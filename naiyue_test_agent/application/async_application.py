@@ -28,6 +28,18 @@ class AsyncApplication:
         if asyncio.get_running_loop() is not self._loop or self._closed or self._closing:
             raise RuntimeError('Async application must be open on its owning event loop')
 
+    @property
+    def model_ids(self):
+        return self._catalog.model_ids
+
+    def has_session(self, session_id):
+        return self._sessions.has_session(session_id)
+
+    async def aget_session_view(self, session_id):
+        self._check_open()
+        return {**self._sessions.describe_session(session_id),
+                'messages': await self.aget_messages(session_id)}
+
     def subscribe_events(self, handler):
         return self._sessions.subscribe_events(handler)
 
@@ -49,8 +61,8 @@ class AsyncApplication:
     def follow_up(self, session_id, text):
         self._sessions.follow_up(session_id, text)
 
-    def request_stop_after_turn(self, session_id):
-        self._sessions.request_stop_after_turn(session_id)
+    def request_stop(self, session_id, *, run_id=None):
+        return self._sessions.request_stop(session_id, run_id=run_id)
 
     def pending_tool_approvals(self, session_id):
         return self._sessions.pending_tool_approvals(session_id)

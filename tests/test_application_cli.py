@@ -267,8 +267,8 @@ def test_tty_stop_uses_application_signal_and_reports_completed_stop(monkeypatch
     assert cli.main(['--no-session', '--config', 'synthetic.json']) == 0
     output = capsys.readouterr().out
     assert 'Steering 已排队' in output
-    assert '已请求在当前 turn 后停止' in output
-    assert '已在当前 turn 后停止' in output
+    assert '已请求停止，正在等待收尾' in output
+    assert '已停止' in output
     assert output.count('current answer') == 1
     assert 'must not run' not in output
     assert len(model.seen) == 1
@@ -301,9 +301,9 @@ def test_tty_stop_request_does_not_mask_model_failure(monkeypatch, capsys):
 
     assert cli.main(['--no-session', '--config', 'synthetic.json']) == 0
     output = capsys.readouterr().out
-    assert '已请求在当前 turn 后停止' in output
+    assert '已请求停止，正在等待收尾' in output
     assert '运行失败（RuntimeError）' in output
-    assert '已在当前 turn 后停止' not in output
+    assert '已停止' not in output
     assert 'private failure' not in output
 
 
@@ -333,7 +333,7 @@ def test_tty_stop_rejection_is_not_reported_as_accepted(monkeypatch, capsys):
             return {'messages': [messages[0], AIMessage(content='answer')],
                     'run_stopped': False}
 
-        def request_stop_after_turn(self, _session_id):
+        def request_stop(self, _session_id):
             raise application.SessionBusyError('Window closed')
 
     monkeypatch.setattr(cli, 'build_local_application',
@@ -354,8 +354,8 @@ def test_tty_stop_rejection_is_not_reported_as_accepted(monkeypatch, capsys):
     assert cli.main(['--no-session', '--config', 'synthetic.json']) == 0
     output = capsys.readouterr().out
     assert '停止请求未被接受' in output
-    assert '已请求在当前 turn 后停止' not in output
-    assert '已在当前 turn 后停止' not in output
+    assert '已请求停止，正在等待收尾' not in output
+    assert '已停止' not in output
     assert 'answer' in output
 
 

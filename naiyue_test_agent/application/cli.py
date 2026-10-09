@@ -1,18 +1,17 @@
-"""Minimal synchronous terminal entry for one local Agent session."""
+"""Terminal input driver with native async Agent execution for one local Agent session."""
 
 import argparse
 import json
 import logging
 import sys
 from pathlib import Path
-from threading import Thread
+from threading import Thread, Lock
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage
 
 from naiyue_test_agent.application import (
     SessionBusyError, SessionManualReviewRequiredError, SessionPendingApprovalError,
-    build_local_application,
 )
 from naiyue_test_agent.application.project_instructions import BASE_SYSTEM_PROMPT
 from naiyue_test_agent.agent_runtime.tools import (
@@ -28,7 +27,7 @@ from naiyue_test_agent.agent_runtime.tools.bash_output import (
 from naiyue_test_agent.agent_runtime.tools.read import resolve_workspace_root
 from naiyue_test_agent.model_access import ModelConfigError
 from naiyue_test_agent.application.cli_display import CliEventDisplay
-from naiyue_test_agent.application.persistent import build_persistent_application
+from naiyue_test_agent.application.cli_async import build_local_application, build_persistent_application
 from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
 
 
@@ -70,7 +69,7 @@ def _print_bash_partial_output(error: BashOutcomeUnknown, *, write=print) -> Non
         write('\n'.join(lines))
 
 
-def _run_and_print(app, session_id: str, text: str, *, display=None) -> None:
+def _run_and_print(app, session_id: str, text: str, *, display=None) -> bool:
     write = display.write if display is not None else print
     if display is not None:
         display.begin_call()
@@ -80,7 +79,7 @@ def _run_and_print(app, session_id: str, text: str, *, display=None) -> None:
         if display is not None:
             display.finish_result(result, input_message_id=request.id)
             _print_pending_approvals(result, write=write)
-            return
+            return True
         messages = result['messages']
         start = next((index for index, message in enumerate(messages)
                       if message.id == request.id), None)
@@ -90,19 +89,22 @@ def _run_and_print(app, session_id: str, text: str, *, display=None) -> None:
                    if isinstance(message, AIMessage) and str(message.text).strip()]
     except SessionManualReviewRequiredError:
         write('本会话工具副作用待核对；请检查执行结果后重启会话')
-        return
+        return False
+    except (SessionBusyError, SessionPendingApprovalError):
+        write('当前会话尚不能接收新请求，待发送内容保留')
+        return False
     except (WriteOutcomeUnknown, BashOutcomeUnknown) as error:
         logger.error('cli_run_failed error_type=%s', type(error).__name__)
         if display is None or not display.terminal_displayed:
             write('工具副作用无法确认；请先检查执行结果，勿直接重试')
         if isinstance(error, BashOutcomeUnknown):
             _print_bash_partial_output(error, write=write)
-        return
+        return True
     except Exception as error:
         logger.error('cli_run_failed error_type=%s', type(error).__name__)
         if display is None or not display.terminal_displayed:
             write(f'运行失败（{type(error).__name__}）')
-        return
+        return True
 
     if replies:
         for reply in replies:
@@ -111,8 +113,9 @@ def _run_and_print(app, session_id: str, text: str, *, display=None) -> None:
         print('本轮没有可展示的回答')
     _print_pending_approvals(result)
     if result.get('run_stopped'):
-        print('已在当前 turn 后停止')
+        print('已停止')
 
+    return True
 
 def _resume_and_print(app, session_id: str, decisions: list[str], *, display=None) -> None:
     write = display.write if display is not None else print
@@ -151,7 +154,7 @@ def _resume_and_print(app, session_id: str, decisions: list[str], *, display=Non
         print('本轮没有可展示的回答')
     _print_pending_approvals(result)
     if result.get('run_stopped'):
-        print('已在当前 turn 后停止')
+        print('已停止')
 
 
 def _pick_session(storage, selected_id):
@@ -199,6 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error('--host-bash requires --workspace')
 
     storage = None
+    app = None
     restored = None
     try:
         if not args.no_session:
@@ -244,6 +248,11 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as error:
         logger.error('cli_initialization_failed error_type=%s', type(error).__name__)
         emit(f'初始化失败（{type(error).__name__}）')
+        if app is not None and callable(getattr(app, 'close', None)):
+            try:
+                app.close()
+            except Exception as closing_error:
+                logger.error('cli_initialization_cleanup_failed error_type=%s', type(closing_error).__name__)
         if storage is not None:
             storage.__exit__(type(error), error, error.__traceback__)
         return 1
@@ -256,16 +265,25 @@ def main(argv: list[str] | None = None) -> int:
             emit('已启用宿主机 Bash：每条命令需审批；命令可访问当前用户可访问的文件和网络，工作区不是沙箱。')
         interactive = sys.stdin.isatty()
         output_clear_plan = None
+        pending_input = []
+        pending_lock = Lock()
+        stopped_input = False
         output_workspace = resolve_workspace_root(args.workspace) if args.workspace is not None else None
 
-        def start_run(text: str) -> None:
+        def start_run(text: str, pending_count=0) -> None:
             nonlocal worker
+            def execute():
+                accepted = _run_and_print(app, session_id, text, display=display)
+                if pending_count and accepted:
+                    with pending_lock:
+                        del pending_input[:pending_count]
+                elif pending_count:
+                    emit('待发送内容仍保留，可用 :pending 查看')
             if interactive:
-                worker = Thread(target=_run_and_print, args=(app, session_id, text),
-                                kwargs={'display': display})
+                worker = Thread(target=execute)
                 worker.start()
             else:
-                _run_and_print(app, session_id, text, display=display)
+                execute()
 
         def start_approval(decisions: list[str]) -> None:
             nonlocal worker
@@ -295,6 +313,19 @@ def main(argv: list[str] | None = None) -> int:
                 if args.workspace is not None and app.pending_tool_approvals(session_id):
                     emit('待审批未处理；退出后内存审批状态无法恢复')
                 return 0
+            if command in (':pending', ':send'):
+                if command == ':pending':
+                    emit('待发送内容：\n' + '\n\n'.join(pending_input) if pending_input else '没有待发送内容')
+                elif worker is not None and worker.is_alive():
+                    emit('上一轮尚未收尾，待发送内容已保留')
+                else:
+                    stopped_input = False
+                    if pending_input:
+                        text = '\n\n'.join(pending_input)
+                        start_run(text, len(pending_input))
+                    else:
+                        emit('没有待发送内容，可输入新的请求')
+                continue
             if command == ':outputs':
                 action = rest[0] if rest else ''
                 if action not in ('clear', 'clear confirm'):
@@ -353,12 +384,17 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 try:
                     receipt_before = display.control_receipt_count('stop') if display is not None else 0
-                    app.request_stop_after_turn(session_id)
+                    retained = app.request_stop(session_id)
+                    pending_input.extend(retained or [])
+                    stopped_input = True
+                    emit('停止后的输入将保留待发送；用 :pending 查看，:send 显式提交')
+                    if pending_input:
+                        emit('待发送内容：\n' + '\n\n'.join(pending_input))
                 except SessionBusyError:
                     emit('停止请求未被接受（运行尚未开窗或已进入收尾）')
                 else:
                     if display is None or display.control_receipt_count('stop') == receipt_before:
-                        emit('已请求在当前 turn 后停止')
+                        emit('已请求停止，正在等待收尾')
                 continue
             if command == ':model':
                 if not rest:
@@ -376,6 +412,10 @@ def main(argv: list[str] | None = None) -> int:
                     emit(f'模型已切换：{model_id}（下一次模型调用生效）')
                 continue
             if command == ':follow':
+                if stopped_input and rest:
+                    pending_input.append(rest[0].strip())
+                    emit('待发送内容已保留：' + rest[0].strip())
+                    continue
                 if not rest or not rest[0].strip():
                     emit('请输入 Follow-up 内容')
                     continue
@@ -399,6 +439,10 @@ def main(argv: list[str] | None = None) -> int:
                 emit('未知命令')
                 continue
 
+            if stopped_input:
+                pending_input.append(line)
+                emit('待发送内容已保留：' + line)
+                continue
             if args.workspace is not None and app.pending_tool_approvals(session_id):
                 emit('当前有待审批工具调用，请先处理审批')
                 continue
@@ -420,8 +464,12 @@ def main(argv: list[str] | None = None) -> int:
             if unsubscribe is not None:
                 unsubscribe()
         finally:
-            if storage is not None:
-                storage.__exit__(*sys.exc_info())
+            try:
+                if callable(getattr(app, 'close', None)):
+                    app.close()
+            finally:
+                if storage is not None:
+                    storage.__exit__(*sys.exc_info())
 
 
 if __name__ == '__main__':

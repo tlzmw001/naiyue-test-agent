@@ -194,13 +194,13 @@ def test_stop_busy_gate_and_active_subscription_snapshot(monkeypatch):
             app.run(session, [('user', 'busy')])
         app.subscribe_events(run_events_only(second.append))
         unsubscribe()
-        app.request_stop_after_turn(session)
+        app.request_stop(session)
     finally:
         release.set()
         worker.join(timeout=3)
     assert not worker.is_alive() and isinstance(outcomes[0], dict), outcomes
     assert first[-1].data.status == 'stopped'
-    assert first[-1].data.stop_mode == 'after_turn'
+    assert first[-1].data.stop_mode == 'active'
     assert second == [] and len(first) == 2
     app.run(session, [('user', 'next')])
     assert len(first) == 2 and len(second) == 2

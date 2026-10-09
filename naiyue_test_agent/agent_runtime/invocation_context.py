@@ -1,6 +1,7 @@
 """Build trusted invocation context shared by sync and async entry points."""
 
 from .events import current_run_event_publisher
+from .run_control import current_run_control
 from .turn_observation import current_turn_observer
 from .control_observation import current_control_observer
 from .context_operation_observation import current_context_operation_observer
@@ -8,6 +9,9 @@ from .context_operation_observation import current_context_operation_observer
 
 def make_invocation_context(session_id, run_id, workspace_root, approval_grants, read_resource_roots):
     context = {'session_id': session_id, 'run_id': run_id}
+    control = current_run_control()
+    if control is not None:
+        context['_run_control'] = control
     publisher = current_run_event_publisher()
     if publisher is not None and publisher.matches(session_id, run_id):
         context['_run_event_publisher'] = publisher

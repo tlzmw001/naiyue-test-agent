@@ -7,7 +7,8 @@ import time
 from collections.abc import Callable
 from xml.sax.saxutils import escape, quoteattr
 
-from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware import AgentMiddleware, hook_config
+from .run_control import UserStop, native_async_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage,
@@ -444,5 +445,13 @@ class _ContextCompactionMiddleware(AgentMiddleware):
     def before_agent(self, state, runtime):
         return _compact_messages(**self._arguments(state, runtime))
 
+    @hook_config(can_jump_to=['end'])
     async def abefore_agent(self, state, runtime):
-        return await _acompact_messages(**self._arguments(state, runtime))
+        control = (runtime.context or {}).get('_run_control')
+        arguments = self._arguments(state, runtime)
+        if control is None or not native_async_model(arguments['model']):
+            return await _acompact_messages(**arguments)
+        try:
+            return await control.await_model(lambda: _acompact_messages(**arguments))
+        except UserStop:
+            return {'run_stopped': True, 'jump_to': 'end'}

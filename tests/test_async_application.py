@@ -120,7 +120,7 @@ def test_waiting_model_accepts_steering_then_follow_up(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_stop_after_turn_still_returns_stopped(monkeypatch):
+def test_active_stop_returns_stopped(monkeypatch):
     async def scenario():
         entered, release = asyncio.Event(), asyncio.Event()
         model = StreamingToolModel(replies=[AIMessage(content='finished turn')], entered=entered, release=release)
@@ -132,12 +132,12 @@ def test_stop_after_turn_still_returns_stopped(monkeypatch):
         try:
             await asyncio.wait_for(entered.wait(), 5)
             app.follow_up(session, 'must not run')
-            app.request_stop_after_turn(session)
+            app.request_stop(session)
             release.set()
             result = await task
             assert result['run_stopped'] is True and len(model.seen) == 1
             assert events[-1].data.status == 'stopped'
-            assert events[-1].data.stop_mode == 'after_turn'
+            assert events[-1].data.stop_mode == 'active'
         finally:
             release.set()
             await asyncio.gather(task, return_exceptions=True)

@@ -55,6 +55,10 @@ class ModelCatalog:
         self._owned_http_clients = []
         self._thinking_selections: dict[str, ThinkingSelection] = {}
 
+    @property
+    def model_ids(self) -> tuple[str, ...]:
+        return tuple(self._models)
+
     def get(self, model_id: str) -> BaseChatModel:
         if not isinstance(model_id, str) or model_id not in self._models:
             raise ModelConfigError(f'Unknown model_id: {model_id}')

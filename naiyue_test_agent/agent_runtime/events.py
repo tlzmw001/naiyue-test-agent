@@ -57,14 +57,14 @@ class RunStartedData:
 @dataclass(frozen=True)
 class RunFinishedData:
     status: Literal['completed', 'stopped', 'interrupted', 'failed']
-    stop_mode: Literal['after_turn'] | None = None
+    stop_mode: Literal['active'] | None = None
     manual_review_required: bool = False
     failure: RunFailureData | None = None
 
     def __post_init__(self):
         if self.status not in ('completed', 'stopped', 'interrupted', 'failed'):
             raise ValueError('Invalid run terminal status')
-        if self.stop_mode != ('after_turn' if self.status == 'stopped' else None):
+        if self.stop_mode != ('active' if self.status == 'stopped' else None):
             raise ValueError('Invalid run stop mode')
         if type(self.manual_review_required) is not bool:
             raise ValueError('Invalid manual review flag')
@@ -338,7 +338,7 @@ class RunEventPublisher:
                              and data.kind in ('steering', 'follow_up') and data.message_id is not None
                              and data.visibility is not None and data.boundary == 'message_state')
                 elif event_type == 'control_applied':
-                    valid = ((previous == ('stop', 'accepted') and data.boundary == 'after_turn')
+                    valid = ((previous == ('stop', 'accepted') and data.boundary == 'active')
                              or (previous == ('approval', 'selected') and data.boundary == 'approval_hook'))
                 elif event_type == 'control_outcome_unknown':
                     valid = previous == (data.kind, 'selected') and data.reason is not None

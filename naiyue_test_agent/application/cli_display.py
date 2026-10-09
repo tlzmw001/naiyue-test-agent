@@ -143,7 +143,7 @@ class CliEventDisplay:
                     if data.manual_review_required else '会话保存未确认，本次运行失败'
                     if data.failure.error_type == 'SessionPersistenceError' else f'运行失败（{data.failure.error_type}）')
         else:
-            text = {'completed': '本次运行完成', 'stopped': '已在当前 turn 后停止',
+            text = {'completed': '本次运行完成', 'stopped': '已停止',
                     'interrupted': '运行已暂停，等待审批'}[data.status]
         self.write(text)
         self._terminal = True
@@ -153,7 +153,7 @@ class CliEventDisplay:
                  'approval': '审批决定'}[data.kind]
         if kind == 'control_accepted':
             text = {'steering': 'Steering 已排队', 'follow_up': 'Follow-up 已排队，将在自然结束边界处理',
-                    'stop': '已请求在当前 turn 后停止', 'approval': '审批决定已接受'}[data.kind]
+                    'stop': '已请求停止，正在等待收尾', 'approval': '审批决定已接受'}[data.kind]
             self.write(text)
             self._receipts[data.kind] = self._receipts.get(data.kind, 0) + 1
         elif kind == 'control_delivered':

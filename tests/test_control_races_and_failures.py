@@ -113,7 +113,7 @@ def test_failure_discards_unprocessed_request_and_preserves_primary(monkeypatch,
         elif kind == 'follow_up':
             app.follow_up(session, 'PRIVATE_FOLLOW')
         else:
-            app.request_stop_after_turn(session)
+            app.request_stop(session)
     finally:
         release.set()
         worker.join(timeout=6)
@@ -146,7 +146,7 @@ def test_approval_preparation_failure_is_discarded_not_submitted_or_applied(monk
     assert app.pending_tool_approvals(session)
 
 
-def test_stop_before_approval_interrupt_is_not_reported_as_applied(monkeypatch, tmp_path):
+def test_active_stop_before_approval_skips_tool_and_finishes(monkeypatch, tmp_path):
     from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
     from naiyue_test_agent.model_access import ModelCatalog
 
@@ -175,15 +175,18 @@ def test_stop_before_approval_interrupt_is_not_reported_as_applied(monkeypatch, 
     worker.start()
     try:
         assert entered.wait(timeout=5)
-        app.request_stop_after_turn(session)
+        app.request_stop(session)
         result = finish(worker, release, outcomes)
     finally:
         release.set()
         worker.join(timeout=6)
-    assert result['approval_requests']
-    assert [e.event_type for e in controls(events)] == ['control_accepted', 'control_discarded']
-    assert controls(events)[-1].data.reason == 'run_interrupted'
-    assert events[-1].data.status == 'interrupted'
+    assert 'approval_requests' not in result
+    result_message = result['messages'][-1]
+    assert result_message.type == 'tool' and result_message.tool_call_id == 'read'
+    assert result_message.status == 'error' and 'user stopped' in result_message.content
+    assert [e.event_type for e in controls(events)] == ['control_accepted', 'control_applied']
+    assert controls(events)[-1].data.boundary == 'active'
+    assert events[-1].data.status == 'stopped'
 
 
 def test_rejected_control_api_calls_never_create_accepted_events(monkeypatch):
@@ -192,7 +195,7 @@ def test_rejected_control_api_calls_never_create_accepted_events(monkeypatch):
     events = []
     app.subscribe_events(events.append)
     for callback in (lambda: app.steer(session, 'idle'), lambda: app.follow_up(session, 'idle'),
-                     lambda: app.request_stop_after_turn(session)):
+                     lambda: app.request_stop(session)):
         with pytest.raises(application.SessionBusyError):
             callback()
     with pytest.raises(ValueError):
@@ -255,7 +258,7 @@ def test_old_cleanup_control_notifications_keep_old_run_after_new_run_starts(mon
     old_run = events[0].run_id
     try:
         app.steer(session, 'old queued')
-        app.request_stop_after_turn(session)
+        app.request_stop(session)
         release.set()
         assert cleanup_entered.wait(timeout=5)
         new_result = app.run(session, [('user', 'new')])

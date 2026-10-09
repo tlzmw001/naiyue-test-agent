@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from naiyue_test_agent.model_access.errors import ModelResponseRejected
 from naiyue_test_agent.agent_runtime.call_observation import observe_tool_dispatch, aobserve_tool_dispatch
 from .async_tool_batch import AsyncBatchPlan
+from .run_control import stop_tool_message
 
 
 logger = logging.getLogger(__name__)
@@ -151,12 +152,17 @@ class ToolBatchMiddleware(AgentMiddleware):
     async def _adispatch_tool_call(self, request, handler):
         context = request.runtime.context or {}
         plan = context.get(_PLAN_KEY)
-        if request.tool_call['name'] not in self.modes:
+        async def guarded():
+            control = context.get('_run_control')
+            if control is not None and control.requested:
+                return stop_tool_message(request.tool_call)
             return await handler(request)
+        if request.tool_call['name'] not in self.modes:
+            return await guarded()
         if not isinstance(plan, AsyncBatchPlan):
             raise ToolBatchSchedulingError('Tool batch plan is unavailable.')
         return await plan.execute(request.tool_call['id'], request.tool_call['name'],
-            lambda: handler(request), request.runtime.config.get('max_concurrency', 4))
+            guarded, request.runtime.config.get('max_concurrency', 4))
 
     def _dispatch_tool_call(self, request, handler):
         context = request.runtime.context

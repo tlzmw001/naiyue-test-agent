@@ -21,7 +21,7 @@ class ControlData:
             raise ValueError('A control identifier is required')
         if self.kind not in ('steering', 'follow_up', 'stop', 'approval'):
             raise ValueError('Invalid control kind')
-        if self.boundary not in ('application', 'queue', 'message_state', 'after_turn',
+        if self.boundary not in ('application', 'queue', 'message_state', 'active',
                                  'invocation', 'approval_hook'):
             raise ValueError('Invalid control boundary')
         if any(v is not None and (not isinstance(v, str) or not v)
@@ -50,7 +50,7 @@ class ControlData:
 
     @property
     def stop_mode(self):
-        return 'after_turn' if self.kind == 'stop' else None
+        return 'active' if self.kind == 'stop' else None
 
 
 @dataclass(frozen=True)

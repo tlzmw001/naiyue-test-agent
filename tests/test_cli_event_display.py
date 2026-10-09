@@ -64,7 +64,7 @@ def test_hidden_messages_recovery_view_and_terminal_control_escaping():
 
 
 @pytest.mark.parametrize('status,text', [('completed', '本次运行完成'),
-    ('stopped', '已在当前 turn 后停止'), ('interrupted', '等待审批'), ('failed', '运行失败')])
+    ('stopped', '已停止'), ('interrupted', '等待审批'), ('failed', '运行失败')])
 def test_terminal_is_once_and_turn_end_is_not_terminal(status, text):
     view, lines = display()
     view(event('turn_finished', 2, status='completed'))

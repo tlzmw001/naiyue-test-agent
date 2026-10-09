@@ -49,26 +49,33 @@ class SessionControlMixin:
         if control:
             control.flush()
 
-    def request_stop_after_turn(self, session_id: str) -> None:
+    def request_stop(self, session_id: str, *, run_id: str | None = None) -> list[str]:
         with self._lock:
             session = self._sessions[session_id]
             if not session['busy']:
                 raise self._busy_error('Session has no active run to stop')
+            if run_id is not None and run_id != session['run_id']:
+                raise self._busy_error('Stop request targets a different run')
             if session['stop_requested']:
-                return
-            if not session['steering_open']:
+                return []
+            active = self._active_runs.get(session_id)
+            if not session['steering_open'] or (active is not None and active.stage == 'finalize'):
                 raise self._busy_error('Session is no longer accepting stop requests')
+            retained = [*session['steering_queue'], *session['follow_up_queue']]
             session['stop_requested'] = True
             session['steering_open'] = False
             run_id = session['run_id']
             control = self._control(session_id)
             if control:
                 control.accept('stop')
+        if active is not None:
+            active.stop_control.request()
         logger.info('stop_requested', extra={'stop_event': {
             'event': 'stop_requested', 'session_id': session_id, 'run_id': run_id,
         }})
         if control:
             control.flush()
+        return retained
 
     def is_stop_requested(self, session_id: str) -> bool:
         with self._lock:

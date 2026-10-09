@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from threading import Lock
 
 from langgraph.errors import GraphBubbleUp
+from naiyue_test_agent.agent_runtime.run_control import RunControl, bind_run_control
 
 from naiyue_test_agent.agent_runtime.events import (
     RunEventPublisher, RunFailureData, RunFinishedData, RunStartedData, safe_error_type,
@@ -96,13 +97,14 @@ class RunObservation:
         self._suppress_terminal = False
         self.turns = TurnObserver(publisher)
         self.controls = ControlObserver(publisher)
+        self.stop_control = RunControl()
         self.context_operations = ContextOperationObserver(publisher)
 
     @contextmanager
     def bind(self):
         if self.mode == 'approval_resume':
             self.controls.submit_approval()
-        with (bind_run_event_publisher(self.publisher), bind_turn_observer(self.turns),
+        with (bind_run_control(self.stop_control), bind_run_event_publisher(self.publisher), bind_turn_observer(self.turns),
               bind_control_observer(self.controls), bind_context_operation_observer(self.context_operations)):
             yield
 
@@ -163,6 +165,6 @@ class RunObservation:
         self.context_operations.flush()
         if not self._suppress_terminal:
             self.publisher.publish('run_finished', RunFinishedData(
-                self.status, 'after_turn' if self.status == 'stopped' else None,
+                self.status, 'active' if self.status == 'stopped' else None,
                 manual_review_required, self.failure,
             ))

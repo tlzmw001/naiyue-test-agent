@@ -156,13 +156,13 @@ def test_steering_and_follow_up_create_turns_when_delivered_not_when_queued(monk
     assert len({e.data.turn_id for e in ends}) == 3 and len({e.run_id for e in ends}) == 1
 
 
-def test_after_turn_stop_completes_current_turn_and_stops_run(monkeypatch):
+def test_sync_tool_settles_before_unified_stop_finishes_run(monkeypatch):
     holder = {}
 
     @tool
     def stop_probe() -> str:
         """Request stop at the current turn boundary."""
-        holder['app'].request_stop_after_turn(holder['session'])
+        holder['app'].request_stop(holder['session'])
         return 'done'
 
     app = make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[

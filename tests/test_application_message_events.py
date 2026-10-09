@@ -192,7 +192,7 @@ def test_control_during_tool_retains_all_messages_and_original_stop_result(monke
             app.steer(session, 'steer')
             assert 'steer' not in [row['content'] for row in rows(events)]
         else:
-            app.request_stop_after_turn(session)
+            app.request_stop(session)
         release.set()
     finally:
         release.set()

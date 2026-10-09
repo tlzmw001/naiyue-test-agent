@@ -1,6 +1,7 @@
 """Presentation state keeps provisional drafts separate from final snapshots."""
 
 import json
+from copy import deepcopy
 
 
 class StreamingMessageProjection:
@@ -13,6 +14,12 @@ class StreamingMessageProjection:
     @property
     def messages(self):
         return list(self._messages.values())
+
+    def seed(self, session_id, rows):
+        """Seed existing presentation/checkpoint rows before observing a new run."""
+        for row in rows:
+            self._messages[(session_id, row['id'])] = {
+                **deepcopy(row), 'session_id': session_id, 'run_id': row.get('run_id')}
 
     def __call__(self, event):
         previous = self._sequences.get(event.run_id, 0)

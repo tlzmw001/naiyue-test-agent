@@ -18,6 +18,7 @@ from naiyue_test_agent.agent_runtime.tool_approval import (
 )
 
 from .bash_output import ArchiveResult, BashOutputArchive
+from ..run_control import current_run_control
 
 
 logger = logging.getLogger(__name__)
@@ -146,6 +147,9 @@ def _run_host_command(command: str, root: Path, timeout: int) -> tuple[int, str,
         'PATH': f'{Path(sys.executable).parent}:/usr/bin:/bin:/usr/sbin:/sbin',
         'HOME': str(root), 'TMPDIR': str(root), 'LANG': 'en_US.UTF-8',
     }
+    control = current_run_control()
+    if control is not None and control.requested:
+        raise ToolException('Bash was not started because the user stopped this run.')
     try:
         process = subprocess.Popen(
             [shell, '-c', command], cwd=root, env=env, stdin=subprocess.DEVNULL,
@@ -168,8 +172,22 @@ def _run_host_command(command: str, root: Path, timeout: int) -> tuple[int, str,
     ]
     for reader in readers:
         reader.start()
+    cancelled = False
     try:
-        exit_code = process.wait(timeout=timeout)
+        if control is None:
+            exit_code = process.wait(timeout=timeout)
+        else:
+            deadline = monotonic() + timeout
+            while process.poll() is None:
+                if control.requested:
+                    cancelled = True
+                    _kill_group(process)
+                    break
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(process.args, timeout)
+                control.signal.wait(min(0.1, remaining))
+            exit_code = process.returncode
         for reader in readers:
             reader.join(timeout=2)
         if any(reader.is_alive() for reader in readers):
@@ -197,6 +215,11 @@ def _run_host_command(command: str, root: Path, timeout: int) -> tuple[int, str,
             'Bash timed out; inspect side effects before retrying.',
             stdout, stderr, out_truncated, err_truncated, archive.finish(),
         ) from error
+    if cancelled:
+        raise _unknown_with_output(
+            'Bash was stopped by the user; inspect side effects before retrying.',
+            stdout, stderr, out_truncated, err_truncated, archive.finish(),
+        )
     return (exit_code, _decode_output_tail(stdout, out_truncated[0]),
             _decode_output_tail(stderr, err_truncated[0]),
             out_truncated[0] or err_truncated[0], archive.finish())

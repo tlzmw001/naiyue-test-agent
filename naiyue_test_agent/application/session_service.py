@@ -137,6 +137,21 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             raise
         return session_id
 
+    def has_session(self, session_id):
+        with self._lock:
+            return session_id in self._sessions
+
+    def describe_session(self, session_id):
+        with self._lock:
+            row = self._sessions[session_id]
+            return {'session_id': session_id, 'model_id': row['model_id'],
+                'workspace_root': str(row['workspace_root']) if row['workspace_root'] else None,
+                'busy': row['busy'], 'run_id': row['run_id'],
+                'manual_review_required': row['manual_review_required'],
+                'pending_approval': row['pending_tool_approval'] is not None,
+                'approval_run_id': (row['pending_tool_approval'].get('requested_run_id')
+                    if row['pending_tool_approval'] is not None else None)}
+
     def resolve_model(self, session_id: str):
         with self._lock:
             model_id = self._sessions[session_id]['model_id']

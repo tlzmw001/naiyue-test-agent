@@ -7,7 +7,7 @@ from typing import Any, NotRequired, TypedDict
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
-    AgentState, HumanInTheLoopMiddleware, ModelRequest, after_agent, after_model,
+    AgentState, HumanInTheLoopMiddleware, ModelRequest, after_agent,
     before_agent, before_model,
     wrap_model_call, wrap_tool_call,
 )
@@ -41,6 +41,8 @@ from naiyue_test_agent.agent_runtime.call_observation import (
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher, current_run_event_publisher
 from naiyue_test_agent.agent_runtime.message_observation import invoke_with_message_observation
 from .invocation_context import make_invocation_context
+from .active_stop import StopModelMiddleware, StopBoundaryMiddleware
+from .run_control import RunControl
 from naiyue_test_agent.agent_runtime.turn_observation import (
     TurnBoundaryMiddleware, TurnObserver, current_turn_observer,
 )
@@ -59,6 +61,7 @@ class RunContext(TypedDict):
     workspace_root: NotRequired[Path]
     approval_grants: NotRequired[dict[str, OneUseApprovalGrants]]
     read_resource_roots: NotRequired[tuple[Path, ...]]
+    _run_control: NotRequired[RunControl]
     _run_event_publisher: NotRequired[RunEventPublisher]
     _turn_observer: NotRequired[TurnObserver]
     _control_observer: NotRequired[ControlObserver]
@@ -66,7 +69,6 @@ class RunContext(TypedDict):
 
 
 class InteractiveRunState(AgentState):
-    model_turn_seen: NotRequired[bool]
     run_stopped: NotRequired[bool]
 
 
@@ -157,17 +159,13 @@ def _assemble_interactive_runtime(
     if is_stop_requested is not None:
         @before_agent
         def reset_run_control(_state, _runtime):
-            return {'model_turn_seen': False, 'run_stopped': False}
-
-        @after_model
-        def mark_model_turn(_state, _runtime):
-            return {'model_turn_seen': True}
+            return {'run_stopped': False}
 
     @before_model(can_jump_to=['end'])
     def inject_before_model(state, runtime):
         session_id = runtime.context['session_id']
         if is_stop_requested is not None and is_stop_requested(session_id):
-            return {'jump_to': 'end'} if state.get('model_turn_seen') else None
+            return {'run_stopped': True, 'jump_to': 'end'}
         messages = drain_steering(session_id)
         if messages:
             prepared = (prepare_control_messages(session_id, messages) if prepare_control_messages is not None
@@ -193,7 +191,7 @@ def _assemble_interactive_runtime(
             }
         return None
 
-    control_middleware = ([reset_run_control, mark_model_turn]
+    control_middleware = ([reset_run_control]
                           if is_stop_requested is not None else [])
     project_prompt_middleware = (
         [make_project_prompt_middleware(resolve_project_instructions)]
@@ -212,14 +210,14 @@ def _assemble_interactive_runtime(
                              inject_at_natural_end, *project_prompt_middleware,
                              recover_input_overflow],
         state_schema=InteractiveRunState if is_stop_requested is not None else None,
-        observe_turns=observe_turns,
+        observe_turns=observe_turns, active_stop=is_stop_requested is not None,
     )
 
 
 def _build_runtime_agent(
     default_model, *, tools, system_prompt, response_format, resolve_model,
     record_selection, checkpointer, steering_middleware, state_schema=None,
-    observe_turns=False,
+    observe_turns=False, active_stop=False,
 ):
     approval_rules = {
         name: {'allowed_decisions': ['approve', 'reject'],
@@ -238,10 +236,11 @@ def _build_runtime_agent(
         response_format=response_format,
         context_schema=RunContext,
         state_schema=state_schema,
-        middleware=[*([TurnBoundaryMiddleware()] if observe_turns else []),
+        middleware=[*([StopModelMiddleware()] if active_stop else []), *([TurnBoundaryMiddleware()] if observe_turns else []),
                     make_model_selection_middleware(resolve_model, record_selection),
                     ToolBatchMiddleware(tools), _record_tool_call,
-                    *steering_middleware, *tool_hitl, observe_model_request],
+                    *steering_middleware, *tool_hitl, observe_model_request,
+                    *([StopBoundaryMiddleware()] if active_stop else [])],
         checkpointer=checkpointer,
     )
 

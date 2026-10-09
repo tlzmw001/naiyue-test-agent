@@ -1,4 +1,4 @@
-"""A stop request finishes the current turn without starting another."""
+"""Cooperative sync operation settlement under the unified stop contract."""
 
 import logging
 from threading import Event, Thread
@@ -56,8 +56,8 @@ def test_stop_after_current_answer_discards_pending_messages(monkeypatch, caplog
             assert entered.wait(timeout=3)
             app.steer(session_id, 'private-steering')
             app.follow_up(session_id, 'private-follow-up')
-            app.request_stop_after_turn(session_id)
-            app.request_stop_after_turn(session_id)
+            app.request_stop(session_id)
+            app.request_stop(session_id)
             with pytest.raises(application.SessionBusyError):
                 app.steer(session_id, 'too-late')
         finally:
@@ -115,7 +115,7 @@ def test_stop_waits_for_current_tool_batch_and_skips_next_model(monkeypatch):
     try:
         assert first_started.wait(timeout=3)
         assert second_started.wait(timeout=3)
-        app.request_stop_after_turn(session_id)
+        app.request_stop(session_id)
     finally:
         release.set()
         worker.join(timeout=3)
@@ -146,7 +146,7 @@ def test_model_failure_wins_over_requested_stop(monkeypatch, caplog):
         worker, outcomes = run_in_worker(app, session_id)
         try:
             assert entered.wait(timeout=3)
-            app.request_stop_after_turn(session_id)
+            app.request_stop(session_id)
         finally:
             release.set()
             worker.join(timeout=3)
@@ -178,7 +178,7 @@ def test_stop_state_resets_before_next_run(monkeypatch, caplog):
         worker, outcomes = run_in_worker(app, session_id)
         try:
             assert entered.wait(timeout=3)
-            app.request_stop_after_turn(session_id)
+            app.request_stop(session_id)
         finally:
             release.set()
             worker.join(timeout=3)
@@ -198,9 +198,9 @@ def test_stop_rejects_idle_and_unknown_sessions(monkeypatch):
     app = build_app(monkeypatch, FakeMessagesListChatModel(responses=[]))
     session_id = app.create_session('A')
     with pytest.raises(application.SessionBusyError):
-        app.request_stop_after_turn(session_id)
+        app.request_stop(session_id)
     with pytest.raises(KeyError):
-        app.request_stop_after_turn('missing-session')
+        app.request_stop('missing-session')
 
 
 def test_stop_rejects_closed_window_while_run_is_still_busy():
@@ -222,7 +222,7 @@ def test_stop_rejects_closed_window_while_run_is_still_busy():
     try:
         assert closed.wait(timeout=3)
         with pytest.raises(application.SessionBusyError):
-            app.request_stop_after_turn(session_id)
+            app.request_stop(session_id)
     finally:
         release.set()
         worker.join(timeout=3)
@@ -240,13 +240,12 @@ def test_stop_before_first_model_does_not_inject_queued_steering(monkeypatch):
     class QueueBeforeInvoke:
         def invoke(self, input, *, context, config):
             app.steer(session_id, 'not-for-first-model')
-            app.request_stop_after_turn(session_id)
+            app.request_stop(session_id)
             return agent.invoke(input, context=context, config=config)
 
     app._agent = QueueBeforeInvoke()
     result = app.run(session_id, [('user', 'initial')])
 
-    assert [message.content for message in result['messages']] == [
-        'initial', 'first-answer',
-    ]
+    assert [message.content for message in result['messages']] == ['initial']
+    assert model.i == 0  # A stop before dispatch sends no model request.
     assert result['run_stopped'] is True

@@ -6,10 +6,11 @@ import re
 from collections.abc import Callable
 from uuid import uuid4
 
-from langchain.agents.middleware import AgentMiddleware, HumanInTheLoopMiddleware, ModelRequest, wrap_tool_call
+from langchain.agents.middleware import AgentMiddleware, HumanInTheLoopMiddleware, ModelRequest, wrap_tool_call, hook_config
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, ToolMessage
-from langgraph.errors import GraphBubbleUp
+from langgraph.errors import GraphBubbleUp, GraphInterrupt
+from .run_control import UserStop, native_async_model
 
 from naiyue_test_agent.agent_runtime.events import (
     ModelCallStartedData, ModelCallFinishedData, ToolCallStartedData, ToolCallFinishedData,
@@ -138,7 +139,8 @@ class _ModelSelectionMiddleware(AgentMiddleware):
         context_operations = context.get('_context_observer')
         if context_operations is not None:
             context_operations.model_call_failed(call_id, error)
-        category, reason = (('cancelled', 'task_cancelled') if isinstance(error, asyncio.CancelledError)
+        category, reason = (('cancelled', 'user_stop') if isinstance(error, UserStop) else
+                            ('cancelled', 'task_cancelled') if isinstance(error, asyncio.CancelledError)
                             else classify_model_failure(error))
         details = (unknown_failure_diagnostics(error) if category == 'unknown' else {})
         logger.error(
@@ -150,7 +152,7 @@ class _ModelSelectionMiddleware(AgentMiddleware):
         )
         if not isinstance(error, GraphBubbleUp):
             failure = (RunFailureData('execute', category, reason, safe_error_type(error))
-                       if isinstance(error, asyncio.CancelledError) else failure_data(error))
+                       if isinstance(error, (asyncio.CancelledError, UserStop)) else failure_data(error))
             _emit(context, 'model_call_finished', ModelCallFinishedData(
                 call_id, event_label(model_id), 'failed', failure=failure,
             ), primary_error=error)
@@ -167,9 +169,13 @@ class _ModelSelectionMiddleware(AgentMiddleware):
     async def awrap_model_call(self, request, handler):
         model_id, call_id, model = self._prepare(request)
         try:
-            response = await handler(request.override(model=model))
+            control = request.runtime.context.get('_run_control')
+            if control is not None and native_async_model(model):
+                response = await control.await_model(lambda: handler(request.override(model=model)))
+            else:
+                response = await handler(request.override(model=model))
             return self._accept(request, response, model_id, call_id)
-        except (Exception, asyncio.CancelledError) as error:
+        except (Exception, asyncio.CancelledError, UserStop) as error:
             self._failed(request, error, model_id, call_id)
             raise
 
@@ -313,7 +319,8 @@ def observe_tool_dispatch(request, handler, dispatch):
             call_id, name, 'dispatch', outcome, failure=failure_data(error),
         ), primary_error=error)
         raise
-    guard_reason = tool_guard_reason(request) if entered else 'prior_batch_failed'
+    guard_reason = (result.additional_kwargs.get('naiyue_not_executed') if isinstance(result, ToolMessage) else None)
+    guard_reason = guard_reason or (tool_guard_reason(request) if entered else 'prior_batch_failed')
     if guard_reason is not None:
         outcome, reason = 'not_executed', guard_reason
     else:
@@ -344,7 +351,8 @@ async def aobserve_tool_dispatch(request, handler, dispatch):
             call_id, name, 'dispatch', outcome, failure=failure_data(error),
         ), primary_error=error)
         raise
-    reason = tool_guard_reason(request) if entered else 'prior_batch_failed'
+    reason = (result.additional_kwargs.get('naiyue_not_executed') if isinstance(result, ToolMessage) else None)
+    reason = reason or (tool_guard_reason(request) if entered else 'prior_batch_failed')
     outcome = ('not_executed' if reason is not None else 'error_result'
                if isinstance(result, ToolMessage) and result.status == 'error' else 'success')
     _emit(context, 'tool_call_finished', ToolCallFinishedData(call_id, name, 'dispatch', outcome, reason))
@@ -352,6 +360,14 @@ async def aobserve_tool_dispatch(request, handler, dispatch):
 
 
 class ObservedHumanInTheLoopMiddleware(HumanInTheLoopMiddleware):
+    @staticmethod
+    def _stop_update(state, runtime):
+        from .active_stop import StopBoundaryMiddleware
+        control = (runtime.context or {}).get('_run_control')
+        if control is not None and control.requested:
+            return StopBoundaryMiddleware().after_model(state, runtime)
+        return None
+
     def _create_action_and_config(self, tool_call, config, state, runtime):
         result = super()._create_action_and_config(tool_call, config, state, runtime)
         controls = runtime.context.get('_control_observer') if runtime.context else None
@@ -359,11 +375,24 @@ class ObservedHumanInTheLoopMiddleware(HumanInTheLoopMiddleware):
             controls.note_approval_candidate(tool_call['id'])
         return result
 
+    @hook_config(can_jump_to=['end'])
     def after_model(self, state, runtime):
+        stopped = self._stop_update(state, runtime)
+        if stopped is not None:
+            return stopped
         controls = runtime.context.get('_control_observer') if runtime.context else None
         if controls is not None:
             controls.begin_approval_hook()
-        update = super().after_model(state, runtime)
+        try:
+            update = super().after_model(state, runtime)
+        except GraphInterrupt:
+            stopped = self._stop_update(state, runtime)
+            if stopped is not None:
+                return stopped
+            raise
+        stopped = self._stop_update(state, runtime)
+        if stopped is not None:
+            return stopped
         if controls is not None:
             controls.approval_applied()
         for message in (update or {}).get('messages', []):
@@ -375,6 +404,7 @@ class ObservedHumanInTheLoopMiddleware(HumanInTheLoopMiddleware):
                 ))
         return update
 
+    @hook_config(can_jump_to=['end'])
     async def aafter_model(self, state, runtime):
         from .async_utils import run_blocking
         return await run_blocking(self.after_model, state, runtime)

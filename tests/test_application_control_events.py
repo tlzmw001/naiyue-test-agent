@@ -96,8 +96,8 @@ def test_stop_is_idempotent_applied_from_result_and_discards_waiting_messages(mo
     try:
         app.steer(session, 'discard steering')
         app.follow_up(session, 'discard follow')
-        app.request_stop_after_turn(session)
-        app.request_stop_after_turn(session)
+        app.request_stop(session)
+        app.request_stop(session)
         result = finish(worker, release, outcomes)
     finally:
         release.set()
@@ -106,7 +106,7 @@ def test_stop_is_idempotent_applied_from_result_and_discards_waiting_messages(mo
     accepted = controls(events, 'control_accepted')
     assert [e.data.kind for e in accepted] == ['steering', 'follow_up', 'stop']
     applied = controls(events, 'control_applied')
-    assert len(applied) == 1 and applied[0].data.kind == 'stop' and applied[0].data.boundary == 'after_turn'
+    assert len(applied) == 1 and applied[0].data.kind == 'stop' and applied[0].data.boundary == 'active'
     assert [e.data.kind for e in controls(events, 'control_discarded')] == ['steering', 'follow_up']
     assert all(e.data.reason == 'run_stopped' for e in controls(events, 'control_discarded'))
     assert events[-1].data.status == 'stopped'

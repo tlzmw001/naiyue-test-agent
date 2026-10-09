@@ -127,7 +127,7 @@ class ControlObserver:
         with self._record_lock:
             record = self._records.get(self._stop_id)
             if record and isinstance(result, dict) and result.get('run_stopped') is True:
-                self._outbox.append(('control_applied', replace(record['data'], boundary='after_turn')))
+                self._outbox.append(('control_applied', replace(record['data'], boundary='active')))
                 del self._records[self._stop_id]
         self.flush()
 

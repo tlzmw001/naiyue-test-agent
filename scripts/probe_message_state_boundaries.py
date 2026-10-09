@@ -199,7 +199,7 @@ def steering_stop_and_partial_failure():
             if action == 'steer':
                 holder['app'].steer(holder['session'], 'adjust question')
             else:
-                holder['app'].request_stop_after_turn(holder['session'])
+                holder['app'].request_stop(holder['session'])
             return 'value'
 
         model = Model(responses=[AIMessage(content='', tool_calls=[

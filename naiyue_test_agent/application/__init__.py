@@ -62,8 +62,8 @@ class LocalApplication:
     def follow_up(self, session_id: str, text: str) -> None:
         self._sessions.follow_up(session_id, text)
 
-    def request_stop_after_turn(self, session_id: str) -> None:
-        self._sessions.request_stop_after_turn(session_id)
+    def request_stop(self, session_id: str, *, run_id: str | None = None) -> list[str]:
+        return self._sessions.request_stop(session_id, run_id=run_id)
 
     def run(self, session_id: str, messages):
         return self._sessions.run(self._agent, session_id, messages)
