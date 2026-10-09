@@ -1,5 +1,15 @@
 # Naiyue Test Agent：项目设计记录
 
+2026-10-09 [Spec078](specs/078-web-tools-and-approval.md)已接通工作区文件工具、显式 opt-in Bash、真实 ToolMessage/参数配对及可折叠工具详情；审批按会话/原run/调用ID严格匹配，逐项决定后整批恢复，新的run继续SSE。应用只增加派生来源run字段，无DB迁移/权限算法改写；保存失败、重启受限状态仍阻断，拒绝仍回填模型。9个新增Python验收及9个新增前端测试通过；离线TCP/两个进程与桌面/375px真实浏览器完成批准/拒绝闭环，新增实网模型调用为0，不替代收费供应商/生产业务证据。下一步试用与系统代码学习，长期会话/权限边界保留待办。
+
+2026-10-09 [Spec077](specs/077-local-web-chat.md)已获用户确认并接通最小本地 Web：React+TS/Vite/CSS Modules、FastAPI/REST+SSE 复用现有 AsyncApplication/SQLite，循环与工具/上下文算法保持。独立 arun 生产任务＋快速领域订阅/有界交付，HTTP 断开不取消；真实 run_id、请求幂等、序号/view 校准、模型/会话选择、Steering/Follow-up、停止保留与明确重发已验证。首片 tools=[]，下一片工具/审批，不宣称 SaaS/完整历史或生产业务效果。操作及证据见 [Web 说明](web-chat.md)。下列选型草案与旧阶段进度按历史时点保留。
+
+2026-10-09 [Spec077草案](specs/077-local-web-chat.md)与[ChatKit接入评估](research/chatkit-web-integration-2026-10-09.md)：已核对官方JS/Python源码、Pi/AgentX及当前应用。建议React+TypeScript/Vite自建薄聊天页面、FastAPI/官方SSE对接AsyncPersistentApplication，保留已确认外观；完整ChatKit可适配，但busy输入、默认取消保存与Store/事件协议另需接线。首片拟做对话/流式/Steering/Follow-up/活动停止及安全会话恢复，工具卡/审批下一片。新栈与首片范围尚待确认；仅调研/Spec和依赖dry-run，未安装或改运行代码。
+
+2026-10-09 Web视觉方向：用户查看实际参考截图后明确选择ChatKit Playground的浅色聊天区域（截图：`/Users/zmw/.codex/visualizations/2026/10/09/openai-ui-reference/chatkit-playground.jpg`）。采用白色主体、深色正文、克制图标、圆角输入框与黑色发送按钮；演示页左侧是样式编辑器，不属于本项目产品界面。整页会话导航与模型/工作区控制按ChatGPT式入口继续设计。此确认仅固定视觉基准；ChatKit SDK、自建UI、前端栈与服务端协议仍需评估，不据此迁移Python/LangChain运行时或安装依赖。下一步完成最小Web接入与页面状态的设计Spec。
+
+2026-10-08 [Spec076](specs/076-active-stop.md)：用户确认统一活动停止并迁移旧after-turn接口；CLI接正式异步应用，停止后保留待发送内容、明确重发，不自动启动下一轮。runtime拥有run私有控制，应用确认目标/保存，工具响应或settle；无新StateGraph、依赖/配置修改或Web。安全停止可恢复，真实失败/副作用不确定仍阻断；已有真实网关一次逻辑调用取消证据。唯一下一步最小Web设计，之后冻结并系统学习。
+
 2026-10-08 用户要求合并原1–4为一大切片，按[Spec075](specs/075-integrated-async-application.md)已接异步工具/批次/HITL、正式应用/控制、官方异步saver+元数据与流式消费/临时文本projection。同步CLI/API保持，delta是第27种事件；临时/完整/保存确认分开，有界交付失败显式、断开不取消生产，未配对工具状态阻断，已开始线程IO先settle后释放busy。新36例/全量882例、语法/依赖/行数检查通过；真实两个独立进程验证增量→随机工具→Steering→保存→重启续聊，3逻辑调用、180秒截止。SDK独立HTTP资源隔离经过本机/测试确认，不关闭借用默认池。活动取消、Web、SaaS和业务质量仍未完成；唯一下一步活动取消Spec，再最小Web与系统学习。
 
 2026-10-08 上下文异步接线：[Spec074](specs/074-async-context-model-chain.md)已让项目prompt、主动摘要和一次输入溢出恢复支持异步，共用原切点/预算/回退算法，仅把摘要IO交同步/异步执行器；取消保持信号，重发构造失败阶段修回retry。34例新增/全量846例及语法编译/依赖检查通过；真实默认模型摘要→回答两逻辑请求、随机合成事实、values/updates状态流和内存checkpoint通过，非文本delta/真实失败取消/生产评测。工具/审批、应用/SQLite和正式事件/显示异步仍未接；唯一下一步工具wrapper/HITL与串并行批次/IO实施Spec。LangChain子任务自行抛CancelledError的独立探针限制已记录，暂不升级依赖。

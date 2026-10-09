@@ -1,12 +1,16 @@
 # 后续开发与补充清单
 
-更新日期：2026-10-08。这里集中记录**尚未实现或尚未验证**的工作；它不是半个月首期的交付承诺。开始某一项前先读当前代码与对应 Spec，以一个小切片重新确定范围和验收，按 TDD 推进。完成时记录代码入口、验证命令和实际结果，再从本清单移至交接记录；不能只因文件存在或测试全绿就勾销真实服务与业务效果验证。
+更新日期：2026-10-09。这里集中记录**尚未实现或尚未验证**的工作；它不是半个月首期的交付承诺。开始某一项前先读当前代码与对应 Spec，以一个小切片重新确定范围和验收，按 TDD 推进。完成时记录代码入口、验证命令和实际结果，再从本清单移至交接记录；不能只因文件存在或测试全绿就勾销真实服务与业务效果验证。
 
 总体顺序与层级见 [实施路线](implementation-roadmap.md)，已经做过的证据见 [交接记录](handoff.md)。本清单聚焦遗留事项，历史讨论不自动转成已批准需求。
 
-最新里程碑（Spec075）：用户要求原1–4合一大切片，异步工具/批次/HITL、正式应用控制、官方异步SQLite与元数据线程IO、三模式流消费/临时文本projection已接通，全量882例与真实两进程正常链路通过。同步CLI保持；下面Spec073/074“尚待应用/存储/流式”的叙述为历史时点。当前唯一下一步为活动取消设计、之后最小Web与整体学习；没有SaaS/沙箱/完整恢复或业务效果成熟度声明。
+最小 Web 已完成 [Spec077](specs/077-local-web-chat.md) 聊天基础及 [Spec078](specs/078-web-tools-and-approval.md)工作区工具/工具详情/逐项决定整批审批，沿用原权限和应用恢复接口。使用见 [Web说明](web-chat.md)、[工具说明](web-tools.md)。唯一下一步：先实际试用 Web 工具/审批闭环，以一次 read→审批→恢复→保存/显示作为系统代码学习入口；不自动扩大长期会话或权限工程。
 
-剩余异步/流式边界：活动模型/SDK重试/摘要/工具/进程取消，真实部分输出故障、传输重连/客户端状态同步、CPU长上下文延迟、多模态/非文本delta和大payload/多消费者压力。当前队列按事件数有界，overflow显式且生产继续；aget_messages只恢复活跃checkpoint，非全聊天历史。SDK独立HTTP资源/已安装httpx2与目录关闭已验证本机构造和默认网关；高级自定义transport/socket选项、更多供应商实网与跨loop生命周期另验。开始的同步工具/元数据IO先settle才清理，不等于主动停止，不能移除shield后宣称子进程或写入已终止。
+Web 遗留：①更多真实供应商工具/审批及浏览器模型失败、部分写入、停止/保存故障矩阵，目前Web新增闭环证据是原生假模型加真实工具、SQLite和TCP；②安全 checkpoint 以外的完整历史/受限恢复，不能盲目重放副作用；③草稿与未执行队列当前只在内存，浏览器刷新/服务重启持久化另设计；④16 个已完成 run/256 事件/1MiB view 及 4096 条回执的长期资源与持久幂等策略，达到界限明确反馈；⑤多用户身份/会话归属、凭证/租户/工具隔离与共享调度/部署，不直接多 worker；⑥多模态/大消息压力/可访问性与浏览器矩阵。每项须独立 Spec 和可复现证据，不预建占位模块。
+
+最新里程碑（Spec076）：统一request_stop/active事件，CLI薄桥接AsyncApplication/AsyncSqliteSaver；原生模型/摘要/SDK等待取消、工具排队与收尾、Bash进程终止及safe checkpoint恢复已接通。全量905例通过，真实默认网关一次逻辑调用取消通过；下一步最小Web与整体学习。下面Spec073–075叙述保留历史时点，当前API及限制以Spec076/README为准。
+
+剩余异步/流式边界：自定义不响应信号工具的停止上界、更多供应商实网取消/部分输出故障、传输重连/客户端状态同步、CPU长上下文延迟、多模态/非文本delta和大payload/多消费者压力。当前工具默认settle，Bash信号作用于进程组，不保证逃离进程组的守护程序或远端副作用已终止；SDK服务端计算/计费不可据客户端取消证明。队列按事件数有界、overflow显式且生产继续；aget_messages仍非全历史。当前CLI待发送内容不跨退出持久保存，行输入桥不提供字符打印或Ctrl-C直接取消。
 
 ## 下一阶段：模型接入与运行边界
 
@@ -34,7 +38,7 @@
 | --- | --- | --- |
 | R1 | 运行终局与异步控制基础 | [Spec 018](specs/018-model-stop-reason-and-truncated-tool-calls.md)已在同步路径统一可识别的模型结束原因，并用假模型验证明确截断的工具调用只回填错误结果、不执行工具；[Spec 020](specs/020-model-response-rejection-before-tool-routing.md)已让明确 `error` 消息走 `run_failed`。[Spec 024](specs/024-stop-after-current-turn.md)已让同步统一应用在当前 turn 后产生独立 `run_stopped`。真实供应商截断/失败/停止未验证；普通文本截断与 `unknown` 的运行语义仍待决定。正式异步/流式运行已按Spec075接线，活动取消仍未接线；迁移前同步wrapper曾在本地 `ainvoke` 探针中抛 `NotImplementedError`；Spec073已补齐低层选模与请求观测，Spec074再补上下文模型链；Spec075已接工具事件/批次、审批、应用与存储；活动取消和压力/更多真实供应商证据仍待补。有副作用工具上线前须确定 `unknown` 的拒绝策略。调研证据见[同步与异步调用记录](research/langchain-langgraph-sync-async-2026-09-30.md)。 |
 | R2 | steering 与 follow-up 的后续验证 | [Spec 022](specs/022-synchronous-steering.md)与[Spec 023](specs/023-synchronous-follow-up.md)已在同进程同步路径实现两条独立队列：Steering 在下一次模型调用前交付，Follow-up 在自然结束时逐条交付；假模型验证优先级、FIFO、工具期间等待、关窗竞争、失败清理、递归上限及同一 run 关联。交互式 CLI 入口已用假模型事件测试和一次真实网关运行中输入验证；仍需跨进程/重启持久交付、更复杂工具/取消边界，以及 Web 入口；特别要验证消息已从队列取出后运行失败时 checkpoint 保留何种部分状态，以及下一次运行是否需要显式恢复或去重。完成时分别提供接线、权限和失败路径证据。 |
-| R3 | 活动取消与停止后的恢复边界 | [Spec 024](specs/024-stop-after-current-turn.md)已用同步假模型验证当前模型回答或已发出的工具批次完成后停止、不再发下一模型请求、待取消息丢弃和 `run_stopped` 终局。[Spec 026](specs/026-cli-graceful-stop.md)已把该信号接入交互式 CLI 的 `:stop`；假模型验证接受回执、停止终局、失败优先和拒绝提示。工作线程刚启动但应用尚未开窗时请求可能被拒绝，尚无预登记保证。仍无活动模型/工具取消；需先验证异步请求、工具与 SDK 重试等待的取消传播，再记录未执行、已完成及结果未知的副作用。还须检查已交付消息与 checkpoint 部分状态的恢复/去重，不把关闭输出流或 LangGraph HITL `interrupt()` 当作取消证明。 |
+| R3 | 活动停止的扩展边界 | [Spec076](specs/076-active-stop.md)已覆盖run私有信号、模型/摘要/重试等待取消、工具排队/settle、Bash进程组终止、审批竞态、CLI保留及显式重发、safe stopped跨进程恢复；旧after-turn公开接口已迁移。剩余：自定义工具协作取消/停机上界、更多供应商真实中断、远端/逃离进程组进程与副作用核对、退出后待发送内容恢复、Ctrl-C/服务shutdown统一政策。当前默认同步/未知工具settle，不能以关闭流或HITL中断当成取消，也不保证服务端停止计费。 |
 | R4 | 核对供应商结束值覆盖和语义 | [Spec 019](specs/019-claude-context-truncation-and-tool-call-binding.md) 已用确定性测试验证 Claude `model_context_window_exceeded → length`，并在工具 hook 对 ID 不一致或无最近模型消息的请求拒绝执行；尚无真实 Claude 截断响应。Pi `a69bef789` 也将 Claude `pause_turn` 映射为 `stop`；当前项目只接客户端工具，暂不增加通用续传。将来接 Claude 服务器工具前，须保存完整响应内容并按官方契约续传，单改枚举值不够。`sensitive`、OpenAI `network_error`/`end` 尚缺已核对官方结束值依据；未知/缺失元数据策略仍未收敛，通用副作用工具上线前需确定。[Spec 021](specs/021-unknown-model-observation.md)已为同步响应型 `unknown` 补独立结构化日志，含字段来源、受限原生原因码与工具调用数量；仍无持久化聚合、真实未知供应商样本或未知原因工具执行策略。详见 [Lesson 10](lessons/lesson-10.md)。 |
 | R5 | 模型失败消息与运行终局 | [2026-10-01 调研](research/loop-termination-retry-cancel-2026-10-01.md)发现的明确错误/无效调用漏洞已按 [Spec 020](specs/020-model-response-rejection-before-tool-routing.md) 以 TDD 收敛：同步假模型路径在路由前拒绝，混合有效/无效调用整条拒绝，`run_failed` 且无工具执行。还须决定 `unknown`、普通文本 `length`、失败后 checkpoint 保留用户输入的契约，并获取真实供应商失败响应证据。在线 SDK 单次请求内部最多 2 次重试，不替代运行终局或用户取消；活动取消需先验证异步与重试等待的取消传播。 |
 | R6 | 工具并发与串行策略 | [Spec 037](specs/037-conditional-tool-batch-scheduling.md)已把同步逐批调度接入运行层：工具缺省并行；任一已注册工具标记 `metadata['naiyue_execution_mode']='sequential'` 时，整批按模型调用 ID 顺序进入完整工具链。合成工具测试已覆盖纯读重叠、混合顺序、可恢复/致命错误、HITL 批准与拒绝、有限并发及同 Agent 双会话；全量 `312 passed`。后续 [Spec 038](specs/038-workspace-write-tool-design.md)已把真实 `write` 声明为 sequential，并用临时真实文件、假模型验证同轮读写读顺序、同目标双会话冲突、不同目标独立及结果未知后会话阻断；现已按 [Spec 039](specs/039-workspace-edit-tool.md)接入真实 `edit` 并验证 read→edit→read 顺序；仍无真实供应商混合请求或跨进程同目标保护。工作区外写审批须先有内容审查与授权绑定；Spec075已验证异步批次、有限并发与错误清理；持久checkpoint部分执行恢复/去重和更高并发压力另片验证。Pi `a69bef789` 的批次模式是设计参照，但其内置 `write/edit` 在核对版本没有显式 sequential 声明。 |

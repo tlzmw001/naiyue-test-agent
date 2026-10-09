@@ -1,6 +1,6 @@
 # Naiyue Test Agent：当前开发学习交接
 
-更新日期：2026-10-08。这里保存最近阶段和唯一下一步；第 1–55 节在[历史（一）](handoff-history-01.md)，第 56–61 节在[历史（二）](handoff-history-02.md)。项目规则、总体选型和未完成工作分别见 [AGENTS.md](../AGENTS.md)、[项目设计](project-plan.md)、[后续清单](future-work.md)。
+更新日期：2026-10-09。这里保存最近阶段和唯一下一步；第 1–55 节在[历史（一）](handoff-history-01.md)，第 56–61 节在[历史（二）](handoff-history-02.md)。项目规则、总体选型和未完成工作分别见 [AGENTS.md](../AGENTS.md)、[项目设计](project-plan.md)、[后续清单](future-work.md)。
 
 ## 62. 工具事件理解反馈与下一切片候选（2026-09-30）
 
@@ -1079,3 +1079,117 @@
 - 本轮`.venv/bin/python -m pytest -q`→882 passed in 23.98s；compileall exit0/pip check无破损依赖。暂存diff显式检查发现三个测试文件EOF额外空行，仅去除空行，不改断言/测试逻辑；README首句按实际状态明确RAG/业务评测未完成，避免公开简介误称已集成。
 - check提交流程的只读安全与架构检查未发现上传阻断；暂存154个Python文件本地绝对模块导入检查无缺项，入口可导入、CLI help正常。已知本地/宿主Bash无沙箱、文件TOCTOU、SaaS/活动取消未验证等限制保持，不把提交视为生产成熟度或发布版本。
 - 首次提交/push结果由Git历史和远程main确认；本片不创建tag/release/PR，不改.env/依赖/关键知识点。完成Git收尾后开发主线仍为活动停止Spec，之后Web与整体学习。
+
+
+## 219. 统一活动停止与 CLI 异步接线（2026-10-08）
+
+- 用户确认不长期保留after-turn模式，停止后的输入保留可重新提交、不自动续跑；按Spec076实施。参照Pi a69bef789的activeRun互斥/abort signal/await listeners/finishRun、Write保持mutation queue至文件操作settle、TUI队列恢复；明确Pi没有本项目checkpoint+SQLite人工核对阻断。AgentX3fcfa0e路径仅关闭SSE，不能证明底层取消；本机RunControl drain不是活动取消。没有重写StateGraph/Agent loop。
+- 新runtime/run_control.py拥有本run信号及模型子任务；RunObservation绑定，可信Runtime.context/线程context传播。request_stop(session_id, run_id可选)校验活动目标/准入、幂等、返回未消费消息；request_stop_after_turn无兼容别名。移除只服务旧轮次停止的model_turn_seen/mark_model_turn。同步库仅协作边界，CLI实际进入AsyncApplication和AsyncSqliteSaver。
+- 原生模型按实际选型注册取消，外层StopModelMiddleware处理UserStop，空ModelResponse+状态更新+最先after_model jump end，无假AIMessage；主动摘要在before_agent单独注册。线程回退模型不强取消，真实异常保持。模型/turn/context观察配对，run_finished为stopped/active且在保存确认之后；真实工具/保存失败与外部Task.cancel不改正常停止。
+- 已开始工具默认settle，串行位置/并发名额之后检查信号，未启动调用得到有解释的ToolMessage/not_executed。Bash等待循环收到信号终止进程组、排空输出与归档，已启动副作用仍BashOutcomeUnknown/failed/人工核对，不自动回滚。审批review线程中途停止按事件同步复现；只有用户信号存在时将该hook的GraphInterrupt转为未执行结果/end，普通审批仍原中断/恢复，未使用授权。停止分支保留重复/缺失调用ID门禁及事件安全标签。
+- CLI薄桥cli_async.py用专属asyncio loop运行正式异步应用，原输入线程和run worker保持，control线程安全提交；不是新Agent运行时或完整TUI。持久预检先释放锁再由异步上下文重新持有/验证。:stop后进入待发送模式，:pending显示、:send显式提交；准入失败不清空，退出不持久保存该队列。普通工具仍框架线程IO、无字符打印/Web/Ctrl-C策略或多用户。持久模式仍单活动run，消费断开不取消生产。
+- TDD证据：首批停止3红/外部取消1通过后接线；CLI原生模型入口先红、Bash旧链60秒超时红、离线进程probe缺模块红、审批竞态红、停止事件标签/重复ID两红后修源。后续SDK/真实写入/草稿/失败优先/并发等待/跨会话/持久恢复/CLI重发为追加验证，不称全部23都先红。首次全量184失败主要为同步事件变量名错误及线程模型错误被取消遮蔽；修源后收敛，未改conftest/skip/放宽断言。两条旧契约验收按用户新要求严格改为首次模型零调用、停止先于审批并回填ToolMessage；旧停止测试文件改名。新增测试场景中响应消费时点、数据库字段名/模型目录构造误用按真实对象纠正，断言未放宽。
+- 最终`.venv/bin/python -m pytest -q` → **905 passed in 28.11s**，基线882、新23；compileall全源码/脚本/测试exit0，pip check → No broken requirements found，git diff --check exit0；全部Python≤500行（CLI476、会话442，新增控制80/停止hook60/CLI桥110）。CLI --help正常，无额外打包构建目标。
+- `.venv/bin/python -m scripts.probe_active_stop --timeout-seconds 120` → **active_stop_probe=PASS mode=real logical_calls=1 delta=observed stopped=verified fake_answer=absent checkpoint=safe**。现有默认配置、无工具/用户业务文件/持久库，看到真实增量后请求停止；父截止125秒，不输出正文/凭证，不统计SDK HTTP尝试/费用，不证明服务端计算或计费停止。该真实探针在后续审批/异常标签分支修正及旧无用turn标记清理前通过，正常请求取消机制未变，未重复付费请求。
+- SDK固定版本OpenAI/Anthropic通过MockTransport 429进入真实anyio.sleep的30秒backoff后取消，均仅1次HTTP mock调用；不等同于Anthropic真实服务验证。Bash实际Python子进程退出/部分输出/unknown阻断、Write原子替换期间busy保持、两个真实独立离线Python进程stopped→ready→restore已验证，停止会话session/thread不变、run/checkpoint更新。
+- 更新Spec076/README/计划/待办与交接；未改.env/配置/依赖/关键知识点，未提交push或部署。用户参与停止模式/输入保留/参考项目差异决策；新增实现未逐行学习、独立复写或面试追问验证，不记为已掌握。
+- 唯一下一步：讨论最小本地Web的应用服务/事件消费/停止及审批展示边界，复用当前AsyncApplication，不将当前本地权限/数据库约束称为SaaS成熟；Web之后按已确认顺序冻结并系统学习。
+
+
+## 220. Web视觉参考确认（2026-10-09）
+
+- 用户希望Web类似ChatGPT，喜欢OpenAI SDK风格；通过浏览器查看官方文档指向的ChatKit Playground及OpenAI Apps SDK UI真实页面，保存参考截图供比较，未制作伪装成已有产品的界面。
+- 用户明确选择第一张ChatKit Playground截图的聊天样式。视觉基准：浅色/白色聊天主体、深色正文、简洁单色图标、圆角输入框、黑色发送按钮。截图左侧为演示样式编辑器，不是本项目会话栏；导航/模型与工作区控制属于下一步页面设计。
+- 参考：https://chatkit.studio/playground；截图`/Users/zmw/.codex/visualizations/2026/10/09/openai-ui-reference/chatkit-playground.jpg`。SDK接入方式尚未选定，不能将用户的视觉选择当作采用ChatKit协议或替换LangChain的授权。
+- 本轮仅更新项目计划/交接，文档diff检查通过；不运行应用测试来宣称UI完成，未修改代码、配置、依赖或关键知识点。用户已确认视觉偏好，未新增核心代码掌握证据。
+- 唯一下一步：评估ChatKit自建后端适配现有AsyncApplication的成本和控制能力，给出最小Web页面、接口及验证Spec；沿用Python/create_agent，UI/SDK事件只负责展示与请求，不接管Agent循环。
+
+
+## 221. 最小Web选型评估与Spec草案（2026-10-09）
+
+- 用户认可第一张ChatKit外观并同意继续评估/设计。本轮只调研和Spec，不将此理解为已经确认React/TypeScript或安装新依赖。此前Spec076未提交改动完整保留，未切分支、清理或覆盖。
+- 临时只读克隆OpenAI chatkit-js 22613848a656077a408788f028c7727e38d10449、chatkit-python dacc133c280b39b9334d06ea73f0f1c199e59927；React绑定/公开types/CustomApiConfig→Python.respond/_process_events/Store与handle_stream_cancelled链已读。官方busy指南说发送等命令可能拒绝，非实测“绝对不支持”；默认取消保存未完成助手文本，与我们的确认规则需适配。ChatKit支持自建服务，不强制替换LangChain或再建DB，但会增加协议/Store映射与控制验证。
+- Pi a69bef789的interactive输入streamingBehavior与工具/event渲染，AgentX3fcfa0e的partial→MessageTransport、完整先保存再end链再次核对；源代码责任与Python框架事实分开。推荐薄Web入口/独立UI，直接复用领域事件、AsyncApplication和现有checkpoint，保持视觉基准。
+- 保存docs/research/chatkit-web-integration-2026-10-09.md及Spec077草案（超过八文件、三职责，先HTTP/交付、再UI/控制、最后浏览器/真实模型验收）。拟React+TS/Vite+普通CSS、FastAPI/Uvicorn+官方SSE，首片无工具和附件，下一片注册工具/卡片/审批。默认本地单用户/持久单活动run，API访问/Origin/Host边界、任务与连接分离、草稿和保存终局、请求去重/有界重同步均明确；历史先恢复checkpoint并显示压缩边界，不假称完整归档。
+- 本机Node24.14.0/npm11.9.0；FastAPI/Uvicorn/ChatKit未安装、无现有frontend项目。PyPI/npm可达，FastAPI0.143.0/Uvicorn0.54.0/React19.3.0/Vite8.3.4以及React插件/测试工具约束已查询；pip install --dry-run -c requirements.txt fastapi==0.143.0 uvicorn==0.54.0退出0，预计新增六个包、不升级既有版本。未安装包/运行参考项目/修改.env或配置，不将dry-run称为Web运行证据。
+- 只做文档结构/链接与git diff --check；本轮无新应用测试或UI构建成果。视觉偏好已确认，新增前端/HTTP知识未教学或独立验证。
+- 唯一下一步：用户确认Spec077推荐技术栈/首片范围后执行TDD，不先搭一个以后丢弃的页面、不以ChatKit默认取消替代既有stop协议。
+
+
+## 222. 自建页面确认与技术栈说明（2026-10-09）
+
+- 用户明确“可以自己开发”，继续询问技术选型；自建UI方向已确认，不再把ChatKit整套协议作为必选。具体React/TypeScript/Vite/FastAPI栈仍待用户认可，未据此安装或编码。
+- 推荐前端React+TS+Vite/npm、内置hooks/useReducer、普通CSS变量+CSS Modules、react-markdown；后端FastAPI/Uvicorn→现有AsyncApplication，REST动作+fetch SSE；SQLite/checkpoint保持，pytest/httpx与Vitest/Testing Library/jsdom验证。构建后前端静态文件同源由Python服务提供，运行无需常驻Node服务。
+- 本轮重读Spec/当前环境，Node24.14.0/npm11.9.0可用，FastAPI/Uvicorn仍未安装；官方React组件/状态、Vite、FastAPI SSE、Vitest文档已核对。此前dry-run成功仅为解析证据，不等同Web接线完成。
+- 更新Spec077职责说明/交接，文档diff检查；未改业务代码、配置、依赖或关键知识点，未新增用户独立编写/掌握证据。唯一下一步仍为确认推荐栈与首片范围后TDD实施。
+
+
+## 223. Web选型的生产化/面试适用性核对（2026-10-09）
+
+- 用户追问推荐栈是否适合生产级目标和面试；本轮建议仍为React+TS/Vite/CSS Modules、FastAPI/REST+SSE、现有SQLite/checkpoint。区分技术基础与当前成熟度，未把提问视为开始安装/编码授权。
+- 核对官方React从零构建/Vite、FastAPI SSE与部署内存/进程说明，并重读本项目SessionPersistence单活动run约束/异步线程settle。未来多用户需要独立身份/归属/隔离、共享任务与事件/存储及部署验证，不能直接多worker共享当前内存控制。
+- 增补Spec077生产化与面试定位：围绕分层、状态/事件、取消/断开、保存、测试/评测及实际理解证据，不堆框架或虚构生产规模。文档diff检查，无新运行验证/依赖变化。下一步保持确认具体栈/范围后执行。
+
+
+## 224. 最小本地 Web 对话实施与验证（2026-10-09）
+
+- 用户明确“好的做吧”，按已确认 [Spec077](specs/077-local-web-chat.md)实施 React+TypeScript/Vite/CSS Modules 前端、FastAPI/Uvicorn 本地入口和 REST+官方 SSE。说明及代码地图见 [Web 对话](web-chat.md)。没有重新写 Agent 循环、替换 create_agent 或修改既有工具/压缩算法；本片 tools=[]，Web 工具卡/审批留在下一片。保留此前 Spec076 未提交改动，本轮未 commit/push/deploy，未修改 .env、真实模型配置、原 requirements 或关键知识点文档。
+- 依赖：新增独立 requirements-web.txt，六个新 Python 包均受原 requirements 约束；前端 package/lock 初始化，Node24.14.0 下固定 jsdom28.1.0 等兼容版本，没有升级已有运行时或 Node。构建产物 frontend/dist 与 node_modules 被忽略；静态目录只挂载 dist，API 显式检查本地 token、Host 与写操作 Origin，凭据不进入诊断日志/HTTP query，模型 SDK/key 不向浏览器传输。不是 SaaS 登录/租户隔离。
+- L1/L2/L3：web 真实路由/lifespan、RunDelivery 任务/有界回放、公开 model/session DTO、frontend App/组件/事件解析与临时投影已创建并调用。独立 arun 生产任务持有生命周期，快速订阅只做内存投影/唤醒，HTTP 断开不取消。模型选择、真实会话列表/安全恢复、文本增量/完整 snapshot、运行中 Steering/Follow-up、活动停止/保留/明确重发接线完成；HTTP 接受、交付、模型返回、保存确认分别表达。
+- TDD/回归：产品模块缺失先红灯；最初原生 SSE 端点使用错误返回形态造成 3 例失败，改异步生成器及发送 header 前的依赖检查后通过。新增红灯锁定取消 start 等待者仍需登记 run/回执、retained view、旧会话响应和模型回执乱序、停止回执覆盖终局提示、完整 SSE 大帧绕过限额、保存失败仍准入；修复对应源代码后转绿。Ctrl-C 冒 Python 堆栈经测试触发 pytest 中断，入口特定处理中断后测试通过，退出码 130 保持。模型切换补测初版断言漏掉本来已有的 SystemMessage，改为精确比较基础提示词加全历史，未删提示词/放宽判定；这些补充验收不全称为逐项 TDD。
+- 最终验证：`.venv/bin/python -m pytest -q` → **918 passed in 31.16s**（Spec076基线905，本片新增13）；`npm --prefix frontend test -- --run` → **5 test files / 16 tests passed**；`npm --prefix frontend run build` → **tsc + Vite成功，184 modules，JS358.43kB/gzip112.37kB，CSS8.54kB**；`compileall`退出0、`pip check` → `No broken requirements found.`；`npm --prefix frontend audit --audit-level=high` → `found 0 vulnerabilities`；`git diff --check`退出0。源代码/测试/前端 src 无超过500行文件。
+- 实网边界另证：`.venv/bin/python -m scripts.probe_web` → `web_probe=PASS mode=offline tcp=True sse_delta=True disconnect_keeps_run=True stop=True retained=True two_processes=True history_used=True duplicate_safe=True`。真实 socket/两个独立进程、临时 SQLite 和原生假模型证明增量在模型结束前交付、HTTP 断开生产继续、控制/停止内容保留、重启旧历史确实进入下一请求与重复请求不启动第二轮。无收费调用；该命令可复跑，默认60秒总截止。
+- 浏览器收费探针：临时独立库、默认 heiyu-gpt-5.5，共两次逻辑调用；第一条精确返回 WEB-CHECK-739，第二条等待中点停止，HTTP公开视图实际为 stopped/done=true/busy=false/can_run=true，没有第二条虚构助手回答。验证期间输入可编辑。没有消费用户业务文件/执行工具或额外收费重跑；SDK重试次数/费用未统计，客户端停止不证明供应商计算/计费终止。临时服务已关闭，测试库保留在系统临时目录，没有清理用户数据。
+- 实际 UI：1280px 桌面与375px窄屏 scrollWidth 等于视口，窄屏导航打开/选择/关闭可用，浏览器控制台未观察到error/warn。本机截图目录 `/Users/zmw/.codex/visualizations/2026/10/09/naiyue-web/`，含 desktop-empty.jpg、desktop-real-reply.jpg、desktop-real-stop.jpg、mobile-chat.jpg；停止提示竞态修正后重读页面保存最终证据。截图和构建通过不等于用户已接受视觉效果。
+- 限制：全应用单活动run/单worker；同库独占；安全checkpoint不等于完整被压缩聊天历史；浏览器草稿/本地新增待发只在内存，服务重启无待发队列/事件恢复。256事件/1MiB frame及view/16已完成run的上限显式报重同步或超限；4096回执达到上限拒绝新请求，旧回执保留防重复，长期持久幂等另做。更多供应商实网、工具审批、附件/图片、SaaS和业务评测未作为本片完成。
+- 学习：本片代码由助手主要实现；尚未逐行教学或由用户独立复写/排错/追问验证，不新增掌握等级。唯一下一步：设计现有工具、工具运行显示与审批接入 Web 的切片，复用现有应用权限/错误回填/串并行/持久终局；Web里程碑完成后按约定进行系统代码学习。
+
+
+## 225. Web 工具显示与审批接线（2026-10-09）
+
+- 用户要求“好的继续”，按上一片明确下一步先写 [Spec078](specs/078-web-tools-and-approval.md)，再接现有工具/审批，使用与代码地图见 [Web工具说明](web-tools.md)。沿用当前 main 与 Spec076/077 未提交工作，未提交/push/deploy、未清理用户改动；未改 .env、真实模型配置、原依赖或关键知识点。
+- 参照当前源码：Pi a69bef789 interactive-mode tool_execution_start/end按toolCallId创建/更新ToolExecutionComponent；AgentX3fcfa0e BuiltInToolRegistry.createToolsForAgent根据provider.supports生成specification/executor。这支持上层装配与独立显示职责，不据此声称Pi有我们的HITL。直接复用现有工具metadata、HITL、pending_tool_approvals/aresume_tool_approval、一次性grant/执行复核、串并行和SQLite保存；未改Agent循环或工具权限算法。
+- 启动--workspace注册read/ls/find/grep/write/edit；无工作区仍聊天；--host-bash默认关闭且必须有工作区，开启后每次命令仍审批。settings/entry/lifespan实际接线，Bash是宿主机执行而非沙箱。工具snapshot保留参数及ToolMessage的ID/name/status，交付view增加tool_states，React可折叠展示参数/结果与处理中/成功/错误/未执行/待核对。结果按所属AI消息和调用ID配对，拒绝结果可能先于获批结果返回，不依赖列表位置。
+- 审批会话view增加派生approval_run_id及已有公共approval_requests；无DB schema迁移。新POST /api/sessions/{id}/approvals严格校验request_id、原run、调用ID、顺序/数量、approve/reject；准入锁内重读当前批次，幂等回执先检查，过期/冲突409，非法/额外字段422，token/Host/Origin保持。前端每项无默认决定，完整选择后整批提交；失败保留选择且不自动重试。恢复产生新run_id，沿原授权和checkpoint执行，拒绝回填模型，保存后终局刷新审批。快速完成、尚未订阅SSE也读取当前审批状态。
+- TDD实际红灯：后端首批4失败因未注册工具/缺字段/缺审批接口；前端缺ApprovalPanel、snapshot丢工具字段和无工具状态/展示失败；随后修源代码转绿。追加测试复现原型键误认为用户决定，以及跨轮复用调用ID导致旧结果错配，均修源代码验证。混合审批测试初版误以ToolMessage列表位置对应申请顺序，核对框架先写拒绝结果后，改为精确验证全部ID/对应正文/status，未更改框架顺序或放宽成功条件。其他追加验收不全称为逐项TDD。
+- 全量`.venv/bin/python -m pytest -q` → **927 passed in 33.58s**（本片新增9例）；`npm --prefix frontend test -- --run` → **9 test files / 25 passed**（本片新增9例）；`npm --prefix frontend run build` → **tsc+Vite成功，186 modules，JS363.27kB/gzip113.80kB、CSS10.50kB**；compileall退出0、pip check无冲突、git diff --check退出0；源文件均≤500行。新增字段同步生产/序列化/前端/测试，派生字段不进DB新表。
+- 本片HTTP/真实工具测试：六文件工具同批次write→edit→read/ls/find/grep结果正确；Bash显式开启、审批后执行合成printf；read缺失文件错误回到模型且run完成；工作区外普通读取批准前中断、混合批准/拒绝与重复请求去重、非法/过期批次、token验证及重启审批继续阻断。
+- `.venv/bin/python -m scripts.probe_web_tools` → `web_tools_probe=PASS mode=offline tcp=True approval=correlated mixed_decisions=True resume_run=new duplicate_safe=True tool_results=paired two_processes=True history_used=True`。原生异步假模型/临时真实SQLite/真实read及ls/真实HTTP-SSE；第二独立进程恢复工具ID/结果并进入模型历史。复用原probe_web进程启动/截止/关闭，原探针默认行为与回归保持。
+- 浏览器：同一构建UI连接专用离线fixture，用临时文件实点批准第一条/拒绝第二条并整批恢复；显示read成功、read未执行、ls成功和后续回答，详情正文真实读取/拒绝回填，刷新后配对保持。1280px/375px的scrollWidth等于视口，窄屏审批区可滚动/选择/提交，控制台未观察error/warn。截图目录`/Users/zmw/.codex/visualizations/2026/10/09/naiyue-web-tools/`包含desktop-approval.jpg、desktop-tools-result.jpg、mobile-approval.jpg、mobile-tools-result.jpg；临时服务已退出，视口复原。新增收费模型请求0，不宣称真实供应商工具决策、模型质量或生产负载；用户尚未接受新UI视觉效果。
+- 当前限制：审批只支持同进程pending批次；重启interrupted/failed不自动恢复，完整归档/分支、持久草稿/队列、权限模式/SaaS、多模态及更多实网故障矩阵仍在future-work。工具详情与tool_states是展示投影，不持久授权；输出HTML转义不等于识别任意输出秘密，原授权/日志边界保持。
+- 学习：助手完成主要代码，新Web/审批尚未逐行教学、用户独立编写或追问验证，未升级掌握记录。唯一下一步：先由用户实际试用闭环，再沿入口→装配→消息/工具→审批→恢复→保存/显示进行系统代码学习，不自动开长期会话/权限大改。
+
+
+## 226. 模型回复去名称与分割线（2026-10-09）
+
+- 用户要求每次模型回复不显示Naiyue，保留右侧人类/左侧回复，并在回复前加分割线。仅改Conversation渲染及CSS：AI消息前一条淡色hr，无人类消息分割线；保留正在生成/未完成标记、工具详情与复制。侧栏项目品牌保持；无运行/工具/模型配置/权限改动。
+- TDD：新增回归先失败，旧输出含Naiyue；修源代码后前端26测试通过。`npm --prefix frontend test -- --run`为9文件/26通过；`npm --prefix frontend run build`的tsc+Vite成功；`.venv/bin/python -m pytest -q`为927 passed in 34.12s；`git diff --check`退出0。
+- 真实浏览器用临时假模型/真实工具fixture验证，新增收费请求0：1280px下用户消息left=874、模型left=386，模型前2条分割线、正文无名称；375px下scrollWidth=375无横向溢出。截图目录`/Users/zmw/.codex/visualizations/2026/10/09/naiyue-web-divider/`的desktop.jpg/mobile.jpg。临时服务已退出，视口复原；视觉仍由用户判断，不将截图验证记为已接受。
+- 本次是小范围显示调整，不新增架构Spec或改关键知识点；未提交/push。下一步保持用户试用后进入系统代码学习。
+
+
+## 227. 去除聊天顶部标题并说明模型菜单（2026-10-09）
+
+- 用户要求删除聊天区左上Test Agent，并询问旁边下拉框用途。删除App中的标题及其两条专属CSS，保留模型选择器/移动导航；解释其读取已配置model_id，新会话使用所选模型、已有会话切换在下一次模型请求生效，沿原selectModel→PATCH→aselect_model链，未改选择逻辑。
+- 回归先失败（旧标题仍显示），最小修改后`npm --prefix frontend test -- --run`为9文件/27通过；`npm --prefix frontend run build`的tsc+Vite成功；`.venv/bin/python -m pytest -q`为927 passed in 34.37s；git diff --check退出0。
+- 实际浏览器只GET离线fixture页面，不启动模型请求：桌面/375px下顶部无Test Agent、select[aria-label=模型]保留，375px无横向溢出。截图在`/Users/zmw/.codex/visualizations/2026/10/09/naiyue-web-header/desktop.jpg`和mobile.jpg，临时服务退出0、视口复原。无.env/依赖/运行机制修改、无收费调用、未提交/push；不改变后续试用与系统学习安排。
+
+
+## 228. 全项目行数盘点与学习顺序（2026-10-09）
+
+- 用户要求统计目前前后端代码，并整理能读完重要代码的学习顺序；明确只有说“开始”后才逐个讲解。本轮不开始课堂、不提理解问题、不修改产品代码或调用模型，也不把另一次真实验收作为开课前置条件。
+- 使用project-learning流程，核对当前README/项目计划/交接、源文件清单、主要装配与调用入口和旧lesson。新[学习路线](1.0/learning-roadmap.md)按系统地图→模型→循环/middleware→事件/消息→会话控制/异步→工具/权限/审批→上下文→持久化/CLI→Web/前端→业务样例/验证/复盘组织10章，每章多个小课，不承诺固定天数；首次地图不等于通读依赖。
+- 当前工作区物理行（含空行/注释/文档字符串）：后端产品73文件10,330行，前端产品15文件937行，合计11,267；Python测试96文件17,480行，前端测试9文件408行，验证脚本18文件2,756行；另4个前端构建/HTML文件62行。非空行分别8,985/890/14,624/385/2,429/61，不称纯逻辑行。排除.env、第三方包、node_modules、dist、lockfile和文档；不是只统计HEAD，也不把行数用于生产/掌握/贡献声明。
+- 已逐文件建立主章节：集合比对覆盖全部88个产品源文件＋4个构建文件，实际输出learning_file_coverage=PASS files=92 chapters=10、product_physical_lines=11267。长文件按机制跨章复访，同步兼容包装也读清职责；测试选代表随章读，第三方框架只追当前机制必要源码。
+- 旧lesson1–17保留为历史材料，当前代码变化须核对；用户开始后新课从lesson-18编号。课堂记录已讲解/引导后理解/独立实现/追问分别验证，功能测试不升级人的掌握；复杂Python及React/TS语法配具体数据流展开，核心行不跳过；关键知识点仍仅明确点名时修改。
+- 本轮只保存学习路线、README链接和本交接；文档UTF-8/路径与覆盖统计、git diff --check验证，不运行应用测试来宣称新功能。唯一下一步：等用户说“开始”，从第1章第一小课的系统/对象装配图开始，再逐段读核心代码。
+
+
+## 229. 学习资料归档与提交前验证（2026-10-09）
+
+- 用户明确要求将知识地图和后续课堂笔记归入docs下的新1.0文件夹，并提交push当前代码。地图已迁移至[docs/1.0/learning-roadmap.md](1.0/learning-roadmap.md)，新增目录入口及lessons规则；后续新课写docs/1.0/lessons，从lesson-18连续编号，旧docs/lessons保留。README/AGENTS/交接链接与路径规则同步，用户说开始后才上课，不提前生成课堂。
+- 提交范围是此前已确认的统一活动停止/CLI异步桥、最小Web/工具审批/显示调整及本轮知识地图；目标已读git remote与GitHub元数据确认：tlzmw001/naiyue-test-agent PUBLIC，main分支，fetch后本地与origin/main为0/0。用户已授权push，不创建release/tag或部署，不修改.env/真实模型配置。
+- 按check深度提交审查：安全审查未发现高置信缺陷，候选103个文本文件凭证特征命中0。架构审查发现seed清空已有run_id导致后续工具卡来源丢失；先加完整工具请求→审批拒绝/恢复→下一轮聊天回归，旧代码assert result.run_id == resumed失败；单行改为row.get('run_id')后转绿，未改变无来源checkpoint的None、循环、权限或副作用。只读复核关闭该发现，未留阻断问题。
+- 最终本轮命令：pytest全量928 passed in 33.47s；前端Vitest9文件/27通过；tsc+Vite构建成功；compileall退出0、pip check无冲突、npm audit0 vulnerabilities；git diff --check与学习文件92路径/行数/入口链接验证通过。当前无CI workflow，不将本地验证称为GitHub CI通过；没有新增收费请求。
+- 回归新增后Python测试物理行更新为17,507、非空14,649，产品11,267行不变；知识地图统计同步。提交排除.env、sqlite/DB、node_modules、dist和机器缓存，跟踪文件的敏感路径扫描为空；原after-turn测试删除属于Spec076已经确认的接口迁移，替代测试随代码提交，不丢弃用户无关工作。
+- Git提交和push结果以本轮git log/远端确认及最终回复为准，不在自身提交里预写尚未发生的成功。唯一下一步：用户说开始后按docs/1.0知识地图进入第1章，后续笔记只记录实际讲解与理解证据。

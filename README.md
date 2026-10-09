@@ -30,6 +30,8 @@
 
 ## 阅读顺序
 
+系统代码课堂使用 [全项目代码学习路线](docs/1.0/learning-roadmap.md)：当前前后端行数、10章阅读顺序、逐文件覆盖表与掌握标准。用户说“开始”后一次一个小课；下面按开发阶段列出的Spec/旧lesson作为参考，不按文档编号直接逐个上课。
+
 1. [AGENTS.md](AGENTS.md)：工程规则与开发学习方式。
 2. [开发学习交接](docs/handoff.md)：最新进度、首个单元及新会话提示词。
 3. [项目设计与排期](docs/project-plan.md)：目标、模块边界、评测和已确认选型。
@@ -78,9 +80,11 @@
 
 ## 当前状态
 
+最新状态（2026-10-09）：最小本地 Web 对话已接通现有异步应用、领域事件和 SQLite/checkpoint。下列段落保留早期机制记录，能力与限制以文末 Web 入口、当前交接和对应阶段 Spec 为准；早期“尚无 Web/持久会话”不是当前状态。
+
 已准备本地 Git 仓库、协作规则、交接文档及 Python 3.12 虚拟环境，安装 LangChain、OpenAI/Anthropic/Ollama 模型适配包和 pytest。依赖检查、最小真实模型响应及一次带 middleware 观察的 create_agent 工具循环通过。正式运行层已实现按可信 `session_id` 在每次模型调用前选模，并由确定性测试验证一次运行内 A→工具→B、会话隔离和缺失 ID 的拒绝。模型接入层现可从 `.env/models.json` 加载配置并构造四类适配对象，配置驱动的 HeiyuCode 真实工具循环通过；OpenAI 官方、Claude、Ollama 尚未真实调用。首个测试策略模块用假模型从提供的 `discount_system` 公开契约文本提交结构化用例。尚无真实模型业务用例、HTTP 执行、Web、持久会话、完整轨迹系统或业务评测；也没有独立的应用构建目标。
 
-首个 HTTP 场景已选 `discount_system` 的折扣规则优先级冲突，公开契约和 SUT 源码已核对；结构化用例设计已用假模型通过 `create_agent` 验证。模型接入代码现归入 `model_access/` 包，并用本地配置可选地指定单模型默认 thinking 等级；确定性测试验证了 Pi 式回退和适配器参数接线，真实供应商执行等级尚未验证。模型请求未配置策略时使用 60 秒 HTTP 超时，在线 SDK 最多重试 2 次；本机 HTTP mock 验证了可重试 503 的尝试次数，Ollama 重试尚未实现。运行层现归入 `agent_runtime/` 包，假模型验证同进程跨 `invoke` 的历史延续与选模；同步运行入口已把 run 开始/终局、模型和工具边界按 run ID 关联，并在 run 事件中记录会话 ID。`application.SessionService` 已用假模型验证进程内会话映射、切换和同会话 busy 规则；`build_local_application` 现将一份模型目录、该服务、一个 Agent 和一个内存 checkpointer 配对，经新入口的假模型测试验证两轮历史、切换、隔离与事件。最小本地 CLI 已调用同一应用对象，真实模型合成文本验证了同一进程两轮输入；旧诊断入口尚未统一接入。当前 CLI 通过工作线程保持同步 Agent 调用，并在终端运行中接受 Steering/Follow-up；未来实时 Web 的流式/异步路径须单独设计和验证；尚无 Web、身份授权、持久恢复、可消费的完整事件系统或业务评测。选模 middleware 的核心语法与调用已讲解；用户对新增 thinking、请求策略及工具事件代码的独立实现和面试追问能力尚未验证。
+首个 HTTP 场景已选 `discount_system` 的折扣规则优先级冲突，公开契约和 SUT 源码已核对；结构化用例设计已用假模型通过 `create_agent` 验证。模型接入代码现归入 `model_access/` 包，并用本地配置可选地指定单模型默认 thinking 等级；确定性测试验证了 Pi 式回退和适配器参数接线，真实供应商执行等级尚未验证。模型请求未配置策略时使用 60 秒 HTTP 超时，在线 SDK 最多重试 2 次；本机 HTTP mock 验证了可重试 503 的尝试次数，Ollama 重试尚未实现。运行层现归入 `agent_runtime/` 包，假模型验证同进程跨 `invoke` 的历史延续与选模；同步运行入口已把 run 开始/终局、模型和工具边界按 run ID 关联，并在 run 事件中记录会话 ID。`application.SessionService` 已用假模型验证进程内会话映射、切换和同会话 busy 规则；`build_local_application` 现将一份模型目录、该服务、一个 Agent 和一个内存 checkpointer 配对，经新入口的假模型测试验证两轮历史、切换、隔离与事件。最小本地 CLI 已调用同一应用对象，真实模型合成文本验证了同一进程两轮输入；旧诊断入口尚未统一接入。当前 CLI 通过输入线程、运行 worker 和专属 asyncio loop 调用异步应用，接受 Steering/Follow-up 和活动停止；持久化与可消费事件已接入，Web、身份授权和业务评测仍待后续。选模 middleware 的核心语法与调用已讲解；用户对新增 thinking、请求策略及工具事件代码的独立实现和面试追问能力尚未验证。
 
 模型接入层现把已知供应商结束字段归一为项目 `naiyue_stop_reason`，包括将 Claude 的 `model_context_window_exceeded` 归为截断。运行层对明确截断的工具调用，以及与最近模型消息不一致的工具请求，回填错误 `ToolMessage`，不执行实际工具函数；本地假模型验证了截断结果回填，直接 hook 注入验证了不一致请求拒绝。真实网关只观察过正常结束字段，真实截断、缺失元数据策略、普通文本截断终局和异步路径尚未验证。CLI 选择工作区时已注册 `read/ls/find/grep/write/edit`；`write` 仅允许工作区内整文件创建/覆盖，`edit` 仅允许对工作区内现有 UTF-8 文件做精确替换，真实供应商调用尚未验证。
 
@@ -90,7 +94,7 @@
 
 本地应用现支持同步运行中的 Steering 与 Follow-up：其他线程可对同一活跃会话调用 `app.steer(session_id, text)` 或 `app.follow_up(session_id, text)` 入队。Steering 在下一次模型调用前加入上下文；Follow-up 只在原本要自然结束时按 FIFO 每次取一条续跑，且同一终局点 Steering 优先。假模型测试验证了工具结果后的顺序、同一 run 续跑、关窗拒绝、失败清理和递归上限失败。
 
-统一应用入口现另可调用 `app.request_stop_after_turn(session_id)`：接受后等待当前模型回答及已发出的工具批次结束，不再发下一次模型请求；假模型验证独立 `run_stopped` 终局、待取消息丢弃和下一次运行恢复。CLI 已接入 `:stop`，分别显示请求接受与运行停止；它不取消正在进行的同步请求或工具。活动取消、流式与持久交付仍待开发。
+统一停止接口现为 `app.request_stop(session_id, run_id=可选目标ID)`，旧 `request_stop_after_turn` 已迁移移除。原生异步模型、摘要及 SDK 重试等待可取消；已开始的普通工具等待收尾，排队工具回填带原因的未执行结果。Bash 终止进程组后保留部分输出，副作用不确定仍失败并要求核对。正常停止在 checkpoint/元数据保存确认后报告 `stopped/active`；保存失败、真实工具异常和外部 Task.cancel 不改成正常停止。同步库模型的线程回退不能强杀，因此同步模型只在协作边界停止，正式 CLI 使用异步入口。
 
 ## 应用运行事件
 
@@ -171,7 +175,7 @@ python3.12 -m venv .venv
 
 不超过 64 KiB 且不超过 2000 行时，`read` 直接返回原文；超出任一预算便按行返回一页，并用 `next_offset` 提示下一次读取的行号。64 KiB 只限制**文件正文**，提示文字另计，因此整个工具结果可略大于 64 KiB。模型也可显式传 `offset`（从 1 开始）和 `limit`（1–2000 行）。返回的正文页严格按 UTF-8 解码；参数、路径/权限、审批、编码、非文本、长行、I/O 与无工作区错误均回填带原因和下一步指引的安全 `ToolMessage`，不包含路径、原始异常或文件内容。路径不可用时为避免泄露敏感文件存在性，只列出“可能缺失、非普通文件或被工作区策略阻止”的原因范围。只读 Read 中未知普通异常也回填安全错误；LangGraph 中断仍上抛。文件在两页之间变化时，行号不代表同一个快照。工作区隔离、审批暂停/恢复与 CLI 命令通过假模型确定性测试；当前网关的受控七工具任务和双来源 Skill 正文/引用任务已观察到真实模型调用本地 Read 的正常路径。拒绝与故障路径仍主要依据确定性测试，不能扩大为任意供应商保证。图片 Read 与其他文本编码 Read 是后续独立能力，不由 RAG 模块替代。
 
-启动后直接输入文字并回车；同一进程内的输入属于同一会话，历史由内存 checkpoint 保存。在交互式终端中，模型仍在运行时直接输入文字会作为 Steering 排队，输入 `:follow <文字>` 会作为 Follow-up 排队；界面显示“已排队”只代表应用接受，模型回复会在这次运行结束后按顺序显示。输入 `:stop` 会请求当前模型回答及已发出的工具批次完成后停止后续循环；“已请求”只表示应用已登记，运行结果出现“已在当前 turn 后停止”才表示该次运行以停止终局结束。输入 `:model <model_id>` 切换下一次模型调用的选型，输入 `:quit` 或发送 EOF 会等待当前运行结束后退出。配置路径须显式提供；可用模型 ID 由该配置决定。通过管道发送多行时仍逐轮运行，不自动变成 Steering。选择工作区后模型可使用 `write` 创建或整文件覆盖该目录内的 UTF-8 文件，也可使用 `edit` 对现有 UTF-8 文件做精确多处替换；`edit` 用分块读取与临时文件写回，不设固定文件大小上限，但单次提交的替换文本仍受输入预算约束，处理还受实际磁盘空间与运行时间影响。此入口尚不提供工作区外写入审批、测试执行工具、业务提示词、逐 token 输出或活动取消；重启后会话不会恢复。工作线程刚启动尚未开窗或已进入收尾时，应用可能拒绝 `:stop`，CLI 会明确提示未接受。
+启动后直接输入文字并回车；同一进程内的输入属于同一会话，历史由内存 checkpoint 保存。在交互式终端中，模型仍在运行时直接输入文字会作为 Steering 排队，输入 `:follow <文字>` 会作为 Follow-up 排队；界面显示“已排队”只代表应用接受，模型回复会在这次运行结束后按顺序显示。输入 `:stop` 请求活动停止；“已请求”只表示登记，关键操作收尾及保存确认后才显示“已停止”。停止时未消费的 Steering/Follow-up 和此后输入保留为待发送内容，`:pending` 查看，`:send` 明确重新提交；收尾期间拒绝启动新 run，准入失败不清空待发送内容。输入 `:model <model_id>` 切换下一次模型调用的选型，输入 `:quit` 或发送 EOF 会等待当前运行结束后退出。配置路径须显式提供；可用模型 ID 由该配置决定。通过管道发送多行时仍逐轮运行，不自动变成 Steering。选择工作区后模型可使用 `write` 创建或整文件覆盖该目录内的 UTF-8 文件，也可使用 `edit` 对现有 UTF-8 文件做精确多处替换；`edit` 用分块读取与临时文件写回，不设固定文件大小上限，但单次提交的替换文本仍受输入预算约束，处理还受实际磁盘空间与运行时间影响。此入口尚不提供工作区外写入审批、专用测试执行策略、业务提示词或逐 token 打印；默认持久模式可以恢复安全完成及安全停止的会话。工作线程刚启动尚未开窗或已进入收尾时，应用可能拒绝 `:stop`，CLI 会明确提示未接受。
 
 ## 真实模型接入诊断
 
@@ -240,12 +244,12 @@ CLI默认创建持久新会话，显示会话ID；默认数据库为`~/.naiyue-t
 
 ## 正式异步应用与事件流
 
-[Spec075](docs/specs/075-integrated-async-application.md)已合并接通工具、应用、SQLite及正式流式消费；新36例、全量882例通过。原CLI继续使用同步应用，以下是新增异步入口，不能把新API存在当作CLI已经异步。
+[Spec075](docs/specs/075-integrated-async-application.md)已合并接通工具、应用、SQLite及正式流式消费；新36例、全量882例通过。这是Spec075时点的异步基础；CLI接线和活动停止已由下述Spec076完成。
 
 - `build_async_local_application`创建内存应用；`open_async_persistent_application`异步上下文管理器拥有SQLite/saver和SDK资源，参数`database_path`明确指定数据库。
 - `acreate_session` / `acreate_workspace_session`、`aselect_model`、`arun` / `aresume_tool_approval`；同会话busy/待审批/人工核对保持，`aget_messages`只返回当前checkpoint的深拷贝消息。
 - `astream_run` / `astream_tool_approval`消费领域事件，文本`message_delta`永远临时；完整snapshot按消息ID替换草稿，终局在关键清理/保存确认之后。`StreamingMessageProjection`提供展示状态，不让runtime依赖界面。
-- `steer`、`follow_up`、`request_stop_after_turn`复用快速内存控制；并行批次遵循`max_concurrency`，异步缺省4，任一sequential整批原顺序。普通同步工具由框架在线程运行，Bash仍是宿主机线程内进程/逐命令审批，不能称为活动取消或沙箱。
+- `steer`、`follow_up`、`request_stop`使用run私有控制；并行批次遵循`max_concurrency`，异步缺省4，任一sequential整批原顺序。普通同步工具由框架在线程运行，Bash仍是宿主机线程内进程/逐命令审批，Spec076已接进程组停止，不能称为沙箱。
 - `capacity`默认256限制交付队列的事件数，溢出抛`EventStreamOverflow`要求重新同步；关闭消费不停止生产，应用持有后台任务，`aclose`排空后关闭其资源。复杂CPU计算/旧同步订阅者仍须快速，大payload/SaaS压力和完整历史恢复另验收。
 
 下面的内存示例会使用已有模型配置发出真实请求，只打印事件类型：
@@ -268,4 +272,49 @@ async def main():
 asyncio.run(main())
 ```
 
-可重复验证：`.venv/bin/python -m scripts.probe_async_application --offline`执行两个独立离线进程与临时真实SQLite；去掉`--offline`使用默认模型，在180秒总截止内最多首进程2次、恢复1次逻辑调用，验证增量、纯随机工具、Steering、保存确认和旧上下文。真实输出为`async_application_probe=PASS mode=real two_processes=True delta=verified tool=1 steering=verified terminal_after_save=verified history_used=True session_id=stable thread_id=stable run_id=new checkpoint=advanced`。不访问用户文件/业务系统、不修改模型配置，也不统计SDK重试尝试或实际费用。活动停止与Web是下一阶段；重启审批/failed等仍识别并阻断。
+可重复验证：`.venv/bin/python -m scripts.probe_async_application --offline`执行两个独立离线进程与临时真实SQLite；去掉`--offline`使用默认模型，在180秒总截止内最多首进程2次、恢复1次逻辑调用，验证增量、纯随机工具、Steering、保存确认和旧上下文。真实输出为`async_application_probe=PASS mode=real two_processes=True delta=verified tool=1 steering=verified terminal_after_save=verified history_used=True session_id=stable thread_id=stable run_id=new checkpoint=advanced`。不访问用户文件/业务系统、不修改模型配置，也不统计SDK重试尝试或实际费用。Web是下一阶段；重启审批/failed等仍识别并阻断。
+
+
+## 统一活动停止与 CLI 异步接线
+
+[Spec076](docs/specs/076-active-stop.md)沿用Pi的run互斥、停止信号、操作收尾和消息保留原则，结合本项目checkpoint安全恢复检查。CLI仍使用普通行输入和完整回答打印，薄桥在专属loop调用AsyncApplication/AsyncSqliteSaver；等待模型时输入线程保持响应，并非所有文件IO已改成原生异步。停止后进入待发送模式，`:send`显式提交保留内容；空队列时`:send`退出待发送模式。待发送内容只在内存，不在退出后恢复。
+
+本片新增23例，全量905例通过；确定性验证覆盖模型/摘要/SDK重试、串行及并发等待、原子写入、审批准备竞态、Bash实际进程、失败优先、部分文本未确认、同进程/两个独立进程恢复和CLI显式重发。真实默认网关探针（一次逻辑调用；SDK HTTP重试不计入该次数）只发送合成请求：
+
+```bash
+.venv/bin/python -m scripts.probe_active_stop --timeout-seconds 120
+```
+
+实际输出：`active_stop_probe=PASS mode=real logical_calls=1 delta=observed stopped=verified fake_answer=absent checkpoint=safe`。加`--offline`可离线重复验证。这个结果证明客户端停止等待和安全结束，不证明供应商服务器停止计算/计费。任意不响应信号的自定义工具没有固定秒数停止保证；关键写入/保存仍须settle，Bash副作用未知时不会自动恢复。最小Web与整体学习为下一步。
+
+## 最小本地 Web 对话（Spec077）
+
+React+TypeScript/Vite 页面参考已确认的 ChatKit 浅色聊天外观；FastAPI 同源提供构建文件、REST 动作与 SSE，直接复用现有异步应用及 SQLite/checkpoint。当前支持配置内模型选择、持久会话列表/安全恢复、完整消息与文本增量、运行中 Steering/Follow-up、活动停止和明确重发。Spec077首片仅聊天；[Spec078](docs/specs/078-web-tools-and-approval.md)随后接通工作区文件工具、可折叠工具详情和逐项决定/整批提交审批。
+
+本机已安装并构建。新环境先安装原 Python requirements，再执行 `.venv/bin/python -m pip install -r requirements-web.txt`、`npm --prefix frontend ci`、`npm --prefix frontend run build`。启动：
+
+```bash
+.venv/bin/python -m naiyue_test_agent.web --config .env/models.json
+```
+
+打开终端打印的本地访问链接，默认随机可用端口和本地访问凭据；运行只需 Python 服务。可选 `--workspace /绝对路径`、`--session-db /绝对路径/sessions.sqlite`、`--port 端口`。同一个数据库只允许一个应用进程使用。服务启动不编辑 `.env`，模型 key 不发送到浏览器。
+
+启用现有文件工具：
+
+```bash
+.venv/bin/python -m naiyue_test_agent.web --config .env/models.json --workspace /绝对工作区路径
+```
+
+工作区模式注册 `read/ls/find/grep/write/edit`，原权限、错误回填和串并行策略继续生效。工作区外可审批的操作会先暂停，在页面核对每项批准/拒绝后提交整批；未选择时不会默认批准。Bash 需额外显式 `--host-bash`，每次命令仍审批，它是宿主机命令而非沙箱。无工作区继续聊天；重启后的待审批会话仍阻断自动恢复。
+
+工具实现/HTTP契约/验证见 [Web工具说明](docs/web-tools.md)。离线真实 TCP/审批与两进程恢复验收运行 `.venv/bin/python -m scripts.probe_web_tools`，不产生收费请求。
+
+运行中普通消息为 Steering，勾选“结束后跟进”即 Follow-up。停止期间输入继续可编辑，未执行内容保留，明确重新发送后才启动新轮。断开 SSE 不取消生产，恢复 view/序号用于同步，完成状态依据保存后的领域终局。浏览器草稿和部分待发送内容只在内存；安全会话恢复不等于完整历史归档或 SaaS。
+
+使用、代码地图、实际验证与限制见 [Web 对话说明](docs/web-chat.md) 和 [Spec077](docs/specs/077-local-web-chat.md)。离线 TCP/两进程探针：
+
+```bash
+.venv/bin/python -m scripts.probe_web --timeout-seconds 60
+```
+
+输出 `web_probe=PASS mode=offline tcp=True sse_delta=True disconnect_keeps_run=True stop=True retained=True two_processes=True history_used=True duplicate_safe=True`。浏览器真实默认模型两次逻辑调用验证了精确回答与活动停止，桌面/375px 视口无横向溢出；这些证据不替代业务评测、工具实网审批或生产负载验证。
