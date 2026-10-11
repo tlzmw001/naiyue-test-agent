@@ -18,7 +18,8 @@ from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime.context_compaction import (
     ContextCompactionError, SUMMARY_MARKER,
 )
-from naiyue_test_agent.model_access.errors import ModelResponseRejected, classify_model_failure
+from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
+from naiyue_test_agent.model_access.errors import classify_model_failure
 from naiyue_test_agent.model_access import ModelCatalog
 from test_context_compaction import RoutedFake, _app, _model
 

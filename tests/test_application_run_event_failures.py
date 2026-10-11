@@ -144,13 +144,14 @@ def test_failure_diagnostic_fault_does_not_replace_primary(monkeypatch, diagnost
     def fail(*_args, **_kwargs):
         raise failure
 
-    def bad_diagnostic(_error):
+    def bad_diagnostic(_self, _error):
         if diagnostic_failure == 'raises':
             raise ValueError('PRIVATE_DIAGNOSTIC_ERROR')
-        return 'bad category', 'PRIVATE RAW TEXT'
+        from types import SimpleNamespace
+        return SimpleNamespace(category='bad category', reason='PRIVATE RAW TEXT', error_type='RuntimeError')
 
     monkeypatch.setattr(module, 'invoke_agent_run', fail)
-    monkeypatch.setattr(run_events, 'classify_model_failure', bad_diagnostic)
+    monkeypatch.setattr(run_events.RunObservation, '_describe_failure', bad_diagnostic)
     with pytest.raises(RuntimeError) as caught:
         app.run(session, [('user', 'run')])
     assert caught.value is failure

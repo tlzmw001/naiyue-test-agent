@@ -1,39 +1,22 @@
 """Trusted, process-local session state for application entry points."""
 
-import logging
-from collections import deque
-from threading import Lock
-from uuid import uuid4
 from pathlib import Path
 
 from langgraph.checkpoint.memory import InMemorySaver
-from langchain_core.messages import AIMessage
 
 from naiyue_test_agent.agent_runtime import (
-    _assemble_interactive_runtime, invoke_agent_run, invoke_agent_run_in_workspace,
-    resume_agent_run_with_grants,
+    _assemble_interactive_runtime,
 )
 from naiyue_test_agent.agent_runtime.tool_approval import (
-    ApprovalReview, approval_policies_for_tools,
+    approval_policies_for_tools,
 )
-from naiyue_test_agent.agent_runtime.tools.read import resolve_workspace_root
-from naiyue_test_agent.agent_runtime.tools.write import WriteOutcomeUnknown
-from naiyue_test_agent.agent_runtime.tools.bash import BashOutcomeUnknown
-from naiyue_test_agent.application.project_instructions import load_workspace_instructions
-from naiyue_test_agent.application.skills import prepare_run_resources
-from naiyue_test_agent.agent_runtime.resource_invocation import (
-    invoke_agent_run_with_resources, resume_agent_run_with_resources,
-)
-from naiyue_test_agent.model_access import ModelCatalog, load_model_catalog
+from naiyue_test_agent.model_access import load_model_catalog
 
 
 from naiyue_test_agent.application.session_service import (
     SessionBusyError, SessionPendingApprovalError, SessionManualReviewRequiredError,
-    SessionService, _pending_tool_approval,
+    SessionService,
 )
-
-
-logger = logging.getLogger(__name__)
 
 
 class LocalApplication:
@@ -46,6 +29,10 @@ class LocalApplication:
 
     def subscribe_events(self, handler):
         return self._sessions.subscribe_events(handler)
+
+    def configure_error_classifiers(self, *, model_id=None, model=None, runtime=None, application=None):
+        return self._sessions.configure_error_classifiers(
+            model_id=model_id, model=model, runtime=runtime, application=application)
 
     def create_session(self, model_id: str) -> str:
         return self._sessions.create_session(model_id)
@@ -95,7 +82,6 @@ def _assemble_application(catalog, sessions, checkpointer, *, tools, system_prom
         record_selection=lambda _session_id, _model_id: None,
         checkpointer=checkpointer,
         drain_steering=sessions.drain_steering,
-        finish_pending_messages=sessions.finish_pending_messages,
         is_stop_requested=sessions.is_stop_requested,
         finish_run_boundary=sessions.finish_run_boundary,
         resolve_project_instructions=sessions.resolve_project_instructions,

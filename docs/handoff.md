@@ -1193,3 +1193,499 @@
 - 最终本轮命令：pytest全量928 passed in 33.47s；前端Vitest9文件/27通过；tsc+Vite构建成功；compileall退出0、pip check无冲突、npm audit0 vulnerabilities；git diff --check与学习文件92路径/行数/入口链接验证通过。当前无CI workflow，不将本地验证称为GitHub CI通过；没有新增收费请求。
 - 回归新增后Python测试物理行更新为17,507、非空14,649，产品11,267行不变；知识地图统计同步。提交排除.env、sqlite/DB、node_modules、dist和机器缓存，跟踪文件的敏感路径扫描为空；原after-turn测试删除属于Spec076已经确认的接口迁移，替代测试随代码提交，不丢弃用户无关工作。
 - Git提交和push结果以本轮git log/远端确认及最终回复为准，不在自身提交里预写尚未发生的成功。唯一下一步：用户说开始后按docs/1.0知识地图进入第1章，后续笔记只记录实际讲解与理解证据。
+
+## 230. 第1章系统课堂开始（2026-10-09）
+
+- 用户明确“开始学习”；继续Agent项目既定知识地图，不启动新RAG开发。按project-learning方式进入[Lesson 18](1.0/lessons/lesson-18.md)，更新1.0入口/课堂目录/地图状态，历史笔记与关键知识点不改。
+- 核对当前代码：main→create_web_app先创建HTTP对象，Uvicorn启动进入lifespan才调用open_async_persistent_application；ModelCatalog/SessionService/SessionStorage/官方异步saver→_assemble_application→_assemble_interactive_runtime→_build_runtime_agent→create_agent→AsyncPersistentApplication，再由WebService/RunDelivery使用。当前通用Web链不强制经过早期测试策略。
+- 本课只讲装配地图、启动/会话/run区别及__main__入口两行，不把其他模块定位记为通读。理解检查待用户回答，独立实现/追问均未评估，AI代码与测试不构成人的掌握。
+- 本轮`.venv/bin/python -m naiyue_test_agent.web --help`退出0并显示实际参数；不启动HTTP、不读取私有配置、不调用模型。仅文档修改，不运行应用全量测试或报告新功能通过，不提交/push。
+- 唯一下一步：用户回答后纠偏，再逐段读web/__main__.py:18–35的main参数→WebSettings；若用户点名某行则停在该行，不重启整章。
+
+## 231. Agent图创建时点纠偏（2026-10-09）
+
+- 用户首答“还没有创建，模型还没被请求”：未请求模型判断正确，服务成功启动后图未创建判断错误。依据当前async_persistent.py:41–44及runtime的create_agent调用，用启动装配图、创建会话、发送消息执行图的时间线纠偏，不提前进入参数解析。
+- Lesson18记录实际回答及待确认点；不升级为引导后完全理解、独立实现或追问能力。只更新学习笔记/交接，未改产品代码、运行模型或新增功能验证；文档检查结果见本轮输出。
+- 唯一下一步：确认图创建/执行区别后再读main:18–35；用户若仍不懂就停在此机制。
+
+## 232. main参数到WebSettings（2026-10-09）
+
+- 用户对图创建/执行纠偏回复“理解了”，只记自述理解。继续Lesson18的main:18–35，基本argparse简略；具体路径/默认/环境优先级、options条件表达式、**关键字展开和Pydantic构造检查按实际代码解释。
+- 区分Web访问token与模型API key；不读取真实配置/环境token。离线WebSettings构造指定不存在的模型JSON路径，输出对象类型/绝对workspace/port=0/随机token存在（不输出值）；非法-1端口报告ValidationError，进程退出0。只是学习探针，无服务/模型/数据库创建或全量应用验证。
+- 更新Lesson18及地图/目录状态，参数段尚待用户反馈；未改产品代码/环境配置，未提交push。文档检查见本轮输出。
+- 唯一下一步：参数段理解后读main:36–44前端产物检查、socket绑定和实际端口写回；尚不展开后续lifespan或整个异步实现。
+
+## 233. 监听socket与端口写回课堂（2026-10-09）
+
+- 用户说“继续”，沿Lesson18读main:36–44，不把继续记为独立掌握。逐行解释前端index检查、IPv4/6选择、with资源关闭、地址复用、bind/listen/backlog及getsockname→model_copy。
+- 本机临时loopback socket实测分配49665，旧settings.port保持0，新副本端口49665，直接赋值被frozen拒绝，with后socket关闭，退出0。Pydantic本机文档确认model_copy(update)不重验；核对Python3.12官方socket文档，backlog不是Agent并发、复用不等于抢占现有监听端口。
+- 仅教学记录，无产品/环境配置修改，无HTTP/模型/DB启动或收费请求，不提交push、不宣称全量应用验证。Lesson18记socket段待反馈。
+- 唯一下一步：反馈后读main:45–59创建HTTP应用、运行服务器与退出/错误路径，再进入create_web_app/lifespan。
+
+## 234. HTTP服务器与退出入口课堂（2026-10-09）
+
+- 用户继续，沿Lesson18读main:45–59：FastAPI app/Server/Agent图区别，访问链接property与flush、Config→Server→run及返回码、KeyboardInterrupt/普通异常边界。实际Uvicorn0.54.0源码核对启动先lifespan.startup、main_loop、关闭lifespan.shutdown；链接提前打印不是ready证据，started是曾启动状态。
+- 说明部分Uvicorn启动失败会SystemExit，不能声称except Exception覆盖所有退出；with仍释放socket。日志固定事件/异常类名不含原文，HTTP访问日志禁用与项目诊断分开；正常收尾不等于强制停止有保证。
+- 运行现有`pytest -q tests/test_web_startup.py`实际1 passed in 0.90s；该用例mock Server.run抛KeyboardInterrupt，只验证130和提示，不证明实网/真实lifespan/工具收尾。没有产品/测试/环境修改或收费请求，课堂记录检查后不提交push。
+- 已讲解至main:59，用户对本段掌握待反馈。唯一下一步：读web/app.py的create_web_app/lifespan注册执行与asynccontextmanager/yield机制，再逐段读具体装配。
+
+## 235. lifespan注册执行与资源生命周期课堂（2026-10-09）
+
+- 用户继续，建立Lesson19承接已讲main入口的Lesson18，更新1.0目录/地图。讲嵌套函数与闭包、asynccontextmanager包装的异步生成器、传回调注册、启动执行到yield/退出恢复finally、app.state和内部factory上下文顺序；工具列表和factory默认lambda尚未逐行读，下一段继续。
+- 核对本机Starlette1.7.0 Router.lifespan的startup接收→async with→startup.complete→等待shutdown→退出→shutdown.complete，以及Uvicorn LifespanOn.main调用ASGI应用；Pythoncontextlib的__aenter__/__aexit__用anext/athrow驱动异步生成器。失败有failed分支，不把yield当作HTTP消息或checkpoint保存。
+- 最小FastAPI+TestClient离线trace：创建app=[]、创建manager=[]、进入=['startup']、app.state.ready=True、退出=['startup','shutdown']，退出0，无真实网络/模型/数据库、无产品代码修改。文档检查见本轮输出，未全量构建或提交push。
+- “继续”仅推进阅读，Lesson19待用户反馈、独立实现/追问未评估。唯一下一步：反馈后读web/app.py:33–40的工具列表、条件展开和factory构造，再接资源入口。
+
+## 236. 工具列表与应用factory课堂（2026-10-09）
+
+- 用户答“没有”，正确判断停在yield时未close，记录此局部判断，不升级为全面掌握。继续Lesson19的web/app.py:33–40，展开workspace条件、列表内*的Bash选择、六StructuredTool对象与创建/执行区别、factory的or/lambda及async with获取application。
+- 默认资源入口yield app与Weblifespan裸yield分别传对象/控制权，解释as application变量来源；工具工作区在实际调用上下文读取、注册不代替授权、Bash开关不跳审批。response_format=None不强制结构化最终输出。
+- 离线构造输出0/6/7工具名及StructuredTool类型，未进入的默认资源管理器类型_AsyncGeneratorContextManager，退出0；无模型JSON读取/DB打开/工具执行/模型请求。只改学习笔记/交接；初次文档patch因同文件重复操作被拒绝（无写入），合并后检查结果见输出，不提交push或称全量通过。
+- 唯一下一步：本段反馈后收束第1章装配地图，按既定路线进入第2章模型配置/目录；HTTP路由、持久资源清理仍留对应章节，不把定位记为通读。
+
+## 237. 第2章模型配置入口课堂（2026-10-10）
+
+- 用户明确“第一章我都学会了，开始第二章”，对已讲范围记自述理解，未升级独立实现/面试追问。进入Lesson20，更新1.0入口/地图及Lesson18/19衔接；不开展新功能或回头改实现。
+- 第一小段读model_access/__init__.py:157–165：路径统一、stat元数据、S_ISREG、S_IMODE&0o077的八进制位运算与抛ModelConfigError。JSON解析/顶层字段/供应商构造下一段逐步读，本次只定位ModelCatalog输入输出与5文件职责。
+- 本轮现有缺失/过宽权限与重复JSON键两测试`2 passed in 0.81s`；临时sample.json探针0600掩码0、0640掩码040、0644掩码044且为普通文件，退出0。未改真实.env、产品或测试，未调用模型或称全量构建/集成通过；文档检查见输出，不提交push。
+- Lesson20待反馈；唯一下一步：166–182及_unique_object的JSON/重复键/异常和顶层结构，按用户问题停在具体行。
+
+## 238. Windows权限语义补充课堂（2026-10-10）
+
+- 用户正确回答0640不读取正文，追问Windows逻辑。保持局部解释，不修改代码或提前做平台适配；Lesson20记录正确判断、平台差异及证据。
+- 官方CPython3.12.14 fileutils的attributes_to_mode把Windows普通文件属性映射为0444/0666，两者与0077均非零；现有加载器权限条件会误拒绝，非Windows ACL校验。Python3.12 chmod文档只读属性限制、微软DACL/ACE资料核验，future-work记录独立平台适配与真实ACL完成判据。
+- 本机darwin/Python3.12.14；只执行源码模式的整数运算0066/0044非零，未在Windows实际运行、修改真实.env或调用模型。文档检查见输出，不称为跨平台验证，不提交push。
+- 唯一下一步保持模型配置JSON解析166–182/_unique_object；若用户继续追问Windows则先答局部问题，不启动新功能开发。
+
+## 239. JSON解析与重复键/异常课堂（2026-10-10）
+
+- 用户明确先学、双系统后做，future-work确认延期，不改配置权限实现。继续Lesson20的166–170/_unique_object：read_text先于loads、回调接pairs并返回dict、每对象重复键拒绝、data赋值时点、两组异常及from None抑制展示但保留context。
+- 本轮临时0600文件实际load_model_catalog拒绝重复键/语法/UTF8错误，类型都是ModelConfigError；语法/编码保留原context并suppress=True，重复键原样传播。未读取真实.env、构造客户端或调用模型；现有重复键回归实际1 passed in 0.59s。
+- 仅课堂/交接/延期记录，文档检查见输出；未修改产品测试或提交push，不称全量应用验证。JSON段掌握待反馈，独立实现/追问未评估。
+- 唯一下一步：172–182与_object/_nonempty顶层字段、版本与providers/models结构；若用户点名JSON回调/异常则先停在该行。
+
+## 240. 顶层配置与字段集合校验课堂（2026-10-10）
+
+- 用户继续，Lesson20讲172–182/_object/_nonempty：配置形状，required/allowed差集、dict_keys视图、稳定首错、root原对象、schema_version严格整数拒bool、非空校验不trim返回值、providers连接与models别名映射。内部关系尚未完全校验，不声称远端存在。
+- helper探针验证missing/extra/类型错误、root is data、1与True/1.0/'1'区别和保留字符串空格；现有配置错误脱敏参数化测试8 passed in 0.70s。未改产品测试/.env或调用模型，不称全量应用验证。
+- 顶层段理解待反馈，“继续”不升级独立实现；首次文档patch同文件重复操作被拒绝且无写入，合并后检查，不提交push。唯一下一步：184–208的provider字段/类型/端点与checked_providers，用户点名语法则先停在该行。
+
+## 241. 供应商契约与URL课堂（2026-10-10）
+
+- 用户继续，Lesson21讲184–205/_base_url：自定义ID与kind分离、两阶段_object、四种字段集合、API key非空/URL格式、本地checked_providers不等于客户端或远端验证。Pythonurlsplit官方文档核对parsed.port延迟校验与解析器非完整验证。
+- 本轮四类型本地构造现有测试1 passed in 0.70s；_base_url合成探针https网关/HTTP Ollama接受，HTTP网关/错误端口/0端口/用户名/query/fragment拒绝。没有实网请求、真实.env或产品测试修改，不称全量应用验证。
+- 1.0目录/地图衔接更新，用户掌握待反馈；独立实现/追问未评估，文档检查后不提交push。唯一下一步：207–222模型ID/供应商引用/模型名，再分小段读预算/thinking/request与构造。
+
+## 242. 模型条目与provider引用课堂（2026-10-10）
+
+- 用户继续，Lesson22讲207–222：built_models/thinking_selections容器、model_id/provider_id/model_name区别、必填与可选参数、引用checked_providers失败/成功、每模型limit_metadata；默认ID存在检查仍函数末尾，不声称此时构造了客户端。
+- 现有未知provider参数化用例1 passed, 7 deselected in 0.74s；完整临时文件加载仅把_build_model替为object记录器，证明两个别名共享provider且各自model名称传递。第一个条目缺引用时拒绝并构造调用0；不把此例推广为所有坏配置都零构造。无真实.env/SDK构造或收费请求。
+- 1.0记录/目录更新，讲解待反馈、独立实现/追问未评估；文档检查后不提交push。唯一下一步：223–241预算/默认来源与reserve公式，再逐小段读余下参数。
+
+## 243. 模型预算与config/default来源课堂（2026-10-10）
+
+- 用户对三ID检查题回复“继续”，不强迫、不记正确；Lesson22继续223–244，按三元组循环、entry.get缺字段默认、严格正整数、动态metadata键与来源、model_id、reserve min/max/整除公式讲。预算不代表供应商窗口，reserve与max_output独立，显式覆盖与默认限制区分。
+- 本轮默认/覆盖/reserve3测试实际3 passed in 0.86s；公式探针128000/32000/8000→16384/8000/2000，退出0。只有本地参数/metadata接线，无实网/业务质量/生产容量或全量应用验证。
+- 只更新课堂/交接，无产品测试/.env修改或提交push。首次patch同文件重复操作无写入，合并后检查；预算段待反馈，独立实现/追问未评估。唯一下一步245–274 keep/summary预算与关联校验，再request/thinking。
+
+## 244. keep与summary预算课堂（2026-10-10）
+
+- 用户继续，Lesson22读245–274：keep默认取min20000与窗口四分之一、保留目标不是硬输出限制；summary默认min2048/普通输出/预留80%，显式覆盖仍须正整数且不超过输出和预留，默认2048/80%不是显式硬限制；tokens/source记录。切点和摘要调用只定位，第7章复访。
+- 本轮现有keep/summary默认与覆盖、无效拒绝及单请求cap适配三用例3 passed in 0.90s；整数示例summary2048/1024/800/1。未访问真实模型或.env，无产品测试修改，不称生产压缩效果/全量应用通过。
+- 本段待反馈，独立实现/追问未评估；文档检查后不提交push。唯一下一步275–288请求策略/默认超时与重试、Ollama限制，thinking再后读。
+
+## 245. request超时与SDK重试课堂（2026-10-10）
+
+- 用户继续，Lesson22读275–288：可选request/空必填集合、单字段默认、有限正数超时/严格非负int重试、Ollama显式字段拒绝、配置名到timeout/max_retries映射。区分SDK尝试、Agent轮次与任务总时限；Ollama构造仅取timeout，不称默认2重试。
+- 本轮定向6组现有参数化共15 passed in 3.45s；两SDK的MockTransport503默认各3请求、0重试各1请求，未访问实网。当前安装OpenAI SDK_should_retry源码核对503分支，不把此计数推广到全部错误/流式阶段。
+- 只更新学习/交接，无产品测试/真实.env修改，文档检查后不提交push。请求段待反馈；唯一下一步289–308及thinking.py的默认选择/能力集合/等级回退/原生参数，按小段讲。
+
+## 246. Thinking配置和支持列表课堂（2026-10-10）
+
+- 用户继续，Lesson23先讲289–300/thinking.py7–23：三个selection字段、dataclass字段顺序/frozen边界、独立model_default、可选thinking块/两必填、list与any生成器/重复检查/tuple输出、requested允许七等级或model_default。支持集合是配置声明，不是远端发现。
+- 本轮现有默认与无效参数化7 passed in 0.71s；纯函数默认记录/冻结字段/正常list→tuple/重复未知空或非列表非字符串拒绝探针退出0。无模型请求或真实.env/产品测试修改，不称全量应用验证。
+- 1.0记录更新，未记用户独立实现/追问；文档检查后不提交push。唯一下一步thinking.py26–43回退逐行，再加载器301–308与原生映射，SDK构造继续后读。
+
+## 247. Thinking回退算法课堂（2026-10-10）
+
+- 用户继续，Lesson23讲thinking.py26–43默认优先/非法/空/自身支持、索引与上切片/下前缀反向迭代，high三场景与low仅off/max反例说明不是整体最近距离。支持列表顺序不决定优先级，模型网络重试不同于本地回退。
+- 现有回退单测1 passed in 0.51s；纯函数六正常及三拒绝输入验证索引/候选/结果，退出0，无SDK/真实.env/实网。回接加载器指出原生能力检查实际在resolve前，尚未逐行教其实现。
+- 检查题medium支持off/low/high待答，独立实现/追问未评估；文档检查后不提交push。唯一下一步301–308与native_thinking_settings的映射和记录，再SDK构造/目录收尾。
+
+## 248. Thinking原生映射与selection回填课堂（2026-10-10）
+
+- 用户答High，正确判断medium先向上high，记录局部理解。Lesson23读301–308/thinking.py46–63：先校验整个声明、再resolve、再映射选中等级；三家off/default/显式kwargs及当前不支持等级、配置错误包装、selection保留请求与有效值。
+- 区分适配器构造参数和最终HTTP协议、配置声明与实际远端能力，声明错误不自动清洗/回退默认。thinking.py核心讲完，地图该行标已讲解，不标独立实现或面试追问通过。
+- 本轮6现有映射/接线/拒绝用例6 passed in 0.60s；纯函数字典/选择结果验证，无实网/真实.env/产品测试修改，不称全量应用构建通过。文档检查后不提交push。
+- 唯一下一步124–154的_build_model与309–313接线，随后目录收尾314–318/ModelCatalog；原生参数执行效果仍独立验收。
+
+## 249. LangChain模型构造课堂（2026-10-10）
+
+- 用户继续，Lesson24读_build_model124–154与309–313，解释十项输入、四预算metadata、四kind到三适配器、两个kwargs展开、Ollama单timeout、普通构造异常脱敏及built_models/selection登记。返回模型对象而非回答/Agent，原生构造字段不等于所有HTTP协议字段。
+- 本轮实际四类本地对象均BaseChatModel子类/输出cap4096，metadata四项目键附加lc_versions；追本机BaseLanguageModel.model_post_init/_add_version确认框架自动版本字段。模拟构造ValueError被安全包装，不含原正文，退出0；没有invoke/真实.env/实网调用、产品测试修改或全量构建声明。
+- 1.0地图/目录同步，用户掌握待反馈、独立实现/追问未评估；文档检查后不提交push。唯一下一步314–318与ModelCatalog49–82的目录查询/记录/资源入口，生命周期模块另段。
+
+## 250. ModelCatalog目录与资源入口课堂（2026-10-10）
+
+- 用户继续，Lesson24读314–318与ModelCatalog49–79：默认键检查在构造之后、目录字段引用、IDs property、get返回已有实例/未知拒绝、thinking记录先校验模型再缺省、资源准备/关闭入口。默认模型不等于会话当前模型；普通构造不自动重跑加载器校验。
+- 假模型接口探针证实IDs/同一实例/记录与已知缺省、两个unknown拒绝、owned初始为空；现有未知默认ID用例1 passed, 7 deselected in 0.81s。无真实.env/网络/模型invoke、产品测试修改或全量构建声明。
+- 模型接入主文件已讲加载/构造/目录，地图同步局部覆盖；bind_model_output_limit仍第7章，不能记全文件独立掌握。文档检查后不提交push。
+- 唯一下一步catalog_lifecycle.py15–49拥有/借用HTTP资源与准备，再52–67关闭；默认应用资源函数仍留第8章，不提前展开全部应用持久化。
+
+## 251. HTTP资源输入与Ollama登记课堂（2026-10-10）
+
+- 用户继续，Lesson25先讲catalog_lifecycle15–23：模型对象集合与owned列表、id身份去重、Ollama SDK/HTTP两层对象、嵌套二元组extend与异步关闭标记。OpenAI/Anthropic24–49和关闭52–67尚未逐行读。
+- 本机ChatOllama构造源码和Ollama Client/AsyncClient核对HTTP来源；默认validate_model_on_init=False。重复同一模型两输入只登记2资源/True False且引用匹配，探针显式清理后两资源closed，退出0，无模型调用/真实.env。
+- 现有通用共享实例去重关闭测试1 passed in 0.59s，用的是ChatOpenAI，清楚区别Ollama实网或全量验证。只改学习文档，独立实现/追问未评估；检查后不提交push。
+- 唯一下一步24–34的SDK对象/proxy/传输库辨认，再35–49替换客户端，关闭稍后读。
+
+## 252. 在线SDK对象与默认HTTP共享课堂（2026-10-10）
+
+- 用户继续，Lesson25读24–34：OpenAI根SDK与API资源/HTTP层区别、Anthropic cached_property延迟SDK、proxy非base_url、module对象选择、未知类跳过。当前SDK同步HTTP校验核对OpenAI兼容两HTTP库/Anthropic限定httpx2，避免按供应商名推断默认库。
+- 本机HTTPX0.28.1/HTTPX2 2.13.1；两类默认wrapper最终派生httpx2.Client。相同端点/timeout不同合成模型的SDK独立但同步/异步默认HTTP共享均True；Anthropic读取_client前无缓存键，之后有。源头默认工厂缓存与每实例SDK缓存分别说明；无真实.env/代理地址输出或invoke网络请求。
+- 只改学习/交接，未修改产品测试/依赖，不称生产并发或全量验收。文档检查后不提交push，用户掌握待反馈。唯一下一步35–49 owned HTTP创建/SDK复制/模型字段重接，再关闭。
+
+## 253. HTTP资源替换与接线课堂（2026-10-10）
+
+- 用户继续，Lesson25读35–49：options保留timeout/proxy、同步/异步HTTP立即登记、with_options复制SDK、OpenAI根与API资源两个路径同时重接、Anthropic缓存字段替换。读取当前SDK copy和LangChain请求消费字段，未修改旧借用池或代码。
+- 本轮两应用隔离现有用例2 passed in 0.63s；双目录身份探针两类newSDK/owned绑定/设置保留/资源隔离均True；关闭A仅A新资源关闭，原借用池与B仍open，探针最终清理自己创建的目录，退出0。无真实代理/网络/模型请求，不扩成生产并发/全量验证。
+- 地图标资源准备15–49已讲，关闭仍待读；用户掌握待反馈、独立实现/追问未评估。文档检查后不提交push。唯一下一步52–67的关闭去重/to_thread/首错误保留与继续清理。
+
+## 254. HTTP资源关闭与普通异常课堂（2026-10-10）
+
+- 用户继续，Lesson25读52–67：HTTP身份去重、async直接await/sync to_thread方法传递、顺序关闭、普通错误日志/首错误保留/尝试其他资源/原对象传播、成功None。核对CPython to_thread默认执行器和CancelledError不属Exception；不把资源普通失败处理扩成强杀/任意取消保证。
+- 假客户端无sleep探针实际first_fail→async_ok→later_fail，重复first只一次、线程模式正确、两条类型日志无原模拟正文、末尾抛首对象、空列表None，退出0。没有真实SDK请求/生产取消验证或产品测试修改，不称全量应用构建通过。
+- 资源模块核心全部已讲，地图局部状态同步，用户掌握待反馈、独立实现/追问未评估；文档检查后不提交push。唯一下一步errors.py的数据记录/响应拒绝与模型请求失败分类，应用资源退出仍第5/8章。
+
+## 255. 异步关闭与HTTP资源归属原因问答（2026-10-10）
+
+- 用户正确答关闭失败后收到异常，追问为什么不全部异步以及当时为何自管HTTP/SDK。保持局部问答，不开始新实现或async-only迁移。
+- 当前对外aclose全是await；本机HTTPX/HTTPX2的同步Client.close非协程且无aclose、AsyncClient.aclose为协程，to_thread用于异步等待同步关闭。历史Spec075:33–35/71核对应用资源所有权、共享默认池/借用不关、独立资源红灯到绿灯及既有httpx2兼容，SDK复制是注入自有HTTP的接线手段，协议/鉴权/重试仍SDK负责。
+- 仅inspect接口/历史文档与现有代码核对，不重跑实网或声称新隔离/生产证据；Lesson25补记问答，独立实现/追问未评估。文档检查后不提交push；用户继续后回errors.py主线。
+
+## 256. 多SDK共享与资源管理必要性澄清（2026-10-10）
+
+- 用户要求区分保险/框架不支持场景，澄清共享默认HTTP是正常复用，多SDK调用本来可用；补的是按独立Application/factory显式关闭资源、不影响其他目录的契约，不把默认共享本身描述成缺陷。此契约已有Spec075记录，不推广普通长寿命单应用也必须替换。
+- 本轮当前类接口检查无统一close/aclose/上下文方法，OpenAI可公开注入HTTP字段，Anthropic字段差异明确；SDK复制/私有缓存接线是现路径，不称唯一必要方法。当前AsyncApplication._close_resources先等run任务再catalog.close，应用关闭边界有实质实现。
+- 独立进程合成两SDK对象探针两类均distinctSDK=True/sharedHTTP=True；手动关闭A SDK后B同HTTP.closed=True，仅证明主动关共享池后果，没发模型请求，不是框架正常多SDK缺陷，不使用现有运行客户端或真实.env。
+- 只改课堂/交接，未实现/重构资源逻辑。问答待反馈、独立实现/追问未评估；文档检查后不提交push。用户继续后回errors.py，不自动做async-only或新注入方案。
+
+## 257. 模型响应拒绝与错误分类课堂（2026-10-10）
+
+- 用户继续学习，Lesson26开始errors.py12–22及45–47：Literal类型提示非运行校验、RuntimeError子类、reason与异常说明、分类二元组及解包。开场误称ModelFailure，核对后立即纠正，当前代码没有该类。
+- 追真实call_observation.py113–121响应拒绝生产点、135–158分类/日志与160–180捕获后裸raise；说明整响应拒绝和工具自身错误反馈不同，分类不决定重试或变更原异常。四原因优先级按真实顺序，归一化字段细节后续读。
+- 合成异常探针验证reason/str/args/分类，退出0；现有响应拒绝两测试节点参数化8 passed in 0.60s，无工具执行/关联ID/安全日志断言通过。无实网/真实.env/产品测试修改或全量构建声明。
+- 只更新1.0笔记/地图与交接，不提交push。用户理解待反馈、独立实现/追问未评估；唯一下一步errors.py其余SDK分类，连同输入溢出识别/unknown安全诊断逐段读。
+
+## 258. SDK鉴权与超时分类课堂（2026-10-10）
+
+- 用户正确回答分类不会触发重试，记录局部理解。Lesson26继续50–51鉴权、74–78超时/连接：SDK产生异常，isinstance备选类型元组，category/reason结果及先超时后连接的子类优先级。其他中间分支仍待逐段补齐。
+- 当前OpenAI._make_status_error源码401映射AuthenticationError；两SDK APITimeoutError均继承APIConnectionError已本机检查。六合成异常探针分类正确；分类与SDK既有重试不同，不据transient承诺自动重试/成功。
+- 现有非OpenAI分类18例+Anthropic SDK模拟401用例实际19 passed in 0.55s；无实网/真实.env/产品代码测试修改或全量构建声明。只更新学习文档、不提交push。
+- 唯一下一步52–73其余SDK类别及Ollama状态码，随后48–49溢出识别25–42、unknown安全诊断82–89；当前检查为何timeout先于connection待反馈。
+
+## 259. SDK重试观测边界问答（2026-10-10）
+
+- 用户正确答连接优先会把超时分类为连接错误，进一步归纳项目只捕获SDK终局失败。补充max_retries是上限、不可重试错误可直接抛，重试后成功当前也看不到中间尝试；模型调用事件是逻辑调用粒度，不是HTTP attempt事件。
+- 查当前OpenAI SyncAPIClient.request内部循环/剩余次数/should_retry及观察层_prepare、handler、_accept/_failed接线，不声称SDK没有细观测能力；当前项目尚未接SDK attempt层。没有新增重试观测实现。
+- 本轮四个SDK模拟503边界用例验证默认2次重试=3请求及显式0=1请求；仅模拟传输验证，结果随本轮命令记录在Lesson26，不扩全量验收。只更新学习笔记/交接、不提交push。
+- 唯一下一步保持52–73其余SDK分类，之后输入溢出识别与unknown安全诊断；问答理解待反馈，独立实现/追问未评估。
+
+## 260. 外部重试待办与一般SDK分类课堂（2026-10-10）
+
+- 用户要求记录后续可考虑外部重试，扩展future-work现有M3：先比较SDK内部观测与项目侧重试，防止叠加，限定模型调用/预算/取消/安全尝试事件及验收，当前不实施或更换策略。
+- Lesson26继续52–73：Anthropic权限/不存在/限流、两SDK>=500、and短路、Ollama统一ResponseError按状态分支及未命中继续至unknown。当前OpenAI普通403/404/429分类缺口明确说明，不把Anthropic专属分支冒充通用能力。
+- 合成异常探针含OpenAI429当前unknown与Ollama418unknown；18例非OpenAI分类测试18 passed in 0.60s。无真实.env/网络/产品测试源码修改，不称全量构建；文档检查后不提交push。
+- 下一步唯一明确为input_context_overflow_reason25–42及分类48–49，随后unknown安全诊断82–89。当前本段理解待反馈，独立实现/追问未评估。
+
+## 261. 输入上下文溢出识别课堂（2026-10-10）
+
+- 用户继续，Lesson26读25–42/48–49：类型及400门禁、OpenAI结构化code优先、文本类型/限流排除、两供应商明确短语、r/正则单词边界/大小写/或短路、None非成功、细原因归一分类。不把全400/任意too long/输出length当输入溢出。
+- 追context_recovery.py84/106同识别函数消费：识别不执行重试，运行层决定强制压缩/一次重发，SDK重试是另一级；算法第7章继续。code命中先于文本限流检查的优先级如实记录，Ollama不在当前识别范围。
+- 八合成案例退出0；现有明确溢出/其他错误/正常length三个节点实际9 passed in 0.62s。无真实.env/实网/产品或测试源码修改，不称完整恢复/全量构建验收。
+- 只更新课堂/地图/交接、不提交push；当前理解待反馈、独立实现/追问未评估。唯一下一步unknown_failure_diagnostics82–89，完成本模型错误模块阅读。
+
+## 262. 模型失败分类覆盖范围问答（2026-10-10）
+
+- 用户问是否已是全部异常，核对当前errors分类六类及观察层取消分支，区分已识别模型失败、SDK全部可能异常与全项目异常。分类unknown是未细分，不是吞错或已能恢复。
+- 捕获范围明确为模型包装try内部普通异常；_prepare在try外，UserStop/CancelledError异步显式处理，不能宣称任意位置/所有BaseException统一被该模块捕获。其他配置/会话/工具/上下文异常后续分章读。
+- 本轮源码核对与笔记更新，无产品修改/新功能测试/实网请求，不提交push；用户理解待反馈。下一步保持unknown_failure_diagnostics82–89。
+
+## 263. Pi与本项目异常协议对照（2026-10-10）
+
+- 用户问异常设计是否类似；重读本地Pi a69bef789 types流契约→OpenAI Responses/Anthropic API catch→agent-loop消息/终局→Agent外围catch/state清理→coding-agent会话消息保存；输入转换过滤错误/取消消息。目标相近，但Pi错误消息/流终局与项目事件+原异常传播不相同。
+- Pi adapter catch生成error/aborted AssistantMessage，loop不执行该响应工具；外围executor异常也转换，但busy等try外校验不能概括为永不上抛。项目classify/事件/异常通道并存，不能说Pi与项目都不生成错误助手消息或同一checkpoint契约。
+- Pi请求重试SDK0+自有wrapper，项目SDK重试；future-work已记外部重试待评估，不在问答改变技术方案。工具可恢复反馈与致命异常区分，不泛化所有工具错误可恢复。
+- 仅静态当前源码证据，无实网/新探针/产品修改，不提交push；已讲解、理解待反馈，下一步仍unknown安全诊断。
+
+## 264. 统一失败契约与抽象边界问答（2026-10-10）
+
+- 用户担心缺少整体抽象类/汇总，核对events.RunFailureData冻结结构、各finished payload及Web asdict/终局消费，指出已有统一失败表达但不是统一Exception父类。异常控制/失败数据/恢复策略分工明确。
+- 记录真实分散点：模块异常与分类组合、call_observation.failure_data和application.run_events组合分支、应用非模型错误部分落unknown；不称已有全项目完整分类体系。建议先保留模块异常/SDK原异常，用现有契约整理职责地图，学习后评估集中映射，未授权/未实施基类或重构。
+- Pi当前流协议链已核对，补读AgentX3fcfa0e TaskExecutionHandler AiServices→AbstractMessageHandler TokenStream.onError→终止/失败上报/hooks，只作为边界对照，不照搬正文展示或声称全异常共同根类。
+- 本轮源码/文档检查，无新功能测试/产品改动，不提交push。地图补入Lesson26；当前理解待反馈，下一步保持unknown安全诊断。
+
+## 265. 异常整理时点建议（2026-10-10）
+
+- 用户问先学完还是现在改。建议先读完unknown诊断并补看失败结构/转换/应用终局一条链，再单独确定整理范围，不等待全项目学习结束，也不立即重构当前模块。
+- 整理先确认实际职责或重复问题，以行为保持/测试为约束；不默认增加共同异常父类、改变重试策略或依相似片段立即抽象。建议尚待用户确认，不当作已授权实施计划。
+- 仅核对源码与更新课堂/交接，无功能修改/新测试，不提交push。当前下一步仍unknown_failure_diagnostics82–89。
+
+## 266. 确认整理顺序与unknown诊断课堂（2026-10-10）
+
+- 用户同意先学完失败小链再整理。顺序已确认，具体重构范围仍待链路汇总/Spec，不自动添加父类或实现外部重试。
+- Lesson26读errors.py82–89：返回诊断dict、type类名、SDK类型限定status、严格整数/100–599/短路与比较、新增可选键；调用方仅unknown时展开到结构化日志。当前无类名格式校验、status日志不是RunFailureData字段，不把局部诊断夸大完整安全保证。
+- 五合成案例退出0；未知异常应用接线四例实际4 passed in 0.57s，原异常对象传播/失败终局/关联及合成正文脱敏通过。无真实.env/实网/产品测试源码修改，不称全量构建。文档检查后不提交push。
+- errors.py核心全部已讲，用户掌握待反馈、独立实现/追问未评估。唯一下一步RunFailureData与failure_data，再应用失败收尾→职责汇总与整理Spec，随后回第2章stop_reason.py。
+
+## 267. 统一失败数据与转换课堂（2026-10-10）
+
+- 用户继续，Lesson27读events.py24–45受限类型名、冻结dataclass字段/生成init/post_init、stage成员检查/category与reason生成器及regex/error_type检查；固定码格式不是完整语义枚举，也非Exception父类。
+- 读call_observation.failure_data263–272：嵌套条件展开取消/副作用未知/普通分类，固定execute，构造数据；诊断自身失败记录并回退，error_type保留原异常类型。原异常继续传播在调用方，不由此函数执行模型或raise。
+- 本地分支/冻结/两诊断失败/类型名探针通过；四字段反例+工具异常接线测试实际5 passed in 0.51s。无实网/真实.env/产品测试修改，不称全量构建；文档检查后不提交push。
+- 已讲解、用户理解待反馈，独立实现/追问未评估；唯一下一步应用failed与会话捕获/finally收尾，然后职责汇总与整理Spec，再回stop_reason.py。
+
+## 268. 原异常类型检查与应用failed课堂（2026-10-10）
+
+- 用户答“原异常”，正确识别回退失败数据error_type，未自动升级独立实现。Lesson28读RunObservation初始化关键字段与failed123–148：普通/框架控制分支、status/self.failure、显式stage优先与实际应用阶段、诊断回退、turn/context报告故障日志。
+- 仅定位SessionService catch→primary_error→failed或cancelled→raise→finally，failed自身不是raise/终局发布入口。finish在收尾末尾，具体清理/持久化与错误优先级留下一段。控制/取消不泛化所有BaseException都普通失败。
+- 现有三阶段/两诊断故障/控制异常节点实际6 passed in 0.53s；假应用局部证据，无实网/真实.env/产品测试源码修改，不称全量构建；文档检查后不提交push。
+- 本段已讲解、理解待反馈，独立实现/追问未评估；唯一下一步_cleanup_run/_finish_run与RunObservation.finish，之后职责汇总及整理Spec。
+
+## 269. failed理解检查与收尾错误优先级（2026-10-10）
+
+- 用户正确答failed更新观察状态。Lesson28继续_finish_run419–429及末尾secondary传播：外层保留primary_error、finally期间暂缓原异常传播，正常运行清理首错转cleanup失败，已有主要异常时清理错只记录不覆盖。
+- review_required局部快照用于后续终局；此段未讲完整_cleanup_run/持久化/flags/finish，不把源码已读自动记已教。未承诺所有finally故障点可恢复或次要错误均结构化汇总。
+- 两例现有清理错误测试通过，命令结果记Lesson28；合成场景区分主要错存在与不存在，测试同时确认busy释放/失败阶段/无模拟正文日志。无实网/产品测试源码修改，不提交push。
+- 本段已讲解、理解待反馈，独立实现/追问未评估；唯一下一步_cleanup_run字段、_finish_run后半与RunObservation.finish，闭合链后整理职责汇总/Spec。
+
+## 270. 会话清理与持久化占用课堂（2026-10-10）
+
+- 用户继续，Lesson28读_cleanup_run396–417锁内pending_turn有限快照/队列清空/controls.close/active与标志、无persistence释放busy；锁外记录丢弃并返回人工核对快照。controls.close与flush/远端取消不同。
+- 读_finish_run430–449保存结束状态、首错误与已有主要/次要错误优先级、finally释放持久化会话字段。核对异步对应await afinish。存储失败可busy=False但被blocked门禁阻止下一run，不等于ready或保存确认。
+- 四定向现有用例实际4 passed in 0.82s：提交等待busy/no terminal、存储失败无成功/阻跑、首模型错保留、正常终局字段已清理；假模型/临时SQLite事件同步，无实网/真实.env/产品测试源码修改，文档检查后不提交push。
+- 已讲解、用户理解待反馈，独立实现/追问未评估；唯一下一步RunObservation.finish163–170与_finish_run450–457终局/交付故障，之后汇总职责与确定整理Spec。
+
+## 271. 终局发布与失败主链收尾课堂（2026-10-10）
+
+- 用户继续，Lesson28读finish163–170顺序flush/普通终局门禁/四状态与payload、RunFinishedData校验以及_finish_run450–457首错优先/发布故障；发布失败不保证终局送达，普通订阅者隔离与入口故障不同。
+- 定位Web wire_event/asdict和run_delivery终局消费，未提前教完整SSE/投影。说明局部review快照、私有observation和publisher关联避免新run污染旧终局，顺序按run而非全局绝不交错。
+- payload四正常/三反例探针通过；三定向既有用例实际3 passed in 0.52s，主异常保留/observer隔离/旧终局快照验证。无实网/真实.env/产品测试源码修改，不称全量构建；文档检查后不提交push。
+- 当前失败主链核心讲完，理解待反馈/独立实现和追问未评估；唯一下一步按已确认顺序做异常职责汇总，确定最小整理范围并写Spec，确认后实施，不扩大到外部重试/统一异常父类；随后回第2章stop_reason。
+
+## 272. 异常职责汇总与Spec079草案（2026-10-10）
+
+- 用户继续已确认的汇总阶段，新增docs/1.0/exception-architecture.md，区分原异常/模型分类/失败数据/运行终局，列所属层、控制/恢复/工具反馈/持久化/消费者/Web入口职责及当前unknown限制；保留四层方向，不把全部错误塞底层。
+- 无网络组件探针复现新明确缺口：模型handler抛合成TimeoutError，call_observation分类器注入ValueError，实际外部caught为诊断ValueError而非原异常。不是推测，也不是已写pytest红灯；源代码/测试未修改。
+- Spec079成稿：新增runtime失败构造入口，收敛模型/工具/应用重复转换并保护分类及unknown诊断普通故障；保留failure_data(error)签名/位置、原日志与事件字段/阶段/控制/恢复/清理/重试。三生产文件及测试注入迁移/回归，具体范围尚待用户确认后实施。
+- 当前LangChain1.4.2/core1.6.6/LangGraph1.2.12，Pi a69bef789和AgentX3fcfa0e相关生产/消费链核对；仅静态/合成故障证据，无实网/新全量验证，不提交push。
+- 下一步唯一明确：用户确认Spec079具体范围后先写回归红灯，再实现与全量验证；不插入外部重试或新异常父类。学习用户掌握未新增独立实现证据。
+
+## 273. 用户三项异常要求与架构复审（2026-10-10）
+
+- 用户要求三层独立、整体异常目录/调用清晰、自定义异常可扩展，明确不能无脑最小修补；暂停原Spec079三生产文件集中转换方向，标旧方案不可直接实施。新增exception-design-review.md并同步地图/计划/未来待办。
+- 静态AST检查三个目录59文件，无反向层导入；只证明静态依赖。发现语义归属问题：ModelResponseRejected下层定义/上层产生，App非模型故障走模型分类；当前无正式classifier注入入口。自定义Exception能unknown传播，ToolException子类可用框架handler反馈，不夸大完整扩展。
+- 本机LangChain已有ModelError统一族，OpenAI/Anthropic多重继承SDK类；合成OpenAI429适配辅助函数得到OpenAIRateLimitError，兼容框架/SDK且cause原对象，但项目仍unknown。源码与无网络探针，不是实网/完整调用验证。
+- 自定义ToolException子类实际invoke得到ToolMessage(error)/call_id保留/安全配置文字；ToolErrorMiddleware本机和官方核对，可显式内容或None决定反馈/传播，Graph控制保留。未装配新middleware/修改依赖。
+- Pi a69bef789自定义工具注册/包装/execute catch、provider流协议/extension onError；AgentX3fcfa0e业务异常继承/GlobalExceptionHandler及TokenStream分路径已追；不虚构统一异常注册器或全局根类。
+- 当前仅建议各层归属+共同安全描述+实例级扩展，原异常传播与策略分离；具体接口/兼容与修订Spec待确认。用户局部能懂、整体链仍不清楚；不记独立追踪/实现/追问。无产品测试源码/环境改动，不提交push；唯一下一步确认复审方向后重写Spec079。
+
+## 274. Spec079分层异常契约与扩展实现（2026-10-10）
+
+- 用户“做吧”批准复审方向，重写Spec079后按TDD实施：contracts冻结描述/None匹配/同步回调签名，model框架ModelError优先+SDK补充/目录model_id快照，runtime错误目录/保护分类/上下文策略与内部报告，App领域错误/try_describe/配置方法及身份复用描述。旧异常导入/事件及日志结构/公开运行签名保持，无新依赖/环境文件修改/真实模型请求。
+- 模型、工具、App新增自定义错误实际接线；可恢复工具沿框架ToolException返回ToolMessage，致命工具走独立描述/原异常传播。App不再把会话/保存错误交SDK分类；真实source由边界/错误域提供，支持(error,source)且兼容单参及其默认参数。配置busy拒绝/先校验后提交，两目录/两App隔离和run快照已有测试。
+- 回归先见诊断故障四红灯；审查两描述/旧桥接缺陷、摘要cause/映射、Graph控制、可选默认值均补红灯修源；框架验证没有放宽旧断言。中途误加日志error_source导致八旧测试失败，删除该源码字段保留旧断言，source只内部使用。新增三个测试文件共34例，旧应用测试只迁移故障注入入口。
+- 最终`.venv/bin/python -m pytest -q --tb=short`：962 passed in34.15s；frontend npm test -- --run：9文件27通过；npm run build：tsc/Vite成功；compileall/pip check/diff --check通过。78产品Python文件≤500行，AST比较355个既有公开定义参数签名不变；搬移类型旧导入以同一对象兼容。
+- check独立架构/安全审查完成，三个架构发现修复并复查无剩余高置信问题；安全无具体高置信问题。证据是本机fake/mock/临时SQLite，不是所有供应商/生产负载/恶意插件隔离。新增回调是可信Python装配，不是HTTP任意函数入口。
+- docs/1.0/exception-architecture.md已重写当前模块目录、三条实际时序及配置示例；review保留历史，Spec/plan/future/map已同步。此前课堂讲旧版，不能把实现当用户掌握。唯一下一步从contracts.FailureDescription/resolve_failure按新图学习，再沿模型→Runtime→App追一条失败；之后回第2章stop_reason。当前未提交/push。
+
+## 275. 新版异常课堂：先建立两条路径（2026-10-10）
+
+- 用户要求顺利理解完整流程，Lesson29先用合成模型TimeoutError给出装配→模型描述→内部报告→原异常传播→应用身份复用→收尾/终局地图；展开reporter与缓存核心，分类器/快照/保护分支仍待逐段学习。
+- 无网络边界探针通过原异常身份、描述复用、failure及终局时点断言；首次遗漏start导致publisher拒绝终局，补齐实验生命周期后通过，非产品缺陷。完整装配既有回归`.venv/bin/python -m pytest -q tests/test_failure_extension_boundaries.py::test_async_custom_model_is_described_once_and_keeps_original`为1 passed in0.52s。
+- 仅更新课堂/索引/地图/交接，不修改产品代码、测试、环境或依赖，不提交push；未新增全量构建或实网证据。理解待用户反馈，独立实现/追问未评估。
+- 用户对内部报告时是否已写failure/发终局答“没有”，正确；记录该时点理解，整条链路独立追踪/实现仍未评估。唯一下一步细读contracts的描述与resolve_failure，沿同一地图继续。
+
+## 276. 新版异常课堂：FailureDescription（2026-10-10）
+
+- 用户继续，Lesson30逐行讲contracts/failures.py的FailureSource及FailureDescription：标准库dataclass冻结/自动post_init、四字段、Literal与运行时检查、any/or短路及两正则。本类不负责分类/重试/终局，固定码格式校验不等于完整语义或安全隔离。
+- 无网络真实类探针正常构造、四非法字段拒绝、冻结赋值拒绝、unknown合法全部通过；没有修改产品源码/测试/环境或依赖，不作全量构建声明，不提交push。已讲解、理解待反馈，独立实现/追问未评估。
+- 唯一下一步resolve_failure分类选择与诊断失败回退，解释None/unknown语义后逐行读，继续沿Lesson29整体图。
+- 用户答“检查参数时被拒绝”，正确识别reason格式校验；补充__post_init__时点及构造未返回，未新增独立实现/追问证据。下一步仍为resolve_failure。
+
+## 277. 新版异常课堂：描述选择与诊断回退（2026-10-10）
+
+- Lesson31逐行讲resolve_failure：自定义顺序/None继续/合法unknown命中，协程拒绝和对应字段验证，内置元组与fallback=False未匹配None，普通诊断故障记录并回退unknown。原error_type保留，原异常由外层裸raise，未把分类和运行策略混为一体。
+- 五路径无网络探针通过；`.venv/bin/python -m pytest -q tests/test_failure_boundary_regression.py::test_model_diagnostic_failure_preserves_original`实际4 passed in0.80s。无产品测试源码/环境修改、不提交push、不作全量构建或实网声明。
+- 已讲解、理解待反馈；独立实现/追问未评估。唯一下一步ErrorClassifier/normalize_classifiers签名适配，再回模型目录快照与Runtime策略；继续沿Lesson29整体地图。
+- 用户答“不会”，正确识别合法unknown描述会终止分类选择，不再调用内置；该分支已理解，其他未答分支与独立实现/追问仍不补记。下一步仍为签名适配。
+
+## 278. 新版异常课堂：单参/双参分类器适配（2026-10-10）
+
+- Lesson32逐行讲ErrorClassifier及normalize_classifiers：Callable类型不是运行包装；同步调用性/签名验证、bind仅检查不执行、单参优先/双参原样、lambda默认参数捕获当前函数与保留原默认值；实际分类仍在resolve_failure执行。
+- 无网络探针验证适配不执行函数、单/双参及可选默认结果、三个非法输入拒绝；定向默认值/配置原子异步拒绝回归2 passed in0.81s。仅改学习文档，不改产品/测试/环境或依赖，不提交push、不作全量构建/实网声明。
+- 已讲解、理解待反馈，独立实现/追问未评估。唯一下一步模型目录错误配置及failure_describer运行快照，再读RuntimeErrorPolicy，沿Lesson29图继续。
+- 用户答“'timeout'”，正确识别单参优先适配保留可选参数默认值；记录该分支理解，不补记整个适配函数独立实现/追问。下一步仍为模型目录配置与运行快照。
+
+## 279. 新版异常课堂：模型目录与每次运行快照（2026-10-10）
+
+- Lesson33逐行讲model_access.ModelCatalog的分类器映射/锁、configure_error_classifiers、describe_failure、failure_describer；闭包保存映射浅复制/已知模型集合，当前读取与run快照区别，快照覆盖所有model_id不冻结模型选择。
+- 明确底层修改快照实验不代表App允许busy中改配置；函数/外部可变状态并未深拷贝，不声称插件隔离。SessionService RuntimeErrorPolicy装配已定位，未记整个接口已学。
+- 无网络目录/fake模型探针旧A规则/新A规则/B内置/未知ID验证通过；定向test_model_classifiers_are_model_scoped_and_snapshotted为1 passed in0.50s。仅学习文档，不改产品/测试/.env/依赖，不提交push、无全量构建或实网声明。
+- 已讲解、理解待反馈；独立实现/追问未评估。唯一下一步RuntimeErrorPolicy的模型委托与运行/保护错误分类，沿Lesson29地图继续。
+- 用户答“旧的、新的”，正确区分旧快照与当前目录读取；记录该时序理解，不补记独立实现/追问。下一步仍为RuntimeErrorPolicy。
+
+## 280. 新版异常课堂：Runtime普通模型委托（2026-10-10）
+
+- Lesson34讲RuntimeErrorPolicy构造/规范化、冻结后初始化转换及模型入口校验，source=model普通TimeoutError分支、lambda绑定实际model_id、外层resolve_failure委托保护与内层模型分类。运行层classifiers不参与本例模型分类，不是两次重试/模型请求。
+- 控制/保护分支仅定位未逐行讲，下课继续；诊断staticmethod已讲固定日志/安全类型。无网络探针确认构造不执行、仅模型规则调用、默认模型入口与坏描述入口unknown回退；同步/异步模型装配回归2 passed in0.52s。
+- 仅学习文档，无产品/测试/环境/依赖修改、不提交push，无全量构建/实网声明。已讲解本路径，理解待反馈，独立实现/追问未评估。唯一下一步Runtime控制/保护错误及普通runtime/tool分支。
+
+## 281. 暂停异常新分支，复盘分类器与描述（2026-10-10）
+
+- 用户反馈调用链长、又迷糊，分类器/描述关系不清；停止原保护分支推进，补Lesson34数据流复盘。明确error原对象→classifier函数→元组或完整描述→resolve构造/选择→description数据，区别包装/规则选择函数与实际业务规则，准备阶段不分类。
+- 无网络实际Catalog/Policy跟踪探针确认自定义None→内置(transient,timeout)→模型四字段描述→Runtime同一描述返回，规则收到同一原异常；进程内记录包装finally还原，无产品源码/测试/环境/依赖修改，不提交push或作完整应用/构建/实网声明。
+- 当前整体理解未确认，之前局部正确不升级整链掌握。唯一下一步先确认分类器/描述/原异常关系，再恢复剩余保护/普通运行分支和App回退；此时不新增学习主题。
+- 用户答“两个对象分别存在”，正确区分原异常与FailureDescription产物；仅记录此概念理解，整链追踪/独立实现仍未评估。保持数据流复盘节奏，待用户继续后再推进剩余分支。
+
+## 282. 数据流课堂：无效模型响应与保护分类（2026-10-10）
+
+- 用户继续，Lesson35只追AIMessage.invalid_tool_calls→运行层_accept产生ModelResponseRejected→Policy固定保护分类/source重归runtime→描述报告/原异常传播。本例不调用模型/运行自定义分类器，不执行无效工具，不泛化为SDK错误或所有工具失败都终止。
+- 无网络消息/Policy探针确认两个对象与扩展绕过；响应门禁/保护规则相关回归7 passed in0.56s（fake模型）。其他保护/控制/普通runtime/tool与App回退仍待读，不记整文件已掌握。
+- 仅学习文档、无产品测试环境依赖修改，不提交push，无全量构建/实网声明。已讲解、理解待反馈；唯一下一步工具结果不确定的保护数据流，再覆盖其余分支。
+
+## 283. 数据流课堂：未知写结果与核对门禁（2026-10-10）
+
+- 用户继续未答Lesson35检查，保留未确认。Lesson36追write替换边界OSError→WriteOutcomeUnknown(from cause)→tool保护描述→报告/传播→App failed及manual_review_required；明确准备阶段ToolException反馈不同、busy释放不等于核对解除、unknown类别不同。
+- 临时目录注入真实替换后合成异常，验证目标已变/业务异常与底层cause/自定义规则绕过，进程内patch finally还原；不宣称真实OS自然复现。相关fake模型/临时文件回归2 passed in0.66s。
+- 仅学习文档，无产品/测试/环境/依赖修改，不提交push，不作全量构建/实网声明。理解待反馈/独立实现追问未评估。唯一下一步停止/取消一个数据流，再补普通runtime/tool及App未报告回退。
+
+## 284. 数据流课堂：用户停止与运行终局（2026-10-10）
+
+- 用户继续，Lesson37限定原生异步模型等待/无活动工具：RunControl请求取消子任务→UserStop→保护描述/模型调用failed→StopModel捕获转换图run_stopped→边界结束→App正常结果路径stopped。强调分类描述不直接决定终局、没有虚构AI回答，外部取消/工具收尾另学。
+- 现有fake模型助手装配的真实图探针打印并断言model failed/user_stop/UserStop与run stopped/active/failure=None、busy=False；首次实验打印错outcome字段改为status后通过，无产品源码改动。定向停止回归1 passed in0.51s；无实网/远端计算终止或工具强杀声明。
+- 只改学习文档，无产品/测试/环境/依赖修改、不提交push、不作全量构建声明。Lesson36未答不记掌握；本例已讲解、理解待反馈，独立实现追问未评估。唯一下一步外部取消对照，再补普通运行分类/App回退。
+
+## 285. 暂停细节课堂，建立异常系统完整总图（2026-10-10）
+
+- 用户反馈代码细节多/疲劳/方向不清，明确要求完整调用图含对象/类/功能/数据/各分支。停止原Lesson38方向，优先扩展已有exception-architecture.md的1A总图，不新增重复说明模块/产品抽象。
+- 总图核对当前代码：对象关系、配置/ContextVar/context接线、原异常与描述双路回流、Runtime保护/模型/运行选择、App身份复用/领域分类/回退、全部主要执行/恢复/停止/取消/审批/准入/收尾/发布分支及输出状态。明确恢复/停止不等于run failed、准入不造run、publish故障不保证终局、保存门禁不等于busy。
+- 仅源码查阅及文档整理，图是结构证据；未新增全量测试/实网结果，不改产品/测试/.env/依赖、不提交push。用户整体理解未确认，图中定位不补记所有代码已学/独立实现。
+- 当前唯一下一步由用户按总图选节点/场景后再读；不自动恢复密集逐行或继续堆新课。
+
+## 286. 讨论当前异常设计的常见性与复杂度（2026-10-11）
+
+- 用户总图后仍感复杂，转为设计评价，停止代码教学/实施方向。核对当前三层源码、Spec079保原异常契约，Pi a69bef789 provider→stopReason→loop/end和工具isError路径；AgentX3fcfa0e业务HTTP异常及TokenStream.onError/trace包装；LangChain本机版本与官方ModelError/middleware能力。
+- 结论记录在exception-design-review第8节：原则有直接先例，具体双resolve/多次签名规范化/身份报告组合非框架规定、无多数使用统计；普通失败路径有收敛空间，业务安全/控制分支不能仅为短图删除。Pi的核心公开协议集中，AgentX产品多边界也非整体简单。
+- 报告表承载下层描述+上层同一异常身份的实际契约，改变为包装异常/统一结果须另行确认。当前只提出审视重复委托/适配与契约取舍，不直接重构、不新增Spec。
+- 只读产品源码/官方资料、补讨论记录，无产品/测试/配置/依赖改动、无新运行/构建证据、不提交push。当前唯一下一步与用户确定简化目标和不可变异常契约，再做具体方案；不自动继续细节课堂。
+
+## 287. 讨论核对门禁与单一运行失败载体（2026-10-11）
+
+- 用户要求解释未知写结果核对的目的、实施前先聊清方案。核对提交边界全部OSError的保守转换、App准入阻断、没有公开核对解除闭环、Pi write等待mutation操作/loop错误结果。纠正不能把全部写异常都宣称真实未知，之前post-replace是人工故障注入；当前门禁非成熟恢复能力。
+- 推荐结构草案在review第9节：Runtime单一失败载体携带E+D，App直接消费并收尾；消除callback/id回查与普通模型双resolve，保留工具反馈、控制与保护语义。公开app原异常合同偏好已异步询问，未答；独立Runtime/middleware行为兼容需正式Spec列明，不能仅保持签名就声称全兼容。
+- 草案不是已批准实施：超过8文件，先定合同/边界/完整Spec和测试再实现；本轮不创建载体源码、不改产品/测试/.env/依赖、不提交push或报告新运行证据。工具核对策略调整单独待讨论，future-work补完成判据。
+- 唯一下一步结合用户对公开失败合同的回答，确认结构与工具策略范围后写可执行Spec；不自动实现或恢复细节课堂。
+
+## 288. 用户原异常标注方案评估与Spec080草稿（2026-10-11）
+
+- 用户明确App原异常对象合同，指出包装的类型/控制/多出口/traceback问题，建议error.naiyue_failure。推荐采用，撤回RuntimeFailure候选；review第10节/Spec080给出安全标注回传、无包装/还原。尚未批准产品实现。
+- 独立进程探针验证9类属性、身份/cause/context/suppress、拒绝setter不换主错、辅助函数不进原traceback；真实类型重试标注原异常2尝试、合成包装1尝试；包装catch重raise的context污染已复现；getter/非法值/type/foreign scope回退通过。
+- 补固定诊断、描述校验、run_id归属。共享异常覆盖已复现，单值不保证并发精确描述，拒绝foreign run后允许退化。故障ContextVar缩为仅策略，不能把模型/摘要下行策略一同删掉。
+- Spec080限定5生产文件（contracts/failures、runtime/errors/invocation_context/__init__、app/run_events）及测试文档，删reporter/id表、普通model双resolve，保留公开异常/字段/控制/业务；未发布内部绑定迁移列明。独立Runtime/直接middleware仍原类型。
+- 只文档与独立探针，无产品/测试/.env/依赖修改、不提交push、无新全量测试/构建/实网声明。用户提供方案与分析真实记录，不记独立实施/面试掌握。唯一下一步确认Spec080草稿后TDD实施，当前不自动开始。
+
+## 289. 澄清自定义异常与需求驱动的决策（2026-10-11）
+
+- 用户询问属性方案是否无自定义异常、需求与常见架构怎样决策。核对已有Runtime/App类型及Spec080，明确仅撤回通用包装，业务类型与分类扩展保持；方案不强求全局根异常，也不禁止有语义的cause保留转换。
+- review第11节记录场景行为→接口诊断合同→分层→框架/参考比较→最少机制→测试/可读性的顺序，用户确认行为边界、助手承担技术方案，不要求用户先发明类树。官方模型/工具错误文档及本地Pi/AgentX边界再次核对，仅结构证据。
+- 只补方案澄清/交接，无产品测试环境依赖改动，无新运行证据、不提交push。Spec080仍草稿，问题不是实施授权。唯一下一步先定错误行为/公开合同与范围，再确认收敛Spec，不继续密集源码课堂。
+
+## 290. Agent健壮性目标蓝图与反馈边界确认（2026-10-11）
+
+- 用户粘贴原则并系统提出工具临时重试/反馈/熔断/备用、模型重试/持续不可用切换和正常返回质量验证。完成agent-resilience-design.md：失败事实+来源/上下文→恢复决策→执行动作→应用合同，不造大一统异常引擎；测试结果与基础设施失败、重放安全、唯一重试所有者、依赖作用域及半开/隔离、流式草稿/真实备用能力均纳入。
+- 实际核对本机OpenAI/Anthropic SDK退避/抖动与项目默认2重试60秒，工具未有通用重试；官方四种middleware优先复用验证。Pi a69bef789 provider生产调用关闭SDK并调用可取消retry helper；AgentX3fcfa0e用户fallbackChain→HA gateway返回实际模型实例/结果上报（内部熔断未深验）。只源码与接口证据，无新请求/故障实验。
+- 用户选择确认“可配对则反馈，协议破坏则停止”；与当前invalid_tool_calls整轮拒绝不同，目标要求独立配对/有界修复切片，不能只工具handler声称覆盖。新设计对程序bug、未知副作用和权限绕过不一刀切反馈。
+- Spec080仍仅基础草稿，未来能力/完成判据已同步plan/future-work，按A基础→B反馈→C安全工具重试→D模型attempt→E熔断隔离→F备用/质量推进；每阶段再锁定配置和验证，不立即编码全部蓝图。
+- 仅文档，无产品/测试/.env/依赖改动，不提交push、无新测试构建/实网或生产能力声明。唯一下一步用户审阅整体职责/处理表后确认首个基础切片；不直接以选择回复当所有功能实现授权。
+
+## 291. 事件与异常共同收敛讨论（2026-10-11）
+
+- 用户提出消费者倒推、Pi分层、生命周期检查移测试、观察不影响执行、集中run上下文，明确建议不是马上动手。已写event-exception-convergence-design.md，无产品/测试修改。
+- 当前注册27事件/6个ContextVar；CLI有control/压缩/恢复消费，Web有control_delivered，turn无专门UI但日志消费；MessageStateObserver无额外bind。内容payload已有白名单JSON/增量，不等于全部安全码。
+- 假模型注入accepted-model结束事件发布ValueError：正常returned/completed，对照ValueError/failed，确认观测影响结果；相关27 passed in 0.57s仅当前基线，不是修复证据。
+- Pi a69bef789 core10种、顺序await监听但未逐个隔离；AgentSession._emit直接调用，message_end监听先于保存。AgentX3fcfa0e完成回调保存/transport/hook分开，ThreadLocal追踪封装。不能把必要保存变可选监听。
+- 推荐普通观察隔离、跨事件规则移测试检查器，安全/输入/真实协议门禁保留；检查器需测试末断言否则隔离可能误绿。单run服务对象+一个集中ContextVar兼容桥接，不承诺零隐式依赖/改公开签名。
+- 合并设计，分观测安全/校验迁移→run依赖/Spec080标注两片；超过8文件先完整Spec，不删事件/改线协议，不搬Runtime压缩到App。custom只是图内候选传输，不能覆盖图外控制/启动/保存终局，本轮未接线验证。
+- 唯一下一步确认职责/保留边界后写共同执行Spec，优先观测不影响运行；不恢复密集课堂、不自动产品实施。
+
+## 292. Spec081跨会话续接与两片实施收尾（2026-10-11）
+
+- 用户要求续接上个会话已批准的Spec。读当前README、计划、交接、Spec080/081及未提交工作区；上个会话最后几次运行中断，不用其对话结论替代当前代码。现有两片接线与测试已在工作区，未切分支、回滚、提交或修改环境/依赖。
+- 续接时定向65例通过，初始全量992例通过，编译与依赖检查通过；前端9文件27例及TypeScript/Vite构建通过。这些是修补前基线，不是最终验收。
+- 发现`RunObservation.failed/cancelled`的外层`except BaseException`吞掉观察器中的控制信号；先加两例回归并看到`2 failed`，再删外层捕获，由公共`observe`继续隔离普通Exception。相关定向48例通过。
+- 发现Web所有事件丢失后返回503会删待定回执，同一request_id重试使假模型执行两次；先加回归并看到`1 failed`，再保留当前进程内待定回执并计入容量。相同正文重复请求固定503、不同正文冲突、新请求容量满拒绝；Web定向26例通过。未观察到run ID时不伪造ID；重启后幂等不在本片保证内。
+- 最终`.venv/bin/python -m pytest -q --tb=short`为`994 passed in 34.77s`；`.venv/bin/python -m compileall -q naiyue_test_agent tests scripts`退出0，`.venv/bin/python -m pip check`为`No broken requirements found.`，`git diff --check`退出0；`frontend`目录`npm test -- --run`为9文件27通过，`npm run build`的`tsc --noEmit`及Vite构建成功。均为本机假模型/故障注入/临时SQLite及前端构建证据，未发真实模型请求。
+- 用户理解证据未新增；代码由助手续接，不能记为用户独立实现或面试追问掌握。本机Spec081实现与验证已收尾，仍未提交/推送；唯一下一步是由用户选择理解复盘或新的功能切片，真实供应商、代表性并发及跨进程回执按future-work另行验收。
+
+## 293. Spec081后恢复第二章衔接学习（2026-10-11）
+
+- 用户同意先学习，并明确此前因链路复杂整体未理解。开始Lesson38，只追普通模型TimeoutError的描述标注/裸raise/App读取；先建立两个对象与一条主链，暂不展开分类器、RunServices和控制恢复分支。
+- 实际源码与无网络边界探针确认同一原异常、同一描述、run标注匹配；标注时应用初始failure=None，App failed之后变execute/transient/timeout。探针不含完整Agent/SDK请求/必要保存/终局发布，不作全量构建或实网声明。
+- 新增lesson38并更新地图/索引，旧reporter/id表课堂标为历史。用户理解检查待答，未新增独立追踪/实现/追问证据；只改学习文档，未改产品/测试/环境/依赖、未提交push。
+- 唯一下一步根据用户回答停在对象回传或细读describe_failure_in_context；补普通观察隔离后回第二章stop_reason，随后再定无效调用反馈切片。
+
+## 293. 中断后再次确认当前工作区验收（2026-10-11）
+
+- 用户要求重试/继续，先检查在途测试及实际工作区。发现已存在292续接记录及控制信号/无事件回执补丁，保留这些改动，没有覆盖为中断前旧版本；当前代码已包含快速成功/失败注册修正与无ID待定回执保护。
+- 重新执行`.venv/bin/python -m pytest -q --tb=short`→`994 passed in 35.56s`；frontend`npm test -- --run`→9文件27通过，`npm run build`→tsc/Vite通过。compileall0、pip check无冲突、diff check0。静态检查生产≤500、单ContextVar；四入口模块51个既有公开参数AST一致。
+- 本轮原始快照相比23生产/9测试文件，其他未提交工作保持。此前本机HTTP404的两种curl均回同ID ToolMessage给假模型，两个HTTP请求无重试；不把假模型done称作测试业务质量。用户再次明确重试对象为外部临时网络/超时/限流/MCP插件不可用，404本身不重试，已入蓝图。
+- 设计稿注明已由Spec081实现；事件丢失可降级、原异常标注不可用可退化、慢听众延迟和跨进程幂等仍有边界。没有真实模型新请求、环境/依赖/数据库模式变化、提交push或新增掌握记录。
+- 唯一建议下一步：按收敛后的执行链、观察链和失败描述回传讲一次完整数据流，再决定工具反馈/安全外部重试切片；不自动启动长期能力。
+
+## 294. 衔接课堂：描述的局部return与异常上抛（2026-10-11）
+
+- 用户答“没有”，正确识别属性标注时应用尚未完成失败收尾；只记录该时点理解，整体链路/独立实现/追问未评估。
+- Lesson38继续agent_runtime/errors.py97–103：取本run策略、类型与默认回退、describe生成描述、attach标注、return给直接调用者_failed。用具体context与TimeoutError说明局部return不同于middleware随后裸raise，尚不展开分类器/RunServices内部。
+- 仅读当前代码并更新课堂/交接，未修改产品/测试/环境或发网络请求；无新增功能测试/构建证据，不提交push。
+- 唯一下一步等待本段局部return理解反馈，再读普通模型委托或标注/读取；补观察隔离后回第二章stop_reason。
+
+## 295. 用户观察入口与剩余分类复杂度建议核验（2026-10-11）
+
+- 用户提出修改建议并要求判断是否正确，暂停Lesson38推进，核验当前代码/Spec及实际调用方；评估写入exception-design-review第13节，未修改生产代码或测试。
+- 无网络探针复现字符串方法拼错被隔离、整观察器降级、后续正确方法未执行；lambda内错误同样落入捕获，绑定方法查找错误在helper前暴露。不能单凭AttributeError/TypeError决定测试/生产不同传播，建议显式验收非预期观察故障与降级。
+- 两条保护/内置compaction及tool_batch重复成立；两签名适配仍有重复准备成本，合同不可直接删。模型层共享resolve有实质职责，旧Runtime双resolve已移除；6个bind/failure_data是主链外兼容入口，当前单ContextVar，移除须明确兼容范围。emit工厂同步求值与导入风格建议成立。
+- 当前定向pytest为37 passed in0.94s，探针退出0，仅现有基线/建议验证，不称修复。只改讨论/交接文档，未改环境/依赖/数据库、未发真实请求或提交push。
+- 唯一下一步按核验结论确定可调用观察入口、测试严格验收与重复规则收敛的具体范围；如进入实施先同步Spec，再TDD，课堂保持Lesson38位置。
+
+## 296. 获批可调用观察入口与严格观察验收补充（2026-10-11）
+
+- 用户明确“做吧”，按Spec081第7节实施；保留已有未提交工作。先加绑定调用合同/正常路径健康/负例验收与保护分类回归，实际`7 failed, 11 passed`后修改helper并迁移86个调用点（10文件）。非可调用操作直接拒绝；方法内部普通Exception继续降级/安全诊断，BaseException保留；未添加测试模式生产分支。
+- 扩展tests/event_sequence.py的显式assert_healthy，是为防止运行成功掩盖观察错误，未改conftest/运行配置。同步工具循环、异步Steering/Follow-up、停止、审批恢复、压缩/溢出恢复均验收；两个负例证明隔离故障或不可用事件即使结果成功也会被健康断言拒绝。
+- _runtime_classification移除compaction/tool_batch不可达重复规则，保护分支优先合同通过；emit文档明确工厂同步立即求值，events/turn_observation导入位置已整理。共享resolve、单参/双参兼容、failure_data与六个bind入口保持，未修改环境/依赖/存储模式、未提交push。
+- 本轮13生产/3测试文件变化，新增17场景；定向`51 passed in 1.56s`，最终`.venv/bin/python -m pytest -q --tb=short`→`1011 passed in 35.97s`；compileall0、pip check无冲突、git diff --check0；frontend9文件27通过及tsc/Vite构建成功。
+- AST确认86个生产observe调用均直接绑定方法、无字符串/lambda；10调用文件AST与修改前快照仅绑定替换（扣除获批导入调整），93个既有App/Runtime公开参数保持，生产≤500行。证据为本机假模型/故障注入/临时文件，无真实模型新请求。
+- 用户给出问题分析和改动建议是实际设计参与；整体理解/独立实现/追问未新增证据。旧异常总图标明Spec079历史，当前链路见Spec081/Lesson38；唯一下一步回Lesson38确认局部return与外层raise，再继续失败描述主链及观察隔离，最后回第二章stop_reason。
+
+## 297. 澄清兼容入口究竟兼容什么（2026-10-11）
+
+- 用户询问兼容对象；读取HEAD旧实现、当前生产/测试/脚本调用方与Spec。failure_data与5个bind早期已有，主要保留模块导入/参数/默认语义/嵌套恢复；没有外部消费者或发布版本需求证据。bind_failure_policy是新内部入口，仅1测试使用，纠正泛称所有6个已发布旧API。
+- 当前bind_run_event_publisher仅2测试使用，其他4个早期bind无调用；failure_data仅兼容测试使用。测试依赖不能独立证明产品必需。current_run_control的Bash停止与current_run_event_publisher的AsyncApplication关闭门禁是实际生产消费，getter不能与闲置bind一并认定无用。
+- 仅代码/历史核对及讨论文档，无产品/测试/环境修改、无新功能验证、无删除/提交push；学习掌握未新增。下一步由用户确定是否移除无真实消费方的内部兼容桥并迁移真实getter使用，或保持Lesson38学习。
+
+## 298. 旧兼容入口与被替代同步分支清理（2026-10-11）
+
+- 用户明确授权清理全部列明兼容入口、已被新主链替代的无用逻辑并写AGENTS。新增Spec082先列删除与实际同步保留消费者，再补24场景观察`23 failed, 1 passed`；删除22函数（6bind/6getter/2通用桥/failure_data/2旧builder/3workspace包装/2旧自然结束方法），去掉旧自然结束fallback/可选停止装配分支及无用导入。收尾模式扫描再补3红灯，删除control_events纯转发模块、模型层响应拒绝别名/旧分类分支；事件/业务异常类身份保持，调用方改导入实际所属层。
+- Bash停止控制和AsyncApplication活动run关闭门禁直接取current_run_services字段，实际行为保持。9个已有测试文件迁移当前入口/回调，审批顺序与结果配对、原异常/嵌套恢复/关窗断言保留；旧builder可用性测试改验当前应用装配，未删行为测试/放宽/skip。异步模型探针更新当前装配回调。
+- 最终17生产文件变化（含删1文件），净减少229行（加41/删270），16既有测试文件变化+新增清理测试文件、1脚本变化，共新增27场景。定向`114 passed in 3.27s`，补充定向`85 passed in 1.89s`；最终`.venv/bin/python -m pytest -q --tb=short`→`1038 passed in 35.40s`；compileall0、pip check无冲突、git diff --check0；frontend9文件27通过及tsc/Vite成功；probe_async_model --help退出0，无实际网络请求。
+- AST确认22废弃名称在产品/测试/脚本无定义/导入/调用（新增测试保留名称字符串作删除回归），产品≤500。同步LocalApplication/持久会话/低层Runtime仍由具体工作区/Skill/持久探针与测试策略使用；共享同步IO和框架注册hook也服务真实调用，保留依据写Spec082第3节，未伪称全项目async-only。
+- AGENTS新增持续迁移清理规则：同单元迁移旧消费者并删除被替代逻辑，不为假设外部用户保留内部兼容；测试依赖不是保留废弃实现的理由，保留行为断言；真实外部合同/风险仍按证据讨论。已有未提交工作保留，未改.env/依赖/DB，未提交push。
+- 用户提出清理原则是实际工程决策参与；未新增独立实现/整链追踪/追问证据。唯一下一步回Lesson38确认return描述与裸raise异常，再继续当前失败主链/观察隔离，随后回第二章stop_reason。
+
+## 299. 本地提交前审查与验收（2026-10-11）
+
+- 用户明确要求先提交代码。当前main相对HEAD的全部工作区改动已逐路径核对：工程实现/测试/Spec/工程文档与此前课堂记录都与当前项目相关，无额外文件。按工程与学习记录分两个本地提交；本轮未获推送授权。
+- check深度审查使用独立架构/安全只读检查，分别定向111与95+3例通过，未发现本轮新引入的高置信阻塞缺陷。96个存在的拟提交变更文件高置信凭证扫描零命中，未读取.env；拟提交路径排除凭证、DB、venv、依赖及构建产物。
+- 本轮最终`.venv/bin/python -m pytest -q --tb=short`→`1038 passed in 35.92s`；compileall退出0、pip check无冲突、git diff --check0；frontend9文件27通过及tsc/Vite成功。实际当前文件与未跟踪模块均纳入检查，不拿历史结果代替当前验收。
+- 一项既有Web失败投影限制已记录future-work：终局事件丢失且应用失败时，工具可能仍显示running；独立最小假应用复现、父会话源码与HEAD核对相同，不扩到本轮提交修复。没有真实模型新请求或生产压力声明。
+- 当前准备依次提交工程与课堂文档，并在Git结果返回后核对提交标识/工作区状态；用户理解证据不变。唯一下一步完成本地提交后回Lesson38。

@@ -80,6 +80,8 @@
 
 ## 当前状态
 
+2026-10-11更新：按[Spec082](docs/specs/082-remove-obsolete-runtime-bridges.md)清理22个被替代函数、旧交互装配/自然结束分支及无用导入；运行依赖统一使用RunServices，旧分项bind/getter和failure_data已移除。CLI/Web继续采用正式异步应用；同步应用/持久会话和低层Runtime仍有明确探针或策略消费者，具体保留依据见Spec第3节。最新本机后端1038、前端27及构建通过；下文早期阶段记录保留历史，不作为废弃接口的使用指引。
+
 最新状态（2026-10-09）：最小本地 Web 对话已接通现有异步应用、领域事件和 SQLite/checkpoint。下列段落保留早期机制记录，能力与限制以文末 Web 入口、当前交接和对应阶段 Spec 为准；早期“尚无 Web/持久会话”不是当前状态。
 
 已准备本地 Git 仓库、协作规则、交接文档及 Python 3.12 虚拟环境，安装 LangChain、OpenAI/Anthropic/Ollama 模型适配包和 pytest。依赖检查、最小真实模型响应及一次带 middleware 观察的 create_agent 工具循环通过。正式运行层已实现按可信 `session_id` 在每次模型调用前选模，并由确定性测试验证一次运行内 A→工具→B、会话隔离和缺失 ID 的拒绝。模型接入层现可从 `.env/models.json` 加载配置并构造四类适配对象，配置驱动的 HeiyuCode 真实工具循环通过；OpenAI 官方、Claude、Ollama 尚未真实调用。首个测试策略模块用假模型从提供的 `discount_system` 公开契约文本提交结构化用例。尚无真实模型业务用例、HTTP 执行、Web、持久会话、完整轨迹系统或业务评测；也没有独立的应用构建目标。

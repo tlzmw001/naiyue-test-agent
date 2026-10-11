@@ -18,7 +18,7 @@ from naiyue_test_agent.agent_runtime.tool_approval import (
 )
 
 from .bash_output import ArchiveResult, BashOutputArchive
-from ..run_control import current_run_control
+from ..run_services import current_run_services
 
 
 logger = logging.getLogger(__name__)
@@ -147,7 +147,8 @@ def _run_host_command(command: str, root: Path, timeout: int) -> tuple[int, str,
         'PATH': f'{Path(sys.executable).parent}:/usr/bin:/bin:/usr/sbin:/sbin',
         'HOME': str(root), 'TMPDIR': str(root), 'LANG': 'en_US.UTF-8',
     }
-    control = current_run_control()
+    services = current_run_services()
+    control = services.control if services is not None else None
     if control is not None and control.requested:
         raise ToolException('Bash was not started because the user stopped this run.')
     try:

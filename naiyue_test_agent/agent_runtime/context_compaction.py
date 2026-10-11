@@ -1,5 +1,7 @@
 """Compact text history for proactive and explicit-overflow recovery."""
 
+from .observation import observe, emit_event
+
 import asyncio
 import json
 import logging
@@ -9,6 +11,7 @@ from xml.sax.saxutils import escape, quoteattr
 
 from langchain.agents.middleware import AgentMiddleware, hook_config
 from .run_control import UserStop, native_async_model
+from .errors import ContextCompactionError, RuntimeErrorPolicy
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage,
@@ -22,7 +25,7 @@ from naiyue_test_agent.model_access import (
     bind_model_output_limit,
 )
 from naiyue_test_agent.model_access.stop_reason import normalize_stop_reason
-from naiyue_test_agent.model_access.errors import classify_model_failure
+from naiyue_test_agent.model_access.errors import describe_model_failure
 from .context_summary_io import run_summary_steps, arun_summary_steps
 
 
@@ -38,10 +41,6 @@ SUMMARY_SYSTEM = (
     'Use concise sections: Goal, Constraints, Progress, Decisions, Next Steps, '
     'Critical Context.'
 )
-
-
-class ContextCompactionError(RuntimeError):
-    """A fixed, safe reason for a compaction that could not complete."""
 
 
 def _cut_at_complete_turn(messages: list, keep_tokens: int) -> int:
@@ -163,7 +162,7 @@ def _record_summary_finished(correlation, observer, operation_id, started, *, re
     logger.log(logging.ERROR if error is not None else logging.INFO,
                'context_summary_model_finished', extra={'context_compaction': payload})
     if observer is not None:
-        observer.summary_finished(operation_id, duration_ms, usage, error=error)
+        observe(observer, observer.summary_finished, operation_id, duration_ms, usage, error=error)
 
 
 def _compaction_steps(
@@ -206,7 +205,7 @@ def _compaction_steps(
         'trigger': 'overflow' if force else 'threshold',
     }})
     observer = context.get('_context_observer')
-    operation_id = (observer.begin_compaction(model_id, 'overflow' if force else 'threshold',
+    operation_id = (observe(observer, observer.begin_compaction, model_id, 'overflow' if force else 'threshold',
                                               estimated, len(messages)) if observer is not None else None)
     fallback_reason = None
     try:
@@ -223,7 +222,7 @@ def _compaction_steps(
                     },
                 })
                 if observer is not None:
-                    observer.finish_compaction(operation_id, 'skipped', 'no_safe_cut_within_send_budget')
+                    observe(observer, observer.finish_compaction, operation_id, 'skipped', 'no_safe_cut_within_send_budget')
                 return None
         split_turn_start = None
         projected = None
@@ -284,7 +283,7 @@ def _compaction_steps(
         }})
         summary_started = time.monotonic()
         if observer is not None:
-            observer.summary_started(operation_id)
+            observe(observer, observer.summary_started, operation_id)
         try:
             response = yield (bind_model_output_limit(model, summary_output['tokens']),
                               summary_request)
@@ -295,9 +294,11 @@ def _compaction_steps(
             _record_summary_finished(correlation, observer, operation_id, summary_started, error=error)
             logger.error('context_summary_model_failed error_type=%s',
                          type(error).__name__)
-            category, reason = classify_model_failure(error)
-            if category == 'transient':
-                fallback_reason = f'summary_{reason}'
+            policy = context.get('_failure_policy')
+            failure = (policy.describe(error, source='model', model_id=model_id)
+                       if isinstance(policy, RuntimeErrorPolicy) else describe_model_failure(error))
+            if failure.category == 'transient':
+                fallback_reason = f'summary_{failure.reason}'
             raise ContextCompactionError('summary_failed') from error
         _record_summary_finished(correlation, observer, operation_id, summary_started, response=response)
         if (not isinstance(response, AIMessage) or
@@ -335,7 +336,7 @@ def _compaction_steps(
             'summary_output_cap_tokens': summary_output['tokens'],
         }})
         if observer is not None:
-            observer.prepare_compaction(operation_id, summary, preserved, removed, post_estimated)
+            observe(observer, observer.prepare_compaction, operation_id, summary, preserved, removed, post_estimated)
         return {'messages': [RemoveMessage(id=REMOVE_ALL_MESSAGES),
                              summary, *preserved]}
     except asyncio.CancelledError as error:
@@ -344,8 +345,8 @@ def _compaction_steps(
             'error_type': type(error).__name__,
         }})
         if observer is not None:
-            observer.finish_compaction(operation_id, 'failed', 'summary_failed', error)
-            observer.flush()
+            observe(observer, observer.finish_compaction, operation_id, 'failed', 'summary_failed', error)
+            observe(observer, observer.flush)
         raise
     except ContextCompactionError as error:
         logger.error('context_compaction_failed reason=%s', str(error),
@@ -374,10 +375,10 @@ def _compaction_steps(
                     },
                 })
                 if observer is not None:
-                    observer.finish_compaction(operation_id, 'fallback', str(error), error)
+                    observe(observer, observer.finish_compaction, operation_id, 'fallback', str(error), error)
                 return None
         if observer is not None:
-            observer.finish_compaction(operation_id, 'failed', str(error), error)
+            observe(observer, observer.finish_compaction, operation_id, 'failed', str(error), error)
         raise
     except Exception as error:
         logger.error('context_compaction_internal_failed error_type=%s',
@@ -386,7 +387,7 @@ def _compaction_steps(
                          'reason': 'compaction_internal',
         }})
         if observer is not None:
-            observer.finish_compaction(operation_id, 'failed', 'compaction_internal', error)
+            observe(observer, observer.finish_compaction, operation_id, 'failed', 'compaction_internal', error)
         raise ContextCompactionError('compaction_internal') from error
 
 

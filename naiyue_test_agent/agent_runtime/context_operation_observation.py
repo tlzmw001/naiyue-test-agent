@@ -1,9 +1,8 @@
 """Observe bounded context operations without owning compaction or retries."""
 
+
 import logging
 from collections import deque
-from contextlib import contextmanager
-from contextvars import ContextVar
 from dataclasses import asdict
 from threading import RLock, Lock
 from uuid import uuid4
@@ -193,19 +192,3 @@ class ContextOperationObserver:
                         self._outbox.clear()
                     logger.error('context_event_publish_failed error_type=%s', safe_error_type(error))
                     return
-
-
-_BOUND_CONTEXT: ContextVar[ContextOperationObserver | None] = ContextVar('naiyue_context_observer', default=None)
-
-
-@contextmanager
-def bind_context_operation_observer(observer):
-    token = _BOUND_CONTEXT.set(observer)
-    try:
-        yield
-    finally:
-        _BOUND_CONTEXT.reset(token)
-
-
-def current_context_operation_observer():
-    return _BOUND_CONTEXT.get()

@@ -1,0 +1,47 @@
+# Spec082：清理被替代的运行入口与同步遗留分支
+
+状态：2026-10-11用户明确授权后已实现并通过本机验收，持续清理规则已写入AGENTS.md；未提交push。范围为被替代入口与遗留分支，实际同步消费者按第3节保留。
+
+## 1. 当前链路和依据
+
+CLI/Web→AsyncApplication→SessionService异步驱动→Runtime异步调用；RunObservation一次绑定RunServices→make_invocation_context生成显式context；原异常属性携带描述。分项bind/getter和failure_data已不属于这条装配/回传主链。
+
+Bash仍通过旧current_run_control读取控制，AsyncApplication关闭门禁仍通过旧current_run_event_publisher读取Publisher；迁移这两处至current_run_services对应字段后移除旧getter。六个bind中只有publisher两测试和policy一测试使用，其他无调用；测试按当前入口迁移。
+
+早期build_steerable_runtime_agent/build_interactive_runtime_agent只是包装当前_assemble_interactive_runtime，唯一旧builder测试迁至当前应用装配。finish_steering/finish_pending_messages及自然结束的旧回调fallback已被finish_run_boundary替代。workspace同步调用/恢复的三个旧包装只被批次审批测试使用，迁移至已有resource_invocation入口，保留拒绝/批准配对及顺序断言。
+
+## 2. 删除与迁移范围
+
+- 删除6个bind与6个current分项入口，以及run_services.bind_service/current_service；删除replace导入。仅保留RunServices、bind_run_services、current_run_services中心入口。
+- 删除call_observation.failure_data；测试改用明确的RuntimeErrorPolicy.describe与run_failure_data，不再隐式兼容旧签名。
+- 删除Runtime两个旧交互builder、invoke_agent_run_in_workspace/resume_agent_run_in_workspace/resume_agent_run_with_grants三包装及对应无用导入。
+- 删除SessionControlMixin.finish_steering/finish_pending_messages；当前自然边界统一finish_run_boundary。_assemble_interactive_runtime删除finish_pending_messages参数及旧fallback，is_stop_requested/finish_run_boundary/prepare_control_messages成为明确回调，移除只有旧builder需要的条件装配/纯文本fallback分支。现有应用、异步上下文测试及async-model探针同步传入这些当前回调。
+- Bash从中心服务读取control；AsyncApplication关闭门禁从中心服务读取publisher。具体停止、进程登记与关闭行为保持，未把Bash或关闭操作变成纯观察。
+- 清理上述迁移造成的无用导入与Runtime/Application旧实现搬移留下的无消费方导入；不为搬迁保留模块属性别名。
+- 收尾同模式扫描发现control_events.py仅转发session_events类型，迁移control_observation及相关测试至contracts.session_events后删除该模块；事件类对象/字段不变。model_access.errors中的ModelResponseRejected/RejectionReason旧别名及响应拒绝tuple兼容分支同属旧入口，active_stop与相关测试改从Runtime错误入口导入；模型层describe直接使用已有classify_model_failure，不保留仅排除旧别名的nested builtin。原业务异常仍是同一类，Runtime保护分类合同保持。此补充源于用户“兼容都清理”的同一授权，先补不存在旧模块/别名的红灯，再迁移，重新完整回归。
+
+生产文件：run_services、events、turn_observation、control_observation、context_operation_observation、run_control、errors、call_observation、agent_runtime/__init__、tools/bash、application/async_application、application/session_controls、session_service、application/__init__。
+
+测试：test_run_services、test_run_events、test_turn_observation、test_model_tool_subscriptions、test_failure_extension_boundaries、test_application_steering、test_application_follow_up、test_tool_batch_scheduling、test_async_context_chain；新增test_runtime_entry_cleanup作为废弃入口回归。脚本probe_async_model迁移当前回调；AGENTS、README当前状态、handoff/future-work/plan/学习导航同步。
+
+## 3. 保留项与真实消费者
+
+- build_runtime_agent被test_agent/discount_case_design与probe_tool_batch等调用，也可构建异步图；不是仅同步旧wrapper。
+- build_configured_runtime_agent仍被probe_configured_tool_loop使用。
+- build_local_application/LocalApplication、同步SessionService.run、invoke_agent_run及resources调用链仍被probe_live_workspace_tools、probe_skill_loading、probe_compaction_quality、probe_message_state_boundaries等实际脚本使用。
+- 同步PersistentApplication/SessionPersistence.finish仍被probe_persistent_session及持久恢复测试使用，当前不是空兼容壳。
+- 同步工具IO/配置读取/SQLite元数据及共享生成器步骤仍由异步驱动调用；LangChain同步hook路径也服务上述真实同步调用，不能按名称删除。统一所有探针/策略到异步属于有明确迁移范围的新单元，本片不伪称全项目async-only。
+
+## 4. 验收与接口边界
+
+本片授权删除列出的内部/旧公开模块入口；现有App.run/arun、停止、审批、模型选型、权限、原异常、事件、存储字段及实际同步入口合同保持。无DB迁移、无环境/依赖修改，旧未提交工作保留，不提交push。
+
+先写废弃入口不存在/旧回调无分支的红灯，再迁移测试并删除实现。测试参数或导入迁移是因旧入口正式废弃，必须保持原顺序/配对/身份/嵌套还原/关窗断言；旧builder可用性测试改验当前应用装配能力，不删掉行为测试。Bash停止、活动run内部关闭禁止、同步真实探针和异步Web/CLI纳入定向回归。
+
+最终全量pytest、compileall、pip check、frontend测试/构建及diff check；AST核验删除入口无定义/生产测试脚本调用，当前注册hook/明确同步消费者保留，产品≤500行。脚本仅做离线帮助/语法验证，不读取私有配置或发送真实模型请求。清理规则做文档结构验证，不编造功能红灯。
+
+## 5. 实施与验证
+
+新增27个场景：第一批24例先`23 failed, 1 passed`，确认22个旧函数及旧装配回调仍存在、当前活动run关闭门禁基线有效；补充旧事件转发模块与模型层别名的3例先全部红灯。随后删除22个旧函数及control_events转发文件，移除旧模型响应拒绝分类分支/别名并迁移读取职责和当前导入；17个生产文件变化（含删除），净减少229行（加41/删270）；16个既有测试文件按当前入口迁移、原断言保持，新增清理测试文件1个；probe_async_model按当前装配参数迁移。
+
+首片定向`114 passed in 3.27s`、补充定向`85 passed in 1.89s`；最终全量`.venv/bin/python -m pytest -q --tb=short`→`1038 passed in 35.40s`。compileall0、pip check无冲突、git diff --check0；frontend9文件27通过及tsc/Vite构建成功；`python -m scripts.probe_async_model --help`退出0，无请求。AST确认22个废弃名称无定义/导入/调用，补充回归确认旧模块/别名不存在，产品≤500行。证据为本机假模型/临时文件/SQLite，不是供应商或生产压力验证。

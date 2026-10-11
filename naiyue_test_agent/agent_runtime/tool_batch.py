@@ -9,7 +9,7 @@ from time import monotonic
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, ToolMessage
 
-from naiyue_test_agent.model_access.errors import ModelResponseRejected
+from .errors import ModelResponseRejected, ToolBatchSchedulingError
 from naiyue_test_agent.agent_runtime.call_observation import observe_tool_dispatch, aobserve_tool_dispatch
 from .async_tool_batch import AsyncBatchPlan
 from .run_control import stop_tool_message
@@ -19,10 +19,6 @@ logger = logging.getLogger(__name__)
 _MODE_KEY = 'naiyue_execution_mode'
 _PLAN_KEY = '_naiyue_tool_batch_plan'
 _WAIT_ENV = 'NAIYUE_TOOL_BATCH_WAIT_SECONDS'
-
-
-class ToolBatchSchedulingError(RuntimeError):
-    """The current tool batch cannot make safe scheduling progress."""
 
 
 class _SequentialPlan:

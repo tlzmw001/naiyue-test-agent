@@ -1,5 +1,7 @@
 """Recover one explicitly rejected model request without replaying the agent."""
 
+from .observation import observe, emit_event
+
 import asyncio
 import logging
 
@@ -28,7 +30,7 @@ def _begin_recovery(request, reason):
         'event': 'context_overflow_detected', **correlation, 'reason': reason,
     }})
     observer = context.get('_context_observer')
-    operation_id = observer.begin_recovery(limits.get('model_id')) if observer is not None else None
+    operation_id = observe(observer, observer.begin_recovery, limits.get('model_id')) if observer is not None else None
     arguments = dict(
         messages=request.messages, model=request.model, model_id=limits.get('model_id'),
         context=context, system_messages=[request.system_message] if request.system_message else [],
@@ -44,7 +46,7 @@ def _retry_request(request, update, correlation, observer, operation_id):
         'event': 'context_overflow_retry_started', **correlation,
     }})
     if observer is not None:
-        observer.retry_started(operation_id)
+        observe(observer, observer.retry_started, operation_id)
     return request.override(messages=retry_messages)
 
 
@@ -54,9 +56,9 @@ def _recovery_failed(error, stage, correlation, observer, operation_id):
         'stage': stage, 'error_type': type(error).__name__,
     }})
     if observer is not None:
-        observer.fail_recovery(operation_id, stage, error)
+        observe(observer, observer.fail_recovery, operation_id, stage, error)
         if isinstance(error, asyncio.CancelledError):
-            observer.flush()
+            observe(observer, observer.flush)
 
 
 def _recovery_returned(response, update, correlation, observer, operation_id):
@@ -64,7 +66,7 @@ def _recovery_returned(response, update, correlation, observer, operation_id):
         'event': 'context_overflow_retry_returned', **correlation,
     }})
     if observer is not None:
-        observer.retry_returned(operation_id, response)
+        observe(observer, observer.retry_returned, operation_id, response)
     # Re-add response IDs after clearing state; framework applies them before commands.
     return ExtendedModelResponse(
         model_response=response,

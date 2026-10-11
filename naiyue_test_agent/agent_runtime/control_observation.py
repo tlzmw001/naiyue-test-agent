@@ -1,9 +1,8 @@
 """Per-run control observation with FIFO delivery outside application locks."""
 
+
 import logging
 from collections import deque
-from contextlib import contextmanager
-from contextvars import ContextVar
 from dataclasses import replace
 from threading import Lock
 from uuid import uuid4
@@ -11,7 +10,7 @@ from uuid import uuid4
 from langchain_core.messages import HumanMessage
 from langgraph.errors import GraphBubbleUp
 
-from .control_events import ControlData, ApprovalRequestedData
+from naiyue_test_agent.contracts.session_events import ControlData, ApprovalRequestedData
 from .events import safe_error_type
 
 
@@ -171,19 +170,3 @@ class ControlObserver:
                         self._outbox.clear()
                     logger.error('control_event_publish_failed error_type=%s', safe_error_type(error))
                     return
-
-
-_BOUND_CONTROLS: ContextVar[ControlObserver | None] = ContextVar('naiyue_control_observer', default=None)
-
-
-@contextmanager
-def bind_control_observer(observer):
-    token = _BOUND_CONTROLS.set(observer)
-    try:
-        yield
-    finally:
-        _BOUND_CONTROLS.reset(token)
-
-
-def current_control_observer():
-    return _BOUND_CONTROLS.get()

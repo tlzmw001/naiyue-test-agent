@@ -1,8 +1,7 @@
 """One run's cooperative stop signal; never cancels arbitrary tool threads."""
 
+
 import asyncio
-from contextlib import contextmanager
-from contextvars import ContextVar
 from threading import Event, Lock
 
 
@@ -48,22 +47,6 @@ class RunControl:
         finally:
             with self._lock:
                 self._model_tasks.discard(task)
-
-
-_BOUND_CONTROL = ContextVar('naiyue_run_control', default=None)
-
-
-@contextmanager
-def bind_run_control(control):
-    token = _BOUND_CONTROL.set(control)
-    try:
-        yield
-    finally:
-        _BOUND_CONTROL.reset(token)
-
-
-def current_run_control():
-    return _BOUND_CONTROL.get()
 
 
 def stop_tool_message(call):

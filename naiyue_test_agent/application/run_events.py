@@ -1,24 +1,27 @@
 """Application-owned subscriptions and run outcome observation."""
 
+from naiyue_test_agent.agent_runtime.observation import observe, emit_event
+
 import inspect
 import logging
 from contextlib import contextmanager
 from threading import Lock
 
 from langgraph.errors import GraphBubbleUp
-from naiyue_test_agent.agent_runtime.run_control import RunControl, bind_run_control
+from naiyue_test_agent.contracts.failures import FailureDescription, read_failure_description, RunFailureData
+from naiyue_test_agent.contracts.session_events import RunStartedData, RunFinishedData
+from naiyue_test_agent.agent_runtime.run_control import RunControl
+from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
 
 from naiyue_test_agent.agent_runtime.events import (
-    RunEventPublisher, RunFailureData, RunFinishedData, RunStartedData, safe_error_type,
-    bind_run_event_publisher,
+    RunEventPublisher, safe_error_type,
 )
-from naiyue_test_agent.agent_runtime.tools.bash import BashOutcomeUnknown
-from naiyue_test_agent.agent_runtime.tools.write import WriteOutcomeUnknown
-from naiyue_test_agent.model_access.errors import classify_model_failure
-from naiyue_test_agent.agent_runtime.turn_observation import TurnObserver, bind_turn_observer
-from naiyue_test_agent.agent_runtime.control_observation import ControlObserver, bind_control_observer
+from naiyue_test_agent.agent_runtime.errors import RuntimeErrorPolicy, run_failure_data
+from .failure_policy import ApplicationErrorPolicy
+from naiyue_test_agent.agent_runtime.turn_observation import TurnObserver
+from naiyue_test_agent.agent_runtime.control_observation import ControlObserver
 from naiyue_test_agent.agent_runtime.context_operation_observation import (
-    ContextOperationObserver, bind_context_operation_observer,
+    ContextOperationObserver,
 )
 
 
@@ -99,53 +102,55 @@ class RunObservation:
         self.controls = ControlObserver(publisher)
         self.stop_control = RunControl()
         self.context_operations = ContextOperationObserver(publisher)
+        self.runtime_errors = RuntimeErrorPolicy()
+        self.application_errors = ApplicationErrorPolicy()
+
+    def _describe_failure(self, error):
+        reported = read_failure_description(error, run_id=self.publisher.run_id)
+        if reported is not None:
+            return reported
+        description = self.application_errors.try_describe(error)
+        if description is not None:
+            return description
+        return (self.runtime_errors.describe(error) if self.stage == 'execute' else
+                FailureDescription('application', 'unknown', 'unclassified', safe_error_type(error)))
 
     @contextmanager
     def bind(self):
         if self.mode == 'approval_resume':
-            self.controls.submit_approval()
-        with (bind_run_control(self.stop_control), bind_run_event_publisher(self.publisher), bind_turn_observer(self.turns),
-              bind_control_observer(self.controls), bind_context_operation_observer(self.context_operations)):
+            observe(self.controls, self.controls.submit_approval)
+        services = RunServices(self.publisher, self.runtime_errors, self.stop_control,
+                               self.turns, self.controls, self.context_operations)
+        with bind_run_services(services):
             yield
 
     def start(self) -> None:
-        self.publisher.publish('run_started', RunStartedData(self.mode))
-        self.controls.start()
+        emit_event(self.publisher, 'run_started', lambda: RunStartedData(self.mode))
+        observe(self.controls, self.controls.start)
 
     def result(self, result, pending) -> None:
         self.status = ('interrupted' if pending is not None
                        else 'stopped' if isinstance(result, dict)
                        and result.get('run_stopped') is True else 'completed')
-        self.turns.result(interrupted=pending is not None)
-        self.controls.run_result(result)
-        self.context_operations.finalize()
+        observe(self.turns, self.turns.result, interrupted=pending is not None)
+        observe(self.controls, self.controls.run_result, result)
+        observe(self.context_operations, self.context_operations.finalize)
 
     def failed(self, error: BaseException, *, stage: str | None = None) -> None:
         if not isinstance(error, Exception) or isinstance(error, GraphBubbleUp):
             self._suppress_terminal = True
-            self.context_operations.finalize(error)
+            observe(self.context_operations, self.context_operations.finalize, error, diagnostic='context_failure_publish_failed')
             return
         self.status = 'failed'
         try:
-            if isinstance(error, (WriteOutcomeUnknown, BashOutcomeUnknown)):
-                category, reason = 'tool_outcome_unknown', 'tool_outcome_unknown'
-            else:
-                category, reason = classify_model_failure(error)
-            self.failure = RunFailureData(stage or self.stage, category, reason,
-                                          safe_error_type(error))
+            self.failure = run_failure_data(self._describe_failure(error), stage=stage or self.stage)
         except Exception as diagnostic_error:
             logger.error('run_failure_diagnostics_unavailable error_type=%s',
                          safe_error_type(diagnostic_error))
             self.failure = RunFailureData(stage or self.stage, 'unknown', 'unclassified',
                                           safe_error_type(error))
-        try:
-            self.turns.fail(self.failure)
-        except BaseException as report_error:
-            logger.error('turn_failure_publish_failed error_type=%s', safe_error_type(report_error))
-        try:
-            self.context_operations.finalize(error)
-        except BaseException as report_error:
-            logger.error('context_failure_publish_failed error_type=%s', safe_error_type(report_error))
+        observe(self.turns, self.turns.fail, self.failure, diagnostic='turn_failure_publish_failed')
+        observe(self.context_operations, self.context_operations.finalize, error, diagnostic='context_failure_publish_failed')
 
     def control_close_reason(self):
         return ('control_exit' if self._suppress_terminal else 'prepare_failed'
@@ -153,18 +158,15 @@ class RunObservation:
 
     def cancelled(self, error):
         self.status = 'failed'
-        self.failure = RunFailureData(self.stage, 'cancelled', 'task_cancelled', safe_error_type(error))
-        try:
-            self.turns.fail(self.failure)
-            self.context_operations.finalize()
-        except BaseException as report_error:
-            logger.error('cancel_failure_publish_failed error_type=%s', safe_error_type(report_error))
+        self.failure = run_failure_data(self.runtime_errors.describe(error), stage=self.stage)
+        observe(self.turns, self.turns.fail, self.failure)
+        observe(self.context_operations, self.context_operations.finalize)
 
     def finish(self, manual_review_required: bool) -> None:
-        self.controls.flush()
-        self.context_operations.flush()
+        observe(self.controls, self.controls.flush)
+        observe(self.context_operations, self.context_operations.flush)
         if not self._suppress_terminal:
-            self.publisher.publish('run_finished', RunFinishedData(
+            emit_event(self.publisher, 'run_finished', lambda: RunFinishedData(
                 self.status, 'active' if self.status == 'stopped' else None,
                 manual_review_required, self.failure,
             ))

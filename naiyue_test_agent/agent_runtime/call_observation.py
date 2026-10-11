@@ -1,5 +1,7 @@
 """Model response gates, legacy logs, and model/tool call event observations."""
 
+from .observation import observe, emit_event
+
 import asyncio
 import logging
 import re
@@ -19,7 +21,11 @@ from naiyue_test_agent.agent_runtime.events import (
 from naiyue_test_agent.agent_runtime.tools.write import WriteOutcomeUnknown
 from naiyue_test_agent.agent_runtime.tools.bash import BashOutcomeUnknown
 from naiyue_test_agent.model_access.errors import (
-    ModelResponseRejected, classify_model_failure, unknown_failure_diagnostics,
+    unknown_failure_diagnostics,
+)
+from .errors import (
+    ModelResponseRejected,
+    describe_failure_in_context, run_failure_data,
 )
 from naiyue_test_agent.model_access.stop_reason import (
     MODEL_STOP_REASON_KEY, normalize_stop_reason, unknown_stop_reason_diagnostics,
@@ -68,11 +74,11 @@ class _ModelSelectionMiddleware(AgentMiddleware):
         call_id = uuid4().hex
         context_operations = context.get('_context_observer')
         if context_operations is not None:
-            context_operations.model_call_started(call_id)
+            observe(context_operations, context_operations.model_call_started, call_id)
         turns = context.get('_turn_observer')
         if turns is not None:
-            turns.begin(call_id)
-        _emit(context, 'model_call_started', ModelCallStartedData(call_id, event_label(model_id)))
+            observe(turns, turns.begin, call_id)
+        _emit(context, 'model_call_started', lambda: ModelCallStartedData(call_id, event_label(model_id)))
         return model_id, call_id, model
 
     def _accept(self, request, response, model_id, call_id):
@@ -120,10 +126,10 @@ class _ModelSelectionMiddleware(AgentMiddleware):
                 and not message.tool_calls):
             raise ModelResponseRejected('missing_tool_calls')
         if turns is not None:
-            turns.accept(message)
+            observe(turns, turns.accept, message)
         if context_operations is not None:
-            context_operations.model_call_accepted(call_id)
-        _emit(context, 'model_call_finished', ModelCallFinishedData(
+            observe(context_operations, context_operations.model_call_accepted, call_id)
+        _emit(context, 'model_call_finished', lambda: ModelCallFinishedData(
             call_id, event_label(model_id), 'accepted',
             message.response_metadata[MODEL_STOP_REASON_KEY],
             tuple(call['id'] for call in message.tool_calls if isinstance(call.get('id'), str)),
@@ -138,11 +144,16 @@ class _ModelSelectionMiddleware(AgentMiddleware):
         correlation = {'run_id': run_id} if run_id else {}
         context_operations = context.get('_context_observer')
         if context_operations is not None:
-            context_operations.model_call_failed(call_id, error)
-        category, reason = (('cancelled', 'user_stop') if isinstance(error, UserStop) else
-                            ('cancelled', 'task_cancelled') if isinstance(error, asyncio.CancelledError)
-                            else classify_model_failure(error))
-        details = (unknown_failure_diagnostics(error) if category == 'unknown' else {})
+            observe(context_operations, context_operations.model_call_failed, call_id, error)
+        description = describe_failure_in_context(error, context, source='model', model_id=model_id)
+        category, reason = description.category, description.reason
+        details = {}
+        if category == 'unknown':
+            try:
+                details = unknown_failure_diagnostics(error)
+            except Exception as fault:
+                logger.error('call_failure_diagnostics_unavailable error_type=%s', safe_error_type(fault))
+            details['error_type'] = description.error_type
         logger.error(
             'model_call_failed category=%s reason=%s', category, reason,
             extra={'model_failure': {
@@ -151,9 +162,8 @@ class _ModelSelectionMiddleware(AgentMiddleware):
             }},
         )
         if not isinstance(error, GraphBubbleUp):
-            failure = (RunFailureData('execute', category, reason, safe_error_type(error))
-                       if isinstance(error, (asyncio.CancelledError, UserStop)) else failure_data(error))
-            _emit(context, 'model_call_finished', ModelCallFinishedData(
+            failure = run_failure_data(description)
+            _emit(context, 'model_call_finished', lambda: ModelCallFinishedData(
                 call_id, event_label(model_id), 'failed', failure=failure,
             ), primary_error=error)
 
@@ -260,31 +270,12 @@ def token_count(value):
     return value if type(value) is int and value >= 0 else None
 
 
-def failure_data(error):
-    try:
-        category, reason = (('cancelled', 'task_cancelled') if isinstance(error, asyncio.CancelledError)
-                            else ('tool_outcome_unknown', 'tool_outcome_unknown')
-                            if isinstance(error, (WriteOutcomeUnknown, BashOutcomeUnknown))
-                            else classify_model_failure(error))
-        return RunFailureData('execute', category, reason, safe_error_type(error))
-    except Exception as diagnostic_error:
-        logger.error('call_failure_diagnostics_unavailable error_type=%s', safe_error_type(diagnostic_error))
-        return RunFailureData('execute', 'unknown', 'unclassified', safe_error_type(error))
-
-
 def _emit(context, event_type, data, *, primary_error=None):
     publisher = context.get('_run_event_publisher') if isinstance(context, dict) else None
     if (not isinstance(publisher, RunEventPublisher)
             or not publisher.matches(context.get('session_id'), context.get('run_id'))):
         return
-    try:
-        publisher.publish(event_type, data)
-    except GraphBubbleUp:
-        raise
-    except Exception as report_error:
-        if primary_error is None:
-            raise
-        logger.error('call_event_publish_failed error_type=%s', safe_error_type(report_error))
+    emit_event(publisher, event_type, data)
 
 
 def tool_guard_reason(request):
@@ -301,7 +292,7 @@ def observe_tool_dispatch(request, handler, dispatch):
     context = request.runtime.context
     call_id = request.tool_call['id']
     name = event_label(request.tool_call['name'])
-    _emit(context, 'tool_call_started', ToolCallStartedData(call_id, name))
+    _emit(context, 'tool_call_started', lambda: ToolCallStartedData(call_id, name))
     entered = False
 
     def enter_chain(inner_request):
@@ -315,8 +306,9 @@ def observe_tool_dispatch(request, handler, dispatch):
         raise
     except Exception as error:
         outcome = 'outcome_unknown' if isinstance(error, (WriteOutcomeUnknown, BashOutcomeUnknown)) else 'exception'
-        _emit(context, 'tool_call_finished', ToolCallFinishedData(
-            call_id, name, 'dispatch', outcome, failure=failure_data(error),
+        description = describe_failure_in_context(error, context, source='tool')
+        _emit(context, 'tool_call_finished', lambda: ToolCallFinishedData(
+            call_id, name, 'dispatch', outcome, failure=run_failure_data(description),
         ), primary_error=error)
         raise
     guard_reason = (result.additional_kwargs.get('naiyue_not_executed') if isinstance(result, ToolMessage) else None)
@@ -326,14 +318,14 @@ def observe_tool_dispatch(request, handler, dispatch):
     else:
         outcome = 'error_result' if isinstance(result, ToolMessage) and result.status == 'error' else 'success'
         reason = None
-    _emit(context, 'tool_call_finished', ToolCallFinishedData(call_id, name, 'dispatch', outcome, reason))
+    _emit(context, 'tool_call_finished', lambda: ToolCallFinishedData(call_id, name, 'dispatch', outcome, reason))
     return result
 
 
 async def aobserve_tool_dispatch(request, handler, dispatch):
     context = request.runtime.context
     call_id, name = request.tool_call['id'], event_label(request.tool_call['name'])
-    _emit(context, 'tool_call_started', ToolCallStartedData(call_id, name))
+    _emit(context, 'tool_call_started', lambda: ToolCallStartedData(call_id, name))
     entered = False
 
     async def enter_chain(inner_request):
@@ -347,15 +339,16 @@ async def aobserve_tool_dispatch(request, handler, dispatch):
         raise
     except (Exception, asyncio.CancelledError) as error:
         outcome = 'outcome_unknown' if isinstance(error, (WriteOutcomeUnknown, BashOutcomeUnknown)) else 'exception'
-        _emit(context, 'tool_call_finished', ToolCallFinishedData(
-            call_id, name, 'dispatch', outcome, failure=failure_data(error),
+        description = describe_failure_in_context(error, context, source='tool')
+        _emit(context, 'tool_call_finished', lambda: ToolCallFinishedData(
+            call_id, name, 'dispatch', outcome, failure=run_failure_data(description),
         ), primary_error=error)
         raise
     reason = (result.additional_kwargs.get('naiyue_not_executed') if isinstance(result, ToolMessage) else None)
     reason = reason or (tool_guard_reason(request) if entered else 'prior_batch_failed')
     outcome = ('not_executed' if reason is not None else 'error_result'
                if isinstance(result, ToolMessage) and result.status == 'error' else 'success')
-    _emit(context, 'tool_call_finished', ToolCallFinishedData(call_id, name, 'dispatch', outcome, reason))
+    _emit(context, 'tool_call_finished', lambda: ToolCallFinishedData(call_id, name, 'dispatch', outcome, reason))
     return result
 
 
@@ -372,7 +365,7 @@ class ObservedHumanInTheLoopMiddleware(HumanInTheLoopMiddleware):
         result = super()._create_action_and_config(tool_call, config, state, runtime)
         controls = runtime.context.get('_control_observer') if runtime.context else None
         if controls is not None:
-            controls.note_approval_candidate(tool_call['id'])
+            observe(controls, controls.note_approval_candidate, tool_call['id'])
         return result
 
     @hook_config(can_jump_to=['end'])
@@ -382,7 +375,7 @@ class ObservedHumanInTheLoopMiddleware(HumanInTheLoopMiddleware):
             return stopped
         controls = runtime.context.get('_control_observer') if runtime.context else None
         if controls is not None:
-            controls.begin_approval_hook()
+            observe(controls, controls.begin_approval_hook)
         try:
             update = super().after_model(state, runtime)
         except GraphInterrupt:
@@ -394,12 +387,12 @@ class ObservedHumanInTheLoopMiddleware(HumanInTheLoopMiddleware):
         if stopped is not None:
             return stopped
         if controls is not None:
-            controls.approval_applied()
+            observe(controls, controls.approval_applied)
         for message in (update or {}).get('messages', []):
             if isinstance(message, ToolMessage) and message.status == 'error':
                 call_id, name = message.tool_call_id, event_label(message.name)
-                _emit(runtime.context, 'tool_call_started', ToolCallStartedData(call_id, name, 'approval_resolution'))
-                _emit(runtime.context, 'tool_call_finished', ToolCallFinishedData(
+                _emit(runtime.context, 'tool_call_started', lambda: ToolCallStartedData(call_id, name, 'approval_resolution'))
+                _emit(runtime.context, 'tool_call_finished', lambda: ToolCallFinishedData(
                     call_id, name, 'approval_resolution', 'not_executed', 'approval_rejected',
                 ))
         return update

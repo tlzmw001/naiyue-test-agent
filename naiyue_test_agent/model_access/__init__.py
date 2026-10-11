@@ -4,12 +4,15 @@ import json
 import math
 import stat
 from pathlib import Path
+from threading import Lock
 from urllib.parse import urlsplit
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
 from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
+from naiyue_test_agent.contracts.failures import normalize_classifiers
+from .errors import describe_model_failure
 
 from naiyue_test_agent.model_access.thinking import (
     MODEL_DEFAULT,
@@ -54,6 +57,33 @@ class ModelCatalog:
         self._models = models
         self._owned_http_clients = []
         self._thinking_selections: dict[str, ThinkingSelection] = {}
+        self._error_classifiers = {}
+        self._error_lock = Lock()
+
+    def configure_error_classifiers(self, model_id, classifiers):
+        self.get(model_id)
+        selected = normalize_classifiers(classifiers)
+        with self._error_lock:
+            self._error_classifiers[model_id] = selected
+
+    def describe_failure(self, model_id, error):
+        self.get(model_id)
+        with self._error_lock:
+            selected = self._error_classifiers.get(model_id, ())
+        return describe_model_failure(error, classifiers=selected)
+
+    def failure_describer(self):
+        """Freeze model-specific mappings for a run; model switching keeps its own mapping."""
+        with self._error_lock:
+            selected = dict(self._error_classifiers)
+        known = frozenset(self._models)
+
+        def describe(model_id, error):
+            if model_id not in known:
+                raise ModelConfigError('Unknown model_id')
+            return describe_model_failure(error, classifiers=selected.get(model_id, ()))
+
+        return describe
 
     @property
     def model_ids(self) -> tuple[str, ...]:

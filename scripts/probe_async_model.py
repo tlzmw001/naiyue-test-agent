@@ -46,7 +46,9 @@ async def _worker(args):
         # Only this process-local probe copy uses synthetic trigger/retention budgets.
         model = model.model_copy(update={'metadata': metadata})
         graph = _assemble_interactive_runtime(model, system_prompt='Answer the requested question precisely.',
-            **common, drain_steering=lambda _: [], finish_pending_messages=lambda _: [],
+            **common, drain_steering=lambda _: [], is_stop_requested=lambda _: False,
+            finish_run_boundary=lambda _: (False, []),
+            prepare_control_messages=lambda _sid, messages: [HumanMessage(content=text) for text in messages],
             resolve_project_instructions=lambda _: '\nUse the supplied synthetic history and summary.')
     else:
         graph = build_runtime_agent(model, system_prompt='', **common)

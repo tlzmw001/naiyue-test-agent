@@ -1,5 +1,7 @@
 """Consume native graph streams; final messages and deltas have distinct roles."""
 
+from .observation import observe, emit_event
+
 import logging
 
 from langchain_core.messages import AIMessage, AIMessageChunk
@@ -37,17 +39,17 @@ class _StreamState:
 
     def state(self, messages, visibility='graph_values'):
         before = {identity: self.observer._hashes.get(identity) for identity in self.drafts}
-        self.observer.observe(messages, visibility=visibility)
+        observe(self.observer, self.observer.observe, messages, visibility=visibility)
         for message in messages:
             if visibility == 'graph_values' and isinstance(message, AIMessage) and message.id in self.drafts:
                 if before.get(message.id) == self.observer._hashes.get(message.id):
                     # A cached or identical revision still confirms a draft from this run.
-                    self.publisher.publish('message_completed', _snapshot(message, visibility))
+                    emit_event(self.publisher, 'message_completed', lambda: _snapshot(message, visibility))
                 self.drafts.discard(message.id)
         for key in ('_control_observer', '_context_observer', '_turn_observer'):
             item = self.context.get(key)
             if item is not None:
-                item.observe(messages, visibility=visibility)
+                observe(item, item.observe, messages, visibility=visibility)
 
     def part(self, part):
         if part['ns']:
@@ -55,55 +57,58 @@ class _StreamState:
         if part['type'] == 'values':
             self.latest = part['data']
             if isinstance(self.latest, dict):
-                self.state(self.latest.get('messages', []))
+                observe(self, self.state, self.latest.get('messages', []))
             for interrupt in part.get('interrupts', ()):
                 self.interrupts[interrupt.id] = interrupt
         elif part['type'] == 'updates' and isinstance(part['data'], dict):
             for interrupt in part['data'].get('__interrupt__', ()):
                 self.interrupts[interrupt.id] = interrupt
         elif part['type'] == 'messages':
-            message, metadata = part['data']
-            if (metadata.get('langgraph_node') != 'model' or SUMMARY_TAG in metadata.get('tags', ())
-                    or not isinstance(message, (AIMessageChunk, AIMessage))):
-                return
-            text = _text(message.content)
-            if not text:
-                return
-            if not isinstance(message.id, str) or not message.id:
-                self.observer.unavailable('snapshot', 'missing_message_id', message=message)
-                return
-            self.indices[message.id] = self.indices.get(message.id, 0) + 1
-            self.drafts.add(message.id)
-            self.publisher.publish('message_delta', MessageDeltaData(message.id, text, self.indices[message.id]))
+            observe(self, self.delta, *part['data'])
         turns, operations = self.context.get('_turn_observer'), self.context.get('_context_observer')
         if turns is not None:
-            turns.try_finish()
+            observe(turns, turns.try_finish)
         if operations is not None:
-            operations.flush()
+            observe(operations, operations.flush)
+
+    def delta(self, message, metadata):
+        if (metadata.get('langgraph_node') != 'model' or SUMMARY_TAG in metadata.get('tags', ())
+                or not isinstance(message, (AIMessageChunk, AIMessage))):
+            return
+        text = _text(message.content)
+        if not text:
+            return
+        if not isinstance(message.id, str) or not message.id:
+            observe(self.observer, self.observer.unavailable, 'snapshot', 'missing_message_id', message=message)
+            return
+        self.indices[message.id] = self.indices.get(message.id, 0) + 1
+        self.drafts.add(message.id)
+        emit_event(self.publisher, 'message_delta', lambda: MessageDeltaData(
+            message.id, text, self.indices[message.id]))
 
 
 async def ainvoke_with_message_observation(agent, input, *, context, config, publisher):
     stream = _StreamState(publisher, context)
     turns = context.get('_turn_observer')
     if not isinstance(agent, Pregel) or getattr(agent.ainvoke, '__func__', None) is not Pregel.ainvoke:
-        stream.observer.unavailable('stream', 'unsupported_state_interface')
+        observe(stream.observer, stream.observer.unavailable, 'stream', 'unsupported_state_interface')
         if turns is not None:
-            turns.disable()
+            observe(turns, turns.disable)
         return await agent.ainvoke(input, context=context, config=config)
     baseline = []
     if agent.checkpointer:
         try:
             baseline = (await agent.aget_state(config)).values.get('messages', [])
-            stream.observer.seed(baseline)
+            observe(stream.observer, stream.observer.seed, baseline)
         except GraphBubbleUp:
             raise
         except Exception as error:
-            stream.observer.unavailable('baseline', 'baseline_read_failed', error=error)
+            observe(stream.observer, stream.observer.unavailable, 'baseline', 'baseline_read_failed', error=error)
             if turns is not None:
-                turns.disable()
+                observe(turns, turns.disable)
             return await agent.ainvoke(input, context=context, config=config)
     if turns is not None and isinstance(input, Command):
-        turns.activate_resume(baseline)
+        observe(turns, turns.activate_resume, baseline)
     iterator = agent.astream(input, context=context, config=config,
         stream_mode=['messages', 'updates', 'values'], version='v2', output_keys=agent.output_channels)
     primary = None
@@ -123,11 +128,11 @@ async def ainvoke_with_message_observation(agent, input, *, context, config, pub
         if isinstance(primary, Exception) and not isinstance(primary, GraphBubbleUp) and agent.checkpointer:
             try:
                 snapshot = await agent.aget_state(config)
-                stream.state(snapshot.values.get('messages', []), 'recovery_view')
+                observe(stream, stream.state, snapshot.values.get('messages', []), 'recovery_view')
             except BaseException as error:
                 logger.error('message_recovery_observation_failed error_type=%s', safe_error_type(error))
                 if isinstance(error, Exception) and not isinstance(error, GraphBubbleUp):
-                    stream.observer.unavailable('recovery', 'recovery_read_failed',
+                    observe(stream.observer, stream.observer.unavailable, 'recovery', 'recovery_read_failed',
                         visibility='recovery_view', error=error)
     return ({**(stream.latest or {}), '__interrupt__': list(stream.interrupts.values())}
             if stream.interrupts else stream.latest)

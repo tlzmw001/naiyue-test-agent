@@ -18,11 +18,19 @@ Web 遗留：①更多真实供应商工具/审批及浏览器模型失败、部
 | --- | --- | --- |
 | M1 | 模型错误分类扩展与真实服务验证 | [Spec 006](specs/006-model-call-failure-event.md)已有同步失败事件；[Spec 008](specs/008-openai-authentication-failure.md)验证 OpenAI SDK 认证失败及当前网关无效凭证 401；[Spec 009](specs/009-non-openai-model-errors.md)实现 Anthropic/Ollama 稳定粗分类；[Spec 010](specs/010-model-request-policy.md)补 OpenAI SDK 超时/连接失败。[Spec 021](specs/021-unknown-model-observation.md)为同步路径未分类异常补安全异常类型及可信 SDK HTTP 状态，但日志尚未持久化或接入评测。其他 SDK/网关错误、歧义状态及真实 Anthropic/Ollama 服务行为仍待逐类取证；继续验证脱敏、原异常传播和重试边界。八类设计基线见[项目计划第 16 节](project-plan.md#16-模型层-thinking-与失败分类设计)。 |
 | M2 | 异步、流式、取消及部分输出失败 | [Spec073](specs/073-async-model-call-middleware.md)已有无工具runtime的原生异步模型等待、响应门禁、内存checkpoint与取消异常传播测试，以及一次有界真实模型成功请求。[Spec074](specs/074-async-context-model-chain.md)随后接通prompt/摘要/一次恢复与状态流，新增34例、全量846例及真实摘要→回答通过。[Spec075](specs/075-integrated-async-application.md)已接应用/工具/存储和文本delta/完整校准，36例新增及882例、真实跨进程正常链路通过；活动取消、真实部分输出失败、SDK重试/副作用unknown和生产负载仍未验，不能把安全排空当作主动停止。 |
-| M3 | 超时与有限重试 | [Spec 010](specs/010-model-request-policy.md)已对在线模型显式设置默认 60 秒 HTTP 超时与 2 次 SDK 重试，对 Ollama 设置 60 秒 HTTP 超时；本机 HTTP mock 验证在线 SDK 对 503 最多尝试 3 次。尚无整个 Agent turn 的严格墙钟预算、尝试级轨迹、取消及流式部分输出后的安全重试策略；Ollama 重试待本地模型可用后单独设计。终局失败不能变成普通 `AIMessage`。 |
+| M3 | 超时与有限重试 | [Spec 010](specs/010-model-request-policy.md)已对在线模型显式设置默认 60 秒 HTTP 超时与 2 次 SDK 重试，对 Ollama 设置 60 秒 HTTP 超时；本机 HTTP mock 验证在线 SDK 对 503 最多尝试 3 次。尚无整个 Agent turn 的严格墙钟预算、尝试级轨迹、取消及流式部分输出后的安全重试策略；Ollama 重试待本地模型可用后单独设计。终局失败不能变成普通 `AIMessage`。2026-10-10用户要求记录后续考虑项目侧外部重试：先比较保留SDK重试并补尝试观测，与由项目控制单次模型请求重试两种方案，尚未决定替换。若采用外部重试，需避免与SDK重试叠加，明确总请求次数/时间预算、可重试条件和取消传播；记录关联call_id、attempt序号、耗时、安全分类及退避，不记录凭据或原始请求/响应。验收至少覆盖首次成功、重试后成功、耗尽失败、不可重试直接失败、等待中取消及总次数约束；流式已输出内容、工具副作用和整个Agent run不能未经设计直接重放。 |
 | M4 | 推理等级真实能力 | [Spec 005](specs/005-model-access-thinking.md)只证明配置、回退及本机适配器参数；HeiyuCode、OpenAI 官方、Claude、Ollama 的具体模型对所选等级的接受与实际效果未验证。能力信息按具体供应商/模型核验；不能把本地 `supported_levels` 当成远端事实。 |
 | M5 | 每次调用可选的 thinking 等级 | 当前只在加载模型配置时确定默认等级。同会话下一轮修改等级的提交时点、成本边界与轨迹仍需设计及测试；保留 `model_default` 与显式 `off` 的区别。 |
 | M6 | 提示词缓存控制与效果对照 | [Spec 007](specs/007-prompt-cache-usage-observation.md) 已记录同步模型成功调用的缓存读取量；HeiyuCode 两次合成请求中第二次报告 `cache_read_tokens=6912`，但尚未设置供应商专用缓存策略，也没有延迟、成本或长期命中率对照。控制参数须按供应商协议验证，不能把缺失统计当成零或把 LangChain 整体响应缓存混进来。 |
 | M7 | 模型发现与更多真实供应商接入 | 当前列表来自 `.env/models.json`。模型 ID/能力自动发现要逐供应商核验；OpenAI 官方、Claude、本地 Ollama 目前只有本机构造/假模型证据，需真实模型→工具→模型与错误路径验证。用户目前没有本地模型，Ollama 实网验收暂缓，不将其作为当前切片的前置条件。 |
+
+### Windows模型配置私有权限校验（2026-10-10）
+
+用户已明确“先学习，双系统适配后面再做”；当前不启动兼容改造，具体平台契约进入该切片时再讨论。
+
+- 当前model_access/__init__.py的S_IMODE(st_mode)&0077是POSIX权限位规则。CPython3.12.14原生Windows将常规文件只读属性映射为0444/0666，现有条件都会拒绝；chmod0600只能改变只读属性，不能建立仅当前用户可读的ACL。这是官方源码/文档结论，不是Windows实测，也不能据本机macOS通过宣称跨平台支持。
+- 后续若明确支持Windows，单独设计平台权限校验/私有凭据存储契约，保持防止非授权用户读取凭据的目标，不直接跳过检查。完成判据：真实Windows环境覆盖仅允许预期主体、其他用户/广泛组可读、ACL继承/拒绝及不可确定权限的处理，证明正文读取前决策正确，并保留POSIX回归；与整个应用其他Windows依赖另行验收。
+- 来源与课堂依据见[Lesson20](1.0/lessons/lesson-20.md)。当前仅记录，未修改产品或环境配置。
 
 ## 最小 CLI 之后、通用工具之前：运行控制
 
@@ -42,7 +50,7 @@ Web 遗留：①更多真实供应商工具/审批及浏览器模型失败、部
 | R4 | 核对供应商结束值覆盖和语义 | [Spec 019](specs/019-claude-context-truncation-and-tool-call-binding.md) 已用确定性测试验证 Claude `model_context_window_exceeded → length`，并在工具 hook 对 ID 不一致或无最近模型消息的请求拒绝执行；尚无真实 Claude 截断响应。Pi `a69bef789` 也将 Claude `pause_turn` 映射为 `stop`；当前项目只接客户端工具，暂不增加通用续传。将来接 Claude 服务器工具前，须保存完整响应内容并按官方契约续传，单改枚举值不够。`sensitive`、OpenAI `network_error`/`end` 尚缺已核对官方结束值依据；未知/缺失元数据策略仍未收敛，通用副作用工具上线前需确定。[Spec 021](specs/021-unknown-model-observation.md)已为同步响应型 `unknown` 补独立结构化日志，含字段来源、受限原生原因码与工具调用数量；仍无持久化聚合、真实未知供应商样本或未知原因工具执行策略。详见 [Lesson 10](lessons/lesson-10.md)。 |
 | R5 | 模型失败消息与运行终局 | [2026-10-01 调研](research/loop-termination-retry-cancel-2026-10-01.md)发现的明确错误/无效调用漏洞已按 [Spec 020](specs/020-model-response-rejection-before-tool-routing.md) 以 TDD 收敛：同步假模型路径在路由前拒绝，混合有效/无效调用整条拒绝，`run_failed` 且无工具执行。还须决定 `unknown`、普通文本 `length`、失败后 checkpoint 保留用户输入的契约，并获取真实供应商失败响应证据。在线 SDK 单次请求内部最多 2 次重试，不替代运行终局或用户取消；活动取消需先验证异步与重试等待的取消传播。 |
 | R6 | 工具并发与串行策略 | [Spec 037](specs/037-conditional-tool-batch-scheduling.md)已把同步逐批调度接入运行层：工具缺省并行；任一已注册工具标记 `metadata['naiyue_execution_mode']='sequential'` 时，整批按模型调用 ID 顺序进入完整工具链。合成工具测试已覆盖纯读重叠、混合顺序、可恢复/致命错误、HITL 批准与拒绝、有限并发及同 Agent 双会话；全量 `312 passed`。后续 [Spec 038](specs/038-workspace-write-tool-design.md)已把真实 `write` 声明为 sequential，并用临时真实文件、假模型验证同轮读写读顺序、同目标双会话冲突、不同目标独立及结果未知后会话阻断；现已按 [Spec 039](specs/039-workspace-edit-tool.md)接入真实 `edit` 并验证 read→edit→read 顺序；仍无真实供应商混合请求或跨进程同目标保护。工作区外写审批须先有内容审查与授权绑定；Spec075已验证异步批次、有限并发与错误清理；持久checkpoint部分执行恢复/去重和更高并发压力另片验证。Pi `a69bef789` 的批次模式是设计参照，但其内置 `write/edit` 在核对版本没有显式 sequential 声明。 |
-| R7 | 运行层旧装配入口收敛 | 当前统一应用使用内部 `_assemble_interactive_runtime`；`build_steerable_runtime_agent` 和 `build_interactive_runtime_agent` 已无产品调用方，但仍是可导入的旧公开入口，前者有直接兼容回归测试。`build_runtime_agent`、`build_configured_runtime_agent` 仍有策略、探针和测试调用。若决定减少公开入口，先确认外部调用方及破坏性变更范围，再单独迁移测试/文档并删除；不能仅凭当前应用不调用就当作死代码清理。 |
+| R7 | 运行层旧装配入口收敛（本机已完成） | 用户授权后按[Spec082](specs/082-remove-obsolete-runtime-bridges.md)删除2个旧交互builder、3个workspace同步包装和旧自然结束回调分支；分项bind/getter及failure_data也移除，测试/探针已迁移。`build_runtime_agent`、`build_configured_runtime_agent`以及同步应用/持久会话仍有具体策略/探针消费者，详见Spec第3节；如后续统一这些消费者到异步，须同单元删除对应旧路径。最新后端1038/前端27与构建通过，旧入口恢复由新增回归阻止。 |
 | R8 | 统一事件与消息生命周期 | [Spec 062](specs/062-application-run-event-contract.md)接 run，[Spec 063](specs/063-model-tool-event-integration.md)接模型/工具，[Spec 064](specs/064-complete-message-observation.md)接消息，[Spec 065](specs/065-turn-lifecycle.md)接 turn，[Spec 066](specs/066-control-request-events.md)接控制；[Spec 067](specs/067-context-operation-events.md)已接压缩/恢复四 type，本地事件实现723例通过，CLI消费按[Spec 068](specs/068-cli-event-display.md)已接线并回归。算法/原结果/异常/调度保持；前三次失败停止后，用户授权独立诊断，本轮真实 compressed 状态确认/四事实4/4通过，间歇性超时根因仍未知。CLI 实时完整消息/工具/控制/上下文/终局显示已接，审批详情仍取原结果；异常和结果只补缺，状态可读/模型门禁/HITL 生效与持久确认分开；模型用量非 SDK/摘要总费用。慢同步消费者、私有 HITL 版本兼容、控制/发布故障交付、持久悬挂运行和活动取消另验收；Spec075已有异步流/元数据、窗口控制与有界交付故障验证。 |
 
 ### R8 后续：消息状态与 turn（2026-10-08）
@@ -124,3 +132,42 @@ CLI已按[Spec 068](specs/068-cli-event-display.md)消费同一事件接口，�
 - 存储长期可靠性：schema/框架版本迁移、损坏/备份恢复、checkpoint增长/清理及磁盘满，验证主异常/元数据与图状态关联、完成事件时点和数据保留。不自动删除用户DB或用旧确认checkpoint宣称文件回滚。
 - 平台和并发：首片macOS/Linux fcntl同库独占、轻量单活动run；Windows、多进程/SaaS、锁/背压/权限、异步saver连接/任务取消另测。stdio失败/事件交付失败不代表保存回滚；持久事件仓库未实现。
 - 核心代码待学：持久组合、元数据事务、_finish_run顺序、恢复与资源关闭。用户完成选型/CLI需求确认，不自动记为独立实现或追问掌握。
+
+## 异常职责整理与诊断故障保护（2026-10-10）
+
+完整目标蓝图见[Agent健壮性设计](agent-resilience-design.md)，2026-10-11用户确认可配对无效调用反馈/协议破坏停止；这些新行为不等于Spec080或当前工具能力已完成。独立完成判据：
+
+- 反馈闭环：明确参数/校验/权限/未知工具与程序bug边界；可配对无效调用不执行、错误结果关联正确、有界修复；无/重复ID停止，控制与脱敏不回归。
+- 安全工具重试：受控依赖样本声明并验证只读/幂等/未提交；实际次数、退避抖动、取消/总预算、授权及批次槽位一致；SUT失败不能被掩盖。
+- 模型attempt治理：选择SDK或Runtime唯一所有者，保持当前默认模式兼容；统计attempt与总预算/停止，不叠加重试、不重放已执行工具或拼接草稿。
+- 熔断与资源隔离：逻辑依赖健康计数、Closed/Open/HalfOpen、有限探测/冷却、实例与目标作用域、并发/队列预算；参数/测试错误不熔断，Open拒绝不再次计故障。
+- 备用工具/模型：授权且实际注册的同能力候选，窗口/输出/工具/多模态/成本/数据限制校验；实际model轨迹、不悄悄改会话选择、不用历史冒充当前证据。
+- 正常返回质量：传输/协议/业务质量独立，固定样本/规则/结果验证及对照；修复回合有界，不能因模型自评通过就宣称正确或质量低就标依赖离线。
+
+各项先Spec再实施，未启用参数在对应阶段讨论，不增加占位模块、不升级依赖、不未经许可改.env。源码与本机测试、真实供应商与业务评测分开报告。
+
+### 事件与异常共同收敛（2026-10-11，本机实现已验证）
+
+见[共同执行Spec](specs/081-event-exception-convergence.md)及[收敛讨论](event-exception-convergence-design.md)。当前未提交工作区已按两片实现普通观察隔离、测试外置序列检查、集中run依赖和Spec080原异常标注；必要保存、控制、权限、工具恢复及事件线协议保持。Web无事件时同一请求不会在本进程重复执行，返回明确503；跨进程幂等与真实服务故障仍需独立设计和验证。
+
+获批观察可读性补充已实施：86个调用点改为绑定方法，正常路径测试显式断言观察健康，compaction/tool_batch两条重复分类规则已去重。最新后端1011/前端27及构建通过；单参/双参分类适配、共享resolve和旧兼容入口保持，是否进一步集中适配准备工作另定范围。
+
+后续按用户清理要求完成Spec082：旧兼容入口已全部按列明范围删除，真实Bash/关闭读取改用中心服务；最新后端1038/前端27与构建通过。单参/双参自定义分类器仍是当前配置能力，进一步集中适配准备工作另定范围；未来功能迁移自动清理被替代内部逻辑的规则已写AGENTS.md。
+
+提交审查确认的既有Web投影限制：工具开始事件已到达、run终局事件丢失且应用抛异常时，run_delivery的失败收尾会令run为done/unconfirmed，但工具条目可能仍是running并显示“处理中”。独立最小假应用探针已复现，当前与HEAD失败分支核对一致，不是本轮新增。完成判据：注入失败终局缺失后，保留原应用失败，未确认的工具条目降为unconfirmed，run与SSE有界收尾，正常工具结果和已有成功兜底不回归；作为独立修复，当前未实施。
+
+本机完成判据：跨事件序列检查移出Publisher并在测试显式断言；事件构造/观察器/听众普通故障不改变结果与原异常，控制和保存失败保留；观察缺口/终局丢失有界收尾；集中绑定无串会话/漏还原，原异常身份/cause/context保持；同步/异步/stream/CLI/Web回归及全量测试通过。仍需单独验证真实供应商、代表性并发和重启后回执行为。事件删减/custom进度接入另定消费者与协议，不自动实施。
+
+### 写入结果不确定与核对恢复待评估（2026-10-11）
+
+当前_replace_temp将替换边界全部OSError保守视为未知；会话随后要求核对，但尚无公开的同会话只读核对/明确解除闭环。已验证门禁不等于完整恢复能力。此处记录待讨论，不自动启动功能或删除门禁；异常结构收敛与工具策略调整分为独立切片。
+
+完成判据：按实际执行阶段、已确认失败/真正未知给出判断与平台证据；明确是否仅中止本run、哪些后续只读操作可用于核对、哪些条件允许继续副作用操作；若保留会话门禁，提供明确恢复/解除入口及状态/持久化验证。覆盖替换前失败、提交明确拒绝、人工注入替换后故障、外部文件变化、核对失败/解除竞争和Bash差异。不能把故障注入当真实文件系统自然复现，不将同内容写入直接等同非幂等业务调用。
+
+### 既有Spec079设计历史与实施状态
+
+[异常地图](1.0/exception-architecture.md)与[Spec079](specs/079-runtime-failure-projection.md)为本轮具体整理草案，尚未实施。已用合成组件探针复现模型分类诊断ValueError遮盖原TimeoutError；需模型同步/异步回归先红灯，再统一运行失败数据构造与诊断回退。完成判据是模块/模型/工具/应用实际接线、原异常身份及已有阶段/终局/日志/控制策略保持、定向与全量测试通过。此片不补全部供应商分类或外部重试，不把文档/探针写完称修复完成。
+
+最新要求覆盖分层独立、全局异常脉络与自定义扩展，原Spec079退回复审不直接实施。完成判据新增每层可独立验证/无反向依赖、模型/工具/App扩展不改不相关层、两应用映射隔离、框架ModelError族复用与兼容；正式分类/注入接口尚待确认，见[复审](1.0/exception-design-review.md)。用户能读局部代码不等于已能追踪完整故障链。
+
+实施更新：用户批准复审方向后Spec079已完成上述本机验收，新增34例及后端962/前端27全部通过；诊断遮盖（含摘要cause）、合法unknown覆盖、旧桥接上下文及默认参数兼容已补回归解决。模型映射按目录/model_id快照，Runtime/App配置按实例，source可显式传给分类器；没有全局注册表或新的HTTP函数接口。下一步学习新版三条故障链；真实供应商异常、未知样本评测仓库、公共HTTP码扩展以及M3外部重试仍待后续，不将本机测试当完整生产验证。

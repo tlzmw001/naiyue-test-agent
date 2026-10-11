@@ -11,7 +11,7 @@ from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
 from naiyue_test_agent.agent_runtime.tools.bash import BashOutcomeUnknown
 from naiyue_test_agent.agent_runtime.turn_observation import TurnBoundaryMiddleware
-from naiyue_test_agent.model_access.errors import ModelResponseRejected
+from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
 from test_application_run_events import ToolModel, make_app
 from test_application_turn_events import turns
 

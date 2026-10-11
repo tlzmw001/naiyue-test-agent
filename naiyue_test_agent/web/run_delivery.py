@@ -12,7 +12,7 @@ from langchain_core.messages import HumanMessage
 
 from naiyue_test_agent.application.stream_projection import StreamingMessageProjection
 from .errors import WebError, public_error
-from .serialization import encoded_size, wire_event, text_content
+from .serialization import encoded_size, wire_event, text_content, message_view
 
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,7 @@ class DeliveredRun:
         self.unsubscribe = None
         self.wake_pending = False
         self.on_started = on_started
+        self._registered = False
 
     def _wake(self):
         with self.lock:
@@ -48,7 +49,9 @@ class DeliveredRun:
         self.changed.set()
 
     def _ready(self, run_id):
-        self.on_started(self)
+        if not self._registered:
+            self.on_started(self)
+            self._registered = True
         if not self.started.done():
             self.started.set_result(run_id)
 
@@ -56,9 +59,13 @@ class DeliveredRun:
         if event.session_id != self.session_id:
             return
         with self.lock:
-            if self.run_id is None and event.event_type == 'run_started':
+            if self.run_id is None:
                 self.run_id = event.run_id
+                if event.event_type != 'run_started':
+                    self.projection.incomplete = True
                 self.loop.call_soon_threadsafe(self._ready, event.run_id)
+            if event.sequence != self.last_sequence + 1:
+                self.projection.incomplete = True
             if self.run_id != event.run_id:
                 return
             self.last_sequence = event.sequence
@@ -158,7 +165,8 @@ class RunDelivery:
         old = self.receipts.get(key)
         if old is not None and old[0] != fingerprint:
             raise WebError('request_id_conflict')
-        if old is None and len(self.receipts) >= self.settings.max_receipts:
+        if (old is None and key not in self.pending_receipts
+                and len(self.receipts) + len(self.pending_receipts) >= self.settings.max_receipts):
             raise WebError('request_window_full')
         return key, fingerprint, deepcopy(old[1]) if old else None
 
@@ -201,12 +209,10 @@ class RunDelivery:
             job.unsubscribe = self.application.subscribe_events(job.observe)
             self.active = job
             job.task = asyncio.create_task(self._produce(job, body, resume=resume_check is not None))
-            try:
-                run_id = await asyncio.shield(job.started)
-                return {'session_id': session_id, 'run_id': run_id}
-            except Exception:
-                self.pending_receipts.pop(key, None)
-                raise
+            # Even when no event reveals the ID, keep the pending receipt so
+            # retrying this request cannot repeat an already completed run.
+            run_id = await asyncio.shield(job.started)
+            return {'session_id': session_id, 'run_id': run_id}
 
     def _prune(self):
         finished = [key for key, job in self.runs.items() if job.done]
@@ -218,11 +224,22 @@ class RunDelivery:
     async def _produce(self, job, body, *, resume=False):
         try:
             if resume:
-                await self.application.aresume_tool_approval(job.session_id, [item.decision for item in body.decisions])
+                result = await self.application.aresume_tool_approval(job.session_id, [item.decision for item in body.decisions])
             else:
-                await self.application.arun(job.session_id,
+                result = await self.application.arun(job.session_id,
                     [HumanMessage(content=body.text, id=body.request_id)])
+            if job.status == 'running':
+                with job.lock:
+                    job.status = ('interrupted' if result.get('approval_requests') else
+                                  'stopped' if result.get('run_stopped') is True else 'completed')
+                    job.projection.incomplete = True
+                    job.projection.seed(job.session_id, [message_view(m) for m in result.get('messages', [])])
+                    for row in job.tool_states.values():
+                        if row['state'] == 'running':
+                            row['state'] = 'unconfirmed'
         except BaseException as error:
+            if job.run_id is not None:
+                job._ready(job.run_id)
             if not job.started.done():
                 job.started.set_exception(public_error(error))
             logger.error('web_run_failed error_type=%s', type(error).__name__)
@@ -231,6 +248,11 @@ class RunDelivery:
                     job.status = 'unconfirmed'
                     job.projection.incomplete = True
         finally:
+            if not job.started.done():
+                if job.run_id is not None:
+                    job._ready(job.run_id)
+                else:
+                    job.started.set_exception(WebError('run_observation_unavailable', 503))
             job.unsubscribe()
             with job.lock:
                 job.done = True

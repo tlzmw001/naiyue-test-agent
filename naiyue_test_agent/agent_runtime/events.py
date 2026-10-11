@@ -4,72 +4,22 @@ import inspect
 import logging
 import re
 from collections.abc import Callable
-from contextlib import contextmanager
-from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from threading import Lock
+from threading import RLock
+from collections import deque
 from typing import Literal
 
-from langgraph.errors import GraphBubbleUp
+from naiyue_test_agent.contracts.failures import safe_error_type, RunFailureData
 from .turn_events import TurnStartedData, TurnFinishedData, TurnUnavailableData
-from .control_events import ControlData, ApprovalRequestedData
+from naiyue_test_agent.contracts.session_events import (
+    RunStartedData, RunFinishedData, ControlData, ApprovalRequestedData, SESSION_PAYLOADS,
+)
 from .context_events import ContextOperationStartedData, ContextOperationFinishedData
 from .stream_events import MessageDeltaData
 
 
 logger = logging.getLogger(__name__)
-
-
-def safe_error_type(error: BaseException) -> str:
-    name = type(error).__name__
-    return name if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,99}', name) else 'Exception'
-
-
-@dataclass(frozen=True)
-class RunFailureData:
-    stage: Literal['prepare', 'execute', 'finalize', 'cleanup']
-    category: str
-    reason: str
-    error_type: str
-
-    def __post_init__(self):
-        if self.stage not in ('prepare', 'execute', 'finalize', 'cleanup'):
-            raise ValueError('Invalid run failure stage')
-        if any(not isinstance(value, str)
-               or not re.fullmatch(r'[a-z][a-z0-9_]{0,79}', value)
-               for value in (self.category, self.reason)):
-            raise ValueError('Run failure requires fixed diagnostic codes')
-        if (not isinstance(self.error_type, str)
-                or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,99}', self.error_type)):
-            raise ValueError('Invalid run failure error type')
-
-
-@dataclass(frozen=True)
-class RunStartedData:
-    mode: Literal['message', 'approval_resume']
-
-    def __post_init__(self):
-        if self.mode not in ('message', 'approval_resume'):
-            raise ValueError('Invalid run start mode')
-
-
-@dataclass(frozen=True)
-class RunFinishedData:
-    status: Literal['completed', 'stopped', 'interrupted', 'failed']
-    stop_mode: Literal['active'] | None = None
-    manual_review_required: bool = False
-    failure: RunFailureData | None = None
-
-    def __post_init__(self):
-        if self.status not in ('completed', 'stopped', 'interrupted', 'failed'):
-            raise ValueError('Invalid run terminal status')
-        if self.stop_mode != ('active' if self.status == 'stopped' else None):
-            raise ValueError('Invalid run stop mode')
-        if type(self.manual_review_required) is not bool:
-            raise ValueError('Invalid manual review flag')
-        if (self.status == 'failed') != isinstance(self.failure, RunFailureData):
-            raise ValueError('Invalid run failure details')
 
 
 def _check_call_subject(call_id, label):
@@ -245,9 +195,8 @@ EventData = (RunStartedData | RunFinishedData | ModelCallStartedData | ModelCall
              | TurnStartedData | TurnFinishedData | TurnUnavailableData | ControlData | ApprovalRequestedData
              | ContextOperationStartedData | ContextOperationFinishedData | MessageDeltaData)
 
-_PAYLOADS = {
+_CORE_PAYLOADS = {
     'message_delta': MessageDeltaData,
-    'run_started': RunStartedData, 'run_finished': RunFinishedData,
     'model_call_started': ModelCallStartedData, 'model_call_finished': ModelCallFinishedData,
     'tool_call_started': ToolCallStartedData, 'tool_call_finished': ToolCallFinishedData,
     'message_completed': MessageSnapshotData, 'message_revised': MessageSnapshotData,
@@ -256,13 +205,11 @@ _PAYLOADS = {
     'turn_started': TurnStartedData, 'turn_resumed': TurnStartedData,
     'turn_finished': TurnFinishedData, 'turn_suspended': TurnFinishedData,
     'turn_observation_unavailable': TurnUnavailableData,
-    'control_accepted': ControlData, 'control_delivery_started': ControlData,
-    'control_delivered': ControlData, 'control_applied': ControlData,
-    'control_discarded': ControlData, 'control_outcome_unknown': ControlData,
-    'approval_requested': ApprovalRequestedData,
     'compaction_started': ContextOperationStartedData, 'compaction_finished': ContextOperationFinishedData,
     'context_recovery_started': ContextOperationStartedData, 'context_recovery_finished': ContextOperationFinishedData,
 }
+
+_PAYLOADS = {**_CORE_PAYLOADS, **SESSION_PAYLOADS}
 
 
 @dataclass(frozen=True)
@@ -288,13 +235,9 @@ class RunEventPublisher:
         self._handlers = tuple(handlers)
         self._failed_handlers: set[int] = set()
         self._sequence = 0
-        self._finished = False
-        self._model_calls = {}
-        self._tool_calls = {}
-        self._turns = {}
-        self._controls = {}
-        self._context_operations = {}
-        self._lock = Lock()
+        self._pending = deque()
+        self._delivering = False
+        self._lock = RLock()
 
     def matches(self, session_id: str, run_id: str) -> bool:
         return self._session_id == session_id and self._run_id == run_id
@@ -305,124 +248,40 @@ class RunEventPublisher:
 
     def publish(self, event_type: str, data: EventData) -> None:
         with self._lock:
-            if (self._finished or _PAYLOADS.get(event_type) is not type(data)
-                    or (event_type == 'run_started') != (self._sequence == 0)):
-                raise ValueError('Invalid run event lifecycle')
-            if event_type in ('compaction_started', 'compaction_finished', 'context_recovery_started', 'context_recovery_finished'):
-                operation = 'compaction' if event_type.startswith('compaction_') else 'recovery'
-                if data.operation != operation:
-                    raise ValueError('Invalid context operation kind')
-                subject = (operation, data.model_id, data.model_call_id, data.trigger,
-                           data.before_estimate, data.original_message_count)
-                if event_type.endswith('_started'):
-                    if data.operation_id in self._context_operations:
-                        raise ValueError('Context operation already started')
-                    self._context_operations[data.operation_id] = subject
-                else:
-                    if self._context_operations.get(data.operation_id) != subject:
-                        raise ValueError('Context result does not match its start')
-                    del self._context_operations[data.operation_id]
-            if event_type.startswith('control_'):
-                key = data.control_id
-                subject = (data.kind, data.tool_call_ids, data.decisions, data.origin_run_id)
-                recorded = self._controls.get(key)
-                if recorded is not None and recorded[0] != subject:
-                    raise ValueError('Control subject changed')
-                previous = (data.kind, recorded[1]) if recorded is not None else None
-                if event_type == 'control_accepted':
-                    valid = previous is None
-                elif event_type == 'control_delivery_started':
-                    valid = previous == (data.kind, 'accepted') and data.kind != 'stop'
-                elif event_type == 'control_delivered':
-                    valid = (previous == (data.kind, 'selected')
-                             and data.kind in ('steering', 'follow_up') and data.message_id is not None
-                             and data.visibility is not None and data.boundary == 'message_state')
-                elif event_type == 'control_applied':
-                    valid = ((previous == ('stop', 'accepted') and data.boundary == 'active')
-                             or (previous == ('approval', 'selected') and data.boundary == 'approval_hook'))
-                elif event_type == 'control_outcome_unknown':
-                    valid = previous == (data.kind, 'selected') and data.reason is not None
-                else:
-                    valid = previous == (data.kind, 'accepted') and data.reason is not None
-                if not valid:
-                    raise ValueError('Invalid control lifecycle')
-                if event_type in ('control_accepted', 'control_delivery_started'):
-                    self._controls[key] = (subject, 'accepted' if event_type == 'control_accepted' else 'selected')
-                else:
-                    del self._controls[key]
-            if event_type in ('turn_started', 'turn_resumed', 'turn_finished', 'turn_suspended'):
-                key = data.turn_id
-                subject = (data.origin_run_id, data.model_call_id)
-                if event_type in ('turn_started', 'turn_resumed'):
-                    if (key in self._turns or self._turns
-                            or (event_type == 'turn_resumed') != (data.kind == 'approval_resume')):
-                        raise ValueError('Invalid turn start lifecycle')
-                    self._turns[key] = subject
-                else:
-                    if (self._turns.get(key) != subject
-                            or (event_type == 'turn_suspended') != (data.status == 'suspended')):
-                        raise ValueError('Turn result does not match its start')
-                    del self._turns[key]
-            if event_type.startswith('model_call_'):
-                key, subject, calls = data.model_call_id, data.model_id, self._model_calls
-            elif event_type.startswith('tool_call_'):
-                key, subject, calls = data.tool_call_id, (data.tool_name, data.boundary), self._tool_calls
-            else:
-                calls = None
-            if calls is not None:
-                if not isinstance(key, str) or not key:
-                    raise ValueError('A call identifier is required')
-                if event_type.endswith('_started'):
-                    if key in calls:
-                        raise ValueError('Call already started')
-                    calls[key] = subject
-                else:
-                    if key not in calls or calls[key] != subject:
-                        raise ValueError('Call result does not match its start')
-                    del calls[key]
+            if _PAYLOADS.get(event_type) is not type(data):
+                logger.error('event_payload_invalid')
+                return
             self._sequence += 1
-            self._finished = event_type == 'run_finished'
-            event = RuntimeEvent(
+            self._pending.append(RuntimeEvent(
                 event_type, self._session_id, self._run_id, self._sequence,
                 datetime.now(timezone.utc).isoformat(), data,
-            )
-            for index, handler in enumerate(self._handlers):
-                if index in self._failed_handlers:
-                    continue
-                try:
-                    returned = handler(event)
-                    if inspect.isawaitable(returned):
-                        if inspect.iscoroutine(returned):
-                            returned.close()
-                        raise TypeError('Run event observers must be synchronous')
-                    if returned is not None:
-                        raise TypeError('Run event observers must return None')
-                except GraphBubbleUp:
-                    raise
-                except Exception as error:
-                    self._failed_handlers.add(index)
-                    logger.warning('event_observer_failed error_type=%s', safe_error_type(error),
-                                   extra={'event_observer': {
-                                       'event': 'event_observer_failed',
-                                       'session_id': self._session_id, 'run_id': self._run_id,
-                                       'error_type': safe_error_type(error),
-                                   }})
+            ))
+            if self._delivering:
+                return
+            self._delivering = True
+            try:
+                while self._pending:
+                    self._deliver(self._pending.popleft())
+            finally:
+                self._delivering = False
 
-
-_BOUND_PUBLISHER: ContextVar[RunEventPublisher | None] = ContextVar(
-    'naiyue_run_event_publisher', default=None,
-)
-
-
-@contextmanager
-def bind_run_event_publisher(publisher: RunEventPublisher):
-    """Bridge existing invocation signatures into explicit Runtime.context."""
-    token = _BOUND_PUBLISHER.set(publisher)
-    try:
-        yield
-    finally:
-        _BOUND_PUBLISHER.reset(token)
-
-
-def current_run_event_publisher() -> RunEventPublisher | None:
-    return _BOUND_PUBLISHER.get()
+    def _deliver(self, event):
+        for index, handler in enumerate(self._handlers):
+            if index in self._failed_handlers:
+                continue
+            try:
+                returned = handler(event)
+                if inspect.isawaitable(returned):
+                    if inspect.iscoroutine(returned):
+                        returned.close()
+                    raise TypeError('Run event observers must be synchronous')
+                if returned is not None:
+                    raise TypeError('Run event observers must return None')
+            except Exception as error:
+                self._failed_handlers.add(index)
+                logger.warning('event_observer_failed error_type=%s', safe_error_type(error),
+                               extra={'event_observer': {
+                                   'event': 'event_observer_failed',
+                                   'session_id': self._session_id, 'run_id': self._run_id,
+                                   'error_type': safe_error_type(error),
+                               }})

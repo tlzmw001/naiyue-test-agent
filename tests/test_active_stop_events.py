@@ -4,7 +4,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from test_application_stop import ToolCapableFake, build_app
-from naiyue_test_agent.model_access.errors import ModelResponseRejected
+from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
 
 
 @pytest.mark.parametrize('duplicate', [False, True])

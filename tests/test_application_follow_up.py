@@ -253,7 +253,7 @@ def test_natural_end_closes_follow_up_before_busy_gate_is_released():
 
     class PausedAtEndAgent:
         def invoke(self, _input, *, context, config):
-            assert service.finish_pending_messages(context['session_id']) == []
+            assert service.finish_run_boundary(context['session_id']) == (False, [])
             closed.set()
             assert release.wait(timeout=3)
             return {'messages': []}

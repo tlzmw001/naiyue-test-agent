@@ -94,9 +94,10 @@ def test_publisher_rejects_changed_operation_subject_without_advancing_sequence(
     from dataclasses import replace
     import pytest
     from naiyue_test_agent.agent_runtime.context_events import ContextOperationStartedData, ContextOperationFinishedData
+    from event_sequence import CheckedPublisher
 
     events = []
-    pub = RunEventPublisher('session', 'run', (events.append,))
+    pub = CheckedPublisher('session', 'run', (events.append,))
     pub.publish('run_started', RunStartedData('message'))
     pub.publish('compaction_started', ContextOperationStartedData('op', 'compaction', 'A', 'threshold',
                                                                   before_estimate=100, original_message_count=3))

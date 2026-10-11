@@ -15,8 +15,7 @@ logger = logging.getLogger(__name__)
 STATES = {'ready', 'running', 'failed', 'interrupted', 'review_required'}
 
 
-class SessionPersistenceError(RuntimeError):
-    """A session could not be stored or safely recovered."""
+from .errors import SessionPersistenceError
 
 
 class SessionStorage:

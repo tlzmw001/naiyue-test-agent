@@ -14,9 +14,12 @@ from langchain_core.tools import ToolException
 from langgraph.checkpoint.memory import InMemorySaver
 
 from naiyue_test_agent.agent_runtime import (
-    build_runtime_agent, invoke_agent_run, invoke_agent_run_in_workspace,
-    resume_agent_run_in_workspace,
+    build_runtime_agent, invoke_agent_run,
 )
+from naiyue_test_agent.agent_runtime.resource_invocation import (
+    invoke_agent_run_with_resources, resume_agent_run_with_resources,
+)
+from naiyue_test_agent.agent_runtime.tool_approval import OneUseApprovalGrants
 from naiyue_test_agent.agent_runtime.tool_batch import (
     ToolBatchMiddleware, ToolBatchSchedulingError, _SequentialPlan,
 )
@@ -219,16 +222,16 @@ def test_rejected_first_tool_does_not_block_later_sequential_tool(tmp_path):
         AIMessage(content='done'),
     ], checkpointer=InMemorySaver())
 
-    pending = invoke_agent_run_in_workspace(
+    pending = invoke_agent_run_with_resources(
         agent, [('user', 'read then write')], session_id='review',
-        thread_id='review-thread', run_id='review-run', workspace_root=workspace,
+        thread_id='review-thread', run_id='review-run', workspace_root=workspace, read_resource_roots=(),
     )
     assert len(pending['__interrupt__']) == 1
     assert executed == []
-    result = resume_agent_run_in_workspace(
+    result = resume_agent_run_with_resources(
         agent, session_id='review', thread_id='review-thread',
         run_id='review-run', workspace_root=workspace,
-        decisions=['reject'], approved_read_only_targets={},
+        decisions=['reject'], approval_grants={}, read_resource_roots=(),
     )
     assert executed == ['write']
     assert [(message.tool_call_id, message.status) for message in tool_results(result)] == [
@@ -257,16 +260,17 @@ def test_approved_first_tool_completes_before_later_sequential_tool(tmp_path):
         ]),
         AIMessage(content='done'),
     ], checkpointer=InMemorySaver())
-    pending = invoke_agent_run_in_workspace(
+    pending = invoke_agent_run_with_resources(
         agent, [('user', 'read then write')], session_id='approve',
-        thread_id='approve-thread', run_id='approve-run', workspace_root=workspace,
+        thread_id='approve-thread', run_id='approve-run', workspace_root=workspace, read_resource_roots=(),
     )
     assert len(pending['__interrupt__']) == 1
     assert executed == []
-    result = resume_agent_run_in_workspace(
+    result = resume_agent_run_with_resources(
         agent, session_id='approve', thread_id='approve-thread',
         run_id='approve-run', workspace_root=workspace,
-        decisions=['approve'], approved_read_only_targets={'approve-1': outside.resolve()},
+        decisions=['approve'], read_resource_roots=(),
+        approval_grants={'read': OneUseApprovalGrants({'approve-1': outside.resolve()})},
     )
     assert executed == ['write']
     assert [(message.tool_call_id, message.content) for message in tool_results(result)] == [

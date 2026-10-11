@@ -7,12 +7,10 @@ from typing import Any, NotRequired, TypedDict
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
-    AgentState, HumanInTheLoopMiddleware, ModelRequest, after_agent,
-    before_agent, before_model,
-    wrap_model_call, wrap_tool_call,
+    AgentState, after_agent, before_agent, before_model,
 )
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 
@@ -27,28 +25,23 @@ from naiyue_test_agent.agent_runtime.tool_approval import (
     OneUseApprovalGrants, approval_policies_for_tools,
 )
 from naiyue_test_agent.model_access import load_model_catalog
-from naiyue_test_agent.model_access.errors import (
-    ModelResponseRejected, classify_model_failure, unknown_failure_diagnostics,
-)
-from naiyue_test_agent.model_access.stop_reason import (
-    MODEL_STOP_REASON_KEY, normalize_stop_reason, unknown_stop_reason_diagnostics,
-)
+from .errors import RuntimeErrorPolicy
 
 
 from naiyue_test_agent.agent_runtime.call_observation import (
     make_model_selection_middleware, _record_tool_call, ObservedHumanInTheLoopMiddleware,
 )
-from naiyue_test_agent.agent_runtime.events import RunEventPublisher, current_run_event_publisher
+from naiyue_test_agent.agent_runtime.events import RunEventPublisher
 from naiyue_test_agent.agent_runtime.message_observation import invoke_with_message_observation
 from .invocation_context import make_invocation_context
 from .active_stop import StopModelMiddleware, StopBoundaryMiddleware
 from .run_control import RunControl
 from naiyue_test_agent.agent_runtime.turn_observation import (
-    TurnBoundaryMiddleware, TurnObserver, current_turn_observer,
+    TurnBoundaryMiddleware, TurnObserver,
 )
-from naiyue_test_agent.agent_runtime.control_observation import ControlObserver, current_control_observer
+from naiyue_test_agent.agent_runtime.control_observation import ControlObserver
 from naiyue_test_agent.agent_runtime.context_operation_observation import (
-    ContextOperationObserver, current_context_operation_observer,
+    ContextOperationObserver,
 )
 
 
@@ -66,6 +59,7 @@ class RunContext(TypedDict):
     _turn_observer: NotRequired[TurnObserver]
     _control_observer: NotRequired[ControlObserver]
     _context_observer: NotRequired[ContextOperationObserver]
+    _failure_policy: NotRequired[RuntimeErrorPolicy]
 
 
 class InteractiveRunState(AgentState):
@@ -91,50 +85,6 @@ def build_runtime_agent(
     )
 
 
-def build_steerable_runtime_agent(
-    default_model: BaseChatModel,
-    *,
-    tools: list,
-    system_prompt: str,
-    response_format: Any,
-    resolve_model: Callable[[str], tuple[str, BaseChatModel]],
-    record_selection: Callable[[str, str], None],
-    checkpointer: BaseCheckpointSaver | None,
-    drain_steering: Callable[[str], list[str]],
-    finish_steering: Callable[[str], list[str]],
-):
-    """Add application-owned steering to the existing synchronous agent."""
-    return build_interactive_runtime_agent(
-        default_model, tools=tools, system_prompt=system_prompt,
-        response_format=response_format, resolve_model=resolve_model,
-        record_selection=record_selection, checkpointer=checkpointer,
-        drain_steering=drain_steering,
-        finish_pending_messages=finish_steering,
-    )
-
-
-def build_interactive_runtime_agent(
-    default_model: BaseChatModel,
-    *,
-    tools: list,
-    system_prompt: str,
-    response_format: Any,
-    resolve_model: Callable[[str], tuple[str, BaseChatModel]],
-    record_selection: Callable[[str, str], None],
-    checkpointer: BaseCheckpointSaver | None,
-    drain_steering: Callable[[str], list[str]],
-    finish_pending_messages: Callable[[str], list[str]],
-):
-    """Preserve the existing interactive assembly contract."""
-    return _assemble_interactive_runtime(
-        default_model, tools=tools, system_prompt=system_prompt,
-        response_format=response_format, resolve_model=resolve_model,
-        record_selection=record_selection, checkpointer=checkpointer,
-        drain_steering=drain_steering,
-        finish_pending_messages=finish_pending_messages,
-    )
-
-
 def _assemble_interactive_runtime(
     default_model: BaseChatModel,
     *,
@@ -145,54 +95,42 @@ def _assemble_interactive_runtime(
     record_selection: Callable[[str, str], None],
     checkpointer: BaseCheckpointSaver | None,
     drain_steering: Callable[[str], list[str]],
-    finish_pending_messages: Callable[[str], list[str]],
-    is_stop_requested: Callable[[str], bool] | None = None,
-    finish_run_boundary: Callable[[str], tuple[bool, list[str]]] | None = None,
+    is_stop_requested: Callable[[str], bool],
+    finish_run_boundary: Callable[[str], tuple[bool, list[str]]],
+    prepare_control_messages: Callable[[str, list[str]], list[HumanMessage]],
     resolve_project_instructions: Callable[[str], str | None] | None = None,
     observe_turns: bool = False,
-    prepare_control_messages: Callable[[str, list[str]], list[HumanMessage]] | None = None,
 ):
     """Resume the same run for steering or a natural-end follow-up."""
-    if (is_stop_requested is None) != (finish_run_boundary is None):
-        raise ValueError('Both stop callbacks are required together')
-
-    if is_stop_requested is not None:
-        @before_agent
-        def reset_run_control(_state, _runtime):
-            return {'run_stopped': False}
+    @before_agent
+    def reset_run_control(_state, _runtime):
+        return {'run_stopped': False}
 
     @before_model(can_jump_to=['end'])
     def inject_before_model(state, runtime):
         session_id = runtime.context['session_id']
-        if is_stop_requested is not None and is_stop_requested(session_id):
+        if is_stop_requested(session_id):
             return {'run_stopped': True, 'jump_to': 'end'}
         messages = drain_steering(session_id)
         if messages:
-            prepared = (prepare_control_messages(session_id, messages) if prepare_control_messages is not None
-                        else [HumanMessage(content=text) for text in messages])
+            prepared = prepare_control_messages(session_id, messages)
             return {'messages': prepared}
         return None
 
     @after_agent(can_jump_to=['model'])
     def inject_at_natural_end(_state, runtime):
         session_id = runtime.context['session_id']
-        if finish_run_boundary is not None:
-            stopped, messages = finish_run_boundary(session_id)
-            if stopped:
-                return {'run_stopped': True}
-        else:
-            messages = finish_pending_messages(session_id)
+        stopped, messages = finish_run_boundary(session_id)
+        if stopped:
+            return {'run_stopped': True}
         if messages:
-            prepared = (prepare_control_messages(session_id, messages) if prepare_control_messages is not None
-                        else [HumanMessage(content=text) for text in messages])
+            prepared = prepare_control_messages(session_id, messages)
             return {
                 'messages': prepared,
                 'jump_to': 'model',
             }
         return None
 
-    control_middleware = ([reset_run_control]
-                          if is_stop_requested is not None else [])
     project_prompt_middleware = (
         [make_project_prompt_middleware(resolve_project_instructions)]
         if resolve_project_instructions is not None else []
@@ -205,12 +143,12 @@ def _assemble_interactive_runtime(
         default_model, tools=tools, system_prompt=system_prompt,
         response_format=response_format, resolve_model=resolve_model,
         record_selection=record_selection, checkpointer=checkpointer,
-        steering_middleware=[*control_middleware, compaction_middleware,
+        steering_middleware=[reset_run_control, compaction_middleware,
                              inject_before_model,
                              inject_at_natural_end, *project_prompt_middleware,
                              recover_input_overflow],
-        state_schema=InteractiveRunState if is_stop_requested is not None else None,
-        observe_turns=observe_turns, active_stop=is_stop_requested is not None,
+        state_schema=InteractiveRunState,
+        observe_turns=observe_turns, active_stop=True,
     )
 
 
@@ -278,52 +216,6 @@ def invoke_agent_run(agent, messages, *, session_id: str, thread_id: str, run_id
     return _invoke_agent_run(
         agent, messages, session_id=session_id, thread_id=thread_id,
         run_id=run_id, workspace_root=None,
-    )
-
-
-def invoke_agent_run_in_workspace(
-    agent, messages, *, session_id: str, thread_id: str, run_id: str,
-    workspace_root: Path,
-):
-    """Invoke with an application-owned workspace in the private run context."""
-    if not isinstance(workspace_root, Path) or not workspace_root.is_absolute():
-        raise ValueError('A canonical workspace_root is required')
-    return _invoke_agent_run(
-        agent, messages, session_id=session_id, thread_id=thread_id,
-        run_id=run_id, workspace_root=workspace_root,
-    )
-
-
-def resume_agent_run_in_workspace(
-    agent, *, session_id: str, thread_id: str, run_id: str,
-    workspace_root: Path, decisions: list[str], approved_read_only_targets: dict[str, Path],
-    approved_bash_commands: dict[str, tuple[str, Path]] | None = None,
-):
-    """Resume one interrupted run with only the reviewed read-only tool grants."""
-    if not isinstance(workspace_root, Path) or not workspace_root.is_absolute():
-        raise ValueError('A canonical workspace_root is required')
-    read_only = OneUseApprovalGrants(approved_read_only_targets)
-    bash = OneUseApprovalGrants(approved_bash_commands or {})
-    return resume_agent_run_with_grants(
-        agent, session_id=session_id, thread_id=thread_id, run_id=run_id,
-        workspace_root=workspace_root, decisions=decisions,
-        approval_grants={'read': read_only, 'ls': read_only, 'find': read_only,
-                         'grep': read_only, 'bash': bash},
-    )
-
-
-def resume_agent_run_with_grants(
-    agent, *, session_id: str, thread_id: str, run_id: str,
-    workspace_root: Path, decisions: list[str],
-    approval_grants: dict[str, OneUseApprovalGrants],
-):
-    """Resume with application-provided grants, independent of concrete tool types."""
-    if not isinstance(workspace_root, Path) or not workspace_root.is_absolute():
-        raise ValueError('A canonical workspace_root is required')
-    return _invoke_agent_run(
-        agent, Command(resume={'decisions': [{'type': item} for item in decisions]}),
-        session_id=session_id, thread_id=thread_id, run_id=run_id,
-        workspace_root=workspace_root, approval_grants=approval_grants,
     )
 
 

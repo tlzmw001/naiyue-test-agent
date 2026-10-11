@@ -1,12 +1,14 @@
 """Stop model waits through middleware, then finish the existing compiled graph."""
 
+from .observation import observe, emit_event
+
 from langchain.agents.middleware import AgentMiddleware, ExtendedModelResponse, ModelResponse, hook_config
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.types import Command
 
 from .events import RunFailureData, ToolCallStartedData, ToolCallFinishedData
 from .run_control import UserStop, stop_tool_message
-from naiyue_test_agent.model_access.errors import ModelResponseRejected
+from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
 
 
 class StopModelMiddleware(AgentMiddleware):
@@ -22,7 +24,7 @@ class StopModelMiddleware(AgentMiddleware):
         except UserStop:
             turns = request.runtime.context.get('_turn_observer')
             if turns is not None:
-                turns.fail(RunFailureData('execute', 'cancelled', 'user_stop', 'CancelledError'))
+                observe(turns, turns.fail, RunFailureData('execute', 'cancelled', 'user_stop', 'CancelledError'))
             return ExtendedModelResponse(ModelResponse(result=[]),
                                          Command(update={'run_stopped': True}))
 
@@ -51,10 +53,10 @@ class StopBoundaryMiddleware(AgentMiddleware):
             from .call_observation import event_label
             for message in results:
                 name = event_label(message.name)
-                publisher.publish('tool_call_started', ToolCallStartedData(message.tool_call_id, name))
-                publisher.publish('tool_call_finished', ToolCallFinishedData(
+                emit_event(publisher, 'tool_call_started', lambda: ToolCallStartedData(message.tool_call_id, name))
+                emit_event(publisher, 'tool_call_finished', lambda: ToolCallFinishedData(
                     message.tool_call_id, name, 'dispatch', 'not_executed', 'user_stop'))
         turns = runtime.context.get('_turn_observer')
         if turns is not None:
-            turns.mark_ready()
+            observe(turns, turns.mark_ready)
         return {'messages': results, 'run_stopped': True, 'jump_to': 'end'}

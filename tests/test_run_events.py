@@ -1,5 +1,7 @@
 """Run metadata stays immutable, ordered, isolated, and safe to observe."""
 
+from event_sequence import CheckedPublisher
+
 from dataclasses import FrozenInstanceError
 from datetime import datetime
 from threading import Thread
@@ -14,7 +16,7 @@ from naiyue_test_agent.application.run_events import ApplicationEventSubscriptio
 
 def test_publisher_reports_immutable_ordered_metadata():
     received = []
-    publisher = RunEventPublisher('session', 'run', (received.append,))
+    publisher = CheckedPublisher('session', 'run', (received.append,))
     publisher.publish('run_started', RunStartedData('message'))
     publisher.publish('run_finished', RunFinishedData('completed'))
     assert [(e.event_type, e.sequence) for e in received] == [
@@ -33,7 +35,7 @@ def test_publisher_reports_immutable_ordered_metadata():
 
 def test_wrong_lifecycle_does_not_publish_a_fake_event():
     received = []
-    publisher = RunEventPublisher('session', 'run', (received.append,))
+    publisher = CheckedPublisher('session', 'run', (received.append,))
     with pytest.raises(ValueError):
         publisher.publish('run_finished', RunFinishedData('completed'))
     with pytest.raises(ValueError):
@@ -151,7 +153,7 @@ def test_call_pairing_and_payload_identity_are_enforced():
     from naiyue_test_agent.agent_runtime.events import ModelCallStartedData, ModelCallFinishedData
 
     received = []
-    publisher = RunEventPublisher('session', 'run', (received.append,))
+    publisher = CheckedPublisher('session', 'run', (received.append,))
     publisher.publish('run_started', RunStartedData('message'))
     publisher.publish('model_call_started', ModelCallStartedData('call', 'A'))
     with pytest.raises(ValueError):
@@ -165,20 +167,20 @@ def test_call_pairing_and_payload_identity_are_enforced():
     assert [e.sequence for e in received] == [1, 2, 3, 4]
 
 
-def test_nested_publisher_bindings_restore_parent_and_reset():
-    from naiyue_test_agent.agent_runtime.events import bind_run_event_publisher, current_run_event_publisher
+def test_nested_run_service_bindings_restore_parent_and_reset():
+    from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services, current_run_services
 
     parent = RunEventPublisher('parent', 'parent-run', ())
     child = RunEventPublisher('child', 'child-run', ())
-    assert current_run_event_publisher() is None
-    with bind_run_event_publisher(parent):
-        assert current_run_event_publisher() is parent
+    assert current_run_services() is None
+    with bind_run_services(RunServices(publisher=parent)):
+        assert current_run_services().publisher is parent
         with pytest.raises(RuntimeError):
-            with bind_run_event_publisher(child):
-                assert current_run_event_publisher() is child
+            with bind_run_services(RunServices(publisher=child)):
+                assert current_run_services().publisher is child
                 raise RuntimeError('synthetic')
-        assert current_run_event_publisher() is parent
-    assert current_run_event_publisher() is None
+        assert current_run_services().publisher is parent
+    assert current_run_services() is None
 
 
 @pytest.mark.parametrize('kind', ['model_start', 'tool_start', 'model_finish', 'tool_finish'])

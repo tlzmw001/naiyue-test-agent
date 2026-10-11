@@ -10,7 +10,7 @@ from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime import build_runtime_agent, invoke_agent_run
 from naiyue_test_agent.agent_runtime.events import RunStartedData, RunFinishedData
 from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions
-from naiyue_test_agent.model_access.errors import ModelResponseRejected
+from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
 from test_application_run_events import ToolModel, make_app
 
 
@@ -147,7 +147,7 @@ def test_bounded_input_recovery_is_one_logical_model_call(monkeypatch):
 
 
 def test_legacy_and_mismatched_scope_do_not_invent_application_events():
-    from naiyue_test_agent.agent_runtime.events import bind_run_event_publisher
+    from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
 
     model = ToolModel(responses=[AIMessage(content='done')])
     agent = build_runtime_agent(
@@ -159,7 +159,7 @@ def test_legacy_and_mismatched_scope_do_not_invent_application_events():
     subscriptions.subscribe(events.append)
     publisher = subscriptions.publisher('outer-session', 'outer-run')
     publisher.publish('run_started', RunStartedData('message'))
-    with bind_run_event_publisher(publisher):
+    with bind_run_services(RunServices(publisher=publisher)):
         result = invoke_agent_run(agent, [('user', 'run')], session_id='legacy-session',
                                   thread_id='legacy-thread', run_id='legacy-run')
     publisher.publish('run_finished', RunFinishedData('completed'))
@@ -168,7 +168,7 @@ def test_legacy_and_mismatched_scope_do_not_invent_application_events():
 
 
 def test_failed_run_binding_is_reset_before_next_direct_invocation(monkeypatch):
-    from naiyue_test_agent.agent_runtime.events import current_run_event_publisher
+    from naiyue_test_agent.agent_runtime.run_services import current_run_services
 
     failure = TimeoutError('synthetic')
 
@@ -179,7 +179,7 @@ def test_failed_run_binding_is_reset_before_next_direct_invocation(monkeypatch):
     app = make_app(monkeypatch, FailingModel(responses=[AIMessage(content='unused')]))
     with pytest.raises(TimeoutError):
         app.run(app.create_session('A'), [('user', 'run')])
-    assert current_run_event_publisher() is None
+    assert current_run_services() is None
 
 
 def test_partial_invalid_tool_response_is_failed_before_dispatch(monkeypatch):

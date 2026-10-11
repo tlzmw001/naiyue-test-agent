@@ -1,5 +1,7 @@
 """Session queue controls; the session service owns storage, lock, and errors."""
 
+from naiyue_test_agent.agent_runtime.observation import observe, emit_event
+
 import logging
 
 from langchain_core.messages import HumanMessage
@@ -27,10 +29,10 @@ class SessionControlMixin:
             run_id = session['run_id']
             control = self._control(session_id)
             if control:
-                control.accept('steering', queue_size=size)
+                observe(control, control.accept, 'steering', queue_size=size)
         self._record_steering('steering_accepted', session_id, run_id, 1)
         if control:
-            control.flush()
+            observe(control, control.flush)
 
     def follow_up(self, session_id: str, text: str) -> None:
         if not isinstance(text, str) or not text.strip():
@@ -44,10 +46,10 @@ class SessionControlMixin:
             run_id = session['run_id']
             control = self._control(session_id)
             if control:
-                control.accept('follow_up', queue_size=size)
+                observe(control, control.accept, 'follow_up', queue_size=size)
         self._record_follow_up('follow_up_accepted', session_id, run_id, 1)
         if control:
-            control.flush()
+            observe(control, control.flush)
 
     def request_stop(self, session_id: str, *, run_id: str | None = None) -> list[str]:
         with self._lock:
@@ -67,14 +69,14 @@ class SessionControlMixin:
             run_id = session['run_id']
             control = self._control(session_id)
             if control:
-                control.accept('stop')
+                observe(control, control.accept, 'stop')
         if active is not None:
             active.stop_control.request()
         logger.info('stop_requested', extra={'stop_event': {
             'event': 'stop_requested', 'session_id': session_id, 'run_id': run_id,
         }})
         if control:
-            control.flush()
+            observe(control, control.flush)
         return retained
 
     def is_stop_requested(self, session_id: str) -> bool:
@@ -84,7 +86,7 @@ class SessionControlMixin:
     def _select_controls(self, session_id, kind, messages):
         control = self._control(session_id)
         if control and messages:
-            control.select(kind, len(messages))
+            observe(control, control.select, kind, len(messages))
         return control
 
     def drain_steering(self, session_id: str) -> list[str]:
@@ -97,28 +99,9 @@ class SessionControlMixin:
         if messages:
             self._record_steering('steering_injected', session_id, run_id, len(messages))
         if control:
-            control.flush()
+            observe(control, control.flush)
         return messages
 
-    def finish_steering(self, session_id: str) -> list[str]:
-        with self._lock:
-            session = self._sessions[session_id]
-            messages = list(session['steering_queue'])
-            session['steering_queue'].clear()
-            if not messages:
-                session['steering_open'] = False
-            run_id = session['run_id']
-            control = self._select_controls(session_id, 'steering', messages)
-        if messages:
-            self._record_steering('steering_injected', session_id, run_id, len(messages))
-        if control:
-            control.flush()
-        return messages
-
-    def finish_pending_messages(self, session_id: str) -> list[str]:
-        """Preserve the message-only callback for older interactive assembly."""
-        _stopped, messages = self.finish_run_boundary(session_id)
-        return messages
 
     def finish_run_boundary(self, session_id: str) -> tuple[bool, list[str]]:
         """Atomically choose stop, steering, follow-up, or natural completion."""
@@ -144,14 +127,14 @@ class SessionControlMixin:
         else:
             self._record_follow_up('follow_up_injected', session_id, run_id, 1)
         if control:
-            control.flush()
+            observe(control, control.flush)
         return False, messages
 
     def prepare_control_messages(self, session_id: str, messages: list[str]) -> list[HumanMessage]:
         """Private assembly callback; plain-string drain/finish APIs stay unchanged."""
         with self._lock:
             control = self._control(session_id)
-        return (control.prepare_messages(messages) if control is not None
+        return (observe(control, control.prepare_messages, messages, fallback=[HumanMessage(content=text) for text in messages]) if control is not None
                 else [HumanMessage(content=text) for text in messages])
 
     @staticmethod

@@ -120,13 +120,13 @@ def test_storage_permissions_instance_lock_and_close(tmp_path):
 
 
 def test_cleanup_failure_never_leaves_session_ready(monkeypatch, tmp_path):
-    from naiyue_test_agent.agent_runtime.turn_observation import TurnObserver
+    from naiyue_test_agent.application.session_service import SessionService
     with SessionStorage(tmp_path / 'sessions.sqlite') as storage:
         app = build(monkeypatch, storage)
         session = app.create_session('A')
-        def broken_snapshot(*_a, **_k):
+        def broken_cleanup(*_a, **_k):
             raise ValueError('PRIVATE_CLEANUP')
-        monkeypatch.setattr(TurnObserver, 'snapshot', broken_snapshot)
+        monkeypatch.setattr(SessionService, '_cleanup_run', broken_cleanup)
         with pytest.raises(ValueError):
             app.run(session, [('user', 'q')])
         assert storage.get(session)['state'] != 'ready'

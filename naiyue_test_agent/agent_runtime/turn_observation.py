@@ -1,13 +1,12 @@
 """Logical turn observation and JSON-only approval continuation."""
 
-from contextlib import contextmanager
-from contextvars import ContextVar
 from threading import RLock
 from uuid import uuid4
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, ToolMessage
 
+from .observation import observe, emit_event
 from .turn_events import TurnFinishedData, TurnStartedData, TurnUnavailableData
 
 
@@ -200,21 +199,5 @@ class TurnBoundaryMiddleware(AgentMiddleware):
     def after_model(self, state, runtime):
         observer = runtime.context.get('_turn_observer') if runtime.context else None
         if observer is not None:
-            observer.mark_ready()
+            observe(observer, observer.mark_ready)
         return None
-
-
-_BOUND_TURNS: ContextVar[TurnObserver | None] = ContextVar('naiyue_turn_observer', default=None)
-
-
-@contextmanager
-def bind_turn_observer(observer):
-    token = _BOUND_TURNS.set(observer)
-    try:
-        yield
-    finally:
-        _BOUND_TURNS.reset(token)
-
-
-def current_turn_observer():
-    return _BOUND_TURNS.get()

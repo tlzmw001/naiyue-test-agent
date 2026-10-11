@@ -1,7 +1,38 @@
-"""Immutable control metadata; no message text, paths, commands, or grants."""
+"""Shared session event contracts; application owns their production."""
 
 from dataclasses import dataclass
 from typing import Literal
+
+from .failures import RunFailureData
+
+
+@dataclass(frozen=True)
+class RunStartedData:
+    mode: Literal['message', 'approval_resume']
+
+    def __post_init__(self):
+        if self.mode not in ('message', 'approval_resume'):
+            raise ValueError('Invalid run start mode')
+
+
+
+@dataclass(frozen=True)
+class RunFinishedData:
+    status: Literal['completed', 'stopped', 'interrupted', 'failed']
+    stop_mode: Literal['active'] | None = None
+    manual_review_required: bool = False
+    failure: RunFailureData | None = None
+
+    def __post_init__(self):
+        if self.status not in ('completed', 'stopped', 'interrupted', 'failed'):
+            raise ValueError('Invalid run terminal status')
+        if self.stop_mode != ('active' if self.status == 'stopped' else None):
+            raise ValueError('Invalid run stop mode')
+        if type(self.manual_review_required) is not bool:
+            raise ValueError('Invalid manual review flag')
+        if (self.status == 'failed') != isinstance(self.failure, RunFailureData):
+            raise ValueError('Invalid run failure details')
+
 
 
 @dataclass(frozen=True)
@@ -65,3 +96,12 @@ class ApprovalRequestedData:
     @property
     def count(self):
         return len(self.tool_call_ids)
+
+
+SESSION_PAYLOADS = {
+    'run_started': RunStartedData, 'run_finished': RunFinishedData,
+    'control_accepted': ControlData, 'control_delivery_started': ControlData,
+    'control_delivered': ControlData, 'control_applied': ControlData,
+    'control_discarded': ControlData, 'control_outcome_unknown': ControlData,
+    'approval_requested': ApprovalRequestedData,
+}

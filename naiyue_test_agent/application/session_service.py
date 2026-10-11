@@ -1,5 +1,7 @@
 """Trusted session state and application run lifecycle."""
 
+from naiyue_test_agent.agent_runtime.observation import observe, emit_event
+
 import asyncio
 import logging
 from functools import partial
@@ -12,7 +14,7 @@ from langchain_core.messages import AIMessage
 from langgraph.errors import GraphBubbleUp
 
 from naiyue_test_agent.agent_runtime import invoke_agent_run
-from naiyue_test_agent.agent_runtime.events import safe_error_type, bind_run_event_publisher
+from naiyue_test_agent.agent_runtime.events import safe_error_type
 from naiyue_test_agent.agent_runtime.tool_approval import ApprovalReview, ContextualApprovalPolicy
 from naiyue_test_agent.agent_runtime.tools.read import resolve_workspace_root
 from naiyue_test_agent.agent_runtime.tools.write import WriteOutcomeUnknown
@@ -24,6 +26,10 @@ from naiyue_test_agent.application.skills import prepare_run_resources
 from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions, RunObservation
 from naiyue_test_agent.application.session_controls import SessionControlMixin
 from naiyue_test_agent.model_access import ModelCatalog
+from naiyue_test_agent.contracts.failures import normalize_classifiers
+from naiyue_test_agent.agent_runtime.errors import RuntimeErrorPolicy
+from .failure_policy import ApplicationErrorPolicy
+from .errors import SessionBusyError, SessionPendingApprovalError, SessionManualReviewRequiredError
 from .io_steps import IOCall, run_steps
 from .async_session import AsyncSessionMixin
 from naiyue_test_agent.agent_runtime.async_invocation import ainvoke_agent_run
@@ -33,18 +39,6 @@ from naiyue_test_agent.agent_runtime.resource_invocation import (
 
 
 logger = logging.getLogger('naiyue_test_agent.application')
-
-
-class SessionBusyError(RuntimeError):
-    """A run is already active in this session."""
-
-
-class SessionPendingApprovalError(RuntimeError):
-    """A paused session needs its pending tool decisions before new input."""
-
-
-class SessionManualReviewRequiredError(RuntimeError):
-    """Uncertain tool side effects must be inspected before this session continues."""
 
 
 def _pending_tool_approval(result, root: Path | None, policies: dict, *, context=None):
@@ -95,6 +89,24 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
         self._events = ApplicationEventSubscriptions()
         self._active_runs = {}
         self._persistence = None
+        self._runtime_classifiers = ()
+        self._application_classifiers = ()
+
+    def configure_error_classifiers(self, *, model_id=None, model=None, runtime=None, application=None):
+        runtime = normalize_classifiers(runtime) if runtime is not None else None
+        application = normalize_classifiers(application) if application is not None else None
+        model = normalize_classifiers(model) if model is not None else None
+        if (model is None) != (model_id is None):
+            raise ValueError('Model classifiers require a model_id')
+        with self._lock:
+            if any(session['busy'] for session in self._sessions.values()):
+                raise SessionBusyError('Cannot change error mappings during an active run')
+            if model is not None:
+                self._catalog.configure_error_classifiers(model_id, model)
+            if runtime is not None:
+                self._runtime_classifiers = runtime
+            if application is not None:
+                self._application_classifiers = application
 
     def subscribe_events(self, handler):
         return self._events.subscribe(handler)
@@ -189,6 +201,8 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             observation = RunObservation(
                 self._events.publisher(session_id, run_id), 'message',
             )
+            observation.runtime_errors = RuntimeErrorPolicy(self._runtime_classifiers, self._catalog.failure_describer())
+            observation.application_errors = ApplicationErrorPolicy(self._application_classifiers)
             session['busy'] = True
             session['steering_open'] = True
             session['stop_requested'] = False
@@ -230,7 +244,7 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
                 with self._lock:
                     pending['requested_run_id'] = run_id
                     session['pending_tool_approval'] = pending
-                observation.controls.approval_requested(tuple(item['tool_call_id'] for item in pending['items']))
+                observe(observation.controls, observation.controls.approval_requested, tuple(item['tool_call_id'] for item in pending['items']))
                 result['approval_requests'] = self._public_approvals(pending)
                 self._record_approval('approval_requested', session_id, run_id,
                                       count=len(pending['items']))
@@ -303,8 +317,10 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             observation = RunObservation(
                 self._events.publisher(session_id, run_id), 'approval_resume',
             )
+            observation.runtime_errors = RuntimeErrorPolicy(self._runtime_classifiers, self._catalog.failure_describer())
+            observation.application_errors = ApplicationErrorPolicy(self._application_classifiers)
             observation.turns.restore(session['pending_turn'])
-            observation.controls.accept('approval',
+            observe(observation.controls, observation.controls.accept, 'approval',
                 tool_call_ids=tuple(item['tool_call_id'] for item in pending['items']),
                 decisions=tuple(decisions), origin_run_id=pending.get('requested_run_id'))
             session['busy'] = True
@@ -361,7 +377,7 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
                                   count=len(pending['items']))
             if next_pending is not None:
                 result['approval_requests'] = self._public_approvals(next_pending)
-                observation.controls.approval_requested(tuple(item['tool_call_id'] for item in next_pending['items']))
+                observe(observation.controls, observation.controls.approval_requested, tuple(item['tool_call_id'] for item in next_pending['items']))
                 self._record_approval('approval_requested', session_id, run_id,
                                       count=len(next_pending['items']))
             observation.result(result, next_pending)
@@ -396,13 +412,13 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
     def _cleanup_run(self, session_id, run_id, session, observation):
         with self._lock:
             review_required = session['manual_review_required']
-            session['pending_turn'] = observation.turns.snapshot(
+            session['pending_turn'] = observe(observation.turns, observation.turns.snapshot,
                 pending=session['pending_tool_approval'] is not None)
             discarded = len(session['steering_queue'])
             session['steering_queue'].clear()
             discarded_follow_up = len(session['follow_up_queue'])
             session['follow_up_queue'].clear()
-            observation.controls.close(observation.control_close_reason())
+            observe(observation.controls, observation.controls.close, observation.control_close_reason())
             self._active_runs.pop(session_id, None)
             session['steering_open'] = False
             session['stop_requested'] = False

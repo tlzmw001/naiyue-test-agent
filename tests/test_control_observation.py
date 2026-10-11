@@ -1,5 +1,7 @@
 """Control facts remain FIFO, immutable, and independent of input text."""
 
+from event_sequence import CheckedPublisher
+
 from langchain_core.messages import HumanMessage
 
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher, RunStartedData
@@ -105,9 +107,10 @@ def test_disabled_delivery_does_not_accumulate_a_second_notification_history(mon
 def test_publisher_keeps_original_approval_subject_across_stages():
     from dataclasses import replace
     import pytest
-    from naiyue_test_agent.agent_runtime.control_events import ControlData
+    from naiyue_test_agent.contracts.session_events import ControlData
 
-    observer, pub, events = make_observer()
+    events = []
+    pub = CheckedPublisher('s', 'r', (events.append,))
     pub.publish('run_started', RunStartedData('approval_resume'))
     accepted = ControlData('control', 'approval', tool_call_ids=('original',),
                            decisions=('approve',), origin_run_id='origin')

@@ -8,7 +8,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime.async_utils import await_settled, run_blocking, acquire_blocking
-from naiyue_test_agent.agent_runtime.events import current_run_event_publisher, safe_error_type
+from naiyue_test_agent.agent_runtime.events import safe_error_type
+from naiyue_test_agent.agent_runtime.run_services import current_run_services
 from naiyue_test_agent.agent_runtime.tool_approval import approval_policies_for_tools
 from .async_event_stream import AsyncEventStream
 
@@ -42,6 +43,11 @@ class AsyncApplication:
 
     def subscribe_events(self, handler):
         return self._sessions.subscribe_events(handler)
+
+    def configure_error_classifiers(self, *, model_id=None, model=None, runtime=None, application=None):
+        self._check_open()
+        return self._sessions.configure_error_classifiers(
+            model_id=model_id, model=model, runtime=runtime, application=application)
 
     async def acreate_session(self, model_id):
         self._check_open()
@@ -149,7 +155,8 @@ class AsyncApplication:
     async def aclose(self):
         if self._closed:
             return
-        if current_run_event_publisher() is not None:
+        services = current_run_services()
+        if services is not None and services.publisher is not None:
             raise RuntimeError('Cannot close the application from an active run')
         self._check_open()
         self._closing = True

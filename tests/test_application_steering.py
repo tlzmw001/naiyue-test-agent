@@ -9,7 +9,6 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime import build_steerable_runtime_agent
 from naiyue_test_agent.model_access import ModelCatalog
 
 
@@ -166,7 +165,7 @@ def test_natural_end_closes_steering_before_busy_gate_is_released():
 
     class PausedAtEndAgent:
         def invoke(self, _input, *, context, config):
-            assert service.finish_steering(context['session_id']) == []
+            assert service.finish_run_boundary(context['session_id']) == (False, [])
             closed.set()
             assert release.wait(timeout=3)
             return {'messages': []}
@@ -187,17 +186,12 @@ def test_natural_end_closes_steering_before_busy_gate_is_released():
     assert outcomes == [('result', {'messages': []})]
 
 
-def test_older_steerable_builder_remains_callable():
+def test_current_application_assembly_accepts_steering_callbacks():
     model = FakeMessagesListChatModel(responses=[AIMessage(content='answer')])
-    service = application.SessionService(ModelCatalog('A', {'A': model}))
-    agent = build_steerable_runtime_agent(
-        model, tools=[], system_prompt='', response_format=None,
-        resolve_model=service.resolve_model,
-        record_selection=lambda _session_id, _model_id: None,
-        checkpointer=None,
-        drain_steering=service.drain_steering,
-        finish_steering=service.finish_steering,
-    )
+    catalog = ModelCatalog('A', {'A': model})
+    service = application.SessionService(catalog)
+    agent = application._assemble_application(
+        catalog, service, None, tools=[], system_prompt='', response_format=None)
 
     result = service.run(agent, service.create_session('A'), [('user', 'initial')])
     assert [message.content for message in result['messages']] == ['initial', 'answer']

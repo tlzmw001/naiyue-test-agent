@@ -158,7 +158,7 @@ def test_non_text_notice_is_not_repeated_by_result_fallback():
 
 def test_registered_control_unknown_event_has_an_explicit_display():
     from naiyue_test_agent.agent_runtime.events import RunEventPublisher, RunStartedData
-    from naiyue_test_agent.agent_runtime.control_events import ControlData
+    from naiyue_test_agent.contracts.session_events import ControlData
     lines = []
     view = CliEventDisplay('session', writer=lines.append)
     publisher = RunEventPublisher('session', 'run', (view,))

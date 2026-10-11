@@ -6,7 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from naiyue_test_agent.agent_runtime.context_compaction import ContextCompactionError
-from naiyue_test_agent.model_access.errors import ModelResponseRejected
+from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
 from test_context_compaction import _app, _model
 from test_context_overflow_recovery import _configured_model, _history, _status
 

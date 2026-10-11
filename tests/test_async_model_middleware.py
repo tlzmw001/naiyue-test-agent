@@ -16,7 +16,7 @@ from pydantic import Field
 
 from naiyue_test_agent.agent_runtime import build_runtime_agent, make_model_selection_middleware
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher, RunStartedData
-from naiyue_test_agent.model_access.errors import ModelResponseRejected
+from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
 
 
 class NativeAsyncModel(BaseChatModel):

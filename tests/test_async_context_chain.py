@@ -15,7 +15,7 @@ from pydantic import Field
 
 from naiyue_test_agent.agent_runtime import _assemble_interactive_runtime
 from naiyue_test_agent.agent_runtime.context_compaction import ContextCompactionError, SUMMARY_MARKER
-from naiyue_test_agent.model_access.errors import ModelResponseRejected
+from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
 
 
 class AsyncContextModel(BaseChatModel):
@@ -93,7 +93,9 @@ def graph_for(models, selected=None, project='PROJECT'):
         models['A'], tools=[], system_prompt='BASE', response_format=None,
         resolve_model=lambda sid: (selected[sid], models[selected[sid]]),
         record_selection=lambda *_: None, checkpointer=InMemorySaver(),
-        drain_steering=lambda _: [], finish_pending_messages=lambda _: [],
+        drain_steering=lambda _: [], is_stop_requested=lambda _: False,
+        finish_run_boundary=lambda _: (False, []),
+        prepare_control_messages=lambda _sid, messages: [HumanMessage(content=text) for text in messages],
         resolve_project_instructions=lambda _: project,
     )
 

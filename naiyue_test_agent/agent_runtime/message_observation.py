@@ -1,5 +1,7 @@
 """Observe complete state messages without owning their reducer or persistence."""
 
+from .observation import observe, emit_event
+
 import hashlib
 import json
 import logging
@@ -123,9 +125,9 @@ def invoke_with_message_observation(agent, input, *, context, config, publisher)
     context_operations = context.get('_context_observer')
     if (not isinstance(agent, Pregel)
             or getattr(agent.invoke, '__func__', None) is not Pregel.invoke):
-        observer.unavailable('stream', 'unsupported_state_interface')
+        observe(observer, observer.unavailable, 'stream', 'unsupported_state_interface')
         if turns is not None:
-            turns.disable()
+            observe(turns, turns.disable)
         return agent.invoke(input, context=context, config=config)
     baseline_messages = []
     if agent.checkpointer:
@@ -134,14 +136,14 @@ def invoke_with_message_observation(agent, input, *, context, config, publisher)
         except GraphBubbleUp:
             raise
         except Exception as error:
-            observer.unavailable('baseline', 'baseline_read_failed', error=error)
+            observe(observer, observer.unavailable, 'baseline', 'baseline_read_failed', error=error)
             if turns is not None:
-                turns.disable()
+                observe(turns, turns.disable)
             return agent.invoke(input, context=context, config=config)
         baseline_messages = baseline.values.get('messages', [])
-        observer.seed(baseline_messages)
+        observe(observer, observer.seed, baseline_messages)
     if turns is not None and isinstance(input, Command):
-        turns.activate_resume(baseline_messages)
+        observe(turns, turns.activate_resume, baseline_messages)
     latest, interrupts = None, []
     iterator = agent.stream(input, context=context, config=config,
                             stream_mode=['updates', 'values'], version='v2',
@@ -154,19 +156,19 @@ def invoke_with_message_observation(agent, input, *, context, config, publisher)
             if part['type'] == 'values':
                 latest = part['data']
                 if isinstance(latest, dict):
-                    observer.observe(latest.get('messages', []))
+                    observe(observer, observer.observe, latest.get('messages', []))
                     if controls is not None:
-                        controls.observe(latest.get('messages', []))
+                        observe(controls, controls.observe, latest.get('messages', []))
                     if context_operations is not None:
-                        context_operations.observe(latest.get('messages', []))
+                        observe(context_operations, context_operations.observe, latest.get('messages', []))
                     if turns is not None:
-                        turns.observe(latest.get('messages', []))
+                        observe(turns, turns.observe, latest.get('messages', []))
             elif part['type'] == 'updates' and isinstance(part['data'], dict):
                 interrupts.extend(part['data'].get('__interrupt__', ()))
             if turns is not None:
-                turns.try_finish()
+                observe(turns, turns.try_finish)
             if context_operations is not None:
-                context_operations.flush()
+                observe(context_operations, context_operations.flush)
     except BaseException as error:
         primary = error
         raise
@@ -182,18 +184,18 @@ def invoke_with_message_observation(agent, input, *, context, config, publisher)
         if isinstance(primary, Exception) and not isinstance(primary, GraphBubbleUp) and agent.checkpointer:
             try:
                 recovered = agent.get_state(config)
-                observer.observe(recovered.values.get('messages', []), visibility='recovery_view')
+                observe(observer, observer.observe, recovered.values.get('messages', []), visibility='recovery_view')
                 if controls is not None:
-                    controls.observe(recovered.values.get('messages', []), visibility='recovery_view')
+                    observe(controls, controls.observe, recovered.values.get('messages', []), visibility='recovery_view')
                 if context_operations is not None:
-                    context_operations.observe(recovered.values.get('messages', []), visibility='recovery_view')
+                    observe(context_operations, context_operations.observe, recovered.values.get('messages', []), visibility='recovery_view')
                 if turns is not None:
-                    turns.observe(recovered.values.get('messages', []), visibility='recovery_view')
+                    observe(turns, turns.observe, recovered.values.get('messages', []), visibility='recovery_view')
             except BaseException as error:
                 logger.error('message_recovery_observation_failed error_type=%s', safe_error_type(error))
                 if isinstance(error, Exception) and not isinstance(error, GraphBubbleUp):
                     try:
-                        observer.unavailable('recovery', 'recovery_read_failed',
+                        observe(observer, observer.unavailable, 'recovery', 'recovery_read_failed',
                                              visibility='recovery_view', error=error)
                     except BaseException as reporting_error:
                         logger.error('message_recovery_reporting_failed error_type=%s',
