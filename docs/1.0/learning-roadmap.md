@@ -1,6 +1,24 @@
 # 全项目代码学习路线
 
-状态：2026-10-09，按用户要求整理当前代码盘点与学习顺序。**尚未开始本轮系统课堂；只有用户说“开始”后进入第1章，之后一次一个小课。** 此路线不要求先新增功能或先完成另一项验收；真实试用/断点/确定性探针作为相应章节的学习素材。
+2026-10-11当前衔接：[Spec081](../specs/081-event-exception-convergence.md)已实施，原reporter/id表回传改为原异常属性标注，运行依赖集中为RunServices。用户明确此前整体未理解，现进入[Lesson38](lessons/lesson-38.md)，先普通模型超时回传与观察隔离，再回第二章stop_reason；以下旧课堂记录保留历史，不作为当前接线说明。理解检查待答，独立实现/追问未评估。
+
+后续接口清理见[Spec082](../specs/082-remove-obsolete-runtime-bridges.md)：旧分项bind/getter、failure_data、两个旧交互builder及workspace调用包装已删除，旧课堂中的相关名字仅作历史。当前入口为中心RunServices及统一交互装配；同步保留项有具体消费者清单，代码规模表仍是当时快照。本次实现不升级用户掌握记录。
+
+状态：2026-10-10。**用户自述第一章已讲内容学会，独立实现与面试追问未评估；第2章errors旧版及Lesson28失败链已讲，整体独立追踪尚未证明。用户批准架构复审方向后，Spec079分层契约/实例扩展已实现（后端962/前端27测试通过），新版核心待学，先按[异常地图](exception-architecture.md)从contracts→model→runtime→application追三条故障链，再回第2章stop_reason。** 第一章见[Lesson18](lessons/lesson-18.md)/[Lesson19](lessons/lesson-19.md)。真实试用/断点/确定性探针作为相应章节的学习素材；下方原代码统计保留2026-10-09盘点，新增模块行数单独列示，不伪造全项目重新测量。
+
+新版异常现从[Lesson29](lessons/lesson-29.md)建立普通模型超时的完整地图；仅展开内部报告/身份复用，分类器算法与其余故障分支待学，不把架构地图定位当作核心代码全部读完。
+
+数据类见[Lesson30](lessons/lesson-30.md)，描述选择见[Lesson31](lessons/lesson-31.md)，分类器签名适配见[Lesson32](lessons/lesson-32.md)，模型目录快照见[Lesson33](lessons/lesson-33.md)，当前[Lesson34](lessons/lesson-34.md)读取RuntimeErrorPolicy构造及普通模型委托，控制/保护/普通运行分支待逐行读。
+
+用户在Lesson34反馈整体链再次迷糊，暂停新分支；先用TimeoutError实际数据流复盘“分类器是函数、描述是产物”及准备/执行区别。此前局部答对不表示整链已掌握。
+
+用户正确区分原异常与描述后说“继续”，[Lesson35](lessons/lesson-35.md)仅推进无效模型响应这一保护分支，按消息→异常→描述→报告/传播读；其他保护/普通运行分支仍未逐行学习。
+
+工具写提交结果不确定/cause与会话核对见[Lesson36](lessons/lesson-36.md)。
+
+现[Lesson37](lessons/lesson-37.md)只追原生异步模型等待中UserStop→图停止结果→stopped终局；外部取消/Graph控制/普通runtime/tool与App未报告回退仍待学。
+
+用户明确要求完整对象/调用/数据/分支图，反馈逐行内容疲劳。当前暂停Lesson38及其余新分支，优先[异常系统总图](exception-architecture.md)的1A节；新图整理是讲解导航，不补记所有分支已学/整链已掌握。后续按用户点名节点深入。
 
 ## 代码规模与统计口径
 
@@ -49,7 +67,7 @@
 
 第1章只建立地图，不一口气解释所有启动依赖。第一次出现尚未学习的模块时先讲输入/输出与职责，详细实现登记为后续阅读项；不能把一次定位算作该文件已经通读。长文件按机制分段、跨章复访，例如运行装配中的控制/压缩接线和SessionService中的审批/finalize。
 
-**第一小课（用户说开始之后）：** 从 `python -m naiyue_test_agent.web` 的入口画到模型目录、SessionService、create_agent及SQLite的装配图，确认这些对象分别属于哪一层。本次不提前讲核心代码。
+**第一小课（已开始）：** 从 `python -m naiyue_test_agent.web` 的入口画到模型目录、SessionService、create_agent及SQLite的装配图，区分启动、会话、运行。先定位装配依赖，不把地图定位记为通读；接着逐段读入口核心代码。
 
 ## 每个小课怎么学
 
@@ -90,16 +108,18 @@
 | 文件 | 物理行数 | 计划阅读状态 |
 |---|---:|---|
 | `naiyue_test_agent/__init__.py` | 1 | 待系统复盘 |
+| `naiyue_test_agent/contracts/__init__.py` | 1 | Spec079新增基础契约包，待学 |
+| `naiyue_test_agent/contracts/failures.py` | 101 | Spec079共享描述/分类与签名适配，待学 |
 
 ### 第2章
 
 | 文件 | 物理行数 | 计划阅读状态 |
 |---|---:|---|
-| `naiyue_test_agent/model_access/__init__.py` | 318 | 待系统复盘 |
-| `naiyue_test_agent/model_access/catalog_lifecycle.py` | 67 | 待系统复盘 |
-| `naiyue_test_agent/model_access/errors.py` | 89 | 待系统复盘 |
+| `naiyue_test_agent/model_access/__init__.py` | 318 | 加载/构造/目录已讲（Lesson20–24）；bind_model_output_limit待第7章；独立实现/追问未评估 |
+| `naiyue_test_agent/model_access/catalog_lifecycle.py` | 67 | 准备/登记/关闭核心已讲（Lesson25）；独立实现/追问未评估 |
+| `naiyue_test_agent/model_access/errors.py` | 89 | Lesson26讲旧版；Spec079框架ModelError/describe新增与别名变更待学，独立实现/追问未评估 |
 | `naiyue_test_agent/model_access/stop_reason.py` | 82 | 待系统复盘 |
-| `naiyue_test_agent/model_access/thinking.py` | 63 | 待系统复盘 |
+| `naiyue_test_agent/model_access/thinking.py` | 63 | 核心已讲解：Lesson23；回退检查题正确，独立实现/追问未评估 |
 
 ### 第3章
 
@@ -116,17 +136,20 @@
 | 文件 | 物理行数 | 计划阅读状态 |
 |---|---:|---|
 | `naiyue_test_agent/agent_runtime/async_message_observation.py` | 133 | 待系统复盘 |
-| `naiyue_test_agent/agent_runtime/call_observation.py` | 410 | 待系统复盘 |
+| `naiyue_test_agent/agent_runtime/call_observation.py` | 410 | failure_data263–272已讲（Lesson27）；模型失败生产/消费局部见Lesson26，其余待系统复盘 |
 | `naiyue_test_agent/agent_runtime/context_events.py` | 90 | 待系统复盘 |
 | `naiyue_test_agent/agent_runtime/context_operation_observation.py` | 211 | 待系统复盘 |
-| `naiyue_test_agent/agent_runtime/control_events.py` | 67 | 待系统复盘 |
+| `naiyue_test_agent/contracts/session_events.py` | — | 原control_events转发模块已按Spec082删除，控制/审批数据从当前契约文件阅读；行数未纳入旧快照重算 |
 | `naiyue_test_agent/agent_runtime/control_observation.py` | 189 | 待系统复盘 |
-| `naiyue_test_agent/agent_runtime/events.py` | 428 | 待系统复盘 |
+| `naiyue_test_agent/agent_runtime/events.py` | 428 | safe_error_type/RunFailureData24–45已讲（Lesson27）；其余待系统复盘 |
+| `naiyue_test_agent/agent_runtime/errors.py` | 114 | Spec079运行层异常目录/策略与报告端口，待学 |
 | `naiyue_test_agent/agent_runtime/message_observation.py` | 203 | 待系统复盘 |
 | `naiyue_test_agent/agent_runtime/stream_events.py` | 23 | 待系统复盘 |
 | `naiyue_test_agent/agent_runtime/turn_events.py` | 84 | 待系统复盘 |
 | `naiyue_test_agent/agent_runtime/turn_observation.py` | 220 | 待系统复盘 |
-| `naiyue_test_agent/application/run_events.py` | 170 | 待系统复盘 |
+| `naiyue_test_agent/application/run_events.py` | 170 | RunObservation初始化关键字段/failed123–148、finish163–170已讲（Lesson28）；cancelled及订阅/日志等其他部分待读 |
+| `naiyue_test_agent/application/errors.py` | 17 | Spec079应用错误目录，待学；旧导入保留同一类型 |
+| `naiyue_test_agent/application/failure_policy.py` | 51 | Spec079应用映射/try_describe，待学 |
 | `naiyue_test_agent/application/stream_projection.py` | 57 | 待系统复盘 |
 
 ### 第5章
@@ -141,7 +164,7 @@
 | `naiyue_test_agent/application/async_session.py` | 88 | 待系统复盘 |
 | `naiyue_test_agent/application/io_steps.py` | 51 | 待系统复盘 |
 | `naiyue_test_agent/application/session_controls.py` | 167 | 待系统复盘 |
-| `naiyue_test_agent/application/session_service.py` | 457 | 待系统复盘 |
+| `naiyue_test_agent/application/session_service.py` | 457 | 失败catch/finally局部、_cleanup_run396–417与_finish_run419–457已讲（Lesson28）；其他主流程待系统复盘 |
 
 ### 第6章
 
