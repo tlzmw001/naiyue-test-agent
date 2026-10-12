@@ -1,6 +1,6 @@
 # 后续开发与补充清单
 
-更新日期：2026-10-09。这里集中记录**尚未实现或尚未验证**的工作；它不是半个月首期的交付承诺。开始某一项前先读当前代码与对应 Spec，以一个小切片重新确定范围和验收，按 TDD 推进。完成时记录代码入口、验证命令和实际结果，再从本清单移至交接记录；不能只因文件存在或测试全绿就勾销真实服务与业务效果验证。
+更新日期：2026-10-11。这里集中记录**尚未实现或尚未验证**的工作；它不是半个月首期的交付承诺。开始某一项前先读当前代码与对应 Spec，以一个小切片重新确定范围和验收，按 TDD 推进。完成时记录代码入口、验证命令和实际结果，再从本清单移至交接记录；不能只因文件存在或测试全绿就勾销真实服务与业务效果验证。
 
 总体顺序与层级见 [实施路线](implementation-roadmap.md)，已经做过的证据见 [交接记录](handoff.md)。本清单聚焦遗留事项，历史讨论不自动转成已批准需求。
 
@@ -119,6 +119,8 @@ CLI已按[Spec 068](specs/068-cli-event-display.md)消费同一事件接口，�
 
 ## 学习与面试证据待补
 
+当前第二章异常按Spec083重建体系，6主题Lesson39–44已推进至Lesson43：Lesson41九选择分支、Lesson42四规则/接线场景已有正确复述，当前描述标注/回传。具体范围与证据见[学习路线](1.0/learning-roadmap.md)。本人独立追失败、写固定签名分类器、预测诊断/观察故障仍待完整验证，讲解收束不算整体掌握。完成本范围后回stop_reason，再恢复下一开发切片；停止/工具/压缩/存储深分支留相应章节。
+
 - 上下文压缩的探针与决策见 [Spec 050](specs/050-context-compaction-feasibility.md)：用户选择不直接接入内置摘要中间件，借鉴 Pi 策略并复用 `create_agent` 状态/checkpoint。[Spec 051](specs/051-model-context-preflight.md)已按 TDD 接入当前模型发送前的近似预算/候选触发事件；[Spec 052](specs/052-completed-turn-compaction.md)已接入新 run 开始前的完整旧轮次摘要，确定性假模型覆盖工具配对、前次摘要、摘要预算/模型失败、checkpoint 历史和会话清理。[Spec 053](specs/053-bounded-compaction-evaluation.md)的固定合成历史经真实网关两次完成有界对照，2048 上限下摘要实际输出 263/312 token、四项事实均保留；该短样本的压缩组总 token 高于未压缩组，不代表长会话收益或真实货币费用。早先超过两分钟的长会话探针根因仍未知。[Spec 054](specs/054-post-compaction-budget-guard.md)已用红绿测试补压缩后发送预算复核；[Spec 055](specs/055-invalid-tool-call-history-summary.md)已用红绿测试证明合成旧历史中解析失败调用与后续纠正可进入摘要输入；[Spec 056](specs/056-no-safe-cut-soft-threshold.md)与 [Spec 057](specs/057-safe-mid-turn-compaction.md)已用假模型完整链路验证软阈值跳过与安全消息边界切分。[Spec 058](specs/058-conditional-compaction-fallback.md)已用假模型验证回退资格、发送边界与原历史继续执行；用户确认方案并追问 Pi 溢出恢复，新增代码尚未独立复写。真实中途摘要质量、跨重启导入未验证；[Spec 059](specs/059-explicit-input-overflow-recovery.md)的指定 SDK 明确溢出恢复已按 TDD 接线；恢复 wrapper 与框架 Command 的独立阅读/复写待补。[Spec 060](specs/060-project-skills-index-and-read.md)已完成双来源索引与 Read 闭环，新增解析/上下文/权限核心代码待逐行阅读和本人练习；其他恢复信号、共享 Skill 来源及质量评测、重启恢复按独立切片推进。
 
 - [Spec 005](specs/005-model-access-thinking.md)的等级回退已讲解，用户反馈理解；供应商参数接线已讲解但尚无独立复写证据。Ollama 映射修正尚待讲解。[Spec 006](specs/006-model-call-failure-event.md) 的错误路径已讲解，用户正确判断 `record_selection` 抛错不会生成模型失败事件；完整路径的独立追踪、复写和追问能力尚待验证。
@@ -154,6 +156,8 @@ CLI已按[Spec 068](specs/068-cli-event-display.md)消费同一事件接口，�
 
 后续按用户清理要求完成Spec082：旧兼容入口已全部按列明范围删除，真实Bash/关闭读取改用中心服务；最新后端1038/前端27与构建通过。单参/双参自定义分类器仍是当前配置能力，进一步集中适配准备工作另定范围；未来功能迁移自动清理被替代内部逻辑的规则已写AGENTS.md。
 
+Spec083进一步收敛已完成：分类器现在仅(error,source)，不再包装单参回调；保护分类直接构造描述并保留两级诊断回退。后端1050/前端27与构建通过。resolve内重复做签名校验是否值得进一步优化仍是独立判断，不把本片表述为所有准备成本已移除；架构冗余来源/建议提示约束见exception-design-review第14节。
+
 提交审查确认的既有Web投影限制：工具开始事件已到达、run终局事件丢失且应用抛异常时，run_delivery的失败收尾会令run为done/unconfirmed，但工具条目可能仍是running并显示“处理中”。独立最小假应用探针已复现，当前与HEAD失败分支核对一致，不是本轮新增。完成判据：注入失败终局缺失后，保留原应用失败，未确认的工具条目降为unconfirmed，run与SSE有界收尾，正常工具结果和已有成功兜底不回归；作为独立修复，当前未实施。
 
 本机完成判据：跨事件序列检查移出Publisher并在测试显式断言；事件构造/观察器/听众普通故障不改变结果与原异常，控制和保存失败保留；观察缺口/终局丢失有界收尾；集中绑定无串会话/漏还原，原异常身份/cause/context保持；同步/异步/stream/CLI/Web回归及全量测试通过。仍需单独验证真实供应商、代表性并发和重启后回执行为。事件删减/custom进度接入另定消费者与协议，不自动实施。
@@ -171,3 +175,9 @@ CLI已按[Spec 068](specs/068-cli-event-display.md)消费同一事件接口，�
 最新要求覆盖分层独立、全局异常脉络与自定义扩展，原Spec079退回复审不直接实施。完成判据新增每层可独立验证/无反向依赖、模型/工具/App扩展不改不相关层、两应用映射隔离、框架ModelError族复用与兼容；正式分类/注入接口尚待确认，见[复审](1.0/exception-design-review.md)。用户能读局部代码不等于已能追踪完整故障链。
 
 实施更新：用户批准复审方向后Spec079已完成上述本机验收，新增34例及后端962/前端27全部通过；诊断遮盖（含摘要cause）、合法unknown覆盖、旧桥接上下文及默认参数兼容已补回归解决。模型映射按目录/model_id快照，Runtime/App配置按实例，source可显式传给分类器；没有全局注册表或新的HTTP函数接口。下一步学习新版三条故障链；真实供应商异常、未知样本评测仓库、公共HTTP码扩展以及M3外部重试仍待后续，不将本机测试当完整生产验证。
+
+### 诊断报告失败时缺少初始诊断类型（2026-10-11，已复现，待完善）
+
+- 用户在Lesson41指出：分类器抛ValueError、报告器写入前再抛RuntimeError，保底日志只记录后者。命令`.venv/bin/python -m pytest -q --log-cli-level=ERROR tests/test_classifier_contract.py::test_diagnostic_report_failure_still_returns_unknown`实际输出`failure_diagnostic_report_failed error_type=RuntimeError`，1 passed in0.52s；没有记录初始分类机制故障的安全类型。测试reports列表保留fault只是内存证据，不构成日志。
+- 范围限定contracts/failures.py的报告器二次故障日志；最小改进建议保留现有report_error的error_type，同时增加diagnostic_error_type字段，二者均用safe_error_type。不增加异常正文/请求内容/堆栈，也不新增包装、报告队列或持久库。若报告器已先完成日志再抛错，原诊断可能已有其他记录；当前缺口限定写入前失败的保底证据。
+- 完成判据：先补能证明当前保底日志缺少初始类型的失败断言；实施后同一故障案例同时记录ValueError与RuntimeError安全标签，当前unknown D仍描述原TimeoutError，日志不含PRIVATE正文，后续规则/内置不执行。当前只是学习中记录待办，未修改生产、未称已修复。

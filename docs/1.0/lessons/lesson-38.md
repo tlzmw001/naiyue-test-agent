@@ -43,6 +43,8 @@ before application中的completed是RunObservation的初始值，未发布完成
 
 当前源码agent_runtime/errors.py的describe_failure_in_context（Spec082清理后从第84行起，旧97–103为课堂开始时快照）。示意context含run_id和已装配的_failure_policy；source=model，model_id为当前模型标识。函数主链未改变，分项绑定/legacy failure_data入口已删除。
 
+Spec083更新后按函数名定位（当前从第90行起）；分类器统一(error,source)，保护分类不再走通用resolve。此前Lesson32讲过的单参包装是历史实现；本课return描述/raise异常的主线保持，不把这次实现当用户理解证明。
+
 1. context.get('_failure_policy')取当前运行的策略对象。
 2. isinstance检查是否为项目策略；独立调用或缺失时构造默认策略。
 3. policy.describe接收原异常和来源/模型标识，返回描述。分类内部算法留下一段。
@@ -53,3 +55,7 @@ before application中的completed是RunObservation的初始值，未发布完成
 检查：return description直接返回给谁？它是否会成为app.run的正常返回值？待答。
 
 下一步根据反馈确认本函数的局部return与外层raise，再逐段解释策略的普通模型委托或标注/读取；随后补普通观察隔离并回第二章stop_reason.py。局部正确答案不能替代当前整体理解。
+
+## 后续安排更新
+
+用户随后明确希望重新建立体系。旧段落保留历史学习位置，当前改按learning-roadmap的6课计划从Lesson39重建普通失败主线；尚未开始新课，不把本课部分讲解或一次正确回答升级为整链掌握。课堂使用Spec083的固定分类器协议，完成本范围后再回stop_reason。

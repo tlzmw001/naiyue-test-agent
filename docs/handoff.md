@@ -1,6 +1,6 @@
 # Naiyue Test Agent：当前开发学习交接
 
-更新日期：2026-10-09。这里保存最近阶段和唯一下一步；第 1–55 节在[历史（一）](handoff-history-01.md)，第 56–61 节在[历史（二）](handoff-history-02.md)。项目规则、总体选型和未完成工作分别见 [AGENTS.md](../AGENTS.md)、[项目设计](project-plan.md)、[后续清单](future-work.md)。
+更新日期：2026-10-11。最新收尾见第323节，课堂位置为Lesson43正常标注/读回；以下按时间保留阶段记录。第 1–55 节在[历史（一）](handoff-history-01.md)，第 56–61 节在[历史（二）](handoff-history-02.md)。项目规则、总体选型和未完成工作分别见 [AGENTS.md](../AGENTS.md)、[项目设计](project-plan.md)、[后续清单](future-work.md)。
 
 ## 62. 工具事件理解反馈与下一切片候选（2026-09-30）
 
@@ -1689,3 +1689,178 @@
 - 本轮最终`.venv/bin/python -m pytest -q --tb=short`→`1038 passed in 35.92s`；compileall退出0、pip check无冲突、git diff --check0；frontend9文件27通过及tsc/Vite成功。实际当前文件与未跟踪模块均纳入检查，不拿历史结果代替当前验收。
 - 一项既有Web失败投影限制已记录future-work：终局事件丢失且应用失败时，工具可能仍显示running；独立最小假应用复现、父会话源码与HEAD核对相同，不扩到本轮提交修复。没有真实模型新请求或生产压力声明。
 - 工程代码已本地提交`bcbe6be`（feat: consolidate failure handling and runtime observation），含Spec079–082、AGENTS清理规则及工程文档；本记录随Lesson18–38及学习导航独立归档，未推送远程。用户理解证据不变，唯一下一步回Lesson38。
+
+## 300. 分类器统一与冗余架构复盘（2026-10-11）
+
+- 用户批准固定分类器签名、保护规则直接构造描述，并要求实现后复盘冗余成因。先写Spec083与12例合同/保护测试，`9 failed, 3 passed`后最小实现；四个已有测试文件迁移为(error,source)，中途定位并补齐两处测试回调中的旧quota调用，保留原断言。
+- ErrorClassifier只按两个位置参数调用；同步/可检查签名/注册原子性保持，不包装函数。模型描述端口(model_id,error)独立保持。保护分支不经过resolve/扩展，非法原因及诊断再次失败安全回退，不替换原异常或泄漏正文。生产净行数持平：去适配6行，显式保护回退增加6行；不以行数换异常合同。
+- 定向`54 passed in 1.45s`；最终`.venv/bin/python -m pytest -q --tb=short`→`1050 passed in 36.00s`；compileall0、pip check无冲突、git diff --check0，frontend9文件27通过及tsc/Vite成功。独立架构复核54例通过，无阻塞发现；AST无normalize lambda，产品≤500。无真实模型请求/环境/依赖/DB变化，本轮未提交push。
+- 实现后复盘写exception-design-review第14节，当前指南加入Spec081–083主链、扩展示例更新固定协议。结论有记录支持：兼容范围过宽、相同结果字段被泛化为相同处理职责、分片缺退出清单、执行/观察职责及可读性验收确定较晚。旧AGENTS已有避免过度设计，不能把问题简单归于用户少写了口号；提示模板仅作建议，未自动追加新强制规则或记忆。
+- 用户提出两项收敛与复盘问题是实际设计参与，整体理解/独立实现/追问未新增证据；唯一下一步继续Lesson38当前主链，再回第二章stop_reason。旧回调课为历史，不重新教单参兼容。
+
+## 301. 复盘规则固化与第二章异常重新编排（2026-10-11）
+
+- 用户明确授权把复盘设计/验收要求写AGENTS，并自述多次修改后异常知识缺少体系。补充正常/失败主链、数据生产消费、必要操作/观察、真实外部接口清单、额外机制必要性/更直接替代、固定结果与规则选择分界、迁移删除与可读性验收；第三次抽象限定同一种职责，避免机械复用外形。已有清理规则保留衔接，未改产品行为。
+- 按实际model_access/errors、contracts/failures、Runtime/model快照、标注和App字段重排6节计划Lesson39–44：地图→内置分类/安全描述→统一扩展选择→本run规则接线→原异常回传→结果/诊断边界与综合练习。固定一个TimeoutError主线，定位后再局部深入，最后回同一地图；预计每节30–60分钟，先按4–6小时安排，随理解调整。
+- 原Lesson26–38保留历史，Lesson38一次正确回答只证明标注时点，不能算整链掌握。新课尚未开始，未创建未来课堂完成记录；当前权威位置是learning-roadmap新计划，旧状态段明确归历史。停止/工具/压缩/存储深分支留第5–8章，middleware/完整事件留第3–4章。
+- 本轮仅规则与学习文档，适用文件/链接/函数定位/未提前创建课堂记录及diff结构检查，不运行或伪称新功能测试。Spec083的1050/27是上一实现单元证据；环境/依赖/产品测试未改，本轮未提交push，未写外部记忆。
+- 完成本范围的证据要求：本人追普通失败、写(error,source)分类器、区分None/unknown及原异常/描述/终局、预测分类诊断与观察故障。达到后回stop_reason并恢复新切片，不等待全项目通读。唯一下一步用户开始Lesson39，从当前地图与三个对象重建。
+
+## 302. 开始Lesson39：用普通模型超时重建地图（2026-10-11）
+
+- 用户说“继续吧”，按六节计划开始Lesson39；具体区分原异常E、FailureDescription D、RunFailureData F及运行status，定位分类标注→裸raise→App读取/记录→必要收尾/终局。只讲普通失败地图，不进入回调算法、框架调度或新开发。
+- 当前源码核对模型超时内置分类、标注/读取、事件投影、模型wrapper和App异常/finally分支。本机合成探针调用真实描述/标注/投影函数，得到model/transient/timeout/TimeoutError、execute/transient/timeout/TimeoutError；同一D读取和原异常上抛身份均True，退出0。只验证局部边界，未请求网络或执行完整App保存。
+- 新建lesson-39并更新路线/目录为开始、待答；未记整链掌握、独立实现或课程完成。无产品代码变更、新全量测试、提交或push。
+- 唯一下一步根据用户回答确认生成描述与记录运行failed的职责时点，补齐地图后再进入Lesson40。
+- Lesson39后续：用户正确回答D在middleware捕获模型异常后生成、failed在App捕获后记录，确认此职责时点理解。继续补failed记录与必要收尾/busy解除/终局时序，未进入分类算法；新检查待答，不升级整链或独立实现。核对当前同步/异步finish源码，文档diff检查通过；无新产品或网络验证。下一步确认仅凭failed不能断定会话已可再次运行，再推进Lesson40。
+
+## 303. Lesson39时序检查正确，进入Lesson40内置超时识别（2026-10-11）
+
+- 用户正确说明failed只记录结果、收尾可能未完，需busy解除才可下一次运行；确认本例必要条件，不泛化为唯一准入条件。入门地图检查通过，未评估完整源码独立追踪。
+- 开始Lesson40第一小段：TimeoutError类型匹配→category/reason二元组→无自定义规则时resolve补source/error_type生成D；分类不执行恢复，不凭超时正文匹配。本机两个合成TimeoutError调用真实分类/描述函数，均得transient/timeout及model/TimeoutError，退出0。
+- lesson-40创建为部分已讲、待答，更新目录与路线；没有网络、完整App或新全量测试证据，产品代码未改，未提交push。diff结构检查通过。
+- 唯一下一步根据ValueError超时正文检查回答继续Lesson40的unknown、安全诊断与描述校验，框架/溢出规则尚未逐行讲解。
+- Lesson40后续：用户正确回答ValueError超时正文不触发超时类型规则，确认该分支识别理解。继续unknown合法描述、有限诊断字段及safe_error_type边界；合成ValueError探针得到unknown/unclassified、model/ValueError，diagnostics仅error_type，局部产物无该例原文True。退出0；未发网络请求，未审计完整日志。下一步确认unknown不改变原异常失败传播，再读校验及框架/溢出规则，Lesson40尚未完成。笔记/指引更新，diff检查通过；无产品修改/提交。
+- Lesson40后续：用户正确说明unknown不是成功、原ValueError继续上抛、D是附带描述。继续构造时__post_init__三组格式规则、any/or短路展开及validate消费边界的对象/类型/可选来源检查；明确合法格式不保证异常对应或业务语义。局部探针匹配通过、错类型描述可构造但校验拒绝、自由文本reason拒绝、原异常未变，5项True，退出0。来源不匹配检查待答，框架/SDK与溢出分支待讲；无产品/网络/新全量测试或提交，文档diff通过。
+- Lesson40后续：用户正确说明期望model而D.source=tool被来源一致性检查拒绝。继续框架规则表的三元组解包、按序isinstance/首个return；本机源码/MRO确认ModelTimeoutError继承ModelError，与ModelAPIError不同分支。两个真实类型的合成分类探针均transient/timeout，D.error_type分别保留TimeoutError/ModelTimeoutError，退出0；非网络或所有适配器转换证据。转换检查待答，输入溢出识别仍待讲。仅更新学习文档、diff检查通过，未改产品/依赖/提交。
+- Lesson40后续：用户正确说明框架超时直接类型识别、无转换且保留原异常。继续输入溢出helper的框架类型、SDK类型/400门槛、显式code、受限正文与None继续其他规则；区分证据标签和统一D.reason。5个本机构造SDK/框架案例probe退出0：明确类型/code/允许短语命中，普通400及无code的限流混合短语不命中（分类unknown）；无HTTP请求或恢复实证。429先于显式code拒绝检查待答，随后进入Lesson41；只更新教学文档，diff检查通过，产品/依赖/提交未改。
+
+## 304. Lesson40门槛检查正确，进入Lesson41自定义规则选择（2026-10-11）
+
+- 用户正确说明429在status!=400时返回None，不检查code；本轮Lesson40概念讲解结束，保留SDK逐条映射未全覆盖边界，未记整文件/独立实现掌握。
+- 开始Lesson41固定(error,source)调用及选择：None不认领继续、合法unknown D认领立即返回；校验后的D才可采用，规则故障不是正常None。真实describe_model_failure合成TimeoutError探针：skip→内置transient/timeout；claim_unknown先认领→unknown/unclassified且后续skip未执行；原类型保留，退出0。
+- 只验证描述选择，无网络/完整App/新全量测试或产品改动。新建lesson-41更新目录/路线，文档diff检查通过，无提交。
+- 唯一下一步确认保留内置超时识别时应返回None，再讲normalize注册与故障安全回退，完成本人规则练习后再进入Lesson42。
+
+## 305. 用户调整教学方式：模块职责与完整分支优先（2026-10-11）
+
+- 用户指出逐行短段太慢、细节淹没脉络、前后难记，要求先模块功能/情况分支，再各层交互/函数，少数关键函数解释，其他点名深入。立即停止上一题/逐行方向，不把重定向当答案或新增掌握证据。
+- 更新AGENTS教学默认规则、learning-roadmap当前方法、Lesson41及目录；旧正确回答保留，取消必须逐行覆盖/每轮检查题。6项保留主题分组，可合并；原估计只属旧节奏，不承诺新时长。未修改外部记忆或关键知识点。
+- 当前源码核对普通模型失败的middleware→Runtime→本run模型规则→模型describe/resolve→标注→App主线，及注册/选择/None/内置/unknown/规则故障/诊断再次失败分支。Runtime保护类型固定描述绕过自定义选择，App无内置匹配的try_describe可返回None，不画成所有异常必过同一引擎。
+- 本轮只有教学规则/文档变更，验证diff、局部链接与Markdown结构，无产品/新运行/构建或全量测试声明，无提交push。
+- 唯一下一步按Lesson41完整选择/故障分支继续讲跨层职责与关键函数，不要求先补答上一题或逐行读完normalize。
+
+## 306. 分支教学配独立单元测试与主动debug入口（2026-10-11）
+
+- 用户授权按分支讲，并希望每个分支有独立单元测试、本人debug结合。AGENTS/路线/目录固化测试优先复用、必要时补、精确命令/断点/变量、用户实际运行单独记录；不自动改IDE/环境或安装依赖。
+- 在已有test_classifier_contract.py补8个局部行为测试：None继续下一条/内置、合法unknown终止、内置未知、规则抛错、非法描述、报告器再次失败、App fallback=False未认领。结合已有注册拒绝测试形成9个分支入口；不新建平行框架、不改产品或conftest、不虚构TDD红灯。
+- 新增exception-branch-debug-guide.md并连到Lesson41/路线。相关5文件62 passed in1.52s；最终全量1058 passed in34.60s；compileall/diff均0。第一次6新增的1056是中间验证，最终结果以1058为准。无前端修改/新前端构建、网络、环境依赖、提交或push。
+- 真实交互pytest --trace单例验证两断点：failures.py111处E类型TimeoutError/source=model、调用后None；121处transient/timeout/TimeoutError；最终1 passed in4.56s。只证明助手本机调试流程可跑，不记用户已debug或掌握。
+- 唯一下一步用户运行test_none_classifier_continues_to_builtin并观察，然后对照合法unknown终止分支；不追加碎片检查题。
+
+## 307. VS Code调试入口与精简对象观察（2026-10-11）
+
+- 用户明确想用VS Code，并反馈对象数据展示冗余。转为已有pytest设置下的Debug Test/Test Explorer流程，不再以终端Pdb为默认；核对.vscode/settings.json确已启用pytest/tests，未修改配置或安装依赖。
+- 按官方Python测试/调试与通用调试文档给解释器选择、Debug Test at Cursor、111行规则调用和测试132行最终D断点、对应WATCH/Debug Console字段投影。明确当前调用栈帧决定变量含义，同名result可能是None或最终D；justMyCode只控制单步范围，不隐藏对象字段。
+- AGENTS、现有指南和Lesson41更新；真实描述入口生成D的4字段投影与asdict相同，本地探针退出0，Markdown结构/diff通过。没有操作用户VS Code UI，不能声明IDE实测或用户掌握；无产品/测试修改、网络模型请求/新全量测试或提交。
+- 唯一下一步用户在VS Code调试test_none_classifier_continues_to_builtin，停到所述断点并查看精简字段；根据真实停点/截图继续对应分支，不新增碎片问答。
+
+## 308. 从测试入口单步观察输入、返回与副作用（2026-10-11）
+
+- 用户要求不在两个中途位置设断点，改自己单步走完整单元测试并查看每次输入/输出。立即调整默认为测试121行入口断点，F10/F11/Shift+F11，配主要函数参数、返回、calls记录副作用地图；定点观察/Pdb转备选。
+- 官方debugpy文档与本机ms-python.debugpy-2026.6.0源码确认showReturnValue支持、VARIABLES返回项加(return)前缀。配置声明默认true不等于当前Test Adapter会话已实测开启，给可应用的完整debug-test配置文本，不未经授权创建launch.json。
+- AGENTS、现有指南和Lesson41更新。当前帧WATCH表达式在空帧/current+source/result=None/内置二元组/最终D五组局部上下文离线求值通过，最终D只显示4字段，缺少变量显示—；结构/JSON/diff验证。只验证表达式与配置格式，不称用户VS Code UI实测、单元功能新测试或本人掌握。
+- 唯一下一步用户从测试入口单步进入describe/resolve，观察参数、自定义None、内置二元组和最终D；根据实际单步停点继续，不退回固定两个中途断点方案。
+
+## 309. 用户复述None→内置主链正确，转合法描述认领分支（2026-10-11）
+
+- 用户自述该单元测试已理解，正确串TimeoutError→描述入口→选择函数→自定义None→内置→D返回。补函数名resolve_failure及多规则None先下一条、全部未认领才内置；对象构造是D非异常包装。记录复述和自述理解，不推断本人VS Code实测/独立实现。
+- 下一分支用同一TimeoutError：test_valid_unknown_stops_later_rules_and_builtin入口134行，match给合法unknown D、validate后立即返回，第二规则/内置不执行。说明forbidden守卫和result is expected身份断言，避免同字段诊断回退掩盖错误调用。
+- 当前指南的备选定点测试最终断言行从误记132校正为129；入口121仍正确，历史课堂当时表述保留。只更新笔记/指引；位置/Markdown/diff检查通过，无生产/测试修改、新功能测试或提交。
+- 唯一下一步用户从第二测试入口单步观察认领/校验/返回同一D，按其实际观察继续，不追加碎片题。
+
+## 310. 合法D优先级复述正确，转分类器故障分支（2026-10-11）
+
+- 用户正确说明第一规则给unknown后直接return、第二规则不执行；“包装后的异常”术语明确纠正为FailureDescription，原TimeoutError不变。只记选择顺序复述与自述理解，对象纠正后未新复述，不推断独立debug。
+- 下一测试test_classifier_failure_returns_unknown_without_continuing入口160行，同一原TimeoutError、规则自己抛ValueError；resolve记录诊断并返回针对原异常的unknown D，不继续第二条/内置。区分原E、诊断fault、描述D，单元不抛E，真实传播由middleware负责。
+- 补强该测试与非法描述分支的forbidden调用记录/空断言，防止守卫AssertionError被诊断回退接住后仅凭unknown结果漏判；未改生产、helper/conftest或放宽断言。当前测试文件20 passed in0.81s，compile/diff及笔记结构检查；无本轮全量/前端/真实模型运行或提交。
+- 唯一下一步用户从160行入口单步观察ValueError进入resolve except、D.error_type仍TimeoutError及forbidden_calls为空；不追加碎片题。
+
+## 311. 分类器故障复述正确，转返回描述校验故障（2026-10-11）
+
+- 用户正确复述规则抛错→except→匿名报告函数取安全类型/日志→unknown描述；采用描述对象称谓。校正口述expect/save为except/safe_error_type，明确report_diagnostic调用lambda、日志类型来自诊断ValueError，而D.error_type已在try前从原TimeoutError提取。只记复述证据，不推断独立debug/实现。
+- 下一分支test_invalid_description_returns_unknown_without_continuing入口182行：wrong_source正常返回合法格式但tool来源的D，validate期望model而拒绝→resolve日志/新unknown D；后续规则/内置不执行。按函数输入/返回与来源比较导航，不再逐行讲字段格式。
+- 当前只更新课堂/路线/指南，行号/Markdown/diff检查；无生产/测试/IDE配置修改、新功能测试、真实模型或提交。唯一下一步用户从182行入口单步观察wrong_source返回和validate校验抛错，再回测试看D_fallback与空守卫记录。
+
+## 312. 返回值校验分支复述正确，转报告器再次故障（2026-10-11）
+
+- 用户正确说明正常D的tool来源与期望model不符，校验抛错→诊断/新unknown D，后续不执行。记录本分支复述理解，未推断本人debug或独立实现。
+- 下一单元test_diagnostic_report_failure_still_returns_unknown入口202行，直接调resolve注入报告器：原TimeoutError→分类ValueError→报告RuntimeError→内层except固定安全日志→unknown D仍TimeoutError；reports=[fault]、builtin_calls=[]。说明三个异常各自来源与范围，非真实日志IO故障证明。
+- 只更新学习记录/指南/路线，当前入口与Markdown/diff验证；无产品/测试修改、新全量/真实模型运行或提交。唯一下一步从202行单步对照外层诊断捕获、内层报告捕获和最终D，再收束选择/诊断模块地图。
+
+## 313. 报告器故障复述正确，确认初始诊断日志缺口并继续内置unknown（2026-10-11）
+
+- 用户正确说明分类ValueError/报告RuntimeError/内层日志/原TimeoutError unknown描述，并指出只记录报告故障。先验证假设：该单元开ERROR日志仅failure_diagnostic_report_failed error_type=RuntimeError，1 passed in0.52s；初始ValueError类型未在保底日志记录，reports列表只是测试内存。限定报告写入前失败，不泛化已有先写后失败场景。
+- 按当前学习/继续分支指令只记future-work待完善：最小候选增diagnostic_error_type安全字段，保留现有报告error_type、描述/原异常合同和脱敏；未改产品或伪称修复。
+- 下一单元test_builtin_unknown_keeps_safe_type_without_raw_text入口152行，ValueError/空自定义→内置正常unknown→D，不进入诊断except；该概念独立单元复访。实时日志运行1 passed in0.51s，无本例诊断日志；middleware原失败日志不在这条局部单元内，不能说所有unknown都不记日志。
+- 更新课堂/指南指引/路线和待办，文档/位置/diff检查，无生产/测试/IDE或实网修改、新全量运行或提交。唯一下一步入口单步观察builtin正常unknown，与诊断回退unknown对照后继续注册/特殊未认领分支。
+
+## 314. 内置unknown复述正确，说明余下3条并复访None→下一规则（2026-10-11）
+
+- 用户正确复述空自定义→内置不识别ValueError→正常unknown/unclassified→D，不进入except，并询问剩余数量。当前指南9条独立测试中6条有正确复述，剩None后自定义命中、注册拒绝、App fallback=False未认领3条；计数不代表整个异常系统完成，独立debug/编写未评估。
+- 下一组合分支test_none_classifier_continues_to_next_rule入口103行，同一TimeoutError、[skip,match]：第一None继续第二、第二合法custom_timeout D校验并返回同一对象，不执行内置。观察classify名skip→match、result None→D、calls两条及身份断言，按入口单步快速对照已学路径。
+- 更新课堂/路线/指南当前定位和计数，旧证据保留。位置/Markdown/diff验证，无产品/测试/IDE配置变更、新功能运行或提交。唯一下一步确认此组合分支后，收束注册拒绝及App未认领，再进入本run规则接线。
+
+## 315. None→下一规则复述正确，进入配置接口拒绝（2026-10-11）
+
+- 用户正确说明第一None→第二合法D→return、不走内置。当前9条独立入口已有7条正确复述，剩配置拒绝/App未认领2条；不记独立debug/编写。
+- 当前test_single_argument_classifier_is_rejected_without_invoking入口19行：直接normalize模拟配置检查，legacy只有一参数；signature=(error)，bind(None,'model')仅检调用形状、不执行规则，TypeError转换固定ValueError被pytest.raises接住，calls=[]。示明prepare检查与执行分类/返回值校验的职责差别，实际App/Catalog注册写入前检查；运行时resolve仍会再次调用normalize并捕获其错误，避免误称该函数仅注册调用。
+- 更新课堂/路线/指南计数、入口和观察变量，位置/Markdown/diff验证。无产品/测试/IDE配置、新运行或提交。唯一下一步用户从19行单步观察接口拒绝并确认，再学最后App fallback=False未认领返回None。
+
+## 316. 注册分支复述正确，进入最后App未认领分支（2026-10-11）
+
+- 用户正确说明注册检两参数、signature.bind不执行、单参拒绝/pytest.raises捕获、calls空。9条已有8条正确复述；最后App分支待反馈，本人独立编写/debug未评估。
+- 当前test_application_no_match_returns_none入口229行，空自定义/普通ValueError→应用builtin=None→fallback=False直接None，不造D不进except。解释flag只控制正常未认领补unknown，合法unknown和机制故障仍可返回unknown。
+- 交互定位：RunObservation先读本run标注，App try未认领才继续Runtime（execute）或应用兜底（非execute）；另一App describe入口自行补unknown。当前单元止于本层None，不宣称已验证全App后续。按229入口单步看source、classified、fallback和result。
+- 只更新课堂/路线/指南，入口/Markdown/diff检查，无生产/测试/IDE修改、新运行或提交。唯一下一步用户复述/观察最后分支后整体收束选择模块，再安排规则练习和本run规则接线。
+
+## 317. 九分支完整图收束，开始Lesson42本run规则来源（2026-10-11）
+
+- 用户正确复述最后App未认领None不代表成功，要求九分支合图并继续。九条入口均有复述证据，记录分支概念理解；独立规则练习/debug/整链追踪未独立验收，不能把课堂讲解收束记成全部目标完成。
+- 调试指南新增一张完整Mermaid图：配置拒绝、运行规则校验、顺序自定义/None/合法D、内置结果/正常未认领、普通诊断/报告再次失败；①–⑨对应测试，注明外围保护/原异常传播/收尾与现存日志缺口。修正索引和future-work仍写未开始的过时学习状态。
+- 新Lesson42：三层规则存放、本run ModelCatalog.failure_describer映射快照、RuntimePolicy、RunObservation.bind/RunServices、make_invocation_context、middleware按model_id委托；先给完整交互地图，内部闭包/ContextVar按需深入。
+- 首个复用单元test_model_classifiers_are_model_scoped_and_snapshotted入口87行，假模型目录A有quota/B无规则；旧快照清空A后仍认领，当前A变unknown。单例1 passed in0.77s，只验证规则ID隔离/映射快照，两个ID复用fake对象，不宣称客户端/凭证隔离或完整run接线。App活动run拒绝改配置与目录单元直接更新区分。
+- 只更新图/学习文档，局部链接/图结构/入口/diff验证；无产品/测试/IDE变更、新全量/实网或提交。唯一下一步用户从87行单步比较当前目录与旧snapshot，再追真正本run策略/context交付；规则独立练习待后续安排。
+
+## 318. 规则快照复述正确，固定Lesson42四场景并进入策略注入（2026-10-11）
+
+- 用户正确说明A/B规则按ID隔离、before旧映射、清空后当前目录与旧快照分离，并问当前分支总数。Lesson42固定4个场景单元：①规则/快照，②本run策略注入context，③归属检查/作用域恢复，④Runtime模型委托/缺省；①已复述、余3个，不按所有if或整个异常系统计数。②③复用同一短测试，④采用实际跨层与缺省单元，标注/收尾只定位。
+- 当前test_single_binding_builds_explicit_context_and_restores_parent入口15行，publisher/control/defaultPolicy组成RunServices，with绑定后make_invocation_context读取并投影同一Policy到_failure_policy。区分此默认Policy接线单元与真实run准备时取得模型快照的Policy，不把局部单位当完整middleware验收。
+- 单例1 passed in0.80s；本地无网络投影打印s/r/same_policy=True，退出0。源码说明publisher有归属检查，现有foreign测试直接只验control；不把policy同门槛源代码定位说成已有单独断言。
+- 更新课堂/路线/目录当前状态、4场景测试导航；入口/Markdown/diff检查。无生产/测试/IDE修改、新全量或实网、提交。唯一下一步用户15行入口单步观察services.errors与context['_failure_policy']同一对象，再整体讲测试后半归属/还原。
+
+## 319. 策略注入复述正确，点名Token旧绑定恢复（2026-10-11）
+
+- 用户正确说明services携policy、context引用同一对象不复制/分类，确认场景②复述；①②已复述，③④余2个。用户点名set返回token与reset变null，暂停其他方向解释恢复机制。
+- 核对Python3.12官方contextvars文档和项目32/36行，Token.var/old_value、MISSING、reset回set前绑定；本项目default=None导致未绑定getNone，内层恢复外层而非清空。finally在正常/异常离开还原，恢复引用不复制/回滚对象内部状态。
+- 独立进程用实际_RUN_SERVICES验证外旧值MISSING、内旧值isOuter、set/reset五时点身份均True、最外层None，退出0；无用户IDE/模型/网络业务运行。没有新生产/测试或配置改动，只更新课堂/路线/交接，文档/diff验证；无提交。
+- 唯一下一步用户在原测试15入口单步观察32 set后的token.old_value与36 reset前后当前绑定；Token机制复述待反馈，随后讲所属session/run门槛，③未标完成。
+
+## 320. 继续场景③归属投影，补独立不匹配单元（2026-10-11）
+
+- 用户说继续，从Token问题转归属检查；未把继续当Token机制复述。make_invocation_context带publisher时要求session_id/run_id同时匹配才复制当前服务，失败只跳过投影，当前绑定不变；缺publisher允许单独服务注入是源码另一入口，不能误称所有情况必需publisher身份。结论限context构造，不作全租户/所有内部路径隔离声明。
+- 原foreign用例只直接验control，按已授权分支测试教学补test_context_projection_rejects_mismatched_run，59行入口，different-session/different-run两案例，context仅请求标识、current_services仍同一对象，直接验证policy/control/publisher未被误注入。无生产/旧断言/helpers/conftest变化，既有行为补断言不称TDD红灯修复。
+- `.venv/bin/python -m pytest -q tests/test_run_services.py`实际5 passed in0.77s；compileall/diff与文档/入口结构检查。新单元无网络/模型/IDE配置，未重跑全量/前端、未提交。
+- 更新课堂/路线/目录当前位置：①②已复述，③归属与还原均已讲、待反馈，④模型委托/默认待讲。唯一下一步用户59入口选择不匹配参数案例单步看matches=False与精简context，然后整体收束③，再进入④。
+
+## 321. 归属/还原复述正确，进入最后Runtime模型委托/缺省（2026-10-11）
+
+- 用户正确说明双标识匹配才注入、跳过不清绑定、with退出token恢复。限定带publisher的正式路径，①②③已有正确复述，当前④；不升级独立debug或编写。
+- 普通model异常：有self.model_describer调用快照端口(model_id,error)，无端口直接describe_model_failure(error)默认内置，返回D仍校验model来源/原类型；Runtime自己的classifiers不先处理普通模型错误。固定保护和信号更早处理，本次仅定位。
+- 复用Fake App跨层test_application_reads_annotation_and_classifies_model_once（51入口）与显式缺省test_explicit_default_failure_conversion_is_independent_of_bound_model_catalog（37入口），共同2 passed in0.77s。前者证明配置model规则到调用一次/结果，后者无端口Policy不受另一个环境services影响；标注内部留Lesson43。
+- 只更新课堂/路线/目录，入口/Markdown/diff验证；无生产/测试/IDE配置、新全量/前端/模型网络或提交。唯一下一步用户单步对照Runtime self.model_describer有/无及最终D，复述确认后收束4场景并进入原异常标注回传；本人规则练习仍待。
+
+## 322. Lesson42四场景复述收束，开始Lesson43正常标注回传（2026-10-11）
+
+- 用户正确说明普通model有model_describer按ID委托快照、无端口用默认内置。四场景都有正确复述，记录机制概念理解；不自动升级独立编写/debug或完整系统掌握。按持续课堂推进进入Lesson43。
+- 新Lesson43固定4场景：正常附着/读取与原异常传播、写入失败、无合法标注/读取故障、foreign run拒读。当前①具体形状E.naiyue_failure=(run_id,D)，写True/读同D，原E不变；describe局部return D与middleware裸raise分开，App按当前run读取优先复用。
+- 首个局部单元test_annotation_preserves_exception_identity_and_cause[error0]入口15行，TimeoutError/手构D；collect-only3cases，当前error0实际1 passed in0.49s。此单元不抛E，不冒充完整middleware传播证据，Fake App跨层同E/callback一次测试另有保护；其他参数不是分类语义正确性验证。
+- 新课堂/路线/目录/future-work学习位置同步，Markdown/链接/入口/diff检查；无产品/测试/IDE配置、新全量/前端/真实模型或提交。日志初始诊断类型缺口仍待修复，独立规则练习待开展。唯一下一步用户15入口选error0单步观察附二元组/读回同D，然后讲写失败/读失效/归属回退。
+
+## 323. 当前代码提交与推送收尾（2026-10-11）
+
+- 用户明确要求“先push一下当前代码”。本轮git fetch/status核对：分支main，origin为https://github.com/tlzmw001/naiyue-test-agent.git，远程更新后已有bcbe6be、39bd190两条本地待推提交；其余当前改动按异常契约/测试、上下文归属测试、协作规则与学习文档拆分提交。推送目标origin/main，执行结果以远程引用核对为准。
+- 当前重新运行`.venv/bin/python -m pytest -q --tb=short`→`1060 passed in 35.18s`；frontend的`npm test -- --run`→9文件27通过，`npm run build`→tsc/Vite成功；`.venv/bin/python -m compileall -q naiyue_test_agent tests scripts`退出0，`.venv/bin/python -m pip check`→`No broken requirements found.`，`git diff --check`退出0。这些是本轮实际结果，不借用此前阶段数字。
+- check按Deep范围只读复核：安全与架构均无阻塞发现，安全定向97通过/架构定向115通过；范围内104个变更文件凭证模式扫描无高置信度命中。父会话核对当前分类/标注/RunServices/观察/应用读回与Web补偿链，原异常、必要保存及控制边界保持。未修改环境/IDE配置、依赖或关键知识点，未发真实模型请求，不声称部署或生产验证。
+- 已知两项待办继续保留：诊断报告器先失败时保底日志缺初始诊断类型；既有Web失败且终局丢失时工具可能仍显示running。没有把它们算已修复。README、Spec083和学习状态指引同步当前收尾，历史课堂和阶段结果保留。
+- 当前仅进行提交/推送，未新增用户掌握证据。唯一下一步：完成远程引用核对后，待用户继续学习时接Lesson43的正常标注/读回，再讲其余写入/读取/归属回退场景。
