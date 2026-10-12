@@ -49,3 +49,19 @@ def test_session_contract_types_are_shared_without_application_imports():
     assert RunStartedData is session_events.RunStartedData
     assert ControlData is session_events.ControlData
     assert LegacyFailure is RunFailureData
+
+
+@pytest.mark.parametrize('session_id,run_id', [
+    ('other', 'r'),
+    ('s', 'other'),
+], ids=['different-session', 'different-run'])
+def test_context_projection_rejects_mismatched_run(session_id, run_id):
+    services = RunServices(
+        publisher=RunEventPublisher('s', 'r', ()),
+        errors=RuntimeErrorPolicy(),
+        control=RunControl(),
+    )
+    with bind_run_services(services):
+        context = make_invocation_context(session_id, run_id, None, None, ())
+        assert context == {'session_id': session_id, 'run_id': run_id}
+        assert current_run_services() is services
