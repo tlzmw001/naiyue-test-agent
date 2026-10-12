@@ -63,8 +63,14 @@ class RuntimeErrorPolicy:
         )
         if protected is not None:
             source = 'tool' if isinstance(error, (WriteOutcomeUnknown, BashOutcomeUnknown)) else 'runtime'
-            return resolve_failure(error, source=source, classifiers=(),
-                builtin=lambda _error: protected, report_diagnostic=self._diagnostic)
+            try:
+                return FailureDescription(source, *protected, safe_error_type(error))
+            except Exception as fault:
+                try:
+                    self._diagnostic(fault)
+                except Exception as report_error:
+                    logger.error('failure_diagnostic_report_failed error_type=%s', safe_error_type(report_error))
+                return FailureDescription(source, 'unknown', 'unclassified', safe_error_type(error))
         if source == 'model':
             try:
                 description = (self.model_describer(model_id, error) if self.model_describer

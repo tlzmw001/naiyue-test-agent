@@ -19,7 +19,7 @@ def test_application_unknown_match_is_not_treated_as_no_match(monkeypatch):
     app, events, _catalog = build(monkeypatch)
     error = ReportStorageError('PRIVATE')
 
-    def describe(_error):
+    def describe(_error, _source):
         return FailureDescription('application', 'unknown', 'report_unclassified', 'ReportStorageError')
 
     def fail(*_args, **_kwargs):
@@ -66,9 +66,9 @@ def test_async_custom_model_is_described_once_and_keeps_original(monkeypatch):
         app = AsyncApplication(catalog, sync._sessions, sync._agent)
         calls = []
 
-        def describe(error):
+        def describe(error, source):
             calls.append(error)
-            return quota(error)
+            return quota(error, source)
 
         try:
             app.configure_error_classifiers(model_id='A', model=[describe])
@@ -89,7 +89,7 @@ def test_async_custom_model_is_described_once_and_keeps_original(monkeypatch):
 def test_configuration_is_atomic_and_rejects_async_classifiers(monkeypatch):
     app, _events, catalog = build(monkeypatch)
 
-    async def classify(_error):
+    async def classify(_error, _source):
         return None
 
     with pytest.raises(ValueError, match='synchronous'):
@@ -144,7 +144,7 @@ def test_model_extension_invalid_contract_falls_back(monkeypatch, invalid, caplo
     error = VendorQuotaError('PRIVATE')
     app, events, _catalog = build(monkeypatch, failure=error)
 
-    def describe(_error):
+    def describe(_error, _source):
         return FailureDescription('application' if invalid == 'source' else 'model',
             'limit_exceeded', 'vendor_quota', 'OtherError' if invalid == 'error_type' else 'VendorQuotaError')
 
@@ -163,7 +163,7 @@ def test_control_errors_do_not_enter_extension_classifiers(control):
 
     calls = []
 
-    def classify(error):
+    def classify(error, source):
         calls.append(error)
         return None
 
@@ -208,10 +208,10 @@ def test_contextual_model_and_application_classifiers(monkeypatch):
     assert calls == ['model', 'application']
 
 
-def test_legacy_classifier_optional_parameter_keeps_default():
+def test_explicit_source_classifier_keeps_extra_captured_default():
     from naiyue_test_agent.application.failure_policy import ApplicationErrorPolicy
 
-    def describe(error, reason='captured_reason'):
+    def describe(error, source, reason='captured_reason'):
         return FailureDescription('application', 'custom_error', reason, type(error).__name__)
 
     assert ApplicationErrorPolicy([describe]).describe(ReportStorageError()).reason == 'captured_reason'

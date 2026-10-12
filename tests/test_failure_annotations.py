@@ -51,9 +51,9 @@ def test_application_reads_annotation_and_classifies_model_once(monkeypatch):
     error = VendorQuotaError('PRIVATE')
     app, events, _catalog = build(monkeypatch, failure=error)
     calls = []
-    def classify(error):
+    def classify(error, source):
         calls.append(error)
-        return quota(error)
+        return quota(error, source)
     app.configure_error_classifiers(model_id='A', model=[classify])
     with pytest.raises(VendorQuotaError) as caught:
         app.run(app.create_session('A'), [('user', 'probe')])

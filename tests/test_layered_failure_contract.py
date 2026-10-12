@@ -36,7 +36,7 @@ class ReportStorageError(Exception):
     pass
 
 
-def quota(error):
+def quota(error, source):
     if isinstance(error, VendorQuotaError):
         return FailureDescription('model', 'limit_exceeded', 'vendor_quota', type(error).__name__)
     return None
@@ -102,7 +102,7 @@ def test_runtime_protected_errors_cannot_be_overridden():
     from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
     from naiyue_test_agent.agent_runtime.errors import ContextCompactionError, ToolBatchSchedulingError
 
-    def forbidden(_error):
+    def forbidden(_error, _source):
         raise AssertionError('Protected classifications must bypass extensions')
 
     policy = RuntimeErrorPolicy(classifiers=[forbidden])
@@ -138,7 +138,7 @@ def test_custom_fatal_tool_description_is_reported_to_application(monkeypatch):
         """Raise a synthetic fatal tool error without side effects."""
         raise error
 
-    def describe(error):
+    def describe(error, source):
         if isinstance(error, ToolDataError):
             return FailureDescription('tool', 'tool_error', 'data_unavailable', 'ToolDataError')
         return None
@@ -184,7 +184,7 @@ def test_application_extension_is_local_and_has_correct_stage(monkeypatch):
     other, other_events, _other_catalog = build(monkeypatch)
     error = ReportStorageError('PRIVATE')
 
-    def describe(error):
+    def describe(error, source):
         if isinstance(error, ReportStorageError):
             return FailureDescription('application', 'storage_error', 'report_unavailable', 'ReportStorageError')
         return None
@@ -208,7 +208,7 @@ def test_invalid_extension_does_not_expose_raw_text_or_replace_error(monkeypatch
     error = VendorQuotaError('PRIVATE_ORIGINAL')
     app, events, _catalog = build(monkeypatch, failure=error)
 
-    def invalid(_error):
+    def invalid(_error, _source):
         raise ValueError('PRIVATE_DIAGNOSTIC')
 
     app.configure_error_classifiers(model_id='A', model=[invalid])

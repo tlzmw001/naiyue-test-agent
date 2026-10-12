@@ -91,10 +91,10 @@ def test_summary_uses_configured_model_failure_mapping(monkeypatch):
     app, session, _model, messages, *_rest = _case(monkeypatch, primary, send_margin=-1)
     calls = []
 
-    def describe(error):
+    def describe(error, source):
         if isinstance(error, VendorQuotaError):
             calls.append(error)
-        return quota(error)
+        return quota(error, source)
 
     app.configure_error_classifiers(model_id='A', model=[describe])
     with pytest.raises(ContextCompactionError) as caught:

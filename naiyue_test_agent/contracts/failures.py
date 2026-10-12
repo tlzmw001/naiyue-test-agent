@@ -46,8 +46,7 @@ class FailureDescription:
             raise ValueError('Invalid failure error type')
 
 
-ErrorClassifier = (Callable[[BaseException], FailureDescription | None]
-                   | Callable[[BaseException, FailureSource], FailureDescription | None])
+ErrorClassifier = Callable[[BaseException, FailureSource], FailureDescription | None]
 
 
 def validate_failure_description(error, description, *, source=None):
@@ -96,15 +95,10 @@ def normalize_classifiers(classifiers: Iterable[ErrorClassifier]) -> tuple[Error
         except (TypeError, ValueError):
             raise ValueError('Failure classifiers require an inspectable signature') from None
         try:
-            signature.bind(None)
+            signature.bind(None, 'model')
         except TypeError:
-            try:
-                signature.bind(None, 'model')
-            except TypeError:
-                raise ValueError('Failure classifiers accept error or error and source') from None
-            result.append(item)
-        else:
-            result.append(lambda error, source, classify=item: classify(error))
+            raise ValueError('Failure classifiers must accept error and source') from None
+        result.append(item)
     return tuple(result)
 
 

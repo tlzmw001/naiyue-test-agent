@@ -4,6 +4,30 @@
 
 接口清理更新：[Spec082](../specs/082-remove-obsolete-runtime-bridges.md)已删除旧分项bind/getter、failure_data及旧交互/workspace包装；当前以bind_run_services/current_run_services和明确的描述转换为入口，Bash停止和应用关闭读取已迁移。以下涉及旧名字的图/记录仅作历史比较，当前清理范围和保留消费者见Spec082。
 
+## 当前主链（Spec081–083）
+
+所有自定义分类器统一按`classify(error, source)`调用；注册校验后保留原函数，没有单参包装。`model_describer(model_id, error)`是模型快照选择端口，与分类器不是同一职责。
+
+下面只画未恢复、最终传到应用的失败路径。用户停止转换为stopped、审批中断和摘要恢复另有控制路径，不能由描述类别直接推定整个run失败。
+
+```mermaid
+flowchart TD
+    A[Runtime捕获原异常] --> B{保护分类是否命中}
+    B -->|是| C[直接构造描述，故障安全回退]
+    B -->|否| D[按来源选择模型或Runtime普通分类]
+    C --> E[描述标注原异常，裸raise]
+    D --> E
+    E --> F[应用读取本run描述，加真实stage]
+    F --> G[必要清理与保存]
+    G --> H[报告终局，原异常继续向调用者传播]
+```
+
+运行依赖：应用装配RunServices→一次绑定→make_invocation_context读取匹配的服务对象→middleware显式使用context。输入线程仍通过active_runs查控制，不读取其他运行的隐式状态。
+
+职责：模型层识别请求失败和模型专用映射；Runtime保护控制/副作用/门禁语义并生成描述；App决定收尾与保存后状态；Publisher/CLI/Web报告已发生事实。普通观察故障降级观察，必要保存失败仍按执行合同失败。
+
+以下Spec079总图与细节保留历史阅读位置；当前回传以本节为准，第7节分类器用法已更新至Spec083。旧reporter/id表不是当前运行环节。
+
 ## 1. 从这里开始读
 
 | 职责 | 当前文件 |
@@ -347,7 +371,7 @@ app.configure_error_classifiers(model_id=app.default_model_id, model=[quota])
 
 上述是接入示例，没有真实供应商请求。runtime=[...]配置循环/工具的致命错误描述，application=[...]配置应用领域错误；App与AsyncApplication都有同名方法，异步应用需在所属事件循环调用。不传的类别保留已有配置，传空列表清空该类别；模型配置同时给model_id/model。任何会话busy时拒绝修改，配置先全部校验再提交。
 
-原单参classifier(error)仍支持。能单参调用的函数保持其默认参数语义；只有必须接收两个参数才收到source。映射必须同步可检查签名，不能联网/重试，返回None交后续映射。来源/错误类型不合契约、非法代码或普通异常均安全回退，不暴露原正文。Graph/取消/副作用未知/响应拒绝等保护先执行，普通扩展不能覆盖控制语义。
+当前只调用classifier(error,source)，单参形式在注册时拒绝；额外默认参数可用于捕获值，但不会再被自动适配。映射必须同步可检查签名，不能联网/重试，返回None交后续映射。来源/错误类型不合契约、非法代码或普通异常均安全回退，不暴露原正文。Graph/取消/副作用未知/响应拒绝等保护先执行，普通扩展不能覆盖控制语义。
 
 模型映射按ModelCatalog实例/model_id保存；运行开始复制目录及Runtime/App元组快照，换模型用对应model_id映射。默认两个应用各有独立目录；手工共享同一个目录意味着明确共享其模型映射，不宣称多租户隔离。没有新的HTTP函数注入接口或.env配置项。
 
@@ -355,6 +379,6 @@ app.configure_error_classifiers(model_id=app.default_model_id, model=[quota])
 
 ModelResponseRejected协议类型在contracts定义，runtime.errors为自然运行入口；旧model_access.errors响应拒绝导入/分类兼容分支已按Spec082删除；当前从runtime.errors导入，模型describe只负责模型请求分类。ContextCompactionError/ToolBatchSchedulingError归runtime.errors，旧模块重导出同一类；App会话/存储错误归application.errors，旧路径仍可导入。没有反向导入来做兼容。
 
-旧failure_data(error)无model_id，因此使用确定默认映射，不隐式读取目录；新边界显式传source/model_id。RunFailureData/RunFinishedData/旧日志字段和DB保持，source只在内部描述和映射匹配中使用。
+旧failure_data已删除，当前边界显式传source/model_id，描述随原异常标注上行。RunFailureData/RunFinishedData/日志字段和DB保持，source只在内部描述和映射匹配中使用。
 
 验证矩阵及实际结果见[Spec079](../specs/079-runtime-failure-projection.md)。已实现不代表用户已会独立追踪/实现；新增代码下一次按这三条时序学习。仍需更多供应商真实故障、未知样本评测、外部重试/尝试观测、公开HTTP错误扩展和长期存储故障验证；不将本机测试称完整生产保证。
