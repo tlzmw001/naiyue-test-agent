@@ -5,6 +5,11 @@ export interface ToolState {
   tool_call_id: string; tool_name: string | null; run_id: string;
   state: 'running' | 'finished' | 'unconfirmed';
   boundary: string; outcome?: string; reason?: string | null;
+  batch_id?: string | null;
+  activity?: 'queued' | 'preparing' | 'running' | 'stopping' | 'settling';
+  phase?: string; completed?: number | null; total?: number | null;
+  unit?: 'bytes' | 'lines' | 'entries' | 'matches' | null; text?: string;
+  started_at?: string; last_activity_at?: string; finished_at?: string;
 }
 export interface ApprovalRequest { tool_call_id: string; tool_name: string; target: string; workspace?: string; }
 export interface ToolDecision { tool_call_id: string; decision: 'approve' | 'reject'; }
@@ -13,6 +18,7 @@ export interface MessageRow {
   id: string;
   type: string;
   content: string;
+  content_projection?: 'text';
   provisional: boolean;
   state: 'draft' | 'complete' | 'unconfirmed';
   is_context_summary?: boolean;
@@ -35,6 +41,7 @@ export interface RunView {
   manual_review_required: boolean;
   retained?: string[];
   tool_states?: Record<string, ToolState>;
+  stop_requested?: boolean;
   failure?: { error_type: string; reason: string } | null;
 }
 
@@ -48,6 +55,9 @@ export interface SessionRow {
 }
 
 export interface SessionView extends SessionRow {
+  checkpoint_id?: string | null;
+  active_tools: string[];
+  permission_mode: 'Default' | 'NoAsk' | 'Auto' | 'BypassApprovals';
   messages: MessageRow[];
   busy: boolean;
   can_run: boolean;
@@ -59,6 +69,14 @@ export interface SessionView extends SessionRow {
   live: RunView | null;
   approval_run_id?: string | null;
   approval_requests?: ApprovalRequest[];
+  recovery?: SessionRecovery;
+}
+
+export interface SessionRecovery {
+  kind: 'ready' | 'pending_approval' | 'interrupted_execution' | 'unavailable';
+  reason: string;
+  actions: string[];
+  unconfirmed_tool_call_ids: string[];
 }
 
 export interface RuntimeEvent {
@@ -66,6 +84,7 @@ export interface RuntimeEvent {
   session_id: string;
   run_id: string;
   sequence: number;
+  timestamp?: string;
   event_type: string;
   data: Record<string, unknown>;
 }

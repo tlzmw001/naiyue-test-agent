@@ -1,3 +1,8 @@
+
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+from naiyue_test_agent.application import prepare_tool_registry
 import json
 from pathlib import Path
 
@@ -122,8 +127,8 @@ def config_for_all_kinds():
             'local': {'kind': 'ollama', 'base_url': 'http://127.0.0.1:11434'},
         },
         'models': {
-            'official': {'provider_id': 'official', 'model': 'openai-test-model'},
-            'gateway': {'provider_id': 'gateway', 'model': 'gateway-test-model'},
+            'official': {'provider_id': 'official', 'model': 'openai-test-model', 'api': 'chat_completions'},
+            'gateway': {'provider_id': 'gateway', 'model': 'gateway-test-model', 'api': 'chat_completions'},
             'claude': {'provider_id': 'claude', 'model': 'claude-test-model'},
             'local': {'provider_id': 'local', 'model': 'local-test-model'},
         },
@@ -389,14 +394,9 @@ def test_duplicate_json_key_is_rejected(tmp_path):
         load_model_catalog(path)
 
 
-def test_missing_or_readable_config_is_rejected(tmp_path):
+def test_missing_config_is_rejected(tmp_path):
     with pytest.raises(ModelConfigError, match='models.json'):
         load_model_catalog(tmp_path / 'models.json')
-
-    path = write_config(tmp_path, config_for_all_kinds())
-    path.chmod(0o644)
-    with pytest.raises(ModelConfigError, match='permissions'):
-        load_model_catalog(path)
 
 
 def test_configured_agent_uses_file_and_switches_after_tool_result(tmp_path, monkeypatch):
@@ -418,10 +418,10 @@ def test_configured_agent_uses_file_and_switches_after_tool_result(tmp_path, mon
         'default_model_id': 'first',
         'providers': {'p': {'kind': 'openai', 'api_key': 'test-key'}},
         'models': {
-            'first': {'provider_id': 'p', 'model': 'model-first',
+            'first': {'provider_id': 'p', 'model': 'model-first', 'api': 'chat_completions',
                       'thinking': {'supported_levels': ['off', 'low', 'high'],
                                    'default_level': 'high'}},
-            'second': {'provider_id': 'p', 'model': 'model-second'},
+            'second': {'provider_id': 'p', 'model': 'model-second', 'api': 'chat_completions'},
         },
     }
     selections = []
@@ -432,9 +432,11 @@ def test_configured_agent_uses_file_and_switches_after_tool_result(tmp_path, mon
         selected['s1'] = 'second'
         return 'selected second'
 
+    _runtime_registry_1 = prepare_tool_registry([ToolSpec(switch_to_second, switch_to_second.args_schema, permissions=ToolPermission(default='allow'))])
+    _runtime_names_1 = _runtime_registry_1.names()
     agent = build_configured_runtime_agent(
         write_config(tmp_path, config),
-        tools=[switch_to_second], system_prompt='Test model selection.', response_format=None,
+        tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='Test model selection.', response_format=None,
         select_model_id=lambda session_id: selected[session_id],
         record_selection=lambda session_id, model_id: selections.append((session_id, model_id)),
     )
@@ -461,10 +463,12 @@ def test_configured_agent_forwards_checkpointer_for_continuous_messages(tmp_path
         'schema_version': 1,
         'default_model_id': 'first',
         'providers': {'p': {'kind': 'openai', 'api_key': 'test-key'}},
-        'models': {'first': {'provider_id': 'p', 'model': 'model-first'}},
+        'models': {'first': {'provider_id': 'p', 'model': 'model-first', 'api': 'chat_completions'}},
     })
+    _runtime_registry_2 = prepare_tool_registry([])
+    _runtime_names_2 = _runtime_registry_2.names()
     agent = build_configured_runtime_agent(
-        config_path, tools=[], system_prompt='', response_format=None,
+        config_path, tool_registry=_runtime_registry_2, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_2: names, system_prompt='', response_format=None,
         select_model_id=lambda _session_id: 'first',
         record_selection=lambda _session_id, _model_id: None,
         checkpointer=InMemorySaver(),

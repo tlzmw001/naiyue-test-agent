@@ -1,5 +1,10 @@
 """Batch scheduling through the actual synchronous create_agent assembly."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+from naiyue_test_agent.application import prepare_tool_registry
+
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
 from types import SimpleNamespace
@@ -19,11 +24,11 @@ from naiyue_test_agent.agent_runtime import (
 from naiyue_test_agent.agent_runtime.resource_invocation import (
     invoke_agent_run_with_resources, resume_agent_run_with_resources,
 )
-from naiyue_test_agent.agent_runtime.tool_approval import OneUseApprovalGrants
-from naiyue_test_agent.agent_runtime.tool_batch import (
+from naiyue_test_agent.tools.permissions import OneUseApprovalGrants
+from naiyue_test_agent.agent_runtime.tool_execution.batch import (
     ToolBatchMiddleware, ToolBatchSchedulingError, _SequentialPlan,
 )
-from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
+from naiyue_test_agent.tools import create_session_read_tool
 
 
 class ToolCapableFake(FakeMessagesListChatModel):
@@ -33,8 +38,10 @@ class ToolCapableFake(FakeMessagesListChatModel):
 
 def make_agent(tools, responses, *, checkpointer=None):
     model = ToolCapableFake(responses=responses)
+    _runtime_registry_1 = prepare_tool_registry(tools)
+    _runtime_names_1 = _runtime_registry_1.names()
     return build_runtime_agent(
-        model, tools=tools, system_prompt='', response_format=None,
+        model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
         resolve_model=lambda _session: ('fake', model),
         record_selection=lambda _session, _model: None,
         checkpointer=checkpointer,
@@ -64,7 +71,7 @@ def test_all_parallel_tools_can_overlap_in_one_model_reply():
         overlap['second'] = first_entered.wait(5)
         return 'second'
 
-    agent = make_agent([read_first, read_second], [
+    agent = make_agent([ToolSpec(read_first, read_first.args_schema, permissions=ToolPermission(default='allow')), ToolSpec(read_second, read_second.args_schema, permissions=ToolPermission(default='allow'))], [
         AIMessage(content='', tool_calls=[
             {'name': 'read_first', 'args': {}, 'id': 'read-1'},
             {'name': 'read_second', 'args': {}, 'id': 'read-2'},
@@ -102,7 +109,6 @@ def test_one_sequential_tool_makes_mixed_batch_execute_in_model_order():
         trace.append('write:end')
         return 'write-result'
 
-    write_probe.metadata = {'naiyue_execution_mode': 'sequential'}
 
     @tool
     def read_last() -> str:
@@ -112,7 +118,7 @@ def test_one_sequential_tool_makes_mixed_batch_execute_in_model_order():
         trace.append('read-3:end')
         return 'read-3-result'
 
-    agent = make_agent([read_first, write_probe, read_last], [
+    agent = make_agent([ToolSpec(read_first, read_first.args_schema, permissions=ToolPermission(default='allow')), ToolSpec(write_probe, write_probe.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow')), ToolSpec(read_last, read_last.args_schema, permissions=ToolPermission(default='allow'))], [
         AIMessage(content='', tool_calls=[
             {'name': 'read_first', 'args': {}, 'id': 'mixed-1'},
             {'name': 'write_probe', 'args': {}, 'id': 'mixed-2'},
@@ -134,7 +140,7 @@ def test_one_sequential_tool_makes_mixed_batch_execute_in_model_order():
     ]
 
 
-def test_fatal_failure_skips_later_tool_body_in_sequential_batch():
+def test_ordinary_failure_allows_later_tool_body_in_sequential_batch():
     executed = []
 
     @tool
@@ -149,20 +155,22 @@ def test_fatal_failure_skips_later_tool_body_in_sequential_batch():
         executed.append('write')
         return 'written'
 
-    write_probe.metadata = {'naiyue_execution_mode': 'sequential'}
-    agent = make_agent([failing_probe, write_probe], [AIMessage(
+    agent = make_agent([ToolSpec(failing_probe, failing_probe.args_schema, permissions=ToolPermission(default='allow')), ToolSpec(write_probe, write_probe.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow'))], [AIMessage(
         content='', tool_calls=[
             {'name': 'failing_probe', 'args': {}, 'id': 'fatal-1'},
             {'name': 'write_probe', 'args': {}, 'id': 'fatal-2'},
         ],
-    )])
+    ), AIMessage(content='handled')])
 
-    with pytest.raises(RuntimeError, match='synthetic fatal failure'):
-        invoke_agent_run(
-            agent, [('user', 'run both')],
-            session_id='fatal', thread_id='fatal-thread', run_id='fatal-run',
-        )
-    assert executed == ['first']
+    result = invoke_agent_run(
+        agent, [('user', 'run both')],
+        session_id='fatal', thread_id='fatal-thread', run_id='fatal-run',
+    )
+    assert executed == ['first', 'write']
+    assert [(m.tool_call_id, m.status) for m in tool_results(result)] == [
+        ('fatal-1', 'error'), ('fatal-2', 'success'),
+    ]
+    assert result['messages'][-1].content == 'handled'
 
 
 def test_recoverable_error_result_allows_next_sequential_call():
@@ -173,7 +181,6 @@ def test_recoverable_error_result_allows_next_sequential_call():
         """Return a recoverable synthetic error."""
         raise ToolException('safe probe failure')
 
-    read_probe.handle_tool_error = True
 
     @tool
     def write_probe() -> str:
@@ -181,8 +188,7 @@ def test_recoverable_error_result_allows_next_sequential_call():
         executed.append('write')
         return 'written'
 
-    write_probe.metadata = {'naiyue_execution_mode': 'sequential'}
-    agent = make_agent([read_probe, write_probe], [
+    agent = make_agent([ToolSpec(read_probe, read_probe.args_schema, permissions=ToolPermission(default='allow')), ToolSpec(write_probe, write_probe.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow'))], [
         AIMessage(content='', tool_calls=[
             {'name': 'read_probe', 'args': {}, 'id': 'recover-1'},
             {'name': 'write_probe', 'args': {}, 'id': 'recover-2'},
@@ -213,8 +219,7 @@ def test_rejected_first_tool_does_not_block_later_sequential_tool(tmp_path):
         executed.append('write')
         return 'written'
 
-    write_probe.metadata = {'naiyue_execution_mode': 'sequential'}
-    agent = make_agent([create_session_read_tool(), write_probe], [
+    agent = make_agent([create_session_read_tool(), ToolSpec(write_probe, write_probe.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow'))], [
         AIMessage(content='', tool_calls=[
             {'name': 'read', 'args': {'path': str(outside)}, 'id': 'review-1'},
             {'name': 'write_probe', 'args': {}, 'id': 'review-2'},
@@ -252,8 +257,7 @@ def test_approved_first_tool_completes_before_later_sequential_tool(tmp_path):
         executed.append('write')
         return 'written'
 
-    write_probe.metadata = {'naiyue_execution_mode': 'sequential'}
-    agent = make_agent([create_session_read_tool(), write_probe], [
+    agent = make_agent([create_session_read_tool(), ToolSpec(write_probe, write_probe.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow'))], [
         AIMessage(content='', tool_calls=[
             {'name': 'read', 'args': {'path': str(outside)}, 'id': 'approve-1'},
             {'name': 'write_probe', 'args': {}, 'id': 'approve-2'},
@@ -266,11 +270,13 @@ def test_approved_first_tool_completes_before_later_sequential_tool(tmp_path):
     )
     assert len(pending['__interrupt__']) == 1
     assert executed == []
+    from naiyue_test_agent.application.session_approval import pending_tool_approval, prepare_resume
+    grants, _ = prepare_resume('approve', pending_tool_approval(pending), ['approve'], None)
     result = resume_agent_run_with_resources(
         agent, session_id='approve', thread_id='approve-thread',
         run_id='approve-run', workspace_root=workspace,
         decisions=['approve'], read_resource_roots=(),
-        approval_grants={'read': OneUseApprovalGrants({'approve-1': outside.resolve()})},
+        approval_grants=grants,
     )
     assert executed == ['write']
     assert [(message.tool_call_id, message.content) for message in tool_results(result)] == [
@@ -284,9 +290,8 @@ def test_invalid_execution_mode_is_rejected_at_agent_assembly():
         """Probe invalid scheduling metadata."""
         return 'ok'
 
-    read_probe.metadata = {'naiyue_execution_mode': 'sometimes'}
     with pytest.raises(ValueError, match='execution mode'):
-        make_agent([read_probe], [AIMessage(content='done')])
+        make_agent([ToolSpec(read_probe, read_probe.args_schema, execution_mode='sometimes', permissions=ToolPermission(default='allow'))], [AIMessage(content='done')])
 
 
 def test_missing_plan_fails_closed_for_every_call_in_mixed_batch():
@@ -300,8 +305,7 @@ def test_missing_plan_fails_closed_for_every_call_in_mixed_batch():
         """Synthetic write that needs batch ordering."""
         return 'write'
 
-    write_probe.metadata = {'naiyue_execution_mode': 'sequential'}
-    middleware = ToolBatchMiddleware([read_probe, write_probe])
+    middleware = ToolBatchMiddleware(prepare_tool_registry([ToolSpec(read_probe, read_probe.args_schema, permissions=ToolPermission(default='allow')), ToolSpec(write_probe, write_probe.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow'))]))
     calls = [
         {'name': 'read_probe', 'args': {}, 'id': 'lost-1'},
         {'name': 'write_probe', 'args': {}, 'id': 'lost-2'},
@@ -309,7 +313,8 @@ def test_missing_plan_fails_closed_for_every_call_in_mixed_batch():
     executed = []
     request = SimpleNamespace(
         tool_call=calls[0],
-        state={'messages': [AIMessage(content='', tool_calls=calls)]},
+        state={'messages': [AIMessage(content='', tool_calls=calls)],
+               'tool_execution': {'tool_names': ['read_probe', 'write_probe']}},
         runtime=SimpleNamespace(context={}),
     )
     with pytest.raises(ToolBatchSchedulingError, match='plan'):
@@ -332,8 +337,7 @@ def test_duplicate_call_ids_reject_whole_batch_before_any_tool_executes():
         executed.append('write')
         return 'write'
 
-    write_probe.metadata = {'naiyue_execution_mode': 'sequential'}
-    agent = make_agent([read_probe, write_probe], [AIMessage(
+    agent = make_agent([ToolSpec(read_probe, read_probe.args_schema, permissions=ToolPermission(default='allow')), ToolSpec(write_probe, write_probe.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow'))], [AIMessage(
         content='', tool_calls=[
             {'name': 'read_probe', 'args': {}, 'id': 'same-id'},
             {'name': 'write_probe', 'args': {}, 'id': 'same-id'},
@@ -369,8 +373,7 @@ def test_sequential_batch_progresses_with_bounded_graph_concurrency(concurrency)
         trace.append('final')
         return 'final'
 
-    write_probe.metadata = {'naiyue_execution_mode': 'sequential'}
-    agent = make_agent([read_probe, write_probe, final_probe], [
+    agent = make_agent([ToolSpec(read_probe, read_probe.args_schema, permissions=ToolPermission(default='allow')), ToolSpec(write_probe, write_probe.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow')), ToolSpec(final_probe, final_probe.args_schema, permissions=ToolPermission(default='allow'))], [
         AIMessage(content='', tool_calls=[
             {'name': 'read_probe', 'args': {}, 'id': 'bounded-1'},
             {'name': 'write_probe', 'args': {}, 'id': 'bounded-2'},
@@ -406,7 +409,6 @@ def test_two_sessions_share_agent_without_sharing_batch_plan():
         trace.append((session, 'write'))
         return session
 
-    write_probe.metadata = {'naiyue_execution_mode': 'sequential'}
 
     class SessionModel(BaseChatModel):
         @property
@@ -431,8 +433,10 @@ def test_two_sessions_share_agent_without_sharing_batch_plan():
             return ChatResult(generations=[ChatGeneration(message=response)])
 
     model = SessionModel()
+    _runtime_registry_2 = prepare_tool_registry([ToolSpec(read_probe, read_probe.args_schema, permissions=ToolPermission(default='allow')), ToolSpec(write_probe, write_probe.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow'))])
+    _runtime_names_2 = _runtime_registry_2.names()
     agent = build_runtime_agent(
-        model, tools=[read_probe, write_probe], system_prompt='', response_format=None,
+        model, tool_registry=_runtime_registry_2, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_2: names, system_prompt='', response_format=None,
         resolve_model=lambda _session: ('fake', model),
         record_selection=lambda _session, _model: None,
     )
@@ -460,7 +464,7 @@ def test_two_sessions_share_agent_without_sharing_batch_plan():
 
 
 def test_completed_batch_cannot_execute_same_call_twice():
-    plan = _SequentialPlan(['once'], wait_seconds=1, run_id='probe-run')
+    plan = _SequentialPlan(['once'], run_id='probe-run')
     executed = []
     assert plan.execute('once', 'probe', lambda: executed.append('once')) is None
     with pytest.raises(ToolBatchSchedulingError, match='already completed'):
@@ -468,7 +472,9 @@ def test_completed_batch_cannot_execute_same_call_twice():
     assert executed == ['once']
 
 
-def test_invalid_batch_wait_configuration_is_rejected(monkeypatch):
-    monkeypatch.setenv('NAIYUE_TOOL_BATCH_WAIT_SECONDS', 'not-a-number')
-    with pytest.raises(ValueError, match='wait duration'):
-        ToolBatchMiddleware([])
+@pytest.mark.parametrize('old_value', ['not-a-number', '0', '-1', 'inf'])
+def test_removed_batch_wait_configuration_does_not_affect_assembly(monkeypatch, old_value):
+    monkeypatch.setenv('NAIYUE_TOOL_BATCH_WAIT_SECONDS', old_value)
+    registry = prepare_tool_registry([])
+    middleware = ToolBatchMiddleware(registry)
+    assert middleware.registry is registry

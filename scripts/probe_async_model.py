@@ -1,6 +1,8 @@
 """Bounded, one-request native async model probe; never prints model content."""
 
 import argparse
+
+from naiyue_test_agent.config_paths import get_models_path
 import asyncio
 import logging
 import math
@@ -15,6 +17,7 @@ async def _worker(args):
     from langchain_core.messages import AIMessage, HumanMessage
     from langgraph.checkpoint.memory import InMemorySaver
     from naiyue_test_agent.agent_runtime import build_runtime_agent, _assemble_interactive_runtime
+    from naiyue_test_agent.tools import ToolRegistry
     from naiyue_test_agent.agent_runtime.context_compaction import SUMMARY_MARKER
     from naiyue_test_agent.agent_runtime.events import RunEventPublisher, RunStartedData
     from naiyue_test_agent.model_access import load_model_catalog
@@ -34,7 +37,7 @@ async def _worker(args):
     events, selections = [], []
     publisher = RunEventPublisher('async-probe', uuid4().hex, (events.append,))
     publisher.publish('run_started', RunStartedData('message'))
-    common = dict(tools=[], response_format=None, resolve_model=lambda _: (model_id, model),
+    common = dict(tool_registry=ToolRegistry(), resolve_active_tool_names=lambda _sid, agent_path='root': (), response_format=None, resolve_model=lambda _: (model_id, model),
                   record_selection=lambda sid, mid: selections.append((sid, mid)), checkpointer=InMemorySaver())
     if args.with_context:
         metadata = dict(model.metadata or {})
@@ -97,7 +100,7 @@ async def _worker(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', default='.env/models.json')
+    parser.add_argument('--config', default=str(get_models_path()))
     parser.add_argument('--model-id')
     parser.add_argument('--timeout-seconds', type=float, default=90)
     parser.add_argument('--with-context', action='store_true')

@@ -29,5 +29,5 @@ def public_error(error):
     if isinstance(error, SessionPersistenceError):
         code = error.args[0] if error.args else ''
         return WebError(code if code in ('session_recovery_blocked', 'workspace_mismatch',
-            'checkpoint_mismatch', 'session_save_unconfirmed') else 'session_unavailable')
+            'checkpoint_mismatch', 'session_save_unconfirmed', 'approval_restore_unavailable') else 'session_unavailable')
     return WebError('operation_failed', 500)

@@ -1,5 +1,10 @@
 """Verify current create_agent tool fan-out with a deterministic fake model."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+from naiyue_test_agent.application import prepare_tool_registry
+
 from threading import Event
 
 from langchain.agents import create_agent
@@ -45,8 +50,10 @@ def main() -> None:
         ], response_metadata={'finish_reason': 'tool_calls'}),
         AIMessage(content='done', response_metadata={'finish_reason': 'stop'}),
     ])
+    _runtime_registry_1 = prepare_tool_registry([ToolSpec(first_probe, first_probe.args_schema, permissions=ToolPermission(default='allow')), ToolSpec(second_probe, second_probe.args_schema, permissions=ToolPermission(default='allow'))])
+    _runtime_names_1 = _runtime_registry_1.names()
     agent = build_runtime_agent(
-        model, tools=[first_probe, second_probe], system_prompt='', response_format=None,
+        model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
         resolve_model=lambda _session: ('fake', model),
         record_selection=lambda _session, _model: None,
     )

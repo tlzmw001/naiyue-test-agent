@@ -1,10 +1,9 @@
-"""Private local SQLite metadata and one process owning the database instance."""
+"""Local SQLite metadata and one process owning the database instance."""
 
-import fcntl
 import logging
+import json
 import os
 import sqlite3
-import stat
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +15,10 @@ STATES = {'ready', 'running', 'failed', 'interrupted', 'review_required'}
 
 
 from .errors import SessionPersistenceError
+from naiyue_test_agent.storage_files import (
+    acquire_store_lock, check_store_file, open_store_file, release_store_lock,
+)
+from naiyue_test_agent.workspaces import check_workspace_relocation
 
 
 class SessionStorage:
@@ -27,50 +30,91 @@ class SessionStorage:
         try:
             self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             lock_path = self.path.with_name(self.path.name + '.lock')
-            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+            fd = open_store_file(lock_path)
             self._stack.callback(os.close, fd)
-            self._check_private(lock_path)
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            existing = self.path.exists() or self.path.is_symlink()
-            if not existing:
-                file_fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+            try:
+                acquire_store_lock(fd)
+            except BlockingIOError as error:
+                raise SessionPersistenceError('storage_in_use') from error
+            self._stack.callback(release_store_lock, fd)
+            try:
+                check_store_file(self.path)
+                existing = True
+            except FileNotFoundError:
+                existing = False
+                file_fd = open_store_file(self.path, exclusive_create=True)
                 os.close(file_fd)
-            self._check_private(self.path)
             for suffix in ('-wal', '-shm', '-journal'):
                 sidecar = self.path.with_name(self.path.name + suffix)
-                if sidecar.exists() or sidecar.is_symlink():
-                    self._check_private(sidecar)
+                try:
+                    check_store_file(sidecar)
+                except FileNotFoundError:
+                    pass
             self.connection = sqlite3.connect(self.path, check_same_thread=False)
             self._stack.callback(self.connection.close)
             self.connection.row_factory = sqlite3.Row
             if existing:
                 version = self.connection.execute('SELECT version FROM naiyue_store_info').fetchall()
-                if len(version) != 1 or version[0][0] != 1:
+                if len(version) != 1 or version[0][0] != 4:
                     raise SessionPersistenceError('unsupported_store_schema')
             else:
                 self.connection.executescript('''
                     CREATE TABLE naiyue_store_info(version INTEGER NOT NULL);
-                    INSERT INTO naiyue_store_info VALUES(1);
+                    INSERT INTO naiyue_store_info VALUES(4);
+                    CREATE TABLE naiyue_workspace(
+                        singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                        workspace_id TEXT NOT NULL, root_path TEXT NOT NULL);
                     CREATE TABLE naiyue_sessions(
                         session_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL UNIQUE,
                         model_id TEXT NOT NULL, workspace_root TEXT,
                         state TEXT NOT NULL, run_id TEXT, checkpoint_id TEXT,
                         checkpoint_ns TEXT NOT NULL DEFAULT '',
                         created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-                        last_run_status TEXT);
+                        last_run_status TEXT, active_tool_names_json TEXT NOT NULL,
+                        permission_mode TEXT NOT NULL DEFAULT 'Default');
                 ''')
             self.checkpoint_connection = sqlite3.connect(self.path, check_same_thread=False)
             self._stack.callback(self.checkpoint_connection.close)
         except (OSError, sqlite3.Error, SessionPersistenceError) as error:
             logger.error('session_storage_open_failed error_type=%s', type(error).__name__)
-            self.close()
+            try:
+                self.close()
+            except SessionPersistenceError:
+                pass  # close() logged the secondary failure; preserve the opening failure.
+            if isinstance(error, SessionPersistenceError):
+                raise
             raise SessionPersistenceError('storage_unavailable') from error
 
-    @staticmethod
-    def _check_private(path):
-        info = path.lstat()
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) & 0o077:
-            raise SessionPersistenceError('unsafe_store_file')
+    def get_workspace_binding(self):
+        rows = self._read('SELECT workspace_id,root_path FROM naiyue_workspace')
+        if len(rows) > 1:
+            raise SessionPersistenceError('invalid_workspace_binding')
+        return rows[0] if rows else None
+
+    def bind_workspace(self, workspace_id, root_path):
+        root = Path(root_path).expanduser().resolve(strict=True)
+        try:
+            with self._lock, self.connection:
+                self.connection.execute('BEGIN')
+                binding = self.get_workspace_binding()
+                if binding is None:
+                    if self.connection.execute('SELECT 1 FROM naiyue_sessions LIMIT 1').fetchone():
+                        raise SessionPersistenceError('workspace_database_mismatch')
+                    self.connection.execute('INSERT INTO naiyue_workspace VALUES(1,?,?)', (workspace_id, str(root)))
+                    return
+                if binding['workspace_id'] != workspace_id:
+                    raise SessionPersistenceError('workspace_database_mismatch')
+                check_workspace_relocation(workspace_id, binding['root_path'], root)
+                if self.connection.execute('SELECT 1 FROM naiyue_sessions WHERE workspace_root IS NULL OR workspace_root != ? LIMIT 1',
+                                           (binding['root_path'],)).fetchone():
+                    raise SessionPersistenceError('workspace_database_mismatch')
+                self.connection.execute('UPDATE naiyue_workspace SET root_path=? WHERE singleton=1', (str(root),))
+                self.connection.execute('UPDATE naiyue_sessions SET workspace_root=?', (str(root),))
+        except (sqlite3.Error, OSError, ValueError, SessionPersistenceError) as error:
+            logger.error('workspace_binding_failed error_type=%s', type(error).__name__)
+            if isinstance(error, SessionPersistenceError):
+                raise
+            raise SessionPersistenceError('workspace_binding_failed') from error
 
     @staticmethod
     def _now():
@@ -95,12 +139,16 @@ class SessionStorage:
             raise SessionPersistenceError('session_read_failed') from error
 
     def create(self, session_id, session):
+        binding = self.get_workspace_binding()
+        if binding and (session['workspace_root'] is None or
+                        Path(session['workspace_root']).resolve(strict=True) != Path(binding['root_path'])):
+            raise SessionPersistenceError('workspace_database_mismatch')
         now = self._now()
         self._write('''INSERT INTO naiyue_sessions
-            (session_id,thread_id,model_id,workspace_root,state,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?)''', (session_id, session['thread_id'], session['model_id'],
+            (session_id,thread_id,model_id,workspace_root,state,created_at,updated_at,active_tool_names_json,permission_mode)
+            VALUES(?,?,?,?,?,?,?,?,?)''', (session_id, session['thread_id'], session['model_id'],
             str(session['workspace_root']) if session['workspace_root'] is not None else None,
-            'ready', now, now))
+            'ready', now, now, json.dumps(session['active_tool_names']), session['permission_mode']))
 
     def get(self, session_id):
         rows = self._read('SELECT * FROM naiyue_sessions WHERE session_id=?', (session_id,))
@@ -117,6 +165,14 @@ class SessionStorage:
     def select_model(self, session_id, model_id):
         self._write('UPDATE naiyue_sessions SET model_id=?,updated_at=? WHERE session_id=?',
                     (model_id, self._now(), session_id))
+
+    def select_active_tools(self, session_id, names):
+        self._write('UPDATE naiyue_sessions SET active_tool_names_json=?,updated_at=? WHERE session_id=?',
+                    (json.dumps(list(names)), self._now(), session_id))
+
+    def select_permission_mode(self, session_id, mode):
+        self._write('UPDATE naiyue_sessions SET permission_mode=?,updated_at=? WHERE session_id=?',
+                    (mode, self._now(), session_id))
 
     def mark_running(self, session_id, run_id):
         self._write("UPDATE naiyue_sessions SET state='running',run_id=?,updated_at=? WHERE session_id=?",

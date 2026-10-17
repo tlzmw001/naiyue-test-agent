@@ -9,7 +9,7 @@ const paused: RunView = { session_id: 's', run_id: 'origin', status: 'interrupte
   last_sequence: 9, incomplete: false, done: true, manual_review_required: false };
 const pending: SessionView = { session_id: 's', model_id: 'A', workspace_root: '/workspace', state: 'interrupted',
   updated_at: '', last_run_status: 'interrupted', messages: [], busy: false, can_run: false, has_compaction: false,
-  active_run_id: null, latest_run_id: 'origin', manual_review_required: false, pending_approval: true,
+  active_run_id: null, latest_run_id: 'origin', active_tools: [], permission_mode: 'Default', manual_review_required: false, pending_approval: true,
   approval_run_id: 'origin', approval_requests: [{ tool_call_id: 't', tool_name: 'read', target: '/outside' }], live: paused };
 function setup() {
   const api = new WebApi('synthetic-test-access');

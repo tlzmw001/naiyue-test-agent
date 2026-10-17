@@ -1,5 +1,10 @@
 """Async dispatch preserves tool order, finite concurrency and error results."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+from naiyue_test_agent.application import prepare_tool_registry
+
 import asyncio
 
 import pytest
@@ -12,7 +17,9 @@ from test_async_application import StreamingToolModel
 
 
 def graph(model, tools):
-    return build_runtime_agent(model, tools=tools, system_prompt='', response_format=None,
+    _runtime_registry_1 = prepare_tool_registry(tools)
+    _runtime_names_1 = _runtime_registry_1.names()
+    return build_runtime_agent(model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
         resolve_model=lambda _: ('A', model), record_selection=lambda *_: None)
 
 
@@ -54,7 +61,7 @@ def test_parallel_batch_respects_config_and_preserves_result_order():
             return label
 
         model = StreamingToolModel(replies=[batch('A', 'B', 'C'), AIMessage(content='done')])
-        task = asyncio.create_task(graph(model, [probe]).ainvoke(
+        task = asyncio.create_task(graph(model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))]).ainvoke(
             {'messages': [('user', 'parallel')]}, context={'session_id': 's'}, config={'max_concurrency': 2}))
         try:
             await wait_entered_or_failure(task, entered)
@@ -82,10 +89,8 @@ def test_sequential_batch_preserves_full_chain_order(soft_error):
                 raise ToolException('safe blocked')
             return label
 
-        probe.metadata = {'naiyue_execution_mode': 'sequential'}
-        probe.handle_tool_error = 'safe blocked'
         model = StreamingToolModel(replies=[batch('A', 'B', 'C'), AIMessage(content='done')])
-        result = await graph(model, [probe]).ainvoke({'messages': [('user', 'ordered')]},
+        result = await graph(model, [ToolSpec(probe, probe.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow'))]).ainvoke({'messages': [('user', 'ordered')]},
                                                    context={'session_id': 's'})
         assert seen == ['A', 'B', 'C']
         results = [m for m in result['messages'] if isinstance(m, ToolMessage)]
@@ -94,7 +99,7 @@ def test_sequential_batch_preserves_full_chain_order(soft_error):
     asyncio.run(scenario())
 
 
-def test_fatal_batch_does_not_enter_later_tools():
+def test_ordinary_batch_failure_keeps_later_tools_runnable():
     async def scenario():
         seen, error = [], RuntimeError('PRIVATE')
 
@@ -104,11 +109,13 @@ def test_fatal_batch_does_not_enter_later_tools():
             seen.append(label)
             raise error
 
-        probe.metadata = {'naiyue_execution_mode': 'sequential'}
-        model = StreamingToolModel(replies=[batch('A', 'B', 'C')])
-        with pytest.raises(RuntimeError) as caught:
-            await graph(model, [probe]).ainvoke({'messages': [('user', 'fatal')]}, context={'session_id': 's'})
-        assert caught.value is error and seen == ['A']
+        model = StreamingToolModel(replies=[batch('A', 'B', 'C'), AIMessage(content='handled')])
+        result = await graph(model, [ToolSpec(probe, probe.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow'))]).ainvoke({'messages': [('user', 'fatal')]}, context={'session_id': 's'})
+        assert seen == ['A', 'B', 'C']
+        assert [(m.tool_call_id, m.status) for m in result['messages'] if isinstance(m, ToolMessage)] == [
+            ('0', 'error'), ('1', 'error'), ('2', 'error'),
+        ]
+        assert result['messages'][-1].content == 'handled'
     asyncio.run(scenario())
 
 
@@ -123,7 +130,7 @@ def test_truncated_calls_are_error_results_without_execution():
             return label
 
         model = StreamingToolModel(replies=[batch('A', reason='length'), AIMessage(content='repaired')])
-        result = await graph(model, [probe]).ainvoke({'messages': [('user', 'guard')]}, context={'session_id': 's'})
+        result = await graph(model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))]).ainvoke({'messages': [('user', 'guard')]}, context={'session_id': 's'})
         assert seen == []
         message = next(m for m in result['messages'] if isinstance(m, ToolMessage))
         assert message.status == 'error' and 'truncated' in message.content

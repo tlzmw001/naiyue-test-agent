@@ -10,8 +10,8 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime.tools import create_session_write_tool
-from naiyue_test_agent.agent_runtime.tools import write as write_module
+from naiyue_test_agent.tools import create_session_write_tool
+from naiyue_test_agent.tools import write as write_module
 from naiyue_test_agent.model_access import ModelCatalog
 
 
@@ -79,7 +79,7 @@ def test_two_application_sessions_contending_for_same_target_get_a_conflict(
     assert (tmp_path / 'shared.md').read_text() == 'FIRST'
 
 
-def test_unknown_write_outcome_blocks_only_affected_session(
+def test_unknown_write_outcome_keeps_sessions_usable_with_explicit_feedback(
     monkeypatch, tmp_path,
 ):
     model = SessionWriteModel()
@@ -97,12 +97,14 @@ def test_unknown_write_outcome_blocks_only_affected_session(
         raise OSError('PRIVATE_COMMIT_DETAIL')
 
     monkeypatch.setattr(write_module.os, 'replace', unknown_replace)
-    with pytest.raises(write_module.WriteOutcomeUnknown):
-        app.run(uncertain_session, [('user', 'FIRST')])
+    uncertain = app.run(uncertain_session, [('user', 'FIRST')])
+    assert results(uncertain)[0].status == 'error'
+    assert 'outcome is unknown' in results(uncertain)[0].content
+    assert not (tmp_path / 'shared.md').exists()
     monkeypatch.setattr(write_module.os, 'replace', real_replace)
 
-    with pytest.raises(RuntimeError, match='manual review'):
-        app.run(uncertain_session, [('user', 'retry')])
+    retried = app.run(uncertain_session, [('user', 'retry')])
+    assert results(retried)[-1].status == 'success'
     other_result = app.run(other_session, [('user', 'SECOND')])
     assert results(other_result)[0].status == 'success'
     assert (tmp_path / 'shared.md').read_text() == 'SECOND'

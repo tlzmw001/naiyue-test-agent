@@ -37,7 +37,14 @@ def test_model_failure_is_safe_and_restart_does_not_replay(monkeypatch, tmp_path
         next_model = StreamingToolModel(replies=[])
         async with web_client(monkeypatch, tmp_path, next_model) as (client, app):
             response = await client.get(f'/api/sessions/{session}')
-            assert response.status_code == 409 and next_model.seen == []
+            assert response.status_code == 200 and next_model.seen == []
+            history = response.json()
+            assert history['recovery']['kind'] == 'interrupted_execution' and not history['can_run']
+            assert [m['content'] for m in history['messages']] == ['start']
+            assert history['live'] is None and history['recovery']['actions'] == ['continue']
+            assert 'PRIVATE_GATEWAY_BODY' not in response.text
+            assert (await client.post(f'/api/sessions/{session}/runs', json=request('no replay'))).status_code == 409
+            assert next_model.seen == [] and not app.state.service.application.has_session(session)
     asyncio.run(scenario())
     assert 'PRIVATE_GATEWAY_BODY' not in caplog.text
 

@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 
 def _begin_recovery(request, reason):
+    # ModelInputMiddleware is inside this wrapper: request still contains canonical
+    # blocks, and each handler(retry) builds a fresh provider-specific copy.
     context = request.runtime.context or {}
     metadata = getattr(request.model, 'metadata', None) or {}
     limits = metadata.get(MODEL_LIMITS_METADATA_KEY, {})

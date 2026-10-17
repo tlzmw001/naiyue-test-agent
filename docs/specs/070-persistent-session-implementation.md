@@ -2,6 +2,10 @@
 
 状态：2026-10-08，按用户已批准Spec069/SQLite/default CLI范围实施完成；本地确定性/两个独立进程和有界真实模型探针通过。首片恢复安全结束的会话，受限状态重启只识别/阻断；同进程审批/错误/控制行为保持，不宣称完整崩溃恢复或生产级会话成熟度。
 
+2026-10-16后续决策：用户取消会话文件的私密权限门槛。SessionStorage不再因数据库、锁文件或SQLite附属文件的组/其他用户模式位而拒绝；默认新建模式保持，不自动修改既有权限、不新增ACL检查。保留普通文件/链接检查、实际IO失败、同库实例独占、schema及保存/恢复校验。将内部_check_private改为_check_store_file并删除权限位分支；迁移旧权限拒绝断言，新增0644/0666实际打开和有效WAL/SHM回归，非普通附属文件仍在SQLite打开前拒绝。CLI/Web默认同库，但多浏览器窗口/会话及Spec086同进程子Agent不是多个应用进程；尚无已确认的多进程共享同库需求，锁策略本轮不变。下面原始范围/结果属于当时版本。
+
+2026-10-16版本边界：工作区共享库已按[Spec087](087-workspace-session-storage.md)实现。默认cwd/本地UUID/data_dir/目录移动重绑/副本冲突/跨平台锁取代本页原始全局路径和POSIX专用实现；新schema4拒绝旧版本，删除schema1/2升级与NULL工具列表补写，不做旧库兼容。下面原始范围与历史测试数字保留查证，当前入口与验证见Spec087及handoff。长期/跨会话记忆仍独立设计。
+
 ## 当前链路与修改
 
 CLI → build_local_application → SessionService内存元数据＋InMemorySaver → app.run → graph状态 → 应用清理/终局。新持久路径由CLI资源生命周期组合SessionStorage＋官方SqliteSaver＋同一SessionService/Agent；关键保存直接接应用运行边界，不通过可隔离observer。
@@ -70,3 +74,5 @@ persistent_session_probe=PASS mode=real two_processes=True session_id=stable thr
 用户仅参与需求/选型/CLI行为确认，尚无本片独立实现/面试追问证据。下一步按核心数据流一起读创建→run收尾→restore，随后按既定顺序复盘工具/上下文生产能力；会话高级恢复另行设计，不自动扩大本片。
 
 最后预算反例先红：探针总时限已过时仍因max(1, remaining)启动worker；改为先检查截止时间，剩余≤0不再发请求，正数才传timeout。故障测试使用局部时钟替身不污染全局time模块。最终781例在该修正后通过；先前真实正常路径证据保持，不追加重复真实请求。
+
+会话文件权限门槛取消的本机验证（2026-10-16）：新行为先3 failed/2 passed；持久四文件41 passed in4.56s，全量1610 passed in49.15s（/tmp/naiyue-storage-permissions-full.log），前端9文件27通过与构建通过，compileall/pip check、273个Python AST/≤500行及diff检查通过。未修改真实数据库或权限；Windows锁兼容仍未实现。存储位置与多进程共享仍在讨论，不能把分库示例当成已批准迁移。

@@ -1,5 +1,9 @@
 """Native graph/CLI integration keeps early replies and original error behavior."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 from langchain.tools import tool
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage
@@ -10,8 +14,8 @@ from naiyue_test_agent import application
 from naiyue_test_agent.application import cli
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.application.cli_display import CliEventDisplay
-from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
-from naiyue_test_agent.agent_runtime.tools.bash import BashOutcomeUnknown
+from naiyue_test_agent.tools import create_session_read_tool
+from naiyue_test_agent.tools.processes import ProcessCleanupError
 from test_application_run_events import make_app, ToolModel
 
 
@@ -37,7 +41,7 @@ def test_cli_displays_first_reply_before_later_failure(monkeypatch, capsys):
         {'name': 'probe', 'args': {}, 'id': 'probe-1'},
     ])])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _p: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application('unused', tools=[probe], system_prompt='', response_format=None)
+    app = application.build_local_application('unused', tools=[ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], system_prompt='', response_format=None)
     monkeypatch.setattr(cli, 'build_local_application', lambda *_a, **_k: app)
     entries = iter(['question', ':quit'])
     monkeypatch.setattr('builtins.input', lambda _p='': next(entries))
@@ -54,8 +58,10 @@ def test_cli_unsubscribes_after_quit_even_when_no_run(monkeypatch, capsys):
     lifecycle = []
     class App:
         default_model_id = 'A'
-        def create_session(self, _model):
+        def create_workspace_session(self, _model, root):
             return 'session'
+        def pending_tool_approvals(self, _session):
+            return []
         def subscribe_events(self, handler):
             lifecycle.append('subscribe')
             return lambda: lifecycle.append('unsubscribe')
@@ -69,8 +75,10 @@ def test_startup_output_error_still_unsubscribes(monkeypatch):
     lifecycle = []
     class App:
         default_model_id = 'A'
-        def create_session(self, _model):
+        def create_workspace_session(self, _model, root):
             return 'session'
+        def pending_tool_approvals(self, _session):
+            return []
         def subscribe_events(self, handler):
             lifecycle.append('subscribe')
             return lambda: lifecycle.append('unsubscribe')
@@ -107,11 +115,10 @@ def test_recoverable_tool_error_displays_reason_and_agent_continues(monkeypatch)
     def retryable() -> str:
         """Return a safe actionable synthetic error."""
         raise ToolException('CORRECTABLE_REASON: use a different argument')
-    retryable.handle_tool_error = True
     app = make_app(monkeypatch, ToolModel(responses=[
         AIMessage(content='first reply', tool_calls=[{'name': 'retryable', 'args': {}, 'id': 't'}]),
         AIMessage(content='recovered reply'),
-    ]), [retryable])
+    ]), [ToolSpec(retryable, retryable.args_schema, permissions=ToolPermission(default='allow'))])
     session = app.create_session('A')
     lines = []
     view = CliEventDisplay(session, writer=lines.append)
@@ -153,15 +160,14 @@ def test_approval_resume_then_new_approval_and_reject_do_not_replay_old_messages
     assert app.pending_tool_approvals(session) == []
 
 
-def test_bash_unknown_keeps_partial_output_and_manual_review_once(monkeypatch):
+def test_cleanup_failure_keeps_manual_review_once(monkeypatch):
     @tool
     def uncertain() -> str:
         """Inject unknown side effects without executing a real command."""
-        raise BashOutcomeUnknown('PRIVATE_EXCEPTION_BODY', partial_stdout='PARTIAL_STDOUT',
-                                 partial_stderr='PARTIAL_STDERR', output_paths={'stdout': 'saved.log'})
+        raise ProcessCleanupError('PRIVATE_EXCEPTION_BODY', facts={'process_reaped': False})
     app = make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'uncertain', 'args': {}, 'id': 'u'},
-    ])]), [uncertain])
+    ])]), [ToolSpec(uncertain, uncertain.args_schema, permissions=ToolPermission(default='allow'))])
     session = app.create_session('A')
     lines = []
     view = CliEventDisplay(session, writer=lines.append)
@@ -169,7 +175,8 @@ def test_bash_unknown_keeps_partial_output_and_manual_review_once(monkeypatch):
     cli._run_and_print(app, session, 'q', display=view)
     out = '\n'.join(lines)
     assert out.count('请先检查执行结果，勿直接重试') == 1
-    assert 'PARTIAL_STDOUT' in out and 'PARTIAL_STDERR' in out and 'saved.log' in out
+    assert out.count('工具 uncertain：副作用无法确认') == 1
+    assert 'facts=' not in out
     assert 'PRIVATE_EXCEPTION_BODY' not in out and '本次运行完成' not in out
 
 
@@ -190,8 +197,10 @@ def test_cli_unsubscribes_on_input_termination(monkeypatch, termination):
     lifecycle = []
     class App:
         default_model_id = 'A'
-        def create_session(self, _model):
+        def create_workspace_session(self, _model, root):
             return 'session'
+        def pending_tool_approvals(self, _session):
+            return []
         def subscribe_events(self, handler):
             return lambda: lifecycle.append('unsubscribe')
     def end_input(_p=''):

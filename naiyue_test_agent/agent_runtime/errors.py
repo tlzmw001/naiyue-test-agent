@@ -14,8 +14,7 @@ from naiyue_test_agent.contracts.failures import (
 from naiyue_test_agent.model_access.errors import describe_model_failure
 from .events import RunFailureData
 from .run_control import UserStop
-from .tools.write import WriteOutcomeUnknown
-from .tools.bash import BashOutcomeUnknown
+from naiyue_test_agent.tools.processes import ProcessCleanupError
 
 
 logger = logging.getLogger(__name__)
@@ -56,13 +55,13 @@ class RuntimeErrorPolicy:
             ('cancelled', 'user_stop') if isinstance(error, UserStop) else
             ('cancelled', 'task_cancelled') if isinstance(error, asyncio.CancelledError) else
             ('tool_outcome_unknown', 'tool_outcome_unknown')
-            if isinstance(error, (WriteOutcomeUnknown, BashOutcomeUnknown)) else
+            if isinstance(error, ProcessCleanupError) else
             ('model_response_rejected', error.reason) if isinstance(error, ModelResponseRejected) else
             ('context_error', 'compaction_failed') if isinstance(error, ContextCompactionError) else
             ('runtime_error', 'tool_batch_scheduling_failed') if isinstance(error, ToolBatchSchedulingError) else None
         )
         if protected is not None:
-            source = 'tool' if isinstance(error, (WriteOutcomeUnknown, BashOutcomeUnknown)) else 'runtime'
+            source = 'tool' if isinstance(error, ProcessCleanupError) else 'runtime'
             try:
                 return FailureDescription(source, *protected, safe_error_type(error))
             except Exception as fault:

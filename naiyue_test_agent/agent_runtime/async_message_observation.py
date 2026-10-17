@@ -11,7 +11,8 @@ from langgraph.types import Command
 
 from .events import safe_error_type
 from .message_observation import MessageStateObserver, _snapshot
-from .stream_events import MessageDeltaData, SUMMARY_TAG
+from .stream_events import MessageDeltaData, SUMMARY_TAG, PERMISSION_REVIEW_TAG
+from .tool_execution.observation import observe_tool_progress
 
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,8 @@ class _StreamState:
                 self.interrupts[interrupt.id] = interrupt
         elif part['type'] == 'messages':
             observe(self, self.delta, *part['data'])
+        elif part['type'] == 'custom':
+            observe_tool_progress(self.context, 'accept_custom', part['data'])
         turns, operations = self.context.get('_turn_observer'), self.context.get('_context_observer')
         if turns is not None:
             observe(turns, turns.try_finish)
@@ -73,6 +76,7 @@ class _StreamState:
 
     def delta(self, message, metadata):
         if (metadata.get('langgraph_node') != 'model' or SUMMARY_TAG in metadata.get('tags', ())
+                or PERMISSION_REVIEW_TAG in metadata.get('tags', ())
                 or not isinstance(message, (AIMessageChunk, AIMessage))):
             return
         text = _text(message.content)
@@ -110,7 +114,7 @@ async def ainvoke_with_message_observation(agent, input, *, context, config, pub
     if turns is not None and isinstance(input, Command):
         observe(turns, turns.activate_resume, baseline)
     iterator = agent.astream(input, context=context, config=config,
-        stream_mode=['messages', 'updates', 'values'], version='v2', output_keys=agent.output_channels)
+        stream_mode=['messages', 'updates', 'values', 'custom'], version='v2', output_keys=agent.output_channels)
     primary = None
     try:
         async for part in iterator:

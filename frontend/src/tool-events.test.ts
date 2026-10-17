@@ -25,3 +25,36 @@ it('tracks dispatch outcomes and leaves unfinished dispatch unconfirmed at termi
   view = applyEvent(view, event(4, 'run_finished', { status: 'failed' }));
   expect(view.tool_states.unknown.state).toBe('unconfirmed');
 });
+
+it('merges latest progress, preserves it at finish, and rejects late or wrong-batch updates', () => {
+  let view = { session_id: 's', run_id: 'r', messages: [{ id: 'ai', type: 'ai', content: '',
+    tool_calls: [{ id: 't', name: 'bash', args: {} }] }], last_sequence: 0, status: 'running' } as any;
+  const progress = (sequence: number, batch_id = 'ai', text = 'latest') => validateEvent({
+    ...event(sequence, 'tool_progress', { batch_id, tool_call_id: 't', tool_name: 'bash',
+      activity: 'running', phase: 'process_output', completed: 8, total: null, unit: 'bytes', text }),
+    timestamp: '2026-10-16T00:00:08Z',
+  });
+  view = applyEvent(view, event(1, 'tool_call_started', { tool_call_id: 't', tool_name: 'bash', boundary: 'dispatch' }));
+  view = applyEvent(view, progress(2, 'old', 'WRONG_BATCH'));
+  expect(view.tool_states.t.text).toBeUndefined();
+  view = applyEvent(view, progress(3));
+  view = applyEvent(view, progress(4, 'ai', '<script>tail</script>'));
+  expect(view.tool_states.t).toMatchObject({ text: '<script>tail</script>', batch_id: 'ai',
+    last_activity_at: '2026-10-16T00:00:08Z', completed: 8, total: null });
+  view = applyEvent(view, event(5, 'tool_call_finished', { tool_call_id: 't', tool_name: 'bash', boundary: 'dispatch', outcome: 'success' }));
+  const finished = view.tool_states.t;
+  view = applyEvent(view, progress(6, 'ai', 'LATE'));
+  expect(view.tool_states.t).toEqual(finished);
+});
+
+it('isolates run identities and keeps stopping distinct from tool completion', () => {
+  let view = { session_id: 's', run_id: 'r', messages: [], last_sequence: 0, status: 'running' } as any;
+  view = applyEvent(view, event(1, 'tool_call_started', { tool_call_id: 't', tool_name: 'bash', boundary: 'dispatch' }));
+  const prior = view;
+  expect(applyEvent(view, { ...event(2, 'control_accepted', { kind: 'stop' }), run_id: 'old' })).toBe(prior);
+  view = applyEvent(view, event(2, 'control_accepted', { kind: 'stop' }));
+  expect(view.stop_requested).toBe(true);
+  expect(view.tool_states.t.state).toBe('running');
+  view = applyEvent(view, event(3, 'run_finished', { status: 'stopped' }));
+  expect(view.tool_states.t.state).toBe('unconfirmed');
+});

@@ -1,5 +1,9 @@
 """All seven existing builtins retain real IO and approval in async dispatch."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import asyncio
 import threading
 
@@ -7,7 +11,7 @@ import pytest
 from langchain.tools import tool
 from langchain_core.messages import AIMessage, ToolMessage
 
-from naiyue_test_agent.agent_runtime import tools as tool_factories
+from naiyue_test_agent import tools as tool_factories
 from test_async_application import StreamingToolModel, make_app, call
 
 
@@ -76,9 +80,8 @@ def test_sync_tool_runs_off_loop_and_cancel_waits_for_settlement(monkeypatch):
             finished.set()
             return 'finished'
 
-        blocking.metadata = {'naiyue_execution_mode': 'sequential'}
         model = StreamingToolModel(replies=[call('blocking', {})])
-        app = await make_app(monkeypatch, model, [blocking])
+        app = await make_app(monkeypatch, model, [ToolSpec(blocking, blocking.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow'))])
         session = await app.acreate_session('A')
         events = []
         app.subscribe_events(events.append)

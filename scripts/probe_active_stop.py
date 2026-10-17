@@ -1,6 +1,8 @@
 """One bounded synthetic model request; cancel after observing a real text delta."""
 
 import argparse
+
+from naiyue_test_agent.config_paths import get_models_path
 import asyncio
 import logging
 import os
@@ -71,7 +73,7 @@ async def _worker(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', type=Path, default=Path('.env/models.json'))
+    parser.add_argument('--config', type=Path, default=get_models_path())
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--timeout-seconds', type=int, default=120)
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)

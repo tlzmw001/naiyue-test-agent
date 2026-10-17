@@ -10,6 +10,7 @@ from langchain_core.messages import AnyMessage
 from pydantic import BaseModel, ConfigDict, Field
 
 from naiyue_test_agent.agent_runtime import build_runtime_agent
+from naiyue_test_agent.tools import ToolRegistry
 
 
 class DiscountRequestCase(BaseModel):
@@ -62,7 +63,8 @@ def build_discount_case_agent(
     """Build a reusable agent; its middleware resolves the model for each call."""
     return build_runtime_agent(
         default_model,
-        tools=[],
+        tool_registry=ToolRegistry(),
+        resolve_active_tool_names=lambda _sid, agent_path='root': (),
         system_prompt=(
             'Design one HTTP test case for discount-rule priority. '
             'Make blocked user, empty stock, and campaign conditions overlap. '

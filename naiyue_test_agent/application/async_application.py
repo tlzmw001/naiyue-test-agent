@@ -10,7 +10,6 @@ from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime.async_utils import await_settled, run_blocking, acquire_blocking
 from naiyue_test_agent.agent_runtime.events import safe_error_type
 from naiyue_test_agent.agent_runtime.run_services import current_run_services
-from naiyue_test_agent.agent_runtime.tool_approval import approval_policies_for_tools
 from .async_event_stream import AsyncEventStream
 
 
@@ -18,9 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 class AsyncApplication:
-    def __init__(self, catalog, sessions, agent):
+    def __init__(self, catalog, sessions, agent, tool_registry):
         self.default_model_id = catalog.default_model_id
         self._catalog, self._sessions, self._agent = catalog, sessions, agent
+        self._tool_registry = tool_registry
         self._loop = asyncio.get_running_loop()
         self._tasks = set()
         self._closed = self._closing = False
@@ -32,6 +32,30 @@ class AsyncApplication:
     @property
     def model_ids(self):
         return self._catalog.model_ids
+
+    def get_registered_tools(self):
+        self._check_open()
+        return self._tool_registry.select(self._tool_registry.names())
+
+    async def aregister_tool(self, spec):
+        self._check_open()
+        self._sessions.register_tool(spec)
+
+    def get_active_tools(self, session_id):
+        self._check_open()
+        return self._sessions.get_active_tools(session_id)
+
+    async def aset_active_tools(self, session_id, names):
+        self._check_open()
+        await run_blocking(self._sessions.set_active_tools, session_id, names)
+
+    def get_permission_mode(self, session_id):
+        self._check_open()
+        return self._sessions.get_permission_mode(session_id)
+
+    async def aset_permission_mode(self, session_id, mode):
+        self._check_open()
+        await run_blocking(self._sessions.set_permission_mode, session_id, mode)
 
     def has_session(self, session_id):
         return self._sessions.has_session(session_id)
@@ -80,13 +104,14 @@ class AsyncApplication:
         snapshot = await self._agent.aget_state({'configurable': {'thread_id': thread}})
         return [m.model_copy(deep=True) for m in snapshot.values.get('messages', [])]
 
-    async def _execute(self, session_id, value, resume, run_id, max_concurrency):
+    async def _execute(self, session_id, value, resume, run_id, max_concurrency, *, remember_approved=None):
         task = asyncio.current_task()
         already_owned = task in self._tasks
         self._tasks.add(task)
         try:
             method = self._sessions.aresume_tool_approval if resume else self._sessions.arun
-            return await method(self._agent, session_id, value, run_id=run_id, max_concurrency=max_concurrency)
+            return await method(self._agent, session_id, value, run_id=run_id, max_concurrency=max_concurrency,
+                                **({'remember_approved': remember_approved} if resume else {}))
         finally:
             if not already_owned:
                 self._tasks.discard(task)
@@ -95,9 +120,9 @@ class AsyncApplication:
         self._check_open()
         return await self._execute(session_id, messages, False, None, max_concurrency)
 
-    async def aresume_tool_approval(self, session_id, decisions, *, max_concurrency=4):
+    async def aresume_tool_approval(self, session_id, decisions, *, max_concurrency=4, remember_approved=None):
         self._check_open()
-        return await self._execute(session_id, decisions, True, None, max_concurrency)
+        return await self._execute(session_id, decisions, True, None, max_concurrency, remember_approved=remember_approved)
 
     def _background_done(self, task):
         self._tasks.discard(task)
@@ -166,14 +191,19 @@ class AsyncApplication:
             self._closed = True
 
 
-async def build_async_local_application(config_path, *, tools, system_prompt, response_format):
+async def build_async_local_application(config_path, *, tools, system_prompt, response_format, initial_active_tools=None, settings=None):
+    settings = settings if settings is not None else application.load_tool_settings()
+    registry = application.prepare_tool_registry(tools)
+    application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
+    initial = registry.names() if initial_active_tools is None else initial_active_tools
+    registry.select(initial)
     catalog = await acquire_blocking(application.load_model_catalog, lambda item: item.aclose(), config_path)
     try:
         await run_blocking(catalog._prepare_async_clients)
-        sessions = application.SessionService(catalog, approval_policies_for_tools(tools))
+        sessions = application.SessionService(catalog, registry, initial_active_tools=initial, permission_settings=settings.permissions, progress_settings=settings.progress)
         agent = application._assemble_application(catalog, sessions, InMemorySaver(),
-            tools=tools, system_prompt=system_prompt, response_format=response_format)
-        return AsyncApplication(catalog, sessions, agent)
+            tool_registry=registry, system_prompt=system_prompt, response_format=response_format)
+        return AsyncApplication(catalog, sessions, agent, registry)
     except BaseException:
         try:
             await await_settled(catalog.aclose())

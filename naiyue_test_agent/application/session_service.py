@@ -15,10 +15,11 @@ from langgraph.errors import GraphBubbleUp
 
 from naiyue_test_agent.agent_runtime import invoke_agent_run
 from naiyue_test_agent.agent_runtime.events import safe_error_type
-from naiyue_test_agent.agent_runtime.tool_approval import ApprovalReview, ContextualApprovalPolicy
-from naiyue_test_agent.agent_runtime.tools.read import resolve_workspace_root
-from naiyue_test_agent.agent_runtime.tools.write import WriteOutcomeUnknown
-from naiyue_test_agent.agent_runtime.tools.bash import BashOutcomeUnknown
+from .session_approval import pending_tool_approval, prepare_resume, public_approvals, validate_remembered
+from naiyue_test_agent.tools.permission_rules import PermissionSettings
+from naiyue_test_agent.agent_runtime.tool_execution.permissions import AutoPermissionReviewer
+from naiyue_test_agent.tools.read import resolve_workspace_root
+from naiyue_test_agent.tools.processes import ProcessCleanupError
 from naiyue_test_agent.agent_runtime.resource_invocation import (
     invoke_agent_run_with_resources, resume_agent_run_with_resources,
 )
@@ -26,6 +27,7 @@ from naiyue_test_agent.application.skills import prepare_run_resources
 from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions, RunObservation
 from naiyue_test_agent.application.session_controls import SessionControlMixin
 from naiyue_test_agent.model_access import ModelCatalog
+from naiyue_test_agent.tools.registry import ToolRegistry
 from naiyue_test_agent.contracts.failures import normalize_classifiers
 from naiyue_test_agent.agent_runtime.errors import RuntimeErrorPolicy
 from .failure_policy import ApplicationErrorPolicy
@@ -41,51 +43,24 @@ from naiyue_test_agent.agent_runtime.resource_invocation import (
 logger = logging.getLogger('naiyue_test_agent.application')
 
 
-def _pending_tool_approval(result, root: Path | None, policies: dict, *, context=None):
-    interrupts = result.get('__interrupt__') if isinstance(result, dict) else None
-    if not interrupts:
-        return None
-    if root is None or len(interrupts) != 1:
-        raise RuntimeError('Unexpected tool approval interrupt')
-    actions = interrupts[0].value.get('action_requests', [])
-    messages = result.get('messages', [])
-    last_ai = next((item for item in reversed(messages) if isinstance(item, AIMessage)), None)
-    if last_ai is None:
-        raise RuntimeError('Tool approval has no model tool calls')
-    pending = []
-    for call in last_ai.tool_calls:
-        name = call['name']
-        policy = policies.get(name)
-        if policy is None:
-            continue
-        review = (policy.review_with_context(root, call.get('args'), context or {})
-                  if isinstance(policy, ContextualApprovalPolicy) else policy.review(root, call.get('args')))
-        if review is not None:
-            if not isinstance(review, ApprovalReview):
-                raise RuntimeError('Tool approval review is invalid')
-            pending.append({'tool_call_id': call['id'], 'target': review.target,
-                            'tool_name': name, 'args': call['args'],
-                            'workspace': review.workspace,
-                            'grant_value': review.grant_value})
-    if (len(pending) != len(actions) or any(
-        action.get('name') != item['tool_name'] or action.get('args') != item['args']
-        for action, item in zip(actions, pending, strict=True)
-    )):
-        raise RuntimeError('Tool approval actions do not match model calls')
-    return {'items': pending, 'message_count': len(messages)}
-
-
 class SessionService(AsyncSessionMixin, SessionControlMixin):
     """Map public session IDs to private LangGraph threads and model choices."""
 
     _busy_error = SessionBusyError
 
-    def __init__(self, catalog: ModelCatalog, approval_policies: dict | None = None):
+    def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None):
+        self._progress_settings = progress_settings
+        self._permission_settings = permission_settings if permission_settings is not None else PermissionSettings()
+        self._permission_reviewer = AutoPermissionReviewer.from_catalog(catalog, self._permission_settings.auto)
         self._catalog = catalog
-        self._approval_policies = approval_policies or {}
+        self._tool_registry = tool_registry if tool_registry is not None else ToolRegistry()
+        initial = self._tool_registry.names() if initial_active_tools is None else initial_active_tools
+        self._initial_active_tools = tuple(spec.tool.name for spec in self._tool_registry.select(initial))
         self._sessions: dict[str, dict] = {}
         self._lock = Lock()
         self._model_selection_lock = Lock()
+        self._tool_selection_lock = Lock()
+        self._permission_selection_lock = Lock()
         self._events = ApplicationEventSubscriptions()
         self._active_runs = {}
         self._persistence = None
@@ -128,12 +103,15 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
                 'thread_id': uuid4().hex,
                 'model_id': model_id,
                 'workspace_root': workspace_root,
+                'active_tool_names': self._initial_active_tools,
+                'permission_mode': self._permission_settings.mode, 'session_allow': [],
                 'pending_tool_approval': None,
                 'pending_turn': None,
                 'manual_review_required': False,
                 'busy': False,
                 'run_id': None,
                 'run_project_instructions': None,
+                'run_review_project_instructions': None,
                 'steering_open': False,
                 'stop_requested': False,
                 'steering_queue': deque(),
@@ -157,6 +135,7 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
         with self._lock:
             row = self._sessions[session_id]
             return {'session_id': session_id, 'model_id': row['model_id'],
+                'active_tools': list(row['active_tool_names']), 'permission_mode': row['permission_mode'],
                 'workspace_root': str(row['workspace_root']) if row['workspace_root'] else None,
                 'busy': row['busy'], 'run_id': row['run_id'],
                 'manual_review_required': row['manual_review_required'],
@@ -199,7 +178,7 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
                 raise SessionBusyError('Session already has an active run')
             run_id = run_id or uuid4().hex
             observation = RunObservation(
-                self._events.publisher(session_id, run_id), 'message',
+                self._events.publisher(session_id, run_id), 'message', progress_settings=self._progress_settings,
             )
             observation.runtime_errors = RuntimeErrorPolicy(self._runtime_classifiers, self._catalog.failure_describer())
             observation.application_errors = ApplicationErrorPolicy(self._application_classifiers)
@@ -219,16 +198,18 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             observation.start()
             if self._persistence is not None:
                 yield IOCall(self._persistence.start, (session_id, run_id))
-            instructions, resources = yield IOCall(prepare_run_resources, (workspace_root,),
-                {'enable_skills': 'read' in self._approval_policies})
+            resources = yield IOCall(prepare_run_resources, (workspace_root,),
+                {'enable_skills': 'read' in self._tool_registry.names()})
             with self._lock:
-                session['run_project_instructions'] = instructions
+                session['run_project_instructions'] = resources['prompt']
+                session['run_review_project_instructions'] = resources['project_instructions']
+            messages = self._mark_human_messages(messages)
             observation.stage = 'execute'
             if workspace_root is not None:
                 with observation.bind():
                     result = yield IOCall(invoke_agent_run_with_resources, (agent, messages),
                         dict(session_id=session_id, thread_id=thread_id, run_id=run_id,
-                             workspace_root=workspace_root, read_resource_roots=resources),
+                             workspace_root=workspace_root, read_resource_roots=resources['read_resource_roots']),
                         async_call=partial(ainvoke_agent_run_with_resources, max_concurrency=max_concurrency),
                         critical=False)
             else:
@@ -237,15 +218,13 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
                         dict(session_id=session_id, thread_id=thread_id, run_id=run_id),
                         async_call=partial(ainvoke_agent_run, max_concurrency=max_concurrency), critical=False)
             observation.stage = 'finalize'
-            pending = yield IOCall(_pending_tool_approval, (result, workspace_root, self._approval_policies),
-                {'context': {'session_id': session_id, 'workspace_root': workspace_root,
-                             'read_resource_roots': resources}})
+            pending = yield IOCall(pending_tool_approval, (result,))
             if pending is not None:
                 with self._lock:
                     pending['requested_run_id'] = run_id
                     session['pending_tool_approval'] = pending
                 observe(observation.controls, observation.controls.approval_requested, tuple(item['tool_call_id'] for item in pending['items']))
-                result['approval_requests'] = self._public_approvals(pending)
+                result['approval_requests'] = public_approvals(pending)
                 self._record_approval('approval_requested', session_id, run_id,
                                       count=len(pending['items']))
             observation.result(result, pending)
@@ -260,14 +239,12 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             if async_mode and isinstance(error, Exception) and not isinstance(error, GraphBubbleUp):
                 partial_tools = yield IOCall(self._review_partial_state, (agent, session_id),
                                             async_call=self._areview_partial_state)
-            if partial_tools or isinstance(error, (WriteOutcomeUnknown, BashOutcomeUnknown)) or (
+            if partial_tools or isinstance(error, ProcessCleanupError) or (
                     async_mode and isinstance(error, asyncio.CancelledError)):
                 with self._lock:
                     session['manual_review_required'] = True
                     session['pending_tool_approval'] = None
-                event_key = ('session_event' if partial_tools or isinstance(error, asyncio.CancelledError)
-                             else 'bash_event' if isinstance(error, BashOutcomeUnknown) else 'write_event')
-                logger.error('session_manual_review_required', extra={event_key: {
+                logger.error('session_manual_review_required', extra={'session_event': {
                     'event': 'session_manual_review_required',
                     'session_id': session_id, 'run_id': run_id,
                 }})
@@ -275,14 +252,6 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
         finally:
             yield IOCall(self._finish_run, (session_id, run_id, session, agent, observation, primary_error),
                          async_call=self._afinish_run)
-
-    @staticmethod
-    def _public_approvals(pending):
-        return [dict({'tool_call_id': item['tool_call_id'],
-                      'tool_name': item['tool_name'], 'target': str(item['target'])},
-                     **({'workspace': str(item['workspace'])}
-                        if item['workspace'] is not None else {}))
-                for item in pending['items']]
 
     @staticmethod
     def _record_approval(event: str, session_id: str, run_id: str, **counts) -> None:
@@ -293,12 +262,12 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
     def pending_tool_approvals(self, session_id: str) -> list[dict[str, str]]:
         with self._lock:
             pending = self._sessions[session_id]['pending_tool_approval']
-            return self._public_approvals(pending) if pending is not None else []
+            return public_approvals(pending) if pending is not None else []
 
-    def resume_tool_approval(self, agent, session_id: str, decisions: list[str]):
-        return run_steps(self._resume_steps(agent, session_id, decisions))
+    def resume_tool_approval(self, agent, session_id: str, decisions: list[str], *, remember_approved=None):
+        return run_steps(self._resume_steps(agent, session_id, decisions, remember_approved=remember_approved))
 
-    def _resume_steps(self, agent, session_id, decisions, *, run_id=None, async_mode=False, max_concurrency=4):
+    def _resume_steps(self, agent, session_id, decisions, *, run_id=None, async_mode=False, max_concurrency=4, remember_approved=None):
         with self._lock:
             session = self._sessions[session_id]
             if session['manual_review_required']:
@@ -313,9 +282,10 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             if (not isinstance(decisions, list) or len(decisions) != len(pending['items'])
                     or any(item not in ('approve', 'reject') for item in decisions)):
                 raise ValueError('One approve/reject decision is required per pending call')
+            validate_remembered(pending, decisions, remember_approved)
             run_id = run_id or uuid4().hex
             observation = RunObservation(
-                self._events.publisher(session_id, run_id), 'approval_resume',
+                self._events.publisher(session_id, run_id), 'approval_resume', progress_settings=self._progress_settings,
             )
             observation.runtime_errors = RuntimeErrorPolicy(self._runtime_classifiers, self._catalog.failure_describer())
             observation.application_errors = ApplicationErrorPolicy(self._application_classifiers)
@@ -337,21 +307,14 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             observation.start()
             if self._persistence is not None:
                 yield IOCall(self._persistence.start, (session_id, run_id))
-            approved_by_tool: dict[str, dict[str, object]] = {}
-            for item, decision in zip(pending['items'], decisions, strict=True):
-                if decision == 'approve':
-                    approved_by_tool.setdefault(item['tool_name'], {})[
-                        item['tool_call_id']
-                    ] = item['grant_value']
-            grants = {
-                name: self._approval_policies[name].grant_factory(values)
-                for name, values in approved_by_tool.items()
-            }
-
-            instructions, resources = yield IOCall(prepare_run_resources, (workspace_root,),
-                {'enable_skills': 'read' in self._approval_policies})
+            grants, remembered = prepare_resume(session_id, pending, decisions, remember_approved)
             with self._lock:
-                session['run_project_instructions'] = instructions
+                session['session_allow'].extend(rule for rule in remembered if rule not in session['session_allow'])
+            resources = yield IOCall(prepare_run_resources, (workspace_root,),
+                {'enable_skills': 'read' in self._tool_registry.names()})
+            with self._lock:
+                session['run_project_instructions'] = resources['prompt']
+                session['run_review_project_instructions'] = resources['project_instructions']
             self._record_approval(
                 'approval_review_submitted', session_id, run_id,
                 approved_count=decisions.count('approve'),
@@ -361,13 +324,11 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             with observation.bind():
                 result = yield IOCall(resume_agent_run_with_resources, (agent,),
                     dict(session_id=session_id, thread_id=thread_id, run_id=run_id, workspace_root=workspace_root,
-                         decisions=decisions, approval_grants=grants, read_resource_roots=resources),
+                         decisions=decisions, approval_grants=grants, read_resource_roots=resources['read_resource_roots']),
                     async_call=partial(aresume_agent_run_with_resources, max_concurrency=max_concurrency),
                     critical=False)
             observation.stage = 'finalize'
-            next_pending = yield IOCall(_pending_tool_approval, (result, workspace_root, self._approval_policies),
-                {'context': {'session_id': session_id, 'workspace_root': workspace_root,
-                             'read_resource_roots': resources}})
+            next_pending = yield IOCall(pending_tool_approval, (result,))
             with self._lock:
                 if next_pending is not None:
                     next_pending['requested_run_id'] = run_id
@@ -376,7 +337,7 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             self._record_approval('approval_resumed', session_id, run_id,
                                   count=len(pending['items']))
             if next_pending is not None:
-                result['approval_requests'] = self._public_approvals(next_pending)
+                result['approval_requests'] = public_approvals(next_pending)
                 observe(observation.controls, observation.controls.approval_requested, tuple(item['tool_call_id'] for item in next_pending['items']))
                 self._record_approval('approval_requested', session_id, run_id,
                                       count=len(next_pending['items']))
@@ -392,14 +353,12 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             if async_mode and isinstance(error, Exception) and not isinstance(error, GraphBubbleUp):
                 partial_tools = yield IOCall(self._review_partial_state, (agent, session_id),
                                             async_call=self._areview_partial_state)
-            if partial_tools or isinstance(error, (WriteOutcomeUnknown, BashOutcomeUnknown)) or (
+            if partial_tools or isinstance(error, ProcessCleanupError) or (
                     async_mode and isinstance(error, asyncio.CancelledError)):
                 with self._lock:
                     session['manual_review_required'] = True
                     session['pending_tool_approval'] = None
-                event_key = ('session_event' if partial_tools or isinstance(error, asyncio.CancelledError)
-                             else 'bash_event' if isinstance(error, BashOutcomeUnknown) else 'write_event')
-                logger.error('session_manual_review_required', extra={event_key: {
+                logger.error('session_manual_review_required', extra={'session_event': {
                     'event': 'session_manual_review_required',
                     'session_id': session_id, 'run_id': run_id,
                 }})
@@ -423,6 +382,7 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             session['steering_open'] = False
             session['stop_requested'] = False
             session['run_project_instructions'] = None
+            session['run_review_project_instructions'] = None
             if self._persistence is None:
                 session['busy'] = False
                 session['run_id'] = None
@@ -460,6 +420,7 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
                     session['steering_open'] = False
                     session['stop_requested'] = False
                     session['run_project_instructions'] = None
+                    session['run_review_project_instructions'] = None
                     session['steering_queue'].clear()
                     session['follow_up_queue'].clear()
                     self._active_runs.pop(session_id, None)

@@ -1,5 +1,9 @@
 """One local application owns its catalog, session service, agent, and checkpoint."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import logging
 from pathlib import Path
 
@@ -44,7 +48,7 @@ def test_local_application_wires_one_catalog_one_checkpoint_and_session_events(m
 
     config_path = Path('synthetic-models.json')
     app = application.build_local_application(
-        config_path, tools=[read_probe], system_prompt='', response_format=None,
+        config_path, tools=[ToolSpec(read_probe, read_probe.args_schema, permissions=ToolPermission(default='allow'))], system_prompt='', response_format=None,
     )
     assert loaded_paths == [config_path]
     assert app.default_model_id == 'A'

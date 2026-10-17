@@ -23,6 +23,7 @@ from naiyue_test_agent.agent_runtime.control_observation import ControlObserver
 from naiyue_test_agent.agent_runtime.context_operation_observation import (
     ContextOperationObserver,
 )
+from naiyue_test_agent.agent_runtime.tool_execution.observation import ToolProgressObserver
 
 
 logger = logging.getLogger(__name__)
@@ -91,7 +92,7 @@ class ApplicationEventSubscriptions:
 class RunObservation:
     """Observe outcomes; the session service still owns results and cleanup."""
 
-    def __init__(self, publisher: RunEventPublisher, mode: str):
+    def __init__(self, publisher: RunEventPublisher, mode: str, *, progress_settings=None):
         self.publisher = publisher
         self.mode = mode
         self.stage = 'prepare'
@@ -102,6 +103,7 @@ class RunObservation:
         self.controls = ControlObserver(publisher)
         self.stop_control = RunControl()
         self.context_operations = ContextOperationObserver(publisher)
+        self.tool_progress = ToolProgressObserver(publisher, progress_settings)
         self.runtime_errors = RuntimeErrorPolicy()
         self.application_errors = ApplicationErrorPolicy()
 
@@ -120,7 +122,7 @@ class RunObservation:
         if self.mode == 'approval_resume':
             observe(self.controls, self.controls.submit_approval)
         services = RunServices(self.publisher, self.runtime_errors, self.stop_control,
-                               self.turns, self.controls, self.context_operations)
+                               self.turns, self.controls, self.context_operations, tool_progress=self.tool_progress)
         with bind_run_services(services):
             yield
 

@@ -1,8 +1,13 @@
 """Tool-boundary events through the project's synchronous LangChain agent."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
+from naiyue_test_agent.application import prepare_tool_registry
+
 import logging
 
-import pytest
 from langchain.tools import tool
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, ToolMessage
@@ -16,10 +21,12 @@ class ToolCapableFake(FakeMessagesListChatModel):
         return self
 
 
-def build_fake_agent(tool_to_call, responses):
+def build_fake_agent(spec, responses):
     model = ToolCapableFake(responses=responses)
+    _runtime_registry_1 = prepare_tool_registry([spec])
+    _runtime_names_1 = _runtime_registry_1.names()
     return build_runtime_agent(
-        model, tools=[tool_to_call], system_prompt='', response_format=None,
+        model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
         resolve_model=lambda _session_id: ('fake-model', model),
         record_selection=lambda _session_id, _model_id: None,
     )
@@ -32,7 +39,7 @@ def test_tool_success_has_correlated_safe_events_in_actual_agent_order(caplog):
         assert value == 'SENSITIVE_ARG'
         return 'SENSITIVE_TOOL_OUTPUT'
 
-    agent = build_fake_agent(read_probe, [
+    agent = build_fake_agent(ToolSpec(read_probe, read_probe.args_schema, permissions=ToolPermission(default='allow')), [
         AIMessage(content='', tool_calls=[{
             'name': 'read_probe', 'args': {'value': 'SENSITIVE_ARG'}, 'id': 'call-1',
         }]),
@@ -72,7 +79,7 @@ def test_tool_success_has_correlated_safe_events_in_actual_agent_order(caplog):
         assert secret not in serialized
 
 
-def test_tool_exception_records_failure_and_propagates_original_error(caplog):
+def test_ordinary_tool_exception_records_failure_and_returns_error_result(caplog):
     failure = RuntimeError('SENSITIVE_ERROR')
 
     @tool
@@ -80,18 +87,20 @@ def test_tool_exception_records_failure_and_propagates_original_error(caplog):
         """Raise a synthetic failure."""
         raise failure
 
-    agent = build_fake_agent(crash_probe, [AIMessage(content='', tool_calls=[
+    agent = build_fake_agent(ToolSpec(crash_probe, crash_probe.args_schema, permissions=ToolPermission(default='allow')), [AIMessage(content='', tool_calls=[
         {'name': 'crash_probe', 'args': {}, 'id': 'call-2'},
-    ])])
+    ]), AIMessage(content='handled')])
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        with pytest.raises(RuntimeError) as caught:
-            invoke_agent_run(
-                agent, [('user', 'SENSITIVE_PROMPT')],
-                session_id='session-2', thread_id='INTERNAL_THREAD', run_id='run-2',
-            )
+        result = invoke_agent_run(
+            agent, [('user', 'SENSITIVE_PROMPT')],
+            session_id='session-2', thread_id='INTERNAL_THREAD', run_id='run-2',
+        )
 
-    assert caught.value is failure
+    feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
+    assert feedback.status == 'error' and feedback.tool_call_id == 'call-2'
+    assert 'RuntimeError' in feedback.content and 'SENSITIVE_ERROR' not in feedback.content
+    assert result['messages'][-1].content == 'handled'
     tool_events = [r.tool_event for r in caplog.records if hasattr(r, 'tool_event')]
     assert tool_events == [
         {'event': 'tool_started', 'tool_name': 'crash_probe',
@@ -101,7 +110,7 @@ def test_tool_exception_records_failure_and_propagates_original_error(caplog):
     ]
     assert [r.run_event for r in caplog.records if hasattr(r, 'run_event')] == [
         {'event': 'run_started', 'run_id': 'run-2', 'session_id': 'session-2'},
-        {'event': 'run_failed', 'run_id': 'run-2', 'session_id': 'session-2'},
+        {'event': 'run_completed', 'run_id': 'run-2', 'session_id': 'session-2'},
     ]
     assert 'SENSITIVE_ERROR' not in repr(tool_events) + caplog.text
     assert 'INTERNAL_THREAD' not in repr(tool_events) + caplog.text
@@ -113,8 +122,7 @@ def test_error_tool_message_is_failure_event_but_run_can_complete(caplog):
         """Return a handled synthetic tool error."""
         raise ToolException('SENSITIVE_HANDLED_ERROR')
 
-    recoverable_probe.handle_tool_error = True
-    agent = build_fake_agent(recoverable_probe, [
+    agent = build_fake_agent(ToolSpec(recoverable_probe, recoverable_probe.args_schema, permissions=ToolPermission(default='allow')), [
         AIMessage(content='', tool_calls=[
             {'name': 'recoverable_probe', 'args': {}, 'id': 'call-3'},
         ]),
@@ -146,7 +154,7 @@ def test_direct_invoke_does_not_invent_run_id_for_tool_events(caplog):
         """Return a synthetic value."""
         return 'value'
 
-    agent = build_fake_agent(plain_probe, [
+    agent = build_fake_agent(ToolSpec(plain_probe, plain_probe.args_schema, permissions=ToolPermission(default='allow')), [
         AIMessage(content='', tool_calls=[
             {'name': 'plain_probe', 'args': {}, 'id': 'call-4'},
         ]),

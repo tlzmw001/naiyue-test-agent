@@ -15,7 +15,7 @@ function client() {
   vi.spyOn(api, 'create').mockResolvedValue({ session_id: 's' });
   vi.spyOn(api, 'session').mockResolvedValue({ ...row, messages: [], busy: false, can_run: true,
     has_compaction: false, active_run_id: null, latest_run_id: null,
-    manual_review_required: false, pending_approval: false, live: null });
+    active_tools: [], permission_mode: 'Default', manual_review_required: false, pending_approval: false, live: null });
   vi.spyOn(api, 'start').mockResolvedValue({ session_id: 's', run_id: 'r' });
   vi.spyOn(api, 'run').mockResolvedValue({ session_id: 's', run_id: 'r', status: 'running', messages: [],
     last_sequence: 0, incomplete: false, done: false, manual_review_required: false });

@@ -2,6 +2,8 @@
 
 from .errors import WebError, public_error
 from .serialization import encoded_size, message_view
+from naiyue_test_agent.application.session_storage import SessionPersistenceError
+from naiyue_test_agent.model_access import ModelConfigError
 
 
 class WebService:
@@ -15,7 +17,8 @@ class WebService:
     async def sessions(self):
         rows = await self.application.alist_sessions()
         return [{key: row[key] for key in ('session_id', 'model_id', 'workspace_root',
-            'state', 'updated_at', 'last_run_status')} for row in rows]
+            'state', 'updated_at', 'last_run_status')} for row in rows
+            if row['workspace_root'] == (str(self.settings.workspace_root) if self.settings.workspace_root else None)]
 
     async def create_session(self, model_id):
         try:
@@ -36,26 +39,38 @@ class WebService:
         if row['workspace_root'] != root:
             raise WebError('workspace_mismatch', 403)
         try:
+            value = None
             if not self.application.has_session(session_id):
-                await self.application.arestore_session(session_id)
-            value = await self.application.aget_session_view(session_id)
+                if row['state'] == 'ready':
+                    try:
+                        await self.application.arestore_session(session_id)
+                    except (SessionPersistenceError, ModelConfigError, ValueError):
+                        value = await self.application.aget_session_history(session_id)
+                else:
+                    value = await self.application.aget_session_history(session_id)
+            if value is None:
+                value = await self.application.aget_session_view(session_id)
         except Exception as error:
             raise public_error(error) from None
         messages = [message_view(m) for m in value.pop('messages')]
         has_compaction = any(m.get('is_context_summary') for m in messages)
-        latest = self.delivery.latest.get(session_id)
+        read_only = 'recovery' in value
+        latest = None if read_only else self.delivery.latest.get(session_id)
         if latest is not None:
             live = self.delivery.get(latest).view()
             messages = live['messages']
         else:
             live = None
         result = {**row, **value, 'messages': messages,
-            'approval_requests': self.application.pending_tool_approvals(session_id),
+            'approval_requests': [] if read_only else self.application.pending_tool_approvals(session_id),
             'has_compaction': has_compaction,
-            'active_run_id': value['run_id'], 'latest_run_id': latest,
-            'can_run': not value['busy'] and row['state'] != 'running'
+            'active_run_id': value.get('run_id'), 'latest_run_id': latest,
+            'can_run': not read_only and not value['busy'] and row['state'] != 'running'
                 and not value['manual_review_required'] and not value['pending_approval'],
             'live': live}
+        if read_only:
+            result.update(busy=False, manual_review_required=row['state'] == 'review_required',
+                          pending_approval=False, approval_run_id=None)
         if encoded_size(result) > self.settings.max_frame_bytes:
             raise WebError('view_too_large')
         return result
@@ -66,12 +81,30 @@ class WebService:
         return await self.delivery.start(session_id, body, value['messages'], can_run=value['can_run'])
 
     async def select_model(self, session_id, model_id):
-        await self.session(session_id)
+        value = await self.session(session_id)
+        if 'recovery' in value:
+            raise WebError('session_recovery_blocked')
         try:
             await self.application.aselect_model(session_id, model_id)
         except Exception as error:
             raise public_error(error) from None
         return {'model_id': model_id}
+
+    async def recover(self, session_id, body):
+        async with self.delivery.start_lock:
+            active = self.delivery.active
+            if active is not None and not active.task.done():
+                raise WebError('session_busy')
+            value = await self.session(session_id)
+            if body.action not in value.get('recovery', {}).get('actions', []):
+                raise WebError('session_recovery_blocked')
+            if value.get('checkpoint_id') != body.checkpoint_id:
+                raise WebError('checkpoint_mismatch')
+            try:
+                await self.application.arecover_session(session_id, checkpoint_id=body.checkpoint_id, action=body.action)
+            except Exception as error:
+                raise public_error(error) from None
+            return await self.session(session_id)
 
     async def approve(self, session_id, body):
         async def check_current():

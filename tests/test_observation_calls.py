@@ -1,5 +1,9 @@
 """Explicit observation calls and normal-path health are separate contracts."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import asyncio
 
 import pytest
@@ -8,7 +12,7 @@ from langchain_core.tools import tool
 
 from naiyue_test_agent.agent_runtime.observation import observe
 from naiyue_test_agent.agent_runtime.turn_observation import TurnObserver
-from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
+from naiyue_test_agent.tools import create_session_read_tool
 from event_sequence import EventSequenceChecker
 from test_application_run_events import ToolModel, make_app
 from test_async_application import StreamingToolModel, make_app as make_async_app
@@ -122,7 +126,7 @@ def test_sync_tool_cycle_has_healthy_observation(monkeypatch, caplog):
         {'name': 'probe', 'args': {}, 'id': 'probe-call'}],
         response_metadata={'finish_reason': 'tool_calls'}),
         AIMessage(content='done', response_metadata={'finish_reason': 'stop'})])
-    app = make_app(monkeypatch, model, [probe])
+    app = make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
     assert app.run(app.create_session('A'), [('user', 'run')])['messages'][-1].content == 'done'

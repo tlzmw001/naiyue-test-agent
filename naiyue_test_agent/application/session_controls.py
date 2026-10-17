@@ -4,7 +4,7 @@ from naiyue_test_agent.agent_runtime.observation import observe, emit_event
 
 import logging
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, convert_to_messages
 
 
 logger = logging.getLogger('naiyue_test_agent.application')
@@ -12,6 +12,52 @@ logger = logging.getLogger('naiyue_test_agent.application')
 
 class SessionControlMixin:
     """Internal split for the 500-line limit; public control signatures remain."""
+
+    def register_tool(self, spec):
+        self._tool_registry.register(spec, permission_settings=self._permission_settings)
+
+    def get_permission_mode(self, session_id):
+        with self._lock:
+            return self._sessions[session_id]['permission_mode']
+
+    def set_permission_mode(self, session_id, mode):
+        self._permission_settings.validate_mode(mode)
+        with self._permission_selection_lock:
+            with self._lock:
+                self._sessions[session_id]
+            if self._persistence is not None:
+                self._persistence.storage.select_permission_mode(session_id, mode)
+            with self._lock:
+                self._sessions[session_id]['permission_mode'] = mode
+
+    def resolve_permission_context(self, session_id, agent_path='root'):
+        if agent_path != 'root':
+            raise ValueError('Only the root agent is supported')
+        from copy import deepcopy
+        with self._lock:
+            row = self._sessions[session_id]
+            return {'mode': row['permission_mode'], 'session_allow': deepcopy(row['session_allow']),
+                    'project_instructions': row['run_review_project_instructions']}
+
+    def get_active_tools(self, session_id):
+        with self._lock:
+            return tuple(self._sessions[session_id]['active_tool_names'])
+
+    def resolve_active_tool_names(self, session_id, agent_path='root'):
+        if agent_path != 'root':
+            raise ValueError('Only the root agent is supported')
+        return self.get_active_tools(session_id)
+
+    def set_active_tools(self, session_id, names):
+        selected = self._tool_registry.select(names)
+        names = tuple(spec.tool.name for spec in selected)
+        with self._tool_selection_lock:
+            with self._lock:
+                self._sessions[session_id]
+            if self._persistence is not None:
+                self._persistence.storage.select_active_tools(session_id, names)
+            with self._lock:
+                self._sessions[session_id]['active_tool_names'] = names
 
     def _control(self, session_id):
         observation = self._active_runs.get(session_id)
@@ -134,8 +180,19 @@ class SessionControlMixin:
         """Private assembly callback; plain-string drain/finish APIs stay unchanged."""
         with self._lock:
             control = self._control(session_id)
-        return (observe(control, control.prepare_messages, messages, fallback=[HumanMessage(content=text) for text in messages]) if control is not None
+        prepared = (observe(control, control.prepare_messages, messages, fallback=[HumanMessage(content=text) for text in messages]) if control is not None
                 else [HumanMessage(content=text) for text in messages])
+        return self._mark_human_messages(prepared)
+
+    @staticmethod
+    def _mark_human_messages(messages):
+        result = []
+        for message in convert_to_messages(messages):
+            extra = {key: value for key, value in message.additional_kwargs.items() if key != 'naiyue_human_input'}
+            if isinstance(message, HumanMessage) and not extra.get('naiyue_compaction_summary'):
+                extra['naiyue_human_input'] = True
+            result.append(message.model_copy(update={'additional_kwargs': extra}))
+        return result
 
     @staticmethod
     def _record_steering(event: str, session_id: str, run_id: str, count: int) -> None:

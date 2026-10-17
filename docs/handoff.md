@@ -1,6 +1,49 @@
 # Naiyue Test Agent：当前开发学习交接
 
-更新日期：2026-10-11。最新收尾见第323节，课堂位置为Lesson43正常标注/读回；以下按时间保留阶段记录。第 1–55 节在[历史（一）](handoff-history-01.md)，第 56–61 节在[历史（二）](handoff-history-02.md)。项目规则、总体选型和未完成工作分别见 [AGENTS.md](../AGENTS.md)、[项目设计](project-plan.md)、[后续清单](future-work.md)。
+## 当前交接摘要（2026-10-17）
+
+- **092C及打开会话时自动恢复已实施并验证**：[Spec092第0节及第5.1节](specs/092-session-restart-recovery.md#51-092c实际接线与当前入口2026-10-17)。Web选择旧会话后GET只读历史，再自动POST原recover；CLI选择旧会话自动恢复。执行中断仍用092B三次更新整理ready；确认前置审批则复核后直接显示原审批卡片。正常路径无需额外continue点击，不扫描全部历史、不自动发草稿/调用模型/执行工具/Auto或批准。
+- **实际主链与文件**：6个后端既有文件、5个前端既有文件，无新生产模块/表/依赖。PermissionMiddleware原_prepare/_default移为共用本地函数，session_recovery.validate_saved_approval核对当前工具/schema/subject/anchor/环境与本地权限；finish_run先规范interrupted及真实审批checkpoint，_install_session安装pending，requested_run_id来自原真实row.run_id。官方interrupt/Command(resume)、一次性grant、批次串并行保持；pending_turn为空沿approval_retry观察，不伪造旧run/turn事件。
+- **失败与临时授权**：旧session_allow不跨重启；持久batch里非空临时范围也不能复活，否则递归工具仍会用旧规则。此类批次、旧Auto allow无法本地证明、目标/当前Deny变化均不恢复原审批、不自动取消，保留历史和明确continue放弃入口。恢复失败重读checkpoint/保留草稿，不循环重试；CLI仅审批条件失效时可手动选择continue。必要保存失败不安装；原source checkpoint/三次更新幂等保护保持。
+- **最终验证**：新增后端21例，全量 **1971 passed in69.72s**（/tmp/naiyue-092c-all-complete.log）；前端新增3例，10文件 **40 passed**（/tmp/naiyue-092c-ui-final.log）；TypeScript/Vite186模块成功（/tmp/naiyue-092c-build-final.log）。compileall/pip check、285份AST/108生产模块≤500行、文档文件链接及diff检查通过。混合顺序批次批准/拒绝执行一次、旧Auto/临时授权失效、源结果不变、保存失败重试、Web授权/准入/旧checkpoint、CLI自动入口/条件失效明确放弃、前端过期选择/失败不循环/草稿与列表降级均覆盖；未改conftest或共享helper。
+- **进程/页面证据**：独立子进程在审批interrupt落盘但终局元数据未保存、恢复元数据落盘但内存安装前明确os._exit(91)，两处重开均能恢复原pending并批准执行一次。真实临时Web＋SQLite＋假模型验证打开时直接恢复审批卡片、执行中断自动整理、未确认说明/输入状态，无控制台error，模型调用0；截图/tmp/naiyue-092c-approval.png、/tmp/naiyue-092c-ready.png。临时页面/服务已关闭。
+- **边界及理解证据**：macOS本地IO/真实框架与假模型证据，不代表真实模型、Windows/Linux原机或业务效果；WIN1仍开放。用户确认自动恢复产品行为，未进行新的独立调试/实现考核；课堂位置仍看[learning-roadmap](1.0/learning-roadmap.md)。真实配置/用户库未改；当前功能与学习记录按用户授权进入提交/push收尾，版本与验证以本轮Git结果为准。
+- **下一步（用户最新重定向）**：先提交并push已完成的功能及学习记录，再系统核对架构语义、contracts归属与同步分支实际消费者；迁移测试/探针后清理已废弃内部兼容。090/091/092八片完成；[086前台一层SubAgent](specs/086-subagent-foreground.md)暂后排，不默认开始。
+
+以下保留前期已完成工作的事实，当前入口与下一步以本节顶部为准。
+
+- **Spec088/089已实施**：[文件提交/归档](specs/088-windows-file-commit-and-archives.md)、[Windows路径授权比较](specs/089-windows-path-permission-identity.md)。共修改6个现有生产模块，新增4份测试，无新平台模块/服务/依赖。Write/Edit已存在目标Windows分支走ReplaceFileW并保留DACL合并选项，拒绝自动清只读/属性失败后降级；新目标单独提交，POSIX仍保留原模式位。归档取消私密位门槛，普通目录/标记/文件、symlink/reparse和确认清理快照仍检查。
+- **路径接线**：唯一permission_path产生比较用PurePath，原生requested/resolved保留供IO与展示；普通/扩展盘符及UNC等价。Deny/Allow、默认工作区/Skill资源范围、session_allow、递归过滤、执行复核和写目标占用使用同一比较。设备/ADS/保留名/尾点空格/扩展路径歧义等在目标IO前报工具错误，配置同类语法启动拒绝；隐藏/隐私默认Ask、Deny优先、整批审批/恢复不重跑Auto不变。
+- **验证**：基线1634通过；088初始9失败/1通过后相关106通过，089首批34失败/8通过后转绿，四个额外边界先4失败/3通过再修。最终新增73例通过；含六文件工具×sync/async的12组正式图，验证Bypass/Allow不覆盖Deny、原subject/checkpoint、零执行、同ID错误/not_executed事件/后续回答。测试按当前生命周期从批次checkpoint查事实，不改变最终模型清空calls的生产合同；同步测试关闭实际catalog，不新增LocalApplication.close。
+- **完整验收**：`PATH="$HOME/.pi/agent/bin:$PATH" .venv/bin/python -m pytest -q` → **1707 passed in50.90s**（`/tmp/naiyue-win-files-full.log`）；新增四文件 → **73 passed in1.03s**。前端`npm --prefix frontend test -- --run` → **9文件27 passed**；`npm --prefix frontend run build` → **TypeScript/Vite186模块成功**。compileall/pip check、283 Python AST/105生产文件≤500行、diff检查通过。真实配置/依赖/数据库未改，未提交/push，原工作树保留，无真实项目.naiyue创建。
+- **088/089证据边界**：以上是macOS真实文件IO、PureWindowsPath、WinAPI参数/故障mock与假模型正式图，不是Windows/Linux原机。当前W1—W4代码缺口已有087/088/089接线，WIN1仍开放；待原生Windows安装→CLI/Web→Write/Edit及DACL/只读/占用→长路径/UNC/junction/Deny→PowerShell5.1/7和Git Bash/rg/fd→停止子树→保存重启续聊验收。报告见[Windows复盘](research/windows-compatibility-audit.md)。没有原机环境不能宣称全项目Windows可交付；此后090A/B已完成，SubAgent086、工具/模式UI与沙箱仍分别后排。
+- **此前087保持**：[工作区存储](specs/087-workspace-session-storage.md)采用启动cwd/项目UUID/data_dir，每工作区共享库、不同工作区服务可并行、同库单应用。关闭后同机移动自动事务重绑；副本显式--new-workspace新身份/空历史，长期记忆独立设计。旧schema1/2升级及NULL补写已删，原默认sessions.sqlite及.lock已按获批范围离线删除，无迁移/启动自删。学习位置仍为[六章后](1.0/learning-roadmap.md)，本轮实现验证不记为用户独立掌握。
+
+### 此前设计与探针记录（历史状态，当前下一步以上述摘要为准）
+
+- Spec086审阅纠正故障范围，供审阅、未实现：A自身执行/checkpoint失败应在委派边界收尾A并转具体ToolException，父收到同ID error；B继续运行或等待自己的审批，不广播根停止。A不能标成功/自动恢复，其自身记录未确认不自动阻断根ready；根自己的checkpoint/元数据保存仍须成功。根确定终止、用户根停止或App关闭时才整轮停止/唤醒。方法/字段见[Spec086第6、11—12节](specs/086-subagent-foreground.md#6-正常调用普通失败和预算)。
+- 前轮P6三组/P7一组机制探针退出0：批准payload后停止动作0；进入动作后停止效果1且成功消息保留；A保存故障原样上抛及先唤醒兄弟的路径可收尾。后两项仅证明人为选择的传播/广播策略能运行，不能证明A失败必须停止整轮；注入仅针对A，未证根/B保存不可用。见[研究P6/P7纠正说明](research/subagent-framework-probes-2026-10-16.md#p6批准与停止时序生成结果后的checkpoint失败)。新局部隔离合同待实施测试；本轮未新增框架探针或产品代码。
+- 前轮两条既有应用回归2 passed in0.54s：根最终保存失败阻断后续运行；临时目录真实写入在os.replace已进入后停止，仍确认替换及成功消息。它们不证明子局部失败应影响根。批准接收不等于执行、pending只能accepted/invalidated一次及真实IO settle合同保持；唯一下一步继续审阅子失败/停止的职责边界，仍不开始实现。
+- 独立子驱动主线保持：共享角色图/saver、实例child_thread_id、当前批即时审批、父run/SSE持续；不采用等待B/父重入账/空GraphInterrupt。根run/resume合同保留；CLI的join、Web busy及面板!busy已列迁移。P5已有内存/SQLite内存库八组通过，见研究。版本保持1.4.2、不改真实配置/依赖/数据库，不发真实模型请求。
+- 用户暂停第七章课堂，工具/权限/审批/图片/双Shell讨论已合并为[Spec085](specs/085-tool-system-rebuild.md)和[文件与消费者清单](specs/085-tool-system-file-map.md)。主文区分当前/目标链路，列数据生产消费、具体函数/hook顺序、审批/恢复/失败模拟、配置及实施验证；附录列新增/迁移/删除和实际消费者。早期Spec084及四份研究稿已标被整合，不再按Bash排除、静态工具名过滤、显式Ask/隐私硬拒、复制工具或完整文件Operations先行等旧候选实现。用户确认本次按真实目标读写软链接、Pillow图片处理、精确编辑不受模糊预算连带限制。无新的必需产品选型阻点；图片/Edit/收尾数值和少量启动默认标为总Spec工程建议，仍待整份审阅。唯一下一步审阅总Spec的抽象、主链与文件迁移，再由用户明确进入实施；本轮不写产品。
+- 已收口架构：App共享ToolSpec注册表/compiled Agent，会话活动名称/四模式，轻量本次模型集合；权限一次准备并保存，局部官方HITL整批暂停，恢复不重跑Auto；原串并行和控制/必要保存合同保留。文件工具独立归tools，ToolError/调度/工具观察归runtime/tool_execution；共享异步进程入口服务双Shell及rg/fd，当前仍是宿主执行，完整沙箱另行设计。已纳入Web图片事件在帧检查前做文字投影，避免base64丢帧。已同步[带注释配置样例](examples/tool-runtime.example.toml)，只是可解析设计文件，产品尚未加载；未改.env/产品/依赖/数据库/测试，无真实模型或Windows执行证据。
+- 工具建设后执行[WIN1全项目Windows复盘](future-work.md#win1工具建设后全项目windows兼容性复盘)。新工具授权会替换旧metadata/重复review/工具错误与未知结果特判，但模型凭据私有访问、会话库锁/必要保存、日志所有权和Web认证仍有真实用途；禁止整块删掉。当前静态可见fcntl/O_NOFOLLOW/flock、POSIX私有位/fchmod等阻点，不能宣称直接Windows可用。冗余内部兼容随各片真实消费者迁移删除，实际旧日志数据可读/清理保留；同步API、线程IO settle和RunServices真实路径不凭名字删除。
+
+- 前轮停止/保存文档校验及P6/P7探针、两条既有回归结果见研究；本轮仅纠正A局部失败不升级整轮失败的Spec、附录和证据解释，新增产品隔离行为尚未实施/验收，不等于磁盘故障或Windows功能已验证。
+- 工程代码最近提交db87428；此后有课堂/规则文档、085-01/02/03A产品迁移和相应测试，均尚未提交。现存诊断/Web限制见原Spec和future-work。
+- 第一至第四章主要讲解范围收束，过程事件总图见[Lesson57](1.0/lessons/lesson-57.md)。发布/交付有用户报告的走读与复述、完整消息有自述理解，delta/本课与独立实现未验收；保留发布实现，无类型扩展实施。唯一进度见[learning-roadmap](1.0/learning-roadmap.md)，分类器练习暂缓。
+- 用户确认低频记录：完整小课/模块收束一次，章节/会话/开发切片更新本摘要；不逐回复追加编号日志，索引仅维护链接。规则已写AGENTS。
+- 开发学习范式已同步到个人工作区`skills/rndflow`原始技能及已安装的`project-learning`：模块/分支地图、确定性测试学习、按需复述与分级理解证据、低频记录；不绑定具体调试工具。两份技能的跨宿主与官方校验共4项通过，引用/格式及发现入口已检查；这是技能文档验证，不是产品测试或用户掌握证据。
+- 本轮纯文本turn、两turn工具批次[sequential]、控制配对/未确认、摘要替换匹配/未确认共6个既有测试6 passed in0.82s。观察器单元与确定性应用集成分别解释，无生产/测试实现、配置或实网更改；观察状态不替代实际保存/业务质量。
+- 前五章综合复盘六组已展开，见[Lesson65](1.0/lessons/lesson-65.md)。用户要求先补例6；本次两个既有测试2 passed in0.84s，只读观测确认new终局先于old discarded/终局、每run序号独立，旧通知身份不串。限内存/本机合同，持久层单活动run另讲。前五章主要机制与复盘讲解收束，例6本人调试/独立实现未评估；此前循环跳转与settle自述、停止hook纠正保留。
+- 用户要求记录前述建议：混合执行、现有批次规则、线程开销、Bash异步子进程及工具能力扩展已进入[future-work](future-work.md)。新增TE9：工具局部异常隔离、LangChain ToolErrorMiddleware/handle_tool_error复用，与权限/审批及副作用边界一起复审；具体策略/实现未定。用户确认学习先理解当前代码、再提出设计改进，不因候选改进暂停；当前不改执行行为。
+- 第六章8节职责/主分支讲解收束，审批最后一节见[Lesson73](1.0/lessons/lesson-73.md)，全章入口Lesson66–73。核对metadata声明→HITL中断/checkpoint→应用pending→原thread/新run恢复→批准grant消费或拒绝配对消息→再次模型/审批；既有测试20 passed in1.40s，无生产/测试实现或配置更改、无模型服务请求。限本机fake/同进程合同，不宣称跨重启审批或用户独立掌握全部细节。课堂后续为第七章上下文工程；2026-10-15起暂缓继续，当前先推进顶部TE9设计讨论，学习位置仍见learning-roadmap。
+
+
+
+## 历史记录（保留查证，不再逐轮追加）
+
+第1–55节见[历史（一）](handoff-history-01.md)，第56–61节见[历史（二）](handoff-history-02.md)，下方保留后续历史。规则/设计/待办分别见[AGENTS.md](../AGENTS.md)、[project-plan.md](project-plan.md)、[future-work.md](future-work.md)；当前状态以顶部摘要和学习路线为准。
 
 ## 62. 工具事件理解反馈与下一切片候选（2026-09-30）
 
@@ -1864,3 +1907,131 @@
 - check按Deep范围只读复核：安全与架构均无阻塞发现，安全定向97通过/架构定向115通过；范围内104个变更文件凭证模式扫描无高置信度命中。父会话核对当前分类/标注/RunServices/观察/应用读回与Web补偿链，原异常、必要保存及控制边界保持。未修改环境/IDE配置、依赖或关键知识点，未发真实模型请求，不声称部署或生产验证。
 - 已知两项待办继续保留：诊断报告器先失败时保底日志缺初始诊断类型；既有Web失败且终局丢失时工具可能仍显示running。没有把它们算已修复。README、Spec083和学习状态指引同步当前收尾，历史课堂和阶段结果保留。
 - 当前仅进行提交/推送，未新增用户掌握证据。唯一下一步：完成远程引用核对后，待用户继续学习时接Lesson43的正常标注/读回，再讲其余写入/读取/归属回退场景。
+
+## 324. 继续Lesson43②标注写入失败（2026-10-11）
+
+- 前轮推送已成功并核对本地/远程main同为db87428，当前开始时工作区干净。用户说正常内容已理解、继续；①仅记自述理解，独立debug/传播追踪未验收。
+- 当前复用test_failed_setter_keeps_original_exception，26行测试入口：Refuses原E/手构D→属性setter抛ValueError→attach日志并False→read缺少属性正常None。区分描述仍存在、载体写入失败及外层继续抛原E；App读不到D则走已学fallback，不保证复得原D。本单元止于局部写读/日志，完整传播只作源码调用链定位。
+- 命令`.venv/bin/python -m pytest -q --log-cli-level=ERROR tests/test_failure_annotations.py::test_failed_setter_keeps_original_exception`实际1 passed in0.50s，安全日志failure_annotation_write_failed error_type=ValueError；无新全量/构建/网络运行、产品/测试/IDE配置修改。本轮只更新课堂/地图/目录/交接，不自动提交push。
+- 唯一下一步用户从26入口单步观察setter输入、原E与fault类型、False与None；随后进入③无合法标注/读取故障，④foreign run仍待。诊断日志与Web既有待办保持。
+
+## 325. Lesson43③无合法标注可读（2026-10-11）
+
+- 用户说继续，②仅记已讲，不自动推断已理解或独立debug。当前③完整情况表：缺失正常None，载体结构/描述对应非法或getter普通故障则日志/None；合法unknown仍可返回同D。read不造D、不追cause，App收到None才按现有主链回退。
+- 复用两现有单元，入口39/67行：TimeoutError合法unknown→错error_type→字符串载体；BadGetter读取ValueError→outer只有cause带D但自身无标注。本单元不验证完整模型传播/应用回退；read不强制model来源，当前验证为合法来源值/原类型/字段格式。VS Code入口单步与精简当前帧变量已写Lesson43，getter案例避免WATCH再次触发属性读取。
+- 两测试共同命令`.venv/bin/python -m pytest -q --log-cli-level=ERROR tests/test_failure_annotations.py::test_unknown_is_valid_but_forged_annotation_is_rejected tests/test_failure_annotations.py::test_broken_annotation_getter_is_safe_and_does_not_search_cause`→2 passed in0.50s，共三条failure_annotation_read_failed error_type=ValueError；文档/diff结构验证。无生产/测试/配置改动、新全量/构建/网络或提交push。
+- 唯一下一步按两入口单步观察合法D与None、故障位置，然后讲④foreign run拒读并收束标注模块。现存诊断/Web待办不变，本人规则练习仍待。
+
+## 326. Lesson43④foreign run拒读与四场景合图（2026-10-11）
+
+- 用户继续，③仅已讲，不自动新增理解/debug证据。复用error0测试15入口，20同run返回D、22other读到run标注→归属ValueError/日志/None；拒读不清属性、不判断运行成功。App当前run来自publisher.run_id，None后回退，元组不替代权限/租户隔离，单属性不保证共享同E时保留多run描述。
+- 当前单例ERROR日志命令`.venv/bin/python -m pytest -q --log-cli-level=ERROR 'tests/test_failure_annotations.py::test_annotation_preserves_exception_identity_and_cause[error0]'`→1 passed in0.50s，一条failure_annotation_read_failed error_type=ValueError。测试不向外抛E、不验证App完整回退或同E并发覆盖；对应消费者与源码已定位，边界分别注明。
+- Lesson43补普通失败合图：policy产D→attach尝试标注→局部return D→middleware裸raise E→App按run读取合法D或回退。四场景讲解收束，①自述理解、②③④未新增复述/本人debug；规则练习仍待。只更新课堂/路线/目录/交接与结构检查，无产品/测试/配置改动、新全量/构建/网络或提交push。
+- 唯一下一步Lesson44：从App记录结果、必要收尾/busy解除与终局观察的分支继续，再做普通失败完整链复盘；不重启已讲的分类/配置/标注机制。诊断/Web既有待办保留。
+
+## 327. 开始Lesson44：结果与必要收尾四组地图（2026-10-11）
+
+- 用户继续，按计划开始应用层结果/清理/保存/观察4组分支地图；控制/审批/停止只定位结果对照，完整算法留后续章节。已讲不新增本人理解/debug证据，Lesson43仅①有自述理解。
+- 当前复用test_stage_failure_keeps_original_exception_and_cleans[execute]入口16行，直接invoke_agent_run边界注入同RuntimeError；无持久化、没有运行模型分类/标注。App _run_steps except记录primary/failed/F.stage=execute，finally通过IOCall驱动_finish_run，清理解除busy后尝试终局，调用者仍同E；同步deterministic单步与CLI/Web异步同生命周期分清，driver throw/send只解释必要桥。
+- `.venv/bin/python -m pytest -q 'tests/test_application_run_event_failures.py::test_stage_failure_keeps_original_exception_and_cleans[execute]'`→1 passed in0.50s。断言身份、终局failed/execute/unknown/RuntimeError与结束busyFalse；中间busyTrue/顺序为源码时序定位，不冒充本测试显式中间断言。无新全量/构建/网络或产品/测试/IDE配置改动，未提交push。
+- 创建Lesson44、更新路线/目录/学习待办与交接，配16入口单步、各帧输入/副作用/返回地图。无持久化在cleanup解除busy；启用时清理→必要保存尝试→finally解除busy→终局；busyFalse仍可能被其他准入条件阻止。唯一下一步阶段prepare/finalize快速对照后进入必要清理失败primary/secondary，再保存与观察；综合TimeoutError链和本人规则练习待开展。
+
+## 328. 用户尚未学run，缩小到failed函数断点（2026-10-11）
+
+- 用户指出尚未学习run相关逻辑，询问理解断点；暂停从app.run入口单步整个driver/清理的安排，不继续推进清理故障。复用execute测试，唯一断点run_events.py:140，先F5到RunObservation.failed，再F10状态赋值、146按需F11追已学描述/投影，观察E/D/F与stage；152/153观察调用跳过，退出函数后F5完成其余生命周期。
+- WATCH限定当前RunObservation帧：原error类型、self.stage/status、self.failure四字段。初始completed为默认值，不表示成功终局；本例failed后生成execute/unknown/unclassified/RuntimeError F，stage参数None由self.stage补。现有测试可触达该函数，未另建局部测试或修改IDE配置，用户实际断点运行未观察。
+- 同一execute单例重新运行实际1 passed in0.78s；仅单元与文档结构检查，无新全量/构建/网络、产品或测试改动、提交push。唯一下一步在failed帧根据实际停点理解D→F与状态副作用；完整run/收尾故障保留后续导航。
+
+## 329. 点名App未认领→Runtime兜底的两次resolve（2026-10-11）
+
+- 用户自述failed局部逻辑理解，指出两次分类/不同默认函数跳转仍有疑问；仅记录自述和具体观察反馈，不自动记完整run/debug/实现掌握。先核对其假设：无自定义仍执行builtin，App未认领因普通RuntimeError不属应用规则；第一次fallback=False返回None，execute后Runtime规则同样不识别，但fallback=True生成unknown D。
+- 两层共享选择机制、各自拥有builtin；本测试无middleware标注，真实本run合法标注存在时优先复用，可跳过两轮。解释try_describe与Runtime describe不同职责，给两resolve帧source/builtin.__name__/classifiers/fallback/调用后classified观察，避免误称第二次识别成功。
+- 本地合成RuntimeError调用真实两层策略与builtin，输出两builtin均None、App try=None、Runtime describe=runtime/unknown/unclassified/RuntimeError，退出0；文档/diff检查。无生产/测试/IDE配置修改、新全量/构建/网络或提交push。唯一下一步确认层间未认领与最终兜底，再回D→F投影；完整run/收尾仍暂缓。
+
+## 330. 分层选择复述与描述/传播边界（2026-10-11）
+
+- 用户复述应用层不能处理就往下交，确认本例未认领后委托Runtime的顺序理解；补充这是描述查找，不是原异常向下传播/恢复。原E由Runtime/middleware向App和调用者上抛；已有本run合法D时直接复用，无标注/未认领且execute才走两层查找。完整限定已讲，未补记用户新复述或独立debug/实现。
+- 仅更新课堂/交接并做文档diff检查，无产品/测试/配置修改、新运行/构建/网络或提交。唯一下一步仍在failed局部解释D→F投影或用户点名函数，完整run/收尾暂缓。
+
+## 331. failed局部D→F与描述故障回退（2026-10-11）
+
+- 用户继续，保持完整run/driver/清理暂缓。当前146行先取得D、stage参数或self.stage补阶段，分类三字段复制到新F；source不投影、添加stage，不再分类或修改D。故障案例在描述抛错或F构造非法码时诊断ValueError，except直接生成unknown F，保留原RuntimeError。
+- 当前同run_events.py:140入口，正常F11追run_failure_data并比较D/F字段；故障比较error与diagnostic_error。三单例命令`.venv/bin/python -m pytest -q 'tests/test_application_run_event_failures.py::test_stage_failure_keeps_original_exception_and_cleans[execute]' 'tests/test_application_run_event_failures.py::test_failure_diagnostic_fault_does_not_replace_primary[raises]' 'tests/test_application_run_event_failures.py::test_failure_diagnostic_fault_does_not_replace_primary[invalid_codes]'`→3 passed in0.65s；本地投影探针D/F四字段符合、D未变True，退出0。
+- 仅课堂/路线/目录/交接与结构检查，无产品/测试/配置修改、新全量/构建/模型/IDE或提交。当前已讲，用户新复述/debug未新增证据；唯一下一步152/153观察投递边界，再按准备程度回run/收尾。既有待办与本人规则练习保留。
+
+## 332. failed局部两个observe与条件投递（2026-10-11）
+
+- 用户继续，当前turn.fail接F、context.finalize接原E；前者仅active轮次发布failed turn，后者把未确认压缩/恢复观察记录关闭为unconfirmed。当前execute入口注入测试尚无轮次/操作，两方法正常空返回；假模型timeout案例可观察active→failed。仅解释观察职责，不深入轮次/压缩算法或完整run。
+- observe隔离普通方法体Exception：日志/标记_observation_failed/返回fallbackNone；当前返回不使用，不改此前status/F，后续观察继续。BaseException和接口绑定错误不泛化隔离。故障单元原TimeoutError＋turn报告ValueError保留对外同原E，helper单元另验只执行一次，context局部单元仅验未确认记录而非完整App/真实压缩。
+- 5单例命令`.venv/bin/python -m pytest -q 'tests/test_application_run_event_failures.py::test_stage_failure_keeps_original_exception_and_cleans[execute]' 'tests/test_turn_failure_boundaries.py::test_failed_model_has_failed_turn_without_visible_assistant[timeout]' tests/test_turn_failure_boundaries.py::test_turn_reporting_secondary_error_does_not_mask_primary tests/test_context_operation_observer.py::test_unconfirmed_state_is_diagnostic_not_a_fabricated_applied_result 'tests/test_observation_calls.py::test_method_body_fault_is_isolated_once_with_safe_diagnostic[ValueError]'`→5 passed in0.80s。文档/入口检查，无产品/测试/IDE配置修改、新全量/构建/实网或提交。
+- 唯一下一步收束failed局部输入/状态/F/观察及原异常边界，根据用户准备程度选后续阶段时序；完整run/必要收尾暂缓。用户新复述/本人debug未新增证据，现存待办与本人规则练习保留。
+
+## 333. 清理异常的两分支：保留主异常或记录新失败（2026-10-11）
+
+- 用户自述failed观察局部理解并继续，当前从_finish_run:436函数断点进入清理故障两分支，跳过完整run/driver。primary_error为此前异常/None，secondary本地槽保存要对外抛的收尾故障；True仅日志保留原RuntimeError/prepare F，False记录ValueError和cleanup F，继续收尾后抛ValueError。True本函数正常返回，原异常由外层继续传播。
+- 测试同ValueError在_record_steering故障注入，故障点为清理后半记录被丢弃队列；本例无持久化且busy已清，不将busyFalse断言泛化全部清理位置。保存分支当前跳过，终局仅定位；self/observation与测试secondary/函数本地secondary分清，阶段显式cleanup覆盖只影响F。
+- 命令`.venv/bin/python -m pytest -q 'tests/test_application_run_event_failures.py::test_cleanup_failure_is_reported_without_masking_primary[True]' 'tests/test_application_run_event_failures.py::test_cleanup_failure_is_reported_without_masking_primary[False]'`→2 passed in0.76s；文档/函数入口/diff检查，无产品/测试/IDE配置修改、新全量/构建/网络或提交。两新分支已讲未新增复述/debug证据。
+- 唯一下一步确认主异常保留与无主异常时故障升级，再讲必要保存失败；完整run/driver仍不展开，综合链与本人规则练习保留。
+
+## 334. 必要保存失败：对外异常取舍与内部阻断（2026-10-11）
+
+- 用户继续，清理两分支仅已讲。当前同_finish_run:436局部入口、448 F10跳过持久化driver，保存异常时无primary/secondary则记录finalize F并最终抛SessionPersistenceError；已有原TimeoutError则日志后保留原E。已有清理secondary时条件也保留它，但两测试不冒充组合覆盖。
+- SessionPersistence把普通存储故障转换为session_save_unconfirmed领域异常并留cause、记录_blocked；这是存储边界合同，不是描述D包装异常。外层finally清busy，下一start仍由_blocked拒绝。两例DB更新前注入导致state仍running，不泛化全部保存故障必为同DB状态。
+- 命令`.venv/bin/python -m pytest -q tests/test_persistent_sessions.py::test_final_save_failure_has_no_completed_and_blocks_uncertain_state tests/test_persistent_sessions.py::test_primary_model_failure_survives_secondary_store_failure`→2 passed in0.91s；本地策略/投影确认F=finalize/persistence_error/session_save_unconfirmed/SessionPersistenceError，退出0。文档/入口/diff检查，无产品/测试/配置修改、新全量/构建/实网/IDE或提交；测试只用tmp_path SQLite。
+- 当前保存两分支已讲、未新增用户复述/debug证据。唯一下一步终局观察故障与主/次异常规则，再收束当前应用错误边界；完整run/checkpoint算法和本人综合练习仍待。
+
+## 335. 终局投递普通故障：已有结果与原异常保持（2026-10-12）
+
+- 用户继续，当前run_events.py:169断点，RunObservation.finish以既有status/F构造终局，payload工厂在emit_event内立即求值，普通构造/发布故障安全日志并结束；不改变成功结果或覆盖原E，不保证事件最终送达。控制抑制/完整run算法继续留后续章节。
+- 两例publish抛ValueError已在emit_event隔离，finish正常返回，不进入_finish_run外层except。额外外层分支只有异常实际逃出才执行，无先前失败时raise、有失败时日志；当前仅源码定位，不能称两例覆盖它。
+- 命令`.venv/bin/python -m pytest -q 'tests/test_observation_isolation.py::test_success_survives_publish_fault[run_finished]' tests/test_application_run_event_failures.py::test_terminal_publish_fault_does_not_replace_primary`→2 passed in0.91s；分别断言正常结果/原RuntimeError身份、busyFalse与安全日志。文档/断点/diff检查，无产品/测试/IDE配置修改、新全量/构建/实网或提交。
+- 四组讲解到末尾，但用户本轮未新增复述/debug或独立实现证据；唯一下一步合普通TimeoutError主链与四组边界图，关联既有综合测试，再安排本人规则练习。完整run/driver/checkpoint算法、诊断/Web现存待办保留。
+
+## 336. 用户没见publish抛错，定位测试故障替身（2026-10-12）
+
+- 用户报告finish→publish内没见错误，先核对该现象；故意raise在monkeypatch的fail_terminal/fault，非原events.py方法。已有execute/保存用例没终局注入，正确测试的非目标事件也回原方法；当前用户用例/参数尚未确认，异步询问，不猜成用户操作错误。
+- 修正断点到测试180行raise，选test_terminal_publish_fault_does_not_replace_primary；成功[run_finished]案例用28行。观察目标事件/run_finished和publisher.publish.__func__.__qualname__，抛出后emit_event45–47捕获日志，测试仍通过。无需修改IDE配置或代码。
+- ERROR日志重跑两指定测试，均打印run_event_publish_failed event_type=run_finished error_type=ValueError，2 passed in0.91s。只证明助手当前两例，不声称看到了用户实际调试。文档/diff检查，无产品/测试/配置修改、新全量/构建/实网或提交。
+- 唯一下一步确认用户测试/参数/当前事件及是否进入替身，看到真实raise与捕获后再合图；当前纠偏不自动升级理解/debug掌握，完整run/driver和独立练习保留。
+- 用户确认test_success_survives_publish_fault[run_finished]，测试选择正确；对应故障点为tests/test_observation_isolation.py:28的fault。该帧kind/外层event_type须同run_finished，其他事件回原publish，不能猜用户当前停在何事件。修正为28唯一raise断点，F10后观察emit_event捕获；不换用例、不改IDE配置，用户实际raise停点尚未直接确认。
+
+## 337. 参数选择纠正，终局投递分支自述理解（2026-10-12）
+
+- 用户明确此前参数选择不对、这次理解，确认此前未见raise的原因，报告修正后的本人调试理解。记录此局部反馈，不推断完整链独立debug、实现或测试输出直接验收。
+- 课堂补记kind/选定event_type匹配才注入raise，emit_event安全捕获、不变成功结果；当前疑问收束，不重讲已理解参数分支。仅更新课堂/路线/交接、文档diff检查，无产品/测试/配置修改、新运行/构建/实网或提交。
+- 唯一下一步合普通TimeoutError主链与结果/清理/保存/观察四组边界图，关联已有综合测试，再安排本人分类器小练习；完整run/driver算法和现存诊断/Web待办保留。
+
+## 338. 普通模型超时完整主链合图与本机综合证据（2026-10-12）
+
+- 用户继续，普通最终未恢复TimeoutError主链合10节点图：middleware模型规则产D→属性标注→模型事件/裸raise→App复用D→failed/F→清理/启用保存→终局→同E调用者，四组分支边界放表。分类/描述/事件数据/状态分清，不把控制恢复等全部异常套统一链。
+- 综合单例`.venv/bin/python -m pytest -q 'tests/test_turn_failure_boundaries.py::test_failed_model_has_failed_turn_without_visible_assistant[timeout]'`→1 passed in0.77s，直接断言E身份、轮次事件/timeout及run failed。独立进程同假模型/真实App探针仅临时捕获真实描述函数返回，输出同E=True、D=model/transient/timeout/TimeoutError、App复用同D=True、F=execute/transient/timeout/TimeoutError、failed、busyFalse、模型/App F分别生成=True。两层F不是同一对象，不能错教只有App生成F。
+- VS Code选[timeout]继续run_events.py:140主断点：此例已有合法标注，App直接读回，不走前面的两层未认领回退；146观察F，测试末身份/终局检查。未知run/框架驱动跳过，不自动改IDE/测试。文档/图/入口/diff结构检查，无生产/测试/配置修改、新全量/构建/实网或提交。
+- 当前只记合图已讲及助手综合证据，用户本人整体复述/debug/规则实现待验收。唯一下一步固定(error,source)同步分类器小练习，达到当前范围检查后回stop_reason；完整run/driver/恢复深分支与诊断/Web现存待办保留。
+
+## 339. 布置本人分类器小练习，待代码（2026-10-12）
+
+- 用户继续，按计划给exercise_classifier(error,source)需求，三个输入：合成Quota类认领limit_exceeded/practice_quota；普通Timeout返回None交内置；Timeout子类主动给合法unknown，终止内置timeout选择。其他类型None，字段source取实参、安全类型用safe_error_type、只类型判断/固定码。助手给骨架和预期，不代写实现。
+- 先搜已有规则/测试，现有选择合同测试复用为依据；教学异常类仅练习数据，不建生产模块或平行框架。用户可先贴函数，随后把本人实现与三个断言测试接现有pytest文件，用VS Code入口单步；当前未创建占位/未完成测试文件，未称独立实现完成。
+- 本地无自定义基线探针：Quota→unknown，普通Timeout/UnknownTimeout子类→transient/timeout，类型均保留，退出0。仅基线与文档结构检查，无新产品/测试/配置修改、全量/构建/网络或提交；练习未通过、无TDD红灯虚构。
+- 唯一下一步等待用户函数并按合同检查/逐级提示，再配测试debug，完成当前范围后回stop_reason。完整run/driver和既有待办不扩展。
+
+## 340. 用户暂缓分类器练习，回第二章stop_reason（2026-10-12）
+
+- 用户明确“先不实现，继续”，立即停止等待/实施exercise_classifier，不代写答案，不记独立实现或练习完成，也不作为后续课堂门槛。异常主链已讲与掌握证据分开，按其最新指令开始Lesson45。
+- 新模块输入已返回AIMessage的response_metadata/tool_calls，输出五种StopReason；字段按存在性优先，只有stop+实际工具校正tool_use。当前三对照finish_reason stop无工具、显式tool_calls有工具、stop有工具；纯函数保留原元数据，middleware_accept92才写naiyue_stop_reason。第三例局部reason仍stop，但直接return tool_use，单步看返回表达式；测试tool_calls布尔与消息列表分清。
+- collect-only19 tests collected in0.50s，精确前三ID为metadata0-False-stop、metadata1-True-tool_use、metadata2-True-tool_use；全模块`.venv/bin/python -m pytest -q tests/test_model_stop_reason.py`→19 passed in0.51s。三AIMessage局部探针返回stop/tool_use/tool_use，真实规范化列表含type=tool_call，退出0。此为合成消息纯归一化，不是供应商/Runtime工具链验收。
+- Lesson45/路线/目录/学习待办/交接更新，文档/入口/diff检查；无生产/测试/IDE配置修改、新全量/构建/网络或提交。当前三分支已讲未新增用户复述/debug证据；唯一下一步length/error与模型门禁/工具边界消费，然后unknown安全诊断；分类器练习按用户指令继续暂缓。
+
+## 341. 前三结束原因自述理解，继续length/error与剩余范围（2026-10-12）
+
+- 用户明确前三例已理解并询问第二章剩余，随后继续。核对模型接入五文件与Lesson20–25/39–44，主体核心已有讲解，主要剩stop_reason消费/unknown/诊断/优先级及复盘；估计再2–3轮（含本轮）约1–2小时依实际debug调整，不当作独立实现保证。分类器练习继续暂缓，bind_model_output_limit原计划第7章，完整run/driver第3/5章不塞本章。
+- 当前length纯归一不会因工具变tool_use，模型门禁接受格式合法响应后，_prepare_tool_call→tool_guard_reason检查同最新调用ID/length，返回匹配错误ToolMessage，handler未执行；预设下一模型完整good调用可执行，cut/good两ID分清。error归一后_accept产生ModelResponseRejected(stop_reason_error)，有效工具也不执行，随后已学异常链。工具started只说明边界处理，不能当真实执行证据。
+- 精确四例命令`.venv/bin/python -m pytest -q 'tests/test_model_stop_reason.py::test_normalization_preserves_provider_metadata[metadata3-True-length]' 'tests/test_model_stop_reason.py::test_normalization_preserves_provider_metadata[metadata4-False-error]' tests/test_agent_runtime_stop_reason.py::test_truncated_call_gets_error_result_then_model_can_reissue 'tests/test_agent_runtime_response_gate.py::test_rejected_model_message_fails_run_without_executing_any_tool[first0-stop_reason_error]'`→4 passed in0.80s；response_gate collect9例/精确ID核对，纯案例34入口、消费断点286/121按需选。无生产/测试/IDE配置修改、新全量/构建/实网或提交。
+- 当前length/error已讲未新增复述/debug证据；更新当前地图及旧第2章阅读状态，历史行数标边界。唯一下一步unknown/安全诊断/字段优先级，再章末复盘；本人练习和独立验收保留未完成。
+
+## 342. unknown响应的三结果、字段优先级与有限诊断（2026-10-12）
+
+- 用户继续，当前区分已返回AIMessage的unknown与抛出E后的unknown描述；没有以响应unknown本身拒绝，文本可完成/有效工具可路由，invalid_tool_calls仍拒绝。现场源码/现有三运行分支验证，不能把unknown说成所有情况必成功或安全获准执行。
+- 来源按存在性status→finish_reason→stop_reason→done_reason，最高字段未知不回退低字段；诊断同一来源，短码形状/列举前缀词过滤，不复制任意metadata/正文/工具参数。缺失missing/None/False与遮蔽原字段/None/True分清，AIMessage原生值未被删除或全响应脱敏。
+- collect13例，命令`.venv/bin/python -m pytest -q tests/test_agent_runtime_unknown_observation.py -k unknown_stop_reason`→9 passed,4 deselected in0.59s；四局部metadata探针unknown和有限字典符合，退出0。metadata0–3精确参数名/测试92或业务93起点写Lesson45。无生产/测试/IDE配置修改、新全量/构建/实网或提交，不实现新的拒绝策略。
+- stop_reason核心讲解到末尾，不新增用户本组复述/debug或独立实现证据。唯一下一步第二章配置到响应/异常的一次复盘；完整run/middleware调度留第3/5章，分类器本人练习按用户指令继续暂缓，既有待办保留。

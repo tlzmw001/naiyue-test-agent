@@ -14,6 +14,7 @@ from naiyue_test_agent.model_access import (
     COMPACTION_RESERVE_METADATA_KEY,
     MODEL_LIMITS_METADATA_KEY,
 )
+from naiyue_test_agent.model_access.messages import is_image_block
 
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,10 @@ def _prepare_observation(request):
         'input_tokens': None,
         'outcome': 'failed',
     }
+    images = sum(is_image_block(block) for message in messages
+                 if isinstance(message.content, list) for block in message.content)
+    if images:
+        payload.update(image_count=images, image_token_estimate='framework_approximate')
     model_metadata = getattr(getattr(request, 'model', None), 'metadata', None)
     limits = (model_metadata.get(MODEL_LIMITS_METADATA_KEY)
               if isinstance(model_metadata, dict) else None)

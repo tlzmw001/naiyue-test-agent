@@ -130,7 +130,7 @@ def test_approval_is_accepted_then_applied_at_actual_hook(monkeypatch, tmp_path,
 
 
 def test_failed_tools_resume_without_replaying_hitl_does_not_fake_new_approval_applied(monkeypatch, tmp_path):
-    from naiyue_test_agent.agent_runtime.tool_batch import ToolBatchMiddleware
+    from naiyue_test_agent.agent_runtime.tool_execution.batch import ToolBatchMiddleware
 
     original = ToolBatchMiddleware.wrap_tool_call
     failure = RuntimeError('synthetic execution failure')

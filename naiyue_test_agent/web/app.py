@@ -11,15 +11,11 @@ from starlette.staticfiles import StaticFiles
 
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.application.project_instructions import BASE_SYSTEM_PROMPT
-from naiyue_test_agent.agent_runtime.tools import (
-    create_session_read_tool, create_session_ls_tool, create_session_find_tool,
-    create_session_grep_tool, create_session_write_tool, create_session_edit_tool,
-    create_session_bash_tool,
-)
+from naiyue_test_agent.tools import create_builtin_tools, load_tool_settings
 from .auth import authorize
 from .errors import WebError
 from .run_delivery import RunDelivery
-from .schemas import ApprovalInput, ControlInput, MessageInput, NewSession
+from .schemas import ApprovalInput, ControlInput, MessageInput, NewSession, RecoveryInput
 from .service import WebService
 from .headers import LocalHeaders
 
@@ -30,15 +26,16 @@ logger = logging.getLogger(__name__)
 def create_web_app(settings, *, application_factory=None):
     @asynccontextmanager
     async def lifespan(app):
-        tools = ([create_session_read_tool(), create_session_ls_tool(), create_session_find_tool(),
-            create_session_grep_tool(), create_session_write_tool(), create_session_edit_tool(),
-            *([create_session_bash_tool()] if settings.host_bash else [])]
-            if settings.workspace_root is not None else [])
+        tool_settings = settings.runtime_settings if settings.runtime_settings is not None else load_tool_settings()
+        tools = create_builtin_tools(tool_settings)
+        initial_tools = [spec.tool.name for spec in tools if spec.tool.name not in ('bash', 'powershell')] if settings.workspace_root is not None else []
         factory = application_factory or (lambda: open_async_persistent_application(
             settings.config_path, database_path=settings.database_path, tools=tools,
-            system_prompt=BASE_SYSTEM_PROMPT, response_format=None))
+            system_prompt=BASE_SYSTEM_PROMPT, response_format=None, initial_active_tools=initial_tools, settings=tool_settings,
+            workspace_binding={'workspace_id': settings.workspace_id, 'root_path': str(settings.workspace_root)}
+                if settings.workspace_id is not None else None))
         async with factory() as application:
-            delivery = RunDelivery(application, settings)
+            delivery = RunDelivery(application, settings, progress_settings=tool_settings.progress)
             app.state.delivery = delivery
             app.state.service = WebService(application, delivery, settings)
             try:
@@ -89,6 +86,10 @@ def create_web_app(settings, *, application_factory=None):
     @app.post('/api/sessions/{session_id}/approvals', status_code=202)
     async def approve(session_id: str, body: ApprovalInput):
         return await app.state.service.approve(session_id, body)
+
+    @app.post('/api/sessions/{session_id}/recover')
+    async def recover(session_id: str, body: RecoveryInput):
+        return await app.state.service.recover(session_id, body)
 
     @app.get('/api/runs/{run_id}')
     async def run(run_id: str):

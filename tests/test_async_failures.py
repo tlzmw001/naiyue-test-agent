@@ -1,5 +1,9 @@
 """Async failure cleanup must settle work and keep partial state explicit."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import asyncio
 import threading
 
@@ -16,12 +20,21 @@ def test_parallel_fatal_waits_for_other_started_tool_before_terminal(monkeypatch
         release, settled = threading.Event(), threading.Event()
         loop = asyncio.get_running_loop()
         original = RuntimeError('synthetic fatal')
+        from naiyue_test_agent.agent_runtime.tool_execution.observation import _record_tool_call
+        real_dispatch = _record_tool_call.awrap_tool_call
+
+        async def broken_dispatch(request, handler):
+            if request.tool_call['name'] == 'fail':
+                await entered.wait()
+                raise original
+            return await real_dispatch(request, handler)
+
+        monkeypatch.setattr(_record_tool_call, 'awrap_tool_call', broken_dispatch)
 
         @tool
         async def fail() -> str:
             """Fail only once its peer is already doing IO."""
-            await entered.wait()
-            raise original
+            return 'unreachable after the dispatch fault'
 
         @tool
         def slow() -> str:
@@ -34,7 +47,7 @@ def test_parallel_fatal_waits_for_other_started_tool_before_terminal(monkeypatch
         model = StreamingToolModel(replies=[AIMessage(content='', tool_calls=[
             {'name': 'fail', 'args': {}, 'id': 'failure'}, {'name': 'slow', 'args': {}, 'id': 'slow'},
         ])])
-        app = await make_app(monkeypatch, model, [fail, slow])
+        app = await make_app(monkeypatch, model, [ToolSpec(fail, fail.args_schema, permissions=ToolPermission(default='allow')), ToolSpec(slow, slow.args_schema, permissions=ToolPermission(default='allow'))])
         session = await app.acreate_session('A')
         events = []
 

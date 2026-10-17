@@ -6,58 +6,58 @@ import pytest
 
 
 def test_clear_only_after_preview_and_preserves_other_files(monkeypatch, tmp_path):
-    from naiyue_test_agent.agent_runtime.tools.bash_output import (
-        clear_bash_outputs, preview_bash_outputs,
+    from naiyue_test_agent.tools.output import (
+        clear_shell_outputs, preview_shell_outputs,
     )
     from tests.test_host_bash import make_app, bash_results, _archive_path
 
-    app = make_app(monkeypatch, "python -c \"print('A'*5000)\"")
+    app = make_app(monkeypatch, "python -c \"print('A'*70000)\"")
     session = app.create_workspace_session('A', tmp_path)
     app.run(session, [('user', 'run')])
     result = app.resume_tool_approval(session, ['approve'])
-    path = tmp_path / _archive_path(bash_results(result)[0].content, 'stdout')
+    path = tmp_path / _archive_path(bash_results(result)[0].content, 'raw')
     outside = tmp_path / 'user-file.txt'
     outside.write_text('keep')
 
-    plan = preview_bash_outputs(tmp_path)
+    plan = preview_shell_outputs(tmp_path)
     assert plan.file_count == 1
-    assert plan.total_bytes == 5001
+    assert plan.total_bytes == 70001
     assert path.exists()
-    assert clear_bash_outputs(plan) == (1, 5001)
+    assert clear_shell_outputs(plan) == (1, 70001)
     assert not path.exists()
     assert outside.read_text() == 'keep'
     assert (tmp_path / 'naiyue-agent-output' / '.gitignore').exists()
 
 
 def test_clear_refuses_changed_plan_and_unexpected_file(monkeypatch, tmp_path):
-    from naiyue_test_agent.agent_runtime.tools.bash_output import (
-        clear_bash_outputs, preview_bash_outputs,
+    from naiyue_test_agent.tools.output import (
+        clear_shell_outputs, preview_shell_outputs,
     )
     from tests.test_host_bash import make_app, bash_results, _archive_path
 
-    app = make_app(monkeypatch, "python -c \"print('A'*5000)\"")
+    app = make_app(monkeypatch, "python -c \"print('A'*70000)\"")
     session = app.create_workspace_session('A', tmp_path)
     app.run(session, [('user', 'run')])
     result = app.resume_tool_approval(session, ['approve'])
-    path = tmp_path / _archive_path(bash_results(result)[0].content, 'stdout')
-    plan = preview_bash_outputs(tmp_path)
+    path = tmp_path / _archive_path(bash_results(result)[0].content, 'raw')
+    plan = preview_shell_outputs(tmp_path)
     path.write_bytes(b'changed')
     with pytest.raises(ValueError, match='changed'):
-        clear_bash_outputs(plan)
+        clear_shell_outputs(plan)
     assert path.read_bytes() == b'changed'
 
     unknown = tmp_path / 'naiyue-agent-output' / 'important.txt'
     unknown.write_text('keep')
     with pytest.raises(ValueError, match='unexpected'):
-        preview_bash_outputs(tmp_path)
+        preview_shell_outputs(tmp_path)
     assert unknown.read_text() == 'keep'
 
 
 def test_clear_rejects_symlink_in_output_directory(monkeypatch, tmp_path):
-    from naiyue_test_agent.agent_runtime.tools.bash_output import preview_bash_outputs
+    from naiyue_test_agent.tools.output import preview_shell_outputs
     from tests.test_host_bash import make_app
 
-    app = make_app(monkeypatch, "python -c \"print('A'*5000)\"")
+    app = make_app(monkeypatch, "python -c \"print('A'*70000)\"")
     session = app.create_workspace_session('A', tmp_path)
     app.run(session, [('user', 'run')])
     app.resume_tool_approval(session, ['approve'])
@@ -65,7 +65,7 @@ def test_clear_rejects_symlink_in_output_directory(monkeypatch, tmp_path):
     outside.write_text('keep')
     (tmp_path / 'naiyue-agent-output' / ('f' * 32 + '-stderr.log')).symlink_to(outside)
     with pytest.raises(ValueError, match='symlink'):
-        preview_bash_outputs(tmp_path)
+        preview_shell_outputs(tmp_path)
     assert outside.read_text() == 'keep'
 
 
@@ -76,11 +76,11 @@ def test_cli_clear_needs_confirmation(monkeypatch, tmp_path, capsys):
     from tests.test_host_bash import BashFake, make_app, bash_results, _archive_path
     from langchain_core.messages import AIMessage
 
-    app = make_app(monkeypatch, "python -c \"print('A'*5000)\"")
+    app = make_app(monkeypatch, "python -c \"print('A'*70000)\"")
     session = app.create_workspace_session('A', tmp_path)
     app.run(session, [('user', 'run')])
     result = app.resume_tool_approval(session, ['approve'])
-    path = tmp_path / _archive_path(bash_results(result)[0].content, 'stdout')
+    path = tmp_path / _archive_path(bash_results(result)[0].content, 'raw')
     model = BashFake(responses=[AIMessage(content='unused')])
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
@@ -102,13 +102,14 @@ def test_cli_clear_needs_confirmation(monkeypatch, tmp_path, capsys):
 
 
 def test_capture_error_cannot_mark_partial_artifact_complete(tmp_path):
-    from naiyue_test_agent.agent_runtime.tools.bash_output import BashOutputArchive
+    from naiyue_test_agent.tools.output import ShellOutputArchive
+    from naiyue_test_agent.tools import BashSettings, ToolOutputSettings
 
-    archive = BashOutputArchive(tmp_path)
-    archive.record('stdout', b'A' * 5000)
+    archive = ShellOutputArchive(tmp_path, BashSettings(), ToolOutputSettings())
+    archive.record(b'A' * 70000, activate=True)
     archive.mark_incomplete('capture_incomplete')
     result = archive.finish()
-    assert result.paths['stdout'].startswith('naiyue-agent-output/')
+    assert result.paths['raw'].startswith('naiyue-agent-output/')
     assert result.complete is False
     assert result.reason == 'capture_incomplete'
 
@@ -116,7 +117,7 @@ def test_capture_error_cannot_mark_partial_artifact_complete(tmp_path):
 def test_nonzero_bash_still_returns_saved_output_path(monkeypatch, tmp_path):
     from tests.test_host_bash import make_app, bash_results, _archive_path
 
-    app = make_app(monkeypatch, "python -c \"print('F'*5000); raise SystemExit(7)\"")
+    app = make_app(monkeypatch, "python -c \"print('F'*70000); raise SystemExit(7)\"")
     session = app.create_workspace_session('A', tmp_path)
     app.run(session, [('user', 'run')])
     result = app.resume_tool_approval(session, ['approve'])
@@ -124,4 +125,4 @@ def test_nonzero_bash_still_returns_saved_output_path(monkeypatch, tmp_path):
     assert message.status == 'error'
     assert 'exit_code=7' in message.content
     assert 'archive_complete=true' in message.content
-    assert (tmp_path / _archive_path(message.content, 'stdout')).read_text().startswith('F' * 5000)
+    assert (tmp_path / _archive_path(message.content, 'raw')).read_text().startswith('F' * 70000)

@@ -14,9 +14,10 @@ from test_context_overflow_recovery import _configured_model, _history, _status
 
 def test_only_four_public_types_are_added_for_context_operations():
     registered = {name for name in _PAYLOADS if name.startswith(('compaction_', 'context_recovery_'))}
-    from naiyue_test_agent.agent_runtime.stream_events import MessageDeltaData
-    assert registered == OP_TYPES and len(_PAYLOADS) == 27
+    from naiyue_test_agent.agent_runtime.stream_events import MessageDeltaData, ToolProgressData
+    assert registered == OP_TYPES and len(_PAYLOADS) == 28
     assert _PAYLOADS['message_delta'] is MessageDeltaData
+    assert _PAYLOADS['tool_progress'] is ToolProgressData
 
 
 def test_soft_trigger_without_cut_is_skipped_and_original_request_runs(monkeypatch):

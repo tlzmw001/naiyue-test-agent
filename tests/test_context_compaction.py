@@ -1,5 +1,9 @@
 """Completed-turn compaction uses the current model and preserves checkpoint facts."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import json
 import logging
 from xml.etree import ElementTree
@@ -135,7 +139,7 @@ def test_compaction_never_splits_tool_call_from_result(monkeypatch):
     b = _model([AIMessage(content='B-done')], window=400, output=10,
                reserve=340,
                summaries=[AIMessage(content='summary-with-tool')], model_id='B')
-    app = _app(monkeypatch, {'A': a, 'B': b}, tools=[probe])
+    app = _app(monkeypatch, {'A': a, 'B': b}, tools=[ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     session = app.create_session('A')
     app.run(session, [('user', 'FIRST_TOOL_TURN_' + 'x' * 110)])
     app.run(session, [('user', 'SECOND_TURN_' + 'y' * 100)])
@@ -322,7 +326,7 @@ def test_unsupported_multimodal_old_history_is_not_silently_summarized(monkeypat
     app = _app(monkeypatch, {'A': a, 'B': b})
     session = app.create_session('A')
     app.run(session, [HumanMessage(content=[
-        {'type': 'image_url', 'image_url': {'url': 'https://example.test/image.png'}},
+        {'type': 'audio', 'mime_type': 'audio/wav', 'base64': 'PRIVATE_AUDIO'},
     ])])
     app.run(session, [('user', 'SECOND_FACT_' + 'y' * 100)])
     app.select_model(session, 'B')

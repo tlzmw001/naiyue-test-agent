@@ -3,17 +3,21 @@
 from pathlib import Path
 import secrets
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from naiyue_test_agent.config_paths import get_models_path
+from naiyue_test_agent.tools.settings import ToolSettings
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class WebSettings(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True)
 
-    config_path: Path
+    config_path: Path = Field(default_factory=get_models_path)
     database_path: Path
     frontend_dist: Path
     workspace_root: Path | None = None
-    host_bash: bool = False
+    workspace_id: str | None = None
+    runtime_settings: ToolSettings | None = Field(default=None, exclude=True, repr=False)
     host: str = '127.0.0.1'
     port: int = Field(default=0, ge=0, le=65535)
     access_token: str = Field(default_factory=lambda: secrets.token_urlsafe(32), min_length=8, repr=False)
@@ -33,12 +37,6 @@ class WebSettings(BaseModel):
     @classmethod
     def canonical_workspace(cls, value):
         return value.expanduser().resolve(strict=True) if value is not None else None
-
-    @model_validator(mode='after')
-    def bash_workspace(self):
-        if self.host_bash and self.workspace_root is None:
-            raise ValueError('Bash requires a workspace')
-        return self
 
     @property
     def authority(self):

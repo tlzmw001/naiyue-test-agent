@@ -1,6 +1,12 @@
 """Bounded real model/tool check for complete message subscriptions."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import argparse
+
+from naiyue_test_agent.config_paths import get_models_path
 import json
 import logging
 import os
@@ -55,7 +61,7 @@ def _worker(args):
     # Only a test guard changes: use the formal application assembly and run.
     with patch.object(application, '_assemble_interactive_runtime', bounded_assemble):
         app = application.build_local_application(
-            args.config, tools=[read_probe_value],
+            args.config, tools=[ToolSpec(read_probe_value, read_probe_value.args_schema, permissions=ToolPermission(default='allow'))],
             system_prompt='Call the requested tool and return its exact value.', response_format=None,
         )
         app.subscribe_events(events.append)
@@ -127,7 +133,7 @@ def _worker(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', default='.env/models.json')
+    parser.add_argument('--config', default=str(get_models_path()))
     parser.add_argument('--model-id')
     parser.add_argument('--with-control', action='store_true')
     parser.add_argument('--with-cli', action='store_true')

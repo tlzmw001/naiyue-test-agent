@@ -1,5 +1,10 @@
 """Observe the framework-side model request without recording its contents."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+from naiyue_test_agent.application import prepare_tool_registry
+
 import hashlib
 import logging
 from types import SimpleNamespace
@@ -45,7 +50,7 @@ def test_each_model_call_observes_final_prompt_messages_tools_and_usage(
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
     app = application.build_local_application(
-        'synthetic.json', tools=[read_probe], system_prompt='BASE', response_format=None,
+        'synthetic.json', tools=[ToolSpec(read_probe, read_probe.args_schema, permissions=ToolPermission(default='allow'))], system_prompt='BASE', response_format=None,
     )
     session_id = app.create_workspace_session('A', tmp_path)
 
@@ -63,6 +68,7 @@ def test_each_model_call_observes_final_prompt_messages_tools_and_usage(
     assert first['system_text_chars'] == second['system_text_chars'] == len(
         'BASE\n\n<project_instructions source="AGENTS.md">\n'
         'SECRET_PROJECT\n</project_instructions>'
+        '\n\nAvailable tools:\nread_probe: Read a private probe value.'
     )
     assert first['message_text_chars'] == len('SECRET_REQUEST')
     assert second['message_text_chars'] == len('SECRET_REQUESTSECRET_RESULT')
@@ -90,8 +96,10 @@ def test_failed_model_call_still_records_safe_request_and_propagates(caplog):
             raise failure
 
     model = FailingModel(responses=[AIMessage(content='unused')])
+    _runtime_registry_1 = prepare_tool_registry([])
+    _runtime_names_1 = _runtime_registry_1.names()
     agent = build_runtime_agent(
-        model, tools=[], system_prompt='BASE', response_format=None,
+        model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='BASE', response_format=None,
         resolve_model=lambda _session_id: ('A', model),
         record_selection=lambda _session_id, _model_id: None,
     )

@@ -1,5 +1,9 @@
 """Explicit input rejection recovers one model request without replaying tools."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import json
 import logging
 
@@ -53,10 +57,16 @@ def _configured_model(attempts, summaries=None):
 
 
 def _history():
-    return [HumanMessage(content='PRIVATE_OLD_' + 'x' * 200),
+    messages = [HumanMessage(content='PRIVATE_OLD_' + 'x' * 200),
             AIMessage(content='old answer'),
             HumanMessage(content='PRIVATE_RECENT_' + 'y' * 100),
             AIMessage(content='recent answer'), HumanMessage(content='new question')]
+    # Stable IDs and expected provenance retain full-object equality through recovery.
+    for index, message in enumerate(messages):
+        message.id = f'history-{index}'
+        if isinstance(message, HumanMessage):
+            message.additional_kwargs['naiyue_human_input'] = True
+    return messages
 
 
 def _events(caplog, attribute):
@@ -194,7 +204,7 @@ def test_tools_before_overflow_are_not_replayed_and_checkpoint_continues(monkeyp
         AIMessage(content='', tool_calls=[{'name': 'effect_read', 'args': {}, 'id': 'call-1'}]),
         _status(), AIMessage(content='recovered'), AIMessage(content='next answer'),
     ])
-    app = _app(monkeypatch, {'A': model}, tools=[effect_read])
+    app = _app(monkeypatch, {'A': model}, tools=[ToolSpec(effect_read, effect_read.args_schema, permissions=ToolPermission(default='allow'))])
     session = app.create_session('A')
     result = app.run(session, _history()[:2] + [HumanMessage(content='execute the tool')])
     assert executions == ['executed']
@@ -223,7 +233,7 @@ def test_new_tool_call_returned_by_retry_remains_routable(monkeypatch):
         AIMessage(content='', tool_calls=[{'name': 'echo_recovery', 'args': {}, 'id': 'new-call'}]),
         AIMessage(content='done'),
     ])
-    app = _app(monkeypatch, {'A': model}, tools=[echo_recovery])
+    app = _app(monkeypatch, {'A': model}, tools=[ToolSpec(echo_recovery, echo_recovery.args_schema, permissions=ToolPermission(default='allow'))])
     result = app.run(app.create_session('A'), _history())
     assert executions == ['executed']
     assert len(model.normal_inputs) == 3 and len(model.summary_inputs) == 1

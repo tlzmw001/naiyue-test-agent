@@ -21,6 +21,8 @@ export function validateEvent(value: unknown): RuntimeEvent {
 }
 
 export function applyEvent(view: RunView, event: RuntimeEvent): RunView {
+  if ((view.run_id && event.run_id !== view.run_id) ||
+      (view.session_id && event.session_id !== view.session_id)) return view;
   if (event.sequence <= view.last_sequence) return view;
   if (event.sequence !== view.last_sequence + 1) throw new Error('sequence_gap');
   let messages = view.messages;
@@ -50,12 +52,36 @@ export function applyEvent(view: RunView, event: RuntimeEvent): RunView {
     }
   } else if (event.event_type === 'tool_call_started' || event.event_type === 'tool_call_finished') {
     if (typeof data.tool_call_id !== 'string' || typeof data.boundary !== 'string') throw new Error('invalid_event');
-    tool_states = { ...tool_states, [data.tool_call_id]: { ...data, run_id: event.run_id,
-      state: event.event_type === 'tool_call_started' ? 'running' : 'finished' } as ToolState };
+    if (view.status === 'running') {
+      const batch_id = [...messages].reverse().find(row => row.type === 'ai' &&
+        row.tool_calls?.some(call => call.id === data.tool_call_id))?.id;
+      const old = tool_states[data.tool_call_id];
+      const finishing = event.event_type === 'tool_call_finished';
+      const prior = finishing && old?.run_id === event.run_id && (!batch_id || old.batch_id === batch_id) ? old : {};
+      tool_states = { ...tool_states, [data.tool_call_id]: { ...prior, ...data, run_id: event.run_id,
+        batch_id: batch_id ?? (prior as ToolState).batch_id,
+        state: finishing ? 'finished' : 'running',
+        ...(finishing ? { finished_at: event.timestamp } : { started_at: event.timestamp }),
+      } as ToolState };
+    }
+  } else if (event.event_type === 'tool_progress') {
+    if (typeof data.tool_call_id !== 'string' || typeof data.batch_id !== 'string' ||
+        typeof data.tool_name !== 'string' || typeof data.text !== 'string' ||
+        typeof data.phase !== 'string' || !['queued', 'preparing', 'running', 'stopping', 'settling'].includes(String(data.activity)))
+      throw new Error('invalid_event');
+    const old = tool_states[data.tool_call_id];
+    if (view.status === 'running' && old?.state === 'running' && old.run_id === event.run_id &&
+        old.tool_name === data.tool_name && (!old.batch_id || old.batch_id === data.batch_id)) {
+      tool_states = { ...tool_states, [data.tool_call_id]: { ...old,
+        batch_id: data.batch_id, activity: data.activity, phase: data.phase, completed: data.completed,
+        total: data.total, unit: data.unit, text: data.text, last_activity_at: event.timestamp } as ToolState };
+    }
+  } else if (event.event_type === 'control_accepted' && data.kind === 'stop') {
+    return { ...view, stop_requested: true, last_sequence: event.sequence };
   } else if (event.event_type === 'run_finished') {
     messages = messages.map(row => row.provisional ? { ...row, state: 'unconfirmed' } : row);
     tool_states = Object.fromEntries(Object.entries(tool_states).map(([id, row]) =>
-      [id, row.state === 'running' ? { ...row, state: 'unconfirmed' } : row]));
+      [id, row.state === 'running' ? { ...row, state: 'unconfirmed', finished_at: event.timestamp } : row]));
     return { ...view, messages, tool_states, last_sequence: event.sequence, status: data.status as RunView['status'],
       manual_review_required: data.manual_review_required === true, failure: data.failure as RunView['failure'] };
   }

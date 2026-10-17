@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from .turn_observation import TurnObserver
     from .control_observation import ControlObserver
     from .context_operation_observation import ContextOperationObserver
+    from .tool_execution.observation import ToolProgressObserver
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class RunServices:
     turns: 'TurnObserver | None' = None
     controls: 'ControlObserver | None' = None
     context_operations: 'ContextOperationObserver | None' = None
+    tool_progress: 'ToolProgressObserver | None' = None
 
 
 _RUN_SERVICES = ContextVar('naiyue_run_services', default=None)

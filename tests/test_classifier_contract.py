@@ -8,8 +8,7 @@ from naiyue_test_agent.contracts.failures import FailureDescription, normalize_c
 from naiyue_test_agent.agent_runtime import errors as runtime_errors
 from naiyue_test_agent.agent_runtime.errors import RuntimeErrorPolicy, ModelResponseRejected
 from naiyue_test_agent.agent_runtime.run_control import UserStop
-from naiyue_test_agent.agent_runtime.tools.write import WriteOutcomeUnknown
-from naiyue_test_agent.agent_runtime.tools.bash import BashOutcomeUnknown
+from naiyue_test_agent.tools.processes import ProcessCleanupError
 from test_layered_failure_contract import VendorQuotaError, build
 from naiyue_test_agent.model_access import errors as model_errors
 from naiyue_test_agent.application.failure_policy import ApplicationErrorPolicy
@@ -60,8 +59,9 @@ def test_wrong_classifier_arity_leaves_all_mappings_unchanged(monkeypatch):
 @pytest.mark.parametrize('error,source,category,reason', [
     (UserStop(), 'runtime', 'cancelled', 'user_stop'),
     (asyncio.CancelledError(), 'runtime', 'cancelled', 'task_cancelled'),
-    (WriteOutcomeUnknown('PRIVATE'), 'tool', 'tool_outcome_unknown', 'tool_outcome_unknown'),
-    (BashOutcomeUnknown('PRIVATE'), 'tool', 'tool_outcome_unknown', 'tool_outcome_unknown'),
+    (ProcessCleanupError('PRIVATE', facts={'process_reaped': False}),
+     'tool', 'tool_outcome_unknown', 'tool_outcome_unknown'),
+    (ProcessCleanupError('PRIVATE'), 'tool', 'tool_outcome_unknown', 'tool_outcome_unknown'),
     (ModelResponseRejected('invalid_tool_calls'), 'runtime', 'model_response_rejected', 'invalid_tool_calls'),
     (runtime_errors.ContextCompactionError('PRIVATE'), 'runtime', 'context_error', 'compaction_failed'),
     (runtime_errors.ToolBatchSchedulingError('PRIVATE'), 'runtime', 'runtime_error', 'tool_batch_scheduling_failed'),
@@ -76,6 +76,7 @@ def test_protected_rule_constructs_description_without_resolver_or_extensions(
     monkeypatch.setattr(runtime_errors, 'resolve_failure', forbidden)
     result = policy.describe(error, source='model')
     assert result == FailureDescription(source, category, reason, type(error).__name__)
+    assert 'PRIVATE' not in repr(result)
 
 
 @pytest.mark.parametrize('diagnostic_failure', [False, True])

@@ -4,6 +4,7 @@ import json
 import math
 import stat
 from pathlib import Path
+
 from threading import Lock
 from urllib.parse import urlsplit
 
@@ -11,8 +12,10 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
 from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
+from naiyue_test_agent.config_paths import get_models_path
 from naiyue_test_agent.contracts.failures import normalize_classifiers
 from .errors import describe_model_failure
+from .messages import MODEL_INPUT_METADATA_KEY
 
 from naiyue_test_agent.model_access.thinking import (
     MODEL_DEFAULT,
@@ -154,21 +157,23 @@ def _base_url(value, label: str, kind: str) -> str:
 def _build_model(kind: str, model_name: str, provider: dict, model_id: str,
                  thinking_settings: dict, request_settings: dict,
                  limit_metadata: dict, reserve_metadata: dict,
-                 keep_metadata: dict, summary_output_metadata: dict) -> BaseChatModel:
+                 keep_metadata: dict, summary_output_metadata: dict,
+                 api: str | None) -> BaseChatModel:
     try:
         output_limit = limit_metadata['max_output_tokens']
         metadata = {MODEL_LIMITS_METADATA_KEY: limit_metadata,
                     COMPACTION_RESERVE_METADATA_KEY: reserve_metadata,
                     COMPACTION_KEEP_RECENT_METADATA_KEY: keep_metadata,
-                    COMPACTION_SUMMARY_OUTPUT_METADATA_KEY: summary_output_metadata}
+                    COMPACTION_SUMMARY_OUTPUT_METADATA_KEY: summary_output_metadata,
+                    MODEL_INPUT_METADATA_KEY: {'kind': kind, 'api': api}}
         if kind == 'openai':
             return ChatOpenAI(model=model_name, api_key=provider['api_key'],
-                              max_tokens=output_limit, metadata=metadata,
+                              max_tokens=output_limit, metadata=metadata, use_responses_api=api == 'responses',
                               **thinking_settings, **request_settings)
         if kind == 'openai_compatible':
             return ChatOpenAI(model=model_name, api_key=provider['api_key'],
                               base_url=provider['base_url'], max_tokens=output_limit,
-                              metadata=metadata,
+                              metadata=metadata, use_responses_api=api == 'responses',
                               **thinking_settings, **request_settings)
         if kind == 'anthropic':
             return ChatAnthropic(model=model_name, api_key=provider['api_key'],
@@ -184,15 +189,13 @@ def _build_model(kind: str, model_name: str, provider: dict, model_id: str,
         ) from None
 
 
-def load_model_catalog(path: str | Path = '.env/models.json') -> ModelCatalog:
+def load_model_catalog(path: str | Path | None = None) -> ModelCatalog:
     """Read, validate, and construct models without making model API requests."""
-    config_path = Path(path)
+    config_path = Path(path) if path is not None else get_models_path()
     try:
         file_stat = config_path.stat()
         if not stat.S_ISREG(file_stat.st_mode):
             raise ModelConfigError(f'{config_path}: model configuration must be a regular file')
-        if stat.S_IMODE(file_stat.st_mode) & 0o077:
-            raise ModelConfigError(f'{config_path}: model configuration permissions must be private')
         data = json.loads(config_path.read_text(encoding='utf-8'), object_pairs_hook=_unique_object)
     except OSError as exc:
         raise ModelConfigError(f'{config_path}: cannot read model configuration ({type(exc).__name__})') from None
@@ -243,12 +246,21 @@ def load_model_catalog(path: str | Path = '.env/models.json') -> ModelCatalog:
                          'context_window_tokens', 'max_output_tokens',
                          'compaction_reserve_tokens',
                          'compaction_keep_recent_tokens',
-                         'compaction_summary_output_tokens'})
+                         'compaction_summary_output_tokens', 'api', 'profile'})
         provider_id = _nonempty(entry['provider_id'], f'models.{model_id}.provider_id')
         model_name = _nonempty(entry['model'], f'models.{model_id}.model')
         if provider_id not in checked_providers:
             raise ModelConfigError(f'models.{model_id}.provider_id is unknown')
         provider = checked_providers[provider_id]
+        api = entry.get('api')
+        if provider['kind'] in ('openai', 'openai_compatible'):
+            if not isinstance(api, str) or api not in ('chat_completions', 'responses'):
+                raise ModelConfigError(f'models.{model_id}.api must be chat_completions or responses')
+        elif 'api' in entry:
+            raise ModelConfigError(f'models.{model_id}.api only applies to OpenAI adapters')
+        profile = _object(entry.get('profile', {}), f'models.{model_id}.profile', set(), {'image_inputs'})
+        if 'image_inputs' in profile and type(profile['image_inputs']) is not bool:
+            raise ModelConfigError(f'models.{model_id}.profile.image_inputs must be a boolean')
         limit_metadata = {}
         for field, default, source_field in (
             ('context_window_tokens', DEFAULT_CONTEXT_WINDOW_TOKENS,
@@ -339,7 +351,8 @@ def load_model_catalog(path: str | Path = '.env/models.json') -> ModelCatalog:
         built_models[model_id] = _build_model(provider['kind'], model_name, provider, model_id,
                                               selection.native_settings, request_settings,
                                               limit_metadata, reserve_metadata, keep_metadata,
-                                              summary_output_metadata)
+                                              summary_output_metadata, api)
+        built_models[model_id].profile = {**(built_models[model_id].profile or {}), **profile}
         thinking_selections[model_id] = selection
     if default_id not in built_models:
         raise ModelConfigError('config.default_model_id is unknown')

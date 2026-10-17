@@ -3,8 +3,10 @@
 import hashlib
 import json
 from threading import RLock
+from time import monotonic
 
 from langchain_core.messages import AIMessage
+from naiyue_test_agent.tools.settings import ToolProgressSettings
 
 
 def _safe_text(text):
@@ -25,20 +27,23 @@ def _text(content):
 class CliEventDisplay:
     """Keep a per-call display ledger, not a second conversation history."""
 
-    def __init__(self, session_id, *, writer=None):
+    def __init__(self, session_id, *, writer=None, progress_settings=None):
         self.session_id = session_id
         self._writer = writer or (lambda text: print(text, flush=True))
         self._lock = RLock()
         self._receipts = {}
+        self._progress_settings = progress_settings or ToolProgressSettings()
         self.begin_call()
 
     def begin_call(self):
         with self._lock:
             self._run_id = None
-            self._sequences = set()
+            self._last_sequence = 0
             self._messages = {}
             self._texts = {}
             self._tools = {}
+            self._progress = {}
+            self._stopping = False
             self._requested_tools = set()
             self._non_text_notices = set()
             self._terminal = False
@@ -58,6 +63,25 @@ class CliEventDisplay:
         with self._lock:
             return self._receipts.get(kind, 0)
 
+    def show_history(self, history):
+        """Display stored messages without manufacturing run events or results."""
+        with self._lock:
+            self.write('只读历史：当前不恢复执行，也不会自动重跑旧调用。')
+            recovery = history['recovery']
+            self.write(f'状态：{recovery["kind"]}；原因：{recovery["reason"]}')
+            for message in history['messages']:
+                self.write(f'[{message.type}]\n{_text(message.content)}')
+                if isinstance(message, AIMessage):
+                    for call in message.tool_calls:
+                        self.write(f'已保存工具请求：{call["name"]}（{call["id"]}）\n'
+                                   + json.dumps(call['args'], ensure_ascii=False))
+                if isinstance(message.content, list) and any(
+                    isinstance(block, dict) and block.get('type') != 'text' for block in message.content
+                ):
+                    self.write('该消息包含终端不能展示的非文本内容')
+            if recovery['unconfirmed_tool_call_ids']:
+                self.write('结果未确认：' + ', '.join(recovery['unconfirmed_tool_call_ids']))
+
     def _incomplete_notice(self):
         if not self._incomplete:
             self.write('消息观察不完整，将在返回时补显可确认的回答')
@@ -69,10 +93,10 @@ class CliEventDisplay:
         with self._lock:
             if event.event_type == 'run_started' and self._run_id is None:
                 self._run_id = event.run_id
-            if event.run_id != self._run_id or event.sequence in self._sequences:
+            if event.run_id != self._run_id or event.sequence <= self._last_sequence:
                 return
             self._render(event.event_type, event.data)
-            self._sequences.add(event.sequence)
+            self._last_sequence = event.sequence
 
     def _render(self, kind, data):
         if kind in ('message_completed', 'message_revised'):
@@ -90,8 +114,16 @@ class CliEventDisplay:
             self.write('模型正在处理请求')
         elif kind == 'tool_call_started':
             self._tools[data.tool_call_id] = data.tool_name or '工具'
+            self._progress[data.tool_call_id] = {'started': monotonic(), 'batch': None,
+                                                'ended': False, 'shown_at': None, 'pending': None}
             self.write(f'处理工具调用：{data.tool_name or "工具"}')
+        elif kind == 'tool_progress':
+            self._tool_progress(data)
         elif kind == 'tool_call_finished':
+            row = self._progress.get(data.tool_call_id)
+            if row:
+                self._show_progress(data.tool_call_id, row)
+                row['ended'] = True
             labels = {'success': '处理完成', 'error_result': '返回错误结果，模型可继续处理',
                       'not_executed': '未执行', 'exception': '处理失败',
                       'outcome_unknown': '副作用无法确认'}
@@ -104,6 +136,43 @@ class CliEventDisplay:
             self.write('正在压缩上下文' if kind == 'compaction_started' else '输入超出模型窗口，正在尝试恢复')
         elif kind in ('compaction_finished', 'context_recovery_finished'):
             self._context(kind, data)
+
+    def _tool_progress(self, data):
+        row = self._progress.get(data.tool_call_id)
+        if (self._terminal or not row or row['ended'] or
+                row['batch'] not in (None, data.batch_id) or
+                self._tools.get(data.tool_call_id) != data.tool_name):
+            return
+        row['batch'] = data.batch_id
+        previous = row.get('latest')
+        row['latest'] = data
+        row['pending'] = data
+        row['last_activity'] = monotonic()
+        interval = self._progress_settings.min_interval_milliseconds / 1000
+        if (row['shown_at'] is None or not previous or
+                (previous.phase, previous.activity) != (data.phase, data.activity) or
+                monotonic() - row['shown_at'] >= interval):
+            self._show_progress(data.tool_call_id, row)
+
+    def _show_progress(self, call_id, row):
+        data = row['pending']
+        if data is None:
+            return
+        labels = {'queued': '排队中', 'preparing': '准备中', 'running': '运行中',
+                  'stopping': '停止中', 'settling': '收尾中'}
+        label = '停止中' if self._stopping else labels[data.activity]
+        now = monotonic()
+        text = f'工具 {data.tool_name}：{label} · {data.phase}'
+        text += f' · 已等待/运行 {int(now - row["started"])}秒'
+        text += f' · 距最后活动 {int(now - row["last_activity"])}秒'
+        if data.completed is not None:
+            text += f' · {data.completed}' + (f'/{data.total}' if data.total is not None else '')
+            text += f' {data.unit or ""}'
+        tail = data.text.encode('utf-8')[-self._progress_settings.max_text_bytes:].decode('utf-8', errors='ignore')
+        if tail:
+            text += '\n' + tail
+        self.write(text)
+        row['shown_at'], row['pending'] = now, None
 
     def _message(self, row, *, revised=False, visibility='graph_values'):
         identity = row.get('id')
@@ -138,6 +207,11 @@ class CliEventDisplay:
     def _finish(self, data):
         if self._terminal:
             return
+        for call_id, row in self._progress.items():
+            self._show_progress(call_id, row)
+            if not row['ended']:
+                self.write(f'工具 {self._tools[call_id]}：状态未确认')
+            row['ended'] = True
         if data.status == 'failed':
             text = ('工具副作用无法确认；请先检查执行结果，勿直接重试'
                     if data.manual_review_required else '会话保存未确认，本次运行失败'
@@ -152,6 +226,8 @@ class CliEventDisplay:
         label = {'steering': 'Steering', 'follow_up': 'Follow-up', 'stop': '停止请求',
                  'approval': '审批决定'}[data.kind]
         if kind == 'control_accepted':
+            if data.kind == 'stop':
+                self._stopping = True
             text = {'steering': 'Steering 已排队', 'follow_up': 'Follow-up 已排队，将在自然结束边界处理',
                     'stop': '已请求停止，正在等待收尾', 'approval': '审批决定已接受'}[data.kind]
             self.write(text)

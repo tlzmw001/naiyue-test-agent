@@ -1,15 +1,21 @@
 """Turn failures retain primary errors and approval-attempt identity."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+from naiyue_test_agent.application import prepare_tool_registry
+
 from threading import Barrier, Thread
 
 import pytest
+from tool_feedback_helpers import fail_tool_dispatch
 from langchain.tools import tool
 from langchain_core.messages import AIMessage
 from langgraph.errors import GraphBubbleUp
 
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
-from naiyue_test_agent.agent_runtime.tools.bash import BashOutcomeUnknown
+from naiyue_test_agent.tools import create_session_read_tool
+from naiyue_test_agent.tools.processes import ProcessCleanupError
 from naiyue_test_agent.agent_runtime.turn_observation import TurnBoundaryMiddleware
 from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
 from test_application_run_events import ToolModel, make_app
@@ -69,9 +75,8 @@ def test_fatal_tool_partial_recovery_finishes_failed_with_observed_skip(monkeypa
     @tool
     def fatal() -> str:
         """Fail the ordered batch."""
-        raise failure
+        return 'unreachable after the dispatch fault'
 
-    fatal.metadata = {'naiyue_execution_mode': 'sequential'}
 
     @tool
     def later() -> str:
@@ -79,10 +84,11 @@ def test_fatal_tool_partial_recovery_finishes_failed_with_observed_skip(monkeypa
         entered.append(True)
         return 'unexpected'
 
+    fail_tool_dispatch(monkeypatch, 'fatal', failure)
     app = make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'fatal', 'args': {}, 'id': 'fatal'},
         {'name': 'later', 'args': {}, 'id': 'later'},
-    ])]), [fatal, later])
+    ])]), [ToolSpec(fatal, fatal.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow')), ToolSpec(later, later.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
     with pytest.raises(RuntimeError) as caught:
@@ -135,7 +141,7 @@ def test_prepare_failure_preserves_waiting_turn_for_later_resume(monkeypatch, tm
 
 
 def test_failed_approval_execution_retry_is_new_turn_not_old_completed(monkeypatch, tmp_path):
-    from naiyue_test_agent.agent_runtime.tool_batch import ToolBatchMiddleware
+    from naiyue_test_agent.agent_runtime.tool_execution.batch import ToolBatchMiddleware
 
     original = ToolBatchMiddleware.wrap_tool_call
     failure = RuntimeError('PRIVATE_EXECUTE')
@@ -187,7 +193,7 @@ def test_framework_and_process_control_do_not_fabricate_failed_or_cancelled(monk
 
 
 def test_unknown_tool_outcome_is_failed_turn_and_manual_review_remains(monkeypatch):
-    failure = BashOutcomeUnknown('PRIVATE_OUTCOME')
+    failure = ProcessCleanupError('PRIVATE_OUTCOME')
 
     @tool
     def uncertain() -> str:
@@ -196,11 +202,11 @@ def test_unknown_tool_outcome_is_failed_turn_and_manual_review_remains(monkeypat
 
     app = make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'uncertain', 'args': {}, 'id': 'uncertain'},
-    ])]), [uncertain])
+    ])]), [ToolSpec(uncertain, uncertain.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
     session = app.create_session('A')
-    with pytest.raises(BashOutcomeUnknown) as caught:
+    with pytest.raises(ProcessCleanupError) as caught:
         app.run(session, [('user', 'run')])
     assert caught.value is failure
     assert turns(events, 'turn_finished')[0].data.failure.category == 'tool_outcome_unknown'
@@ -243,7 +249,7 @@ def test_two_sessions_share_graph_but_never_share_turn_identity(monkeypatch):
         assert scoped[0].data.turn_id == scoped[1].data.turn_id
 
 
-def test_legacy_runtime_keeps_existing_six_step_budget_without_app_observation():
+def test_dynamic_runtime_has_no_app_observation_and_fits_explicit_step_budget():
     from naiyue_test_agent.agent_runtime import build_runtime_agent
 
     @tool
@@ -254,12 +260,15 @@ def test_legacy_runtime_keeps_existing_six_step_budget_without_app_observation()
     model = ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'probe', 'args': {}, 'id': 'probe'},
     ]), AIMessage(content='done')])
-    graph = build_runtime_agent(model, tools=[probe], system_prompt='', response_format=None,
+    _runtime_registry_1 = prepare_tool_registry([ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
+    _runtime_names_1 = _runtime_registry_1.names()
+    graph = build_runtime_agent(model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
                                 resolve_model=lambda _s: ('A', model), record_selection=lambda *_a: None)
     result = graph.invoke({'messages': [('user', 'run')]}, context={'session_id': 'session'},
-                          config={'recursion_limit': 6})
+                          config={'recursion_limit': 14})
     assert [m.type for m in result['messages']] == ['human', 'ai', 'tool', 'ai']
     assert result['messages'][-1].content == 'done'
+    assert not any('TurnBoundaryMiddleware' in name for name in graph.nodes)
 
 
 def test_observer_failure_on_turn_event_does_not_change_business_result(monkeypatch, caplog):

@@ -11,7 +11,7 @@ function session(id: string): SessionView {
   return { session_id: id, model_id: 'A', workspace_root: null, state: 'ready',
     updated_at: '', last_run_status: null, messages: [], busy: false, can_run: true,
     has_compaction: false, active_run_id: null, latest_run_id: null,
-    manual_review_required: false, pending_approval: false, live: null };
+    active_tools: [], permission_mode: 'Default', manual_review_required: false, pending_approval: false, live: null };
 }
 function setup() {
   const api = new WebApi('synthetic-test-access');
@@ -98,4 +98,36 @@ it('does not apply an old model-switch acknowledgement to another selected sessi
   await act(async () => { finish(); await switched; });
   expect(result.current.session?.session_id).toBe('two');
   expect(result.current.notice).not.toContain('模型已切换');
+});
+
+it('restores progress and accepted stopping from a reconnect snapshot', async () => {
+  const { api, result } = setup();
+  const progress = { tool_call_id: 't', tool_name: 'bash', run_id: 'r', batch_id: 'ai',
+    state: 'running', boundary: 'dispatch', phase: 'process_output', text: 'RESTORED_TAIL' } as const;
+  vi.spyOn(api, 'session').mockResolvedValue({ ...session('s'), live });
+  await act(async () => result.current.selectSession('s'));
+  vi.mocked(api.run).mockResolvedValue({ ...live, last_sequence: 20, stop_requested: true,
+    tool_states: { t: progress } });
+  await act(async () => result.current.reconnect());
+  await waitFor(() => expect(result.current.run?.tool_states?.t.text).toBe('RESTORED_TAIL'));
+  expect(result.current.stopping).toBe(true);
+  expect(result.current.run?.tool_states?.t.state).toBe('running');
+});
+
+it('ignores a late event callback from an aborted watch in the same session', async () => {
+  const { api, result } = setup();
+  let oldFrame!: Parameters<WebApi['events']>[3];
+  vi.mocked(api.events).mockImplementation(async (id, _after, signal, frame) => {
+    if (id === 'r') oldFrame = frame;
+    await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve()));
+  });
+  vi.spyOn(api, 'session').mockResolvedValue({ ...session('s'), live });
+  await act(async () => result.current.selectSession('s'));
+  vi.mocked(api.session).mockResolvedValue({ ...session('s'), live: { ...live, run_id: 'new' } });
+  await act(async () => result.current.selectSession('s'));
+  await waitFor(() => expect(result.current.run?.run_id).toBe('new'));
+  act(() => oldFrame({ event: 'runtime', data: { version: 1, session_id: 's', run_id: 'r',
+    sequence: 1, event_type: 'control_accepted', data: { kind: 'stop' } } }));
+  expect(result.current.run?.run_id).toBe('new');
+  expect(result.current.stopping).toBe(false);
 });

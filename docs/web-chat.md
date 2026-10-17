@@ -20,14 +20,14 @@ npm --prefix frontend run build
 
 打开终端打印的本地访问链接。默认随机可用端口，访问凭据在 URL fragment，页面读取后移除；凭据仅留在当前浏览器 tab 的 sessionStorage，模型 API key 保持在后端。运行阶段只需一个 Python 服务，不需要常驻 Vite/Node 服务。Ctrl-C 请求服务退出并等待应用资源收尾；退出码 130 是用户中断的常规状态，入口不打印 Python 中断堆栈。
 
-可选 `--workspace /绝对路径`、`--session-db /绝对路径/sessions.sqlite`、`--port 端口`、`--frontend-dist /绝对路径/dist`。`--host` 只允许 loopback；host/port 也可用 `NAIYUE_WEB_HOST`、`NAIYUE_WEB_PORT` 设置。数据库默认 `~/.naiyue-test-agent/sessions.sqlite`，沿用现有 CLI 库与文件锁，同一库同时只能由一个应用进程占用。无需编辑 `.env`。
+可选 `--workspace /绝对路径`、`--session-db /绝对路径/sessions.sqlite`、`--port 端口`、`--frontend-dist /绝对路径/dist`。`--host` 只允许 loopback；host/port 也可用 `NAIYUE_WEB_HOST`、`NAIYUE_WEB_PORT` 设置。未传工作区默认启动cwd。项目内`.naiyue/workspace.json`保存UUID，数据库默认`~/.naiyue-test-agent/data/workspaces/<UUID>/sessions.sqlite`；全局`settings.toml`的`[storage] data_dir`可把数据放其他盘，显式`--session-db`优先。同一库同时只能由一个应用占用，不同工作区可以分别开服务/浏览器窗口。关闭后携标识移动目录会自动重绑历史；目录副本重复ID需`--new-workspace`创建独立身份/空历史。旧全局库不兼容，详见[Spec087](specs/087-workspace-session-storage.md)。无需编辑 `.env`。
 
 - 首条普通消息创建持久会话并启动 run。侧栏“新建会话”只创建空会话；列表显示实际记录与模型，不填充示例历史。
 - 模型菜单来自实际配置目录，同一会话可切模型，下一次模型请求生效。切换失败保留先前确认的选项。
 - 运行中普通输入作为 Steering；勾选“结束后跟进”作为 Follow-up。HTTP 接受只是排队回执，领域事件说明是否已交付上下文。
 - 点停止后输入仍可编辑；停止期间发送只保留本地待发送内容。未执行的 Steering/Follow-up 回传并显示；终局后需用户明确“重新发送”，不会自动开启下一轮。
 - 已完成答案按完整消息校准临时增量，可复制正文。未完成的增量保留“未完成内容”标记，不能当作保存成功的答案。
-- 浏览器刷新后从侧栏选择会话；服务仍存活且 run view 尚保留时可找回服务端未执行内容。浏览器草稿/本地新增待发送内容只在内存，刷新会丢失；服务重启只恢复安全 checkpoint，不恢复内存事件或待发送队列。
+- 浏览器刷新后从侧栏选择会话；服务仍存活且run view尚保留时可找回服务端未执行内容。浏览器草稿/本地新增待发送内容只在内存，刷新会丢失。服务重启后按[Spec092](specs/092-session-restart-recovery.md#0-2026-10-17确认打开会话自动恢复)在打开会话时自动整理状态：执行中断用三次更新保留真实结果、补未确认说明并结束旧任务；前置审批通过本地复核后直接显示审批卡片。不会自动重跑工具、调用模型/Auto或发送草稿。失败保留历史与草稿、重读当前checkpoint，停止自动重试；用户可手动重试或明确结束失效旧批次。GET仍只读，不扫描全部历史，不复活旧进度/SSE或待发送队列。
 - 事件断线可点“重新同步”。程序最多一次重读 view 并续接事件，绝不自动重发用户 POST。模型失败、保存未确认或受限会话会明确显示状态。
 
 ## 一条真实调用链

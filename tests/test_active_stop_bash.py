@@ -1,4 +1,4 @@
-"""A host process is terminated, but its already-started effects remain uncertain."""
+"""User stop reaps Bash and pairs its error result without another model call."""
 
 import asyncio
 import os
@@ -7,11 +7,10 @@ import sys
 from pathlib import Path
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime.tools import create_session_bash_tool
-from naiyue_test_agent.agent_runtime.tools.bash import BashOutcomeUnknown
+from naiyue_test_agent.tools import create_session_bash_tool
 from test_async_application import make_app, StreamingToolModel, call
 
 
@@ -35,15 +34,16 @@ def test_user_stop_terminates_bash_and_preserves_partial_output(monkeypatch, tmp
                     await asyncio.sleep(0.01)
             pid = int(marker.read_text())
             app.request_stop(session)
-            with pytest.raises(BashOutcomeUnknown) as caught:
-                await asyncio.wait_for(task, 5)
-            assert 'stopped by the user' in str(caught.value)
-            assert 'started' in caught.value.partial_stdout
+            result = await asyncio.wait_for(task, 5)
+            message = next(m for m in result['messages'] if isinstance(m, ToolMessage))
+            assert message.status == 'error' and message.tool_call_id == 't'
+            assert 'stopped by the user' in message.content and 'started' in message.content
+            assert result['run_stopped']
+            assert not any(m.content == 'must not run' for m in result['messages'])
             with pytest.raises(ProcessLookupError):
                 os.kill(pid, 0)
-            assert app._sessions._sessions[session]['manual_review_required']
-            with pytest.raises(application.SessionManualReviewRequiredError):
-                await app.arun(session, [('user', 'no automatic retry')])
+            assert not app._sessions._sessions[session].get('manual_review_required')
+            assert not app._sessions._sessions[session]['busy']
         finally:
             if pid is not None:
                 try:

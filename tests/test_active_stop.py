@@ -1,5 +1,9 @@
 """User stop is run-scoped; cancellation must leave a safe protocol boundary."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import asyncio
 from threading import Event
 
@@ -117,12 +121,11 @@ def test_stop_drains_started_tool_but_skips_waiting_tool(monkeypatch, sequential
             second.set()
             return 'unexpected'
 
-        writing.metadata = {'naiyue_execution_mode': 'sequential'} if sequential else None
         model = StreamingToolModel(replies=[AIMessage(content='', tool_calls=[
             {'name': 'writing', 'args': {}, 'id': 'one'},
             {'name': 'later', 'args': {}, 'id': 'two'},
         ])])
-        app = await make_app(monkeypatch, model, [writing, later])
+        app = await make_app(monkeypatch, model, [ToolSpec(writing, writing.args_schema, execution_mode='sequential' if sequential else 'parallel', permissions=ToolPermission(default='allow')), ToolSpec(later, later.args_schema, permissions=ToolPermission(default='allow'))])
         session = await app.acreate_session('A')
         task = asyncio.create_task(app.arun(session, [('user', 'start')], max_concurrency=1))
         try:
@@ -225,8 +228,8 @@ def test_stop_during_text_stream_keeps_draft_unconfirmed(monkeypatch):
 
 
 def test_stop_during_real_write_waits_for_atomic_replace(monkeypatch, tmp_path):
-    from naiyue_test_agent.agent_runtime.tools import create_session_write_tool
-    from naiyue_test_agent.agent_runtime.tools import write as write_module
+    from naiyue_test_agent.tools import create_session_write_tool
+    from naiyue_test_agent.tools import write as write_module
 
     async def scenario():
         entered, release = Event(), Event()

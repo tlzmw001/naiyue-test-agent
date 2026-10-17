@@ -1,5 +1,9 @@
 """Observe both kinds of unknown without changing Agent routing."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import logging
 from pathlib import Path
 
@@ -139,7 +143,7 @@ def test_unknown_stop_reason_with_valid_tool_still_routes_tool(
         }], response_metadata={'finish_reason': 'future_reason'}),
         AIMessage(content='done', response_metadata={'finish_reason': 'stop'}),
     ])
-    app = build_app(monkeypatch, model, [probe])
+    app = build_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         result = app.run(app.create_session('A'), [('user', 'probe')])
@@ -172,7 +176,7 @@ def test_unknown_stop_reason_is_observed_before_invalid_call_rejection(monkeypat
                              'error': 'private-parse-error'}],
         response_metadata={'finish_reason': 'future_reason'},
     )])
-    app = build_app(monkeypatch, model, [probe])
+    app = build_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(RuntimeError) as caught:

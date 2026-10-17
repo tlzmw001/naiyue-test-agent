@@ -75,7 +75,7 @@ def test_cli_explicit_workspace_registers_ls_and_returns_hidden_names_to_model(
     output = capsys.readouterr().out
     assert 'listing received' in output
     assert 'PRIVATE_VALUE' not in output
-    assert model.seen[1][-1] == ('tool', '.env\ncontract.md')
+    assert model.seen[1][-1] == ('tool', 'contract.md\n[ls: not listed: .env: unapproved_private_or_external]')
 
 
 def test_cli_workspace_registers_find_and_grep(monkeypatch, capsys, tmp_path):
@@ -122,7 +122,7 @@ def test_cli_model_can_request_a_read_page(monkeypatch, capsys, tmp_path):
 
     assert cli.main(['--no-session', '--config', 'synthetic.json', '--workspace', str(tmp_path)]) == 0
     assert 'Page received' in capsys.readouterr().out
-    assert model.seen[1][-1] == ('tool', 'first\n[read: lines 1-1; next_offset=2]')
+    assert model.seen[1][-1] == ('tool', 'first\n[read: lines 1-1; next_offset=2]\n[read: stopped by 1 line page limit; continue with the same path, offset=2, limit=1]')
 
 
 def test_cli_external_read_requires_explicit_approval_and_resumes(monkeypatch, capsys, tmp_path):

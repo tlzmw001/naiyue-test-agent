@@ -12,10 +12,12 @@ from langchain_core.messages import AIMessage, ToolMessage
 from pydantic import Field
 
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime.tools import (
-    create_session_read_tool, create_session_write_tool,
+from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.tools import (
+    WriteSettings, create_session_read_tool, create_session_write_tool,
 )
-from naiyue_test_agent.agent_runtime.tools import write as write_module
+from naiyue_test_agent.tools import write as write_module
+from naiyue_test_agent.tools.paths import prepare_file_subject
 from naiyue_test_agent.model_access import ModelCatalog
 
 
@@ -30,14 +32,14 @@ class RecordingFake(FakeMessagesListChatModel):
         return super()._generate(messages, *args, **kwargs)
 
 
-def make_app(monkeypatch, responses, tools=None):
+def make_app(monkeypatch, responses, tools=None, *, permissions=None):
     model = RecordingFake(responses=responses)
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
     app = application.build_local_application(
         Path('synthetic.json'),
         tools=tools or [create_session_write_tool()],
-        system_prompt='', response_format=None,
+        system_prompt='', response_format=None, settings=ToolSettings.model_validate({'permissions': permissions or {}}),
     )
     return app, model
 
@@ -51,7 +53,7 @@ def results(result):
 
 
 def test_write_creates_and_replaces_whole_file_and_accepts_empty_content(monkeypatch, tmp_path):
-    assert set(create_session_write_tool().tool_call_schema.model_fields) == {
+    assert set(create_session_write_tool().tool.tool_call_schema.model_fields) == {
         'path', 'content',
     }
     app, model = make_app(monkeypatch, [
@@ -92,9 +94,9 @@ def test_write_creates_and_replaces_whole_file_and_accepts_empty_content(monkeyp
 @pytest.mark.parametrize('path', [
     '../outside.md', '.env', '.env.local', '.hidden/file.md',
     '.github/.env', 'secret.pem', 'private.key', 'directory',
-    'missing/file.md', 'outside-link.md', 'inside-link.md',
+    'missing/file.md', 'outside-link.md',
 ])
-def test_write_rejects_unsafe_targets_without_changing_existing_files(
+def test_write_target_policy_and_missing_parent_preserve_existing_files(
     monkeypatch, tmp_path, path, caplog,
 ):
     root = tmp_path / 'workspace'
@@ -116,12 +118,18 @@ def test_write_rejects_unsafe_targets_without_changing_existing_files(
     ])
 
     with caplog.at_level(logging.WARNING):
-        result = app.run(app.create_workspace_session('A', root), [('user', 'write')])
+        session = app.create_workspace_session('A', root)
+        app.set_permission_mode(session, 'NoAsk')
+        result = app.run(session, [('user', 'write')])
 
     message = results(result)[0]
     assert message.tool_call_id == 'denied'
-    assert message.status == 'error'
-    assert 'path' in message.content.lower()
+    if path == 'missing/file.md':
+        assert message.status == 'success' and message.content.startswith('write created')
+        assert (root / path).read_text() == 'PRIVATE_CONTENT'
+    else:
+        assert message.status == 'error'
+        assert ('path' if path == 'directory' else 'permission policy') in message.content.lower()
     assert 'PRIVATE_CONTENT' not in message.content + caplog.text
     assert inside.read_text(encoding='utf-8') == 'ORIGINAL'
     assert outside.read_text(encoding='utf-8') == 'OUTSIDE_ORIGINAL'
@@ -142,7 +150,9 @@ def test_write_rejects_absolute_outside_path_and_symlinked_parent(monkeypatch, t
         AIMessage(content='denied'),
     ])
 
-    result = app.run(app.create_workspace_session('A', root), [('user', 'write outside')])
+    session = app.create_workspace_session('A', root)
+    app.set_permission_mode(session, 'NoAsk')
+    result = app.run(session, [('user', 'write outside')])
 
     assert [(item.tool_call_id, item.status) for item in results(result)] == [
         ('abs', 'error'), ('link', 'error'),
@@ -161,7 +171,7 @@ def test_write_accepts_source_dotfiles_but_not_arbitrary_hidden_targets(monkeypa
                            'content': 'name: tests\n'}, 'workflow'),
         ]),
         AIMessage(content='done'),
-    ])
+    ], permissions={'allow': [{'tool': 'write', 'path': '${workspace}/.gitignore'}, {'tool': 'write', 'path': '${workspace}/.github/**'}]})
 
     result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'write configs')])
 
@@ -213,7 +223,6 @@ def test_model_supplied_runtime_cannot_change_the_write_workspace(monkeypatch, t
 
 
 def test_write_budget_counts_utf8_bytes_and_rejects_surrogates(monkeypatch, tmp_path):
-    monkeypatch.setenv('NAIYUE_WRITE_MAX_BYTES', '4')
     app, _model = make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('write', {
             'path': 'ok.md', 'content': '中文',
@@ -223,7 +232,7 @@ def test_write_budget_counts_utf8_bytes_and_rejects_surrogates(monkeypatch, tmp_
             'path': 'bad.md', 'content': '\ud800',
         }, 'encoding')]),
         AIMessage(content='bad encoding'),
-    ])
+    ], tools=[create_session_write_tool(settings=WriteSettings(max_input_bytes=4))])
     session = app.create_workspace_session('A', tmp_path)
 
     too_large = app.run(session, [('user', 'write large')])
@@ -243,30 +252,32 @@ def test_obviously_oversized_content_is_rejected_before_encoding(tmp_path):
             raise AssertionError('oversized content should not be encoded')
 
     with pytest.raises(write_module.ToolException, match='size limit'):
-        write_module._write(tmp_path, 'large.md', OversizedText('x' * 5), 4)
+        write_module._write(tmp_path, 'large.md', OversizedText('x' * 5), 4, subject=prepare_file_subject('large.md', tmp_path, 'write'))
     assert not (tmp_path / 'large.md').exists()
 
 
 @pytest.mark.parametrize('value', ['0', '-1', 'abc', '1.5', ''])
-def test_invalid_write_limit_rejects_tool_construction(monkeypatch, value):
-    monkeypatch.setenv('NAIYUE_WRITE_MAX_BYTES', value)
-    with pytest.raises(ValueError, match='write.*limit'):
-        create_session_write_tool()
+def test_invalid_write_limit_rejects_settings(value):
+    with pytest.raises(ValueError, match='max_input_bytes'):
+        WriteSettings(max_input_bytes=value)
 
 
 def test_precommit_io_failure_keeps_original_and_removes_temp(monkeypatch, tmp_path, caplog):
     original = tmp_path / 'existing.md'
     original.write_text('ORIGINAL', encoding='utf-8')
+    failure = OSError('PRIVATE_REPLACE_DETAIL')
 
     def fail_replace(_source, _target):
-        raise OSError('PRIVATE_REPLACE_DETAIL')
+        raise failure
 
     monkeypatch.setattr(write_module.os, 'replace', fail_replace)
     with caplog.at_level(logging.WARNING), pytest.raises(
-        write_module.WriteOutcomeUnknown,
-    ):
-        write_module._write(tmp_path, 'existing.md', 'REPLACEMENT', 1024)
+        write_module.ToolException,
+    ) as caught:
+        write_module._write(tmp_path, 'existing.md', 'REPLACEMENT', 1024, subject=prepare_file_subject('existing.md', tmp_path, 'write'))
 
+    assert caught.value.__cause__ is failure
+    assert 'outcome is unknown' in str(caught.value)
     assert original.read_text(encoding='utf-8') == 'ORIGINAL'
     assert sorted(path.name for path in tmp_path.iterdir()) == ['existing.md']
     assert 'PRIVATE_REPLACE_DETAIL' not in caplog.text
@@ -281,7 +292,7 @@ def test_temp_write_failure_keeps_original_and_returns_tool_error(monkeypatch, t
 
     monkeypatch.setattr(write_module.tempfile, 'NamedTemporaryFile', fail_temp)
     with pytest.raises(write_module.ToolException, match='write.*I/O'):
-        write_module._write(tmp_path, 'existing.md', 'REPLACEMENT', 1024)
+        write_module._write(tmp_path, 'existing.md', 'REPLACEMENT', 1024, subject=prepare_file_subject('existing.md', tmp_path, 'write'))
 
     assert original.read_text(encoding='utf-8') == 'ORIGINAL'
 
@@ -303,7 +314,7 @@ def test_replacing_file_keeps_ordinary_permission_bits(monkeypatch, tmp_path):
     assert stat.S_IMODE(target.stat().st_mode) == 0o750
 
 
-def test_uncertain_commit_stops_run_and_emits_correlated_event(
+def test_uncertain_commit_returns_error_and_emits_correlated_diagnostic(
     monkeypatch, tmp_path, caplog,
 ):
     target = tmp_path / 'case.md'
@@ -312,27 +323,30 @@ def test_uncertain_commit_stops_run_and_emits_correlated_event(
         AIMessage(content='', tool_calls=[call('write', {
             'path': 'case.md', 'content': 'NEW',
         }, 'uncertain')]),
-        AIMessage(content='must not continue'),
+        AIMessage(content='inspect the file before another write'),
     ])
 
     def uncertain_replace(_source, _target):
         raise OSError('PRIVATE_COMMIT_DETAIL')
 
     monkeypatch.setattr(write_module.os, 'replace', uncertain_replace)
-    with caplog.at_level(logging.INFO), pytest.raises(write_module.WriteOutcomeUnknown):
-        app.run(app.create_workspace_session('A', tmp_path), [('user', 'rewrite')])
+    with caplog.at_level(logging.INFO):
+        result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'rewrite')])
 
     assert target.read_text() == 'OLD'
-    assert len(model.seen) == 1
-    assert 'run_failed' in caplog.text
+    assert len(model.seen) == 2
+    assert results(result)[0].status == 'error'
+    assert 'outcome is unknown' in results(result)[0].content
+    assert result['messages'][-1].content == 'inspect the file before another write'
+    assert 'run_completed' in caplog.text
+    assert 'run_failed' not in caplog.text
     assert 'PRIVATE_COMMIT_DETAIL' not in caplog.text
-    events = [record.write_event for record in caplog.records
-              if hasattr(record, 'write_event')]
-    assert [event['event'] for event in events] == [
-        'write_outcome_unknown', 'session_manual_review_required',
-    ]
+    events = [record.tool_error for record in caplog.records if hasattr(record, 'tool_error')]
+    assert len(events) == 1
     assert events[0]['tool_call_id'] == 'uncertain'
-    assert events[0]['run_id'] == events[1]['run_id']
+    assert events[0]['cause_type'] == 'OSError'
+    assert events[0]['run_id']
+    assert 'session_manual_review_required' not in caplog.text
 
 
 def test_same_target_conflict_does_not_silently_overwrite_first_write(
@@ -349,10 +363,10 @@ def test_same_target_conflict_does_not_silently_overwrite_first_write(
 
     monkeypatch.setattr(write_module.os, 'replace', wait_before_replace)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        first = pool.submit(write_module._write, tmp_path, 'same.md', 'FIRST', 1024)
+        first = pool.submit(write_module._write, tmp_path, 'same.md', 'FIRST', 1024, subject=prepare_file_subject('same.md', tmp_path, 'write'))
         assert entered.wait(5)
         with pytest.raises(write_module.ToolException, match='busy'):
-            write_module._write(tmp_path, 'same.md', 'SECOND', 1024)
+            write_module._write(tmp_path, 'same.md', 'SECOND', 1024, subject=prepare_file_subject('same.md', tmp_path, 'write'))
         release.set()
         assert first.result(timeout=5).startswith('write created')
     assert (tmp_path / 'same.md').read_text() == 'FIRST'
@@ -371,10 +385,10 @@ def test_case_variant_target_cannot_bypass_process_conflict(monkeypatch, tmp_pat
 
     monkeypatch.setattr(write_module.os, 'replace', hold_first_write)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        first = pool.submit(write_module._write, tmp_path, 'Case.md', 'FIRST', 1024)
+        first = pool.submit(write_module._write, tmp_path, 'Case.md', 'FIRST', 1024, subject=prepare_file_subject('Case.md', tmp_path, 'write'))
         assert entered.wait(5)
         with pytest.raises(write_module.ToolException, match='busy'):
-            write_module._write(tmp_path, 'case.md', 'SECOND', 1024)
+            write_module._write(tmp_path, 'case.md', 'SECOND', 1024, subject=prepare_file_subject('case.md', tmp_path, 'write'))
         release.set()
         assert first.result(timeout=5) == 'write created 5 bytes'
     assert (tmp_path / 'Case.md').read_text() == 'FIRST'
@@ -393,9 +407,9 @@ def test_different_targets_can_write_while_one_target_is_busy(monkeypatch, tmp_p
 
     monkeypatch.setattr(write_module.os, 'replace', hold_first_write)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        first = pool.submit(write_module._write, tmp_path, 'first.md', 'FIRST', 1024)
+        first = pool.submit(write_module._write, tmp_path, 'first.md', 'FIRST', 1024, subject=prepare_file_subject('first.md', tmp_path, 'write'))
         assert entered.wait(5)
-        assert write_module._write(tmp_path, 'second.md', 'SECOND', 1024) == (
+        assert write_module._write(tmp_path, 'second.md', 'SECOND', 1024, subject=prepare_file_subject('second.md', tmp_path, 'write')) == (
             'write created 6 bytes'
         )
         release.set()
@@ -458,7 +472,8 @@ def test_unknown_write_during_approval_resume_cannot_be_replayed(
             call('read', {'path': str(outside)}, 'read-outside'),
             call('write', {'path': 'case.md', 'content': 'NEW'}, 'write-inside'),
         ]),
-        AIMessage(content='must not continue'),
+        AIMessage(content='inspect the file before another write'),
+        AIMessage(content='continued safely'),
     ], tools=[create_session_read_tool(), create_session_write_tool()])
     session = app.create_workspace_session('A', root)
     pending = app.run(session, [('user', 'read then write')])
@@ -468,9 +483,10 @@ def test_unknown_write_during_approval_resume_cannot_be_replayed(
         raise OSError('PRIVATE_COMMIT_DETAIL')
 
     monkeypatch.setattr(write_module.os, 'replace', unknown_replace)
-    with pytest.raises(write_module.WriteOutcomeUnknown):
+    result = app.resume_tool_approval(session, ['approve'])
+    assert results(result)[-1].status == 'error'
+    assert 'outcome is unknown' in results(result)[-1].content
+    with pytest.raises(application.SessionPendingApprovalError, match='pending'):
         app.resume_tool_approval(session, ['approve'])
-    with pytest.raises(RuntimeError, match='manual review'):
-        app.resume_tool_approval(session, ['approve'])
-    with pytest.raises(RuntimeError, match='manual review'):
-        app.run(session, [('user', 'continue')])
+    continued = app.run(session, [('user', 'continue')])
+    assert continued['messages'][-1].content == 'continued safely'

@@ -1,5 +1,9 @@
 """A truncated model response cannot execute its parsed tool calls."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import logging
 from pathlib import Path
 from types import SimpleNamespace
@@ -56,7 +60,7 @@ def test_truncated_call_gets_error_result_then_model_can_reissue(monkeypatch, ca
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
     app = application.build_local_application(
-        Path('synthetic.json'), tools=[write_probe],
+        Path('synthetic.json'), tools=[ToolSpec(write_probe, write_probe.args_schema, permissions=ToolPermission(default='allow'))],
         system_prompt='', response_format=None,
     )
     session_id = app.create_session('A')
@@ -106,7 +110,7 @@ def test_every_call_in_one_truncated_response_is_rejected(monkeypatch):
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
     app = application.build_local_application(
-        Path('synthetic.json'), tools=[write_probe],
+        Path('synthetic.json'), tools=[ToolSpec(write_probe, write_probe.args_schema, permissions=ToolPermission(default='allow'))],
         system_prompt='', response_format=None,
     )
     result = app.run(app.create_session('A'), [('user', 'probe')])
@@ -139,7 +143,7 @@ def test_claude_context_window_truncation_rejects_tool_through_application(monke
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
     app = application.build_local_application(
-        Path('synthetic.json'), tools=[write_probe],
+        Path('synthetic.json'), tools=[ToolSpec(write_probe, write_probe.args_schema, permissions=ToolPermission(default='allow'))],
         system_prompt='', response_format=None,
     )
     result = app.run(app.create_session('A'), [('user', 'probe')])

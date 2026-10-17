@@ -35,28 +35,32 @@ class StopBoundaryMiddleware(AgentMiddleware):
         control = runtime.context.get('_run_control')
         if control is None or not control.requested:
             return None
-        results = []
-        messages = state['messages']
-        for index in range(len(messages) - 1, -1, -1):
-            if isinstance(messages[index], AIMessage):
-                completed = {m.tool_call_id for m in messages[index + 1:] if isinstance(m, ToolMessage)}
-                pending = [c for c in messages[index].tool_calls if c['id'] not in completed]
-                ids = [c.get('id') for c in pending]
-                if any(not isinstance(identity, str) or not identity for identity in ids):
-                    raise ModelResponseRejected('missing_tool_call_id')
-                if len(set(ids)) != len(ids):
-                    raise ModelResponseRejected('duplicate_tool_call_ids')
-                results = [stop_tool_message(c) for c in pending]
-                break
-        publisher = runtime.context.get('_run_event_publisher')
-        if publisher is not None:
-            from .call_observation import event_label
-            for message in results:
-                name = event_label(message.name)
-                emit_event(publisher, 'tool_call_started', lambda: ToolCallStartedData(message.tool_call_id, name))
-                emit_event(publisher, 'tool_call_finished', lambda: ToolCallFinishedData(
-                    message.tool_call_id, name, 'dispatch', 'not_executed', 'user_stop'))
-        turns = runtime.context.get('_turn_observer')
-        if turns is not None:
-            observe(turns, turns.mark_ready)
-        return {'messages': results, 'run_stopped': True, 'jump_to': 'end'}
+        return finish_stopped_batch(state, runtime)
+
+
+def finish_stopped_batch(state, runtime):
+    results = []
+    messages = state['messages']
+    for index in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[index], AIMessage):
+            completed = {m.tool_call_id for m in messages[index + 1:] if isinstance(m, ToolMessage)}
+            pending = [c for c in messages[index].tool_calls if c['id'] not in completed]
+            ids = [c.get('id') for c in pending]
+            if any(not isinstance(identity, str) or not identity for identity in ids):
+                raise ModelResponseRejected('missing_tool_call_id')
+            if len(set(ids)) != len(ids):
+                raise ModelResponseRejected('duplicate_tool_call_ids')
+            results = [stop_tool_message(c) for c in pending]
+            break
+    publisher = runtime.context.get('_run_event_publisher')
+    if publisher is not None:
+        from .call_observation import event_label
+        for message in results:
+            name = event_label(message.name)
+            emit_event(publisher, 'tool_call_started', lambda: ToolCallStartedData(message.tool_call_id, name))
+            emit_event(publisher, 'tool_call_finished', lambda: ToolCallFinishedData(
+                message.tool_call_id, name, 'dispatch', 'not_executed', 'user_stop'))
+    turns = runtime.context.get('_turn_observer')
+    if turns is not None:
+        observe(turns, turns.mark_ready)
+    return {'messages': results, 'run_stopped': True, 'jump_to': 'end'}

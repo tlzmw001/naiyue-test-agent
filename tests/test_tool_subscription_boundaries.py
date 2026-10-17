@@ -1,17 +1,23 @@
 """Approval, dispatch, guards, and batch skips never imply executor entry."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+from naiyue_test_agent.application import prepare_tool_registry
+
 from threading import Barrier
 from types import SimpleNamespace
 
 import pytest
+from tool_feedback_helpers import fail_tool_dispatch
 from langchain.tools import tool
 from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent.agent_runtime import _record_tool_call
 from naiyue_test_agent.agent_runtime.events import RunStartedData, RunFinishedData
-from naiyue_test_agent.agent_runtime.tool_batch import ToolBatchMiddleware
-from naiyue_test_agent.agent_runtime.tools import create_session_read_tool, create_session_write_tool
-from naiyue_test_agent.agent_runtime.tools.bash import BashOutcomeUnknown
+from naiyue_test_agent.agent_runtime.tool_execution.batch import ToolBatchMiddleware
+from naiyue_test_agent.tools import create_session_read_tool, create_session_write_tool
+from naiyue_test_agent.tools.processes import ProcessCleanupError
 from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions
 from test_application_run_events import ToolModel, make_app
 from test_model_tool_subscriptions import events_of, CALL_METADATA_EVENTS
@@ -60,7 +66,7 @@ def test_truncated_response_returns_original_error_result_without_tool_io(monkey
     model = ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'probe', 'args': {}, 'id': 'truncated-1'},
     ], response_metadata={'finish_reason': 'length'}), AIMessage(content='handled')])
-    app = make_app(monkeypatch, model, [probe])
+    app = make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
     result = app.run(app.create_session('A'), [('user', 'run')])
@@ -85,7 +91,7 @@ def test_parameter_validation_is_error_result_not_executor_success(monkeypatch):
     model = ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'needs_value', 'args': {}, 'id': 'invalid-1'},
     ]), AIMessage(content='handled')])
-    app = make_app(monkeypatch, model, [needs_value])
+    app = make_app(monkeypatch, model, [ToolSpec(needs_value, needs_value.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
     result = app.run(app.create_session('A'), [('user', 'run')])
@@ -101,9 +107,8 @@ def test_fatal_sequential_tool_reports_later_batch_skip(monkeypatch):
     @tool
     def first() -> str:
         """Fail the sequential batch."""
-        raise failure
+        return 'unreachable after the dispatch fault'
 
-    first.metadata = {'naiyue_execution_mode': 'sequential'}
 
     @tool
     def later() -> str:
@@ -115,7 +120,8 @@ def test_fatal_sequential_tool_reports_later_batch_skip(monkeypatch):
         {'name': 'first', 'args': {}, 'id': 'first-1'},
         {'name': 'later', 'args': {}, 'id': 'later-1'},
     ])])
-    app = make_app(monkeypatch, model, [first, later])
+    fail_tool_dispatch(monkeypatch, 'first', failure)
+    app = make_app(monkeypatch, model, [ToolSpec(first, first.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow')), ToolSpec(later, later.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
     with pytest.raises(RuntimeError) as caught:
@@ -140,7 +146,7 @@ def test_parallel_tools_overlap_and_each_pair_has_order(monkeypatch):
         {'name': 'parallel', 'args': {}, 'id': 'parallel-1'},
         {'name': 'parallel', 'args': {}, 'id': 'parallel-2'},
     ]), AIMessage(content='done')])
-    app = make_app(monkeypatch, model, [parallel])
+    app = make_app(monkeypatch, model, [ToolSpec(parallel, parallel.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
     app.run(app.create_session('A'), [('user', 'run')])
@@ -167,7 +173,7 @@ def test_unbound_tool_request_is_not_executed():
         tool_call={'name': 'probe', 'args': {}, 'id': 'wrong'},
         runtime=SimpleNamespace(context={'session_id': 'session', 'run_id': 'run',
                                          '_run_event_publisher': publisher}),
-        state={'messages': [AIMessage(content='', tool_calls=[
+        state={'tool_execution': {'tool_names': ['probe']}, 'messages': [AIMessage(content='', tool_calls=[
             {'name': 'probe', 'args': {}, 'id': 'actual'},
         ])]},
     )
@@ -176,14 +182,14 @@ def test_unbound_tool_request_is_not_executed():
     def handler(req):
         return _record_tool_call.wrap_tool_call(req, lambda _r: called.append(True))
 
-    result = ToolBatchMiddleware([probe]).wrap_tool_call(request, handler)
+    result = ToolBatchMiddleware(prepare_tool_registry([ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])).wrap_tool_call(request, handler)
     publisher.publish('run_finished', RunFinishedData('completed'))
     assert result.status == 'error' and called == []
     assert events_of(events, 'tool_call_finished')[0].data.reason == 'tool_call_mismatch'
 
 
-def test_unknown_bash_outcome_is_event_and_original_exception(monkeypatch):
-    failure = BashOutcomeUnknown('PRIVATE_OUTCOME')
+def test_unconfirmed_process_cleanup_is_event_and_original_exception(monkeypatch):
+    failure = ProcessCleanupError('PRIVATE_OUTCOME')
 
     @tool
     def uncertain() -> str:
@@ -193,10 +199,10 @@ def test_unknown_bash_outcome_is_event_and_original_exception(monkeypatch):
     model = ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'uncertain', 'args': {}, 'id': 'uncertain-1'},
     ])])
-    app = make_app(monkeypatch, model, [uncertain])
+    app = make_app(monkeypatch, model, [ToolSpec(uncertain, uncertain.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
-    with pytest.raises(BashOutcomeUnknown) as caught:
+    with pytest.raises(ProcessCleanupError) as caught:
         app.run(app.create_session('A'), [('user', 'run')])
     assert caught.value is failure
     assert events_of(events, 'tool_call_finished')[0].data.outcome == 'outcome_unknown'

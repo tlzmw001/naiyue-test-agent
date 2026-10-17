@@ -5,6 +5,9 @@ import json
 import logging
 import sys
 from pathlib import Path
+
+from naiyue_test_agent.config_paths import get_data_dir, get_models_path
+from naiyue_test_agent.workspaces import prepare_workspace
 from threading import Thread, Lock
 from uuid import uuid4
 
@@ -14,17 +17,12 @@ from naiyue_test_agent.application import (
     SessionBusyError, SessionManualReviewRequiredError, SessionPendingApprovalError,
 )
 from naiyue_test_agent.application.project_instructions import BASE_SYSTEM_PROMPT
-from naiyue_test_agent.agent_runtime.tools import (
-    create_session_edit_tool, create_session_find_tool, create_session_grep_tool,
-    create_session_ls_tool, create_session_read_tool, create_session_write_tool,
-    create_session_bash_tool,
+from naiyue_test_agent.tools import create_builtin_tools, load_tool_settings
+from naiyue_test_agent.tools.processes import ProcessCleanupError
+from naiyue_test_agent.tools.output import (
+    clear_shell_outputs, preview_shell_outputs,
 )
-from naiyue_test_agent.agent_runtime.tools.write import WriteOutcomeUnknown
-from naiyue_test_agent.agent_runtime.tools.bash import BashOutcomeUnknown
-from naiyue_test_agent.agent_runtime.tools.bash_output import (
-    clear_bash_outputs, preview_bash_outputs,
-)
-from naiyue_test_agent.agent_runtime.tools.read import resolve_workspace_root
+from naiyue_test_agent.tools.read import resolve_workspace_root
 from naiyue_test_agent.model_access import ModelConfigError
 from naiyue_test_agent.application.cli_display import CliEventDisplay
 from naiyue_test_agent.application.cli_async import build_local_application, build_persistent_application
@@ -37,34 +35,14 @@ logger = logging.getLogger(__name__)
 def _print_pending_approvals(result, *, write=print) -> None:
     lines = []
     for index, item in enumerate(result.get('approval_requests', []), start=1):
-        if item['tool_name'] == 'bash':
+        if item['tool_name'] in ('bash', 'powershell'):
             command = json.dumps(item['target'], ensure_ascii=False)
             workspace = json.dumps(item['workspace'], ensure_ascii=False)
-            lines.append(f"待审批 {index}: bash 工作区={workspace} 命令={command}")
+            lines.append(f"待审批 {index}: {item['tool_name']} 工作区={workspace} 命令={command}")
         else:
             lines.append(f"待审批 {index}: {item['tool_name']} → {item['target']}")
     if result.get('approval_requests'):
         lines.append('单项使用 :approve 或 :deny；多项使用 :review approve reject ...')
-    if lines:
-        write('\n'.join(lines))
-
-
-def _print_bash_partial_output(error: BashOutcomeUnknown, *, write=print) -> None:
-    lines = []
-    if error.partial_stdout or error.partial_stderr:
-        lines.append('已捕获部分输出（可能不完整，不能据此判断命令是否完成）：')
-        if error.output_truncated:
-            lines.append('输出过长，仅保留各流末尾')
-        if error.partial_stdout:
-            lines.append('stdout末尾=' + json.dumps(error.partial_stdout, ensure_ascii=False))
-        if error.partial_stderr:
-            lines.append('stderr末尾=' + json.dumps(error.partial_stderr, ensure_ascii=False))
-    if error.output_paths:
-        lines.append('已保存输出：' + '; '.join(
-            f'{stream}={path}' for stream, path in error.output_paths.items()
-        ))
-    if error.archive_reason is not None:
-        lines.append(f'完整输出保存不全（{error.archive_reason}）')
     if lines:
         write('\n'.join(lines))
 
@@ -93,12 +71,10 @@ def _run_and_print(app, session_id: str, text: str, *, display=None) -> bool:
     except (SessionBusyError, SessionPendingApprovalError):
         write('当前会话尚不能接收新请求，待发送内容保留')
         return False
-    except (WriteOutcomeUnknown, BashOutcomeUnknown) as error:
+    except ProcessCleanupError as error:
         logger.error('cli_run_failed error_type=%s', type(error).__name__)
         if display is None or not display.terminal_displayed:
             write('工具副作用无法确认；请先检查执行结果，勿直接重试')
-        if isinstance(error, BashOutcomeUnknown):
-            _print_bash_partial_output(error, write=write)
         return True
     except Exception as error:
         logger.error('cli_run_failed error_type=%s', type(error).__name__)
@@ -134,12 +110,10 @@ def _resume_and_print(app, session_id: str, decisions: list[str], *, display=Non
     except SessionManualReviewRequiredError:
         write('本会话工具副作用待核对；请检查执行结果后重启会话')
         return
-    except (WriteOutcomeUnknown, BashOutcomeUnknown) as error:
+    except ProcessCleanupError as error:
         logger.error('cli_approval_failed error_type=%s', type(error).__name__)
         if display is None or not display.terminal_displayed:
             write('工具副作用无法确认；请先检查执行结果，勿直接重试')
-        if isinstance(error, BashOutcomeUnknown):
-            _print_bash_partial_output(error, write=write)
         return
     except Exception as error:
         logger.error('cli_approval_failed error_type=%s', type(error).__name__)
@@ -188,66 +162,74 @@ def _pick_session(storage, selected_id):
 def main(argv: list[str] | None = None) -> int:
     emit = print
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', type=Path, required=True)
+    parser.add_argument('--config', type=Path, default=get_models_path())
     parser.add_argument('--workspace', type=Path)
     parser.add_argument('--no-session', action='store_true', help='Use an ephemeral in-memory session')
-    parser.add_argument('--session-db', type=Path, help='Override the private session database path')
+    parser.add_argument('--session-db', type=Path, help='Override the session database path')
+    parser.add_argument('--new-workspace', action='store_true', help='Give a copied workspace a new identity')
     parser.add_argument('--resume', nargs='?', const='', help='Choose a session, or resume the exact ID')
-    parser.add_argument('--host-bash', action='store_true',
-                        help='Expose approval-gated Bash with current user host access')
     args = parser.parse_args(argv)
     if args.no_session and (args.resume is not None or args.session_db is not None):
         parser.error('--no-session conflicts with --resume and --session-db')
-    if args.host_bash and args.workspace is None and args.resume is None:
-        parser.error('--host-bash requires --workspace')
+
+    if args.new_workspace and (args.no_session or args.session_db is not None or args.resume is not None):
+        parser.error('--new-workspace conflicts with --no-session, --session-db and --resume')
 
     storage = None
     app = None
     restored = None
+    history = None
     try:
+        tool_settings = load_tool_settings()
+        args.workspace = resolve_workspace_root(args.workspace or Path.cwd())
         if not args.no_session:
-            db = args.session_db or Path.home() / '.naiyue-test-agent' / 'sessions.sqlite'
-            if args.resume is not None and not db.expanduser().exists() and not db.expanduser().is_symlink():
+            location = prepare_workspace(args.workspace, data_dir=get_data_dir(tool_settings.storage),
+                database_path=args.session_db, new_workspace=args.new_workspace, create=args.resume is None)
+            if args.resume is not None and (location is None or not location.database_path.exists()):
                 if args.resume == '':
                     print('暂无历史会话')
                     return 0
                 raise SessionPersistenceError('session_not_found')
-            storage = SessionStorage(db)
+            storage = SessionStorage(location.database_path)
+            storage.bind_workspace(location.workspace_id, location.root)
             if args.resume is not None:
                 selected = _pick_session(storage, args.resume)
                 if selected is None:
                     storage.close()
                     return 0
                 restored = storage.get(selected)
-                if restored['state'] != 'ready':
-                    print(f'该会话状态为 {restored["state"]}，首片不能自动恢复执行')
-                    raise SessionPersistenceError('session_recovery_blocked')
-                if args.workspace is not None and str(resolve_workspace_root(args.workspace)) != restored['workspace_root']:
+                if str(args.workspace) != restored['workspace_root']:
                     raise SessionPersistenceError('workspace_mismatch')
-                args.workspace = Path(restored['workspace_root']) if restored['workspace_root'] else None
-        if args.host_bash and args.workspace is None:
-            raise ValueError('Bash requires a workspace')
-        tools = ([create_session_read_tool(), create_session_ls_tool(),
-                  create_session_find_tool(), create_session_grep_tool(),
-                  create_session_write_tool(), create_session_edit_tool(),
-                  *([create_session_bash_tool()] if args.host_bash else [])]
-                 if args.workspace is not None else [])
+        tools = create_builtin_tools(tool_settings)
+        initial_tools = [spec.tool.name for spec in tools if spec.tool.name not in ('bash', 'powershell')]
         factory = build_local_application if storage is None else build_persistent_application
         options = {} if storage is None else {'storage': storage}
         app = factory(
             args.config, tools=tools, system_prompt=BASE_SYSTEM_PROMPT,
-            response_format=None, **options,
+            response_format=None, initial_active_tools=initial_tools, settings=tool_settings, **options,
         )
-        session_id = (app.restore_session(restored['session_id']) if restored is not None else
-                      app.create_workspace_session(app.default_model_id, args.workspace)
-                      if args.workspace is not None else app.create_session(app.default_model_id))
-        display = (CliEventDisplay(session_id)
+        if restored is None:
+            session_id = app.create_workspace_session(app.default_model_id, args.workspace)
+        else:
+            session_id = restored['session_id']
+            if restored['state'] == 'ready':
+                try:
+                    app.restore_session(session_id)
+                except (SessionPersistenceError, ModelConfigError, ValueError):
+                    history = app.get_session_history(session_id)
+            else:
+                history = app.get_session_history(session_id)
+        display = (CliEventDisplay(session_id, progress_settings=tool_settings.progress)
                    if callable(getattr(app, 'subscribe_events', None)) else None)
-        unsubscribe = app.subscribe_events(display) if display is not None else None
+        unsubscribe = app.subscribe_events(display) if display is not None and history is None else None
         emit = display.write if display is not None else print
     except Exception as error:
         logger.error('cli_initialization_failed error_type=%s', type(error).__name__)
         emit(f'初始化失败（{type(error).__name__}）')
+        if str(error) == 'workspace_id_conflict':
+            emit('检测到工作区副本；请使用 --new-workspace 为副本创建独立历史')
+        elif str(error) == 'storage_in_use':
+            emit('该工作区数据库已被其他服务占用，请先关闭该服务')
         if app is not None and callable(getattr(app, 'close', None)):
             try:
                 app.close()
@@ -261,14 +243,46 @@ def main(argv: list[str] | None = None) -> int:
     try:
         emit(f'当前模型：{restored["model_id"] if restored else app.default_model_id}')
         emit(f'{"持久会话" if storage is not None else "临时会话"}：{session_id}')
-        if args.host_bash:
-            emit('已启用宿主机 Bash：每条命令需审批；命令可访问当前用户可访问的文件和网络，工作区不是沙箱。')
         interactive = sys.stdin.isatty()
+        if history is not None:
+            display.show_history(history)
+            kind, actions = history['recovery']['kind'], history['recovery']['actions']
+            action = ('restore_approval' if kind == 'pending_approval' and 'restore_approval' in actions else
+                      'continue' if kind == 'interrupted_execution' and 'continue' in actions else None)
+            if action is None:
+                return 0
+            try:
+                app.recover_session(session_id, checkpoint_id=history['checkpoint_id'], action=action)
+            except Exception as error:
+                logger.error('cli_session_recovery_failed error_type=%s', type(error).__name__)
+                if action != 'restore_approval' or str(error) != 'approval_restore_unavailable' or not interactive:
+                    emit('会话恢复未确认；已保留历史，请重新打开会话核对当前状态。')
+                    return 1
+                emit('原审批条件已变化；输入 continue 放弃旧批次后继续沟通，空行退出。')
+                try:
+                    if input('恢复操作：').strip() != 'continue':
+                        return 0
+                    current = app.get_session_history(session_id)
+                    app.recover_session(session_id, checkpoint_id=current['checkpoint_id'], action='continue')
+                    action = 'continue'
+                except EOFError:
+                    return 0
+                except Exception as fault:
+                    logger.error('cli_session_recovery_failed error_type=%s', type(fault).__name__)
+                    emit('会话恢复未确认；已保留历史，请重新打开会话核对当前状态。')
+                    return 1
+            unsubscribe = app.subscribe_events(display)
+            if action == 'restore_approval':
+                emit('已恢复待审批批次，工具尚未执行。用 :review 为每项提供 approve/reject。')
+                for item in app.pending_tool_approvals(session_id):
+                    emit(f'{item["tool_name"]}：{item["target"]}')
+            else:
+                emit('旧运行已结束；下一条新消息才会启动运行。')
         output_clear_plan = None
         pending_input = []
         pending_lock = Lock()
         stopped_input = False
-        output_workspace = resolve_workspace_root(args.workspace) if args.workspace is not None else None
+        output_workspace = args.workspace
 
         def start_run(text: str, pending_count=0) -> None:
             nonlocal worker
@@ -310,8 +324,8 @@ def main(argv: list[str] | None = None) -> int:
             if command == ':quit':
                 if worker is not None:
                     worker.join()
-                if args.workspace is not None and app.pending_tool_approvals(session_id):
-                    emit('待审批未处理；退出后内存审批状态无法恢复')
+                if app.pending_tool_approvals(session_id):
+                    emit('待审批未处理；下次打开会话时将重新核对恢复条件')
                 return 0
             if command in (':pending', ':send'):
                 if command == ':pending':
@@ -332,39 +346,35 @@ def main(argv: list[str] | None = None) -> int:
                     emit('用法：:outputs clear；确认后输入 :outputs clear confirm')
                     output_clear_plan = None
                     continue
-                if output_workspace is None:
-                    emit('当前没有工作区，无法清理 Bash 输出')
-                    output_clear_plan = None
-                    continue
                 if worker is not None and worker.is_alive():
-                    emit('当前运行尚未结束，不能清理 Bash 输出')
+                    emit('当前运行尚未结束，不能清理 Shell 输出')
                     output_clear_plan = None
                     continue
                 try:
                     if action == 'clear':
-                        output_clear_plan = preview_bash_outputs(output_workspace)
+                        output_clear_plan = preview_shell_outputs(output_workspace)
                         if output_clear_plan.file_count:
                             emit(f'将清理 {output_clear_plan.file_count} 个文件，'
                                   f'{output_clear_plan.total_bytes} 字节；'
                                   '确认请输入 :outputs clear confirm')
                         else:
-                            emit('没有可清理的 Bash 输出')
+                            emit('没有可清理的 Shell 输出')
                             output_clear_plan = None
                     elif output_clear_plan is None:
                         emit('请先输入 :outputs clear 查看待清理文件')
                     else:
-                        count, size = clear_bash_outputs(output_clear_plan)
+                        count, size = clear_shell_outputs(output_clear_plan)
                         output_clear_plan = None
                         emit(f'已清理 {count} 个文件，{size} 字节')
                 except (OSError, ValueError, UnicodeError) as error:
                     output_clear_plan = None
                     logger.warning('bash_output_clear_failed error_type=%s', type(error).__name__)
-                    emit('Bash 输出目录异常或预览后已变化，未完成清理')
+                    emit('Shell 输出目录异常或预览后已变化，未完成清理')
                 continue
             if command in (':approve', ':deny', ':review'):
                 if worker is not None and worker.is_alive():
                     worker.join()
-                pending = app.pending_tool_approvals(session_id) if args.workspace is not None else []
+                pending = app.pending_tool_approvals(session_id)
                 if not pending:
                     emit('当前没有待审批的工具调用')
                     continue
@@ -420,7 +430,7 @@ def main(argv: list[str] | None = None) -> int:
                     emit('请输入 Follow-up 内容')
                     continue
                 text = rest[0].strip()
-                if args.workspace is not None and app.pending_tool_approvals(session_id):
+                if app.pending_tool_approvals(session_id):
                     emit('当前有待审批工具调用，请先处理审批')
                     continue
                 if worker is not None and worker.is_alive():
@@ -443,7 +453,7 @@ def main(argv: list[str] | None = None) -> int:
                 pending_input.append(line)
                 emit('待发送内容已保留：' + line)
                 continue
-            if args.workspace is not None and app.pending_tool_approvals(session_id):
+            if app.pending_tool_approvals(session_id):
                 emit('当前有待审批工具调用，请先处理审批')
                 continue
             if worker is not None and worker.is_alive():

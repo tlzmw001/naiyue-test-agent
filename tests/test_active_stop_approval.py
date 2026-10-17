@@ -1,12 +1,14 @@
 """Stop while approval preparation is waiting must not leave a stale interrupt."""
 
+from naiyue_test_agent.tools import ToolSpec
+
 import asyncio
 from threading import Event
 
 from langchain.tools import tool
 from langchain_core.messages import ToolMessage
 
-from naiyue_test_agent.agent_runtime.tool_approval import attach_approval, ApprovalPolicy, ApprovalReview, OneUseApprovalGrants
+from naiyue_test_agent.tools.permissions import ToolPermission
 from test_async_application import StreamingToolModel, make_app, call
 
 
@@ -20,15 +22,13 @@ def test_stop_during_approval_hook_finishes_without_executing_tool(monkeypatch, 
             executed.set()
             return 'unexpected'
 
-        def when(request):
-            entered.set()
-            assert release.wait(5)
-            return True
+        class WaitingPermission(ToolPermission):
+            def default_decision(self, subject):
+                entered.set()
+                assert release.wait(5)
+                return 'ask'
 
-        attach_approval(gated, ApprovalPolicy(when=when, description='Synthetic approval',
-            review=lambda root, args: ApprovalReview(target='synthetic', grant_value='synthetic', workspace=root),
-            grant_factory=OneUseApprovalGrants))
-        app = await make_app(monkeypatch, StreamingToolModel(replies=[call('gated', {})]), [gated])
+        app = await make_app(monkeypatch, StreamingToolModel(replies=[call('gated', {})]), [ToolSpec(gated, gated.args_schema, permissions=WaitingPermission())])
         session = await app.acreate_workspace_session('A', tmp_path)
         task = asyncio.create_task(app.arun(session, [('user', 'start')]))
         try:

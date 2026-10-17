@@ -41,11 +41,11 @@ class AsyncSessionMixin:
         return await arun_steps(self._run_steps(agent, session_id, messages,
             run_id=run_id, async_mode=True, max_concurrency=max_concurrency))
 
-    async def aresume_tool_approval(self, agent, session_id, decisions, *, run_id=None, max_concurrency=4):
+    async def aresume_tool_approval(self, agent, session_id, decisions, *, run_id=None, max_concurrency=4, remember_approved=None):
         if type(max_concurrency) is not int or max_concurrency <= 0:
             raise ValueError('Tool concurrency must be a positive integer')
         return await arun_steps(self._resume_steps(agent, session_id, decisions,
-            run_id=run_id, async_mode=True, max_concurrency=max_concurrency))
+            run_id=run_id, async_mode=True, max_concurrency=max_concurrency, remember_approved=remember_approved))
 
     async def _afinish_run(self, session_id, run_id, session, agent, observation, primary_error):
         secondary = None
@@ -75,6 +75,7 @@ class AsyncSessionMixin:
                     session['steering_open'] = False
                     session['stop_requested'] = False
                     session['run_project_instructions'] = None
+                    session['run_review_project_instructions'] = None
                     session['steering_queue'].clear()
                     session['follow_up_queue'].clear()
                     self._active_runs.pop(session_id, None)

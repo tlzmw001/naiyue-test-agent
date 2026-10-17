@@ -9,12 +9,12 @@ from xml.sax.saxutils import escape, quoteattr
 import yaml
 
 from naiyue_test_agent.application.project_instructions import load_workspace_instructions
-from naiyue_test_agent.agent_runtime.tools.read import MAX_READ_BYTES
 
 
 logger = logging.getLogger(__name__)
 _NAME = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*\Z')
 _SOURCES = ('agents', 'claude')
+_MAX_SKILL_SOURCE_BYTES = 64 * 1024
 
 
 class _SkillError(ValueError):
@@ -75,8 +75,8 @@ def _report(diagnostics: list, source: str, reason: str, **details) -> None:
 
 def _metadata(path: Path) -> dict:
     with path.open('rb') as stream:
-        content = stream.read(MAX_READ_BYTES + 1)
-    if len(content) > MAX_READ_BYTES:
+        content = stream.read(_MAX_SKILL_SOURCE_BYTES + 1)
+    if len(content) > _MAX_SKILL_SOURCE_BYTES:
         raise _SkillError('skill_too_large')
     text = content.decode('utf-8-sig')
     if any(ord(char) < 32 and char not in '\t\r\n' or ord(char) == 127 for char in text):
@@ -191,4 +191,5 @@ def prepare_run_resources(workspace_root: Path | None, *, enable_skills=True):
     instructions = load_workspace_instructions(workspace_root)
     catalog = discover_project_skills(workspace_root) if enable_skills else SkillCatalog((), ())
     index = format_skill_catalog(catalog)
-    return (instructions or '') + (index or '') or None, catalog.read_resource_roots
+    return {'prompt': (instructions or '') + (index or '') or None,
+            'project_instructions': instructions, 'read_resource_roots': catalog.read_resource_roots}

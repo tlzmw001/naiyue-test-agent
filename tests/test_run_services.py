@@ -63,5 +63,5 @@ def test_context_projection_rejects_mismatched_run(session_id, run_id):
     )
     with bind_run_services(services):
         context = make_invocation_context(session_id, run_id, None, None, ())
-        assert context == {'session_id': session_id, 'run_id': run_id}
+        assert context == {'session_id': session_id, 'run_id': run_id, 'agent_path': 'root'}
         assert current_run_services() is services

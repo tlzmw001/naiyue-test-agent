@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from threading import Barrier, Thread
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from naiyue_test_agent.application.cli_display import CliEventDisplay
 
@@ -29,6 +29,22 @@ def display():
     view.begin_call()
     view(event('run_started', 1, mode='message'))
     return view, lines
+
+
+def test_readonly_history_projects_all_roles_and_escapes_terminal_controls():
+    lines = []
+    view = CliEventDisplay('session', writer=lines.append)
+    view.show_history({'messages': [HumanMessage(content='saved\x1b[31m', id='h'),
+        AIMessage(content='', id='a', tool_calls=[{'id': 'call', 'name': 'read', 'args': {'path': 'x'}}]),
+        ToolMessage(content='saved result', id='result', tool_call_id='call'),
+        AIMessage(content=[{'type': 'text', 'text': 'caption'}, {'type': 'image', 'base64': 'PRIVATE_IMAGE'}], id='image')],
+        'recovery': {'kind': 'interrupted_execution', 'reason': 'previous_run_unfinished',
+                     'unconfirmed_tool_call_ids': ['missing']}})
+    output = '\n'.join(lines)
+    assert '[human]' in output and 'saved result' in output and 'caption' in output
+    assert '\x1b' not in output and '\\x1b' in output and 'PRIVATE_IMAGE' not in output
+    assert '结果未确认：missing' in output and '非文本内容' in output
+    assert not view.terminal_displayed and view._run_id is None and view._tools == {}
 
 
 def test_messages_are_immediate_and_result_is_not_reprinted():
@@ -81,7 +97,7 @@ def test_failed_terminal_does_not_erase_previous_reply():
     view, lines = display()
     view(message(2, text='first reply'))
     view(event('run_finished', 3, status='failed', manual_review_required=True,
-               failure=SimpleNamespace(error_type='WriteOutcomeUnknown')))
+               failure=SimpleNamespace(error_type='ProcessCleanupError')))
     assert 'first reply' in lines
     assert '工具副作用无法确认' in '\n'.join(lines)
 
@@ -168,3 +184,49 @@ def test_registered_control_unknown_event_has_an_explicit_display():
     publisher.publish('control_outcome_unknown', ControlData('c', 'steering',
                       boundary='message_state', reason='message_state_unconfirmed'))
     assert '未确认交付或生效' in '\n'.join(lines)
+
+
+def test_progress_is_immediate_escaped_and_closed_by_terminal(monkeypatch):
+    view, lines = display()
+    view(event('tool_call_started', 2, tool_call_id='t', tool_name='bash', boundary='dispatch'))
+    view(event('tool_progress', 3, batch_id='a', tool_call_id='t', tool_name='bash',
+        activity='queued', phase='batch_wait', completed=None, total=None, unit=None, text=''))
+    view(event('tool_progress', 4, batch_id='a', tool_call_id='t', tool_name='bash',
+        activity='running', phase='process_output', completed=8, total=None, unit='bytes',
+        text='real\x1b[31m output'))
+    assert '排队' in '\n'.join(lines) and '8 bytes' in '\n'.join(lines)
+    assert 'real\\x1b[31m output' in '\n'.join(lines) and '\x1b' not in '\n'.join(lines)
+    view(event('control_accepted', 5, kind='stop'))
+    assert '等待收尾' in '\n'.join(lines) and not view.terminal_displayed
+    view(event('tool_call_finished', 6, tool_call_id='t', tool_name='bash', outcome='success'))
+    count = len(lines)
+    view(event('tool_progress', 7, batch_id='a', tool_call_id='t', tool_name='bash',
+        activity='running', phase='process_output', completed=9, total=None, unit='bytes', text='LATE'))
+    assert len(lines) == count and 'LATE' not in '\n'.join(lines)
+
+
+def test_cli_coalesces_same_phase_and_flushes_latest_before_finished(monkeypatch):
+    import naiyue_test_agent.application.cli_display as module
+    clock = [0.0]
+    monkeypatch.setattr(module, 'monotonic', lambda: clock[0])
+    view, lines = display()
+    view(event('tool_call_started', 2, tool_call_id='t', tool_name='probe', boundary='dispatch'))
+    for index in range(3, 8):
+        view(event('tool_progress', index, batch_id='a', tool_call_id='t', tool_name='probe',
+            activity='running', phase='scan', completed=index, total=None, unit='entries', text=str(index)))
+    assert len([line for line in lines if 'entries' in line]) == 1
+    view(event('tool_call_finished', 8, tool_call_id='t', tool_name='probe', outcome='success'))
+    assert len([line for line in lines if 'entries' in line]) == 2
+    assert '7 entries' in lines[-2] and '处理完成' in lines[-1]
+
+
+def test_cli_ignores_older_unseen_progress_and_reports_unfinished_call_as_unconfirmed():
+    view, lines = display()
+    view(event('tool_call_started', 2, tool_call_id='t', tool_name='bash', boundary='dispatch'))
+    values = dict(batch_id='a', tool_call_id='t', tool_name='bash', activity='running',
+                  phase='scan', completed=3, total=None, unit='entries', text='CURRENT')
+    view(event('tool_progress', 5, **values))
+    view(event('tool_progress', 4, **{**values, 'phase': 'old', 'text': 'OLD'}))
+    view(event('run_finished', 6, status='stopped', manual_review_required=False, failure=None))
+    assert 'OLD' not in '\n'.join(lines)
+    assert '状态未确认' in '\n'.join(lines) and '已停止' in lines[-1]

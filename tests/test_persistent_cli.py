@@ -1,5 +1,6 @@
 """CLI persistence is default; temporary and resume paths are explicit."""
 
+import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -24,7 +25,9 @@ def test_default_creates_persistent_database(monkeypatch, tmp_path, capsys):
     lines = iter(['q', ':quit'])
     monkeypatch.setattr('builtins.input', lambda _p='': next(lines))
     assert cli.main(['--config', 'unused']) == 0
-    assert (tmp_path / '.naiyue-test-agent' / 'sessions.sqlite').is_file()
+    identity = json.loads((tmp_path / '.naiyue/workspace.json').read_text())['workspace_id']
+    assert (tmp_path / '.naiyue-test-agent/data/workspaces' / identity / 'sessions.sqlite').is_file()
+    assert not (tmp_path / '.naiyue-test-agent/sessions.sqlite').exists()
     assert '持久会话' in capsys.readouterr().out
 
 
@@ -60,9 +63,12 @@ def test_temporary_conflicts_are_rejected_before_storage(extra, tmp_path, monkey
 def test_resume_non_tty_lists_all_without_loading_model(monkeypatch, tmp_path, capsys):
     from naiyue_test_agent.application.session_storage import SessionStorage
     db = tmp_path / 'sessions.sqlite'
+    from naiyue_test_agent.workspaces import prepare_workspace
+    location = prepare_workspace(tmp_path, data_dir=tmp_path / 'data', database_path=db)
     with SessionStorage(db) as storage:
-        storage.create('one', {'thread_id': 't1', 'model_id': 'A', 'workspace_root': None})
-        storage.create('two', {'thread_id': 't2', 'model_id': 'B', 'workspace_root': tmp_path})
+        storage.bind_workspace(location.workspace_id, location.root)
+        storage.create('one', {'thread_id': 't1', 'model_id': 'A', 'workspace_root': tmp_path, 'active_tool_names': (), 'permission_mode': 'Default'})
+        storage.create('two', {'thread_id': 't2', 'model_id': 'B', 'workspace_root': tmp_path, 'active_tool_names': (), 'permission_mode': 'Default'})
     def unexpected(*_a):
         raise AssertionError('must not load model catalog for list')
     monkeypatch.setattr(application, 'load_model_catalog', unexpected)
@@ -78,8 +84,11 @@ def test_resume_non_tty_lists_all_without_loading_model(monkeypatch, tmp_path, c
 def test_picker_selects_without_creating_new_session(monkeypatch, tmp_path, capsys):
     from naiyue_test_agent.application.session_storage import SessionStorage
     db = tmp_path / 'sessions.sqlite'
+    from naiyue_test_agent.workspaces import prepare_workspace
+    location = prepare_workspace(tmp_path, data_dir=tmp_path / 'data', database_path=db)
     with SessionStorage(db) as storage:
-        storage.create('saved', {'thread_id': 'thread', 'model_id': 'A', 'workspace_root': None})
+        storage.bind_workspace(location.workspace_id, location.root)
+        storage.create('saved', {'thread_id': 'thread', 'model_id': 'A', 'workspace_root': tmp_path, 'active_tool_names': (), 'permission_mode': 'Default'})
     configure(monkeypatch)
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
     lines = iter(['invalid', '1', ':quit'])
@@ -112,8 +121,11 @@ def test_direct_resume_continues_same_session(monkeypatch, tmp_path, capsys):
 def test_picker_cancel_does_not_load_model_or_add_record(monkeypatch, tmp_path, capsys):
     from naiyue_test_agent.application.session_storage import SessionStorage
     db = tmp_path / 'sessions.sqlite'
+    from naiyue_test_agent.workspaces import prepare_workspace
+    location = prepare_workspace(tmp_path, data_dir=tmp_path / 'data', database_path=db)
     with SessionStorage(db) as storage:
-        storage.create('saved', {'thread_id': 'thread', 'model_id': 'A', 'workspace_root': None})
+        storage.bind_workspace(location.workspace_id, location.root)
+        storage.create('saved', {'thread_id': 'thread', 'model_id': 'A', 'workspace_root': tmp_path, 'active_tool_names': (), 'permission_mode': 'Default'})
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
     monkeypatch.setattr('builtins.input', lambda _p='': '')
     monkeypatch.setattr(application, 'load_model_catalog', lambda _p: (_ for _ in ()).throw(AssertionError()))
@@ -149,3 +161,136 @@ def test_broken_database_symlink_is_not_reported_as_empty_history(monkeypatch, t
     assert cli.main(['--config', 'unused', '--session-db', str(db), '--resume']) == 1
     assert '暂无历史会话' not in capsys.readouterr().out
     assert db.is_symlink() and not target.exists()
+
+
+def test_restricted_resume_prints_history_without_reading_input_or_running_model(monkeypatch, tmp_path, capsys):
+    from naiyue_test_agent.application.session_storage import SessionStorage
+    configure(monkeypatch)
+    db = tmp_path / 'sessions.sqlite'
+    lines = iter(['saved request', ':quit'])
+    monkeypatch.setattr('builtins.input', lambda _p='': next(lines))
+    assert cli.main(['--session-db', str(db)]) == 0
+    capsys.readouterr()
+    with SessionStorage(db) as storage:
+        row = storage.list_sessions()[0]
+        sid = row['session_id']
+        storage.finish_run(sid, 'running', row['checkpoint_id'], '', None)
+        storage.connection.execute('UPDATE naiyue_sessions SET active_tool_names_json=? WHERE session_id=?', ('["removed"]', sid))
+        storage.connection.commit()
+        before = tuple(storage.connection.iterdump())
+    def forbidden(*_a, **_k):
+        raise AssertionError('Read-only history must not read input or call a model')
+    monkeypatch.setattr('builtins.input', forbidden)
+    monkeypatch.setattr(ToolModel, '_astream', forbidden)
+    assert cli.main(['--session-db', str(db), '--resume', sid]) == 0
+    output = capsys.readouterr().out
+    assert '只读历史' in output and 'saved request' in output and 'answer' in output
+    assert 'saved_configuration_unavailable' in output and '本次运行完成' not in output
+    with SessionStorage(db) as storage:
+        assert tuple(storage.connection.iterdump()) == before
+
+
+def test_interactive_auto_recovery_waits_for_new_input_before_running(monkeypatch, tmp_path, capsys):
+    from naiyue_test_agent.application.session_storage import SessionStorage
+    from test_persistent_sessions import build
+    configure(monkeypatch)
+    db = tmp_path / 'sessions.sqlite'
+    lines = iter(['saved request', ':quit'])
+    monkeypatch.setattr('builtins.input', lambda _p='': next(lines))
+    assert cli.main(['--session-db', str(db)]) == 0
+    with SessionStorage(db) as storage:
+        row = storage.list_sessions()[0]
+        storage.finish_run(row['session_id'], 'failed', row['checkpoint_id'], '', 'failed')
+    capsys.readouterr()
+    monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
+    lines = iter(['new request', ':quit'])
+    monkeypatch.setattr('builtins.input', lambda _p='': next(lines))
+    assert cli.main(['--session-db', str(db), '--resume', row['session_id']]) == 0
+    output = capsys.readouterr().out
+    assert '只读历史' in output and '下一条新消息才会启动运行' in output
+    assert output.count('本次运行完成') == 1
+    with SessionStorage(db) as storage:
+        app = build(monkeypatch, storage)
+        history = app.get_session_history(row['session_id'])
+        assert [m.content for m in history['messages']] == ['saved request', 'answer', 'new request', 'answer']
+
+
+def test_open_then_quit_recovers_without_model_or_new_user_message(monkeypatch, tmp_path, capsys):
+    from naiyue_test_agent.application.session_storage import SessionStorage
+    configure(monkeypatch)
+    db = tmp_path / 'sessions.sqlite'
+    lines = iter(['saved', ':quit'])
+    monkeypatch.setattr('builtins.input', lambda _p='': next(lines))
+    assert cli.main(['--session-db', str(db)]) == 0
+    with SessionStorage(db) as storage:
+        row = storage.list_sessions()[0]
+        storage.finish_run(row['session_id'], 'failed', row['checkpoint_id'], '', 'failed')
+        before = tuple(storage.connection.iterdump())
+    capsys.readouterr()
+    monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr('builtins.input', lambda _p='': ':quit')
+    assert cli.main(['--session-db', str(db), '--resume', row['session_id']]) == 0
+    assert '本次运行完成' not in capsys.readouterr().out
+    with SessionStorage(db) as storage:
+        saved = storage.get(row['session_id'])
+        assert saved['state'] == 'ready' and saved['last_run_status'] == 'recovered'
+        assert saved['checkpoint_id'] != row['checkpoint_id']
+
+
+@pytest.mark.parametrize('decision', ['approve', 'reject'])
+def test_cli_cold_approval_has_no_extra_restore_prompt(monkeypatch, tmp_path, capsys, decision):
+    from naiyue_test_agent.application.session_storage import SessionStorage
+    root = tmp_path / 'workspace'
+    root.mkdir()
+    outside = tmp_path / 'external'
+    outside.write_text('external input')
+    db = tmp_path / 'sessions.sqlite'
+    model = ToolModel(responses=[AIMessage(content='', tool_calls=[
+        {'name': 'read', 'args': {'path': str(outside)}, 'id': 'external-call'}])])
+    monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
+    lines = iter(['read external', ':quit'])
+    monkeypatch.setattr('builtins.input', lambda _p='': next(lines))
+    monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: False))
+    assert cli.main(['--workspace', str(root), '--session-db', str(db)]) == 0
+    with SessionStorage(db) as storage:
+        sid = storage.list_sessions()[0]['session_id']
+    capsys.readouterr()
+    model = ToolModel(responses=[AIMessage(content='after approval')])
+    lines = iter([':review ' + decision, ':quit'])
+    assert cli.main(['--workspace', str(root), '--session-db', str(db), '--resume', sid]) == 0
+    output = capsys.readouterr().out
+    assert '已恢复待审批批次' in output and 'after approval' in output
+    assert '输入 continue' not in output
+    with SessionStorage(db) as storage:
+        assert storage.get(sid)['state'] == 'ready'
+
+
+@pytest.mark.parametrize('choice', ['continue', ''])
+def test_cli_changed_approval_requires_explicit_choice_to_abandon(monkeypatch, tmp_path, capsys, choice):
+    from naiyue_test_agent.application.session_storage import SessionStorage
+    root = tmp_path / 'workspace'
+    root.mkdir()
+    outside = tmp_path / 'external'
+    outside.write_text('original')
+    db = tmp_path / 'sessions.sqlite'
+    model = ToolModel(responses=[AIMessage(content='', tool_calls=[
+        {'name': 'read', 'args': {'path': str(outside)}, 'id': 'external-call'}])])
+    monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
+    monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: False))
+    lines = iter(['read external', ':quit'])
+    monkeypatch.setattr('builtins.input', lambda _p='': next(lines))
+    options = ['--workspace', str(root), '--session-db', str(db)]
+    assert cli.main(options) == 0
+    with SessionStorage(db) as storage:
+        row = storage.list_sessions()[0]
+    outside.unlink()
+    outside.symlink_to(tmp_path / 'other')
+    capsys.readouterr()
+    configure(monkeypatch)
+    monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
+    lines = iter([choice, ':quit'])
+    assert cli.main([*options, '--resume', row['session_id']]) == 0
+    output = capsys.readouterr().out
+    assert '原审批条件已变化' in output and '本次运行完成' not in output
+    with SessionStorage(db) as storage:
+        assert storage.get(row['session_id'])['state'] == ('ready' if choice else 'interrupted')

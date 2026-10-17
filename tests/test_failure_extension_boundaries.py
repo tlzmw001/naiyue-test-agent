@@ -1,5 +1,9 @@
 """Matched unknown descriptions and legacy entry points must stay meaningful."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import asyncio
 from threading import Event, Thread
 
@@ -63,7 +67,7 @@ def test_async_custom_model_is_described_once_and_keeps_original(monkeypatch):
     async def scenario():
         error = VendorQuotaError('PRIVATE')
         sync, events, catalog = build(monkeypatch, failure=error)
-        app = AsyncApplication(catalog, sync._sessions, sync._agent)
+        app = AsyncApplication(catalog, sync._sessions, sync._agent, sync._tool_registry)
         calls = []
 
         def describe(error, source):
@@ -111,7 +115,7 @@ def test_configuration_rejected_while_real_run_is_busy(monkeypatch):
         assert release.wait(5)
         return 'ok'
 
-    app, _events, _catalog = build(monkeypatch, tools=[probe], replies=[
+    app, _events, _catalog = build(monkeypatch, tools=[ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], replies=[
         AIMessage(content='', tool_calls=[{'name': 'probe', 'args': {}, 'id': 'c1'}],
                   response_metadata={'finish_reason': 'tool_calls'}),
         AIMessage(content='done', response_metadata={'finish_reason': 'stop'}),

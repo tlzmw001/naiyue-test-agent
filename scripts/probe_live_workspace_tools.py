@@ -1,6 +1,8 @@
 """Exercise the configured model through the real workspace tool chain."""
 
 import argparse
+
+from naiyue_test_agent.config_paths import get_models_path
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -8,7 +10,7 @@ from tempfile import TemporaryDirectory
 from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent.application import build_local_application
-from naiyue_test_agent.agent_runtime.tools import (
+from naiyue_test_agent.tools import (
     create_session_bash_tool, create_session_edit_tool, create_session_find_tool,
     create_session_grep_tool, create_session_ls_tool, create_session_read_tool,
     create_session_write_tool,
@@ -48,7 +50,7 @@ def _check_results(label: str, messages: list, required: set[str]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', default='.env/models.json')
+    parser.add_argument('--config', default=str(get_models_path()))
     parser.add_argument('--model-id')
     args = parser.parse_args()
 

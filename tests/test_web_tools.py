@@ -111,9 +111,7 @@ def test_web_restored_tool_messages_preserve_association(monkeypatch, tmp_path):
     asyncio.run(scenario())
 
 
-def test_web_host_bash_requires_workspace(tmp_path):
-    assert WebSettings(config_path='unused', database_path=tmp_path / 'db', frontend_dist=tmp_path,
-        workspace_root=tmp_path, host_bash=True).host_bash is True
+def test_web_rejects_removed_shell_setting(tmp_path):
     with pytest.raises(ValidationError):
         WebSettings(config_path='unused', database_path=tmp_path / 'db', frontend_dist=tmp_path, host_bash=True)
 
@@ -143,8 +141,17 @@ def test_web_bash_opt_in_approval_and_safe_command(monkeypatch, tmp_path):
         root = tmp_path / 'workspace'
         root.mkdir()
         model = StreamingToolModel(replies=[calls(('bash', {'command': 'printf WEB-BASH'}, 'bash')), AIMessage(content='done')])
-        async with web_client(monkeypatch, tmp_path, model, workspace_root=root, host_bash=True) as (client, app):
-            sid, origin = await start(client)
+        async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
+            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+            backend = app.state.service.application
+            assert 'bash' in [spec.tool.name for spec in backend.get_registered_tools()]
+            assert 'bash' not in backend.get_active_tools(sid)
+            assert 'powershell' in [spec.tool.name for spec in backend.get_registered_tools()]
+            assert set(backend.get_active_tools(sid)) == {'read', 'ls', 'find', 'grep', 'write', 'edit'}
+            await backend.aset_active_tools(sid, ['bash'])
+            assert (await client.get(f'/api/sessions/{sid}')).json()['active_tools'] == ['bash']
+            origin = (await client.post(f'/api/sessions/{sid}/runs', json=request('use shell'))).json()['run_id']
+            await client.get(f'/api/runs/{origin}/events')
             value = (await client.get(f'/api/sessions/{sid}')).json()
             assert value['approval_requests'][0]['target'] == 'printf WEB-BASH'
             response = await client.post(f'/api/sessions/{sid}/approvals', json={
@@ -176,7 +183,11 @@ def test_approval_request_validation_auth_and_restart_block(monkeypatch, tmp_pat
         next_model = StreamingToolModel(replies=[])
         async with web_client(monkeypatch, tmp_path, next_model, workspace_root=root) as (client, app):
             assert (await client.post(endpoint, json=body)).status_code == 409
-            assert (await client.get(f'/api/sessions/{sid}')).status_code == 409
+            view = (await client.get(f'/api/sessions/{sid}')).json()
+            assert view['recovery']['kind'] == 'pending_approval'
+            assert not view['can_run'] and not view['pending_approval']
+            assert view['approval_requests'] == [] and view['live'] is None
+            assert view['recovery']['unconfirmed_tool_call_ids'] == ['t']
             assert next_model.seen == []
     asyncio.run(scenario())
 

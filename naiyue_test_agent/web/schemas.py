@@ -9,6 +9,12 @@ class NewSession(BaseModel):
     model_id: str = Field(min_length=1, max_length=128)
 
 
+class RecoveryInput(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    checkpoint_id: str = Field(min_length=1, max_length=128)
+    action: Literal['continue', 'restore_approval']
+
+
 class MessageInput(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     request_id: str = Field(pattern=r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')

@@ -80,6 +80,12 @@
 
 ## 当前状态
 
+搜索需要服务PATH中已安装的`rg`和`fd`（Linux的同程序名`fdfind`也可）；项目不会自动下载或安装。完整额度及其启动快照规则见[当前设置样例](docs/examples/settings.example.toml)。
+
+2026-10-16已完成085-15本机工具复盘，后续按用户决定取消模型/会话文件的私密权限位门槛；Spec087接工作区UUID存储与跨平台锁，Spec088/089继续补Windows文件提交、归档与路径授权比较。ReplaceFileW分支保留目标DACL，普通/扩展盘符及UNC在权限规则和范围判断中等价；设备/ADS/歧义名称作为普通文件工具不支持输入反馈。已有目标属性和操作系统访问错误仍受尊重。最新验收见[handoff](docs/handoff.md)，平台证据见[复盘](docs/research/windows-compatibility-audit.md)。当前只有macOS真实IO及Windows语义/分支mock，没有Windows/Linux原机安装、ACL、UNC/junction或双Shell成功证据；WIN1仍开放。正常串行排队期限、SubAgent086、UI/完整沙箱另排。
+
+2026-10-16工具错误入口按[Spec085-01](docs/specs/085-01-unified-tool-errors.md)迁移：工具用`ToolException`保留具体公开提示，官方`ToolErrorMiddleware`统一生成同调用ID的错误消息；普通文件/自定义工具执行异常也可反馈给模型继续处理，不自动重试。原提示白名单、逐工具`handle_tool_error`及`WriteOutcomeUnknown`已移除；Write/Edit提交未确认明确反馈“结果未知”，不因此自动锁会话。停止、中断、真实调度/必要保存保护保留；01阶段仅接Bash具体错误；该旧边界已在085-12随runner迁移完成。随后按[Spec085-02](docs/specs/085-02-tool-package-boundaries.md)完成目录与依赖迁移：具体工具及现有权限声明位于`naiyue_test_agent/tools/`，调度、工具观察、HITL与错误转换位于`agent_runtime/tool_execution/`；旧路径已移除。Bash停止对象由现有context显式传入；02当时保持执行/审批行为，当前收尾以085-12为准。后端1101与前端27测试、构建通过。注册/设置、动态工具和新权限继续逐片推进，当前已实施范围及下一片入口以上段为准。
+
 2026-10-11最新收尾：Spec083已统一分类器为`(error, source)`，保护分类直接构造描述并保留诊断回退；分支测试与VS Code单步指南已补齐，第二章课堂当前到Lesson43。此次提交前重新验证：后端1060通过、前端9文件27通过，TypeScript/Vite构建、compileall与依赖检查通过。当前工程状态及已记录限制见[交接第323节](docs/handoff.md#323-当前代码提交与推送收尾2026-10-11)，下列Spec082结果为此前阶段快照。
 
 2026-10-11更新：按[Spec082](docs/specs/082-remove-obsolete-runtime-bridges.md)清理22个被替代函数、旧交互装配/自然结束分支及无用导入；运行依赖统一使用RunServices，旧分项bind/getter和failure_data已移除。CLI/Web继续采用正式异步应用；同步应用/持久会话和低层Runtime仍有明确探针或策略消费者，具体保留依据见Spec第3节。最新本机后端1038、前端27及构建通过；下文早期阶段记录保留历史，不作为废弃接口的使用指引。
@@ -98,7 +104,7 @@
 
 本地应用现支持同步运行中的 Steering 与 Follow-up：其他线程可对同一活跃会话调用 `app.steer(session_id, text)` 或 `app.follow_up(session_id, text)` 入队。Steering 在下一次模型调用前加入上下文；Follow-up 只在原本要自然结束时按 FIFO 每次取一条续跑，且同一终局点 Steering 优先。假模型测试验证了工具结果后的顺序、同一 run 续跑、关窗拒绝、失败清理和递归上限失败。
 
-统一停止接口现为 `app.request_stop(session_id, run_id=可选目标ID)`，旧 `request_stop_after_turn` 已迁移移除。原生异步模型、摘要及 SDK 重试等待可取消；已开始的普通工具等待收尾，排队工具回填带原因的未执行结果。Bash 终止进程组后保留部分输出，副作用不确定仍失败并要求核对。正常停止在 checkpoint/元数据保存确认后报告 `stopped/active`；保存失败、真实工具异常和外部 Task.cancel 不改成正常停止。同步库模型的线程回退不能强杀，因此同步模型只在协作边界停止，正式 CLI 使用异步入口。
+统一停止接口现为 `app.request_stop(session_id, run_id=可选目标ID)`，旧 `request_stop_after_turn` 已迁移移除。原生异步模型、摘要及 SDK 重试等待可取消；已开始的普通工具等待收尾，排队工具回填带原因的未执行结果。Bash经共享runner终止并回收后保留部分输出，以停止工具结果配对；仅必要收尾未确认时上抛ProcessCleanupError并要求人工核对。正常停止在 checkpoint/元数据保存确认后报告 `stopped/active`；保存失败、真实工具异常和外部 Task.cancel 不改成正常停止。同步库模型的线程回退不能强杀，因此同步模型只在协作边界停止，正式 CLI 使用异步入口。
 
 ## 应用运行事件
 
@@ -153,37 +159,44 @@ python3.12 -m venv .venv
 
 ## 最小本地 CLI
 
-已有私有模型配置时，在项目根目录运行：
+模型条目的当前格式见[models.example.json](docs/examples/models.example.json)。占位URL/密钥/模型名需要自行填写；OpenAI/openai_compatible必须显式设置`api`为`chat_completions`或`responses`，按实际能力设置可选`profile.image_inputs`。旧配置没有api会在启动前报错；修改配置后重启服务，不自动迁移真实文件。
+
+将私有模型配置放在`~/.naiyue-test-agent/models.json`后，在项目根目录运行（默认配置目录由用户home决定）：
 
 ```bash
-.venv/bin/python -m naiyue_test_agent.application.cli --config .env/models.json
+.venv/bin/python -m naiyue_test_agent.application.cli
 ```
 
 需要让模型读取工作区内文本文件时，显式附加 `--workspace /绝对路径/项目目录`：
 
 ```bash
-.venv/bin/python -m naiyue_test_agent.application.cli --config .env/models.json --workspace /绝对路径/项目目录
+.venv/bin/python -m naiyue_test_agent.application.cli --workspace /绝对路径/项目目录
 ```
 
-单用户本地开发时，如需让模型提出并运行 Bash 命令，额外传 `--host-bash`：
+CLI/Web统一登记六个文件工具及Bash、PowerShell，共八项。有工作区的新会话默认启用六个文件工具，无工作区默认为空；两个Shell通过后端会话工具选择API启用，默认策略Ask，各自精确Allow/Deny命令规则互不通用。旧命令工具专用开关已取消；工具选择界面与CLI交互命令留到后续。
 
-```bash
-.venv/bin/python -m naiyue_test_agent.application.cli --config .env/models.json --workspace /绝对路径/项目目录 --host-bash
-```
+Bash/PowerShell默认未活动，Default下未命中Allow的有效命令在执行前整批暂停；输入`:approve`或`:deny`，多项用`:review ...`。无效参数以原调用ID反馈模型。批准后每次新建非交互进程，以工作区为cwd、无stdin/TTY，使用当前用户的本机文件及网络权限；这是宿主执行，尚无沙箱。默认继承父环境（包括业务测试凭据），配置environment.values/path_prepend/unset_env可覆盖、前置PATH目录及最终移除；Bash默认移除BASH_ENV与NAIYUE_WEB_TOKEN，PowerShell默认移除后者，不自动加载项目.env。跨调用不延续cd/export。
 
-此开关默认关闭，且每条有效 Bash 命令都会在执行前暂停，终端展示完整命令与工作区；输入 `:approve` 或 `:deny`，多项调用用 `:review ...`。无效工具参数不进入审批，错误以原调用 ID 回填给模型。批准的命令以工作区为当前目录，但运行在宿主机上，**可以读取/修改当前用户有权限访问的工作区外文件，也可以访问网络**。审批是人的授权，不是沙箱；启动时会再次提示。子进程不继承模型 API key 等环境变量，仍可主动读取宿主机文件；因此不要在不可信工作区、无人值守或共享服务中启用。单次默认 60 秒、最多 300 秒，stdout/stderr 分别最多回填末尾 4096 原始字节。超过这个窗口时，工具尝试将两条流的原始输出分别保存在工作区的 `naiyue-agent-output/`，在结果中返回相对路径；普通 UTF-8 多行日志可用 `read` 分页回看，无须额外审批。目录只在需要归档时创建，内含 Git 忽略规则，目录权限 0700、文件 0600。单命令默认最多保存 16 MiB、当前进程单工作区默认最多 128 MiB，分别可通过 `NAIYUE_BASH_OUTPUT_COMMAND_BYTES`、`NAIYUE_BASH_OUTPUT_WORKSPACE_BYTES` 设置正整数字节上限。超限或写入失败会明确标记 `archive_complete=false`，命令输出仍会持续排空并保留末尾；这些文件不是不可篡改审计记录。超时或输出管道不完整时，会话要求人工核对，CLI 展示已有路径及有界部分输出，不能据此判断命令是否完成或副作用是否发生，也不会自动让模型继续运行。二进制、非 UTF-8 和超长单行输出尚不能由当前 `read` 完整消费；隔离执行模式仍待 [Spec 041](docs/specs/041-bash-execution-feasibility.md) 验证。
+两个Shell分别配置解释器和限额，见[当前配置样例](docs/examples/settings.example.toml)：默认60秒、最多300秒，合并stdout/stderr，末尾正文同时限2000行/64KiB。增量解码并清理ANSI、规范换行和转义控制字符，标明有损、实际行范围及部分行；超长末行返回安全UTF-8尾段。超限/转换时将含原前缀的原始输出归档到naiyue-agent-output/，必要时另建UTF-8文本视图，使用返回的Read路径分页。每调用实际落盘16MiB、同进程同工作区跨Shell/会话共128MiB；双份都计额，配额/磁盘失败仍排空并保留尾部，明确archive_complete=false和可能缺口。短普通文本不落盘，旧stdout/stderr日志仍可读/清理。超时给具体工具错误，用户停止结束本轮；未确认收尾的ProcessCleanupError上抛。Windows优先pwsh再PowerShell5.1，Bash只自动找原生Git Bash；无自动安装，缺解释器明确不可用。装配会运行有界固定版本探测，失败标unknown；PowerShell默认尊重策略，可配置该子进程bypass，不改机器策略。Windows全项目可运行性待085-15/WIN1实机复盘。
 
 输出文件不会自动过期或删除。运行结束后输入 `:outputs clear` 查看当前工作区将清理的文件数和字节数，再输入 `:outputs clear confirm` 才执行；运行中或目录包含陌生文件时会拒绝。清理只针对应用创建的归档文件，不删除目录或用户文件；日志可能包含敏感测试数据，选择工作区和保留时间时须留意。当前清理与容量协调只在一个 CLI 进程内验证，不提供跨进程或 SaaS 隔离保证。详见 [Spec 045](docs/specs/045-workspace-bash-output-artifacts.md)。
 
-提供工作区后 CLI 才注册 `read`，并把规范化根目录存进当前应用会话；工具执行时通过可信运行上下文取得该会话的根目录。未提供时保持纯聊天。工作区根不能是隐藏目录，也不能位于 `.env`、`.ssh` 或 `.git` 内。工作区内普通 UTF-8 文本可直接读取，包括普通 `.gitignore` 文件和 `.github` 目录下的非敏感文件；工作区外、未命中敏感规则的普通文件先暂停，在终端展示规范化目标，逐个等候人工决定。输入 `:approve` 批准唯一待审调用，`:deny` 拒绝它；同时有多项待审时输入 `:review approve reject ...`，按显示顺序为每项给出决定。决定数量错误时不恢复。新普通输入在待审期间被拒绝，`:quit` 会提示内存审批状态无法在重启后恢复。其他隐藏路径、工作区外任何隐藏路径、`.pem`/`.key`、路径遍历和非普通文件直接拒绝；批准后工具还会重新解析路径，并要求目标与本次调用的一次性授权一致。不会执行写入。当前这是同进程内存 checkpoint 的本地审批，尚无身份授权、持久审批或 OS 级沙箱保证。
+提供工作区后 CLI 默认启用 `read`，并把规范化根目录存进当前应用会话；工具执行时通过可信运行上下文取得该会话的根目录。未提供时保持纯聊天。工作区根不能是隐藏目录，也不能位于 `.env`、`.ssh` 或 `.git` 内。工作区内普通 UTF-8 文本可直接读取，包括普通 `.gitignore` 文件和 `.github` 目录下的非敏感文件；工作区外、未命中敏感规则的普通文件先暂停，在终端展示规范化目标，逐个等候人工决定。输入 `:approve` 批准唯一待审调用，`:deny` 拒绝它；同时有多项待审时输入 `:review approve reject ...`，按显示顺序为每项给出决定。决定数量错误时不恢复。新普通输入在待审期间被拒绝，`:quit` 会提示内存审批状态无法在重启后恢复。其他隐藏路径、工作区外任何隐藏路径、`.pem`/`.key`、路径遍历和非普通文件直接拒绝；批准后工具还会重新解析路径，并要求目标与本次调用的一次性授权一致。不会执行写入。当前这是同进程内存 checkpoint 的本地审批，尚无身份授权、持久审批或 OS 级沙箱保证。
 
 不超过 64 KiB 且不超过 2000 行时，`read` 直接返回原文；超出任一预算便按行返回一页，并用 `next_offset` 提示下一次读取的行号。64 KiB 只限制**文件正文**，提示文字另计，因此整个工具结果可略大于 64 KiB。模型也可显式传 `offset`（从 1 开始）和 `limit`（1–2000 行）。返回的正文页严格按 UTF-8 解码；参数、路径/权限、审批、编码、非文本、长行、I/O 与无工作区错误均回填带原因和下一步指引的安全 `ToolMessage`，不包含路径、原始异常或文件内容。路径不可用时为避免泄露敏感文件存在性，只列出“可能缺失、非普通文件或被工作区策略阻止”的原因范围。只读 Read 中未知普通异常也回填安全错误；LangGraph 中断仍上抛。文件在两页之间变化时，行号不代表同一个快照。工作区隔离、审批暂停/恢复与 CLI 命令通过假模型确定性测试；当前网关的受控七工具任务和双来源 Skill 正文/引用任务已观察到真实模型调用本地 Read 的正常路径。拒绝与故障路径仍主要依据确定性测试，不能扩大为任意供应商保证。图片 Read 与其他文本编码 Read 是后续独立能力，不由 RAG 模块替代。
 
-启动后直接输入文字并回车；同一进程内的输入属于同一会话，历史由内存 checkpoint 保存。在交互式终端中，模型仍在运行时直接输入文字会作为 Steering 排队，输入 `:follow <文字>` 会作为 Follow-up 排队；界面显示“已排队”只代表应用接受，模型回复会在这次运行结束后按顺序显示。输入 `:stop` 请求活动停止；“已请求”只表示登记，关键操作收尾及保存确认后才显示“已停止”。停止时未消费的 Steering/Follow-up 和此后输入保留为待发送内容，`:pending` 查看，`:send` 明确重新提交；收尾期间拒绝启动新 run，准入失败不清空待发送内容。输入 `:model <model_id>` 切换下一次模型调用的选型，输入 `:quit` 或发送 EOF 会等待当前运行结束后退出。配置路径须显式提供；可用模型 ID 由该配置决定。通过管道发送多行时仍逐轮运行，不自动变成 Steering。选择工作区后模型可使用 `write` 创建或整文件覆盖该目录内的 UTF-8 文件，也可使用 `edit` 对现有 UTF-8 文件做精确多处替换；`edit` 用分块读取与临时文件写回，不设固定文件大小上限，但单次提交的替换文本仍受输入预算约束，处理还受实际磁盘空间与运行时间影响。此入口尚不提供工作区外写入审批、专用测试执行策略、业务提示词或逐 token 打印；默认持久模式可以恢复安全完成及安全停止的会话。工作线程刚启动尚未开窗或已进入收尾时，应用可能拒绝 `:stop`，CLI 会明确提示未接受。
+启动后直接输入文字并回车；同一进程内的输入属于同一会话，历史由内存 checkpoint 保存。在交互式终端中，模型仍在运行时直接输入文字会作为 Steering 排队，输入 `:follow <文字>` 会作为 Follow-up 排队；界面显示“已排队”只代表应用接受，模型回复会在这次运行结束后按顺序显示。输入 `:stop` 请求活动停止；“已请求”只表示登记，关键操作收尾及保存确认后才显示“已停止”。停止时未消费的 Steering/Follow-up 和此后输入保留为待发送内容，`:pending` 查看，`:send` 明确重新提交；收尾期间拒绝启动新 run，准入失败不清空待发送内容。输入 `:model <model_id>` 切换下一次模型调用的选型，输入 `:quit` 或发送 EOF 会等待当前运行结束后退出。模型配置缺省从用户目录读取，也可显式覆盖；可用模型 ID 由该配置决定。通过管道发送多行时仍逐轮运行，不自动变成 Steering。选择工作区后模型可使用 `write` 创建或整文件覆盖该目录内的 UTF-8 文件，也可使用 `edit` 对现有 UTF-8 文件做精确多处替换；`edit` 用分块读取与临时文件写回，不设固定文件大小上限，但单次提交的替换文本仍受输入预算约束，处理还受实际磁盘空间与运行时间影响。此入口尚不提供工作区外写入审批、专用测试执行策略、业务提示词或逐 token 打印；默认持久模式可以恢复安全完成及安全停止的会话。工作线程刚启动尚未开窗或已进入收尾时，应用可能拒绝 `:stop`，CLI 会明确提示未接受。
+
+
+工具运行设置默认读`~/.naiyue-test-agent/settings.toml`，与模型文件同目录；不自动从工作区读取或创建配置。Read/Ls支持`default_limit/max_limit/max_output_bytes/max_path_chars`，分别是缺省行数或条目数、模型允许请求的上限、UTF-8正文字节预算、路径字符上限；Write/Edit分别支持`max_input_bytes/max_path_chars`。Write预算计算content，Edit预算计算全部oldText+newText的UTF-8字节总量，不限制原文件或修改后文件大小。旧Write额度环境变量不再读取；搜索与Shell设置跟随对应执行链片接入。参考[当前可用样例](docs/examples/settings.example.toml)，完整未来样例不能整份套用。设置在启动创建工具时固定，修改后重启应用生效；直接Python使用可`load_tool_settings()`后将相应`.tools.read/ls/write/edit`交给工具工厂的`settings=`。权限配置尚未接入此文件，不把额度回退宣称成权限策略加载。
+
+工具接入按[085-04](docs/specs/085-04-tool-registration.md)、[085-05](docs/specs/085-05-dynamic-tools.md)和[085-06](docs/specs/085-06-permission-pipeline.md)统一为`ToolSpec(tool, input_schema, execution_mode, side_effects, prompt_snippet, prompt_guidelines, permissions)`。工厂返回Spec，原工具和公开参数类分别为`.tool/.input_schema`。自定义工具可用`ToolPermission(default='allow'|'ask')`，文件目标可用`FilePermission(path_field, operation)`，均在`tools.permissions`；未声明权限默认Ask。`prepare(args, context)`准备JSON事实，`default_decision(subject)`只返回allow/ask，不调用模型；明确禁止放Deny规则。实际工具须在IO前显式调用`require_tool_permit`或`require_file_target`。`build_*application(..., tools=[spec, ...], initial_active_tools=[名称, ...], settings=ToolSettings(...))`只接Spec；省略设置则加载默认用户文件，省略初始选择则启用传入定义。CLI/Web共用`create_builtin_tools(settings)`。App提供`get_registered_tools/register_tool/get_active_tools/set_active_tools`；异步写操作为`aregister_tool/aset_active_tools`。登记不自动启用，活动选择从下次主模型请求生效；模式`get_permission_mode/set_permission_mode`从下个工具批次生效，异步写操作为`aset_permission_mode`。模型定义、提示词、压缩预算和执行共用本次集合，审批恢复沿已保存批次。`resume_tool_approval(..., remember_approved=[tool_call_id])`只记本次确实批准的精确目标，不写配置/DB。旧when/review/grant_factory、Read专用策略metadata和逐工具grant已移除；Auto已按[085-07](docs/specs/085-07-auto-permission-review.md)接入；配置两个已有模型ID后可选择。
+
+自定义工具的完整注册示例、停止检查、IO期限、异常传播和资源所有权见[工具作者约定](docs/tool-authoring.md)。090B已为Read/图片/Write/Edit接入原RunControl的安全点检查，提交前停止不提交目标内容，已经进入提交则等待并保留真实结果；Ls仍返回授权部分结果及停止提示。注册成功只证明结构有效，不证明任意SDK可取消或资源自动收尾。[091A](docs/specs/091-tool-progress.md)已接八内置和自定义ToolProgress后端事件，统一[progress]预算默认200ms/8KiB；工具只报事实，运行层校验身份/终结后发布，[091B](docs/specs/091-tool-progress.md#8-091b实施与验收记录)已在Web/CLI维护最新展示快照，卡片显示阶段、真实计数、尾部、历时及最后活动时间；停止接受后保持停止中直到真实终局，重连恢复最新快照。同步写入官方stream_writer、异步走custom，保持原并发及停止合同。进度不进模型消息/checkpoint，文件正文和图片不进进度。[090C](docs/specs/090-tool-wait-stop-and-author-contract.md#8-090c实施与验收记录)已统一Bash/PowerShell/Grep/Find的timeout：省略/null/0无限，正整数指定本次秒数，无300秒上限；Grep全搜索共用期限，停止和必要清理保持。重启恢复092继续按片推进。
 
 ## 真实模型接入诊断
 
-本地模型配置为 Git 忽略的 `.env/models.json`，格式见 [Spec 004](docs/specs/004-local-model-config-format.md)。当前实际文件只配置已有凭证的 HeiyuCode 网关；创建时权限为 `0600`。`naiyue_test_agent.model_access.load_model_catalog` 读取并校验配置，`naiyue_test_agent.agent_runtime.build_configured_runtime_agent` 将它接到现有按会话选模的 middleware。下面的命令会调用真实模型，发送的只有随机诊断值和工具提示；最多两次模型调用，90 秒截止，不输出密钥或诊断值：
+模型默认配置为`~/.naiyue-test-agent/models.json`，JSON格式见[Spec004](docs/specs/004-local-model-config-format.md)，沿用私有文件权限检查（当前POSIX要求无组/其他用户访问位）。原项目文件`.env/models.json`不自动搬迁；继续使用它时显式传`--config .env/models.json`。`naiyue_test_agent.model_access.load_model_catalog` 读取并校验配置，`naiyue_test_agent.agent_runtime.build_configured_runtime_agent` 将它接到现有按会话选模的 middleware。下面的命令会调用真实模型，发送的只有随机诊断值和工具提示；最多两次模型调用，90 秒截止，不输出密钥或诊断值：
 
 ```bash
 .venv/bin/python -m scripts.probe_configured_tool_loop --model-id heiyu-gpt-5.5
@@ -219,26 +232,30 @@ python3.12 -m venv .venv
 
 ## 本地持久会话（Spec 070）
 
-CLI默认创建持久新会话，显示会话ID；默认数据库为`~/.naiyue-test-agent/sessions.sqlite`，可用`--session-db`覆盖。应用元数据和官方SqliteSaver分别负责会话信息/图状态，现有`build_local_application`仍是内存入口。只恢复已安全结束且记录与checkpoint一致的会话，选模/workspace从元数据恢复；相同session/thread、新run ID。完整行为与限制见[Spec070](docs/specs/070-persistent-session-implementation.md)。
+CLI默认创建持久新会话并显示ID。CLI/Web未传`--workspace`时使用启动终端的当前目录，显式参数优先；每个工作区在`.naiyue/workspace.json`持有本地UUID，库默认位于`~/.naiyue-test-agent/data/workspaces/<UUID>/sessions.sqlite`。可在全局`settings.toml`的`[storage] data_dir`配置绝对目录（Windows可放D盘），或用`--session-db`覆盖单个库路径；真实配置不自动改写。设置含义与Windows写法见[配置样例](docs/examples/settings.example.toml)。
+
+不同工作区可以分别启动服务、打开各自浏览器窗口，各有多个会话。同一数据库仍只允许一个应用持有；CLI与Web选择相同工作区及数据位置时共用历史。配置位置和数据位置独立，数据目录不可用时明确失败。关闭服务后，携带`.naiyue`改名/移动目录，可自动重绑并继续原历史；不依赖下次启动终端所在目录（用`--workspace`选定目标即可）。复制目录默认检测重复ID并拒绝接管，用`--new-workspace`给副本新ID和空历史；不用于重置原目录，也不能与`--resume`、`--session-db`、`--no-session`合用。标识是本机身份，勿提交到版本控制；运行中移动或跨电脑搬历史不在本次支持范围。
+
+应用元数据和官方saver分别负责会话信息/图状态；普通restore只开放安全结束且checkpoint一致的会话，相同session/thread、新run。[Spec092](docs/specs/092-session-restart-recovery.md#0-2026-10-17确认打开会话自动恢复)支持打开旧会话时自动恢复：GET仍只读最新历史，Web选择会话后自动POST恢复，CLI选择旧会话后自动恢复。执行中断时用三次官方更新保留真实结果、补未确认说明并结束旧任务，确认保存才开放新输入；确认停在工具审批前时按当前本地规则复核，通过后直接恢复审批卡片，批准前整批不执行。恢复不调用模型/工具/Auto、不发草稿；失败保留历史和手动重试，不自动取消失效审批。旧临时授权不跨重启。schema4不兼容旧全局库，不做迁移、双读或自动删除。详见[Spec087](docs/specs/087-workspace-session-storage.md)，原始持久合同见[Spec070](docs/specs/070-persistent-session-implementation.md)。
 
 在项目根目录执行：
 
 ```bash
 # 默认保存新会话，启用本工作区文件工具
-.venv/bin/python -m naiyue_test_agent.application.cli --config .env/models.json --workspace .
+.venv/bin/python -m naiyue_test_agent.application.cli --workspace .
 
 # 显式临时会话，同进程仍支持多轮，退出后不可恢复
-.venv/bin/python -m naiyue_test_agent.application.cli --config .env/models.json --workspace . --no-session
+.venv/bin/python -m naiyue_test_agent.application.cli --workspace . --no-session
 
-# 列出所选数据库历史会话；交互终端输入编号/ID选择，空行取消
-.venv/bin/python -m naiyue_test_agent.application.cli --config .env/models.json --resume
+# 列出所选工作区历史会话；交互终端输入编号/ID选择，空行取消
+.venv/bin/python -m naiyue_test_agent.application.cli --resume
 ```
 
-直接恢复使用`--resume <session_id>`，替换为CLI显示的真实ID；恢复会沿用保存的工作区，另给不一致的`--workspace`会失败。非交互的无IDresume只列索引并退出，不消耗业务输入。临时模式不打开会话DB，工具业务文件按原规则保存；临时与resume/显式DB路径互斥。Bash仍需本次显式`--host-bash`并走审批，不因恢复自动开启。
+直接选择使用`--resume <session_id>`，替换为CLI显示的真实ID；先选工作区再选择其中会话，自动移动重绑会同步更新会话根路径。安全完成会话可继续输入；中断会话自动整理后开放新输入，前置审批自动复核并恢复原待审项，用`:review approve/reject`提交决定。原审批条件变化时不自动取消；交互终端可明确输入`continue`放弃旧批次，空行退出。无ID非交互resume只列索引，不消耗业务输入。临时模式不打开会话DB，工具业务文件按原规则保存；临时与resume/显式DB路径互斥。活动工具名称随会话恢复，Bash被选择后执行仍走审批；旧模型/工具/模式不可用时，可读历史仍可查看，执行保持受限。整个应用启动所需配置仍须合法。
 
 本地确定性全量`781 passed`，两个独立离线进程和一次有界真实默认模型探针验证历史延续；真实探针可运行`.venv/bin/python -m scripts.probe_persistent_session --real`，最多两逻辑请求、95秒总时限，临时DB/合成事实，只输出验收统计。证明机制接线，不代表业务评测或生产规模。
 
-当前macOS/Linux、本地轻量单CLI/单活动run，第二个同库入口会拒绝；默认目录和DB/lock/WAL/SHM私有权限已验证，不是沙箱。待审批、失败、未确认结束或副作用待核对的会话重启只识别/阻断，不能自动续跑；同进程审批保持。全历史浏览/分支、重启高级恢复、长期备份/清理/迁移、多用户/原生异步/活动取消分别在后续切片实现。
+存储锁已分别接POSIX flock和Windows CreateFileW/msvcrt；本机验证在macOS完成，Windows/Linux实机验收仍待执行，不能据此宣称全项目Windows可用。已有文件不要求私密权限位，仍检查普通文件、链接、实际IO和schema。待审批、失败、未确认结束或副作用待核对会话重启仍阻断；同进程审批保持。高级恢复、长期记忆、历史数据清理与同项目多进程协调另排。
 
 [Spec072](docs/specs/072-read-permission-extension-seam.md)已给会话Read增加权限扩展接口：可信调用方可通过`attach_file_permission_policy`注入同步allow/ask/deny策略，审批判断、带会话/资源上下文的review和执行前复核共用规则；无策略时沿用当前默认行为。策略异常回填安全工具错误，敏感/无效目标仍拒绝。17个新增测试与全量798例通过；仅Read接入，没有新增CLI权限模式，其他工具、成熟权限服务、原生异步及Web另片推进。
 
@@ -253,7 +270,7 @@ CLI默认创建持久新会话，显示会话ID；默认数据库为`~/.naiyue-t
 - `build_async_local_application`创建内存应用；`open_async_persistent_application`异步上下文管理器拥有SQLite/saver和SDK资源，参数`database_path`明确指定数据库。
 - `acreate_session` / `acreate_workspace_session`、`aselect_model`、`arun` / `aresume_tool_approval`；同会话busy/待审批/人工核对保持，`aget_messages`只返回当前checkpoint的深拷贝消息。
 - `astream_run` / `astream_tool_approval`消费领域事件，文本`message_delta`永远临时；完整snapshot按消息ID替换草稿，终局在关键清理/保存确认之后。`StreamingMessageProjection`提供展示状态，不让runtime依赖界面。
-- `steer`、`follow_up`、`request_stop`使用run私有控制；并行批次遵循`max_concurrency`，异步缺省4，任一sequential整批原顺序。普通同步工具由框架在线程运行，Bash仍是宿主机线程内进程/逐命令审批，Spec076已接进程组停止，不能称为沙箱。
+- `steer`、`follow_up`、`request_stop`使用run私有控制；并行批次遵循`max_concurrency`，异步缺省4，任一sequential整批原顺序。普通同步工具由框架在线程运行，Bash通过原生async共享runner执行宿主进程，按规则/模式审批，停止先确认进程收尾，不能称为沙箱。
 - `capacity`默认256限制交付队列的事件数，溢出抛`EventStreamOverflow`要求重新同步；关闭消费不停止生产，应用持有后台任务，`aclose`排空后关闭其资源。复杂CPU计算/旧同步订阅者仍须快速，大payload/SaaS压力和完整历史恢复另验收。
 
 下面的内存示例会使用已有模型配置发出真实请求，只打印事件类型：
@@ -264,7 +281,7 @@ from naiyue_test_agent.application.async_application import build_async_local_ap
 
 async def main():
     app = await build_async_local_application(
-        '.env/models.json', tools=[], system_prompt='', response_format=None,
+        None, tools=[], system_prompt='', response_format=None,
     )
     try:
         session = await app.acreate_session(app.default_model_id)
@@ -289,7 +306,7 @@ asyncio.run(main())
 .venv/bin/python -m scripts.probe_active_stop --timeout-seconds 120
 ```
 
-实际输出：`active_stop_probe=PASS mode=real logical_calls=1 delta=observed stopped=verified fake_answer=absent checkpoint=safe`。加`--offline`可离线重复验证。这个结果证明客户端停止等待和安全结束，不证明供应商服务器停止计算/计费。任意不响应信号的自定义工具没有固定秒数停止保证；关键写入/保存仍须settle，Bash副作用未知时不会自动恢复。最小Web与整体学习为下一步。
+实际输出：`active_stop_probe=PASS mode=real logical_calls=1 delta=observed stopped=verified fake_answer=absent checkpoint=safe`。加`--offline`可离线重复验证。这个结果证明客户端停止等待和安全结束，不证明供应商服务器停止计算/计费。任意不响应信号的自定义工具没有固定秒数停止保证；关键写入/保存仍须settle，Bash仅必要进程收尾未确认时阻断；普通超时错误可回填模型。最小Web与整体学习为下一步。
 
 ## 最小本地 Web 对话（Spec077）
 
@@ -298,7 +315,7 @@ React+TypeScript/Vite 页面参考已确认的 ChatKit 浅色聊天外观；Fast
 本机已安装并构建。新环境先安装原 Python requirements，再执行 `.venv/bin/python -m pip install -r requirements-web.txt`、`npm --prefix frontend ci`、`npm --prefix frontend run build`。启动：
 
 ```bash
-.venv/bin/python -m naiyue_test_agent.web --config .env/models.json
+.venv/bin/python -m naiyue_test_agent.web
 ```
 
 打开终端打印的本地访问链接，默认随机可用端口和本地访问凭据；运行只需 Python 服务。可选 `--workspace /绝对路径`、`--session-db /绝对路径/sessions.sqlite`、`--port 端口`。同一个数据库只允许一个应用进程使用。服务启动不编辑 `.env`，模型 key 不发送到浏览器。
@@ -306,10 +323,10 @@ React+TypeScript/Vite 页面参考已确认的 ChatKit 浅色聊天外观；Fast
 启用现有文件工具：
 
 ```bash
-.venv/bin/python -m naiyue_test_agent.web --config .env/models.json --workspace /绝对工作区路径
+.venv/bin/python -m naiyue_test_agent.web --workspace /绝对工作区路径
 ```
 
-工作区模式注册 `read/ls/find/grep/write/edit`，原权限、错误回填和串并行策略继续生效。工作区外可审批的操作会先暂停，在页面核对每项批准/拒绝后提交整批；未选择时不会默认批准。Bash 需额外显式 `--host-bash`，每次命令仍审批，它是宿主机命令而非沙箱。无工作区继续聊天；重启后的待审批会话仍阻断自动恢复。
+所有模式均登记八个内置定义；工作区新会话默认启用 `read/ls/find/grep/write/edit`，原权限、错误回填和串并行策略继续生效。工作区外可审批的操作会先暂停，在页面核对每项批准/拒绝后提交整批；未选择时不会默认批准。Bash通过后端会话活动集合选择，页面暂不提供工具管理按钮，默认Ask并按显式规则/模式处理。未传工作区使用启动cwd；重启后的待审批会话仍阻断自动恢复。
 
 工具实现/HTTP契约/验证见 [Web工具说明](docs/web-tools.md)。离线真实 TCP/审批与两进程恢复验收运行 `.venv/bin/python -m scripts.probe_web_tools`，不产生收费请求。
 

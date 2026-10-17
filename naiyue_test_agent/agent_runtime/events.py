@@ -16,7 +16,7 @@ from naiyue_test_agent.contracts.session_events import (
     RunStartedData, RunFinishedData, ControlData, ApprovalRequestedData, SESSION_PAYLOADS,
 )
 from .context_events import ContextOperationStartedData, ContextOperationFinishedData
-from .stream_events import MessageDeltaData
+from .stream_events import MessageDeltaData, ToolProgressData
 
 
 logger = logging.getLogger(__name__)
@@ -193,9 +193,10 @@ EventData = (RunStartedData | RunFinishedData | ModelCallStartedData | ModelCall
              | ToolCallStartedData | ToolCallFinishedData | MessageSnapshotData
              | ContextMessagesChangedData | MessageSnapshotUnavailableData
              | TurnStartedData | TurnFinishedData | TurnUnavailableData | ControlData | ApprovalRequestedData
-             | ContextOperationStartedData | ContextOperationFinishedData | MessageDeltaData)
+             | ContextOperationStartedData | ContextOperationFinishedData | MessageDeltaData | ToolProgressData)
 
 _CORE_PAYLOADS = {
+    'tool_progress': ToolProgressData,
     'message_delta': MessageDeltaData,
     'model_call_started': ModelCallStartedData, 'model_call_finished': ModelCallFinishedData,
     'tool_call_started': ToolCallStartedData, 'tool_call_finished': ToolCallFinishedData,

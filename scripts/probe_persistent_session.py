@@ -1,6 +1,8 @@
 """Bounded two-process persistence probe; default is deterministic and offline."""
 
 import argparse
+
+from naiyue_test_agent.config_paths import get_models_path
 import json
 import logging
 import os
@@ -73,7 +75,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--database', type=Path)
     parser.add_argument('--real', action='store_true')
-    parser.add_argument('--config', default='.env/models.json')
+    parser.add_argument('--config', default=str(get_models_path()))
     parser.add_argument('--worker', choices=['save', 'resume'], help=argparse.SUPPRESS)
     parser.add_argument('--session', help=argparse.SUPPRESS)
     parser.add_argument('--value', help=argparse.SUPPRESS)

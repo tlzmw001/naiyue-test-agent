@@ -1,5 +1,11 @@
 """Follow-up waits for a natural end and continues the same run."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.application import prepare_tool_registry
+
+from naiyue_test_agent.tools import ToolSpec
+
 import logging
 from threading import Event, Thread
 
@@ -109,7 +115,7 @@ def test_follow_up_does_not_enter_model_immediately_after_tool(monkeypatch):
         AIMessage(content='', tool_calls=[{'name': 'probe', 'args': {}, 'id': 'call-1'}]),
         AIMessage(content='tool-answer'), AIMessage(content='follow-answer'),
     ])
-    app = build_app(monkeypatch, {'A': model}, [probe])
+    app = build_app(monkeypatch, {'A': model}, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     session_id = app.create_session('A')
     worker, outcomes = run_in_worker(app, session_id)
     try:
@@ -258,7 +264,7 @@ def test_natural_end_closes_follow_up_before_busy_gate_is_released():
             assert release.wait(timeout=3)
             return {'messages': []}
 
-    app = application.LocalApplication('A', service, PausedAtEndAgent())
+    app = application.LocalApplication('A', service, PausedAtEndAgent(), prepare_tool_registry([]))
     worker, outcomes = run_in_worker(app, session_id)
     try:
         assert closed.wait(timeout=3)

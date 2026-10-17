@@ -25,9 +25,11 @@ export default function App({ api: supplied }: { api?: WebApi }) {
       <header className={styles.header}>
         <div className={styles.headerLeft}>
           <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="打开会话栏" onClick={() => setNavigation(true)}><Icon name="menu" /></button>
-          <select aria-label="模型" value={chat.model} onChange={event => void chat.selectModel(event.target.value)}
-            disabled={chat.selectingSession || chat.changingModel || !chat.models.length}>
+          <select aria-label="模型" value={chat.session?.recovery ? chat.session.model_id : chat.model} onChange={event => void chat.selectModel(event.target.value)}
+            disabled={!!chat.session?.recovery || chat.recovering || chat.selectingSession || chat.changingModel || !chat.models.length}>
             {!chat.models.length && <option value="">加载模型…</option>}
+            {chat.session?.recovery && !chat.models.includes(chat.session.model_id) &&
+              <option value={chat.session.model_id}>{chat.session.model_id}（已保存）</option>}
             {chat.models.map(id => <option key={id} value={id}>{id}</option>)}
           </select>
         </div>
@@ -35,7 +37,10 @@ export default function App({ api: supplied }: { api?: WebApi }) {
           {chat.session?.workspace_root ?? '未设置工作区'}
         </div>
       </header>
-      <Conversation messages={chat.messages} compacted={chat.session?.has_compaction ?? false} toolStates={chat.run?.tool_states} />
+      <Conversation messages={chat.messages} compacted={chat.session?.has_compaction ?? false} toolStates={chat.run?.tool_states}
+        recovery={chat.session?.recovery}
+        recovering={chat.recovering} onRecover={action => void chat.recover(action)}
+        stoppingRunId={chat.run?.status === 'running' && chat.run.stop_requested ? chat.run.run_id : undefined} />
       <div className={styles.feedback} aria-live="polite">
         {chat.run && <span className={`${styles.runStatus} ${busy ? styles.running : ''}`}><i />{labels[chat.run.status]}</span>}
         {chat.run?.manual_review_required && <span className={styles.error}>执行结果需要人工核对，当前不能继续。</span>}

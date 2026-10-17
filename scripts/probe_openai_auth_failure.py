@@ -1,6 +1,8 @@
 """Check one configured gateway's SDK error for a generated invalid credential."""
 
 import argparse
+
+from naiyue_test_agent.config_paths import get_models_path
 import os
 import secrets
 import signal
@@ -8,7 +10,7 @@ import signal
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', default='.env/models.json')
+    parser.add_argument('--config', default=str(get_models_path()))
     parser.add_argument('--model-id', required=True)
     args = parser.parse_args()
 

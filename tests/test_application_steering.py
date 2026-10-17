@@ -1,5 +1,10 @@
 """Run-time steering crosses the application queue and LangChain hooks."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+from naiyue_test_agent.application import prepare_tool_registry
+
 import logging
 from threading import Event, Thread
 
@@ -53,7 +58,7 @@ def test_steering_after_tool_result_is_fifo_and_stays_in_one_run(monkeypatch, ca
         AIMessage(content='', tool_calls=[{'name': 'probe', 'args': {}, 'id': 'call-1'}]),
         AIMessage(content='answer-after-steering'),
     ])
-    app = build_app(monkeypatch, model, [probe])
+    app = build_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     session_id = app.create_session('A')
     with caplog.at_level(logging.INFO):
         worker, outcomes = run_in_worker(app, session_id)
@@ -170,7 +175,7 @@ def test_natural_end_closes_steering_before_busy_gate_is_released():
             assert release.wait(timeout=3)
             return {'messages': []}
 
-    app = application.LocalApplication('A', service, PausedAtEndAgent())
+    app = application.LocalApplication('A', service, PausedAtEndAgent(), prepare_tool_registry([]))
     worker, outcomes = run_in_worker(app, session_id)
     try:
         assert closed.wait(timeout=3)
@@ -191,7 +196,7 @@ def test_current_application_assembly_accepts_steering_callbacks():
     catalog = ModelCatalog('A', {'A': model})
     service = application.SessionService(catalog)
     agent = application._assemble_application(
-        catalog, service, None, tools=[], system_prompt='', response_format=None)
+        catalog, service, None, tool_registry=prepare_tool_registry([]), system_prompt='', response_format=None)
 
     result = service.run(agent, service.create_session('A'), [('user', 'initial')])
     assert [message.content for message in result['messages']] == ['initial', 'answer']

@@ -1,6 +1,8 @@
 """Bounded, read-only live check of default and explicitly selected Skill sources."""
 
 import argparse
+
+from naiyue_test_agent.config_paths import get_models_path
 import os
 from pathlib import Path
 import subprocess
@@ -11,7 +13,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent.application import build_local_application
 from naiyue_test_agent.application.project_instructions import BASE_SYSTEM_PROMPT
-from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
+from naiyue_test_agent.tools import create_session_read_tool
 
 
 MARKERS = {'agents': 'SOURCE_AGENTS_PROBE', 'claude': 'SOURCE_CLAUDE_PROBE'}
@@ -92,7 +94,7 @@ def _worker(args) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', default='.env/models.json')
+    parser.add_argument('--config', default=str(get_models_path()))
     parser.add_argument('--model-id')
     parser.add_argument('--total-timeout-seconds', type=float, default=120)
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)

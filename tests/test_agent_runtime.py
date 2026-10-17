@@ -1,3 +1,5 @@
+
+from naiyue_test_agent.application import prepare_tool_registry
 import logging
 
 import anthropic
@@ -42,8 +44,10 @@ def test_synchronous_runs_emit_correlated_start_model_and_terminal_events(caplog
     model = FakeMessagesListChatModel(responses=[
         AIMessage(content='answer-one'), AIMessage(content='answer-two'),
     ])
+    _runtime_registry_1 = prepare_tool_registry([])
+    _runtime_names_1 = _runtime_registry_1.names()
     agent = build_runtime_agent(
-        model, tools=[], system_prompt='', response_format=None,
+        model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
         resolve_model=lambda _session_id: ('model-A', model),
         record_selection=lambda _session_id, _model_id: None,
         checkpointer=InMemorySaver(),
@@ -105,8 +109,10 @@ def test_synchronous_run_failure_emits_terminal_event_and_rethrows_same_error(ca
             raise failure
 
     model = FailingModel(responses=['unused'])
+    _runtime_registry_2 = prepare_tool_registry([])
+    _runtime_names_2 = _runtime_registry_2.names()
     agent = build_runtime_agent(
-        model, tools=[], system_prompt='', response_format=None,
+        model, tool_registry=_runtime_registry_2, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_2: names, system_prompt='', response_format=None,
         resolve_model=lambda _session_id: ('model-A', model),
         record_selection=lambda _session_id, _model_id: None,
     )
@@ -159,8 +165,10 @@ def test_checkpointer_continues_messages_and_switches_model_between_invokes():
         'B': RecordingFake(responses=[AIMessage(content='answer-B')]),
     }
     selections = []
+    _runtime_registry_3 = prepare_tool_registry([])
+    _runtime_names_3 = _runtime_registry_3.names()
     agent = build_runtime_agent(
-        models['A'], tools=[], system_prompt='', response_format=None,
+        models['A'], tool_registry=_runtime_registry_3, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_3: names, system_prompt='', response_format=None,
         resolve_model=lambda session_id: (selected[session_id], models[selected[session_id]]),
         record_selection=lambda session_id, model_id: selections.append((session_id, model_id)),
         checkpointer=InMemorySaver(),
@@ -275,8 +283,10 @@ def test_successful_model_call_records_reported_cache_usage(
     model = FakeMessagesListChatModel(responses=[AIMessage(
         content='unchanged answer', usage_metadata=usage,
     )])
+    _runtime_registry_4 = prepare_tool_registry([])
+    _runtime_names_4 = _runtime_registry_4.names()
     agent = build_runtime_agent(
-        model, tools=[], system_prompt='', response_format=None,
+        model, tool_registry=_runtime_registry_4, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_4: names, system_prompt='', response_format=None,
         resolve_model=lambda _session_id: ('model-A', model),
         record_selection=lambda _session_id, _model_id: None,
     )
@@ -347,8 +357,10 @@ def test_model_failure_records_safe_event_and_propagates_same_exception(
 
     model = FailingModel(responses=['unused'])
     selections = []
+    _runtime_registry_5 = prepare_tool_registry([])
+    _runtime_names_5 = _runtime_registry_5.names()
     agent = build_runtime_agent(
-        model, tools=[], system_prompt='', response_format=None,
+        model, tool_registry=_runtime_registry_5, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_5: names, system_prompt='', response_format=None,
         resolve_model=lambda session_id: ('model-A', model),
         record_selection=lambda session_id, model_id: selections.append((session_id, model_id)),
     )
@@ -386,8 +398,10 @@ def test_openai_authentication_failure_is_classified_without_leaking_response(ca
             raise failure
 
     model = FailingModel(responses=['unused'])
+    _runtime_registry_6 = prepare_tool_registry([])
+    _runtime_names_6 = _runtime_registry_6.names()
     agent = build_runtime_agent(
-        model, tools=[], system_prompt='', response_format=None,
+        model, tool_registry=_runtime_registry_6, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_6: names, system_prompt='', response_format=None,
         resolve_model=lambda _session_id: ('model-A', model),
         record_selection=lambda _session_id, _model_id: None,
     )
@@ -419,8 +433,10 @@ def test_openai_transport_failure_reaches_agent_as_terminal_error(error_type, re
             raise failure
 
     model = FailingModel(responses=['unused'])
+    _runtime_registry_7 = prepare_tool_registry([])
+    _runtime_names_7 = _runtime_registry_7.names()
     agent = build_runtime_agent(
-        model, tools=[], system_prompt='', response_format=None,
+        model, tool_registry=_runtime_registry_7, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_7: names, system_prompt='', response_format=None,
         resolve_model=lambda _session_id: ('model-A', model),
         record_selection=lambda _session_id, _model_id: None,
     )
@@ -457,8 +473,10 @@ def test_non_openai_failure_reaches_agent_event_without_leaking_body(
             raise failure
 
     model = FailingModel(responses=['unused'])
+    _runtime_registry_8 = prepare_tool_registry([])
+    _runtime_names_8 = _runtime_registry_8.names()
     agent = build_runtime_agent(
-        model, tools=[], system_prompt='', response_format=None,
+        model, tool_registry=_runtime_registry_8, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_8: names, system_prompt='', response_format=None,
         resolve_model=lambda _session_id: ('model-A', model),
         record_selection=lambda _session_id, _model_id: None,
     )

@@ -1,5 +1,9 @@
 """Reject unusable model messages before LangChain can route their tools."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import logging
 from pathlib import Path
 from types import SimpleNamespace
@@ -56,7 +60,7 @@ def test_rejected_model_message_fails_run_without_executing_any_tool(
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
     app = application.build_local_application(
-        Path('synthetic.json'), tools=[write_probe], system_prompt='', response_format=None,
+        Path('synthetic.json'), tools=[ToolSpec(write_probe, write_probe.args_schema, permissions=ToolPermission(default='allow'))], system_prompt='', response_format=None,
     )
     session_id = app.create_session('A')
 

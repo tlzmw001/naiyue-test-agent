@@ -27,6 +27,7 @@ from naiyue_test_agent.model_access import (
 from naiyue_test_agent.model_access.stop_reason import normalize_stop_reason
 from naiyue_test_agent.model_access.errors import describe_model_failure
 from .context_summary_io import run_summary_steps, arun_summary_steps
+from naiyue_test_agent.model_access.messages import content_text
 
 
 logger = logging.getLogger(__name__)
@@ -61,8 +62,10 @@ def _cut_at_complete_turn(messages: list, keep_tokens: int) -> int:
 def _validate_removed_prefix(messages: list) -> None:
     pending: set[str] = set()
     for message in messages:
-        if not isinstance(message.content, str):
-            raise ContextCompactionError('unsupported_summary_content')
+        try:
+            content_text(message.content, strict=True)
+        except ValueError as error:
+            raise ContextCompactionError('unsupported_summary_content') from error
         if isinstance(message, AIMessage):
             if 'function_call' in message.additional_kwargs:
                 raise ContextCompactionError('unsupported_summary_content')
@@ -85,8 +88,9 @@ def _validate_removed_prefix(messages: list) -> None:
 def _serialize_text_history(messages: list) -> str:
     parts = []
     for message in messages:
+        text = content_text(message.content, strict=True)
         if isinstance(message, HumanMessage):
-            parts.append(f'<message type="human">{escape(message.content)}</message>')
+            parts.append(f'<message type="human">{escape(text)}</message>')
         elif isinstance(message, AIMessage):
             calls = ''.join(
                 f'<tool_call id={quoteattr(call["id"])} '
@@ -102,16 +106,16 @@ def _serialize_text_history(messages: list) -> str:
                 + '</invalid_tool_call>'
                 for call in message.invalid_tool_calls
             )
-            parts.append(f'<message type="ai"><content>{escape(message.content)}'
+            parts.append(f'<message type="ai"><content>{escape(text)}'
                          f'</content>{calls}{invalid_calls}</message>')
         elif isinstance(message, ToolMessage):
             parts.append(
                 f'<message type="tool" tool_call_id={quoteattr(message.tool_call_id)} '
                 f'status={quoteattr(message.status)}>'
-                f'{escape(message.content)}</message>'
+                f'{escape(text)}</message>'
             )
         elif isinstance(message, SystemMessage):
-            parts.append(f'<message type="system">{escape(message.content)}</message>')
+            parts.append(f'<message type="system">{escape(text)}</message>')
         else:
             raise ContextCompactionError('unsupported_summary_content')
     return '\n'.join(parts)
@@ -412,20 +416,16 @@ async def _acompact_messages(
 
 
 def make_context_compaction_middleware(
-    resolve_model: Callable[[str], tuple[str, BaseChatModel]],
-    *, tools: list, system_prompt: str,
-    resolve_project_instructions: Callable[[str], str | None] | None,
+    resolve_model: Callable[[str], tuple[str, BaseChatModel]], *, model_inputs: Callable,
 ):
-    """Use the active session model in both execution modes."""
-    return _ContextCompactionMiddleware(resolve_model, tools, system_prompt, resolve_project_instructions)
+    """Use the same request definitions and prompt prepared before compaction."""
+    return _ContextCompactionMiddleware(resolve_model, model_inputs)
 
 
 class _ContextCompactionMiddleware(AgentMiddleware):
-    def __init__(self, resolve_model, tools, system_prompt, resolve_project_instructions):
+    def __init__(self, resolve_model, model_inputs):
         self.resolve_model = resolve_model
-        self.tools = tools
-        self.system_prompt = system_prompt
-        self.resolve_project_instructions = resolve_project_instructions
+        self.model_inputs = model_inputs
 
     @property
     def name(self):
@@ -435,12 +435,10 @@ class _ContextCompactionMiddleware(AgentMiddleware):
         context = runtime.context or {}
         session_id = context.get('session_id')
         model_id, model = self.resolve_model(session_id)
-        project = (self.resolve_project_instructions(session_id)
-                   if self.resolve_project_instructions is not None else None)
-        prompt = self.system_prompt + (project or '')
+        tools, prompt = self.model_inputs(state, runtime)
         return dict(
             messages=state['messages'], model=model, model_id=model_id, context=context,
-            system_messages=[SystemMessage(content=prompt)] if prompt else [], tools=self.tools,
+            system_messages=[SystemMessage(content=prompt)], tools=tools,
         )
 
     def before_agent(self, state, runtime):

@@ -10,21 +10,31 @@
 .venv/bin/python -m naiyue_test_agent.web --config .env/models.json --workspace /绝对工作区路径
 ```
 
-已有 read/ls/find/grep/write/edit 被真实注册。工作区内操作沿原工具政策执行；工作区外普通读取/目录搜索可触发审批，敏感/无效路径仍拒绝，write/edit 继续原工作区约束。无工作区时继续仅聊天，不默认选择项目根或扩大到整个磁盘。
+统一登记八个内置定义，工作区新会话默认启用 read/ls/find/grep/write/edit。普通非隐藏工作区目标默认Allow，外部/隐藏/私密目标可审批，显式Deny优先；write/edit也可在明确许可后操作外部真实目标。递归搜索的未授权隐藏/私密目标跳过，Deny不因批准目录被覆盖。CLI/Web未传工作区默认启动cwd（Spec087）；程序化无工作区会话仍可用。
 
-Bash 另需显式 `--host-bash`；每次命令沿原审批机制。它是宿主机命令，不是沙箱，不能把这个开关当成隔离保证。find/grep 仍使用已有 rg 依赖，缺失时沿工具错误回填处理。
+
+Windows文件工具的提交/归档与路径比较已按[Spec088](specs/088-windows-file-commit-and-archives.md)/[Spec089](specs/089-windows-path-permission-identity.md)接入：合法普通/扩展盘符和UNC目标用同一比较语义，Deny仍优先，递归批准不绕过子目标过滤。归档不要求私密模式位，但标记/类型/链接和显式清理快照仍检查；已有文件替换保留系统访问设置，不自动清只读/提权。当前为本机IO与平台分支证据，Windows原机验收另做，页面/审批API未新增字段。
+
+Bash/PowerShell通过后端`aset_active_tools(session_id, names)`选择；页面尚无工具管理按钮。命令按显式规则/当前模式审批，默认策略Ask，仍是宿主机执行。双Shell环境/合流/归档见[085-14](specs/085-14-dual-shell.md)，共用进程runner/原生async及清理保护沿085-12；[085-13](specs/085-13-search-tools.md)已将Grep接原生rg分组搜索、Find接fd（Linux也识别fdfind），均有流式预算、权限过滤和不完整反馈；程序须在服务PATH中，不自动下载/安装。
+
+090C已统一Bash/PowerShell/Grep/Find的timeout参数：省略/null/0不设执行期限，正整数指定本次秒数，不设300秒上限；Grep发现和各分组共用一次期限。用户仍可通过现有停止按钮结束协作工具，必要进程清理和模型网络期限保留，输出/归档预算不变。
 
 页面默认折叠工具详情，显示工具名及处理中/成功/错误结果/未执行/待核对等状态。展开能看到模型实际提供的参数和对应 ToolMessage 正文；工具结果用转义文本显示，不当作助手回答或 HTML 执行。缺少历史执行来源时显示“已有结果”，不借用其他运行的状态。
 
+[Spec091](specs/091-tool-progress.md)已接真实运行进度：折叠卡片显示排队/准备/运行/停止/收尾、具体阶段、自dispatch起的历时和距最后活动时间；无新活动仅更新时间，不自动判断卡死。展开显示实际计数和最新有界输出尾部，未知总量不显示百分比，尾部替换而非追加历史。工具不提供进度时仍有dispatch历时，已终局不会被迟到进度改回运行中。
+
+原SSE缓冲溢出后走完整run快照，保留每call最新进度；同run后续批次复用call_id也只绑定对应AI行。接受停止后显示“停止中”，清理和保存未结束时按钮保持等待；真实finished/ToolMessage决定成功、错误或未执行，缺终局显示未确认。进度仅驻当前服务内存，不进入模型、checkpoint或新的数据库表，服务重启后的恢复仍由092另做。
+
 审批区展示实际待审调用及后端规范化目标。每项默认无决定，全部选择批准或拒绝后“提交审批并继续”才可用。批准仅对该调用/目标一次生效；不提供前端修改参数/目标或授予永久权限的入口。HTTP失败保留选择，不自动重试；拒绝经原 HITL 返回错误 ToolMessage 给模型。
 
-服务重启后的 interrupted/failed 会话仍不能自动恢复或审批；这需要后续独立恢复协议。当前审批依赖同进程 pending 状态，完整归档、分支、草稿持久化与成熟权限模式仍另做。
+服务重启后的会话按[Spec092](specs/092-session-restart-recovery.md#0-2026-10-17确认打开会话自动恢复)打开时自动恢复：执行中断保留真实结果、补未确认说明、结束旧任务；确认是前置审批则重新核对当前本地权限和目标，直接恢复原审批卡片，批准前整批零执行。GET不写checkpoint，自动恢复使用原POST和准入锁；原待审复核失败不自动continue取消，保留历史/草稿与手动重试或明确放弃入口。恢复不调用模型/工具/Auto，不复活旧临时授权、进度/SSE或草稿发送。完整归档、分支和草稿持久化另做。
 
 ## 数据流与接口
 
 ```text
-启动 workspace / host_bash
-  → Web lifespan 注册现有工具 → 现有应用装配/metadata/HITL
+启动 workspace
+  → Web lifespan 登记八工具，工作区决定新会话初始活动集合
+  → ToolSet固定本次集合/提示词/预算 → 按本批生成局部官方HITL
 用户提示 → 既有 arun → 模型 AIMessage.tool_calls
   → message_completed snapshot → Web/React 工具详情
   → 工具开始/结束事件 → 仅临时状态投影
@@ -57,8 +67,8 @@ Bash 另需显式 `--host-bash`；每次命令沿原审批机制。它是宿主�
 
 | 位置 | 改动 |
 |---|---|
-| web/app.py、settings.py、__main__.py | 工作区注册/显式 Bash/审批路由 |
-| application/session_service.describe_session | 派生 approval_run_id，不改DB表或恢复算法 |
+| web/app.py、settings.py、__main__.py | 统一登记/初始活动选择/审批路由 |
+| application/session_service.describe_session | 派生 approval_run_id及active_tools；schema v2保存活动名称 |
 | web/service.py、schemas.py | 公共待审列表、严格请求、锁内当前批次校验 |
 | web/run_delivery.py | 复用已有独立生产任务和回执；调用异步审批恢复；工具事件投影 |
 | web/serialization.py | 保留 AI tool_calls、ToolMessage 调用ID/name/status |
@@ -73,7 +83,7 @@ Pi a69bef789 interactive-mode 的 start/end 根据toolCallId建立/更新ToolExe
 - 前端 `npm --prefix frontend test -- --run` → **9个测试文件、25个测试通过**，本片新增9例；tsc+Vite构建成功，186modules，JS363.27kB/gzip113.80kB、CSS10.50kB。
 - compileall、pip check、git diff --check通过；源文件均不超过500行，无.env/真实模型配置/原依赖/关键知识点变更。
 - 红灯包含工具尚未注册/DTO丢字段、工具事件/审批组件缺失、原型键被误认已选、跨轮复用调用ID导致旧结果错配；修对应源代码后通过。混合审批测试起初错误假定ToolMessage列表按申请顺序返回，核对框架可先写拒绝结果后，改为精确断言全部ID及对应正文/状态，没有更改框架顺序或放宽成功条件。其他追加验收不冒称逐项TDD。
-- 真实文件/工具经HTTP验证六工具同批次write→edit→read/ls/find/grep的结果；Bash显式开启、命令审批后执行合成printf；read不存在路径错误回到模型后运行完成；工作区外批准/拒绝、非法/过期/重复请求、重启审批阻断均覆盖。
+- 真实文件/工具经HTTP验证六工具同批次write→edit→read/ls/find/grep的结果；Bash显式开启、命令审批后执行合成printf；read不存在路径错误回到模型后运行完成；工作区外批准/拒绝、非法/过期/重复请求、重启审批复核/恢复、条件变化拒绝均覆盖（当前092C覆盖取代最初阻断合同）。
 
 离线TCP/两个独立进程：
 

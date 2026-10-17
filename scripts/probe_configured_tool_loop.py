@@ -1,6 +1,13 @@
 """Probe a configured model with synthetic model → tool → model data."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+from naiyue_test_agent.application import prepare_tool_registry
+
 import argparse
+
+from naiyue_test_agent.config_paths import get_models_path
 import os
 import secrets
 import signal
@@ -8,7 +15,7 @@ import signal
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', default='.env/models.json')
+    parser.add_argument('--config', default=str(get_models_path()))
     parser.add_argument('--model-id', required=True)
     args = parser.parse_args()
 
@@ -42,9 +49,11 @@ def main() -> int:
         return expected
 
     try:
+        _runtime_registry_1 = prepare_tool_registry([ToolSpec(read_probe_value, read_probe_value.args_schema, permissions=ToolPermission(default='allow'))])
+        _runtime_names_1 = _runtime_registry_1.names()
         agent = build_configured_runtime_agent(
             args.config,
-            tools=[read_probe_value],
+            tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names,
             system_prompt='Use the requested diagnostic tool and return its exact value.',
             response_format=None,
             select_model_id=lambda _session_id: args.model_id,
@@ -54,7 +63,7 @@ def main() -> int:
             {'messages': [('user',
                            'Call read_probe_value exactly once. Reply only with the value returned by the tool.')]},
             context={'session_id': 'configured-probe'},
-            config={'recursion_limit': 6},
+            config={'recursion_limit': 12},
         )
         messages = result['messages']
         calls = [call for message in messages if message.type == 'ai'

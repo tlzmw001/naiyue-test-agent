@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "default_model_id": "main",
+  "providers": {
+    "gateway": {
+      "kind": "openai_compatible",
+      "base_url": "https://example.invalid/v1",
+      "api_key": "<your-api-key>"
+    }
+  },
+  "models": {
+    "main": {
+      "provider_id": "gateway",
+      "model": "<your-model-name>",
+      "api": "chat_completions",
+      "profile": {"image_inputs": false}
+    }
+  }
+}

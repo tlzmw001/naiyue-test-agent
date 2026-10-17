@@ -1,5 +1,9 @@
 """Complete messages observed from actual compiled agent state."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import json
 import logging
 from threading import Barrier, Event, Thread
@@ -12,7 +16,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import BaseModel
 
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
+from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.model_access import ModelCatalog
 from test_application_run_events import ToolModel, make_app
 
@@ -37,7 +41,7 @@ def test_tool_loop_publishes_all_content_once_and_default_logs_are_metadata(monk
     model = ToolModel(responses=[AIMessage(content='PRIVATE_THOUGHT', tool_calls=[
         {'name': 'probe', 'args': {'value': 'PRIVATE_ARG'}, 'id': 'c1'},
     ]), AIMessage(content='PRIVATE_ANSWER')])
-    app = make_app(monkeypatch, model, [probe])
+    app = make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
     with caplog.at_level(logging.INFO):
@@ -173,7 +177,7 @@ def test_control_during_tool_retains_all_messages_and_original_stop_result(monke
     model = ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'blocked', 'args': {}, 'id': 'blocked'},
     ]), AIMessage(content='answer')])
-    app = make_app(monkeypatch, model, [blocked])
+    app = make_app(monkeypatch, model, [ToolSpec(blocked, blocked.args_schema, permissions=ToolPermission(default='allow'))])
     session = app.create_session('A')
     events, outcomes = [], []
     app.subscribe_events(events.append)
@@ -218,7 +222,7 @@ def test_parallel_tool_messages_are_each_delivered_once(monkeypatch):
     app = make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'parallel', 'args': {'value': 'one'}, 'id': 'one'},
         {'name': 'parallel', 'args': {'value': 'two'}, 'id': 'two'},
-    ]), AIMessage(content='done')]), [parallel])
+    ]), AIMessage(content='done')]), [ToolSpec(parallel, parallel.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
     result = app.run(app.create_session('A'), [('user', 'run')])

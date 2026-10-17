@@ -9,6 +9,8 @@ from .async_invocation import ainvoke_agent_run
 
 
 def _check_resources(workspace_root, read_resource_roots):
+    if workspace_root is None and read_resource_roots == ():
+        return
     if (not isinstance(workspace_root, Path) or not workspace_root.is_absolute()
             or '..' in workspace_root.parts):
         raise ValueError('A canonical workspace_root is required')

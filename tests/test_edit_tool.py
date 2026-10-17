@@ -6,16 +6,18 @@ from pathlib import Path
 from threading import Event
 
 import pytest
+from naiyue_test_agent.tools.paths import prepare_file_subject
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 from pydantic import Field
 
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime.tools import (
-    create_session_edit_tool, create_session_read_tool,
+from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.tools import (
+    EditSettings, create_session_edit_tool, create_session_read_tool,
 )
-from naiyue_test_agent.agent_runtime.tools import edit as edit_module
-from naiyue_test_agent.agent_runtime.tools import write as write_module
+from naiyue_test_agent.tools import edit as edit_module
+from naiyue_test_agent.tools import write as write_module
 from naiyue_test_agent.model_access import ModelCatalog
 
 
@@ -56,8 +58,8 @@ def test_edit_replaces_multiple_original_regions_and_returns_same_call_id(
     target = tmp_path / 'case.md'
     target.write_text('alpha\nbeta\ngamma\n', encoding='utf-8')
     tool = create_session_edit_tool()
-    assert set(tool.tool_call_schema.model_fields) == {'path', 'edits'}
-    assert tool.metadata['naiyue_execution_mode'] == 'sequential'
+    assert set(tool.tool.tool_call_schema.model_fields) == {'path', 'edits'}
+    assert tool.execution_mode == 'sequential'
     app, model = make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('edit', {
             'path': 'case.md', 'edits': [
@@ -74,7 +76,7 @@ def test_edit_replaces_multiple_original_regions_and_returns_same_call_id(
     message = tool_result(result, 'edit-1')
     assert message.status == 'success'
     assert '2' in message.content
-    assert 'ALPHA' not in message.content
+    assert '+ALPHA' in message.content and message.artifact['firstChangedLine'] == 1
     assert any(isinstance(item, ToolMessage) and item.tool_call_id == 'edit-1'
                for item in model.seen[1])
 
@@ -210,7 +212,9 @@ def test_edit_rejects_unsafe_or_missing_files(monkeypatch, tmp_path, path):
         AIMessage(content='done'),
     ])
 
-    result = app.run(app.create_workspace_session('A', root), [('user', 'edit')])
+    session = app.create_workspace_session('A', root)
+    app.set_permission_mode(session, 'NoAsk')
+    result = app.run(session, [('user', 'edit')])
 
     assert tool_result(result, 'denied').status == 'error'
     assert outside.read_text(encoding='utf-8') == 'outside'
@@ -233,13 +237,12 @@ def test_edit_rejects_invalid_utf8_without_overwriting(monkeypatch, tmp_path):
 def test_edit_rejects_replacement_input_past_configured_byte_limit(monkeypatch, tmp_path):
     target = tmp_path / 'case.md'
     target.write_text('old', encoding='utf-8')
-    monkeypatch.setenv('NAIYUE_WRITE_MAX_BYTES', '4')
     app, _ = make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('edit', {
             'path': 'case.md', 'edits': [{'oldText': 'old', 'newText': 'longer'}],
         }, 'limit')]),
         AIMessage(content='done'),
-    ])
+    ], tools=[create_session_edit_tool(settings=EditSettings(max_input_bytes=4))])
     result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'edit')])
     assert tool_result(result, 'limit').status == 'error'
     assert 'limit' in tool_result(result, 'limit').content.lower()
@@ -251,8 +254,8 @@ def test_edit_rejects_file_changed_after_initial_read(monkeypatch, tmp_path):
     target.write_text('old', encoding='utf-8')
     real_scan = edit_module._scan_target
 
-    def change_after_scan(target_path, old_parts):
-        result = real_scan(target_path, old_parts)
+    def change_after_scan(target_path, old_parts, **kwargs):
+        result = real_scan(target_path, old_parts, **kwargs)
         target.write_text('another writer', encoding='utf-8')
         return result
 
@@ -309,7 +312,8 @@ def test_edit_detects_external_change_while_copying(monkeypatch, tmp_path):
     with pytest.raises(write_module.ToolException, match='changed'):
         edit_module._edit(tmp_path, 'case.md', [
             edit_module.EditReplacement(oldText='old', newText='new'),
-        ], 1024)
+        ], EditSettings(max_input_bytes=1024),
+            subject=prepare_file_subject('case.md', tmp_path, 'write'))
     assert target.read_bytes() == b'ALT' + b'a' * (128 * 1024)
     assert sorted(path.name for path in tmp_path.iterdir()) == ['case.md']
 
@@ -321,21 +325,23 @@ def test_edit_reserves_target_before_scan_against_concurrent_write(monkeypatch, 
     release = Event()
     real_scan = edit_module._scan_target
 
-    def paused_scan(target_path, old_parts):
+    def paused_scan(target_path, old_parts, **kwargs):
         entered.set()
         assert release.wait(5)
-        return real_scan(target_path, old_parts)
+        return real_scan(target_path, old_parts, **kwargs)
 
     monkeypatch.setattr(edit_module, '_scan_target', paused_scan)
     with ThreadPoolExecutor(max_workers=2) as pool:
         first = pool.submit(edit_module._edit, tmp_path, 'case.md', [
             edit_module.EditReplacement(oldText='old', newText='new'),
-        ], 1024)
+        ], EditSettings(max_input_bytes=1024),
+            subject=prepare_file_subject('case.md', tmp_path, 'write'))
         assert entered.wait(5)
         with pytest.raises(write_module.ToolException, match='busy'):
-            write_module._write(tmp_path, 'case.md', 'other', 1024)
+            write_module._write(tmp_path, 'case.md', 'other', 1024,
+                subject=prepare_file_subject('case.md', tmp_path, 'write'))
         release.set()
-        assert first.result(timeout=5).startswith('edit replaced')
+        assert first.result(timeout=5)[0].startswith('edit replaced')
     assert target.read_text(encoding='utf-8') == 'new'
 
 
@@ -350,7 +356,8 @@ def test_edit_temp_write_failure_keeps_original(monkeypatch, tmp_path):
     with pytest.raises(write_module.ToolException, match='I/O'):
         edit_module._edit(tmp_path, 'case.md', [
             edit_module.EditReplacement(oldText='old', newText='new'),
-        ], 1024)
+        ], EditSettings(max_input_bytes=1024),
+            subject=prepare_file_subject('case.md', tmp_path, 'write'))
     assert target.read_text(encoding='utf-8') == 'old'
 
 
@@ -400,7 +407,7 @@ def test_read_edit_read_batch_observes_order(monkeypatch, tmp_path):
     assert tool_result(result, 'read-after').content == 'after'
 
 
-def test_edit_commit_unknown_quarantines_session_and_redacts_details(
+def test_edit_commit_unknown_returns_error_and_redacts_details(
     monkeypatch, tmp_path, caplog,
 ):
     target = tmp_path / 'case.md'
@@ -409,7 +416,8 @@ def test_edit_commit_unknown_quarantines_session_and_redacts_details(
         AIMessage(content='', tool_calls=[call('edit', {
             'path': 'case.md', 'edits': [{'oldText': 'old', 'newText': 'PRIVATE_NEW'}],
         }, 'unknown')]),
-        AIMessage(content='must not continue'),
+        AIMessage(content='inspect the file before another edit'),
+        AIMessage(content='continued safely'),
     ])
     session = app.create_workspace_session('A', tmp_path)
 
@@ -417,19 +425,19 @@ def test_edit_commit_unknown_quarantines_session_and_redacts_details(
         raise OSError('PRIVATE_IO_DETAIL')
 
     monkeypatch.setattr(write_module.os, 'replace', unknown_replace)
-    with caplog.at_level(logging.INFO), pytest.raises(write_module.WriteOutcomeUnknown):
-        app.run(session, [('user', 'edit')])
+    with caplog.at_level(logging.INFO):
+        result = app.run(session, [('user', 'edit')])
 
     assert target.read_text(encoding='utf-8') == 'old'
-    assert len(model.seen) == 1
+    assert len(model.seen) == 2
+    assert tool_result(result, 'unknown').status == 'error'
+    assert 'outcome is unknown' in tool_result(result, 'unknown').content
     assert 'PRIVATE_IO_DETAIL' not in caplog.text
     assert 'PRIVATE_NEW' not in caplog.text
-    events = [record.write_event for record in caplog.records
-              if hasattr(record, 'write_event')]
-    assert [event['event'] for event in events] == [
-        'edit_outcome_unknown', 'session_manual_review_required',
-    ]
-    assert events[0]['tool_call_id'] == 'unknown'
-    assert events[0]['run_id'] == events[1]['run_id']
-    with pytest.raises(RuntimeError, match='manual review'):
-        app.run(session, [('user', 'again')])
+    events = [record.tool_error for record in caplog.records if hasattr(record, 'tool_error')]
+    assert len(events) == 1 and events[0]['tool_call_id'] == 'unknown'
+    assert events[0]['cause_type'] == 'OSError' and events[0]['run_id']
+    assert 'session_manual_review_required' not in caplog.text
+    continued = app.run(session, [('user', 'again')])
+    assert continued['messages'][-1].content == 'continued safely'
+    assert len(model.seen) == 3

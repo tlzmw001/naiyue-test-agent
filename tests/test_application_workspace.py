@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from pydantic import Field
 
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
+from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.model_access import ModelCatalog
 
 
@@ -63,7 +63,7 @@ def test_shared_agent_reads_only_its_session_workspace(monkeypatch, tmp_path):
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
     tool = create_session_read_tool()
-    assert set(tool.tool_call_schema.model_fields) == {'path', 'offset', 'limit'}
+    assert set(tool.tool.tool_call_schema.model_fields) == {'path', 'offset', 'limit'}
     app = application.build_local_application(
         Path('synthetic.json'), tools=[tool], system_prompt='', response_format=None,
     )

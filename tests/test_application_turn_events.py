@@ -1,5 +1,9 @@
 """Turn lifecycle reflects the actual model/tool/approval graph."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import json
 import logging
 from threading import Barrier
@@ -9,7 +13,7 @@ from langchain.tools import tool
 from langchain_core.messages import AIMessage
 from langchain_core.tools import ToolException
 
-from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
+from naiyue_test_agent.tools import create_session_read_tool
 from test_application_run_events import ToolModel, make_app
 
 
@@ -49,12 +53,11 @@ def test_one_tool_batch_and_final_answer_are_two_turns(monkeypatch, mode):
             barrier.wait(timeout=5)
         return value
 
-    probe.metadata = {'naiyue_execution_mode': mode}
     model = ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'probe', 'args': {'value': 'one'}, 'id': 'one'},
         {'name': 'probe', 'args': {'value': 'two'}, 'id': 'two'},
     ]), AIMessage(content='done')])
-    app = make_app(monkeypatch, model, [probe])
+    app = make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, execution_mode=mode, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
     result = app.run(app.create_session('A'), [('user', 'run')])
@@ -105,10 +108,9 @@ def test_recoverable_tool_error_completes_turn_with_error_result_count(monkeypat
         """Return a recoverable error."""
         raise ToolException('Invalid path; choose an existing file.')
 
-    probe.handle_tool_error = True
     app = make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'probe', 'args': {}, 'id': 'probe'},
-    ]), AIMessage(content='handled')]), [probe])
+    ]), AIMessage(content='handled')]), [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
     result = app.run(app.create_session('A'), [('user', 'run')])
@@ -143,7 +145,7 @@ def test_steering_and_follow_up_create_turns_when_delivered_not_when_queued(monk
 
     app = make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'probe', 'args': {}, 'id': 'probe'},
-    ]), AIMessage(content='second'), AIMessage(content='third')]), [probe])
+    ]), AIMessage(content='second'), AIMessage(content='third')]), [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     session = app.create_session('A')
     events = []
     app.subscribe_events(events.append)
@@ -167,7 +169,7 @@ def test_sync_tool_settles_before_unified_stop_finishes_run(monkeypatch):
 
     app = make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'stop_probe', 'args': {}, 'id': 'stop'},
-    ]), AIMessage(content='must not generate')]), [stop_probe])
+    ]), AIMessage(content='must not generate')]), [ToolSpec(stop_probe, stop_probe.args_schema, permissions=ToolPermission(default='allow'))])
     session = app.create_session('A')
     events = []
     app.subscribe_events(events.append)
@@ -217,7 +219,7 @@ def test_truncated_tool_response_finishes_with_error_result_without_executor(mon
 
     app = make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'probe', 'args': {}, 'id': 'probe'},
-    ], response_metadata={'finish_reason': 'length'}), AIMessage(content='handled')]), [probe])
+    ], response_metadata={'finish_reason': 'length'}), AIMessage(content='handled')]), [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
     result = app.run(app.create_session('A'), [('user', 'run')])

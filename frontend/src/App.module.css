@@ -1,4 +1,9 @@
 .app { display: flex; height: 100dvh; min-height: 420px; overflow: hidden; }
+.recoveryNotice { position: sticky; top: 0; z-index: 1; padding: 16px 18px; border: 1px solid #ded6c4; border-radius: 12px; background: #faf8f1; color: #514c41; font-size: 13px; overflow-wrap: anywhere; }
+.recoveryNotice p { margin: 6px 0; line-height: 1.65; }
+.recoveryNotice span { color: var(--muted); font-size: 12px; }
+.recoveryActions { margin-top: 10px; border-top: 1px solid #ded6c4; padding-top: 6px; }
+.recoveryActions button { border: 1px solid #bdb6a7; border-radius: 8px; padding: 8px 12px; background: #fff; color: inherit; font-size: 13px; }
 .sidebar { width: 260px; flex-shrink: 0; display: flex; flex-direction: column; padding: 24px 14px 16px; background: var(--sidebar); }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 12px; font-size: 19px; font-weight: 650; letter-spacing: -.4px; }
 .brandMark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 10px; background: #202020; color: #fff; font-size: 16px; }
@@ -92,11 +97,14 @@
   .userMessage { max-width: 92%; }
 }
 .toolCall { background: #f8f8f8; border: 1px solid #ececec; border-radius: 12px; margin: 9px 0; min-width: 0; }
-.toolCall > summary { display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 11px 14px; font-size: 13px; }
+.toolCall > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; cursor: pointer; padding: 11px 14px; font-size: 13px; }
 .toolCall > summary::before { content: '›'; color: #888; }
 .toolCall[open] > summary::before { transform: rotate(90deg); }
-.toolName { font-weight: 600; }
+.toolName { font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
 .toolStatus { color: #777; margin-left: auto; font-size: 12px; }
+.toolPhase { color: #666; font-size: 12px; flex-basis: 100%; padding-left: 18px; overflow-wrap: anywhere; }
+.toolTiming { display: flex; flex-wrap: wrap; gap: 4px 12px; flex-basis: 100%; padding-left: 18px; color: #777; font-size: 11px; font-variant-numeric: tabular-nums; }
+.toolCounter { font-size: 12px; color: #555; font-variant-numeric: tabular-nums; margin: 8px 0; }
 .toolDetail { padding: 0 14px 12px; }
 .detailLabel { color: #777; font-size: 11px; margin-top: 8px; }
 .toolDetail pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow-y: auto; background: transparent; padding: 6px 0; margin: 0; font-size: 12px; }

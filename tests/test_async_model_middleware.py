@@ -1,5 +1,7 @@
 """Native async model IO keeps the existing selection/gate/event contract."""
 
+from naiyue_test_agent.application import prepare_tool_registry
+
 import asyncio
 import logging
 from types import SimpleNamespace
@@ -45,8 +47,10 @@ class NativeAsyncModel(BaseChatModel):
 
 
 def runtime(models, selected, selections=None):
+    _runtime_registry_1 = prepare_tool_registry([])
+    _runtime_names_1 = _runtime_registry_1.names()
     return build_runtime_agent(
-        next(iter(models.values())), tools=[], system_prompt='', response_format=None,
+        next(iter(models.values())), tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
         resolve_model=lambda sid: (selected[sid], models[selected[sid]]),
         record_selection=lambda sid, mid: selections.append((sid, mid)) if selections is not None else None,
         checkpointer=InMemorySaver(),

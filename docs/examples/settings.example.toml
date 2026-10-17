@@ -1,0 +1,229 @@
+# 当前可用的工具、权限、进程及进度设置样例（Spec085-14 / Spec087 / Spec091 / Spec090C）。
+# 默认位置：~/.naiyue-test-agent/settings.toml，与 models.json 同目录。
+# 文件缺失使用默认；读取失败、TOML语法错误、权限非法或storage非法会终止启动。
+# tools / process / tool_output / progress额度字段非法时分别警告并回退该部分默认，保留合法权限规则。
+# 权限规则启动时读取并校验，不随工具调用重新读文件；修改文件后重启服务。
+# 已接八工具：tools.read / ls / write / edit / grep / find / bash / powershell。
+# 完整目标字段见 tool-runtime.example.toml，不能直接整份套用。
+
+[progress]
+# 是否产生工具进度事件；不影响工具结果、停止、权限或执行期限。
+# 091A提供后端事件，091B已接Web/CLI进度显示及最新快照。
+enabled = true
+# 同一阶段连续更新的最小发送间隔，单位毫秒；0表示每次真实活动都发送。
+# 阶段变化即时报告，不创建心跳或计时任务；不会把无输出当作卡死。
+min_interval_milliseconds = 200
+# 单次进度中最新文本尾部的UTF-8字节上限，必须大于0。
+# 文件工具不发送正文/图片；Shell发送规范化尾部，消费者按快照替换。
+max_text_bytes = 8_192
+
+[storage]
+# 会话数据根目录；不改变 models.json / settings.toml 的配置位置。
+# 未设置默认 ~/.naiyue-test-agent/data。必须是绝对路径，支持 ~；修改后重启。
+# Windows可用TOML单引号避免反斜杠转义，例如 data_dir = 'D:\NaiyueData'。
+# data_dir = '/absolute/data'
+# 每个工作区实际库位于 data_dir/workspaces/<workspace_id>/sessions.sqlite。
+# 路径不可用时启动失败，不回退；改变data_dir不会自动搬迁已有历史。
+
+[permissions]
+# Default：剩余Ask交人工；NoAsk：拒绝Ask；Auto：先模型审查；BypassApprovals：允许Ask但仍服从Deny。
+mode = "Default"
+# 所有匹配字段取AND，规则之间取OR；任何Deny优先于所有Allow。
+# tool为精确名字或"*"；path仅用于声明文件目标的工具。
+# 路径支持组件*、?和跨目录**；${workspace}按当前会话工作区替换。
+# 示例：同目录其余文件Allow，但private.txt始终Deny。
+# deny = [{ tool = "read", path = "${workspace}/docs/private.txt" }]
+# allow = [{ tool = "read", path = "${workspace}/docs/**" }]
+# 外部目录改写为绝对路径，例如/absolute/shared/**或Windows的'C:\shared\**'。
+# 命令只按完整command精确匹配，不能用*或前缀代替命令解析：
+# allow = [{ tool = "bash", args = { command = "python -m pytest -q" } }]
+# args只接受工具公开标量参数，键不存在或类型不符会在创建Agent前报错。
+# 未配置的普通工作区文件默认Allow；隐藏、.pem/.key和外部目标默认Ask。
+# 目录授权不会自动授予隐藏/私密子目标，未获许可的范围跳过并反馈；Deny始终过滤。
+deny = []
+allow = []
+
+[process]
+# 执行期限之外的一份总收尾预算，所有步骤共用，不是每步重新给5秒。
+cleanup_timeout_seconds = 5
+# Shell父退出但后代仍持有管道时，最后输出后的静默等待；主动关流会标不完整。
+# 显式设置timeout时持续输出仍受本次执行期限限制；搜索不能用此静默判断内容完整。
+shell_exit_quiet_milliseconds = 100
+# 回调与消费者间未处理字节高水位；触及后暂停读取，降到半水位恢复。
+# 已交付的一个读取块允许有限超量；不是完整输出的内存缓存或归档配额。
+max_pending_output_bytes = 1_048_576
+
+# 使用Auto前取消下面注释，填写同目录models.json中已存在的模型ID。
+# 配了auto时，两个ID即使在Default模式下也会在创建Agent前校验；不支持运行中重载。
+# 快/详审各自沿用对应模型的thinking、context_window、max_output_tokens、timeout和retry配置。
+# 只在快审有效Ask时详审；审查失败、非法结果或输入超预算直接交人工。
+# [permissions.auto]
+# fast_model_id = "review-fast"
+# detailed_model_id = "review-detailed"
+# 模型reason的字符数上限；超出视为无效结果，不截断后继续放行。
+# max_reason_chars = 512
+
+[tools.read]
+# 未提供 limit 时每页的行数，必须不大于 max_limit。
+default_limit = 2000
+# 模型一次调用允许提出的最大行数。
+max_limit = 2000
+# 正文 UTF-8 字节预算，不含少量分页提示；超长首行仅返回完整字符前缀并标明余文未返回。
+# offset/limit按行分页，不能用来续读被截断的同一行后半部分。
+max_output_bytes = 65_536
+# path 输入的字符数上限；操作系统路径限制仍有效。
+max_path_chars = 4096
+
+[tools.read.image]
+# 编码图片输入上限；在读入和解码前检查，独立于文字64KiB预算。
+max_input_bytes = 33_554_432
+# 解码前宽×高的像素数上限；Pillow自身的炸弹保护也会生效。
+max_pixels = 40_000_000
+# 输出最长边，等比例缩小，不放大较小图片；先按EXIF校正方向。
+max_dimension = 2000
+# base64负载字节上限，独立于少量MIME/尺寸文字；有限缩小仍超限则报错。
+max_base64_bytes = 4_718_592
+
+[tools.ls]
+# 一层列名；跳过/检查失败/停止会说明结果不完整，不以不完整清单冒充empty。
+# 未提供 limit 时返回的条目数，必须不大于 max_limit。
+default_limit = 500
+# 模型一次调用允许提出的最大条目数。
+max_limit = 2000
+# 清单正文 UTF-8 字节预算，不含少量截断提示。
+max_output_bytes = 51_200
+# path 输入的字符数上限。
+max_path_chars = 4096
+
+[tools.write]
+# 授权执行后自动创建缺失父目录；输入校验先于mkdir，拒绝或待审批不创建目录。
+# 中途失败时已建目录可能保留，不会自动递归回滚删除。
+# content 输入的 UTF-8 字节上限；不是字符数，不限制原文件大小。
+max_input_bytes = 1_048_576
+# path 输入的字符数上限。
+max_path_chars = 4096
+
+[tools.edit]
+# 本次全部 oldText + newText 的 UTF-8 字节总量上限。
+# 不限制原文件或修改后文件的大小；原文件仍按块处理。
+max_input_bytes = 1_048_576
+# path 输入的字符数上限。
+max_path_chars = 4096
+# 归一化匹配的UTF-8文本及源字节坐标缓冲预算；超限不影响全部精确唯一的编辑。
+max_normalization_buffer_bytes = 1_048_576
+# 归一化及diff收集时单个源行的字节上限；超长精确编辑可执行但省略对应反馈。
+max_affected_line_bytes = 1_048_576
+# 返回模型的局部diff字节预算；截断时明确标记。
+max_diff_bytes = 65_536
+# artifact中修改后局部预览的字节预算；截断时明确标记。
+max_preview_bytes = 65_536
+# 完整unified patch的字节上限，并约束变化区收集；超过则整份patch省略。
+max_patch_bytes = 1_048_576
+
+[tools.grep]
+# 默认/最大匹配行数；上下文不占匹配名额，但占输出字节。
+default_limit = 100
+max_limit = 1000
+# 每处匹配前后默认/最大上下文行数。
+default_context_lines = 0
+max_context_lines = 10
+# 单行源文字片段字符数；超长则裁片并说明，不限制扫描文件大小。
+max_line_chars = 2000
+# 匹配与上下文正文 UTF-8 字节预算；不含有界的跳过范围和少量状态提示。
+max_output_bytes = 51_200
+# 默认无执行期限；工具调用可传 timeout（秒），省略/null/0不限时，正整数指定本次期限。
+# 模型输入的 pattern/path/glob 字符数，不代表候选总量或扫描大小。
+max_pattern_chars = 4096
+max_path_chars = 4096
+max_glob_chars = 4096
+# 一条 JSONL/NUL 协议记录的字节上限；超限丢弃该记录并明确结果不完整。
+# 独立于单行显示片段，不能用 rg --max-columns 代替这个预算。
+max_record_bytes = 1_048_576
+# native stderr 仅保留此字节数用于识别原因，不把原诊断正文写日志。
+max_diagnostic_bytes = 8192
+# 每组 argv 的编码字节预算，不是总候选数；Windows按实际命令行UTF-16编码计算。
+# OS对argv与环境仍有自己的上限，启动失败不会静默重试。
+max_argument_bytes = 16_384
+
+[tools.find]
+# 需要 PATH 中的 fd（Linux也识别同程序的fdfind名称），不自动下载/安装。
+# 文件和目录都占条目；先过滤权限，再计返回名额。
+default_limit = 1000
+max_limit = 2000
+# 返回路径正文 UTF-8 字节预算，不含有界跳过范围和少量状态提示。
+max_output_bytes = 51_200
+# 默认无执行期限；工具调用可传 timeout（秒），省略/null/0不限时，正整数指定本次期限。
+# 模型输入字符数上限，不限制搜索产生的绝对路径记录。
+max_pattern_chars = 4096
+max_path_chars = 4096
+# 一条NUL路径记录的字节上限；独立于模型path输入与进程输出队列。
+max_record_bytes = 65_536
+# native stderr 诊断尾部字节数。
+max_diagnostic_bytes = 8192
+
+[tools.bash]
+# 可选解释器路径；省略时发现原生Bash（Windows为Git Bash）。不可用时保留登记并在调用时具体报错。
+# executable = "/absolute/path/to/bash"
+# command 输入的字符数上限；不保证超过操作系统命令长度限制后仍可执行。
+max_command_chars = 8192
+# 装配时固定版本探测的秒数预算；超时只报告版本unknown，不执行用户脚本。
+probe_timeout_seconds = 5
+# 默认无执行期限；工具调用可传 timeout（秒），省略/null/0不限时，正整数指定本次期限。
+# stdout/stderr 合并后的末尾正文最多保留的行数。
+max_output_lines = 2000
+# 同一尾部正文的 UTF-8 字节上限：64 KiB，与行数限制同时生效。
+max_output_bytes = 65_536
+# 一次 Bash 调用所有归档文件的实际落盘字节总和：16 MiB。
+# 原始字节及必要的 UTF-8 文本视图都计入；不表示输出超过该值就停止命令。
+max_archive_bytes = 16_777_216
+# 捕获原始输出时采用的文本编码；不自动猜测任意外部程序的编码。
+output_encoding = "utf-8"
+
+[tools.bash.environment]
+# 从继承环境中显式移除的变量名，名称不存在时无需报错；可按需求修改此列表。
+# 如需排除某个 Agent 私有变量，在此明确填写名称，不按 TOKEN/KEY 等模式批量删除。
+# BASH_ENV会让非交互Bash读取脚本；NAIYUE_WEB_TOKEN是Agent服务认证变量。
+unset_env = ["BASH_ENV", "NAIYUE_WEB_TOKEN"]
+# 在继承/覆盖后的 PATH 前增加的工具目录；条目为目录，不是拼接好的 PATH 字符串。
+path_prepend = []
+
+[tools.bash.environment.values]
+# 显式新增/覆盖环境变量的字符串值；空表表示不覆盖。
+# 这里只记录非敏感的固定设置；已有测试凭证正常继承，不把真实凭证写入样例或日志。
+# TEST_ENV = "staging"
+
+[tools.powershell]
+# 可选解释器路径；省略时优先发现 pwsh 7+，Windows 可回退 powershell.exe 5.1。
+# executable = 'C:\Program Files\PowerShell\7\pwsh.exe'
+# PowerShell command 输入的字符数上限，与 Bash 分别配置。
+max_command_chars = 8192
+# 装配时固定版本探测的秒数预算；超时只报告版本unknown，不执行用户脚本。
+probe_timeout_seconds = 5
+# 默认无执行期限；工具调用可传 timeout（秒），省略/null/0不限时，正整数指定本次期限。
+# 合并后的末尾正文行数上限。
+max_output_lines = 2000
+# 同一尾部正文的 UTF-8 字节上限：64 KiB。
+max_output_bytes = 65_536
+# 一次 PowerShell 调用的实际归档总量：16 MiB，含原始文件和条件文本视图。
+max_archive_bytes = 16_777_216
+# 适配器初始化文本输出后预期的编码；原生程序使用其他编码时需明确调整。
+# 该候选默认仍须用 Windows PowerShell 5.1/7 实机验证，不能仅靠此字段保证兼容。
+output_encoding = "utf-8"
+# 仅Windows PowerShell进程的执行策略选择：inherit尊重当前策略；bypass只影响该子进程。
+# 工程默认建议inherit，不调用Set-ExecutionPolicy改用户/机器策略；企业策略仍有效。
+execution_policy = "inherit"
+
+[tools.powershell.environment]
+# 从继承环境中显式移除的变量名；与 Bash 独立配置，无需逐个允许其余变量。
+unset_env = ["NAIYUE_WEB_TOKEN"]
+# 在继承/覆盖后的 PATH 前添加的工具目录，按 Windows/宿主平台规则合成。
+path_prepend = []
+
+[tools.powershell.environment.values]
+# 显式新增/覆盖的非敏感字符串值；空表表示不覆盖，规则与 Bash 相同。
+
+[tool_output]
+# 同一工作区全部受管 Shell 日志的实际落盘总量：128 MiB。
+# Bash/PowerShell、并发会话及已有受管归档共用此额度，不能各拿一份 128 MiB。
+# 单次额度与本额度都必须满足；达到任一额度后继续采集最新尾部，明确归档不完整。
+max_workspace_archive_bytes = 134_217_728

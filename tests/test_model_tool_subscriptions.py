@@ -1,5 +1,10 @@
 """Logical model and tool calls share application run metadata notifications."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+from naiyue_test_agent.application import prepare_tool_registry
+
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -48,7 +53,7 @@ def test_one_tool_loop_has_correlated_immutable_safe_events(monkeypatch, caplog)
         }),
         AIMessage(content='PRIVATE_FINAL', response_metadata={'finish_reason': 'stop'}),
     ])
-    app = make_app(monkeypatch, model, [probe])
+    app = make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(call_metadata_only(events.append))
     session = app.create_session('A')
@@ -59,7 +64,8 @@ def test_one_tool_loop_has_correlated_immutable_safe_events(monkeypatch, caplog)
         'tool_call_started', 'tool_call_finished',
         'model_call_started', 'model_call_finished', 'run_finished',
     ]
-    assert [e.sequence for e in events] == [1, 4, 5, 7, 8, 12, 13, 16]
+    # Every registered dispatch now reports queued/preparing between start/end.
+    assert [e.sequence for e in events] == [1, 4, 5, 7, 10, 14, 15, 18]
     assert all(e.session_id == session and e.run_id == events[0].run_id for e in events)
     starts = events_of(events, 'model_call_started')
     ends = events_of(events, 'model_call_finished')
@@ -150,8 +156,10 @@ def test_legacy_and_mismatched_scope_do_not_invent_application_events():
     from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
 
     model = ToolModel(responses=[AIMessage(content='done')])
+    _runtime_registry_1 = prepare_tool_registry([])
+    _runtime_names_1 = _runtime_registry_1.names()
     agent = build_runtime_agent(
-        model, tools=[], system_prompt='', response_format=None,
+        model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
         resolve_model=lambda _id: ('A', model), record_selection=lambda *_args: None,
     )
     events = []
@@ -194,7 +202,7 @@ def test_partial_invalid_tool_response_is_failed_before_dispatch(monkeypatch):
     model = ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'probe', 'args': {}, 'id': 'valid'},
     ], invalid_tool_calls=[{'name': 'probe', 'args': '{', 'id': 'invalid', 'error': 'parse'}])])
-    app = make_app(monkeypatch, model, [probe])
+    app = make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
     with pytest.raises(ModelResponseRejected) as caught:

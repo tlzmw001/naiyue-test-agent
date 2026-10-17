@@ -1,5 +1,10 @@
 """Configured context budgets remain visible through the real agent call path."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+from naiyue_test_agent.application import prepare_tool_registry
+
 import json
 import logging
 from types import SimpleNamespace
@@ -26,8 +31,8 @@ def _config(tmp_path, *, first_limits=None, second_limits=None):
         'schema_version': 1, 'default_model_id': 'first',
         'providers': {'p': {'kind': 'openai', 'api_key': 'synthetic-key'}},
         'models': {
-            'first': {'provider_id': 'p', 'model': 'synthetic-first', **(first_limits or {})},
-            'second': {'provider_id': 'p', 'model': 'synthetic-second', **(second_limits or {})},
+            'first': {'provider_id': 'p', 'model': 'synthetic-first', 'api': 'chat_completions', **(first_limits or {})},
+            'second': {'provider_id': 'p', 'model': 'synthetic-second', 'api': 'chat_completions', **(second_limits or {})},
         },
     }
     path = tmp_path / 'models.json'
@@ -51,7 +56,7 @@ def test_default_limits_reach_each_adapter_and_are_marked_as_defaults(tmp_path):
     data['models'].update({
         'claude': {'provider_id': 'claude', 'model': 'synthetic-claude'},
         'local': {'provider_id': 'local', 'model': 'synthetic-local'},
-        'gateway': {'provider_id': 'gateway', 'model': 'synthetic-gateway'},
+        'gateway': {'provider_id': 'gateway', 'model': 'synthetic-gateway', 'api': 'chat_completions'},
     })
     path = tmp_path / 'models.json'
     path.write_text(json.dumps(data), encoding='utf-8')
@@ -116,12 +121,14 @@ def test_budget_observation_follows_model_switch_and_missing_usage(tmp_path, mon
         selected['s1'] = 'second'
         return 'switched'
 
+    _runtime_registry_1 = prepare_tool_registry([ToolSpec(switch_model, switch_model.args_schema, permissions=ToolPermission(default='allow'))])
+    _runtime_names_1 = _runtime_registry_1.names()
     agent = build_configured_runtime_agent(
         _config(tmp_path, first_limits={'context_window_tokens': 120,
                                         'max_output_tokens': 16},
                 second_limits={'context_window_tokens': 200,
                                'max_output_tokens': 32}),
-        tools=[switch_model], system_prompt='BASE', response_format=None,
+        tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='BASE', response_format=None,
         select_model_id=lambda session_id: selected[session_id],
         record_selection=lambda _session_id, _model_id: None,
     )
@@ -166,8 +173,10 @@ def test_budget_observation_on_model_error_preserves_failure(tmp_path, monkeypat
         return FailingModel(responses=[AIMessage(content='unused')], metadata=metadata)
 
     monkeypatch.setattr('naiyue_test_agent.model_access.ChatOpenAI', fake_openai)
+    _runtime_registry_2 = prepare_tool_registry([])
+    _runtime_names_2 = _runtime_registry_2.names()
     agent = build_configured_runtime_agent(
-        _config(tmp_path), tools=[], system_prompt='', response_format=None,
+        _config(tmp_path), tool_registry=_runtime_registry_2, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_2: names, system_prompt='', response_format=None,
         select_model_id=lambda _session_id: 'first',
         record_selection=lambda _session_id, _model_id: None,
     )

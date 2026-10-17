@@ -61,6 +61,11 @@ def _case(monkeypatch, summary_result, *, send_margin=None, normal_failure=None)
         HumanMessage(content='PRIVATE_SECOND_' + 'y' * 100),
         AIMessage(content='second done'), HumanMessage(content='new question'),
     ]
+    # Expected history now includes the application provenance contract; compare every field.
+    for index, message in enumerate(messages):
+        message.id = f'history-{index}'
+        if isinstance(message, HumanMessage):
+            message.additional_kwargs['naiyue_human_input'] = True
     estimate = count_tokens_approximately([SystemMessage(content='BASE'), *messages])
     output = 20 if send_margin is None else 400 - (estimate + send_margin)
     model = FallbackFake(

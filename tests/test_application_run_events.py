@@ -1,5 +1,9 @@
 """Application terminal events follow real graph results and session cleanup."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import logging
 from threading import Barrier, Event, Thread
 
@@ -10,8 +14,8 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import ToolException
 
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
-from naiyue_test_agent.agent_runtime.tools.write import WriteOutcomeUnknown
+from naiyue_test_agent.tools import create_session_read_tool
+from naiyue_test_agent.tools.processes import ProcessCleanupError
 from naiyue_test_agent.model_access import ModelCatalog
 
 
@@ -69,17 +73,16 @@ def test_success_events_follow_cleanup_without_changing_result(monkeypatch, capl
     ]
 
 
-def test_error_tool_result_can_complete_and_unhandled_error_fails(monkeypatch):
+def test_explicit_and_unexpected_tool_errors_allow_run_completion(monkeypatch):
     @tool
     def handled() -> str:
         """Return a recoverable synthetic failure."""
         raise ToolException('handled')
 
-    handled.handle_tool_error = True
     model = ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'handled', 'args': {}, 'id': 'call-1'},
     ]), AIMessage(content='recovered')])
-    app = make_app(monkeypatch, model, [handled])
+    app = make_app(monkeypatch, model, [ToolSpec(handled, handled.args_schema, permissions=ToolPermission(default='allow'))])
     received = []
     app.subscribe_events(run_events_only(received.append))
     result = app.run(app.create_session('A'), [('user', 'run')])
@@ -95,13 +98,16 @@ def test_error_tool_result_can_complete_and_unhandled_error_fails(monkeypatch):
 
     model = ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'unhandled', 'args': {}, 'id': 'call-2'},
-    ])])
-    app = make_app(monkeypatch, model, [unhandled])
+    ]), AIMessage(content='handled unexpected failure')])
+    app = make_app(monkeypatch, model, [ToolSpec(unhandled, unhandled.args_schema, permissions=ToolPermission(default='allow'))])
     received = []
     app.subscribe_events(run_events_only(received.append))
-    with pytest.raises(RuntimeError) as caught:
-        app.run(app.create_session('A'), [('user', 'run')])
-    assert caught.value is failure and received[-1].data.status == 'failed'
+    result = app.run(app.create_session('A'), [('user', 'run')])
+    feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
+    assert feedback.status == 'error' and feedback.tool_call_id == 'call-2'
+    assert 'RuntimeError' in feedback.content and 'PRIVATE_TOOL_ERROR' not in feedback.content
+    assert result['messages'][-1].content == 'handled unexpected failure'
+    assert received[-1].data.status == 'completed' and received[-1].data.failure is None
 
 
 def test_approval_terminal_is_installed_before_notification_and_resume_is_new_run(
@@ -136,12 +142,13 @@ def test_approval_terminal_is_installed_before_notification_and_resume_is_new_ru
     assert result['messages'][-1].content == 'done'
     assert received[2].data.mode == 'approval_resume'
     assert received[0].run_id != received[2].run_id
-    assert [e.sequence for e in received] == [1, 9, 1, 15]
+    # Resume adds queued/preparing and Read's detection/read/last-count reports.
+    assert [e.sequence for e in received] == [1, 9, 1, 20]
     assert received[-1].data.status == 'completed' and pending_at_end[-1] == []
 
 
 def test_unknown_outcome_preserves_block_and_original_exception(monkeypatch):
-    failure = WriteOutcomeUnknown('PRIVATE_UNKNOWN')
+    failure = ProcessCleanupError('PRIVATE_UNKNOWN')
 
     @tool
     def uncertain() -> str:
@@ -151,11 +158,11 @@ def test_unknown_outcome_preserves_block_and_original_exception(monkeypatch):
     model = ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'uncertain', 'args': {}, 'id': 'write-1'},
     ])])
-    app = make_app(monkeypatch, model, [uncertain])
+    app = make_app(monkeypatch, model, [ToolSpec(uncertain, uncertain.args_schema, permissions=ToolPermission(default='allow'))])
     session = app.create_session('A')
     received = []
     app.subscribe_events(run_events_only(received.append))
-    with pytest.raises(WriteOutcomeUnknown) as caught:
+    with pytest.raises(ProcessCleanupError) as caught:
         app.run(session, [('user', 'run')])
     assert caught.value is failure
     assert received[-1].data.status == 'failed'
@@ -301,7 +308,7 @@ def test_old_terminal_uses_cleanup_snapshot_when_new_run_changes_session(monkeyp
     received, outcomes = [], []
     app.subscribe_events(run_events_only(received.append))
     module = __import__(application.SessionService.__module__, fromlist=['SessionService'])
-    original_pending = module._pending_tool_approval
+    original_pending = module.pending_tool_approval
     original_invoke = module.invoke_agent_run
     cleanup_released, finish_old = Event(), Event()
 
@@ -314,14 +321,14 @@ def test_old_terminal_uses_cleanup_snapshot_when_new_run_changes_session(monkeyp
         cleanup_released.set()
         assert finish_old.wait(timeout=3)
 
-    failure = WriteOutcomeUnknown('PRIVATE_NEW_OUTCOME')
+    failure = ProcessCleanupError('PRIVATE_NEW_OUTCOME')
 
     def fail_new(agent, messages, **kwargs):
-        if messages[0][1] == 'new':
+        if messages[0].content == 'new':
             raise failure
         return original_invoke(agent, messages, **kwargs)
 
-    monkeypatch.setattr(module, '_pending_tool_approval', queue_at_finalize)
+    monkeypatch.setattr(module, 'pending_tool_approval', queue_at_finalize)
     monkeypatch.setattr(module, 'invoke_agent_run', fail_new)
     monkeypatch.setattr(app._sessions, '_record_steering', pause_discard)
 
@@ -335,7 +342,7 @@ def test_old_terminal_uses_cleanup_snapshot_when_new_run_changes_session(monkeyp
     worker.start()
     try:
         assert cleanup_released.wait(timeout=3)
-        with pytest.raises(WriteOutcomeUnknown) as caught:
+        with pytest.raises(ProcessCleanupError) as caught:
             app.run(session, [('user', 'new')])
         assert caught.value is failure
     finally:

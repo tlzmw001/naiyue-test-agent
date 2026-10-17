@@ -1,6 +1,7 @@
 """Persistent sessions keep framework state and application recovery boundaries."""
 
 from pathlib import Path
+import sqlite3
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -8,7 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from naiyue_test_agent import application
 from naiyue_test_agent.application.persistent import build_persistent_application
 from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
-from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
+from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.model_access import ModelCatalog
 from test_application_run_events import ToolModel
 
@@ -35,7 +36,7 @@ def test_close_reopen_preserves_ids_tool_history_and_has_no_old_tool_execution(m
         first_ids = [m.id for m in result['messages']]
         thread = row['thread_id']
     with SessionStorage(db) as storage:
-        second = build(monkeypatch, storage)
+        second = build(monkeypatch, storage, tools=[create_session_read_tool()])
         assert second.restore_session(session) == session
         assert second._sessions._sessions[session]['thread_id'] == thread
         later = second.run(session, [('user', 'continue')])
@@ -106,7 +107,7 @@ def test_mismatching_checkpoint_is_not_silently_ignored(monkeypatch, tmp_path):
             app.restore_session(session)
 
 
-def test_storage_permissions_instance_lock_and_close(tmp_path):
+def test_storage_instance_lock_and_close(tmp_path):
     db = tmp_path / 'sessions.sqlite'
     with SessionStorage(db):
         assert db.stat().st_mode & 0o777 == 0o600
@@ -114,9 +115,22 @@ def test_storage_permissions_instance_lock_and_close(tmp_path):
             SessionStorage(db)
     with SessionStorage(db) as storage:
         assert storage.list_sessions() == []
-    db.chmod(0o644)
-    with pytest.raises(SessionPersistenceError):
-        SessionStorage(db)
+
+
+@pytest.mark.parametrize('mode', [0o644, 0o666])
+def test_existing_database_and_lock_load_without_private_mode_requirement(tmp_path, mode):
+    db = tmp_path / 'sessions.sqlite'
+    with SessionStorage(db):
+        pass
+    lock = db.with_name(db.name + '.lock')
+    db.chmod(mode)
+    lock.chmod(mode)
+    before = db.read_bytes()
+    with SessionStorage(db) as storage:
+        assert storage.list_sessions() == []
+    assert db.read_bytes() == before
+    assert db.stat().st_mode & 0o777 == mode
+    assert lock.stat().st_mode & 0o777 == mode
 
 
 def test_cleanup_failure_never_leaves_session_ready(monkeypatch, tmp_path):
@@ -197,7 +211,7 @@ def test_approval_can_resume_in_process_but_is_blocked_after_restart(monkeypatch
         done = app.resume_tool_approval(session, ['approve'])
         assert done['messages'][-1].content == 'approved' and storage.get(session)['state'] == 'ready'
     with SessionStorage(db) as storage:
-        app = build(monkeypatch, storage)
+        app = build(monkeypatch, storage, tools=[create_session_read_tool()])
         assert app.restore_session(session) == session
 
 
@@ -242,14 +256,37 @@ def test_symlink_and_unknown_schema_are_rejected(tmp_path):
         SessionStorage(db)
 
 
-def test_existing_public_wal_is_rejected_before_database_open(tmp_path):
+def test_nonregular_wal_is_rejected_before_database_open(tmp_path):
     db = tmp_path / 'sessions.sqlite'
     with SessionStorage(db):
         pass
     before = db.read_bytes()
     wal = tmp_path / 'sessions.sqlite-wal'
-    wal.write_bytes(b'UNRELATED')
-    wal.chmod(0o644)
+    wal.mkdir()
+    unrelated = wal / 'unrelated.txt'
+    unrelated.write_bytes(b'UNRELATED')
     with pytest.raises(SessionPersistenceError):
         SessionStorage(db)
-    assert wal.read_bytes() == b'UNRELATED' and db.read_bytes() == before
+    assert unrelated.read_bytes() == b'UNRELATED' and db.read_bytes() == before
+
+
+def test_existing_valid_wal_and_shm_load_without_private_mode_requirement(tmp_path):
+    db = tmp_path / 'sessions.sqlite'
+    with SessionStorage(db):
+        pass
+    keeper = sqlite3.connect(db)
+    try:
+        keeper.execute('PRAGMA journal_mode=WAL')
+        keeper.execute('CREATE TABLE permission_probe(value TEXT)')
+        keeper.execute('INSERT INTO permission_probe(value) VALUES(?)', ('saved',))
+        keeper.commit()
+        for suffix in ('-wal', '-shm'):
+            db.with_name(db.name + suffix).chmod(0o644)
+        with SessionStorage(db) as storage:
+            assert storage.list_sessions() == []
+            row = storage.connection.execute('SELECT value FROM permission_probe').fetchone()
+            assert row['value'] == 'saved'
+        for suffix in ('-wal', '-shm'):
+            assert db.with_name(db.name + suffix).stat().st_mode & 0o777 == 0o644
+    finally:
+        keeper.close()

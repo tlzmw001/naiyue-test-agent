@@ -1,12 +1,18 @@
 """Layer-owned descriptions and trusted, isolated extension entry points."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import ast
 import asyncio
+from importlib.util import resolve_name
 from pathlib import Path
 import subprocess
 import sys
 
 import pytest
+from tool_feedback_helpers import fail_tool_dispatch
 from langchain_core.exceptions import ModelRateLimitError, ModelTimeoutError
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, ToolMessage
@@ -98,7 +104,7 @@ def test_model_classifiers_are_model_scoped_and_snapshotted():
 
 def test_runtime_protected_errors_cannot_be_overridden():
     from naiyue_test_agent.agent_runtime.run_control import UserStop
-    from naiyue_test_agent.agent_runtime.tools.write import WriteOutcomeUnknown
+    from naiyue_test_agent.tools.processes import ProcessCleanupError
     from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
     from naiyue_test_agent.agent_runtime.errors import ContextCompactionError, ToolBatchSchedulingError
 
@@ -108,7 +114,7 @@ def test_runtime_protected_errors_cannot_be_overridden():
     policy = RuntimeErrorPolicy(classifiers=[forbidden])
     for error, reason in [(UserStop(), 'user_stop'),
                           (asyncio.CancelledError(), 'task_cancelled'),
-                          (WriteOutcomeUnknown('PRIVATE'), 'tool_outcome_unknown'),
+                          (ProcessCleanupError('PRIVATE'), 'tool_outcome_unknown'),
                           (ModelResponseRejected('invalid_tool_calls'), 'invalid_tool_calls'),
                           (ContextCompactionError('PRIVATE'), 'compaction_failed'),
                           (ToolBatchSchedulingError('PRIVATE'), 'tool_batch_scheduling_failed')]:
@@ -136,14 +142,15 @@ def test_custom_fatal_tool_description_is_reported_to_application(monkeypatch):
     @tool
     def probe() -> str:
         """Raise a synthetic fatal tool error without side effects."""
-        raise error
+        return 'unreachable after the dispatch fault'
 
     def describe(error, source):
         if isinstance(error, ToolDataError):
             return FailureDescription('tool', 'tool_error', 'data_unavailable', 'ToolDataError')
         return None
 
-    app, events, _catalog = build(monkeypatch, tools=[probe], replies=[
+    fail_tool_dispatch(monkeypatch, 'probe', error)
+    app, events, _catalog = build(monkeypatch, tools=[ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], replies=[
         AIMessage(content='', tool_calls=[{'name': 'probe', 'args': {}, 'id': 'c1'}],
                   response_metadata={'finish_reason': 'tool_calls'}),
     ])
@@ -163,10 +170,9 @@ def test_custom_recoverable_tool_uses_existing_framework_feedback(monkeypatch):
     @tool
     def probe() -> str:
         """Raise a recoverable error without side effects."""
-        raise Recoverable('PRIVATE')
+        raise Recoverable('Input is unavailable; choose another input.')
 
-    probe.handle_tool_error = lambda _error: 'Input is unavailable; choose another input.'
-    app, events, _catalog = build(monkeypatch, tools=[probe], replies=[
+    app, events, _catalog = build(monkeypatch, tools=[ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], replies=[
         AIMessage(content='', tool_calls=[{'name': 'probe', 'args': {}, 'id': 'c1'}],
                   response_metadata={'finish_reason': 'tool_calls'}),
         AIMessage(content='recovered', response_metadata={'finish_reason': 'stop'}),
@@ -225,6 +231,8 @@ import naiyue_test_agent.contracts.failures
 assert not any(n.startswith('langchain') for n in sys.modules)
 import naiyue_test_agent.model_access
 assert not any(n.startswith(('naiyue_test_agent.agent_runtime', 'naiyue_test_agent.application')) for n in sys.modules)
+import naiyue_test_agent.tools
+assert not any(n.startswith(('naiyue_test_agent.agent_runtime', 'naiyue_test_agent.application')) for n in sys.modules)
 import naiyue_test_agent.agent_runtime
 assert not any(n.startswith('naiyue_test_agent.application') for n in sys.modules)
 '''
@@ -232,9 +240,17 @@ assert not any(n.startswith('naiyue_test_agent.application') for n in sys.module
     assert result.returncode == 0, result.stderr
     for layer, forbidden in [('contracts', ('model_access', 'agent_runtime', 'application', 'web')),
                              ('model_access', ('agent_runtime', 'application', 'web')),
+                             ('tools', ('agent_runtime', 'application', 'web')),
                              ('agent_runtime', ('application', 'web'))]:
         for path in (Path('naiyue_test_agent') / layer).rglob('*.py'):
             for node in ast.walk(ast.parse(path.read_text())):
-                if isinstance(node, ast.ImportFrom) and node.module:
-                    assert not any(node.module.startswith('naiyue_test_agent.' + name)
-                                   for name in forbidden), (path, node.lineno)
+                if isinstance(node, ast.ImportFrom):
+                    package = '.'.join(path.parent.parts)
+                    module = resolve_name('.' * node.level + (node.module or ''), package)
+                    names = [module, *(module + '.' + item.name for item in node.names)]
+                elif isinstance(node, ast.Import):
+                    names = [item.name for item in node.names]
+                else:
+                    continue
+                assert not any(name.startswith('naiyue_test_agent.' + blocked)
+                               for name in names for blocked in forbidden), (path, node.lineno)

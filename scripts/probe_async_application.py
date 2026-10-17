@@ -1,6 +1,12 @@
 """Bounded two-process async stream/tool/control/persistence probe."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import argparse
+
+from naiyue_test_agent.config_paths import get_models_path
 import asyncio
 import json
 import logging
@@ -98,7 +104,7 @@ async def _worker(args):
                 raise RuntimeError('Probe model budget exceeded')
 
     budget = Budget(2 if args.phase == 'start' else 1)
-    tools = [read_probe_value] if args.phase == 'start' else []
+    tools = [ToolSpec(read_probe_value, read_probe_value.args_schema, permissions=ToolPermission(default='allow'))]
     async with asyncio.timeout(args.timeout_seconds):
         async with open_async_persistent_application(args.config, database_path=args.database,
                 tools=tools, system_prompt='Return only the exact requested synthetic value.', response_format=None) as app:
@@ -110,6 +116,7 @@ async def _worker(args):
                 saved = json.loads(record_path.read_text())
                 expected = saved['value']
                 session = await app.arestore_session(saved['session_id'])
+                await app.aset_active_tools(session, [])
                 restored = await app.aget_messages(session)
                 assert any(m.content == expected for m in restored)
                 prompt = 'Without calling any tools, reply only with the exact value read by read_probe_value earlier.'
@@ -147,7 +154,7 @@ async def _worker(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', default='.env/models.json')
+    parser.add_argument('--config', default=str(get_models_path()))
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--timeout-seconds', type=float, default=180)
     parser.add_argument('--phase', choices=['start', 'resume'], help=argparse.SUPPRESS)

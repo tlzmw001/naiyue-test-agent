@@ -1,18 +1,22 @@
 """A stop request must not turn real failures into successful terminal events."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import asyncio
 from threading import Event
 
 import pytest
 from langchain.tools import tool
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent.application.session_storage import SessionPersistenceError
 from test_async_application import make_app, StreamingToolModel, call
 from test_async_persistent import factory
 
 
-def test_started_tool_failure_wins_over_user_stop(monkeypatch):
+def test_started_tool_error_result_is_preserved_when_user_stops(monkeypatch):
     async def scenario():
         entered, release = asyncio.Event(), asyncio.Event()
         failure = RuntimeError('PRIVATE_TOOL_ERROR')
@@ -24,7 +28,7 @@ def test_started_tool_failure_wins_over_user_stop(monkeypatch):
             await release.wait()
             raise failure
 
-        app = await make_app(monkeypatch, StreamingToolModel(replies=[call('failing', {})]), [failing])
+        app = await make_app(monkeypatch, StreamingToolModel(replies=[call('failing', {})]), [ToolSpec(failing, failing.args_schema, permissions=ToolPermission(default='allow'))])
         session = await app.acreate_session('A')
         events = []
         app.subscribe_events(events.append)
@@ -33,11 +37,15 @@ def test_started_tool_failure_wins_over_user_stop(monkeypatch):
             await asyncio.wait_for(entered.wait(), 5)
             app.request_stop(session)
             release.set()
-            with pytest.raises(RuntimeError) as caught:
-                await task
-            assert caught.value is failure
-            assert events[-1].data.status == 'failed' and events[-1].data.manual_review_required
-            assert not any(e.event_type == 'run_finished' and e.data.status == 'stopped' for e in events)
+            result = await task
+            feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
+            assert feedback.status == 'error' and feedback.name == 'failing'
+            assert 'RuntimeError' in feedback.content and 'PRIVATE_' not in feedback.content
+            assert result['run_stopped']
+            assert events[-1].data.status == 'stopped' and not events[-1].data.manual_review_required
+            end = next(e.data for e in events if e.event_type == 'tool_call_finished')
+            assert end.outcome == 'error_result'
+            assert len([e for e in events if e.event_type == 'model_call_started']) == 1
         finally:
             release.set()
             await asyncio.gather(task, return_exceptions=True)

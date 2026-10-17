@@ -14,14 +14,14 @@ logger = logging.getLogger(__name__)
 
 
 class AsyncCliApplication:
-    def __init__(self, config_path, *, tools, system_prompt, response_format, database_path=None):
+    def __init__(self, config_path, *, tools, system_prompt, response_format, database_path=None, initial_active_tools=None, settings=None, workspace_binding=None):
         self._ready = Event()
         self._closed = False
         self._thread = Thread(target=self._serve, name='naiyue-cli-async')
         self._thread.start()
         self._ready.wait()
         try:
-            self._submit(lambda: self._open(config_path, database_path, tools, system_prompt, response_format))
+            self._submit(lambda: self._open(config_path, database_path, tools, system_prompt, response_format, initial_active_tools, settings, workspace_binding))
         except BaseException:
             self._loop.call_soon_threadsafe(self._loop.stop)
             self._thread.join()
@@ -34,14 +34,14 @@ class AsyncCliApplication:
             self._ready.set()
             self._loop.run_forever()
 
-    async def _open(self, config, database, tools, prompt, response_format):
+    async def _open(self, config, database, tools, prompt, response_format, initial_active_tools, settings, workspace_binding):
         self._stack = AsyncExitStack()
         if database is not None:
             self._app = await self._stack.enter_async_context(open_async_persistent_application(
-                config, database_path=database, tools=tools, system_prompt=prompt, response_format=response_format))
+                config, database_path=database, tools=tools, system_prompt=prompt, response_format=response_format, initial_active_tools=initial_active_tools, settings=settings, workspace_binding=workspace_binding))
         else:
             self._app = await build_async_local_application(
-                config, tools=tools, system_prompt=prompt, response_format=response_format)
+                config, tools=tools, system_prompt=prompt, response_format=response_format, initial_active_tools=initial_active_tools, settings=settings)
             self._stack.push_async_callback(self._app.aclose)
 
     def _submit(self, call):
@@ -54,6 +54,18 @@ class AsyncCliApplication:
 
         return asyncio.run_coroutine_threadsafe(execute(), self._loop).result()
 
+    def register_tool(self, spec):
+        return self._submit(lambda: self._app.aregister_tool(spec))
+
+    def get_registered_tools(self):
+        return self._submit(self._app.get_registered_tools)
+
+    def get_active_tools(self, session_id):
+        return self._submit(lambda: self._app.get_active_tools(session_id))
+
+    def set_active_tools(self, session_id, names):
+        return self._submit(lambda: self._app.aset_active_tools(session_id, names))
+
     def create_session(self, model_id):
         return self._submit(lambda: self._app.acreate_session(model_id))
 
@@ -63,8 +75,20 @@ class AsyncCliApplication:
     def restore_session(self, session_id):
         return self._submit(lambda: self._app.arestore_session(session_id))
 
+    def get_session_history(self, session_id):
+        return self._submit(lambda: self._app.aget_session_history(session_id))
+
+    def recover_session(self, session_id, *, checkpoint_id, action):
+        return self._submit(lambda: self._app.arecover_session(session_id, checkpoint_id=checkpoint_id, action=action))
+
     def select_model(self, session_id, model_id):
         return self._submit(lambda: self._app.aselect_model(session_id, model_id))
+
+    def get_permission_mode(self, session_id):
+        return self._submit(lambda: self._app.get_permission_mode(session_id))
+
+    def set_permission_mode(self, session_id, mode):
+        return self._submit(lambda: self._app.aset_permission_mode(session_id, mode))
 
     def subscribe_events(self, handler):
         return self._submit(lambda: self._app.subscribe_events(handler))
@@ -84,8 +108,8 @@ class AsyncCliApplication:
     def run(self, session_id, messages):
         return self._submit(lambda: self._app.arun(session_id, messages))
 
-    def resume_tool_approval(self, session_id, decisions):
-        return self._submit(lambda: self._app.aresume_tool_approval(session_id, decisions))
+    def resume_tool_approval(self, session_id, decisions, *, remember_approved=None):
+        return self._submit(lambda: self._app.aresume_tool_approval(session_id, decisions, remember_approved=remember_approved))
 
     def close(self):
         if self._closed:
@@ -98,13 +122,14 @@ class AsyncCliApplication:
             self._thread.join()
 
 
-def build_local_application(config_path, *, tools, system_prompt, response_format):
+def build_local_application(config_path, *, tools, system_prompt, response_format, initial_active_tools=None, settings=None):
     return AsyncCliApplication(config_path, tools=tools, system_prompt=system_prompt,
-                               response_format=response_format)
+                               response_format=response_format, initial_active_tools=initial_active_tools, settings=settings)
 
 
-def build_persistent_application(config_path, *, storage, tools, system_prompt, response_format):
+def build_persistent_application(config_path, *, storage, tools, system_prompt, response_format, initial_active_tools=None, settings=None):
     path = storage.path
+    binding = storage.get_workspace_binding()
     storage.close()  # Release the preflight lock; async ownership rechecks restoration.
-    return AsyncCliApplication(config_path, database_path=path, tools=tools,
-                               system_prompt=system_prompt, response_format=response_format)
+    return AsyncCliApplication(config_path, database_path=path, workspace_binding=binding, tools=tools,
+                               system_prompt=system_prompt, response_format=response_format, initial_active_tools=initial_active_tools, settings=settings)

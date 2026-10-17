@@ -4,7 +4,7 @@ from .run_services import current_run_services
 
 
 def make_invocation_context(session_id, run_id, workspace_root, approval_grants, read_resource_roots):
-    context = {'session_id': session_id, 'run_id': run_id}
+    context = {'session_id': session_id, 'run_id': run_id, 'agent_path': 'root'}
     services = current_run_services()
     if services is not None:
         publisher = services.publisher
@@ -17,7 +17,8 @@ def make_invocation_context(session_id, run_id, workspace_root, approval_grants,
                 context['_run_event_publisher'] = publisher
                 for name, observer in (('_turn_observer', services.turns),
                                        ('_control_observer', services.controls),
-                                       ('_context_observer', services.context_operations)):
+                                       ('_context_observer', services.context_operations),
+                                       ('_tool_progress_observer', services.tool_progress)):
                     if observer is not None and observer.publisher is publisher:
                         context[name] = observer
     if workspace_root is not None:

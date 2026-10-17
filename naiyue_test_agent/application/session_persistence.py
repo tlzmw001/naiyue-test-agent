@@ -1,12 +1,14 @@
 """Critical persistence boundaries, separate from optional event consumers."""
 
 import logging
+import json
 from collections import deque
 from threading import Lock
 
 from .session_storage import SessionPersistenceError
 from .io_steps import IOCall, run_steps, arun_steps
-from naiyue_test_agent.agent_runtime.tools.read import resolve_workspace_root
+from .session_recovery import history_steps, recovery_steps
+from naiyue_test_agent.tools.read import resolve_workspace_root
 
 
 logger = logging.getLogger(__name__)
@@ -19,10 +21,11 @@ class SessionPersistence:
         self._lock = Lock()
         self._active = None
         self._blocked = set()
+        self._recovering = None
 
     def start(self, session_id, run_id):
         with self._lock:
-            if self._active is not None or session_id in self._blocked:
+            if self._active is not None or self._recovering is not None or session_id in self._blocked:
                 raise SessionPersistenceError('session_recovery_blocked')
             self.storage.mark_running(session_id, run_id)
             self._active = (session_id, run_id)
@@ -66,15 +69,42 @@ class SessionPersistence:
     def restore(self, session_id, agent):
         return run_steps(self._restore_steps(session_id, agent))
 
+    def history(self, session_id, agent):
+        return run_steps(history_steps(self, session_id, agent))
+
+    async def ahistory(self, session_id, agent):
+        return await arun_steps(history_steps(self, session_id, agent))
+
+    def recover(self, session_id, agent, *, checkpoint_id, action):
+        return run_steps(self._recover_steps(session_id, agent, checkpoint_id, action))
+
+    async def arecover(self, session_id, agent, *, checkpoint_id, action):
+        return await arun_steps(self._recover_steps(session_id, agent, checkpoint_id, action))
+
+    def _recover_steps(self, session_id, agent, checkpoint_id, action):
+        with self._lock:
+            if self._active is not None or self._recovering is not None or session_id in self._blocked:
+                raise SessionPersistenceError('session_recovery_blocked')
+            self._recovering = session_id
+        try:
+            if self.sessions.has_session(session_id):
+                raise SessionPersistenceError('session_recovery_blocked')
+            return (yield from recovery_steps(self, session_id, agent, checkpoint_id, action))
+        finally:
+            with self._lock:
+                self._recovering = None
+
     async def arestore(self, session_id, agent):
         return await arun_steps(self._restore_steps(session_id, agent))
 
     def _restore_steps(self, session_id, agent):
+        with self._lock:
+            if self._recovering is not None:
+                raise SessionPersistenceError('session_recovery_blocked')
         row = yield IOCall(self.storage.get, (session_id,))
         if row['state'] != 'ready':
             raise SessionPersistenceError('session_recovery_blocked')
-        self.sessions._catalog.get(row['model_id'])
-        root = (yield IOCall(resolve_workspace_root, (row['workspace_root'],))) if row['workspace_root'] else None
+        root, names = yield from self._configuration_steps(row)
         snapshot = yield IOCall(agent.get_state, ({'configurable': {'thread_id': row['thread_id']}},),
                                 async_call=agent.aget_state)
         actual = snapshot.config.get('configurable', {}).get('checkpoint_id')
@@ -82,14 +112,39 @@ class SessionPersistence:
         if (row['checkpoint_id'] != actual or row['checkpoint_ns'] != namespace or snapshot.next
                 or any(task.interrupts or task.error for task in snapshot.tasks)):
             raise SessionPersistenceError('checkpoint_mismatch')
-        with self.sessions._lock:
+        self._install_session(row, root, names)
+        return session_id
+
+    def _configuration_steps(self, row):
+        try:
+            self.sessions._permission_settings.validate_mode(row['permission_mode'])
+        except ValueError as error:
+            raise SessionPersistenceError('invalid_permission_mode') from error
+        saved = row['active_tool_names_json']
+        try:
+            names = json.loads(saved)
+            specs = self.sessions._tool_registry.select(names)
+            names = tuple(spec.tool.name for spec in specs)
+        except (ValueError, TypeError) as error:
+            raise SessionPersistenceError('invalid_active_tools') from error
+        self.sessions._catalog.get(row['model_id'])
+        root = (yield IOCall(resolve_workspace_root, (row['workspace_root'],))) if row['workspace_root'] else None
+        return root, names
+
+    def _install_session(self, row, root, names, *, recovering=False, pending=None):
+        session_id = row['session_id']
+        with self._lock, self.sessions._lock:
+            if self._recovering is not None and not (recovering and self._recovering == session_id):
+                raise SessionPersistenceError('session_recovery_blocked')
             if session_id in self.sessions._sessions:
                 raise SessionPersistenceError('session_already_loaded')
             self.sessions._sessions[session_id] = {
                 'thread_id': row['thread_id'], 'model_id': row['model_id'], 'workspace_root': root,
-                'pending_tool_approval': None, 'pending_turn': None, 'manual_review_required': False,
+                'active_tool_names': names,
+                'permission_mode': row['permission_mode'], 'session_allow': [],
+                'pending_tool_approval': pending, 'pending_turn': None, 'manual_review_required': False,
                 'busy': False, 'run_id': None, 'run_project_instructions': None,
+                'run_review_project_instructions': None,
                 'steering_open': False, 'stop_requested': False,
                 'steering_queue': deque(), 'follow_up_queue': deque(),
             }
-        return session_id

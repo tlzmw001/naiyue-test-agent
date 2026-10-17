@@ -8,7 +8,7 @@ from pydantic import Field
 
 from naiyue_test_agent import application
 from naiyue_test_agent.application import cli
-from naiyue_test_agent.agent_runtime.tools import write as write_module
+from naiyue_test_agent.tools import write as write_module
 from naiyue_test_agent.model_access import ModelCatalog
 
 
@@ -60,11 +60,14 @@ def test_cli_uncertain_write_tells_user_to_inspect_before_retry(
         'name': 'write',
         'args': {'path': 'case.md', 'content': 'PRIVATE_NEW_CONTENT'},
         'id': 'write-unknown',
-    }])])
+    }]), AIMessage(content='请先检查文件，确认写入结果后再操作'), AIMessage(content='新请求已收到')])
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
 
+    attempts = []
+
     def unknown_replace(_source, _target):
+        attempts.append(True)
         raise OSError('PRIVATE_DISK_DETAIL')
 
     monkeypatch.setattr(write_module.os, 'replace', unknown_replace)
@@ -74,7 +77,9 @@ def test_cli_uncertain_write_tells_user_to_inspect_before_retry(
 
     output = capsys.readouterr().out
     assert '请先检查' in output
-    assert '勿直接重试' in output
-    assert '本会话' in output
+    assert '确认写入结果' in output
+    assert '本会话工具副作用待核对' not in output
+    assert '新请求已收到' in output
     assert 'PRIVATE_' not in output
-    assert len(model.seen) == 1
+    assert len(model.seen) == 3 and attempts == [True]
+    assert any(kind == 'tool' and 'outcome is unknown' in content for kind, content in model.seen[1])

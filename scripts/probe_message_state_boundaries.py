@@ -1,5 +1,9 @@
 """Offline research: compare accepted calls, graph values, and saved state."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import hashlib
 import json
 import logging
@@ -17,7 +21,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import BaseModel
 
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
+from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.model_access import ModelCatalog
 
 
@@ -126,7 +130,7 @@ def normal_and_followup():
         {'name': 'probe_value', 'args': {}, 'id': 'read-1'},
     ], response_metadata={'finish_reason': 'tool_calls'}),
         AIMessage(content='answer', response_metadata={'finish_reason': 'stop'})])
-    app, session, probe = make_app(model, tools=[probe_value])
+    app, session, probe = make_app(model, tools=[ToolSpec(probe_value, probe_value.args_schema, permissions=ToolPermission(default='allow'))])
     result = app.run(session, [('user', 'question')])
     assert [row['role'] for row in probe.values[-1]] == ['human', 'ai', 'tool', 'ai']
     assert probe.accepted_ai_counts == [0, 1]
@@ -205,7 +209,7 @@ def steering_stop_and_partial_failure():
         model = Model(responses=[AIMessage(content='', tool_calls=[
             {'name': 'controlled_tool', 'args': {}, 'id': 'control-1'},
         ]), AIMessage(content='answer')])
-        app, session, probe = make_app(model, tools=[controlled_tool])
+        app, session, probe = make_app(model, tools=[ToolSpec(controlled_tool, controlled_tool.args_schema, permissions=ToolPermission(default='allow'))])
         holder.update(app=app, session=session)
         result = app.run(session, [('user', 'question')])
         expected = ['human', 'ai', 'tool', 'human', 'ai'] if action == 'steer' else ['human', 'ai', 'tool']
@@ -222,7 +226,6 @@ def steering_stop_and_partial_failure():
         """Fail a controlled sequential batch."""
         raise failure
 
-    fatal.metadata = {'naiyue_execution_mode': 'sequential'}
 
     @tool
     def skipped() -> str:
@@ -233,7 +236,7 @@ def steering_stop_and_partial_failure():
         {'name': 'fatal', 'args': {}, 'id': 'fatal-1'},
         {'name': 'skipped', 'args': {}, 'id': 'skip-1'},
     ])])
-    app, session, probe = make_app(model, tools=[fatal, skipped])
+    app, session, probe = make_app(model, tools=[ToolSpec(fatal, fatal.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow')), ToolSpec(skipped, skipped.args_schema, permissions=ToolPermission(default='allow'))])
     try:
         app.run(session, [('user', 'run')])
     except RuntimeError as error:

@@ -4,7 +4,6 @@ import asyncio
 import threading
 
 import pytest
-from langchain.tools import tool
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 
@@ -71,20 +70,22 @@ def test_cancelled_catalog_acquisition_disposes_result(monkeypatch):
 def test_factory_cleanup_does_not_replace_assembly_error(monkeypatch, caplog):
     async def scenario():
         catalog = ModelCatalog('A', {'A': StreamingToolModel(replies=[])})
+        failure = ValueError('synthetic assembly failure')
+        closed = []
 
         async def close():
+            closed.append(True)
             raise RuntimeError('PRIVATE_CLOSE')
 
-        @tool
-        async def invalid() -> str:
-            """Synthetic invalid registration."""
-            return 'unused'
-
-        invalid.metadata = {'naiyue_execution_mode': 'INVALID'}
+        def assemble(*args, **kwargs):
+            raise failure
         monkeypatch.setattr(catalog, 'aclose', close)
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: catalog)
-        with pytest.raises(ValueError, match='Invalid tool execution mode'):
-            await build_async_local_application('unused', tools=[invalid], system_prompt='', response_format=None)
+        monkeypatch.setattr(application, '_assemble_application', assemble)
+        with pytest.raises(ValueError, match='synthetic assembly failure') as caught:
+            await build_async_local_application('unused', tools=[], system_prompt='', response_format=None)
+        assert caught.value is failure and closed == [True]
+        assert 'model_cleanup_secondary_failed' in caplog.text
         assert 'PRIVATE_CLOSE' not in caplog.text
     asyncio.run(scenario())
 

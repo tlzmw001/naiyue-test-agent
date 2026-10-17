@@ -7,7 +7,8 @@ from langchain_core.messages import AIMessage, ToolMessage
 from pydantic import Field
 
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime.tools import (
+from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.tools import (
     create_session_find_tool, create_session_grep_tool, create_session_ls_tool,
     create_session_read_tool,
 )
@@ -57,6 +58,7 @@ def test_find_and_grep_tool_results_enter_next_model_turn(monkeypatch, tmp_path)
         AIMessage(content='I found the contract'),
     ])
     session = app.create_workspace_session('A', tmp_path)
+    app.set_permission_mode(session, 'NoAsk')
 
     result = app.run(session, [('user', 'find the discount contract')])
 

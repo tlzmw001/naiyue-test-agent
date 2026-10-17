@@ -1,5 +1,7 @@
 # Spec 037：在 `create_agent` 内实现按批次的工具执行模式
 
+版本边界：2026-10-16的[090A](090-tool-wait-stop-and-author-contract.md)已移除本文的正常排队60秒期限及NAIYUE_TOOL_BATCH_WAIT_SECONDS读取，并补齐同步放行前停止检查。下文保留初版实现历史，不再作为等待期限的当前合同；批次串并行、机制故障及审批仍保留。
+
 状态：2026-10-02，同步运行层切片已按 TDD 实现并通过本地确定性测试；尚未接入 `write/edit` 真实文件工具。用户已明确否定把读写混合或多写批次整批拒绝；模型的一次多工具请求必须能正常执行。本片只针对当前同步运行路径，沿用 Python + LangChain `create_agent`，不手写完整 StateGraph。
 
 ## 目标与当前调用链

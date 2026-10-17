@@ -7,7 +7,8 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
+from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.model_access import ModelCatalog
 
 
@@ -16,13 +17,13 @@ class ToolCapableFake(FakeMessagesListChatModel):
         return self
 
 
-def make_app(monkeypatch, responses):
+def make_app(monkeypatch, responses, *, permissions=None):
     model = ToolCapableFake(responses=responses)
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
     return application.build_local_application(
         Path('synthetic.json'), tools=[create_session_read_tool()],
-        system_prompt='', response_format=None,
+        system_prompt='', response_format=None, settings=ToolSettings.model_validate({'permissions': permissions or {}}),
     )
 
 
@@ -99,6 +100,7 @@ def test_reject_skips_read_and_sensitive_external_path_is_denied(monkeypatch, tm
     assert tool_messages(rejected)[0].status == 'error'
     assert 'PRIVATE_CONTENT' not in str(rejected)
 
+    app.set_permission_mode(session, 'NoAsk')
     denied = app.run(session, [('user', 'try secret')])
     assert 'approval_requests' not in denied
     assert tool_messages(denied)[-1].status == 'error'
@@ -127,7 +129,7 @@ def test_changed_symlink_target_cannot_use_old_approval(monkeypatch, tmp_path):
     result = app.resume_tool_approval(session, ['approve'])
 
     assert tool_messages(result)[0].status == 'error'
-    assert 'approval for the current target' in tool_messages(result)[0].content
+    assert 'changed' in tool_messages(result)[0].content
     assert 'FIRST_PRIVATE' not in str(result)
     assert 'SECOND_PRIVATE' not in str(result)
 
@@ -217,7 +219,7 @@ def test_session_read_allows_github_source_but_denies_external_hidden_target(
         AIMessage(content='inside done'),
         AIMessage(content='', tool_calls=[tool_call(external, 'outside')]),
         AIMessage(content='outside denied'),
-    ])
+    ], permissions={'mode': 'NoAsk', 'allow': [{'tool': 'read', 'path': '${workspace}/.github/**'}]})
     session = app.create_workspace_session('A', root)
 
     inside = app.run(session, [('user', 'read internal workflow')])

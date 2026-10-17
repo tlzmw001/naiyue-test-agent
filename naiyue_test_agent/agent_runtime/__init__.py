@@ -7,29 +7,31 @@ from typing import Any, NotRequired, TypedDict
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
-    AgentState, after_agent, before_agent, before_model,
+    ToolErrorMiddleware, after_agent, before_agent, before_model,
 )
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 
-from naiyue_test_agent.agent_runtime.tool_batch import ToolBatchMiddleware
+from naiyue_test_agent.agent_runtime.tool_execution.batch import ToolBatchMiddleware
 from naiyue_test_agent.agent_runtime.context_observation import observe_model_request
 from naiyue_test_agent.agent_runtime.context_compaction import (
     make_context_compaction_middleware,
 )
 from naiyue_test_agent.agent_runtime.context_recovery import recover_input_overflow
-from naiyue_test_agent.agent_runtime.project_prompt import make_project_prompt_middleware
-from naiyue_test_agent.agent_runtime.tool_approval import (
-    OneUseApprovalGrants, approval_policies_for_tools,
+from .tool_execution.toolset import ToolSetMiddleware, ToolExecutionState
+from naiyue_test_agent.tools.permissions import (
+    OneUseApprovalGrants,
 )
 from naiyue_test_agent.model_access import load_model_catalog
+from naiyue_test_agent.model_access.messages import ModelInputMiddleware
 from .errors import RuntimeErrorPolicy
+from naiyue_test_agent.tools.registry import ToolRegistry
 
 
 from naiyue_test_agent.agent_runtime.call_observation import (
-    make_model_selection_middleware, _record_tool_call, ObservedHumanInTheLoopMiddleware,
+    make_model_selection_middleware,
 )
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher
 from naiyue_test_agent.agent_runtime.message_observation import invoke_with_message_observation
@@ -40,6 +42,12 @@ from naiyue_test_agent.agent_runtime.turn_observation import (
     TurnBoundaryMiddleware, TurnObserver,
 )
 from naiyue_test_agent.agent_runtime.control_observation import ControlObserver
+from .tool_execution import tool_error_feedback
+from .tool_execution.observation import _record_tool_call
+from .tool_execution.approval import BatchApprovalMiddleware
+from .tool_execution.permissions import AutoPermissionReviewer, PermissionMiddleware, fixed_permission_context
+from .tool_execution.authorization import ExecutionAuthorizationMiddleware
+from naiyue_test_agent.tools.permission_rules import PermissionSettings
 from naiyue_test_agent.agent_runtime.context_operation_observation import (
     ContextOperationObserver,
 )
@@ -50,9 +58,10 @@ logger = logging.getLogger(__name__)
 
 class RunContext(TypedDict):
     session_id: str
+    agent_path: NotRequired[str]
     run_id: NotRequired[str]
     workspace_root: NotRequired[Path]
-    approval_grants: NotRequired[dict[str, OneUseApprovalGrants]]
+    approval_grants: NotRequired[OneUseApprovalGrants]
     read_resource_roots: NotRequired[tuple[Path, ...]]
     _run_control: NotRequired[RunControl]
     _run_event_publisher: NotRequired[RunEventPublisher]
@@ -62,33 +71,39 @@ class RunContext(TypedDict):
     _failure_policy: NotRequired[RuntimeErrorPolicy]
 
 
-class InteractiveRunState(AgentState):
+class InteractiveRunState(ToolExecutionState):
     run_stopped: NotRequired[bool]
 
 
 def build_runtime_agent(
     default_model: BaseChatModel,
     *,
-    tools: list,
+    tool_registry: ToolRegistry,
+    resolve_active_tool_names: Callable,
     system_prompt: str,
     response_format: Any,
     resolve_model: Callable[[str], tuple[str, BaseChatModel]],
     record_selection: Callable[[str, str], None],
     checkpointer: BaseCheckpointSaver | None = None,
+    permission_settings: PermissionSettings | None = None,
+    resolve_permission_context: Callable = fixed_permission_context,
+    permission_reviewer: AutoPermissionReviewer | None = None,
 ):
     """Own LangChain agent assembly while callers supply task-specific policy."""
     return _build_runtime_agent(
-        default_model, tools=tools, system_prompt=system_prompt,
+        default_model, tool_registry=tool_registry, resolve_active_tool_names=resolve_active_tool_names, system_prompt=system_prompt,
         response_format=response_format, resolve_model=resolve_model,
         record_selection=record_selection, checkpointer=checkpointer,
-        steering_middleware=[],
+        steering_middleware=[], permission_settings=permission_settings, resolve_permission_context=resolve_permission_context,
+        permission_reviewer=permission_reviewer,
     )
 
 
 def _assemble_interactive_runtime(
     default_model: BaseChatModel,
     *,
-    tools: list,
+    tool_registry: ToolRegistry,
+    resolve_active_tool_names: Callable,
     system_prompt: str,
     response_format: Any,
     resolve_model: Callable[[str], tuple[str, BaseChatModel]],
@@ -100,6 +115,9 @@ def _assemble_interactive_runtime(
     prepare_control_messages: Callable[[str, list[str]], list[HumanMessage]],
     resolve_project_instructions: Callable[[str], str | None] | None = None,
     observe_turns: bool = False,
+    permission_settings: PermissionSettings | None = None,
+    resolve_permission_context: Callable = fixed_permission_context,
+    permission_reviewer: AutoPermissionReviewer | None = None,
 ):
     """Resume the same run for steering or a natural-end follow-up."""
     @before_agent
@@ -131,53 +149,46 @@ def _assemble_interactive_runtime(
             }
         return None
 
-    project_prompt_middleware = (
-        [make_project_prompt_middleware(resolve_project_instructions)]
-        if resolve_project_instructions is not None else []
-    )
+    toolset = ToolSetMiddleware(tool_registry, resolve_active_tool_names, system_prompt, resolve_project_instructions)
     compaction_middleware = make_context_compaction_middleware(
-        resolve_model, tools=tools, system_prompt=system_prompt,
-        resolve_project_instructions=resolve_project_instructions,
+        resolve_model, model_inputs=toolset.model_inputs,
     )
     return _build_runtime_agent(
-        default_model, tools=tools, system_prompt=system_prompt,
+        default_model, tool_registry=tool_registry, resolve_active_tool_names=resolve_active_tool_names, system_prompt=system_prompt,
         response_format=response_format, resolve_model=resolve_model,
         record_selection=record_selection, checkpointer=checkpointer,
         steering_middleware=[reset_run_control, compaction_middleware,
                              inject_before_model,
-                             inject_at_natural_end, *project_prompt_middleware,
+                             inject_at_natural_end,
                              recover_input_overflow],
-        state_schema=InteractiveRunState,
-        observe_turns=observe_turns, active_stop=True,
+        toolset=toolset, state_schema=InteractiveRunState,
+        observe_turns=observe_turns, active_stop=True, permission_settings=permission_settings, resolve_permission_context=resolve_permission_context,
+        permission_reviewer=permission_reviewer,
     )
 
 
 def _build_runtime_agent(
-    default_model, *, tools, system_prompt, response_format, resolve_model,
+    default_model, *, tool_registry, resolve_active_tool_names, system_prompt, response_format, resolve_model,
     record_selection, checkpointer, steering_middleware, state_schema=None,
-    observe_turns=False, active_stop=False,
+    observe_turns=False, active_stop=False, toolset=None, permission_settings=None, resolve_permission_context=fixed_permission_context,
+    permission_reviewer=None,
 ):
-    approval_rules = {
-        name: {'allowed_decisions': ['approve', 'reject'],
-               'when': policy.when, 'description': policy.description}
-        for name, policy in approval_policies_for_tools(tools).items()
-    }
-    tool_hitl = []
-    if approval_rules:
-        if checkpointer is None:
-            raise ValueError('Session tool approval requires a checkpointer')
-        tool_hitl = [ObservedHumanInTheLoopMiddleware(interrupt_on=approval_rules)]
+    permission_settings = permission_settings if permission_settings is not None else PermissionSettings()
+    toolset = toolset or ToolSetMiddleware(tool_registry, resolve_active_tool_names, system_prompt)
     return create_agent(
         model=default_model,
-        tools=tools,
+        tools=[],
         system_prompt=system_prompt,
         response_format=response_format,
         context_schema=RunContext,
         state_schema=state_schema,
         middleware=[*([StopModelMiddleware()] if active_stop else []), *([TurnBoundaryMiddleware()] if observe_turns else []),
                     make_model_selection_middleware(resolve_model, record_selection),
-                    ToolBatchMiddleware(tools), _record_tool_call,
-                    *steering_middleware, *tool_hitl, observe_model_request,
+                    toolset, ToolBatchMiddleware(tool_registry), _record_tool_call,
+                    ToolErrorMiddleware(on_error=tool_error_feedback), ExecutionAuthorizationMiddleware(permission_settings),
+                    *steering_middleware, BatchApprovalMiddleware(has_checkpointer=checkpointer is not None),
+                    PermissionMiddleware(tool_registry, permission_settings, resolve_permission_context, permission_reviewer),
+                    ModelInputMiddleware(), observe_model_request,
                     *([StopBoundaryMiddleware()] if active_stop else [])],
         checkpointer=checkpointer,
     )
@@ -186,15 +197,20 @@ def _build_runtime_agent(
 def build_configured_runtime_agent(
     config_path,
     *,
-    tools: list,
+    tool_registry: ToolRegistry,
+    resolve_active_tool_names: Callable,
     system_prompt: str,
     response_format: Any,
     select_model_id: Callable[[str], str],
     record_selection: Callable[[str, str], None],
     checkpointer: BaseCheckpointSaver | None = None,
+    permission_settings: PermissionSettings | None = None,
+    resolve_permission_context: Callable = fixed_permission_context,
 ):
     """Load one config snapshot and connect its models to session-aware routing."""
     catalog = load_model_catalog(config_path)
+    settings = permission_settings if permission_settings is not None else PermissionSettings()
+    reviewer = AutoPermissionReviewer.from_catalog(catalog, settings.auto)
 
     def resolve_model(session_id: str) -> tuple[str, BaseChatModel]:
         model_id = select_model_id(session_id)
@@ -202,12 +218,14 @@ def build_configured_runtime_agent(
 
     return build_runtime_agent(
         catalog.get(catalog.default_model_id),
-        tools=tools,
+        tool_registry=tool_registry,
+        resolve_active_tool_names=resolve_active_tool_names,
         system_prompt=system_prompt,
         response_format=response_format,
         resolve_model=resolve_model,
         record_selection=record_selection,
-        checkpointer=checkpointer,
+        checkpointer=checkpointer, permission_settings=permission_settings, resolve_permission_context=resolve_permission_context,
+        permission_reviewer=reviewer,
     )
 
 
@@ -222,7 +240,7 @@ def invoke_agent_run(agent, messages, *, session_id: str, thread_id: str, run_id
 def _invoke_agent_run(
     agent, messages, *, session_id: str, thread_id: str, run_id: str,
     workspace_root: Path | None,
-    approval_grants: dict[str, OneUseApprovalGrants] | None = None,
+    approval_grants: OneUseApprovalGrants | None = None,
     read_resource_roots: tuple[Path, ...] = (),
 ):
     for name, value in (

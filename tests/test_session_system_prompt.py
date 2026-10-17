@@ -1,5 +1,9 @@
 """A shared agent must receive the current session's project instructions."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 from pathlib import Path
 
 import pytest
@@ -13,7 +17,7 @@ from naiyue_test_agent.application import cli
 from naiyue_test_agent.application.project_instructions import (
     BASE_SYSTEM_PROMPT, ProjectInstructionsError,
 )
-from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
+from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.model_access import ModelCatalog
 
 
@@ -43,7 +47,7 @@ def system_text(messages):
     return systems[0].content
 
 
-def test_cli_uses_approved_base_prompt_without_workspace(monkeypatch, capsys):
+def test_cli_uses_approved_base_prompt_and_current_directory_tools(monkeypatch, capsys):
     model = RecordingModel(responses=[AIMessage(content='done')])
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
@@ -52,7 +56,9 @@ def test_cli_uses_approved_base_prompt_without_workspace(monkeypatch, capsys):
 
     assert cli.main(['--config', 'synthetic.json']) == 0
     assert 'done' in capsys.readouterr().out
-    assert system_text(model.inputs[0]) == BASE_SYSTEM_PROMPT
+    assert system_text(model.inputs[0]).startswith(BASE_SYSTEM_PROMPT)
+    assert 'Available tools:' in system_text(model.inputs[0])
+    assert '\nread:' in system_text(model.inputs[0])
     assert BASE_SYSTEM_PROMPT.startswith(
         '你是在naiyue-test-agent中工作的通用编程与测试助手'
     )
@@ -101,7 +107,7 @@ def test_project_instructions_are_frozen_for_one_run_and_reloaded_next_run(
         AIMessage(content='first run done'),
         AIMessage(content='second run done'),
     ])
-    app = build_app(monkeypatch, model, tools=[update_instructions])
+    app = build_app(monkeypatch, model, tools=[ToolSpec(update_instructions, update_instructions.args_schema, permissions=ToolPermission(default='allow'))])
     session = app.create_workspace_session('A', tmp_path)
 
     app.run(session, [('user', 'update')])

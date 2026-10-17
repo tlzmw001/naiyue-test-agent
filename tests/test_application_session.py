@@ -1,3 +1,8 @@
+
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+from naiyue_test_agent.application import prepare_tool_registry
 import logging
 from threading import Event, Thread
 
@@ -25,8 +30,10 @@ def test_sessions_continue_history_switch_models_and_isolate_threads(caplog):
         'B': FakeMessagesListChatModel(responses=[AIMessage(content='B-two')]),
     }
     service = SessionService(ModelCatalog('A', models))
+    _runtime_registry_1 = prepare_tool_registry([])
+    _runtime_names_1 = _runtime_registry_1.names()
     agent = build_runtime_agent(
-        models['A'], tools=[], system_prompt='', response_format=None,
+        models['A'], tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
         resolve_model=service.resolve_model,
         record_selection=lambda _session_id, _model_id: None,
         checkpointer=InMemorySaver(),
@@ -107,8 +114,10 @@ def test_model_change_during_tool_call_applies_at_next_model_boundary(caplog):
         return 'switched'
 
     selected = []
+    _runtime_registry_2 = prepare_tool_registry([ToolSpec(switch_to_b, switch_to_b.args_schema, permissions=ToolPermission(default='allow'))])
+    _runtime_names_2 = _runtime_registry_2.names()
     agent = build_runtime_agent(
-        models['A'], tools=[switch_to_b], system_prompt='', response_format=None,
+        models['A'], tool_registry=_runtime_registry_2, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_2: names, system_prompt='', response_format=None,
         resolve_model=service.resolve_model,
         record_selection=lambda _session_id, model_id: selected.append(model_id),
         checkpointer=InMemorySaver(),

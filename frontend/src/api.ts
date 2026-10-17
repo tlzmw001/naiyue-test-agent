@@ -39,6 +39,9 @@ export class WebApi {
   sessions() { return this.json<SessionRow[]>('/sessions'); }
   create(model_id: string) { return this.json<{ session_id: string }>('/sessions', 'POST', { model_id }); }
   session(id: string) { return this.json<SessionView>(`/sessions/${encodeURIComponent(id)}`); }
+  recover(id: string, checkpoint_id: string, action: 'continue' | 'restore_approval') {
+    return this.json<SessionView>(`/sessions/${encodeURIComponent(id)}/recover`, 'POST', { checkpoint_id, action });
+  }
   select(id: string, model_id: string) {
     return this.json<{ model_id: string }>(`/sessions/${encodeURIComponent(id)}/model`, 'PATCH', { model_id });
   }
@@ -74,6 +77,9 @@ export function errorText(error: unknown): string {
     stale_run: '这次运行已结束，请刷新状态后操作。',
     stale_approval: '审批批次已变化，请重新同步后核对当前调用。',
     session_recovery_blocked: '该会话尚不能安全恢复，请先核对之前的执行状态。',
+    checkpoint_mismatch: '已保存状态发生变化，请核对刷新后的历史再操作。',
+    session_save_unconfirmed: '恢复保存未确认，请核对当前历史后再操作。',
+    approval_restore_unavailable: '原审批的目标或权限条件已变化。可核对后重试，或结束旧批次后重新提出任务。',
     manual_review_required: '执行结果需要人工核对，当前不能继续运行。',
     workspace_mismatch: '该会话属于其他工作区，请用对应工作区启动后恢复。',
     resync_required: '事件连接需要重新同步，已保留当前内容。',

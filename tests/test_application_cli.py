@@ -18,6 +18,9 @@ from naiyue_test_agent.model_access import ModelCatalog, ModelConfigError
 class RecordingFake(FakeMessagesListChatModel):
     seen: list[list[tuple[str, str]]] = Field(default_factory=list)
 
+    def bind_tools(self, tools, **kwargs):
+        return self
+
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         self.seen.append([(message.type, message.content) for message in messages])
         return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
@@ -48,8 +51,10 @@ def test_cli_reuses_application_history_and_switches_model(monkeypatch, capsys):
     assert output.count('A-one') == 1
     assert output.count('B-two') == 1
     assert loaded == [config]
+    assert a.seen[0][0][1].startswith(BASE_SYSTEM_PROMPT)
+    assert 'Available tools:' in a.seen[0][0][1]
     assert b.seen == [[
-        ('system', BASE_SYSTEM_PROMPT), ('human', 'private-first'),
+        a.seen[0][0], ('human', 'private-first'),
         ('ai', 'A-one'), ('human', 'private-second'),
     ]]
     assert 'private-first' not in output
@@ -66,20 +71,25 @@ def test_cli_invalid_workspace_fails_before_model_call(monkeypatch, capsys, tmp_
     assert model.seen == []
 
 
-def test_cli_without_workspace_registers_no_file_tool(monkeypatch, capsys):
-    tools_seen = []
+def test_cli_defaults_to_current_workspace_and_selects_file_tools(monkeypatch, capsys):
+    tools_seen, choices = [], []
 
     class MinimalApp:
         default_model_id = 'A'
 
-        def create_session(self, _model_id):
+        def create_workspace_session(self, _model_id, root):
+            assert root == Path.cwd()
             return 'session'
+
+        def pending_tool_approvals(self, _session_id):
+            return []
 
         def run(self, _session_id, messages):
             return {'messages': [messages[0], AIMessage(content='answer')]}
 
-    def build(_config, *, tools, system_prompt, response_format):
+    def build(_config, *, tools, system_prompt, response_format, initial_active_tools, settings):
         tools_seen.extend(tools)
+        choices.append(initial_active_tools)
         return MinimalApp()
 
     monkeypatch.setattr(cli, 'build_local_application', build)
@@ -87,7 +97,8 @@ def test_cli_without_workspace_registers_no_file_tool(monkeypatch, capsys):
 
     assert cli.main(['--no-session', '--config', 'synthetic.json']) == 0
     assert 'answer' in capsys.readouterr().out
-    assert tools_seen == []
+    assert [spec.tool.name for spec in tools_seen] == ['read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell']
+    assert choices == [['read', 'ls', 'find', 'grep', 'write', 'edit']]
 
 
 def test_cli_invalid_model_empty_line_and_unknown_command_do_not_call_model(monkeypatch, capsys):
@@ -157,7 +168,7 @@ def test_cli_rejected_model_response_has_no_answer_and_next_turn_recovers(
     assert 'private-rejected-answer' not in output + caplog.text
     assert 'recovered' in output
     assert model.seen[1] == [
-        ('system', BASE_SYSTEM_PROMPT), ('human', 'first'), ('human', 'second'),
+        model.seen[0][0], ('human', 'first'), ('human', 'second'),
     ]
 
 
@@ -324,8 +335,12 @@ def test_tty_stop_rejection_is_not_reported_as_accepted(monkeypatch, capsys):
     class ClosingApp:
         default_model_id = 'A'
 
-        def create_session(self, _model_id):
+        def create_workspace_session(self, _model_id, root):
+            assert root == Path.cwd()
             return 'session'
+
+        def pending_tool_approvals(self, _session_id):
+            return []
 
         def run(self, _session_id, messages):
             entered.set()
@@ -369,8 +384,12 @@ def test_tty_input_after_acceptance_window_closes_starts_next_run(monkeypatch, c
             self.requests = []
             self.steer_attempts = 0
 
-        def create_session(self, _model_id):
+        def create_workspace_session(self, _model_id, root):
+            assert root == Path.cwd()
             return 'session'
+
+        def pending_tool_approvals(self, _session_id):
+            return []
 
         def run(self, _session_id, messages):
             self.requests.append(messages[0].content)

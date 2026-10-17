@@ -1,7 +1,13 @@
 """Observability failures preserve business results, exceptions, and control."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+from naiyue_test_agent.application import prepare_tool_registry
+
 import json
 import pytest
+from tool_feedback_helpers import fail_tool_dispatch
 from langchain.tools import tool
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.errors import GraphBubbleUp
@@ -88,9 +94,8 @@ def test_fatal_batch_pending_error_is_recovery_view_not_success(monkeypatch):
     @tool
     def fatal() -> str:
         """Fail a sequential batch."""
-        raise failure
+        return 'unreachable after the dispatch fault'
 
-    fatal.metadata = {'naiyue_execution_mode': 'sequential'}
 
     @tool
     def skipped() -> str:
@@ -98,10 +103,11 @@ def test_fatal_batch_pending_error_is_recovery_view_not_success(monkeypatch):
         entered.append(True)
         return 'unexpected'
 
+    fail_tool_dispatch(monkeypatch, 'fatal', failure)
     app = make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'fatal', 'args': {}, 'id': 'fatal'},
         {'name': 'skipped', 'args': {}, 'id': 'skip'},
-    ])]), [fatal, skipped])
+    ])]), [ToolSpec(fatal, fatal.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow')), ToolSpec(skipped, skipped.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
     with pytest.raises(RuntimeError) as caught:
@@ -148,7 +154,9 @@ def test_failed_recovery_read_cannot_replace_original_error(monkeypatch, caplog)
 def test_non_json_content_without_saver_is_reported_and_result_unchanged():
     bad = HumanMessage(id='bad', content=[{'type': 'custom', 'data': object()}])
     model = ToolModel(responses=[AIMessage(content='done')])
-    graph = build_runtime_agent(model, tools=[], system_prompt='', response_format=None,
+    _runtime_registry_1 = prepare_tool_registry([])
+    _runtime_names_1 = _runtime_registry_1.names()
+    graph = build_runtime_agent(model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
                                 resolve_model=lambda _s: ('A', model), record_selection=lambda *_a: None)
     pub, events = publisher()
     result = invoke_with_message_observation(graph, {'messages': [bad]},
@@ -163,7 +171,9 @@ def test_non_json_content_without_saver_is_reported_and_result_unchanged():
 
 def test_iterator_close_secondary_failure_preserves_primary_and_attempts_close(monkeypatch, caplog):
     model = ToolModel(responses=[AIMessage(content='unused')])
-    graph = build_runtime_agent(model, tools=[], system_prompt='', response_format=None,
+    _runtime_registry_2 = prepare_tool_registry([])
+    _runtime_names_2 = _runtime_registry_2.names()
+    graph = build_runtime_agent(model, tool_registry=_runtime_registry_2, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_2: names, system_prompt='', response_format=None,
                                 resolve_model=lambda _s: ('A', model), record_selection=lambda *_a: None)
     primary = RuntimeError('PRIVATE_PRIMARY')
     closed = []
@@ -228,7 +238,9 @@ def test_message_consumer_failure_is_isolated_from_other_consumers_and_result(mo
 
 def test_state_adapter_result_equals_native_invoke_with_all_output_fields():
     model = ToolModel(responses=[AIMessage(id='answer', content='done')])
-    graph = build_runtime_agent(model, tools=[], system_prompt='', response_format=None,
+    _runtime_registry_3 = prepare_tool_registry([])
+    _runtime_names_3 = _runtime_registry_3.names()
+    graph = build_runtime_agent(model, tool_registry=_runtime_registry_3, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_3: names, system_prompt='', response_format=None,
                                 resolve_model=lambda _s: ('A', model), record_selection=lambda *_a: None)
     input = {'messages': [HumanMessage(id='input', content='run')]}
     context = {'session_id': 'session', 'run_id': 'run'}
@@ -267,9 +279,9 @@ def test_real_probe_guard_counts_model_requests_not_preflight_resolution(monkeyp
     with caplog.at_level(logging.CRITICAL):
         _worker(SimpleNamespace(config='synthetic.json', model_id='A', with_control=with_control))
     assert len(model_calls) == 2
-    expected = ('real_message_events=PASS events=20 messages=5 model_calls=2 '
+    expected = ('real_message_events=PASS events=22 messages=5 model_calls=2 '
                 'tool_calls=1 turns=2 controls=1 pairing=verified terminal=completed\n'
-                if with_control else 'real_message_events=PASS events=16 messages=4 model_calls=2 '
+                if with_control else 'real_message_events=PASS events=18 messages=4 model_calls=2 '
                 'tool_calls=1 turns=2 pairing=verified terminal=completed\n')
     assert capsys.readouterr().out == expected
 

@@ -1,5 +1,9 @@
 """Skill index, resource read, and per-run context must be wired together."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.tools import ToolSpec
+
 import logging
 
 import pytest
@@ -9,7 +13,7 @@ from langchain_core.messages.utils import count_tokens_approximately
 
 from naiyue_test_agent import application
 from naiyue_test_agent.application import session_service
-from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
+from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.model_access import ModelCatalog
 from skill_helpers import write_skill
 from test_session_system_prompt import RecordingModel, build_app, system_text
@@ -52,7 +56,7 @@ def test_both_indexes_are_visible_and_body_enters_next_model_call(monkeypatch, t
     assert tool_messages[1] in model.inputs[2]
     assert not result.get('approval_requests')
     preflight = [r.model_context_preflight for r in caplog.records if hasattr(r, 'model_context_preflight')]
-    assert preflight[0]['estimated_input_tokens'] == count_tokens_approximately(model.inputs[0], tools=[read])
+    assert preflight[0]['estimated_input_tokens'] == count_tokens_approximately(model.inputs[0], tools=[read.tool])
 
 
 @pytest.mark.parametrize('target_kind', ['env', 'key', 'hidden', 'external_link', 'changed_root'])
@@ -82,8 +86,10 @@ def test_resource_scope_never_bypasses_sensitive_or_external_paths(monkeypatch, 
         AIMessage(content='', tool_calls=[{'name': 'alter_source', 'args': {}, 'id': 'alter'}]),
         _read_call(target), AIMessage(content='handled'),
     ])
-    app = build_app(monkeypatch, model, tools=[create_session_read_tool(), alter_source])
-    result = app.run(app.create_workspace_session('A', root), [('user', 'test read boundary')])
+    app = build_app(monkeypatch, model, tools=[create_session_read_tool(), ToolSpec(alter_source, alter_source.args_schema, permissions=ToolPermission(default='allow'))])
+    session = app.create_workspace_session('A', root)
+    app.set_permission_mode(session, 'NoAsk')
+    result = app.run(session, [('user', 'test read boundary')])
     outcome = next(msg for msg in result['messages'] if isinstance(msg, ToolMessage)
                    and msg.tool_call_id == 'read-1')
     assert outcome.status == 'error' and 'PRIVATE_' not in outcome.content
@@ -103,7 +109,7 @@ def test_index_is_frozen_but_body_is_read_live_then_index_refreshes(monkeypatch,
         AIMessage(content='', tool_calls=[{'name': 'modify_skill', 'args': {}, 'id': 'modify'}]),
         _read_call(path), AIMessage(content='first done'), AIMessage(content='next done'),
     ])
-    app = build_app(monkeypatch, model, tools=[create_session_read_tool(), modify_skill])
+    app = build_app(monkeypatch, model, tools=[create_session_read_tool(), ToolSpec(modify_skill, modify_skill.args_schema, permissions=ToolPermission(default='allow'))])
     session = app.create_workspace_session('A', tmp_path)
     first = app.run(session, [('user', 'modify and read')])
     assert all('DESC_ONE' in system_text(items) and 'DESC_TWO' not in system_text(items)
@@ -121,7 +127,9 @@ def test_workspaces_do_not_share_indexes_or_resource_permissions(monkeypatch, tm
     model = RecordingModel(responses=[_read_call(second), AIMessage(content='denied'),
                                      _read_call(second), AIMessage(content='allowed')])
     app = build_app(monkeypatch, model, tools=[create_session_read_tool()])
-    result_a = app.run(app.create_workspace_session('A', a), [('user', 'read')])
+    session_a = app.create_workspace_session('A', a)
+    app.set_permission_mode(session_a, 'NoAsk')
+    result_a = app.run(session_a, [('user', 'read')])
     result_b = app.run(app.create_workspace_session('A', b), [('user', 'read')])
     assert 'WORKSPACE_A' in system_text(model.inputs[0]) and str(second) not in system_text(model.inputs[0])
     assert 'WORKSPACE_B' in system_text(model.inputs[2]) and str(first) not in system_text(model.inputs[2])
@@ -167,7 +175,7 @@ def test_reference_pagination_and_encoding_failure_remain_tool_results(monkeypat
     result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'read references')])
     outputs = [msg for msg in result['messages'] if isinstance(msg, ToolMessage)]
     assert outputs[0].status == 'success'
-    assert outputs[0].content == 'line 2001\nline 2002\nline 2003\n[read: lines 2001-2003; next_offset=2004]'
+    assert outputs[0].content == 'line 2001\nline 2002\nline 2003\n[read: lines 2001-2003; next_offset=2004]\n[read: stopped by 3 line page limit; continue with the same path, offset=2004, limit=3]'
     assert outputs[1].status == 'error' and 'UTF-8' in outputs[1].content
     assert outputs[1] in model.inputs[-1]
 
@@ -177,7 +185,7 @@ def test_model_cannot_supply_resource_permissions_as_tool_arguments(monkeypatch,
     model = RecordingModel(responses=[_read_call(path, read_resource_roots=[str(path.parent)]),
                                      AIMessage(content='handled')])
     read = create_session_read_tool()
-    assert 'read_resource_roots' not in read.tool_call_schema.model_json_schema()['properties']
+    assert 'read_resource_roots' not in read.tool.tool_call_schema.model_json_schema()['properties']
     app = build_app(monkeypatch, model, tools=[read])
     result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'read')])
     output = next(msg for msg in result['messages'] if isinstance(msg, ToolMessage))
@@ -239,5 +247,5 @@ def test_skill_index_is_in_compaction_and_overflow_request_budget(monkeypatch, t
     assert system_text(recovery_model.normal_inputs[0]) == system_text(recovery_model.normal_inputs[1])
     starts = [record.context_compaction for record in caplog.records if hasattr(record, 'context_compaction')
               and record.context_compaction['event'] == 'context_compaction_started']
-    expected = count_tokens_approximately([compact_model.normal_inputs[0][0], *old['messages'], HumanMessage(content='new')], tools=[read])
+    expected = count_tokens_approximately([compact_model.normal_inputs[0][0], *old['messages'], HumanMessage(content='new')], tools=[read.tool])
     assert starts[0]['estimated_input_tokens'] == expected

@@ -1,5 +1,7 @@
 """Actual interactive graph runs the context chain with native async model IO."""
 
+from naiyue_test_agent.application import prepare_tool_registry
+
 import asyncio
 import logging
 from typing import Any
@@ -89,8 +91,10 @@ def overflow_error():
 
 def graph_for(models, selected=None, project='PROJECT'):
     selected = selected or {'s': 'A'}
+    _runtime_registry_1 = prepare_tool_registry([])
+    _runtime_names_1 = _runtime_registry_1.names()
     return _assemble_interactive_runtime(
-        models['A'], tools=[], system_prompt='BASE', response_format=None,
+        models['A'], tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='BASE', response_format=None,
         resolve_model=lambda sid: (selected[sid], models[selected[sid]]),
         record_selection=lambda *_: None, checkpointer=InMemorySaver(),
         drain_steering=lambda _: [], is_stop_requested=lambda _: False,

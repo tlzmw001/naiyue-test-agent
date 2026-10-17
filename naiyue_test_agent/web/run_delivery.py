@@ -3,6 +3,7 @@
 import asyncio
 from collections import OrderedDict, deque
 from copy import deepcopy
+from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import logging
@@ -11,15 +12,16 @@ from threading import Lock
 from langchain_core.messages import HumanMessage
 
 from naiyue_test_agent.application.stream_projection import StreamingMessageProjection
+from naiyue_test_agent.tools.settings import ToolProgressSettings
 from .errors import WebError, public_error
-from .serialization import encoded_size, wire_event, text_content, message_view
+from .serialization import encoded_size, wire_event, text_content, message_view, project_event_for_web
 
 
 logger = logging.getLogger(__name__)
 
 
 class DeliveredRun:
-    def __init__(self, session_id, rows, settings, on_started):
+    def __init__(self, session_id, rows, settings, on_started, *, progress_settings=None):
         self.session_id, self.settings = session_id, settings
         self.run_id = None
         self.started = asyncio.get_running_loop().create_future()
@@ -36,6 +38,9 @@ class DeliveredRun:
         self.failure = None
         self.retained = []
         self.tool_states = {}
+        progress = progress_settings or ToolProgressSettings()
+        self.progress_max_text_bytes = progress.max_text_bytes
+        self.stop_requested = False
         self.done = False
         self.task = None
         self.unsubscribe = None
@@ -64,36 +69,66 @@ class DeliveredRun:
                 if event.event_type != 'run_started':
                     self.projection.incomplete = True
                 self.loop.call_soon_threadsafe(self._ready, event.run_id)
+            if self.run_id != event.run_id or event.sequence <= self.last_sequence:
+                return
             if event.sequence != self.last_sequence + 1:
                 self.projection.incomplete = True
-            if self.run_id != event.run_id:
-                return
             self.last_sequence = event.sequence
             try:
+                event = project_event_for_web(event, progress_max_text_bytes=self.progress_max_text_bytes)
                 payload = wire_event(event)
                 if encoded_size(payload) > self.settings.max_frame_bytes:
                     self.projection.incomplete = True
                 else:
                     self.events.append(payload)
                     self.projection(event)
-                    if event.event_type in ('tool_call_started', 'tool_call_finished'):
-                        data = payload['data']
-                        self.tool_states[data['tool_call_id']] = {**data,
-                            'run_id': event.run_id,
-                            'state': 'running' if event.event_type == 'tool_call_started' else 'finished'}
+                    self._observe_tool(payload)
+                    if (event.event_type == 'control_accepted' and event.data.kind == 'stop'
+                            and self.status == 'running'):
+                        self.stop_requested = True
                 if event.event_type == 'run_finished':
                     self.status = event.data.status
                     self.manual_review_required = event.data.manual_review_required
                     self.failure = payload['data']['failure']
-                    for row in self.tool_states.values():
-                        if row['state'] == 'running':
-                            row['state'] = 'unconfirmed'
+                    self._mark_tools_unconfirmed(event.timestamp)
             except Exception as error:
                 self.projection.incomplete = True
                 logger.error('web_event_projection_failed error_type=%s', type(error).__name__)
             if not self.wake_pending:
                 self.wake_pending = True
                 self.loop.call_soon_threadsafe(self._wake)
+
+    def _observe_tool(self, event):
+        kind, data = event['event_type'], event['data']
+        if kind not in ('tool_call_started', 'tool_call_finished', 'tool_progress'):
+            return
+        if self.status != 'running':
+            return
+        call_id = data['tool_call_id']
+        old = self.tool_states.get(call_id, {})
+        batch_id = next((row['id'] for row in reversed(self.projection.messages)
+            if row['type'] == 'ai' and any(call.get('id') == call_id
+                for call in row.get('tool_calls', []))), None)
+        if kind == 'tool_progress':
+            if (old.get('run_id') != self.run_id or old.get('state') != 'running'
+                    or old.get('tool_name') != data['tool_name']
+                    or old.get('batch_id') not in (None, data['batch_id'])):
+                return
+            self.tool_states[call_id] = {**old, **data, 'last_activity_at': event['timestamp']}
+        elif kind == 'tool_call_started':
+            self.tool_states[call_id] = {**data, 'run_id': self.run_id, 'batch_id': batch_id,
+                'state': 'running', 'started_at': event['timestamp']}
+        else:
+            if old.get('run_id') != self.run_id or (batch_id is not None and old.get('batch_id') != batch_id):
+                old = {}
+            self.tool_states[call_id] = {**old, **data, 'run_id': self.run_id,
+                'batch_id': batch_id or old.get('batch_id'), 'state': 'finished',
+                'finished_at': event['timestamp']}
+
+    def _mark_tools_unconfirmed(self, timestamp):
+        for row in self.tool_states.values():
+            if row['state'] == 'running':
+                row.update(state='unconfirmed', finished_at=timestamp)
 
     def view(self):
         with self.lock:
@@ -102,6 +137,7 @@ class DeliveredRun:
                              for row in self.projection.messages], 'last_sequence': self.last_sequence,
                 'incomplete': self.projection.incomplete, 'done': self.done,
                 'manual_review_required': self.manual_review_required, 'failure': self.failure,
+                'stop_requested': self.stop_requested,
                 'retained': deepcopy(self.retained), 'tool_states': deepcopy(self.tool_states)}
         if encoded_size(value) > self.settings.max_frame_bytes:
             raise WebError('view_too_large')
@@ -143,8 +179,9 @@ class DeliveredRun:
 
 
 class RunDelivery:
-    def __init__(self, application, settings):
+    def __init__(self, application, settings, *, progress_settings=None):
         self.application, self.settings = application, settings
+        self.progress_settings = progress_settings
         self.runs = OrderedDict()
         self.latest = {}
         self.receipts = {}
@@ -201,7 +238,7 @@ class RunDelivery:
                 self.pending_receipts.pop(key, None)
                 self._prune()
 
-            job = DeliveredRun(session_id, rows, self.settings, register)
+            job = DeliveredRun(session_id, rows, self.settings, register, progress_settings=self.progress_settings)
             previous = self.runs.get(self.latest.get(session_id))
             if previous is not None:
                 job.tool_states = previous.view()['tool_states']
@@ -234,9 +271,7 @@ class RunDelivery:
                                   'stopped' if result.get('run_stopped') is True else 'completed')
                     job.projection.incomplete = True
                     job.projection.seed(job.session_id, [message_view(m) for m in result.get('messages', [])])
-                    for row in job.tool_states.values():
-                        if row['state'] == 'running':
-                            row['state'] = 'unconfirmed'
+                    job._mark_tools_unconfirmed(datetime.now(timezone.utc).isoformat())
         except BaseException as error:
             if job.run_id is not None:
                 job._ready(job.run_id)
@@ -256,6 +291,7 @@ class RunDelivery:
             job.unsubscribe()
             with job.lock:
                 job.done = True
+                job._mark_tools_unconfirmed(datetime.now(timezone.utc).isoformat())
             job.changed.set()
 
     async def control(self, run_id, body):
@@ -271,6 +307,8 @@ class RunDelivery:
                     retained = self.application.request_stop(job.session_id, run_id=run_id)
                     with job.lock:
                         job.retained = list(retained)
+                        if job.status == 'running':
+                            job.stop_requested = True
                 else:
                     method = self.application.steer if body.kind == 'steering' else self.application.follow_up
                     method(job.session_id, body.text)

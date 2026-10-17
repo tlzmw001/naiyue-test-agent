@@ -2,6 +2,7 @@
 # Direct dependencies: langchain, langchain-openai, langchain-anthropic,
 # langchain-ollama (runtime), pytest (development).
 # Includes transitive dependencies.
+Pillow==12.3.0
 annotated-types==0.8.0
 anthropic==1.9.0
 anyio==4.15.1

@@ -1,6 +1,8 @@
 """Bounded, redacted comparison of a fixed fact-recall task with compaction."""
 
 import argparse
+
+from naiyue_test_agent.config_paths import get_models_path
 import json
 import logging
 import os
@@ -244,7 +246,7 @@ def _run_case(args) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', default='.env/models.json')
+    parser.add_argument('--config', default=str(get_models_path()))
     parser.add_argument('--model-id')
     parser.add_argument('--summary-output-tokens', type=int, default=2048)
     parser.add_argument('--total-timeout-seconds', type=float, default=120)

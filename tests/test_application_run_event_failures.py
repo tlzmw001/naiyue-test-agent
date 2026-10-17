@@ -1,13 +1,12 @@
 """Run failure observation preserves exceptions, control, and approval state."""
 
 import logging
-from dataclasses import replace
 
 import pytest
 from langchain_core.messages import AIMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
+from naiyue_test_agent.tools import create_session_read_tool
 from test_application_run_events import ToolModel, make_app, run_events_only
 
 
@@ -20,7 +19,7 @@ def test_stage_failure_keeps_original_exception_and_cleans(monkeypatch, stage, c
     # The current module changes when SessionService is moved; use its owner.
     module = __import__(application.SessionService.__module__, fromlist=['SessionService'])
     function = {'prepare': 'prepare_run_resources', 'execute': 'invoke_agent_run',
-                'finalize': '_pending_tool_approval'}[stage]
+                'finalize': 'pending_tool_approval'}[stage]
     failure = RuntimeError('PRIVATE_ORIGINAL_ERROR')
 
     def fail(*_args, **_kwargs):
@@ -56,7 +55,7 @@ def test_cleanup_failure_is_reported_without_masking_primary(monkeypatch, has_pr
         app._sessions._sessions[session]['steering_queue'].append('PRIVATE_QUEUE')
         raise primary
 
-    original = module._pending_tool_approval
+    original = module.pending_tool_approval
 
     def queue_and_return(*args, **kwargs):
         app._sessions._sessions[session]['steering_queue'].append('PRIVATE_QUEUE')
@@ -66,7 +65,7 @@ def test_cleanup_failure_is_reported_without_masking_primary(monkeypatch, has_pr
     if has_primary:
         monkeypatch.setattr(module, 'prepare_run_resources', queue_and_fail)
     else:
-        monkeypatch.setattr(module, '_pending_tool_approval', queue_and_return)
+        monkeypatch.setattr(module, 'pending_tool_approval', queue_and_return)
     with pytest.raises(Exception) as caught:
         app.run(session, [('user', 'run')])
     assert caught.value is (primary if has_primary else secondary)
@@ -96,8 +95,8 @@ def test_accepted_approval_failure_is_cleaned_and_keeps_pending(monkeypatch, tmp
         raise failure
 
     if failure_stage == 'grant':
-        policy = app._sessions._approval_policies['read']
-        app._sessions._approval_policies['read'] = replace(policy, grant_factory=fail)
+        from naiyue_test_agent.application import session_approval
+        monkeypatch.setattr(session_approval, 'OneUseApprovalGrants', fail)
     else:
         module = __import__(application.SessionService.__module__, fromlist=['SessionService'])
         monkeypatch.setattr(module, 'resume_agent_run_with_resources', fail)

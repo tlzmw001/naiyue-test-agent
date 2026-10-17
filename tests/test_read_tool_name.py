@@ -1,10 +1,12 @@
-from naiyue_test_agent.agent_runtime.tools import create_read_tool, create_session_read_tool
+from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.application import LocalApplication, SessionService
 
 
-def test_read_tool_factories_expose_one_model_visible_name(tmp_path):
-    assert create_read_tool(tmp_path).name == 'read'
-    assert create_session_read_tool().name == 'read'
+def test_read_definition_exposes_one_model_visible_name():
+    spec = create_session_read_tool()
+    assert spec.tool.name == 'read'
+    assert set(spec.input_schema.model_fields) == {'path', 'offset', 'limit'}
+    assert issubclass(spec.tool.args_schema, spec.input_schema)
 
 
 def test_tool_approval_methods_have_no_old_read_only_aliases():

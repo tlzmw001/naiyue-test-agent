@@ -1,6 +1,7 @@
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, expect, it } from 'vitest';
+import { act, cleanup, render, screen } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
 import Conversation from './Conversation';
+import ToolCall from './ToolCall';
 
 afterEach(cleanup);
 it('renders a correlated tool result once, escapes content, and separates it from assistant speech', () => {
@@ -14,6 +15,45 @@ it('renders a correlated tool result once, escapes content, and separates it fro
   expect(screen.getByText('错误结果')).toBeTruthy();
   expect(screen.getAllByText('<script>tool body</script>')).toHaveLength(1);
   expect(container.querySelector('script')).toBeNull();
+});
+
+it('shows real progress with an advancing local clock, escaped latest tail, and terminal status', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-10-16T00:00:10Z'));
+  try {
+    const call = { id: 't', name: 'bash', args: { command: 'pytest' } };
+    const phase = { tool_call_id: 't', tool_name: 'bash', run_id: 'r', batch_id: 'ai',
+      state: 'running', boundary: 'dispatch', activity: 'running', phase: 'process_output',
+      completed: 8, total: null, unit: 'bytes', text: '<img src=x onerror=alert(1)>',
+      started_at: '2026-10-16T00:00:00Z', last_activity_at: '2026-10-16T00:00:08Z' } as any;
+    const { container, rerender } = render(<ToolCall call={call} phase={phase} />);
+    expect(screen.getByText('输出更新')).toBeTruthy();
+    expect(screen.getByText('已历时 10秒')).toBeTruthy();
+    expect(screen.getByText('距最后活动 2秒')).toBeTruthy();
+    expect(screen.getByText('8 bytes')).toBeTruthy();
+    expect(screen.queryByText(/%/)).toBeNull();
+    expect(container.querySelector('img')).toBeNull();
+    act(() => vi.advanceTimersByTime(2000));
+    expect(screen.getByText('距最后活动 4秒')).toBeTruthy();
+    rerender(<ToolCall call={call} phase={phase} stopping />);
+    expect(screen.getByText('停止中')).toBeTruthy();
+    rerender(<ToolCall call={call} phase={{ ...phase, state: 'finished', outcome: 'success',
+      finished_at: '2026-10-16T00:00:12Z' }} stopping />);
+    expect(screen.getByText('成功')).toBeTruthy();
+    expect(screen.queryByText('停止中')).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+
+it('binds progress only to its AI batch when a call ID is reused in the same run', () => {
+  const messages = ['old', 'current'].map(id => ({ id, type: 'ai', content: '', run_id: 'r',
+    state: 'complete', provisional: false, tool_calls: [{ id: 't', name: 'read', args: { path: id } }] }));
+  render(<Conversation compacted={false} messages={messages as any} toolStates={{ t: {
+    tool_call_id: 't', tool_name: 'read', run_id: 'r', batch_id: 'current', state: 'running',
+    boundary: 'dispatch', activity: 'queued', phase: 'batch_wait', text: 'CURRENT_PROGRESS',
+  } as any }} />);
+  expect(screen.getAllByText('排队中')).toHaveLength(1);
+  expect(screen.getAllByText('CURRENT_PROGRESS')).toHaveLength(1);
 });
 
 it('does not attach a later tool result to an earlier turn when a call ID is reused', () => {

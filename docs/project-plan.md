@@ -1,5 +1,20 @@
 # Naiyue Test Agent：项目设计记录
 
+2026-10-17：[092A/B/C历史、自动整理与前置审批恢复](specs/092-session-restart-recovery.md)已实施。Web打开旧会话后自动调用原POST，CLI选择会话后自动恢复；执行中断保留三次更新，前置审批复用本地权限准备并重建原pending，整批在批准前不执行。恢复不调用模型/工具/Auto；失败保留历史、草稿与手动操作，不自动取消失效审批。旧临时授权不跨重启。无新生产模块、DB字段或依赖，原授权/准入锁/批次调度保持；验证见handoff。090A/B/C、091A/B、092A/B/C八片已完成；下一步讲解086前台一层SubAgent的实施切片，Windows原机WIN1仍待验。
+
+2026-10-16会话存储最终方向：用户确认改为工作目录级共享SQLite，一个工作目录中的多个会话共用库；不同目录的独立服务/浏览器窗口可以同时工作，同一默认目录库暂时保留一个应用持有。终端启动位置、端口或PID不决定历史归属；真实目录规范化后稳定定位。此前“全局共享库＋会话级协调”为已撤回候选。长期记忆、跨会话记忆以后独立设计，不预定其后端。
+
+[Spec087：工作区会话数据与跨平台实例锁](specs/087-workspace-session-storage.md)已按用户批准接线：默认启动cwd、项目内稳定UUID、可配置data_dir、每工作区共享库、关闭后移动自动事务重绑、副本显式新身份及POSIX/Windows锁。沿用官方saver和原安全恢复合同；schema4拒绝旧格式，删除旧升级/NULL补写，不设启动自删。配置与数据位置独立，不同目录服务可并行，同库仍单应用持有。同项目多独立服务、单服务切工作区、长期/跨会话记忆独立设计。实际证据与剩余Windows范围见handoff。
+
+
+[Spec088](specs/088-windows-file-commit-and-archives.md)和[Spec089](specs/089-windows-path-permission-identity.md)已按用户批准实施：Windows文件提交保留目标DACL、POSIX保留模式位；归档取消私密位门槛，显式类型/链接/标记/清理快照保留；普通/扩展盘符与UNC统一权限比较，覆盖Deny/Allow/默认/会话记住/递归/写入占用，未新增审查对象或平台服务。当前本机73新增用例及正式图验证，最终全量见handoff；Windows/Linux原机DACL、长路径/UNC/junction、安装/双Shell/停止和保存恢复仍未验。下一步原机端到端，SubAgent086及正常串行排队60秒期限另片。
+
+2026-10-16工具建设完成[085-15本机终检与Windows复盘](specs/085-15-final-audit-windows.md)，报告见[Windows兼容性复盘](research/windows-compatibility-audit.md)。085-15清理SessionService两处旧Shell诊断标签，四例红灯回归后全量1597/前端27及构建通过。后续按用户决定取消模型配置私密权限检查，保留正常OS读取、普通文件与内容校验；新增十例后全量1607/前端27及构建通过，273个Python结构检查通过。前14片工具/权限/审批主链及旧消费者已核查，文件IO线程回退与进程原生async分别保留。同日继续取消会话库/锁/附属文件的私密模式位门槛，保留普通文件/链接检查和实例独占。原生Windows仍有fcntl/O_NOFOLLOW入口、归档目录检查、fchmod覆盖/Edit及Deny命名空间问题，WIN1保持未完成；当前无Windows/Linux原机/真实PowerShell或远端模型证据。下一步讨论Windows安全文件与数据库锁的具体修复方案；长命令串行排队期限也列独立待修。真实配置/依赖未改，未提交/push；SubAgent086、UI/完整沙箱另排。
+
+2026-10-16 子Agent补充设计：[Spec086](specs/086-subagent-foreground.md)及[文件地图](specs/086-subagent-file-map.md)将已确认的一层/前台/同进程、可信角色登记、独立实例、共用权限和内部批量审批落实到拟定接口/恢复/停止/保存/事件与六个实施切片，仍供审阅、未实施。框架假模型证明并行完成保留、串行挂起重建和多interrupt身份可行，不等于当前项目接线；原“审批等顶层图停止后提交”候选因体验问题已撤回；P4/P5验证独立子运行状态/审批通道可在B运行时恢复/停止A，086与文件地图已按唯一子驱动者、当前批投递、CLI/Web活动审批和必要保存边界修订为供审阅方案。移除正常排队60秒故障阈值已获用户确认并转090A；缺省不额外限主模型轮数仍为086工程建议。结束续跑、多层和后台分别后排TE10/TE11/TE12，无新Agent进程或任务平台。
+
+2026-10-15 工具/权限/审批/图片/双Shell讨论整合为[Spec085](specs/085-tool-system-rebuild.md)及[文件清单](specs/085-tool-system-file-map.md)：共享ToolSpec注册/会话活动集合、固定create_agent适配、保存权限决定后批量审批、统一ToolError及共享进程入口；真实目标软链接/Pillow/精确编辑保留已确认。当前仅设计，未实施；工具建设后做[WIN1全项目Windows复盘](future-work.md#win1工具建设后全项目windows兼容性复盘)，旧工具授权替换不等于删除OS凭证/存储保护，沙箱后续独立决策。
+
 2026-10-09 [Spec078](specs/078-web-tools-and-approval.md)已接通工作区文件工具、显式 opt-in Bash、真实 ToolMessage/参数配对及可折叠工具详情；审批按会话/原run/调用ID严格匹配，逐项决定后整批恢复，新的run继续SSE。应用只增加派生来源run字段，无DB迁移/权限算法改写；保存失败、重启受限状态仍阻断，拒绝仍回填模型。9个新增Python验收及9个新增前端测试通过；离线TCP/两个进程与桌面/375px真实浏览器完成批准/拒绝闭环，新增实网模型调用为0，不替代收费供应商/生产业务证据。下一步试用与系统代码学习，长期会话/权限边界保留待办。
 
 2026-10-09 [Spec077](specs/077-local-web-chat.md)已获用户确认并接通最小本地 Web：React+TS/Vite/CSS Modules、FastAPI/REST+SSE 复用现有 AsyncApplication/SQLite，循环与工具/上下文算法保持。独立 arun 生产任务＋快速领域订阅/有界交付，HTTP 断开不取消；真实 run_id、请求幂等、序号/view 校准、模型/会话选择、Steering/Follow-up、停止保留与明确重发已验证。首片 tools=[]，下一片工具/审批，不宣称 SaaS/完整历史或生产业务效果。操作及证据见 [Web 说明](web-chat.md)。下列选型草案与旧阶段进度按历史时点保留。

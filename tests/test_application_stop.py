@@ -1,5 +1,11 @@
 """Cooperative sync operation settlement under the unified stop contract."""
 
+from naiyue_test_agent.tools.permissions import ToolPermission
+
+from naiyue_test_agent.application import prepare_tool_registry
+
+from naiyue_test_agent.tools import ToolSpec
+
 import logging
 from threading import Event, Thread
 
@@ -109,7 +115,7 @@ def test_stop_waits_for_current_tool_batch_and_skips_next_model(monkeypatch):
         {'name': 'first_tool', 'args': {}, 'id': 'call-one'},
         {'name': 'second_tool', 'args': {}, 'id': 'call-two'},
     ]), AIMessage(content='must-not-be-called')])
-    app = build_app(monkeypatch, model, [first_tool, second_tool])
+    app = build_app(monkeypatch, model, [ToolSpec(first_tool, first_tool.args_schema, permissions=ToolPermission(default='allow')), ToolSpec(second_tool, second_tool.args_schema, permissions=ToolPermission(default='allow'))])
     session_id = app.create_session('A')
     worker, outcomes = run_in_worker(app, session_id)
     try:
@@ -217,7 +223,7 @@ def test_stop_rejects_closed_window_while_run_is_still_busy():
             assert release.wait(timeout=3)
             return {'messages': []}
 
-    app = application.LocalApplication('A', service, PausedAtEndAgent())
+    app = application.LocalApplication('A', service, PausedAtEndAgent(), prepare_tool_registry([]))
     worker, outcomes = run_in_worker(app, session_id)
     try:
         assert closed.wait(timeout=3)

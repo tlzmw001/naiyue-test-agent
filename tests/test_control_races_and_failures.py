@@ -147,7 +147,7 @@ def test_approval_preparation_failure_is_discarded_not_submitted_or_applied(monk
 
 
 def test_active_stop_before_approval_skips_tool_and_finishes(monkeypatch, tmp_path):
-    from naiyue_test_agent.agent_runtime.tools import create_session_read_tool
+    from naiyue_test_agent.tools import create_session_read_tool
     from naiyue_test_agent.model_access import ModelCatalog
 
     root = tmp_path / 'workspace'
