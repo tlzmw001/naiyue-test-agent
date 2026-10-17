@@ -1,5 +1,7 @@
 # 全项目代码学习路线
 
+代码版本对应（Spec093，2026-10-17）：历史课堂讲过的`LocalApplication.run → SessionService.run → run_steps`已撤销；当前从`AsyncApplication.arun → SessionService.arun → arun_steps`进入同一准入/结果生成器。`async_session.py`实际方法并回`session_service.py`，`persistent.py`由`async_persistent.py`取代，finish仅保留`_afinish_run`。已学的session/thread/run归属、IOCall/send/throw、异常优先级与IO settle机制仍适用；变动及当前消费者见[Spec093](../specs/093-architecture-semantics-and-sync-cleanup.md)，不代表本轮已完成新的课堂或独立掌握。
+
 当前学习安排（2026-10-14）：第六章8节职责/主分支讲解收束，最后一节见[Lesson73](lessons/lesson-73.md)，全章入口Lesson66–73。唯一下一步第七章上下文工程，先建立模型上下文组成与来源地图。前五章综合复盘见[Lesson65](lessons/lesson-65.md)。本节审批/恢复既有测试20 passed in1.40s，限本机fake与同进程合同，不宣称跨重启审批、实网模型或生产保证。讲解收束不等于逐行覆盖；用户有循环跳转/settle自述与失败隔离设计提问，第六章本人调试及独立实现未评估。后续为7上下文工程、8持久化与CLI、9Web/前端、10测试与复盘；改进见[后续清单TE9](../future-work.md)，未启动新功能。分类器练习仍暂缓，发布实现保留。
 
 记录方式：用户确认完整小课/模块收束一次；当前进度只在本页维护，lesson保留知识/理解证据，handoff作短交接，索引不复制即时进度，不逐轮写流水或重复跑测试。
@@ -76,6 +78,8 @@ Lesson39–44仅是计划编号，用户开始对应课后才建立课堂笔记�
 
 后续接口清理见[Spec082](../specs/082-remove-obsolete-runtime-bridges.md)：旧分项bind/getter、failure_data、两个旧交互builder及workspace调用包装已删除，旧课堂中的相关名字仅作历史。当前入口为中心RunServices及统一交互装配；同步保留项有具体消费者清单，代码规模表仍是当时快照。本次实现不升级用户掌握记录。
 
+093C版本对应：历史`invoke_agent_run`改用`async_invocation.ainvoke_agent_run`；resource普通/审批恢复改用`ainvoke_agent_run_with_resources/aresume_agent_run_with_resources`；`invoke_with_message_observation`改用`async_message_observation.ainvoke_with_message_observation`。测试直接await，不经同步应用代理；建图仍是共享同步函数。
+
 状态：2026-10-10。**用户自述第一章已讲内容学会，独立实现与面试追问未评估；第2章errors旧版及Lesson28失败链已讲，整体独立追踪尚未证明。用户批准架构复审方向后，Spec079分层契约/实例扩展已实现（后端962/前端27测试通过），新版核心待学，先按[异常地图](exception-architecture.md)从contracts→model→runtime→application追三条故障链，再回第2章stop_reason。** 第一章见[Lesson18](lessons/lesson-18.md)/[Lesson19](lessons/lesson-19.md)。真实试用/断点/确定性探针作为相应章节的学习素材；下方原代码统计保留2026-10-09盘点，新增模块行数单独列示，不伪造全项目重新测量。
 
 新版异常现从[Lesson29](lessons/lesson-29.md)建立普通模型超时的完整地图；仅展开内部报告/身份复用，分类器算法与其余故障分支待学，不把架构地图定位当作核心代码全部读完。
@@ -130,12 +134,12 @@ Lesson39–44仅是计划编号，用户开始对应课后才建立课堂笔记�
 | 2 | 模型接入；model_access的5个文件 | 配置如何被加载和真正使用；供应商适配/基类、thinking回退、上下文与输出参数、失败分类/结束原因、超时/SDK重试、客户端资源归属 | 一条配置到模型的调用链、默认值/异常表、接入模型的小练习 |
 | 3 | Agent循环与middleware；agent_runtime/__init__、invocation_context、async_invocation、resource_invocation，application/__init__ | Human/AI/Tool消息结构；模型怎样请求工具、结果怎样回填；create_agent如何收集hook并构图；reducer/jump_to/handler顺序；同步与异步调用入口 | 真实数据结构与一轮→多轮轨迹、hook时序、框架/项目职责表 |
 | 4 | 事件、消息与观察；events、call/message/turn/control/context观察模块，application/run_events、stream_projection | 谁生产/消费事件；run/turn/message/tool标识与序号；delta/完整snapshot/终局；异常和终局的关系；JSON序列化/去重；事件不能替代授权或保存 | 事件生产→交付→投影的数据流、各状态证据、unknown/失败诊断样例 |
-| 5 | 会话运行与控制；session_service、session_controls、async_session、async_application、async_event_stream、io_steps及run_control/active_stop/async_utils | session/thread/run归属；busy/队列/开窗关窗；Steering与Follow-up；停止/失败/收尾优先级；async任务归属、断开与取消、IOCall/send/throw、已开始线程IO的settle | 完整状态/信号表、正常/干预/停止/异常路径、并发与取消练习 |
+| 5 | 会话运行与控制；session_service（已合入async_session）、session_controls、async_application、async_event_stream、io_steps及run_control/active_stop/async_utils | session/thread/run归属；busy/队列/开窗关窗；Steering与Follow-up；停止/失败/收尾优先级；async任务归属、断开与取消、IOCall/send/throw、已开始线程IO的settle | 完整状态/信号表、正常/干预/停止/异常路径、并发与取消练习 |
 | 6 | 工具执行、调度、权限与审批；tools全部工具、tool_batch/async_tool_batch、tool_approval、file_permissions；复访session_service审批部分 | 工具定义/schema/metadata注册；Runtime.context注入；read分页与路径；ls/find/grep；write/edit原子性；Bash进程/输出；串并行；ToolMessage错误；HITL和一次性授权 | 七工具共同范式与差异、批次顺序、审批→恢复/拒绝链、新增工具练习 |
 | 7 | 上下文工程；project_instructions、skills、project_prompt、context_observation、context_compaction、context_summary_io、context_recovery | 系统prompt/AGENTS/CLAUDE/Skill来源和加载时点；近似token/usage/窗口/预留/阈值；安全切点、摘要替换、回退、一次溢出恢复；上下文不等于全部展示历史 | 数字预算例子、切点场景表、压缩/恢复轨迹和失败验证 |
 | 8 | 持久化与CLI；session_storage、session_persistence、persistent/async_persistent、cli/cli_async/cli_display；复访SessionService finalize | 元数据与官方checkpoint分别存什么；保存确认与终局顺序；同库独占；安全恢复/受限状态；CLI线程桥与异步应用；哪些状态没持久化 | SQLite/checkpoint关系图、重启/保存失败案例、CLI完整入口复盘 |
 | 9 | Web与前端；web全部文件、frontend全部产品代码及构建入口 | lifespan/REST/schema/本地访问边界；生产任务和SSE连接分离；回执/游标/重同步；TS类型、JSX、React state/ref/effect、API/fetch/SSE；聊天/工具/审批投影、模型选择、草稿与操作竞态 | 一次浏览器操作全链路、请求/事件/界面状态表、前端小改动 |
-| 10 | 测试策略、验证与全链路复盘；test_agent/discount_case_design、代表性tests/scripts；各入口复访 | 早期结构化用例样例与当前通用Agent主入口的关系；假模型/真实集成/业务评测证据区别；怎样复现/定位；扩展模型/middleware/工具/评测；哪些长期能力尚未做 | 独立追踪/小实现/故障排查/面试连续追问与真实贡献清单 |
+| 10 | 验证与全链路复盘；代表性tests/scripts、正式异步入口复访 | 历史业务原型已撤销；当前通用Agent主入口的职责；假模型/真实集成/业务评测证据区别；怎样复现/定位；扩展模型/middleware/工具/评测；哪些长期能力尚未做 | 独立追踪/小实现/故障排查/面试连续追问与真实贡献清单 |
 
 第1章只建立地图，不一口气解释所有启动依赖。第一次出现尚未学习的模块时先讲输入/输出与职责，详细实现登记为后续阅读项；不能把一次定位算作该文件已经通读。长文件按机制分段、跨章复访，例如运行装配中的控制/压缩接线和SessionService中的审批/finalize。
 
@@ -169,7 +173,7 @@ Lesson39–44仅是计划编号，用户开始对应课后才建立课堂笔记�
 - 上下文：test_session_system_prompt、test_project_skills、test_context_compaction、test_context_compaction_fallback、test_context_overflow_recovery。
 - 持久化：test_persistent_sessions、test_persistent_processes、test_async_persistent、test_cli_async_stop。
 - Web/前端：test_web_api、test_web_tools、test_web_delivery及SSE/事件/审批/Conversation/App/useConversation相关前端测试。
-- 业务/集成：test_discount_case_design；probe_async_application、probe_active_stop、probe_web、probe_web_tools的离线方式优先；真实供应商探针必须区分收费调用和业务评测。
+- 集成：Discount历史测试已移除；probe_async_application、probe_active_stop、probe_web、probe_web_tools的离线方式优先；真实供应商探针必须区分收费调用和业务评测。
 
 ## 文件阅读清单
 
@@ -236,7 +240,7 @@ Lesson39–44仅是计划编号，用户开始对应课后才建立课堂笔记�
 | 节 | 主题 | 要解决的问题与阅读边界 |
 |---|---|---|
 | 1 | session/thread/run与busy准入 | 谁保存会话状态、谁标识checkpoint历史、谁标识单次运行；同会话互斥与不同会话隔离。先用同步测试，审批/人工核对只说明准入合同 |
-| 2 | IOCall与生命周期驱动 | _run_steps如何交出待执行操作，run_steps如何用send回传结果、throw回传异常；先走同步链，再对照arun_steps，异步调度内部步过 |
+| 2 | IOCall与生命周期驱动 | _run_steps交出待执行操作，arun_steps用send回传结果、throw回传异常；当前只走异步驱动，同步run_steps属历史版本，异步调度内部步过 |
 | 3 | 一次run从准备到收尾 | 准备、执行、结果处理、finally与busy释放；正常/失败及主要/次要异常。必要保存只讲输入输出，存储算法留第8章 |
 | 4 | steering与follow_up实际交付 | 接受、队列、交付边界、优先顺序和输入窗口；关联第四章已讲的control事件，不重讲观察器内部 |
 | 5 | 用户停止与外部取消 | request_stop与run私有信号如何进入模型/工具边界；未开始与已开始、stopped与failed的区别 |
@@ -251,7 +255,7 @@ Lesson39–44仅是计划编号，用户开始对应课后才建立课堂笔记�
 | `naiyue_test_agent/agent_runtime/run_control.py` | 63 | 待系统复盘 |
 | `naiyue_test_agent/application/async_application.py` | 189 | 待系统复盘 |
 | `naiyue_test_agent/application/async_event_stream.py` | 76 | 待系统复盘 |
-| `naiyue_test_agent/application/async_session.py` | 88 | 待系统复盘 |
+| `naiyue_test_agent/application/async_session.py`（历史） | 88 | 093已并入session_service，不再作为当前入口 |
 | `naiyue_test_agent/application/io_steps.py` | 51 | 待系统复盘 |
 | `naiyue_test_agent/application/session_controls.py` | 150 | 待系统复盘 |
 | `naiyue_test_agent/application/session_service.py` | 472 | 失败catch/finally局部、_cleanup_run396–417与_finish_run419–457已讲（Lesson28）；其他主流程待系统复盘 |
@@ -317,7 +321,7 @@ Lesson39–44仅是计划编号，用户开始对应课后才建立课堂笔记�
 | `naiyue_test_agent/application/cli.py` | 469 | 待系统复盘 |
 | `naiyue_test_agent/application/cli_async.py` | 110 | 待系统复盘 |
 | `naiyue_test_agent/application/cli_display.py` | 200 | 待系统复盘 |
-| `naiyue_test_agent/application/persistent.py` | 29 | 待系统复盘 |
+| `naiyue_test_agent/application/persistent.py`（历史） | 29 | 093已移除，当前入口async_persistent.py |
 | `naiyue_test_agent/application/session_persistence.py` | 95 | 待系统复盘 |
 | `naiyue_test_agent/application/session_storage.py` | 149 | 待系统复盘 |
 
@@ -358,10 +362,7 @@ Lesson39–44仅是计划编号，用户开始对应课后才建立课堂笔记�
 
 ### 第10章
 
-| 文件 | 物理行数 | 计划阅读状态 |
-|---|---:|---|
-| `naiyue_test_agent/test_agent/__init__.py` | 1 | 待系统复盘 |
-| `naiyue_test_agent/test_agent/discount_case_design.py` | 96 | 待系统复盘 |
+Discount固定业务原型及测试已按用户确认移除，本章改用当前异步运行与验证入口复盘。历史课堂保留，不要求重新系统学习。
 
 ## 复现物理行数统计
 

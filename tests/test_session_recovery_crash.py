@@ -1,5 +1,7 @@
 """Real process exits at explicit save boundaries, without timing guesses."""
 
+from native_application_helpers import async_test
+
 import asyncio
 import importlib
 import json
@@ -11,7 +13,6 @@ import sys
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
-from naiyue_test_agent.application.session_storage import SessionStorage
 from naiyue_test_agent.tools import create_session_read_tool, create_session_write_tool
 from test_persistent_sessions import build
 from test_session_recovery import unfinished
@@ -31,32 +32,34 @@ def run_child(*args):
 @pytest.mark.parametrize('native', [False, True])
 @pytest.mark.parametrize('point', ['before_cleared', 'cleared', 'during_paired_writes', 'paired',
                                   'finished', 'before_metadata', 'after_metadata'])
-def test_crash_at_recovery_boundary_can_reopen_and_finish(monkeypatch, tmp_path, point, native):
+@async_test
+async def test_crash_at_recovery_boundary_can_reopen_and_finish(monkeypatch, tmp_path, point, native):
     path = tmp_path / 'state.sqlite'
-    sid, original, messages = unfinished(monkeypatch, path)
+    sid, original, messages = await unfinished(monkeypatch, path)
     checkpoint = original.config['configurable']['checkpoint_id']
     run_child('recover', path, sid, checkpoint, point, str(int(native)))
-    with SessionStorage(path) as storage:
-        app = build(monkeypatch, storage)
-        history = app.get_session_history(sid)
+    async with build(monkeypatch, path) as app:
+        storage = app._sessions._persistence.storage
+        history = await app.aget_session_history(sid)
         latest = history['checkpoint_id']
         assert [m for m in history['messages'] if isinstance(m, ToolMessage) and m.tool_call_id == 'a'] == [messages[-1]]
         if point == 'after_metadata':
             assert storage.get(sid)['state'] == 'ready' and history['recovery']['kind'] == 'ready'
-            assert app.restore_session(sid) == sid
+            assert await app.arestore_session(sid) == sid
         else:
             assert storage.get(sid)['state'] == 'failed' and history['recovery']['actions'] == ['continue']
             if point == 'before_cleared':
                 assert latest == checkpoint
-            app.recover_session(sid, checkpoint_id=latest, action='continue')
-        snapshot = app._agent.get_state({'configurable': {'thread_id': original.config['configurable']['thread_id']}})
+            await app.arecover_session(sid, checkpoint_id=latest, action='continue')
+        snapshot = await app._agent.aget_state({'configurable': {'thread_id': original.config['configurable']['thread_id']}})
         assert snapshot.next == () and snapshot.tasks == ()
         assert snapshot.values['messages'][:3] == messages
         assert [m.tool_call_id for m in snapshot.values['messages'] if isinstance(m, ToolMessage)] == ['a', 'b']
         assert json.loads(snapshot.metadata['naiyue_recovery'])['phase'] == 'finished'
 
 
-def test_file_commit_without_tool_result_is_retained_and_never_replayed(monkeypatch, tmp_path):
+@async_test
+async def test_file_commit_without_tool_result_is_retained_and_never_replayed(monkeypatch, tmp_path):
     path = tmp_path / 'state.sqlite'
     root = tmp_path / 'work'
     root.mkdir()
@@ -69,22 +72,22 @@ def test_file_commit_without_tool_result_is_retained_and_never_replayed(monkeypa
     def forbidden(*_a, **_kw):
         reached.append(True)
         raise AssertionError('Old file tools must not replay')
-    with SessionStorage(path) as storage:
-        tools = [create_session_read_tool(), create_session_write_tool()]
-        app = build(monkeypatch, storage, tools=tools)
-        history = app.get_session_history(sid)
+    tools = [create_session_read_tool(), create_session_write_tool()]
+    async with build(monkeypatch, path, tools=tools) as app:
+        storage = app._sessions._persistence.storage
+        history = await app.aget_session_history(sid)
         assert history['state'] == 'running' and 'b' in history['recovery']['unconfirmed_tool_call_ids']
         monkeypatch.setattr(importlib.import_module('naiyue_test_agent.tools.write'), '_write', forbidden)
         monkeypatch.setattr(importlib.import_module('naiyue_test_agent.tools.read'), '_read', forbidden)
         events = []
         app.subscribe_events(events.append)
-        app.recover_session(sid, checkpoint_id=history['checkpoint_id'], action='continue')
+        await app.arecover_session(sid, checkpoint_id=history['checkpoint_id'], action='continue')
         assert events == [] and reached == []
         assert (root / 'b.txt').read_text() == 'committed effect'
-        snapshot = app._agent.get_state({'configurable': {'thread_id': storage.get(sid)['thread_id']}})
+        snapshot = await app._agent.aget_state({'configurable': {'thread_id': storage.get(sid)['thread_id']}})
         result = next(m for m in snapshot.values['messages'] if isinstance(m, ToolMessage) and m.tool_call_id == 'b')
         assert result.status == 'error' and 'may already have taken effect' in result.content
-        assert app.run(sid, [('user', 'new input')])['messages'][-1].content == 'answer'
+        assert (await app.arun(sid, [('user', 'new input')]))['messages'][-1].content == 'answer'
         assert reached == [] and (tmp_path / 'executions').read_text() == 'write\n'
 
 
@@ -95,35 +98,21 @@ def crash(point, wanted):
 
 def install_exit_points(patch, app, point, native):
     graph = app._agent
-    method = graph.aupdate_state if native else graph.update_state
-    if native:
-        async def update(config, values, *, as_node):
-            phase = json.loads(config['metadata']['naiyue_recovery'])['phase']
-            crash('before_' + phase, point)
-            result = await method(config, values, as_node=as_node)
-            crash(phase, point)
-            return result
-    else:
-        def update(config, values, *, as_node):
-            phase = json.loads(config['metadata']['naiyue_recovery'])['phase']
-            crash('before_' + phase, point)
-            result = method(config, values, as_node=as_node)
-            crash(phase, point)
-            return result
-    patch.setattr(graph, 'aupdate_state' if native else 'update_state', update)
+    method = graph.aupdate_state
+    async def update(config, values, *, as_node):
+        phase = json.loads(config['metadata']['naiyue_recovery'])['phase']
+        crash('before_' + phase, point)
+        result = await method(config, values, as_node=as_node)
+        crash(phase, point)
+        return result
+    patch.setattr(graph, 'aupdate_state', update)
     saver = graph.checkpointer
-    put = saver.aput if native else saver.put
-    if native:
-        async def save(config, *args, **kwargs):
-            if json.loads(config.get('metadata', {}).get('naiyue_recovery', '{}')).get('phase') == 'paired':
-                crash('during_paired_writes', point)
-            return await put(config, *args, **kwargs)
-    else:
-        def save(config, *args, **kwargs):
-            if json.loads(config.get('metadata', {}).get('naiyue_recovery', '{}')).get('phase') == 'paired':
-                crash('during_paired_writes', point)
-            return put(config, *args, **kwargs)
-    patch.setattr(saver, 'aput' if native else 'put', save)
+    put = saver.aput
+    async def save(config, *args, **kwargs):
+        if json.loads(config.get('metadata', {}).get('naiyue_recovery', '{}')).get('phase') == 'paired':
+            crash('during_paired_writes', point)
+        return await put(config, *args, **kwargs)
+    patch.setattr(saver, 'aput', save)
     storage = app._sessions._persistence.storage
     finish = storage.finish_run
     def metadata(*args):
@@ -134,7 +123,7 @@ def install_exit_points(patch, app, point, native):
     patch.setattr(storage, 'finish_run', metadata)
 
 
-def child():
+async def child():
     mode, path, *args = sys.argv[1:]
     with pytest.MonkeyPatch.context() as patch:
         if mode == 'recover':
@@ -144,12 +133,12 @@ def child():
                     async with factory(patch, Path(path), StreamingToolModel(replies=[])) as app:
                         install_exit_points(patch, app, point, True)
                         await app.arecover_session(sid, checkpoint_id=checkpoint, action='continue')
-                asyncio.run(execute())
+                await execute()
             else:
-                with SessionStorage(Path(path)) as storage:
-                    app = build(patch, storage)
+                async with build(patch, Path(path)) as app:
+                    storage = app._sessions._persistence.storage
                     install_exit_points(patch, app, point, False)
-                    app.recover_session(sid, checkpoint_id=checkpoint, action='continue')
+                    await app.arecover_session(sid, checkpoint_id=checkpoint, action='continue')
         else:
             root = Path(args[0])
             module = importlib.import_module('naiyue_test_agent.tools.write')
@@ -162,15 +151,15 @@ def child():
                     os.fsync(output.fileno())
                 os._exit(91)
             patch.setattr(module, '_write', committed)
-            with SessionStorage(Path(path)) as storage:
-                model = ToolModel(responses=[AIMessage(content='', id='ai', tool_calls=[
-                    {'name': 'read', 'args': {'path': 'a.txt'}, 'id': 'a'},
-                    {'name': 'write', 'args': {'path': 'b.txt', 'content': 'committed effect'}, 'id': 'b'}])])
-                app = build(patch, storage, model, [create_session_read_tool(), create_session_write_tool()])
-                sid = app.create_workspace_session('A', root)
+            model = ToolModel(responses=[AIMessage(content='', id='ai', tool_calls=[
+                {'name': 'read', 'args': {'path': 'a.txt'}, 'id': 'a'},
+                {'name': 'write', 'args': {'path': 'b.txt', 'content': 'committed effect'}, 'id': 'b'}])])
+            async with build(patch, Path(path), model, [create_session_read_tool(), create_session_write_tool()]) as app:
+                storage = app._sessions._persistence.storage
+                sid = await app.acreate_workspace_session('A', root)
                 (root.parent / 'session-id').write_text(sid)
-                app.run(sid, [('user', 'fixture request')])
+                await app.arun(sid, [('user', 'fixture request')])
 
 
 if __name__ == '__main__':
-    child()
+    asyncio.run(child())

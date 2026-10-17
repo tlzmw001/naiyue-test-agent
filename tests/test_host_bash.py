@@ -1,5 +1,7 @@
 """Explicitly enabled host Bash requires exact approval and bounded execution."""
 
+from native_application_helpers import async_test, build_application
+
 from tool_feedback_helpers import invoke_tool_feedback
 
 import logging
@@ -26,7 +28,7 @@ class BashFake(FakeMessagesListChatModel):
     def bind_tools(self, tools, **kwargs):
         return self
 
-def make_app(monkeypatch, command: str, *, timeout: int | None = None, settings=None, output_settings=None):
+async def make_app(monkeypatch, command: str, *, timeout: int | None = None, settings=None, output_settings=None):
     # Simulate an activated test venv in the inherited parent environment.
     monkeypatch.setenv('PATH', str(Path(sys.executable).parent) + os.pathsep + os.environ['PATH'])
     args = {'command': command}
@@ -38,7 +40,7 @@ def make_app(monkeypatch, command: str, *, timeout: int | None = None, settings=
     ])
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    return application.build_local_application(
+    return await build_application(
         Path('synthetic.json'), tools=[create_session_bash_tool(settings=settings, output_settings=output_settings)],
         system_prompt='', response_format=None,
     )
@@ -47,16 +49,17 @@ def bash_results(result):
     return [item for item in result['messages'] if isinstance(item, ToolMessage)
             and item.name == 'bash']
 
-def test_host_bash_approval_then_runs_in_trusted_workspace(monkeypatch, tmp_path, caplog):
+@async_test
+async def test_host_bash_approval_then_runs_in_trusted_workspace(monkeypatch, tmp_path, caplog):
     root = tmp_path / 'workspace'
     root.mkdir()
     marker = root / 'created.txt'
     command = 'printf approved > created.txt; pwd'
-    app = make_app(monkeypatch, command)
-    session = app.create_workspace_session('A', root)
+    app = await make_app(monkeypatch, command)
+    session = await app.acreate_workspace_session('A', root)
 
     with caplog.at_level(logging.INFO):
-        pending = app.run(session, [('user', 'run a command')])
+        pending = await app.arun(session, [('user', 'run a command')])
     assert not marker.exists()
     assert bash_results(pending) == []
     assert pending['approval_requests'] == [{
@@ -66,7 +69,7 @@ def test_host_bash_approval_then_runs_in_trusted_workspace(monkeypatch, tmp_path
     assert app.pending_tool_approvals(session) == pending['approval_requests']
 
     with caplog.at_level(logging.INFO):
-        result = app.resume_tool_approval(session, ['approve'])
+        result = await app.aresume_tool_approval(session, ['approve'])
     assert marker.read_text() == 'approved'
     tool_result = bash_results(result)[0]
     assert tool_result.tool_call_id == 'bash-1'
@@ -76,55 +79,60 @@ def test_host_bash_approval_then_runs_in_trusted_workspace(monkeypatch, tmp_path
     assert command not in caplog.text
     assert 'approved' not in caplog.text
 
-def test_host_bash_reject_has_no_side_effect(monkeypatch, tmp_path):
+@async_test
+async def test_host_bash_reject_has_no_side_effect(monkeypatch, tmp_path):
     marker = tmp_path / 'blocked.txt'
-    app = make_app(monkeypatch, 'printf blocked > blocked.txt')
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    result = app.resume_tool_approval(session, ['reject'])
+    app = await make_app(monkeypatch, 'printf blocked > blocked.txt')
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
+    result = await app.aresume_tool_approval(session, ['reject'])
     assert not marker.exists()
     assert bash_results(result)[0].status == 'error'
 
-def test_host_bash_can_access_outside_workspace_after_approval(monkeypatch, tmp_path):
+@async_test
+async def test_host_bash_can_access_outside_workspace_after_approval(monkeypatch, tmp_path):
     root = tmp_path / 'workspace'
     root.mkdir()
     outside = tmp_path / 'outside.txt'
     command = f'printf outside > "{outside}"'
-    app = make_app(monkeypatch, command)
-    session = app.create_workspace_session('A', root)
-    app.run(session, [('user', 'run')])
-    app.resume_tool_approval(session, ['approve'])
+    app = await make_app(monkeypatch, command)
+    session = await app.acreate_workspace_session('A', root)
+    await app.arun(session, [('user', 'run')])
+    await app.aresume_tool_approval(session, ['approve'])
     assert outside.read_text() == 'outside'
 
-def test_host_bash_nonzero_and_inherited_environment(monkeypatch, tmp_path):
+@async_test
+async def test_host_bash_nonzero_and_inherited_environment(monkeypatch, tmp_path):
     monkeypatch.setenv('OPENAI_API_KEY', 'secret-test-token')
     command = 'if [ -n "$OPENAI_API_KEY" ]; then echo inherited; else exit 9; fi; exit 7'
-    app = make_app(monkeypatch, command)
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    result = app.resume_tool_approval(session, ['approve'])
+    app = await make_app(monkeypatch, command)
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
+    result = await app.aresume_tool_approval(session, ['approve'])
     message = bash_results(result)[0]
     assert 'exit_code=7' in message.content
     assert message.status == 'error'
     assert 'inherited' in message.content
     assert 'secret-test-token' not in str(result)
 
-def test_host_bash_timeout_returns_error_and_model_continues(monkeypatch, tmp_path):
-    app = make_app(monkeypatch, 'sleep 3', timeout=1)
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    result = app.resume_tool_approval(session, ['approve'])
+@async_test
+async def test_host_bash_timeout_returns_error_and_model_continues(monkeypatch, tmp_path):
+    app = await make_app(monkeypatch, 'sleep 3', timeout=1)
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
+    result = await app.aresume_tool_approval(session, ['approve'])
     message = bash_results(result)[0]
     assert message.status == 'error' and message.tool_call_id == 'bash-1'
     assert 'timed out' in message.content and 'Inspect side effects' in message.content
     assert result['messages'][-1].content == 'done'
     assert not app._sessions._sessions[session].get('manual_review_required')
 
-def test_host_bash_output_is_bounded(monkeypatch, tmp_path):
-    app = make_app(monkeypatch, 'printf "%0100000d" 0')
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    result = app.resume_tool_approval(session, ['approve'])
+@async_test
+async def test_host_bash_output_is_bounded(monkeypatch, tmp_path):
+    app = await make_app(monkeypatch, 'printf "%0100000d" 0')
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
+    result = await app.aresume_tool_approval(session, ['approve'])
     message = bash_results(result)[0]
     assert len(message.content) < 70000
     assert 'truncated=true' in message.content
@@ -138,47 +146,6 @@ def test_bash_grant_is_one_use_and_exact(tmp_path):
     assert grant.consume('id-1', ('printf ok', root))
     assert not grant.consume('id-1', ('printf ok', root))
 
-def test_cli_backend_tool_selection_and_approval_displays_full_command(
-    monkeypatch, tmp_path, capsys,
-):
-    with pytest.raises(SystemExit) as missing:
-        cli.main(['--config', 'synthetic.json', '--host-bash'])
-    assert missing.value.code == 2
-
-    command = 'printf "hello\\n" > result.txt'
-    model = BashFake(responses=[
-        AIMessage(content='', tool_calls=[{'name': 'bash', 'id': 'cli-bash',
-                                           'args': {'command': command}}]),
-        AIMessage(content='finished'),
-    ])
-    monkeypatch.setattr(application, 'load_model_catalog',
-                        lambda _path: ModelCatalog('A', {'A': model}))
-    original_build = cli.build_persistent_application
-    def build_selected(*args, **kwargs):
-        app = original_build(*args, **kwargs)
-        create = app.create_workspace_session
-        def create_selected(model_id, root):
-            sid = create(model_id, root)
-            app.set_active_tools(sid, [*app.get_active_tools(sid), 'bash'])
-            return sid
-        app.create_workspace_session = create_selected
-        return app
-    monkeypatch.setattr(cli, 'build_persistent_application', build_selected)
-    inputs = iter(('run shell', ':approve', ':quit'))
-    target = tmp_path / 'result.txt'
-
-    def read_input(_prompt=''):
-        line = next(inputs)
-        if line == ':approve':
-            assert not target.exists()
-        return line
-
-    monkeypatch.setattr('builtins.input', read_input)
-    assert cli.main(['--config', 'synthetic.json', '--workspace', str(tmp_path)]) == 0
-    output = capsys.readouterr().out
-    assert '命令=' in output and 'printf' in output
-    assert 'finished' in output
-    assert target.read_text() == 'hello\n'
 
 
 @pytest.mark.parametrize('args', [
@@ -187,20 +154,21 @@ def test_cli_backend_tool_selection_and_approval_displays_full_command(
     {'command': 'printf ok', 'timeout': '3'},
     {'command': 'printf ok', 'unexpected': True},
 ])
-def test_invalid_bash_args_return_tool_error_without_approval(monkeypatch, tmp_path, args):
+@async_test
+async def test_invalid_bash_args_return_tool_error_without_approval(monkeypatch, tmp_path, args):
     model = BashFake(responses=[
         AIMessage(content='', tool_calls=[{'name': 'bash', 'id': 'bad-args', 'args': args}]),
         AIMessage(content='I will correct the arguments'),
     ])
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application(
+    app = await build_application(
         Path('synthetic.json'), tools=[create_session_bash_tool()],
         system_prompt='', response_format=None,
     )
-    session = app.create_workspace_session('A', tmp_path)
+    session = await app.acreate_workspace_session('A', tmp_path)
 
-    result = app.run(session, [('user', 'run')])
+    result = await app.arun(session, [('user', 'run')])
     assert 'approval_requests' not in result
     message = bash_results(result)[0]
     assert message.tool_call_id == 'bad-args'
@@ -208,7 +176,8 @@ def test_invalid_bash_args_return_tool_error_without_approval(monkeypatch, tmp_p
     assert 'Invalid bash arguments' in message.content
     assert result['messages'][-1].content == 'I will correct the arguments'
 
-def test_invalid_and_valid_bash_in_one_batch_only_valid_needs_approval(
+@async_test
+async def test_invalid_and_valid_bash_in_one_batch_only_valid_needs_approval(
     monkeypatch, tmp_path,
 ):
     model = BashFake(responses=[
@@ -220,38 +189,40 @@ def test_invalid_and_valid_bash_in_one_batch_only_valid_needs_approval(
     ])
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application(
+    app = await build_application(
         Path('synthetic.json'), tools=[create_session_bash_tool()],
         system_prompt='', response_format=None,
     )
-    session = app.create_workspace_session('A', tmp_path)
+    session = await app.acreate_workspace_session('A', tmp_path)
 
-    pending = app.run(session, [('user', 'run both')])
+    pending = await app.arun(session, [('user', 'run both')])
     assert [item['tool_call_id'] for item in pending['approval_requests']] == ['good']
     assert not (tmp_path / 'result.txt').exists()
-    result = app.resume_tool_approval(session, ['approve'])
+    result = await app.aresume_tool_approval(session, ['approve'])
     assert (tmp_path / 'result.txt').read_text() == 'ok'
     assert [(item.tool_call_id, item.status) for item in bash_results(result)] == [
         ('bad', 'error'), ('good', 'success'),
     ]
 
-def test_long_bash_output_keeps_failure_summary_at_tail(monkeypatch, tmp_path):
+@async_test
+async def test_long_bash_output_keeps_failure_summary_at_tail(monkeypatch, tmp_path):
     command = 'python -c "print(\'A\'*70000); print(\'FAILED 1 test\')"'
-    app = make_app(monkeypatch, command)
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    result = app.resume_tool_approval(session, ['approve'])
+    app = await make_app(monkeypatch, command)
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
+    result = await app.aresume_tool_approval(session, ['approve'])
     message = bash_results(result)[0]
     assert 'truncated=true' in message.content
     assert 'FAILED 1 test' in message.content
     assert 'A' * 70000 not in message.content
 
-def test_bash_tail_does_not_split_utf8_character(monkeypatch, tmp_path):
+@async_test
+async def test_bash_tail_does_not_split_utf8_character(monkeypatch, tmp_path):
     command = 'python -c "import sys; sys.stdout.buffer.write(b\'A\'*65535 + \'中\'.encode())"'
-    app = make_app(monkeypatch, command)
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    result = app.resume_tool_approval(session, ['approve'])
+    app = await make_app(monkeypatch, command)
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
+    result = await app.aresume_tool_approval(session, ['approve'])
     message = bash_results(result)[0]
     assert 'truncated=true' in message.content
     assert '中' in message.content
@@ -262,70 +233,53 @@ def test_bash_tail_does_not_split_utf8_character(monkeypatch, tmp_path):
     ('def test_case():\n    assert 1 == 1\n', 'success', 'passed'),
     ('def test_case():\n    assert 1 == 2\n', 'error', 'failed'),
 ])
-def test_actual_pytest_result_reaches_model_tool_message(
+@async_test
+async def test_actual_pytest_result_reaches_model_tool_message(
     monkeypatch, tmp_path, source, expected_status, summary,
 ):
     (tmp_path / 'test_generated.py').write_text(source, encoding='utf-8')
-    app = make_app(monkeypatch, 'python -m pytest -q test_generated.py')
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run generated test')])
-    result = app.resume_tool_approval(session, ['approve'])
+    app = await make_app(monkeypatch, 'python -m pytest -q test_generated.py')
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run generated test')])
+    result = await app.aresume_tool_approval(session, ['approve'])
     message = bash_results(result)[0]
     assert message.status == expected_status
     assert summary in message.content
     assert message.tool_call_id == 'bash-1'
 
-def test_timeout_keeps_bounded_partial_output_for_model_feedback(
+@async_test
+async def test_timeout_keeps_bounded_partial_output_for_model_feedback(
     monkeypatch, tmp_path, caplog,
 ):
-    app = make_app(monkeypatch, 'printf "EARLY_DIAGNOSTIC\\n"; sleep 3', timeout=1)
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
+    app = await make_app(monkeypatch, 'printf "EARLY_DIAGNOSTIC\\n"; sleep 3', timeout=1)
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
 
     with caplog.at_level(logging.INFO):
-        result = app.resume_tool_approval(session, ['approve'])
+        result = await app.aresume_tool_approval(session, ['approve'])
     message = bash_results(result)[0]
     assert message.status == 'error' and 'EARLY_DIAGNOSTIC' in message.content
     assert 'output:\n' in message.content
     assert 'EARLY_DIAGNOSTIC' not in caplog.text
     assert result['messages'][-1].content == 'done'
 
-def test_timeout_partial_output_respects_merged_budget(monkeypatch, tmp_path):
+@async_test
+async def test_timeout_partial_output_respects_merged_budget(monkeypatch, tmp_path):
     command = ('python -c "import sys; '
                "sys.stdout.write('A'*70000+'OUT_TAIL'); sys.stdout.flush(); "
                "sys.stderr.write('B'*70000+'ERR_TAIL'); sys.stderr.flush()"
                '"; sleep 3')
-    app = make_app(monkeypatch, command, timeout=1)
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
+    app = await make_app(monkeypatch, command, timeout=1)
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
 
-    result = app.resume_tool_approval(session, ['approve'])
+    result = await app.aresume_tool_approval(session, ['approve'])
     message = bash_results(result)[0]
     assert message.status == 'error' and 'truncated=true' in message.content
     output = message.content.split('output:\n')[1].split('\narchive_complete=')[0]
     assert len(output.encode('utf-8')) <= 65536 and output.endswith('ERR_TAIL')
     assert 'OUT_TAIL' not in output and 'partial_line=true' in message.content
 
-def test_timeout_returns_raw_output_to_model_without_cli_control_sequences(monkeypatch, tmp_path, capsys):
-    app = make_app(monkeypatch, 'printf "EARLY\\033[2J\\n"; sleep 3', timeout=1)
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-
-    results = []
-    resume = app.resume_tool_approval
-    def capture(*args, **kwargs):
-        result = resume(*args, **kwargs)
-        results.append(result)
-        return result
-    monkeypatch.setattr(app, 'resume_tool_approval', capture)
-    cli._resume_and_print(app, session, ['approve'])
-    output = capsys.readouterr().out
-    assert 'done' in output
-    assert '工具副作用无法确认' not in output
-    assert '\x1b' not in output
-    assert 'output:\nEARLY\n' in bash_results(results[0])[0].content
-    assert '\x1b' not in bash_results(results[0])[0].content
-    assert not app._sessions._sessions[session].get('manual_review_required')
 
 def test_bash_model_schema_explains_timeout_and_output_limit():
     schema = create_session_bash_tool().tool.tool_call_schema.model_json_schema()
@@ -342,52 +296,56 @@ def _archive_path(message: str, stream: str) -> str:
     assert match is not None, message
     return match.group(1)
 
-def test_long_bash_output_is_saved_and_readable_inside_workspace(monkeypatch, tmp_path):
+@async_test
+async def test_long_bash_output_is_saved_and_readable_inside_workspace(monkeypatch, tmp_path):
     subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
-    app = make_app(monkeypatch, "python -c \"print('A'*70000); print('END')\"")
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    result = app.resume_tool_approval(session, ['approve'])
+    app = await make_app(monkeypatch, "python -c \"print('A'*70000); print('END')\"")
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
+    result = await app.aresume_tool_approval(session, ['approve'])
     message = bash_results(result)[0].content
     path = _archive_path(message, 'raw')
     assert 'archive_complete=true' in message
     assert 'truncated=true' in message
     assert (tmp_path / path).read_text().endswith('END\n')
-    assert 'A' * 5000 in invoke_tool_feedback(create_session_read_tool(), {'path': path},
-        call_id='archive-read', context={'workspace_root': tmp_path}).content
+    assert 'A' * 5000 in (await invoke_tool_feedback(create_session_read_tool(), {'path': path},
+        call_id='archive-read', context={'workspace_root': tmp_path})).content
     output_dir = tmp_path / 'naiyue-agent-output'
     assert output_dir.stat().st_mode & 0o777 == 0o700
     assert (tmp_path / path).stat().st_mode & 0o777 == 0o600
     assert subprocess.run(['git', '-C', str(tmp_path), 'check-ignore', '-q', path],
                           check=False).returncode == 0
 
-def test_short_bash_output_creates_no_artifacts(monkeypatch, tmp_path):
-    app = make_app(monkeypatch, 'printf short')
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    result = app.resume_tool_approval(session, ['approve'])
+@async_test
+async def test_short_bash_output_creates_no_artifacts(monkeypatch, tmp_path):
+    app = await make_app(monkeypatch, 'printf short')
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
+    result = await app.aresume_tool_approval(session, ['approve'])
     assert 'raw_path=' not in bash_results(result)[0].content
     assert not (tmp_path / 'naiyue-agent-output').exists()
 
-def test_archive_preserves_both_streams_without_claiming_order(monkeypatch, tmp_path):
+@async_test
+async def test_archive_preserves_both_streams_without_claiming_order(monkeypatch, tmp_path):
     command = ('python -c "import sys; '
                "sys.stdout.write('O'*70000); sys.stderr.write('E'*70000)"
                '"')
-    app = make_app(monkeypatch, command)
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    result = app.resume_tool_approval(session, ['approve'])
+    app = await make_app(monkeypatch, command)
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
+    result = await app.aresume_tool_approval(session, ['approve'])
     message = bash_results(result)[0].content
     raw = (tmp_path / _archive_path(message, 'raw')).read_text()
     assert len(raw) == 140000 and raw.count('O') == raw.count('E') == 70000
 
-def test_archive_quota_is_explicit_and_command_still_finishes(monkeypatch, tmp_path):
-    app = make_app(monkeypatch, "python -c \"print('Q'*100000)\"",
+@async_test
+async def test_archive_quota_is_explicit_and_command_still_finishes(monkeypatch, tmp_path):
+    app = await make_app(monkeypatch, "python -c \"print('Q'*100000)\"",
         settings=BashSettings(max_archive_bytes=5000),
         output_settings=ToolOutputSettings(max_workspace_archive_bytes=6000))
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    result = app.resume_tool_approval(session, ['approve'])
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
+    result = await app.aresume_tool_approval(session, ['approve'])
     message = bash_results(result)[0].content
     assert 'exit_code=0' in message
     assert 'archive_complete=false' in message
@@ -395,42 +353,45 @@ def test_archive_quota_is_explicit_and_command_still_finishes(monkeypatch, tmp_p
     assert 'Q' * 100000 not in message
     assert (tmp_path / _archive_path(message, 'raw')).stat().st_size == 5000
 
-def test_existing_unowned_output_directory_is_not_modified(monkeypatch, tmp_path):
+@async_test
+async def test_existing_unowned_output_directory_is_not_modified(monkeypatch, tmp_path):
     output_dir = tmp_path / 'naiyue-agent-output'
     output_dir.mkdir()
     marker = output_dir / 'user-file.txt'
     marker.write_text('keep')
-    app = make_app(monkeypatch, "python -c \"print('A'*70000)\"")
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    result = app.resume_tool_approval(session, ['approve'])
+    app = await make_app(monkeypatch, "python -c \"print('A'*70000)\"")
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
+    result = await app.aresume_tool_approval(session, ['approve'])
     message = bash_results(result)[0].content
     assert 'archive_complete=false' in message
     assert 'archive_reason=directory_unavailable' in message
     assert marker.read_text() == 'keep'
     assert sorted(item.name for item in output_dir.iterdir()) == ['user-file.txt']
 
-def test_timeout_keeps_archive_path_in_tool_feedback(monkeypatch, tmp_path):
-    app = make_app(monkeypatch, "python -c \"print('T'*70000, flush=True)\"; sleep 3",
+@async_test
+async def test_timeout_keeps_archive_path_in_tool_feedback(monkeypatch, tmp_path):
+    app = await make_app(monkeypatch, "python -c \"print('T'*70000, flush=True)\"; sleep 3",
                    timeout=1)
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    result = app.resume_tool_approval(session, ['approve'])
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
+    result = await app.aresume_tool_approval(session, ['approve'])
     message = bash_results(result)[0]
     path = _archive_path(message.content, 'raw')
     assert (tmp_path / path).read_text().startswith('T' * 70000)
     assert 'archive_complete=true' in message.content and message.status == 'error'
     assert result['messages'][-1].content == 'done'
 
-def test_workspace_archive_limit_applies_across_commands(monkeypatch, tmp_path):
+@async_test
+async def test_workspace_archive_limit_applies_across_commands(monkeypatch, tmp_path):
     paths = []
     for _ in range(2):
-        app = make_app(monkeypatch, "python -c \"print('W'*5000)\"",
+        app = await make_app(monkeypatch, "python -c \"print('W'*5000)\"",
             settings=BashSettings(max_output_bytes=4096, max_archive_bytes=10000),
             output_settings=ToolOutputSettings(max_workspace_archive_bytes=7000))
-        session = app.create_workspace_session('A', tmp_path)
-        app.run(session, [('user', 'run')])
-        message = bash_results(app.resume_tool_approval(session, ['approve']))[0].content
+        session = await app.acreate_workspace_session('A', tmp_path)
+        await app.arun(session, [('user', 'run')])
+        message = bash_results(await app.aresume_tool_approval(session, ['approve']))[0].content
         paths.append(tmp_path / _archive_path(message, 'raw'))
     assert sum(path.stat().st_size for path in paths) == 7000
     assert 'archive_complete=false' in message
@@ -463,15 +424,3 @@ def test_cli_refuses_output_cleanup_during_active_run(monkeypatch, tmp_path, cap
     monkeypatch.setattr('builtins.input', terminal_input)
     assert cli.main(['--config', 'synthetic.json', '--workspace', str(tmp_path)]) == 0
     assert '当前运行尚未结束，不能清理 Shell 输出' in capsys.readouterr().out
-
-def test_timeout_cli_resumes_model_and_archive_remains_in_tool_result(
-    monkeypatch, tmp_path, capsys,
-):
-    app = make_app(monkeypatch, "python -c \"print('T'*70000, flush=True)\"; sleep 3",
-                   timeout=1)
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    cli._resume_and_print(app, session, ['approve'])
-    output = capsys.readouterr().out
-    assert 'done' in output and '工具副作用无法确认' not in output
-    assert not app._sessions._sessions[session].get('manual_review_required')

@@ -1,5 +1,6 @@
 from naiyue_test_agent.tools import create_session_read_tool
-from naiyue_test_agent.application import LocalApplication, SessionService
+from naiyue_test_agent.application import SessionService
+from naiyue_test_agent.application.async_application import AsyncApplication
 
 
 def test_read_definition_exposes_one_model_visible_name():
@@ -12,5 +13,5 @@ def test_read_definition_exposes_one_model_visible_name():
 def test_tool_approval_methods_have_no_old_read_only_aliases():
     assert not hasattr(SessionService, 'pending_read_approvals')
     assert not hasattr(SessionService, 'resume_read_approval')
-    assert not hasattr(LocalApplication, 'pending_read_approvals')
-    assert not hasattr(LocalApplication, 'resume_read_approval')
+    assert not hasattr(AsyncApplication, 'pending_read_approvals')
+    assert not hasattr(AsyncApplication, 'resume_read_approval')

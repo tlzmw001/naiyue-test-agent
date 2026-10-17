@@ -1,7 +1,8 @@
 """Native custom progress must arrive before a real tool finishes."""
 
+from native_application_helpers import async_test
+
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
 import pytest
@@ -11,7 +12,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from naiyue_test_agent.tools import ToolSpec
 from naiyue_test_agent.tools.permissions import ToolPermission, require_tool_permit
 from event_sequence import EventSequenceChecker
-from test_application_run_events import ToolModel, make_app as sync_app
+from test_application_run_events import ToolModel, make_app as make_test_app
 from test_async_application import StreamingToolModel, make_app, call
 
 
@@ -76,7 +77,8 @@ def test_progress_arrives_during_unfinished_async_application_tool(monkeypatch, 
 
 
 @pytest.mark.parametrize('concurrency', [1, 2])
-def test_synchronous_application_receives_progress_before_tool_returns(monkeypatch, caplog, concurrency):
+@async_test
+async def test_async_application_receives_sync_tool_progress_before_return(monkeypatch, caplog, concurrency):
     from pydantic import BaseModel
     from naiyue_test_agent.tools.schemas import build_tool_schemas
     from naiyue_test_agent.tools.progress import ToolProgress
@@ -94,27 +96,26 @@ def test_synchronous_application_receives_progress_before_tool_returns(monkeypat
     probe.args_schema = execution
     spec = ToolSpec(probe, public, permissions=ToolPermission(default='allow'))
     model = ToolModel(responses=[call('probe', {}, 'sync'), AIMessage(content='done')])
-    app = sync_app(monkeypatch, model, [spec])
+    app = await make_test_app(monkeypatch, model, [spec])
     app._agent = app._agent.with_config({'max_concurrency': concurrency})
-    sid, events = app.create_session('A'), []
+    sid, events = await app.acreate_session('A'), []
     def collect(event):
         events.append(event)
         if event.event_type == 'tool_progress' and event.data.phase == 'working':
             arrived.set()
     app.subscribe_events(collect)
     try:
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            task = pool.submit(app.run, sid, [('user', 'work')])
-            try:
-                assert entered.wait(5) and arrived.wait(5)
-                assert not task.done()
-            finally:
-                release.set()
-            result = task.result(timeout=5)
+        task = asyncio.create_task(app.arun(sid, [('user', 'work')], max_concurrency=concurrency))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5) and await asyncio.to_thread(arrived.wait, 5)
+            assert not task.done()
+        finally:
+            release.set()
+        result = await asyncio.wait_for(asyncio.shield(task), 5)
         assert next(m for m in result['messages'] if isinstance(m, ToolMessage)).content == 'real result'
         EventSequenceChecker.assert_healthy(events, caplog.records)
     finally:
-        asyncio.run(app._sessions._catalog.aclose())
+        await app.aclose()
 
 
 def test_queued_progress_does_not_claim_waiting_tool_has_started_io(monkeypatch, caplog):
@@ -201,39 +202,8 @@ def test_broken_progress_receiver_keeps_real_write_and_original_io_failure(monke
 
 
 @pytest.mark.parametrize('persistent', [False, True])
-def test_sync_application_variants_use_startup_progress_settings(monkeypatch, tmp_path, persistent):
-    from naiyue_test_agent import application
-    from naiyue_test_agent.application.persistent import build_persistent_application
-    from naiyue_test_agent.application.session_storage import SessionStorage
-    from naiyue_test_agent.model_access import ModelCatalog
-    from naiyue_test_agent.tools import ToolSettings, create_builtin_tools
-    (tmp_path / 'file.txt').write_text('real content')
-    chosen = ToolModel(responses=[call('read', {'path': 'file.txt'}, 'read'), AIMessage(content='done')])
-    monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': chosen}))
-    settings = ToolSettings.model_validate({'progress': {'enabled': False}})
-    specs = [item for item in create_builtin_tools(settings) if item.tool.name == 'read']
-    storage = SessionStorage(tmp_path / 'session.sqlite') if persistent else None
-    try:
-        app = (build_persistent_application('unused', storage=storage, tools=specs,
-                    system_prompt='', response_format=None, settings=settings) if persistent else
-               application.build_local_application('unused', tools=specs,
-                    system_prompt='', response_format=None, settings=settings))
-        events = []
-        app.subscribe_events(events.append)
-        result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'read')])
-        assert app._sessions._progress_settings is settings.progress
-        assert not any(e.event_type == 'tool_progress' for e in events)
-        assert next(m for m in result['messages'] if isinstance(m, ToolMessage)).content == 'real content'
-        assert events[-1].data.status == 'completed'
-    finally:
-        if 'app' in locals():
-            asyncio.run(app._sessions._catalog.aclose())
-        if storage is not None:
-            storage.close()
-
-
-@pytest.mark.parametrize('persistent', [False, True])
-def test_async_application_variants_use_startup_progress_settings(monkeypatch, tmp_path, persistent):
+@pytest.mark.parametrize('native_model', [False, True])
+def test_application_variants_use_startup_progress_settings(monkeypatch, tmp_path, persistent, native_model):
     async def scenario():
         from naiyue_test_agent import application
         from naiyue_test_agent.application.async_application import build_async_local_application
@@ -241,7 +211,8 @@ def test_async_application_variants_use_startup_progress_settings(monkeypatch, t
         from naiyue_test_agent.model_access import ModelCatalog
         from naiyue_test_agent.tools import ToolSettings, create_session_read_tool
         (tmp_path / 'file.txt').write_text('real content')
-        chosen = StreamingToolModel(replies=[call('read', {'path': 'file.txt'}, 'read'), AIMessage(content='done')])
+        replies = [call('read', {'path': 'file.txt'}, 'read'), AIMessage(content='done')]
+        chosen = StreamingToolModel(replies=replies) if native_model else ToolModel(responses=replies)
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': chosen}))
         settings = ToolSettings.model_validate({'progress': {'enabled': False}})
         options = dict(tools=[create_session_read_tool()], system_prompt='', response_format=None, settings=settings)

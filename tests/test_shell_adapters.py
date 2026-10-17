@@ -1,5 +1,7 @@
 """Interpreter adapters preserve language, startup and host platform contracts."""
 
+from native_application_helpers import async_test
+
 import base64
 import os
 import shlex
@@ -11,7 +13,8 @@ from langchain_core.tools import ToolException
 from tool_feedback_helpers import invoke_tool_feedback
 
 
-def test_bash_uses_no_profiles_and_inherits_environment_per_call(monkeypatch, tmp_path):
+@async_test
+async def test_bash_uses_no_profiles_and_inherits_environment_per_call(monkeypatch, tmp_path):
     from naiyue_test_agent.tools import BashSettings, EnvironmentSettings, create_session_bash_tool
     startup = tmp_path / 'startup.sh'
     startup.write_text('printf WRONG_STARTUP\n')
@@ -22,21 +25,22 @@ def test_bash_uses_no_profiles_and_inherits_environment_per_call(monkeypatch, tm
         values={'TEST_OVERRIDE': 'new'}, unset_env=['BASH_ENV', 'NAIYUE_WEB_TOKEN'])))
     context = {'workspace_root': tmp_path}
     command = 'printf "%s:%s:%s" "$TEST_PARENT" "$TEST_OVERRIDE" "$NAIYUE_WEB_TOKEN"; export ONLY_HERE=yes; cd /'
-    first = invoke_tool_feedback(tool, {'command': command}, context=context, call_id='first', permission_mode='BypassApprovals')
+    first = (await invoke_tool_feedback(tool, {'command': command}, context=context, call_id='first', permission_mode='BypassApprovals'))
     assert first.status == 'success' and 'first:new:' in first.content
     assert 'WRONG_STARTUP' not in first.content and 'synthetic-private' not in first.content
     monkeypatch.setenv('TEST_PARENT', 'second')
-    second = invoke_tool_feedback(tool, {'command': 'printf "%s:%s:" "$TEST_PARENT" "$ONLY_HERE"; pwd'}, context=context, call_id='second', permission_mode='BypassApprovals')
+    second = (await invoke_tool_feedback(tool, {'command': 'printf "%s:%s:" "$TEST_PARENT" "$ONLY_HERE"; pwd'}, context=context, call_id='second', permission_mode='BypassApprovals'))
     assert 'second::' + str(tmp_path.resolve()) in second.content
     assert os.environ['TEST_PARENT'] == 'second' and 'ONLY_HERE' not in os.environ
 
 
-def test_bash_combines_stdout_stderr_before_tail_capture(tmp_path):
+@async_test
+async def test_bash_combines_stdout_stderr_before_tail_capture(tmp_path):
     from naiyue_test_agent.tools import BashSettings, create_session_bash_tool
     script = 'import os;os.write(1,b"out1\\n");os.write(2,b"err2\\n");os.write(1,b"out3\\n")'
     command = f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'
     tool = create_session_bash_tool(settings=BashSettings(max_output_lines=2))
-    result = invoke_tool_feedback(tool, {'command': command}, context={'workspace_root': tmp_path}, call_id='merged', permission_mode='BypassApprovals')
+    result = (await invoke_tool_feedback(tool, {'command': command}, context={'workspace_root': tmp_path}, call_id='merged', permission_mode='BypassApprovals'))
     assert result.status == 'success' and 'output:\nerr2\nout3\n' in result.content
     assert 'returned_lines=2-3' in result.content and 'truncated=true' in result.content
     assert 'raw_path=' in result.content and 'out1\n' not in result.content
@@ -67,7 +71,8 @@ def test_bypass_is_only_a_child_argument():
     assert base64.b64decode(argv[-1]).decode('utf-16-le').endswith('exit 3')
 
 
-def test_missing_explicit_executable_has_no_fallback_but_tool_is_registered(tmp_path, monkeypatch):
+@async_test
+async def test_missing_explicit_executable_has_no_fallback_but_tool_is_registered(tmp_path, monkeypatch):
     from naiyue_test_agent.tools import PowerShellSettings, create_session_powershell_tool
     from naiyue_test_agent.tools.powershell import PowerShellAdapter
     def forbidden(*args):
@@ -76,7 +81,7 @@ def test_missing_explicit_executable_has_no_fallback_but_tool_is_registered(tmp_
     spec = create_session_powershell_tool(settings=PowerShellSettings(executable=str(tmp_path / 'missing')))
     assert spec.tool.name == 'powershell' and spec.tool.metadata['shell']['available'] is False
     assert 'available=false' in spec.tool.description
-    result = invoke_tool_feedback(spec, {'command': 'Write-Output ok'}, context={'workspace_root': tmp_path}, call_id='missing', permission_mode='BypassApprovals')
+    result = (await invoke_tool_feedback(spec, {'command': 'Write-Output ok'}, context={'workspace_root': tmp_path}, call_id='missing', permission_mode='BypassApprovals'))
     assert result.status == 'error' and 'interpreter is unavailable' in result.content
 
 

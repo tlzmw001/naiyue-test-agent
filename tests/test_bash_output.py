@@ -1,20 +1,22 @@
 """Workspace Bash output ownership, limits, and explicit cleanup."""
 
-from pathlib import Path
+from native_application_helpers import async_test
+
 
 import pytest
 
 
-def test_clear_only_after_preview_and_preserves_other_files(monkeypatch, tmp_path):
+@async_test
+async def test_clear_only_after_preview_and_preserves_other_files(monkeypatch, tmp_path):
     from naiyue_test_agent.tools.output import (
         clear_shell_outputs, preview_shell_outputs,
     )
     from tests.test_host_bash import make_app, bash_results, _archive_path
 
-    app = make_app(monkeypatch, "python -c \"print('A'*70000)\"")
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    result = app.resume_tool_approval(session, ['approve'])
+    app = await make_app(monkeypatch, "python -c \"print('A'*70000)\"")
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
+    result = await app.aresume_tool_approval(session, ['approve'])
     path = tmp_path / _archive_path(bash_results(result)[0].content, 'raw')
     outside = tmp_path / 'user-file.txt'
     outside.write_text('keep')
@@ -29,16 +31,17 @@ def test_clear_only_after_preview_and_preserves_other_files(monkeypatch, tmp_pat
     assert (tmp_path / 'naiyue-agent-output' / '.gitignore').exists()
 
 
-def test_clear_refuses_changed_plan_and_unexpected_file(monkeypatch, tmp_path):
+@async_test
+async def test_clear_refuses_changed_plan_and_unexpected_file(monkeypatch, tmp_path):
     from naiyue_test_agent.tools.output import (
         clear_shell_outputs, preview_shell_outputs,
     )
     from tests.test_host_bash import make_app, bash_results, _archive_path
 
-    app = make_app(monkeypatch, "python -c \"print('A'*70000)\"")
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    result = app.resume_tool_approval(session, ['approve'])
+    app = await make_app(monkeypatch, "python -c \"print('A'*70000)\"")
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
+    result = await app.aresume_tool_approval(session, ['approve'])
     path = tmp_path / _archive_path(bash_results(result)[0].content, 'raw')
     plan = preview_shell_outputs(tmp_path)
     path.write_bytes(b'changed')
@@ -53,14 +56,15 @@ def test_clear_refuses_changed_plan_and_unexpected_file(monkeypatch, tmp_path):
     assert unknown.read_text() == 'keep'
 
 
-def test_clear_rejects_symlink_in_output_directory(monkeypatch, tmp_path):
+@async_test
+async def test_clear_rejects_symlink_in_output_directory(monkeypatch, tmp_path):
     from naiyue_test_agent.tools.output import preview_shell_outputs
     from tests.test_host_bash import make_app
 
-    app = make_app(monkeypatch, "python -c \"print('A'*70000)\"")
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    app.resume_tool_approval(session, ['approve'])
+    app = await make_app(monkeypatch, "python -c \"print('A'*70000)\"")
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
+    await app.aresume_tool_approval(session, ['approve'])
     outside = tmp_path / 'outside.txt'
     outside.write_text('keep')
     (tmp_path / 'naiyue-agent-output' / ('f' * 32 + '-stderr.log')).symlink_to(outside)
@@ -69,17 +73,18 @@ def test_clear_rejects_symlink_in_output_directory(monkeypatch, tmp_path):
     assert outside.read_text() == 'keep'
 
 
-def test_cli_clear_needs_confirmation(monkeypatch, tmp_path, capsys):
+@async_test
+async def test_cli_clear_needs_confirmation(monkeypatch, tmp_path, capsys):
     from naiyue_test_agent import application
     from naiyue_test_agent.application import cli
     from naiyue_test_agent.model_access import ModelCatalog
     from tests.test_host_bash import BashFake, make_app, bash_results, _archive_path
     from langchain_core.messages import AIMessage
 
-    app = make_app(monkeypatch, "python -c \"print('A'*70000)\"")
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    result = app.resume_tool_approval(session, ['approve'])
+    app = await make_app(monkeypatch, "python -c \"print('A'*70000)\"")
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
+    result = await app.aresume_tool_approval(session, ['approve'])
     path = tmp_path / _archive_path(bash_results(result)[0].content, 'raw')
     model = BashFake(responses=[AIMessage(content='unused')])
     monkeypatch.setattr(application, 'load_model_catalog',
@@ -114,13 +119,14 @@ def test_capture_error_cannot_mark_partial_artifact_complete(tmp_path):
     assert result.reason == 'capture_incomplete'
 
 
-def test_nonzero_bash_still_returns_saved_output_path(monkeypatch, tmp_path):
+@async_test
+async def test_nonzero_bash_still_returns_saved_output_path(monkeypatch, tmp_path):
     from tests.test_host_bash import make_app, bash_results, _archive_path
 
-    app = make_app(monkeypatch, "python -c \"print('F'*70000); raise SystemExit(7)\"")
-    session = app.create_workspace_session('A', tmp_path)
-    app.run(session, [('user', 'run')])
-    result = app.resume_tool_approval(session, ['approve'])
+    app = await make_app(monkeypatch, "python -c \"print('F'*70000); raise SystemExit(7)\"")
+    session = await app.acreate_workspace_session('A', tmp_path)
+    await app.arun(session, [('user', 'run')])
+    result = await app.aresume_tool_approval(session, ['approve'])
     message = bash_results(result)[0]
     assert message.status == 'error'
     assert 'exit_code=7' in message.content

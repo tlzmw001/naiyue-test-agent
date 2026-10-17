@@ -2,6 +2,15 @@
 
 ## 当前交接摘要（2026-10-17）
 
+- **交付范围**：用户已授权将093A/B/C架构清理、异步迁移、Discount移除及对应测试/文档作为本轮提交并push至origin/main。此前ef34d49/d6053f2已push；本轮准确SHA以Git记录为准。没有改真实配置、依赖、用户数据库或存储/事件协议。
+- **093架构清理**：[Spec093](specs/093-architecture-semantics-and-sync-cleanup.md)记录完整职责与入口。contracts保留标准库共享事实，响应拒绝异常归Runtime；CLI/Web统一AsyncApplication，旧同步App、持久化执行器及双驱动已移除。固定审批前证明与缺结果阻止重放的合同保持，安全重试另议。
+- **093C追加完成**：用户撤销Discount历史需求，删除原型、其包初始化和对应测试3文件248行；Runtime 16文件净减431行，移除同步invoke/resource恢复/消息流/Condition批次/摘要驱动/Auto审查及仅同步执行的包装。43份测试、4个探针改异步，保留消息/事件/异常/权限/保存断言，未新增生产模块；生产模块106→104。测试共用反馈helper改async，三组run入口断言迁到既有tool_events文件以满足500行。
+- **保留项有实际用途**：共享建图、短状态算法、文件及metadata IO、同步模型SDK的线程回退、官方HITL同步after_model仍由异步链消费。独立127行probe_tool_serial_config保留官方同步API对照，不依赖本项目同步Runtime；其失败调度行为与async不同，不能改断言混用。生产Runtime同步图调用为0。
+- **最新验证**：后端 **1946 passed in74.71s**（/tmp/naiyue-093-ship-backend.log），前端10文件 **40 passed**，TypeScript/Vite186模块构建成功。compileall/pip check/diff/全仓Python≤500行/当前文档本地链接通过；批次、摘要、10种消息状态、两进程会话及三个恢复探针均通过。两个真实请求入口使用假模型离线接线通过，没有供应商请求。结构收敛、可选aclose及配置探针14步预算均有先红后绿证据；架构/安全复核无遗留阻断，专项93例通过。
+- **证据与下一步**：限macOS、真实本地IO/框架/SQLite和假模型，不代表Windows/Linux原机或业务效果。当前学习进度仍看[学习路线](1.0/learning-roadmap.md)，不记新的用户独立掌握。提交093后按[当前工作顺序](future-work.md#清理后的当前工作顺序2026-10-17)推进：先同步086的过期基线，再分片讲解前台一层SubAgent；工具管理/模式前端、真实供应商、PyPI交付另排，WIN1待环境。本轮只梳理，不实施新功能。
+
+### 此前092C验收快照（当前状态以上述093为准）
+
 - **092C及打开会话时自动恢复已实施并验证**：[Spec092第0节及第5.1节](specs/092-session-restart-recovery.md#51-092c实际接线与当前入口2026-10-17)。Web选择旧会话后GET只读历史，再自动POST原recover；CLI选择旧会话自动恢复。执行中断仍用092B三次更新整理ready；确认前置审批则复核后直接显示原审批卡片。正常路径无需额外continue点击，不扫描全部历史、不自动发草稿/调用模型/执行工具/Auto或批准。
 - **实际主链与文件**：6个后端既有文件、5个前端既有文件，无新生产模块/表/依赖。PermissionMiddleware原_prepare/_default移为共用本地函数，session_recovery.validate_saved_approval核对当前工具/schema/subject/anchor/环境与本地权限；finish_run先规范interrupted及真实审批checkpoint，_install_session安装pending，requested_run_id来自原真实row.run_id。官方interrupt/Command(resume)、一次性grant、批次串并行保持；pending_turn为空沿approval_retry观察，不伪造旧run/turn事件。
 - **失败与临时授权**：旧session_allow不跨重启；持久batch里非空临时范围也不能复活，否则递归工具仍会用旧规则。此类批次、旧Auto allow无法本地证明、目标/当前Deny变化均不恢复原审批、不自动取消，保留历史和明确continue放弃入口。恢复失败重读checkpoint/保留草稿，不循环重试；CLI仅审批条件失效时可手动选择continue。必要保存失败不安装；原source checkpoint/三次更新幂等保护保持。

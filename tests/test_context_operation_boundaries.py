@@ -1,6 +1,10 @@
 """Failure, fallback, and observation limits keep original execution behavior."""
 
-from threading import Barrier, Thread
+import asyncio
+
+from native_application_helpers import async_test, build_application
+
+from threading import Barrier
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -20,12 +24,13 @@ def test_only_four_public_types_are_added_for_context_operations():
     assert _PAYLOADS['tool_progress'] is ToolProgressData
 
 
-def test_soft_trigger_without_cut_is_skipped_and_original_request_runs(monkeypatch):
+@async_test
+async def test_soft_trigger_without_cut_is_skipped_and_original_request_runs(monkeypatch):
     model = _model([AIMessage(content='done')], window=1000, output=20, reserve=950, keep=100)
-    app = _app(monkeypatch, {'A': model})
+    app = await _app(monkeypatch, {'A': model})
     events = []
     app.subscribe_events(events.append)
-    result = app.run(app.create_session('A'), [('user', 'x' * 300)])
+    result = await app.arun(await app.acreate_session('A'), [('user', 'x' * 300)])
     operations = operation_events(events)
     assert [e.event_type for e in operations] == ['compaction_started', 'compaction_finished']
     assert operations[-1].data.status == 'skipped'
@@ -34,14 +39,15 @@ def test_soft_trigger_without_cut_is_skipped_and_original_request_runs(monkeypat
     assert len(model.normal_inputs) == 1 and model.summary_inputs == []
 
 
-def test_forced_summary_failure_does_not_fall_back_or_retry_normal_request(monkeypatch):
+@async_test
+async def test_forced_summary_failure_does_not_fall_back_or_retry_normal_request(monkeypatch):
     model = _configured_model([_status(), AIMessage(content='must not run')],
                               summaries=[TimeoutError('PRIVATE_SUMMARY')])
-    app = _app(monkeypatch, {'A': model})
+    app = await _app(monkeypatch, {'A': model})
     events = []
     app.subscribe_events(events.append)
     with pytest.raises(ContextCompactionError) as caught:
-        app.run(app.create_session('A'), _history())
+        await app.arun(await app.acreate_session('A'), _history())
     assert str(caught.value) == 'summary_failed'
     compaction = next(e.data for e in events if e.event_type == 'compaction_finished')
     recovery = next(e.data for e in events if e.event_type == 'context_recovery_finished')
@@ -51,14 +57,15 @@ def test_forced_summary_failure_does_not_fall_back_or_retry_normal_request(monke
     assert 'PRIVATE_' not in repr(operation_events(events))
 
 
-def test_retry_exception_keeps_identity_and_summary_is_not_applied(monkeypatch):
+@async_test
+async def test_retry_exception_keeps_identity_and_summary_is_not_applied(monkeypatch):
     failure = TimeoutError('PRIVATE_RETRY')
     model = _configured_model([_status(), failure])
-    app = _app(monkeypatch, {'A': model})
+    app = await _app(monkeypatch, {'A': model})
     events = []
     app.subscribe_events(events.append)
     with pytest.raises(TimeoutError) as caught:
-        app.run(app.create_session('A'), _history())
+        await app.arun(await app.acreate_session('A'), _history())
     assert caught.value is failure
     compaction = next(e.data for e in events if e.event_type == 'compaction_finished')
     recovery = next(e.data for e in events if e.event_type == 'context_recovery_finished')
@@ -67,25 +74,27 @@ def test_retry_exception_keeps_identity_and_summary_is_not_applied(monkeypatch):
     assert events[-1].data.status == 'failed' and len(model.normal_inputs) == 2
 
 
-def test_post_summary_budget_failure_has_no_applied_event_or_normal_request(monkeypatch):
-    app, session, model, events = prepared_app(monkeypatch, AIMessage(content='x' * 5000))
+@async_test
+async def test_post_summary_budget_failure_has_no_applied_event_or_normal_request(monkeypatch):
+    app, session, model, events = await prepared_app(monkeypatch, AIMessage(content='x' * 5000))
     with pytest.raises(ContextCompactionError) as caught:
-        app.run(session, [('user', 'third')])
+        await app.arun(session, [('user', 'third')])
     assert str(caught.value) == 'compacted_request_over_budget'
     assert operation_events(events)[-1].data.status == 'failed'
     assert operation_events(events)[-1].data.reason == 'compacted_request_over_budget'
     assert model.normal_inputs == [] and events[-1].data.status == 'failed'
 
 
-def test_custom_invoke_result_is_preserved_but_replacement_is_unconfirmed(monkeypatch):
-    app, session, model, events = prepared_app(monkeypatch)
-    original = app._agent.invoke
+@async_test
+async def test_custom_invoke_result_is_preserved_but_replacement_is_unconfirmed(monkeypatch):
+    app, session, model, events = await prepared_app(monkeypatch)
+    original = app._agent.ainvoke
 
-    def custom(input, **kwargs):
-        return original(input, **kwargs)
+    async def custom(input, **kwargs):
+        return await original(input, **kwargs)
 
-    monkeypatch.setattr(app._agent, 'invoke', custom)
-    result = app.run(session, [('user', 'third')])
+    monkeypatch.setattr(app._agent, 'ainvoke', custom)
+    result = await app.arun(session, [('user', 'third')])
     assert result['messages'][0].additional_kwargs['naiyue_compaction_summary'] is True
     end = operation_events(events)[-1].data
     assert end.status == 'unconfirmed' and end.reason == 'state_replacement_unconfirmed'
@@ -93,8 +102,9 @@ def test_custom_invoke_result_is_preserved_but_replacement_is_unconfirmed(monkey
     assert len(model.summary_inputs) == len(model.normal_inputs) == 1
 
 
-def test_context_consumer_failure_is_isolated_and_real_replacement_still_observed(monkeypatch, caplog):
-    app, session, model, events = prepared_app(monkeypatch)
+@async_test
+async def test_context_consumer_failure_is_isolated_and_real_replacement_still_observed(monkeypatch, caplog):
+    app, session, model, events = await prepared_app(monkeypatch)
     calls = []
 
     def broken(event):
@@ -103,17 +113,18 @@ def test_context_consumer_failure_is_isolated_and_real_replacement_still_observe
             raise RuntimeError('PRIVATE_CONSUMER')
 
     app.subscribe_events(broken)
-    result = app.run(session, [('user', 'third')])
+    result = await app.arun(session, [('user', 'third')])
     assert calls == ['compaction_started']
     assert result['messages'][-1].content == 'final'
     assert operation_events(events)[-1].data.status == 'applied'
     assert 'event_observer_failed' in caplog.text and 'PRIVATE_' not in caplog.text
 
 
-def test_context_publish_fault_does_not_change_compaction_or_model_result(monkeypatch, caplog):
+@async_test
+async def test_context_publish_fault_does_not_change_compaction_or_model_result(monkeypatch, caplog):
     from naiyue_test_agent.agent_runtime.events import RunEventPublisher
 
-    app, session, model, events = prepared_app(monkeypatch)
+    app, session, model, events = await prepared_app(monkeypatch)
     original = RunEventPublisher.publish
 
     def fail_context(self, event_type, data):
@@ -122,19 +133,20 @@ def test_context_publish_fault_does_not_change_compaction_or_model_result(monkey
         return original(self, event_type, data)
 
     monkeypatch.setattr(RunEventPublisher, 'publish', fail_context)
-    result = app.run(session, [('user', 'third')])
+    result = await app.arun(session, [('user', 'third')])
     assert result['messages'][0].additional_kwargs['naiyue_compaction_summary'] is True
     assert result['messages'][-1].content == 'final'
     assert events[-1].data.status == 'completed'
     assert 'context_event_publish_failed' in caplog.text and 'PRIVATE_' not in caplog.text
 
 
-def test_context_failure_reporting_error_never_masks_original_exception(monkeypatch, caplog):
+@async_test
+async def test_context_failure_reporting_error_never_masks_original_exception(monkeypatch, caplog):
     from naiyue_test_agent.agent_runtime.context_operation_observation import ContextOperationObserver
 
     failure = TimeoutError('PRIVATE_PRIMARY')
     model = _configured_model([_status(), failure])
-    app = _app(monkeypatch, {'A': model})
+    app = await _app(monkeypatch, {'A': model})
     original = ContextOperationObserver.finalize
 
     def fail_report(self, error=None):
@@ -144,12 +156,13 @@ def test_context_failure_reporting_error_never_masks_original_exception(monkeypa
 
     monkeypatch.setattr(ContextOperationObserver, 'finalize', fail_report)
     with pytest.raises(TimeoutError) as caught:
-        app.run(app.create_session('A'), _history())
+        await app.arun(await app.acreate_session('A'), _history())
     assert caught.value is failure
     assert 'context_failure_publish_failed' in caplog.text and 'PRIVATE_' not in caplog.text
 
 
-def test_recovery_operations_are_isolated_between_sessions(monkeypatch):
+@async_test
+async def test_recovery_operations_are_isolated_between_sessions(monkeypatch):
     from langchain_core.outputs import ChatGeneration, ChatResult
     from naiyue_test_agent import application
     from naiyue_test_agent.model_access import ModelCatalog
@@ -169,23 +182,21 @@ def test_recovery_operations_are_isolated_between_sessions(monkeypatch):
     model = Concurrent(responses=[AIMessage(content='unused')], summary_responses=[],
                        metadata=_configured_model([]).metadata)
     monkeypatch.setattr(application, 'load_model_catalog', lambda _p: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application('synthetic.json', tools=[], system_prompt='BASE', response_format=None)
-    sessions = [app.create_session('A') for _ in range(2)]
+    app = await build_application('synthetic.json', tools=[], system_prompt='BASE', response_format=None)
+    sessions = [await app.acreate_session('A') for _ in range(2)]
     events, outcomes = [], []
     app.subscribe_events(events.append)
 
-    def run(session):
+    async def run(session):
         try:
-            outcomes.append(app.run(session, _history()))
+            outcomes.append(await app.arun(session, _history()))
         except BaseException as error:
             outcomes.append(error)
 
-    workers = [Thread(target=run, args=(session,)) for session in sessions]
+    workers = [asyncio.create_task(run(session)) for session in sessions]
     for worker in workers:
-        worker.start()
-    for worker in workers:
-        worker.join(timeout=6)
-        assert not worker.is_alive()
+        await asyncio.wait_for(asyncio.shield(worker), 6)
+        assert worker.done()
     assert len(outcomes) == 2 and all(isinstance(r, dict) for r in outcomes), outcomes
     assert len({e.data.operation_id for e in events if e.event_type == 'compaction_started'}) == 2
     for session in sessions:
@@ -198,7 +209,8 @@ def test_recovery_operations_are_isolated_between_sessions(monkeypatch):
         assert [e.sequence for e in scoped] == list(range(1, len(scoped) + 1))
 
 
-def test_structured_retry_response_keeps_object_and_confirms_context_state(monkeypatch):
+@async_test
+async def test_structured_retry_response_keeps_object_and_confirms_context_state(monkeypatch):
     from langchain.agents.structured_output import ToolStrategy
     from pydantic import BaseModel
     from naiyue_test_agent import application
@@ -211,11 +223,11 @@ def test_structured_retry_response_keeps_object_and_confirms_context_state(monke
         {'name': 'Answer', 'args': {'value': 'structured'}, 'id': 'schema'},
     ])])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _p: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application('synthetic.json', tools=[], system_prompt='BASE',
+    app = await build_application('synthetic.json', tools=[], system_prompt='BASE',
                                                response_format=ToolStrategy(Answer))
     events = []
     app.subscribe_events(events.append)
-    result = app.run(app.create_session('A'), _history())
+    result = await app.arun(await app.acreate_session('A'), _history())
     assert isinstance(result['structured_response'], Answer) and result['structured_response'].value == 'structured'
     assert operation_events(events)[-1].data.status == 'recovered'
     assert result['messages'][-1].type == 'tool' and result['messages'][-1].tool_call_id == 'schema'

@@ -1,5 +1,7 @@
 """Explicit input rejection recovers one model request without replaying tools."""
 
+from native_application_helpers import async_test, build_application
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
@@ -80,14 +82,15 @@ def _events(caplog, attribute):
     _status(anthropic.BadRequestError, code=None,
             message='prompt is too long: 210000 tokens > 200000 maximum PRIVATE_INPUT'),
 ])
-def test_explicit_overflow_forces_compaction_below_local_threshold(monkeypatch, caplog, error):
+@async_test
+async def test_explicit_overflow_forces_compaction_below_local_threshold(monkeypatch, caplog, error):
     model = _configured_model([error, AIMessage(content='recovered')])
-    app = _app(monkeypatch, {'A': model})
-    session = app.create_session('A')
+    app = await _app(monkeypatch, {'A': model})
+    session = await app.acreate_session('A')
     messages = _history()
     assert count_tokens_approximately([SystemMessage(content='BASE'), *messages]) < 1980
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        result = app.run(session, messages)
+        result = await app.arun(session, messages)
 
     assert classify_model_failure(error) == ('request_rejected', 'context_window_exceeded')
     assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == 1
@@ -99,7 +102,7 @@ def test_explicit_overflow_forces_compaction_below_local_threshold(monkeypatch, 
     assert result['messages'] == [*retry[1:], result['messages'][-1]]
     assert result['messages'][-1].content == 'recovered'
     thread = app._sessions._sessions[session]['thread_id']
-    latest = app._agent.get_state({'configurable': {'thread_id': thread}})
+    latest = await app._agent.aget_state({'configurable': {'thread_id': thread}})
     assert latest.values['messages'] == result['messages']
     assert app._sessions._sessions[session]['busy'] is False
     recovery = _events(caplog, 'context_recovery')
@@ -121,39 +124,42 @@ def test_explicit_overflow_forces_compaction_below_local_threshold(monkeypatch, 
     _status(AuthenticationError, status=401),
     _status(anthropic.APIStatusError, status=429, code=None, message='prompt is too long'),
 ])
-def test_other_errors_are_not_retried(monkeypatch, caplog, error):
+@async_test
+async def test_other_errors_are_not_retried(monkeypatch, caplog, error):
     model = _configured_model([error])
-    app = _app(monkeypatch, {'A': model})
-    session = app.create_session('A')
+    app = await _app(monkeypatch, {'A': model})
+    session = await app.acreate_session('A')
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(type(error)) as caught:
-            app.run(session, _history())
+            await app.arun(session, _history())
     assert caught.value is error
     assert len(model.normal_inputs) == 1 and model.summary_inputs == []
     assert _events(caplog, 'context_recovery') == []
     assert _events(caplog, 'run_event')[-1]['event'] == 'run_failed'
 
 
-def test_normal_length_response_does_not_trigger_overflow_recovery(monkeypatch):
+@async_test
+async def test_normal_length_response_does_not_trigger_overflow_recovery(monkeypatch):
     model = _configured_model([AIMessage(content='partial', response_metadata={'finish_reason': 'length'})])
-    app = _app(monkeypatch, {'A': model})
-    assert app.run(app.create_session('A'), _history())['messages'][-1].content == 'partial'
+    app = await _app(monkeypatch, {'A': model})
+    assert (await app.arun(await app.acreate_session('A'), _history()))['messages'][-1].content == 'partial'
     assert len(model.normal_inputs) == 1 and model.summary_inputs == []
 
 
 @pytest.mark.parametrize('second_error', [_status(), TimeoutError('PRIVATE_RETRY')])
-def test_second_model_failure_stops_without_committing_summary(monkeypatch, caplog, second_error):
+@async_test
+async def test_second_model_failure_stops_without_committing_summary(monkeypatch, caplog, second_error):
     model = _configured_model([_status(), second_error])
-    app = _app(monkeypatch, {'A': model})
-    session = app.create_session('A')
+    app = await _app(monkeypatch, {'A': model})
+    session = await app.acreate_session('A')
     messages = _history()
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(type(second_error)) as caught:
-            app.run(session, messages)
+            await app.arun(session, messages)
     assert caught.value is second_error
     assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == 1
     thread = app._sessions._sessions[session]['thread_id']
-    assert app._agent.get_state({'configurable': {'thread_id': thread}}).values['messages'] == messages
+    assert (await app._agent.aget_state({'configurable': {'thread_id': thread}})).values['messages'] == messages
     assert app._sessions._sessions[session]['busy'] is False
     recovery = _events(caplog, 'context_recovery')
     assert recovery[-1]['event'] == 'context_overflow_recovery_failed'
@@ -165,13 +171,14 @@ def test_second_model_failure_stops_without_committing_summary(monkeypatch, capl
     TimeoutError('PRIVATE_SUMMARY'), AIMessage(content=''),
     AIMessage(content='partial', response_metadata={'finish_reason': 'length'}),
 ])
-def test_forced_summary_failure_cannot_fall_back_to_rejected_input(monkeypatch, caplog, summary_result):
+@async_test
+async def test_forced_summary_failure_cannot_fall_back_to_rejected_input(monkeypatch, caplog, summary_result):
     model = _configured_model([_status()], summaries=[summary_result])
-    app = _app(monkeypatch, {'A': model})
-    session = app.create_session('A')
+    app = await _app(monkeypatch, {'A': model})
+    session = await app.acreate_session('A')
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(ContextCompactionError):
-            app.run(session, _history())
+            await app.arun(session, _history())
     assert len(model.normal_inputs) == len(model.summary_inputs) == 1
     assert not any(event['event'] == 'context_compaction_fallback'
                    for event in _events(caplog, 'context_compaction'))
@@ -183,15 +190,17 @@ def test_forced_summary_failure_cannot_fall_back_to_rejected_input(monkeypatch, 
     ([HumanMessage(content='only request ' + 'x' * 200)], [], 'no_safe_cut'),
     (_history(), [AIMessage(content='z' * 600)], 'compaction_not_reducing'),
 ])
-def test_forced_compaction_must_find_a_safe_reducing_plan(monkeypatch, messages, summaries, reason):
+@async_test
+async def test_forced_compaction_must_find_a_safe_reducing_plan(monkeypatch, messages, summaries, reason):
     model = _configured_model([_status()], summaries=summaries)
-    app = _app(monkeypatch, {'A': model})
+    app = await _app(monkeypatch, {'A': model})
     with pytest.raises(ContextCompactionError, match=reason):
-        app.run(app.create_session('A'), messages)
+        await app.arun(await app.acreate_session('A'), messages)
     assert len(model.normal_inputs) == 1
 
 
-def test_tools_before_overflow_are_not_replayed_and_checkpoint_continues(monkeypatch):
+@async_test
+async def test_tools_before_overflow_are_not_replayed_and_checkpoint_continues(monkeypatch):
     executions = []
 
     @tool
@@ -204,22 +213,23 @@ def test_tools_before_overflow_are_not_replayed_and_checkpoint_continues(monkeyp
         AIMessage(content='', tool_calls=[{'name': 'effect_read', 'args': {}, 'id': 'call-1'}]),
         _status(), AIMessage(content='recovered'), AIMessage(content='next answer'),
     ])
-    app = _app(monkeypatch, {'A': model}, tools=[ToolSpec(effect_read, effect_read.args_schema, permissions=ToolPermission(default='allow'))])
-    session = app.create_session('A')
-    result = app.run(session, _history()[:2] + [HumanMessage(content='execute the tool')])
+    app = await _app(monkeypatch, {'A': model}, tools=[ToolSpec(effect_read, effect_read.args_schema, permissions=ToolPermission(default='allow'))])
+    session = await app.acreate_session('A')
+    result = await app.arun(session, _history()[:2] + [HumanMessage(content='execute the tool')])
     assert executions == ['executed']
     assert len(model.normal_inputs) == 3 and len(model.summary_inputs) == 1
     assert [item.type for item in result['messages']] == ['human', 'human', 'ai', 'tool', 'ai']
     assert result['messages'][2].tool_calls[0]['id'] == result['messages'][3].tool_call_id == 'call-1'
     assert result['messages'][-1].content == 'recovered'
-    continued = app.run(session, [('user', 'next')])
+    continued = await app.arun(session, [('user', 'next')])
     assert continued['messages'][:len(result['messages'])] == result['messages']
     assert model.normal_inputs[-1][1:-1] == result['messages']
     assert continued['messages'][-1].content == 'next answer'
     assert executions == ['executed']
 
 
-def test_new_tool_call_returned_by_retry_remains_routable(monkeypatch):
+@async_test
+async def test_new_tool_call_returned_by_retry_remains_routable(monkeypatch):
     executions = []
 
     @tool
@@ -233,39 +243,42 @@ def test_new_tool_call_returned_by_retry_remains_routable(monkeypatch):
         AIMessage(content='', tool_calls=[{'name': 'echo_recovery', 'args': {}, 'id': 'new-call'}]),
         AIMessage(content='done'),
     ])
-    app = _app(monkeypatch, {'A': model}, tools=[ToolSpec(echo_recovery, echo_recovery.args_schema, permissions=ToolPermission(default='allow'))])
-    result = app.run(app.create_session('A'), _history())
+    app = await _app(monkeypatch, {'A': model}, tools=[ToolSpec(echo_recovery, echo_recovery.args_schema, permissions=ToolPermission(default='allow'))])
+    result = await app.arun(await app.acreate_session('A'), _history())
     assert executions == ['executed']
     assert len(model.normal_inputs) == 3 and len(model.summary_inputs) == 1
     assert result['messages'][-2].tool_call_id == 'new-call'
     assert result['messages'][-1].content == 'done'
 
 
-def test_retry_uses_frozen_project_instructions(monkeypatch, tmp_path):
+@async_test
+async def test_retry_uses_frozen_project_instructions(monkeypatch, tmp_path):
     (tmp_path / 'AGENTS.md').write_text('Keep PRIVATE_WORKSPACE_CONSTRAINT.', encoding='utf-8')
     model = _configured_model([_status(), AIMessage(content='recovered')])
-    app = _app(monkeypatch, {'A': model})
-    app.run(app.create_workspace_session('A', tmp_path), _history())
+    app = await _app(monkeypatch, {'A': model})
+    await app.arun(await app.acreate_workspace_session('A', tmp_path), _history())
     assert model.normal_inputs[0][0].content == model.normal_inputs[1][0].content
     assert 'Keep PRIVATE_WORKSPACE_CONSTRAINT.' in model.normal_inputs[1][0].content
 
 
-def test_rejected_retry_response_does_not_commit_compaction(monkeypatch):
+@async_test
+async def test_rejected_retry_response_does_not_commit_compaction(monkeypatch):
     invalid = AIMessage(content='', invalid_tool_calls=[
         {'name': 'read', 'args': '{', 'id': 'bad', 'error': 'PRIVATE_PARSE'},
     ])
     model = _configured_model([_status(), invalid])
-    app = _app(monkeypatch, {'A': model})
-    session = app.create_session('A')
+    app = await _app(monkeypatch, {'A': model})
+    session = await app.acreate_session('A')
     messages = _history()
     with pytest.raises(ModelResponseRejected, match='invalid_tool_calls'):
-        app.run(session, messages)
+        await app.arun(session, messages)
     thread = app._sessions._sessions[session]['thread_id']
-    assert app._agent.get_state({'configurable': {'thread_id': thread}}).values['messages'] == messages
+    assert (await app._agent.aget_state({'configurable': {'thread_id': thread}})).values['messages'] == messages
     assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == 1
 
 
-def test_recovery_keeps_structured_response_and_its_tool_message(monkeypatch):
+@async_test
+async def test_recovery_keeps_structured_response_and_its_tool_message(monkeypatch):
     class RecoveryResult(BaseModel):
         answer: str
 
@@ -276,11 +289,11 @@ def test_recovery_keeps_structured_response_and_its_tool_message(monkeypatch):
     ])
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application(
+    app = await build_application(
         'synthetic.json', tools=[], system_prompt='BASE',
         response_format=ToolStrategy(RecoveryResult),
     )
-    result = app.run(app.create_session('A'), _history())
+    result = await app.arun(await app.acreate_session('A'), _history())
     assert result['structured_response'] == RecoveryResult(answer='recovered')
     assert result['messages'][0].additional_kwargs[SUMMARY_MARKER] is True
     assert result['messages'][-2].tool_calls[0]['id'] == 'structured'
@@ -288,13 +301,14 @@ def test_recovery_keeps_structured_response_and_its_tool_message(monkeypatch):
     assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == 1
 
 
-def test_incomplete_original_tool_history_is_rejected_before_forced_summary(monkeypatch):
+@async_test
+async def test_incomplete_original_tool_history_is_rejected_before_forced_summary(monkeypatch):
     model = _configured_model([_status()])
-    app = _app(monkeypatch, {'A': model})
+    app = await _app(monkeypatch, {'A': model})
     messages = _history()
     messages[3] = AIMessage(content='', tool_calls=[
         {'name': 'read', 'args': {}, 'id': 'unanswered'},
     ])
     with pytest.raises(ContextCompactionError, match='incomplete_tool_pair'):
-        app.run(app.create_session('A'), messages)
+        await app.arun(await app.acreate_session('A'), messages)
     assert len(model.normal_inputs) == 1 and model.summary_inputs == []

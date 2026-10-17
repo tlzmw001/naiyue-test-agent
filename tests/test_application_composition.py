@@ -1,5 +1,7 @@
 """One local application owns its catalog, session service, agent, and checkpoint."""
 
+from native_application_helpers import async_test, build_application
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
@@ -21,7 +23,8 @@ class ToolCapableFake(FakeMessagesListChatModel):
         return self
 
 
-def test_local_application_wires_one_catalog_one_checkpoint_and_session_events(monkeypatch, caplog):
+@async_test
+async def test_local_application_wires_one_catalog_one_checkpoint_and_session_events(monkeypatch, caplog):
     models = {
         'A': ToolCapableFake(responses=[
             AIMessage(content='', tool_calls=[
@@ -47,20 +50,20 @@ def test_local_application_wires_one_catalog_one_checkpoint_and_session_events(m
         return 'private-tool-result'
 
     config_path = Path('synthetic-models.json')
-    app = application.build_local_application(
+    app = await build_application(
         config_path, tools=[ToolSpec(read_probe, read_probe.args_schema, permissions=ToolPermission(default='allow'))], system_prompt='', response_format=None,
     )
     assert loaded_paths == [config_path]
     assert app.default_model_id == 'A'
     assert not hasattr(app, 'thread_id')
 
-    first_session = app.create_session('A')
-    other_session = app.create_session('A')
+    first_session = await app.acreate_session('A')
+    other_session = await app.acreate_session('A')
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        first = app.run(first_session, [('user', 'private-first')])
-        app.select_model(first_session, 'B')
-        second = app.run(first_session, [('user', 'private-second')])
-        other = app.run(other_session, [('user', 'private-other')])
+        first = await app.arun(first_session, [('user', 'private-first')])
+        await app.aselect_model(first_session, 'B')
+        second = await app.arun(first_session, [('user', 'private-second')])
+        other = await app.arun(other_session, [('user', 'private-other')])
 
     assert [m.type for m in first['messages']] == ['human', 'ai', 'tool', 'ai']
     assert [m.content for m in second['messages']] == [
@@ -86,7 +89,8 @@ def test_local_application_wires_one_catalog_one_checkpoint_and_session_events(m
     assert 'private-tool-result' not in caplog.text
 
 
-def test_local_application_stops_at_configuration_failure(monkeypatch):
+@async_test
+async def test_local_application_stops_at_configuration_failure(monkeypatch):
     loaded_paths = []
 
     def fail_loading(path):
@@ -95,7 +99,7 @@ def test_local_application_stops_at_configuration_failure(monkeypatch):
 
     monkeypatch.setattr(application, 'load_model_catalog', fail_loading, raising=False)
     with pytest.raises(ModelConfigError, match='synthetic invalid configuration'):
-        application.build_local_application(
+        await build_application(
             Path('broken.json'), tools=[], system_prompt='', response_format=None,
         )
     assert loaded_paths == [Path('broken.json')]

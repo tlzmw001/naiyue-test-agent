@@ -1,5 +1,7 @@
 """A truncated model response cannot execute its parsed tool calls."""
 
+from native_application_helpers import async_test, build_application
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
@@ -35,7 +37,8 @@ class RecordingFake(FakeMessagesListChatModel):
         return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
 
 
-def test_truncated_call_gets_error_result_then_model_can_reissue(monkeypatch, caplog):
+@async_test
+async def test_truncated_call_gets_error_result_then_model_can_reissue(monkeypatch, caplog):
     model = RecordingFake(responses=[
         AIMessage(
             content='',
@@ -59,14 +62,14 @@ def test_truncated_call_gets_error_result_then_model_can_reissue(monkeypatch, ca
 
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application(
+    app = await build_application(
         Path('synthetic.json'), tools=[ToolSpec(write_probe, write_probe.args_schema, permissions=ToolPermission(default='allow'))],
         system_prompt='', response_format=None,
     )
-    session_id = app.create_session('A')
+    session_id = await app.acreate_session('A')
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        result = app.run(session_id, [('user', 'write a probe value')])
+        result = await app.arun(session_id, [('user', 'write a probe value')])
 
     messages = result['messages']
     tool_results = [message for message in messages if isinstance(message, ToolMessage)]
@@ -87,7 +90,8 @@ def test_truncated_call_gets_error_result_then_model_can_reissue(monkeypatch, ca
     assert 'private-cut' not in caplog.text
 
 
-def test_every_call_in_one_truncated_response_is_rejected(monkeypatch):
+@async_test
+async def test_every_call_in_one_truncated_response_is_rejected(monkeypatch):
     model = RecordingFake(responses=[
         AIMessage(
             content='',
@@ -109,11 +113,11 @@ def test_every_call_in_one_truncated_response_is_rejected(monkeypatch):
 
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application(
+    app = await build_application(
         Path('synthetic.json'), tools=[ToolSpec(write_probe, write_probe.args_schema, permissions=ToolPermission(default='allow'))],
         system_prompt='', response_format=None,
     )
-    result = app.run(app.create_session('A'), [('user', 'probe')])
+    result = await app.arun(await app.acreate_session('A'), [('user', 'probe')])
 
     tool_results = [item for item in result['messages'] if isinstance(item, ToolMessage)]
     assert executed == []
@@ -123,7 +127,8 @@ def test_every_call_in_one_truncated_response_is_rejected(monkeypatch):
     assert {item[0] for item in model.seen_tool_results[1]} == {'cut-1', 'cut-2'}
 
 
-def test_claude_context_window_truncation_rejects_tool_through_application(monkeypatch):
+@async_test
+async def test_claude_context_window_truncation_rejects_tool_through_application(monkeypatch):
     model = RecordingFake(responses=[
         AIMessage(
             content='',
@@ -142,11 +147,11 @@ def test_claude_context_window_truncation_rejects_tool_through_application(monke
 
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application(
+    app = await build_application(
         Path('synthetic.json'), tools=[ToolSpec(write_probe, write_probe.args_schema, permissions=ToolPermission(default='allow'))],
         system_prompt='', response_format=None,
     )
-    result = app.run(app.create_session('A'), [('user', 'probe')])
+    result = await app.arun(await app.acreate_session('A'), [('user', 'probe')])
 
     tool_results = [item for item in result['messages'] if isinstance(item, ToolMessage)]
     assert executed == []
@@ -158,6 +163,7 @@ def test_claude_context_window_truncation_rejects_tool_through_application(monke
     assert result['messages'][1].response_metadata[MODEL_STOP_REASON_KEY] == 'length'
 
 
+@async_test
 @pytest.mark.parametrize('messages', [
     [AIMessage(content='', tool_calls=[{'name': 'write_probe', 'args': {}, 'id': 'original'}],
                response_metadata={MODEL_STOP_REASON_KEY: 'length'})],
@@ -165,7 +171,7 @@ def test_claude_context_window_truncation_rejects_tool_through_application(monke
                response_metadata={MODEL_STOP_REASON_KEY: 'tool_use'})],
     [],
 ])
-def test_tool_request_without_matching_latest_model_call_fails_closed(messages, caplog):
+async def test_tool_request_without_matching_latest_model_call_fails_closed(messages, caplog):
     request = SimpleNamespace(
         tool_call={'name': 'write_probe', 'args': {}, 'id': 'other'},
         state={'messages': messages},
@@ -173,12 +179,12 @@ def test_tool_request_without_matching_latest_model_call_fails_closed(messages, 
     )
     executed = []
 
-    def handler(_request):
+    async def handler(_request):
         executed.append(True)
         return ToolMessage(content='written', tool_call_id='other')
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        result = _record_tool_call.wrap_tool_call(request, handler)
+        result = (await _record_tool_call.awrap_tool_call(request, handler))
 
     assert executed == []
     assert isinstance(result, ToolMessage)

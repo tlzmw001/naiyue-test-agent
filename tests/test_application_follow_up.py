@@ -1,5 +1,10 @@
 """Follow-up waits for a natural end and continues the same run."""
 
+from naiyue_test_agent.application.async_application import AsyncApplication
+import asyncio
+
+from native_application_helpers import async_test, build_application
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.application import prepare_tool_registry
@@ -7,7 +12,7 @@ from naiyue_test_agent.application import prepare_tool_registry
 from naiyue_test_agent.tools import ToolSpec
 
 import logging
-from threading import Event, Thread
+from threading import Event
 
 import pytest
 from langchain.tools import tool
@@ -24,10 +29,10 @@ class ToolCapableFake(FakeMessagesListChatModel):
         return self
 
 
-def build_app(monkeypatch, models, tools=None):
+async def build_app(monkeypatch, models, tools=None):
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', models))
-    return application.build_local_application(
+    return await build_application(
         'synthetic.json', tools=tools or [], system_prompt='', response_format=None,
     )
 
@@ -35,18 +40,19 @@ def build_app(monkeypatch, models, tools=None):
 def run_in_worker(app, session_id):
     outcomes = []
 
-    def run():
+    async def run():
         try:
-            outcomes.append(('result', app.run(session_id, [('user', 'initial')])))
+            outcomes.append(('result', await app.arun(session_id, [('user', 'initial')])))
         except Exception as error:
             outcomes.append(('error', error))
 
-    worker = Thread(target=run, daemon=True)
-    worker.start()
+    worker = asyncio.create_task(run())
+
     return worker, outcomes
 
 
-def test_two_follow_ups_are_fifo_separate_turns_in_one_run(monkeypatch, caplog):
+@async_test
+async def test_two_follow_ups_are_fifo_separate_turns_in_one_run(monkeypatch, caplog):
     entered, release = Event(), Event()
     inputs = []
 
@@ -61,19 +67,19 @@ def test_two_follow_ups_are_fifo_separate_turns_in_one_run(monkeypatch, caplog):
     model = BlockingModel(responses=[AIMessage(content='answer-one'),
                                      AIMessage(content='answer-two'),
                                      AIMessage(content='answer-three')])
-    app = build_app(monkeypatch, {'A': model})
-    session_id = app.create_session('A')
+    app = await build_app(monkeypatch, {'A': model})
+    session_id = await app.acreate_session('A')
     with caplog.at_level(logging.INFO):
         worker, outcomes = run_in_worker(app, session_id)
         try:
-            assert entered.wait(timeout=3)
+            assert await asyncio.to_thread(entered.wait, timeout=3)
             app.follow_up(session_id, 'private-follow-one')
             app.follow_up(session_id, 'private-follow-two')
         finally:
             release.set()
-            worker.join(timeout=3)
+            await asyncio.wait_for(asyncio.shield(worker), 3)
 
-    assert not worker.is_alive()
+    assert worker.done()
     assert outcomes[0][0] == 'result', outcomes
     assert [m.content for m in outcomes[0][1]['messages']] == [
         'initial', 'answer-one', 'private-follow-one', 'answer-two',
@@ -95,7 +101,8 @@ def test_two_follow_ups_are_fifo_separate_turns_in_one_run(monkeypatch, caplog):
     assert 'private-follow-one' not in caplog.text
 
 
-def test_follow_up_does_not_enter_model_immediately_after_tool(monkeypatch):
+@async_test
+async def test_follow_up_does_not_enter_model_immediately_after_tool(monkeypatch):
     tool_started, release_tool = Event(), Event()
     inputs = []
 
@@ -115,17 +122,17 @@ def test_follow_up_does_not_enter_model_immediately_after_tool(monkeypatch):
         AIMessage(content='', tool_calls=[{'name': 'probe', 'args': {}, 'id': 'call-1'}]),
         AIMessage(content='tool-answer'), AIMessage(content='follow-answer'),
     ])
-    app = build_app(monkeypatch, {'A': model}, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
-    session_id = app.create_session('A')
+    app = await build_app(monkeypatch, {'A': model}, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
+    session_id = await app.acreate_session('A')
     worker, outcomes = run_in_worker(app, session_id)
     try:
-        assert tool_started.wait(timeout=3)
+        assert await asyncio.to_thread(tool_started.wait, timeout=3)
         app.follow_up(session_id, 'private-follow')
     finally:
         release_tool.set()
-        worker.join(timeout=3)
+        await asyncio.wait_for(asyncio.shield(worker), 3)
 
-    assert not worker.is_alive()
+    assert worker.done()
     assert outcomes[0][0] == 'result', outcomes
     assert 'private-follow' not in inputs[1]
     assert inputs[1][-1] == 'tool-result'
@@ -135,7 +142,8 @@ def test_follow_up_does_not_enter_model_immediately_after_tool(monkeypatch):
     ]
 
 
-def test_steering_has_priority_over_follow_up_at_natural_end(monkeypatch):
+@async_test
+async def test_steering_has_priority_over_follow_up_at_natural_end(monkeypatch):
     entered, release = Event(), Event()
     calls = []
 
@@ -150,18 +158,18 @@ def test_steering_has_priority_over_follow_up_at_natural_end(monkeypatch):
     model = BlockingModel(responses=[AIMessage(content='first'),
                                      AIMessage(content='after-steering'),
                                      AIMessage(content='after-follow-up')])
-    app = build_app(monkeypatch, {'A': model})
-    session_id = app.create_session('A')
+    app = await build_app(monkeypatch, {'A': model})
+    session_id = await app.acreate_session('A')
     worker, outcomes = run_in_worker(app, session_id)
     try:
-        assert entered.wait(timeout=3)
+        assert await asyncio.to_thread(entered.wait, timeout=3)
         app.follow_up(session_id, 'private-follow')
         app.steer(session_id, 'private-steer')
     finally:
         release.set()
-        worker.join(timeout=3)
+        await asyncio.wait_for(asyncio.shield(worker), 3)
 
-    assert not worker.is_alive()
+    assert worker.done()
     assert outcomes[0][0] == 'result', outcomes
     assert [m.content for m in outcomes[0][1]['messages']] == [
         'initial', 'first', 'private-steer', 'after-steering',
@@ -169,7 +177,8 @@ def test_steering_has_priority_over_follow_up_at_natural_end(monkeypatch):
     ]
 
 
-def test_failure_discards_pending_follow_up_and_rejects_idle_input(monkeypatch, caplog):
+@async_test
+async def test_failure_discards_pending_follow_up_and_rejects_idle_input(monkeypatch, caplog):
     entered, release = Event(), Event()
     failure = RuntimeError('private-model-failure')
 
@@ -179,18 +188,18 @@ def test_failure_discards_pending_follow_up_and_rejects_idle_input(monkeypatch, 
             assert release.wait(timeout=3)
             raise failure
 
-    app = build_app(monkeypatch, {'A': FailingModel(responses=[])})
-    session_id = app.create_session('A')
+    app = await build_app(monkeypatch, {'A': FailingModel(responses=[])})
+    session_id = await app.acreate_session('A')
     with caplog.at_level(logging.INFO):
         worker, outcomes = run_in_worker(app, session_id)
         try:
-            assert entered.wait(timeout=3)
+            assert await asyncio.to_thread(entered.wait, timeout=3)
             app.follow_up(session_id, 'private-pending-follow')
         finally:
             release.set()
-            worker.join(timeout=3)
+            await asyncio.wait_for(asyncio.shield(worker), 3)
 
-    assert not worker.is_alive()
+    assert worker.done()
     assert outcomes == [('error', failure)]
     run_events = [r.run_event['event'] for r in caplog.records if hasattr(r, 'run_event')]
     assert run_events == ['run_started', 'run_failed']
@@ -209,7 +218,8 @@ def test_failure_discards_pending_follow_up_and_rejects_idle_input(monkeypatch, 
         app.follow_up('unknown-session', 'message')
 
 
-def test_follow_up_is_isolated_between_active_sessions(monkeypatch):
+@async_test
+async def test_follow_up_is_isolated_between_active_sessions(monkeypatch):
     entered_a, entered_b, release = Event(), Event(), Event()
 
     def blocking_model(entered):
@@ -226,23 +236,23 @@ def test_follow_up_is_isolated_between_active_sessions(monkeypatch):
         return Model(responses=[AIMessage(content='first'),
                                 AIMessage(content='second')])
 
-    app = build_app(monkeypatch, {
+    app = await build_app(monkeypatch, {
         'A': blocking_model(entered_a), 'B': blocking_model(entered_b),
     })
-    session_a = app.create_session('A')
-    session_b = app.create_session('B')
+    session_a = await app.acreate_session('A')
+    session_b = await app.acreate_session('B')
     worker_a, outcomes_a = run_in_worker(app, session_a)
     worker_b, outcomes_b = run_in_worker(app, session_b)
     try:
-        assert entered_a.wait(timeout=3)
-        assert entered_b.wait(timeout=3)
+        assert await asyncio.to_thread(entered_a.wait, timeout=3)
+        assert await asyncio.to_thread(entered_b.wait, timeout=3)
         app.follow_up(session_a, 'private-A-only')
     finally:
         release.set()
-        worker_a.join(timeout=3)
-        worker_b.join(timeout=3)
+        await asyncio.wait_for(asyncio.shield(worker_a), 3)
+        await asyncio.wait_for(asyncio.shield(worker_b), 3)
 
-    assert not worker_a.is_alive() and not worker_b.is_alive()
+    assert worker_a.done() and worker_b.done()
     assert outcomes_a[0][0] == outcomes_b[0][0] == 'result'
     assert [m.content for m in outcomes_a[0][1]['messages']] == [
         'initial', 'first', 'private-A-only', 'second',
@@ -250,7 +260,8 @@ def test_follow_up_is_isolated_between_active_sessions(monkeypatch):
     assert [m.content for m in outcomes_b[0][1]['messages']] == ['initial', 'first']
 
 
-def test_natural_end_closes_follow_up_before_busy_gate_is_released():
+@async_test
+async def test_natural_end_closes_follow_up_before_busy_gate_is_released():
     service = application.SessionService(ModelCatalog('A', {
         'A': FakeMessagesListChatModel(responses=[]),
     }))
@@ -258,27 +269,31 @@ def test_natural_end_closes_follow_up_before_busy_gate_is_released():
     closed, release = Event(), Event()
 
     class PausedAtEndAgent:
-        def invoke(self, _input, *, context, config):
+        async def ainvoke(self, _input, *, context, config):
             assert service.finish_run_boundary(context['session_id']) == (False, [])
             closed.set()
-            assert release.wait(timeout=3)
+            assert await asyncio.to_thread(release.wait, timeout=3)
             return {'messages': []}
 
-    app = application.LocalApplication('A', service, PausedAtEndAgent(), prepare_tool_registry([]))
+    app = AsyncApplication(service._catalog, service, PausedAtEndAgent(), prepare_tool_registry([]))
     worker, outcomes = run_in_worker(app, session_id)
     try:
-        assert closed.wait(timeout=3)
+        assert await asyncio.to_thread(closed.wait, timeout=3)
         with pytest.raises(application.SessionBusyError):
             app.follow_up(session_id, 'arrived-after-close')
     finally:
         release.set()
-        worker.join(timeout=3)
+        try:
+            await asyncio.wait_for(asyncio.shield(worker), 3)
+        finally:
+            await app.aclose()
 
-    assert not worker.is_alive()
+    assert worker.done()
     assert outcomes == [('result', {'messages': []})]
 
 
-def test_recursion_limit_is_a_failed_run_not_a_completed_answer(monkeypatch, caplog):
+@async_test
+async def test_recursion_limit_is_a_failed_run_not_a_completed_answer(monkeypatch, caplog):
     app = None
     session_id = None
 
@@ -287,20 +302,20 @@ def test_recursion_limit_is_a_failed_run_not_a_completed_answer(monkeypatch, cap
             app.follow_up(session_id, 'continue')
             return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
 
-    app = build_app(monkeypatch, {
+    app = await build_app(monkeypatch, {
         'A': RequeueingModel(responses=[AIMessage(content='partial')]),
     })
-    session_id = app.create_session('A')
+    session_id = await app.acreate_session('A')
     agent = app._agent
 
     class LimitedAgent:
-        def invoke(self, input, *, context, config):
-            return agent.invoke(input, context=context,
+        async def ainvoke(self, input, *, context, config):
+            return await agent.ainvoke(input, context=context,
                                 config={**config, 'recursion_limit': 5})
 
     app._agent = LimitedAgent()
     with caplog.at_level(logging.INFO), pytest.raises(GraphRecursionError):
-        app.run(session_id, [('user', 'initial')])
+        await app.arun(session_id, [('user', 'initial')])
 
     run_events = [r.run_event['event'] for r in caplog.records if hasattr(r, 'run_event')]
     assert run_events == ['run_started', 'run_failed']

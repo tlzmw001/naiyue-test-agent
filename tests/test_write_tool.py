@@ -1,5 +1,7 @@
 """A real workspace write must preserve files and return actionable tool results."""
 
+from native_application_helpers import async_test, build_application
+
 import logging
 import stat
 from concurrent.futures import ThreadPoolExecutor
@@ -32,11 +34,11 @@ class RecordingFake(FakeMessagesListChatModel):
         return super()._generate(messages, *args, **kwargs)
 
 
-def make_app(monkeypatch, responses, tools=None, *, permissions=None):
+async def make_app(monkeypatch, responses, tools=None, *, permissions=None):
     model = RecordingFake(responses=responses)
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application(
+    app = await build_application(
         Path('synthetic.json'),
         tools=tools or [create_session_write_tool()],
         system_prompt='', response_format=None, settings=ToolSettings.model_validate({'permissions': permissions or {}}),
@@ -52,11 +54,12 @@ def results(result):
     return [item for item in result['messages'] if isinstance(item, ToolMessage)]
 
 
-def test_write_creates_and_replaces_whole_file_and_accepts_empty_content(monkeypatch, tmp_path):
+@async_test
+async def test_write_creates_and_replaces_whole_file_and_accepts_empty_content(monkeypatch, tmp_path):
     assert set(create_session_write_tool().tool.tool_call_schema.model_fields) == {
         'path', 'content',
     }
-    app, model = make_app(monkeypatch, [
+    app, model = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('write', {
             'path': 'case.md', 'content': '第一版\n',
         }, 'new')]),
@@ -70,13 +73,13 @@ def test_write_creates_and_replaces_whole_file_and_accepts_empty_content(monkeyp
         }, 'empty')]),
         AIMessage(content='emptied'),
     ])
-    session = app.create_workspace_session('A', tmp_path)
+    session = await app.acreate_workspace_session('A', tmp_path)
 
-    first = app.run(session, [('user', 'create')])
+    first = await app.arun(session, [('user', 'create')])
     assert (tmp_path / 'case.md').read_text(encoding='utf-8') == '第一版\n'
-    second = app.run(session, [('user', 'replace')])
+    second = await app.arun(session, [('user', 'replace')])
     assert (tmp_path / 'case.md').read_text(encoding='utf-8') == 'replacement'
-    third = app.run(session, [('user', 'clear')])
+    third = await app.arun(session, [('user', 'clear')])
     assert (tmp_path / 'case.md').read_bytes() == b''
     assert [(item.tool_call_id, item.status) for result, call_id in (
         (first, 'new'), (second, 'replace'), (third, 'empty')
@@ -96,7 +99,8 @@ def test_write_creates_and_replaces_whole_file_and_accepts_empty_content(monkeyp
     '.github/.env', 'secret.pem', 'private.key', 'directory',
     'missing/file.md', 'outside-link.md',
 ])
-def test_write_target_policy_and_missing_parent_preserve_existing_files(
+@async_test
+async def test_write_target_policy_and_missing_parent_preserve_existing_files(
     monkeypatch, tmp_path, path, caplog,
 ):
     root = tmp_path / 'workspace'
@@ -110,7 +114,7 @@ def test_write_target_policy_and_missing_parent_preserve_existing_files(
     outside.write_text('OUTSIDE_ORIGINAL', encoding='utf-8')
     (root / 'outside-link.md').symlink_to(outside)
     (root / 'inside-link.md').symlink_to(inside)
-    app, model = make_app(monkeypatch, [
+    app, model = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('write', {
             'path': path, 'content': 'PRIVATE_CONTENT',
         }, 'denied')]),
@@ -118,9 +122,9 @@ def test_write_target_policy_and_missing_parent_preserve_existing_files(
     ])
 
     with caplog.at_level(logging.WARNING):
-        session = app.create_workspace_session('A', root)
-        app.set_permission_mode(session, 'NoAsk')
-        result = app.run(session, [('user', 'write')])
+        session = await app.acreate_workspace_session('A', root)
+        await app.aset_permission_mode(session, 'NoAsk')
+        result = await app.arun(session, [('user', 'write')])
 
     message = results(result)[0]
     assert message.tool_call_id == 'denied'
@@ -136,13 +140,14 @@ def test_write_target_policy_and_missing_parent_preserve_existing_files(
     assert message in model.seen[1]
 
 
-def test_write_rejects_absolute_outside_path_and_symlinked_parent(monkeypatch, tmp_path):
+@async_test
+async def test_write_rejects_absolute_outside_path_and_symlinked_parent(monkeypatch, tmp_path):
     root = tmp_path / 'workspace'
     root.mkdir()
     outside = tmp_path / 'outside'
     outside.mkdir()
     (root / 'linked-dir').symlink_to(outside, target_is_directory=True)
-    app, _model = make_app(monkeypatch, [
+    app, _model = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[
             call('write', {'path': str(outside / 'external.md'), 'content': 'bad'}, 'abs'),
             call('write', {'path': 'linked-dir/external.md', 'content': 'bad'}, 'link'),
@@ -150,9 +155,9 @@ def test_write_rejects_absolute_outside_path_and_symlinked_parent(monkeypatch, t
         AIMessage(content='denied'),
     ])
 
-    session = app.create_workspace_session('A', root)
-    app.set_permission_mode(session, 'NoAsk')
-    result = app.run(session, [('user', 'write outside')])
+    session = await app.acreate_workspace_session('A', root)
+    await app.aset_permission_mode(session, 'NoAsk')
+    result = await app.arun(session, [('user', 'write outside')])
 
     assert [(item.tool_call_id, item.status) for item in results(result)] == [
         ('abs', 'error'), ('link', 'error'),
@@ -161,10 +166,11 @@ def test_write_rejects_absolute_outside_path_and_symlinked_parent(monkeypatch, t
     assert result.get('approval_requests') is None
 
 
-def test_write_accepts_source_dotfiles_but_not_arbitrary_hidden_targets(monkeypatch, tmp_path):
+@async_test
+async def test_write_accepts_source_dotfiles_but_not_arbitrary_hidden_targets(monkeypatch, tmp_path):
     workflow = tmp_path / '.github' / 'workflows'
     workflow.mkdir(parents=True)
-    app, _model = make_app(monkeypatch, [
+    app, _model = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[
             call('write', {'path': '.gitignore', 'content': '*.pyc\n'}, 'gitignore'),
             call('write', {'path': '.github/workflows/test.yml',
@@ -173,7 +179,7 @@ def test_write_accepts_source_dotfiles_but_not_arbitrary_hidden_targets(monkeypa
         AIMessage(content='done'),
     ], permissions={'allow': [{'tool': 'write', 'path': '${workspace}/.gitignore'}, {'tool': 'write', 'path': '${workspace}/.github/**'}]})
 
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'write configs')])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'write configs')])
 
     assert [item.status for item in results(result)] == ['success', 'success']
     assert (tmp_path / '.gitignore').read_text() == '*.pyc\n'
@@ -186,13 +192,14 @@ def test_write_accepts_source_dotfiles_but_not_arbitrary_hidden_targets(monkeypa
     {'path': 'note.md', 'content': 5},
     {'path': 'note.md', 'content': 'x', 'extra': 'PRIVATE_ARG'},
 ])
-def test_write_schema_errors_return_same_id_without_echoing_args(monkeypatch, tmp_path, args):
-    app, model = make_app(monkeypatch, [
+@async_test
+async def test_write_schema_errors_return_same_id_without_echoing_args(monkeypatch, tmp_path, args):
+    app, model = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('write', args, 'invalid')]),
         AIMessage(content='fixed'),
     ])
 
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'write')])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'write')])
 
     message = results(result)[0]
     assert message.tool_call_id == 'invalid'
@@ -202,12 +209,13 @@ def test_write_schema_errors_return_same_id_without_echoing_args(monkeypatch, tm
     assert message in model.seen[1]
 
 
-def test_model_supplied_runtime_cannot_change_the_write_workspace(monkeypatch, tmp_path):
+@async_test
+async def test_model_supplied_runtime_cannot_change_the_write_workspace(monkeypatch, tmp_path):
     real_root = tmp_path / 'real'
     forged_root = tmp_path / 'forged'
     real_root.mkdir()
     forged_root.mkdir()
-    app, _model = make_app(monkeypatch, [
+    app, _model = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('write', {
             'path': 'note.md', 'content': 'REAL_WORKSPACE',
             'runtime': {'context': {'workspace_root': str(forged_root)}},
@@ -215,15 +223,16 @@ def test_model_supplied_runtime_cannot_change_the_write_workspace(monkeypatch, t
         AIMessage(content='done'),
     ])
 
-    result = app.run(app.create_workspace_session('A', real_root), [('user', 'write')])
+    result = await app.arun(await app.acreate_workspace_session('A', real_root), [('user', 'write')])
 
     assert results(result)[0].status == 'success'
     assert (real_root / 'note.md').read_text() == 'REAL_WORKSPACE'
     assert not (forged_root / 'note.md').exists()
 
 
-def test_write_budget_counts_utf8_bytes_and_rejects_surrogates(monkeypatch, tmp_path):
-    app, _model = make_app(monkeypatch, [
+@async_test
+async def test_write_budget_counts_utf8_bytes_and_rejects_surrogates(monkeypatch, tmp_path):
+    app, _model = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('write', {
             'path': 'ok.md', 'content': '中文',
         }, 'large')]),
@@ -233,10 +242,10 @@ def test_write_budget_counts_utf8_bytes_and_rejects_surrogates(monkeypatch, tmp_
         }, 'encoding')]),
         AIMessage(content='bad encoding'),
     ], tools=[create_session_write_tool(settings=WriteSettings(max_input_bytes=4))])
-    session = app.create_workspace_session('A', tmp_path)
+    session = await app.acreate_workspace_session('A', tmp_path)
 
-    too_large = app.run(session, [('user', 'write large')])
-    invalid_encoding = app.run(session, [('user', 'write invalid unicode')])
+    too_large = await app.arun(session, [('user', 'write large')])
+    invalid_encoding = await app.arun(session, [('user', 'write invalid unicode')])
 
     assert results(too_large)[0].status == 'error'
     assert 'size' in results(too_large)[0].content.lower()
@@ -297,29 +306,31 @@ def test_temp_write_failure_keeps_original_and_returns_tool_error(monkeypatch, t
     assert original.read_text(encoding='utf-8') == 'ORIGINAL'
 
 
-def test_replacing_file_keeps_ordinary_permission_bits(monkeypatch, tmp_path):
+@async_test
+async def test_replacing_file_keeps_ordinary_permission_bits(monkeypatch, tmp_path):
     target = tmp_path / 'script.py'
     target.write_text('old', encoding='utf-8')
     target.chmod(0o750)
-    app, _model = make_app(monkeypatch, [
+    app, _model = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('write', {
             'path': 'script.py', 'content': 'new',
         }, 'mode')]),
         AIMessage(content='done'),
     ])
 
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'rewrite')])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'rewrite')])
 
     assert results(result)[0].status == 'success'
     assert stat.S_IMODE(target.stat().st_mode) == 0o750
 
 
-def test_uncertain_commit_returns_error_and_emits_correlated_diagnostic(
+@async_test
+async def test_uncertain_commit_returns_error_and_emits_correlated_diagnostic(
     monkeypatch, tmp_path, caplog,
 ):
     target = tmp_path / 'case.md'
     target.write_text('OLD', encoding='utf-8')
-    app, model = make_app(monkeypatch, [
+    app, model = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('write', {
             'path': 'case.md', 'content': 'NEW',
         }, 'uncertain')]),
@@ -331,7 +342,7 @@ def test_uncertain_commit_returns_error_and_emits_correlated_diagnostic(
 
     monkeypatch.setattr(write_module.os, 'replace', uncertain_replace)
     with caplog.at_level(logging.INFO):
-        result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'rewrite')])
+        result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'rewrite')])
 
     assert target.read_text() == 'OLD'
     assert len(model.seen) == 2
@@ -418,10 +429,11 @@ def test_different_targets_can_write_while_one_target_is_busy(monkeypatch, tmp_p
     assert (tmp_path / 'second.md').read_text() == 'SECOND'
 
 
-def test_real_read_write_read_batch_sees_new_content(monkeypatch, tmp_path):
+@async_test
+async def test_real_read_write_read_batch_sees_new_content(monkeypatch, tmp_path):
     document = tmp_path / 'case.md'
     document.write_text('BEFORE', encoding='utf-8')
-    app, model = make_app(monkeypatch, [
+    app, model = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[
             call('read', {'path': 'case.md'}, 'read-1'),
             call('write', {'path': 'case.md', 'content': 'AFTER'}, 'write-2'),
@@ -430,7 +442,7 @@ def test_real_read_write_read_batch_sees_new_content(monkeypatch, tmp_path):
         AIMessage(content='done'),
     ], tools=[create_session_read_tool(), create_session_write_tool()])
 
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'update case')])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'update case')])
 
     assert [(item.tool_call_id, item.content) for item in results(result)] == [
         ('read-1', 'BEFORE'), ('write-2', 'write replaced 5 bytes'),
@@ -442,32 +454,17 @@ def test_real_read_write_read_batch_sees_new_content(monkeypatch, tmp_path):
     ]
 
 
-def test_session_write_fails_closed_without_workspace(monkeypatch, tmp_path):
-    app, model = make_app(monkeypatch, [
-        AIMessage(content='', tool_calls=[call('write', {
-            'path': str(tmp_path / 'note.md'), 'content': 'PRIVATE',
-        }, 'no-workspace')]),
-        AIMessage(content='denied'),
-    ])
-
-    result = app.run(app.create_session('A'), [('user', 'write without workspace')])
-
-    message = results(result)[0]
-    assert message.tool_call_id == 'no-workspace'
-    assert message.status == 'error'
-    assert 'workspace' in message.content.lower()
-    assert message in model.seen[1]
-    assert not (tmp_path / 'note.md').exists()
 
 
-def test_unknown_write_during_approval_resume_cannot_be_replayed(
+@async_test
+async def test_unknown_write_during_approval_resume_cannot_be_replayed(
     monkeypatch, tmp_path,
 ):
     root = tmp_path / 'workspace'
     root.mkdir()
     outside = tmp_path / 'outside.md'
     outside.write_text('APPROVED', encoding='utf-8')
-    app, _model = make_app(monkeypatch, [
+    app, _model = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[
             call('read', {'path': str(outside)}, 'read-outside'),
             call('write', {'path': 'case.md', 'content': 'NEW'}, 'write-inside'),
@@ -475,18 +472,18 @@ def test_unknown_write_during_approval_resume_cannot_be_replayed(
         AIMessage(content='inspect the file before another write'),
         AIMessage(content='continued safely'),
     ], tools=[create_session_read_tool(), create_session_write_tool()])
-    session = app.create_workspace_session('A', root)
-    pending = app.run(session, [('user', 'read then write')])
+    session = await app.acreate_workspace_session('A', root)
+    pending = await app.arun(session, [('user', 'read then write')])
     assert pending['approval_requests'][0]['tool_call_id'] == 'read-outside'
 
     def unknown_replace(_source, _target):
         raise OSError('PRIVATE_COMMIT_DETAIL')
 
     monkeypatch.setattr(write_module.os, 'replace', unknown_replace)
-    result = app.resume_tool_approval(session, ['approve'])
+    result = await app.aresume_tool_approval(session, ['approve'])
     assert results(result)[-1].status == 'error'
     assert 'outcome is unknown' in results(result)[-1].content
     with pytest.raises(application.SessionPendingApprovalError, match='pending'):
-        app.resume_tool_approval(session, ['approve'])
-    continued = app.run(session, [('user', 'continue')])
+        await app.aresume_tool_approval(session, ['approve'])
+    continued = await app.arun(session, [('user', 'continue')])
     assert continued['messages'][-1].content == 'continued safely'

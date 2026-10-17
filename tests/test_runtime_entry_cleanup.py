@@ -68,3 +68,30 @@ def test_central_run_services_still_prevent_closing_from_active_run(monkeypatch)
             await app.aclose()
         assert app._closed
     asyncio.run(scenario())
+
+
+def test_configured_probe_uses_current_async_graph_without_network(monkeypatch, capsys):
+    import sys
+    from langchain_core.messages import AIMessage
+    from naiyue_test_agent import agent_runtime
+    from naiyue_test_agent.model_access import ModelCatalog
+    from scripts import probe_configured_tool_loop as probe
+    from test_agent_runtime import ToolCapableFake
+
+    model = ToolCapableFake(responses=[
+        AIMessage(content='', tool_calls=[{'name': 'read_probe_value', 'args': {}, 'id': 'probe'}]),
+        AIMessage(content='offline-value'),
+    ])
+    monkeypatch.setattr(agent_runtime, 'load_model_catalog',
+                        lambda _: ModelCatalog('fake', {'fake': model}))
+    monkeypatch.setattr(probe.secrets, 'token_hex', lambda _: 'offline-value')
+    monkeypatch.setattr(sys, 'argv',
+                        ['probe', '--config', 'synthetic.json', '--model-id', 'fake'])
+    monkeypatch.setenv('LANGSMITH_TRACING', 'false')
+    monkeypatch.setenv('LANGCHAIN_TRACING_V2', 'false')
+    # The test controls all IO; do not install a process-wide signal timer.
+    monkeypatch.setattr(probe.signal, 'signal', lambda *_: None)
+    monkeypatch.setattr(probe.signal, 'alarm', lambda *_: 0)
+    assert asyncio.run(probe.main()) == 0
+    assert capsys.readouterr().out == (
+        'status=PASS model_calls=2 tool_executions=1 final_matches_tool_result=true\n')

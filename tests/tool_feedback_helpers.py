@@ -12,7 +12,7 @@ from test_agent_runtime import ToolCapableFake
 EXPECTED_NOASK = 'Tool was not executed: access denied by the permission policy (NoAsk).'
 
 
-def invoke_tool_feedback(spec, args, *, call_id, context=None, permission_mode='NoAsk'):
+async def invoke_tool_feedback(spec, args, *, call_id, context=None, permission_mode='NoAsk'):
     tool = spec.tool
     model = ToolCapableFake(responses=[
         AIMessage(content='', tool_calls=[{'name': tool.name, 'args': args, 'id': call_id}]),
@@ -28,8 +28,8 @@ def invoke_tool_feedback(spec, args, *, call_id, context=None, permission_mode='
     )
     config = {'configurable': {'thread_id': 'feedback'}}
     context = {'session_id': 'feedback', **(context or {})}
-    result = agent.invoke({'messages': [('user', 'run tool')]},
-                          context=context, config=config)
+    result = (await agent.ainvoke({'messages': [('user', 'run tool')]},
+                          context=context, config=config))
     feedback = next(m for m in result['messages']
                     if isinstance(m, ToolMessage) and m.tool_call_id == call_id)
     assert feedback.name == tool.name
@@ -41,15 +41,13 @@ def fail_tool_dispatch(monkeypatch, tool_name, failure):
     """Inject a runtime dispatch fault outside the ordinary execution-error adapter."""
     from naiyue_test_agent.agent_runtime.tool_execution.observation import _record_tool_call
 
-    original = _record_tool_call.wrap_tool_call
+    async_original = _record_tool_call.awrap_tool_call
 
-    def dispatch(request, handler):
+    async def async_dispatch(request, handler):
         if request.tool_call['name'] != tool_name:
-            return original(request, handler)
-
-        def fail(_request):
+            return await async_original(request, handler)
+        async def fail(_request):
             raise failure
+        return await async_original(request, fail)
 
-        return original(request, fail)
-
-    monkeypatch.setattr(_record_tool_call, 'wrap_tool_call', dispatch)
+    monkeypatch.setattr(_record_tool_call, 'awrap_tool_call', async_dispatch)

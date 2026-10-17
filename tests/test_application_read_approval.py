@@ -1,5 +1,7 @@
 """Read approval pauses before IO and binds each approval to one target."""
 
+from native_application_helpers import async_test, build_application
+
 from pathlib import Path
 
 import pytest
@@ -17,11 +19,11 @@ class ToolCapableFake(FakeMessagesListChatModel):
         return self
 
 
-def make_app(monkeypatch, responses, *, permissions=None):
+async def make_app(monkeypatch, responses, *, permissions=None):
     model = ToolCapableFake(responses=responses)
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    return application.build_local_application(
+    return await build_application(
         Path('synthetic.json'), tools=[create_session_read_tool()],
         system_prompt='', response_format=None, settings=ToolSettings.model_validate({'permissions': permissions or {}}),
     )
@@ -35,32 +37,33 @@ def tool_messages(result):
     return [message for message in result['messages'] if isinstance(message, ToolMessage)]
 
 
-def test_external_read_pauses_then_approve_reads_once(monkeypatch, tmp_path, caplog):
+@async_test
+async def test_external_read_pauses_then_approve_reads_once(monkeypatch, tmp_path, caplog):
     root = tmp_path / 'workspace'
     root.mkdir()
     outside = tmp_path / 'outside.md'
     outside.write_text('APPROVED_CONTENT', encoding='utf-8')
-    app = make_app(monkeypatch, [
+    app = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[tool_call(outside)]),
         AIMessage(content='approved answer'),
     ])
-    session = app.create_workspace_session('A', root)
+    session = await app.acreate_workspace_session('A', root)
 
     with caplog.at_level('INFO'):
-        pending = app.run(session, [('user', 'read external')])
+        pending = await app.arun(session, [('user', 'read external')])
 
     assert len(pending['approval_requests']) == 1
     assert pending['approval_requests'][0]['target'] == str(outside.resolve())
     assert tool_messages(pending) == []
     assert app.pending_tool_approvals(session) == pending['approval_requests']
     with pytest.raises(application.SessionPendingApprovalError):
-        app.run(session, [('user', 'skip approval')])
+        await app.arun(session, [('user', 'skip approval')])
     with pytest.raises(ValueError):
-        app.resume_tool_approval(session, [])
+        await app.aresume_tool_approval(session, [])
     assert app.pending_tool_approvals(session) == pending['approval_requests']
 
     with caplog.at_level('INFO'):
-        result = app.resume_tool_approval(session, ['approve'])
+        result = await app.aresume_tool_approval(session, ['approve'])
 
     assert app.pending_tool_approvals(session) == []
     assert [message.content for message in tool_messages(result)] == ['APPROVED_CONTENT']
@@ -79,35 +82,37 @@ def test_external_read_pauses_then_approve_reads_once(monkeypatch, tmp_path, cap
     assert 'APPROVED_CONTENT' not in caplog.text
 
 
-def test_reject_skips_read_and_sensitive_external_path_is_denied(monkeypatch, tmp_path):
+@async_test
+async def test_reject_skips_read_and_sensitive_external_path_is_denied(monkeypatch, tmp_path):
     root = tmp_path / 'workspace'
     root.mkdir()
     outside = tmp_path / 'outside.md'
     outside.write_text('PRIVATE_CONTENT', encoding='utf-8')
     secret = tmp_path / '.env'
     secret.write_text('SECRET', encoding='utf-8')
-    app = make_app(monkeypatch, [
+    app = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[tool_call(outside, 'rejected')]),
         AIMessage(content='read rejected'),
         AIMessage(content='', tool_calls=[tool_call(secret, 'secret')]),
         AIMessage(content='secret denied'),
     ])
-    session = app.create_workspace_session('A', root)
+    session = await app.acreate_workspace_session('A', root)
 
-    pending = app.run(session, [('user', 'try outside')])
+    pending = await app.arun(session, [('user', 'try outside')])
     assert len(pending['approval_requests']) == 1
-    rejected = app.resume_tool_approval(session, ['reject'])
+    rejected = await app.aresume_tool_approval(session, ['reject'])
     assert tool_messages(rejected)[0].status == 'error'
     assert 'PRIVATE_CONTENT' not in str(rejected)
 
-    app.set_permission_mode(session, 'NoAsk')
-    denied = app.run(session, [('user', 'try secret')])
+    await app.aset_permission_mode(session, 'NoAsk')
+    denied = await app.arun(session, [('user', 'try secret')])
     assert 'approval_requests' not in denied
     assert tool_messages(denied)[-1].status == 'error'
     assert 'SECRET' not in str(denied)
 
 
-def test_changed_symlink_target_cannot_use_old_approval(monkeypatch, tmp_path):
+@async_test
+async def test_changed_symlink_target_cannot_use_old_approval(monkeypatch, tmp_path):
     root = tmp_path / 'workspace'
     root.mkdir()
     first = tmp_path / 'first.md'
@@ -116,17 +121,17 @@ def test_changed_symlink_target_cannot_use_old_approval(monkeypatch, tmp_path):
     second.write_text('SECOND_PRIVATE', encoding='utf-8')
     link = root / 'external-link.md'
     link.symlink_to(first)
-    app = make_app(monkeypatch, [
+    app = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[tool_call(link)]),
         AIMessage(content='target changed'),
     ])
-    session = app.create_workspace_session('A', root)
+    session = await app.acreate_workspace_session('A', root)
 
-    pending = app.run(session, [('user', 'read link')])
+    pending = await app.arun(session, [('user', 'read link')])
     assert pending['approval_requests'][0]['target'] == str(first.resolve())
     link.unlink()
     link.symlink_to(second)
-    result = app.resume_tool_approval(session, ['approve'])
+    result = await app.aresume_tool_approval(session, ['approve'])
 
     assert tool_messages(result)[0].status == 'error'
     assert 'changed' in tool_messages(result)[0].content
@@ -134,22 +139,23 @@ def test_changed_symlink_target_cannot_use_old_approval(monkeypatch, tmp_path):
     assert 'SECOND_PRIVATE' not in str(result)
 
 
-def test_two_external_calls_have_independent_decisions(monkeypatch, tmp_path):
+@async_test
+async def test_two_external_calls_have_independent_decisions(monkeypatch, tmp_path):
     root = tmp_path / 'workspace'
     root.mkdir()
     first = tmp_path / 'first.md'
     second = tmp_path / 'second.md'
     first.write_text('FIRST_PRIVATE', encoding='utf-8')
     second.write_text('SECOND_PRIVATE', encoding='utf-8')
-    app = make_app(monkeypatch, [
+    app = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[tool_call(first, 'first'), tool_call(second, 'second')]),
         AIMessage(content='review finished'),
     ])
-    session = app.create_workspace_session('A', root)
+    session = await app.acreate_workspace_session('A', root)
 
-    pending = app.run(session, [('user', 'read both')])
+    pending = await app.arun(session, [('user', 'read both')])
     assert [item['target'] for item in pending['approval_requests']] == [str(first), str(second)]
-    result = app.resume_tool_approval(session, ['approve', 'reject'])
+    result = await app.aresume_tool_approval(session, ['approve', 'reject'])
 
     messages = tool_messages(result)
     assert len(messages) == 2
@@ -161,50 +167,53 @@ def test_two_external_calls_have_independent_decisions(monkeypatch, tmp_path):
     assert 'SECOND_PRIVATE' not in str(result)
 
 
-def test_other_session_cannot_resume_pending_read_but_can_run(monkeypatch, tmp_path):
+@async_test
+async def test_other_session_cannot_resume_pending_read_but_can_run(monkeypatch, tmp_path):
     first_root = tmp_path / 'first-workspace'
     second_root = tmp_path / 'second-workspace'
     first_root.mkdir()
     second_root.mkdir()
     external = tmp_path / 'external.md'
     external.write_text('FIRST_PRIVATE', encoding='utf-8')
-    app = make_app(monkeypatch, [
+    app = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[tool_call(external)]),
         AIMessage(content='second session answer'),
         AIMessage(content='first resumed answer'),
     ])
-    first = app.create_workspace_session('A', first_root)
-    second = app.create_workspace_session('A', second_root)
+    first = await app.acreate_workspace_session('A', first_root)
+    second = await app.acreate_workspace_session('A', second_root)
 
-    pending = app.run(first, [('user', 'read external')])
+    pending = await app.arun(first, [('user', 'read external')])
     assert len(pending['approval_requests']) == 1
     with pytest.raises(application.SessionPendingApprovalError):
-        app.resume_tool_approval(second, ['approve'])
-    assert app.run(second, [('user', 'ordinary answer')])['messages'][-1].content == (
+        await app.aresume_tool_approval(second, ['approve'])
+    assert (await app.arun(second, [('user', 'ordinary answer')]))['messages'][-1].content == (
         'second session answer'
     )
-    assert app.resume_tool_approval(first, ['approve'])['messages'][-1].content == (
+    assert (await app.aresume_tool_approval(first, ['approve']))['messages'][-1].content == (
         'first resumed answer'
     )
 
 
-def test_file_inside_workspace_under_hidden_parent_is_allowed(monkeypatch, tmp_path):
+@async_test
+async def test_file_inside_workspace_under_hidden_parent_is_allowed(monkeypatch, tmp_path):
     root = tmp_path / '.projects' / 'workspace'
     root.mkdir(parents=True)
     (root / 'visible.md').write_text('VISIBLE_CONTENT', encoding='utf-8')
-    app = make_app(monkeypatch, [
+    app = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[tool_call('visible.md')]),
         AIMessage(content='read finished'),
     ])
-    session = app.create_workspace_session('A', root)
+    session = await app.acreate_workspace_session('A', root)
 
-    result = app.run(session, [('user', 'read workspace file')])
+    result = await app.arun(session, [('user', 'read workspace file')])
 
     assert 'approval_requests' not in result
     assert tool_messages(result)[0].content == 'VISIBLE_CONTENT'
 
 
-def test_session_read_allows_github_source_but_denies_external_hidden_target(
+@async_test
+async def test_session_read_allows_github_source_but_denies_external_hidden_target(
     monkeypatch, tmp_path,
 ):
     root = tmp_path / 'workspace'
@@ -214,16 +223,16 @@ def test_session_read_allows_github_source_but_denies_external_hidden_target(
     external = tmp_path / '.github' / 'outside.yml'
     external.parent.mkdir()
     external.write_text('PRIVATE_EXTERNAL', encoding='utf-8')
-    app = make_app(monkeypatch, [
+    app = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[tool_call('.github/workflows/test.yml', 'inside')]),
         AIMessage(content='inside done'),
         AIMessage(content='', tool_calls=[tool_call(external, 'outside')]),
         AIMessage(content='outside denied'),
     ], permissions={'mode': 'NoAsk', 'allow': [{'tool': 'read', 'path': '${workspace}/.github/**'}]})
-    session = app.create_workspace_session('A', root)
+    session = await app.acreate_workspace_session('A', root)
 
-    inside = app.run(session, [('user', 'read internal workflow')])
-    outside_result = app.run(session, [('user', 'read external hidden')])
+    inside = await app.arun(session, [('user', 'read internal workflow')])
+    outside_result = await app.arun(session, [('user', 'read external hidden')])
 
     assert 'approval_requests' not in inside
     assert tool_messages(inside)[0].content == 'workflow source'

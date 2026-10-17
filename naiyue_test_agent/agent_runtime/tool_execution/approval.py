@@ -27,9 +27,6 @@ class BatchApprovalMiddleware(AgentMiddleware):
                           'when': needs_review, 'description': 'Review access to the prepared tool target'}
             for call in asks.values()})
 
-    @hook_config(can_jump_to=['end'])
-    def after_model(self, state, runtime):
-        return self._local(state, runtime).after_model(state, runtime)
 
     @hook_config(can_jump_to=['end'])
     async def aafter_model(self, state, runtime):

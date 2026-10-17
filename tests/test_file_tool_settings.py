@@ -1,5 +1,7 @@
 """Per-tool limits must affect public schemas and actual file IO together."""
 
+from native_application_helpers import async_test
+
 import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
@@ -55,14 +57,15 @@ def test_file_settings_load_together_and_invalid_group_falls_back(tmp_path, capl
         module.LsSettings(default_limit=6, max_limit=5)
 
 
-def test_ls_config_controls_default_explicit_limit_and_feedback(tmp_path):
+@async_test
+async def test_ls_config_controls_default_explicit_limit_and_feedback(tmp_path):
     for name in ('a', 'b', 'c', 'd'):
         (tmp_path / name).touch()
     tool = tools.create_session_ls_tool(settings=tools.LsSettings(
         default_limit=2, max_limit=3, max_output_bytes=128))
-    default = invoke_tool_feedback(tool, {}, call_id='default', context={'workspace_root': tmp_path})
-    larger = invoke_tool_feedback(tool, {'limit': 3}, call_id='larger', context={'workspace_root': tmp_path})
-    invalid = invoke_tool_feedback(tool, {'limit': 4}, call_id='invalid', context={'workspace_root': tmp_path})
+    default = (await invoke_tool_feedback(tool, {}, call_id='default', context={'workspace_root': tmp_path}))
+    larger = (await invoke_tool_feedback(tool, {'limit': 3}, call_id='larger', context={'workspace_root': tmp_path}))
+    invalid = (await invoke_tool_feedback(tool, {'limit': 4}, call_id='invalid', context={'workspace_root': tmp_path}))
     assert default.content == 'a\nb\n[ls: truncated at 2 entries; narrow the directory or limit]'
     assert larger.content == 'a\nb\nc\n[ls: truncated at 3 entries; narrow the directory or limit]'
     assert invalid.status == 'error' and '1 to 3' in invalid.content
@@ -71,11 +74,12 @@ def test_ls_config_controls_default_explicit_limit_and_feedback(tmp_path):
     assert '128 bytes' in tool.tool.description and '2 entries' in tool.tool.description
 
 
-def test_ls_output_budget_counts_utf8_and_reports_its_actual_limit(tmp_path):
+@async_test
+async def test_ls_output_budget_counts_utf8_and_reports_its_actual_limit(tmp_path):
     (tmp_path / '中').touch()
     (tmp_path / '文').touch()
     tool = tools.create_session_ls_tool(settings=tools.LsSettings(max_output_bytes=6))
-    result = invoke_tool_feedback(tool, {}, call_id='ls', context={'workspace_root': tmp_path})
+    result = (await invoke_tool_feedback(tool, {}, call_id='ls', context={'workspace_root': tmp_path}))
     assert result.status == 'success'
     assert result.content == '中\n[ls: truncated at 6 bytes output; narrow the directory or limit]'
 
@@ -114,7 +118,8 @@ def test_session_tool_schemas_hide_runtime_and_enforce_configured_paths(name, ar
     ('write', {'path': 'x', 'content': 'ok'}, '_write'),
     ('edit', {'path': 'x', 'edits': [{'oldText': 'a', 'newText': 'b'}]}, '_edit'),
 ])
-def test_invalid_configured_arguments_stop_before_io(monkeypatch, tmp_path, name, args, io_name):
+@async_test
+async def test_invalid_configured_arguments_stop_before_io(monkeypatch, tmp_path, name, args, io_name):
     import importlib
     from langchain_core.messages import AIMessage, ToolMessage
     from test_application_run_events import make_app, ToolModel
@@ -126,10 +131,10 @@ def test_invalid_configured_arguments_stop_before_io(monkeypatch, tmp_path, name
     invalid_args = [{**args, 'path': 'long'}, {**args, 'path': 1},
                     {**args, 'unknown': 'PRIVATE'}]
     # Session Ls includes HITL, so use the existing app helper with a checkpointer.
-    app = make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
+    app = await make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': name, 'args': invalid, 'id': str(index)}
         for index, invalid in enumerate(invalid_args)]), AIMessage(content='done')]), [tool])
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'run')])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'run')])
     feedback = [message for message in result['messages'] if isinstance(message, ToolMessage)]
     assert len(feedback) == 3
     assert all(message.status == 'error' for message in feedback)
@@ -137,33 +142,35 @@ def test_invalid_configured_arguments_stop_before_io(monkeypatch, tmp_path, name
     assert entered == []
 
 
-def test_write_and_edit_keep_independent_utf8_input_budgets(tmp_path):
+@async_test
+async def test_write_and_edit_keep_independent_utf8_input_budgets(tmp_path):
     target = tmp_path / 'doc'
     target.write_text('旧', encoding='utf-8')
     writer = tools.create_session_write_tool(settings=tools.WriteSettings(max_input_bytes=4))
     editor = tools.create_session_edit_tool(settings=tools.EditSettings(max_input_bytes=9))
     context = {'workspace_root': tmp_path}
-    failed = invoke_tool_feedback(writer, {'path': 'doc', 'content': '中文'},
-                                  call_id='write', context=context)
+    failed = (await invoke_tool_feedback(writer, {'path': 'doc', 'content': '中文'},
+                                  call_id='write', context=context))
     assert failed.status == 'error' and 'size limit' in failed.content
     assert target.read_text() == '旧'
-    edited = invoke_tool_feedback(editor, {'path': 'doc', 'edits': [
-        {'oldText': '旧', 'newText': '中文'}]}, call_id='edit', context=context)
+    edited = (await invoke_tool_feedback(editor, {'path': 'doc', 'edits': [
+        {'oldText': '旧', 'newText': '中文'}]}, call_id='edit', context=context))
     assert edited.status == 'success' and target.read_text() == '中文'
-    failed = invoke_tool_feedback(editor, {'path': 'doc', 'edits': [
-        {'oldText': '中文', 'newText': '新内容'}]}, call_id='large', context=context)
+    failed = (await invoke_tool_feedback(editor, {'path': 'doc', 'edits': [
+        {'oldText': '中文', 'newText': '新内容'}]}, call_id='large', context=context))
     assert failed.status == 'error' and 'input limit' in failed.content
     assert target.read_text() == '中文'
     assert [path.name for path in tmp_path.iterdir()] == ['doc']
     assert '4 bytes' in writer.tool.description and '9 bytes' in editor.tool.description
 
 
-def test_edit_input_budget_does_not_limit_original_file_size(tmp_path):
+@async_test
+async def test_edit_input_budget_does_not_limit_original_file_size(tmp_path):
     original = 'x' * (128 * 1024) + 'a'
     (tmp_path / 'large').write_text(original)
     editor = tools.create_session_edit_tool(settings=tools.EditSettings(max_input_bytes=2))
-    result = invoke_tool_feedback(editor, {'path': 'large', 'edits': [
-        {'oldText': 'a', 'newText': 'b'}]}, call_id='edit', context={'workspace_root': tmp_path})
+    result = (await invoke_tool_feedback(editor, {'path': 'large', 'edits': [
+        {'oldText': 'a', 'newText': 'b'}]}, call_id='edit', context={'workspace_root': tmp_path}))
     assert result.status == 'success'
     assert (tmp_path / 'large').read_text() == original[:-1] + 'b'
 

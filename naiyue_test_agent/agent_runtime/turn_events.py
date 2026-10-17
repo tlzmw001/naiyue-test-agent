@@ -1,10 +1,9 @@
 """Finite, immutable turn metadata; content remains in message events."""
 
 from dataclasses import dataclass
-from typing import Literal, TYPE_CHECKING
+from typing import Literal
 
-if TYPE_CHECKING:
-    from .events import RunFailureData
+from naiyue_test_agent.contracts.failures import RunFailureData
 
 
 def _identity(turn_id, origin_run_id, model_call_id):
@@ -45,11 +44,9 @@ class TurnFinishedData:
     tool_call_ids: tuple[str, ...] = ()
     tool_message_ids: tuple[str, ...] = ()
     error_result_count: int = 0
-    failure: 'RunFailureData | None' = None
+    failure: RunFailureData | None = None
 
     def __post_init__(self):
-        from .events import RunFailureData
-
         _identity(self.turn_id, self.origin_run_id, self.model_call_id)
         if self.status not in ('completed', 'suspended', 'failed'):
             raise ValueError('Invalid turn outcome')

@@ -1,5 +1,7 @@
 """A new approval tool is registered without editing the generic runtime."""
 
+from native_application_helpers import async_test, build_application
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
@@ -10,7 +12,6 @@ import pytest
 from langchain.tools import ToolRuntime, tool
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, ToolMessage
-from langchain_core.tools import ToolException
 from pydantic import BaseModel, ConfigDict
 from naiyue_test_agent.tools.schemas import build_tool_schemas
 from naiyue_test_agent.application import prepare_tool_registry
@@ -31,7 +32,8 @@ class ApprovalInput(BaseModel):
     value: str
 
 
-def test_registered_approval_tool_pauses_and_resumes_without_runtime_tool_branch(
+@async_test
+async def test_registered_approval_tool_pauses_and_resumes_without_runtime_tool_branch(
     monkeypatch, tmp_path,
 ):
     calls = []
@@ -52,25 +54,26 @@ def test_registered_approval_tool_pauses_and_resumes_without_runtime_tool_branch
     ])
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application(
+    app = await build_application(
         Path('synthetic.json'), tools=[ToolSpec(approval_probe, ApprovalInput, permissions=ToolPermission())],
         system_prompt='', response_format=None,
     )
-    session = app.create_workspace_session('A', tmp_path)
+    session = await app.acreate_workspace_session('A', tmp_path)
 
-    pending = app.run(session, [('user', 'use probe')])
+    pending = await app.arun(session, [('user', 'use probe')])
     assert calls == []
     assert pending['approval_requests'] == [{
         'tool_call_id': 'probe-1', 'tool_name': 'approval_probe', 'target': '{"value": "approved"}',
     }]
-    result = app.resume_tool_approval(session, ['approve'])
+    result = await app.aresume_tool_approval(session, ['approve'])
     assert calls == ['approved']
     assert [(message.tool_call_id, message.content) for message in result['messages']
             if isinstance(message, ToolMessage)] == [('probe-1', 'approved')]
     assert result['messages'][-1].content == 'finished'
 
 
-def test_invalid_approval_metadata_is_rejected_when_registering_tool(
+@async_test
+async def test_invalid_approval_metadata_is_rejected_when_registering_tool(
     monkeypatch, tmp_path,
 ):
     @tool
@@ -83,7 +86,7 @@ def test_invalid_approval_metadata_is_rejected_when_registering_tool(
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
     with pytest.raises(ValueError, match='permission'):
-        application.build_local_application(
+        await build_application(
             Path('synthetic.json'), tools=[ToolSpec(approval_probe, approval_probe.args_schema, permissions=invalid_permission)],
             system_prompt='', response_format=None,
         )

@@ -1,25 +1,19 @@
 """Observe complete state messages without owning their reducer or persistence."""
 
-from .observation import observe, emit_event
+from naiyue_test_agent.contracts.failures import safe_error_type
 
 import hashlib
 import json
-import logging
 
 from langchain_core.messages import (
     AIMessage, ChatMessage, FunctionMessage, HumanMessage, SystemMessage, ToolMessage,
 )
-from langgraph.errors import GraphBubbleUp
-from langgraph.pregel import Pregel
-from langgraph.types import Command
 
 from .events import (
     ContextMessagesChangedData, MessageSnapshotData, MessageSnapshotUnavailableData,
-    safe_error_type,
 )
 
 
-logger = logging.getLogger(__name__)
 _SUPPORTED = (HumanMessage, AIMessage, ToolMessage, SystemMessage, FunctionMessage, ChatMessage)
 
 
@@ -115,91 +109,3 @@ class MessageStateObserver:
                     removed, current, visibility, 'compaction' if new_summary else 'state_update',
                 ))
             self._ids = current
-
-
-def invoke_with_message_observation(agent, input, *, context, config, publisher):
-    """Consume one native synchronous execution and preserve invoke's v1 result."""
-    observer = MessageStateObserver(publisher)
-    turns = context.get('_turn_observer')
-    controls = context.get('_control_observer')
-    context_operations = context.get('_context_observer')
-    if (not isinstance(agent, Pregel)
-            or getattr(agent.invoke, '__func__', None) is not Pregel.invoke):
-        observe(observer, observer.unavailable, 'stream', 'unsupported_state_interface')
-        if turns is not None:
-            observe(turns, turns.disable)
-        return agent.invoke(input, context=context, config=config)
-    baseline_messages = []
-    if agent.checkpointer:
-        try:
-            baseline = agent.get_state(config)
-        except GraphBubbleUp:
-            raise
-        except Exception as error:
-            observe(observer, observer.unavailable, 'baseline', 'baseline_read_failed', error=error)
-            if turns is not None:
-                observe(turns, turns.disable)
-            return agent.invoke(input, context=context, config=config)
-        baseline_messages = baseline.values.get('messages', [])
-        observe(observer, observer.seed, baseline_messages)
-    if turns is not None and isinstance(input, Command):
-        observe(turns, turns.activate_resume, baseline_messages)
-    latest, interrupts = None, []
-    iterator = agent.stream(input, context=context, config=config,
-                            stream_mode=['updates', 'values'], version='v2',
-                            output_keys=agent.output_channels)
-    primary = None
-    try:
-        for part in iterator:
-            if part['ns']:
-                continue
-            if part['type'] == 'values':
-                latest = part['data']
-                if isinstance(latest, dict):
-                    observe(observer, observer.observe, latest.get('messages', []))
-                    if controls is not None:
-                        observe(controls, controls.observe, latest.get('messages', []))
-                    if context_operations is not None:
-                        observe(context_operations, context_operations.observe, latest.get('messages', []))
-                    if turns is not None:
-                        observe(turns, turns.observe, latest.get('messages', []))
-            elif part['type'] == 'updates' and isinstance(part['data'], dict):
-                interrupts.extend(part['data'].get('__interrupt__', ()))
-            if turns is not None:
-                observe(turns, turns.try_finish)
-            if context_operations is not None:
-                observe(context_operations, context_operations.flush)
-    except BaseException as error:
-        primary = error
-        raise
-    finally:
-        try:
-            close = getattr(iterator, 'close', None)
-            if close is not None:
-                close()
-        except BaseException as error:
-            if primary is None:
-                raise
-            logger.error('message_stream_close_failed error_type=%s', safe_error_type(error))
-        if isinstance(primary, Exception) and not isinstance(primary, GraphBubbleUp) and agent.checkpointer:
-            try:
-                recovered = agent.get_state(config)
-                observe(observer, observer.observe, recovered.values.get('messages', []), visibility='recovery_view')
-                if controls is not None:
-                    observe(controls, controls.observe, recovered.values.get('messages', []), visibility='recovery_view')
-                if context_operations is not None:
-                    observe(context_operations, context_operations.observe, recovered.values.get('messages', []), visibility='recovery_view')
-                if turns is not None:
-                    observe(turns, turns.observe, recovered.values.get('messages', []), visibility='recovery_view')
-            except BaseException as error:
-                logger.error('message_recovery_observation_failed error_type=%s', safe_error_type(error))
-                if isinstance(error, Exception) and not isinstance(error, GraphBubbleUp):
-                    try:
-                        observe(observer, observer.unavailable, 'recovery', 'recovery_read_failed',
-                                             visibility='recovery_view', error=error)
-                    except BaseException as reporting_error:
-                        logger.error('message_recovery_reporting_failed error_type=%s',
-                                     safe_error_type(reporting_error))
-    if interrupts:
-        return {**(latest if isinstance(latest, dict) else {}), '__interrupt__': interrupts}
-    return latest

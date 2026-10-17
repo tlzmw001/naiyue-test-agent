@@ -1,4 +1,4 @@
-"""Shared session event contracts; application owns their production."""
+"""Shared run/control facts produced by the application and runtime observers."""
 
 from dataclasses import dataclass
 from typing import Literal

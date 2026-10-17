@@ -1,8 +1,10 @@
 # Naiyue Test Agent
 
-面向 HTTP/RPC 接口测试的 AI Agent 项目，当前已实现本地模型—工具循环、会话、事件流及同步／异步应用基础链路；RAG 与业务评测按后续切片推进。
+面向 HTTP/RPC 接口测试的 AI Agent 项目，当前已实现本地模型—工具循环、会话、事件流及统一异步应用链路；RAG 与业务评测按后续切片推进。
 
 项目目录与仓库名：`naiyue-test-agent`。初始化日期：2026-09-28。
+
+当前架构收敛见 [Spec093](docs/specs/093-architecture-semantics-and-sync-cleanup.md)：CLI/Web统一使用`AsyncApplication`，CLI保留终端线程桥；独立同步App及其持久化工厂已删除；093C继续删除历史Discount原型及本项目同步Runtime执行面，低层测试/探针迁至异步。`contracts`保留跨层共享事实，响应拒绝异常归Runtime。已学旧入口与当前函数的对应关系见[学习路线](docs/1.0/learning-roadmap.md)。
 
 ## 项目目标
 
@@ -38,8 +40,8 @@
 4. [分层命名与实施路线](docs/implementation-roadmap.md)：四层职责、当前代码位置与首期小目标顺序。
 5. [AgentX 源码参考](docs/agentx_architecture_reference.md)：2026-09-23 的静态调研记录。
 6. [首个运行层 Spec](docs/specs/001-model-selection-boundary.md)与[Lesson 1](docs/lessons/lesson-1.md)：模型调用边界按会话选模的设计、代码地图和理解检查。
-7. [首个 HTTP 业务场景 Spec](docs/specs/002-discount-policy-first-scenario.md)：`discount_system` 折扣规则优先级冲突的公开契约、验收样本与证据边界。
-8. [结构化用例设计 Spec](docs/specs/003-discount-case-design.md)与[Lesson 2](docs/lessons/lesson-2.md)：从公开契约文本到 Pydantic 用例、结构化工具调用与引用校验。
+7. [首个 HTTP 业务场景 Spec](docs/specs/002-discount-policy-first-scenario.md)：历史`discount_system`契约与证据边界，需求已撤销。
+8. [结构化用例设计 Spec](docs/specs/003-discount-case-design.md)与[Lesson 2](docs/lessons/lesson-2.md)：历史结构化用例实验，093C已删除对应实现和测试。
 9. [本地模型配置 Spec](docs/specs/004-local-model-config-format.md)：`.env/models.json` 的格式、读取、接线与验证边界。
 10. [模型接入 thinking Spec](docs/specs/005-model-access-thinking.md)：`model_access/` 包、默认等级回退、供应商参数映射及证据边界。
 11. [后续开发与补充清单](docs/future-work.md)：集中记录未实现、未验证和待学习的事项及完成判据。
@@ -88,13 +90,13 @@
 
 2026-10-11最新收尾：Spec083已统一分类器为`(error, source)`，保护分类直接构造描述并保留诊断回退；分支测试与VS Code单步指南已补齐，第二章课堂当前到Lesson43。此次提交前重新验证：后端1060通过、前端9文件27通过，TypeScript/Vite构建、compileall与依赖检查通过。当前工程状态及已记录限制见[交接第323节](docs/handoff.md#323-当前代码提交与推送收尾2026-10-11)，下列Spec082结果为此前阶段快照。
 
-2026-10-11更新：按[Spec082](docs/specs/082-remove-obsolete-runtime-bridges.md)清理22个被替代函数、旧交互装配/自然结束分支及无用导入；运行依赖统一使用RunServices，旧分项bind/getter和failure_data已移除。CLI/Web继续采用正式异步应用；同步应用/持久会话和低层Runtime仍有明确探针或策略消费者，具体保留依据见Spec第3节。最新本机后端1038、前端27及构建通过；下文早期阶段记录保留历史，不作为废弃接口的使用指引。
+2026-10-11更新：按[Spec082](docs/specs/082-remove-obsolete-runtime-bridges.md)清理22个被替代函数、旧交互装配/自然结束分支及无用导入；运行依赖统一使用RunServices，旧分项bind/getter和failure_data已移除。CLI/Web继续采用正式异步应用；该时点同步应用/持久会话和低层Runtime仍有消费者；093已迁移应用和Runtime消费者，删除独立同步执行链；Discount历史原型已按用户确认移除。最新本机后端1038、前端27及构建通过；下文早期阶段记录保留历史，不作为废弃接口的使用指引。
 
 最新状态（2026-10-09）：最小本地 Web 对话已接通现有异步应用、领域事件和 SQLite/checkpoint。下列段落保留早期机制记录，能力与限制以文末 Web 入口、当前交接和对应阶段 Spec 为准；早期“尚无 Web/持久会话”不是当前状态。
 
 已准备本地 Git 仓库、协作规则、交接文档及 Python 3.12 虚拟环境，安装 LangChain、OpenAI/Anthropic/Ollama 模型适配包和 pytest。依赖检查、最小真实模型响应及一次带 middleware 观察的 create_agent 工具循环通过。正式运行层已实现按可信 `session_id` 在每次模型调用前选模，并由确定性测试验证一次运行内 A→工具→B、会话隔离和缺失 ID 的拒绝。模型接入层现可从 `.env/models.json` 加载配置并构造四类适配对象，配置驱动的 HeiyuCode 真实工具循环通过；OpenAI 官方、Claude、Ollama 尚未真实调用。首个测试策略模块用假模型从提供的 `discount_system` 公开契约文本提交结构化用例。尚无真实模型业务用例、HTTP 执行、Web、持久会话、完整轨迹系统或业务评测；也没有独立的应用构建目标。
 
-首个 HTTP 场景已选 `discount_system` 的折扣规则优先级冲突，公开契约和 SUT 源码已核对；结构化用例设计已用假模型通过 `create_agent` 验证。模型接入代码现归入 `model_access/` 包，并用本地配置可选地指定单模型默认 thinking 等级；确定性测试验证了 Pi 式回退和适配器参数接线，真实供应商执行等级尚未验证。模型请求未配置策略时使用 60 秒 HTTP 超时，在线 SDK 最多重试 2 次；本机 HTTP mock 验证了可重试 503 的尝试次数，Ollama 重试尚未实现。运行层现归入 `agent_runtime/` 包，假模型验证同进程跨 `invoke` 的历史延续与选模；同步运行入口已把 run 开始/终局、模型和工具边界按 run ID 关联，并在 run 事件中记录会话 ID。`application.SessionService` 已用假模型验证进程内会话映射、切换和同会话 busy 规则；`build_local_application` 现将一份模型目录、该服务、一个 Agent 和一个内存 checkpointer 配对，经新入口的假模型测试验证两轮历史、切换、隔离与事件。最小本地 CLI 已调用同一应用对象，真实模型合成文本验证了同一进程两轮输入；旧诊断入口尚未统一接入。当前 CLI 通过输入线程、运行 worker 和专属 asyncio loop 调用异步应用，接受 Steering/Follow-up 和活动停止；持久化与可消费事件已接入，Web、身份授权和业务评测仍待后续。选模 middleware 的核心语法与调用已讲解；用户对新增 thinking、请求策略及工具事件代码的独立实现和面试追问能力尚未验证。
+首个 HTTP 场景已选 `discount_system` 的折扣规则优先级冲突，公开契约和 SUT 源码已核对；结构化用例设计已用假模型通过 `create_agent` 验证。模型接入代码现归入 `model_access/` 包，并用本地配置可选地指定单模型默认 thinking 等级；确定性测试验证了 Pi 式回退和适配器参数接线，真实供应商执行等级尚未验证。模型请求未配置策略时使用 60 秒 HTTP 超时，在线 SDK 最多重试 2 次；本机 HTTP mock 验证了可重试 503 的尝试次数，Ollama 重试尚未实现。运行层现归入 `agent_runtime/` 包，假模型验证同进程跨 `invoke` 的历史延续与选模；同步运行入口已把 run 开始/终局、模型和工具边界按 run ID 关联，并在 run 事件中记录会话 ID。`application.SessionService` 已用假模型验证进程内会话映射、切换和同会话 busy 规则；历史同步`build_local_application`（已由093撤销，当前用`build_async_local_application`）将一份模型目录、该服务、一个 Agent 和一个内存 checkpointer 配对，经新入口的假模型测试验证两轮历史、切换、隔离与事件。最小本地 CLI 已调用同一应用对象，真实模型合成文本验证了同一进程两轮输入；旧诊断入口尚未统一接入。当前 CLI 通过输入线程、运行 worker 和专属 asyncio loop 调用异步应用，接受 Steering/Follow-up 和活动停止；持久化与可消费事件已接入，Web、身份授权和业务评测仍待后续。选模 middleware 的核心语法与调用已讲解；用户对新增 thinking、请求策略及工具事件代码的独立实现和面试追问能力尚未验证。
 
 模型接入层现把已知供应商结束字段归一为项目 `naiyue_stop_reason`，包括将 Claude 的 `model_context_window_exceeded` 归为截断。运行层对明确截断的工具调用，以及与最近模型消息不一致的工具请求，回填错误 `ToolMessage`，不执行实际工具函数；本地假模型验证了截断结果回填，直接 hook 注入验证了不一致请求拒绝。真实网关只观察过正常结束字段，真实截断、缺失元数据策略、普通文本截断终局和异步路径尚未验证。CLI 选择工作区时已注册 `read/ls/find/grep/write/edit`；`write` 仅允许工作区内整文件创建/覆盖，`edit` 仅允许对工作区内现有 UTF-8 文件做精确替换，真实供应商调用尚未验证。
 
@@ -264,6 +266,8 @@ CLI默认创建持久新会话并显示ID。CLI/Web未传`--workspace`时使用�
 [Spec074](docs/specs/074-async-context-model-chain.md)随后接通项目prompt、主动摘要及一次明确输入溢出恢复的异步模型IO，同步/异步共用原压缩算法。34例新增/全量846例通过，取消摘要和重发的确定性测试保留原信号；`ainvoke`完整结果及`astream`的values/updates状态替换/内存checkpoint已验证。真实上下文探针`.venv/bin/python -m scripts.probe_async_model --with-context --timeout-seconds 120`通过摘要+回答两逻辑请求和随机合成事实，125秒父截止，只调整探针内存预算，不读取用户文件/持久库或修改配置。仍无token增量、异步工具/审批/应用/SQLite或真实活动取消证明；CPU估算和事件订阅仍同步，框架内部子任务取消限制见待办。
 
 ## 正式异步应用与事件流
+
+[Spec093](docs/specs/093-architecture-semantics-and-sync-cleanup.md)已移除独立同步App，以下为唯一产品应用执行链。
 
 [Spec075](docs/specs/075-integrated-async-application.md)已合并接通工具、应用、SQLite及正式流式消费；新36例、全量882例通过。这是Spec075时点的异步基础；CLI接线和活动停止已由下述Spec076完成。
 

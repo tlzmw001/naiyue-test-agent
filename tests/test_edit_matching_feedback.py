@@ -1,5 +1,7 @@
 """Edit behavior through the real permission, dispatch and ToolError boundary."""
 
+from native_application_helpers import async_test
+
 import json
 import re
 from pathlib import Path
@@ -10,15 +12,16 @@ from naiyue_test_agent.tools import EditSettings, create_session_edit_tool
 from tool_feedback_helpers import invoke_tool_feedback
 
 
-def run_edit(tmp_path, original, edits, settings=None):
+async def run_edit(tmp_path, original, edits, settings=None):
     target = tmp_path / 'text.txt'
     target.write_bytes(original)
-    result = invoke_tool_feedback(create_session_edit_tool(settings=settings),
+    result = (await invoke_tool_feedback(create_session_edit_tool(settings=settings),
         {'path': target.name, 'edits': [{'oldText': old, 'newText': new} for old, new in edits]},
-        call_id='edit-detail', context={'workspace_root': tmp_path})
+        call_id='edit-detail', context={'workspace_root': tmp_path}))
     return result, target.read_bytes()
 
 
+@async_test
 @pytest.mark.parametrize(('original', 'old', 'new', 'expected'), [
     (b'\xef\xbb\xbfalpha\r\nbeta\r\n', 'alpha\nbeta', 'A\nB', b'\xef\xbb\xbfA\r\nB\r\n'),
     ('print(“旧值”)\r\n'.encode(), 'print("旧值")', 'print("新值")', 'print("新值")\r\n'.encode()),
@@ -26,8 +29,8 @@ def run_edit(tmp_path, original, edits, settings=None):
     ('a\u00a0—\u2009b  \r\nc\n'.encode(), 'a - b\nc', 'X\nY', b'X\r\nY\n'),
     (b'first\r\nsecond\nthird\n', 'second\nthird', 'S\nT', b'first\r\nS\nT\n'),
 ])
-def test_finite_normalization_and_local_newline_preserve_bytes(tmp_path, original, old, new, expected):
-    result, actual = run_edit(tmp_path, original, [(old, new)])
+async def test_finite_normalization_and_local_newline_preserve_bytes(tmp_path, original, old, new, expected):
+    result, actual = (await run_edit(tmp_path, original, [(old, new)]))
     assert result.status == 'success', result.content
     assert actual == expected
     assert result.tool_call_id == 'edit-detail'
@@ -36,8 +39,9 @@ def test_finite_normalization_and_local_newline_preserve_bytes(tmp_path, origina
     assert json.loads(json.dumps(result.artifact)) == result.artifact
 
 
-def test_success_contains_bounded_diff_and_json_artifact(tmp_path):
-    result, actual = run_edit(tmp_path, b'a\nb\nc\nd\ne\nf\ng\nh\n', [('d', 'D'), ('h', 'H')])
+@async_test
+async def test_success_contains_bounded_diff_and_json_artifact(tmp_path):
+    result, actual = (await run_edit(tmp_path, b'a\nb\nc\nd\ne\nf\ng\nh\n', [('d', 'D'), ('h', 'H')]))
     assert result.status == 'success'
     assert actual == b'a\nb\nc\nD\ne\nf\ng\nH\n'
     assert 'firstChangedLine=4' in result.content and '+D' in result.content
@@ -46,25 +50,27 @@ def test_success_contains_bounded_diff_and_json_artifact(tmp_path):
     assert result.artifact['diff_truncated'] is False
 
 
+@async_test
 @pytest.mark.parametrize(('original', 'edits', 'reason'), [
     ('“a”\n"a"\nother\n', [('"a"', 'A'), ('ｏｔｈｅｒ', 'B')], 'unique'),
     ('“a” same same\n', [('"a"', 'A'), ('same', 'B')], 'unique'),
     ('“abc”\n', [('"abc"', 'A'), ('abc', 'B')], 'overlap'),
     ('ﬃ\n', [('fi', 'X')], 'not found'),
 ])
-def test_ambiguity_overlap_and_partial_unicode_expansion_are_atomic(tmp_path, original, edits, reason):
+async def test_ambiguity_overlap_and_partial_unicode_expansion_are_atomic(tmp_path, original, edits, reason):
     encoded = original.encode()
-    result, actual = run_edit(tmp_path, encoded, edits)
+    result, actual = (await run_edit(tmp_path, encoded, edits))
     assert result.status == 'error'
     assert reason in result.content
     assert actual == encoded
 
 
-def test_fuzzy_crosses_io_chunks_and_hangul_combining_boundary(tmp_path, monkeypatch):
+@async_test
+async def test_fuzzy_crosses_io_chunks_and_hangul_combining_boundary(tmp_path, monkeypatch):
     from naiyue_test_agent.tools import edit as module
     monkeypatch.setattr(module, '_CHUNK_BYTES', 5)
     original = ('prefix\n' + '\u1100\u1161\u11a8 cafe\u0301 “x”\n').encode()
-    result, actual = run_edit(tmp_path, original, [('각 café "x"', 'done')])
+    result, actual = (await run_edit(tmp_path, original, [('각 café "x"', 'done')]))
     assert result.status == 'success', result.content
     assert actual == b'prefix\ndone\n'
 
@@ -108,6 +114,7 @@ def apply_patch(original, patch):
     return b''.join(output)
 
 
+@async_test
 @pytest.mark.parametrize(('original', 'edits'), [
     (b'a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\np\n', [('b', 'B\nBB'), ('o', 'O')]),
     (b'one\ntwo', [('two', 'TWO\nlast\n')]),
@@ -116,36 +123,39 @@ def apply_patch(original, patch):
     (b'\xef\xbb\xbfalpha\r\nbeta\r\n', [('alpha\nbeta', 'A\nB')]),
     ('a\u2028b\nc\n'.encode(), [('b', 'B')]),
 ])
-def test_complete_patch_reconstructs_exact_result(tmp_path, original, edits):
-    result, actual = run_edit(tmp_path, original, edits)
+async def test_complete_patch_reconstructs_exact_result(tmp_path, original, edits):
+    result, actual = (await run_edit(tmp_path, original, edits))
     assert result.status == 'success', result.content
     assert result.artifact['patch_omitted'] is False
     assert apply_patch(original, result.artifact['patch']) == actual
 
 
-def test_changed_line_is_first_difference_not_oldtext_start(tmp_path):
-    result, actual = run_edit(tmp_path, b'same\nold\ntail\n', [('same\nold', 'same\nNEW')])
+@async_test
+async def test_changed_line_is_first_difference_not_oldtext_start(tmp_path):
+    result, actual = (await run_edit(tmp_path, b'same\nold\ntail\n', [('same\nold', 'same\nNEW')]))
     assert actual == b'same\nNEW\ntail\n'
     assert result.artifact['firstChangedLine'] == 2
 
 
+@async_test
 @pytest.mark.parametrize('setting', ['max_normalization_buffer_bytes', 'max_affected_line_bytes'])
-def test_exact_remains_available_but_mixed_fuzzy_fails_atomically_at_buffer_limit(tmp_path, setting):
+async def test_exact_remains_available_but_mixed_fuzzy_fails_atomically_at_buffer_limit(tmp_path, setting):
     settings = EditSettings(**{setting: 8})
     original = ('x' * 100 + ' old\n“a”\n').encode()
-    result, actual = run_edit(tmp_path, original, [('old', 'NEW')], settings)
+    result, actual = (await run_edit(tmp_path, original, [('old', 'NEW')], settings))
     assert result.status == 'success' and actual == original.replace(b'old', b'NEW')
     if setting == 'max_affected_line_bytes':
         assert result.artifact['patch_omitted'] is True
         assert result.artifact['diff_truncated'] is True
-    failed, unchanged = run_edit(tmp_path, original, [('old', 'NEW'), ('"a"', 'A')], settings)
+    failed, unchanged = (await run_edit(tmp_path, original, [('old', 'NEW'), ('"a"', 'A')], settings))
     assert failed.status == 'error' and 'buffer limit' in failed.content
     assert unchanged == original
 
 
-def test_feedback_budgets_are_independent_utf8_limits_and_patch_never_partial(tmp_path):
+@async_test
+async def test_feedback_budgets_are_independent_utf8_limits_and_patch_never_partial(tmp_path):
     settings = EditSettings(max_diff_bytes=13, max_preview_bytes=11, max_patch_bytes=20)
-    result, actual = run_edit(tmp_path, '旧值\n'.encode(), [('旧值', '新值新值')], settings)
+    result, actual = (await run_edit(tmp_path, '旧值\n'.encode(), [('旧值', '新值新值')], settings))
     assert result.status == 'success' and actual == '新值新值\n'.encode()
     detail = result.artifact
     assert len(detail['diff'].encode()) <= 13 and detail['diff_truncated'] is True
@@ -154,8 +164,9 @@ def test_feedback_budgets_are_independent_utf8_limits_and_patch_never_partial(tm
     assert 'patch omitted' in result.content and 'truncated' in result.content
 
 
+@async_test
 @pytest.mark.parametrize('fuzzy', [False, True])
-def test_feedback_does_not_add_a_full_file_scan(tmp_path, monkeypatch, fuzzy):
+async def test_feedback_does_not_add_a_full_file_scan(tmp_path, monkeypatch, fuzzy):
     target = tmp_path / 'text.txt'
     reads, real_open = [], Path.open
     def count_open(path, mode='r', *args, **kwargs):
@@ -164,40 +175,44 @@ def test_feedback_does_not_add_a_full_file_scan(tmp_path, monkeypatch, fuzzy):
         return real_open(path, mode, *args, **kwargs)
     monkeypatch.setattr(Path, 'open', count_open)
     original = 'zero\n“a”\nend\n'.encode() if fuzzy else b'zero\na\nend\n'
-    result, _ = run_edit(tmp_path, original, [('"a"' if fuzzy else 'a', 'A')])
+    result, _ = (await run_edit(tmp_path, original, [('"a"' if fuzzy else 'a', 'A')]))
     assert result.status == 'success'
     assert len(reads) - 1 == (3 if fuzzy else 2)  # Exclude test's final read_bytes.
 
 
+@async_test
 @pytest.mark.parametrize(('source', 'old'), [('ﬃ', 'ffi'), ('\u09c7\u09be', '\u09cb'), ('e\u0301\u0323', 'ẹ\u0301')])
-def test_indivisible_expansion_and_combining_sequences(tmp_path, source, old):
-    result, actual = run_edit(tmp_path, (source + '\n').encode(), [(old, 'X')])
+async def test_indivisible_expansion_and_combining_sequences(tmp_path, source, old):
+    result, actual = (await run_edit(tmp_path, (source + '\n').encode(), [(old, 'X')]))
     assert result.status == 'success', result.content
     assert actual == b'X\n'
 
 
-def test_unicode_expansion_crossing_normalization_tail_is_not_partial_match(tmp_path, monkeypatch):
+@async_test
+async def test_unicode_expansion_crossing_normalization_tail_is_not_partial_match(tmp_path, monkeypatch):
     from naiyue_test_agent.tools import edit as module
     monkeypatch.setattr(module, '_CHUNK_BYTES', 1)
-    result, actual = run_edit(tmp_path, 'ﬃ\nnext\n'.encode(), [('fi\nnext', 'BAD')])
+    result, actual = (await run_edit(tmp_path, 'ﬃ\nnext\n'.encode(), [('fi\nnext', 'BAD')]))
     assert result.status == 'error' and actual == 'ﬃ\nnext\n'.encode()
 
 
-def test_patch_headers_support_spaces_without_quote_parser_dependency(tmp_path):
+@async_test
+async def test_patch_headers_support_spaces_without_quote_parser_dependency(tmp_path):
     target = tmp_path / 'text with space.txt'
     target.write_text('old\n')
-    result = invoke_tool_feedback(create_session_edit_tool(), {'path': target.name,
-        'edits': [{'oldText': 'old', 'newText': 'NEW'}]}, call_id='space', context={'workspace_root': tmp_path})
+    result = (await invoke_tool_feedback(create_session_edit_tool(), {'path': target.name,
+        'edits': [{'oldText': 'old', 'newText': 'NEW'}]}, call_id='space', context={'workspace_root': tmp_path}))
     assert result.status == 'success'
     assert result.artifact['patch'].startswith('--- a/text with space.txt\t\n+++ b/text with space.txt\t\n')
 
 
+@async_test
 @pytest.mark.parametrize('name', ['tab\tname.txt', 'line\nname.txt'])
-def test_unrepresentable_patch_filename_does_not_inject_headers(tmp_path, name):
+async def test_unrepresentable_patch_filename_does_not_inject_headers(tmp_path, name):
     target = tmp_path / name
     target.write_text('old\n')
-    result = invoke_tool_feedback(create_session_edit_tool(), {'path': name,
-        'edits': [{'oldText': 'old', 'newText': 'NEW'}]}, call_id='path', context={'workspace_root': tmp_path})
+    result = (await invoke_tool_feedback(create_session_edit_tool(), {'path': name,
+        'edits': [{'oldText': 'old', 'newText': 'NEW'}]}, call_id='path', context={'workspace_root': tmp_path}))
     assert result.status == 'success' and target.read_text() == 'NEW\n'
     assert result.artifact['patch'] is None and result.artifact['patch_omitted'] is True
     assert result.artifact['diff_truncated'] is False
@@ -217,9 +232,10 @@ def test_edit_feedback_limits_load_from_commented_sample_and_explicit_settings(t
     assert [getattr(result, name) for name in names] == list(range(101, 106))
 
 
-def test_exact_replacement_newlines_use_file_fallback_and_noop_is_not_committed(tmp_path):
-    result, actual = run_edit(tmp_path, b'first\r\nold\r\n', [('old', 'NEW\nMORE')])
+@async_test
+async def test_exact_replacement_newlines_use_file_fallback_and_noop_is_not_committed(tmp_path):
+    result, actual = (await run_edit(tmp_path, b'first\r\nold\r\n', [('old', 'NEW\nMORE')]))
     assert result.status == 'success' and actual == b'first\r\nNEW\r\nMORE\r\n'
-    failed, unchanged = run_edit(tmp_path, b'first\r\nold\r\n', [('old\r\n', 'old\n')])
+    failed, unchanged = (await run_edit(tmp_path, b'first\r\nold\r\n', [('old\r\n', 'old\n')]))
     assert failed.status == 'error' and 'no change' in failed.content
     assert unchanged == b'first\r\nold\r\n'

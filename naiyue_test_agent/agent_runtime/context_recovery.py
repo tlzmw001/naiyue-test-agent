@@ -1,6 +1,6 @@
 """Recover one explicitly rejected model request without replaying the agent."""
 
-from .observation import observe, emit_event
+from .observation import observe
 
 import asyncio
 import logging
@@ -8,9 +8,7 @@ import logging
 from langchain.agents.middleware import AgentMiddleware, ExtendedModelResponse
 from langgraph.types import Command
 
-from naiyue_test_agent.agent_runtime.context_compaction import (
-    ContextCompactionError, _compact_messages, _acompact_messages,
-)
+from naiyue_test_agent.agent_runtime.context_compaction import ContextCompactionError, _acompact_messages
 from naiyue_test_agent.model_access import MODEL_LIMITS_METADATA_KEY
 from naiyue_test_agent.model_access.errors import input_context_overflow_reason
 
@@ -81,27 +79,6 @@ class _InputOverflowRecoveryMiddleware(AgentMiddleware):
     def name(self):
         return 'recover_input_overflow'
 
-    def wrap_model_call(self, request, handler):
-        try:
-            return handler(request)
-        except Exception as error:
-            reason = input_context_overflow_reason(error)
-            if reason is None:
-                raise
-
-        arguments, correlation, observer, operation_id = _begin_recovery(request, reason)
-        stage = 'compact'
-        try:
-            update = _compact_messages(**arguments)
-            if update is None:
-                raise ContextCompactionError('compaction_unavailable')
-            stage = 'retry'
-            retry = _retry_request(request, update, correlation, observer, operation_id)
-            response = handler(retry)
-        except Exception as error:
-            _recovery_failed(error, stage, correlation, observer, operation_id)
-            raise
-        return _recovery_returned(response, update, correlation, observer, operation_id)
 
     async def awrap_model_call(self, request, handler):
         try:

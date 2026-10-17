@@ -12,7 +12,7 @@ from langgraph.errors import GraphBubbleUp
 
 from .call_observation import event_label, token_count
 from .context_events import ContextOperationStartedData, ContextOperationFinishedData, safe_context_reason
-from .events import safe_error_type
+from naiyue_test_agent.contracts.failures import safe_error_type
 
 
 logger = logging.getLogger(__name__)

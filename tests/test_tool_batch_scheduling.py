@@ -1,11 +1,15 @@
-"""Batch scheduling through the actual synchronous create_agent assembly."""
+"""Batch scheduling through the actual asynchronous create_agent assembly."""
+
+from native_application_helpers import async_test
+
+from naiyue_test_agent.agent_runtime.async_invocation import ainvoke_agent_run
 
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
 from naiyue_test_agent.application import prepare_tool_registry
 
-from concurrent.futures import ThreadPoolExecutor
+import asyncio
 from threading import Barrier, Event
 from types import SimpleNamespace
 
@@ -18,17 +22,16 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import ToolException
 from langgraph.checkpoint.memory import InMemorySaver
 
-from naiyue_test_agent.agent_runtime import (
-    build_runtime_agent, invoke_agent_run,
-)
+from naiyue_test_agent.agent_runtime import build_runtime_agent
 from naiyue_test_agent.agent_runtime.resource_invocation import (
-    invoke_agent_run_with_resources, resume_agent_run_with_resources,
+    ainvoke_agent_run_with_resources, aresume_agent_run_with_resources,
 )
 from naiyue_test_agent.tools.permissions import OneUseApprovalGrants
 from naiyue_test_agent.agent_runtime.tool_execution.batch import (
-    ToolBatchMiddleware, ToolBatchSchedulingError, _SequentialPlan,
+    ToolBatchMiddleware, ToolBatchSchedulingError,
 )
 from naiyue_test_agent.tools import create_session_read_tool
+from naiyue_test_agent.agent_runtime.tool_execution.async_batch import AsyncBatchPlan
 
 
 class ToolCapableFake(FakeMessagesListChatModel):
@@ -52,7 +55,8 @@ def tool_results(result):
     return [message for message in result['messages'] if isinstance(message, ToolMessage)]
 
 
-def test_all_parallel_tools_can_overlap_in_one_model_reply():
+@async_test
+async def test_all_parallel_tools_can_overlap_in_one_model_reply():
     first_entered = Event()
     second_entered = Event()
     overlap = {}
@@ -78,10 +82,10 @@ def test_all_parallel_tools_can_overlap_in_one_model_reply():
         ]),
         AIMessage(content='done'),
     ])
-    result = invoke_agent_run(
+    result = (await ainvoke_agent_run(
         agent, [('user', 'read both')],
         session_id='parallel', thread_id='parallel-thread', run_id='parallel-run',
-    )
+    ))
 
     assert overlap == {'first': True, 'second': True}
     assert [(message.tool_call_id, message.content) for message in tool_results(result)] == [
@@ -89,7 +93,8 @@ def test_all_parallel_tools_can_overlap_in_one_model_reply():
     ]
 
 
-def test_one_sequential_tool_makes_mixed_batch_execute_in_model_order():
+@async_test
+async def test_one_sequential_tool_makes_mixed_batch_execute_in_model_order():
     later_entered = Event()
     trace = []
 
@@ -126,10 +131,10 @@ def test_one_sequential_tool_makes_mixed_batch_execute_in_model_order():
         ]),
         AIMessage(content='done'),
     ])
-    result = invoke_agent_run(
+    result = (await ainvoke_agent_run(
         agent, [('user', 'read write read')],
         session_id='mixed', thread_id='mixed-thread', run_id='mixed-run',
-    )
+    ))
 
     assert trace == [
         'read-1:start', 'read-1:saw_later=False', 'read-1:end',
@@ -140,7 +145,8 @@ def test_one_sequential_tool_makes_mixed_batch_execute_in_model_order():
     ]
 
 
-def test_ordinary_failure_allows_later_tool_body_in_sequential_batch():
+@async_test
+async def test_ordinary_failure_allows_later_tool_body_in_sequential_batch():
     executed = []
 
     @tool
@@ -162,10 +168,10 @@ def test_ordinary_failure_allows_later_tool_body_in_sequential_batch():
         ],
     ), AIMessage(content='handled')])
 
-    result = invoke_agent_run(
+    result = (await ainvoke_agent_run(
         agent, [('user', 'run both')],
         session_id='fatal', thread_id='fatal-thread', run_id='fatal-run',
-    )
+    ))
     assert executed == ['first', 'write']
     assert [(m.tool_call_id, m.status) for m in tool_results(result)] == [
         ('fatal-1', 'error'), ('fatal-2', 'success'),
@@ -173,7 +179,8 @@ def test_ordinary_failure_allows_later_tool_body_in_sequential_batch():
     assert result['messages'][-1].content == 'handled'
 
 
-def test_recoverable_error_result_allows_next_sequential_call():
+@async_test
+async def test_recoverable_error_result_allows_next_sequential_call():
     executed = []
 
     @tool
@@ -195,10 +202,10 @@ def test_recoverable_error_result_allows_next_sequential_call():
         ]),
         AIMessage(content='done'),
     ])
-    result = invoke_agent_run(
+    result = (await ainvoke_agent_run(
         agent, [('user', 'run both')],
         session_id='recover', thread_id='recover-thread', run_id='recover-run',
-    )
+    ))
 
     assert executed == ['write']
     assert [(message.tool_call_id, message.status) for message in tool_results(result)] == [
@@ -206,7 +213,8 @@ def test_recoverable_error_result_allows_next_sequential_call():
     ]
 
 
-def test_rejected_first_tool_does_not_block_later_sequential_tool(tmp_path):
+@async_test
+async def test_rejected_first_tool_does_not_block_later_sequential_tool(tmp_path):
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     outside = tmp_path / 'outside.md'
@@ -227,24 +235,25 @@ def test_rejected_first_tool_does_not_block_later_sequential_tool(tmp_path):
         AIMessage(content='done'),
     ], checkpointer=InMemorySaver())
 
-    pending = invoke_agent_run_with_resources(
+    pending = (await ainvoke_agent_run_with_resources(
         agent, [('user', 'read then write')], session_id='review',
         thread_id='review-thread', run_id='review-run', workspace_root=workspace, read_resource_roots=(),
-    )
+    ))
     assert len(pending['__interrupt__']) == 1
     assert executed == []
-    result = resume_agent_run_with_resources(
+    result = (await aresume_agent_run_with_resources(
         agent, session_id='review', thread_id='review-thread',
         run_id='review-run', workspace_root=workspace,
         decisions=['reject'], approval_grants={}, read_resource_roots=(),
-    )
+    ))
     assert executed == ['write']
     assert [(message.tool_call_id, message.status) for message in tool_results(result)] == [
         ('review-1', 'error'), ('review-2', 'success'),
     ]
 
 
-def test_approved_first_tool_completes_before_later_sequential_tool(tmp_path):
+@async_test
+async def test_approved_first_tool_completes_before_later_sequential_tool(tmp_path):
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     outside = tmp_path / 'outside.md'
@@ -264,20 +273,20 @@ def test_approved_first_tool_completes_before_later_sequential_tool(tmp_path):
         ]),
         AIMessage(content='done'),
     ], checkpointer=InMemorySaver())
-    pending = invoke_agent_run_with_resources(
+    pending = (await ainvoke_agent_run_with_resources(
         agent, [('user', 'read then write')], session_id='approve',
         thread_id='approve-thread', run_id='approve-run', workspace_root=workspace, read_resource_roots=(),
-    )
+    ))
     assert len(pending['__interrupt__']) == 1
     assert executed == []
     from naiyue_test_agent.application.session_approval import pending_tool_approval, prepare_resume
     grants, _ = prepare_resume('approve', pending_tool_approval(pending), ['approve'], None)
-    result = resume_agent_run_with_resources(
+    result = (await aresume_agent_run_with_resources(
         agent, session_id='approve', thread_id='approve-thread',
         run_id='approve-run', workspace_root=workspace,
         decisions=['approve'], read_resource_roots=(),
         approval_grants=grants,
-    )
+    ))
     assert executed == ['write']
     assert [(message.tool_call_id, message.content) for message in tool_results(result)] == [
         ('approve-1', 'approved content'), ('approve-2', 'written'),
@@ -294,7 +303,8 @@ def test_invalid_execution_mode_is_rejected_at_agent_assembly():
         make_agent([ToolSpec(read_probe, read_probe.args_schema, execution_mode='sometimes', permissions=ToolPermission(default='allow'))], [AIMessage(content='done')])
 
 
-def test_missing_plan_fails_closed_for_every_call_in_mixed_batch():
+@async_test
+async def test_missing_plan_fails_closed_for_every_call_in_mixed_batch():
     @tool
     def read_probe() -> str:
         """Synthetic read that must not bypass a lost plan."""
@@ -318,11 +328,14 @@ def test_missing_plan_fails_closed_for_every_call_in_mixed_batch():
         runtime=SimpleNamespace(context={}),
     )
     with pytest.raises(ToolBatchSchedulingError, match='plan'):
-        middleware.wrap_tool_call(request, lambda _request: executed.append('read'))
+        async def downstream(_request):
+            executed.append('read')
+        await middleware.awrap_tool_call(request, downstream)
     assert executed == []
 
 
-def test_duplicate_call_ids_reject_whole_batch_before_any_tool_executes():
+@async_test
+async def test_duplicate_call_ids_reject_whole_batch_before_any_tool_executes():
     executed = []
 
     @tool
@@ -344,15 +357,16 @@ def test_duplicate_call_ids_reject_whole_batch_before_any_tool_executes():
         ],
     )])
     with pytest.raises(Exception, match='duplicate_tool_call_ids'):
-        invoke_agent_run(
+        (await ainvoke_agent_run(
             agent, [('user', 'run both')], session_id='duplicate',
             thread_id='duplicate-thread', run_id='duplicate-run',
-        )
+        ))
     assert executed == []
 
 
+@async_test
 @pytest.mark.parametrize('concurrency', [1, 2])
-def test_sequential_batch_progresses_with_bounded_graph_concurrency(concurrency):
+async def test_sequential_batch_progresses_with_bounded_graph_concurrency(concurrency):
     trace = []
 
     @tool
@@ -381,18 +395,19 @@ def test_sequential_batch_progresses_with_bounded_graph_concurrency(concurrency)
         ]),
         AIMessage(content='done'),
     ])
-    result = agent.invoke(
+    result = (await agent.ainvoke(
         {'messages': [('user', 'run all')]},
         context={'session_id': f'bounded-{concurrency}'},
         config={'max_concurrency': concurrency},
-    )
+    ))
     assert trace == ['read', 'write', 'final']
     assert [message.tool_call_id for message in tool_results(result)] == [
         'bounded-1', 'bounded-2', 'bounded-3',
     ]
 
 
-def test_two_sessions_share_agent_without_sharing_batch_plan():
+@async_test
+async def test_two_sessions_share_agent_without_sharing_batch_plan():
     barrier = Barrier(2)
     trace = []
 
@@ -441,17 +456,13 @@ def test_two_sessions_share_agent_without_sharing_batch_plan():
         record_selection=lambda _session, _model: None,
     )
 
-    def run(session):
-        return invoke_agent_run(
+    async def run(session):
+        return (await ainvoke_agent_run(
             agent, [('user', session)], session_id=session,
             thread_id=f'{session}-thread', run_id=f'{session}-run',
-        )
+        ))
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        first = executor.submit(run, 'A')
-        second = executor.submit(run, 'B')
-        first_result = first.result(timeout=10)
-        second_result = second.result(timeout=10)
+    first_result, second_result = await asyncio.wait_for(asyncio.gather(run('A'), run('B')), 10)
 
     assert trace.index(('A', 'read')) < trace.index(('A', 'write'))
     assert trace.index(('B', 'read')) < trace.index(('B', 'write'))
@@ -463,12 +474,17 @@ def test_two_sessions_share_agent_without_sharing_batch_plan():
     ]
 
 
-def test_completed_batch_cannot_execute_same_call_twice():
-    plan = _SequentialPlan(['once'], run_id='probe-run')
+@async_test
+async def test_completed_batch_cannot_execute_same_call_twice():
+    plan = AsyncBatchPlan(['once'], True, 'probe-run', ToolBatchSchedulingError)
     executed = []
-    assert plan.execute('once', 'probe', lambda: executed.append('once')) is None
+    async def once():
+        executed.append('once')
+    async def again():
+        executed.append('again')
+    assert await plan.execute('once', 'probe', once, 1) is None
     with pytest.raises(ToolBatchSchedulingError, match='already completed'):
-        plan.execute('once', 'probe', lambda: executed.append('again'))
+        await plan.execute('once', 'probe', again, 1)
     assert executed == ['once']
 
 

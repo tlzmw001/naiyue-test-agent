@@ -1,5 +1,7 @@
 """Native async model IO keeps the existing selection/gate/event contract."""
 
+from native_application_helpers import async_test
+
 from naiyue_test_agent.application import prepare_tool_registry
 
 import asyncio
@@ -233,8 +235,8 @@ def test_async_graph_control_exception_is_preserved():
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize('asynchronous', [False, True])
-def test_request_override_failure_preserves_exception_and_closes_call(asynchronous):
+@async_test
+async def test_request_override_failure_preserves_exception_and_closes_call():
     events, error = [], ValueError('PRIVATE override failure')
     middleware = make_model_selection_middleware(lambda _: ('A', object()), lambda *_: None)
     request = SimpleNamespace(runtime=SimpleNamespace(context=context(events)))
@@ -244,17 +246,11 @@ def test_request_override_failure_preserves_exception_and_closes_call(asynchrono
 
     request.override = override
 
-    def sync_handler(_request):
-        raise AssertionError('No model call should be made')
-
     async def async_handler(_request):
         raise AssertionError('No model call should be made')
 
     with pytest.raises(ValueError) as caught:
-        if asynchronous:
-            asyncio.run(middleware.awrap_model_call(request, async_handler))
-        else:
-            middleware.wrap_model_call(request, sync_handler)
+        await middleware.awrap_model_call(request, async_handler)
     assert caught.value is error
     assert [e.event_type for e in events] == ['run_started', 'model_call_started', 'model_call_finished']
     assert events[-1].data.status == 'failed'

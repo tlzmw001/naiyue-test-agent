@@ -1,12 +1,14 @@
 """Permission composition covers target aliases, batching and internal grants."""
 
+from native_application_helpers import async_test
+
 from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
-from naiyue_test_agent.tools import create_builtin_tools, create_session_read_tool, ToolSettings
+from naiyue_test_agent.tools import create_builtin_tools, ToolSettings
 from naiyue_test_agent.tools.permissions import (
     FilePermission, ToolPermission, OneUseApprovalGrants, PermissionMechanismError,
 )
@@ -22,7 +24,8 @@ def outputs(result):
 
 @pytest.mark.parametrize('tool_name', ['read', 'write', 'edit'])
 @pytest.mark.parametrize('directory_link', [False, True])
-def test_file_and_directory_aliases_use_real_target_without_replacing_link(monkeypatch, tmp_path, tool_name, directory_link):
+@async_test
+async def test_file_and_directory_aliases_use_real_target_without_replacing_link(monkeypatch, tmp_path, tool_name, directory_link):
     root, outside = tmp_path / 'workspace', tmp_path / 'outside'
     root.mkdir(); outside.mkdir()
     target = outside / 'note.txt'
@@ -37,12 +40,12 @@ def test_file_and_directory_aliases_use_real_target_without_replacing_link(monke
         args['edits'] = [{'oldText': 'before', 'newText': 'after'}]
     spec = next(s for s in create_builtin_tools(ToolSettings()) if s.tool.name == tool_name)
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[{'name': tool_name, 'args': args, 'id': 'op'}]), AIMessage(content='done')])
-    app = build(monkeypatch, model, [spec])
-    sid = app.create_workspace_session('A', root)
-    paused = app.run(sid, [('user', 'operate on the alias')])
+    app = await build(monkeypatch, model, [spec])
+    sid = await app.acreate_workspace_session('A', root)
+    paused = await app.arun(sid, [('user', 'operate on the alias')])
     assert paused['approval_requests'][0]['target'] == str(target)
     assert target.read_text() == 'before' and link.is_symlink()
-    result = app.resume_tool_approval(sid, ['approve'])
+    result = await app.aresume_tool_approval(sid, ['approve'])
     assert outputs(result)['op'].status == 'success'
     assert target.read_text() == ('before' if tool_name == 'read' else 'after')
     assert link.is_symlink()
@@ -50,7 +53,8 @@ def test_file_and_directory_aliases_use_real_target_without_replacing_link(monke
 
 @pytest.mark.parametrize('name,args', [('ls', {}), ('find', {'pattern': '*'}), ('grep', {'pattern': 'NEEDLE'})])
 @pytest.mark.parametrize('explicit_allow', [False, True])
-def test_directory_permission_still_filters_denied_and_unapproved_private_children(monkeypatch, tmp_path, name, args, explicit_allow):
+@async_test
+async def test_directory_permission_still_filters_denied_and_unapproved_private_children(monkeypatch, tmp_path, name, args, explicit_allow):
     root, directory = tmp_path / 'workspace', tmp_path / 'outside'
     root.mkdir(); directory.mkdir()
     for filename, body in [('ordinary.txt', 'NEEDLE_OK'), ('denied.txt', 'NEEDLE_DENIED'),
@@ -62,12 +66,12 @@ def test_directory_permission_still_filters_denied_and_unapproved_private_childr
         options['allow'] = [{'tool': name, 'path': str(directory) + '/**'}]
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[
         {'name': name, 'args': {**args, 'path': str(directory)}, 'id': 'search'}]), AIMessage(content='done')])
-    app = build(monkeypatch, model, [spec], **options)
-    sid = app.create_workspace_session('A', root)
-    result = app.run(sid, [('user', 'search the directory')])
+    app = await build(monkeypatch, model, [spec], **options)
+    sid = await app.acreate_workspace_session('A', root)
+    result = await app.arun(sid, [('user', 'search the directory')])
     if not explicit_allow:
         assert result['approval_requests'] and not outputs(result)
-        result = app.resume_tool_approval(sid, ['approve'])
+        result = await app.aresume_tool_approval(sid, ['approve'])
     else:
         assert not result.get('approval_requests')
     message = outputs(result)['search']
@@ -82,41 +86,44 @@ def test_directory_permission_still_filters_denied_and_unapproved_private_childr
         assert 'NEEDLE_PRIVATE' not in message.content and 'NEEDLE_KEY' not in message.content
 
 
-def test_schema_error_waits_for_batch_approval_without_reading_first(monkeypatch, tmp_path):
+@async_test
+async def test_schema_error_waits_for_batch_approval_without_reading_first(monkeypatch, tmp_path):
     outside = tmp_path.parent / (tmp_path.name + '-external.txt')
     outside.write_text('approved')
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[
         call('unused', 'invalid', offset=0), call(outside, 'valid')]), AIMessage(content='done')])
-    app = build(monkeypatch, model)
-    sid = app.create_workspace_session('A', tmp_path)
-    paused = app.run(sid, [('user', 'read')])
+    app = await build(monkeypatch, model)
+    sid = await app.acreate_workspace_session('A', tmp_path)
+    paused = await app.arun(sid, [('user', 'read')])
     assert [item['tool_call_id'] for item in paused['approval_requests']] == ['valid']
     assert not outputs(paused)
-    result = app.resume_tool_approval(sid, ['approve'])
+    result = await app.aresume_tool_approval(sid, ['approve'])
     assert outputs(result)['invalid'].status == 'error'
     assert 'Invalid read arguments' in outputs(result)['invalid'].content
     assert 'runtime' not in outputs(result)['invalid'].content
     assert outputs(result)['valid'].content == 'approved'
 
 
-def test_custom_tool_without_declaration_requires_review(monkeypatch):
+@async_test
+async def test_custom_tool_without_declaration_requires_review(monkeypatch):
     spec = replace(definition(), permissions=ToolPermission())
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[{'name': 'probe', 'args': {'value': 'v'}, 'id': 'c'}]), AIMessage(content='done')])
-    app = build(monkeypatch, model, [spec])
-    sid = app.create_session('A')
-    paused = app.run(sid, [('user', 'run')])
+    app = await build(monkeypatch, model, [spec])
+    sid = await app.acreate_session('A')
+    paused = await app.arun(sid, [('user', 'run')])
     assert paused['approval_requests'] and not outputs(paused)
-    result = app.resume_tool_approval(sid, ['approve'])
+    result = await app.aresume_tool_approval(sid, ['approve'])
     assert outputs(result)['c'].content == 'v'
 
 
 @pytest.mark.parametrize('mode', ['NoAsk', 'BypassApprovals'])
-def test_modes_cannot_override_explicit_deny(monkeypatch, tmp_path, mode):
+@async_test
+async def test_modes_cannot_override_explicit_deny(monkeypatch, tmp_path, mode):
     path = tmp_path / 'secret'
     path.write_text('PRIVATE_DENIED')
-    app = build(monkeypatch, DynamicModel(responses=[AIMessage(content='', tool_calls=[call(path)]), AIMessage(content='done')]),
+    app = await build(monkeypatch, DynamicModel(responses=[AIMessage(content='', tool_calls=[call(path)]), AIMessage(content='done')]),
         mode=mode, deny=[{'tool': 'read', 'path': str(path)}], allow=[{'tool': 'read', 'path': str(tmp_path) + '/**'}])
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'read')])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'read')])
     assert outputs(result)['c1'].status == 'error'
     assert 'PRIVATE_DENIED' not in outputs(result)['c1'].content
     assert not result.get('approval_requests')

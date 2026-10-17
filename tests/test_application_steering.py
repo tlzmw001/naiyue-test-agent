@@ -1,12 +1,17 @@
 """Run-time steering crosses the application queue and LangChain hooks."""
 
+from naiyue_test_agent.application.async_application import AsyncApplication
+import asyncio
+
+from native_application_helpers import async_test, build_application
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
 from naiyue_test_agent.application import prepare_tool_registry
 
 import logging
-from threading import Event, Thread
+from threading import Event
 
 import pytest
 from langchain.tools import tool
@@ -22,10 +27,10 @@ class ToolCapableFake(FakeMessagesListChatModel):
         return self
 
 
-def build_app(monkeypatch, model, tools=None):
+async def build_app(monkeypatch, model, tools=None):
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    return application.build_local_application(
+    return await build_application(
         'synthetic.json', tools=tools or [], system_prompt='', response_format=None,
     )
 
@@ -33,18 +38,19 @@ def build_app(monkeypatch, model, tools=None):
 def run_in_worker(app, session_id):
     outcomes = []
 
-    def run():
+    async def run():
         try:
-            outcomes.append(('result', app.run(session_id, [('user', 'first-task')])))
+            outcomes.append(('result', await app.arun(session_id, [('user', 'first-task')])))
         except Exception as error:
             outcomes.append(('error', error))
 
-    worker = Thread(target=run, daemon=True)
-    worker.start()
+    worker = asyncio.create_task(run())
+
     return worker, outcomes
 
 
-def test_steering_after_tool_result_is_fifo_and_stays_in_one_run(monkeypatch, caplog):
+@async_test
+async def test_steering_after_tool_result_is_fifo_and_stays_in_one_run(monkeypatch, caplog):
     tool_started, release_tool = Event(), Event()
 
     @tool
@@ -58,19 +64,19 @@ def test_steering_after_tool_result_is_fifo_and_stays_in_one_run(monkeypatch, ca
         AIMessage(content='', tool_calls=[{'name': 'probe', 'args': {}, 'id': 'call-1'}]),
         AIMessage(content='answer-after-steering'),
     ])
-    app = build_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
-    session_id = app.create_session('A')
+    app = await build_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
+    session_id = await app.acreate_session('A')
     with caplog.at_level(logging.INFO):
         worker, outcomes = run_in_worker(app, session_id)
         try:
-            assert tool_started.wait(timeout=3)
+            assert await asyncio.to_thread(tool_started.wait, timeout=3)
             app.steer(session_id, 'private-steer-one')
             app.steer(session_id, 'private-steer-two')
         finally:
             release_tool.set()
-            worker.join(timeout=3)
+            await asyncio.wait_for(asyncio.shield(worker), 3)
 
-    assert not worker.is_alive()
+    assert worker.done()
     assert outcomes[0][0] == 'result', outcomes
     messages = outcomes[0][1]['messages']
     assert [(m.type, m.content) for m in messages] == [
@@ -90,7 +96,8 @@ def test_steering_after_tool_result_is_fifo_and_stays_in_one_run(monkeypatch, ca
     assert 'private-steer-one' not in caplog.text
 
 
-def test_steering_during_final_model_response_continues_before_completion(monkeypatch):
+@async_test
+async def test_steering_during_final_model_response_continues_before_completion(monkeypatch):
     entered, release = Event(), Event()
     calls = []
 
@@ -104,17 +111,17 @@ def test_steering_during_final_model_response_continues_before_completion(monkey
 
     model = BlockingModel(responses=[AIMessage(content='first-answer'),
                                      AIMessage(content='second-answer')])
-    app = build_app(monkeypatch, model)
-    session_id = app.create_session('A')
+    app = await build_app(monkeypatch, model)
+    session_id = await app.acreate_session('A')
     worker, outcomes = run_in_worker(app, session_id)
     try:
-        assert entered.wait(timeout=3)
+        assert await asyncio.to_thread(entered.wait, timeout=3)
         app.steer(session_id, 'private-steer')
     finally:
         release.set()
-        worker.join(timeout=3)
+        await asyncio.wait_for(asyncio.shield(worker), 3)
 
-    assert not worker.is_alive()
+    assert worker.done()
     assert outcomes[0][0] == 'result', outcomes
     assert [m.content for m in outcomes[0][1]['messages']] == [
         'first-task', 'first-answer', 'private-steer', 'second-answer',
@@ -129,7 +136,8 @@ def test_steering_during_final_model_response_continues_before_completion(monkey
         app.steer('unknown-session', 'message')
 
 
-def test_failure_discards_pending_steering_and_releases_session(monkeypatch, caplog):
+@async_test
+async def test_failure_discards_pending_steering_and_releases_session(monkeypatch, caplog):
     entered, release = Event(), Event()
     error = RuntimeError('private-provider-failure')
 
@@ -139,18 +147,18 @@ def test_failure_discards_pending_steering_and_releases_session(monkeypatch, cap
             assert release.wait(timeout=3)
             raise error
 
-    app = build_app(monkeypatch, FailingModel(responses=[]))
-    session_id = app.create_session('A')
+    app = await build_app(monkeypatch, FailingModel(responses=[]))
+    session_id = await app.acreate_session('A')
     with caplog.at_level(logging.INFO):
         worker, outcomes = run_in_worker(app, session_id)
         try:
-            assert entered.wait(timeout=3)
+            assert await asyncio.to_thread(entered.wait, timeout=3)
             app.steer(session_id, 'private-pending')
         finally:
             release.set()
-            worker.join(timeout=3)
+            await asyncio.wait_for(asyncio.shield(worker), 3)
 
-    assert not worker.is_alive()
+    assert worker.done()
     assert outcomes == [('error', error)]
     steering = [r.steering_event for r in caplog.records if hasattr(r, 'steering_event')]
     assert [e['event'] for e in steering] == ['steering_accepted', 'steering_discarded']
@@ -161,7 +169,8 @@ def test_failure_discards_pending_steering_and_releases_session(monkeypatch, cap
         app.steer(session_id, 'not-running')
 
 
-def test_natural_end_closes_steering_before_busy_gate_is_released():
+@async_test
+async def test_natural_end_closes_steering_before_busy_gate_is_released():
     service = application.SessionService(ModelCatalog('A', {
         'A': FakeMessagesListChatModel(responses=[]),
     }))
@@ -169,34 +178,38 @@ def test_natural_end_closes_steering_before_busy_gate_is_released():
     closed, release = Event(), Event()
 
     class PausedAtEndAgent:
-        def invoke(self, _input, *, context, config):
+        async def ainvoke(self, _input, *, context, config):
             assert service.finish_run_boundary(context['session_id']) == (False, [])
             closed.set()
-            assert release.wait(timeout=3)
+            assert await asyncio.to_thread(release.wait, timeout=3)
             return {'messages': []}
 
-    app = application.LocalApplication('A', service, PausedAtEndAgent(), prepare_tool_registry([]))
+    app = AsyncApplication(service._catalog, service, PausedAtEndAgent(), prepare_tool_registry([]))
     worker, outcomes = run_in_worker(app, session_id)
     try:
-        assert closed.wait(timeout=3)
+        assert await asyncio.to_thread(closed.wait, timeout=3)
         with pytest.raises(application.SessionBusyError):
             app.steer(session_id, 'arrived-after-close')
         with pytest.raises(application.SessionBusyError):
-            app.run(session_id, [('user', 'second-task')])
+            await app.arun(session_id, [('user', 'second-task')])
     finally:
         release.set()
-        worker.join(timeout=3)
+        try:
+            await asyncio.wait_for(asyncio.shield(worker), 3)
+        finally:
+            await app.aclose()
 
-    assert not worker.is_alive()
+    assert worker.done()
     assert outcomes == [('result', {'messages': []})]
 
 
-def test_current_application_assembly_accepts_steering_callbacks():
+@async_test
+async def test_current_application_assembly_accepts_steering_callbacks():
     model = FakeMessagesListChatModel(responses=[AIMessage(content='answer')])
     catalog = ModelCatalog('A', {'A': model})
     service = application.SessionService(catalog)
     agent = application._assemble_application(
         catalog, service, None, tool_registry=prepare_tool_registry([]), system_prompt='', response_format=None)
 
-    result = service.run(agent, service.create_session('A'), [('user', 'initial')])
+    result = await service.arun(agent, service.create_session('A'), [('user', 'initial')])
     assert [message.content for message in result['messages']] == ['initial', 'answer']

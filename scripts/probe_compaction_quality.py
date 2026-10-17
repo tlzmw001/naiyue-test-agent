@@ -1,5 +1,8 @@
 """Bounded, redacted comparison of a fixed fact-recall task with compaction."""
 
+import asyncio
+from contextlib import AsyncExitStack
+
 import argparse
 
 from naiyue_test_agent.config_paths import get_models_path
@@ -13,7 +16,7 @@ import time
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.messages.utils import count_tokens_approximately
 
-from naiyue_test_agent import application
+from naiyue_test_agent.application.async_application import build_async_local_application
 from naiyue_test_agent.model_access import (
     COMPACTION_KEEP_RECENT_METADATA_KEY, COMPACTION_RESERVE_METADATA_KEY,
     COMPACTION_SUMMARY_OUTPUT_METADATA_KEY, MODEL_LIMITS_METADATA_KEY,
@@ -137,111 +140,116 @@ class _SafeEventHandler(logging.Handler):
             print(json.dumps({'event': 'answer_model_finished'}), flush=True)
 
 
-def _run_case(args) -> int:
-    os.environ['LANGSMITH_TRACING'] = 'false'
-    os.environ['LANGCHAIN_TRACING_V2'] = 'false'
-    handler = _SafeEventHandler()
-    runtime_logger = logging.getLogger('naiyue_test_agent.agent_runtime')
-    runtime_logger.addHandler(handler)
-    runtime_logger.setLevel(logging.INFO)
-    print(json.dumps({'event': 'case_started', 'mode': args.worker}), flush=True)
-    context_operations = []
-    try:
-        app = application.build_local_application(
-            args.config, tools=[], system_prompt=EVAL_SYSTEM, response_format=None,
-        )
-        def observe_context(event):
-            if event.event_type in ('compaction_started', 'compaction_finished',
-                                    'context_recovery_started', 'context_recovery_finished'):
-                context_operations.append(event)
-                print(json.dumps({'event': event.event_type,
-                                  'status': getattr(event.data, 'status', None),
-                                  'visibility': getattr(event.data, 'visibility', None)}, sort_keys=True), flush=True)
+def _run_case(args):
+    return asyncio.run(_async__run_case(args))
 
-        app.subscribe_events(observe_context)
-        model_id = args.model_id or app.default_model_id
-        model = app._sessions._catalog.get(model_id)
-        metadata = dict(model.metadata or {})
-        limits = dict(metadata[MODEL_LIMITS_METADATA_KEY])
-        output_cap = limits['max_output_tokens']
-        if args.summary_output_tokens > output_cap:
-            raise ValueError('Summary cap exceeds the configured model output limit')
-        messages = case_messages()
-        estimated = count_tokens_approximately(
-            [HumanMessage(content=EVAL_SYSTEM), *messages], tools=[],
-        )
-        if args.worker == 'compacted':
-            limits['context_window_tokens'] = max(
-                output_cap + args.summary_output_tokens + 1024,
-                estimated + args.summary_output_tokens + 1024,
+async def _async__run_case(args) -> int:
+    async with AsyncExitStack() as resources:
+        os.environ['LANGSMITH_TRACING'] = 'false'
+        os.environ['LANGCHAIN_TRACING_V2'] = 'false'
+        handler = _SafeEventHandler()
+        runtime_logger = logging.getLogger('naiyue_test_agent.agent_runtime')
+        runtime_logger.addHandler(handler)
+        runtime_logger.setLevel(logging.INFO)
+        print(json.dumps({'event': 'case_started', 'mode': args.worker}), flush=True)
+        context_operations = []
+        try:
+            app = await build_async_local_application(
+                args.config, tools=[], system_prompt=EVAL_SYSTEM, response_format=None,
             )
-            metadata[COMPACTION_KEEP_RECENT_METADATA_KEY] = {
-                'tokens': 500, 'source': 'probe',
-            }
-            metadata[COMPACTION_RESERVE_METADATA_KEY] = {
-                'tokens': max(16384, args.summary_output_tokens), 'source': 'probe',
-            }
-        else:
-            limits['context_window_tokens'] = max(
-                limits['context_window_tokens'], estimated + output_cap + 1024,
-            )
-        limits['context_window_source'] = 'probe'
-        metadata[MODEL_LIMITS_METADATA_KEY] = limits
-        metadata[COMPACTION_SUMMARY_OUTPUT_METADATA_KEY] = {
-            'tokens': args.summary_output_tokens, 'source': 'probe',
-        }
-        model.metadata = metadata
+            resources.push_async_callback(app.aclose)
+            def observe_context(event):
+                if event.event_type in ('compaction_started', 'compaction_finished',
+                                        'context_recovery_started', 'context_recovery_finished'):
+                    context_operations.append(event)
+                    print(json.dumps({'event': event.event_type,
+                                      'status': getattr(event.data, 'status', None),
+                                      'visibility': getattr(event.data, 'visibility', None)}, sort_keys=True), flush=True)
 
-        session = app.create_session(model_id)
-        started = time.monotonic()
-        result = app.run(session, messages)
-        elapsed_ms = round((time.monotonic() - started) * 1000)
-        answers = [message for message in result['messages']
-                   if isinstance(message, AIMessage)]
-        if not answers:
-            raise RuntimeError('No answer AIMessage')
-        summary_events = [event for event in handler.compaction_events
-                          if event['event'] == 'context_summary_model_finished']
-        summary_returned = any(event.get('outcome') == 'returned'
-                               for event in summary_events)
-        if summary_returned != (args.worker == 'compacted'):
-            raise RuntimeError('Unexpected compaction event sequence')
-        state_confirmed = False
-        if args.worker == 'compacted':
-            if ([e.event_type for e in context_operations] != ['compaction_started', 'compaction_finished']
-                    or context_operations[-1].data.status != 'applied'
-                    or context_operations[-1].data.summary_message_id != result['messages'][0].id
-                    or context_operations[-1].data.visibility != 'graph_values'):
-                raise RuntimeError('Compaction state confirmation missing')
-            state_confirmed = True
-        elif context_operations:
-            raise RuntimeError('Unexpected baseline context operations')
-        usage = answers[-1].usage_metadata or {}
-        summary_usage = next((event for event in summary_events
-                              if event.get('outcome') == 'returned'), {})
-        score = score_answer(answers[-1].text)
-        print(json.dumps({
-            'event': 'case_result', 'mode': args.worker,
-            'elapsed_ms': elapsed_ms, 'summary_returned': summary_returned,
-            'compaction_state_confirmed': state_confirmed,
-            'summary_duration_ms': summary_usage.get('duration_ms'),
-            'summary_input_tokens': summary_usage.get('input_tokens'),
-            'summary_output_tokens': summary_usage.get('output_tokens'),
-            'answer_input_tokens': usage.get('input_tokens'),
-            'answer_output_tokens': usage.get('output_tokens'),
-            **score,
-        }, sort_keys=True), flush=True)
-        return 0 if score['correct_count'] == len(EXPECTED_FACTS) else 1
-    except Exception as error:
-        context_failure_reason = next((event.data.reason for event in reversed(context_operations)
-                                       if event.event_type == 'compaction_finished'
-                                       and event.data.status == 'failed'), None)
-        print(json.dumps({'event': 'case_failed', 'mode': args.worker,
-                          'error_type': type(error).__name__,
-                          'context_failure_reason': context_failure_reason}), flush=True)
-        return 1
-    finally:
-        runtime_logger.removeHandler(handler)
+            app.subscribe_events(observe_context)
+            model_id = args.model_id or app.default_model_id
+            model = app._sessions._catalog.get(model_id)
+            metadata = dict(model.metadata or {})
+            limits = dict(metadata[MODEL_LIMITS_METADATA_KEY])
+            output_cap = limits['max_output_tokens']
+            if args.summary_output_tokens > output_cap:
+                raise ValueError('Summary cap exceeds the configured model output limit')
+            messages = case_messages()
+            estimated = count_tokens_approximately(
+                [HumanMessage(content=EVAL_SYSTEM), *messages], tools=[],
+            )
+            if args.worker == 'compacted':
+                limits['context_window_tokens'] = max(
+                    output_cap + args.summary_output_tokens + 1024,
+                    estimated + args.summary_output_tokens + 1024,
+                )
+                metadata[COMPACTION_KEEP_RECENT_METADATA_KEY] = {
+                    'tokens': 500, 'source': 'probe',
+                }
+                metadata[COMPACTION_RESERVE_METADATA_KEY] = {
+                    'tokens': max(16384, args.summary_output_tokens), 'source': 'probe',
+                }
+            else:
+                limits['context_window_tokens'] = max(
+                    limits['context_window_tokens'], estimated + output_cap + 1024,
+                )
+            limits['context_window_source'] = 'probe'
+            metadata[MODEL_LIMITS_METADATA_KEY] = limits
+            metadata[COMPACTION_SUMMARY_OUTPUT_METADATA_KEY] = {
+                'tokens': args.summary_output_tokens, 'source': 'probe',
+            }
+            model.metadata = metadata
+
+            session = await app.acreate_session(model_id)
+            started = time.monotonic()
+            result = await app.arun(session, messages)
+            elapsed_ms = round((time.monotonic() - started) * 1000)
+            answers = [message for message in result['messages']
+                       if isinstance(message, AIMessage)]
+            if not answers:
+                raise RuntimeError('No answer AIMessage')
+            summary_events = [event for event in handler.compaction_events
+                              if event['event'] == 'context_summary_model_finished']
+            summary_returned = any(event.get('outcome') == 'returned'
+                                   for event in summary_events)
+            if summary_returned != (args.worker == 'compacted'):
+                raise RuntimeError('Unexpected compaction event sequence')
+            state_confirmed = False
+            if args.worker == 'compacted':
+                if ([e.event_type for e in context_operations] != ['compaction_started', 'compaction_finished']
+                        or context_operations[-1].data.status != 'applied'
+                        or context_operations[-1].data.summary_message_id != result['messages'][0].id
+                        or context_operations[-1].data.visibility != 'graph_values'):
+                    raise RuntimeError('Compaction state confirmation missing')
+                state_confirmed = True
+            elif context_operations:
+                raise RuntimeError('Unexpected baseline context operations')
+            usage = answers[-1].usage_metadata or {}
+            summary_usage = next((event for event in summary_events
+                                  if event.get('outcome') == 'returned'), {})
+            score = score_answer(answers[-1].text)
+            print(json.dumps({
+                'event': 'case_result', 'mode': args.worker,
+                'elapsed_ms': elapsed_ms, 'summary_returned': summary_returned,
+                'compaction_state_confirmed': state_confirmed,
+                'summary_duration_ms': summary_usage.get('duration_ms'),
+                'summary_input_tokens': summary_usage.get('input_tokens'),
+                'summary_output_tokens': summary_usage.get('output_tokens'),
+                'answer_input_tokens': usage.get('input_tokens'),
+                'answer_output_tokens': usage.get('output_tokens'),
+                **score,
+            }, sort_keys=True), flush=True)
+            return 0 if score['correct_count'] == len(EXPECTED_FACTS) else 1
+        except Exception as error:
+            context_failure_reason = next((event.data.reason for event in reversed(context_operations)
+                                           if event.event_type == 'compaction_finished'
+                                           and event.data.status == 'failed'), None)
+            print(json.dumps({'event': 'case_failed', 'mode': args.worker,
+                              'error_type': type(error).__name__,
+                              'context_failure_reason': context_failure_reason}), flush=True)
+            return 1
+        finally:
+            runtime_logger.removeHandler(handler)
 
 
 def main() -> int:

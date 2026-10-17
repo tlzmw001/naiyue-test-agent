@@ -1,6 +1,5 @@
-"""Assembly, model routing, and synchronous events for the LangChain agent loop."""
+"""Assembly and model routing for the LangChain agent loop."""
 
-import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
@@ -12,7 +11,6 @@ from langchain.agents.middleware import (
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.types import Command
 
 from naiyue_test_agent.agent_runtime.tool_execution.batch import ToolBatchMiddleware
 from naiyue_test_agent.agent_runtime.context_observation import observe_model_request
@@ -34,8 +32,6 @@ from naiyue_test_agent.agent_runtime.call_observation import (
     make_model_selection_middleware,
 )
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher
-from naiyue_test_agent.agent_runtime.message_observation import invoke_with_message_observation
-from .invocation_context import make_invocation_context
 from .active_stop import StopModelMiddleware, StopBoundaryMiddleware
 from .run_control import RunControl
 from naiyue_test_agent.agent_runtime.turn_observation import (
@@ -51,9 +47,6 @@ from naiyue_test_agent.tools.permission_rules import PermissionSettings
 from naiyue_test_agent.agent_runtime.context_operation_observation import (
     ContextOperationObserver,
 )
-
-
-logger = logging.getLogger(__name__)
 
 
 class RunContext(TypedDict):
@@ -227,47 +220,3 @@ def build_configured_runtime_agent(
         checkpointer=checkpointer, permission_settings=permission_settings, resolve_permission_context=resolve_permission_context,
         permission_reviewer=reviewer,
     )
-
-
-def invoke_agent_run(agent, messages, *, session_id: str, thread_id: str, run_id: str):
-    """Invoke one synchronous run and record its correlated terminal outcome."""
-    return _invoke_agent_run(
-        agent, messages, session_id=session_id, thread_id=thread_id,
-        run_id=run_id, workspace_root=None,
-    )
-
-
-def _invoke_agent_run(
-    agent, messages, *, session_id: str, thread_id: str, run_id: str,
-    workspace_root: Path | None,
-    approval_grants: OneUseApprovalGrants | None = None,
-    read_resource_roots: tuple[Path, ...] = (),
-):
-    for name, value in (
-        ('session_id', session_id), ('thread_id', thread_id), ('run_id', run_id),
-    ):
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(f'A non-empty {name} is required')
-
-    correlation = {'run_id': run_id, 'session_id': session_id}
-    logger.info('run_started', extra={'run_event': {'event': 'run_started', **correlation}})
-    try:
-        context = make_invocation_context(session_id, run_id, workspace_root, approval_grants, read_resource_roots)
-        publisher = context.get('_run_event_publisher')
-        input = messages if isinstance(messages, Command) else {'messages': messages}
-        config = {'configurable': {'thread_id': thread_id}}
-        if '_run_event_publisher' in context:
-            result = invoke_with_message_observation(
-                agent, input, context=context, config=config, publisher=publisher,
-            )
-        else:
-            result = agent.invoke(input, context=context, config=config)
-    except Exception:
-        logger.error('run_failed', extra={'run_event': {'event': 'run_failed', **correlation}})
-        raise
-
-    terminal = ('run_interrupted' if isinstance(result, dict) and result.get('__interrupt__')
-                else 'run_stopped' if isinstance(result, dict) and result.get('run_stopped') is True
-                else 'run_completed')
-    logger.info(terminal, extra={'run_event': {'event': terminal, **correlation}})
-    return result

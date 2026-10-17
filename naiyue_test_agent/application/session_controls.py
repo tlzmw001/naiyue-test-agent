@@ -1,6 +1,6 @@
 """Session queue controls; the session service owns storage, lock, and errors."""
 
-from naiyue_test_agent.agent_runtime.observation import observe, emit_event
+from naiyue_test_agent.agent_runtime.observation import observe
 
 import logging
 

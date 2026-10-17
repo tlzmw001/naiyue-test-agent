@@ -1,5 +1,8 @@
 """Bounded, read-only live check of default and explicitly selected Skill sources."""
 
+import asyncio
+from contextlib import AsyncExitStack
+
 import argparse
 
 from naiyue_test_agent.config_paths import get_models_path
@@ -11,7 +14,7 @@ from tempfile import TemporaryDirectory
 
 from langchain_core.messages import AIMessage, ToolMessage
 
-from naiyue_test_agent.application import build_local_application
+from naiyue_test_agent.application.async_application import build_async_local_application
 from naiyue_test_agent.application.project_instructions import BASE_SYSTEM_PROMPT
 from naiyue_test_agent.tools import create_session_read_tool
 
@@ -48,48 +51,53 @@ def check_skill_trace(messages, root: Path, source: str) -> int:
     return len(calls)
 
 
-def _worker(args) -> int:
+def _worker(args):
+    return asyncio.run(_async__worker(args))
+
+async def _async__worker(args) -> int:
     # This worker accepts only an empty parent-owned temporary directory.
-    root = Path(args.workspace).resolve(strict=True)
-    if not root.is_dir() or any(root.iterdir()):
-        raise ValueError('An empty temporary workspace is required')
-    for source, marker in MARKERS.items():
-        folder = root / f'.{source}/skills/source-check'
-        (folder / 'references').mkdir(parents=True)
-        (folder / 'SKILL.md').write_text(
-            '---\nname: source-check\n'
-            'description: Use for controlled source verification tasks called source-check.\n'
-            '---\n\nRead references/source.txt relative to this Skill directory using read. '
-            'Then reply with only the exact marker returned by that reference file. '
-            'Do not infer or guess its value.\n', encoding='utf-8',
+    async with AsyncExitStack() as resources:
+        root = Path(args.workspace).resolve(strict=True)
+        if not root.is_dir() or any(root.iterdir()):
+            raise ValueError('An empty temporary workspace is required')
+        for source, marker in MARKERS.items():
+            folder = root / f'.{source}/skills/source-check'
+            (folder / 'references').mkdir(parents=True)
+            (folder / 'SKILL.md').write_text(
+                '---\nname: source-check\n'
+                'description: Use for controlled source verification tasks called source-check.\n'
+                '---\n\nRead references/source.txt relative to this Skill directory using read. '
+                'Then reply with only the exact marker returned by that reference file. '
+                'Do not infer or guess its value.\n', encoding='utf-8',
+            )
+            (folder / 'references/source.txt').write_text(marker + '\n', encoding='utf-8')
+        os.environ['LANGSMITH_TRACING'] = 'false'
+        os.environ['LANGCHAIN_TRACING_V2'] = 'false'
+        app = await build_async_local_application(
+            args.config, tools=[create_session_read_tool()],
+            system_prompt=BASE_SYSTEM_PROMPT, response_format=None,
         )
-        (folder / 'references/source.txt').write_text(marker + '\n', encoding='utf-8')
-    os.environ['LANGSMITH_TRACING'] = 'false'
-    os.environ['LANGCHAIN_TRACING_V2'] = 'false'
-    app = build_local_application(
-        args.config, tools=[create_session_read_tool()],
-        system_prompt=BASE_SYSTEM_PROMPT, response_format=None,
-    )
-    session = app.create_workspace_session(args.model_id or app.default_model_id, root)
-    print('phase=default_started', flush=True)
-    first = app.run(session, [('user', 'Use the source-check Skill for a controlled '
-                              'verification task. Follow the default source in the '
-                              'available Skill index and report the required marker.')])
-    if first.get('approval_requests'):
-        raise AssertionError('Unexpected approval; nothing was approved')
-    first_count = check_skill_trace(first['messages'], root, 'agents')
-    print(f'phase=default_verified source=agents read_calls={first_count}', flush=True)
-    print('phase=explicit_started', flush=True)
-    second = app.run(session, [('user', 'Now explicitly use the source-check Skill from '
-                               '.claude/skills. Read that source and its required '
-                               'reference, then report only its exact marker.')])
-    if second.get('approval_requests'):
-        raise AssertionError('Unexpected approval; nothing was approved')
-    second_count = check_skill_trace(second['messages'][len(first['messages']):], root, 'claude')
-    print(f'phase=explicit_verified source=claude read_calls={second_count}', flush=True)
-    print('status=PASS default_source=agents explicit_source=claude '
-          'body_and_reference_reads=verified tool_messages=paired', flush=True)
-    return 0
+        resources.push_async_callback(app.aclose)
+        session = await app.acreate_workspace_session(args.model_id or app.default_model_id, root)
+        print('phase=default_started', flush=True)
+        first = await app.arun(session, [('user', 'Use the source-check Skill for a controlled '
+                                  'verification task. Follow the default source in the '
+                                  'available Skill index and report the required marker.')])
+        if first.get('approval_requests'):
+            raise AssertionError('Unexpected approval; nothing was approved')
+        first_count = check_skill_trace(first['messages'], root, 'agents')
+        print(f'phase=default_verified source=agents read_calls={first_count}', flush=True)
+        print('phase=explicit_started', flush=True)
+        second = await app.arun(session, [('user', 'Now explicitly use the source-check Skill from '
+                                   '.claude/skills. Read that source and its required '
+                                   'reference, then report only its exact marker.')])
+        if second.get('approval_requests'):
+            raise AssertionError('Unexpected approval; nothing was approved')
+        second_count = check_skill_trace(second['messages'][len(first['messages']):], root, 'claude')
+        print(f'phase=explicit_verified source=claude read_calls={second_count}', flush=True)
+        print('status=PASS default_source=agents explicit_source=claude '
+              'body_and_reference_reads=verified tool_messages=paired', flush=True)
+        return 0
 
 
 def main() -> int:

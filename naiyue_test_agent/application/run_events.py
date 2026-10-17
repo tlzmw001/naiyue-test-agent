@@ -1,5 +1,7 @@
 """Application-owned subscriptions and run outcome observation."""
 
+from naiyue_test_agent.contracts.failures import safe_error_type
+
 from naiyue_test_agent.agent_runtime.observation import observe, emit_event
 
 import inspect
@@ -14,7 +16,7 @@ from naiyue_test_agent.agent_runtime.run_control import RunControl
 from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
 
 from naiyue_test_agent.agent_runtime.events import (
-    RunEventPublisher, safe_error_type,
+    RunEventPublisher,
 )
 from naiyue_test_agent.agent_runtime.errors import RuntimeErrorPolicy, run_failure_data
 from .failure_policy import ApplicationErrorPolicy

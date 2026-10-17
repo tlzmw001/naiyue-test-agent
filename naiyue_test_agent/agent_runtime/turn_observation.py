@@ -6,7 +6,7 @@ from uuid import uuid4
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, ToolMessage
 
-from .observation import observe, emit_event
+from .observation import observe
 from .turn_events import TurnFinishedData, TurnStartedData, TurnUnavailableData
 
 

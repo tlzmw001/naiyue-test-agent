@@ -1,4 +1,7 @@
-"""Spec092 framework probes only; no production recovery API is implemented.
+"""Spec092 framework transport probes, migrated to native async application IO in Spec093.
+
+Manual state updates below deliberately isolate framework transport; product
+recovery now lives in arecover_session with its own validation.
 
 Run from the repository root:
 PYTHONPATH=tests:. .venv/bin/python docs/examples/probe_session_recovery_design.py
@@ -26,7 +29,7 @@ from test_application_run_events import ToolModel
 from test_persistent_sessions import build
 
 
-def probe_continue():
+async def probe_continue():
     with TemporaryDirectory() as directory, MonkeyPatch.context() as patch:
         root = Path(directory) / 'work'
         root.mkdir()
@@ -42,19 +45,19 @@ def probe_continue():
             return original_read(*args, **kwargs)
 
         patch.setattr(read_module, '_read', record_read)
-        with SessionStorage(database) as storage:
-            model = ToolModel(responses=[AIMessage(content='', tool_calls=[
-                {'name': 'read', 'args': {'path': str(outside)}, 'id': 'old-call'},
-            ])])
-            app = build(patch, storage, model, [create_session_read_tool()])
-            session = app.create_workspace_session('A', root)
-            app.run(session, [HumanMessage(content='fixture request')])
+        model = ToolModel(responses=[AIMessage(content='', tool_calls=[
+            {'name': 'read', 'args': {'path': str(outside)}, 'id': 'old-call'},
+        ])])
+        async with build(patch, database, model, [create_session_read_tool()]) as app:
+            storage = app._sessions._persistence.storage
+            session = await app.acreate_workspace_session('A', root)
+            await app.arun(session, [HumanMessage(content='fixture request')])
             thread = storage.get(session)['thread_id']
-        with SessionStorage(database) as storage:
-            app = build(patch, storage, tools=[create_session_read_tool()])
+        async with build(patch, database, tools=[create_session_read_tool()]) as app:
+            storage = app._sessions._persistence.storage
             agent = app._agent
             config = {'configurable': {'thread_id': thread}}
-            old = agent.get_state(config)
+            old = await agent.aget_state(config)
             assert old.next and any(task.interrupts for task in old.tasks)
             record = {'version': 1, 'recovery_id': 'fixture-recovery',
                       'source_checkpoint_id': old.config['configurable']['checkpoint_id']}
@@ -62,23 +65,23 @@ def probe_continue():
             def marked(config, phase):
                 return {**config, 'metadata': {'naiyue_recovery': json.dumps({**record, 'phase': phase})}}
 
-            cleared = agent.update_state(marked(config, 'cleared'), None, as_node=END)
-            assert not agent.get_state(cleared).next
-            paired = agent.update_state(marked(cleared, 'paired'), {
+            cleared = await agent.aupdate_state(marked(config, 'cleared'), None, as_node=END)
+            assert not (await agent.aget_state(cleared)).next
+            paired = await agent.aupdate_state(marked(cleared, 'paired'), {
                 'messages': [ToolMessage(content='Previous result unconfirmed; inspect effects before retrying.',
                     tool_call_id='old-call', name='read', status='error', id='recovery-old-call')],
                 'tool_execution': {}, 'run_stopped': False,
             }, as_node='tools')
-            final_config = agent.update_state(marked(paired, 'finished'), None, as_node=END)
-            final = agent.get_state(final_config)
+            final_config = await agent.aupdate_state(marked(paired, 'finished'), None, as_node=END)
+            final = await agent.aget_state(final_config)
             assert not final.next and len(final.values['messages']) == 3
             assert json.loads(final.metadata['naiyue_recovery'])['phase'] == 'finished'
-            assert agent.get_state(old.config).values['messages'] == old.values['messages']
+            assert (await agent.aget_state(old.config)).values['messages'] == old.values['messages']
             storage.finish_run(session, 'ready', final.config['configurable']['checkpoint_id'], '', 'recovered')
-        with SessionStorage(database) as storage:
-            app = build(patch, storage, tools=[create_session_read_tool()])
-            app.restore_session(session)
-            result = app.run(session, [HumanMessage(content='inspect only')])
+        async with build(patch, database, tools=[create_session_read_tool()]) as app:
+            storage = app._sessions._persistence.storage
+            await app.arestore_session(session)
+            result = await app.arun(session, [HumanMessage(content='inspect only')])
             assert result['messages'][-1].content == 'answer'
             assert sum(isinstance(message, ToolMessage) for message in result['messages']) == 1
             assert calls == []
@@ -145,7 +148,7 @@ async def probe_pending_writes():
     print('pending_writes_probe=PASS async=True saved_success_retained=True original_checkpoint_unchanged=True no_replay=True')
 
 
-def probe_approval_transport():
+async def probe_approval_transport():
     """Manually rebuild memory only to test existing resume transport, not new policy validation."""
     with TemporaryDirectory() as directory, MonkeyPatch.context() as patch:
         root = Path(directory) / 'work'
@@ -164,29 +167,29 @@ def probe_approval_transport():
 
             patch.setattr(module, function, recorded)
         tools = [create_session_read_tool(), create_session_write_tool()]
-        with SessionStorage(database) as storage:
-            model = ToolModel(responses=[AIMessage(content='', tool_calls=[
-                {'name': 'read', 'args': {'path': 'inside.txt'}, 'id': 'read-call'},
-                {'name': 'write', 'args': {'path': str(target), 'content': 'written'}, 'id': 'write-call'},
-            ])])
-            app = build(patch, storage, model, tools)
-            session = app.create_workspace_session('A', root)
-            result = app.run(session, [('user', 'fixture request')])
+        model = ToolModel(responses=[AIMessage(content='', tool_calls=[
+            {'name': 'read', 'args': {'path': 'inside.txt'}, 'id': 'read-call'},
+            {'name': 'write', 'args': {'path': str(target), 'content': 'written'}, 'id': 'write-call'},
+        ])])
+        async with build(patch, database, model, tools) as app:
+            storage = app._sessions._persistence.storage
+            session = await app.acreate_workspace_session('A', root)
+            result = await app.arun(session, [('user', 'fixture request')])
             assert len(result['approval_requests']) == 1 and not target.exists()
             assert calls == []
             assert not any(isinstance(message, ToolMessage) for message in result['messages'])
             memory = dict(app._sessions._sessions[session])
-        with SessionStorage(database) as storage:
-            app = build(patch, storage, tools=tools)
+        async with build(patch, database, tools=tools) as app:
+            storage = app._sessions._persistence.storage
             row = storage.get(session)
-            snapshot = app._agent.get_state({'configurable': {'thread_id': row['thread_id']}})
+            snapshot = await app._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
             interrupts = tuple(item for task in snapshot.tasks for item in task.interrupts)
             pending = pending_tool_approval({**snapshot.values, '__interrupt__': interrupts})
             pending['requested_run_id'] = row['run_id']
             memory.update(pending_tool_approval=pending, pending_turn=None, session_allow=[],
                           steering_queue=deque(), follow_up_queue=deque(), busy=False, run_id=None)
             app._sessions._sessions[session] = memory
-            result = app.resume_tool_approval(session, ['approve'])
+            result = await app.aresume_tool_approval(session, ['approve'])
             assert target.read_text() == 'written' and result['messages'][-1].content == 'answer'
             results = [message for message in result['messages'] if isinstance(message, ToolMessage)]
             assert [message.tool_call_id for message in results] == ['read-call', 'write-call']
@@ -194,7 +197,11 @@ def probe_approval_transport():
     print('approval_transport_probe=PASS reopened=True mixed_sequential_batch=True no_early_tools=True new_grants=True')
 
 
+async def main():
+    await probe_continue()
+    await probe_pending_writes()
+    await probe_approval_transport()
+
+
 if __name__ == '__main__':
-    probe_continue()
-    asyncio.run(probe_pending_writes())
-    probe_approval_transport()
+    asyncio.run(main())

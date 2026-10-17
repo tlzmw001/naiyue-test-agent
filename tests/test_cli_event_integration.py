@@ -1,5 +1,13 @@
 """Native graph/CLI integration keeps early replies and original error behavior."""
 
+import os
+import sys
+
+from contextlib import closing
+from pathlib import Path
+from naiyue_test_agent.tools import create_session_bash_tool
+from test_host_bash import BashFake, bash_results
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
@@ -16,7 +24,7 @@ from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.application.cli_display import CliEventDisplay
 from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.tools.processes import ProcessCleanupError
-from test_application_run_events import make_app, ToolModel
+from test_application_run_events import ToolModel
 
 
 def test_cli_displays_first_reply_before_later_failure(monkeypatch, capsys):
@@ -41,7 +49,7 @@ def test_cli_displays_first_reply_before_later_failure(monkeypatch, capsys):
         {'name': 'probe', 'args': {}, 'id': 'probe-1'},
     ])])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _p: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application('unused', tools=[ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], system_prompt='', response_format=None)
+    app = cli.build_local_application('unused', tools=[ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], system_prompt='', response_format=None)
     monkeypatch.setattr(cli, 'build_local_application', lambda *_a, **_k: app)
     entries = iter(['question', ':quit'])
     monkeypatch.setattr('builtins.input', lambda _p='': next(entries))
@@ -91,8 +99,8 @@ def test_startup_output_error_still_unsubscribes(monkeypatch):
     assert lifecycle == ['subscribe', 'unsubscribe']
 
 
-def test_observer_output_failure_does_not_change_run_and_result_can_fill_gap(monkeypatch, caplog):
-    app = make_app(monkeypatch, ToolModel(responses=[AIMessage(content='visible answer', id='a')]))
+def test_observer_output_failure_does_not_change_run_and_result_can_fill_gap(monkeypatch, cli_app, caplog):
+    app = cli_app( ToolModel(responses=[AIMessage(content='visible answer', id='a')]))
     session = app.create_session('A')
     lines, failures = [], []
     def writer(text):
@@ -110,12 +118,12 @@ def test_observer_output_failure_does_not_change_run_and_result_can_fill_gap(mon
     assert 'PRIVATE_OUTPUT_ERROR' not in caplog.text
 
 
-def test_recoverable_tool_error_displays_reason_and_agent_continues(monkeypatch):
+def test_recoverable_tool_error_displays_reason_and_agent_continues(monkeypatch, cli_app):
     @tool
     def retryable() -> str:
         """Return a safe actionable synthetic error."""
         raise ToolException('CORRECTABLE_REASON: use a different argument')
-    app = make_app(monkeypatch, ToolModel(responses=[
+    app = cli_app( ToolModel(responses=[
         AIMessage(content='first reply', tool_calls=[{'name': 'retryable', 'args': {}, 'id': 't'}]),
         AIMessage(content='recovered reply'),
     ]), [ToolSpec(retryable, retryable.args_schema, permissions=ToolPermission(default='allow'))])
@@ -130,7 +138,7 @@ def test_recoverable_tool_error_displays_reason_and_agent_continues(monkeypatch)
     assert out.count('本次运行完成') == 1 and '运行失败' not in out
 
 
-def test_approval_resume_then_new_approval_and_reject_do_not_replay_old_messages(monkeypatch, tmp_path):
+def test_approval_resume_then_new_approval_and_reject_do_not_replay_old_messages(monkeypatch, cli_app, tmp_path):
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     first, second = tmp_path / 'one.txt', tmp_path / 'two.txt'
@@ -143,7 +151,7 @@ def test_approval_resume_then_new_approval_and_reject_do_not_replay_old_messages
             {'name': 'read', 'args': {'path': str(second)}, 'id': 'second'},
         ]), AIMessage(content='final reply', id='c'),
     ])
-    app = make_app(monkeypatch, model, [create_session_read_tool()])
+    app = cli_app( model, [create_session_read_tool()])
     session = app.create_workspace_session('A', workspace)
     lines = []
     view = CliEventDisplay(session, writer=lines.append)
@@ -160,12 +168,12 @@ def test_approval_resume_then_new_approval_and_reject_do_not_replay_old_messages
     assert app.pending_tool_approvals(session) == []
 
 
-def test_cleanup_failure_keeps_manual_review_once(monkeypatch):
+def test_cleanup_failure_keeps_manual_review_once(monkeypatch, cli_app):
     @tool
     def uncertain() -> str:
         """Inject unknown side effects without executing a real command."""
         raise ProcessCleanupError('PRIVATE_EXCEPTION_BODY', facts={'process_reaped': False})
-    app = make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
+    app = cli_app( ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'uncertain', 'args': {}, 'id': 'u'},
     ])]), [ToolSpec(uncertain, uncertain.args_schema, permissions=ToolPermission(default='allow'))])
     session = app.create_session('A')
@@ -180,12 +188,12 @@ def test_cleanup_failure_keeps_manual_review_once(monkeypatch):
     assert 'PRIVATE_EXCEPTION_BODY' not in out and '本次运行完成' not in out
 
 
-def test_returned_answer_can_fill_missing_message_events(monkeypatch):
-    app = make_app(monkeypatch, ToolModel(responses=[AIMessage(content='fallback answer')]))
+def test_returned_answer_can_fill_missing_message_events(monkeypatch, cli_app):
+    app = cli_app( ToolModel(responses=[AIMessage(content='fallback answer')]))
     session = app.create_session('A')
     lines = []
     view = CliEventDisplay(session, writer=lines.append)
-    app.subscribe_events(lambda e: view(e) if e.event_type not in ('message_completed', 'message_revised') else None)
+    app.subscribe_events(lambda e: view(e) if e.event_type not in ('message_delta', 'message_completed', 'message_revised') else None)
     cli._run_and_print(app, session, 'q', display=view)
     assert lines.count('fallback answer') == 1
     assert lines.count('本次运行完成') == 1
@@ -213,3 +221,114 @@ def test_cli_unsubscribes_on_input_termination(monkeypatch, termination):
         with pytest.raises(RuntimeError):
             cli.main(['--no-session', '--config', 'unused'])
     assert lifecycle == ['unsubscribe']
+
+
+@pytest.fixture
+def cli_app(monkeypatch):
+    opened = []
+    def create(model, tools=None):
+        monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
+        app = cli.build_local_application('synthetic', tools=tools or [], system_prompt='', response_format=None)
+        opened.append(app)
+        return app
+    try:
+        yield create
+    finally:
+        for app in reversed(opened):
+            app.close()
+
+
+def test_cli_backend_tool_selection_and_approval_displays_full_command(
+    monkeypatch, tmp_path, capsys,
+):
+    with pytest.raises(SystemExit) as missing:
+        cli.main(['--config', 'synthetic.json', '--host-bash'])
+    assert missing.value.code == 2
+
+    command = 'printf "hello\\n" > result.txt'
+    model = BashFake(responses=[
+        AIMessage(content='', tool_calls=[{'name': 'bash', 'id': 'cli-bash',
+                                           'args': {'command': command}}]),
+        AIMessage(content='finished'),
+    ])
+    monkeypatch.setattr(application, 'load_model_catalog',
+                        lambda _path: ModelCatalog('A', {'A': model}))
+    original_build = cli.build_persistent_application
+    def build_selected(*args, **kwargs):
+        app = original_build(*args, **kwargs)
+        create = app.create_workspace_session
+        def create_selected(model_id, root):
+            sid = create(model_id, root)
+            app.set_active_tools(sid, [*app.get_active_tools(sid), 'bash'])
+            return sid
+        app.create_workspace_session = create_selected
+        return app
+    monkeypatch.setattr(cli, 'build_persistent_application', build_selected)
+    inputs = iter(('run shell', ':approve', ':quit'))
+    target = tmp_path / 'result.txt'
+
+    def read_input(_prompt=''):
+        line = next(inputs)
+        if line == ':approve':
+            assert not target.exists()
+        return line
+
+    monkeypatch.setattr('builtins.input', read_input)
+    assert cli.main(['--config', 'synthetic.json', '--workspace', str(tmp_path)]) == 0
+    output = capsys.readouterr().out
+    assert '命令=' in output and 'printf' in output
+    assert 'finished' in output
+    assert target.read_text() == 'hello\n'
+
+
+def test_timeout_returns_raw_output_to_model_without_cli_control_sequences(monkeypatch, tmp_path, capsys):
+    with closing(make_cli_app(monkeypatch, 'printf "EARLY\\033[2J\\n"; sleep 3', timeout=1)) as app:
+        session = app.create_workspace_session('A', tmp_path)
+        app.run(session, [('user', 'run')])
+
+        results = []
+        resume = app.resume_tool_approval
+        def capture(*args, **kwargs):
+            result = resume(*args, **kwargs)
+            results.append(result)
+            return result
+        monkeypatch.setattr(app, 'resume_tool_approval', capture)
+        cli._resume_and_print(app, session, ['approve'])
+        output = capsys.readouterr().out
+        assert 'done' in output
+        assert '工具副作用无法确认' not in output
+        assert '\x1b' not in output
+        assert 'output:\nEARLY\n' in bash_results(results[0])[0].content
+        assert '\x1b' not in bash_results(results[0])[0].content
+        assert not app._app._sessions._sessions[session].get('manual_review_required')
+
+
+def test_timeout_cli_resumes_model_and_archive_remains_in_tool_result(
+    monkeypatch, tmp_path, capsys,
+):
+    with closing(make_cli_app(monkeypatch, "python -c \"print('T'*70000, flush=True)\"; sleep 3",
+                   timeout=1)) as app:
+        session = app.create_workspace_session('A', tmp_path)
+        app.run(session, [('user', 'run')])
+        cli._resume_and_print(app, session, ['approve'])
+        output = capsys.readouterr().out
+        assert 'done' in output and '工具副作用无法确认' not in output
+        assert not app._app._sessions._sessions[session].get('manual_review_required')
+
+
+def make_cli_app(monkeypatch, command: str, *, timeout: int | None = None, settings=None, output_settings=None):
+    # Simulate an activated test venv in the inherited parent environment.
+    monkeypatch.setenv('PATH', str(Path(sys.executable).parent) + os.pathsep + os.environ['PATH'])
+    args = {'command': command}
+    if timeout is not None:
+        args['timeout'] = timeout
+    model = BashFake(responses=[
+        AIMessage(content='', tool_calls=[{'name': 'bash', 'id': 'bash-1', 'args': args}]),
+        AIMessage(content='done'),
+    ])
+    monkeypatch.setattr(application, 'load_model_catalog',
+                        lambda _path: ModelCatalog('A', {'A': model}))
+    return cli.build_local_application(
+        Path('synthetic.json'), tools=[create_session_bash_tool(settings=settings, output_settings=output_settings)],
+        system_prompt='', response_format=None,
+    )

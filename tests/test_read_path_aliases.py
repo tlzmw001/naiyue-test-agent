@@ -1,5 +1,7 @@
 """Filename compatibility selects the review target once and never bypasses policy."""
 
+from native_application_helpers import async_test
+
 from pathlib import Path
 
 import pytest
@@ -13,30 +15,33 @@ from test_permission_pipeline import build, call
 from test_dynamic_tools import DynamicModel
 
 
+@async_test
 @pytest.mark.parametrize('actual,supplied', [('note.txt', '@note.txt'), ('has space.txt', 'has\u00a0space.txt'),
     ('has space.txt', 'has\u3000space.txt'), ('Shot 1\u202fPM.txt', 'Shot 1 PM.txt'),
     ('cafe\u0301.txt', 'café.txt'), ('café.txt', 'cafe\u0301.txt'),
     ('Capture d’écran.txt', "Capture d'écran.txt"), ('cafe\u0301 d’écran.txt', "café d'écran.txt")])
-def test_read_selects_an_existing_finite_filename_variant(tmp_path, actual, supplied):
+async def test_read_selects_an_existing_finite_filename_variant(tmp_path, actual, supplied):
     (tmp_path / actual).write_text('selected')
-    result = call_read(create_session_read_tool(), {'path': supplied}, tmp_path)
+    result = (await call_read(create_session_read_tool(), {'path': supplied}, tmp_path))
     assert result.status == 'success' and result.content == 'selected'
 
 
-def test_exact_name_wins_even_when_compatibility_target_exists(tmp_path):
+@async_test
+async def test_exact_name_wins_even_when_compatibility_target_exists(tmp_path):
     (tmp_path / '@note.txt').write_text('exact')
     (tmp_path / 'note.txt').write_text('variant')
-    assert call_read(create_session_read_tool(), {'path': '@note.txt'}, tmp_path).content == 'exact'
+    assert (await call_read(create_session_read_tool(), {'path': '@note.txt'}, tmp_path)).content == 'exact'
     (tmp_path / '@directory').mkdir()
     (tmp_path / 'directory').write_text('PRIVATE_VARIANT')
-    result = call_read(create_session_read_tool(), {'path': '@directory'}, tmp_path)
+    result = (await call_read(create_session_read_tool(), {'path': '@directory'}, tmp_path))
     assert result.status == 'error' and 'PRIVATE_VARIANT' not in result.content
 
 
-def test_broken_exact_link_does_not_fall_back(tmp_path):
+@async_test
+async def test_broken_exact_link_does_not_fall_back(tmp_path):
     (tmp_path / '@note.txt').symlink_to(tmp_path / 'missing')
     (tmp_path / 'note.txt').write_text('PRIVATE_VARIANT')
-    result = call_read(create_session_read_tool(), {'path': '@note.txt'}, tmp_path)
+    result = (await call_read(create_session_read_tool(), {'path': '@note.txt'}, tmp_path))
     assert result.status == 'error' and 'PRIVATE_VARIANT' not in result.content
 
 
@@ -73,7 +78,8 @@ def test_execution_rechecks_the_saved_exact_target_without_alias_search(tmp_path
 
 
 @pytest.mark.parametrize('decision', ['deny', 'approve', 'reject', 'changed'])
-def test_alias_permissions_use_selected_real_target_and_resume_never_reselects(monkeypatch, tmp_path, decision):
+@async_test
+async def test_alias_permissions_use_selected_real_target_and_resume_never_reselects(monkeypatch, tmp_path, decision):
     root = tmp_path / 'workspace'
     root.mkdir()
     first, second = tmp_path / 'first.txt', tmp_path / 'second.txt'
@@ -83,15 +89,15 @@ def test_alias_permissions_use_selected_real_target_and_resume_never_reselects(m
     link.symlink_to(first)
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[call('@note.txt')]), AIMessage(content='done')])
     rules = {'deny': [{'tool': 'read', 'path': str(first)}], 'allow': [{'tool': 'read', 'path': str(tmp_path) + '/**'}]} if decision == 'deny' else {}
-    app = build(monkeypatch, model, **rules)
-    sid = app.create_workspace_session('A', root)
+    app = await build(monkeypatch, model, **rules)
+    sid = await app.acreate_workspace_session('A', root)
     opened, original = [], Path.open
     def record(path, *args, **kwargs):
         if path in (first, second):
             opened.append(path)
         return original(path, *args, **kwargs)
     monkeypatch.setattr(Path, 'open', record)
-    paused = app.run(sid, [('user', 'read the file')])
+    paused = await app.arun(sid, [('user', 'read the file')])
     assert opened == []
     if decision == 'deny':
         result = paused
@@ -101,7 +107,7 @@ def test_alias_permissions_use_selected_real_target_and_resume_never_reselects(m
         if decision == 'changed':
             link.unlink()
             link.symlink_to(second)
-        result = app.resume_tool_approval(sid, ['reject' if decision == 'reject' else 'approve'])
+        result = await app.aresume_tool_approval(sid, ['reject' if decision == 'reject' else 'approve'])
     output = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert output.tool_call_id == 'c1' and output.status == ('success' if decision == 'approve' else 'error')
     assert 'PRIVATE_OTHER' not in output.content
@@ -109,9 +115,10 @@ def test_alias_permissions_use_selected_real_target_and_resume_never_reselects(m
     assert result['messages'][-1].content == 'done'
 
 
-def test_hidden_compatibility_target_still_requires_approval(monkeypatch, tmp_path):
+@async_test
+async def test_hidden_compatibility_target_still_requires_approval(monkeypatch, tmp_path):
     (tmp_path / '.private').write_text('PRIVATE_BODY')
-    app = build(monkeypatch, DynamicModel(responses=[AIMessage(content='', tool_calls=[call('@.private')])]))
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'read')])
+    app = await build(monkeypatch, DynamicModel(responses=[AIMessage(content='', tool_calls=[call('@.private')])]))
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'read')])
     assert result['approval_requests'][0]['target'] == str(tmp_path / '.private')
     assert not any(isinstance(m, ToolMessage) for m in result['messages'])

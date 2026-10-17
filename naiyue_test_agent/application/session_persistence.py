@@ -6,7 +6,7 @@ from collections import deque
 from threading import Lock
 
 from .session_storage import SessionPersistenceError
-from .io_steps import IOCall, run_steps, arun_steps
+from .io_steps import IOCall, arun_steps
 from .session_recovery import history_steps, recovery_steps
 from naiyue_test_agent.tools.read import resolve_workspace_root
 
@@ -30,8 +30,6 @@ class SessionPersistence:
             self.storage.mark_running(session_id, run_id)
             self._active = (session_id, run_id)
 
-    def finish(self, session_id, run_id, agent, observation):
-        return run_steps(self._finish_steps(session_id, run_id, agent, observation))
 
     async def afinish(self, session_id, run_id, agent, observation):
         return await arun_steps(self._finish_steps(session_id, run_id, agent, observation))
@@ -49,7 +47,7 @@ class SessionPersistence:
             previous = yield IOCall(self.storage.get, (session_id,))
             checkpoint_id, namespace = previous['checkpoint_id'], previous['checkpoint_ns']
             if state == 'ready':
-                snapshot = yield IOCall(agent.get_state, ({'configurable': {'thread_id': session['thread_id']}},),
+                snapshot = yield IOCall(args=({'configurable': {'thread_id': session['thread_id']}},),
                                         async_call=agent.aget_state)
                 checkpoint_id = snapshot.config.get('configurable', {}).get('checkpoint_id')
                 namespace = snapshot.config.get('configurable', {}).get('checkpoint_ns', '')
@@ -66,17 +64,11 @@ class SessionPersistence:
             with self._lock:
                 self._active = None
 
-    def restore(self, session_id, agent):
-        return run_steps(self._restore_steps(session_id, agent))
 
-    def history(self, session_id, agent):
-        return run_steps(history_steps(self, session_id, agent))
 
     async def ahistory(self, session_id, agent):
         return await arun_steps(history_steps(self, session_id, agent))
 
-    def recover(self, session_id, agent, *, checkpoint_id, action):
-        return run_steps(self._recover_steps(session_id, agent, checkpoint_id, action))
 
     async def arecover(self, session_id, agent, *, checkpoint_id, action):
         return await arun_steps(self._recover_steps(session_id, agent, checkpoint_id, action))
@@ -105,7 +97,7 @@ class SessionPersistence:
         if row['state'] != 'ready':
             raise SessionPersistenceError('session_recovery_blocked')
         root, names = yield from self._configuration_steps(row)
-        snapshot = yield IOCall(agent.get_state, ({'configurable': {'thread_id': row['thread_id']}},),
+        snapshot = yield IOCall(args=({'configurable': {'thread_id': row['thread_id']}},),
                                 async_call=agent.aget_state)
         actual = snapshot.config.get('configurable', {}).get('checkpoint_id')
         namespace = snapshot.config.get('configurable', {}).get('checkpoint_ns', '')

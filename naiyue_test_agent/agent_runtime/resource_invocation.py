@@ -4,7 +4,6 @@ from pathlib import Path
 
 from langgraph.types import Command
 
-from naiyue_test_agent.agent_runtime import _invoke_agent_run
 from .async_invocation import ainvoke_agent_run
 
 
@@ -22,29 +21,6 @@ def _check_resources(workspace_root, read_resource_roots):
         if not isinstance(root, Path) or not root.is_absolute() or '..' in root.parts:
             raise ValueError('A canonical resource directory is required')
         root.relative_to(workspace_root)
-
-
-def invoke_agent_run_with_resources(
-    agent, messages, *, session_id, thread_id, run_id, workspace_root, read_resource_roots,
-):
-    _check_resources(workspace_root, read_resource_roots)
-    return _invoke_agent_run(
-        agent, messages, session_id=session_id, thread_id=thread_id, run_id=run_id,
-        workspace_root=workspace_root, read_resource_roots=read_resource_roots,
-    )
-
-
-def resume_agent_run_with_resources(
-    agent, *, session_id, thread_id, run_id, workspace_root, read_resource_roots,
-    decisions, approval_grants,
-):
-    _check_resources(workspace_root, read_resource_roots)
-    return _invoke_agent_run(
-        agent, Command(resume={'decisions': [{'type': item} for item in decisions]}),
-        session_id=session_id, thread_id=thread_id, run_id=run_id,
-        workspace_root=workspace_root, read_resource_roots=read_resource_roots,
-        approval_grants=approval_grants,
-    )
 
 
 async def ainvoke_agent_run_with_resources(agent, messages, *, session_id, thread_id, run_id,

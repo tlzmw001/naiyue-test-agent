@@ -1,5 +1,7 @@
 """Public timeout semantics reach the existing tool/permission execution chain."""
 
+from native_application_helpers import async_test
+
 import asyncio
 import json
 
@@ -42,8 +44,9 @@ def test_public_timeout_schema_is_optional_strict_nonnegative_and_has_no_300_cap
         assert 'runtime' not in shape['properties']
 
 
+@async_test
 @pytest.mark.parametrize('value', ['omitted', None, 0, 600])
-def test_normalized_timeout_reaches_process_requests_through_formal_graph(spec, monkeypatch, tmp_path, value):
+async def test_normalized_timeout_reaches_process_requests_through_formal_graph(spec, monkeypatch, tmp_path, value):
     target = tmp_path / 'note.txt'
     target.write_text('HIT\n')
     seen = []
@@ -62,8 +65,8 @@ def test_normalized_timeout_reaches_process_requests_through_formal_graph(spec, 
     args = args_for(spec)
     if value != 'omitted':
         args['timeout'] = value
-    feedback = invoke_tool_feedback(spec, args, call_id='timeout',
-        context={'workspace_root': tmp_path}, permission_mode='BypassApprovals')
+    feedback = (await invoke_tool_feedback(spec, args, call_id='timeout',
+        context={'workspace_root': tmp_path}, permission_mode='BypassApprovals'))
     assert feedback.status == 'success'
     assert ('note.txt' if spec.tool.name == 'find' else 'HIT') in feedback.content
     assert seen
@@ -74,12 +77,13 @@ def test_normalized_timeout_reaches_process_requests_through_formal_graph(spec, 
         assert max(request.timeout_seconds for request in seen) > 300
 
 
-def test_invalid_timeout_is_tool_feedback_without_starting_process(spec, monkeypatch, tmp_path):
+@async_test
+async def test_invalid_timeout_is_tool_feedback_without_starting_process(spec, monkeypatch, tmp_path):
     async def forbidden(*args, **kwargs):
         pytest.fail('Invalid input must not acquire a process')
     monkeypatch.setattr(HostProcessRunner, 'run', forbidden)
-    feedback = invoke_tool_feedback(spec, {**args_for(spec), 'timeout': -1}, call_id='invalid',
-        context={'workspace_root': tmp_path}, permission_mode='BypassApprovals')
+    feedback = (await invoke_tool_feedback(spec, {**args_for(spec), 'timeout': -1}, call_id='invalid',
+        context={'workspace_root': tmp_path}, permission_mode='BypassApprovals'))
     assert feedback.status == 'error' and 'timeout' in feedback.content
     assert 'runtime' not in feedback.content
 

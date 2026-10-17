@@ -1,5 +1,7 @@
 """Classifiers use one protocol; protected facts bypass ordinary resolution."""
 
+from native_application_helpers import async_test
+
 import asyncio
 
 import pytest
@@ -41,8 +43,9 @@ def test_two_argument_classifier_is_kept_without_wrapper_or_invocation():
     assert calls == [(error, 'tool')]
 
 
-def test_wrong_classifier_arity_leaves_all_mappings_unchanged(monkeypatch):
-    app, _events, catalog = build(monkeypatch)
+@async_test
+async def test_wrong_classifier_arity_leaves_all_mappings_unchanged(monkeypatch):
+    app, _events, catalog = await build(monkeypatch)
 
     def model(error, source):
         return FailureDescription(source, 'limit_exceeded', 'vendor_quota', type(error).__name__)

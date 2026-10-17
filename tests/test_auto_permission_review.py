@@ -1,6 +1,7 @@
 """Auto review sends bounded source-aware data through two distinct stages."""
 
-import asyncio
+from native_application_helpers import async_test
+
 import json
 import logging
 
@@ -47,14 +48,14 @@ def payload():
         additional_kwargs={'naiyue_human_input': True})], prepared(), 'PROJECT_RULE')
 
 
-@pytest.mark.parametrize('asynchronous', [False, True])
+@async_test
 @pytest.mark.parametrize('first,second,expected,calls', [('allow', 'ask', 'allow', 0),
     ('ask', 'allow', 'allow', 1), ('ask', 'ask', 'ask', 1)])
-def test_review_stage_contract_and_no_shared_model_mutation(asynchronous, first, second, expected, calls):
+async def test_review_stage_contract_and_no_shared_model_mutation(first, second, expected, calls):
     fast, detailed = model([verdict(first)]), model([verdict(second)])
     original = dict(fast.metadata)
     review = reviewer(fast, detailed)
-    result = asyncio.run(review.areview(payload(), {'session_id': 's', 'run_id': 'r'})) if asynchronous else review.review(payload(), {'session_id': 's', 'run_id': 'r'})
+    result = (await review.areview(payload(), {'session_id': 's', 'run_id': 'r'}))
     assert result['decision'] == expected
     assert len(fast.seen) == 1 and len(detailed.seen) == calls
     assert isinstance(fast.seen[0][0], SystemMessage)
@@ -65,29 +66,31 @@ def test_review_stage_contract_and_no_shared_model_mutation(asynchronous, first,
         assert fast.seen[0][0].content != detailed.seen[0][0].content
 
 
+@async_test
 @pytest.mark.parametrize('response', [verdict('deny'), verdict(extra='not allowed'),
     AIMessage(content='not json'), AIMessage(content='{"decision":"ask","decision":"allow","reason":"x"}'),
     verdict(reason='x' * 513), AIMessage(content='{"decision":"allow","reason":""}'),
     AIMessage(content='{"decision":"allow","reason":"ok"}', response_metadata={'finish_reason': 'length'}),
     AIMessage(content='{"decision":"allow","reason":"ok"}', tool_calls=[{'name': 'bash', 'args': {}, 'id': 'bad'}]),
 ])
-def test_invalid_fast_response_goes_to_human_without_detailed_call(response):
+async def test_invalid_fast_response_goes_to_human_without_detailed_call(response):
     fast, detailed = model([response]), model([verdict()])
-    assert reviewer(fast, detailed).review(payload(), {})['decision'] == 'ask'
+    assert (await reviewer(fast, detailed).areview(payload(), {}))['decision'] == 'ask'
     assert len(fast.seen) == 1 and detailed.seen == []
 
 
+@async_test
 @pytest.mark.parametrize('stage', ['fast', 'detail'])
-def test_network_error_is_safe_ask_without_retry(stage, caplog):
+async def test_network_error_is_safe_ask_without_retry(stage, caplog):
     caplog.set_level(logging.INFO, logger='naiyue_test_agent.agent_runtime.tool_execution.permissions')
     class Failing(DynamicModel):
-        def _generate(self, *args, **kwargs):
+        async def _agenerate(self, *args, **kwargs):
             self.seen.append(True)
             raise TimeoutError('PRIVATE_PROVIDER_DETAIL')
     failing = Failing(responses=[], metadata=model([]).metadata)
     fast = failing if stage == 'fast' else model([verdict('ask')])
     detail = model([]) if stage == 'fast' else failing
-    assert reviewer(fast, detail).review(payload(), {'session_id': 's', 'run_id': 'r'})['decision'] == 'ask'
+    assert (await reviewer(fast, detail).areview(payload(), {'session_id': 's', 'run_id': 'r'}))['decision'] == 'ask'
     assert len(failing.seen) == 1
     assert detail.seen == [] if stage == 'fast' else len(detail.seen) == 1
     assert 'PRIVATE_PROVIDER_DETAIL' not in caplog.text
@@ -119,8 +122,9 @@ def test_only_text_parts_of_human_input_are_sent():
     assert collect_human_messages(messages)[0]['content'] == 'real task'
 
 
+@async_test
 @pytest.mark.parametrize('unavailable', ['no_user', 'current_too_large', 'project_too_large', 'missing_limits'])
-def test_missing_intent_or_budget_never_sends_partial_current_call(unavailable):
+async def test_missing_intent_or_budget_never_sends_partial_current_call(unavailable):
     fast, detailed = model([verdict()], window=2048), model([verdict()], window=2048)
     data = payload()
     if unavailable == 'no_user':
@@ -131,15 +135,16 @@ def test_missing_intent_or_budget_never_sends_partial_current_call(unavailable):
         data['project_instructions'] = 'PROJECT_END ' * 10000
     else:
         fast.metadata = {}
-    assert reviewer(fast, detailed).review(data, {})['decision'] == 'ask'
+    assert (await reviewer(fast, detailed).areview(data, {}))['decision'] == 'ask'
     assert fast.seen == detailed.seen == []
 
 
-def test_old_history_can_be_removed_but_current_call_and_project_are_complete():
+@async_test
+async def test_old_history_can_be_removed_but_current_call_and_project_are_complete():
     fast, detailed = model([verdict()], window=2048), model([verdict()], window=2048)
     data = payload()
     data['previous_calls'] = [{'sequence': -1, 'id': 'old', 'name': 'write', 'args': {'content': 'OLD ' * 10000}}]
-    result = reviewer(fast, detailed).review(data, {})
+    result = (await reviewer(fast, detailed).areview(data, {}))
     assert result['decision'] == 'allow'
     sent = json.loads(fast.seen[0][-1].content)
     assert sent['previous_calls'] == []
@@ -147,25 +152,27 @@ def test_old_history_can_be_removed_but_current_call_and_project_are_complete():
     assert data['previous_calls']
 
 
-def test_graph_control_is_not_an_ask():
+@async_test
+async def test_graph_control_is_not_an_ask():
     failure = GraphBubbleUp('control')
     class Signalling(DynamicModel):
-        def _generate(self, *args, **kwargs):
+        async def _agenerate(self, *args, **kwargs):
             raise failure
     review = reviewer(Signalling(responses=[], metadata=model([]).metadata), model([]))
     with pytest.raises(GraphBubbleUp) as caught:
-        review.review(payload(), {})
+        (await review.areview(payload(), {}))
     assert caught.value is failure
 
 
-def test_reasoning_blocks_are_supported_and_only_safe_usage_is_logged(caplog):
+@async_test
+async def test_reasoning_blocks_are_supported_and_only_safe_usage_is_logged(caplog):
     caplog.set_level(logging.INFO, logger='naiyue_test_agent.agent_runtime.tool_execution.permissions')
     response = AIMessage(content=[{'type': 'thinking', 'thinking': 'PRIVATE_THINKING'},
         {'type': 'text', 'text': '{"decision":"allow","reason":"PRIVATE_REASON"}'}],
         response_metadata={'stop_reason': 'end_turn'},
         usage_metadata={'input_tokens': 20, 'output_tokens': 4, 'total_tokens': 24})
     fast, detailed = model([response]), model([])
-    assert reviewer(fast, detailed).review(payload(), {'session_id': 's', 'run_id': 'r', '_review_call_id': 'c'})['decision'] == 'allow'
+    assert (await reviewer(fast, detailed).areview(payload(), {'session_id': 's', 'run_id': 'r', '_review_call_id': 'c'}))['decision'] == 'allow'
     entries = [r.permission_review for r in caplog.records if hasattr(r, 'permission_review')]
     assert len(entries) == 1 and entries[0]['input_tokens'] == 20 and entries[0]['output_tokens'] == 4
     assert entries[0]['stage'] == 'fast' and entries[0]['tool_call_id'] == 'c'
@@ -188,17 +195,19 @@ def test_settings_loader_keeps_auto_configuration_and_tool_budgets(tmp_path):
     assert loaded.tools.read.default_limit == 12
 
 
-def test_unmarked_stored_history_is_not_upgraded_to_human_intent():
+@async_test
+async def test_unmarked_stored_history_is_not_upgraded_to_human_intent():
     fast, detailed = model([verdict()]), model([])
     data = prepare_review_input([HumanMessage(content='old unmarked history')], prepared(), None)
-    assert reviewer(fast, detailed).review(data, {})['decision'] == 'ask'
+    assert (await reviewer(fast, detailed).areview(data, {}))['decision'] == 'ask'
     assert fast.seen == detailed.seen == []
 
 
-def test_diagnostic_failure_does_not_change_review_decision(monkeypatch, caplog):
+@async_test
+async def test_diagnostic_failure_does_not_change_review_decision(monkeypatch, caplog):
     from naiyue_test_agent.agent_runtime.tool_execution import permissions
     def fail(*args, **kwargs):
         raise RuntimeError('PRIVATE_DIAGNOSTIC')
     monkeypatch.setattr(permissions.logger, 'info', fail)
-    assert reviewer(model([verdict()]), model([])).review(payload(), {})['decision'] == 'allow'
+    assert (await reviewer(model([verdict()]), model([])).areview(payload(), {}))['decision'] == 'allow'
     assert 'auto_review_diagnostics_failed' in caplog.text and 'PRIVATE_DIAGNOSTIC' not in caplog.text

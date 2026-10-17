@@ -5,7 +5,7 @@ from typing import NotRequired
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import SystemMessage, ToolMessage
 
-from .observation import observe_tool_dispatch, aobserve_tool_dispatch
+from .observation import aobserve_tool_dispatch
 
 
 _VIEW_KEY = '_naiyue_tool_view'
@@ -78,8 +78,6 @@ class ToolSetMiddleware(AgentMiddleware):
         tools, prompt = self.model_inputs(request.state, request.runtime)
         return request.override(tools=tools, system_message=SystemMessage(content=prompt))
 
-    def wrap_model_call(self, request, handler):
-        return handler(self._model_request(request))
 
     async def awrap_model_call(self, request, handler):
         return await handler(self._model_request(request))
@@ -95,11 +93,6 @@ class ToolSetMiddleware(AgentMiddleware):
             name=request.tool_call['name'], tool_call_id=request.tool_call['id'], status='error',
             additional_kwargs={'naiyue_not_executed': 'tool_not_active'})
 
-    def wrap_tool_call(self, request, handler):
-        selected = self._tool_request(request)
-        if selected is not None:
-            return handler(selected)
-        return observe_tool_dispatch(request, handler, lambda _: self._unavailable(request))
 
     async def awrap_tool_call(self, request, handler):
         selected = self._tool_request(request)

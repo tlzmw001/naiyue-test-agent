@@ -1,5 +1,7 @@
 """Explicit observation calls and normal-path health are separate contracts."""
 
+from native_application_helpers import async_test
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
@@ -92,8 +94,9 @@ def test_missing_or_disabled_observer_preserves_fallback_without_calling():
     assert observer.calls == []
 
 
-def test_health_check_rejects_success_with_isolated_observer_fault(monkeypatch, caplog):
-    app = make_app(monkeypatch)
+@async_test
+async def test_health_check_rejects_success_with_isolated_observer_fault(monkeypatch, caplog):
+    app = await make_app(monkeypatch)
     events = []
     app.subscribe_events(events.append)
 
@@ -101,22 +104,24 @@ def test_health_check_rejects_success_with_isolated_observer_fault(monkeypatch, 
         raise TypeError('PRIVATE_BAD_OBSERVATION')
 
     monkeypatch.setattr(TurnObserver, 'begin', fail)
-    assert app.run(app.create_session('A'), [('user', 'probe')])['messages'][-1].content == 'PRIVATE_REPLY'
+    assert (await app.arun(await app.acreate_session('A'), [('user', 'probe')]))['messages'][-1].content == 'PRIVATE_REPLY'
     with pytest.raises(AssertionError, match='Unexpected observation diagnostics'):
         EventSequenceChecker.assert_healthy(events, caplog.records)
 
 
-def test_health_check_rejects_unavailable_observation_without_exception(monkeypatch, caplog):
-    app = make_app(monkeypatch)
+@async_test
+async def test_health_check_rejects_unavailable_observation_without_exception(monkeypatch, caplog):
+    app = await make_app(monkeypatch)
     events = []
     app.subscribe_events(events.append)
     monkeypatch.setattr(TurnObserver, 'begin', lambda self, _call: self.disable())
-    assert app.run(app.create_session('A'), [('user', 'probe')])['messages'][-1].content == 'PRIVATE_REPLY'
+    assert (await app.arun(await app.acreate_session('A'), [('user', 'probe')]))['messages'][-1].content == 'PRIVATE_REPLY'
     with pytest.raises(AssertionError, match='Unexpected observation unavailability'):
         EventSequenceChecker.assert_healthy(events, caplog.records)
 
 
-def test_sync_tool_cycle_has_healthy_observation(monkeypatch, caplog):
+@async_test
+async def test_sync_tool_cycle_has_healthy_observation(monkeypatch, caplog):
     @tool
     def probe() -> str:
         """Return a deterministic tool result."""
@@ -126,16 +131,17 @@ def test_sync_tool_cycle_has_healthy_observation(monkeypatch, caplog):
         {'name': 'probe', 'args': {}, 'id': 'probe-call'}],
         response_metadata={'finish_reason': 'tool_calls'}),
         AIMessage(content='done', response_metadata={'finish_reason': 'stop'})])
-    app = make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
+    app = await make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
-    assert app.run(app.create_session('A'), [('user', 'run')])['messages'][-1].content == 'done'
+    assert (await app.arun(await app.acreate_session('A'), [('user', 'run')]))['messages'][-1].content == 'done'
     EventSequenceChecker.assert_healthy(events, caplog.records)
     assert sum(event.event_type == 'turn_finished' for event in events) == 2
     assert sum(event.event_type == 'tool_call_finished' for event in events) == 1
 
 
-def test_async_steering_follow_up_have_healthy_observation(monkeypatch, caplog):
+@async_test
+async def test_async_steering_follow_up_have_healthy_observation(monkeypatch, caplog):
     async def scenario():
         entered, release = asyncio.Event(), asyncio.Event()
         model = StreamingToolModel(replies=[AIMessage(content=text) for text in ('one', 'two', 'three')],
@@ -159,10 +165,11 @@ def test_async_steering_follow_up_have_healthy_observation(monkeypatch, caplog):
         finally:
             release.set()
             await app.aclose()
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_async_stop_has_healthy_observation(monkeypatch, caplog):
+@async_test
+async def test_async_stop_has_healthy_observation(monkeypatch, caplog):
     async def scenario():
         entered, release = asyncio.Event(), asyncio.Event()
         model = StreamingToolModel(replies=[], entered=entered, release=release)
@@ -182,25 +189,26 @@ def test_async_stop_has_healthy_observation(monkeypatch, caplog):
         finally:
             release.set()
             await app.aclose()
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_approval_and_resume_have_healthy_observation(monkeypatch, tmp_path, caplog):
+@async_test
+async def test_approval_and_resume_have_healthy_observation(monkeypatch, tmp_path, caplog):
     root = tmp_path / 'workspace'
     root.mkdir()
     outside = tmp_path / 'outside.md'
     outside.write_text('approved', encoding='utf-8')
     model = ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'read', 'args': {'path': str(outside)}, 'id': 'read-call'}]), AIMessage(content='done')])
-    app = make_app(monkeypatch, model, [create_session_read_tool()])
-    session = app.create_workspace_session('A', root)
+    app = await make_app(monkeypatch, model, [create_session_read_tool()])
+    session = await app.acreate_workspace_session('A', root)
     events = []
     app.subscribe_events(events.append)
-    paused = app.run(session, [('user', 'read')])
+    paused = await app.arun(session, [('user', 'read')])
     assert paused['approval_requests'] and events[-1].data.status == 'interrupted'
     EventSequenceChecker.assert_healthy(events, caplog.records)
     events.clear()
-    result = app.resume_tool_approval(session, ['approve'])
+    result = await app.aresume_tool_approval(session, ['approve'])
     assert result['messages'][-1].content == 'done'
     EventSequenceChecker.assert_healthy(events, caplog.records)
     assert any(event.event_type == 'turn_resumed' for event in events)
@@ -208,17 +216,18 @@ def test_approval_and_resume_have_healthy_observation(monkeypatch, tmp_path, cap
 
 
 @pytest.mark.parametrize('operation', ['compaction', 'recovery'])
-def test_context_operations_have_healthy_observation(monkeypatch, caplog, operation):
+@async_test
+async def test_context_operations_have_healthy_observation(monkeypatch, caplog, operation):
     if operation == 'compaction':
-        app, session, _model, events = prepared_app(monkeypatch)
+        app, session, _model, events = await prepared_app(monkeypatch)
         messages = [('user', 'third')]
     else:
         model = _configured_model([_status(), AIMessage(content='recovered')])
-        app = _app(monkeypatch, {'A': model})
-        session, events = app.create_session('A'), []
+        app = await _app(monkeypatch, {'A': model})
+        session, events = await app.acreate_session('A'), []
         app.subscribe_events(events.append)
         messages = _history()
-    app.run(session, messages)
+    await app.arun(session, messages)
     EventSequenceChecker.assert_healthy(events, caplog.records)
     expected = 'compaction_finished' if operation == 'compaction' else 'context_recovery_finished'
     assert any(event.event_type == expected for event in events)

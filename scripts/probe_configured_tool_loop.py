@@ -1,5 +1,6 @@
 """Probe a configured model with synthetic model → tool → model data."""
 
+import asyncio
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
@@ -13,7 +14,7 @@ import secrets
 import signal
 
 
-def main() -> int:
+async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', default=str(get_models_path()))
     parser.add_argument('--model-id', required=True)
@@ -59,12 +60,12 @@ def main() -> int:
             select_model_id=lambda _session_id: args.model_id,
             record_selection=record_selection,
         )
-        result = agent.invoke(
+        result = (await agent.ainvoke(
             {'messages': [('user',
                            'Call read_probe_value exactly once. Reply only with the value returned by the tool.')]},
             context={'session_id': 'configured-probe'},
-            config={'recursion_limit': 12},
-        )
+            config={'recursion_limit': 14},
+        ))
         messages = result['messages']
         calls = [call for message in messages if message.type == 'ai'
                  for call in message.tool_calls]
@@ -84,4 +85,4 @@ def main() -> int:
 
 
 if __name__ == '__main__':
-    raise SystemExit(main())
+    raise SystemExit(asyncio.run(main()))

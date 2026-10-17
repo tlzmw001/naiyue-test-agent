@@ -1,1 +1,1 @@
-"""Provider- and application-independent contracts shared by the layers."""
+"""Standard-library shared facts and validation, without layer-owned policies."""

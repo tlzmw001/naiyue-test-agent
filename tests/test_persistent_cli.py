@@ -1,5 +1,7 @@
 """CLI persistence is default; temporary and resume paths are explicit."""
 
+from native_application_helpers import async_test
+
 import json
 from pathlib import Path
 import sys
@@ -190,7 +192,8 @@ def test_restricted_resume_prints_history_without_reading_input_or_running_model
         assert tuple(storage.connection.iterdump()) == before
 
 
-def test_interactive_auto_recovery_waits_for_new_input_before_running(monkeypatch, tmp_path, capsys):
+@async_test
+async def test_interactive_auto_recovery_waits_for_new_input_before_running(monkeypatch, tmp_path, capsys):
     from naiyue_test_agent.application.session_storage import SessionStorage
     from test_persistent_sessions import build
     configure(monkeypatch)
@@ -209,9 +212,9 @@ def test_interactive_auto_recovery_waits_for_new_input_before_running(monkeypatc
     output = capsys.readouterr().out
     assert '只读历史' in output and '下一条新消息才会启动运行' in output
     assert output.count('本次运行完成') == 1
-    with SessionStorage(db) as storage:
-        app = build(monkeypatch, storage)
-        history = app.get_session_history(row['session_id'])
+    async with build(monkeypatch, db) as app:
+        storage = app._sessions._persistence.storage
+        history = await app.aget_session_history(row['session_id'])
         assert [m.content for m in history['messages']] == ['saved request', 'answer', 'new request', 'answer']
 
 

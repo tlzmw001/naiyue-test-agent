@@ -1,5 +1,7 @@
 """Reject unusable model messages before LangChain can route their tools."""
 
+from native_application_helpers import async_test, build_application
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
@@ -45,7 +47,8 @@ INVALID_CALL = {'name': 'write_probe', 'args': '{bad', 'id': 'call-2',
     (AIMessage(content='', response_metadata={'finish_reason': 'tool_calls'}),
      'missing_tool_calls'),
 ])
-def test_rejected_model_message_fails_run_without_executing_any_tool(
+@async_test
+async def test_rejected_model_message_fails_run_without_executing_any_tool(
     monkeypatch, caplog, first, reason,
 ):
     model = ToolCapableFake(responses=[first, AIMessage(content='unused')])
@@ -59,14 +62,14 @@ def test_rejected_model_message_fails_run_without_executing_any_tool(
 
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application(
+    app = await build_application(
         Path('synthetic.json'), tools=[ToolSpec(write_probe, write_probe.args_schema, permissions=ToolPermission(default='allow'))], system_prompt='', response_format=None,
     )
-    session_id = app.create_session('A')
+    session_id = await app.acreate_session('A')
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(RuntimeError) as caught:
-            app.run(session_id, [('user', 'private-question')])
+            await app.arun(session_id, [('user', 'private-question')])
 
     assert type(caught.value).__name__ == 'ModelResponseRejected'
     assert caught.value.reason == reason
@@ -93,8 +96,11 @@ def test_rejected_model_message_fails_run_without_executing_any_tool(
         assert secret not in caplog.text + str(caught.value)
 
 
+@async_test
 @pytest.mark.parametrize('result_messages', [[], [HumanMessage(content='private-unexpected')]])
-def test_model_hook_rejects_response_without_ai_message(result_messages, caplog):
+async def test_model_hook_rejects_response_without_ai_message(result_messages, caplog):
+    async def async_handler_0(_request):
+        return ModelResponse(result=result_messages)
     model = ToolCapableFake(responses=[])
     middleware = make_model_selection_middleware(
         lambda _session: ('A', model), lambda _session, _model: None,
@@ -106,9 +112,9 @@ def test_model_hook_rejects_response_without_ai_message(result_messages, caplog)
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(RuntimeError) as caught:
-            middleware.wrap_model_call(
-                request, lambda _request: ModelResponse(result=result_messages),
-            )
+            (await middleware.awrap_model_call(
+                request, async_handler_0,
+            ))
 
     assert type(caught.value).__name__ == 'ModelResponseRejected'
     assert caught.value.reason == 'missing_ai_message'
@@ -117,21 +123,22 @@ def test_model_hook_rejects_response_without_ai_message(result_messages, caplog)
     assert 'private-unexpected' not in caplog.text + str(caught.value)
 
 
-def test_session_can_continue_after_rejected_response(monkeypatch):
+@async_test
+async def test_session_can_continue_after_rejected_response(monkeypatch):
     model = ToolCapableFake(responses=[
         AIMessage(content='private-bad-response', response_metadata={'status': 'failed'}),
         AIMessage(content='recovered', response_metadata={'finish_reason': 'stop'}),
     ])
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application(
+    app = await build_application(
         Path('synthetic.json'), tools=[], system_prompt='', response_format=None,
     )
-    session_id = app.create_session('A')
+    session_id = await app.acreate_session('A')
 
     with pytest.raises(RuntimeError):
-        app.run(session_id, [('user', 'first')])
-    result = app.run(session_id, [('user', 'second')])
+        await app.arun(session_id, [('user', 'first')])
+    result = await app.arun(session_id, [('user', 'second')])
 
     assert [(type(message).__name__, message.content) for message in result['messages']] == [
         ('HumanMessage', 'first'), ('HumanMessage', 'second'),

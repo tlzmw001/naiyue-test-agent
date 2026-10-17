@@ -1,6 +1,7 @@
 """Edit artifact persistence and failure boundaries, with real temporary files."""
 
-import asyncio
+from native_application_helpers import async_test, build_application
+
 from dataclasses import asdict
 import json
 
@@ -12,8 +13,6 @@ from langchain_openai.chat_models.base import _convert_message_to_dict
 from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime.context_compaction import _serialize_text_history
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.application.persistent import build_persistent_application
-from naiyue_test_agent.application.session_storage import SessionStorage
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import ToolSettings, create_session_edit_tool
 from naiyue_test_agent.tools import edit as module
@@ -29,37 +28,26 @@ def tool_call(path='text.txt'):
         'edits': [{'oldText': '"old"', 'newText': '"NEW"'}]}}
 
 
-@pytest.mark.parametrize('async_mode', [False, True])
-def test_edit_json_artifact_survives_sqlite_reopen_but_is_not_model_payload(monkeypatch, tmp_path, async_mode):
+@pytest.mark.parametrize('native_model', [False, True])
+@async_test
+async def test_edit_json_artifact_survives_sqlite_reopen_but_is_not_model_payload(monkeypatch, tmp_path, native_model):
     (tmp_path / 'text.txt').write_text('“old”\n')
     replies = [AIMessage(content='', tool_calls=[tool_call()]), AIMessage(content='done')]
-    model = StreamingToolModel(replies=replies) if async_mode else RecordingFake(responses=replies)
+    model = StreamingToolModel(replies=replies) if native_model else RecordingFake(responses=replies)
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     tools, events = [create_session_edit_tool()], []
     options = dict(tools=tools, settings=ToolSettings(), system_prompt='', response_format=None)
     database = tmp_path / 'sessions.sqlite'
-    if async_mode:
-        async def scenario():
-            async with open_async_persistent_application('synthetic', database_path=database, **options) as app:
-                app.subscribe_events(events.append)
-                sid = await app.acreate_workspace_session('A', tmp_path)
-                await app.arun(sid, [('user', 'edit')])
-                before = await app.aget_messages(sid)
-            async with open_async_persistent_application('synthetic', database_path=database, **options) as app:
-                await app.arestore_session(sid)
-                return before, await app.aget_messages(sid)
-        before, after = asyncio.run(scenario())
-    else:
-        with SessionStorage(database) as storage:
-            app = build_persistent_application('synthetic', storage=storage, **options)
+    async def scenario():
+        async with open_async_persistent_application('synthetic', database_path=database, **options) as app:
             app.subscribe_events(events.append)
-            sid = app.create_workspace_session('A', tmp_path)
-            before = app.run(sid, [('user', 'edit')])['messages']
-        with SessionStorage(database) as storage:
-            app = build_persistent_application('synthetic', storage=storage, **options)
-            app.restore_session(sid)
-            thread = app._sessions._sessions[sid]['thread_id']
-            after = app._agent.get_state({'configurable': {'thread_id': thread}}).values['messages']
+            sid = await app.acreate_workspace_session('A', tmp_path)
+            await app.arun(sid, [('user', 'edit')])
+            before = await app.aget_messages(sid)
+        async with open_async_persistent_application('synthetic', database_path=database, **options) as app:
+            await app.arestore_session(sid)
+            return before, await app.aget_messages(sid)
+    before, after = await scenario()
     first = next(m for m in before if isinstance(m, ToolMessage))
     restored = next(m for m in after if isinstance(m, ToolMessage))
     assert first.status == restored.status == 'success'
@@ -78,15 +66,16 @@ def test_edit_json_artifact_survives_sqlite_reopen_but_is_not_model_payload(monk
     assert any(isinstance(m, ToolMessage) and m.tool_call_id == 'edit-json' for m in model.seen[1])
 
 
-def test_feedback_failure_is_before_commit_and_cleans_temp(monkeypatch, tmp_path, caplog):
+@async_test
+async def test_feedback_failure_is_before_commit_and_cleans_temp(monkeypatch, tmp_path, caplog):
     target = tmp_path / 'text.txt'
     target.write_text('“old”\n')
     def fail_feedback(*args):
         assert target.read_text() == '“old”\n'
         raise RuntimeError('PRIVATE_FEEDBACK_DETAIL')
     monkeypatch.setattr(module, 'build_edit_feedback', fail_feedback)
-    result = invoke_tool_feedback(create_session_edit_tool(), tool_call()['args'],
-        call_id='feedback-failed', context={'workspace_root': tmp_path})
+    result = (await invoke_tool_feedback(create_session_edit_tool(), tool_call()['args'],
+        call_id='feedback-failed', context={'workspace_root': tmp_path}))
     assert result.status == 'error' and 'I/O' in result.content
     assert target.read_text() == '“old”\n'
     assert sorted(p.name for p in tmp_path.iterdir()) == ['text.txt']
@@ -94,7 +83,8 @@ def test_feedback_failure_is_before_commit_and_cleans_temp(monkeypatch, tmp_path
     assert 'PRIVATE_FEEDBACK_DETAIL' not in caplog.text
 
 
-def test_swap_logical_symlink_after_feedback_never_commits_old_or_new_target(monkeypatch, tmp_path):
+@async_test
+async def test_swap_logical_symlink_after_feedback_never_commits_old_or_new_target(monkeypatch, tmp_path):
     target, other, link = tmp_path / 'real.txt', tmp_path / 'other.txt', tmp_path / 'link.txt'
     target.write_text('“old”\n'); other.write_text('other\n'); link.symlink_to(target)
     real_feedback = module.build_edit_feedback
@@ -104,15 +94,16 @@ def test_swap_logical_symlink_after_feedback_never_commits_old_or_new_target(mon
         link.symlink_to(other)
         return result
     monkeypatch.setattr(module, 'build_edit_feedback', swap)
-    result = invoke_tool_feedback(create_session_edit_tool(), tool_call(link.name)['args'],
-        call_id='swap', context={'workspace_root': tmp_path})
+    result = (await invoke_tool_feedback(create_session_edit_tool(), tool_call(link.name)['args'],
+        call_id='swap', context={'workspace_root': tmp_path}))
     assert result.status == 'error' and 'changed' in result.content
     assert target.read_text() == '“old”\n' and other.read_text() == 'other\n'
     assert link.is_symlink() and link.resolve() == other
     assert not list(tmp_path.glob('.naiyue-write-*'))
 
 
-def test_file_change_after_normalized_scan_is_not_overwritten(monkeypatch, tmp_path):
+@async_test
+async def test_file_change_after_normalized_scan_is_not_overwritten(monkeypatch, tmp_path):
     target = tmp_path / 'text.txt'
     target.write_text('“old”\n')
     real_scan = edit_matching.scan_normalized_matches
@@ -121,30 +112,31 @@ def test_file_change_after_normalized_scan_is_not_overwritten(monkeypatch, tmp_p
         target.write_text('another writer\n')
         return result
     monkeypatch.setattr(edit_matching, 'scan_normalized_matches', change)
-    result = invoke_tool_feedback(create_session_edit_tool(), tool_call()['args'],
-        call_id='changed', context={'workspace_root': tmp_path})
+    result = (await invoke_tool_feedback(create_session_edit_tool(), tool_call()['args'],
+        call_id='changed', context={'workspace_root': tmp_path}))
     assert result.status == 'error' and 'changed' in result.content
     assert target.read_text() == 'another writer\n'
     assert not list(tmp_path.glob('.naiyue-write-*'))
 
 
-def test_approval_does_not_read_original_for_preview(monkeypatch, tmp_path):
+@async_test
+async def test_approval_does_not_read_original_for_preview(monkeypatch, tmp_path):
     root, outside = tmp_path / 'workspace', tmp_path / 'outside.txt'
     root.mkdir(); outside.write_text('“old”\n')
     model = RecordingFake(responses=[AIMessage(content='', tool_calls=[tool_call(str(outside))]), AIMessage(content='done')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application('synthetic', tools=[create_session_edit_tool()],
+    app = await build_application('synthetic', tools=[create_session_edit_tool()],
         settings=ToolSettings(), system_prompt='', response_format=None)
-    sid = app.create_workspace_session('A', root)
+    sid = await app.acreate_workspace_session('A', root)
     calls, real_scan = [], module._scan_target
     def scan(*args, **kwargs):
         calls.append(True)
         return real_scan(*args, **kwargs)
     monkeypatch.setattr(module, '_scan_target', scan)
-    app.run(sid, [('user', 'edit outside')])
+    await app.arun(sid, [('user', 'edit outside')])
     assert calls == [] and outside.read_text() == '“old”\n'
     assert app.pending_tool_approvals(sid)
-    result = app.resume_tool_approval(sid, ['approve'])
+    result = await app.aresume_tool_approval(sid, ['approve'])
     feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert calls == [True] and feedback.status == 'success'
     assert outside.read_bytes() == b'"NEW"\n'

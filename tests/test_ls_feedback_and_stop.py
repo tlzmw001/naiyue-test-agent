@@ -1,5 +1,7 @@
 """A directory result explicitly accounts for failed entries and cooperative stop."""
 
+from native_application_helpers import async_test
+
 import asyncio
 from threading import Event
 from types import SimpleNamespace
@@ -36,14 +38,15 @@ class Scan:
         self.closed = True
 
 
+@async_test
 @pytest.mark.parametrize('error,reason', [(FileNotFoundError('PRIVATE'), 'disappeared'),
     (PermissionError('PRIVATE'), 'permission_denied'), (OSError('PRIVATE'), 'io_error')])
 @pytest.mark.parametrize('ordinary', [True, False])
-def test_stat_fault_is_reported_and_never_looks_like_empty(monkeypatch, tmp_path, caplog, error, reason, ordinary):
+async def test_stat_fault_is_reported_and_never_looks_like_empty(monkeypatch, tmp_path, caplog, error, reason, ordinary):
     entries = ([Entry(tmp_path, 'a.txt')] if ordinary else []) + [Entry(tmp_path, 'b\n.txt', error)]
     scan = Scan(entries)
     monkeypatch.setattr(ls_module.os, 'scandir', lambda _: scan)
-    result = call_ls(create_session_ls_tool(), {}, tmp_path)
+    result = (await call_ls(create_session_ls_tool(), {}, tmp_path))
     assert result.status == 'success' and '(empty directory)' not in result.content
     assert 'incomplete' in result.content and 'b\\n.txt: ' + reason in result.content
     assert result.content.startswith('a.txt\n') if ordinary else result.content.startswith('[ls:')
@@ -51,14 +54,15 @@ def test_stat_fault_is_reported_and_never_looks_like_empty(monkeypatch, tmp_path
     assert type(error).__name__ in caplog.text
 
 
+@async_test
 @pytest.mark.parametrize('error,expected', [(FileNotFoundError('PRIVATE'), ('missing', 'Check')),
     (NotADirectoryError('PRIVATE'), ('directory', 'Choose')),
     (PermissionError('PRIVATE'), ('permission', 'Check'))])
-def test_open_failure_has_specific_safe_message(monkeypatch, tmp_path, caplog, error, expected):
+async def test_open_failure_has_specific_safe_message(monkeypatch, tmp_path, caplog, error, expected):
     def fail(_):
         raise error
     monkeypatch.setattr(ls_module.os, 'scandir', fail)
-    result = call_ls(create_session_ls_tool(), {}, tmp_path)
+    result = (await call_ls(create_session_ls_tool(), {}, tmp_path))
     assert result.status == 'error' and all(word in result.content for word in expected)
     assert type(error).__name__ in caplog.text and 'PRIVATE' not in result.content + caplog.text
 
@@ -124,9 +128,10 @@ def test_listing_stop_retains_allowed_prefix_and_run_finishes_stopped(monkeypatc
     asyncio.run(scenario())
 
 
-def test_many_failed_entries_keep_the_skip_report_bounded(monkeypatch, tmp_path):
+@async_test
+async def test_many_failed_entries_keep_the_skip_report_bounded(monkeypatch, tmp_path):
     scan = Scan([Entry(tmp_path, f'{number:03d}-entry.txt', OSError('PRIVATE')) for number in range(100)])
     monkeypatch.setattr(ls_module.os, 'scandir', lambda _: scan)
-    result = call_ls(create_session_ls_tool(settings=LsSettings(max_output_bytes=128)), {}, tmp_path)
+    result = (await call_ls(create_session_ls_tool(settings=LsSettings(max_output_bytes=128)), {}, tmp_path))
     assert result.status == 'success' and 'incomplete' in result.content and 'omitted' in result.content
     assert len(result.content.encode()) <= 228 and 'PRIVATE' not in result.content

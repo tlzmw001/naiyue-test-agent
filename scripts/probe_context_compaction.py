@@ -3,6 +3,8 @@
 Exploratory, deterministic framework experiment; not wired into the product agent.
 """
 
+import asyncio
+
 from pydantic import Field
 
 from langchain.agents import create_agent
@@ -75,11 +77,11 @@ def _make_agent(summary_model):
     return agent, selected, model_a, model_b
 
 
-def _invoke(agent, text):
-    return agent.invoke(
+async def _invoke(agent, text):
+    return (await agent.ainvoke(
         {'messages': [('user', text)]}, context={'session_id': 'probe'},
         config={'configurable': {'thread_id': 'probe-thread'}},
-    )
+    ))
 
 
 def _shape(messages):
@@ -96,20 +98,20 @@ def _shape(messages):
     return result
 
 
-def main():
+async def main():
     summary_model = RecordingFake(
         responses=[AIMessage(content='synthetic-summary')],
         profile={'max_input_tokens': 100},
     )
     agent, selected, model_a, model_b = _make_agent(summary_model)
-    first = _invoke(agent, 'first-user-message')
+    first = (await _invoke(agent, 'first-user-message'))
     assert _shape(first['messages']) == ['human', 'ai_call:probe-1', 'tool:probe-1', 'ai']
     first_checkpoint_id = agent.get_state(
         {'configurable': {'thread_id': 'probe-thread'}}
     ).config['configurable']['checkpoint_id']
 
     selected['probe'] = 'B'
-    second = _invoke(agent, 'second-user-message')
+    second = (await _invoke(agent, 'second-user-message'))
     current_shape = _shape(second['messages'])
     assert current_shape == [
         'summary', 'ai_call:probe-1', 'tool:probe-1', 'ai', 'human', 'ai',
@@ -132,10 +134,10 @@ def main():
         responses=[AIMessage(content='unused')], profile={'max_input_tokens': 100},
     )
     failed_agent, failed_selection, _a, _b = _make_agent(failing_summary)
-    _invoke(failed_agent, 'first-user-message')
+    (await _invoke(failed_agent, 'first-user-message'))
     failed_selection['probe'] = 'B'
     try:
-        _invoke(failed_agent, 'second-user-message')
+        (await _invoke(failed_agent, 'second-user-message'))
     except RuntimeError as error:
         assert str(error) == 'synthetic_summary_failure'
     else:
@@ -150,4 +152,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())

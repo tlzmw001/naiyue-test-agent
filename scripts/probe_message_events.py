@@ -5,6 +5,8 @@ from naiyue_test_agent.tools.permissions import ToolPermission
 from naiyue_test_agent.tools import ToolSpec
 
 import argparse
+import asyncio
+from contextlib import AsyncExitStack
 
 from naiyue_test_agent.config_paths import get_models_path
 import json
@@ -17,118 +19,132 @@ from unittest.mock import patch
 
 
 def _worker(args):
-    os.environ['LANGSMITH_TRACING'] = 'false'
-    os.environ['LANGCHAIN_TRACING_V2'] = 'false'
-    logging.getLogger().setLevel(logging.CRITICAL)
-    from langchain.tools import tool
-    from langchain_core.messages import AIMessage, ToolMessage
-    from naiyue_test_agent import application
+    return asyncio.run(_async_worker(args))
 
-    expected = secrets.token_hex(6)
-    executions, selections, events = [], [], []
-    holder = {}
-    with_control = getattr(args, 'with_control', False)
-    with_cli = getattr(args, 'with_cli', False)
-    displayed = []
-    original_assemble = application._assemble_interactive_runtime
 
-    def bounded_assemble(*positional, **options):
-        original_record = options['record_selection']
+async def _async_worker(args):
+    async with AsyncExitStack() as resources:
+        os.environ['LANGSMITH_TRACING'] = 'false'
+        os.environ['LANGCHAIN_TRACING_V2'] = 'false'
+        logging.getLogger().setLevel(logging.CRITICAL)
+        from langchain.tools import tool
+        from langchain_core.messages import AIMessage, ToolMessage
+        from naiyue_test_agent import application
+        from naiyue_test_agent.application.async_application import build_async_local_application
+        from naiyue_test_agent.application.cli_async import AsyncCliApplication
 
-        def record_selection(session_id, model_id):
-            if len(selections) >= 2:
-                raise RuntimeError('Probe model-call limit reached')
-            selections.append(True)
-            original_record(session_id, model_id)
+        expected = secrets.token_hex(6)
+        executions, selections, events = [], [], []
+        holder = {}
+        with_control = getattr(args, 'with_control', False)
+        with_cli = getattr(args, 'with_cli', False)
+        displayed = []
+        original_assemble = application._assemble_interactive_runtime
 
-        options['record_selection'] = record_selection
-        return original_assemble(*positional, **options)
+        def bounded_assemble(*positional, **options):
+            original_record = options['record_selection']
 
-    @tool
-    def read_probe_value() -> str:
-        """Return the diagnostic value generated for this run."""
-        if executions:
-            raise RuntimeError('Probe tool-call limit reached')
-        if with_cli:
-            assert any(line.strip() == 'CLI_BEFORE_TOOL' for line in displayed)
-        executions.append(True)
+            def record_selection(session_id, model_id):
+                if len(selections) >= 2:
+                    raise RuntimeError('Probe model-call limit reached')
+                selections.append(True)
+                original_record(session_id, model_id)
+
+            options['record_selection'] = record_selection
+            return original_assemble(*positional, **options)
+
+        @tool
+        def read_probe_value() -> str:
+            """Return the diagnostic value generated for this run."""
+            if executions:
+                raise RuntimeError('Probe tool-call limit reached')
+            if with_cli:
+                assert any(line.strip() == 'CLI_BEFORE_TOOL' for line in displayed)
+            executions.append(True)
+            if with_control:
+                holder['app'].steer(holder['session'],
+                    'The requested tool has returned. Do not call more tools. '
+                    'Reply with only the exact value returned by read_probe_value.')
+            return expected
+
+        # Only a test guard changes: use the formal application assembly and run.
+        with patch.object(application, '_assemble_interactive_runtime', bounded_assemble):
+            options = dict(tools=[ToolSpec(read_probe_value, read_probe_value.args_schema,
+                permissions=ToolPermission(default='allow'))],
+                system_prompt='Call the requested tool and return its exact value.', response_format=None)
+            if with_cli:
+                # The CLI bridge owns another loop; this caller never runs on it.
+                app = AsyncCliApplication(args.config, **options)
+                resources.callback(app.close)
+                session = app.create_session(args.model_id or app.default_model_id)
+            else:
+                app = await build_async_local_application(args.config, **options)
+                resources.push_async_callback(app.aclose)
+                session = await app.acreate_session(args.model_id or app.default_model_id)
+            app.subscribe_events(events.append)
+            holder.update(app=app, session=session)
+            prompt = 'Call read_probe_value exactly once. Reply only with the exact value returned by it.'
+            if with_cli:
+                from naiyue_test_agent.application.cli import _run_and_print
+                from naiyue_test_agent.application.cli_display import CliEventDisplay
+                view = CliEventDisplay(session, writer=displayed.append)
+                unsubscribe = app.subscribe_events(view)
+                original_run = app.run
+
+                def capture_result(*args, **kwargs):
+                    holder['result'] = original_run(*args, **kwargs)
+                    return holder['result']
+
+                try:
+                    with patch.object(app, 'run', capture_result):
+                        _run_and_print(app, session,
+                            'In the assistant message containing the tool call, write exactly CLI_BEFORE_TOOL as text. '
+                            + prompt, display=view)
+                finally:
+                    unsubscribe()
+                result = holder['result']
+                assert sum(line.strip() == 'CLI_BEFORE_TOOL' for line in displayed) == 1
+                assert sum(line.strip() == expected for line in displayed) == 1
+                assert displayed.count('本次运行完成') == 1
+                assert '工具 read_probe_value：处理完成' in displayed
+            else:
+                result = await app.arun(session, [('user', prompt)])
+        messages = result['messages']
+        snapshots = [e.data for e in events if e.event_type == 'message_completed']
+        rows = [json.loads(data.snapshot_json) for data in snapshots]
+        assert len(selections) == 2 and len(executions) == 1
+        assert [row['type'] for row in rows] == (
+            ['human', 'ai', 'tool', 'human', 'ai'] if with_control else ['human', 'ai', 'tool', 'ai'])
+        assert [row['id'] for row in rows] == [m.id for m in messages]
+        assert [row['content'] for row in rows] == [m.content for m in messages]
+        calls = [c for m in messages if isinstance(m, AIMessage) for c in m.tool_calls]
+        tools = [m for m in messages if isinstance(m, ToolMessage)]
+        assert len(calls) == len(tools) == 1
+        assert rows[1]['tool_calls'][0]['id'] == rows[2]['tool_call_id'] == calls[0]['id'] == tools[0].tool_call_id
+        assert rows[2]['content'] == expected and tools[0].status == 'success'
+        assert messages[-1].content.strip() == expected
+        assert all(data.visibility == 'graph_values' for data in snapshots)
+        assert [e.sequence for e in events] == list(range(1, len(events) + 1))
+        assert events[-1].event_type == 'run_finished' and events[-1].data.status == 'completed'
+        starts = [e for e in events if e.event_type == 'turn_started']
+        ends = [e for e in events if e.event_type == 'turn_finished']
+        assert len(starts) == len(ends) == 2
+        assert [e.data.turn_id for e in starts] == [e.data.turn_id for e in ends]
+        assert starts[0].data.turn_id != starts[1].data.turn_id
+        assert all(e.data.status == 'completed' for e in ends)
+        assert ends[0].data.assistant_message_id == messages[1].id
+        assert ends[0].data.tool_message_ids == (messages[2].id,)
+        assert ends[1].data.assistant_message_id == messages[-1].id
+        assert starts[0].sequence < ends[0].sequence < starts[1].sequence < ends[1].sequence
         if with_control:
-            holder['app'].steer(holder['session'],
-                'The requested tool has returned. Do not call more tools. '
-                'Reply with only the exact value returned by read_probe_value.')
-        return expected
-
-    # Only a test guard changes: use the formal application assembly and run.
-    with patch.object(application, '_assemble_interactive_runtime', bounded_assemble):
-        app = application.build_local_application(
-            args.config, tools=[ToolSpec(read_probe_value, read_probe_value.args_schema, permissions=ToolPermission(default='allow'))],
-            system_prompt='Call the requested tool and return its exact value.', response_format=None,
-        )
-        app.subscribe_events(events.append)
-        session = app.create_session(args.model_id or app.default_model_id)
-        holder.update(app=app, session=session)
-        prompt = 'Call read_probe_value exactly once. Reply only with the exact value returned by it.'
-        if with_cli:
-            from naiyue_test_agent.application.cli import _run_and_print
-            from naiyue_test_agent.application.cli_display import CliEventDisplay
-            view = CliEventDisplay(session, writer=displayed.append)
-            unsubscribe = app.subscribe_events(view)
-            original_run = app.run
-
-            def capture_result(*args, **kwargs):
-                holder['result'] = original_run(*args, **kwargs)
-                return holder['result']
-
-            try:
-                with patch.object(app, 'run', capture_result):
-                    _run_and_print(app, session,
-                        'In the assistant message containing the tool call, write exactly CLI_BEFORE_TOOL as text. '
-                        + prompt, display=view)
-            finally:
-                unsubscribe()
-            result = holder['result']
-            assert sum(line.strip() == 'CLI_BEFORE_TOOL' for line in displayed) == 1
-            assert sum(line.strip() == expected for line in displayed) == 1
-            assert displayed.count('本次运行完成') == 1
-            assert '工具 read_probe_value：处理完成' in displayed
-        else:
-            result = app.run(session, [('user', prompt)])
-    messages = result['messages']
-    snapshots = [e.data for e in events if e.event_type == 'message_completed']
-    rows = [json.loads(data.snapshot_json) for data in snapshots]
-    assert len(selections) == 2 and len(executions) == 1
-    assert [row['type'] for row in rows] == (
-        ['human', 'ai', 'tool', 'human', 'ai'] if with_control else ['human', 'ai', 'tool', 'ai'])
-    assert [row['id'] for row in rows] == [m.id for m in messages]
-    assert [row['content'] for row in rows] == [m.content for m in messages]
-    calls = [c for m in messages if isinstance(m, AIMessage) for c in m.tool_calls]
-    tools = [m for m in messages if isinstance(m, ToolMessage)]
-    assert len(calls) == len(tools) == 1
-    assert rows[1]['tool_calls'][0]['id'] == rows[2]['tool_call_id'] == calls[0]['id'] == tools[0].tool_call_id
-    assert rows[2]['content'] == expected and tools[0].status == 'success'
-    assert messages[-1].content.strip() == expected
-    assert all(data.visibility == 'graph_values' for data in snapshots)
-    assert [e.sequence for e in events] == list(range(1, len(events) + 1))
-    assert events[-1].event_type == 'run_finished' and events[-1].data.status == 'completed'
-    starts = [e for e in events if e.event_type == 'turn_started']
-    ends = [e for e in events if e.event_type == 'turn_finished']
-    assert len(starts) == len(ends) == 2
-    assert [e.data.turn_id for e in starts] == [e.data.turn_id for e in ends]
-    assert starts[0].data.turn_id != starts[1].data.turn_id
-    assert all(e.data.status == 'completed' for e in ends)
-    assert ends[0].data.assistant_message_id == messages[1].id
-    assert ends[0].data.tool_message_ids == (messages[2].id,)
-    assert ends[1].data.assistant_message_id == messages[-1].id
-    assert starts[0].sequence < ends[0].sequence < starts[1].sequence < ends[1].sequence
-    if with_control:
-        controls = [e for e in events if e.event_type.startswith('control_')]
-        assert [e.event_type for e in controls] == ['control_accepted', 'control_delivery_started', 'control_delivered']
-        assert len({e.data.control_id for e in controls}) == 1
-        assert controls[-1].data.message_id == messages[3].id
-    control_text = 'controls=1 ' if with_control else ''
-    display_text = 'cli_display=verified replies=2 ' if with_cli else ''
-    print(f'real_message_events=PASS events={len(events)} messages={len(rows)} '
-          f'model_calls=2 tool_calls=1 turns=2 {control_text}{display_text}pairing=verified terminal=completed', flush=True)
+            controls = [e for e in events if e.event_type.startswith('control_')]
+            assert [e.event_type for e in controls] == ['control_accepted', 'control_delivery_started', 'control_delivered']
+            assert len({e.data.control_id for e in controls}) == 1
+            assert controls[-1].data.message_id == messages[3].id
+        control_text = 'controls=1 ' if with_control else ''
+        display_text = 'cli_display=verified replies=2 ' if with_cli else ''
+        print(f'real_message_events=PASS events={len(events)} messages={len(rows)} '
+              f'model_calls=2 tool_calls=1 turns=2 {control_text}{display_text}pairing=verified terminal=completed', flush=True)
 
 
 def main():

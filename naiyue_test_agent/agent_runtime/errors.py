@@ -4,20 +4,34 @@ import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Literal
 from langgraph.errors import GraphBubbleUp
 
 from naiyue_test_agent.contracts.failures import (
-    ErrorClassifier, FailureDescription, ModelResponseRejected,
+    ErrorClassifier, FailureDescription, RunFailureData,
     normalize_classifiers, resolve_failure, safe_error_type,
     validate_failure_description, attach_failure_description,
 )
 from naiyue_test_agent.model_access.errors import describe_model_failure
-from .events import RunFailureData
 from .run_control import UserStop
 from naiyue_test_agent.tools.processes import ProcessCleanupError
 
 
 logger = logging.getLogger(__name__)
+
+
+RejectionReason = Literal[
+    'stop_reason_error', 'invalid_tool_calls', 'missing_tool_calls', 'missing_ai_message',
+    'missing_tool_call_id', 'duplicate_tool_call_ids', 'invalid_tool_call_ids',
+]
+
+
+class ModelResponseRejected(RuntimeError):
+    """Response-rejection protocol; the runtime owns the rejection policy."""
+
+    def __init__(self, reason: RejectionReason):
+        self.reason = reason
+        super().__init__(f'Model response rejected: {reason}')
 
 
 class ContextCompactionError(RuntimeError):

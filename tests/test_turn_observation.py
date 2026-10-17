@@ -89,6 +89,12 @@ def test_recovery_view_does_not_complete_and_failed_retry_gets_new_turn():
     assert retried[-1].data.previous_turn_id == events[1].data.turn_id
     assert retried[-1].data.turn_id != events[1].data.turn_id
     assert retried[-1].data.model_call_id is None
+    retry_id = retried[-1].data.turn_id
+    assert saved['post_model_checks_passed'] is True
+    second.observe([reply, result])
+    assert retried[-1].data.status == 'completed' and retried[-1].data.turn_id == retry_id
+    assert events[-1].data.status == 'failed'
+    assert second.snapshot(pending=False) is None
 
 
 def test_restored_turn_is_not_failed_by_preparation_error():

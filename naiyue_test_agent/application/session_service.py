@@ -1,6 +1,6 @@
 """Trusted session state and application run lifecycle."""
 
-from naiyue_test_agent.agent_runtime.observation import observe, emit_event
+from naiyue_test_agent.agent_runtime.observation import observe
 
 import asyncio
 import logging
@@ -10,19 +10,15 @@ from threading import Lock
 from uuid import uuid4
 from pathlib import Path
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.errors import GraphBubbleUp
 
-from naiyue_test_agent.agent_runtime import invoke_agent_run
-from naiyue_test_agent.agent_runtime.events import safe_error_type
-from .session_approval import pending_tool_approval, prepare_resume, public_approvals, validate_remembered
+from naiyue_test_agent.contracts.failures import safe_error_type
+from .session_approval import pending_tool_approval, prepare_resume, public_approvals, validate_remembered, is_pre_tool_approval
 from naiyue_test_agent.tools.permission_rules import PermissionSettings
 from naiyue_test_agent.agent_runtime.tool_execution.permissions import AutoPermissionReviewer
 from naiyue_test_agent.tools.read import resolve_workspace_root
 from naiyue_test_agent.tools.processes import ProcessCleanupError
-from naiyue_test_agent.agent_runtime.resource_invocation import (
-    invoke_agent_run_with_resources, resume_agent_run_with_resources,
-)
 from naiyue_test_agent.application.skills import prepare_run_resources
 from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions, RunObservation
 from naiyue_test_agent.application.session_controls import SessionControlMixin
@@ -32,8 +28,7 @@ from naiyue_test_agent.contracts.failures import normalize_classifiers
 from naiyue_test_agent.agent_runtime.errors import RuntimeErrorPolicy
 from .failure_policy import ApplicationErrorPolicy
 from .errors import SessionBusyError, SessionPendingApprovalError, SessionManualReviewRequiredError
-from .io_steps import IOCall, run_steps
-from .async_session import AsyncSessionMixin
+from .io_steps import IOCall, arun_steps
 from naiyue_test_agent.agent_runtime.async_invocation import ainvoke_agent_run
 from naiyue_test_agent.agent_runtime.resource_invocation import (
     ainvoke_agent_run_with_resources, aresume_agent_run_with_resources,
@@ -43,7 +38,7 @@ from naiyue_test_agent.agent_runtime.resource_invocation import (
 logger = logging.getLogger('naiyue_test_agent.application')
 
 
-class SessionService(AsyncSessionMixin, SessionControlMixin):
+class SessionService(SessionControlMixin):
     """Map public session IDs to private LangGraph threads and model choices."""
 
     _busy_error = SessionBusyError
@@ -162,10 +157,7 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             with self._lock:
                 self._sessions[session_id]['model_id'] = model_id
 
-    def run(self, agent, session_id: str, messages):
-        return run_steps(self._run_steps(agent, session_id, messages))
-
-    def _run_steps(self, agent, session_id, messages, *, run_id=None, async_mode=False, max_concurrency=4):
+    def _run_steps(self, agent, session_id, messages, *, run_id=None, max_concurrency=4):
         with self._lock:
             session = self._sessions[session_id]
             if session['manual_review_required']:
@@ -207,15 +199,15 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             observation.stage = 'execute'
             if workspace_root is not None:
                 with observation.bind():
-                    result = yield IOCall(invoke_agent_run_with_resources, (agent, messages),
-                        dict(session_id=session_id, thread_id=thread_id, run_id=run_id,
+                    result = yield IOCall(args=(agent, messages),
+                        kwargs=dict(session_id=session_id, thread_id=thread_id, run_id=run_id,
                              workspace_root=workspace_root, read_resource_roots=resources['read_resource_roots']),
                         async_call=partial(ainvoke_agent_run_with_resources, max_concurrency=max_concurrency),
                         critical=False)
             else:
                 with observation.bind():
-                    result = yield IOCall(invoke_agent_run, (agent, messages),
-                        dict(session_id=session_id, thread_id=thread_id, run_id=run_id),
+                    result = yield IOCall(args=(agent, messages),
+                        kwargs=dict(session_id=session_id, thread_id=thread_id, run_id=run_id),
                         async_call=partial(ainvoke_agent_run, max_concurrency=max_concurrency), critical=False)
             observation.stage = 'finalize'
             pending = yield IOCall(pending_tool_approval, (result,))
@@ -231,16 +223,16 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             return result
         except BaseException as error:
             primary_error = error
-            if async_mode and isinstance(error, asyncio.CancelledError):
+            if isinstance(error, asyncio.CancelledError):
                 observation.cancelled(error)
             else:
                 observation.failed(error)
             partial_tools = False
-            if async_mode and isinstance(error, Exception) and not isinstance(error, GraphBubbleUp):
-                partial_tools = yield IOCall(self._review_partial_state, (agent, session_id),
+            if isinstance(error, Exception) and not isinstance(error, GraphBubbleUp):
+                partial_tools = yield IOCall(args=(agent, session_id),
                                             async_call=self._areview_partial_state)
             if partial_tools or isinstance(error, ProcessCleanupError) or (
-                    async_mode and isinstance(error, asyncio.CancelledError)):
+                    isinstance(error, asyncio.CancelledError)):
                 with self._lock:
                     session['manual_review_required'] = True
                     session['pending_tool_approval'] = None
@@ -250,7 +242,7 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
                 }})
             raise
         finally:
-            yield IOCall(self._finish_run, (session_id, run_id, session, agent, observation, primary_error),
+            yield IOCall(args=(session_id, run_id, session, agent, observation, primary_error),
                          async_call=self._afinish_run)
 
     @staticmethod
@@ -264,10 +256,7 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             pending = self._sessions[session_id]['pending_tool_approval']
             return public_approvals(pending) if pending is not None else []
 
-    def resume_tool_approval(self, agent, session_id: str, decisions: list[str], *, remember_approved=None):
-        return run_steps(self._resume_steps(agent, session_id, decisions, remember_approved=remember_approved))
-
-    def _resume_steps(self, agent, session_id, decisions, *, run_id=None, async_mode=False, max_concurrency=4, remember_approved=None):
+    def _resume_steps(self, agent, session_id, decisions, *, run_id=None, max_concurrency=4, remember_approved=None):
         with self._lock:
             session = self._sessions[session_id]
             if session['manual_review_required']:
@@ -322,8 +311,8 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             )
             observation.stage = 'execute'
             with observation.bind():
-                result = yield IOCall(resume_agent_run_with_resources, (agent,),
-                    dict(session_id=session_id, thread_id=thread_id, run_id=run_id, workspace_root=workspace_root,
+                result = yield IOCall(args=(agent,),
+                    kwargs=dict(session_id=session_id, thread_id=thread_id, run_id=run_id, workspace_root=workspace_root,
                          decisions=decisions, approval_grants=grants, read_resource_roots=resources['read_resource_roots']),
                     async_call=partial(aresume_agent_run_with_resources, max_concurrency=max_concurrency),
                     critical=False)
@@ -345,16 +334,16 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             return result
         except BaseException as error:
             primary_error = error
-            if async_mode and isinstance(error, asyncio.CancelledError):
+            if isinstance(error, asyncio.CancelledError):
                 observation.cancelled(error)
             else:
                 observation.failed(error)
             partial_tools = False
-            if async_mode and isinstance(error, Exception) and not isinstance(error, GraphBubbleUp):
-                partial_tools = yield IOCall(self._review_partial_state, (agent, session_id),
+            if isinstance(error, Exception) and not isinstance(error, GraphBubbleUp):
+                partial_tools = yield IOCall(args=(agent, session_id),
                                             async_call=self._areview_partial_state)
             if partial_tools or isinstance(error, ProcessCleanupError) or (
-                    async_mode and isinstance(error, asyncio.CancelledError)):
+                    isinstance(error, asyncio.CancelledError)):
                 with self._lock:
                     session['manual_review_required'] = True
                     session['pending_tool_approval'] = None
@@ -364,7 +353,7 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
                 }})
             raise
         finally:
-            yield IOCall(self._finish_run, (session_id, run_id, session, agent, observation, primary_error),
+            yield IOCall(args=(session_id, run_id, session, agent, observation, primary_error),
                          async_call=self._afinish_run)
 
 
@@ -392,7 +381,41 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
             self._record_follow_up('follow_up_discarded', session_id, run_id, discarded_follow_up)
         return review_required
 
-    def _finish_run(self, session_id, run_id, session, agent, observation, primary_error):
+    async def _areview_partial_state(self, agent, session_id):
+        return await arun_steps(self._partial_review_steps(agent, session_id))
+
+    def _partial_review_steps(self, agent, session_id):
+        with self._lock:
+            thread = self._sessions[session_id]['thread_id']
+        try:
+            snapshot = yield IOCall(args=({'configurable': {'thread_id': thread}},),
+                                    async_call=agent.aget_state)
+        except BaseException as error:
+            logger.error('partial_state_review_failed error_type=%s', safe_error_type(error))
+            return True
+        messages = snapshot.values.get('messages', [])
+        if is_pre_tool_approval(snapshot, messages):
+            return False
+        for index in range(len(messages) - 1, -1, -1):
+            if isinstance(messages[index], AIMessage):
+                calls = {call.get('id') for call in messages[index].tool_calls}
+                results = {m.tool_call_id for m in messages[index + 1:] if isinstance(m, ToolMessage)}
+                return bool(calls - results)
+        return False
+
+    async def arun(self, agent, session_id, messages, *, run_id=None, max_concurrency=4):
+        if type(max_concurrency) is not int or max_concurrency <= 0:
+            raise ValueError('Tool concurrency must be a positive integer')
+        return await arun_steps(self._run_steps(agent, session_id, messages,
+            run_id=run_id, max_concurrency=max_concurrency))
+
+    async def aresume_tool_approval(self, agent, session_id, decisions, *, run_id=None, max_concurrency=4, remember_approved=None):
+        if type(max_concurrency) is not int or max_concurrency <= 0:
+            raise ValueError('Tool concurrency must be a positive integer')
+        return await arun_steps(self._resume_steps(agent, session_id, decisions,
+            run_id=run_id, max_concurrency=max_concurrency, remember_approved=remember_approved))
+
+    async def _afinish_run(self, session_id, run_id, session, agent, observation, primary_error):
         secondary = None
         review_required = session['manual_review_required']
         try:
@@ -405,7 +428,7 @@ class SessionService(AsyncSessionMixin, SessionControlMixin):
                 logger.error('session_cleanup_failed error_type=%s', safe_error_type(error))
         try:
             if self._persistence is not None:
-                self._persistence.finish(session_id, run_id, agent, observation)
+                await self._persistence.afinish(session_id, run_id, agent, observation)
         except Exception as error:
             if primary_error is None and secondary is None:
                 secondary = error

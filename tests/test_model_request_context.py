@@ -1,5 +1,9 @@
 """Observe the framework-side model request without recording its contents."""
 
+from naiyue_test_agent.agent_runtime.async_invocation import ainvoke_agent_run
+
+from native_application_helpers import async_test, build_application
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
@@ -15,7 +19,7 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime import build_runtime_agent, invoke_agent_run
+from naiyue_test_agent.agent_runtime import build_runtime_agent
 from naiyue_test_agent.agent_runtime.context_observation import observe_model_request
 from naiyue_test_agent.model_access import ModelCatalog
 
@@ -30,7 +34,8 @@ def _context_events(caplog):
             if hasattr(record, 'model_request_context')]
 
 
-def test_each_model_call_observes_final_prompt_messages_tools_and_usage(
+@async_test
+async def test_each_model_call_observes_final_prompt_messages_tools_and_usage(
     monkeypatch, tmp_path, caplog,
 ):
     (tmp_path / 'AGENTS.md').write_text('SECRET_PROJECT', encoding='utf-8')
@@ -49,13 +54,13 @@ def test_each_model_call_observes_final_prompt_messages_tools_and_usage(
     ])
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application(
+    app = await build_application(
         'synthetic.json', tools=[ToolSpec(read_probe, read_probe.args_schema, permissions=ToolPermission(default='allow'))], system_prompt='BASE', response_format=None,
     )
-    session_id = app.create_workspace_session('A', tmp_path)
+    session_id = await app.acreate_workspace_session('A', tmp_path)
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        app.run(session_id, [('user', 'SECRET_REQUEST')])
+        await app.arun(session_id, [('user', 'SECRET_REQUEST')])
 
     first, second = _context_events(caplog)
     assert first['event'] == second['event'] == 'model_request_context'
@@ -88,7 +93,8 @@ def test_each_model_call_observes_final_prompt_messages_tools_and_usage(
         assert private not in serialized
 
 
-def test_failed_model_call_still_records_safe_request_and_propagates(caplog):
+@async_test
+async def test_failed_model_call_still_records_safe_request_and_propagates(caplog):
     failure = RuntimeError('SECRET_PROVIDER_FAILURE')
 
     class FailingModel(ToolCapableFake):
@@ -106,8 +112,8 @@ def test_failed_model_call_still_records_safe_request_and_propagates(caplog):
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(RuntimeError) as caught:
-            invoke_agent_run(agent, [('user', 'SECRET_REQUEST')],
-                             session_id='session-1', thread_id='PRIVATE_THREAD', run_id='run-1')
+            (await ainvoke_agent_run(agent, [('user', 'SECRET_REQUEST')],
+                             session_id='session-1', thread_id='PRIVATE_THREAD', run_id='run-1'))
 
     assert caught.value is failure
     assert _context_events(caplog) == [{
@@ -124,7 +130,8 @@ def test_failed_model_call_still_records_safe_request_and_propagates(caplog):
     assert 'PRIVATE_THREAD' not in caplog.text
 
 
-def test_unserializable_schema_warns_without_blocking_model_call(caplog):
+@async_test
+async def test_unserializable_schema_warns_without_blocking_model_call(caplog):
     request = SimpleNamespace(
         runtime=SimpleNamespace(context={'session_id': 's1', 'run_id': 'r1'}),
         messages=[HumanMessage(content='SECRET_REQUEST')],
@@ -134,12 +141,12 @@ def test_unserializable_schema_warns_without_blocking_model_call(caplog):
     response = SimpleNamespace(result=[AIMessage(content='done')])
     seen = []
 
-    def handler(received):
+    async def handler(received):
         seen.append(received)
         return response
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        assert observe_model_request.wrap_model_call(request, handler) is response
+        assert (await observe_model_request.awrap_model_call(request, handler)) is response
 
     assert seen == [request]
     assert _context_events(caplog)[0]['schema_status'] == 'unavailable'

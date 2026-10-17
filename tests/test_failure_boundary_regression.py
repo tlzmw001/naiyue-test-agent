@@ -1,6 +1,7 @@
 """Diagnostic failures must never replace a model boundary's original error."""
 
-import asyncio
+from native_application_helpers import async_test
+
 from types import SimpleNamespace
 
 import pytest
@@ -10,9 +11,9 @@ from naiyue_test_agent.agent_runtime import call_observation
 from naiyue_test_agent.model_access import errors as model_errors
 
 
-@pytest.mark.parametrize('asynchronous', [False, True])
+@async_test
 @pytest.mark.parametrize('diagnostic', ['classification', 'unknown_details'])
-def test_model_diagnostic_failure_preserves_original(monkeypatch, asynchronous, diagnostic):
+async def test_model_diagnostic_failure_preserves_original(monkeypatch, diagnostic):
     model = FakeMessagesListChatModel(responses=[])
     middleware = call_observation.make_model_selection_middleware(
         lambda _session: ('A', model), lambda *_args: None,
@@ -33,22 +34,17 @@ def test_model_diagnostic_failure_preserves_original(monkeypatch, asynchronous, 
     owner = model_errors if diagnostic == 'classification' else call_observation
     monkeypatch.setattr(owner, name, broken)
 
-    def handler(_request):
-        raise primary
-
-    async def ahandler(_request):
+    async def handler(_request):
         raise primary
 
     with pytest.raises(RuntimeError) as caught:
-        if asynchronous:
-            asyncio.run(middleware.awrap_model_call(request, ahandler))
-        else:
-            middleware.wrap_model_call(request, handler)
+        await middleware.awrap_model_call(request, handler)
     assert caught.value is primary
     assert called == [True]
 
 
-def test_summary_diagnostic_failure_keeps_original_cause(monkeypatch):
+@async_test
+async def test_summary_diagnostic_failure_keeps_original_cause(monkeypatch):
     from naiyue_test_agent.agent_runtime import context_compaction
     from test_context_compaction_fallback import _case
 
@@ -59,36 +55,38 @@ def test_summary_diagnostic_failure_keeps_original_cause(monkeypatch):
         calls.append(True)
         raise ValueError('PRIVATE_DIAGNOSTIC')
 
-    app, session, _model, messages, *_rest = _case(monkeypatch, primary, send_margin=-1)
+    app, session, _model, messages, *_rest = await _case(monkeypatch, primary, send_margin=-1)
     monkeypatch.setattr(model_errors, 'classify_model_failure', broken)
     if hasattr(context_compaction, 'classify_model_failure'):
         monkeypatch.setattr(context_compaction, 'classify_model_failure', broken)
     with pytest.raises(context_compaction.ContextCompactionError) as caught:
-        app.run(session, messages)
+        await app.arun(session, messages)
     assert caught.value.__cause__ is primary
     assert calls == [True]
 
 
-def test_runtime_compaction_error_is_not_reclassified_as_model_unknown(monkeypatch):
+@async_test
+async def test_runtime_compaction_error_is_not_reclassified_as_model_unknown(monkeypatch):
     from naiyue_test_agent.agent_runtime.context_compaction import ContextCompactionError
     from test_context_compaction_fallback import _case
 
-    app, session, _model, messages, *_rest = _case(monkeypatch, RuntimeError('PRIVATE'), send_margin=-1)
+    app, session, _model, messages, *_rest = await _case(monkeypatch, RuntimeError('PRIVATE'), send_margin=-1)
     events = []
     app.subscribe_events(events.append)
     with pytest.raises(ContextCompactionError):
-        app.run(session, messages)
+        await app.arun(session, messages)
     assert events[-1].data.failure.category == 'context_error'
     assert events[-1].data.failure.reason == 'compaction_failed'
 
 
-def test_summary_uses_configured_model_failure_mapping(monkeypatch):
+@async_test
+async def test_summary_uses_configured_model_failure_mapping(monkeypatch):
     from naiyue_test_agent.agent_runtime.context_compaction import ContextCompactionError
     from test_context_compaction_fallback import _case
     from test_layered_failure_contract import VendorQuotaError, quota
 
     primary = VendorQuotaError('PRIVATE')
-    app, session, _model, messages, *_rest = _case(monkeypatch, primary, send_margin=-1)
+    app, session, _model, messages, *_rest = await _case(monkeypatch, primary, send_margin=-1)
     calls = []
 
     def describe(error, source):
@@ -98,6 +96,6 @@ def test_summary_uses_configured_model_failure_mapping(monkeypatch):
 
     app.configure_error_classifiers(model_id='A', model=[describe])
     with pytest.raises(ContextCompactionError) as caught:
-        app.run(session, messages)
+        await app.arun(session, messages)
     assert caught.value.__cause__ is primary
     assert calls == [primary]

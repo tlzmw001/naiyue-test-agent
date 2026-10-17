@@ -1,5 +1,9 @@
 """Logical model and tool calls share application run metadata notifications."""
 
+from naiyue_test_agent.agent_runtime.async_invocation import ainvoke_agent_run
+
+from native_application_helpers import async_test
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
@@ -12,7 +16,7 @@ from langchain.tools import tool
 from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime import build_runtime_agent, invoke_agent_run
+from naiyue_test_agent.agent_runtime import build_runtime_agent
 from naiyue_test_agent.agent_runtime.events import RunStartedData, RunFinishedData
 from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions
 from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
@@ -37,7 +41,8 @@ def call_metadata_only(handler):
     return observe
 
 
-def test_one_tool_loop_has_correlated_immutable_safe_events(monkeypatch, caplog):
+@async_test
+async def test_one_tool_loop_has_correlated_immutable_safe_events(monkeypatch, caplog):
     @tool
     def probe(value: str) -> str:
         """Read one controlled value."""
@@ -53,19 +58,20 @@ def test_one_tool_loop_has_correlated_immutable_safe_events(monkeypatch, caplog)
         }),
         AIMessage(content='PRIVATE_FINAL', response_metadata={'finish_reason': 'stop'}),
     ])
-    app = make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
+    app = await make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(call_metadata_only(events.append))
-    session = app.create_session('A')
+    session = await app.acreate_session('A')
     with caplog.at_level('INFO'):
-        result = app.run(session, [('user', 'PRIVATE_PROMPT')])
+        result = await app.arun(session, [('user', 'PRIVATE_PROMPT')])
     assert [e.event_type for e in events] == [
         'run_started', 'model_call_started', 'model_call_finished',
         'tool_call_started', 'tool_call_finished',
         'model_call_started', 'model_call_finished', 'run_finished',
     ]
-    # Every registered dispatch now reports queued/preparing between start/end.
-    assert [e.sequence for e in events] == [1, 4, 5, 7, 10, 14, 15, 18]
+    # Native streams report one message_delta for each text reply;
+    # registered dispatches also report queued/preparing between start/end.
+    assert [e.sequence for e in events] == [1, 4, 6, 8, 11, 15, 17, 20]
     assert all(e.session_id == session and e.run_id == events[0].run_id for e in events)
     starts = events_of(events, 'model_call_started')
     ends = events_of(events, 'model_call_finished')
@@ -92,7 +98,8 @@ def test_one_tool_loop_has_correlated_immutable_safe_events(monkeypatch, caplog)
 
 
 @pytest.mark.parametrize('kind', ['timeout', 'rejected'])
-def test_model_failure_has_no_accepted_end_and_preserves_exception(monkeypatch, kind, caplog):
+@async_test
+async def test_model_failure_has_no_accepted_end_and_preserves_exception(monkeypatch, kind, caplog):
     failure = TimeoutError('PRIVATE_TIMEOUT')
 
     class FailingModel(ToolModel):
@@ -102,12 +109,12 @@ def test_model_failure_has_no_accepted_end_and_preserves_exception(monkeypatch, 
     model = (FailingModel(responses=[AIMessage(content='unused')]) if kind == 'timeout'
              else ToolModel(responses=[AIMessage(content='PRIVATE_FILTERED',
                                                response_metadata={'finish_reason': 'content_filter'})]))
-    app = make_app(monkeypatch, model)
+    app = await make_app(monkeypatch, model)
     events = []
     app.subscribe_events(call_metadata_only(events.append))
     expected = TimeoutError if kind == 'timeout' else ModelResponseRejected
     with caplog.at_level('INFO'), pytest.raises(expected) as caught:
-        app.run(app.create_session('A'), [('user', 'PRIVATE_PROMPT')])
+        await app.arun(await app.acreate_session('A'), [('user', 'PRIVATE_PROMPT')])
     if kind == 'timeout':
         assert caught.value is failure
     assert [e.event_type for e in events] == [
@@ -120,8 +127,9 @@ def test_model_failure_has_no_accepted_end_and_preserves_exception(monkeypatch, 
     assert 'PRIVATE_' not in repr(events) + caplog.text
 
 
-def test_midrun_observer_failure_does_not_change_model_or_tool_result(monkeypatch):
-    app = make_app(monkeypatch)
+@async_test
+async def test_midrun_observer_failure_does_not_change_model_or_tool_result(monkeypatch):
+    app = await make_app(monkeypatch)
     observed, broken_calls = [], []
 
     def broken(event):
@@ -131,20 +139,21 @@ def test_midrun_observer_failure_does_not_change_model_or_tool_result(monkeypatc
 
     app.subscribe_events(call_metadata_only(broken))
     app.subscribe_events(call_metadata_only(observed.append))
-    result = app.run(app.create_session('A'), [('user', 'run')])
+    result = await app.arun(await app.acreate_session('A'), [('user', 'run')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
     assert broken_calls == ['run_started', 'model_call_started']
     assert observed[-1].data.status == 'completed' and len(observed) == 4
 
 
-def test_bounded_input_recovery_is_one_logical_model_call(monkeypatch):
+@async_test
+async def test_bounded_input_recovery_is_one_logical_model_call(monkeypatch):
     from test_context_overflow_recovery import _app, _configured_model, _history, _status
 
     model = _configured_model([_status(), AIMessage(content='recovered')])
-    app = _app(monkeypatch, {'A': model})
+    app = await _app(monkeypatch, {'A': model})
     events = []
     app.subscribe_events(events.append)
-    result = app.run(app.create_session('A'), _history())
+    result = await app.arun(await app.acreate_session('A'), _history())
     assert result['messages'][-1].content == 'recovered'
     assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == 1
     assert len(events_of(events, 'model_call_started')) == 1
@@ -152,7 +161,8 @@ def test_bounded_input_recovery_is_one_logical_model_call(monkeypatch):
     assert events_of(events, 'model_call_finished')[0].data.status == 'accepted'
 
 
-def test_legacy_and_mismatched_scope_do_not_invent_application_events():
+@async_test
+async def test_legacy_and_mismatched_scope_do_not_invent_application_events():
     from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
 
     model = ToolModel(responses=[AIMessage(content='done')])
@@ -168,14 +178,15 @@ def test_legacy_and_mismatched_scope_do_not_invent_application_events():
     publisher = subscriptions.publisher('outer-session', 'outer-run')
     publisher.publish('run_started', RunStartedData('message'))
     with bind_run_services(RunServices(publisher=publisher)):
-        result = invoke_agent_run(agent, [('user', 'run')], session_id='legacy-session',
-                                  thread_id='legacy-thread', run_id='legacy-run')
+        result = (await ainvoke_agent_run(agent, [('user', 'run')], session_id='legacy-session',
+                                  thread_id='legacy-thread', run_id='legacy-run'))
     publisher.publish('run_finished', RunFinishedData('completed'))
     assert result['messages'][-1].content == 'done'
     assert [e.event_type for e in events] == ['run_started', 'run_finished']
 
 
-def test_failed_run_binding_is_reset_before_next_direct_invocation(monkeypatch):
+@async_test
+async def test_failed_run_binding_is_reset_before_next_direct_invocation(monkeypatch):
     from naiyue_test_agent.agent_runtime.run_services import current_run_services
 
     failure = TimeoutError('synthetic')
@@ -184,13 +195,14 @@ def test_failed_run_binding_is_reset_before_next_direct_invocation(monkeypatch):
         def _generate(self, *args, **kwargs):
             raise failure
 
-    app = make_app(monkeypatch, FailingModel(responses=[AIMessage(content='unused')]))
+    app = await make_app(monkeypatch, FailingModel(responses=[AIMessage(content='unused')]))
     with pytest.raises(TimeoutError):
-        app.run(app.create_session('A'), [('user', 'run')])
+        await app.arun(await app.acreate_session('A'), [('user', 'run')])
     assert current_run_services() is None
 
 
-def test_partial_invalid_tool_response_is_failed_before_dispatch(monkeypatch):
+@async_test
+async def test_partial_invalid_tool_response_is_failed_before_dispatch(monkeypatch):
     called = []
 
     @tool
@@ -202,11 +214,11 @@ def test_partial_invalid_tool_response_is_failed_before_dispatch(monkeypatch):
     model = ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'probe', 'args': {}, 'id': 'valid'},
     ], invalid_tool_calls=[{'name': 'probe', 'args': '{', 'id': 'invalid', 'error': 'parse'}])])
-    app = make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
+    app = await make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
     with pytest.raises(ModelResponseRejected) as caught:
-        app.run(app.create_session('A'), [('user', 'run')])
+        await app.arun(await app.acreate_session('A'), [('user', 'run')])
     assert caught.value.reason == 'invalid_tool_calls' and called == []
     assert events_of(events, 'model_call_finished')[0].data.status == 'failed'
     assert events_of(events, 'tool_call_started') == []

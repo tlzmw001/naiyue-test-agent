@@ -1,5 +1,7 @@
 """A shared agent must receive the current session's project instructions."""
 
+from native_application_helpers import async_test, build_application
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
@@ -32,10 +34,10 @@ class RecordingModel(FakeMessagesListChatModel):
         return super()._generate(messages, *args, **kwargs)
 
 
-def build_app(monkeypatch, model, tools=None, prompt='BASE'):
+async def build_app(monkeypatch, model, tools=None, prompt='BASE'):
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    return application.build_local_application(
+    return await build_application(
         Path('synthetic.json'), tools=tools or [],
         system_prompt=prompt, response_format=None,
     )
@@ -64,7 +66,8 @@ def test_cli_uses_approved_base_prompt_and_current_directory_tools(monkeypatch, 
     )
 
 
-def test_workspace_file_precedence_and_session_isolation(monkeypatch, tmp_path):
+@async_test
+async def test_workspace_file_precedence_and_session_isolation(monkeypatch, tmp_path):
     first = tmp_path / 'first'
     second = tmp_path / 'second'
     empty = tmp_path / 'empty'
@@ -74,11 +77,11 @@ def test_workspace_file_precedence_and_session_isolation(monkeypatch, tmp_path):
     (first / 'CLAUDE.md').write_text('FIRST_CLAUDE_IGNORED', encoding='utf-8')
     (second / 'CLAUDE.md').write_text('SECOND_CLAUDE_SECRET', encoding='utf-8')
     model = RecordingModel(responses=[AIMessage(content='ok')] * 4)
-    app = build_app(monkeypatch, model)
+    app = await build_app(monkeypatch, model)
 
     for root in (first, second, empty):
-        app.run(app.create_workspace_session('A', root), [('user', 'hello')])
-    app.run(app.create_session('A'), [('user', 'hello')])
+        await app.arun(await app.acreate_workspace_session('A', root), [('user', 'hello')])
+    await app.arun(await app.acreate_session('A'), [('user', 'hello')])
 
     prompts = [system_text(messages) for messages in model.inputs]
     assert 'FIRST_AGENTS_SECRET' in prompts[0]
@@ -88,7 +91,8 @@ def test_workspace_file_precedence_and_session_isolation(monkeypatch, tmp_path):
     assert prompts[2:] == ['BASE', 'BASE']
 
 
-def test_project_instructions_are_frozen_for_one_run_and_reloaded_next_run(
+@async_test
+async def test_project_instructions_are_frozen_for_one_run_and_reloaded_next_run(
     monkeypatch, tmp_path,
 ):
     instruction_file = tmp_path / 'AGENTS.md'
@@ -107,11 +111,11 @@ def test_project_instructions_are_frozen_for_one_run_and_reloaded_next_run(
         AIMessage(content='first run done'),
         AIMessage(content='second run done'),
     ])
-    app = build_app(monkeypatch, model, tools=[ToolSpec(update_instructions, update_instructions.args_schema, permissions=ToolPermission(default='allow'))])
-    session = app.create_workspace_session('A', tmp_path)
+    app = await build_app(monkeypatch, model, tools=[ToolSpec(update_instructions, update_instructions.args_schema, permissions=ToolPermission(default='allow'))])
+    session = await app.acreate_workspace_session('A', tmp_path)
 
-    app.run(session, [('user', 'update')])
-    app.run(session, [('user', 'continue')])
+    await app.arun(session, [('user', 'update')])
+    await app.arun(session, [('user', 'continue')])
 
     prompts = [system_text(messages) for messages in model.inputs]
     assert 'VERSION_ONE' in prompts[0]
@@ -120,7 +124,8 @@ def test_project_instructions_are_frozen_for_one_run_and_reloaded_next_run(
     assert 'VERSION_TWO' in prompts[2]
 
 
-def test_approval_resume_starts_new_prompt_snapshot(monkeypatch, tmp_path):
+@async_test
+async def test_approval_resume_starts_new_prompt_snapshot(monkeypatch, tmp_path):
     root = tmp_path / 'workspace'
     root.mkdir()
     (root / 'AGENTS.md').write_text('BEFORE_APPROVAL', encoding='utf-8')
@@ -132,13 +137,13 @@ def test_approval_resume_starts_new_prompt_snapshot(monkeypatch, tmp_path):
         }]),
         AIMessage(content='done'),
     ])
-    app = build_app(monkeypatch, model, tools=[create_session_read_tool()])
-    session = app.create_workspace_session('A', root)
+    app = await build_app(monkeypatch, model, tools=[create_session_read_tool()])
+    session = await app.acreate_workspace_session('A', root)
 
-    paused = app.run(session, [('user', 'read outside')])
+    paused = await app.arun(session, [('user', 'read outside')])
     assert paused['approval_requests'][0]['tool_call_id'] == 'outside-read'
     (root / 'AGENTS.md').write_text('AFTER_APPROVAL', encoding='utf-8')
-    resumed = app.resume_tool_approval(session, ['approve'])
+    resumed = await app.aresume_tool_approval(session, ['approve'])
 
     assert resumed['messages'][-1].content == 'done'
     assert 'BEFORE_APPROVAL' in system_text(model.inputs[0])
@@ -146,7 +151,8 @@ def test_approval_resume_starts_new_prompt_snapshot(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize('bad_file', ['outside_link', 'invalid_utf8', 'oversized'])
-def test_invalid_preferred_file_fails_before_model_and_releases_session(
+@async_test
+async def test_invalid_preferred_file_fails_before_model_and_releases_session(
     monkeypatch, tmp_path, caplog, bad_file,
 ):
     root = tmp_path / 'workspace'
@@ -162,15 +168,15 @@ def test_invalid_preferred_file_fails_before_model_and_releases_session(
     else:
         preferred.write_bytes(b'PRIVATE_BODY' + b'X' * (64 * 1024))
     model = RecordingModel(responses=[AIMessage(content='recovered')])
-    app = build_app(monkeypatch, model)
-    session = app.create_workspace_session('A', root)
+    app = await build_app(monkeypatch, model)
+    session = await app.acreate_workspace_session('A', root)
 
     with pytest.raises(ProjectInstructionsError):
-        app.run(session, [('user', 'first')])
+        await app.arun(session, [('user', 'first')])
     assert model.inputs == []
     assert 'PRIVATE_BODY' not in caplog.text
     assert 'MUST_NOT_FALL_BACK' not in caplog.text
 
     preferred.unlink()
-    app.run(session, [('user', 'second')])
+    await app.arun(session, [('user', 'second')])
     assert 'MUST_NOT_FALL_BACK' in system_text(model.inputs[0])

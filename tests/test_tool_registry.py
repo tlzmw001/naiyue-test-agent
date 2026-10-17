@@ -1,10 +1,10 @@
 """Only valid, explicit tool definitions enter an application."""
 
+from native_application_helpers import async_test, build_application
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
-import asyncio
 from dataclasses import FrozenInstanceError
-from types import SimpleNamespace
 
 import pytest
 from langchain.tools import ToolRuntime, tool
@@ -137,11 +137,12 @@ def test_divergent_execution_model_is_rejected(change):
         ToolRegistry().register(ToolSpec(probe, ProbeInput, permissions=ToolPermission(default='allow')))
 
 
-@pytest.mark.parametrize('entry', ['sync', 'async', 'persistent', 'async_persistent'])
-def test_invalid_initial_registry_precedes_model_and_storage_acquisition(monkeypatch, tmp_path, entry):
+@pytest.mark.parametrize('entry', ['local', 'persistent'])
+@async_test
+async def test_invalid_initial_registry_precedes_model_and_storage_acquisition(monkeypatch, tmp_path, entry):
     from naiyue_test_agent import application
     from naiyue_test_agent.application.async_application import build_async_local_application
-    from naiyue_test_agent.application.persistent import build_persistent_application
+    from naiyue_test_agent.application.async_persistent import open_async_persistent_application
     from naiyue_test_agent.application import async_persistent
     entered = []
     def unexpected(*args, **kwargs):
@@ -151,18 +152,11 @@ def test_invalid_initial_registry_precedes_model_and_storage_acquisition(monkeyp
     monkeypatch.setattr(async_persistent, 'SessionStorage', unexpected)
     options = dict(tools=[probe_tool()], system_prompt='', response_format=None)
     with pytest.raises(ValueError, match='ToolSpec'):
-        if entry == 'sync':
-            application.build_local_application('synthetic.json', **options)
-        elif entry == 'persistent':
-            build_persistent_application('synthetic.json', storage=SimpleNamespace(), **options)
-        elif entry == 'async':
-            asyncio.run(build_async_local_application('synthetic.json', **options))
+        if entry == 'local':
+            await build_application('synthetic', **options)
         else:
-            async def scenario():
-                async with async_persistent.open_async_persistent_application(
-                    'synthetic.json', database_path=tmp_path / 'sessions.sqlite', **options):
-                    raise AssertionError('invalid registry must not open an app')
-            asyncio.run(scenario())
+            async with open_async_persistent_application('synthetic', database_path=tmp_path / 'sessions.sqlite', **options):
+                pytest.fail('Invalid configuration must not acquire an application')
     assert entered == [] and not (tmp_path / 'sessions.sqlite').exists()
 
 
@@ -181,12 +175,13 @@ def test_builtin_collection_has_real_schemas_settings_and_capability_declaration
     assert bash.side_effects == 'may_mutate'
 
 
-@pytest.mark.parametrize('async_mode', [False, True])
-def test_registered_artifact_uses_original_tool_and_survives_checkpoint(monkeypatch, tmp_path, async_mode):
+@pytest.mark.parametrize('native_model', [False, True])
+@async_test
+async def test_registered_artifact_uses_original_tool_and_survives_checkpoint(monkeypatch, tmp_path, native_model):
     from naiyue_test_agent.tools import ToolSpec
     from naiyue_test_agent import application
     from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-    from naiyue_test_agent.application.persistent import build_persistent_application
+    from naiyue_test_agent.application.async_persistent import open_async_persistent_application
     from naiyue_test_agent.application.session_storage import SessionStorage
     from naiyue_test_agent.model_access import ModelCatalog
     from test_write_tool import RecordingFake
@@ -198,27 +193,18 @@ def test_registered_artifact_uses_original_tool_and_survives_checkpoint(monkeypa
     spec = ToolSpec(probe, ProbeInput, side_effects='read_only', permissions=ToolPermission(default='allow'))
     replies = [AIMessage(content='', tool_calls=[
         {'name': 'probe', 'args': {}, 'id': 'artifact'}]), AIMessage(content='done')]
-    model = StreamingToolModel(replies=replies) if async_mode else RecordingFake(responses=replies)
+    model = StreamingToolModel(replies=replies) if native_model else RecordingFake(responses=replies)
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
-    if async_mode:
-        async def scenario():
-            async with open_async_persistent_application('synthetic.json', database_path=tmp_path / 'async.sqlite',
-                tools=[spec], system_prompt='', response_format=None) as app:
-                assert app.get_registered_tools() == (spec,)
-                assert app.get_registered_tools()[0].tool is probe
-                sid = await app.acreate_session('A')
-                await app.arun(sid, [('user', 'run')])
-                return await app.aget_messages(sid)
-        messages = asyncio.run(scenario())
-    else:
-        with SessionStorage(tmp_path / 'sync.sqlite') as storage:
-            app = build_persistent_application('synthetic.json', storage=storage,
-                tools=[spec], system_prompt='', response_format=None)
+    async def scenario():
+        async with open_async_persistent_application('synthetic.json', database_path=tmp_path / 'async.sqlite',
+            tools=[spec], system_prompt='', response_format=None) as app:
+            assert app.get_registered_tools() == (spec,)
             assert app.get_registered_tools()[0] is spec
-            sid = app.create_session('A')
-            app.run(sid, [('user', 'run')])
-            snapshot = app._agent.get_state({'configurable': {'thread_id': app._sessions._sessions[sid]['thread_id']}})
-            messages = snapshot.values['messages']
+            assert app.get_registered_tools()[0].tool is probe
+            sid = await app.acreate_session('A')
+            await app.arun(sid, [('user', 'run')])
+            return await app.aget_messages(sid)
+    messages = await scenario()
     feedback = next(message for message in messages if isinstance(message, ToolMessage))
     assert (feedback.tool_call_id, feedback.content, feedback.artifact) == (
         'artifact', '1', {'detail': 'PRIVATE_ARTIFACT', 'value': 1})

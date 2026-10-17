@@ -1,5 +1,7 @@
 """Configured context budgets remain visible through the real agent call path."""
 
+from native_application_helpers import async_test
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
@@ -99,7 +101,8 @@ def test_limits_overrides_are_per_model_and_must_be_positive_integers(tmp_path):
         assert 'synthetic-key' not in str(caught.value)
 
 
-def test_budget_observation_follows_model_switch_and_missing_usage(tmp_path, monkeypatch, caplog):
+@async_test
+async def test_budget_observation_follows_model_switch_and_missing_usage(tmp_path, monkeypatch, caplog):
     selected = {'s1': 'first'}
     models = {
         'synthetic-first': ToolCapableFake(responses=[AIMessage(
@@ -133,7 +136,7 @@ def test_budget_observation_follows_model_switch_and_missing_usage(tmp_path, mon
         record_selection=lambda _session_id, _model_id: None,
     )
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        agent.invoke({'messages': [('user', 'SECRET_REQUEST')]}, context={'session_id': 's1'})
+        (await agent.ainvoke({'messages': [('user', 'SECRET_REQUEST')]}, context={'session_id': 's1'}))
 
     events = [record.model_context_budget for record in caplog.records
               if hasattr(record, 'model_context_budget')]
@@ -162,7 +165,8 @@ def test_budget_observation_follows_model_switch_and_missing_usage(tmp_path, mon
     assert 'SECRET_REQUEST' not in caplog.text
 
 
-def test_budget_observation_on_model_error_preserves_failure(tmp_path, monkeypatch, caplog):
+@async_test
+async def test_budget_observation_on_model_error_preserves_failure(tmp_path, monkeypatch, caplog):
     failure = RuntimeError('SECRET_PROVIDER_FAILURE')
 
     class FailingModel(ToolCapableFake):
@@ -182,8 +186,8 @@ def test_budget_observation_on_model_error_preserves_failure(tmp_path, monkeypat
     )
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(RuntimeError) as caught:
-            agent.invoke({'messages': [('user', 'SECRET_REQUEST')]},
-                         context={'session_id': 's1'})
+            (await agent.ainvoke({'messages': [('user', 'SECRET_REQUEST')]},
+                         context={'session_id': 's1'}))
 
     assert caught.value is failure
     budgets = [record.model_context_budget for record in caplog.records
@@ -221,13 +225,14 @@ def test_compaction_reserve_default_override_and_invalid_config(tmp_path):
             }))
 
 
+@async_test
 @pytest.mark.parametrize(('estimated_tokens', 'output_limit', 'expected_threshold',
                           'needs_compaction'), [
     (80, 10, 80, False),
     (81, 10, 80, True),
     (71, 30, 70, True),
 ])
-def test_preflight_uses_final_request_and_does_not_change_model_call(
+async def test_preflight_uses_final_request_and_does_not_change_model_call(
     monkeypatch, caplog, estimated_tokens, output_limit, expected_threshold,
     needs_compaction,
 ):
@@ -255,12 +260,12 @@ def test_preflight_uses_final_request_and_does_not_change_model_call(
     response = SimpleNamespace(result=[AIMessage(content='done')])
     handled = []
 
-    def handler(received):
+    async def handler(received):
         handled.append(received)
         return response
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        assert observe_model_request.wrap_model_call(request, handler) is response
+        assert (await observe_model_request.awrap_model_call(request, handler)) is response
     assert handled == [request]
     assert len(seen) == 1
     assert seen[0][0] == [request.system_message, *request.messages]
@@ -283,7 +288,10 @@ def test_preflight_uses_final_request_and_does_not_change_model_call(
     assert 'SECRET_TOOL' not in caplog.text
 
 
-def test_preflight_estimation_failure_is_visible_and_does_not_block(monkeypatch, caplog):
+@async_test
+async def test_preflight_estimation_failure_is_visible_and_does_not_block(monkeypatch, caplog):
+    async def async_handler_1(_request):
+        return response
     def fail_estimate(*_args, **_kwargs):
         raise RuntimeError('SECRET_ESTIMATION_FAILURE')
 
@@ -303,7 +311,7 @@ def test_preflight_estimation_failure_is_visible_and_does_not_block(monkeypatch,
     )
     response = SimpleNamespace(result=[AIMessage(content='done')])
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        assert observe_model_request.wrap_model_call(request, lambda _request: response) is response
+        assert (await observe_model_request.awrap_model_call(request, async_handler_1)) is response
     events = [record.model_context_preflight for record in caplog.records
               if hasattr(record, 'model_context_preflight')]
     assert len(events) == 1

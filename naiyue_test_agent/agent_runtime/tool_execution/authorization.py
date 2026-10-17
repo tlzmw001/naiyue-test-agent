@@ -39,9 +39,6 @@ class ExecutionAuthorizationMiddleware(AgentMiddleware):
                  '_session_allow': batch.get('session_allow', [])}
         return request.override(runtime=replace(request.runtime, context=local))
 
-    def wrap_tool_call(self, request, handler):
-        authorized = self._authorize(request)
-        return authorized if isinstance(authorized, ToolMessage) else handler(authorized)
 
     async def awrap_tool_call(self, request, handler):
         authorized = self._authorize(request)

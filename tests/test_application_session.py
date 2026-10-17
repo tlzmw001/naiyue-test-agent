@@ -1,10 +1,13 @@
+import asyncio
+
+from native_application_helpers import async_test
 
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
 from naiyue_test_agent.application import prepare_tool_registry
 import logging
-from threading import Event, Thread
+from threading import Event
 
 import pytest
 from langchain.tools import tool
@@ -22,7 +25,8 @@ class ToolCapableFake(FakeMessagesListChatModel):
         return self
 
 
-def test_sessions_continue_history_switch_models_and_isolate_threads(caplog):
+@async_test
+async def test_sessions_continue_history_switch_models_and_isolate_threads(caplog):
     models = {
         'A': FakeMessagesListChatModel(responses=[
             AIMessage(content='A-one'), AIMessage(content='A-other'),
@@ -43,10 +47,10 @@ def test_sessions_continue_history_switch_models_and_isolate_threads(caplog):
     assert first_session != other_session
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        first = service.run(agent, first_session, [('user', 'private-first')])
+        first = await service.arun(agent, first_session, [('user', 'private-first')])
         service.select_model(first_session, 'B')
-        second = service.run(agent, first_session, [('user', 'private-second')])
-        other = service.run(agent, other_session, [('user', 'private-other')])
+        second = await service.arun(agent, first_session, [('user', 'private-second')])
+        other = await service.arun(agent, other_session, [('user', 'private-other')])
 
     assert [m.content for m in first['messages']] == ['private-first', 'A-one']
     assert [m.content for m in second['messages']] == [
@@ -74,7 +78,8 @@ def test_sessions_continue_history_switch_models_and_isolate_threads(caplog):
     assert 'A-one' not in caplog.text
 
 
-def test_invalid_model_and_unknown_session_do_not_change_selection():
+@async_test
+async def test_invalid_model_and_unknown_session_do_not_change_selection():
     models = {'A': FakeMessagesListChatModel(responses=[]),
               'B': FakeMessagesListChatModel(responses=[])}
     service = SessionService(ModelCatalog('A', models))
@@ -90,14 +95,15 @@ def test_invalid_model_and_unknown_session_do_not_change_selection():
         service.select_model('not-a-session', 'B')
 
     class UnexpectedAgent:
-        def invoke(self, *_args, **_kwargs):
+        async def ainvoke(self, *_args, **_kwargs):
             raise AssertionError('unknown session must not call agent')
 
     with pytest.raises(KeyError):
-        service.run(UnexpectedAgent(), 'not-a-session', [('user', 'private')])
+        await service.arun(UnexpectedAgent(), 'not-a-session', [('user', 'private')])
 
 
-def test_model_change_during_tool_call_applies_at_next_model_boundary(caplog):
+@async_test
+async def test_model_change_during_tool_call_applies_at_next_model_boundary(caplog):
     models = {
         'A': ToolCapableFake(responses=[AIMessage(
             content='', tool_calls=[{'name': 'switch_to_b', 'args': {}, 'id': 'call-1'}],
@@ -123,7 +129,7 @@ def test_model_change_during_tool_call_applies_at_next_model_boundary(caplog):
         checkpointer=InMemorySaver(),
     )
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        result = service.run(agent, session_id, [('user', 'switch after tool')])
+        result = await service.arun(agent, session_id, [('user', 'switch after tool')])
     assert selected == ['A', 'B']
     assert [message.type for message in result['messages']] == ['human', 'ai', 'tool', 'ai']
     assert result['messages'][2].tool_call_id == result['messages'][1].tool_calls[0]['id']
@@ -135,7 +141,8 @@ def test_model_change_during_tool_call_applies_at_next_model_boundary(caplog):
     assert result['messages'][-1].content == 'B-final'
 
 
-def test_same_session_busy_rejected_other_session_runs_and_failure_releases_gate(caplog):
+@async_test
+async def test_same_session_busy_rejected_other_session_runs_and_failure_releases_gate(caplog):
     service = SessionService(ModelCatalog('A', {
         'A': FakeMessagesListChatModel(responses=[]),
     }))
@@ -147,36 +154,40 @@ def test_same_session_busy_rejected_other_session_runs_and_failure_releases_gate
     seen = []
 
     class BlockingAgent:
-        def invoke(self, _input, *, context, config):
+        async def ainvoke(self, _input, *, context, config):
             seen.append((context['session_id'], config['configurable']['thread_id']))
             if context['session_id'] == first_session:
                 started.set()
-                assert release.wait(timeout=3)
+                assert await asyncio.to_thread(release.wait, timeout=3)
                 raise failure
             return {'messages': []}
+
+        async def aget_state(self, _config):
+            from types import SimpleNamespace
+            return SimpleNamespace(values={'messages': []})
 
     agent = BlockingAgent()
     worker_errors = []
 
-    def run_first():
+    async def run_first():
         try:
-            service.run(agent, first_session, [('user', 'private')])
+            await service.arun(agent, first_session, [('user', 'private')])
         except Exception as error:
             worker_errors.append(error)
 
-    worker = Thread(target=run_first, daemon=True)
+    worker = asyncio.create_task(run_first())
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        worker.start()
+
         try:
-            assert started.wait(timeout=3)
+            assert await asyncio.to_thread(started.wait, timeout=3)
             with pytest.raises(SessionBusyError):
-                service.run(agent, first_session, [('user', 'second')])
-            assert service.run(agent, other_session, [('user', 'other')]) == {'messages': []}
+                await service.arun(agent, first_session, [('user', 'second')])
+            assert await service.arun(agent, other_session, [('user', 'other')]) == {'messages': []}
         finally:
             release.set()
-            worker.join(timeout=3)
+            await asyncio.wait_for(asyncio.shield(worker), 3)
 
-    assert not worker.is_alive()
+    assert worker.done()
     assert worker_errors == [failure]
     assert [item[0] for item in seen] == [first_session, other_session]
     assert seen[0][1] != seen[1][1]
@@ -184,5 +195,5 @@ def test_same_session_busy_rejected_other_session_runs_and_failure_releases_gate
     assert seen[1][1] not in caplog.text
     assert 'private-failure' not in caplog.text
     with pytest.raises(RuntimeError) as caught:
-        service.run(agent, first_session, [('user', 'again')])
+        await service.arun(agent, first_session, [('user', 'again')])
     assert caught.value is failure

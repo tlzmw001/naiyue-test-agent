@@ -1,5 +1,21 @@
 # 后续开发与补充清单
 
+2026-10-17清理收尾：Spec093 A/B/C已完成contracts归属、应用与Runtime异步执行收敛、历史Discount原型及测试移除；本轮提交覆盖这些清理，最新验证与交付状态见[交接](handoff.md)。共享建图、必要同步IO/短hook和SDK线程回退保留，独立127行官方同步API对照探针不依赖本项目同步执行链。“证明工具未执行后安全重试”仍须独立设计，当前不提供该能力。
+
+## 清理后的当前工作顺序（2026-10-17）
+
+下表是下一阶段的安排与边界，下文保留历史需求与证据，不把已完成项目重新列为待实现。
+
+| 顺序 | 工作 | 当前状态与下一步 |
+|---|---|---|
+| 1 | 前台一层SubAgent（Spec086） | 已讨论、未实施。先对齐093后的纯异步入口及090/091/092已完成能力，删除设计中的旧同步端口/双驱动引用，再按既有切片展示代码调用链，经用户确认后逐片实现。覆盖同级并行、子内部人工审批、父等待、停止和必要保存；不扩展后台/多层/已结束实例续跑。 |
+| 2 | 现有工具的前端使用入口 | 后端已有可信代码注册、会话活动工具和四种权限模式；仍需工具启停、模式切换及Shift+Tab、本会话不再询问、图片/工具结果专用展示。前端管理已登记定义，不意味着允许上传任意Python插件；具体切片另定。 |
+| 3 | 真实供应商与浏览器验收 | 当前真实请求证据覆盖部分场景；继续按实际使用补Auto快审/详审、图片接口、审批恢复、停止/流式故障及多会话体验，不把假模型全绿当供应商或业务效果验收。 |
+| 4 | PyPI本地Web交付 | 方向已确定，尚无Python打包元数据或wheel/干净安装证据。需打包前端静态资源、确定rg/fd交付或安装前置、验证安装后CLI/Web/工作区数据/配置和升级流程；不启动桌面/npm/SaaS交付。 |
+| 待环境 | Windows/Linux原机（WIN1/TE2） | 087/088/089修复与本机mock已完成，原生平台未验收。获得环境后核对双Shell、路径/文件提交、进程树停止、平台锁与SQLite恢复；无Windows电脑时不把这一项标完成，也不阻塞其他切片。 |
+| 后续独立设计 | 沙箱、长期/跨会话记忆、RAG/MCP及业务闭环 | 进程接口已有预留，隔离本体未实现；长期记忆不预设复用会话SQLite。按明确场景逐项设计，Discount不再作为固定业务目标。非响应工具硬取消、崩溃副作用的安全重试、跨进程幂等及更广恢复仍有边界。 |
+
+
 更新日期：2026-10-17。这里集中记录**尚未实现或尚未验证**的工作；它不是半个月首期的交付承诺。开始某一项前先读当前代码与对应 Spec，以一个小切片重新确定范围和验收，按 TDD 推进。完成时记录代码入口、验证命令和实际结果，再从本清单移至交接记录；不能只因文件存在或测试全绿就勾销真实服务与业务效果验证。
 
 总体顺序与层级见 [实施路线](implementation-roadmap.md)，已经做过的证据见 [交接记录](handoff.md)。本清单聚焦遗留事项，历史讨论不自动转成已批准需求。
@@ -43,7 +59,7 @@ Web 遗留：①更多真实供应商工具/审批及浏览器模型失败、部
 
 ### TE9：与权限、审批一起复审的具体问题
 
-**当前统一入口（2026-10-16分片更新）**：[Spec085](specs/085-tool-system-rebuild.md)、[文件与消费者清单](specs/085-tool-system-file-map.md)、[085-15复盘报告](research/windows-compatibility-audit.md)。01—14及15本机终检完成，全量1597/前端27及构建通过；当前可用八工具/权限/process/tool_output见[settings.example.toml](examples/settings.example.toml)，完整目标样例含未来SubAgent字段不能整份套用。Windows修复/原机验证尚未完成，下一步先定安全文件/锁；下方早期设计状态以本段及各小Spec为准。
+**当前统一入口（2026-10-16分片更新）**：[Spec085](specs/085-tool-system-rebuild.md)、[文件与消费者清单](specs/085-tool-system-file-map.md)、[085-15复盘报告](research/windows-compatibility-audit.md)。01—14及15本机终检完成，全量1597/前端27及构建通过；当前可用八工具/权限/process/tool_output见[settings.example.toml](examples/settings.example.toml)，完整目标样例含未来SubAgent字段不能整份套用。087/088/089平台分支修复已完成，仍待Windows/Linux原机验证；下方早期设计状态以本段及各小Spec为准。
 
 用户2026-10-14确认记录工具失败隔离问题；2026-10-15在第六章讲解收束后暂停课堂。**下方为2026-10-15设计阶段过程记录**，不描述已实施085-01的当前状态；当前范围及下一片见上表和小Spec，不按历史“尚无实施授权”重复阻断已获准步骤。
 
@@ -120,7 +136,7 @@ SessionStorage对数据库、锁及SQLite附属文件不再检查组/其他用�
 | R4 | 核对供应商结束值覆盖和语义 | [Spec 019](specs/019-claude-context-truncation-and-tool-call-binding.md) 已用确定性测试验证 Claude `model_context_window_exceeded → length`，并在工具 hook 对 ID 不一致或无最近模型消息的请求拒绝执行；尚无真实 Claude 截断响应。Pi `a69bef789` 也将 Claude `pause_turn` 映射为 `stop`；当前项目只接客户端工具，暂不增加通用续传。将来接 Claude 服务器工具前，须保存完整响应内容并按官方契约续传，单改枚举值不够。`sensitive`、OpenAI `network_error`/`end` 尚缺已核对官方结束值依据；未知/缺失元数据策略仍未收敛，通用副作用工具上线前需确定。[Spec 021](specs/021-unknown-model-observation.md)已为同步响应型 `unknown` 补独立结构化日志，含字段来源、受限原生原因码与工具调用数量；仍无持久化聚合、真实未知供应商样本或未知原因工具执行策略。详见 [Lesson 10](lessons/lesson-10.md)。 |
 | R5 | 模型失败消息与运行终局 | [2026-10-01 调研](research/loop-termination-retry-cancel-2026-10-01.md)发现的明确错误/无效调用漏洞已按 [Spec 020](specs/020-model-response-rejection-before-tool-routing.md) 以 TDD 收敛：同步假模型路径在路由前拒绝，混合有效/无效调用整条拒绝，`run_failed` 且无工具执行。还须决定 `unknown`、普通文本 `length`、失败后 checkpoint 保留用户输入的契约，并获取真实供应商失败响应证据。在线 SDK 单次请求内部最多 2 次重试，不替代运行终局或用户取消；活动取消需先验证异步与重试等待的取消传播。 |
 | R6 | 工具并发与串行策略 | [Spec 037](specs/037-conditional-tool-batch-scheduling.md)已把同步逐批调度接入运行层：工具缺省并行；任一已注册工具标记 `metadata['naiyue_execution_mode']='sequential'` 时，整批按模型调用 ID 顺序进入完整工具链。合成工具测试已覆盖纯读重叠、混合顺序、可恢复/致命错误、HITL 批准与拒绝、有限并发及同 Agent 双会话；全量 `312 passed`。后续 [Spec 038](specs/038-workspace-write-tool-design.md)已把真实 `write` 声明为 sequential，并用临时真实文件、假模型验证同轮读写读顺序、同目标双会话冲突、不同目标独立及结果未知后会话阻断；现已按 [Spec 039](specs/039-workspace-edit-tool.md)接入真实 `edit` 并验证 read→edit→read 顺序；仍无真实供应商混合请求或跨进程同目标保护。工作区外写审批须先有内容审查与授权绑定；Spec075已验证异步批次、有限并发与错误清理；持久checkpoint部分执行恢复/去重和更高并发压力另片验证。Pi `a69bef789` 的批次模式是设计参照，但其内置 `write/edit` 在核对版本没有显式 sequential 声明。 |
-| R7 | 运行层旧装配入口收敛（本机已完成） | 用户授权后按[Spec082](specs/082-remove-obsolete-runtime-bridges.md)删除2个旧交互builder、3个workspace同步包装和旧自然结束回调分支；分项bind/getter及failure_data也移除，测试/探针已迁移。`build_runtime_agent`、`build_configured_runtime_agent`以及同步应用/持久会话仍有具体策略/探针消费者，详见Spec第3节；如后续统一这些消费者到异步，须同单元删除对应旧路径。最新后端1038/前端27与构建通过，旧入口恢复由新增回归阻止。 |
+| R7 | 运行层旧装配入口收敛（本机已完成） | 用户授权后按[Spec082](specs/082-remove-obsolete-runtime-bridges.md)删除2个旧交互builder、3个workspace同步包装和旧自然结束回调分支；分项bind/getter及failure_data也移除，测试/探针已迁移。`build_runtime_agent`、`build_configured_runtime_agent`仍有低层策略/探针消费者；独立同步应用/持久会话已由093迁移消费者并删除，当前只保留正式异步App与CLI桥。最新后端1038/前端27与构建通过，旧入口恢复由新增回归阻止。 |
 | R8 | 统一事件与消息生命周期 | [Spec 062](specs/062-application-run-event-contract.md)接 run，[Spec 063](specs/063-model-tool-event-integration.md)接模型/工具，[Spec 064](specs/064-complete-message-observation.md)接消息，[Spec 065](specs/065-turn-lifecycle.md)接 turn，[Spec 066](specs/066-control-request-events.md)接控制；[Spec 067](specs/067-context-operation-events.md)已接压缩/恢复四 type，本地事件实现723例通过，CLI消费按[Spec 068](specs/068-cli-event-display.md)已接线并回归。算法/原结果/异常/调度保持；前三次失败停止后，用户授权独立诊断，本轮真实 compressed 状态确认/四事实4/4通过，间歇性超时根因仍未知。CLI 实时完整消息/工具/控制/上下文/终局显示已接，审批详情仍取原结果；异常和结果只补缺，状态可读/模型门禁/HITL 生效与持久确认分开；模型用量非 SDK/摘要总费用。慢同步消费者、私有 HITL 版本兼容、控制/发布故障交付、持久悬挂运行和活动取消另验收；Spec075已有异步流/元数据、窗口控制与有界交付故障验证。 |
 
 ### R8 后续：消息状态与 turn（2026-10-08）
@@ -151,7 +167,6 @@ CLI已按[Spec 068](specs/068-cli-event-display.md)消费同一事件接口，�
 | --- | --- | --- |
 | C1 | 连续会话与实际切换 | [Spec 011](specs/011-in-memory-agent-continuation.md)已有内存 checkpointer；[Spec 014](specs/014-in-memory-session-service.md)已用应用服务和假模型验证同进程历史延续、A→B 切换、不同会话隔离、同会话 busy 拦截及失败释放。[Spec070](specs/070-persistent-session-implementation.md)已补本地安全结束会话跨进程恢复、持久选模与工作区、状态/确认checkpoint一致性和默认CLI；真实默认模型两进程延续通过。仍无可信Web身份/归属授权、真实跨供应商历史兼容、完整持久轨迹/历史树；opaque `session_id` 不能当权限凭证。[架构草案](agent-runtime-architecture-draft.md) |
 | C2 | 通用受限文件工具 | [Spec 027](specs/027-workspace-read-tool.md)已完成首个只读 `read`；[Spec 028](specs/028-read-file-pagination.md)已增加 `offset/limit` 按行续读，单页**文件正文**最多 64 KiB/2000 行，续读提示另计；[Spec 029](specs/029-session-workspace-read-boundary.md)和[Spec 030](specs/030-read-permission-and-approval.md)已完成可信工作区与同进程 Read 审批边界。[Spec 033](specs/033-ls-tool.md)已实现 `ls`：默认当前工作区、排序/目录标记、500 条/50 KiB 限制、工作区外审批，按用户选择显示全部名称（含 dotfiles），但不放宽 Read 内容权限。用户确认超长单行由 Read 返回错误，不做行内游标；Bash 已接入，但超长单行时提示模型改用 Bash 的实际回退路径仍未验证。跨页文件变更没有快照、深页需要从文件开头重新扫描，read/ls/find/grep 已在临时工作区用已配置的真实模型完成合成样本调用并核对结果与原调用 ID；仍没有稳定性或答案质量评测；路径检查与打开之间仍有 TOCTOU 窗口，不能宣称沙箱。`ls` 的条目上限不限制目录扫描/排序成本，极大目录性能待代表性样本评估。[Spec 034](specs/034-find-and-grep-tools.md)已完成 `find` 与 `grep` 的独立工具、CLI 接线、`.gitignore` 文件发现、正文权限过滤及同进程审批；`rg` 为显式运行前提，缺失时返回工具错误，极大目录内存峰值与打包环境可用性仍待验证。已按 [Spec 035](specs/035-read-tool-rename.md)将工具完整改名为 `read`；同步批次调度已按 [Spec 037](specs/037-conditional-tool-batch-scheduling.md)接线；首个真实 `write` 已按 [Spec 038](specs/038-workspace-write-tool-design.md)在 CLI 接线：工作区内 UTF-8 整文件创建/覆盖、现有父目录、1 MiB 默认上限、目标级进程内冲突和临时文件替换；假模型与真实临时文件测试已验证结果回填和读写读顺序，临时工作区已有一次真实模型 write→edit→read 成功链路，业务写入质量仍未验证。现已按 [Spec 039](specs/039-workspace-edit-tool.md)接入工作区内现有 UTF-8 文件的精确多处替换，验证快照变化冲突、原 ID 结果回填与 CLI 接线；Pi 的模糊匹配、完整 diff 展示尚未实现；Bash 已由后续切片实施。工作区外可审批写入需先有可审查内容/差异并绑定授权的界面，不能复用只读的仅路径审批。每种新工具各自定义权限动作及执行校验。用户提到的 `base` 是否为命令工具需在该切片确认。不要把“设计用例”“生成 pytest”做成固定流程工具。 |
-| C3 | `discount_system` 单场景产物与执行 | [Spec 002](specs/002-discount-policy-first-scenario.md)已确认公开契约，[Spec 003](specs/003-discount-case-design.md)仅有假模型结构化实验。需让模型读取证据、写 Markdown 用例和自动化代码，分别校验内容与可执行性；受控调用 SUT 后保留请求/响应、断言、唯一 `request_id` 和 DELETE 清理证据。 |
 | C4 | 首次执行生成代码前的安全边界 | 未有可宣称的沙箱。用户确认先在单用户本地 CLI 中显式启用审批式宿主机 Bash，作为开发实验；它能访问当前用户可访问的工作区外文件和网络，不满足自动/无人值守、Web/SaaS 或生产测试执行的隔离门槛。上述场景仍须先验证目标白名单、方法/路径/文件权限、运行预算、审批与 OS 隔离；审批不等于隔离。用户停止请求须阻止后续调度并标记已开始工具副作用的未知状态，不能声称自动回滚。 |
 | C5 | 关联轨迹与基础评测 | [Spec 013](specs/013-synchronous-run-events.md)与[Spec 015](specs/015-synchronous-tool-events.md)已在同步入口用结构化日志关联 run 开始/终局、选模、模型用量/失败及工具开始/完成/失败；旧路径未统一接入，也未配置日志消费者。下一切片须设计安全的事件消费与交付边界，区分日志诊断、Web 实时流、持久轨迹；若需要跨并发工具严格排序，再设计 per-run 序号与背压。未来还需检索/上下文/产物及取消事件和独立结果/过程评分器。以固定样本报告成功和失败案例，区分调用成功、用例质量和业务缺陷检出。 |
 | C6 | 应用服务与本地 Web | [Spec 016](specs/016-local-application-composition.md) 已有进程内统一装配，并用假模型验证两轮历史与事件；[Spec 017](specs/017-local-cli-entry.md) 的同步 CLI 已调用同一服务，真实模型验证两轮合成文本输入，但不含测试工具或业务能力。尚无 Web 入口或身份认证。未来本地 Web 应调用同一服务，展示真实会话、模型选择、轨迹与测试结果；上线前验证回环监听、授权、浏览器来源和文件操作边界，不用假数据冒充运行结果。 |

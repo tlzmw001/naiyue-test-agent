@@ -8,7 +8,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime.async_utils import await_settled, run_blocking, acquire_blocking
-from naiyue_test_agent.agent_runtime.events import safe_error_type
+from naiyue_test_agent.contracts.failures import safe_error_type
 from naiyue_test_agent.agent_runtime.run_services import current_run_services
 from .async_event_stream import AsyncEventStream
 

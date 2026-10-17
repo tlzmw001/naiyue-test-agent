@@ -10,19 +10,6 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 FailureSource = Literal['model', 'runtime', 'tool', 'application']
-RejectionReason = Literal[
-    'stop_reason_error', 'invalid_tool_calls', 'missing_tool_calls', 'missing_ai_message',
-]
-
-
-class ModelResponseRejected(RuntimeError):
-    """Response-rejection protocol; the runtime owns the rejection policy."""
-
-    def __init__(self, reason: RejectionReason):
-        self.reason = reason
-        super().__init__(f'Model response rejected: {reason}')
-
-
 def safe_error_type(error: BaseException) -> str:
     name = type(error).__name__
     return name if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,99}', name) else 'Exception'

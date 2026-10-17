@@ -1,5 +1,7 @@
 """Failure descriptions travel on the same exception without wrapping it."""
 
+from native_application_helpers import async_test
+
 import asyncio
 
 import pytest
@@ -47,16 +49,17 @@ def test_unknown_is_valid_but_forged_annotation_is_rejected(caplog):
     assert 'PRIVATE_' not in caplog.text
 
 
-def test_application_reads_annotation_and_classifies_model_once(monkeypatch):
+@async_test
+async def test_application_reads_annotation_and_classifies_model_once(monkeypatch):
     error = VendorQuotaError('PRIVATE')
-    app, events, _catalog = build(monkeypatch, failure=error)
+    app, events, _catalog = await build(monkeypatch, failure=error)
     calls = []
     def classify(error, source):
         calls.append(error)
         return quota(error, source)
     app.configure_error_classifiers(model_id='A', model=[classify])
     with pytest.raises(VendorQuotaError) as caught:
-        app.run(app.create_session('A'), [('user', 'probe')])
+        await app.arun(await app.acreate_session('A'), [('user', 'probe')])
     assert caught.value is error and calls == [error]
     assert read_failure_description(error, run_id=events[-1].run_id).reason == 'vendor_quota'
     assert events[-1].data.failure.reason == 'vendor_quota'

@@ -1,11 +1,12 @@
 """Execution failures become paired results inside the real batch boundary."""
 
+from native_application_helpers import async_test, build_application
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
 from naiyue_test_agent.application import prepare_tool_registry
 
-import asyncio
 import logging
 
 import pytest
@@ -31,19 +32,17 @@ def graph(tools, calls, *, checkpointer=None):
     )
 
 
-def invoke(agent, *, async_mode=False):
+async def invoke(agent):
     kwargs = {'context': {'session_id': 's', 'run_id': 'r'},
               'config': {'configurable': {'thread_id': 't'}}}
-    inputs = {'messages': [('user', 'run')]}
-    return (asyncio.run(agent.ainvoke(inputs, **kwargs)) if async_mode
-            else agent.invoke(inputs, **kwargs))
+    return await agent.ainvoke({'messages': [('user', 'run')]}, **kwargs)
 
 
-@pytest.mark.parametrize('async_mode', [False, True], ids=['sync', 'async'])
+@async_test
 @pytest.mark.parametrize('failure', [
     ToolException('Choose a UTF-8 file.'), RuntimeError('PRIVATE_BODY'), KeyError('PRIVATE_KEY'),
 ])
-def test_execution_errors_keep_pairing_and_continue_model(failure, async_mode, caplog):
+async def test_execution_errors_keep_pairing_and_continue_model(failure, caplog):
     @tool
     def probe() -> str:
         """Fail without external side effects."""
@@ -52,7 +51,7 @@ def test_execution_errors_keep_pairing_and_continue_model(failure, async_mode, c
     identity = (probe, probe.func, probe.args_schema, probe.metadata)
     agent = graph([ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], [{'name': 'probe', 'args': {}, 'id': 'call-1'}])
     with caplog.at_level(logging.INFO):
-        result = invoke(agent, async_mode=async_mode)
+        result = (await invoke(agent))
     feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert (feedback.name, feedback.tool_call_id, feedback.status) == ('probe', 'call-1', 'error')
     assert result['messages'][-1].content == 'handled'
@@ -69,8 +68,8 @@ def test_execution_errors_keep_pairing_and_continue_model(failure, async_mode, c
     assert conversions[0]['error_type'] == type(failure).__name__
 
 
-@pytest.mark.parametrize('async_mode', [False, True], ids=['sync', 'async'])
-def test_unexpected_error_does_not_fail_sequential_plan(async_mode):
+@async_test
+async def test_unexpected_error_does_not_fail_sequential_plan():
     seen = []
 
     @tool
@@ -81,9 +80,9 @@ def test_unexpected_error_does_not_fail_sequential_plan(async_mode):
             raise RuntimeError('PRIVATE')
         return label
 
-    result = invoke(graph([ToolSpec(probe, probe.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow'))], [
+    result = (await invoke(graph([ToolSpec(probe, probe.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow'))], [
         {'name': 'probe', 'args': {'label': label}, 'id': label} for label in ('A', 'B', 'C')
-    ]), async_mode=async_mode)
+    ])))
     assert seen == ['A', 'B', 'C']
     assert [(m.tool_call_id, m.status) for m in result['messages'] if isinstance(m, ToolMessage)] == [
         ('A', 'success'), ('B', 'error'), ('C', 'success'),
@@ -103,8 +102,8 @@ def test_old_internal_error_handler_is_rejected_without_mutation():
     assert probe.handle_tool_error is True
 
 
-@pytest.mark.parametrize('async_mode', [False, True], ids=['sync', 'async'])
-def test_validation_stays_outside_execution_feedback(async_mode, caplog):
+@async_test
+async def test_validation_stays_outside_execution_feedback(caplog):
     called = []
 
     @tool
@@ -114,8 +113,7 @@ def test_validation_stays_outside_execution_feedback(async_mode, caplog):
         return value
 
     probe.handle_validation_error = 'Invalid arguments.'
-    result = invoke(graph([ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], [{'name': 'probe', 'args': {}, 'id': 'invalid'}]),
-                    async_mode=async_mode)
+    result = (await invoke(graph([ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], [{'name': 'probe', 'args': {}, 'id': 'invalid'}])))
     feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert feedback.status == 'error' and feedback.tool_call_id == 'invalid'
     assert feedback.content == 'Invalid arguments.'
@@ -123,22 +121,22 @@ def test_validation_stays_outside_execution_feedback(async_mode, caplog):
     assert not any(hasattr(r, 'tool_error') for r in caplog.records)
 
 
-@pytest.mark.parametrize('async_mode', [False, True], ids=['sync', 'async'])
-def test_real_interrupt_is_not_converted(async_mode, caplog):
+@async_test
+async def test_real_interrupt_is_not_converted(caplog):
     @tool
     def probe() -> str:
         """Pause through the actual graph interrupt protocol."""
         return interrupt('approval')
 
-    result = invoke(graph([ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], [{'name': 'probe', 'args': {}, 'id': 'pause'}],
-                          checkpointer=InMemorySaver()), async_mode=async_mode)
+    result = (await invoke(graph([ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], [{'name': 'probe', 'args': {}, 'id': 'pause'}],
+                          checkpointer=InMemorySaver())))
     assert result['__interrupt__'][0].value == 'approval'
     assert not any(isinstance(m, ToolMessage) for m in result['messages'])
     assert not any(hasattr(r, 'tool_error') for r in caplog.records)
 
 
-@pytest.mark.parametrize('async_mode', [False, True], ids=['sync', 'async'])
-def test_process_cleanup_failure_propagates_original(async_mode):
+@async_test
+async def test_process_cleanup_failure_propagates_original():
     from naiyue_test_agent.tools.processes import ProcessCleanupError
     failure = ProcessCleanupError('PRIVATE_PROCESS_FAULT')
 
@@ -148,41 +146,40 @@ def test_process_cleanup_failure_propagates_original(async_mode):
         raise failure
 
     with pytest.raises(ProcessCleanupError) as caught:
-        invoke(graph([ToolSpec(bash, bash.args_schema, permissions=ToolPermission(default='allow'))], [{'name': 'bash', 'args': {}, 'id': 'shell'}]),
-               async_mode=async_mode)
+        (await invoke(graph([ToolSpec(bash, bash.args_schema, permissions=ToolPermission(default='allow'))], [{'name': 'bash', 'args': {}, 'id': 'shell'}])))
     assert caught.value is failure
 
 
-@pytest.mark.parametrize('async_mode', [False, True], ids=['sync', 'async'])
-def test_bash_unexpected_error_uses_same_public_feedback_boundary(async_mode, caplog):
+@async_test
+async def test_bash_unexpected_error_uses_same_public_feedback_boundary(caplog):
     @tool('bash')
     def bash() -> str:
         """Fail after the shared process runner has confirmed settlement."""
         raise RuntimeError('PRIVATE_PROCESS_FAULT')
-    result = invoke(graph([ToolSpec(bash, bash.args_schema, permissions=ToolPermission(default='allow'))],
-        [{'name': 'bash', 'args': {}, 'id': 'shell'}]), async_mode=async_mode)
+    result = (await invoke(graph([ToolSpec(bash, bash.args_schema, permissions=ToolPermission(default='allow'))],
+        [{'name': 'bash', 'args': {}, 'id': 'shell'}])))
     message = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert message.tool_call_id == 'shell' and message.name == 'bash' and message.status == 'error'
     assert 'RuntimeError' in message.content and result['messages'][-1].content == 'handled'
     assert 'PRIVATE' not in str(result) + caplog.text
 
 
-@pytest.mark.parametrize('async_mode', [False, True], ids=['sync', 'async'])
-def test_empty_tools_and_unknown_name_never_execute(async_mode):
-    empty = invoke(graph([], []), async_mode=async_mode)
+@async_test
+async def test_empty_tools_and_unknown_name_never_execute():
+    empty = (await invoke(graph([], [])))
     assert empty['messages'][-1].content == 'handled'
-    result = invoke(graph([], [{'name': 'missing', 'args': {}, 'id': 'unknown'}]),
-                    async_mode=async_mode)
+    result = (await invoke(graph([], [{'name': 'missing', 'args': {}, 'id': 'unknown'}])))
     feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert feedback.status == 'error' and feedback.tool_call_id == 'unknown'
     assert result['messages'][-1].content == 'handled'
 
 
-@pytest.mark.parametrize('async_mode', [False, True], ids=['sync', 'async'])
+@pytest.mark.parametrize('native_model', [False, True], ids=['sync-sdk', 'native-async'])
 @pytest.mark.parametrize('after_replace', [False, True], ids=['before-commit', 'after-commit'])
 @pytest.mark.parametrize('tool_name', ['write', 'edit'])
-def test_uncertain_commit_is_not_replayed_or_quarantined(
-    monkeypatch, tmp_path, caplog, async_mode, after_replace, tool_name,
+@async_test
+async def test_uncertain_commit_is_not_replayed_or_quarantined(
+    monkeypatch, tmp_path, caplog, native_model, after_replace, tool_name,
 ):
     from naiyue_test_agent import application
     from naiyue_test_agent.tools import create_session_write_tool, create_session_edit_tool
@@ -222,7 +219,7 @@ def test_uncertain_commit_is_not_replayed_or_quarantined(
         assert len(conversions) == 1 and conversions[0]['cause_type'] == 'OSError'
         assert 'PRIVATE_' not in caplog.text + feedback.content
 
-    if async_mode:
+    if native_model:
         async def scenario():
             app = await make_app(monkeypatch, StreamingToolModel(replies=replies), tools)
             try:
@@ -232,19 +229,20 @@ def test_uncertain_commit_is_not_replayed_or_quarantined(
                 assert_result(result, continued, app, session)
             finally:
                 await app.aclose()
-        asyncio.run(scenario())
+        await scenario()
     else:
         model = ToolCapableFake(responses=replies)
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
-        app = application.build_local_application('synthetic', tools=tools, system_prompt='', response_format=None)
-        session = app.create_workspace_session('A', tmp_path)
-        result = app.run(session, [('user', 'modify')])
-        continued = app.run(session, [('user', 'continue')])
+        app = await build_application('synthetic', tools=tools, system_prompt='', response_format=None)
+        session = await app.acreate_workspace_session('A', tmp_path)
+        result = await app.arun(session, [('user', 'modify')])
+        continued = await app.arun(session, [('user', 'continue')])
         assert_result(result, continued, app, session)
 
 
+@async_test
 @pytest.mark.parametrize('failure', [ToolException('Choose another input.'), RuntimeError('PRIVATE')])
-def test_conversion_diagnostic_fault_does_not_replace_feedback(monkeypatch, caplog, failure):
+async def test_conversion_diagnostic_fault_does_not_replace_feedback(monkeypatch, caplog, failure):
     from naiyue_test_agent.agent_runtime.tool_execution import feedback as module
 
     @tool
@@ -256,7 +254,7 @@ def test_conversion_diagnostic_fault_does_not_replace_feedback(monkeypatch, capl
         raise ValueError('PRIVATE_DIAGNOSTIC')
 
     monkeypatch.setattr(module.logger, 'warning', broken_diagnostic)
-    result = invoke(graph([ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], [{'name': 'probe', 'args': {}, 'id': 'diagnostic'}]))
+    result = (await invoke(graph([ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], [{'name': 'probe', 'args': {}, 'id': 'diagnostic'}])))
     feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert feedback.status == 'error' and feedback.tool_call_id == 'diagnostic'
     assert feedback.content == (str(failure) if isinstance(failure, ToolException) else

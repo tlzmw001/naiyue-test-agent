@@ -1,6 +1,7 @@
 """Default paths and Read settings are consumed by real application entries."""
 
-import asyncio
+from native_application_helpers import async_test
+
 import json
 from pathlib import Path
 
@@ -8,7 +9,8 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 
-def test_model_catalog_reads_the_default_user_file(monkeypatch, tmp_path):
+@async_test
+async def test_model_catalog_reads_the_default_user_file(monkeypatch, tmp_path):
     from naiyue_test_agent import model_access
     from naiyue_test_agent.model_access import load_model_catalog, ModelConfigError
     from test_model_access import config_for_all_kinds
@@ -34,7 +36,7 @@ def test_model_catalog_reads_the_default_user_file(monkeypatch, tmp_path):
     catalog = load_model_catalog()
     assert catalog.default_model_id == 'gateway'
     assert constructed == ['official', 'gateway', 'claude', 'local']
-    asyncio.run(catalog.aclose())
+    await catalog.aclose()
     path.write_text('invalid')
     with pytest.raises(ModelConfigError, match='invalid JSON'):
         load_model_catalog()
@@ -91,7 +93,8 @@ def test_cli_loads_read_settings_and_default_model_path(monkeypatch, tmp_path, c
     ('[tools.read]\ndefault_limit=1\n', 'first\n[read: lines 1-1; next_offset=2]\n[read: stopped by 1 line page limit; continue with the same path, offset=2, limit=1]'),
     ('INVALID = [', None),
 ])
-def test_web_uses_the_same_settings_loader(monkeypatch, tmp_path, content, expected):
+@async_test
+async def test_web_uses_the_same_settings_loader(monkeypatch, tmp_path, content, expected):
     from test_web_api import web_client, request
     from test_async_application import StreamingToolModel, call
     from naiyue_test_agent.tools import settings as module
@@ -112,9 +115,9 @@ def test_web_uses_the_same_settings_loader(monkeypatch, tmp_path, content, expec
             assert feedback.content == expected
     if expected is None:
         with pytest.raises(ValueError, match='Permission settings could not be read or parsed'):
-            asyncio.run(scenario())
+            await scenario()
     else:
-        asyncio.run(scenario())
+        await scenario()
 
 
 def test_web_entry_model_config_is_optional(monkeypatch, tmp_path):
@@ -131,24 +134,26 @@ def test_web_entry_model_config_is_optional(monkeypatch, tmp_path):
     assert seen[0].config_path == tmp_path / '.naiyue-test-agent' / 'models.json'
 
 
-def test_two_applications_keep_their_own_read_budget(monkeypatch, tmp_path):
+@async_test
+async def test_two_applications_keep_their_own_read_budget(monkeypatch, tmp_path):
     from naiyue_test_agent.tools import ReadSettings, create_session_read_tool
     from test_application_run_events import make_app, ToolModel
     from test_async_application import call
     (tmp_path / 'doc.md').write_text('a\nb\nc\n')
-    first = make_app(monkeypatch,
+    first = await make_app(monkeypatch,
         ToolModel(responses=[call('read', {'path': 'doc.md'}), AIMessage(content='done')]),
         [create_session_read_tool(settings=ReadSettings(default_limit=1))])
-    second = make_app(monkeypatch,
+    second = await make_app(monkeypatch,
         ToolModel(responses=[call('read', {'path': 'doc.md'}), AIMessage(content='done')]),
         [create_session_read_tool(settings=ReadSettings(default_limit=3))])
-    first_result = first.run(first.create_workspace_session('A', tmp_path), [('user', 'read')])
-    second_result = second.run(second.create_workspace_session('A', tmp_path), [('user', 'read')])
+    first_result = await first.arun(await first.acreate_workspace_session('A', tmp_path), [('user', 'read')])
+    second_result = await second.arun(await second.acreate_workspace_session('A', tmp_path), [('user', 'read')])
     assert next(m for m in first_result['messages'] if isinstance(m, ToolMessage)).content == 'a\n[read: lines 1-1; next_offset=2]\n[read: stopped by 1 line page limit; continue with the same path, offset=2, limit=1]'
     assert next(m for m in second_result['messages'] if isinstance(m, ToolMessage)).content == 'a\nb\nc\n'
 
 
-def test_approval_resume_keeps_the_original_startup_settings(monkeypatch, tmp_path):
+@async_test
+async def test_approval_resume_keeps_the_original_startup_settings(monkeypatch, tmp_path):
     from naiyue_test_agent.tools import create_session_read_tool, load_tool_settings
     from test_application_run_events import make_app, ToolModel
     from test_async_application import call
@@ -159,15 +164,15 @@ def test_approval_resume_keeps_the_original_startup_settings(monkeypatch, tmp_pa
     path = tmp_path / 'settings.toml'
     path.write_text('[tools.read]\ndefault_limit=1\n')
     reader = create_session_read_tool(settings=load_tool_settings(path).tools.read)
-    app = make_app(monkeypatch,
+    app = await make_app(monkeypatch,
         ToolModel(responses=[call('read', {'path': str(document)}), AIMessage(content='done')]),
         [reader])
-    session = app.create_workspace_session('A', workspace)
-    pending = app.run(session, [('user', 'read')])
+    session = await app.acreate_workspace_session('A', workspace)
+    pending = await app.arun(session, [('user', 'read')])
     assert len(pending['approval_requests']) == 1
     assert not any(isinstance(m, ToolMessage) for m in pending['messages'])
     path.write_text('[tools.read]\ndefault_limit=3\n')
-    result = app.resume_tool_approval(session, ['approve'])
+    result = await app.aresume_tool_approval(session, ['approve'])
     assert next(m for m in result['messages'] if isinstance(m, ToolMessage)).content == 'a\n[read: lines 1-1; next_offset=2]\n[read: stopped by 1 line page limit; continue with the same path, offset=2, limit=1]'
 
 
@@ -183,7 +188,8 @@ def test_small_read_page_does_not_remove_skills_from_discovery(tmp_path):
 
 
 @pytest.mark.parametrize('entry', ['cli', 'web'])
-def test_entries_wire_ls_write_and_edit_settings(monkeypatch, tmp_path, entry):
+@async_test
+async def test_entries_wire_ls_write_and_edit_settings(monkeypatch, tmp_path, entry):
     from naiyue_test_agent.tools import settings as module
     from test_write_tool import RecordingFake
     from test_async_application import StreamingToolModel
@@ -225,7 +231,7 @@ def test_entries_wire_ls_write_and_edit_settings(monkeypatch, tmp_path, entry):
                 sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
                 run = (await client.post(f'/api/sessions/{sid}/runs', json=request('check files'))).json()['run_id']
                 await client.get(f'/api/runs/{run}/events')
-        asyncio.run(scenario())
+        await scenario()
     feedback = {m.tool_call_id: m for m in model.seen[1] if isinstance(m, ToolMessage)}
     assert feedback['ls'].status == 'success'
     assert feedback['ls'].content == 'a\n[ls: truncated at 1 entries; narrow the directory or limit]'
@@ -235,17 +241,18 @@ def test_entries_wire_ls_write_and_edit_settings(monkeypatch, tmp_path, entry):
     assert (workspace / 'doc').read_text() == '中文'
 
 
-def test_two_applications_keep_their_own_ls_defaults(monkeypatch, tmp_path):
+@async_test
+async def test_two_applications_keep_their_own_ls_defaults(monkeypatch, tmp_path):
     from naiyue_test_agent.tools import LsSettings, create_session_ls_tool
     from test_application_run_events import make_app, ToolModel
     from test_async_application import call
     (tmp_path / 'a').touch()
     (tmp_path / 'b').touch()
-    applications = [make_app(monkeypatch,
+    applications = [await make_app(monkeypatch,
         ToolModel(responses=[call('ls', {}), AIMessage(content='done')]),
         [create_session_ls_tool(settings=LsSettings(default_limit=limit))]) for limit in (1, 2)]
     outputs = []
     for app in applications:
-        result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'ls')])
+        result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'ls')])
         outputs.append(next(m.content for m in result['messages'] if isinstance(m, ToolMessage)))
     assert outputs == ['a\n[ls: truncated at 1 entries; narrow the directory or limit]', 'a\nb']

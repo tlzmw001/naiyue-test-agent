@@ -1,5 +1,9 @@
 """Layer-owned descriptions and trusted, isolated extension entry points."""
 
+from test_application_run_events import ToolModel
+
+from native_application_helpers import async_test, build_application
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
@@ -14,7 +18,6 @@ import sys
 import pytest
 from tool_feedback_helpers import fail_tool_dispatch
 from langchain_core.exceptions import ModelRateLimitError, ModelTimeoutError
-from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import ToolException, tool
 
@@ -25,9 +28,6 @@ from naiyue_test_agent.model_access.errors import describe_model_failure
 from naiyue_test_agent.agent_runtime.errors import RuntimeErrorPolicy
 
 
-class ToolModel(FakeMessagesListChatModel):
-    def bind_tools(self, tools, **_kwargs):
-        return self
 
 
 class VendorQuotaError(Exception):
@@ -48,7 +48,7 @@ def quota(error, source):
     return None
 
 
-def build(monkeypatch, *, failure=None, tools=None, replies=None):
+async def build(monkeypatch, *, failure=None, tools=None, replies=None):
     class Failing(ToolModel):
         def _generate(self, *args, **kwargs):
             raise failure
@@ -58,7 +58,7 @@ def build(monkeypatch, *, failure=None, tools=None, replies=None):
     ])
     catalog = ModelCatalog('A', {'A': model})
     monkeypatch.setattr(application, 'load_model_catalog', lambda _path: catalog)
-    app = application.build_local_application(
+    app = await build_application(
         'synthetic.json', tools=tools or [], system_prompt='', response_format=None,
     )
     events = []
@@ -121,13 +121,14 @@ def test_runtime_protected_errors_cannot_be_overridden():
         assert policy.describe(error, source='runtime').reason == reason
 
 
-def test_custom_model_error_reaches_model_and_run_events_without_core_edits(monkeypatch):
+@async_test
+async def test_custom_model_error_reaches_model_and_run_events_without_core_edits(monkeypatch):
     error = VendorQuotaError('PRIVATE')
-    app, events, _catalog = build(monkeypatch, failure=error)
+    app, events, _catalog = await build(monkeypatch, failure=error)
     app.configure_error_classifiers(model_id='A', model=[quota])
-    session = app.create_session('A')
+    session = await app.acreate_session('A')
     with pytest.raises(VendorQuotaError) as caught:
-        app.run(session, [('user', 'probe')])
+        await app.arun(session, [('user', 'probe')])
     assert caught.value is error
     model_end = next(e.data for e in events if e.event_type == 'model_call_finished')
     terminal = events[-1].data
@@ -136,7 +137,8 @@ def test_custom_model_error_reaches_model_and_run_events_without_core_edits(monk
     assert terminal.failure.reason == 'vendor_quota'
 
 
-def test_custom_fatal_tool_description_is_reported_to_application(monkeypatch):
+@async_test
+async def test_custom_fatal_tool_description_is_reported_to_application(monkeypatch):
     error = ToolDataError('PRIVATE')
 
     @tool
@@ -150,20 +152,21 @@ def test_custom_fatal_tool_description_is_reported_to_application(monkeypatch):
         return None
 
     fail_tool_dispatch(monkeypatch, 'probe', error)
-    app, events, _catalog = build(monkeypatch, tools=[ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], replies=[
+    app, events, _catalog = await build(monkeypatch, tools=[ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], replies=[
         AIMessage(content='', tool_calls=[{'name': 'probe', 'args': {}, 'id': 'c1'}],
                   response_metadata={'finish_reason': 'tool_calls'}),
     ])
     app.configure_error_classifiers(runtime=[describe])
     with pytest.raises(ToolDataError) as caught:
-        app.run(app.create_session('A'), [('user', 'probe')])
+        await app.arun(await app.acreate_session('A'), [('user', 'probe')])
     assert caught.value is error
     tool_end = next(e.data for e in events if e.event_type == 'tool_call_finished')
     assert tool_end.failure.reason == 'data_unavailable'
     assert events[-1].data.failure == tool_end.failure
 
 
-def test_custom_recoverable_tool_uses_existing_framework_feedback(monkeypatch):
+@async_test
+async def test_custom_recoverable_tool_uses_existing_framework_feedback(monkeypatch):
     class Recoverable(ToolException):
         pass
 
@@ -172,12 +175,12 @@ def test_custom_recoverable_tool_uses_existing_framework_feedback(monkeypatch):
         """Raise a recoverable error without side effects."""
         raise Recoverable('Input is unavailable; choose another input.')
 
-    app, events, _catalog = build(monkeypatch, tools=[ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], replies=[
+    app, events, _catalog = await build(monkeypatch, tools=[ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], replies=[
         AIMessage(content='', tool_calls=[{'name': 'probe', 'args': {}, 'id': 'c1'}],
                   response_metadata={'finish_reason': 'tool_calls'}),
         AIMessage(content='recovered', response_metadata={'finish_reason': 'stop'}),
     ])
-    result = app.run(app.create_session('A'), [('user', 'probe')])
+    result = await app.arun(await app.acreate_session('A'), [('user', 'probe')])
     feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert feedback.status == 'error' and feedback.tool_call_id == 'c1'
     assert feedback.content == 'Input is unavailable; choose another input.'
@@ -185,9 +188,10 @@ def test_custom_recoverable_tool_uses_existing_framework_feedback(monkeypatch):
     assert events[-1].data.status == 'completed'
 
 
-def test_application_extension_is_local_and_has_correct_stage(monkeypatch):
-    app, events, _catalog = build(monkeypatch)
-    other, other_events, _other_catalog = build(monkeypatch)
+@async_test
+async def test_application_extension_is_local_and_has_correct_stage(monkeypatch):
+    app, events, _catalog = await build(monkeypatch)
+    other, other_events, _other_catalog = await build(monkeypatch)
     error = ReportStorageError('PRIVATE')
 
     def describe(error, source):
@@ -203,23 +207,24 @@ def test_application_extension_is_local_and_has_correct_stage(monkeypatch):
     monkeypatch.setattr(application.session_service, 'prepare_run_resources', fail)
     for item in (app, other):
         with pytest.raises(ReportStorageError) as caught:
-            item.run(item.create_session('A'), [('user', 'probe')])
+            await item.arun(await item.acreate_session('A'), [('user', 'probe')])
         assert caught.value is error
     assert events[-1].data.failure.reason == 'report_unavailable'
     assert events[-1].data.failure.stage == 'prepare'
     assert other_events[-1].data.failure.category == 'unknown'
 
 
-def test_invalid_extension_does_not_expose_raw_text_or_replace_error(monkeypatch, caplog):
+@async_test
+async def test_invalid_extension_does_not_expose_raw_text_or_replace_error(monkeypatch, caplog):
     error = VendorQuotaError('PRIVATE_ORIGINAL')
-    app, events, _catalog = build(monkeypatch, failure=error)
+    app, events, _catalog = await build(monkeypatch, failure=error)
 
     def invalid(_error, _source):
         raise ValueError('PRIVATE_DIAGNOSTIC')
 
     app.configure_error_classifiers(model_id='A', model=[invalid])
     with pytest.raises(VendorQuotaError) as caught:
-        app.run(app.create_session('A'), [('user', 'probe')])
+        await app.arun(await app.acreate_session('A'), [('user', 'probe')])
     assert caught.value is error
     assert events[-1].data.failure.category == 'unknown'
     assert 'PRIVATE_' not in caplog.text + repr(events)

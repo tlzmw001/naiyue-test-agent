@@ -1,8 +1,9 @@
 """Queue duration is unbounded; ordering, settlement and stop guards remain."""
 
+from native_application_helpers import async_test
+
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
-from threading import Condition, Event
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -39,25 +40,24 @@ def prepared(mode='sequential', *, control=None, unknown=False):
     return middleware, state, runtime, calls
 
 
-def test_sync_later_call_keeps_waiting_when_old_queue_deadline_passes(monkeypatch):
+@async_test
+async def test_blocking_tool_keeps_later_call_queued_past_old_deadline(monkeypatch):
     middleware, state, runtime, _ = prepared()
-    middleware.after_model(state, runtime)
+    await middleware.aafter_model(state, runtime)
     plan = runtime.context[batch._PLAN_KEY]
-    entered, release, waiting, observed = Event(), Event(), Event(), Event()
+    entered, release = Event(), Event()
+    waiting, observed = asyncio.Event(), asyncio.Event()
     clock, trace = [0.0], []
-    monkeypatch.setattr(batch, 'monotonic', lambda: clock[0], raising=False)
+    monkeypatch.setattr(async_batch, 'monotonic', lambda: clock[0], raising=False)
 
-    class ObservableCondition(Condition):
+    class ObservableCondition(asyncio.Condition):
         waits = 0
-
-        def wait(self, timeout=None):
+        async def wait(self):
             self.waits += 1
             waiting.set()
             if self.waits == 2:
                 observed.set()
-            # Test controls the notification; no real 60-second sleep is needed.
-            return super().wait()
-
+            return await super().wait()
     plan.condition = ObservableCondition()
 
     def first_body():
@@ -66,32 +66,33 @@ def test_sync_later_call_keeps_waiting_when_old_queue_deadline_passes(monkeypatc
         assert release.wait(5)
         trace.append('first:end')
         return 'first-result'
+    async def first_handler():
+        return await asyncio.to_thread(first_body)
+    async def later_handler():
+        trace.append('later')
+    first = asyncio.create_task(plan.execute('first', 'queue_probe', first_handler, 2))
+    later = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        later = asyncio.create_task(plan.execute('later', 'queue_probe', later_handler, 2))
+        await asyncio.wait_for(waiting.wait(), 5)
+        clock[0] = 120.0
+        async with plan.condition:
+            plan.condition.notify_all()
+        await asyncio.wait_for(observed.wait(), 5)
+        assert not later.done(), 'Queue time must not fail a still-running predecessor.'
+        assert trace == ['first:start']
+        release.set()
+        assert await asyncio.wait_for(first, 5) == 'first-result'
+        assert await asyncio.wait_for(later, 5) is None
+        assert trace == ['first:start', 'first:end', 'later']
+    finally:
+        release.set()
+        await asyncio.gather(*([first, later] if later else [first]), return_exceptions=True)
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        first = executor.submit(plan.execute, 'first', 'queue_probe', first_body)
-        later = None
-        try:
-            assert entered.wait(5)
-            later = executor.submit(plan.execute, 'later', 'queue_probe', lambda: trace.append('later'))
-            later.add_done_callback(lambda _future: observed.set())
-            assert waiting.wait(5)
-            clock[0] = 120.0
-            with plan.condition:
-                plan.condition.notify_all()
-            assert observed.wait(5)
-            assert not later.done(), 'Queue time must not fail a still-running predecessor.'
-            assert trace == ['first:start']
-            release.set()
-            assert first.result(5) == 'first-result'
-            assert later.result(5) is None
-            assert trace == ['first:start', 'first:end', 'later']
-        finally:
-            release.set()
-            with plan.condition:
-                plan.condition.notify_all()
 
-
-def test_async_later_call_has_no_execution_deadline_while_queued(monkeypatch):
+@async_test
+async def test_async_later_call_has_no_execution_deadline_while_queued(monkeypatch):
     async def scenario():
         waiting, observed, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
         timers, trace = [], []
@@ -163,18 +164,21 @@ def test_async_later_call_has_no_execution_deadline_while_queued(monkeypatch):
             release.set()
             witness.cancel()
             await asyncio.gather(first, later, witness, return_exceptions=True)
-    asyncio.run(scenario())
+    await scenario()
 
 
 @pytest.mark.parametrize('mode,unknown', [('parallel', False), ('sequential', False), ('parallel', True)])
-def test_sync_dispatch_does_not_enter_downstream_after_stop(mode, unknown):
+@async_test
+async def test_dispatch_does_not_enter_downstream_after_stop(mode, unknown):
     control = RunControl()
     middleware, state, runtime, calls = prepared(mode, control=control, unknown=unknown)
-    middleware.after_model(state, runtime)
+    await middleware.aafter_model(state, runtime)
     control.request()
     executed = []
     request = SimpleNamespace(tool_call=calls[0], state=state, runtime=runtime)
-    result = middleware.wrap_tool_call(request, lambda _request: executed.append('entered'))
+    async def downstream(_request):
+        executed.append('entered')
+    result = await middleware.awrap_tool_call(request, downstream)
     assert executed == []
     assert isinstance(result, ToolMessage) and result.status == 'error'
     assert result.tool_call_id == 'first'
@@ -182,7 +186,8 @@ def test_sync_dispatch_does_not_enter_downstream_after_stop(mode, unknown):
 
 
 @pytest.mark.parametrize('concurrency', [1, 2])
-def test_sync_app_settles_first_tool_then_skips_later_without_another_model(monkeypatch, caplog, concurrency):
+@async_test
+async def test_sync_app_settles_first_tool_then_skips_later_without_another_model(monkeypatch, caplog, concurrency):
     entered, release, later_dispatched = Event(), Event(), Event()
     executed, events = [], []
 
@@ -204,12 +209,12 @@ def test_sync_app_settles_first_tool_then_skips_later_without_another_model(monk
         {'name': 'first', 'args': {}, 'id': 'first-call'},
         {'name': 'later', 'args': {}, 'id': 'later-call'},
     ]), AIMessage(content='must not request')])
-    app = make_app(monkeypatch, model, [
+    app = await make_app(monkeypatch, model, [
         ToolSpec(first, first.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow')),
         ToolSpec(later, later.args_schema, permissions=ToolPermission(default='allow')),
     ])
     app._agent = app._agent.with_config({'max_concurrency': concurrency})
-    session = app.create_session('A')
+    session = await app.acreate_session('A')
 
     def observe(event):
         events.append(event)
@@ -218,17 +223,16 @@ def test_sync_app_settles_first_tool_then_skips_later_without_another_model(monk
 
     app.subscribe_events(observe)
     try:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            task = executor.submit(app.run, session, [('user', 'start')])
-            try:
-                assert entered.wait(5)
-                if concurrency == 2:
-                    assert later_dispatched.wait(5)
-                app.request_stop(session)
-                assert app._sessions._sessions[session]['busy'] and not task.done()
-            finally:
-                release.set()
-            result = task.result(5)
+        task = asyncio.create_task(app.arun(session, [('user', 'start')], max_concurrency=concurrency))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            if concurrency == 2:
+                assert await asyncio.to_thread(later_dispatched.wait, 5)
+            app.request_stop(session)
+            assert app._sessions._sessions[session]['busy'] and not task.done()
+        finally:
+            release.set()
+        result = await asyncio.wait_for(asyncio.shield(task), 5)
         assert executed == ['first']
         results = {message.tool_call_id: message for message in result['messages'] if isinstance(message, ToolMessage)}
         assert results['first-call'].content == 'committed' and results['first-call'].status == 'success'
@@ -239,16 +243,17 @@ def test_sync_app_settles_first_tool_then_skips_later_without_another_model(monk
         assert finished['first-call'].outcome == 'success'
         assert finished['later-call'].outcome == 'not_executed' and finished['later-call'].reason == 'user_stop'
         assert events[-1].data.status == 'stopped' and not events[-1].data.manual_review_required
-        snapshot = app._agent.get_state({'configurable': {'thread_id': app._sessions._sessions[session]['thread_id']}})
+        snapshot = await app._agent.aget_state({'configurable': {'thread_id': app._sessions._sessions[session]['thread_id']}})
         assert not snapshot.next and not any(task.error or task.interrupts for task in snapshot.tasks)
         assert not app._sessions._sessions[session]['busy']
         EventSequenceChecker.assert_healthy(events, caplog.records)
     finally:
         release.set()
-        asyncio.run(app._sessions._catalog.aclose())
+        await app._sessions._catalog.aclose()
 
 
-def test_async_cancelled_waiter_wakes_remaining_calls_without_running_them():
+@async_test
+async def test_async_cancelled_waiter_wakes_remaining_calls_without_running_them():
     async def scenario():
         middleware, state, runtime, calls = prepared()
         calls.append({'name': 'queue_probe', 'args': {'label': 'tail'}, 'id': 'tail'})
@@ -290,4 +295,4 @@ def test_async_cancelled_waiter_wakes_remaining_calls_without_running_them():
         finally:
             release.set()
             await asyncio.gather(*tasks, return_exceptions=True)
-    asyncio.run(scenario())
+    await scenario()

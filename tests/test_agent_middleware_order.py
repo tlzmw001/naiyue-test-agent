@@ -1,6 +1,7 @@
 """Make middleware registration and a complete tool-loop order observable."""
 
-import asyncio
+from native_application_helpers import async_test
+
 
 from langchain.agents import create_agent
 import pytest
@@ -16,7 +17,8 @@ class ToolCapableFake(FakeMessagesListChatModel):
         return self
 
 
-def test_hooks_are_registered_and_ordered_across_two_model_calls():
+@async_test
+async def test_hooks_are_registered_and_ordered_across_two_model_calls():
     trace = []
 
     class TraceMiddleware(AgentMiddleware):
@@ -70,7 +72,7 @@ def test_hooks_are_registered_and_ordered_across_two_model_calls():
             assert f'{label}.{hook}' in agent.nodes
             assert f'AgentMiddleware.{hook}' not in agent.nodes
 
-    result = agent.invoke({'messages': [('user', 'Echo ping, then answer.')]})
+    result = (await agent.ainvoke({'messages': [('user', 'Echo ping, then answer.')]}))
 
     assert [event for event, _ in trace] == [
         'A.before_agent', 'B.before_agent',
@@ -93,11 +95,12 @@ def test_hooks_are_registered_and_ordered_across_two_model_calls():
     assert result['messages'][-1].content == 'done'
 
 
+@async_test
 @pytest.mark.parametrize(('scope', 'outcome'), [
     ('model', 'pass'), ('model', 'short'), ('tool', 'short'),
     ('model', 'error'), ('tool', 'error'),
 ], ids=['pass', 'model-short', 'tool-short', 'model-error', 'tool-error'])
-def test_wrap_handlers_enter_return_and_preserve_boundaries(scope, outcome):
+async def test_wrap_handlers_enter_return_and_preserve_boundaries(scope, outcome):
     trace = []
     failure = RuntimeError('synthetic failure')
 
@@ -109,7 +112,7 @@ def test_wrap_handlers_enter_return_and_preserve_boundaries(scope, outcome):
         def name(self):
             return self.label
 
-        def _call(self, kind, request, handler):
+        async def _call(self, kind, request, handler):
             trace.append(f'{self.label}.{kind}.enter')
             try:
                 if self.label == 'B' and scope == kind and outcome == 'short':
@@ -122,18 +125,18 @@ def test_wrap_handlers_enter_return_and_preserve_boundaries(scope, outcome):
                             tool_call_id=request.tool_call['id'],
                         )
                 else:
-                    result = handler(request)
+                    result = await handler(request)
             except RuntimeError:
                 trace.append(f'{self.label}.{kind}.error')
                 raise
             trace.append(f'{self.label}.{kind}.exit')
             return result
 
-        def wrap_model_call(self, request, handler):
-            return self._call('model', request, handler)
+        async def awrap_model_call(self, request, handler):
+            return await self._call('model', request, handler)
 
-        def wrap_tool_call(self, request, handler):
-            return self._call('tool', request, handler)
+        async def awrap_tool_call(self, request, handler):
+            return await self._call('tool', request, handler)
 
     class RecordingModel(ToolCapableFake):
         def _generate(self, messages, *args, **kwargs):
@@ -166,10 +169,10 @@ def test_wrap_handlers_enter_return_and_preserve_boundaries(scope, outcome):
 
     if outcome == 'error':
         with pytest.raises(RuntimeError) as caught:
-            agent.invoke({'messages': [('user', 'Echo ping, then answer.')]})
+            (await agent.ainvoke({'messages': [('user', 'Echo ping, then answer.')]}))
         assert caught.value is failure
     else:
-        result = agent.invoke({'messages': [('user', 'Echo ping, then answer.')]})
+        result = (await agent.ainvoke({'messages': [('user', 'Echo ping, then answer.')]}))
         assert result['messages'][-1].content == ('short answer' if scope == 'model' and outcome == 'short' else 'done')
         if scope == 'tool' and outcome == 'short':
             assert result['messages'][2].content == 'synthetic tool result'
@@ -191,8 +194,9 @@ def test_wrap_handlers_enter_return_and_preserve_boundaries(scope, outcome):
     assert trace == expected
 
 
-@pytest.mark.parametrize('mode', ['invoke', 'ainvoke', 'stream', 'astream'])
-def test_call_modes_share_loop_but_differ_in_output(mode):
+@async_test
+@pytest.mark.parametrize('mode', ['ainvoke', 'astream'])
+async def test_call_modes_share_loop_but_differ_in_output(mode):
     calls = []
     parts = []
 
@@ -220,23 +224,14 @@ def test_call_modes_share_loop_but_differ_in_output(mode):
             parts.append(part)
         return [part['data'] for part in parts if part['type'] == 'values'][-1]
 
-    if mode == 'invoke':
-        result = agent.invoke(inputs)
-    elif mode == 'stream':
-        for part in agent.stream(
-            inputs, stream_mode=['updates', 'values'], version='v2',
-        ):
-            parts.append(part)
-        result = [part['data'] for part in parts if part['type'] == 'values'][-1]
-    else:
-        result = asyncio.run(async_call())
+    result = await async_call()
 
     assert calls == ['ping']
     assert [message.type for message in result['messages']] == ['human', 'ai', 'tool', 'ai']
     assert result['messages'][2].content == 'echo: ping'
     assert result['messages'][2].tool_call_id == result['messages'][1].tool_calls[0]['id']
     assert result['messages'][-1].content == 'done'
-    if mode in ('stream', 'astream'):
+    if mode == 'astream':
         assert all(part['ns'] == () for part in parts)
         updates = [part['data'] for part in parts if part['type'] == 'updates']
         assert [list(update) for update in updates] == [['model'], ['tools'], ['model']]

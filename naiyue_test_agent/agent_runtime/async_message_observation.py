@@ -9,7 +9,7 @@ from langgraph.errors import GraphBubbleUp
 from langgraph.pregel import Pregel
 from langgraph.types import Command
 
-from .events import safe_error_type
+from naiyue_test_agent.contracts.failures import safe_error_type
 from .message_observation import MessageStateObserver, _snapshot
 from .stream_events import MessageDeltaData, SUMMARY_TAG, PERMISSION_REVIEW_TAG
 from .tool_execution.observation import observe_tool_progress
@@ -124,7 +124,9 @@ async def ainvoke_with_message_observation(agent, input, *, context, config, pub
         raise
     finally:
         try:
-            await iterator.aclose()
+            close = getattr(iterator, 'aclose', None)
+            if close is not None:
+                await close()
         except BaseException as error:
             if primary is None:
                 raise

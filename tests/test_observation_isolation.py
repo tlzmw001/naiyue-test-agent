@@ -1,5 +1,7 @@
 """Optional observations never decide execution success or control outcomes."""
 
+from native_application_helpers import async_test
+
 import asyncio
 
 import pytest
@@ -18,9 +20,10 @@ from event_sequence import EventSequenceChecker
 
 
 @pytest.mark.parametrize('event_type', ['run_started', 'model_call_started', 'model_call_finished', 'run_finished'])
-def test_success_survives_publish_fault(monkeypatch, event_type, caplog):
-    app = make_app(monkeypatch)
-    session = app.create_session('A')
+@async_test
+async def test_success_survives_publish_fault(monkeypatch, event_type, caplog):
+    app = await make_app(monkeypatch)
+    session = await app.acreate_session('A')
     publish = RunEventPublisher.publish
 
     def fault(self, kind, data):
@@ -29,7 +32,7 @@ def test_success_survives_publish_fault(monkeypatch, event_type, caplog):
         return publish(self, kind, data)
 
     monkeypatch.setattr(RunEventPublisher, 'publish', fault)
-    result = app.run(session, [('user', 'probe')])
+    result = await app.arun(session, [('user', 'probe')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
     assert app._sessions._sessions[session]['busy'] is False
     assert 'PRIVATE_EVENT_FAULT' not in caplog.text
@@ -42,22 +45,24 @@ def test_success_survives_publish_fault(monkeypatch, event_type, caplog):
     (ContextOperationObserver, 'model_call_started'), (ContextOperationObserver, 'finalize'),
     (MessageStateObserver, 'observe'), (TurnObserver, 'snapshot'),
 ])
-def test_observer_fault_does_not_change_result(monkeypatch, owner, operation, caplog):
-    app = make_app(monkeypatch)
-    session = app.create_session('A')
+@async_test
+async def test_observer_fault_does_not_change_result(monkeypatch, owner, operation, caplog):
+    app = await make_app(monkeypatch)
+    session = await app.acreate_session('A')
 
     def fault(*_args, **_kwargs):
         raise ValueError('PRIVATE_OBSERVER_FAULT')
 
     monkeypatch.setattr(owner, operation, fault)
-    result = app.run(session, [('user', 'probe')])
+    result = await app.arun(session, [('user', 'probe')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
     assert app._sessions._sessions[session]['busy'] is False
     assert 'observation_failed' in caplog.text and 'PRIVATE_OBSERVER_FAULT' not in caplog.text
 
 
-def test_listener_cannot_interrupt_the_graph(monkeypatch, caplog):
-    app = make_app(monkeypatch)
+@async_test
+async def test_listener_cannot_interrupt_the_graph(monkeypatch, caplog):
+    app = await make_app(monkeypatch)
     received = []
 
     def faulty(_event):
@@ -65,7 +70,7 @@ def test_listener_cannot_interrupt_the_graph(monkeypatch, caplog):
 
     app.subscribe_events(faulty)
     app.subscribe_events(received.append)
-    result = app.run(app.create_session('A'), [('user', 'probe')])
+    result = await app.arun(await app.acreate_session('A'), [('user', 'probe')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
     assert received[-1].data.status == 'completed'
     assert 'event_observer_failed' in caplog.text
@@ -86,25 +91,27 @@ def test_run_observation_does_not_swallow_base_exception_from_observer(monkeypat
         getattr(observation, method)(error)
 
 
-def test_sequence_checker_is_asserted_outside_delivery(monkeypatch):
-    app = make_app(monkeypatch)
+@async_test
+async def test_sequence_checker_is_asserted_outside_delivery(monkeypatch):
+    app = await make_app(monkeypatch)
     events = []
     app.subscribe_events(events.append)
-    app.run(app.create_session('A'), [('user', 'probe')])
+    await app.arun(await app.acreate_session('A'), [('user', 'probe')])
     EventSequenceChecker.assert_valid(events)
     with pytest.raises(AssertionError, match='not contiguous'):
         EventSequenceChecker.assert_valid(events[1:])
 
 
-def test_payload_construction_failure_is_optional(monkeypatch, caplog):
+@async_test
+async def test_payload_construction_failure_is_optional(monkeypatch, caplog):
     from naiyue_test_agent.agent_runtime import call_observation
-    app = make_app(monkeypatch)
+    app = await make_app(monkeypatch)
 
     def fault(*_args):
         raise ValueError('PRIVATE_PAYLOAD_FAULT')
 
     monkeypatch.setattr(call_observation, 'ModelCallStartedData', fault)
-    result = app.run(app.create_session('A'), [('user', 'probe')])
+    result = await app.arun(await app.acreate_session('A'), [('user', 'probe')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
     assert 'publish_failed' in caplog.text and 'PRIVATE_PAYLOAD_FAULT' not in caplog.text
 
@@ -128,7 +135,8 @@ def test_reentrant_notifications_preserve_listener_order():
 
 
 @pytest.mark.parametrize('missing', ['run_started', 'run_finished', 'all'])
-def test_web_settles_after_missing_notifications(monkeypatch, tmp_path, missing):
+@async_test
+async def test_web_settles_after_missing_notifications(monkeypatch, tmp_path, missing):
     async def scenario():
         model = StreamingToolModel(replies=[AIMessage(content='answer'), AIMessage(content='answer')])
         options = {'max_receipts': 1} if missing == 'all' else {}
@@ -168,11 +176,12 @@ def test_web_settles_after_missing_notifications(monkeypatch, tmp_path, missing)
             state = (await client.get(f'/api/sessions/{session}')).json()
             assert state['busy'] is False and state['messages'][-1]['content'] == 'answer'
             assert len(model.seen) == 1
-    asyncio.run(scenario())
+    await scenario()
 
 
 @pytest.mark.parametrize('failure', [False, True])
-def test_fast_web_completion_does_not_race_queued_start_callback(failure):
+@async_test
+async def test_fast_web_completion_does_not_race_queued_start_callback(failure):
     from types import SimpleNamespace
     from uuid import uuid4
     from naiyue_test_agent.web.run_delivery import RunDelivery
@@ -204,4 +213,4 @@ def test_fast_web_completion_does_not_race_queued_start_callback(failure):
         await delivery.wait('actual-run')
         assert delivery.get('actual-run').view()['status'] == ('unconfirmed' if failure else 'completed')
         assert len(delivery.receipts) == 1 and not delivery.pending_receipts
-    asyncio.run(scenario())
+    await scenario()

@@ -54,7 +54,7 @@ flowchart TD
 
 | 对象/类或函数 | 实例与保存的数据 | 功能与输出 |
 |---|---|---|
-| LocalApplication / AsyncApplication | 应用实例，持有目录、会话服务、编译图 | 提供run/arun、配置和控制入口 |
+| AsyncApplication | 应用实例，持有目录、会话服务、编译图 | 提供arun/aresume、配置和控制；CLI以真实线程桥调用。093已删除历史LocalApplication |
 | SessionService | 多会话状态：model_id/thread_id/busy/审批/核对；每run一个run_id | 准入→准备→执行→结果处理→清理保存；保留并传播主异常 |
 | ModelCatalog | 每model_id模型对象、分类函数tuple、锁 | 按模型配置规则；failure_describer返回本run快照函数 |
 | RuntimeErrorPolicy | 本run的runtime规则与model_describer函数 | 保护错误优先；普通模型委托；普通runtime/tool使用运行层规则 |

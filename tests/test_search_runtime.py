@@ -1,9 +1,9 @@
 """Search authorization, native async ownership, and incomplete-result contracts."""
 
-import asyncio
+from native_application_helpers import async_test
+
 import json
 import threading
-from pathlib import Path
 
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
@@ -11,14 +11,15 @@ from langchain_core.messages import AIMessage, ToolMessage
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_application import build_async_local_application
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import create_session_find_tool, create_session_grep_tool, GrepSettings, FindSettings, ToolSettings
+from naiyue_test_agent.tools import create_session_find_tool, create_session_grep_tool, FindSettings, ToolSettings
 from naiyue_test_agent.tools.processes import HostProcessRunner, ProcessOutcome, ProcessCleanupError
 from naiyue_test_agent.tools.process_protocol import ProcessProtocol
 from test_async_application import StreamingToolModel, make_app, call
 from test_search_streaming import invoke
 
 
-def test_external_batch_starts_nothing_before_approval_and_filters_before_content(monkeypatch, tmp_path):
+@async_test
+async def test_external_batch_starts_nothing_before_approval_and_filters_before_content(monkeypatch, tmp_path):
     async def scenario():
         root, outside = tmp_path / 'workspace', tmp_path / 'external'
         root.mkdir(); outside.mkdir()
@@ -64,12 +65,13 @@ def test_external_batch_starts_nothing_before_approval_and_filters_before_conten
             assert events[-1].data.status == 'completed'
         finally:
             await app.aclose()
-    asyncio.run(scenario())
+    await scenario()
 
 
+@async_test
 @pytest.mark.parametrize('name', ['grep', 'find'])
 @pytest.mark.parametrize('have_result', [False, True])
-def test_timeout_keeps_partial_results_but_never_reports_empty_complete(monkeypatch, tmp_path, name, have_result):
+async def test_timeout_keeps_partial_results_but_never_reports_empty_complete(monkeypatch, tmp_path, name, have_result):
     target = tmp_path / 'note.txt'
     target.write_text('HIT\n')
     async def stream(self, request, consume, control=None):
@@ -87,7 +89,7 @@ def test_timeout_keeps_partial_results_but_never_reports_empty_complete(monkeypa
     monkeypatch.setattr(HostProcessRunner, 'run', stream)
     spec = create_session_grep_tool() if name == 'grep' else create_session_find_tool()
     args = {'pattern': 'HIT' if name == 'grep' else '*.txt'}
-    result = invoke(spec, tmp_path, **args)
+    result = (await invoke(spec, tmp_path, **args))
     assert result.status == ('success' if have_result else 'error')
     assert 'timeout' in result.content and ('incomplete' in result.content if have_result else 'No complete result' in result.content)
     assert 'No matches found' not in result.content and 'No files found' not in result.content
@@ -95,8 +97,9 @@ def test_timeout_keeps_partial_results_but_never_reports_empty_complete(monkeypa
         assert 'note.txt' in result.content
 
 
+@async_test
 @pytest.mark.parametrize('name', ['grep', 'find'])
-def test_result_limit_reaps_native_process_without_stopping_run(monkeypatch, tmp_path, name):
+async def test_result_limit_reaps_native_process_without_stopping_run(monkeypatch, tmp_path, name):
     protocols = []
     made = ProcessProtocol.connection_made
     def record(self, transport):
@@ -106,21 +109,23 @@ def test_result_limit_reaps_native_process_without_stopping_run(monkeypatch, tmp
     for index in range(100):
         (tmp_path / f'{index:03d}.txt').write_text('HIT\n')
     spec = create_session_grep_tool() if name == 'grep' else create_session_find_tool()
-    result = invoke(spec, tmp_path, pattern='HIT' if name == 'grep' else '*.txt', limit=1)
+    result = (await invoke(spec, tmp_path, pattern='HIT' if name == 'grep' else '*.txt', limit=1))
     assert result.status == 'success' and 'truncated' in result.content
     assert protocols and all(p.transport.get_returncode() is not None and p.closed for p in protocols)
 
 
-def test_rg_config_cannot_override_reviewed_native_arguments(monkeypatch, tmp_path):
+@async_test
+async def test_rg_config_cannot_override_reviewed_native_arguments(monkeypatch, tmp_path):
     config = tmp_path / 'rgconfig'
     config.write_text('--files-without-match\n')
     monkeypatch.setenv('RIPGREP_CONFIG_PATH', str(config))
     (tmp_path / 'target.txt').write_text('HIT\n')
-    result = invoke(create_session_grep_tool(), tmp_path, pattern='HIT', glob='*.txt')
+    result = (await invoke(create_session_grep_tool(), tmp_path, pattern='HIT', glob='*.txt'))
     assert result.content == 'target.txt:1: HIT'
 
 
-def test_fd_permission_filter_happens_before_result_count(monkeypatch, tmp_path):
+@async_test
+async def test_fd_permission_filter_happens_before_result_count(monkeypatch, tmp_path):
     from naiyue_test_agent.tools import find as module
     target = tmp_path / 'visible.txt'
     hidden = tmp_path / '.hidden.txt'
@@ -129,13 +134,14 @@ def test_fd_permission_filter_happens_before_result_count(monkeypatch, tmp_path)
         await consume('stdout', str(hidden).encode() + b'\0' + str(target).encode() + b'\0')
         return ProcessOutcome(0, 'exited', True, True, True, True, 0)
     monkeypatch.setattr(HostProcessRunner, 'run', stream)
-    result = invoke(create_session_find_tool(settings=FindSettings(default_limit=1)), tmp_path, pattern='*.txt')
+    result = (await invoke(create_session_find_tool(settings=FindSettings(default_limit=1)), tmp_path, pattern='*.txt'))
     assert result.status == 'success' and result.content.startswith('visible.txt\n')
     assert '.hidden.txt: unapproved_private_or_external' in result.content
     assert 'truncated' not in result.content
 
 
-def test_approved_search_file_cannot_become_a_directory_before_execution(monkeypatch, tmp_path):
+@async_test
+async def test_approved_search_file_cannot_become_a_directory_before_execution(monkeypatch, tmp_path):
     from test_dynamic_tools import DynamicModel
     from test_permission_pipeline import build
     root, target = tmp_path / 'workspace', tmp_path / 'external'
@@ -143,9 +149,9 @@ def test_approved_search_file_cannot_become_a_directory_before_execution(monkeyp
     target.write_text('original file')
     model = DynamicModel(responses=[call('grep', {'pattern': 'SECRET', 'path': str(target)}),
                                    AIMessage(content='target changed')])
-    app = build(monkeypatch, model, [create_session_grep_tool()])
-    sid = app.create_workspace_session('A', root)
-    paused = app.run(sid, [('user', 'search this file')])
+    app = await build(monkeypatch, model, [create_session_grep_tool()])
+    sid = await app.acreate_workspace_session('A', root)
+    paused = await app.arun(sid, [('user', 'search this file')])
     assert paused['approval_requests']
     target.unlink()
     target.mkdir()
@@ -156,14 +162,15 @@ def test_approved_search_file_cannot_become_a_directory_before_execution(monkeyp
         calls.append(request.argv)
         return await run(self, request, *args, **kwargs)
     monkeypatch.setattr(HostProcessRunner, 'run', record)
-    result = app.resume_tool_approval(sid, ['approve'])
+    result = await app.aresume_tool_approval(sid, ['approve'])
     message = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert message.tool_call_id == 't' and message.status == 'error'
     assert 'changed' in message.content.lower()
     assert calls == [] and 'SECRET_UNAPPROVED_CHILD' not in str(result)
 
 
-def test_earlier_serial_write_can_create_directory_for_later_ls_and_search(monkeypatch, tmp_path):
+@async_test
+async def test_earlier_serial_write_can_create_directory_for_later_ls_and_search(monkeypatch, tmp_path):
     from test_dynamic_tools import DynamicModel
     from test_permission_pipeline import build
     from naiyue_test_agent.tools import create_session_write_tool, create_session_ls_tool
@@ -172,9 +179,9 @@ def test_earlier_serial_write_can_create_directory_for_later_ls_and_search(monke
         {'name': 'ls', 'id': 'l', 'args': {'path': 'new'}},
         {'name': 'grep', 'id': 'g', 'args': {'path': 'new', 'pattern': 'HIT'}},
     ]), AIMessage(content='done')])
-    app = build(monkeypatch, model, [create_session_write_tool(), create_session_ls_tool(),
+    app = await build(monkeypatch, model, [create_session_write_tool(), create_session_ls_tool(),
                                     create_session_grep_tool()])
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'create and inspect')])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'create and inspect')])
     messages = {m.tool_call_id: m for m in result['messages'] if isinstance(m, ToolMessage)}
     assert all(m.status == 'success' for m in messages.values())
     assert messages['l'].content == 'note.txt'
@@ -182,7 +189,8 @@ def test_earlier_serial_write_can_create_directory_for_later_ls_and_search(monke
 
 
 @pytest.mark.parametrize('name', ['grep', 'find'])
-def test_unconfirmed_cleanup_is_never_converted_to_search_feedback(monkeypatch, tmp_path, name):
+@async_test
+async def test_unconfirmed_cleanup_is_never_converted_to_search_feedback(monkeypatch, tmp_path, name):
     async def scenario():
         failure = ProcessCleanupError(facts={'process_reaped': False})
         async def fail(*args, **kwargs):
@@ -201,4 +209,4 @@ def test_unconfirmed_cleanup_is_never_converted_to_search_feedback(monkeypatch, 
             assert len(model.seen) == 1
         finally:
             await app.aclose()
-    asyncio.run(scenario())
+    await scenario()

@@ -122,3 +122,21 @@ def test_publisher_keeps_original_approval_subject_across_stages():
         pub.publish('control_applied', replace(accepted, decisions=('reject',), boundary='approval_hook'))
     pub.publish('control_applied', replace(accepted, boundary='approval_hook'))
     assert [e.sequence for e in events] == [1, 2, 3, 4]
+
+
+def test_retry_without_hitl_does_not_invent_approval_applied():
+    from naiyue_test_agent.agent_runtime.control_observation import ControlObserver
+    events = []
+    publisher = RunEventPublisher('session', 'retry', (events.append,))
+    publisher.publish('run_started', RunStartedData('approval_resume'))
+    observer = ControlObserver(publisher)
+    observer.accept('approval', tool_call_ids=('original',), decisions=('approve',), origin_run_id='original-run')
+    observer.start()
+    observer.submit_approval()
+    observer.close('run_completed')
+    observer.flush()
+    assert [event.event_type for event in events] == [
+        'run_started', 'control_accepted', 'control_delivery_started', 'control_outcome_unknown']
+    assert events[-1].data.reason == 'approval_resolution_unconfirmed'
+    assert events[-1].data.origin_run_id == 'original-run'
+    assert events[-1].data.tool_call_ids == ('original',)

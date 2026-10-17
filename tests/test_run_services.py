@@ -44,11 +44,17 @@ def test_new_thread_does_not_inherit_another_runs_services():
 def test_session_contract_types_are_shared_without_application_imports():
     from naiyue_test_agent.contracts import session_events
     from naiyue_test_agent.contracts.failures import RunFailureData
-    from naiyue_test_agent.agent_runtime.events import RunStartedData, RunFailureData as LegacyFailure
     from naiyue_test_agent.contracts.session_events import ControlData
-    assert RunStartedData is session_events.RunStartedData
-    assert ControlData is session_events.ControlData
-    assert LegacyFailure is RunFailureData
+    events = []
+    publisher = RunEventPublisher('session', 'run', (events.append,))
+    started = session_events.RunStartedData('message')
+    control = ControlData('control', 'stop')
+    failure = RunFailureData('execute', 'unknown', 'unclassified', 'RuntimeError')
+    finished = session_events.RunFinishedData('failed', failure=failure)
+    for event_type, payload in [('run_started', started), ('control_accepted', control), ('run_finished', finished)]:
+        publisher.publish(event_type, payload)
+    assert [event.data for event in events] == [started, control, finished]
+    assert events[-1].data.failure is failure
 
 
 @pytest.mark.parametrize('session_id,run_id', [

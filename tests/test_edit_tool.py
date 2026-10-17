@@ -1,5 +1,7 @@
 """Exact workspace edits should be all-or-nothing and observable to the model."""
 
+from native_application_helpers import async_test, build_application
+
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -12,7 +14,6 @@ from langchain_core.messages import AIMessage, ToolMessage
 from pydantic import Field
 
 from naiyue_test_agent import application
-from naiyue_test_agent.tools import ToolSettings
 from naiyue_test_agent.tools import (
     EditSettings, create_session_edit_tool, create_session_read_tool,
 )
@@ -36,11 +37,11 @@ def call(name, args, call_id):
     return {'name': name, 'args': args, 'id': call_id}
 
 
-def make_app(monkeypatch, responses, tools=None):
+async def make_app(monkeypatch, responses, tools=None):
     model = RecordingFake(responses=responses)
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application(
+    app = await build_application(
         Path('synthetic.json'), tools=tools or [create_session_edit_tool()],
         system_prompt='', response_format=None,
     )
@@ -52,7 +53,8 @@ def tool_result(result, call_id):
                 if isinstance(message, ToolMessage) and message.tool_call_id == call_id)
 
 
-def test_edit_replaces_multiple_original_regions_and_returns_same_call_id(
+@async_test
+async def test_edit_replaces_multiple_original_regions_and_returns_same_call_id(
     monkeypatch, tmp_path,
 ):
     target = tmp_path / 'case.md'
@@ -60,7 +62,7 @@ def test_edit_replaces_multiple_original_regions_and_returns_same_call_id(
     tool = create_session_edit_tool()
     assert set(tool.tool.tool_call_schema.model_fields) == {'path', 'edits'}
     assert tool.execution_mode == 'sequential'
-    app, model = make_app(monkeypatch, [
+    app, model = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('edit', {
             'path': 'case.md', 'edits': [
                 {'oldText': 'alpha', 'newText': 'ALPHA'},
@@ -70,7 +72,7 @@ def test_edit_replaces_multiple_original_regions_and_returns_same_call_id(
         AIMessage(content='done'),
     ])
 
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'edit')])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'edit')])
 
     assert target.read_text(encoding='utf-8') == 'ALPHA\nbeta\nGAMMA\n'
     message = tool_result(result, 'edit-1')
@@ -89,19 +91,20 @@ def test_edit_replaces_multiple_original_regions_and_returns_same_call_id(
     ([{'oldText': '', 'newText': 'X'}], 'empty'),
     ([{'oldText': 'alpha', 'newText': 'alpha'}], 'no change'),
 ])
-def test_edit_invalid_replacement_does_not_change_file(
+@async_test
+async def test_edit_invalid_replacement_does_not_change_file(
     monkeypatch, tmp_path, edits, reason,
 ):
     target = tmp_path / 'case.md'
     target.write_text('alpha same same\n', encoding='utf-8')
-    app, model = make_app(monkeypatch, [
+    app, model = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('edit', {
             'path': 'case.md', 'edits': edits,
         }, 'invalid')]),
         AIMessage(content='done'),
     ])
 
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'edit')])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'edit')])
 
     assert target.read_text(encoding='utf-8') == 'alpha same same\n'
     message = tool_result(result, 'invalid')
@@ -111,10 +114,11 @@ def test_edit_invalid_replacement_does_not_change_file(
                for item in model.seen[1])
 
 
-def test_edit_preserves_bom_crlf_and_allows_deletion(monkeypatch, tmp_path):
+@async_test
+async def test_edit_preserves_bom_crlf_and_allows_deletion(monkeypatch, tmp_path):
     target = tmp_path / 'case.md'
     target.write_bytes(b'\xef\xbb\xbfalpha\r\nbeta\r\n')
-    app, _ = make_app(monkeypatch, [
+    app, _ = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('edit', {
             'path': 'case.md', 'edits': [
                 {'oldText': 'alpha', 'newText': 'ALPHA'},
@@ -124,13 +128,14 @@ def test_edit_preserves_bom_crlf_and_allows_deletion(monkeypatch, tmp_path):
         AIMessage(content='done'),
     ])
 
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'edit')])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'edit')])
 
     assert target.read_bytes() == b'\xef\xbb\xbfALPHA\r\n\r\n'
     assert tool_result(result, 'bom').status == 'success'
 
 
-def test_edit_large_file_with_match_crossing_chunk_keeps_untouched_bytes(
+@async_test
+async def test_edit_large_file_with_match_crossing_chunk_keeps_untouched_bytes(
     monkeypatch, tmp_path,
 ):
     target = tmp_path / 'large.md'
@@ -139,7 +144,7 @@ def test_edit_large_file_with_match_crossing_chunk_keeps_untouched_bytes(
                 + b'z' * (16 * 1024 * 1024))
     target.write_bytes(original)
     target.chmod(0o640)
-    app, model = make_app(monkeypatch, [
+    app, model = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('edit', {
             'path': 'large.md', 'edits': [
                 {'oldText': '甲old乙', 'newText': '甲NEW乙'},
@@ -148,7 +153,7 @@ def test_edit_large_file_with_match_crossing_chunk_keeps_untouched_bytes(
         AIMessage(content='done'),
     ])
 
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'edit')])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'edit')])
 
     assert tool_result(result, 'large').status == 'success'
     assert target.read_bytes() == original.replace(
@@ -159,36 +164,38 @@ def test_edit_large_file_with_match_crossing_chunk_keeps_untouched_bytes(
                for item in model.seen[1])
 
 
-def test_edit_rejects_duplicate_in_different_chunks(monkeypatch, tmp_path):
+@async_test
+async def test_edit_rejects_duplicate_in_different_chunks(monkeypatch, tmp_path):
     target = tmp_path / 'case.md'
     original = b'a' * (64 * 1024 - 2) + b'old' + b'z' * (64 * 1024) + b'old'
     target.write_bytes(original)
-    app, _ = make_app(monkeypatch, [
+    app, _ = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('edit', {
             'path': 'case.md', 'edits': [{'oldText': 'old', 'newText': 'new'}],
         }, 'duplicate')]),
         AIMessage(content='done'),
     ])
 
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'edit')])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'edit')])
 
     assert tool_result(result, 'duplicate').status == 'error'
     assert 'unique' in tool_result(result, 'duplicate').content.lower()
     assert target.read_bytes() == original
 
 
-def test_edit_rejects_invalid_utf8_split_across_chunks(monkeypatch, tmp_path):
+@async_test
+async def test_edit_rejects_invalid_utf8_split_across_chunks(monkeypatch, tmp_path):
     target = tmp_path / 'case.md'
     original = b'a' * (64 * 1024 - 1) + b'\xe2' + b'bad target'
     target.write_bytes(original)
-    app, _ = make_app(monkeypatch, [
+    app, _ = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('edit', {
             'path': 'case.md', 'edits': [{'oldText': 'target', 'newText': 'done'}],
         }, 'encoding-boundary')]),
         AIMessage(content='done'),
     ])
 
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'edit')])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'edit')])
 
     assert tool_result(result, 'encoding-boundary').status == 'error'
     assert 'utf-8' in tool_result(result, 'encoding-boundary').content.lower()
@@ -198,58 +205,62 @@ def test_edit_rejects_invalid_utf8_split_across_chunks(monkeypatch, tmp_path):
 @pytest.mark.parametrize('path', [
     '../outside.md', '.env', 'secret.pem', 'missing.md', 'directory', 'link.md',
 ])
-def test_edit_rejects_unsafe_or_missing_files(monkeypatch, tmp_path, path):
+@async_test
+async def test_edit_rejects_unsafe_or_missing_files(monkeypatch, tmp_path, path):
     root = tmp_path / 'root'
     root.mkdir()
     (root / 'directory').mkdir()
     outside = tmp_path / 'outside.md'
     outside.write_text('outside', encoding='utf-8')
     (root / 'link.md').symlink_to(outside)
-    app, _ = make_app(monkeypatch, [
+    app, _ = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('edit', {
             'path': path, 'edits': [{'oldText': 'outside', 'newText': 'changed'}],
         }, 'denied')]),
         AIMessage(content='done'),
     ])
 
-    session = app.create_workspace_session('A', root)
-    app.set_permission_mode(session, 'NoAsk')
-    result = app.run(session, [('user', 'edit')])
+    session = await app.acreate_workspace_session('A', root)
+    await app.aset_permission_mode(session, 'NoAsk')
+    result = await app.arun(session, [('user', 'edit')])
 
     assert tool_result(result, 'denied').status == 'error'
     assert outside.read_text(encoding='utf-8') == 'outside'
 
 
-def test_edit_rejects_invalid_utf8_without_overwriting(monkeypatch, tmp_path):
+@async_test
+async def test_edit_rejects_invalid_utf8_without_overwriting(monkeypatch, tmp_path):
     target = tmp_path / 'bad.md'
     target.write_bytes(b'\xffalpha')
-    app, _ = make_app(monkeypatch, [
+    app, _ = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('edit', {
             'path': 'bad.md', 'edits': [{'oldText': 'alpha', 'newText': 'beta'}],
         }, 'encoding')]),
         AIMessage(content='done'),
     ])
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'edit')])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'edit')])
     assert tool_result(result, 'encoding').status == 'error'
     assert target.read_bytes() == b'\xffalpha'
 
 
-def test_edit_rejects_replacement_input_past_configured_byte_limit(monkeypatch, tmp_path):
+@async_test
+async def test_edit_rejects_replacement_input_past_configured_byte_limit(monkeypatch, tmp_path):
     target = tmp_path / 'case.md'
     target.write_text('old', encoding='utf-8')
-    app, _ = make_app(monkeypatch, [
+    app, _ = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('edit', {
             'path': 'case.md', 'edits': [{'oldText': 'old', 'newText': 'longer'}],
         }, 'limit')]),
         AIMessage(content='done'),
     ], tools=[create_session_edit_tool(settings=EditSettings(max_input_bytes=4))])
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'edit')])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'edit')])
     assert tool_result(result, 'limit').status == 'error'
     assert 'limit' in tool_result(result, 'limit').content.lower()
     assert target.read_text(encoding='utf-8') == 'old'
 
 
-def test_edit_rejects_file_changed_after_initial_read(monkeypatch, tmp_path):
+@async_test
+async def test_edit_rejects_file_changed_after_initial_read(monkeypatch, tmp_path):
     target = tmp_path / 'case.md'
     target.write_text('old', encoding='utf-8')
     real_scan = edit_module._scan_target
@@ -260,13 +271,13 @@ def test_edit_rejects_file_changed_after_initial_read(monkeypatch, tmp_path):
         return result
 
     monkeypatch.setattr(edit_module, '_scan_target', change_after_scan)
-    app, model = make_app(monkeypatch, [
+    app, model = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('edit', {
             'path': 'case.md', 'edits': [{'oldText': 'old', 'newText': 'new'}],
         }, 'changed')]),
         AIMessage(content='done'),
     ])
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'edit')])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'edit')])
     message = tool_result(result, 'changed')
     assert message.status == 'error'
     assert 'changed' in message.content.lower()
@@ -361,7 +372,8 @@ def test_edit_temp_write_failure_keeps_original(monkeypatch, tmp_path):
     assert target.read_text(encoding='utf-8') == 'old'
 
 
-def test_edit_uses_session_workspace_even_when_model_forges_runtime(
+@async_test
+async def test_edit_uses_session_workspace_even_when_model_forges_runtime(
     monkeypatch, tmp_path,
 ):
     first = tmp_path / 'first'
@@ -370,7 +382,7 @@ def test_edit_uses_session_workspace_even_when_model_forges_runtime(
     second.mkdir()
     (first / 'case.md').write_text('old', encoding='utf-8')
     (second / 'case.md').write_text('old', encoding='utf-8')
-    app, _ = make_app(monkeypatch, [
+    app, _ = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('edit', {
             'path': 'case.md',
             'edits': [{'oldText': 'old', 'newText': 'new'}],
@@ -379,17 +391,18 @@ def test_edit_uses_session_workspace_even_when_model_forges_runtime(
         AIMessage(content='done'),
     ])
 
-    result = app.run(app.create_workspace_session('A', first), [('user', 'edit')])
+    result = await app.arun(await app.acreate_workspace_session('A', first), [('user', 'edit')])
 
     assert tool_result(result, 'forged').status == 'success'
     assert (first / 'case.md').read_text(encoding='utf-8') == 'new'
     assert (second / 'case.md').read_text(encoding='utf-8') == 'old'
 
 
-def test_read_edit_read_batch_observes_order(monkeypatch, tmp_path):
+@async_test
+async def test_read_edit_read_batch_observes_order(monkeypatch, tmp_path):
     target = tmp_path / 'case.md'
     target.write_text('before', encoding='utf-8')
-    app, _ = make_app(monkeypatch, [
+    app, _ = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[
             call('read', {'path': 'case.md'}, 'read-before'),
             call('edit', {'path': 'case.md', 'edits': [
@@ -400,33 +413,34 @@ def test_read_edit_read_batch_observes_order(monkeypatch, tmp_path):
         AIMessage(content='done'),
     ], [create_session_read_tool(), create_session_edit_tool()])
 
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'edit')])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'edit')])
 
     assert tool_result(result, 'read-before').content == 'before'
     assert tool_result(result, 'edit-middle').status == 'success'
     assert tool_result(result, 'read-after').content == 'after'
 
 
-def test_edit_commit_unknown_returns_error_and_redacts_details(
+@async_test
+async def test_edit_commit_unknown_returns_error_and_redacts_details(
     monkeypatch, tmp_path, caplog,
 ):
     target = tmp_path / 'case.md'
     target.write_text('old', encoding='utf-8')
-    app, model = make_app(monkeypatch, [
+    app, model = await make_app(monkeypatch, [
         AIMessage(content='', tool_calls=[call('edit', {
             'path': 'case.md', 'edits': [{'oldText': 'old', 'newText': 'PRIVATE_NEW'}],
         }, 'unknown')]),
         AIMessage(content='inspect the file before another edit'),
         AIMessage(content='continued safely'),
     ])
-    session = app.create_workspace_session('A', tmp_path)
+    session = await app.acreate_workspace_session('A', tmp_path)
 
     def unknown_replace(_source, _target):
         raise OSError('PRIVATE_IO_DETAIL')
 
     monkeypatch.setattr(write_module.os, 'replace', unknown_replace)
     with caplog.at_level(logging.INFO):
-        result = app.run(session, [('user', 'edit')])
+        result = await app.arun(session, [('user', 'edit')])
 
     assert target.read_text(encoding='utf-8') == 'old'
     assert len(model.seen) == 2
@@ -438,6 +452,6 @@ def test_edit_commit_unknown_returns_error_and_redacts_details(
     assert len(events) == 1 and events[0]['tool_call_id'] == 'unknown'
     assert events[0]['cause_type'] == 'OSError' and events[0]['run_id']
     assert 'session_manual_review_required' not in caplog.text
-    continued = app.run(session, [('user', 'again')])
+    continued = await app.arun(session, [('user', 'again')])
     assert continued['messages'][-1].content == 'continued safely'
     assert len(model.seen) == 3

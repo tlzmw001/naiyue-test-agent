@@ -4,13 +4,14 @@ from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
 
+import asyncio
+from contextlib import AsyncExitStack
 import hashlib
 import json
 import logging
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from threading import Event, Thread
 from unittest.mock import patch
 
 from langchain.agents.structured_output import ToolStrategy
@@ -21,6 +22,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import BaseModel
 
 from naiyue_test_agent import application
+from naiyue_test_agent.application.async_application import build_async_local_application
+from naiyue_test_agent.tools.permissions import PermissionMechanismError
 from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.model_access import ModelCatalog
 
@@ -31,7 +34,7 @@ class Model(FakeMessagesListChatModel):
 
 
 class StateProbe:
-    """Research-only proxy; reproduces the current invoke result from sync parts."""
+    """Research-only proxy; reproduces the native async result from observed graph parts."""
 
     def __init__(self, graph):
         self.graph = graph
@@ -67,10 +70,10 @@ class StateProbe:
             })
         return rows
 
-    def invoke(self, input, *, context, config):
+    async def ainvoke(self, input, *, context, config):
         latest, interrupts = None, []
         run_rows = []
-        for part in self.graph.stream(
+        async for part in self.graph.astream(
             input, context=context, config=config,
             stream_mode=['updates', 'values', 'tasks'], version='v2',
             output_keys=self.graph.output_channels,
@@ -95,15 +98,16 @@ class StateProbe:
         return latest
 
 
-def make_app(model, *, tools=None, workspace=None, response_format=None):
+async def make_app(model, *, resources, tools=None, workspace=None, response_format=None):
     with patch.object(application, 'load_model_catalog', return_value=ModelCatalog('A', {'A': model})):
-        app = application.build_local_application(
+        app = await build_async_local_application(
             'synthetic.json', tools=tools or [], system_prompt='', response_format=response_format,
         )
+    resources.push_async_callback(app.aclose)
     probe = StateProbe(app._agent)
     app._agent = probe
     app.subscribe_events(probe.record_event)
-    session = app.create_workspace_session('A', workspace) if workspace else app.create_session('A')
+    session = await app.acreate_workspace_session('A', workspace) if workspace else await app.acreate_session('A')
     return app, session, probe
 
 
@@ -120,7 +124,7 @@ def report(case, probe, **extra):
     }, ensure_ascii=False))
 
 
-def normal_and_followup():
+async def normal_and_followup(resources):
     @tool
     def probe_value() -> str:
         """Read one synthetic value."""
@@ -130,8 +134,8 @@ def normal_and_followup():
         {'name': 'probe_value', 'args': {}, 'id': 'read-1'},
     ], response_metadata={'finish_reason': 'tool_calls'}),
         AIMessage(content='answer', response_metadata={'finish_reason': 'stop'})])
-    app, session, probe = make_app(model, tools=[ToolSpec(probe_value, probe_value.args_schema, permissions=ToolPermission(default='allow'))])
-    result = app.run(session, [('user', 'question')])
+    app, session, probe = await make_app(model, tools=[ToolSpec(probe_value, probe_value.args_schema, permissions=ToolPermission(default='allow'))], resources=resources)
+    result = await app.arun(session, [('user', 'question')])
     assert [row['role'] for row in probe.values[-1]] == ['human', 'ai', 'tool', 'ai']
     assert probe.accepted_ai_counts == [0, 1]
     assert len({row['id'] for row in probe.values[-1]}) == 4
@@ -149,27 +153,27 @@ def normal_and_followup():
                 holder['app'].follow_up(holder['session'], 'follow question')
             return super()._generate(*args, **kwargs)
 
-    app, session, probe = make_app(QueueingModel(responses=[AIMessage(content='first'), AIMessage(content='second')]))
+    app, session, probe = await make_app(QueueingModel(responses=[AIMessage(content='first'), AIMessage(content='second')]), resources=resources)
     holder.update(app=app, session=session)
-    result = app.run(session, [('user', 'initial')])
+    result = await app.arun(session, [('user', 'initial')])
     assert [m.type for m in result['messages']] == ['human', 'ai', 'human', 'ai']
     assert probe.task_starts.count('model') == 2
     assert any(name.endswith('inject_at_natural_end.after_agent') for name in probe.update_nodes)
     report('followup', probe, one_app_run_two_model_turns=True)
 
 
-def approval_and_failure(root):
+async def approval_and_failure(root, resources):
     workspace = root / 'workspace'
     workspace.mkdir()
     outside = root / 'outside.md'
     outside.write_text('value', encoding='utf-8')
-    app, session, probe = make_app(Model(responses=[AIMessage(content='', tool_calls=[
+    app, session, probe = await make_app(Model(responses=[AIMessage(content='', tool_calls=[
         {'name': 'read', 'args': {'path': str(outside)}, 'id': 'approval-1'},
-    ]), AIMessage(content='handled')]), tools=[create_session_read_tool()], workspace=workspace)
-    paused = app.run(session, [('user', 'read outside')])
+    ]), AIMessage(content='handled')]), tools=[create_session_read_tool()], workspace=workspace, resources=resources)
+    paused = await app.arun(session, [('user', 'read outside')])
     assert paused['approval_requests'] and '__interrupt__' in paused
     pending_ai_id = probe.values[-1][-1]['id']
-    result = app.resume_tool_approval(session, ['reject'])
+    result = await app.aresume_tool_approval(session, ['reject'])
     assert probe.runs[1][0][-1]['id'] == pending_ai_id
     assert [m.type for m in result['messages']] == ['human', 'ai', 'tool', 'ai']
     assert any(row['tool_result'] == 'approval-1' for rows in probe.runs[1] for row in rows)
@@ -181,9 +185,9 @@ def approval_and_failure(root):
         def _generate(self, *args, **kwargs):
             raise failure
 
-    app, session, probe = make_app(Failing(responses=[AIMessage(content='unused')]))
+    app, session, probe = await make_app(Failing(responses=[AIMessage(content='unused')]), resources=resources)
     try:
-        app.run(session, [('user', 'question')])
+        await app.arun(session, [('user', 'question')])
     except RuntimeError as error:
         assert error is failure
     else:
@@ -193,7 +197,7 @@ def approval_and_failure(root):
     report('model_failure', probe, input_visible_without_ai=True)
 
 
-def steering_stop_and_partial_failure():
+async def steering_stop_and_partial_failure(resources):
     for action in ('steer', 'stop'):
         holder = {}
 
@@ -209,9 +213,9 @@ def steering_stop_and_partial_failure():
         model = Model(responses=[AIMessage(content='', tool_calls=[
             {'name': 'controlled_tool', 'args': {}, 'id': 'control-1'},
         ]), AIMessage(content='answer')])
-        app, session, probe = make_app(model, tools=[ToolSpec(controlled_tool, controlled_tool.args_schema, permissions=ToolPermission(default='allow'))])
+        app, session, probe = await make_app(model, tools=[ToolSpec(controlled_tool, controlled_tool.args_schema, permissions=ToolPermission(default='allow'))], resources=resources)
         holder.update(app=app, session=session)
-        result = app.run(session, [('user', 'question')])
+        result = await app.arun(session, [('user', 'question')])
         expected = ['human', 'ai', 'tool', 'human', 'ai'] if action == 'steer' else ['human', 'ai', 'tool']
         assert [m.type for m in result['messages']] == expected
         assert probe.task_starts.count('model') == (2 if action == 'steer' else 1)
@@ -219,7 +223,7 @@ def steering_stop_and_partial_failure():
             assert result['run_stopped'] is True
         report(action, probe, signal_effect_visible=True)
 
-    failure = RuntimeError('synthetic fatal tool')
+    failure = PermissionMechanismError('synthetic mechanism failure')
 
     @tool
     def fatal() -> str:
@@ -236,24 +240,24 @@ def steering_stop_and_partial_failure():
         {'name': 'fatal', 'args': {}, 'id': 'fatal-1'},
         {'name': 'skipped', 'args': {}, 'id': 'skip-1'},
     ])])
-    app, session, probe = make_app(model, tools=[ToolSpec(fatal, fatal.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow')), ToolSpec(skipped, skipped.args_schema, permissions=ToolPermission(default='allow'))])
+    app, session, probe = await make_app(model, tools=[ToolSpec(fatal, fatal.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow')), ToolSpec(skipped, skipped.args_schema, permissions=ToolPermission(default='allow'))], resources=resources)
     try:
-        app.run(session, [('user', 'run')])
+        await app.arun(session, [('user', 'run')])
     except RuntimeError as error:
         assert error is failure
     else:
         raise AssertionError('Expected tool failure')
     config = {'configurable': {'thread_id': app._sessions._sessions[session]['thread_id']}}
-    saved = probe.graph.checkpointer.get_tuple(config)
+    saved = await probe.graph.checkpointer.aget_tuple(config)
     pending_tools = []
     for _task, channel, value in saved.pending_writes:
         if channel == 'messages':
             pending_tools.extend(m for m in (value if isinstance(value, list) else [value])
                                  if isinstance(m, ToolMessage))
-    first, second = probe.graph.get_state(config), probe.graph.get_state(config)
+    first, second = await probe.graph.aget_state(config), await probe.graph.aget_state(config)
     tools_first = [m.id for m in first.values['messages'] if isinstance(m, ToolMessage)]
     tools_second = [m.id for m in second.values['messages'] if isinstance(m, ToolMessage)]
-    exact = probe.graph.get_state(first.config)
+    exact = await probe.graph.aget_state(first.config)
     report('partial_tool_failure', probe,
            latest_read_roles=[m.type for m in first.values['messages']],
            exact_checkpoint_roles=[m.type for m in exact.values['messages']],
@@ -261,14 +265,14 @@ def steering_stop_and_partial_failure():
            pending_tool_ids_stable=(tools_first == tools_second) if tools_first else None)
 
 
-def recovery_and_structured():
+async def recovery_and_structured(resources):
     # Research reuses the existing deterministic recovery fixture, not product code.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tests'))
     from test_context_overflow_recovery import _configured_model, _history, _status
 
     model = _configured_model([_status(), AIMessage(content='recovered')])
-    app, session, probe = make_app(model)
-    result = app.run(session, _history())
+    app, session, probe = await make_app(model, resources=resources)
+    result = await app.arun(session, _history())
     initial_ids = {row['id'] for row in probe.values[0]}
     final = probe.values[-1]
     assert final[0]['summary'] and initial_ids - {row['id'] for row in final}
@@ -282,73 +286,65 @@ def recovery_and_structured():
     model = Model(responses=[AIMessage(content='', tool_calls=[
         {'name': 'Answer', 'args': {'value': 'structured'}, 'id': 'format-1'},
     ])])
-    app, session, probe = make_app(model, response_format=ToolStrategy(Answer))
-    result = app.run(session, [('user', 'answer')])
+    app, session, probe = await make_app(model, response_format=ToolStrategy(Answer), resources=resources)
+    result = await app.arun(session, [('user', 'answer')])
     assert result['structured_response'].value == 'structured'
     assert [m.type for m in result['messages']] == ['human', 'ai', 'tool']
     assert 'tools' not in probe.task_starts
     report('structured_response', probe, tool_message_without_tool_node=True)
 
 
-def persistence_lag():
-    saver_entered, allow_save, ai_observed = Event(), Event(), Event()
+async def persistence_lag(resources):
+    saver_entered, allow_save, ai_observed = asyncio.Event(), asyncio.Event(), asyncio.Event()
     put_shapes = []
 
     class LaggingSaver(InMemorySaver):
-        def put(self, config, checkpoint, metadata, new_versions):
+        async def aput(self, config, checkpoint, metadata, new_versions):
             put_shapes.append([type(m).__name__ for m in checkpoint['channel_values'].get('messages', [])])
             if any(isinstance(m, AIMessage) for m in checkpoint['channel_values'].get('messages', [])):
                 saver_entered.set()
-                assert allow_save.wait(timeout=5)
-            return super().put(config, checkpoint, metadata, new_versions)
+                await allow_save.wait()
+            return await super().aput(config, checkpoint, metadata, new_versions)
 
     saver = LaggingSaver()
-    app, session, probe = make_app(Model(responses=[AIMessage(content='answer')]))
+    app, session, probe = await make_app(Model(responses=[AIMessage(content='answer')]), resources=resources)
     graph = probe.graph
     graph.checkpointer = saver
     config = {'configurable': {'thread_id': 'lag-probe'}}
-    errors = []
 
-    def run():
-        try:
-            for part in graph.stream({'messages': [('user', 'question')]}, config=config,
-                                     context={'session_id': session, 'run_id': 'lag-probe'},
-                                     stream_mode='values', version='v2'):
-                if any(isinstance(m, AIMessage) for m in part['data']['messages']):
-                    ai_observed.set()
-        except BaseException as error:
-            errors.append(error)
+    async def run():
+        async for part in graph.astream({'messages': [('user', 'question')]}, config=config,
+                context={'session_id': session, 'run_id': 'lag-probe'}, stream_mode='values', version='v2'):
+            if any(isinstance(m, AIMessage) for m in part['data']['messages']):
+                ai_observed.set()
 
-    worker = Thread(target=run)
-    worker.start()
+    worker = asyncio.create_task(run())
     try:
-        observed = ai_observed.wait(timeout=5)
-        entered = saver_entered.wait(timeout=5)
-        assert observed and entered, {
-            'ai_observed': observed, 'saver_entered': entered,
-            'put_shapes': put_shapes, 'worker_errors': [type(e).__name__ for e in errors],
-        }
-        saved = saver.get_tuple(config)
+        await asyncio.wait_for(ai_observed.wait(), 5)
+        await asyncio.wait_for(saver_entered.wait(), 5)
+        saved = await saver.aget_tuple(config)
         assert saved is not None
         assert not any(isinstance(m, AIMessage) for m in saved.checkpoint['channel_values']['messages'])
     finally:
         allow_save.set()
-        worker.join(timeout=5)
-    assert not worker.is_alive() and not errors, errors
-    assert any(isinstance(m, AIMessage) for m in saver.get_tuple(config).checkpoint['channel_values']['messages'])
+        await asyncio.wait_for(asyncio.shield(worker), 5)
+    assert worker.done()
+    saved = await saver.aget_tuple(config)
+    assert any(isinstance(m, AIMessage) for m in saved.checkpoint['channel_values']['messages'])
     print(json.dumps({'case': 'persistence_lag', 'ai_value_before_save': True, 'save_after_release': True}))
 
 
-def main():
+async def main():
     logging.getLogger().setLevel(logging.CRITICAL)
-    normal_and_followup()
-    with TemporaryDirectory(prefix='message-state-') as directory:
-        approval_and_failure(Path(directory))
-    recovery_and_structured()
-    steering_stop_and_partial_failure()
-    persistence_lag()
+    async with AsyncExitStack() as resources:
+        await normal_and_followup(resources)
+        with TemporaryDirectory(prefix='message-state-') as directory:
+            await approval_and_failure(Path(directory), resources)
+        await recovery_and_structured(resources)
+        await steering_stop_and_partial_failure(resources)
+        await persistence_lag(resources)
     print('message_state_boundaries=PASS cases=10 network=none product_changes=none')
 
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())

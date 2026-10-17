@@ -11,7 +11,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.errors import GraphBubbleUp
 
 from naiyue_test_agent.contracts.session_events import ControlData, ApprovalRequestedData
-from .events import safe_error_type
+from naiyue_test_agent.contracts.failures import safe_error_type
 
 
 logger = logging.getLogger(__name__)

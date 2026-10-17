@@ -1,16 +1,17 @@
 """Configured Read uses one validated budget for schema, feedback, and IO."""
 
+from native_application_helpers import async_test
+
 from pathlib import Path
 
 import pytest
-from langchain_core.tools import ToolException
 from pydantic import ValidationError
 
 from tool_feedback_helpers import invoke_tool_feedback as _invoke_tool_feedback
 
 
-def invoke_tool_feedback(reader, args, root):
-    return _invoke_tool_feedback(reader, args, call_id='settings-read', context={'workspace_root': root})
+async def invoke_tool_feedback(reader, args, root):
+    return (await _invoke_tool_feedback(reader, args, call_id='settings-read', context={'workspace_root': root}))
 
 
 def test_missing_settings_use_defaults_without_creating_a_file(tmp_path, caplog):
@@ -88,7 +89,8 @@ def test_programming_failure_is_not_converted_to_default_settings(monkeypatch, t
     assert caught.value is error
 
 
-def test_configured_schema_feedback_and_read_page_agree(tmp_path):
+@async_test
+async def test_configured_schema_feedback_and_read_page_agree(tmp_path):
     from naiyue_test_agent.tools import ReadSettings, create_session_read_tool
     (tmp_path / 'doc.md').write_text('a\nb\nc\nd\n')
     reader = create_session_read_tool(settings=ReadSettings(default_limit=2, max_limit=3, max_output_bytes=64))
@@ -96,27 +98,29 @@ def test_configured_schema_feedback_and_read_page_agree(tmp_path):
     assert props['limit']['anyOf'][0]['maximum'] == 3
     assert 'runtime' not in props
     assert '2 lines' in reader.tool.description and '64 bytes' in reader.tool.description
-    assert invoke_tool_feedback(reader, {'path': 'doc.md'}, tmp_path).content == 'a\nb\n[read: lines 1-2; next_offset=3]\n[read: stopped by 2 line page limit; continue with the same path, offset=3, limit=2]'
-    assert invoke_tool_feedback(reader, {'path': 'doc.md', 'limit': 3}, tmp_path).content == 'a\nb\nc\n[read: lines 1-3; next_offset=4]\n[read: stopped by 3 line page limit; continue with the same path, offset=4, limit=3]'
-    invalid = invoke_tool_feedback(reader, {'path': 'doc.md', 'limit': 4}, tmp_path)
+    assert (await invoke_tool_feedback(reader, {'path': 'doc.md'}, tmp_path)).content == 'a\nb\n[read: lines 1-2; next_offset=3]\n[read: stopped by 2 line page limit; continue with the same path, offset=3, limit=2]'
+    assert (await invoke_tool_feedback(reader, {'path': 'doc.md', 'limit': 3}, tmp_path)).content == 'a\nb\nc\n[read: lines 1-3; next_offset=4]\n[read: stopped by 3 line page limit; continue with the same path, offset=4, limit=3]'
+    invalid = (await invoke_tool_feedback(reader, {'path': 'doc.md', 'limit': 4}, tmp_path))
     assert invalid.status == 'error' and '1 to 3' in invalid.content
 
 
-def test_configured_utf8_budget_and_long_line_feedback(tmp_path):
+@async_test
+async def test_configured_utf8_budget_and_long_line_feedback(tmp_path):
     from naiyue_test_agent.tools import ReadSettings, create_session_read_tool
     reader = create_session_read_tool(settings=ReadSettings(max_output_bytes=4))
     (tmp_path / 'doc.md').write_text('中\n文\n', encoding='utf-8')
-    result = invoke_tool_feedback(reader, {'path': 'doc.md'}, tmp_path)
+    result = (await invoke_tool_feedback(reader, {'path': 'doc.md'}, tmp_path))
     assert result.content == '中\n[read: lines 1-1; next_offset=2]\n[read: stopped by 4 byte page limit; continue with the same path, offset=2, limit=2000]'
     (tmp_path / 'long.md').write_text('abcde')
-    partial = invoke_tool_feedback(reader, {'path': 'long.md'}, tmp_path)
+    partial = (await invoke_tool_feedback(reader, {'path': 'long.md'}, tmp_path))
     assert partial.status == 'success'
     assert partial.content == ('abcd\n[read: line 1 partial; returned_bytes=4; byte_limit=4; '
         'next_offset=unavailable; line remainder omitted. offset/limit cannot resume within this line; '
         'use a shell to inspect the remainder.]')
 
 
-def test_strict_injected_schema_and_path_limits_reject_before_io(tmp_path, monkeypatch):
+@async_test
+async def test_strict_injected_schema_and_path_limits_reject_before_io(tmp_path, monkeypatch):
     from naiyue_test_agent.tools import ReadSettings, create_session_read_tool
     from naiyue_test_agent.tools import read as module
     from test_async_application import call
@@ -134,19 +138,20 @@ def test_strict_injected_schema_and_path_limits_reject_before_io(tmp_path, monke
         call('read', {'path': 'long-name'}),
         AIMessage(content='done'),
     ])
-    app = make_app(monkeypatch, model, [reader])
-    result = app.run(app.create_workspace_session('A', tmp_path), [('user', 'read')])
+    app = await make_app(monkeypatch, model, [reader])
+    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'read')])
     feedback = [m for m in result['messages'] if isinstance(m, ToolMessage)]
     assert len(feedback) == 2 and all(m.status == 'error' for m in feedback)
     assert all('runtime' not in m.content and 'workspace_root' not in m.content for m in feedback)
     assert entered == []
 
 
-def test_two_tools_keep_independent_settings_and_small_file_behavior(tmp_path):
+@async_test
+async def test_two_tools_keep_independent_settings_and_small_file_behavior(tmp_path):
     from naiyue_test_agent.tools import ReadSettings, create_session_read_tool
     (tmp_path / 'doc.md').write_text('a\nb\nc\n')
     first = create_session_read_tool(settings=ReadSettings(default_limit=1))
     second = create_session_read_tool(settings=ReadSettings(default_limit=3))
-    assert invoke_tool_feedback(first, {'path': 'doc.md'}, tmp_path).content == 'a\n[read: lines 1-1; next_offset=2]\n[read: stopped by 1 line page limit; continue with the same path, offset=2, limit=1]'
-    assert invoke_tool_feedback(second, {'path': 'doc.md'}, tmp_path).content == 'a\nb\nc\n'
-    assert invoke_tool_feedback(first, {'path': 'doc.md'}, tmp_path).content == 'a\n[read: lines 1-1; next_offset=2]\n[read: stopped by 1 line page limit; continue with the same path, offset=2, limit=1]'
+    assert (await invoke_tool_feedback(first, {'path': 'doc.md'}, tmp_path)).content == 'a\n[read: lines 1-1; next_offset=2]\n[read: stopped by 1 line page limit; continue with the same path, offset=2, limit=1]'
+    assert (await invoke_tool_feedback(second, {'path': 'doc.md'}, tmp_path)).content == 'a\nb\nc\n'
+    assert (await invoke_tool_feedback(first, {'path': 'doc.md'}, tmp_path)).content == 'a\n[read: lines 1-1; next_offset=2]\n[read: stopped by 1 line page limit; continue with the same path, offset=2, limit=1]'

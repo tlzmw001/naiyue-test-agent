@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-from dataclasses import replace
 from threading import RLock
 
 from langchain.agents.middleware import AgentMiddleware
@@ -144,18 +143,6 @@ class _ToolCallObservationMiddleware(AgentMiddleware):
     def name(self):
         return '_record_tool_call'
 
-    def wrap_tool_call(self, request, handler):
-        record, denied = _prepare_tool_call(request)
-        if denied is not None:
-            return denied
-        try:
-            result = handler(request)
-        except Exception:
-            record('tool_failed')
-            raise
-        record('tool_failed' if isinstance(result, ToolMessage) and result.status == 'error'
-               else 'tool_completed')
-        return result
 
     async def awrap_tool_call(self, request, handler):
         from ..async_utils import await_settled
@@ -182,51 +169,6 @@ def tool_guard_reason(request):
     if last_ai.response_metadata.get(MODEL_STOP_REASON_KEY) == 'length':
         return 'model_response_truncated'
     return None
-
-
-def observe_tool_dispatch(request, handler, dispatch):
-    context = request.runtime.context
-    call_id = request.tool_call['id']
-    name = event_label(request.tool_call['name'])
-    _emit(context, 'tool_call_started', lambda: ToolCallStartedData(call_id, name))
-    observe_tool_progress(context, 'begin_dispatch', request)
-    entered = False
-
-    def enter_chain(inner_request):
-        nonlocal entered
-        entered = True
-        if context and context.get('_tool_progress_observer') is not None:
-            # Sync custom streaming occupies the sole executor at concurrency=1
-            # in LangGraph 1.2.12. Use its public writer field without a waiter.
-            def write(payload):
-                observe_tool_progress(context, 'accept_custom', payload)
-            inner_request = inner_request.override(runtime=replace(inner_request.runtime, stream_writer=write))
-        return handler(inner_request)
-
-    try:
-        try:
-            result = dispatch(enter_chain)
-        finally:
-            batch = request.state.get('tool_execution', {}).get('batch_id')
-            observe_tool_progress(context, 'finish', batch, call_id)
-    except GraphBubbleUp:
-        raise
-    except Exception as error:
-        outcome = 'outcome_unknown' if isinstance(error, ProcessCleanupError) else 'exception'
-        description = describe_failure_in_context(error, context, source='tool')
-        _emit(context, 'tool_call_finished', lambda: ToolCallFinishedData(
-            call_id, name, 'dispatch', outcome, failure=run_failure_data(description),
-        ), primary_error=error)
-        raise
-    guard_reason = (result.additional_kwargs.get('naiyue_not_executed') if isinstance(result, ToolMessage) else None)
-    guard_reason = guard_reason or (tool_guard_reason(request) if entered else 'prior_batch_failed')
-    if guard_reason is not None:
-        outcome, reason = 'not_executed', guard_reason
-    else:
-        outcome = 'error_result' if isinstance(result, ToolMessage) and result.status == 'error' else 'success'
-        reason = None
-    _emit(context, 'tool_call_finished', lambda: ToolCallFinishedData(call_id, name, 'dispatch', outcome, reason))
-    return result
 
 
 async def aobserve_tool_dispatch(request, handler, dispatch):

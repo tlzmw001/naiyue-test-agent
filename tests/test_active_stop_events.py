@@ -1,5 +1,7 @@
 """Cancellation preserves safe event labels and still rejects malformed call IDs."""
 
+from native_application_helpers import async_test
+
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
@@ -8,7 +10,8 @@ from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
 
 
 @pytest.mark.parametrize('duplicate', [False, True])
-def test_stop_boundary_validates_ids_and_redacts_tool_label(monkeypatch, duplicate):
+@async_test
+async def test_stop_boundary_validates_ids_and_redacts_tool_label(monkeypatch, duplicate):
     holder = {}
 
     class StopsOnReply(ToolCapableFake):
@@ -19,16 +22,16 @@ def test_stop_boundary_validates_ids_and_redacts_tool_label(monkeypatch, duplica
     calls = [{'name': '未知工具', 'args': {}, 'id': 'call'}]
     if duplicate:
         calls.append({'name': 'unknown', 'args': {}, 'id': 'call'})
-    app = build_app(monkeypatch, StopsOnReply(responses=[AIMessage(content='', tool_calls=calls)]))
-    holder.update(app=app, session=app.create_session('A'))
+    app = await build_app(monkeypatch, StopsOnReply(responses=[AIMessage(content='', tool_calls=calls)]))
+    holder.update(app=app, session=await app.acreate_session('A'))
     events = []
     app.subscribe_events(events.append)
     if duplicate:
         with pytest.raises(ModelResponseRejected, match='duplicate_tool_call_ids'):
-            app.run(holder['session'], [('user', 'start')])
+            await app.arun(holder['session'], [('user', 'start')])
         assert events[-1].data.status == 'failed'
     else:
-        result = app.run(holder['session'], [('user', 'start')])
+        result = await app.arun(holder['session'], [('user', 'start')])
         assert result['run_stopped']
         message = result['messages'][-1]
         assert isinstance(message, ToolMessage) and message.name == '未知工具'

@@ -1,11 +1,15 @@
 """Turn failures retain primary errors and approval-attempt identity."""
 
+import asyncio
+
+from native_application_helpers import async_test
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
 from naiyue_test_agent.application import prepare_tool_registry
 
-from threading import Barrier, Thread
+from threading import Barrier
 
 import pytest
 from tool_feedback_helpers import fail_tool_dispatch
@@ -23,7 +27,8 @@ from test_application_turn_events import turns
 
 
 @pytest.mark.parametrize('mode', ['timeout', 'invalid'])
-def test_failed_model_has_failed_turn_without_visible_assistant(monkeypatch, mode):
+@async_test
+async def test_failed_model_has_failed_turn_without_visible_assistant(monkeypatch, mode):
     failure = TimeoutError('PRIVATE_ERROR')
 
     class Failing(ToolModel):
@@ -34,11 +39,11 @@ def test_failed_model_has_failed_turn_without_visible_assistant(monkeypatch, mod
         responses=[AIMessage(content='PRIVATE_REJECTED', invalid_tool_calls=[
             {'name': 'probe', 'args': '{', 'id': 'invalid', 'error': 'parse'},
         ])]))
-    app = make_app(monkeypatch, model)
+    app = await make_app(monkeypatch, model)
     events = []
     app.subscribe_events(events.append)
     with pytest.raises(TimeoutError if mode == 'timeout' else ModelResponseRejected) as caught:
-        app.run(app.create_session('A'), [('user', 'run')])
+        await app.arun(await app.acreate_session('A'), [('user', 'run')])
     if mode == 'timeout':
         assert caught.value is failure
     assert [e.event_type for e in turns(events)] == ['turn_started', 'turn_finished']
@@ -49,18 +54,19 @@ def test_failed_model_has_failed_turn_without_visible_assistant(monkeypatch, mod
     assert events[-1].data.status == 'failed'
 
 
-def test_after_model_error_does_not_report_earlier_visible_ai_as_completed(monkeypatch):
+@async_test
+async def test_after_model_error_does_not_report_earlier_visible_ai_as_completed(monkeypatch):
     failure = RuntimeError('PRIVATE_AFTER_MODEL')
 
     def fail_checks(self, state, runtime):
         raise failure
 
     monkeypatch.setattr(TurnBoundaryMiddleware, 'after_model', fail_checks)
-    app = make_app(monkeypatch)
+    app = await make_app(monkeypatch)
     events = []
     app.subscribe_events(events.append)
     with pytest.raises(RuntimeError) as caught:
-        app.run(app.create_session('A'), [('user', 'run')])
+        await app.arun(await app.acreate_session('A'), [('user', 'run')])
     assert caught.value is failure
     end = turns(events, 'turn_finished')[0].data
     ai = next(e.data for e in events if e.event_type == 'message_completed' and e.data.message_type == 'ai')
@@ -68,7 +74,8 @@ def test_after_model_error_does_not_report_earlier_visible_ai_as_completed(monke
     assert not any(e.data.status == 'completed' for e in turns(events, 'turn_finished'))
 
 
-def test_fatal_tool_partial_recovery_finishes_failed_with_observed_skip(monkeypatch):
+@async_test
+async def test_fatal_tool_partial_recovery_finishes_failed_with_observed_skip(monkeypatch):
     failure = RuntimeError('PRIVATE_FATAL')
     entered = []
 
@@ -85,14 +92,14 @@ def test_fatal_tool_partial_recovery_finishes_failed_with_observed_skip(monkeypa
         return 'unexpected'
 
     fail_tool_dispatch(monkeypatch, 'fatal', failure)
-    app = make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
+    app = await make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'fatal', 'args': {}, 'id': 'fatal'},
         {'name': 'later', 'args': {}, 'id': 'later'},
     ])]), [ToolSpec(fatal, fatal.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow')), ToolSpec(later, later.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
     with pytest.raises(RuntimeError) as caught:
-        app.run(app.create_session('A'), [('user', 'run')])
+        await app.arun(await app.acreate_session('A'), [('user', 'run')])
     assert caught.value is failure and entered == []
     end = turns(events, 'turn_finished')[0]
     recovered = next(e for e in events if e.event_type == 'message_completed' and e.data.message_type == 'tool')
@@ -102,25 +109,26 @@ def test_fatal_tool_partial_recovery_finishes_failed_with_observed_skip(monkeypa
     assert recovered.sequence < end.sequence < events[-1].sequence
 
 
-def make_approval(monkeypatch, tmp_path):
+async def make_approval(monkeypatch, tmp_path):
     root = tmp_path / 'workspace'
     root.mkdir()
     outside = tmp_path / 'outside.md'
     outside.write_text('body', encoding='utf-8')
-    app = make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
+    app = await make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'read', 'args': {'path': str(outside)}, 'id': 'read'},
     ]), AIMessage(content='done')]), [create_session_read_tool()])
-    session = app.create_workspace_session('A', root)
+    session = await app.acreate_workspace_session('A', root)
     events = []
     app.subscribe_events(events.append)
-    app.run(session, [('user', 'read')])
+    await app.arun(session, [('user', 'read')])
     return app, session, events
 
 
-def test_prepare_failure_preserves_waiting_turn_for_later_resume(monkeypatch, tmp_path):
+@async_test
+async def test_prepare_failure_preserves_waiting_turn_for_later_resume(monkeypatch, tmp_path):
     from naiyue_test_agent.application import session_service
 
-    app, session, events = make_approval(monkeypatch, tmp_path)
+    app, session, events = await make_approval(monkeypatch, tmp_path)
     saved = app._sessions._sessions[session]['pending_turn']
     original = session_service.prepare_run_resources
     failure = OSError('PRIVATE_PREPARE')
@@ -131,68 +139,74 @@ def test_prepare_failure_preserves_waiting_turn_for_later_resume(monkeypatch, tm
     monkeypatch.setattr(session_service, 'prepare_run_resources', fail_prepare)
     old_count = len(events)
     with pytest.raises(OSError) as caught:
-        app.resume_tool_approval(session, ['approve'])
+        await app.aresume_tool_approval(session, ['approve'])
     assert caught.value is failure and turns(events[old_count:]) == []
     assert app._sessions._sessions[session]['pending_turn'] == saved
     assert events[-1].data.failure.stage == 'prepare'
     monkeypatch.setattr(session_service, 'prepare_run_resources', original)
-    app.resume_tool_approval(session, ['reject'])
+    await app.aresume_tool_approval(session, ['reject'])
     assert turns(events, 'turn_resumed')[0].data.turn_id == saved['turn_id']
 
 
-def test_failed_approval_execution_retry_is_new_turn_not_old_completed(monkeypatch, tmp_path):
+@async_test
+async def test_failed_approval_tool_stage_requires_review_before_another_attempt(monkeypatch, tmp_path):
     from naiyue_test_agent.agent_runtime.tool_execution.batch import ToolBatchMiddleware
 
-    original = ToolBatchMiddleware.wrap_tool_call
+    original = ToolBatchMiddleware.awrap_tool_call
     failure = RuntimeError('PRIVATE_EXECUTE')
     attempts = []
 
-    def fail_once(self, request, handler):
+    async def fail_once(self, request, handler):
         attempts.append(True)
         if len(attempts) == 1:
             raise failure
-        return original(self, request, handler)
+        return await original(self, request, handler)
 
-    monkeypatch.setattr(ToolBatchMiddleware, 'wrap_tool_call', fail_once)
+    monkeypatch.setattr(ToolBatchMiddleware, 'awrap_tool_call', fail_once)
     # create_agent captures bound hooks during assembly; inject before construction.
-    app, session, events = make_approval(monkeypatch, tmp_path)
+    app, session, events = await make_approval(monkeypatch, tmp_path)
     suspended_id = turns(events, 'turn_started')[0].data.turn_id
     with pytest.raises(RuntimeError) as caught:
-        app.resume_tool_approval(session, ['approve'])
+        await app.aresume_tool_approval(session, ['approve'])
     assert caught.value is failure
     assert turns(events, 'turn_finished')[-1].data.status == 'failed'
-    assert app._sessions._sessions[session]['pending_turn']['status'] == 'failed'
-    assert app._sessions._sessions[session]['pending_turn']['post_model_checks_passed'] is True
-    thread_id = app._sessions._sessions[session]['thread_id']
-    assert app._agent.get_state({'configurable': {'thread_id': thread_id}}).next == ('tools',)
-    result = app.resume_tool_approval(session, ['approve'])
-    retry = next(e for e in turns(events, 'turn_started') if e.data.kind == 'approval_retry')
-    assert retry.data.previous_turn_id == suspended_id and retry.data.turn_id != suspended_id
-    ends = turns(events, 'turn_finished')
-    assert [(e.data.turn_id, e.data.status) for e in ends][:2] == [
-        (suspended_id, 'failed'), (retry.data.turn_id, 'completed'),
-    ]
-    assert result['messages'][-1].content == 'done'
-    assert app._sessions._sessions[session]['pending_turn'] is None
+    state = app._sessions._sessions[session]
+    assert state['manual_review_required'] and state['pending_turn'] is None
+    assert state['pending_tool_approval'] is None and not state['busy']
+    thread_id = state['thread_id']
+    assert (await app._agent.aget_state({'configurable': {'thread_id': thread_id}})).next == ('tools',)
+    count = len(events)
+    with pytest.raises(application.SessionManualReviewRequiredError):
+        await app.aresume_tool_approval(session, ['approve'])
+    with pytest.raises(application.SessionManualReviewRequiredError):
+        await app.arun(session, [('user', 'retry')])
+    assert events[count:] == [] and attempts == [True]
+    assert [(e.data.turn_id, e.data.status) for e in turns(events, 'turn_finished')] == [(suspended_id, 'failed')]
 
 
 @pytest.mark.parametrize('failure', [GraphBubbleUp(), KeyboardInterrupt()])
-def test_framework_and_process_control_do_not_fabricate_failed_or_cancelled(monkeypatch, failure):
-    class Failing(ToolModel):
-        def _generate(self, *args, **kwargs):
-            raise failure
-
-    app = make_app(monkeypatch, Failing(responses=[AIMessage(content='unused')]))
+@async_test
+async def test_framework_and_process_control_do_not_fabricate_failed_or_cancelled(monkeypatch, failure):
+    app = await make_app(monkeypatch)
+    from naiyue_test_agent.agent_runtime import async_invocation
+    async def control(_agent, _input, *, context, config, publisher):
+        from naiyue_test_agent.agent_runtime.run_services import current_run_services
+        current_run_services().turns.begin('control-call')
+        raise failure
+    # Inject at the awaited stream boundary after starting the actual TurnObserver.
+    # This keeps KeyboardInterrupt outside asyncio's internal model tasks.
+    monkeypatch.setattr(async_invocation, 'ainvoke_with_message_observation', control)
     events = []
     app.subscribe_events(events.append)
     with pytest.raises(type(failure)) as caught:
-        app.run(app.create_session('A'), [('user', 'run')])
+        await app.arun(await app.acreate_session('A'), [('user', 'run')])
     assert caught.value is failure
     assert [e.event_type for e in turns(events)] == ['turn_started']
     assert not any(e.event_type == 'run_finished' for e in events)
 
 
-def test_unknown_tool_outcome_is_failed_turn_and_manual_review_remains(monkeypatch):
+@async_test
+async def test_unknown_tool_outcome_is_failed_turn_and_manual_review_remains(monkeypatch):
     failure = ProcessCleanupError('PRIVATE_OUTCOME')
 
     @tool
@@ -200,22 +214,23 @@ def test_unknown_tool_outcome_is_failed_turn_and_manual_review_remains(monkeypat
         """Fail with uncertain side effects."""
         raise failure
 
-    app = make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
+    app = await make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'uncertain', 'args': {}, 'id': 'uncertain'},
     ])]), [ToolSpec(uncertain, uncertain.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
     app.subscribe_events(events.append)
-    session = app.create_session('A')
+    session = await app.acreate_session('A')
     with pytest.raises(ProcessCleanupError) as caught:
-        app.run(session, [('user', 'run')])
+        await app.arun(session, [('user', 'run')])
     assert caught.value is failure
     assert turns(events, 'turn_finished')[0].data.failure.category == 'tool_outcome_unknown'
     assert events[-1].data.manual_review_required is True
     with pytest.raises(application.SessionManualReviewRequiredError):
-        app.run(session, [('user', 'again')])
+        await app.arun(session, [('user', 'again')])
 
 
-def test_two_sessions_share_graph_but_never_share_turn_identity(monkeypatch):
+@async_test
+async def test_two_sessions_share_graph_but_never_share_turn_identity(monkeypatch):
     barrier = Barrier(2)
 
     class Concurrent(ToolModel):
@@ -223,23 +238,21 @@ def test_two_sessions_share_graph_but_never_share_turn_identity(monkeypatch):
             barrier.wait(timeout=5)
             return super()._generate(*args, **kwargs)
 
-    app = make_app(monkeypatch, Concurrent(responses=[AIMessage(content='done')]))
-    sessions = [app.create_session('A') for _ in range(2)]
+    app = await make_app(monkeypatch, Concurrent(responses=[AIMessage(content='done')]))
+    sessions = [await app.acreate_session('A') for _ in range(2)]
     events, results = [], []
     app.subscribe_events(events.append)
 
-    def run(session):
+    async def run(session):
         try:
-            results.append(app.run(session, [('user', 'run')]))
+            results.append(await app.arun(session, [('user', 'run')]))
         except BaseException as error:
             results.append(error)
 
-    workers = [Thread(target=run, args=(session,)) for session in sessions]
+    workers = [asyncio.create_task(run(session)) for session in sessions]
     for worker in workers:
-        worker.start()
-    for worker in workers:
-        worker.join(timeout=6)
-        assert not worker.is_alive()
+        await asyncio.wait_for(asyncio.shield(worker), 6)
+        assert worker.done()
     assert len(results) == 2 and all(isinstance(r, dict) for r in results), results
     starts = turns(events, 'turn_started')
     assert len({e.data.turn_id for e in starts}) == 2
@@ -249,7 +262,8 @@ def test_two_sessions_share_graph_but_never_share_turn_identity(monkeypatch):
         assert scoped[0].data.turn_id == scoped[1].data.turn_id
 
 
-def test_dynamic_runtime_has_no_app_observation_and_fits_explicit_step_budget():
+@async_test
+async def test_dynamic_runtime_has_no_app_observation_and_fits_explicit_step_budget():
     from naiyue_test_agent.agent_runtime import build_runtime_agent
 
     @tool
@@ -264,15 +278,16 @@ def test_dynamic_runtime_has_no_app_observation_and_fits_explicit_step_budget():
     _runtime_names_1 = _runtime_registry_1.names()
     graph = build_runtime_agent(model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
                                 resolve_model=lambda _s: ('A', model), record_selection=lambda *_a: None)
-    result = graph.invoke({'messages': [('user', 'run')]}, context={'session_id': 'session'},
-                          config={'recursion_limit': 14})
+    result = (await graph.ainvoke({'messages': [('user', 'run')]}, context={'session_id': 'session'},
+                          config={'recursion_limit': 14}))
     assert [m.type for m in result['messages']] == ['human', 'ai', 'tool', 'ai']
     assert result['messages'][-1].content == 'done'
     assert not any('TurnBoundaryMiddleware' in name for name in graph.nodes)
 
 
-def test_observer_failure_on_turn_event_does_not_change_business_result(monkeypatch, caplog):
-    app = make_app(monkeypatch)
+@async_test
+async def test_observer_failure_on_turn_event_does_not_change_business_result(monkeypatch, caplog):
+    app = await make_app(monkeypatch)
     calls, events = [], []
 
     def broken(event):
@@ -282,14 +297,15 @@ def test_observer_failure_on_turn_event_does_not_change_business_result(monkeypa
 
     app.subscribe_events(broken)
     app.subscribe_events(events.append)
-    result = app.run(app.create_session('A'), [('user', 'run')])
+    result = await app.arun(await app.acreate_session('A'), [('user', 'run')])
     assert calls == ['run_started', 'message_completed', 'turn_started']
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
     assert turns(events, 'turn_finished')[0].data.status == 'completed'
     assert 'event_observer_failed' in caplog.text and 'PRIVATE_' not in caplog.text
 
 
-def test_turn_reporting_secondary_error_does_not_mask_primary(monkeypatch, caplog):
+@async_test
+async def test_turn_reporting_secondary_error_does_not_mask_primary(monkeypatch, caplog):
     from naiyue_test_agent.agent_runtime.turn_observation import TurnObserver
 
     failure = TimeoutError('PRIVATE_PRIMARY')
@@ -302,22 +318,25 @@ def test_turn_reporting_secondary_error_does_not_mask_primary(monkeypatch, caplo
         raise ValueError('PRIVATE_SECONDARY')
 
     monkeypatch.setattr(TurnObserver, 'fail', fail_reporting)
-    app = make_app(monkeypatch, Failing(responses=[AIMessage(content='unused')]))
+    app = await make_app(monkeypatch, Failing(responses=[AIMessage(content='unused')]))
     events = []
     app.subscribe_events(events.append)
     with pytest.raises(TimeoutError) as caught:
-        app.run(app.create_session('A'), [('user', 'run')])
+        await app.arun(await app.acreate_session('A'), [('user', 'run')])
     assert caught.value is failure and events[-1].data.status == 'failed'
     assert 'turn_failure_publish_failed' in caplog.text and 'PRIVATE_' not in caplog.text
 
 
-def test_unsupported_state_observation_is_explicit_and_original_custom_result_kept(monkeypatch):
-    app = make_app(monkeypatch)
+@async_test
+async def test_unsupported_state_observation_is_explicit_and_original_custom_result_kept(monkeypatch):
+    app = await make_app(monkeypatch)
     original_result = {'messages': []}
-    monkeypatch.setattr(app._agent, 'invoke', lambda *_a, **_kw: original_result)
+    async def custom(*_a, **_kw):
+        return original_result
+    monkeypatch.setattr(app._agent, 'ainvoke', custom)
     events = []
     app.subscribe_events(events.append)
-    assert app.run(app.create_session('A'), [('user', 'run')]) is original_result
+    assert await app.arun(await app.acreate_session('A'), [('user', 'run')]) is original_result
     assert [e.event_type for e in turns(events)] == ['turn_observation_unavailable']
     assert turns(events)[0].data.reason == 'state_observation_unavailable'
     assert events[-1].data.status == 'completed'

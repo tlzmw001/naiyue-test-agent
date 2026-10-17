@@ -164,14 +164,6 @@ class _ModelRequestObservationMiddleware(AgentMiddleware):
     def name(self):
         return 'observe_model_request'
 
-    def wrap_model_call(self, request: ModelRequest, handler):
-        payload, budget = _prepare_observation(request)
-        try:
-            response = handler(request)
-            _observe_returned(response, payload, budget)
-            return response
-        finally:
-            _finish_observation(payload, budget)
 
     async def awrap_model_call(self, request: ModelRequest, handler):
         payload, budget = _prepare_observation(request)

@@ -1,5 +1,7 @@
 """Context operations end at confirmed replacement, not summary return."""
 
+from native_application_helpers import async_test
+
 import logging
 
 import pytest
@@ -19,26 +21,27 @@ def operation_events(events):
     return [e for e in events if e.event_type in OP_TYPES]
 
 
-def prepared_app(monkeypatch, summary=None):
+async def prepared_app(monkeypatch, summary=None):
     a = _model([AIMessage(content='one'), AIMessage(content='two')], window=10000)
     b = _model([AIMessage(content='final')], window=300, output=10, reserve=250, keep=10,
                summaries=[summary if summary is not None else AIMessage(content='PRIVATE_SUMMARY', usage_metadata={
                    'input_tokens': 20, 'output_tokens': 5, 'total_tokens': 25,
                })], model_id='B')
-    app = _app(monkeypatch, {'A': a, 'B': b})
-    session = app.create_session('A')
-    app.run(session, [('user', 'PRIVATE_FIRST_' + 'x' * 100)])
-    app.run(session, [('user', 'PRIVATE_SECOND_' + 'y' * 100)])
-    app.select_model(session, 'B')
+    app = await _app(monkeypatch, {'A': a, 'B': b})
+    session = await app.acreate_session('A')
+    await app.arun(session, [('user', 'PRIVATE_FIRST_' + 'x' * 100)])
+    await app.arun(session, [('user', 'PRIVATE_SECOND_' + 'y' * 100)])
+    await app.aselect_model(session, 'B')
     events = []
     app.subscribe_events(events.append)
     return app, session, b, events
 
 
-def test_threshold_compaction_finishes_only_after_expected_summary_is_visible(monkeypatch, caplog):
-    app, session, model, events = prepared_app(monkeypatch)
+@async_test
+async def test_threshold_compaction_finishes_only_after_expected_summary_is_visible(monkeypatch, caplog):
+    app, session, model, events = await prepared_app(monkeypatch)
     with caplog.at_level(logging.INFO):
-        result = app.run(session, [('user', 'third')])
+        result = await app.arun(session, [('user', 'third')])
     operations = operation_events(events)
     assert [e.event_type for e in operations] == ['compaction_started', 'compaction_finished']
     start, end = operations
@@ -54,18 +57,20 @@ def test_threshold_compaction_finishes_only_after_expected_summary_is_visible(mo
     assert 'PRIVATE_' not in repr(operations) + caplog.text
 
 
-def test_below_threshold_does_not_invent_compaction_operations(monkeypatch):
+@async_test
+async def test_below_threshold_does_not_invent_compaction_operations(monkeypatch):
     model = _model([AIMessage(content='done')], window=10000)
-    app = _app(monkeypatch, {'A': model})
+    app = await _app(monkeypatch, {'A': model})
     events = []
     app.subscribe_events(events.append)
-    app.run(app.create_session('A'), [('user', 'short')])
+    await app.arun(await app.acreate_session('A'), [('user', 'short')])
     assert operation_events(events) == [] and model.summary_inputs == []
 
 
-def test_eligible_summary_failure_falls_back_and_normal_request_still_runs(monkeypatch):
-    app, session, model, events = prepared_app(monkeypatch, TimeoutError('PRIVATE_TIMEOUT'))
-    result = app.run(session, [('user', 'third')])
+@async_test
+async def test_eligible_summary_failure_falls_back_and_normal_request_still_runs(monkeypatch):
+    app, session, model, events = await prepared_app(monkeypatch, TimeoutError('PRIVATE_TIMEOUT'))
+    result = await app.arun(session, [('user', 'third')])
     start, end = operation_events(events)
     assert start.event_type == 'compaction_started'
     assert end.data.status == 'fallback' and end.data.error_type == 'TimeoutError'
@@ -75,24 +80,26 @@ def test_eligible_summary_failure_falls_back_and_normal_request_still_runs(monke
     assert events[-1].data.status == 'completed'
 
 
-def test_invalid_summary_fails_without_normal_model_call_or_applied_event(monkeypatch):
-    app, session, model, events = prepared_app(monkeypatch, AIMessage(content='bad', tool_calls=[
+@async_test
+async def test_invalid_summary_fails_without_normal_model_call_or_applied_event(monkeypatch):
+    app, session, model, events = await prepared_app(monkeypatch, AIMessage(content='bad', tool_calls=[
         {'name': 'unexpected', 'args': {}, 'id': 'bad'},
     ]))
     with pytest.raises(ContextCompactionError) as caught:
-        app.run(session, [('user', 'third')])
+        await app.arun(session, [('user', 'third')])
     assert str(caught.value) == 'summary_invalid'
     end = operation_events(events)[-1].data
     assert end.status == 'failed' and end.reason == 'summary_invalid'
     assert model.normal_inputs == [] and events[-1].data.status == 'failed'
 
 
-def test_explicit_overflow_recovery_waits_for_gate_and_state_and_is_one_model_turn(monkeypatch):
+@async_test
+async def test_explicit_overflow_recovery_waits_for_gate_and_state_and_is_one_model_turn(monkeypatch):
     model = _configured_model([_status(), AIMessage(content='recovered')])
-    app = _app(monkeypatch, {'A': model})
+    app = await _app(monkeypatch, {'A': model})
     events = []
     app.subscribe_events(events.append)
-    result = app.run(app.create_session('A'), _history())
+    result = await app.arun(await app.acreate_session('A'), _history())
     operations = operation_events(events)
     assert [e.event_type for e in operations] == [
         'context_recovery_started', 'compaction_started', 'compaction_finished', 'context_recovery_finished',
@@ -109,15 +116,16 @@ def test_explicit_overflow_recovery_waits_for_gate_and_state_and_is_one_model_tu
     assert sum(e.event_type == 'turn_started' for e in events) == 1
 
 
-def test_retry_response_rejected_does_not_report_recovery_or_replacement_success(monkeypatch):
+@async_test
+async def test_retry_response_rejected_does_not_report_recovery_or_replacement_success(monkeypatch):
     model = _configured_model([_status(), AIMessage(content='PRIVATE_REJECTED', invalid_tool_calls=[
         {'name': 'probe', 'args': '{', 'id': 'bad', 'error': 'parse'},
     ])])
-    app = _app(monkeypatch, {'A': model})
+    app = await _app(monkeypatch, {'A': model})
     events = []
     app.subscribe_events(events.append)
     with pytest.raises(ModelResponseRejected) as caught:
-        app.run(app.create_session('A'), _history())
+        await app.arun(await app.acreate_session('A'), _history())
     assert caught.value.reason == 'invalid_tool_calls'
     operations = operation_events(events)
     compaction = next(e.data for e in operations if e.event_type == 'compaction_finished')

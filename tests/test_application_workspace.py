@@ -1,5 +1,7 @@
 """One shared agent must use each session's trusted read workspace."""
 
+from native_application_helpers import async_test, build_application
+
 from pathlib import Path
 
 import pytest
@@ -25,7 +27,8 @@ class RecordingToolCapableFake(ToolCapableFake):
         return super()._generate(messages, *args, **kwargs)
 
 
-def test_shared_agent_reads_only_its_session_workspace(monkeypatch, tmp_path):
+@async_test
+async def test_shared_agent_reads_only_its_session_workspace(monkeypatch, tmp_path):
     first_root = tmp_path / 'first'
     second_root = tmp_path / 'second'
     first_root.mkdir()
@@ -64,19 +67,19 @@ def test_shared_agent_reads_only_its_session_workspace(monkeypatch, tmp_path):
                         lambda _path: ModelCatalog('A', {'A': model}))
     tool = create_session_read_tool()
     assert set(tool.tool.tool_call_schema.model_fields) == {'path', 'offset', 'limit'}
-    app = application.build_local_application(
+    app = await build_application(
         Path('synthetic.json'), tools=[tool], system_prompt='', response_format=None,
     )
-    first = app.create_workspace_session('A', first_root)
-    second = app.create_workspace_session('A', second_root)
+    first = await app.acreate_workspace_session('A', first_root)
+    second = await app.acreate_workspace_session('A', second_root)
 
-    first_own = app.run(first, [('user', 'read mine')])
-    second_own = app.run(second, [('user', 'read mine')])
-    first_cross = app.run(first, [('user', 'read other absolute path')])
-    first_cross_rejected = app.resume_tool_approval(first, ['reject'])
-    first_link = app.run(first, [('user', 'read link to other workspace')])
-    first_link_rejected = app.resume_tool_approval(first, ['reject'])
-    first_forged = app.run(first, [('user', 'read mine with forged runtime')])
+    first_own = await app.arun(first, [('user', 'read mine')])
+    second_own = await app.arun(second, [('user', 'read mine')])
+    first_cross = await app.arun(first, [('user', 'read other absolute path')])
+    first_cross_rejected = await app.aresume_tool_approval(first, ['reject'])
+    first_link = await app.arun(first, [('user', 'read link to other workspace')])
+    first_link_rejected = await app.aresume_tool_approval(first, ['reject'])
+    first_forged = await app.arun(first, [('user', 'read mine with forged runtime')])
 
     def last_tool(result):
         return next(msg for msg in reversed(result['messages']) if isinstance(msg, ToolMessage))
@@ -92,7 +95,8 @@ def test_shared_agent_reads_only_its_session_workspace(monkeypatch, tmp_path):
         assert 'SECOND_PRIVATE' not in str(result)
 
 
-def test_session_read_tool_fails_closed_without_workspace(monkeypatch, tmp_path):
+@async_test
+async def test_session_read_tool_fails_closed_without_workspace(monkeypatch, tmp_path):
     (tmp_path / 'contract.md').write_text('PRIVATE', encoding='utf-8')
     model = ToolCapableFake(responses=[
         AIMessage(content='', tool_calls=[{
@@ -103,12 +107,12 @@ def test_session_read_tool_fails_closed_without_workspace(monkeypatch, tmp_path)
     ])
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application(
+    app = await build_application(
         Path('synthetic.json'), tools=[create_session_read_tool()],
         system_prompt='', response_format=None,
     )
 
-    result = app.run(app.create_session('A'), [('user', 'read absolute path')])
+    result = await app.arun(await app.acreate_session('A'), [('user', 'read absolute path')])
 
     denied = next(msg for msg in result['messages'] if isinstance(msg, ToolMessage))
     assert denied.status == 'error'
@@ -119,19 +123,21 @@ def test_session_read_tool_fails_closed_without_workspace(monkeypatch, tmp_path)
     assert 'PRIVATE' not in str(result)
 
 
-def test_workspace_session_rejects_invalid_root(monkeypatch, tmp_path):
+@async_test
+async def test_workspace_session_rejects_invalid_root(monkeypatch, tmp_path):
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': ToolCapableFake(responses=[])}))
-    app = application.build_local_application(
+    app = await build_application(
         Path('synthetic.json'), tools=[create_session_read_tool()],
         system_prompt='', response_format=None,
     )
 
     with pytest.raises(ValueError, match='workspace'):
-        app.create_workspace_session('A', tmp_path / 'missing')
+        await app.acreate_workspace_session('A', tmp_path / 'missing')
 
 
-def test_read_failure_messages_reach_next_model_turn_with_matching_ids(
+@async_test
+async def test_read_failure_messages_reach_next_model_turn_with_matching_ids(
     monkeypatch, tmp_path, caplog,
 ):
     model = RecordingToolCapableFake(responses=[
@@ -143,14 +149,14 @@ def test_read_failure_messages_reach_next_model_turn_with_matching_ids(
     ])
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application(
+    app = await build_application(
         Path('synthetic.json'), tools=[create_session_read_tool()],
         system_prompt='', response_format=None,
     )
-    session = app.create_workspace_session('A', tmp_path)
+    session = await app.acreate_workspace_session('A', tmp_path)
 
     with caplog.at_level('INFO', logger='naiyue_test_agent.agent_runtime'):
-        result = app.run(session, [('user', 'Read a file')])
+        result = await app.arun(session, [('user', 'Read a file')])
 
     errors = {message.tool_call_id: message for message in result['messages']
               if isinstance(message, ToolMessage)}

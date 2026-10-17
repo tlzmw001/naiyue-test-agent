@@ -12,8 +12,6 @@ from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
 
 
 class StopModelMiddleware(AgentMiddleware):
-    def wrap_model_call(self, request, handler):
-        return handler(request)
 
     async def awrap_model_call(self, request, handler):
         control = request.runtime.context.get('_run_control')

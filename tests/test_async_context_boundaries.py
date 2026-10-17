@@ -91,7 +91,7 @@ def test_invalid_or_oversized_summary_is_not_committed(summary, reason):
     asyncio.run(scenario())
 
 
-def test_sync_and_async_compaction_share_cut_and_previous_summary():
+def test_native_and_sync_sdk_compaction_share_cut_and_previous_summary():
     async def scenario():
         previous = HumanMessage(content=SUMMARY_PREFIX + 'previous fact', id='previous',
                                 additional_kwargs={SUMMARY_MARKER: True})
@@ -99,7 +99,7 @@ def test_sync_and_async_compaction_share_cut_and_previous_summary():
         native = model()
         sync = _model([], window=500, reserve=450, keep=10,
                       summaries=[AIMessage(content='brief summary')])
-        expected = context_compaction._compact_messages(
+        expected = await context_compaction._acompact_messages(
             messages, sync, model_id='A', context={},
             system_messages=[SystemMessage(content='BASEPROJECT')], tools=[],
         )
@@ -169,10 +169,10 @@ def test_cancelled_summary_closes_context_observation_and_preserves_signal(caplo
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize('asynchronous', [False, True])
-def test_retry_request_construction_failure_is_classified_as_retry(asynchronous, caplog):
+@pytest.mark.parametrize('native_model', [False, True])
+def test_retry_request_construction_failure_is_classified_as_retry(native_model, caplog):
     async def scenario():
-        chosen = (model(window=2000, reserve=20) if asynchronous else
+        chosen = (model(window=2000, reserve=20) if native_model else
                   _model([], window=2000, reserve=20, summaries=[AIMessage(content='brief summary')]))
         error, calls = ValueError('PRIVATE'), []
         request = SimpleNamespace(runtime=SimpleNamespace(context={}), model=chosen,
@@ -183,18 +183,15 @@ def test_retry_request_construction_failure_is_classified_as_retry(asynchronous,
 
         request.override = override
 
-        def sync_handler(received):
+        async def sync_handler(received):
             calls.append(received)
             raise overflow_error()
 
         async def async_handler(received):
-            return sync_handler(received)
+            return await sync_handler(received)
 
         with pytest.raises(ValueError) as caught:
-            if asynchronous:
-                await recover_input_overflow.awrap_model_call(request, async_handler)
-            else:
-                recover_input_overflow.wrap_model_call(request, sync_handler)
+            await recover_input_overflow.awrap_model_call(request, async_handler)
         assert caught.value is error and calls == [request]
         failed = [r.context_recovery for r in caplog.records
                   if getattr(r, 'context_recovery', {}).get('event') == 'context_overflow_recovery_failed']

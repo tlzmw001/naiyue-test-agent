@@ -1,11 +1,13 @@
 """Matched unknown descriptions and legacy entry points must stay meaningful."""
 
+from native_application_helpers import async_test
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
 
 import asyncio
-from threading import Event, Thread
+from threading import Event
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -19,20 +21,21 @@ from naiyue_test_agent.model_access import ModelCatalog, ModelConfigError
 from test_layered_failure_contract import ToolModel, ReportStorageError, VendorQuotaError, quota, build
 
 
-def test_application_unknown_match_is_not_treated_as_no_match(monkeypatch):
-    app, events, _catalog = build(monkeypatch)
+@async_test
+async def test_application_unknown_match_is_not_treated_as_no_match(monkeypatch):
+    app, events, _catalog = await build(monkeypatch)
     error = ReportStorageError('PRIVATE')
 
     def describe(_error, _source):
         return FailureDescription('application', 'unknown', 'report_unclassified', 'ReportStorageError')
 
-    def fail(*_args, **_kwargs):
+    async def fail(*_args, **_kwargs):
         raise error
 
     app.configure_error_classifiers(application=[describe])
-    monkeypatch.setattr(application.session_service, 'invoke_agent_run', fail)
+    monkeypatch.setattr(application.session_service, 'ainvoke_agent_run', fail)
     with pytest.raises(ReportStorageError) as caught:
-        app.run(app.create_session('A'), [('user', 'probe')])
+        await app.arun(await app.acreate_session('A'), [('user', 'probe')])
     assert caught.value is error
     assert events[-1].data.failure.reason == 'report_unclassified'
 
@@ -48,26 +51,26 @@ def test_explicit_default_failure_conversion_is_independent_of_bound_model_catal
     assert during == before
 
 
-def test_model_mapping_is_local_to_each_application(monkeypatch):
+@async_test
+async def test_model_mapping_is_local_to_each_application(monkeypatch):
     error = VendorQuotaError('PRIVATE')
-    first, events, _catalog = build(monkeypatch, failure=error)
-    second, second_events, _other = build(monkeypatch, failure=error)
+    first, events, _catalog = await build(monkeypatch, failure=error)
+    second, second_events, _other = await build(monkeypatch, failure=error)
     first.configure_error_classifiers(model_id='A', model=[quota])
     for app in (first, second):
         with pytest.raises(VendorQuotaError) as caught:
-            app.run(app.create_session('A'), [('user', 'probe')])
+            await app.arun(await app.acreate_session('A'), [('user', 'probe')])
         assert caught.value is error
     assert events[-1].data.failure.reason == 'vendor_quota'
     assert second_events[-1].data.failure.reason == 'unclassified'
 
 
-def test_async_custom_model_is_described_once_and_keeps_original(monkeypatch):
-    from naiyue_test_agent.application.async_application import AsyncApplication
+@async_test
+async def test_async_custom_model_is_described_once_and_keeps_original(monkeypatch):
 
     async def scenario():
         error = VendorQuotaError('PRIVATE')
-        sync, events, catalog = build(monkeypatch, failure=error)
-        app = AsyncApplication(catalog, sync._sessions, sync._agent, sync._tool_registry)
+        app, events, catalog = await build(monkeypatch, failure=error)
         calls = []
 
         def describe(error, source):
@@ -87,11 +90,12 @@ def test_async_custom_model_is_described_once_and_keeps_original(monkeypatch):
         finally:
             await app.aclose()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_configuration_is_atomic_and_rejects_async_classifiers(monkeypatch):
-    app, _events, catalog = build(monkeypatch)
+@async_test
+async def test_configuration_is_atomic_and_rejects_async_classifiers(monkeypatch):
+    app, _events, catalog = await build(monkeypatch)
 
     async def classify(_error, _source):
         return None
@@ -105,7 +109,8 @@ def test_configuration_is_atomic_and_rejects_async_classifiers(monkeypatch):
     assert app._sessions._application_classifiers == ()
 
 
-def test_configuration_rejected_while_real_run_is_busy(monkeypatch):
+@async_test
+async def test_configuration_rejected_while_real_run_is_busy(monkeypatch):
     entered, release = Event(), Event()
 
     @tool
@@ -115,38 +120,38 @@ def test_configuration_rejected_while_real_run_is_busy(monkeypatch):
         assert release.wait(5)
         return 'ok'
 
-    app, _events, _catalog = build(monkeypatch, tools=[ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], replies=[
+    app, _events, _catalog = await build(monkeypatch, tools=[ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))], replies=[
         AIMessage(content='', tool_calls=[{'name': 'probe', 'args': {}, 'id': 'c1'}],
                   response_metadata={'finish_reason': 'tool_calls'}),
         AIMessage(content='done', response_metadata={'finish_reason': 'stop'}),
     ])
-    session = app.create_session('A')
+    session = await app.acreate_session('A')
     outcomes = []
 
-    def run():
+    async def run():
         try:
-            outcomes.append(app.run(session, [('user', 'probe')]))
+            outcomes.append(await app.arun(session, [('user', 'probe')]))
         except BaseException as error:
             outcomes.append(error)
 
-    thread = Thread(target=run)
-    thread.start()
+    thread = asyncio.create_task(run())
     try:
-        assert entered.wait(5)
+        assert await asyncio.to_thread(entered.wait, 5)
         with pytest.raises(application.SessionBusyError):
             app.configure_error_classifiers(runtime=[])
     finally:
         release.set()
-        thread.join(5)
-    assert not thread.is_alive() and len(outcomes) == 1
+        await asyncio.wait_for(asyncio.shield(thread), 5)
+    assert thread.done() and len(outcomes) == 1
     assert isinstance(outcomes[0], dict), outcomes
     app.configure_error_classifiers(runtime=[])
 
 
 @pytest.mark.parametrize('invalid', ['source', 'error_type'])
-def test_model_extension_invalid_contract_falls_back(monkeypatch, invalid, caplog):
+@async_test
+async def test_model_extension_invalid_contract_falls_back(monkeypatch, invalid, caplog):
     error = VendorQuotaError('PRIVATE')
-    app, events, _catalog = build(monkeypatch, failure=error)
+    app, events, _catalog = await build(monkeypatch, failure=error)
 
     def describe(_error, _source):
         return FailureDescription('application' if invalid == 'source' else 'model',
@@ -154,7 +159,7 @@ def test_model_extension_invalid_contract_falls_back(monkeypatch, invalid, caplo
 
     app.configure_error_classifiers(model_id='A', model=[describe])
     with pytest.raises(VendorQuotaError) as caught:
-        app.run(app.create_session('A'), [('user', 'probe')])
+        await app.arun(await app.acreate_session('A'), [('user', 'probe')])
     assert caught.value is error
     assert events[-1].data.failure.reason == 'unclassified'
     assert events[-1].data.failure.error_type == 'VendorQuotaError'

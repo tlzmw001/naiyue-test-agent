@@ -13,7 +13,7 @@ from langgraph.errors import GraphBubbleUp
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from typing import Literal
 
-from naiyue_test_agent.tools.permission_rules import PermissionSettings, match_rules
+from naiyue_test_agent.tools.permission_rules import match_rules
 from naiyue_test_agent.tools.permissions import execution_environment, matches_session_allow, PermissionMechanismError
 from .toolset import batch_tool_specs
 from ..run_control import UserStop, native_async_model
@@ -197,22 +197,6 @@ class AutoPermissionReviewer:
             if decision == 'allow' or stage == 'detailed':
                 return {'decision': decision, 'source': 'auto_' + stage}
 
-    def review(self, data, context):
-        steps = self._review_steps(data, context)
-        try:
-            pending = next(steps)
-            while True:
-                model, messages = pending
-                try:
-                    response = model.invoke(messages, config={'tags': [PERMISSION_REVIEW_TAG], 'callbacks': []})
-                except BaseException as error:
-                    pending = steps.throw(error)
-                else:
-                    pending = steps.send(response)
-        except StopIteration as completed:
-            return completed.value
-        finally:
-            steps.close()
 
     async def areview(self, data, context):
         from ..async_utils import run_blocking
@@ -337,19 +321,6 @@ class PermissionMiddleware(AgentMiddleware):
             elif mode == 'Auto':
                 yield call
 
-    @hook_config(can_jump_to=['end'])
-    def after_model(self, state, runtime):
-        prepared = self.prepare_local_batch(state, runtime)
-        if prepared is None:
-            return None
-        batch, project = prepared
-        try:
-            for call in self._pending_asks(batch):
-                data = prepare_review_input(state['messages'], call, project)
-                call.update(self.reviewer.review(data, {**runtime.context, '_review_call_id': call['id']}))
-        except UserStop:
-            return finish_stopped_batch(state, runtime)
-        return {'tool_execution': batch}
 
     @hook_config(can_jump_to=['end'])
     async def aafter_model(self, state, runtime):

@@ -1,5 +1,7 @@
 """Observe both kinds of unknown without changing Agent routing."""
 
+from native_application_helpers import async_test, build_application
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
@@ -25,10 +27,10 @@ class ToolCapableFake(FakeMessagesListChatModel):
         return self
 
 
-def build_app(monkeypatch, model, tools=None):
+async def build_app(monkeypatch, model, tools=None):
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    return application.build_local_application(
+    return await build_application(
         Path('synthetic.json'), tools=tools or [], system_prompt='', response_format=None,
     )
 
@@ -49,19 +51,20 @@ def build_app(monkeypatch, model, tools=None):
     ), 400),
     (ResponseError('private-exception-body', -1), None),
 ])
-def test_unknown_exception_has_safe_diagnostic_and_still_fails_run(
+@async_test
+async def test_unknown_exception_has_safe_diagnostic_and_still_fails_run(
     monkeypatch, caplog, failure, expected_status,
 ):
     class FailingFake(ToolCapableFake):
         def _generate(self, messages, stop=None, run_manager=None, **kwargs):
             raise failure
 
-    app = build_app(monkeypatch, FailingFake(responses=[]))
-    session_id = app.create_session('A')
+    app = await build_app(monkeypatch, FailingFake(responses=[]))
+    session_id = await app.acreate_session('A')
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(type(failure)) as caught:
-            app.run(session_id, [('user', 'private-prompt')])
+            await app.arun(session_id, [('user', 'private-prompt')])
 
     assert caught.value is failure
     events = [record.model_failure for record in caplog.records
@@ -90,17 +93,18 @@ def test_unknown_exception_has_safe_diagnostic_and_still_fails_run(
     ({'finish_reason': 'a' * 100}, 'finish_reason', None, True),
     ({'finish_reason': 123}, 'finish_reason', None, True),
 ])
-def test_unknown_stop_reason_records_safe_source_without_changing_result(
+@async_test
+async def test_unknown_stop_reason_records_safe_source_without_changing_result(
     monkeypatch, caplog, metadata, source, code, redacted,
 ):
     model = ToolCapableFake(responses=[
         AIMessage(content='private-model-text', response_metadata=metadata),
     ])
-    app = build_app(monkeypatch, model)
-    session_id = app.create_session('A')
+    app = await build_app(monkeypatch, model)
+    session_id = await app.acreate_session('A')
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        result = app.run(session_id, [('user', 'private-prompt')])
+        result = await app.arun(session_id, [('user', 'private-prompt')])
 
     assert result['messages'][-1].content == 'private-model-text'
     observed = [record.model_response for record in caplog.records
@@ -126,7 +130,8 @@ def test_unknown_stop_reason_records_safe_source_without_changing_result(
         assert secret not in caplog.text + repr(event)
 
 
-def test_unknown_stop_reason_with_valid_tool_still_routes_tool(
+@async_test
+async def test_unknown_stop_reason_with_valid_tool_still_routes_tool(
     monkeypatch, caplog,
 ):
     calls = []
@@ -143,10 +148,10 @@ def test_unknown_stop_reason_with_valid_tool_still_routes_tool(
         }], response_metadata={'finish_reason': 'future_reason'}),
         AIMessage(content='done', response_metadata={'finish_reason': 'stop'}),
     ])
-    app = build_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
+    app = await build_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        result = app.run(app.create_session('A'), [('user', 'probe')])
+        result = await app.arun(await app.acreate_session('A'), [('user', 'probe')])
 
     assert result['messages'][-1].content == 'done'
     assert calls == ['private-arg']
@@ -160,7 +165,8 @@ def test_unknown_stop_reason_with_valid_tool_still_routes_tool(
     assert 'private-arg' not in caplog.text + repr(observed)
 
 
-def test_unknown_stop_reason_is_observed_before_invalid_call_rejection(monkeypatch, caplog):
+@async_test
+async def test_unknown_stop_reason_is_observed_before_invalid_call_rejection(monkeypatch, caplog):
     calls = []
 
     @tool
@@ -176,11 +182,11 @@ def test_unknown_stop_reason_is_observed_before_invalid_call_rejection(monkeypat
                              'error': 'private-parse-error'}],
         response_metadata={'finish_reason': 'future_reason'},
     )])
-    app = build_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
+    app = await build_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(RuntimeError) as caught:
-            app.run(app.create_session('A'), [('user', 'probe')])
+            await app.arun(await app.acreate_session('A'), [('user', 'probe')])
 
     assert caught.value.reason == 'invalid_tool_calls'
     assert calls == []

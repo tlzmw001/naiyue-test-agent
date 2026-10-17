@@ -1,5 +1,7 @@
 """Model response gates, model observations, and shared event helpers."""
 
+from naiyue_test_agent.contracts.failures import safe_error_type
+
 from .observation import observe, emit_event
 
 import asyncio
@@ -16,7 +18,7 @@ from .run_control import UserStop, native_async_model
 
 from naiyue_test_agent.agent_runtime.events import (
     ModelCallStartedData, ModelCallFinishedData,
-    RunEventPublisher, safe_error_type,
+    RunEventPublisher,
 )
 from naiyue_test_agent.model_access.errors import (
     unknown_failure_diagnostics,
@@ -165,14 +167,6 @@ class _ModelSelectionMiddleware(AgentMiddleware):
                 call_id, event_label(model_id), 'failed', failure=failure,
             ), primary_error=error)
 
-    def wrap_model_call(self, request, handler):
-        model_id, call_id, model = self._prepare(request)
-        try:
-            response = handler(request.override(model=model))
-            return self._accept(request, response, model_id, call_id)
-        except Exception as error:
-            self._failed(request, error, model_id, call_id)
-            raise
 
     async def awrap_model_call(self, request, handler):
         model_id, call_id, model = self._prepare(request)

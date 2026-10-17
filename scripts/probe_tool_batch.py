@@ -1,5 +1,8 @@
 """Verify current create_agent tool fan-out with a deterministic fake model."""
 
+import asyncio
+from naiyue_test_agent.agent_runtime.async_invocation import ainvoke_agent_run
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
@@ -13,7 +16,7 @@ from langchain.tools import tool
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 
-from naiyue_test_agent.agent_runtime import build_runtime_agent, invoke_agent_run
+from naiyue_test_agent.agent_runtime import build_runtime_agent
 
 
 class ToolCapableFake(FakeMessagesListChatModel):
@@ -21,7 +24,7 @@ class ToolCapableFake(FakeMessagesListChatModel):
         return self
 
 
-def main() -> None:
+async def main() -> None:
     first_entered = Event()
     second_entered = Event()
     observations = {}
@@ -57,10 +60,10 @@ def main() -> None:
         resolve_model=lambda _session: ('fake', model),
         record_selection=lambda _session, _model: None,
     )
-    result = invoke_agent_run(
+    result = (await ainvoke_agent_run(
         agent, [('user', 'probe')], session_id='probe-session',
         thread_id='probe-thread', run_id='probe-run',
-    )
+    ))
     tool_messages = [
         (message.tool_call_id, message.content)
         for message in result['messages'] if isinstance(message, ToolMessage)
@@ -95,7 +98,7 @@ def main() -> None:
     gated_agent = create_agent(
         gate_model, tools=[first_probe, second_probe], middleware=[reject_multi_call],
     )
-    gated_result = gated_agent.invoke({'messages': [('user', 'probe')]})
+    gated_result = (await gated_agent.ainvoke({'messages': [('user', 'probe')]}))
     gate_messages = [
         (message.tool_call_id, message.status)
         for message in gated_result['messages'] if isinstance(message, ToolMessage)
@@ -108,4 +111,4 @@ def main() -> None:
 
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())

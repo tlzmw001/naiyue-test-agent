@@ -1,4 +1,6 @@
 
+from native_application_helpers import async_test
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
@@ -399,7 +401,8 @@ def test_missing_config_is_rejected(tmp_path):
         load_model_catalog(tmp_path / 'models.json')
 
 
-def test_configured_agent_uses_file_and_switches_after_tool_result(tmp_path, monkeypatch):
+@async_test
+async def test_configured_agent_uses_file_and_switches_after_tool_result(tmp_path, monkeypatch):
     selected = {'s1': 'first'}
     received_settings = {}
     models = {
@@ -440,7 +443,7 @@ def test_configured_agent_uses_file_and_switches_after_tool_result(tmp_path, mon
         select_model_id=lambda session_id: selected[session_id],
         record_selection=lambda session_id, model_id: selections.append((session_id, model_id)),
     )
-    result = agent.invoke({'messages': [('user', 'switch, then answer')]}, context={'session_id': 's1'})
+    result = (await agent.ainvoke({'messages': [('user', 'switch, then answer')]}, context={'session_id': 's1'}))
 
     assert selections == [('s1', 'first'), ('s1', 'second')]
     assert [message.type for message in result['messages']] == ['human', 'ai', 'tool', 'ai']
@@ -454,7 +457,8 @@ def test_configured_agent_uses_file_and_switches_after_tool_result(tmp_path, mon
     assert received_settings['model-second']['max_retries'] == 2
 
 
-def test_configured_agent_forwards_checkpointer_for_continuous_messages(tmp_path, monkeypatch):
+@async_test
+async def test_configured_agent_forwards_checkpointer_for_continuous_messages(tmp_path, monkeypatch):
     model = FakeMessagesListChatModel(responses=[
         AIMessage(content='first answer'), AIMessage(content='second answer'),
     ])
@@ -478,8 +482,8 @@ def test_configured_agent_forwards_checkpointer_for_continuous_messages(tmp_path
         'config': {'configurable': {'thread_id': 'internal-thread-s1'}},
     }
 
-    agent.invoke({'messages': [('user', 'first question')]}, **invoke_options)
-    result = agent.invoke({'messages': [('user', 'second question')]}, **invoke_options)
+    (await agent.ainvoke({'messages': [('user', 'first question')]}, **invoke_options))
+    result = (await agent.ainvoke({'messages': [('user', 'second question')]}, **invoke_options))
 
     assert [message.content for message in result['messages']] == [
         'first question', 'first answer', 'second question', 'second answer',

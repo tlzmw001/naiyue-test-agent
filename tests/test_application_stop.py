@@ -1,5 +1,10 @@
 """Cooperative sync operation settlement under the unified stop contract."""
 
+from naiyue_test_agent.application.async_application import AsyncApplication
+import asyncio
+
+from native_application_helpers import async_test, build_application
+
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.application import prepare_tool_registry
@@ -7,7 +12,7 @@ from naiyue_test_agent.application import prepare_tool_registry
 from naiyue_test_agent.tools import ToolSpec
 
 import logging
-from threading import Event, Thread
+from threading import Event
 
 import pytest
 from langchain.tools import tool
@@ -23,10 +28,10 @@ class ToolCapableFake(FakeMessagesListChatModel):
         return self
 
 
-def build_app(monkeypatch, model, tools=None):
+async def build_app(monkeypatch, model, tools=None):
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    return application.build_local_application(
+    return await build_application(
         'synthetic.json', tools=tools or [], system_prompt='', response_format=None,
     )
 
@@ -34,18 +39,19 @@ def build_app(monkeypatch, model, tools=None):
 def run_in_worker(app, session_id):
     outcomes = []
 
-    def run():
+    async def run():
         try:
-            outcomes.append(('result', app.run(session_id, [('user', 'initial')])))
+            outcomes.append(('result', await app.arun(session_id, [('user', 'initial')])))
         except Exception as error:
             outcomes.append(('error', error))
 
-    worker = Thread(target=run, daemon=True)
-    worker.start()
+    worker = asyncio.create_task(run())
+
     return worker, outcomes
 
 
-def test_stop_after_current_answer_discards_pending_messages(monkeypatch, caplog):
+@async_test
+async def test_stop_after_current_answer_discards_pending_messages(monkeypatch, caplog):
     entered, release = Event(), Event()
 
     class BlockingModel(FakeMessagesListChatModel):
@@ -54,12 +60,12 @@ def test_stop_after_current_answer_discards_pending_messages(monkeypatch, caplog
             assert release.wait(timeout=3)
             return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
 
-    app = build_app(monkeypatch, BlockingModel(responses=[AIMessage(content='answer')]))
-    session_id = app.create_session('A')
+    app = await build_app(monkeypatch, BlockingModel(responses=[AIMessage(content='answer')]))
+    session_id = await app.acreate_session('A')
     with caplog.at_level(logging.INFO):
         worker, outcomes = run_in_worker(app, session_id)
         try:
-            assert entered.wait(timeout=3)
+            assert await asyncio.to_thread(entered.wait, timeout=3)
             app.steer(session_id, 'private-steering')
             app.follow_up(session_id, 'private-follow-up')
             app.request_stop(session_id)
@@ -68,9 +74,9 @@ def test_stop_after_current_answer_discards_pending_messages(monkeypatch, caplog
                 app.steer(session_id, 'too-late')
         finally:
             release.set()
-            worker.join(timeout=3)
+            await asyncio.wait_for(asyncio.shield(worker), 3)
 
-    assert not worker.is_alive()
+    assert worker.done()
     assert outcomes[0][0] == 'result', outcomes
     assert [m.content for m in outcomes[0][1]['messages']] == ['initial', 'answer']
     assert outcomes[0][1]['run_stopped'] is True
@@ -88,7 +94,8 @@ def test_stop_after_current_answer_discards_pending_messages(monkeypatch, caplog
     assert 'private-follow-up' not in caplog.text
 
 
-def test_stop_waits_for_current_tool_batch_and_skips_next_model(monkeypatch):
+@async_test
+async def test_stop_waits_for_current_tool_batch_and_skips_next_model(monkeypatch):
     first_started, second_started, release = Event(), Event(), Event()
     model_inputs = []
 
@@ -115,18 +122,18 @@ def test_stop_waits_for_current_tool_batch_and_skips_next_model(monkeypatch):
         {'name': 'first_tool', 'args': {}, 'id': 'call-one'},
         {'name': 'second_tool', 'args': {}, 'id': 'call-two'},
     ]), AIMessage(content='must-not-be-called')])
-    app = build_app(monkeypatch, model, [ToolSpec(first_tool, first_tool.args_schema, permissions=ToolPermission(default='allow')), ToolSpec(second_tool, second_tool.args_schema, permissions=ToolPermission(default='allow'))])
-    session_id = app.create_session('A')
+    app = await build_app(monkeypatch, model, [ToolSpec(first_tool, first_tool.args_schema, permissions=ToolPermission(default='allow')), ToolSpec(second_tool, second_tool.args_schema, permissions=ToolPermission(default='allow'))])
+    session_id = await app.acreate_session('A')
     worker, outcomes = run_in_worker(app, session_id)
     try:
-        assert first_started.wait(timeout=3)
-        assert second_started.wait(timeout=3)
+        assert await asyncio.to_thread(first_started.wait, timeout=3)
+        assert await asyncio.to_thread(second_started.wait, timeout=3)
         app.request_stop(session_id)
     finally:
         release.set()
-        worker.join(timeout=3)
+        await asyncio.wait_for(asyncio.shield(worker), 3)
 
-    assert not worker.is_alive()
+    assert worker.done()
     assert outcomes[0][0] == 'result', outcomes
     assert len(model_inputs) == 1
     result = outcomes[0][1]
@@ -136,7 +143,8 @@ def test_stop_waits_for_current_tool_batch_and_skips_next_model(monkeypatch):
     ]
 
 
-def test_model_failure_wins_over_requested_stop(monkeypatch, caplog):
+@async_test
+async def test_model_failure_wins_over_requested_stop(monkeypatch, caplog):
     entered, release = Event(), Event()
     failure = RuntimeError('private-model-failure')
 
@@ -146,25 +154,26 @@ def test_model_failure_wins_over_requested_stop(monkeypatch, caplog):
             assert release.wait(timeout=3)
             raise failure
 
-    app = build_app(monkeypatch, FailingModel(responses=[]))
-    session_id = app.create_session('A')
+    app = await build_app(monkeypatch, FailingModel(responses=[]))
+    session_id = await app.acreate_session('A')
     with caplog.at_level(logging.INFO):
         worker, outcomes = run_in_worker(app, session_id)
         try:
-            assert entered.wait(timeout=3)
+            assert await asyncio.to_thread(entered.wait, timeout=3)
             app.request_stop(session_id)
         finally:
             release.set()
-            worker.join(timeout=3)
+            await asyncio.wait_for(asyncio.shield(worker), 3)
 
-    assert not worker.is_alive()
+    assert worker.done()
     assert outcomes == [('error', failure)]
     run_events = [r.run_event['event'] for r in caplog.records if hasattr(r, 'run_event')]
     assert run_events == ['run_started', 'run_failed']
     assert 'private-model-failure' not in caplog.text
 
 
-def test_stop_state_resets_before_next_run(monkeypatch, caplog):
+@async_test
+async def test_stop_state_resets_before_next_run(monkeypatch, caplog):
     entered, release = Event(), Event()
     calls = []
 
@@ -176,21 +185,21 @@ def test_stop_state_resets_before_next_run(monkeypatch, caplog):
                 assert release.wait(timeout=3)
             return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
 
-    app = build_app(monkeypatch, FirstCallBlocked(responses=[
+    app = await build_app(monkeypatch, FirstCallBlocked(responses=[
         AIMessage(content='first-answer'), AIMessage(content='second-answer'),
     ]))
-    session_id = app.create_session('A')
+    session_id = await app.acreate_session('A')
     with caplog.at_level(logging.INFO):
         worker, outcomes = run_in_worker(app, session_id)
         try:
-            assert entered.wait(timeout=3)
+            assert await asyncio.to_thread(entered.wait, timeout=3)
             app.request_stop(session_id)
         finally:
             release.set()
-            worker.join(timeout=3)
-        second = app.run(session_id, [('user', 'second-task')])
+            await asyncio.wait_for(asyncio.shield(worker), 3)
+        second = await app.arun(session_id, [('user', 'second-task')])
 
-    assert not worker.is_alive()
+    assert worker.done()
     assert outcomes[0][1]['run_stopped'] is True
     assert second['run_stopped'] is False
     assert [m.content for m in second['messages']] == [
@@ -200,16 +209,18 @@ def test_stop_state_resets_before_next_run(monkeypatch, caplog):
     assert run_events == ['run_started', 'run_stopped', 'run_started', 'run_completed']
 
 
-def test_stop_rejects_idle_and_unknown_sessions(monkeypatch):
-    app = build_app(monkeypatch, FakeMessagesListChatModel(responses=[]))
-    session_id = app.create_session('A')
+@async_test
+async def test_stop_rejects_idle_and_unknown_sessions(monkeypatch):
+    app = await build_app(monkeypatch, FakeMessagesListChatModel(responses=[]))
+    session_id = await app.acreate_session('A')
     with pytest.raises(application.SessionBusyError):
         app.request_stop(session_id)
     with pytest.raises(KeyError):
         app.request_stop('missing-session')
 
 
-def test_stop_rejects_closed_window_while_run_is_still_busy():
+@async_test
+async def test_stop_rejects_closed_window_while_run_is_still_busy():
     service = application.SessionService(ModelCatalog('A', {
         'A': FakeMessagesListChatModel(responses=[]),
     }))
@@ -217,40 +228,44 @@ def test_stop_rejects_closed_window_while_run_is_still_busy():
     closed, release = Event(), Event()
 
     class PausedAtEndAgent:
-        def invoke(self, _input, *, context, config):
+        async def ainvoke(self, _input, *, context, config):
             assert service.finish_run_boundary(context['session_id']) == (False, [])
             closed.set()
-            assert release.wait(timeout=3)
+            assert await asyncio.to_thread(release.wait, timeout=3)
             return {'messages': []}
 
-    app = application.LocalApplication('A', service, PausedAtEndAgent(), prepare_tool_registry([]))
+    app = AsyncApplication(service._catalog, service, PausedAtEndAgent(), prepare_tool_registry([]))
     worker, outcomes = run_in_worker(app, session_id)
     try:
-        assert closed.wait(timeout=3)
+        assert await asyncio.to_thread(closed.wait, timeout=3)
         with pytest.raises(application.SessionBusyError):
             app.request_stop(session_id)
     finally:
         release.set()
-        worker.join(timeout=3)
+        try:
+            await asyncio.wait_for(asyncio.shield(worker), 3)
+        finally:
+            await app.aclose()
 
-    assert not worker.is_alive()
+    assert worker.done()
     assert outcomes == [('result', {'messages': []})]
 
 
-def test_stop_before_first_model_does_not_inject_queued_steering(monkeypatch):
+@async_test
+async def test_stop_before_first_model_does_not_inject_queued_steering(monkeypatch):
     model = FakeMessagesListChatModel(responses=[AIMessage(content='first-answer')])
-    app = build_app(monkeypatch, model)
-    session_id = app.create_session('A')
+    app = await build_app(monkeypatch, model)
+    session_id = await app.acreate_session('A')
     agent = app._agent
 
     class QueueBeforeInvoke:
-        def invoke(self, input, *, context, config):
+        async def ainvoke(self, input, *, context, config):
             app.steer(session_id, 'not-for-first-model')
             app.request_stop(session_id)
-            return agent.invoke(input, context=context, config=config)
+            return await agent.ainvoke(input, context=context, config=config)
 
     app._agent = QueueBeforeInvoke()
-    result = app.run(session_id, [('user', 'initial')])
+    result = await app.arun(session_id, [('user', 'initial')])
 
     assert [message.content for message in result['messages']] == ['initial']
     assert model.i == 0  # A stop before dispatch sends no model request.

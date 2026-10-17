@@ -1,4 +1,4 @@
-"""Share finite application lifecycles while changing only their IO execution."""
+"""Drive application lifecycle steps through actual blocking or native async IO."""
 
 from dataclasses import dataclass, field
 from collections.abc import Callable
@@ -8,27 +8,15 @@ from naiyue_test_agent.agent_runtime.async_utils import await_settled, run_block
 
 @dataclass
 class IOCall:
-    call: Callable
+    call: Callable | None = None
     args: tuple = ()
     kwargs: dict = field(default_factory=dict)
     async_call: Callable | None = None
     critical: bool = True
 
-
-def run_steps(steps):
-    try:
-        pending = next(steps)
-        while True:
-            try:
-                result = pending.call(*pending.args, **pending.kwargs)
-            except BaseException as error:
-                pending = steps.throw(error)
-            else:
-                pending = steps.send(result)
-    except StopIteration as completed:
-        return completed.value
-    finally:
-        steps.close()
+    def __post_init__(self):
+        if (self.call is None) == (self.async_call is None):
+            raise ValueError('IOCall requires exactly one implementation')
 
 
 async def arun_steps(steps):

@@ -1,5 +1,7 @@
 # 消息、状态与保存时点探针（2026-10-08）
 
+2026-10-17入口版本边界：Spec093已把应用消费者和诊断探针迁到原生异步App，删除独立同步应用/持久化入口；下文早期源码名称和运行记录保留当时证据。当前API用arun/aresume_tool_approval、aget_session_history/arecover_session；框架本身的同步能力与本项目低层同步策略不因此删除。
+
 范围：无网络研究，不改产品运行代码。当前本机 LangChain 1.4.2、LangGraph 1.2.12，使用现有应用装配、假模型、内存 checkpoint 和临时目录。脚本是研究产物，不是已实现消息订阅，也不称为产品 TDD。
 
 命令：`.venv/bin/python -m scripts.probe_message_state_boundaries`

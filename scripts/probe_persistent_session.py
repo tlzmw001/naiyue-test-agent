@@ -1,5 +1,7 @@
 """Bounded two-process persistence probe; default is deterministic and offline."""
 
+import asyncio
+
 import argparse
 
 from naiyue_test_agent.config_paths import get_models_path
@@ -16,6 +18,9 @@ from unittest.mock import patch
 
 
 def _worker(args):
+    return asyncio.run(_async__worker(args))
+
+async def _async__worker(args):
     os.environ['LANGSMITH_TRACING'] = 'false'
     os.environ['LANGCHAIN_TRACING_V2'] = 'false'
     logging.getLogger().setLevel(logging.CRITICAL)
@@ -23,7 +28,7 @@ def _worker(args):
     from langchain_core.messages import AIMessage, HumanMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.persistent import build_persistent_application
+    from naiyue_test_agent.application.async_persistent import open_async_persistent_application
     from naiyue_test_agent.application.session_storage import SessionStorage
     from naiyue_test_agent.model_access import ModelCatalog
 
@@ -51,16 +56,16 @@ def _worker(args):
         with patch.object(application, 'load_model_catalog',
                           application.load_model_catalog if args.real else
                           lambda _p: ModelCatalog('offline', {'offline': HistoryModel(responses=[])})):
-            with SessionStorage(args.database) as storage:
-                app = build_persistent_application(args.config, storage=storage, tools=[],
-                    system_prompt='Keep the synthetic test fact. Answer only the requested exact value.', response_format=None)
+            async with open_async_persistent_application(args.config, database_path=args.database, tools=[],
+                    system_prompt='Keep the synthetic test fact. Answer only the requested exact value.', response_format=None) as app:
+                storage = app._sessions._persistence.storage
                 if args.worker == 'save':
-                    session = app.create_session(app.default_model_id)
+                    session = await app.acreate_session(app.default_model_id)
                     prompt = f'The synthetic test fact is {args.value}. Remember it and reply only SAVED.'
                 else:
-                    session = app.restore_session(args.session)
+                    session = await app.arestore_session(args.session)
                     prompt = 'What is the synthetic test fact from the earlier conversation? Reply with only its exact value.'
-                result = app.run(session, [('user', prompt)])
+                result = await app.arun(session, [('user', prompt)])
                 row = storage.get(session)
                 assert len(calls) == 1 and row['state'] == 'ready'
                 history_used = result['messages'][-1].text.strip() == args.value if args.worker == 'resume' else None

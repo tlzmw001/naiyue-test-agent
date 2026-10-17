@@ -1,6 +1,7 @@
 """Real graph decisions with synthetic Windows subjects; no native IO emulation."""
 
-import asyncio
+from native_application_helpers import async_test
+
 from dataclasses import replace
 
 import pytest
@@ -19,8 +20,8 @@ from test_dynamic_tools import DynamicModel
     ('read', {}), ('ls', {}), ('find', {'pattern': '*'}), ('grep', {'pattern': 'NEEDLE'}),
     ('write', {'content': 'after'}), ('edit', {'edits': [{'oldText': 'before', 'newText': 'after'}]}),
 ])
-@pytest.mark.parametrize('asynchronous', [False, True])
-def test_extended_windows_target_denied_before_all_file_tool_execution(monkeypatch, tmp_path, tool_name, args, asynchronous):
+@async_test
+async def test_extended_windows_target_denied_before_all_file_tool_execution(monkeypatch, tmp_path, tool_name, args):
     environment = {'kind': 'host', 'platform': 'windows'}
     target = r'\\?\C:\work\private.txt'
     prepared = []
@@ -47,20 +48,15 @@ def test_extended_windows_target_denied_before_all_file_tool_execution(monkeypat
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     options = dict(tools=[spec], settings=settings, system_prompt='', response_format=None)
     async def scenario():
-        if asynchronous:
-            app = await build_async_local_application('synthetic', **options)
-            sid = await app.acreate_workspace_session('A', tmp_path)
-        else:
-            app = application.build_local_application('synthetic', **options)
-            sid = app.create_workspace_session('A', tmp_path)
+        app = await build_async_local_application('synthetic', **options)
+        sid = await app.acreate_workspace_session('A', tmp_path)
         events = []
         app.subscribe_events(events.append)
         try:
-            result = await app.arun(sid, [('user', 'operate')]) if asynchronous else app.run(sid, [('user', 'operate')])
+            result = await app.arun(sid, [('user', 'operate')])
             assert len(prepared) == 1
             config = {'configurable': {'thread_id': app._sessions._sessions[sid]['thread_id']}}
-            snapshots = ([item async for item in app._agent.aget_state_history(config)] if asynchronous
-                         else list(app._agent.get_state_history(config)))
+            snapshots = ([item async for item in app._agent.aget_state_history(config)])
             batches = [item.values['tool_execution']['calls'] for item in snapshots
                        if item.values.get('tool_execution', {}).get('calls')]
             assert batches, 'prepared permission facts must be checkpointed'
@@ -73,8 +69,5 @@ def test_extended_windows_target_denied_before_all_file_tool_execution(monkeypat
             finished = [event for event in events if event.event_type == 'tool_call_finished']
             assert len(finished) == 1 and finished[0].data.outcome == 'not_executed'
         finally:
-            if asynchronous:
-                await app.aclose()
-            else:
-                await app._sessions._catalog.aclose()
-    asyncio.run(scenario())
+            await app.aclose()
+    await scenario()

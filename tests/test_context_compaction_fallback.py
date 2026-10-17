@@ -1,5 +1,7 @@
 """Failed proactive summaries may fall back only with usable original history."""
 
+from native_application_helpers import async_test, build_application
+
 import logging
 from concurrent.futures import CancelledError
 
@@ -8,12 +10,12 @@ import httpx
 import pytest
 from ollama import ResponseError
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AuthenticationError
-from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 from naiyue_test_agent import application
+from test_application_run_events import ToolModel
 from naiyue_test_agent.agent_runtime.context_compaction import (
     ContextCompactionError, SUMMARY_MARKER,
 )
@@ -21,7 +23,7 @@ from naiyue_test_agent.model_access import ModelCatalog, ModelConfigError
 from naiyue_test_agent.model_access.errors import classify_model_failure
 
 
-class FallbackFake(FakeMessagesListChatModel):
+class FallbackFake(ToolModel):
     summary_results: list[object]
     summary_inputs: list = []
     normal_inputs: list = []
@@ -50,7 +52,7 @@ def _sdk_status(error_type, status):
     return error_type('PRIVATE_SDK_FAILURE', response=response, body=None)
 
 
-def _case(monkeypatch, summary_result, *, send_margin=None, normal_failure=None):
+async def _case(monkeypatch, summary_result, *, send_margin=None, normal_failure=None):
     messages = [
         HumanMessage(content='PRIVATE_FIRST_' + 'x' * 100),
         AIMessage(content='', tool_calls=[
@@ -81,10 +83,10 @@ def _case(monkeypatch, summary_result, *, send_margin=None, normal_failure=None)
     )
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
-    app = application.build_local_application(
+    app = await build_application(
         'synthetic.json', tools=[], system_prompt='BASE', response_format=None,
     )
-    return app, app.create_session('A'), model, messages, estimate, 400 - output
+    return app, await app.acreate_session('A'), model, messages, estimate, 400 - output
 
 
 def _events(caplog, attribute):
@@ -108,13 +110,14 @@ def _events(caplog, attribute):
     (AIMessage(content='partial', response_metadata={'finish_reason': 'length'}),
      'summary_truncated'),
 ])
-def test_recoverable_summary_failure_preserves_history_and_completes_run(
+@async_test
+async def test_recoverable_summary_failure_preserves_history_and_completes_run(
     monkeypatch, caplog, summary_result, fallback_reason,
 ):
-    app, session, model, messages, estimate, budget = _case(monkeypatch, summary_result)
+    app, session, model, messages, estimate, budget = await _case(monkeypatch, summary_result)
     assert 50 < estimate < budget
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        result = app.run(session, messages)
+        result = await app.arun(session, messages)
 
     assert len(model.summary_inputs) == 1
     assert len(model.normal_inputs) == 1
@@ -125,7 +128,7 @@ def test_recoverable_summary_failure_preserves_history_and_completes_run(
                    for message in result['messages'])
     assert app._sessions._sessions[session]['busy'] is False
     thread = app._sessions._sessions[session]['thread_id']
-    latest = app._agent.get_state({'configurable': {'thread_id': thread}})
+    latest = await app._agent.aget_state({'configurable': {'thread_id': thread}})
     assert latest.values['messages'] == result['messages']
     events = _events(caplog, 'context_compaction')
     names = [event['event'] for event in events]
@@ -149,19 +152,20 @@ def test_recoverable_summary_failure_preserves_history_and_completes_run(
      'summary_invalid'),
 ])
 @pytest.mark.parametrize('send_margin', [0, -1])
-def test_original_send_budget_boundary_controls_fallback(
+@async_test
+async def test_original_send_budget_boundary_controls_fallback(
     monkeypatch, caplog, summary_result, reason, send_margin,
 ):
-    app, session, model, messages, estimate, budget = _case(
+    app, session, model, messages, estimate, budget = await _case(
         monkeypatch, summary_result, send_margin=send_margin,
     )
     assert budget == estimate + send_margin
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         if send_margin == 0:
-            assert app.run(session, messages)['messages'][-1].content == 'continued'
+            assert (await app.arun(session, messages))['messages'][-1].content == 'continued'
         else:
             with pytest.raises(ContextCompactionError, match=reason):
-                app.run(session, messages)
+                await app.arun(session, messages)
     assert len(model.summary_inputs) == 1
     assert len(model.normal_inputs) == (1 if send_margin == 0 else 0)
     events = _events(caplog, 'context_compaction')
@@ -187,14 +191,15 @@ def test_original_send_budget_boundary_controls_fallback(
         {'name': 'read', 'args': '{', 'id': 'invalid-call', 'error': 'PRIVATE_PARSE'},
     ]),
 ])
-def test_nonrecoverable_summary_failure_never_falls_back(
+@async_test
+async def test_nonrecoverable_summary_failure_never_falls_back(
     monkeypatch, caplog, summary_result,
 ):
-    app, session, model, messages, estimate, budget = _case(monkeypatch, summary_result)
+    app, session, model, messages, estimate, budget = await _case(monkeypatch, summary_result)
     assert estimate < budget
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(ContextCompactionError):
-            app.run(session, messages)
+            await app.arun(session, messages)
     assert len(model.summary_inputs) == 1
     assert model.normal_inputs == []
     assert app._sessions._sessions[session]['busy'] is False
@@ -204,14 +209,15 @@ def test_nonrecoverable_summary_failure_never_falls_back(
     assert 'PRIVATE_' not in caplog.text
 
 
-def test_normal_model_failure_after_fallback_is_still_a_failed_run(monkeypatch, caplog):
+@async_test
+async def test_normal_model_failure_after_fallback_is_still_a_failed_run(monkeypatch, caplog):
     normal_failure = TimeoutError('PRIVATE_NORMAL_FAILURE')
-    app, session, model, messages, _, _ = _case(
+    app, session, model, messages, _, _ = await _case(
         monkeypatch, TimeoutError('PRIVATE_SUMMARY_FAILURE'), normal_failure=normal_failure,
     )
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(TimeoutError) as caught:
-            app.run(session, messages)
+            await app.arun(session, messages)
     assert caught.value is normal_failure
     assert len(model.summary_inputs) == len(model.normal_inputs) == 1
     assert model.normal_inputs[0][1:] == messages
@@ -222,14 +228,15 @@ def test_normal_model_failure_after_fallback_is_still_a_failed_run(monkeypatch, 
     assert 'PRIVATE_' not in caplog.text
 
 
-def test_incomplete_original_tool_pair_prevents_fallback(monkeypatch, caplog):
-    app, session, model, messages, _, _ = _case(monkeypatch, TimeoutError())
+@async_test
+async def test_incomplete_original_tool_pair_prevents_fallback(monkeypatch, caplog):
+    app, session, model, messages, _, _ = await _case(monkeypatch, TimeoutError())
     messages[5] = AIMessage(content='', tool_calls=[
         {'name': 'read', 'args': {'path': 'b.txt'}, 'id': 'unanswered'},
     ])
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(ContextCompactionError, match='summary_failed'):
-            app.run(session, messages)
+            await app.arun(session, messages)
     assert len(model.summary_inputs) == 1
     assert model.normal_inputs == []
     assert not any(event['event'] == 'context_compaction_fallback'

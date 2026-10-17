@@ -1,6 +1,6 @@
 """Compact text history for proactive and explicit-overflow recovery."""
 
-from .observation import observe, emit_event
+from .observation import observe
 
 import asyncio
 import json
@@ -26,7 +26,7 @@ from naiyue_test_agent.model_access import (
 )
 from naiyue_test_agent.model_access.stop_reason import normalize_stop_reason
 from naiyue_test_agent.model_access.errors import describe_model_failure
-from .context_summary_io import run_summary_steps, arun_summary_steps
+from .context_summary_io import arun_summary_steps
 from naiyue_test_agent.model_access.messages import content_text
 
 
@@ -395,16 +395,6 @@ def _compaction_steps(
         raise ContextCompactionError('compaction_internal') from error
 
 
-def _compact_messages(
-    messages: list, model: BaseChatModel, *, model_id: str | None, context: dict,
-    system_messages: list, tools: list, force: bool = False,
-):
-    return run_summary_steps(_compaction_steps(
-        messages, model, model_id=model_id, context=context,
-        system_messages=system_messages, tools=tools, force=force,
-    ))
-
-
 async def _acompact_messages(
     messages: list, model: BaseChatModel, *, model_id: str | None, context: dict,
     system_messages: list, tools: list, force: bool = False,
@@ -441,8 +431,6 @@ class _ContextCompactionMiddleware(AgentMiddleware):
             system_messages=[SystemMessage(content=prompt)], tools=tools,
         )
 
-    def before_agent(self, state, runtime):
-        return _compact_messages(**self._arguments(state, runtime))
 
     @hook_config(can_jump_to=['end'])
     async def abefore_agent(self, state, runtime):
