@@ -1,0 +1,16 @@
+.menu { position: fixed; width: 188px; z-index: 60; padding: 6px; background: #fff; border: 1px solid #e4e4e4; border-radius: 12px; box-shadow: 0 8px 30px #00000016; }
+.menu > button { display: block; width: 100%; padding: 9px 10px; border: 0; border-radius: 7px; background: transparent; color: #444; font-size: 12px; text-align: left; }
+.menu > button:hover:not(:disabled), .menu > button:focus-visible { background: #f2f2f2; }
+.separator { height: 1px; background: #eee; margin: 4px; }
+.menu > .delete { color: #b53c37; }
+.menu p { color: #9c4540; font-size: 11px; padding: 4px 10px; }
+.backdrop { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 20px; background: #00000030; }
+.dialog { width: min(380px, 100%); background: #fff; border: 1px solid #e4e4e4; border-radius: 16px; padding: 22px; box-shadow: 0 12px 45px #00000018; }
+.dialog h2 { margin: 0 0 18px; font-size: 16px; color: #333; font-weight: 600; }
+.dialog label { display: block; color: #666; font-size: 12px; }
+.dialog input { width: 100%; display: block; margin-top: 8px; padding: 10px; border: 1px solid #ccc; border-radius: 8px; color: #333; font-size: 13px; }
+.dialog p { font-size: 13px; line-height: 1.8; color: #666; margin: 8px 0; overflow-wrap: anywhere; }
+.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
+.actions button { padding: 9px 15px; border: 1px solid #ddd; border-radius: 8px; background: #fff; color: #444; font-size: 12px; }
+.actions .primary { background: #262626; border-color: #262626; color: #fff; }
+.actions .danger { background: #b53c37; border-color: #b53c37; color: #fff; }

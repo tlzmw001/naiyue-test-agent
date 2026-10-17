@@ -12,7 +12,7 @@ from naiyue_test_agent.application.cli_display import CliEventDisplay
 
 def event(event_type, sequence, **data):
     return SimpleNamespace(event_type=event_type, session_id='session', run_id='run',
-                           sequence=sequence, data=SimpleNamespace(**data))
+                           sequence=sequence, source=None, data=SimpleNamespace(**data))
 
 
 def message(sequence, identity='a', text='answer', kind='message_completed', **extra):

@@ -31,7 +31,7 @@ from naiyue_test_agent.tools.registry import ToolRegistry
 from naiyue_test_agent.agent_runtime.call_observation import (
     make_model_selection_middleware,
 )
-from naiyue_test_agent.agent_runtime.events import RunEventPublisher
+from naiyue_test_agent.agent_runtime.events import RunEventPublisher, AgentEventPublisher
 from .active_stop import StopModelMiddleware, StopBoundaryMiddleware
 from .run_control import RunControl
 from naiyue_test_agent.agent_runtime.turn_observation import (
@@ -52,12 +52,16 @@ from naiyue_test_agent.agent_runtime.context_operation_observation import (
 class RunContext(TypedDict):
     session_id: str
     agent_path: NotRequired[str]
+    parent_tool_call_id: NotRequired[str]
+    parent_run_id: NotRequired[str]
+    root_run_id: NotRequired[str]
+    ainvoke_subagent: NotRequired[Callable]
     run_id: NotRequired[str]
     workspace_root: NotRequired[Path]
     approval_grants: NotRequired[OneUseApprovalGrants]
     read_resource_roots: NotRequired[tuple[Path, ...]]
     _run_control: NotRequired[RunControl]
-    _run_event_publisher: NotRequired[RunEventPublisher]
+    _run_event_publisher: NotRequired[RunEventPublisher | AgentEventPublisher]
     _turn_observer: NotRequired[TurnObserver]
     _control_observer: NotRequired[ControlObserver]
     _context_observer: NotRequired[ContextOperationObserver]
@@ -75,7 +79,7 @@ def build_runtime_agent(
     resolve_active_tool_names: Callable,
     system_prompt: str,
     response_format: Any,
-    resolve_model: Callable[[str], tuple[str, BaseChatModel]],
+    resolve_model: Callable[[str, str], tuple[str, BaseChatModel]],
     record_selection: Callable[[str, str], None],
     checkpointer: BaseCheckpointSaver | None = None,
     permission_settings: PermissionSettings | None = None,
@@ -99,7 +103,7 @@ def _assemble_interactive_runtime(
     resolve_active_tool_names: Callable,
     system_prompt: str,
     response_format: Any,
-    resolve_model: Callable[[str], tuple[str, BaseChatModel]],
+    resolve_model: Callable[[str, str], tuple[str, BaseChatModel]],
     record_selection: Callable[[str, str], None],
     checkpointer: BaseCheckpointSaver | None,
     drain_steering: Callable[[str], list[str]],
@@ -107,6 +111,8 @@ def _assemble_interactive_runtime(
     finish_run_boundary: Callable[[str], tuple[bool, list[str]]],
     prepare_control_messages: Callable[[str, list[str]], list[HumanMessage]],
     resolve_project_instructions: Callable[[str], str | None] | None = None,
+    resolve_subagent_roles: Callable | None = None,
+    resolve_prompt_parts: Callable | None = None,
     observe_turns: bool = False,
     permission_settings: PermissionSettings | None = None,
     resolve_permission_context: Callable = fixed_permission_context,
@@ -142,7 +148,8 @@ def _assemble_interactive_runtime(
             }
         return None
 
-    toolset = ToolSetMiddleware(tool_registry, resolve_active_tool_names, system_prompt, resolve_project_instructions)
+    toolset = ToolSetMiddleware(tool_registry, resolve_active_tool_names, system_prompt,
+                                resolve_project_instructions, resolve_subagent_roles, resolve_prompt_parts)
     compaction_middleware = make_context_compaction_middleware(
         resolve_model, model_inputs=toolset.model_inputs,
     )
@@ -164,7 +171,7 @@ def _build_runtime_agent(
     default_model, *, tool_registry, resolve_active_tool_names, system_prompt, response_format, resolve_model,
     record_selection, checkpointer, steering_middleware, state_schema=None,
     observe_turns=False, active_stop=False, toolset=None, permission_settings=None, resolve_permission_context=fixed_permission_context,
-    permission_reviewer=None,
+    permission_reviewer=None, model_middleware=(),
 ):
     permission_settings = permission_settings if permission_settings is not None else PermissionSettings()
     toolset = toolset or ToolSetMiddleware(tool_registry, resolve_active_tool_names, system_prompt)
@@ -181,7 +188,7 @@ def _build_runtime_agent(
                     ToolErrorMiddleware(on_error=tool_error_feedback), ExecutionAuthorizationMiddleware(permission_settings),
                     *steering_middleware, BatchApprovalMiddleware(has_checkpointer=checkpointer is not None),
                     PermissionMiddleware(tool_registry, permission_settings, resolve_permission_context, permission_reviewer),
-                    ModelInputMiddleware(), observe_model_request,
+                    ModelInputMiddleware(), observe_model_request, *model_middleware,
                     *([StopBoundaryMiddleware()] if active_stop else [])],
         checkpointer=checkpointer,
     )
@@ -205,7 +212,7 @@ def build_configured_runtime_agent(
     settings = permission_settings if permission_settings is not None else PermissionSettings()
     reviewer = AutoPermissionReviewer.from_catalog(catalog, settings.auto)
 
-    def resolve_model(session_id: str) -> tuple[str, BaseChatModel]:
+    def resolve_model(session_id: str, agent_path='root') -> tuple[str, BaseChatModel]:
         model_id = select_model_id(session_id)
         return model_id, catalog.get(model_id)
 

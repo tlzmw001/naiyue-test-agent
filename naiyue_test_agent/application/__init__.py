@@ -6,6 +6,7 @@ from naiyue_test_agent.agent_runtime import (
 from naiyue_test_agent.model_access import load_model_catalog
 from naiyue_test_agent.tools.registry import ToolRegistry, ToolSpec
 from naiyue_test_agent.tools.settings import load_tool_settings
+from naiyue_test_agent.tools.settings import SubAgentOutputSettings
 from naiyue_test_agent.tools.permission_rules import validate_permission_rules
 
 
@@ -22,8 +23,12 @@ def prepare_tool_registry(specs: list[ToolSpec]) -> ToolRegistry:
     return registry
 
 
-def _assemble_application(catalog, sessions, checkpointer, *, tool_registry, system_prompt, response_format):
+def _assemble_application(catalog, sessions, checkpointer, *, tool_registry, system_prompt, response_format, subagents=(), subagent_settings=None):
     """Shared assembly for actual memory and persistent entry points."""
+    sessions._system_prompt = system_prompt
+    sessions.configure_subagent_runtime(checkpointer, subagent_settings or SubAgentOutputSettings())
+    for spec in subagents:
+        sessions.register_subagent(spec)
     return _assemble_interactive_runtime(
         catalog.get(catalog.default_model_id),
         tool_registry=tool_registry,
@@ -38,7 +43,8 @@ def _assemble_application(catalog, sessions, checkpointer, *, tool_registry, sys
         drain_steering=sessions.drain_steering,
         is_stop_requested=sessions.is_stop_requested,
         finish_run_boundary=sessions.finish_run_boundary,
-        resolve_project_instructions=sessions.resolve_project_instructions,
+        resolve_subagent_roles=sessions.get_registered_subagents,
+        resolve_prompt_parts=sessions.resolve_prompt_parts,
         observe_turns=True,
         prepare_control_messages=sessions.prepare_control_messages,
     )

@@ -130,9 +130,9 @@ class ControlObserver:
                 del self._records[self._stop_id]
         self.flush()
 
-    def approval_requested(self, tool_call_ids):
+    def approval_requested(self, tool_call_ids, approval_batch_id=None, items=()):
         with self._record_lock:
-            self._outbox.append(('approval_requested', ApprovalRequestedData(tool_call_ids)))
+            self._outbox.append(('approval_requested', ApprovalRequestedData(tool_call_ids, approval_batch_id, items)))
         self.flush()
 
     def close(self, reason):

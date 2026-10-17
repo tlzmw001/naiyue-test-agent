@@ -106,7 +106,7 @@ async def test_failed_model_call_still_records_safe_request_and_propagates(caplo
     _runtime_names_1 = _runtime_registry_1.names()
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='BASE', response_format=None,
-        resolve_model=lambda _session_id: ('A', model),
+        resolve_model=lambda _session_id, agent_path='root': ('A', model),
         record_selection=lambda _session_id, _model_id: None,
     )
 

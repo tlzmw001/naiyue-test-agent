@@ -74,7 +74,7 @@ def collect_human_messages(messages):
     return collected
 
 
-def prepare_review_input(messages, call, project_instructions):
+def prepare_review_input(messages, call, project_instructions, *, human_messages=None):
     latest = next((m for m in reversed(messages) if isinstance(m, AIMessage)), None)
     previous = []
     for index, message in enumerate(messages):
@@ -83,7 +83,7 @@ def prepare_review_input(messages, call, project_instructions):
                             for c in message.tool_calls)
     subject = {key: value for key, value in call['subject'].items()
                if key not in ('args', 'anchor', 'resource_roots', 'session_id', 'tool_name')}
-    return {'human_messages': collect_human_messages(messages), 'project_instructions': project_instructions,
+    return {'human_messages': collect_human_messages(messages) if human_messages is None else deepcopy(human_messages), 'project_instructions': project_instructions,
             'previous_calls': previous, 'current_call': {'id': call['id'], 'name': call['name'],
             'args': call['subject'].get('args', call['args'])}, 'subject': subject, 'reason': call['source']}
 
@@ -331,7 +331,8 @@ class PermissionMiddleware(AgentMiddleware):
         batch, project = prepared
         try:
             for call in self._pending_asks(batch):
-                data = prepare_review_input(state['messages'], call, project)
+                data = prepare_review_input(state['messages'], call, project,
+                    human_messages=runtime.context.get('_human_review_messages'))
                 call.update(await self.reviewer.areview(data, {**runtime.context, '_review_call_id': call['id']}))
         except UserStop:
             return finish_stopped_batch(state, runtime)

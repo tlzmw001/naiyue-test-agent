@@ -18,7 +18,7 @@ from .run_control import UserStop, native_async_model
 
 from naiyue_test_agent.agent_runtime.events import (
     ModelCallStartedData, ModelCallFinishedData,
-    RunEventPublisher,
+    RunEventPublisher, AgentEventPublisher,
 )
 from naiyue_test_agent.model_access.errors import (
     unknown_failure_diagnostics,
@@ -36,7 +36,7 @@ logger = logging.getLogger('naiyue_test_agent.agent_runtime')
 
 
 def make_model_selection_middleware(
-    resolve_model: Callable[[str], tuple[str, BaseChatModel]],
+    resolve_model: Callable[[str, str], tuple[str, BaseChatModel]],
     record_selection: Callable[[str, str], None],
 ):
     """Choose the session model with the same gates in sync and async calls."""
@@ -60,7 +60,7 @@ class _ModelSelectionMiddleware(AgentMiddleware):
         run_id = context.get('run_id') if context else None
         correlation = {'run_id': run_id} if run_id else {}
 
-        model_id, model = self.resolve_model(session_id)
+        model_id, model = self.resolve_model(session_id, context.get('agent_path', 'root'))
         if not model_id:
             raise ValueError('Resolved model_id must not be empty')
         self.record_selection(session_id, model_id)
@@ -72,6 +72,8 @@ class _ModelSelectionMiddleware(AgentMiddleware):
                 }},
             )
         call_id = uuid4().hex
+        context['_naiyue_model_call_id'] = call_id
+        context['_naiyue_model_id'] = event_label(model_id)
         context_operations = context.get('_context_observer')
         if context_operations is not None:
             observe(context_operations, context_operations.model_call_started, call_id)
@@ -192,7 +194,7 @@ def token_count(value):
 
 def _emit(context, event_type, data, *, primary_error=None):
     publisher = context.get('_run_event_publisher') if isinstance(context, dict) else None
-    if (not isinstance(publisher, RunEventPublisher)
+    if (not isinstance(publisher, (RunEventPublisher, AgentEventPublisher))
             or not publisher.matches(context.get('session_id'), context.get('run_id'))):
         return
     emit_event(publisher, event_type, data)

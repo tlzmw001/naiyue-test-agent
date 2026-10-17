@@ -54,7 +54,7 @@ async def test_checkpointer_continues_messages_and_switches_model_between_invoke
     _runtime_names_3 = _runtime_registry_3.names()
     agent = build_runtime_agent(
         models['A'], tool_registry=_runtime_registry_3, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_3: names, system_prompt='', response_format=None,
-        resolve_model=lambda session_id: (selected[session_id], models[selected[session_id]]),
+        resolve_model=lambda session_id, agent_path='root': (selected[session_id], models[selected[session_id]]),
         record_selection=lambda session_id, model_id: selections.append((session_id, model_id)),
         checkpointer=InMemorySaver(),
     )
@@ -107,7 +107,7 @@ async def test_switches_model_after_tool_result_in_same_run():
         selected['s1'] = 'B'
         return 'selected B'
 
-    def resolve_model(session_id):
+    def resolve_model(session_id, agent_path='root'):
         model_id = selected[session_id]
         return model_id, models[model_id]
 
@@ -137,7 +137,7 @@ async def test_model_selection_is_isolated_by_session(caplog):
     }
     selections = []
 
-    def resolve_model(session_id):
+    def resolve_model(session_id, agent_path='root'):
         model_id = selected[session_id]
         return model_id, models[model_id]
 
@@ -175,7 +175,7 @@ async def test_successful_model_call_records_reported_cache_usage(
     _runtime_names_4 = _runtime_registry_4.names()
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_4, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_4: names, system_prompt='', response_format=None,
-        resolve_model=lambda _session_id: ('model-A', model),
+        resolve_model=lambda _session_id, agent_path='root': ('model-A', model),
         record_selection=lambda _session_id, _model_id: None,
     )
 
@@ -198,7 +198,7 @@ async def test_missing_session_id_fails_before_model_call(caplog):
     calls = []
     model = FakeListChatModel(responses=['unexpected'])
 
-    def resolve_model(session_id):
+    def resolve_model(session_id, agent_path='root'):
         calls.append(session_id)
         return 'A', model
 
@@ -223,7 +223,7 @@ async def test_selection_recorder_failure_is_not_a_model_call_failure(caplog):
     agent = create_agent(
         model=model, tools=[], context_schema=RunContext,
         middleware=[make_model_selection_middleware(
-            lambda _session_id: ('model-A', model), fail_recording,
+            lambda _session_id, agent_path='root': ('model-A', model), fail_recording,
         )],
     )
 
@@ -252,7 +252,7 @@ async def test_model_failure_records_safe_event_and_propagates_same_exception(
     _runtime_names_5 = _runtime_registry_5.names()
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_5, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_5: names, system_prompt='', response_format=None,
-        resolve_model=lambda session_id: ('model-A', model),
+        resolve_model=lambda session_id, agent_path='root': ('model-A', model),
         record_selection=lambda session_id, model_id: selections.append((session_id, model_id)),
     )
 
@@ -294,7 +294,7 @@ async def test_openai_authentication_failure_is_classified_without_leaking_respo
     _runtime_names_6 = _runtime_registry_6.names()
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_6, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_6: names, system_prompt='', response_format=None,
-        resolve_model=lambda _session_id: ('model-A', model),
+        resolve_model=lambda _session_id, agent_path='root': ('model-A', model),
         record_selection=lambda _session_id, _model_id: None,
     )
 
@@ -330,7 +330,7 @@ async def test_openai_transport_failure_reaches_agent_as_terminal_error(error_ty
     _runtime_names_7 = _runtime_registry_7.names()
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_7, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_7: names, system_prompt='', response_format=None,
-        resolve_model=lambda _session_id: ('model-A', model),
+        resolve_model=lambda _session_id, agent_path='root': ('model-A', model),
         record_selection=lambda _session_id, _model_id: None,
     )
 
@@ -371,7 +371,7 @@ async def test_non_openai_failure_reaches_agent_event_without_leaking_body(
     _runtime_names_8 = _runtime_registry_8.names()
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_8, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_8: names, system_prompt='', response_format=None,
-        resolve_model=lambda _session_id: ('model-A', model),
+        resolve_model=lambda _session_id, agent_path='root': ('model-A', model),
         record_selection=lambda _session_id, _model_id: None,
     )
 

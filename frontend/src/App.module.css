@@ -22,8 +22,16 @@
 .workspace { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .header { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 28px; }
 .headerLeft { display: flex; align-items: center; gap: 16px; min-width: 0; }
-.header select { border: 0; background: transparent; color: #606060; font-size: 13px; max-width: 230px; padding: 6px 4px; cursor: pointer; }
 .workspacePath { color: #8a8a8a; font-size: 12px; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.headerActions { display: flex; min-width: 0; align-items: center; gap: 16px; }
+.agentsButton { border: 1px solid #ddd; border-radius: 8px; background: #fff; padding: 7px 10px; color: #666; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.agentsButton:disabled { opacity: .5; cursor: default; }
+.delegatedAgent { border-bottom: 1px solid #eee; padding: 12px 0; font-size: 13px; }
+.delegatedHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.agentLink { border: 0; background: transparent; padding: 0; color: #444; cursor: pointer; text-align: left; overflow-wrap: anywhere; }
+.agentLink span { margin-left: 8px; color: #999; }
+.agentState { color: #777; font-size: 11px; white-space: nowrap; }
+.delegatedTask { font-size: 12px; color: #777; margin: 6px 0; }
 .conversation { flex: 1; min-height: 0; overflow-y: auto; position: relative; padding: 20px 28px; }
 .welcome { max-width: 768px; width: 100%; height: 100%; margin: auto; display: flex; flex-direction: column; justify-content: center; align-items: center; padding-bottom: 25px; }
 .welcomeMark { border: 1px solid var(--line); border-radius: 18px; width: 55px; height: 55px; display: grid; place-items: center; font-size: 25px; margin-bottom: 25px; }
@@ -61,14 +69,13 @@
 .composer:focus-within { border-color: #bcbcbc; }
 .composer > textarea { width: 100%; resize: vertical; min-height: 48px; max-height: 180px; line-height: 1.6; color: var(--text); border: 0; padding: 0 3px; background: transparent; font-size: 15px; }
 .composer > textarea::placeholder { color: #9a9a9a; }
-.composerActions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; min-height: 34px; }
-.actionGroup { display: flex; align-items: center; gap: 8px; }
+.composerActions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 10px; margin-top: 8px; min-height: 34px; }
+.actionGroup { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .sendButton, .stopButton { display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 50%; flex-shrink: 0; }
 .sendButton { background: #181818; color: white; }
 .sendButton:disabled { background: #d7d7d7; color: #fff; opacity: 1; }
 .stopButton { background: #efefef; color: #333; }
-.followUp { display: flex; align-items: center; gap: 6px; color: #777; font-size: 12px; }
-.followUp input { accent-color: #222; }
+.sendMode { background: transparent; color: #777; border: 0; border-radius: 7px; font-size: 12px; padding: 5px 0; max-width: 116px; cursor: pointer; }
 .composerFooter { font-size: 11px; color: #aaa; text-align: center; padding-top: 11px; }
 .pending { background: #f9f9f9; border: 1px solid #ededed; border-radius: 14px; padding: 12px; margin: 0 0 12px; max-height: 180px; overflow-y: auto; }
 .pendingTitle { color: #777; font-size: 12px; margin-bottom: 7px; }
@@ -87,7 +94,6 @@
   .backdrop { display: block; position: fixed; inset: 0; border: 0; background: #00000030; z-index: 4; }
   .header { padding: 14px 16px; min-height: 65px; gap: 8px; }
   .headerLeft { gap: 8px; }
-  .header select { max-width: 135px; font-size: 12px; }
   .workspacePath { display: none; }
   .conversation { padding: 20px; }
   .composerArea, .feedback { width: calc(100% - 32px); }
@@ -106,20 +112,21 @@
 .toolTiming { display: flex; flex-wrap: wrap; gap: 4px 12px; flex-basis: 100%; padding-left: 18px; color: #777; font-size: 11px; font-variant-numeric: tabular-nums; }
 .toolCounter { font-size: 12px; color: #555; font-variant-numeric: tabular-nums; margin: 8px 0; }
 .toolDetail { padding: 0 14px 12px; }
+.toolDetail section > p { overflow-wrap: anywhere; font-size: 12px; color: #777; }
 .detailLabel { color: #777; font-size: 11px; margin-top: 8px; }
 .toolDetail pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow-y: auto; background: transparent; padding: 6px 0; margin: 0; font-size: 12px; }
 .toolReason { color: #888; font-size: 12px; }
-.approvalArea { width: min(768px, calc(100% - 56px)); margin: 0 auto 12px; }
+.approvalArea { width: min(768px, calc(100% - 56px)); margin: 0 auto 12px; max-height: 45dvh; overflow-y: auto; flex-shrink: 0; display: grid; gap: 8px; }
 .approval { background: #fafafa; border: 1px solid #e6e6e6; border-radius: 16px; padding: 14px; }
-.approvalHeading { display: flex; align-items: center; gap: 12px; font-weight: 600; font-size: 14px; }
+.approvalHeading { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-weight: 600; font-size: 14px; }
 .approvalHeading span, .approval > p { font-size: 12px; color: #777; font-weight: 400; }
-.approval > p { margin: 7px 0 10px; }
+.approval > p { margin: 7px 0 10px; overflow-wrap: anywhere; }
 .approvalItems { max-height: 210px; overflow-y: auto; }
 .approvalItem { padding: 10px 0; border-top: 1px solid #e9e9e9; }
 .approvalSubject { min-width: 0; font-size: 12px; }
 .approvalSubject pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; margin: 5px 0; color: #555; }
 .approvalSubject span { color: #888; overflow-wrap: anywhere; }
-.approvalChoices { display: flex; gap: 18px; font-size: 12px; margin-top: 8px; }
+.approvalChoices { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 12px; margin-top: 8px; }
 .approvalChoices label { display: flex; align-items: center; gap: 5px; padding: 4px 0; }
 .approvalChoices input { accent-color: #222; }
 .approvalSubmit { margin-top: 10px; padding: 9px 14px; border: 0; background: #222; color: #fff; border-radius: 18px; font-size: 12px; }

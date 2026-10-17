@@ -22,7 +22,7 @@ class ProjectInstructionsError(ValueError):
     """The selected workspace instruction file cannot be used safely."""
 
 
-def load_workspace_instructions(workspace_root: Path | None) -> str | None:
+def load_workspace_instruction_part(workspace_root: Path | None):
     """Select AGENTS.md before CLAUDE.md and return a per-run prompt section."""
     if workspace_root is None:
         return None
@@ -51,6 +51,6 @@ def load_workspace_instructions(workspace_root: Path | None) -> str | None:
         logger.info('project_instructions_loaded source=%s bytes=%s', name, len(content))
         if not decoded.strip():
             return None
-        return (f'\n\n<project_instructions source="{name}">\n'
-                f'{decoded}\n</project_instructions>')
+        return {'id': 'project', 'source': name, 'text': (
+            f'\n\n<project_instructions source="{name}">\n{decoded}\n</project_instructions>')}
     return None

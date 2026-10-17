@@ -1,8 +1,10 @@
 """Session queue controls; the session service owns storage, lock, and errors."""
 
-from naiyue_test_agent.agent_runtime.observation import observe
+from naiyue_test_agent.agent_runtime.observation import observe, emit_event
+from naiyue_test_agent.contracts.session_events import ControlData
 
 import logging
+from uuid import uuid4
 
 from langchain_core.messages import HumanMessage, convert_to_messages
 
@@ -12,6 +14,17 @@ logger = logging.getLogger('naiyue_test_agent.application')
 
 class SessionControlMixin:
     """Internal split for the 500-line limit; public control signatures remain."""
+
+    def select_thinking(self, session_id, model_id, level):
+        self._catalog.with_thinking(model_id, level)
+        with self._model_selection_lock:
+            with self._lock:
+                if self._sessions[session_id]['model_id'] != model_id:
+                    raise ValueError('Model selection changed')
+            if self._persistence is not None:
+                self._persistence.storage.select_thinking(session_id, level)
+            with self._lock:
+                self._sessions[session_id]['thinking_level'] = level
 
     def register_tool(self, spec):
         self._tool_registry.register(spec, permission_settings=self._permission_settings)
@@ -31,10 +44,10 @@ class SessionControlMixin:
                 self._sessions[session_id]['permission_mode'] = mode
 
     def resolve_permission_context(self, session_id, agent_path='root'):
-        if agent_path != 'root':
-            raise ValueError('Only the root agent is supported')
         from copy import deepcopy
         with self._lock:
+            if agent_path != 'root':
+                self.subagent_instance(session_id, agent_path)
             row = self._sessions[session_id]
             return {'mode': row['permission_mode'], 'session_allow': deepcopy(row['session_allow']),
                     'project_instructions': row['run_review_project_instructions']}
@@ -45,7 +58,8 @@ class SessionControlMixin:
 
     def resolve_active_tool_names(self, session_id, agent_path='root'):
         if agent_path != 'root':
-            raise ValueError('Only the root agent is supported')
+            with self._lock:
+                return self.subagent_instance(session_id, agent_path)['tool_names']
         return self.get_active_tools(session_id)
 
     def set_active_tools(self, session_id, names):
@@ -97,29 +111,70 @@ class SessionControlMixin:
         if control:
             observe(control, control.flush)
 
-    def request_stop(self, session_id: str, *, run_id: str | None = None) -> list[str]:
+    def request_stop(self, session_id: str, *, run_id: str | None = None, agent_path='root') -> list[str]:
+        return self._request_scope_stop(session_id, run_id=run_id, agent_path=agent_path)
+
+    def _request_scope_stop(self, session_id, *, run_id=None, agent_path='root', reason='user'):
+        targets = []
         with self._lock:
             session = self._sessions[session_id]
             if not session['busy']:
+                if reason != 'user':
+                    return []
                 raise self._busy_error('Session has no active run to stop')
             if run_id is not None and run_id != session['run_id']:
                 raise self._busy_error('Stop request targets a different run')
-            if session['stop_requested']:
-                return []
             active = self._active_runs.get(session_id)
-            if not session['steering_open'] or (active is not None and active.stage == 'finalize'):
-                raise self._busy_error('Session is no longer accepting stop requests')
-            retained = [*session['steering_queue'], *session['follow_up_queue']]
-            session['stop_requested'] = True
-            session['steering_open'] = False
+            if agent_path != 'root':
+                instance = self._subagent_instances.get((session_id, agent_path))
+                if (instance is None or instance['root_run_id'] != session['run_id']
+                        or instance['phase'] == 'finalize' or instance['settled']):
+                    if reason != 'user':
+                        return []
+                    raise self._busy_error('Subagent is no longer accepting stop requests')
+                candidates = [instance]
+                retained, control = [], None
+            else:
+                if session['stop_requested']:
+                    return []
+                if reason == 'user' and ((not session['steering_open'] and (active is None or active.mode != 'compact'))
+                                        or (active is not None and active.stage == 'finalize')):
+                    raise self._busy_error('Session is no longer accepting stop requests')
+                candidates = [instance for (sid, _), instance in self._subagent_instances.items()
+                              if sid == session_id and instance['root_run_id'] == session['run_id']]
+                retained = [*session['steering_queue'], *session['follow_up_queue']]
+                session['stop_requested'] = True
+                session['steering_open'] = False
+                if active is not None:
+                    active.stop_control.mark_requested(reason)
+                control = self._control(session_id) if reason == 'user' else None
+                if control:
+                    observe(control, control.accept, 'stop')
+            for instance in candidates:
+                if instance['phase'] == 'finalize' or instance['status'] == 'stopping':
+                    continue
+                instance['status'] = 'stopping'
+                instance['control'].mark_requested(reason)
+                pending = instance.get('approval')
+                if pending is not None and pending.status == 'pending':
+                    pending.status = 'invalidated'
+                targets.append((instance, pending))
             run_id = session['run_id']
-            control = self._control(session_id)
-            if control:
-                observe(control, control.accept, 'stop')
-        if active is not None:
-            active.stop_control.request()
+        if agent_path == 'root' and active is not None:
+            active.stop_control.request(reason)
+        for instance, pending in targets:
+            instance['control'].request(reason)
+            publisher = instance.get('publisher_view')
+            if reason == 'user':
+                emit_event(publisher, 'control_accepted', lambda: ControlData(uuid4().hex, 'stop'))
+            if pending is not None and pending.status == 'invalidated':
+                def wake(future=pending.future):
+                    if not future.done():
+                        future.set_result(([], None))
+                pending.future.get_loop().call_soon_threadsafe(wake)
         logger.info('stop_requested', extra={'stop_event': {
             'event': 'stop_requested', 'session_id': session_id, 'run_id': run_id,
+            'agent_path': agent_path, 'reason': reason,
         }})
         if control:
             observe(control, control.flush)

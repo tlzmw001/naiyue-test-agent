@@ -15,6 +15,8 @@ from naiyue_test_agent.model_access import (
     MODEL_LIMITS_METADATA_KEY,
 )
 from naiyue_test_agent.model_access.messages import is_image_block
+from .context_usage import estimate_context, request_snapshot, finish_snapshot, ModelContextSnapshotData
+from .observation import emit_event
 
 
 logger = logging.getLogger(__name__)
@@ -167,12 +169,32 @@ class _ModelRequestObservationMiddleware(AgentMiddleware):
 
     async def awrap_model_call(self, request: ModelRequest, handler):
         payload, budget = _prepare_observation(request)
+        snapshot = None
+        context = request.runtime.context or {}
+        try:
+            if context.get('_naiyue_model_call_id'):
+                snapshot = request_snapshot(context, estimate_context(
+                    request.model, request.system_message, request.messages, request.tools))
+                _publish_snapshot(context, snapshot)
+        except Exception as error:
+            logger.warning('context_snapshot_unavailable error_type=%s', type(error).__name__)
+        response = None
         try:
             response = await handler(request)
             _observe_returned(response, payload, budget)
             return response
         finally:
+            if snapshot is not None:
+                try:
+                    _publish_snapshot(context, finish_snapshot(snapshot, response))
+                except Exception as error:
+                    logger.warning('context_snapshot_unavailable error_type=%s', type(error).__name__)
             _finish_observation(payload, budget)
 
 
 observe_model_request = _ModelRequestObservationMiddleware()
+
+
+def _publish_snapshot(context, snapshot):
+    emit_event(context.get('_run_event_publisher'), 'model_context_snapshot', lambda: ModelContextSnapshotData(
+        snapshot['model_call_id'], json.dumps(snapshot, ensure_ascii=False, allow_nan=False)))

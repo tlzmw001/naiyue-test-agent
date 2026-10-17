@@ -14,7 +14,8 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.errors import GraphBubbleUp
 
 from naiyue_test_agent.contracts.failures import safe_error_type
-from .session_approval import pending_tool_approval, prepare_resume, public_approvals, validate_remembered, is_pre_tool_approval
+from .session_approval import (SessionApprovalControls, pending_tool_approval, prepare_resume,
+                               public_approvals, validate_decisions, validate_remembered, is_pre_tool_approval, root_approval_batch)
 from naiyue_test_agent.tools.permission_rules import PermissionSettings
 from naiyue_test_agent.agent_runtime.tool_execution.permissions import AutoPermissionReviewer
 from naiyue_test_agent.tools.read import resolve_workspace_root
@@ -22,10 +23,12 @@ from naiyue_test_agent.tools.processes import ProcessCleanupError
 from naiyue_test_agent.application.skills import prepare_run_resources
 from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions, RunObservation
 from naiyue_test_agent.application.session_controls import SessionControlMixin
+from naiyue_test_agent.application.session_subagents import SessionSubagentControls
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools.registry import ToolRegistry
 from naiyue_test_agent.contracts.failures import normalize_classifiers
 from naiyue_test_agent.agent_runtime.errors import RuntimeErrorPolicy
+from naiyue_test_agent.agent_runtime.manual_compaction import ManualCompactionCommitError
 from .failure_policy import ApplicationErrorPolicy
 from .errors import SessionBusyError, SessionPendingApprovalError, SessionManualReviewRequiredError
 from .io_steps import IOCall, arun_steps
@@ -38,7 +41,7 @@ from naiyue_test_agent.agent_runtime.resource_invocation import (
 logger = logging.getLogger('naiyue_test_agent.application')
 
 
-class SessionService(SessionControlMixin):
+class SessionService(SessionControlMixin, SessionSubagentControls, SessionApprovalControls):
     """Map public session IDs to private LangGraph threads and model choices."""
 
     _busy_error = SessionBusyError
@@ -52,6 +55,8 @@ class SessionService(SessionControlMixin):
         initial = self._tool_registry.names() if initial_active_tools is None else initial_active_tools
         self._initial_active_tools = tuple(spec.tool.name for spec in self._tool_registry.select(initial))
         self._sessions: dict[str, dict] = {}
+        self._subagents: dict[str, dict] = {}
+        self._subagent_instances: dict[tuple[str, str], dict] = {}
         self._lock = Lock()
         self._model_selection_lock = Lock()
         self._tool_selection_lock = Lock()
@@ -97,6 +102,7 @@ class SessionService(SessionControlMixin):
             session = {
                 'thread_id': uuid4().hex,
                 'model_id': model_id,
+                'thinking_level': 'model_default',
                 'workspace_root': workspace_root,
                 'active_tool_names': self._initial_active_tools,
                 'permission_mode': self._permission_settings.mode, 'session_allow': [],
@@ -105,8 +111,7 @@ class SessionService(SessionControlMixin):
                 'manual_review_required': False,
                 'busy': False,
                 'run_id': None,
-                'run_project_instructions': None,
-                'run_review_project_instructions': None,
+                'run_review_project_instructions': None, 'run_prompt_parts': [],
                 'steering_open': False,
                 'stop_requested': False,
                 'steering_queue': deque(),
@@ -130,6 +135,7 @@ class SessionService(SessionControlMixin):
         with self._lock:
             row = self._sessions[session_id]
             return {'session_id': session_id, 'model_id': row['model_id'],
+                'thinking_level': row['thinking_level'],
                 'active_tools': list(row['active_tool_names']), 'permission_mode': row['permission_mode'],
                 'workspace_root': str(row['workspace_root']) if row['workspace_root'] else None,
                 'busy': row['busy'], 'run_id': row['run_id'],
@@ -138,14 +144,16 @@ class SessionService(SessionControlMixin):
                 'approval_run_id': (row['pending_tool_approval'].get('requested_run_id')
                     if row['pending_tool_approval'] is not None else None)}
 
-    def resolve_model(self, session_id: str):
+    def resolve_model(self, session_id: str, agent_path='root'):
         with self._lock:
-            model_id = self._sessions[session_id]['model_id']
-        return model_id, self._catalog.get(model_id)
+            model_id = (self._sessions[session_id]['model_id'] if agent_path == 'root'
+                        else self.subagent_instance(session_id, agent_path)['model_id'])
+            level = self._sessions[session_id]['thinking_level'] if agent_path == 'root' else 'model_default'
+        return model_id, self._catalog.with_thinking(model_id, level)
 
-    def resolve_project_instructions(self, session_id: str) -> str | None:
+    def resolve_prompt_parts(self, session_id):
         with self._lock:
-            return self._sessions[session_id]['run_project_instructions']
+            return list(self._sessions[session_id]['run_prompt_parts'])
 
     def select_model(self, session_id: str, model_id: str) -> None:
         self._catalog.get(model_id)
@@ -156,8 +164,9 @@ class SessionService(SessionControlMixin):
                 self._persistence.storage.select_model(session_id, model_id)
             with self._lock:
                 self._sessions[session_id]['model_id'] = model_id
+                self._sessions[session_id]['thinking_level'] = 'model_default'
 
-    def _run_steps(self, agent, session_id, messages, *, run_id=None, max_concurrency=4):
+    def _run_steps(self, agent, session_id, messages, *, run_id=None, max_concurrency=4, compact=False):
         with self._lock:
             session = self._sessions[session_id]
             if session['manual_review_required']:
@@ -170,12 +179,12 @@ class SessionService(SessionControlMixin):
                 raise SessionBusyError('Session already has an active run')
             run_id = run_id or uuid4().hex
             observation = RunObservation(
-                self._events.publisher(session_id, run_id), 'message', progress_settings=self._progress_settings,
+                self._events.publisher(session_id, run_id), 'compact' if compact else 'message', progress_settings=self._progress_settings,
             )
             observation.runtime_errors = RuntimeErrorPolicy(self._runtime_classifiers, self._catalog.failure_describer())
             observation.application_errors = ApplicationErrorPolicy(self._application_classifiers)
             session['busy'] = True
-            session['steering_open'] = True
+            session['steering_open'] = not compact
             session['stop_requested'] = False
             session['steering_queue'].clear()
             session['follow_up_queue'].clear()
@@ -193,19 +202,24 @@ class SessionService(SessionControlMixin):
             resources = yield IOCall(prepare_run_resources, (workspace_root,),
                 {'enable_skills': 'read' in self._tool_registry.names()})
             with self._lock:
-                session['run_project_instructions'] = resources['prompt']
+                session['run_prompt_parts'] = resources['prompt_parts']
                 session['run_review_project_instructions'] = resources['project_instructions']
             messages = self._mark_human_messages(messages)
             observation.stage = 'execute'
-            if workspace_root is not None:
+            if compact:
+                from .session_compaction import compact_session
                 with observation.bind():
+                    result = yield IOCall(args=(self, agent, session_id, thread_id, run_id),
+                        async_call=compact_session, critical=False)
+            elif workspace_root is not None:
+                with observation.bind(ainvoke_subagent=self.ainvoke_subagent):
                     result = yield IOCall(args=(agent, messages),
                         kwargs=dict(session_id=session_id, thread_id=thread_id, run_id=run_id,
                              workspace_root=workspace_root, read_resource_roots=resources['read_resource_roots']),
                         async_call=partial(ainvoke_agent_run_with_resources, max_concurrency=max_concurrency),
                         critical=False)
             else:
-                with observation.bind():
+                with observation.bind(ainvoke_subagent=self.ainvoke_subagent):
                     result = yield IOCall(args=(agent, messages),
                         kwargs=dict(session_id=session_id, thread_id=thread_id, run_id=run_id),
                         async_call=partial(ainvoke_agent_run, max_concurrency=max_concurrency), critical=False)
@@ -215,7 +229,7 @@ class SessionService(SessionControlMixin):
                 with self._lock:
                     pending['requested_run_id'] = run_id
                     session['pending_tool_approval'] = pending
-                observe(observation.controls, observation.controls.approval_requested, tuple(item['tool_call_id'] for item in pending['items']))
+                self.announce_approval(observation, root_approval_batch(session_id, pending))
                 result['approval_requests'] = public_approvals(pending)
                 self._record_approval('approval_requested', session_id, run_id,
                                       count=len(pending['items']))
@@ -231,7 +245,7 @@ class SessionService(SessionControlMixin):
             if isinstance(error, Exception) and not isinstance(error, GraphBubbleUp):
                 partial_tools = yield IOCall(args=(agent, session_id),
                                             async_call=self._areview_partial_state)
-            if partial_tools or isinstance(error, ProcessCleanupError) or (
+            if partial_tools or isinstance(error, (ProcessCleanupError, ManualCompactionCommitError)) or (
                     isinstance(error, asyncio.CancelledError)):
                 with self._lock:
                     session['manual_review_required'] = True
@@ -256,7 +270,7 @@ class SessionService(SessionControlMixin):
             pending = self._sessions[session_id]['pending_tool_approval']
             return public_approvals(pending) if pending is not None else []
 
-    def _resume_steps(self, agent, session_id, decisions, *, run_id=None, max_concurrency=4, remember_approved=None):
+    def _resume_steps(self, agent, session_id, decisions, *, run_id=None, max_concurrency=4, remember_approved=None, stop=False):
         with self._lock:
             session = self._sessions[session_id]
             if session['manual_review_required']:
@@ -268,10 +282,9 @@ class SessionService(SessionControlMixin):
                 raise SessionPendingApprovalError('Session has no pending tool approval')
             if session['busy']:
                 raise SessionBusyError('Session already has an active run')
-            if (not isinstance(decisions, list) or len(decisions) != len(pending['items'])
-                    or any(item not in ('approve', 'reject') for item in decisions)):
-                raise ValueError('One approve/reject decision is required per pending call')
-            validate_remembered(pending, decisions, remember_approved)
+            if not stop:
+                validate_decisions(pending, decisions)
+                validate_remembered(pending, decisions, remember_approved)
             run_id = run_id or uuid4().hex
             observation = RunObservation(
                 self._events.publisher(session_id, run_id), 'approval_resume', progress_settings=self._progress_settings,
@@ -279,12 +292,16 @@ class SessionService(SessionControlMixin):
             observation.runtime_errors = RuntimeErrorPolicy(self._runtime_classifiers, self._catalog.failure_describer())
             observation.application_errors = ApplicationErrorPolicy(self._application_classifiers)
             observation.turns.restore(session['pending_turn'])
-            observe(observation.controls, observation.controls.accept, 'approval',
-                tool_call_ids=tuple(item['tool_call_id'] for item in pending['items']),
-                decisions=tuple(decisions), origin_run_id=pending.get('requested_run_id'))
+            if stop:
+                observation.stop_control.request()
+                observe(observation.controls, observation.controls.accept, 'stop')
+            else:
+                observe(observation.controls, observation.controls.accept, 'approval',
+                    tool_call_ids=tuple(item['tool_call_id'] for item in pending['items']),
+                    decisions=tuple(decisions), origin_run_id=pending.get('requested_run_id'))
             session['busy'] = True
-            session['steering_open'] = True
-            session['stop_requested'] = False
+            session['steering_open'] = not stop
+            session['stop_requested'] = stop
             thread_id = session['thread_id']
             workspace_root = session['workspace_root']
             session['run_id'] = run_id
@@ -296,21 +313,21 @@ class SessionService(SessionControlMixin):
             observation.start()
             if self._persistence is not None:
                 yield IOCall(self._persistence.start, (session_id, run_id))
-            grants, remembered = prepare_resume(session_id, pending, decisions, remember_approved)
+            grants, remembered = (None, []) if stop else prepare_resume(session_id, pending, decisions, remember_approved)
             with self._lock:
                 session['session_allow'].extend(rule for rule in remembered if rule not in session['session_allow'])
             resources = yield IOCall(prepare_run_resources, (workspace_root,),
                 {'enable_skills': 'read' in self._tool_registry.names()})
             with self._lock:
-                session['run_project_instructions'] = resources['prompt']
+                session['run_prompt_parts'] = resources['prompt_parts']
                 session['run_review_project_instructions'] = resources['project_instructions']
             self._record_approval(
-                'approval_review_submitted', session_id, run_id,
+                'approval_stop_submitted' if stop else 'approval_review_submitted', session_id, run_id,
                 approved_count=decisions.count('approve'),
                 rejected_count=decisions.count('reject'),
             )
             observation.stage = 'execute'
-            with observation.bind():
+            with observation.bind(ainvoke_subagent=self.ainvoke_subagent):
                 result = yield IOCall(args=(agent,),
                     kwargs=dict(session_id=session_id, thread_id=thread_id, run_id=run_id, workspace_root=workspace_root,
                          decisions=decisions, approval_grants=grants, read_resource_roots=resources['read_resource_roots']),
@@ -327,7 +344,7 @@ class SessionService(SessionControlMixin):
                                   count=len(pending['items']))
             if next_pending is not None:
                 result['approval_requests'] = public_approvals(next_pending)
-                observe(observation.controls, observation.controls.approval_requested, tuple(item['tool_call_id'] for item in next_pending['items']))
+                self.announce_approval(observation, root_approval_batch(session_id, next_pending))
                 self._record_approval('approval_requested', session_id, run_id,
                                       count=len(next_pending['items']))
             observation.result(result, next_pending)
@@ -370,7 +387,7 @@ class SessionService(SessionControlMixin):
             self._active_runs.pop(session_id, None)
             session['steering_open'] = False
             session['stop_requested'] = False
-            session['run_project_instructions'] = None
+            session['run_prompt_parts'] = []
             session['run_review_project_instructions'] = None
             if self._persistence is None:
                 session['busy'] = False
@@ -409,16 +426,23 @@ class SessionService(SessionControlMixin):
         return await arun_steps(self._run_steps(agent, session_id, messages,
             run_id=run_id, max_concurrency=max_concurrency))
 
-    async def aresume_tool_approval(self, agent, session_id, decisions, *, run_id=None, max_concurrency=4, remember_approved=None):
+    async def acompact(self, agent, session_id, *, run_id=None):
+        return await arun_steps(self._run_steps(agent, session_id, [], run_id=run_id, compact=True))
+
+    async def aresume_tool_approval(self, agent, session_id, decisions, *, run_id=None, max_concurrency=4, remember_approved=None, stop=False):
         if type(max_concurrency) is not int or max_concurrency <= 0:
             raise ValueError('Tool concurrency must be a positive integer')
         return await arun_steps(self._resume_steps(agent, session_id, decisions,
-            run_id=run_id, max_concurrency=max_concurrency, remember_approved=remember_approved))
+            run_id=run_id, max_concurrency=max_concurrency, remember_approved=remember_approved, stop=stop))
 
     async def _afinish_run(self, session_id, run_id, session, agent, observation, primary_error):
         secondary = None
         review_required = session['manual_review_required']
         try:
+            if primary_error is not None:
+                self._request_scope_stop(session_id, run_id=run_id, reason='failure')
+            await self.settle_subagent_drivers(session_id, run_id)
+            self.assert_subagents_settled(session_id, run_id)
             review_required = self._cleanup_run(session_id, run_id, session, observation)
         except Exception as error:
             if primary_error is None:
@@ -442,7 +466,7 @@ class SessionService(SessionControlMixin):
                     session['run_id'] = None
                     session['steering_open'] = False
                     session['stop_requested'] = False
-                    session['run_project_instructions'] = None
+                    session['run_prompt_parts'] = []
                     session['run_review_project_instructions'] = None
                     session['steering_queue'].clear()
                     session['follow_up_queue'].clear()

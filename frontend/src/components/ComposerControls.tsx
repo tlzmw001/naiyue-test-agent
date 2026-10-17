@@ -1,0 +1,120 @@
+import { useEffect, useId, useRef } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
+import type { PermissionMode, SessionControlOptions, SkillCatalogView } from '../types';
+import type { WebApi } from '../api';
+import SkillsMenu from './SkillsMenu';
+import { commands } from '../commands';
+import type { CommandName, ComposerMenu } from '../commands';
+import { Icon } from './Icons';
+import styles from './ComposerControls.module.css';
+
+const modes: { name: PermissionMode; description: string }[] = [
+  { name: 'Default', description: '需要询问的操作交给你审批' },
+  { name: 'NoAsk', description: '需要询问的操作直接拒绝' },
+  { name: 'Auto', description: '先由模型审查，剩余请求再交给你' },
+  { name: 'BypassApprovals', description: '跳过询问，仍遵守 Deny 与执行检查' },
+];
+
+export default function ComposerControls({ options, mode, tools, disabled, loading, error, reload, selectMode, selectTools, sessionId,
+  menu, setMenu, runCommand, compactDisabled, api, selectSkill, focusEditor }: {
+  options: SessionControlOptions | null; mode?: PermissionMode; tools: string[]; disabled: boolean;
+  loading: boolean; error: boolean; reload: () => void;
+  selectMode: (mode: PermissionMode) => void; selectTools: (names: string[]) => void;
+  sessionId: string | null;
+  menu: ComposerMenu; setMenu: Dispatch<SetStateAction<ComposerMenu>>;
+  runCommand: (command: CommandName) => void; compactDisabled: boolean;
+  api: WebApi; selectSkill: (command: string, catalog: SkillCatalogView) => void; focusEditor: () => void;
+}) {
+  const open = menu === 'model' ? null : menu;
+  const setOpen = setMenu;
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement | null>(null);
+  const previousSession = useRef(sessionId);
+  const id = useId();
+  useEffect(() => {
+    if (previousSession.current !== null && previousSession.current !== sessionId) setOpen(null);
+    previousSession.current = sessionId;
+  }, [sessionId]);
+  useEffect(() => {
+    if (!open) return;
+    function outside(event: PointerEvent) {
+      if (!root.current?.contains(event.target as Node)) setOpen(null);
+    }
+    document.addEventListener('pointerdown', outside);
+    const focus = root.current?.querySelector<HTMLInputElement>('input:checked:not(:disabled)') ??
+      root.current?.querySelector<HTMLElement>('input:not(:disabled), [role="menuitem"]:not(:disabled)');
+    focus?.focus();
+    return () => document.removeEventListener('pointerdown', outside);
+  }, [open]);
+
+  function toggle(kind: 'modes' | 'tools' | 'commands', button: HTMLButtonElement) {
+    trigger.current = button;
+    setOpen(previous => previous === kind ? null : kind);
+  }
+
+  return <div className={styles.controls} ref={root} onKeyDown={event => {
+    if (event.key === 'Escape' && open) { event.preventDefault(); setOpen(null); trigger.current ? trigger.current.focus() : focusEditor(); }
+    if (open === 'commands' && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      const items = Array.from(root.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? []);
+      const current = items.indexOf(document.activeElement as HTMLButtonElement);
+      const index = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 :
+        (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+      event.preventDefault(); items[index]?.focus();
+    }
+  }}>
+    <button type="button" className={`${styles.trigger} ${styles.plus}`} aria-label="指令与功能"
+      aria-haspopup="menu" aria-expanded={open === 'commands'} disabled={disabled}
+      onClick={event => toggle('commands', event.currentTarget)}><Icon name="plus" /></button>
+    <button type="button" className={styles.trigger} aria-label={`权限模式：${mode ?? '加载中'}`}
+      aria-expanded={open === 'modes'} aria-controls={open === 'modes' ? id : undefined}
+      onClick={event => toggle('modes', event.currentTarget)} disabled={disabled} title="权限模式 · Shift + Tab 切换">
+      {mode ?? '权限模式'} <span className={styles.chevron}>⌃</span>
+    </button>
+    <button type="button" className={styles.trigger} aria-label={`工具 · ${tools.length} 项启用`}
+      aria-expanded={open === 'tools'} aria-controls={open === 'tools' ? id : undefined}
+      onClick={event => toggle('tools', event.currentTarget)} disabled={disabled}>
+      工具 <span className={styles.count}>{options ? tools.length : '…'}</span>
+    </button>
+    {open === 'commands' && <section role="menu" aria-label="指令与功能" className={styles.popover}>
+      <div className={styles.heading}>指令与功能</div>
+      {commands.filter(command => command.name === 'compact' || command.name === 'skills').map(command => <button key={command.name} type="button" role="menuitem" className={styles.command}
+        disabled={command.name === 'compact' && compactDisabled}
+        onClick={() => { setOpen(null); runCommand(command.name); }}>
+        <span>{command.label}</span><kbd>/{command.name}</kbd>
+      </button>)}
+      <p className={styles.note}>可在输入框输入以上指令。压缩需先结束运行并处理审批。</p>
+    </section>}
+    {open === 'skills' && <SkillsMenu api={api} readEnabled={tools.includes('read')} className={styles.popover}
+      select={selectSkill} close={() => { setOpen(null); focusEditor(); }} />}
+    {(open === 'modes' || open === 'tools') && <section id={id} role="dialog" aria-label={open === 'modes' ? '权限模式' : '主 Agent 工具'} className={styles.popover}>
+      <div className={styles.heading}>{open === 'modes' ? '权限模式' : '主 Agent 可用工具'}
+        <button type="button" onClick={() => { setOpen(null); trigger.current?.focus(); }} aria-label="关闭工具与模式菜单">×</button>
+      </div>
+      {loading ? <p className={styles.note}>正在加载工具与模式…</p> : error ?
+        <p className={styles.note} role="status">工具与模式加载失败。<button type="button" onClick={reload}>重试加载</button></p> : <>
+        <div className={styles.options}>
+          {open === 'modes' ? <fieldset className={styles.fieldset} disabled={disabled}>
+            <legend className={styles.srOnly}>选择权限模式</legend>
+            {modes.map(item => <label key={item.name} className={styles.option}>
+              <input type="radio" name={id} checked={mode === item.name} disabled={!options?.permission_modes.includes(item.name)}
+                onChange={() => { selectMode(item.name); setOpen(null); trigger.current?.focus(); }} />
+              <span><strong>{item.name}</strong><small>{item.name === 'Auto' && !options?.permission_modes.includes('Auto') ?
+                '未配置 Auto 审查模型' : item.description}</small></span>
+            </label>)}
+          </fieldset> : <fieldset className={styles.fieldset} disabled={disabled}>
+            <legend className={styles.srOnly}>选择主 Agent 工具</legend>
+            {!options?.tools.length && <p className={styles.note}>没有已注册工具</p>}
+            {options?.tools.map(tool => <label key={tool.name} className={styles.option}>
+              <input type="checkbox" checked={tools.includes(tool.name)} onChange={event =>
+                selectTools(event.target.checked ? [...tools, tool.name] : tools.filter(name => name !== tool.name))} />
+              <span><strong>{tool.name}</strong><small className={styles.toolDescription} title={tool.description}>{tool.description}</small></span>
+            </label>)}
+          </fieldset>}
+        </div>
+        <p className={styles.note}>{open === 'modes' ? '下一批工具调用生效，已有审批保持原样。' :
+          '下一次模型请求生效；不修改子 Agent 的角色工具集合，也不会停止当前调用。'}</p>
+        <button type="button" className={styles.refresh} onClick={reload}>刷新工具与模式</button>
+      </>}
+    </section>}
+  </div>;
+}

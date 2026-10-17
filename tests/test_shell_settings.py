@@ -22,7 +22,7 @@ def test_shell_defaults_and_configured_schema(tmp_path):
     assert defaults.tools.powershell.execution_policy == 'inherit'
     assert defaults.tools.bash.environment.unset_env == ['BASH_ENV', 'NAIYUE_WEB_TOKEN']
     specs = {s.tool.name: s for s in create_builtin_tools(settings)}
-    assert set(specs) == {'read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell'}
+    assert set(specs) == {'read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent'}
     for name in ('bash', 'powershell'):
         spec = specs[name]
         schema = spec.tool.tool_call_schema.model_json_schema()

@@ -60,6 +60,12 @@ class AsyncCliApplication:
     def get_registered_tools(self):
         return self._submit(self._app.get_registered_tools)
 
+    def register_subagent(self, spec):
+        return self._submit(lambda: self._app.aregister_subagent(spec))
+
+    def get_registered_subagents(self):
+        return self._submit(self._app.get_registered_subagents)
+
     def get_active_tools(self, session_id):
         return self._submit(lambda: self._app.get_active_tools(session_id))
 
@@ -96,20 +102,38 @@ class AsyncCliApplication:
     def pending_tool_approvals(self, session_id):
         return self._submit(lambda: self._app.pending_tool_approvals(session_id))
 
+    def pending_subagent_approvals(self, session_id):
+        return self._submit(lambda: self._app.pending_subagent_approvals(session_id))
+
+    def pending_approval_batches(self, session_id):
+        return self._submit(lambda: self._app.pending_approval_batches(session_id))
+
+    def prepare_root_approval_submission(self, session_id, **submission):
+        return self._submit(lambda: self._app.prepare_root_approval_submission(session_id, **submission))
+
+    def submit_subagent_approval(self, session_id, *, approval_batch_id, decisions, origin_run_id, remember_approved=()):
+        return self._submit(lambda: self._app.asubmit_subagent_approval(session_id,
+            approval_batch_id=approval_batch_id, decisions=decisions,
+            origin_run_id=origin_run_id, remember_approved=remember_approved))
+
     def steer(self, session_id, text):
         return self._submit(lambda: self._app.steer(session_id, text))
 
     def follow_up(self, session_id, text):
         return self._submit(lambda: self._app.follow_up(session_id, text))
 
-    def request_stop(self, session_id, *, run_id=None):
-        return self._submit(lambda: self._app.request_stop(session_id, run_id=run_id))
+    def request_stop(self, session_id, *, run_id=None, agent_path='root'):
+        return self._submit(lambda: self._app.request_stop(session_id, run_id=run_id, agent_path=agent_path))
 
     def run(self, session_id, messages):
         return self._submit(lambda: self._app.arun(session_id, messages))
 
     def resume_tool_approval(self, session_id, decisions, *, remember_approved=None):
         return self._submit(lambda: self._app.aresume_tool_approval(session_id, decisions, remember_approved=remember_approved))
+
+    def stop_tool_approval(self, session_id, *, approval_batch_id, origin_run_id):
+        return self._submit(lambda: self._app.astop_tool_approval(session_id,
+            approval_batch_id=approval_batch_id, origin_run_id=origin_run_id))
 
     def close(self):
         if self._closed:

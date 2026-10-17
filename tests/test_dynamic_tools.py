@@ -216,7 +216,7 @@ async def test_tool_prompt_guidelines_and_project_instructions_compose_once(monk
 
 def test_builtin_catalog_includes_bash_without_a_special_flag():
     specs = create_builtin_tools(ToolSettings())
-    assert [spec.tool.name for spec in specs] == ['read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell']
+    assert [spec.tool.name for spec in specs] == ['read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent']
 
 
 @pytest.mark.parametrize('field, value', [('prompt_snippet', 1), ('prompt_guidelines', ['guide']), ('prompt_guidelines', (1,))])
@@ -244,7 +244,7 @@ async def test_dynamic_approval_without_checkpointer_fails_before_execution(tmp_
     model = DynamicModel(responses=[call('gated')])
     graph = build_runtime_agent(model, tool_registry=registry,
         resolve_active_tool_names=lambda _sid, agent_path='root': ('gated',),
-        system_prompt='', response_format=None, resolve_model=lambda _: ('A', model), record_selection=lambda *_: None)
+        system_prompt='', response_format=None, resolve_model=lambda _, agent_path='root': ('A', model), record_selection=lambda *_: None)
     registry.register(definition('gated', approved=True, calls=calls))
     with pytest.raises(ValueError, match='checkpointer'):
         (await graph.ainvoke({'messages': [('user', 'run')]}, context={'session_id': 's', 'workspace_root': tmp_path}))

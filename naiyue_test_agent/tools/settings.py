@@ -6,10 +6,11 @@ from pathlib import Path
 import tomllib
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from naiyue_test_agent.config_paths import StorageSettings, get_agent_dir
 from .permission_rules import PermissionSettings
+from .subagent import SubAgentSpec
 
 
 logger = logging.getLogger(__name__)
@@ -182,6 +183,13 @@ class ToolOutputSettings(BaseModel):
     max_workspace_archive_bytes: int = Field(default=134217728, gt=0)
 
 
+class SubAgentOutputSettings(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
+
+    max_result_lines: int = Field(default=2000, gt=0)
+    max_result_bytes: int = Field(default=65536, gt=0)
+
+
 class BuiltinToolSettings(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
 
@@ -193,6 +201,7 @@ class BuiltinToolSettings(BaseModel):
     find: FindSettings = Field(default_factory=FindSettings)
     bash: BashSettings = Field(default_factory=BashSettings)
     powershell: PowerShellSettings = Field(default_factory=PowerShellSettings)
+    subagent: SubAgentOutputSettings = Field(default_factory=SubAgentOutputSettings)
 
 
 class ProcessSettings(BaseModel):
@@ -220,6 +229,29 @@ class ToolSettings(BaseModel):
     process: ProcessSettings = Field(default_factory=ProcessSettings)
     tool_output: ToolOutputSettings = Field(default_factory=ToolOutputSettings)
     progress: ToolProgressSettings = Field(default_factory=ToolProgressSettings)
+    subagents: tuple[SubAgentSpec, ...] = ()
+
+    @field_validator('subagents', mode='before')
+    @classmethod
+    def role_definitions(cls, value):
+        if not isinstance(value, (list, tuple)):
+            raise ValueError('Subagent settings require a list of definitions')
+        specs = []
+        for item in value:
+            if isinstance(item, dict):
+                fields = dict(item)
+                if isinstance(fields.get('tool_names'), list):
+                    fields['tool_names'] = tuple(fields['tool_names'])
+                try:
+                    item = SubAgentSpec(**fields)
+                except TypeError as error:
+                    raise ValueError('Invalid subagent definition fields') from error
+            if not isinstance(item, SubAgentSpec):
+                raise ValueError('Subagent settings require definitions')
+            specs.append(item)
+        if len({spec.name for spec in specs}) != len(specs):
+            raise ValueError('Duplicate subagent names in settings')
+        return tuple(specs)
 
 
 def load_tool_settings(path: str | Path | None = None) -> ToolSettings:
@@ -233,7 +265,7 @@ def load_tool_settings(path: str | Path | None = None) -> ToolSettings:
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
         logger.error('permission_settings_unavailable error_type=%s', type(error).__name__)
         raise ValueError('Permission settings could not be read or parsed') from error
-    if set(raw) - {'tools', 'permissions', 'process', 'tool_output', 'storage', 'progress'}:
+    if set(raw) - {'tools', 'permissions', 'process', 'tool_output', 'storage', 'progress', 'subagents'}:
         raise ValueError('Unknown runtime settings section')
     storage = StorageSettings.model_validate(raw.get('storage', {}))
     permissions = PermissionSettings.model_validate(raw.get('permissions', {}))
@@ -257,5 +289,9 @@ def load_tool_settings(path: str | Path | None = None) -> ToolSettings:
     except ValidationError:
         logger.warning('tool_progress_settings_fallback reason=invalid')
         progress = ToolProgressSettings()
-    return ToolSettings(storage=storage, tools=tools, permissions=permissions, process=process, tool_output=tool_output,
-                        progress=progress)
+    try:
+        return ToolSettings(storage=storage, tools=tools, permissions=permissions, process=process, tool_output=tool_output,
+                            progress=progress, subagents=raw.get('subagents', ()))
+    except ValidationError as error:
+        logger.error('subagent_settings_invalid error_type=%s', type(error).__name__)
+        raise ValueError('Subagent settings are invalid') from None

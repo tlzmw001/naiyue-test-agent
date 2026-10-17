@@ -1,0 +1,13 @@
+.root { position: relative; min-width: 0; }
+.trigger { display: flex; align-items: center; gap: 5px; border: 0; border-radius: 8px; background: transparent; color: #666; min-height: 34px; padding: 5px; max-width: 230px; font-size: 11px; }
+.trigger:hover:not(:disabled), .trigger[aria-expanded="true"] { background: #f1f1f1; color: #252525; }
+.level { flex-shrink: 0; }
+.modelName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.level { color: #888; font-size: 10px; }
+.popover { position: absolute; right: 0; bottom: calc(100% + 12px); z-index: 10; width: min(320px, calc(100vw - 64px)); padding: 14px; background: #fff; border: 1px solid #e4e4e4; border-radius: 16px; box-shadow: 0 8px 30px #00000012, 0 2px 6px #00000005; }
+.heading { display: flex; align-items: center; justify-content: space-between; color: #333; font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+.heading button { border: 0; background: transparent; color: #888; width: 24px; height: 24px; font-size: 20px; border-radius: 7px; }
+.popover label { display: flex; flex-direction: column; gap: 6px; color: #666; font-size: 11px; margin-top: 12px; }
+.popover select { width: 100%; min-width: 0; border: 1px solid #e4e4e4; border-radius: 8px; background: #fafafa; color: #333; padding: 9px; font-size: 12px; }
+.popover p { margin: 12px 0 0; color: #888; font-size: 11px; line-height: 1.6; }
+@media (max-width: 600px) { .trigger { max-width: 170px; } .popover { right: -42px; } }

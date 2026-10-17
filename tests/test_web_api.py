@@ -46,7 +46,8 @@ def test_web_models_auth_and_validation_do_not_leak_data(monkeypatch, tmp_path):
             assert (await client.get('/api/models', headers={'Authorization': ''})).status_code == 401
             assert (await client.get('/api/models', headers={'Host': 'evil.example'})).status_code == 403
             response = await client.get('/api/models')
-            assert response.json() == {'default_model_id': 'A', 'model_ids': ['A']}
+            assert response.json() == {'default_model_id': 'A', 'model_ids': ['A'],
+                'thinking_options': {'A': {'supported_levels': [], 'default_level': 'model_default'}}}
             assert (await client.post('/api/sessions', json={'model_id': 'A'},
                                      headers={'Origin': 'https://evil.example'})).status_code == 403
             malformed = await client.post('/api/sessions', json={'model_id': 'A', 'api_key': 'PRIVATE_VALUE'})

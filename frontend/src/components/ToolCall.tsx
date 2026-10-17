@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { MessageRow, ToolCallRow, ToolState } from '../types';
+import type { AgentView, MessageRow, ToolCallRow, ToolState } from '../types';
 import styles from '../App.module.css';
 
 const activities: Record<string, string> = { queued: '排队中', preparing: '准备中', running: '运行中',
@@ -20,8 +20,11 @@ function seconds(start: string | undefined, now: number) {
   return `${Math.max(0, Math.floor((now - Date.parse(start)) / 1000))}秒`;
 }
 
-export default function ToolCall({ call, result, phase, stopping = false, unconfirmed = false }: {
+export default function ToolCall({ call, result, phase, agents = [], stopAgent, openAgent, stopping = false, unconfirmed = false }: {
   call: ToolCallRow; result?: MessageRow; phase?: ToolState; stopping?: boolean; unconfirmed?: boolean;
+  agents?: AgentView[];
+  stopAgent?: (agentPath: string, originRunId: string) => void;
+  openAgent?: (agentPath: string) => void;
 }) {
   const active = phase?.state === 'running';
   const [now, setNow] = useState(Date.now);
@@ -35,12 +38,14 @@ export default function ToolCall({ call, result, phase, stopping = false, unconf
   const quiet = seconds(phase?.last_activity_at, end);
   const outcomes: Record<string, string> = { success: '成功', error_result: '错误结果',
     not_executed: '未执行', exception: '执行异常', outcome_unknown: '结果待核对' };
+  const delegation = agents.length ? agents.some(agent => agent.status === 'awaiting_approval')
+    ? '等待子任务审批' : '等待子任务结果' : null;
   const label = unconfirmed ? '结果未确认' : phase?.state === 'unconfirmed' ? '状态未确认' : phase?.outcome
     ? outcomes[phase.outcome] ?? '状态未确认' : active ? stopping ? '停止中' : activities[phase?.activity ?? ''] ?? '处理中'
       : result ? result.status === 'error' ? '错误结果' : '已有结果' : '待执行';
-  return <details className={styles.toolCall}>
-    <summary><span className={styles.toolName}>{call.name}</span><span className={styles.toolStatus}>{label}</span>
-      {phase?.phase && <span className={styles.toolPhase}>{phases[phase.phase] ?? phase.phase}</span>}
+  return <><details className={styles.toolCall}>
+    <summary><span className={styles.toolName}>{call.name}</span><span className={styles.toolStatus}>{active && !stopping && delegation ? delegation : label}</span>
+      {phase?.phase && !delegation && <span className={styles.toolPhase}>{phases[phase.phase] ?? phase.phase}</span>}
       {(elapsed || (active && quiet)) && <span className={styles.toolTiming}>
         {elapsed && <span>已历时 {elapsed}</span>}{active && quiet && <span>距最后活动 {quiet}</span>}
       </span>}
@@ -54,5 +59,22 @@ export default function ToolCall({ call, result, phase, stopping = false, unconf
       {result && <><div className={styles.detailLabel}>工具结果</div><pre>{result.content}</pre></>}
       {phase?.reason && <p className={styles.toolReason}>原因：{phase.reason}</p>}
     </div>
-  </details>;
+  </details>
+    {agents.map(agent => <section key={agent.source.agent_path} className={styles.delegatedAgent} aria-label="子智能体进度">
+        <div className={styles.delegatedHeading}>
+          {openAgent ? <button className={styles.agentLink}
+            aria-label={`查看子智能体 ${agent.source.agent_path.split('/')[1]} · ${agent.source.agent_id.slice(0, 6)}`}
+            onClick={() => openAgent(agent.source.agent_path)}>
+            {agent.source.agent_path.split('/')[1]} · {agent.source.agent_id.slice(0, 6)} <span>›</span>
+          </button> : <span>{agent.source.agent_path.split('/')[1]} · {agent.source.agent_id.slice(0, 6)}</span>}
+          <span className={styles.agentState}>{
+          ({ running: '运行中', awaiting_approval: '等待审批', completed: '已完成', failed: '失败', stopped: '已停止',
+            interrupted: '等待审批', stopping: '正在收尾', unconfirmed: '状态未确认' })[agent.status]}</span>
+        </div>
+        {typeof call.args.task === 'string' && <p className={styles.delegatedTask}>{call.args.task}</p>}
+        {stopAgent && ['running', 'awaiting_approval', 'stopping'].includes(agent.status) && <button className={styles.syncButton}
+          disabled={agent.status === 'stopping' || stopping} onClick={() => stopAgent(agent.source.agent_path, agent.source.parent_run_id)}>
+          {agent.status === 'stopping' ? '正在停止子任务…' : '停止该子任务'}</button>}
+      </section>)}
+  </>;
 }

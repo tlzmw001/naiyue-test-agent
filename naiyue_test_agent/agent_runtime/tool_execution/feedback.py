@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 def tool_error_feedback(error, request):
     """Return model-visible content, or None to preserve a mechanism failure."""
+    if request.tool_call['name'] == 'subagent' and not isinstance(error, ToolException):
+        return None
     if isinstance(error, (ProcessCleanupError, ToolBatchSchedulingError,
                           ModelResponseRejected, ContextCompactionError, PermissionMechanismError)):
         return None

@@ -26,25 +26,11 @@ from naiyue_test_agent.tools.read import resolve_workspace_root
 from naiyue_test_agent.model_access import ModelConfigError
 from naiyue_test_agent.application.cli_display import CliEventDisplay
 from naiyue_test_agent.application.cli_async import build_local_application, build_persistent_application
+from naiyue_test_agent.application.cli_approval import handle_approval, handle_scope_stop, show_approval_batches, settle_cli_worker
 from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
 
 
 logger = logging.getLogger(__name__)
-
-
-def _print_pending_approvals(result, *, write=print) -> None:
-    lines = []
-    for index, item in enumerate(result.get('approval_requests', []), start=1):
-        if item['tool_name'] in ('bash', 'powershell'):
-            command = json.dumps(item['target'], ensure_ascii=False)
-            workspace = json.dumps(item['workspace'], ensure_ascii=False)
-            lines.append(f"待审批 {index}: {item['tool_name']} 工作区={workspace} 命令={command}")
-        else:
-            lines.append(f"待审批 {index}: {item['tool_name']} → {item['target']}")
-    if result.get('approval_requests'):
-        lines.append('单项使用 :approve 或 :deny；多项使用 :review approve reject ...')
-    if lines:
-        write('\n'.join(lines))
 
 
 def _run_and_print(app, session_id: str, text: str, *, display=None) -> bool:
@@ -56,7 +42,6 @@ def _run_and_print(app, session_id: str, text: str, *, display=None) -> bool:
         result = app.run(session_id, [request])
         if display is not None:
             display.finish_result(result, input_message_id=request.id)
-            _print_pending_approvals(result, write=write)
             return True
         messages = result['messages']
         start = next((index for index, message in enumerate(messages)
@@ -87,21 +72,22 @@ def _run_and_print(app, session_id: str, text: str, *, display=None) -> bool:
             print(reply)
     elif not result.get('approval_requests'):
         print('本轮没有可展示的回答')
-    _print_pending_approvals(result)
+    show_approval_batches(app.pending_approval_batches(session_id), print)
     if result.get('run_stopped'):
         print('已停止')
 
     return True
 
-def _resume_and_print(app, session_id: str, decisions: list[str], *, display=None) -> None:
+def _resume_and_print(app, session_id: str, decisions: list[str], *, display=None, remember_approved=None, stop_batch=None) -> None:
     write = display.write if display is not None else print
     if display is not None:
         display.begin_call()
     try:
-        result = app.resume_tool_approval(session_id, decisions)
+        result = (app.stop_tool_approval(session_id, approval_batch_id=stop_batch['approval_batch_id'],
+                   origin_run_id=stop_batch['origin_run_id']) if stop_batch is not None else
+                  app.resume_tool_approval(session_id, decisions, remember_approved=remember_approved))
         if display is not None:
             display.finish_result(result, resume_start_index=result.get('resume_start_index'))
-            _print_pending_approvals(result, write=write)
             return
         messages = result['messages']
         start = result['resume_start_index']
@@ -126,7 +112,7 @@ def _resume_and_print(app, session_id: str, decisions: list[str], *, display=Non
             print(reply)
     elif not result.get('approval_requests'):
         print('本轮没有可展示的回答')
-    _print_pending_approvals(result)
+    show_approval_batches(app.pending_approval_batches(session_id), print)
     if result.get('run_stopped'):
         print('已停止')
 
@@ -274,8 +260,7 @@ def main(argv: list[str] | None = None) -> int:
             unsubscribe = app.subscribe_events(display)
             if action == 'restore_approval':
                 emit('已恢复待审批批次，工具尚未执行。用 :review 为每项提供 approve/reject。')
-                for item in app.pending_tool_approvals(session_id):
-                    emit(f'{item["tool_name"]}：{item["target"]}')
+                show_approval_batches(app.pending_approval_batches(session_id), emit)
             else:
                 emit('旧运行已结束；下一条新消息才会启动运行。')
         output_clear_plan = None
@@ -283,6 +268,8 @@ def main(argv: list[str] | None = None) -> int:
         pending_lock = Lock()
         stopped_input = False
         output_workspace = args.workspace
+        piped_input = []
+        submitted_root = None
 
         def start_run(text: str, pending_count=0) -> None:
             nonlocal worker
@@ -293,27 +280,39 @@ def main(argv: list[str] | None = None) -> int:
                         del pending_input[:pending_count]
                 elif pending_count:
                     emit('待发送内容仍保留，可用 :pending 查看')
-            if interactive:
-                worker = Thread(target=execute)
-                worker.start()
-            else:
-                execute()
+            worker = Thread(target=execute)
+            worker.start()
 
-        def start_approval(decisions: list[str]) -> None:
+        def start_approval(decisions: list[str], remembered) -> None:
             nonlocal worker
-            if interactive:
-                worker = Thread(target=_resume_and_print, args=(app, session_id, decisions),
-                                kwargs={'display': display})
-                worker.start()
-            else:
-                _resume_and_print(app, session_id, decisions, display=display)
+            worker = Thread(target=_resume_and_print, args=(app, session_id, decisions),
+                            kwargs={'display': display, 'remember_approved': remembered})
+            worker.start()
+
+        def start_approval_stop(batch):
+            nonlocal worker
+            worker = Thread(target=_resume_and_print, args=(app, session_id, []),
+                            kwargs={'display': display, 'stop_batch': batch})
+            worker.start()
+
+        def drain_pipe(*, allow_approval=False):
+            while piped_input:
+                if allow_approval and app.pending_approval_batches(session_id):
+                    return
+                if not settle_cli_worker(app, session_id, worker, emit, stop_waits=not allow_approval):
+                    return
+                if allow_approval and app.pending_approval_batches(session_id):
+                    return
+                kind, text = piped_input.pop(0)
+                if kind == 'model': app.select_model(session_id, text)
+                else: start_run(text)
 
         while True:
             try:
                 line = input('> ').strip()
             except EOFError:
-                if worker is not None:
-                    worker.join()
+                drain_pipe()
+                settle_cli_worker(app, session_id, worker, emit, stop_active=interactive)
                 return 0
 
             if not line:
@@ -322,9 +321,9 @@ def main(argv: list[str] | None = None) -> int:
             if command != ':outputs':
                 output_clear_plan = None
             if command == ':quit':
-                if worker is not None:
-                    worker.join()
-                if app.pending_tool_approvals(session_id):
+                drain_pipe()
+                settle_cli_worker(app, session_id, worker, emit, stop_active=interactive)
+                if app.pending_approval_batches(session_id):
                     emit('待审批未处理；下次打开会话时将重新核对恢复条件')
                 return 0
             if command in (':pending', ':send'):
@@ -371,24 +370,20 @@ def main(argv: list[str] | None = None) -> int:
                     logger.warning('bash_output_clear_failed error_type=%s', type(error).__name__)
                     emit('Shell 输出目录异常或预览后已变化，未完成清理')
                 continue
-            if command in (':approve', ':deny', ':review'):
-                if worker is not None and worker.is_alive():
-                    worker.join()
-                pending = app.pending_tool_approvals(session_id)
-                if not pending:
-                    emit('当前没有待审批的工具调用')
-                    continue
-                decisions = ([command.removeprefix(':')]
-                             if command != ':review' else rest[0].split() if rest else [])
-                if len(decisions) != len(pending) or any(
-                    decision not in ('approve', 'reject', 'deny') for decision in decisions
-                ):
-                    emit(f'需要为 {len(pending)} 个调用分别给出决定（approve/reject）')
-                    continue
-                start_approval(['reject' if decision == 'deny' else decision
-                                for decision in decisions])
+            if command in (':approve', ':deny', ':review', ':approvals'):
+                while (submitted_root is not None and worker is not None and worker.is_alive() and
+                       any(batch['approval_batch_id'] == submitted_root for batch in app.pending_approval_batches(session_id))):
+                    worker.join(0.05)
+                if not interactive and command != ':approvals':
+                    drain_pipe(allow_approval=True)
+                submitted_root = handle_approval(app, session_id, line, worker=worker, interactive=interactive,
+                    write=emit, start_root=start_approval)
                 continue
             if command == ':stop':
+                target = rest[0].strip() if rest else 'root'
+                if handle_scope_stop(app, session_id, target, worker=worker, write=emit, start_root=start_approval_stop):
+                    if target == 'root': stopped_input = True
+                    continue
                 if worker is None or not worker.is_alive():
                     emit('当前没有运行')
                     continue
@@ -411,6 +406,9 @@ def main(argv: list[str] | None = None) -> int:
                     emit('请输入模型 ID')
                     continue
                 model_id = rest[0].strip()
+                if not interactive and ((worker is not None and worker.is_alive()) or piped_input):
+                    piped_input.append(('model', model_id))
+                    continue
                 try:
                     app.select_model(session_id, model_id)
                 except ModelConfigError:
@@ -430,7 +428,7 @@ def main(argv: list[str] | None = None) -> int:
                     emit('请输入 Follow-up 内容')
                     continue
                 text = rest[0].strip()
-                if app.pending_tool_approvals(session_id):
+                if app.pending_approval_batches(session_id):
                     emit('当前有待审批工具调用，请先处理审批')
                     continue
                 if worker is not None and worker.is_alive():
@@ -453,7 +451,10 @@ def main(argv: list[str] | None = None) -> int:
                 pending_input.append(line)
                 emit('待发送内容已保留：' + line)
                 continue
-            if app.pending_tool_approvals(session_id):
+            if not interactive and ((worker is not None and worker.is_alive()) or piped_input):
+                piped_input.append(('run', line))
+                continue
+            if app.pending_approval_batches(session_id):
                 emit('当前有待审批工具调用，请先处理审批')
                 continue
             if worker is not None and worker.is_alive():
@@ -469,7 +470,7 @@ def main(argv: list[str] | None = None) -> int:
             start_run(line)
     finally:
         if worker is not None and worker.is_alive():
-            worker.join()
+            settle_cli_worker(app, session_id, worker, emit, stop_active=True)
         try:
             if unsubscribe is not None:
                 unsubscribe()

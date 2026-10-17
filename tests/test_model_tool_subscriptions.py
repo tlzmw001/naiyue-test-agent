@@ -70,8 +70,9 @@ async def test_one_tool_loop_has_correlated_immutable_safe_events(monkeypatch, c
         'model_call_started', 'model_call_finished', 'run_finished',
     ]
     # Native streams report one message_delta for each text reply;
-    # registered dispatches also report queued/preparing between start/end.
-    assert [e.sequence for e in events] == [1, 4, 6, 8, 11, 15, 17, 20]
+    # Registered dispatches report queued/preparing; each model input also emits
+    # its prepared and returned context statistics, outside this metadata filter.
+    assert [e.sequence for e in events] == [1, 4, 8, 10, 13, 17, 21, 24]
     assert all(e.session_id == session and e.run_id == events[0].run_id for e in events)
     starts = events_of(events, 'model_call_started')
     ends = events_of(events, 'model_call_finished')
@@ -170,7 +171,7 @@ async def test_legacy_and_mismatched_scope_do_not_invent_application_events():
     _runtime_names_1 = _runtime_registry_1.names()
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
-        resolve_model=lambda _id: ('A', model), record_selection=lambda *_args: None,
+        resolve_model=lambda _id, agent_path='root': ('A', model), record_selection=lambda *_args: None,
     )
     events = []
     subscriptions = ApplicationEventSubscriptions()

@@ -53,7 +53,7 @@ def runtime(models, selected, selections=None):
     _runtime_names_1 = _runtime_registry_1.names()
     return build_runtime_agent(
         next(iter(models.values())), tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
-        resolve_model=lambda sid: (selected[sid], models[selected[sid]]),
+        resolve_model=lambda sid, agent_path='root': (selected[sid], models[selected[sid]]),
         record_selection=lambda sid, mid: selections.append((sid, mid)) if selections is not None else None,
         checkpointer=InMemorySaver(),
     )
@@ -137,7 +137,7 @@ def test_async_gate_rejects_unusable_response(message, reason, caplog):
         with pytest.raises(ModelResponseRejected) as caught:
             await graph.ainvoke({'messages': [('user', 'PRIVATE')]}, context=context(events), config=config())
         assert caught.value.reason == reason
-        assert [e.event_type for e in events] == ['run_started', 'model_call_started', 'model_call_finished']
+        assert [e.event_type for e in events] == ['run_started', 'model_call_started', 'model_context_snapshot', 'model_context_snapshot', 'model_call_finished']
         assert events[-1].data.status == 'failed'
         assert events[-1].data.failure.reason == reason
         assert not any(isinstance(m, AIMessage) for m in (await graph.aget_state(config())).values['messages'])
@@ -170,7 +170,8 @@ def test_async_usage_unknown_reason_and_call_pairing(caplog):
         with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
             result = await graph.ainvoke({'messages': [('user', 'PRIVATE')]}, context=context(events), config=config())
         assert result['messages'][-1].response_metadata['naiyue_stop_reason'] == 'unknown'
-        start, end = events[1:]
+        start, prepared, returned, end = events[1:]
+        assert prepared.data.model_call_id == returned.data.model_call_id == start.data.model_call_id
         assert start.data.model_call_id == end.data.model_call_id
         assert (end.data.input_tokens, end.data.output_tokens, end.data.cache_read_tokens) == (9, 2, 4)
         assert any(hasattr(record, 'model_response') for record in caplog.records)
@@ -205,7 +206,7 @@ def test_task_cancellation_propagates_and_closes_model_call():
 @pytest.mark.parametrize('messages', [[], [HumanMessage(content='PRIVATE')]])
 def test_async_missing_ai_message_is_rejected(messages):
     async def scenario():
-        middleware = make_model_selection_middleware(lambda _: ('A', object()), lambda *_: None)
+        middleware = make_model_selection_middleware(lambda _, agent_path='root': ('A', object()), lambda *_: None)
         request = SimpleNamespace(runtime=SimpleNamespace(context=context()))
         request.override = lambda **_: request
 
@@ -221,7 +222,7 @@ def test_async_missing_ai_message_is_rejected(messages):
 def test_async_graph_control_exception_is_preserved():
     async def scenario():
         events, error = [], GraphBubbleUp('PRIVATE')
-        middleware = make_model_selection_middleware(lambda _: ('A', object()), lambda *_: None)
+        middleware = make_model_selection_middleware(lambda _, agent_path='root': ('A', object()), lambda *_: None)
         request = SimpleNamespace(runtime=SimpleNamespace(context=context(events)))
         request.override = lambda **_: request
 
@@ -238,7 +239,7 @@ def test_async_graph_control_exception_is_preserved():
 @async_test
 async def test_request_override_failure_preserves_exception_and_closes_call():
     events, error = [], ValueError('PRIVATE override failure')
-    middleware = make_model_selection_middleware(lambda _: ('A', object()), lambda *_: None)
+    middleware = make_model_selection_middleware(lambda _, agent_path='root': ('A', object()), lambda *_: None)
     request = SimpleNamespace(runtime=SimpleNamespace(context=context(events)))
 
     def override(**_kwargs):

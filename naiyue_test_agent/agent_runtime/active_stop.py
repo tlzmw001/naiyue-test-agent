@@ -22,7 +22,8 @@ class StopModelMiddleware(AgentMiddleware):
         except UserStop:
             turns = request.runtime.context.get('_turn_observer')
             if turns is not None:
-                observe(turns, turns.fail, RunFailureData('execute', 'cancelled', 'user_stop', 'CancelledError'))
+                reason = {'user': 'user_stop', 'failure': 'run_failure', 'close': 'application_close'}[control.reason]
+                observe(turns, turns.fail, RunFailureData('execute', 'cancelled', reason, 'CancelledError'))
             return ExtendedModelResponse(ModelResponse(result=[]),
                                          Command(update={'run_stopped': True}))
 
@@ -48,7 +49,8 @@ def finish_stopped_batch(state, runtime):
                 raise ModelResponseRejected('missing_tool_call_id')
             if len(set(ids)) != len(ids):
                 raise ModelResponseRejected('duplicate_tool_call_ids')
-            results = [stop_tool_message(c) for c in pending]
+            control = runtime.context.get('_run_control')
+            results = [stop_tool_message(c, reason=control.reason if control is not None else 'user') for c in pending]
             break
     publisher = runtime.context.get('_run_event_publisher')
     if publisher is not None:
@@ -57,7 +59,7 @@ def finish_stopped_batch(state, runtime):
             name = event_label(message.name)
             emit_event(publisher, 'tool_call_started', lambda: ToolCallStartedData(message.tool_call_id, name))
             emit_event(publisher, 'tool_call_finished', lambda: ToolCallFinishedData(
-                message.tool_call_id, name, 'dispatch', 'not_executed', 'user_stop'))
+                message.tool_call_id, name, 'dispatch', 'not_executed', message.additional_kwargs['naiyue_not_executed']))
     turns = runtime.context.get('_turn_observer')
     if turns is not None:
         observe(turns, turns.mark_ready)

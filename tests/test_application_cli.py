@@ -71,7 +71,7 @@ def test_cli_invalid_workspace_fails_before_model_call(monkeypatch, capsys, tmp_
     assert model.seen == []
 
 
-def test_cli_defaults_to_current_workspace_and_selects_file_tools(monkeypatch, capsys):
+def test_cli_defaults_to_current_workspace_and_selects_default_tools(monkeypatch, capsys):
     tools_seen, choices = [], []
 
     class MinimalApp:
@@ -81,7 +81,7 @@ def test_cli_defaults_to_current_workspace_and_selects_file_tools(monkeypatch, c
             assert root == Path.cwd()
             return 'session'
 
-        def pending_tool_approvals(self, _session_id):
+        def pending_approval_batches(self, _session_id):
             return []
 
         def run(self, _session_id, messages):
@@ -97,8 +97,8 @@ def test_cli_defaults_to_current_workspace_and_selects_file_tools(monkeypatch, c
 
     assert cli.main(['--no-session', '--config', 'synthetic.json']) == 0
     assert 'answer' in capsys.readouterr().out
-    assert [spec.tool.name for spec in tools_seen] == ['read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell']
-    assert choices == [['read', 'ls', 'find', 'grep', 'write', 'edit']]
+    assert [spec.tool.name for spec in tools_seen] == ['read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent']
+    assert choices == [['read', 'ls', 'find', 'grep', 'write', 'edit', 'subagent']]
 
 
 def test_cli_invalid_model_empty_line_and_unknown_command_do_not_call_model(monkeypatch, capsys):
@@ -196,7 +196,7 @@ def test_cli_empty_final_text_has_no_fabricated_answer(monkeypatch, capsys):
 
 
 def test_tty_queues_steering_and_follow_up_during_model_call(monkeypatch, capsys):
-    entered, release = Event(), Event()
+    entered, release, finished = Event(), Event(), Event()
 
     class BlockingModel(RecordingFake):
         def _generate(self, messages, stop=None, run_manager=None, **kwargs):
@@ -212,6 +212,12 @@ def test_tty_queues_steering_and_follow_up_during_model_call(monkeypatch, capsys
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
+    build = cli.build_local_application
+    def factory(*args, **kwargs):
+        app = build(*args, **kwargs)
+        app.subscribe_events(lambda event: finished.set() if event.event_type == 'run_finished' else None)
+        return app
+    monkeypatch.setattr(cli, 'build_local_application', factory)
     entries = iter(['initial', 'private steering', ':follow private follow-up', ':quit'])
 
     def terminal_input(_prompt=''):
@@ -220,6 +226,7 @@ def test_tty_queues_steering_and_follow_up_during_model_call(monkeypatch, capsys
             assert entered.wait(timeout=3)
         if line == ':quit':
             release.set()
+            assert finished.wait(5)
         return line
 
     monkeypatch.setattr('builtins.input', terminal_input)
@@ -339,7 +346,7 @@ def test_tty_stop_rejection_is_not_reported_as_accepted(monkeypatch, capsys):
             assert root == Path.cwd()
             return 'session'
 
-        def pending_tool_approvals(self, _session_id):
+        def pending_approval_batches(self, _session_id):
             return []
 
         def run(self, _session_id, messages):
@@ -388,7 +395,7 @@ def test_tty_input_after_acceptance_window_closes_starts_next_run(monkeypatch, c
             assert root == Path.cwd()
             return 'session'
 
-        def pending_tool_approvals(self, _session_id):
+        def pending_approval_batches(self, _session_id):
             return []
 
         def run(self, _session_id, messages):

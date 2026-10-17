@@ -4,9 +4,10 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 if TYPE_CHECKING:
-    from .events import RunEventPublisher
+    from .events import RunEventPublisher, AgentEventPublisher
     from .errors import RuntimeErrorPolicy
     from .run_control import RunControl
     from .turn_observation import TurnObserver
@@ -17,13 +18,14 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class RunServices:
-    publisher: 'RunEventPublisher | None' = None
+    publisher: 'RunEventPublisher | AgentEventPublisher | None' = None
     errors: 'RuntimeErrorPolicy | None' = None
     control: 'RunControl | None' = None
     turns: 'TurnObserver | None' = None
     controls: 'ControlObserver | None' = None
     context_operations: 'ContextOperationObserver | None' = None
     tool_progress: 'ToolProgressObserver | None' = None
+    ainvoke_subagent: Callable | None = None
 
 
 _RUN_SERVICES = ContextVar('naiyue_run_services', default=None)

@@ -35,7 +35,7 @@ def build_fake_agent(spec, responses):
     _runtime_names_1 = _runtime_registry_1.names()
     return build_runtime_agent(
         model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
-        resolve_model=lambda _session_id: ('fake-model', model),
+        resolve_model=lambda _session_id, agent_path='root': ('fake-model', model),
         record_selection=lambda _session_id, _model_id: None,
     )
 
@@ -191,7 +191,7 @@ async def test_async_runs_emit_correlated_start_model_and_terminal_events(caplog
     _runtime_names_1 = _runtime_registry_1.names()
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
-        resolve_model=lambda _session_id: ('model-A', model),
+        resolve_model=lambda _session_id, agent_path='root': ('model-A', model),
         record_selection=lambda _session_id, _model_id: None,
         checkpointer=InMemorySaver(),
     )
@@ -257,7 +257,7 @@ async def test_async_run_failure_emits_terminal_event_and_rethrows_same_error(ca
     _runtime_names_2 = _runtime_registry_2.names()
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_2, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_2: names, system_prompt='', response_format=None,
-        resolve_model=lambda _session_id: ('model-A', model),
+        resolve_model=lambda _session_id, agent_path='root': ('model-A', model),
         record_selection=lambda _session_id, _model_id: None,
     )
 

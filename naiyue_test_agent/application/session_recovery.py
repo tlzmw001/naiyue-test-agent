@@ -100,7 +100,7 @@ def classify_recovery(row, snapshot):
 
 def history_steps(persistence, session_id, agent):
     row = yield IOCall(persistence.storage.get, (session_id,))
-    value = {key: row[key] for key in ('session_id', 'state', 'model_id', 'workspace_root', 'permission_mode')}
+    value = {key: row[key] for key in ('session_id', 'state', 'model_id', 'thinking_level', 'workspace_root', 'permission_mode')}
     value.update(messages=[], active_tools=[], checkpoint_id=None, checkpoint_ns='',
                  confirmed_checkpoint_id=row['checkpoint_id'], confirmed_checkpoint_ns=row['checkpoint_ns'])
     config = {'configurable': {'thread_id': row['thread_id']}}

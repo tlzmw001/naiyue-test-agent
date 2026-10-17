@@ -102,11 +102,11 @@ async def test_project_selection_frozen_within_run_and_refreshed_next_run(monkey
     (tmp_path / 'CLAUDE.md').write_text('CLAUDE_FALLBACK')
     target.write_text('PROJECT_OLD')
     reads = []
-    original = skills.load_workspace_instructions
+    original = skills.load_workspace_instruction_part
     def load(root):
         reads.append(root)
         return original(root)
-    monkeypatch.setattr(skills, 'load_workspace_instructions', load)
+    monkeypatch.setattr(skills, 'load_workspace_instruction_part', load)
     fast, detailed = model([verdict('ask'), verdict()]), model([verdict()])
     fast.on_request = lambda number: target.write_text('PROJECT_NEW') if number == 1 else None
     primary = DynamicModel(responses=[call(call_id='one'), AIMessage(content='one'),

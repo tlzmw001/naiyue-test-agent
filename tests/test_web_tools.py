@@ -17,6 +17,13 @@ def calls(*items):
         for name, args, identity in items], response_metadata={'finish_reason': 'tool_calls'})
 
 
+def approval_request(batch, choices):
+    return {'request_id': str(uuid4()), 'origin_run_id': batch['origin_run_id'],
+        'approval_batch_id': batch['approval_batch_id'],
+        'decisions': [{'approval_id': row['approval_id'], 'decision': decision}
+            for row, decision in zip(batch['items'], choices, strict=True)]}
+
+
 async def start(client, text='use tools'):
     sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
     run = (await client.post(f'/api/sessions/{sid}/runs', json=request(text))).json()['run_id']
@@ -70,15 +77,15 @@ def test_web_approval_matches_batch_and_resumes_exactly_once(monkeypatch, tmp_pa
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
             sid, origin = await start(client)
             value = (await client.get(f'/api/sessions/{sid}')).json()
-            assert value['approval_run_id'] == origin and value['pending_approval']
-            assert [item['tool_call_id'] for item in value['approval_requests']] == ['one', 'two']
-            assert value['approval_requests'][0]['target'] == str(first)
+            batch, = value['approval_batches']
+            assert batch['origin_run_id'] == origin and value['pending_approval']
+            assert [item['tool_call_id'] for item in batch['items']] == ['one', 'two']
+            assert batch['items'][0]['target'] == str(first)
             assert len(model.seen) == 1
             endpoint = f'/api/sessions/{sid}/approvals'
-            body = {'request_id': str(uuid4()), 'origin_run_id': origin,
-                'decisions': [{'tool_call_id': 'one', 'decision': 'approve'}, {'tool_call_id': 'two', 'decision': 'reject'}]}
+            body = approval_request(batch, ['approve', 'reject'])
             for invalid in ({**body, 'origin_run_id': 'wrong'}, {**body, 'decisions': body['decisions'][:1]},
-                            {**body, 'decisions': list(reversed(body['decisions']))}):
+                            {**body, 'decisions': [body['decisions'][0], body['decisions'][0]]}):
                 assert (await client.post(endpoint, json=invalid)).status_code == 409
             first_resume = await client.post(endpoint, json=body)
             assert first_resume.status_code == 202
@@ -147,16 +154,15 @@ def test_web_bash_opt_in_approval_and_safe_command(monkeypatch, tmp_path):
             assert 'bash' in [spec.tool.name for spec in backend.get_registered_tools()]
             assert 'bash' not in backend.get_active_tools(sid)
             assert 'powershell' in [spec.tool.name for spec in backend.get_registered_tools()]
-            assert set(backend.get_active_tools(sid)) == {'read', 'ls', 'find', 'grep', 'write', 'edit'}
+            assert set(backend.get_active_tools(sid)) == {'read', 'ls', 'find', 'grep', 'write', 'edit', 'subagent'}
             await backend.aset_active_tools(sid, ['bash'])
             assert (await client.get(f'/api/sessions/{sid}')).json()['active_tools'] == ['bash']
             origin = (await client.post(f'/api/sessions/{sid}/runs', json=request('use shell'))).json()['run_id']
             await client.get(f'/api/runs/{origin}/events')
             value = (await client.get(f'/api/sessions/{sid}')).json()
-            assert value['approval_requests'][0]['target'] == 'printf WEB-BASH'
-            response = await client.post(f'/api/sessions/{sid}/approvals', json={
-                'request_id': str(uuid4()), 'origin_run_id': origin,
-                'decisions': [{'tool_call_id': 'bash', 'decision': 'approve'}]})
+            batch, = value['approval_batches']
+            assert batch['items'][0]['target'] == 'printf WEB-BASH'
+            response = await client.post(f'/api/sessions/{sid}/approvals', json=approval_request(batch, ['approve']))
             response.raise_for_status()
             await client.get(f'/api/runs/{response.json()["run_id"]}/events')
             result = next(m for m in model.seen[1] if isinstance(m, ToolMessage))
@@ -174,11 +180,11 @@ def test_approval_request_validation_auth_and_restart_block(monkeypatch, tmp_pat
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
             sid, origin = await start(client)
             endpoint = f'/api/sessions/{sid}/approvals'
-            body = {'request_id': str(uuid4()), 'origin_run_id': origin,
-                'decisions': [{'tool_call_id': 't', 'decision': 'approve'}]}
+            batch, = (await client.get(f'/api/sessions/{sid}')).json()['approval_batches']
+            body = approval_request(batch, ['approve'])
             assert (await client.post(endpoint, json=body, headers={'Authorization': ''})).status_code == 401
             assert (await client.post(endpoint, json={**body, 'grant': 'PRIVATE_GRANT'})).status_code == 422
-            invalid = await client.post(endpoint, json={**body, 'decisions': [{'tool_call_id': 't', 'decision': 'edit'}]})
+            invalid = await client.post(endpoint, json={**body, 'decisions': [{'approval_id': batch['items'][0]['approval_id'], 'decision': 'edit'}]})
             assert invalid.status_code == 422 and len(model.seen) == 1
         next_model = StreamingToolModel(replies=[])
         async with web_client(monkeypatch, tmp_path, next_model, workspace_root=root) as (client, app):
@@ -186,7 +192,7 @@ def test_approval_request_validation_auth_and_restart_block(monkeypatch, tmp_pat
             view = (await client.get(f'/api/sessions/{sid}')).json()
             assert view['recovery']['kind'] == 'pending_approval'
             assert not view['can_run'] and not view['pending_approval']
-            assert view['approval_requests'] == [] and view['live'] is None
+            assert view['approval_batches'] == [] and view['live'] is None
             assert view['recovery']['unconfirmed_tool_call_ids'] == ['t']
             assert next_model.seen == []
     asyncio.run(scenario())
@@ -202,9 +208,8 @@ def test_tool_outcome_keeps_run_origin_after_approval_and_next_chat(monkeypatch,
             AIMessage(content='rejection handled'), AIMessage(content='next chat')])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
             sid, origin = await start(client)
-            response = await client.post(f'/api/sessions/{sid}/approvals', json={
-                'request_id': str(uuid4()), 'origin_run_id': origin,
-                'decisions': [{'tool_call_id': 't', 'decision': 'reject'}]})
+            batch, = (await client.get(f'/api/sessions/{sid}')).json()['approval_batches']
+            response = await client.post(f'/api/sessions/{sid}/approvals', json=approval_request(batch, ['reject']))
             resumed = response.json()['run_id']
             await client.get(f'/api/runs/{resumed}/events')
             next_run = (await client.post(f'/api/sessions/{sid}/runs', json=request('another'))).json()['run_id']

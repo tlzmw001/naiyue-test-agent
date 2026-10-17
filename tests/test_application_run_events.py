@@ -74,7 +74,7 @@ async def test_success_events_follow_cleanup_without_changing_result(monkeypatch
         result = await app.arun(session, [('user', 'PRIVATE_PROMPT')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
     assert [(e.event_type, e.sequence) for e in received] == [
-        ('run_started', 1), ('run_finished', 9),
+        ('run_started', 1), ('run_finished', 11),
     ]
     assert received[0].session_id == received[1].session_id == session
     assert received[0].run_id == received[1].run_id
@@ -82,7 +82,7 @@ async def test_success_events_follow_cleanup_without_changing_result(monkeypatch
     assert received[1].data.status == 'completed' and received[1].data.failure is None
     assert states[0]['busy'] is True
     assert states[1]['busy'] is False and states[1]['run_id'] is None
-    assert states[1]['run_project_instructions'] is None
+    assert states[1]['run_prompt_parts'] == []
     assert not states[1]['steering_open'] and not states[1]['stop_requested']
     assert 'PRIVATE_' not in caplog.text + repr(received)
     assert 'thread_id' not in repr(received)
@@ -164,7 +164,7 @@ async def test_approval_terminal_is_installed_before_notification_and_resume_is_
     assert received[0].run_id != received[2].run_id
     # Native streaming adds one message_delta for the final reply.
     # Resume adds queued/preparing and Read's detection/read/last-count reports.
-    assert [e.sequence for e in received] == [1, 9, 1, 21]
+    assert [e.sequence for e in received] == [1, 11, 1, 23]
     assert received[-1].data.status == 'completed' and pending_at_end[-1] == []
 
 
@@ -292,7 +292,7 @@ async def test_two_sessions_have_independent_sequences_and_no_fake_start(monkeyp
     assert len(outcomes) == 2 and all(isinstance(r, dict) for r in outcomes), outcomes
     for session in sessions:
         events = [e for e in received if e.session_id == session]
-        assert [e.sequence for e in events] == [1, 9]
+        assert [e.sequence for e in events] == [1, 11]
         assert len({e.run_id for e in events}) == 1
 
 

@@ -37,7 +37,7 @@ async def _worker(args):
     events, selections = [], []
     publisher = RunEventPublisher('async-probe', uuid4().hex, (events.append,))
     publisher.publish('run_started', RunStartedData('message'))
-    common = dict(tool_registry=ToolRegistry(), resolve_active_tool_names=lambda _sid, agent_path='root': (), response_format=None, resolve_model=lambda _: (model_id, model),
+    common = dict(tool_registry=ToolRegistry(), resolve_active_tool_names=lambda _sid, agent_path='root': (), response_format=None, resolve_model=lambda _, agent_path='root': (model_id, model),
                   record_selection=lambda sid, mid: selections.append((sid, mid)), checkpointer=InMemorySaver())
     if args.with_context:
         metadata = dict(model.metadata or {})
@@ -87,9 +87,9 @@ async def _worker(args):
         assert len(messages) == 2 and kinds == ['normal']
     assert messages[-1].content.strip() == marker and not messages[-1].tool_calls
     assert selections == [('async-probe', model_id)]
-    assert [e.event_type for e in events] == ['run_started', 'model_call_started', 'model_call_finished']
-    assert events[1].data.model_call_id == events[2].data.model_call_id
-    assert events[2].data.status == 'accepted'
+    assert [e.event_type for e in events] == ['run_started', 'model_call_started', 'model_context_snapshot', 'model_context_snapshot', 'model_call_finished']
+    assert events[1].data.model_call_id == events[2].data.model_call_id == events[3].data.model_call_id == events[4].data.model_call_id
+    assert events[4].data.status == 'accepted'
     snapshot = await graph.aget_state(config)
     assert [m.id for m in snapshot.values['messages']] == [m.id for m in messages]
     label = 'async_context_probe' if args.with_context else 'async_model_probe'

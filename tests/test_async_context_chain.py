@@ -95,7 +95,7 @@ def graph_for(models, selected=None, project='PROJECT'):
     _runtime_names_1 = _runtime_registry_1.names()
     return _assemble_interactive_runtime(
         models['A'], tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='BASE', response_format=None,
-        resolve_model=lambda sid: (selected[sid], models[selected[sid]]),
+        resolve_model=lambda sid, agent_path='root': (selected[sid], models[selected[sid]]),
         record_selection=lambda *_: None, checkpointer=InMemorySaver(),
         drain_steering=lambda _: [], is_stop_requested=lambda _: False,
         finish_run_boundary=lambda _: (False, []),

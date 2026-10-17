@@ -60,6 +60,7 @@ class ModelCatalog:
         self._models = models
         self._owned_http_clients = []
         self._thinking_selections: dict[str, ThinkingSelection] = {}
+        self._thinking_capabilities = {}
         self._error_classifiers = {}
         self._error_lock = Lock()
 
@@ -110,6 +111,26 @@ class ModelCatalog:
         self.get(model_id)
         return self._thinking_selections.get(
             model_id, ThinkingSelection(MODEL_DEFAULT, MODEL_DEFAULT, {}))
+
+    def thinking_options(self, model_id):
+        selection = self.thinking_selection(model_id)
+        capability = self._thinking_capabilities.get(model_id, {})
+        return {'supported_levels': list(capability.get('levels', ())),
+                'default_level': selection.selected}
+
+    def with_thinking(self, model_id, level):
+        model = self.get(model_id)
+        if level == MODEL_DEFAULT:
+            return model
+        capability = self._thinking_capabilities.get(model_id, {})
+        if level not in capability.get('levels', ()):
+            raise ValueError('Unsupported thinking level')
+        settings = native_thinking_settings(capability['kind'], level)
+        if capability['kind'] == 'anthropic':
+            # Materialize lazy SDK properties before copying, so both views borrow them.
+            model._client, model._async_client
+            settings = {'thinking': None, 'reasoning_effort': None, **settings}
+        return model.model_copy(update=settings)
 
 
 def _unique_object(pairs):
@@ -239,6 +260,7 @@ def load_model_catalog(path: str | Path | None = None) -> ModelCatalog:
 
     built_models = {}
     thinking_selections = {}
+    thinking_capabilities = {}
     for model_id, raw in models.items():
         _nonempty(model_id, 'model_id')
         entry = _object(raw, f'models.{model_id}', {'provider_id', 'model'},
@@ -348,6 +370,7 @@ def load_model_catalog(path: str | Path | None = None) -> ModelCatalog:
             except ValueError as exc:
                 raise ModelConfigError(f'models.{model_id}.thinking: {exc}') from None
             selection = ThinkingSelection(requested, selected, native_settings)
+            thinking_capabilities[model_id] = {'kind': provider['kind'], 'levels': supported}
         built_models[model_id] = _build_model(provider['kind'], model_name, provider, model_id,
                                               selection.native_settings, request_settings,
                                               limit_metadata, reserve_metadata, keep_metadata,
@@ -358,4 +381,5 @@ def load_model_catalog(path: str | Path | None = None) -> ModelCatalog:
         raise ModelConfigError('config.default_model_id is unknown')
     catalog = ModelCatalog(default_id, built_models)
     catalog._thinking_selections = thinking_selections
+    catalog._thinking_capabilities = thinking_capabilities
     return catalog

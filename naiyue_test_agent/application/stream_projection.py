@@ -28,6 +28,8 @@ class StreamingMessageProjection:
         if event.sequence != previous + 1:
             self.incomplete = True
         self._sequences[event.run_id] = event.sequence
+        if event.source is not None:
+            return
         data = event.data
         if event.event_type == 'message_delta':
             key = (event.session_id, data.message_id)

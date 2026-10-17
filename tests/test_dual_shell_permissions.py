@@ -58,11 +58,11 @@ def test_bash_exact_allow_does_not_authorize_powershell_or_suffix(monkeypatch, t
 
 
 def test_cli_powershell_approval_displays_workspace_and_escaped_command():
-    from naiyue_test_agent.application.cli import _print_pending_approvals
+    from naiyue_test_agent.application.cli_approval import show_approval_batches
     lines = []
-    _print_pending_approvals({'approval_requests': [{
+    show_approval_batches([{'approval_batch_id': 'batch', 'agent_path': 'root', 'items': [{
         'tool_name': 'powershell', 'target': 'Write-Output "中"\n\x1b[31m',
         'workspace': 'C:\\work',
-    }]}, write=lines.append)
-    assert 'powershell 工作区=' in lines[0] and '命令=' in lines[0]
-    assert '\\n' in lines[0] and '\\u001b' in lines[0] and '\x1b' not in lines[0]
+    }]}], lines.append)
+    assert 'powershell 工作区=' in lines[1] and '命令=' in lines[1]
+    assert '\\n' in lines[1] and '\\u001b' in lines[1] and '\x1b' not in lines[1]

@@ -103,7 +103,7 @@ async def test_model_hook_rejects_response_without_ai_message(result_messages, c
         return ModelResponse(result=result_messages)
     model = ToolCapableFake(responses=[])
     middleware = make_model_selection_middleware(
-        lambda _session: ('A', model), lambda _session, _model: None,
+        lambda _session, agent_path='root': ('A', model), lambda _session, _model: None,
     )
     request = SimpleNamespace(runtime=SimpleNamespace(context={
         'session_id': 's', 'run_id': 'r',

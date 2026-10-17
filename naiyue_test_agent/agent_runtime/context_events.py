@@ -32,7 +32,7 @@ class ContextOperationStartedData:
     def __post_init__(self):
         if not isinstance(self.operation_id, str) or not self.operation_id:
             raise ValueError('A context operation identifier is required')
-        if self.operation not in ('compaction', 'recovery') or self.trigger not in ('threshold', 'overflow'):
+        if self.operation not in ('compaction', 'recovery') or self.trigger not in ('threshold', 'overflow', 'manual'):
             raise ValueError('Invalid context operation')
         if self.operation == 'recovery' and self.trigger != 'overflow':
             raise ValueError('Recovery requires explicit overflow')

@@ -277,7 +277,7 @@ async def test_dynamic_runtime_has_no_app_observation_and_fits_explicit_step_bud
     _runtime_registry_1 = prepare_tool_registry([ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     _runtime_names_1 = _runtime_registry_1.names()
     graph = build_runtime_agent(model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
-                                resolve_model=lambda _s: ('A', model), record_selection=lambda *_a: None)
+                                resolve_model=lambda _s, agent_path='root': ('A', model), record_selection=lambda *_a: None)
     result = (await graph.ainvoke({'messages': [('user', 'run')]}, context={'session_id': 'session'},
                           config={'recursion_limit': 14}))
     assert [m.type for m in result['messages']] == ['human', 'ai', 'tool', 'ai']

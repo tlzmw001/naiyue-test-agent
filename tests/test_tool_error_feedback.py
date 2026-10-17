@@ -27,7 +27,7 @@ def graph(tools, calls, *, checkpointer=None):
     _runtime_names_1 = _runtime_registry_1.names()
     return build_runtime_agent(
         model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
-        resolve_model=lambda _: ('fake', model), record_selection=lambda *_: None,
+        resolve_model=lambda _, agent_path='root': ('fake', model), record_selection=lambda *_: None,
         checkpointer=checkpointer,
     )
 

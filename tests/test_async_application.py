@@ -52,6 +52,8 @@ class StreamingToolModel(BaseChatModel):
         response = await self._next(messages)
         identity = response.id or uuid4().hex
         text = response.content
+        if isinstance(text, list):
+            yield ChatGenerationChunk(message=AIMessageChunk(content=text, id=identity))
         if isinstance(text, str) and text:
             split = max(1, len(text) // 2)
             yield ChatGenerationChunk(message=AIMessageChunk(content=text[:split], id=identity))

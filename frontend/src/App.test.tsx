@@ -33,7 +33,7 @@ it('renders an empty conversation, then sends a real input and keeps editor avai
   const { api } = client();
   vi.spyOn(api, 'control').mockResolvedValue({ accepted: true, retained: [] });
   render(<App api={api} />);
-  await screen.findByRole('option', { name: 'A' });
+  await screen.findByRole('button', { name: /模型与推理强度：A/ });
   expect(screen.getByText('还没有历史会话')).toBeTruthy();
   const input = screen.getByRole('textbox', { name: '消息' });
   fireEvent.change(input, { target: { value: 'first' } });
@@ -50,7 +50,7 @@ it('retains input during stop, without automatically starting another run', asyn
   let finishStop!: (value: { accepted: boolean; retained: string[] }) => void;
   vi.spyOn(api, 'control').mockImplementation(() => new Promise(resolve => { finishStop = resolve; }));
   render(<App api={api} />);
-  await screen.findByRole('option', { name: 'A' });
+  await screen.findByRole('button', { name: /模型与推理强度：A/ });
   const input = screen.getByRole('textbox', { name: '消息' });
   fireEvent.change(input, { target: { value: 'first' } });
   fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
@@ -65,10 +65,11 @@ it('retains input during stop, without automatically starting another run', asyn
   expect(api.start).toHaveBeenCalledTimes(1);
 });
 
-it('keeps the model selector in the header without a product title', async () => {
+it('keeps the model selector in the composer without a product title', async () => {
   const { api } = client();
   render(<App api={api} />);
-  await screen.findByRole('option', { name: 'A' });
+  fireEvent.click(await screen.findByRole('button', { name: /模型与推理强度：A/ }));
   expect(screen.queryByText('Test Agent')).toBeNull();
   expect((screen.getByRole('combobox', { name: '模型' }) as HTMLSelectElement).value).toBe('A');
+  expect(screen.getByRole('combobox', { name: '模型' }).closest('header')).toBeNull();
 });

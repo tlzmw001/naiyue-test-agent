@@ -49,6 +49,7 @@ class CliEventDisplay:
             self._terminal = False
             self._had_reply = False
             self._incomplete = False
+            self._agents = {}
 
     @property
     def terminal_displayed(self):
@@ -95,8 +96,33 @@ class CliEventDisplay:
                 self._run_id = event.run_id
             if event.run_id != self._run_id or event.sequence <= self._last_sequence:
                 return
-            self._render(event.event_type, event.data)
+            if event.source is not None:
+                self._render_child(event)
+            else:
+                self._render(event.event_type, event.data)
             self._last_sequence = event.sequence
+
+    def _render_child(self, event):
+        source = event.source
+        child = self._agents.get(source.agent_path)
+        if child is None:
+            child = CliEventDisplay(self.session_id, progress_settings=self._progress_settings,
+                writer=lambda text: self.write(f'[{source.agent_path}] {text}'))
+            self._agents[source.agent_path] = child
+        if event.event_type == 'run_started':
+            child._terminal = False
+            child.write('子 Agent 正在执行')
+        elif event.event_type in ('message_completed', 'message_revised'):
+            row = json.loads(event.data.snapshot_json)
+            if row.get('type') == 'ai':
+                # Only tool requests are shown here; child prose is not a root reply.
+                child._message({**row, 'content': ''})
+            elif row.get('type') == 'tool':
+                child._message(row)
+        elif event.event_type == 'run_finished' and event.data.status == 'interrupted':
+            child.write('子 Agent 等待审批，父运行仍在等待结果')
+        else:
+            child._render(event.event_type, event.data)
 
     def _render(self, kind, data):
         if kind in ('message_completed', 'message_revised'):
@@ -130,6 +156,12 @@ class CliEventDisplay:
             self.write(f'工具 {data.tool_name or "工具"}：{labels[data.outcome]}')
         elif kind == 'approval_requested':
             self.write(f'有 {data.count} 项工具调用待审批')
+            if data.items:
+                from .cli_approval import show_approval_batches
+                from dataclasses import asdict
+                show_approval_batches([{'approval_batch_id': data.approval_batch_id,
+                    'agent_path': '当前实例', 'items': [{key: value for key, value in asdict(item).items()
+                        if value is not None} for item in data.items]}], self.write)
         elif kind.startswith('control_'):
             self._control(kind, data)
         elif kind in ('compaction_started', 'context_recovery_started'):

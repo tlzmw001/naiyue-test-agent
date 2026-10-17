@@ -17,6 +17,18 @@ logger = logging.getLogger(__name__)
 
 
 class AsyncPersistentApplication(AsyncApplication):
+    async def aupdate_session_presentation(self, session_id, **changes):
+        self._check_open()
+        await run_blocking(self._sessions._persistence.storage.update_presentation, session_id, **changes)
+
+    async def areorder_sessions(self, workspace_root, identities):
+        self._check_open()
+        await run_blocking(self._sessions._persistence.storage.reorder, workspace_root, identities)
+
+    async def adelete_session(self, session_id):
+        self._check_open()
+        await await_settled(self._sessions._persistence.adelete(session_id, self._agent))
+
     async def arecover_session(self, session_id, *, checkpoint_id, action):
         self._check_open()
         return await self._sessions._persistence.arecover(session_id, self._agent, checkpoint_id=checkpoint_id, action=action)
@@ -53,7 +65,8 @@ async def open_async_persistent_application(config_path, *, database_path, tools
             sessions = application.SessionService(catalog, registry, initial_active_tools=initial, permission_settings=settings.permissions, progress_settings=settings.progress)
             sessions._persistence = SessionPersistence(storage, sessions)
             agent = application._assemble_application(catalog, sessions, saver,
-                tool_registry=registry, system_prompt=system_prompt, response_format=response_format)
+                tool_registry=registry, system_prompt=system_prompt, response_format=response_format,
+                subagents=settings.subagents, subagent_settings=settings.tools.subagent)
             agent = agent.with_config({'configurable': {CONFIG_KEY_DURABILITY: 'sync'}})
             app = AsyncPersistentApplication(catalog, sessions, agent, registry)
             try:

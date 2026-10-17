@@ -2,12 +2,57 @@
 
 ## 当前交接摘要（2026-10-17）
 
-- **交付范围**：用户已授权将093A/B/C架构清理、异步迁移、Discount移除及对应测试/文档作为本轮提交并push至origin/main。此前ef34d49/d6053f2已push；本轮准确SHA以Git记录为准。没有改真实配置、依赖、用户数据库或存储/事件协议。
-- **093架构清理**：[Spec093](specs/093-architecture-semantics-and-sync-cleanup.md)记录完整职责与入口。contracts保留标准库共享事实，响应拒绝异常归Runtime；CLI/Web统一AsyncApplication，旧同步App、持久化执行器及双驱动已移除。固定审批前证明与缺结果阻止重放的合同保持，安全重试另议。
-- **093C追加完成**：用户撤销Discount历史需求，删除原型、其包初始化和对应测试3文件248行；Runtime 16文件净减431行，移除同步invoke/resource恢复/消息流/Condition批次/摘要驱动/Auto审查及仅同步执行的包装。43份测试、4个探针改异步，保留消息/事件/异常/权限/保存断言，未新增生产模块；生产模块106→104。测试共用反馈helper改async，三组run入口断言迁到既有tool_events文件以满足500行。
-- **保留项有实际用途**：共享建图、短状态算法、文件及metadata IO、同步模型SDK的线程回退、官方HITL同步after_model仍由异步链消费。独立127行probe_tool_serial_config保留官方同步API对照，不依赖本项目同步Runtime；其失败调度行为与async不同，不能改断言混用。生产Runtime同步图调用为0。
-- **最新验证**：后端 **1946 passed in74.71s**（/tmp/naiyue-093-ship-backend.log），前端10文件 **40 passed**，TypeScript/Vite186模块构建成功。compileall/pip check/diff/全仓Python≤500行/当前文档本地链接通过；批次、摘要、10种消息状态、两进程会话及三个恢复探针均通过。两个真实请求入口使用假模型离线接线通过，没有供应商请求。结构收敛、可选aclose及配置探针14步预算均有先红后绿证据；架构/安全复核无遗留阻断，专项93例通过。
-- **证据与下一步**：限macOS、真实本地IO/框架/SQLite和假模型，不代表Windows/Linux原机或业务效果。当前学习进度仍看[学习路线](1.0/learning-roadmap.md)，不记新的用户独立掌握。提交093后按[当前工作顺序](future-work.md#清理后的当前工作顺序2026-10-17)推进：先同步086的过期基线，再分片讲解前台一层SubAgent；工具管理/模式前端、真实供应商、PyPI交付另排，WIN1待环境。本轮只梳理，不实施新功能。
+- **阶段整合交付**：用户确认提交并push本阶段已完成的Spec086 S1—S6与Spec094—099。提交前最终全量后端 **2143 passed in85.92s**（`/tmp/naiyue-push-20261017-backend-final.log`）、前端 **18文件96 passed**（`/tmp/naiyue-push-20261017-frontend.log`）、TypeScript/Vite **204模块成功**；AST/≤500行、compileall、pip check、文档链接及暂存diff检查通过。跨切片架构/安全复核收尾；补齐旧运行淘汰时的控制回执清理，防止删除会话后重放旧停止回执读到待发文本，新回归先红后绿并保留启动幂等断言。仅提交本阶段180个代码/测试/Spec与说明及已授权的配置样例，无真实配置、用户数据库或构建缓存。具体提交与远端同步状态以Git记录为准。
+- **Spec099会话管理已接线**：[设计、调用链与边界](specs/099-session-sidebar-management.md)。左侧右键/省略号只有重命名、置顶/取消置顶、删除；排序只用鼠标拖动，组内插入线/组末落点，拖后不切会话。名称/置顶/顺序随SQLite保存；模型按钮桌面/窄屏只显示模型名与推理档位，无指针或展开箭头。
+- **存储与失败边界**：schema6事务迁移现行4/5，旧全局库1/2/3仍拒绝。删除固定当前工作区ID，拒绝活动/恢复，元数据与全部根/关联子checkpoint和writes原子清理，工作区文件保留。restore全程占用生命周期，HTTP取消等待数据库与Web缓存一并收尾；两项竞态先红后绿。旧GET不覆盖新确认列表，取消确认不删除、失败保留历史，不新建会话或调用模型。
+- **最终验证**：全量后端 **2142 passed in87.00s**（`/tmp/naiyue-099-backend-final-complete.log`），前端 **18文件96 passed**（`/tmp/naiyue-099-frontend-final-complete.log`），TypeScript/Vite **204模块成功**。架构/安全复核发现已闭合；临时工作区/SQLite/离线模型，实际IAB与Chrome鼠标拖动、刷新及服务重启保存，1440/375菜单和文字按钮已验。截图见Spec099；无真实配置/用户库修改或供应商请求，Windows原机未验。
+- **理解与唯一下一步**：助手实现不新增用户掌握声明，学习位置见[学习路线](1.0/learning-roadmap.md)。本阶段已排定的实现切片收束；从[后续清单](future-work.md#清理后的当前工作顺序2026-10-17)选择下一独立切片。真实供应商有界验收、Windows/Linux原机及PyPI打包分别后排，不因整合提交标为完成。下方各片“未提交/push”为当时验收快照。
+
+### 此前098验收快照
+
+- **Spec098技能列表与显式指令已接线**：[设计、调用链及边界](specs/098-skills-picker-and-explicit-command.md)。`/skills`及加号→技能打开同一列表，显示当前项目两来源的名称/说明/来源/指令，可刷新；点选只在草稿前加入指令，保留任务并回焦点，不自动发送或创建会话。Read未启用可查看但不能选择。
+- **来源与执行**：认证GET只读调用应用发现，不返回正文/绝对路径。agents普通名称`/name`，claude固定`/claude:name`，agents内建重名用`/agents:name`，不随默认来源变化而重绑定。发送前确认目录与Read，再走原消息/Read/权限；索引含command，但不把模型服从当确定性保证。异步确认覆盖主草稿、待重发队列、会话/模式状态变化与卸载，不发旧响应对应的新内容。
+- **最终验证**：全量后端 **2133 passed in85.19s**（`/tmp/naiyue-098-backend-final-complete.log`），前端 **17文件88 passed**（`/tmp/naiyue-098-frontend-final-complete.log`），TypeScript/Vite **200模块成功**。来源变化、数字起始和待重发竞态先红后绿；架构/安全复核已闭合。临时工作区/SQLite/离线模型和真实Read，实际构建页1440/375、两入口/草稿/所选来源正文已验，截图见Spec098；不写真实配置或用户库，无实网供应商请求或Windows原机证据。
+- **理解与唯一下一步**：本轮为助手实现，不新增用户掌握声明；学习位置见[学习路线](1.0/learning-roadmap.md)。先由用户试用技能列表与填入指令；后续从[当前工作顺序](future-work.md#清理后的当前工作顺序2026-10-17)选择独立切片，不重复已接入口。既有086/094—097工作树保留，未暂存/提交/push。
+
+### 此前097验收快照
+
+- **Spec097输入框指令及模型设置已接线**：[设计、调用链及边界](specs/097-composer-commands-model-thinking.md)。模式左侧加号按用户补充只保留“压缩上下文 /compact”，不重复其他按钮功能；模型/推理菜单位于上下文和发送键之间，删除顶部重复选择器及旧CSS。模式名称仍无圆圈。
+- **执行与保存**：compact复用原busy/资源/事件/停止/必要保存，独立摘要后官方model writer→END，读回确认后完成，不执行普通模型/工具。只保留完整轮边界，末轮放不下则失败保留原文；待审批拒绝、停止摘要、空会话开始即停止、两次提交故障均覆盖。根推理档位来自启动配置、浅副本隔离，按会话保存；切模型重置默认，子角色和Auto保持自己的配置。SQLite4→5事务新增默认列，无新表/依赖，真实配置及用户库未改。
+- **最终验证**：`PATH="$HOME/.pi/agent/bin:$PATH" .venv/bin/python -m pytest -q` → **2128 passed in85.55s**（`/tmp/naiyue-097-backend-final-complete.log`）；前端`npm test -- --run` → **16文件79 passed**（`/tmp/naiyue-097-frontend-complete.log`）；`npm run build` → **TypeScript/Vite198模块成功**。338 Python AST/44前端文件≤500行、compileall/pip check/diff通过。架构/安全复核两处确证发现均以先红后绿回归闭合。临时SQLite/真实Read/离线模型，桌面/375px菜单、high切换、模型切换重置、文字compact及独立服务重启后保存读取已验；截图见Spec097。无实网模型、Windows/Linux原机、提交或push证据。
+- **理解与唯一下一步**：本轮为助手实现，不新增用户掌握声明；学习位置见[学习路线](1.0/learning-roadmap.md)。先由用户试用输入框，下一功能讨论Skills查看，区分可用/已读取和实际使用证据；真实供应商/PyPI/WIN1分别安排，见[后续清单](future-work.md#清理后的当前工作顺序2026-10-17)。当前预览为临时离线验收服务；既有086/094/095/096工作树保留，未暂存/提交/push。
+
+### 此前096验收快照
+
+- **Spec096上下文构成查看已接线**：[设计、真实调用链与验收](specs/096-context-inspector.md)。入口固定发送键左侧，当前估算/最近请求报告两个页签，与子智能体侧栏互斥；系统来源、工具定义、消息/工具结果/摘要分开统计，预算来源可见，缺失非零，缓存属于输入子集。
+- **边界与清理**：最终输入适配后统计，按model_call_id配对，有限数字摘要随原AI响应checkpoint保存；GET只读、不发模型/摘要、不恢复工具。运行中固定last_sent，审批/异常未完成状态不伪装next_request；根子隔离、过期GET及统计超限独立降级均有回归。删除应用旧合并prompt字段/getter和旧拼接函数，框架字符串回调仅为实际异步探针/测试入口保留，无新表/依赖/兼容执行链。
+- **最终验证**：后端全量 **2115 passed in83.63s**（`/tmp/naiyue-096-backend-complete.log`）；前端 **15文件72 passed**，TypeScript/Vite **195模块成功**。334 Python/40前端源结构、compileall、pip check、链接与diff通过。架构/安全复核闭合审批状态发现；临时SQLite/真实Read/离线模型/实际构建浏览器1440与375、独立服务重启只读统计及模型切换已验，截图见Spec。无真实供应商或Windows原机证据，既有工作树保留，未提交/push。
+- **输入框外观补充**：按用户要求去掉已选权限模式名称旁圆圈及无用样式，四种模式保留名称/下拉箭头。回归先红后绿；前端15文件73 passed，TypeScript/Vite195模块构建成功，桌面实际构建页已查看。未改后端或权限行为。
+- **理解与唯一下一步**：实现由助手完成，不新增掌握声明，学习位置见[学习路线](1.0/learning-roadmap.md)。下一步继续核对加号指令菜单、`/compact`及输入框模型/推理强度切换的现有能力和新增边界；手动压缩的准入/失败/保存需讲清，之后Skills查看。Steering/Follow-up已有发送方式入口。真实供应商/PyPI/WIN1仍分别安排，见[后续清单](future-work.md#清理后的当前工作顺序2026-10-17)。
+
+### 此前095验收快照
+
+- **Spec095子智能体侧栏已接线**：[设计/调用链与验收](specs/095-subagent-sidebar.md)。顶部“子智能体”先选名称，详情不显示名称，复用Conversation/ToolCall正文、分割线和工具进度；审批始终在主会话、不自动弹栏；窄屏回审批关闭侧栏，单子停止沿原作用域控制。
+- **消息/存储边界**：只读应用查询由真实父批次/调用ID派生子身份并读取官方checkpoint，Web沿认证/工作区归属。根快照仅摘要及有预算的草稿基线，完整记录独立读取，子详情超限不阻断主审批；相同ID跨批、停止历史状态、缺前文增量及重新同步覆盖均有回归。无新依赖/配置/DB表，不恢复或重跑旧子工具。
+- **本轮验证**：后端全量 **2104 passed in82.31s**（`/tmp/naiyue-095-backend-final.log`）；前端 **14文件68 passed**，TypeScript/Vite **192模块构建成功**。架构/安全独立复核已闭合确证问题。临时SQLite/确定性模型/真实HTTP及实际构建页验证1440和375px、主审批、进展、单独停止及服务重启后查看；截图见Spec。无真实供应商或Windows原机证据，未提交/push，086/094既有修改保留。
+- **理解与下一步**：实现由助手完成，不新增用户掌握声明；学习位置仍见[学习路线](1.0/learning-roadmap.md)。唯一下一步先讨论上下文构成查看面板，之后手动压缩、Skills查看；[后续清单](future-work.md#清理后的当前工作顺序2026-10-17)已同步。压缩前被移除的委派未建立永久索引，瞬时进度不跨重启，真实供应商/PyPI/WIN1仍分别安排。
+
+### 此前094验收快照
+
+- **Spec094输入框工具/权限模式UI已接线**：[设计与调用链](specs/094-composer-tools-and-permissions.md)。模式固定输入框内部左下角，工具入口相邻；向上菜单、不可用Auto说明、限定输入框Shift+Tab、原Steering/Follow-up发送方式均已接。新GET元信息和两个PATCH沿原Bearer/Host/Origin、工作区归属及恢复检查，调用原异步setter与SQLite；不新增Runtime机制/表/依赖。
+- **选择/失败语义**：空白会话首次修改创建会话并保留草稿，不启动模型；工具从下一模型请求、模式从下一工具批生效，已有审批保持，主工具选择不改子角色工具集合。失败保留已确认值、提示并只读重查；首次读取失败保留已创建ID，重试不重复创建。刷新版本保护防止旧GET覆盖新确认选择。初始缺失API/路由、首次读取失败、旧快照覆盖及菜单焦点均先红灯后修复，没有改共享测试基础设施。
+- **本轮验证**：`PATH="$HOME/.pi/agent/bin:$PATH" .venv/bin/python -m pytest -q` → **2096 passed in80.72s**（/tmp/naiyue-094-backend.log）；frontend目录`npm test -- --run` → **12文件57 passed**；`npm run build` → **TypeScript/Vite189模块成功**。compileall/pip check、327份Python AST/≤500行及前端≤500行、diff检查通过；架构/安全只读复核发现的两项状态问题已用回归闭合。
+- **页面证据与边界**：临时工作区/SQLite/离线模型的真实Web，实际验证NoAsk选择、工具关闭7→6、运行中发送方式/停止，桌面1280及375px无横向溢出，浏览器无error/warn。截图`/tmp/naiyue-094-ui/desktop-composer.png`、`desktop-mode.png`、`mobile-mode.png`；不是真实供应商、Windows/Linux或业务效果证据。未修改真实配置、用户库或关键知识点，原086工作树保留，未提交/push。
+- **唯一下一步**：先由用户试用输入框布局，再逐项讨论子Agent侧栏及完整历史数据、上下文构成、Skills查看、手动压缩；本片不实现这些新增UI。后续真实供应商有界验收、PyPI交付及WIN1原机安排见[清单](future-work.md#清理后的当前工作顺序2026-10-17)。学习位置仍看[学习路线](1.0/learning-roadmap.md)，没有新增掌握声明。
+
+### 此前086-S6验收快照
+
+- **本轮已完成086-S6，六片本机实现及组合验收完成**：[Spec086](specs/086-subagent-foreground.md)及[文件地图L节](specs/086-subagent-file-map.md#l-s6执行细案2026-10-17用户已授权)。新增真实Read→Write→Read/报告/根ready/关闭重开/新实例、同步模型线程收尾及两处真实进程退出恢复的组合验证。S1—S5工作树保留；无新生产类/模块、依赖、DB schema或Agent进程，未改真实配置/用户库，未提交push。
+- **实际主链和恢复边界**：持久App启动冻结角色/编译图→父subagent工具→应用唯一子driver→Runtime子图→原权限/工具/保存→有界content/artifact→父消息→根settle/assert/必要保存→ready；重开后旧根历史保留，下一委派是新的独立实例。子前置审批或写文件已经提交后明确os._exit(91)，新App只沿092三次更新整理根状态，补result_unconfirmed，不调用旧子/工具/模型、不复活Future，子checkpoint保持原状，实际写入及执行次数不重复。活动子驱动跨重启原样续跑不在合同内。
+- **清理与保留**：只在已有Runtime/subagents.py中删除S2空services/无publisher裸ainvoke回退，唯一实际消费者始终显式传带来源RunServices；修正tools/subagent.py旧opt-in注释。根审批Python API、CLI薄桥、框架同步hook、叶子IO和图内同步SDK线程回退均有实际消费者，保留。同步SDK组合验证线程结束前driver/根busy/共享资源关闭入口不释放，外部取消保留原CancelledError。不新增并行旧入口或兼容层。
+- **验证命令/结果**：`PATH="$HOME/.pi/agent/bin:$PATH" .venv/bin/python -m pytest -q` → **2091 passed in80.50s**（/tmp/naiyue-086-s6-backend.log）。新增两文件6项及配置样例1项；集成/重启/配置/动态工具四文件 **49 passed in2.96s**。frontend目录`npm test -- --run` → **11文件50 passed**，`npm run build` → **TypeScript/Vite187模块成功**。compileall/pip check、326份Python AST/≤500行、文档本地链接及diff检查通过；架构/安全只读复核无新增发现，根恢复/崩溃/pending writes/子异常额外回归通过。新测试是既有行为的组合补证，未发现需修正的行为缺陷，不虚构红灯。
+- **文档/证据边界**：README、Spec/文件地图、配置样例注释、project-plan与future-work已对齐；旧G—K保留当时版本，当前主文不再把产品执行写成仅探针。无新UI改动，桌面/375px浏览器证据明确沿用S5，本片未声称重新浏览器验收。全部新增证据来自macOS假模型、真实框架/文件/SQLite/独立进程；真实供应商和Windows/Linux原机未验收，学习位置仍看[学习路线](1.0/learning-roadmap.md)，不新增用户掌握声明。
+- **唯一下一步**：先讨论工具启停及权限模式管理UI的具体切片，再获批实施；活动工具从下一模型请求、模式从下一工具批生效，包含受鉴权入口和Shift+Tab适配。审批面板“本会话不再询问”已接，不重复列待开发。之后分别安排真实供应商有界验证、PyPI本地Web交付；WIN1待原机不阻塞其他工作。沙箱、长期/跨会话记忆、RAG/MCP/真实HTTP-RPC业务场景及后台/多层/实例续跑独立设计，详见[后续顺序](future-work.md#清理后的当前工作顺序2026-10-17)。
 
 ### 此前092C验收快照（当前状态以上述093为准）
 

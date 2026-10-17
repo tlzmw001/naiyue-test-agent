@@ -68,7 +68,7 @@ def test_cli_unsubscribes_after_quit_even_when_no_run(monkeypatch, capsys):
         default_model_id = 'A'
         def create_workspace_session(self, _model, root):
             return 'session'
-        def pending_tool_approvals(self, _session):
+        def pending_approval_batches(self, _session):
             return []
         def subscribe_events(self, handler):
             lifecycle.append('subscribe')
@@ -85,7 +85,7 @@ def test_startup_output_error_still_unsubscribes(monkeypatch):
         default_model_id = 'A'
         def create_workspace_session(self, _model, root):
             return 'session'
-        def pending_tool_approvals(self, _session):
+        def pending_approval_batches(self, _session):
             return []
         def subscribe_events(self, handler):
             lifecycle.append('subscribe')
@@ -207,7 +207,7 @@ def test_cli_unsubscribes_on_input_termination(monkeypatch, termination):
         default_model_id = 'A'
         def create_workspace_session(self, _model, root):
             return 'session'
-        def pending_tool_approvals(self, _session):
+        def pending_approval_batches(self, _session):
             return []
         def subscribe_events(self, handler):
             return lambda: lifecycle.append('unsubscribe')

@@ -171,7 +171,7 @@ def _record_summary_finished(correlation, observer, operation_id, started, *, re
 
 def _compaction_steps(
     messages: list, model: BaseChatModel, *, model_id: str | None, context: dict,
-    system_messages: list, tools: list, force: bool = False,
+    system_messages: list, tools: list, force: bool = False, trigger: str | None = None,
 ):
     """Share safe compaction between proactive and rejected-request paths."""
     session_id = context.get('session_id')
@@ -200,22 +200,31 @@ def _compaction_steps(
     if not force and estimated <= threshold and headroom < window:
         return None
 
+    trigger = trigger or ('overflow' if force else 'threshold')
     correlation = {'session_id': session_id, 'run_id': context.get('run_id'),
                    'model_id': model_id}
     logger.info('context_compaction_started', extra={'context_compaction': {
         'event': 'context_compaction_started', **correlation,
         'estimated_input_tokens': estimated,
         'original_message_count': len(messages),
-        'trigger': 'overflow' if force else 'threshold',
+        'trigger': trigger,
     }})
     observer = context.get('_context_observer')
-    operation_id = (observe(observer, observer.begin_compaction, model_id, 'overflow' if force else 'threshold',
+    operation_id = (observe(observer, observer.begin_compaction, model_id, trigger,
                                               estimated, len(messages)) if observer is not None else None)
     fallback_reason = None
     try:
         if force:
             _validate_removed_prefix(messages)
         cutoff = _cut_at_complete_turn(messages, keep['tokens'])
+        if trigger == 'manual' and cutoff == 0:
+            cutoff = next((index for index in range(len(messages) - 1, 0, -1)
+                           if isinstance(messages[index], HumanMessage)
+                           and not messages[index].additional_kwargs.get(SUMMARY_MARKER)), 0)
+            if cutoff == 0:
+                if observer is not None:
+                    observe(observer, observer.finish_compaction, operation_id, 'skipped', 'no_safe_cut')
+                return None
         if cutoff == 0:
             if not force and estimated <= window - output:
                 logger.info('context_compaction_skipped', extra={
@@ -238,6 +247,8 @@ def _compaction_steps(
         if cutoff == 0 or projected > window - output:
             for candidate in range(max(cutoff + 1, 1), len(messages) - 1):
                 boundary = messages[candidate]
+                if trigger == 'manual' and not isinstance(boundary, HumanMessage):
+                    continue
                 if not isinstance(boundary, (HumanMessage, AIMessage)):
                     continue
                 turn_start = None
@@ -269,6 +280,8 @@ def _compaction_steps(
                     cutoff = candidate
                     split_turn_start = turn_start
                     break
+        if trigger == 'manual' and projected is not None and projected > window - output:
+            raise ContextCompactionError('compacted_request_over_budget')
         if cutoff == 0:
             raise ContextCompactionError('no_safe_cut')
         removed = messages[:cutoff]
@@ -397,16 +410,16 @@ def _compaction_steps(
 
 async def _acompact_messages(
     messages: list, model: BaseChatModel, *, model_id: str | None, context: dict,
-    system_messages: list, tools: list, force: bool = False,
+    system_messages: list, tools: list, force: bool = False, trigger: str | None = None,
 ):
     return await arun_summary_steps(_compaction_steps(
         messages, model, model_id=model_id, context=context,
-        system_messages=system_messages, tools=tools, force=force,
+        system_messages=system_messages, tools=tools, force=force, trigger=trigger,
     ))
 
 
 def make_context_compaction_middleware(
-    resolve_model: Callable[[str], tuple[str, BaseChatModel]], *, model_inputs: Callable,
+    resolve_model: Callable[[str, str], tuple[str, BaseChatModel]], *, model_inputs: Callable,
 ):
     """Use the same request definitions and prompt prepared before compaction."""
     return _ContextCompactionMiddleware(resolve_model, model_inputs)
@@ -424,7 +437,7 @@ class _ContextCompactionMiddleware(AgentMiddleware):
     def _arguments(self, state, runtime):
         context = runtime.context or {}
         session_id = context.get('session_id')
-        model_id, model = self.resolve_model(session_id)
+        model_id, model = self.resolve_model(session_id, context.get('agent_path', 'root'))
         tools, prompt = self.model_inputs(state, runtime)
         return dict(
             messages=state['messages'], model=model, model_id=model_id, context=context,

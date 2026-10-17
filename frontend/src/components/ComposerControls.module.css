@@ -1,0 +1,29 @@
+.controls { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: 3px; min-width: 0; }
+.trigger { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 8px; background: transparent; color: #666; padding: 7px 8px; min-height: 34px; font-size: 12px; white-space: nowrap; }
+.trigger:hover:not(:disabled), .trigger[aria-expanded="true"] { background: #f1f1f1; color: #252525; }
+.chevron { color: #999; font-size: 12px; }
+.plus { width: 30px; justify-content: center; padding-inline: 4px; }
+.command { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; border: 0; background: transparent; border-radius: 9px; padding: 11px 10px; color: #444; font-size: 12px; text-align: left; }
+.command:hover:not(:disabled), .command:focus-visible { background: #f3f3f3; }
+.command kbd { color: #999; font-size: 10px; font-family: inherit; }
+.count { color: #737373; font-size: 11px; font-variant-numeric: tabular-nums; }
+.popover { position: absolute; left: 0; bottom: calc(100% + 12px); z-index: 10; width: min(340px, calc(100vw - 64px)); background: #fff; border: 1px solid #e4e4e4; border-radius: 16px; padding: 8px; box-shadow: 0 8px 30px #00000012, 0 2px 6px #00000005; }
+.heading { display: flex; align-items: center; justify-content: space-between; padding: 5px 9px 9px; color: #333; font-size: 13px; font-weight: 600; }
+.heading button { border: 0; background: transparent; color: #888; width: 28px; height: 28px; font-size: 20px; border-radius: 7px; }
+.heading button:hover { background: #f2f2f2; }
+.options { overflow-y: auto; max-height: min(340px, 42dvh); overscroll-behavior: contain; }
+.fieldset { padding: 0; margin: 0; border: 0; min-width: 0; }
+.option { display: flex; align-items: flex-start; gap: 10px; padding: 10px; border-radius: 9px; cursor: pointer; }
+.option:hover { background: #f7f7f7; }
+.option:has(input:checked) { background: #f4f4f4; }
+.option:has(input:disabled) { color: #999; cursor: default; }
+.option input { margin: 3px 0 0; accent-color: #333; flex-shrink: 0; }
+.option > span { min-width: 0; overflow-wrap: anywhere; }
+.option strong { display: block; font-size: 12px; font-weight: 550; line-height: 1.5; }
+.option small { display: block; font-size: 11px; line-height: 1.6; color: #737373; margin-top: 2px; white-space: pre-line; }
+.option .toolDescription { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.note { border-top: 1px solid #eee; font-size: 11px; line-height: 1.7; color: #737373; margin: 8px 4px 0; padding: 10px 6px 3px; }
+.note button, .refresh { border: 0; background: transparent; color: #666; font-size: 11px; text-decoration: underline; text-underline-offset: 3px; padding: 5px 6px; border-radius: 5px; }
+.refresh { margin-left: 4px; }
+.srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+@media (max-width: 480px) { .trigger { padding-inline: 5px; gap: 5px; font-size: 11px; } }

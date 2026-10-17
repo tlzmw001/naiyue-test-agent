@@ -3,14 +3,17 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { WebApi } from './api';
 import { useConversation } from './useConversation';
 import type { RunView, SessionView } from './types';
+import type { SseFrame } from './sse';
 
 afterEach(cleanup);
 const paused: RunView = { session_id: 's', run_id: 'origin', status: 'interrupted', messages: [],
   last_sequence: 9, incomplete: false, done: true, manual_review_required: false };
+const batch = { approval_batch_id: 'batch', kind: 'paused_root' as const, agent_path: 'root', agent: null, origin_run_id: 'origin',
+  items: [{ approval_id: 'row', tool_call_id: 't', tool_name: 'read', target: '/outside' }] };
 const pending: SessionView = { session_id: 's', model_id: 'A', workspace_root: '/workspace', state: 'interrupted',
   updated_at: '', last_run_status: 'interrupted', messages: [], busy: false, can_run: false, has_compaction: false,
   active_run_id: null, latest_run_id: 'origin', active_tools: [], permission_mode: 'Default', manual_review_required: false, pending_approval: true,
-  approval_run_id: 'origin', approval_requests: [{ tool_call_id: 't', tool_name: 'read', target: '/outside' }], live: paused };
+  approval_batches: [batch], live: paused };
 function setup() {
   const api = new WebApi('synthetic-test-access');
   vi.spyOn(api, 'models').mockResolvedValue({ default_model_id: 'A', model_ids: ['A'] });
@@ -24,12 +27,12 @@ it('loads pending approvals even if the run finished before the stream subscript
   vi.spyOn(api, 'create').mockResolvedValue({ session_id: 's' });
   vi.spyOn(api, 'start').mockResolvedValue({ session_id: 's', run_id: 'origin' });
   vi.spyOn(api, 'run').mockResolvedValue(paused);
-  vi.mocked(api.session).mockResolvedValueOnce({ ...pending, pending_approval: false, approval_requests: [] });
+  vi.mocked(api.session).mockResolvedValueOnce({ ...pending, pending_approval: false, approval_batches: [] });
   await waitFor(() => expect(result.current.model).toBe('A'));
   act(() => result.current.setDraft('first'));
   await act(async () => result.current.submit(false));
   await waitFor(() => expect(result.current.session?.pending_approval).toBe(true));
-  expect(result.current.session?.approval_requests).toHaveLength(1);
+  expect(result.current.session?.approval_batches).toHaveLength(1);
 });
 it('submits the original batch and refreshes the new run while preserving draft text', async () => {
   const { api, result } = setup();
@@ -38,10 +41,76 @@ it('submits the original batch and refreshes the new run while preserving draft 
   vi.spyOn(api, 'approve').mockResolvedValue({ session_id: 's', run_id: 'resumed' });
   const completed = { ...paused, run_id: 'resumed', status: 'completed' as const };
   vi.spyOn(api, 'run').mockResolvedValue(completed);
-  vi.mocked(api.session).mockResolvedValue({ ...pending, pending_approval: false, approval_requests: [], can_run: true, live: completed });
-  await act(async () => result.current.approve([{ tool_call_id: 't', decision: 'reject' }]));
+  vi.mocked(api.session).mockResolvedValue({ ...pending, pending_approval: false, approval_batches: [], can_run: true, live: completed });
+  await act(async () => result.current.approve(batch, [{ approval_id: 'row', decision: 'reject' }]));
   await waitFor(() => expect(result.current.session?.pending_approval).toBe(false));
-  expect(api.approve).toHaveBeenCalledWith('s', 'origin', [{ tool_call_id: 't', decision: 'reject' }]);
+  expect(api.approve).toHaveBeenCalledWith('s', batch, [{ approval_id: 'row', decision: 'reject' }], []);
   expect(result.current.run?.run_id).toBe('resumed');
   expect(result.current.draft).toBe('later question');
+});
+
+it('refreshes a live child batch and submits without replacing its active SSE subscription', async () => {
+  const { api, result } = setup();
+  const liveBatch = { ...batch, kind: 'live_child' as const, agent: 'tester', agent_path: 'root/tester/A' };
+  const live = { ...paused, status: 'running' as const, done: false };
+  const active = { ...pending, state: 'running', busy: true, live, approval_batches: [] };
+  vi.mocked(api.session).mockResolvedValue(active);
+  const run = vi.spyOn(api, 'run');
+  let receive!: (frame: SseFrame) => void;
+  const events = vi.spyOn(api, 'events').mockImplementation((_run, _after, signal, callback) => {
+    receive = callback;
+    return new Promise(resolve => signal.addEventListener('abort', () => resolve()));
+  });
+  await act(async () => result.current.selectSession('s'));
+  await waitFor(() => expect(events).toHaveBeenCalledTimes(1));
+  vi.mocked(api.session).mockResolvedValue({ ...active, pending_approval: true, approval_batches: [liveBatch] });
+  act(() => receive({ event: 'runtime', data: { version: 1, session_id: 's', run_id: 'origin', sequence: 10,
+    event_type: 'approval_requested', data: {}, source: { agent_path: 'root/tester/A', agent_id: 'A',
+      agent_run_id: 'segment', parent_run_id: 'origin', parent_tool_call_id: 'outer' } } }));
+  await waitFor(() => expect(result.current.session?.approval_batches).toHaveLength(1));
+  vi.mocked(api.session).mockResolvedValue({ ...active, pending_approval: false });
+  vi.spyOn(api, 'approve').mockResolvedValue({ session_id: 's', run_id: 'origin', accepted: true, kind: 'live_child' });
+  await act(async () => result.current.approve(liveBatch, [{ approval_id: 'row', decision: 'approve' }], ['row']));
+  expect(result.current.session?.approval_batches).toEqual([]);
+  expect(result.current.run?.last_sequence).toBe(10);
+  expect(result.current.run?.status).toBe('running');
+  expect(events).toHaveBeenCalledTimes(1);
+  expect(run).not.toHaveBeenCalled();
+  expect(events.mock.calls[0][2].aborted).toBe(false);
+});
+
+it('stops a live child without stopping its parent or reconnecting SSE', async () => {
+  const { api, result } = setup();
+  const liveBatch = { ...batch, kind: 'live_child' as const, agent_path: 'root/tester/A' };
+  const live = { ...paused, status: 'running' as const, done: false };
+  const active = { ...pending, busy: true, live, approval_batches: [liveBatch] };
+  vi.mocked(api.session).mockResolvedValue(active);
+  const events = vi.spyOn(api, 'events').mockImplementation((_run, _after, signal) =>
+    new Promise(resolve => signal.addEventListener('abort', () => resolve())));
+  const stop = vi.spyOn(api, 'control').mockResolvedValue({ accepted: true, retained: [] });
+  await act(async () => result.current.selectSession('s'));
+  await waitFor(() => expect(events).toHaveBeenCalledTimes(1));
+  vi.mocked(api.session).mockResolvedValue({ ...active, pending_approval: false, approval_batches: [] });
+  await act(async () => result.current.stopApproval(liveBatch));
+  expect(stop).toHaveBeenCalledWith('origin', 'stop', undefined, 'root/tester/A');
+  expect(result.current.stopping).toBe(false);
+  expect(result.current.pendingMode).toBe(false);
+  expect(result.current.run?.status).toBe('running');
+  expect(events).toHaveBeenCalledTimes(1);
+  expect(events.mock.calls[0][2].aborted).toBe(false);
+});
+
+it('stops a paused root through a new run while retaining the pending draft', async () => {
+  const { api, result } = setup();
+  await act(async () => result.current.selectSession('s'));
+  act(() => result.current.setDraft('next task'));
+  const stop = vi.spyOn(api, 'stopApproval').mockResolvedValue({ session_id: 's', run_id: 'stopped-run' });
+  vi.spyOn(api, 'run').mockResolvedValue({ ...paused, run_id: 'stopped-run', status: 'stopped' });
+  vi.mocked(api.session).mockResolvedValue({ ...pending, pending_approval: false, approval_batches: [], can_run: true });
+  await act(async () => result.current.stopApproval(batch));
+  await waitFor(() => expect(result.current.session?.pending_approval).toBe(false));
+  expect(stop).toHaveBeenCalledWith('s', batch);
+  expect(result.current.run?.status).toBe('stopped');
+  expect(result.current.draft).toBe('next task');
+  expect(result.current.pendingMode).toBe(true);
 });

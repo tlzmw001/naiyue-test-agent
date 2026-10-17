@@ -1,10 +1,43 @@
-# 当前可用的工具、权限、进程及进度设置样例（Spec085-14 / Spec087 / Spec091 / Spec090C）。
+# 当前可用的工具、权限、进程、进度及角色定义样例（Spec085-14 / Spec087 / Spec091 / Spec090C / Spec086-S1—S6）。
 # 默认位置：~/.naiyue-test-agent/settings.toml，与 models.json 同目录。
-# 文件缺失使用默认；读取失败、TOML语法错误、权限非法或storage非法会终止启动。
+# 文件缺失使用默认；读取失败、TOML语法错误、权限/storage/角色定义非法会终止启动。
 # tools / process / tool_output / progress额度字段非法时分别警告并回退该部分默认，保留合法权限规则。
 # 权限规则启动时读取并校验，不随工具调用重新读文件；修改文件后重启服务。
-# 已接八工具：tools.read / ls / write / edit / grep / find / bash / powershell。
+# 已接八执行工具及通用subagent；tools.subagent配置报告预算，[[subagents]]配置角色。
 # 完整目标字段见 tool-runtime.example.toml，不能直接整份套用。
+
+# 子Agent角色定义：取消下面整个示例块的行首注释后生效，可重复[[subagents]]定义多个角色。
+# S1—S6已接定义、执行、CLI/Web子批审批及停止/保存；默认无角色，不自动发起模型调用。
+# 配置仅在启动时读取；修改工具列表、描述、提示词或模型后重启。当前不覆盖同名角色。
+# name：唯一角色名，字符限英文字母/数字/下划线/点/短横线；最终作为subagent的agent参数。
+# description：供父模型决定何时委派的短说明；不要把完整工作流程塞进这里。
+# system_prompt：子角色的职责、工作步骤及结果要求；不授予额外工具或权限。
+# tool_names：已登记工具名称数组；[]表示无工具。不能含subagent，首版只支持一层。
+# 自定义工具须先由可信启动代码放入builder的tools参数；配置不会import或执行Python插件。
+# model_id：同目录models.json中的已有ID；省略表示启动子实例时继承父模型。
+# max_model_calls：每次委派的子图主模型调用次数上限；省略不加额外次数限制，不要填0或true。
+# 上限仅计子图主模型轮数，不是HTTP重试/Auto审查/摘要调用总数；S3审批恢复已沿用同一计数。
+# 第N次若已给最终答复可成功；需要第N+1次时不再请求，向父返回错误，已执行工具不回滚。
+# 下面的提示词按公开Claude/OpenAI角色示例的职责、步骤、证据结构拟定，不是其私有提示词。
+# [[subagents]]
+# name = "tester"
+# description = "测试验证子Agent；独立检查改动并运行相关测试，返回实际结果与未验证范围。"
+# tool_names = ["read", "grep", "find", "ls", "bash"]
+# # max_model_calls = 12  # 可选；需要限制时移除本行两层注释，放在system_prompt多行字符串之外。
+# system_prompt = """
+# 你负责完成父Agent委派的测试验证任务。
+# 先确认任务范围，再读取相关代码和测试，选择与改动有关的验证。
+# 依据实际工具结果报告，不把未运行的测试描述为通过。
+# 区分测试发现的问题、环境问题与工具执行失败；不主动修改源码。
+# 最终返回检查范围、执行的验证、实际结果、问题证据及未验证部分。
+# """
+# 默认省略model_id/max_model_calls；需要时在本角色内填写已有模型ID/正整数。
+
+[tools.subagent]
+# 子任务最终报告的正文行数、UTF-8字节上限，均须大于0；与角色max_model_calls分别配置。
+# 保留开头完整行；首行过长时保留完整字符前缀。截断提示另计；完整历史留在子checkpoint。
+max_result_lines = 2000
+max_result_bytes = 65_536
 
 [progress]
 # 是否产生工具进度事件；不影响工具结果、停止、权限或执行期限。

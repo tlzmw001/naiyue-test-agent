@@ -55,12 +55,24 @@ class SessionStorage:
             self.connection.row_factory = sqlite3.Row
             if existing:
                 version = self.connection.execute('SELECT version FROM naiyue_store_info').fetchall()
-                if len(version) != 1 or version[0][0] != 4:
+                if len(version) != 1 or version[0][0] not in (4, 5, 6):
                     raise SessionPersistenceError('unsupported_store_schema')
+                if version[0][0] in (4, 5):
+                    with self.connection:
+                        self.connection.execute('BEGIN')
+                        if version[0][0] == 4:
+                            self.connection.execute("ALTER TABLE naiyue_sessions ADD COLUMN thinking_level TEXT NOT NULL DEFAULT 'model_default'")
+                        self.connection.execute('ALTER TABLE naiyue_sessions ADD COLUMN title TEXT')
+                        self.connection.execute('ALTER TABLE naiyue_sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0')
+                        self.connection.execute('ALTER TABLE naiyue_sessions ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0')
+                        rows = self.connection.execute('SELECT session_id FROM naiyue_sessions ORDER BY updated_at DESC,session_id').fetchall()
+                        self.connection.executemany('UPDATE naiyue_sessions SET sort_order=? WHERE session_id=?',
+                                                    [(index, row[0]) for index, row in enumerate(rows)])
+                        self.connection.execute('UPDATE naiyue_store_info SET version=6')
             else:
                 self.connection.executescript('''
                     CREATE TABLE naiyue_store_info(version INTEGER NOT NULL);
-                    INSERT INTO naiyue_store_info VALUES(4);
+                    INSERT INTO naiyue_store_info VALUES(6);
                     CREATE TABLE naiyue_workspace(
                         singleton INTEGER PRIMARY KEY CHECK(singleton=1),
                         workspace_id TEXT NOT NULL, root_path TEXT NOT NULL);
@@ -71,7 +83,10 @@ class SessionStorage:
                         checkpoint_ns TEXT NOT NULL DEFAULT '',
                         created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                         last_run_status TEXT, active_tool_names_json TEXT NOT NULL,
-                        permission_mode TEXT NOT NULL DEFAULT 'Default');
+                        permission_mode TEXT NOT NULL DEFAULT 'Default',
+                        thinking_level TEXT NOT NULL DEFAULT 'model_default',
+                        title TEXT, pinned INTEGER NOT NULL DEFAULT 0,
+                        sort_order INTEGER NOT NULL DEFAULT 0);
                 ''')
             self.checkpoint_connection = sqlite3.connect(self.path, check_same_thread=False)
             self._stack.callback(self.checkpoint_connection.close)
@@ -145,10 +160,11 @@ class SessionStorage:
             raise SessionPersistenceError('workspace_database_mismatch')
         now = self._now()
         self._write('''INSERT INTO naiyue_sessions
-            (session_id,thread_id,model_id,workspace_root,state,created_at,updated_at,active_tool_names_json,permission_mode)
-            VALUES(?,?,?,?,?,?,?,?,?)''', (session_id, session['thread_id'], session['model_id'],
+            (session_id,thread_id,model_id,workspace_root,state,created_at,updated_at,active_tool_names_json,permission_mode,sort_order)
+            VALUES(?,?,?,?,?,?,?,?,?,(SELECT COALESCE(MIN(sort_order),0)-1 FROM naiyue_sessions WHERE workspace_root IS ?))''', (session_id, session['thread_id'], session['model_id'],
             str(session['workspace_root']) if session['workspace_root'] is not None else None,
-            'ready', now, now, json.dumps(session['active_tool_names']), session['permission_mode']))
+            'ready', now, now, json.dumps(session['active_tool_names']), session['permission_mode'],
+            str(session['workspace_root']) if session['workspace_root'] is not None else None))
 
     def get(self, session_id):
         rows = self._read('SELECT * FROM naiyue_sessions WHERE session_id=?', (session_id,))
@@ -160,11 +176,57 @@ class SessionStorage:
         return row
 
     def list_sessions(self):
-        return self._read('SELECT * FROM naiyue_sessions ORDER BY updated_at DESC, session_id ASC')
+        return self._read('SELECT * FROM naiyue_sessions ORDER BY pinned DESC,sort_order ASC,created_at DESC,session_id ASC')
+
+    def update_presentation(self, session_id, *, title=None, pinned=None):
+        if title is None and pinned is None:
+            raise ValueError('invalid_session_presentation')
+        if title is not None:
+            if not isinstance(title, str) or not title.strip() or len(title.strip()) > 120 or any(ord(c) < 32 or ord(c) == 127 for c in title):
+                raise ValueError('invalid_session_presentation')
+            title = title.strip()
+        if pinned is not None and type(pinned) is not bool:
+            raise ValueError('invalid_session_presentation')
+        self._write('UPDATE naiyue_sessions SET title=COALESCE(?,title),pinned=COALESCE(?,pinned) WHERE session_id=?',
+                    (title, pinned, session_id))
+
+    def reorder(self, workspace_root, identities):
+        root = str(workspace_root) if workspace_root is not None else None
+        try:
+            with self._lock, self.connection:
+                self.connection.execute('BEGIN')
+                rows = self.connection.execute('SELECT session_id,pinned FROM naiyue_sessions WHERE workspace_root IS ?', (root,)).fetchall()
+                pins = {row['session_id']: row['pinned'] for row in rows}
+                if len(identities) != len(pins) or set(identities) != set(pins):
+                    raise ValueError('stale_session_order')
+                if [pins[key] for key in identities] != sorted(pins.values(), reverse=True):
+                    raise ValueError('invalid_session_order')
+                self.connection.executemany('UPDATE naiyue_sessions SET sort_order=? WHERE session_id=?', enumerate(identities))
+        except sqlite3.Error as error:
+            logger.error('session_order_save_failed error_type=%s', type(error).__name__)
+            raise SessionPersistenceError('session_save_unconfirmed') from error
+
+    def delete(self, session_id, child_threads):
+        try:
+            with self._lock, self.connection:
+                self.connection.execute('BEGIN')
+                row = self.get(session_id)
+                threads = [(key,) for key in {row['thread_id'], *child_threads}]
+                # One transaction across the current official SQLite tables and our metadata.
+                self.connection.executemany('DELETE FROM writes WHERE thread_id=?', threads)
+                self.connection.executemany('DELETE FROM checkpoints WHERE thread_id=?', threads)
+                self.connection.execute('DELETE FROM naiyue_sessions WHERE session_id=?', (session_id,))
+        except sqlite3.Error as error:
+            logger.error('session_delete_failed error_type=%s', type(error).__name__)
+            raise SessionPersistenceError('session_delete_unconfirmed') from error
 
     def select_model(self, session_id, model_id):
-        self._write('UPDATE naiyue_sessions SET model_id=?,updated_at=? WHERE session_id=?',
+        self._write("UPDATE naiyue_sessions SET model_id=?,thinking_level='model_default',updated_at=? WHERE session_id=?",
                     (model_id, self._now(), session_id))
+
+    def select_thinking(self, session_id, level):
+        self._write('UPDATE naiyue_sessions SET thinking_level=?,updated_at=? WHERE session_id=?',
+                    (level, self._now(), session_id))
 
     def select_active_tools(self, session_id, names):
         self._write('UPDATE naiyue_sessions SET active_tool_names_json=?,updated_at=? WHERE session_id=?',

@@ -3,6 +3,7 @@
 import asyncio
 from collections import OrderedDict, deque
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -15,6 +16,7 @@ from naiyue_test_agent.application.stream_projection import StreamingMessageProj
 from naiyue_test_agent.tools.settings import ToolProgressSettings
 from .errors import WebError, public_error
 from .serialization import encoded_size, wire_event, text_content, message_view, project_event_for_web
+from .agent_projection import observe_agent, summarize_agent
 
 
 logger = logging.getLogger(__name__)
@@ -34,10 +36,14 @@ class DeliveredRun:
         self.projection.seed(session_id, rows)
         self.last_sequence = 0
         self.status = 'running'
+        self.mode = 'message'
+        self.compaction_result = None
         self.manual_review_required = False
         self.failure = None
         self.retained = []
         self.tool_states = {}
+        self.agents = {}
+        self.context_snapshot = None
         progress = progress_settings or ToolProgressSettings()
         self.progress_max_text_bytes = progress.max_text_bytes
         self.stop_requested = False
@@ -77,16 +83,29 @@ class DeliveredRun:
             try:
                 event = project_event_for_web(event, progress_max_text_bytes=self.progress_max_text_bytes)
                 payload = wire_event(event)
+                if event.event_type == 'model_context_snapshot' and encoded_size(payload) > self.settings.max_frame_bytes:
+                    event = replace(event, data=replace(event.data, snapshot_json=None))
+                    payload = wire_event(event)
+                    logger.warning('web_context_snapshot_omitted reason=view_limit')
                 if encoded_size(payload) > self.settings.max_frame_bytes:
                     self.projection.incomplete = True
                 else:
                     self.events.append(payload)
                     self.projection(event)
-                    self._observe_tool(payload)
-                    if (event.event_type == 'control_accepted' and event.data.kind == 'stop'
+                    if event.source is not None:
+                        observe_agent(self.agents, payload, self.projection.messages)
+                    else:
+                        if event.event_type == 'run_started':
+                            self.mode = event.data.mode
+                        if event.event_type == 'compaction_finished' and event.data.trigger == 'manual':
+                            self.compaction_result = {'status': event.data.status, 'reason': event.data.reason}
+                        self._observe_tool(payload)
+                        if event.event_type == 'model_context_snapshot':
+                            self.context_snapshot = json.loads(event.data.snapshot_json) if event.data.snapshot_json else None
+                    if (event.source is None and event.event_type == 'control_accepted' and event.data.kind == 'stop'
                             and self.status == 'running'):
                         self.stop_requested = True
-                if event.event_type == 'run_finished':
+                if event.source is None and event.event_type == 'run_finished':
                     self.status = event.data.status
                     self.manual_review_required = event.data.manual_review_required
                     self.failure = payload['data']['failure']
@@ -126,22 +145,47 @@ class DeliveredRun:
                 'finished_at': event['timestamp']}
 
     def _mark_tools_unconfirmed(self, timestamp):
-        for row in self.tool_states.values():
+        rows = [*self.tool_states.values(), *(row for agent in self.agents.values() for row in agent['tool_states'].values())]
+        for row in rows:
             if row['state'] == 'running':
                 row.update(state='unconfirmed', finished_at=timestamp)
 
     def view(self):
         with self.lock:
-            value = {'session_id': self.session_id, 'run_id': self.run_id, 'status': self.status,
+            value = {'session_id': self.session_id, 'run_id': self.run_id, 'status': self.status, 'mode': self.mode,
                 'messages': [{**deepcopy(row), 'content': text_content(row['content'])}
                              for row in self.projection.messages], 'last_sequence': self.last_sequence,
                 'incomplete': self.projection.incomplete, 'done': self.done,
                 'manual_review_required': self.manual_review_required, 'failure': self.failure,
                 'stop_requested': self.stop_requested,
-                'retained': deepcopy(self.retained), 'tool_states': deepcopy(self.tool_states)}
+                'retained': deepcopy(self.retained), 'tool_states': deepcopy(self.tool_states),
+                'context_snapshot': deepcopy(self.context_snapshot), 'compaction_result': deepcopy(self.compaction_result),
+                'agents': {path: {**summarize_agent(agent, self.settings.max_frame_bytes // (4 * max(1, len(self.agents)))),
+                                  'snapshot_sequence': self.last_sequence}
+                    for path, agent in self.agents.items()}}
+        if encoded_size(value) > self.settings.max_frame_bytes and value.get('context_snapshot') is not None:
+            value['context_snapshot'] = None
+            logger.warning('web_context_summary_omitted reason=view_limit')
         if encoded_size(value) > self.settings.max_frame_bytes:
             raise WebError('view_too_large')
         return value
+
+    def agent_view(self, agent_path):
+        """Full selected child data has its own size boundary, independent of root controls."""
+        with self.lock:
+            agent = self.agents.get(agent_path)
+            if agent is None:
+                return None
+            value = {**deepcopy({key: item for key, item in agent.items() if key != 'tool_states'}),
+                     'tool_states': {identity: deepcopy({key: item for key, item in row.items() if key != 'result'})
+                                     for identity, row in agent['tool_states'].items()}}
+        if encoded_size(value) > self.settings.max_frame_bytes:
+            raise WebError('view_too_large')
+        return value
+
+    def context_view(self):
+        with self.lock:
+            return deepcopy(self.context_snapshot)
 
     def _check_cursor(self, after):
         if after > self.last_sequence or self.projection.incomplete or (
@@ -196,6 +240,18 @@ class RunDelivery:
         except KeyError:
             raise WebError('run_not_found', 404) from None
 
+    def forget_session(self, session_id):
+        identities = {key for key, job in self.runs.items() if job.session_id == session_id}
+        for key in identities:
+            self.runs.pop(key)
+        self.latest.pop(session_id, None)
+        for receipts in (self.receipts, self.pending_receipts):
+            for key in tuple(receipts):
+                if key[0] == session_id or key[0] in identities:
+                    receipts.pop(key)
+        if self.active is not None and self.active.session_id == session_id:
+            self.active = None
+
     def _cached(self, scope, request_id, body):
         fingerprint = sha256(json.dumps(body, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
         key = (scope, request_id)
@@ -210,12 +266,16 @@ class RunDelivery:
     async def start(self, session_id, body, rows, *, can_run=True):
         return await self._launch(session_id, body, rows, can_run=can_run)
 
+    async def compact(self, session_id, body, rows, *, can_run=True):
+        return await self._launch(session_id, body, rows, can_run=can_run, compact=True)
+
     async def resume(self, session_id, body, check_current):
         return await self._launch(session_id, body, [], resume_check=check_current)
 
-    async def _launch(self, session_id, body, rows, *, can_run=True, resume_check=None):
+    async def _launch(self, session_id, body, rows, *, can_run=True, resume_check=None, compact=False):
         async with self.start_lock:
-            key, fingerprint, old = self._cached(session_id, body.request_id, body.model_dump())
+            key, fingerprint, old = self._cached(session_id, body.request_id, {**body.model_dump(),
+                '_operation': 'compact' if compact else 'approval' if resume_check else 'message'})
             if old is not None:
                 return old
             pending = self.pending_receipts.get(key)
@@ -224,12 +284,26 @@ class RunDelivery:
                     raise WebError('request_id_conflict')
                 run_id = await asyncio.shield(pending[1].started)
                 return {'session_id': session_id, 'run_id': run_id}
+            prepared = await resume_check() if resume_check is not None else None
+            if prepared is not None and prepared['kind'] == 'live_child':
+                if (self.active is None or self.active.task.done() or self.active.session_id != session_id
+                        or self.active.run_id != body.origin_run_id):
+                    raise WebError('stale_approval')
+                try:
+                    receipt = await self.application.asubmit_subagent_approval(session_id,
+                        approval_batch_id=body.approval_batch_id, origin_run_id=body.origin_run_id,
+                        decisions=[item.model_dump() for item in body.decisions], remember_approved=body.remember_approved)
+                except ValueError:
+                    raise WebError('stale_approval') from None
+                result = {'session_id': session_id, **receipt, 'kind': 'live_child'}
+                self.receipts[key] = (fingerprint, result)
+                return result
             if self.active is not None and not self.active.task.done():
                 raise WebError('session_busy')
             if not can_run:
                 raise WebError('session_recovery_blocked')
-            if resume_check is not None:
-                rows = await resume_check()
+            if prepared is not None:
+                rows = prepared['messages']
 
             def register(job):
                 self.runs[job.run_id] = job
@@ -245,7 +319,7 @@ class RunDelivery:
             self.pending_receipts[key] = (fingerprint, job)
             job.unsubscribe = self.application.subscribe_events(job.observe)
             self.active = job
-            job.task = asyncio.create_task(self._produce(job, body, resume=resume_check is not None))
+            job.task = asyncio.create_task(self._produce(job, body, prepared=prepared, compact=compact))
             # Even when no event reveals the ID, keep the pending receipt so
             # retrying this request cannot repeat an already completed run.
             run_id = await asyncio.shield(job.started)
@@ -255,13 +329,26 @@ class RunDelivery:
         finished = [key for key, job in self.runs.items() if job.done]
         for key in finished[:-self.settings.retained_runs]:
             old = self.runs.pop(key)
+            for receipt in tuple(self.receipts):
+                if receipt[0] == key:
+                    self.receipts.pop(receipt)
             if self.latest.get(old.session_id) == key:
                 self.latest.pop(old.session_id, None)
 
-    async def _produce(self, job, body, *, resume=False):
+    async def _produce(self, job, body, *, prepared=None, compact=False):
         try:
-            if resume:
-                result = await self.application.aresume_tool_approval(job.session_id, [item.decision for item in body.decisions])
+            if compact:
+                result = await self.application.acompact_context(job.session_id)
+                if job.compaction_result is None and result.get('compaction_status') is not None:
+                    with job.lock:
+                        job.compaction_result = {'status': result['compaction_status'], 'reason': None}
+            elif prepared is not None:
+                if prepared.get('stop'):
+                    result = await self.application.astop_tool_approval(job.session_id,
+                        approval_batch_id=body.approval_batch_id, origin_run_id=body.origin_run_id)
+                else:
+                    result = await self.application.aresume_tool_approval(job.session_id, prepared['decisions'],
+                        remember_approved=prepared['remember_approved'])
             else:
                 result = await self.application.arun(job.session_id,
                     [HumanMessage(content=body.text, id=body.request_id)])
@@ -304,11 +391,12 @@ class RunDelivery:
                 raise WebError('stale_run')
             try:
                 if body.kind == 'stop':
-                    retained = self.application.request_stop(job.session_id, run_id=run_id)
-                    with job.lock:
-                        job.retained = list(retained)
-                        if job.status == 'running':
-                            job.stop_requested = True
+                    retained = self.application.request_stop(job.session_id, run_id=run_id, agent_path=body.agent_path)
+                    if body.agent_path == 'root':
+                        with job.lock:
+                            job.retained = list(retained)
+                            if job.status == 'running':
+                                job.stop_requested = True
                 else:
                     method = self.application.steer if body.kind == 'steering' else self.application.follow_up
                     method(job.session_id, body.text)
@@ -323,9 +411,6 @@ class RunDelivery:
         await asyncio.shield(self.get(run_id).task)
 
     async def close(self):
+        await self.application.aclose()
         if self.active is not None and not self.active.task.done():
-            try:
-                self.application.request_stop(self.active.session_id, run_id=self.active.run_id)
-            except Exception as error:
-                logger.info('web_shutdown_stop_not_accepted error_type=%s', type(error).__name__)
             await asyncio.shield(self.active.task)

@@ -8,10 +8,10 @@ from .failures import RunFailureData
 
 @dataclass(frozen=True)
 class RunStartedData:
-    mode: Literal['message', 'approval_resume']
+    mode: Literal['message', 'approval_resume', 'compact']
 
     def __post_init__(self):
-        if self.mode not in ('message', 'approval_resume'):
+        if self.mode not in ('message', 'approval_resume', 'compact'):
             raise ValueError('Invalid run start mode')
 
 
@@ -85,13 +85,29 @@ class ControlData:
 
 
 @dataclass(frozen=True)
+class ApprovalItemData:
+    approval_id: str
+    tool_call_id: str
+    tool_name: str
+    target: str
+    workspace: str | None = None
+
+
+@dataclass(frozen=True)
 class ApprovalRequestedData:
     tool_call_ids: tuple[str, ...]
+    approval_batch_id: str | None = None
+    items: tuple[ApprovalItemData, ...] = ()
 
     def __post_init__(self):
         if (type(self.tool_call_ids) is not tuple or not self.tool_call_ids
                 or any(not isinstance(v, str) or not v for v in self.tool_call_ids)):
             raise ValueError('Actual pending tool identifiers are required')
+        if self.approval_batch_id is not None and (not isinstance(self.approval_batch_id, str) or not self.approval_batch_id):
+            raise ValueError('Invalid approval batch identifier')
+        if (type(self.items) is not tuple or any(type(item) is not ApprovalItemData for item in self.items)
+                or self.items and tuple(item.tool_call_id for item in self.items) != self.tool_call_ids):
+            raise ValueError('Approval display rows do not match pending calls')
 
     @property
     def count(self):

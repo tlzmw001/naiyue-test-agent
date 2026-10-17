@@ -16,7 +16,7 @@ from naiyue_test_agent.agent_runtime.run_control import RunControl
 from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
 
 from naiyue_test_agent.agent_runtime.events import (
-    RunEventPublisher,
+    RunEventPublisher, AgentEventPublisher,
 )
 from naiyue_test_agent.agent_runtime.errors import RuntimeErrorPolicy, run_failure_data
 from .failure_policy import ApplicationErrorPolicy
@@ -36,6 +36,9 @@ def _log_event(event) -> None:
         'event': event.event_type, 'session_id': event.session_id, 'run_id': event.run_id,
         'sequence': event.sequence, 'timestamp': event.timestamp,
     }
+    if event.source is not None:
+        fields.update(agent_path=event.source.agent_path, agent_run_id=event.source.agent_run_id,
+                      parent_tool_call_id=event.source.parent_tool_call_id)
     if isinstance(event.data, RunStartedData):
         fields['mode'] = event.data.mode
     elif isinstance(event.data, RunFinishedData):
@@ -94,7 +97,7 @@ class ApplicationEventSubscriptions:
 class RunObservation:
     """Observe outcomes; the session service still owns results and cleanup."""
 
-    def __init__(self, publisher: RunEventPublisher, mode: str, *, progress_settings=None):
+    def __init__(self, publisher: RunEventPublisher | AgentEventPublisher, mode: str, *, progress_settings=None, stop_control=None):
         self.publisher = publisher
         self.mode = mode
         self.stage = 'prepare'
@@ -103,7 +106,7 @@ class RunObservation:
         self._suppress_terminal = False
         self.turns = TurnObserver(publisher)
         self.controls = ControlObserver(publisher)
-        self.stop_control = RunControl()
+        self.stop_control = stop_control if stop_control is not None else RunControl()
         self.context_operations = ContextOperationObserver(publisher)
         self.tool_progress = ToolProgressObserver(publisher, progress_settings)
         self.runtime_errors = RuntimeErrorPolicy()
@@ -120,11 +123,12 @@ class RunObservation:
                 FailureDescription('application', 'unknown', 'unclassified', safe_error_type(error)))
 
     @contextmanager
-    def bind(self):
+    def bind(self, *, ainvoke_subagent=None):
         if self.mode == 'approval_resume':
             observe(self.controls, self.controls.submit_approval)
         services = RunServices(self.publisher, self.runtime_errors, self.stop_control,
-                               self.turns, self.controls, self.context_operations, tool_progress=self.tool_progress)
+                               self.turns, self.controls, self.context_operations, tool_progress=self.tool_progress,
+                               ainvoke_subagent=ainvoke_subagent)
         with bind_run_services(services):
             yield
 

@@ -8,12 +8,13 @@ from xml.sax.saxutils import escape, quoteattr
 
 import yaml
 
-from naiyue_test_agent.application.project_instructions import load_workspace_instructions
+from naiyue_test_agent.application.project_instructions import load_workspace_instruction_part
 
 
 logger = logging.getLogger(__name__)
 _NAME = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*\Z')
 _SOURCES = ('agents', 'claude')
+_BUILTIN_COMMANDS = {'compact', 'context', 'model', 'tools', 'permissions', 'agents', 'skills'}
 _MAX_SKILL_SOURCE_BYTES = 64 * 1024
 
 
@@ -43,6 +44,11 @@ class SkillCatalog:
     @property
     def read_resource_roots(self) -> tuple[Path, ...]:
         return tuple(dict.fromkeys(item.resource_root for item in self.entries))
+
+    def command_for(self, entry: SkillEntry) -> str:
+        # Keep aliases stable when one source disappears between selection and sending.
+        qualified = entry.source_id != 'agents' or entry.name in _BUILTIN_COMMANDS
+        return f'/{entry.source_id}:{entry.name}' if qualified else f'/{entry.name}'
 
 
 def _target(path: Path, workspace: Path) -> Path:
@@ -165,10 +171,13 @@ def format_skill_catalog(catalog: SkillCatalog) -> str | None:
         '\n\nSkill loading policy: Use the default source unless the user explicitly '
         'requests another source. Source agents means .agents/skills; source claude '
         'means .claude/skills. Keep same-name skills from different sources distinct. '
+        'A user message starting with a listed command explicitly selects that exact '
+        'Skill and source: use read to load its SKILL.md before following it. '
         'When a task matches a skill description, use read to load its SKILL.md before '
         'following it. Resolve referenced relative paths against the Skill directory '
         'and use absolute paths. If a requested source or skill is unavailable, say so '
-        'rather than silently substituting another. Skill instructions do not grant '
+        'rather than silently substituting another. If read is unavailable, explain '
+        'that the Skill cannot be loaded. Skill instructions do not grant '
         'permissions or bypass tool approvals.',
         f'<available_skills default_source={quoteattr(catalog.default_source)}>',
     ]
@@ -180,6 +189,7 @@ def format_skill_catalog(catalog: SkillCatalog) -> str | None:
                      f'default={quoteattr(str(source == catalog.default_source).lower())}>')
         for item in group:
             lines.append(f'<skill><name>{escape(item.name)}</name>'
+                         f'<command>{escape(catalog.command_for(item))}</command>'
                          f'<description>{escape(item.description)}</description>'
                          f'<location>{escape(str(item.skill_file))}</location></skill>')
         lines.append('</source>')
@@ -188,8 +198,10 @@ def format_skill_catalog(catalog: SkillCatalog) -> str | None:
 
 
 def prepare_run_resources(workspace_root: Path | None, *, enable_skills=True):
-    instructions = load_workspace_instructions(workspace_root)
+    part = load_workspace_instruction_part(workspace_root)
+    instructions = part['text'] if part else None
     catalog = discover_project_skills(workspace_root) if enable_skills else SkillCatalog((), ())
     index = format_skill_catalog(catalog)
-    return {'prompt': (instructions or '') + (index or '') or None,
+    parts = ([part] if part else []) + ([{'id': 'skills', 'text': index, 'count': len(catalog.entries)}] if index else [])
+    return {'prompt_parts': parts,
             'project_instructions': instructions, 'read_resource_roots': catalog.read_resource_roots}

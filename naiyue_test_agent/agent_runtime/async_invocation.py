@@ -19,6 +19,7 @@ async def ainvoke_agent_run(agent, messages, *, session_id, thread_id, run_id,
     correlation = {'run_id': run_id, 'session_id': session_id}
     logger.info('run_started', extra={'run_event': {'event': 'run_started', **correlation}})
     context = make_invocation_context(session_id, run_id, workspace_root, approval_grants, read_resource_roots)
+    context['_max_concurrency'] = max_concurrency
     input = messages if isinstance(messages, Command) else {'messages': messages}
     config = {'configurable': {'thread_id': thread_id}, 'max_concurrency': max_concurrency}
     try:

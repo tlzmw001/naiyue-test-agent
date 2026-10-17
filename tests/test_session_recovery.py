@@ -212,7 +212,7 @@ async def test_current_process_state_cannot_be_bypassed(monkeypatch, tmp_path, g
         elif gate == 'active':
             app._sessions._persistence._active = ('other-session', 'active-run')
         else:
-            app._sessions._sessions[sid] = {'manual_review_required': True}
+            app._sessions._sessions[sid] = {'manual_review_required': True, 'busy': False}
         before = database_facts(storage)
         with pytest.raises(SessionPersistenceError, match='session_recovery_blocked'):
             await app.arecover_session(sid, checkpoint_id=original.config['configurable']['checkpoint_id'], action='continue')

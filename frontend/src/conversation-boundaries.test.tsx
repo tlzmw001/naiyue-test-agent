@@ -75,6 +75,39 @@ it('preserves independent drafts and keeps the confirmed model when a switch fai
   expect(result.current.model).toBe('A');
   expect(result.current.notice).toContain('操作未确认');
 });
+
+it('reads back a model selection when the save succeeded but its receipt was lost', async () => {
+  const { api, result } = setup();
+  vi.spyOn(api, 'session').mockResolvedValueOnce(session('one')).mockResolvedValue({ ...session('one'), model_id: 'B', thinking_level: 'model_default' });
+  vi.spyOn(api, 'select').mockRejectedValue(new Error('receipt lost'));
+  await act(async () => result.current.selectSession('one'));
+  await act(async () => result.current.selectModel('B'));
+  expect(result.current.model).toBe('B');
+  expect(result.current.session?.model_id).toBe('B');
+  expect(result.current.notice).toContain('操作未确认');
+});
+
+it('keeps a confirmed failure readback when an older run refresh returns last', async () => {
+  const { api, result } = setup();
+  vi.spyOn(api, 'session').mockResolvedValue({ ...session('s'), live });
+  await act(async () => result.current.selectSession('s'));
+  let rejectPatch!: (error: Error) => void;
+  vi.spyOn(api, 'select').mockImplementation(() => new Promise((_resolve, reject) => { rejectPatch = reject; }));
+  let switching!: Promise<void>;
+  act(() => { switching = result.current.selectModel('B'); });
+  let oldRead!: (value: SessionView) => void;
+  vi.mocked(api.run).mockResolvedValue({ ...live, status: 'completed', done: true });
+  vi.mocked(api.session).mockImplementationOnce(() => new Promise(resolve => { oldRead = resolve; }))
+    .mockResolvedValue({ ...session('s'), model_id: 'B', thinking_level: 'model_default' });
+  act(() => result.current.reconnect());
+  await waitFor(() => expect(oldRead).toBeTypeOf('function'));
+  await act(async () => { rejectPatch(new Error('receipt lost')); await switching; });
+  expect(result.current.session?.model_id).toBe('B');
+  await act(async () => oldRead({ ...session('s'), model_id: 'A', thinking_level: 'high' }));
+  expect(result.current.model).toBe('B');
+  expect(result.current.session?.model_id).toBe('B');
+  expect(result.current.session?.thinking_level).toBe('model_default');
+});
 it('retains text after a failed start and never automatically retries the POST', async () => {
   const { api, result } = setup();
   vi.spyOn(api, 'session').mockResolvedValue(session('s'));

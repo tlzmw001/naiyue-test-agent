@@ -15,7 +15,7 @@ from naiyue_test_agent.tools import create_builtin_tools, load_tool_settings
 from .auth import authorize
 from .errors import WebError
 from .run_delivery import RunDelivery
-from .schemas import ApprovalInput, ControlInput, MessageInput, NewSession, RecoveryInput
+from .schemas import ActiveToolsInput, ApprovalInput, ApprovalStopInput, CompactInput, ControlInput, MessageInput, NewSession, PermissionModeInput, RecoveryInput, SessionOrder, SessionPresentation, ThinkingInput
 from .service import WebService
 from .headers import LocalHeaders
 
@@ -63,9 +63,29 @@ def create_web_app(settings, *, application_factory=None):
     async def models():
         return app.state.service.models()
 
+    @app.get('/api/session-controls')
+    async def session_control_options():
+        return app.state.service.session_control_options()
+
+    @app.get('/api/skills')
+    async def skills():
+        return await app.state.service.skills()
+
     @app.get('/api/sessions')
     async def sessions():
         return await app.state.service.sessions()
+
+    @app.put('/api/session-order')
+    async def reorder_sessions(body: SessionOrder):
+        return await app.state.service.reorder_sessions(body)
+
+    @app.patch('/api/sessions/{session_id}/presentation')
+    async def update_presentation(session_id: str, body: SessionPresentation):
+        return await app.state.service.update_presentation(session_id, body)
+
+    @app.delete('/api/sessions/{session_id}')
+    async def delete_session(session_id: str):
+        return await app.state.service.delete_session(session_id)
 
     @app.post('/api/sessions', status_code=201)
     async def create(body: NewSession):
@@ -75,9 +95,37 @@ def create_web_app(settings, *, application_factory=None):
     async def session(session_id: str):
         return await app.state.service.session(session_id)
 
+    @app.get('/api/sessions/{session_id}/subagents')
+    async def subagents(session_id: str):
+        return await app.state.service.subagents(session_id)
+
+    @app.get('/api/sessions/{session_id}/context')
+    async def context(session_id: str):
+        return await app.state.service.context(session_id)
+
+    @app.get('/api/sessions/{session_id}/subagents/{agent_id}')
+    async def subagent(session_id: str, agent_id: str):
+        return await app.state.service.subagent(session_id, agent_id)
+
     @app.patch('/api/sessions/{session_id}/model')
     async def select(session_id: str, body: NewSession):
         return await app.state.service.select_model(session_id, body.model_id)
+
+    @app.patch('/api/sessions/{session_id}/thinking')
+    async def thinking(session_id: str, body: ThinkingInput):
+        return await app.state.service.select_thinking(session_id, body.model_id, body.thinking_level)
+
+    @app.post('/api/sessions/{session_id}/compact', status_code=202)
+    async def compact(session_id: str, body: CompactInput):
+        return await app.state.service.compact(session_id, body)
+
+    @app.patch('/api/sessions/{session_id}/tools')
+    async def select_tools(session_id: str, body: ActiveToolsInput):
+        return await app.state.service.select_tools(session_id, body.active_tools)
+
+    @app.patch('/api/sessions/{session_id}/permission-mode')
+    async def select_permission_mode(session_id: str, body: PermissionModeInput):
+        return await app.state.service.select_permission_mode(session_id, body.permission_mode)
 
     @app.post('/api/sessions/{session_id}/runs', status_code=202)
     async def start(session_id: str, body: MessageInput):
@@ -86,6 +134,10 @@ def create_web_app(settings, *, application_factory=None):
     @app.post('/api/sessions/{session_id}/approvals', status_code=202)
     async def approve(session_id: str, body: ApprovalInput):
         return await app.state.service.approve(session_id, body)
+
+    @app.post('/api/sessions/{session_id}/approvals/stop', status_code=202)
+    async def stop_approval(session_id: str, body: ApprovalStopInput):
+        return await app.state.service.stop_approval(session_id, body)
 
     @app.post('/api/sessions/{session_id}/recover')
     async def recover(session_id: str, body: RecoveryInput):

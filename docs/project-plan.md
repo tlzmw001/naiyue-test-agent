@@ -1,5 +1,15 @@
 # Naiyue Test Agent：项目设计记录
 
+2026-10-17本阶段已完成[Spec086 S1—S6](specs/086-subagent-file-map.md)及[Spec094—099](future-work.md#清理后的当前工作顺序2026-10-17)的本机实现与组合验收。后续[Spec098](specs/098-skills-picker-and-explicit-command.md)已接技能目录与显式指令；[Spec099](specs/099-session-sidebar-management.md)已接会话名称、置顶、鼠标分组排序与确认删除，模型入口只显示名称/推理档位，SQLite schema6事务迁移现行4/5。以下各日期段落保留对应实施时点；当前状态以handoff和future-work顶部为准。真实供应商、Windows/Linux原机与PyPI交付仍分别后排。
+
+2026-10-17 [Spec097输入框指令/模型设置](specs/097-composer-commands-model-thinking.md)按用户授权接线：加号只保留无独立按钮的压缩入口，`/compact`共用原摘要/保存/停止，手动不拆最近完整轮；模型与推理入口移入上下文/发送键之间。会话覆盖从声明能力选择，浅副本隔离共享模型，schema4→5只新增thinking_level并保存/恢复。手动压缩不执行图，官方model writer更新后END清路由；任务保存失败不报ready。下一步Skills查看，实际验证见handoff。
+
+2026-10-17 [Spec096上下文构成查看](specs/096-context-inspector.md)已按用户批准接线：发送键旁入口、当前估算/最近请求报告分开，唯一提示词装配保留来源；原checkpoint随AI响应保存有限统计，无新库表/依赖/额外模型请求。当前预算配置来源可见，主子统计独立；只读查询、审批暂停、旧GET、未知用量及统计交付超限均保留明确边界。实际验证见handoff，下一步先讨论手动压缩、之后Skills查看。
+
+2026-10-17 Web子智能体侧栏按[Spec095](specs/095-subagent-sidebar.md)接入：先按名称选择实例，详情不显示名称，复用主会话消息/工具卡片，审批始终在主会话。应用仅由真实父调用派生读取子checkpoint身份，Web独立有界查询，根快照不携工具正文/完整子历史；不改变Agent循环、权限、审批、停止或DB schema。下一块先讨论上下文构成查看，再讨论手动压缩及Skills查看；真实供应商、PyPI、WIN1仍分别待验。
+
+2026-10-17角色及实例：[Spec086-S1—S6](specs/086-subagent-file-map.md)本机实现及组合验收已完成。共享冻结角色/编译图、独立thread/模型工具快照、有界报告及次数上限、唯一子驱动者审批/恢复、动态索引、CLI/Web来源/分组审批及停止/保存/关闭均已接。S6补真实Read/Write/SQLite重开新实例、同步SDK线程收尾和真实进程退出后的092根恢复；不重放旧委派、不复活子审批Future。删除S2空服务/无publisher回退，无新增生产类/依赖/DB表。下一步建议先补工具启停及权限模式管理UI，随后真实供应商验证和PyPI本地Web交付；Windows/Linux原机保持待验。后台、多层、已结束实例续跑及长期记忆/沙箱独立排期。
+
 2026-10-17追加：用户撤销Discount历史业务，093C删除其实现和测试，迁移Runtime低层消费者到异步并删除同步执行面；共享建图、必要同步IO/短hook和模型SDK线程回退保留。独立127行官方同步API对照探针不依赖本项目同步Runtime。下方9月业务记录只作历史。
 
 2026-10-17架构核对：[Spec093](specs/093-architecture-semantics-and-sync-cleanup.md)按用户确认迁移旧应用测试/六探针至正式异步入口，删除独立同步App、同步持久化和双驱动生命周期。contracts保留标准库共享事实，Runtime响应拒绝归运行层；CLI桥、框架同步hook、真实文件IO和低层策略/探针仍有消费者。工具阶段失败缺结果继续采用原异步核对保护，不直接再次审批重放；“证明未执行后安全重试”另设计。最新验收与后续工作以handoff顶部为准。

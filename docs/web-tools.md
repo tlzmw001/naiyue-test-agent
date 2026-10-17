@@ -1,6 +1,6 @@
 # Web 工具与审批：入口、数据流和验证
 
-2026-10-09，按 [Spec078](specs/078-web-tools-and-approval.md)接入现有工具。界面仍参考已确认的浅色聊天区，CSS Modules 延续原样式；本片没有新增依赖/SDK、改写循环或扩大工具权限。
+当前使用入口已按[Spec086](specs/086-subagent-foreground.md)、[Spec094](specs/094-composer-tools-and-permissions.md)、[Spec095](specs/095-subagent-sidebar.md)、[Spec096](specs/096-context-inspector.md)、[Spec097](specs/097-composer-commands-model-thinking.md)、[Spec098](specs/098-skills-picker-and-explicit-command.md)及[Spec099](specs/099-session-sidebar-management.md)更新；下方“本次验证”为Spec078的历史证据，最新验证见[交接](handoff.md)。界面沿用浅色聊天区和CSS Modules。
 
 ## 使用
 
@@ -10,12 +10,35 @@
 .venv/bin/python -m naiyue_test_agent.web --config .env/models.json --workspace /绝对工作区路径
 ```
 
-统一登记八个内置定义，工作区新会话默认启用 read/ls/find/grep/write/edit。普通非隐藏工作区目标默认Allow，外部/隐藏/私密目标可审批，显式Deny优先；write/edit也可在明确许可后操作外部真实目标。递归搜索的未授权隐藏/私密目标跳过，Deny不因批准目录被覆盖。CLI/Web未传工作区默认启动cwd（Spec087）；程序化无工作区会话仍可用。
+统一登记文件、搜索、双Shell及subagent定义，工作区新会话默认启用 read/ls/find/grep/write/edit/subagent。普通非隐藏工作区目标默认Allow，外部/隐藏/私密目标可审批，显式Deny优先；write/edit也可在明确许可后操作外部真实目标。递归搜索的未授权隐藏/私密目标跳过，Deny不因批准目录被覆盖。CLI/Web未传工作区默认启动cwd（Spec087）；程序化无工作区会话仍可用。
 
+左侧会话右键或点击省略号，打开“重命名、置顶／取消置顶、删除”。排序直接用鼠标拖动会话，置顶和普通组内分别排序；出现插入线后松开保存，拖动不会打开会话，跨组不改变置顶属性。没有上移/下移入口。名称、置顶和顺序存入会话SQLite，刷新/服务重启后保留，新会话在普通组首位。删除需确认，执行/恢复中的会话拒绝删除；成功清理该会话及关联子历史，工作区文件保留。失败保留列表并提示，不自动重试删除。触屏可用省略号菜单，本片不拦截滚动做触屏排序。
+
+运行交付缓存有保留上限；旧运行淘汰时同步清理该运行的控制回执，过期控制请求返回run_not_found，不再返回旧停止回执的待发送文本。会话级启动/审批回执仍保留防重复执行，删除会话时一起撤销。
+
+输入框内部左下角显示当前权限模式，点击向上打开Default/NoAsk/Auto/BypassApprovals；Auto未配置时显示不可用原因。输入框获得焦点时Shift+Tab轮换可用模式，其他控件保留正常焦点导航。模式选择保存到当前会话，下一批工具调用生效，已有审批仍须单独处理。
+
+模式左侧加号列“压缩上下文 /compact”和“技能 /skills”，不重复已有按钮的功能。输入`/compact`并发送或点击该菜单调用同一压缩操作，不把指令当用户任务发给模型。已有会话空闲、无待审批/恢复/人工核对时可压缩；只调用摘要并保存，保留最近完整用户轮，不自动运行普通模型/工具。历史太少会跳过，摘要失败保留原文；替换/保存失败保持阻断。压缩期间显示状态且可停止，草稿保留，普通补充消息暂不排队。文字指令`/context`、`/model`、`/tools`、`/permissions`、`/agents`也可打开各自入口，首版不接受参数。
+
+输入`/skills`并发送，或加号→技能，打开相同的可滚动技能列表；支持刷新、空态与失败重试。选择只将技能指令放到输入框前面并保留任务文字，不自动发送或创建会话。当前范围为工作区`.agents/skills`与`.claude/skills`，遵守已有发现限制，不扫描用户级/共享目录。agents普通名称使用`/name`，claude始终`/claude:name`，与内建指令重名的agents技能用`/agents:name`。Read未启用时只读查看，按提示先启用工具；不自动授权。发送时重新确认技能仍存在，正文仍由模型经原Read读取。列表代表可发现，不代表已读取或已使用；运行中新增技能在下一轮索引生效。
+
+上下文与发送键之间的文字按钮显示当前模型名/推理强度，点击打开设置；不显示指针图标或展开箭头，顶部不重复选择模型。可用模型和推理档位来自启动模型配置，配置默认可解析时直接显示对应档位；未配置thinking时只显示配置默认并说明原因，不按模型名字猜能力。强度与模型按当前会话保存，运行中的请求不改变，下一请求使用新选择；切模型重置为其配置默认，子角色和Auto审查模型不继承根会话覆盖。保存失败保留已确认值并只读核对，不自动重发写请求。SQLite当前schema6自动迁移现行4/5，包含thinking_level和呈现字段，不改用户配置文件；旧全局库1/2/3仍不接受。
+
+旁边“工具”显示当前启用数量，可勾选/取消已注册工具，下一次主模型请求生效，不中止当前调用、不改子Agent角色工具集合，也不代替权限授权。首次发送前即可选择，会创建空会话并保留草稿，不调用模型。保存失败显示未确认反馈并读取实际选择，不自动重复写请求。
+
+运行中输入框右下角可选择“引导本轮”或“结束后跟进”，默认仍为前者；它们继续使用原steering/follow_up控制，停止和待重新发送语义保持。
+
+发送键左侧的圆环/占用比例打开“上下文”侧栏，与子智能体侧栏切换使用。“当前预估”读取实际模型上下文，展示系统说明（项目文件、Skill索引、工具指导等）、工具定义和消息分项；“最近请求”按同一个调用ID展示发送前估算和供应商返回的输入/输出/缓存用量。缓存属于输入子集，缺失显示“未提供”，真实0保留。窗口及预留标明配置/默认来源，图片仅粗估；草稿/排队内容和子智能体内部历史不算主会话输入。运行中采用最近已发送的固定快照；待审批或未完成的checkpoint不显示为下一请求预估。查看不调用模型/摘要，不恢复工具。成功请求统计随官方checkpoint保存，历史没有记录的构成不补造。
+
+
+
+顶部“子智能体”打开名称列表，同名实例按短标识和任务区分；选择后详情不重复显示名称，复用主会话的分割线、Markdown和可展开工具卡片。消息与进展同流，支持只停止选中的活跃子智能体。待审批只显示状态和“到主会话处理”，所有审批仍在主会话；出现审批不自动展开侧栏。375px侧栏覆盖聊天，返回审批时关闭侧栏。
+
+两个只读接口 `GET /api/sessions/{id}/subagents`、`GET /api/sessions/{id}/subagents/{agent_id}` 沿原认证和工作区归属检查，由真实父调用派生身份后读取官方子checkpoint，不接受任意thread_id、不执行恢复或模型调用。根快照只保留子摘要及有预算的当前草稿，完整记录独立读取，详情超限不阻断主审批。列表受当前父checkpoint可关联范围限制，压缩前被移除的委派未另建永久索引；瞬时进度不跨服务重启。
 
 Windows文件工具的提交/归档与路径比较已按[Spec088](specs/088-windows-file-commit-and-archives.md)/[Spec089](specs/089-windows-path-permission-identity.md)接入：合法普通/扩展盘符和UNC目标用同一比较语义，Deny仍优先，递归批准不绕过子目标过滤。归档不要求私密模式位，但标记/类型/链接和显式清理快照仍检查；已有文件替换保留系统访问设置，不自动清只读/提权。当前为本机IO与平台分支证据，Windows原机验收另做，页面/审批API未新增字段。
 
-Bash/PowerShell通过后端`aset_active_tools(session_id, names)`选择；页面尚无工具管理按钮。命令按显式规则/当前模式审批，默认策略Ask，仍是宿主机执行。双Shell环境/合流/归档见[085-14](specs/085-14-dual-shell.md)，共用进程runner/原生async及清理保护沿085-12；[085-13](specs/085-13-search-tools.md)已将Grep接原生rg分组搜索、Find接fd（Linux也识别fdfind），均有流式预算、权限过滤和不完整反馈；程序须在服务PATH中，不自动下载/安装。
+Bash/PowerShell可从输入框“工具”启用，后端仍复用`aset_active_tools(session_id, names)`。命令按显式规则/当前模式审批，默认策略Ask，仍是宿主机执行。双Shell环境/合流/归档见[085-14](specs/085-14-dual-shell.md)，共用进程runner/原生async及清理保护沿085-12；[085-13](specs/085-13-search-tools.md)已将Grep接原生rg分组搜索、Find接fd（Linux也识别fdfind），均有流式预算、权限过滤和不完整反馈；程序须在服务PATH中，不自动下载/安装。
 
 090C已统一Bash/PowerShell/Grep/Find的timeout参数：省略/null/0不设执行期限，正整数指定本次秒数，不设300秒上限；Grep发现和各分组共用一次期限。用户仍可通过现有停止按钮结束协作工具，必要进程清理和模型网络期限保留，输出/归档预算不变。
 
@@ -31,9 +54,15 @@ Bash/PowerShell通过后端`aset_active_tools(session_id, names)`选择；页面
 
 ## 数据流与接口
 
+当前管理入口：`GET /api/session-controls`仅返回工具名称/描述、默认选择与可用模式；
+`PATCH /api/sessions/{id}/tools`接收`{"active_tools":["read","ls"]}`；
+`PATCH /api/sessions/{id}/permission-mode`接收`{"permission_mode":"NoAsk"}`。
+沿用Bearer/Host/Origin及工作区归属检查，只读恢复态拒绝修改，非法工具/模式422，保存确认后才返回。
+菜单可刷新可信代码新登记的定义，不支持上传Python代码。
+
 ```text
 启动 workspace
-  → Web lifespan 登记八工具，工作区决定新会话初始活动集合
+  → Web lifespan 登记工具与角色，工作区决定新会话初始活动集合
   → ToolSet固定本次集合/提示词/预算 → 按本批生成局部官方HITL
 用户提示 → 既有 arun → 模型 AIMessage.tool_calls
   → message_completed snapshot → Web/React 工具详情
@@ -41,7 +70,7 @@ Bash/PowerShell通过后端`aset_active_tools(session_id, names)`选择；页面
   → ToolMessage → 按所属 AI 消息＋调用 ID 配对正文
 
 需要审批 → run_finished(interrupted) / 当前 pending 批次
-  → GET session 返回 approval_run_id / approval_requests
+  → GET session 返回 approval_batches（含来源与审批项ID）
   → 页面逐项决定 → POST approvals
   → 先查幂等回执，再在准入锁内重新读取批次并校验来源/ID/顺序
   → aresume_tool_approval → 原一次性 grant / Command.resume / 原 checkpoint
@@ -54,14 +83,15 @@ Bash/PowerShell通过后端`aset_active_tools(session_id, names)`选择；页面
 {
   "request_id": "浏览器生成的 UUID",
   "origin_run_id": "本批次原运行 ID",
+  "approval_batch_id": "当前真实审批批次 ID",
   "decisions": [
-    {"tool_call_id": "第一个真实调用 ID", "decision": "approve"},
-    {"tool_call_id": "第二个真实调用 ID", "decision": "reject"}
+    {"approval_id": "第一个真实审批项 ID", "decision": "approve"},
+    {"approval_id": "第二个真实审批项 ID", "decision": "reject"}
   ]
 }
 ```
 
-`POST /api/sessions/{id}/approvals` 返回202及真实新run_id；JSON中的占位文字只说明格式，不是可直接提交的示例ID。严格schema拒绝额外字段/非法决定，目标、授权值不能由浏览器回传替换。过期原run、ID/顺序/数量不匹配409；重复相同request_id和正文优先返回原回执，正文冲突409。所有API沿原token/Host/Origin检查。202不是执行/保存成功，最终仍消费新run领域终局。
+`POST /api/sessions/{id}/approvals`根批次返回202及新run_id，活动子批次沿当前根run投递，不新建根运行；JSON中的占位文字只说明格式，不是可直接提交的示例ID。严格schema拒绝额外字段/非法决定，目标、授权值不能由浏览器回传替换。过期原run、ID/顺序/数量不匹配409；重复相同request_id和正文优先返回原回执，正文冲突409。所有API沿原token/Host/Origin检查。202不是执行/保存成功，最终仍消费领域终局。
 
 ## 代码地图
 

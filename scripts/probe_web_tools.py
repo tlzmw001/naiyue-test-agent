@@ -134,10 +134,12 @@ def _parent(args):
                     if phase == 'start':
                         assert 'approval_requested' in stream.text
                         value = client.get(f'/api/sessions/{sid}').json()
-                        assert value['pending_approval'] and len(value['approval_requests']) == 2
-                        body = {'request_id': str(uuid4()), 'origin_run_id': run,
-                            'decisions': [{'tool_call_id': 'external-one', 'decision': 'approve'},
-                                          {'tool_call_id': 'external-two', 'decision': 'reject'}]}
+                        batch, = value['approval_batches']
+                        assert value['pending_approval'] and len(batch['items']) == 2
+                        assert [row['tool_call_id'] for row in batch['items']] == ['external-one', 'external-two']
+                        body = {'request_id': str(uuid4()), 'origin_run_id': run, 'approval_batch_id': batch['approval_batch_id'],
+                            'decisions': [{'approval_id': row['approval_id'], 'decision': decision}
+                                for row, decision in zip(batch['items'], ['approve', 'reject'], strict=True)]}
                         resumed = client.post(f'/api/sessions/{sid}/approvals', json=body)
                         resumed.raise_for_status()
                         new_run = resumed.json()['run_id']

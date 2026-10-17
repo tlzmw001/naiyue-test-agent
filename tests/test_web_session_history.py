@@ -29,7 +29,7 @@ def test_restricted_history_is_readable_without_live_run_or_execution(monkeypatc
             assert response.status_code == 200
             view = response.json()
             assert [m['content'] for m in view['messages']] == ['saved human', 'saved answer']
-            assert not view['can_run'] and not view['pending_approval'] and view['approval_requests'] == []
+            assert not view['can_run'] and not view['pending_approval'] and view['approval_batches'] == []
             assert view['live'] is None and view['active_run_id'] is None and view['latest_run_id'] is None
             assert view['recovery']['kind'] == 'interrupted_execution' and view['recovery']['actions'] == ['continue']
             assert (await client.post(f'/api/sessions/{sid}/runs', json=request('must not run'))).status_code == 409

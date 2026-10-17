@@ -9,7 +9,7 @@ from langgraph.errors import GraphBubbleUp
 from langgraph.pregel import Pregel
 from langgraph.types import Command
 
-from naiyue_test_agent.contracts.failures import safe_error_type
+from naiyue_test_agent.contracts.failures import safe_error_type, read_failure_description
 from .message_observation import MessageStateObserver, _snapshot
 from .stream_events import MessageDeltaData, SUMMARY_TAG, PERMISSION_REVIEW_TAG
 from .tool_execution.observation import observe_tool_progress
@@ -91,14 +91,15 @@ class _StreamState:
             message.id, text, self.indices[message.id]))
 
 
-async def ainvoke_with_message_observation(agent, input, *, context, config, publisher):
+async def ainvoke_with_message_observation(agent, input, *, context, config, publisher, durability=None):
+    options = {'durability': durability} if durability is not None else {}
     stream = _StreamState(publisher, context)
     turns = context.get('_turn_observer')
     if not isinstance(agent, Pregel) or getattr(agent.ainvoke, '__func__', None) is not Pregel.ainvoke:
         observe(stream.observer, stream.observer.unavailable, 'stream', 'unsupported_state_interface')
         if turns is not None:
             observe(turns, turns.disable)
-        return await agent.ainvoke(input, context=context, config=config)
+        return await agent.ainvoke(input, context=context, config=config, **options)
     baseline = []
     if agent.checkpointer:
         try:
@@ -107,14 +108,17 @@ async def ainvoke_with_message_observation(agent, input, *, context, config, pub
         except GraphBubbleUp:
             raise
         except Exception as error:
+            failure = read_failure_description(error, run_id=publisher.run_id)
+            if failure is not None and failure.reason == 'subagent_checkpoint_failed':
+                raise
             observe(stream.observer, stream.observer.unavailable, 'baseline', 'baseline_read_failed', error=error)
             if turns is not None:
                 observe(turns, turns.disable)
-            return await agent.ainvoke(input, context=context, config=config)
+            return await agent.ainvoke(input, context=context, config=config, **options)
     if turns is not None and isinstance(input, Command):
         observe(turns, turns.activate_resume, baseline)
     iterator = agent.astream(input, context=context, config=config,
-        stream_mode=['messages', 'updates', 'values', 'custom'], version='v2', output_keys=agent.output_channels)
+        stream_mode=['messages', 'updates', 'values', 'custom'], version='v2', output_keys=agent.output_channels, **options)
     primary = None
     try:
         async for part in iterator:
@@ -131,7 +135,9 @@ async def ainvoke_with_message_observation(agent, input, *, context, config, pub
             if primary is None:
                 raise
             logger.error('message_stream_close_failed error_type=%s', safe_error_type(error))
-        if isinstance(primary, Exception) and not isinstance(primary, GraphBubbleUp) and agent.checkpointer:
+        failure = read_failure_description(primary, run_id=publisher.run_id) if primary is not None else None
+        if (isinstance(primary, Exception) and not isinstance(primary, GraphBubbleUp) and agent.checkpointer
+                and not (failure is not None and failure.reason == 'subagent_checkpoint_failed')):
             try:
                 snapshot = await agent.aget_state(config)
                 observe(stream, stream.state, snapshot.values.get('messages', []), 'recovery_view')

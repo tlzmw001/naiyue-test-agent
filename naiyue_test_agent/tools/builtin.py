@@ -9,6 +9,7 @@ from .ls import create_session_ls_tool
 from .read import create_session_read_tool
 from .registry import ToolSpec
 from .settings import ToolSettings
+from .subagent import create_subagent_tool
 from .write import create_session_write_tool
 
 
@@ -24,5 +25,6 @@ def create_builtin_tools(settings: ToolSettings) -> list[ToolSpec]:
             settings=settings.tools.bash, output_settings=settings.tool_output, progress_settings=settings.progress),
         create_session_powershell_tool(process_settings=settings.process,
             settings=settings.tools.powershell, output_settings=settings.tool_output, progress_settings=settings.progress),
+        create_subagent_tool(),
     ]
     return specs

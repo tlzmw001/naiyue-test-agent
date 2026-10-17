@@ -1,24 +1,29 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, errorText, WebApi } from './api';
 import { applyEvent, mergeMessages, validateEvent } from './events';
-import type { MessageRow, RunView, SessionRow, SessionView, ToolDecision } from './types';
+import type { ApprovalBatch, MessageRow, PermissionMode, RunView, SessionView, ThinkingOptions, ToolDecision } from './types';
+import { useSessions } from './useSessions';
 
 export function useConversation(api: WebApi) {
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState('');
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const [thinkingOptions, setThinkingOptions] = useState<Record<string, ThinkingOptions>>({});
   const [session, setSession] = useState<SessionView | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [run, setRun] = useState<RunView | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<Record<string, string[]>>({});
   const [notice, setNotice] = useState('');
+  const listing = useSessions(api, setNotice);
+  const { sessions, refreshSessions } = listing;
   const [submitting, setSubmitting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [changingModel, setChangingModel] = useState(false);
   const [selectingSession, setSelectingSession] = useState(false);
   const [recovering, setRecovering] = useState(false);
+  const [changingControls, setChangingControls] = useState(false);
   const selectionGeneration = useRef(0);
+  const controlsRevision = useRef(0);
   const selectionPending = useRef(false);
   const selected = useRef<string>('new');
   const currentRun = useRef<RunView | null>(null);
@@ -38,12 +43,21 @@ export function useConversation(api: WebApi) {
     setPending(pendingRef.current);
   };
 
-  async function refreshSessions() { setSessions(await api.sessions()); }
+  async function refreshSession(sid: string, signal?: AbortSignal) {
+    const revision = controlsRevision.current;
+    const value = await api.session(sid);
+    if (!signal?.aborted && selected.current === sid) setSession(previous =>
+      previous?.session_id === sid && revision !== controlsRevision.current ? {
+        ...value, active_tools: previous.active_tools, permission_mode: previous.permission_mode,
+        model_id: previous.model_id, thinking_level: previous.thinking_level,
+      } : value);
+    return value;
+  }
 
   useEffect(() => {
     let disposed = false;
-    Promise.all([api.models(), api.sessions()]).then(([config, rows]) => {
-      if (!disposed) { setModels(config.model_ids); setModel(config.default_model_id); setSessions(rows); }
+    Promise.all([api.models(), refreshSessions()]).then(([config]) => {
+      if (!disposed) { setModels(config.model_ids); setModel(config.default_model_id); setThinkingOptions(config.thinking_options ?? {}); }
     }).catch(error => { if (!disposed) setNotice(errorText(error)); });
     return () => { disposed = true; subscription.current?.abort(); };
   }, [api]);
@@ -53,6 +67,11 @@ export function useConversation(api: WebApi) {
     currentRun.current = view;
     setRun(view);
     setMessages(previous => replace ? view.messages : mergeMessages(previous, view.messages));
+    if (view.mode === 'compact' && view.status === 'completed' && view.compaction_result) {
+      const status = view.compaction_result.status;
+      setNotice(status === 'applied' ? '上下文已压缩，原任务不会自动继续。' : status === 'skipped' ?
+        '当前暂无可压缩的早期对话，已保留全部上下文。' : '压缩未成功，原上下文已保留，可以继续对话或重试。');
+    }
     setStopping(view.status === 'running' && (view.stop_requested === true || pendingStop.current === view.run_id));
     if (view.status !== 'running') {
       setStopping(false);
@@ -71,8 +90,7 @@ export function useConversation(api: WebApi) {
       if (controller.signal.aborted) return;
       display(view, sid);
       if (view.done) {
-        const refreshed = await api.session(sid);
-        if (selected.current === sid) setSession(refreshed);
+        await refreshSession(sid, controller.signal);
         await refreshSessions();
         return;
       }
@@ -86,7 +104,11 @@ export function useConversation(api: WebApi) {
             if (event.run_id !== runId || event.session_id !== sid) throw new Error('invalid_event');
             view = applyEvent(view, event);
             display(view, sid);
-            if (event.event_type === 'control_delivered' && selected.current === sid)
+            if (event.event_type === 'approval_requested') {
+              void refreshSession(sid, controller.signal)
+                .catch(error => { if (!controller.signal.aborted && selected.current === sid) setNotice(errorText(error)); });
+            }
+            if (!event.source && event.event_type === 'control_delivered' && selected.current === sid)
               setNotice('补充消息已加入本次上下文。');
           });
           if (!controller.signal.aborted && view.status === 'running') throw new Error('stream_truncated');
@@ -104,8 +126,7 @@ export function useConversation(api: WebApi) {
         const confirmed = await api.run(runId);
         if (controller.signal.aborted) return;
         display(confirmed, sid);
-        const refreshed = await api.session(sid);
-        if (selected.current === sid) setSession(refreshed);
+        await refreshSession(sid, controller.signal);
         await refreshSessions();
       }
     } catch (error) {
@@ -160,6 +181,22 @@ export function useConversation(api: WebApi) {
     } catch (error) { setNotice(errorText(error)); }
   }
 
+  async function deleteSession(sid: string) {
+    if (busySend.current || selectionPending.current) return false;
+    busySend.current = true;
+    try {
+      if (!await listing.deleteSession(sid)) return false;
+      delete draftRef.current[sid]; delete pendingRef.current[sid]; delete stoppedMode.current[sid];
+      setDrafts({ ...draftRef.current }); setPending({ ...pendingRef.current });
+      if (selected.current === sid) {
+        subscription.current?.abort(); selectionGeneration.current++; controlsRevision.current++;
+        selected.current = 'new'; currentRun.current = null;
+        setSession(null); setMessages([]); setRun(null); setStopping(false);
+      }
+      return true;
+    } finally { busySend.current = false; }
+  }
+
   async function recover(value: SessionView | null, action: 'continue' | 'restore_approval' =
       value?.recovery?.kind === 'pending_approval' ? 'restore_approval' : 'continue') {
     if (busySend.current || !value?.checkpoint_id || !value.recovery?.actions.includes(action)) return;
@@ -196,16 +233,79 @@ export function useConversation(api: WebApi) {
     if (changingModel || selectionPending.current || recovering || session?.recovery) return;
     if (!session) { setModel(value); return; }
     const sid = session.session_id;
+    controlsRevision.current++;
     setChangingModel(true);
     try {
       await api.select(sid, value);
       if (selected.current !== sid) { await refreshSessions(); return; }
       setModel(value);
-      setSession(previous => previous ? { ...previous, model_id: value } : previous);
+      controlsRevision.current++;
+      setSession(previous => previous ? { ...previous, model_id: value, thinking_level: 'model_default' } : previous);
       await refreshSessions();
       setNotice('模型已切换，下一次模型调用生效。');
-    } catch (error) { if (selected.current === sid) setNotice(errorText(error)); }
-    finally { setChangingModel(false); }
+    } catch (error) {
+      if (selected.current === sid) {
+        setNotice(errorText(error));
+        try {
+          const actual = await api.session(sid);
+          if (selected.current === sid) {
+            controlsRevision.current++;
+            setModel(actual.model_id);
+            setSession(previous => previous?.session_id === sid ? { ...previous,
+              model_id: actual.model_id, thinking_level: actual.thinking_level } : previous);
+          }
+        } catch { if (selected.current === sid) setNotice(errorText(error) + ' 当前模型刷新未确认，请重新打开会话核对。'); }
+      }
+    } finally { setChangingModel(false); }
+  }
+
+  async function changeControls(change: { active_tools: string[] } | { permission_mode: PermissionMode } | { thinking_level: string }) {
+    if (busySend.current || selectionPending.current || recovering || session?.recovery || !model) return;
+    busySend.current = true;
+    controlsRevision.current++;
+    setChangingControls(true);
+    setNotice('');
+    let sid = selected.current;
+    try {
+      if (!session) {
+        if (sid === 'new') {
+          sid = (await api.create(model)).session_id;
+          selected.current = sid;
+          writeDraft(draftRef.current.new ?? '', sid);
+          writeDraft('', 'new');
+        }
+        const value = await api.session(sid);
+        applySession(value);
+      }
+      const confirmed = 'active_tools' in change ? await api.selectTools(sid, change.active_tools) :
+        'permission_mode' in change ? await api.selectPermissionMode(sid, change.permission_mode) :
+        await api.selectThinking(sid, model, change.thinking_level);
+      controlsRevision.current++;
+      if (selected.current === sid) {
+        setSession(previous => previous?.session_id === sid ? { ...previous, ...confirmed } : previous);
+        setNotice('active_tools' in change ? '工具选择已保存，下一次模型请求生效。' : 'permission_mode' in change ?
+          '权限模式已保存，下一批工具调用生效；当前审批保持原样。' : '推理强度已保存，下一次模型请求生效。');
+      }
+      try { await refreshSessions(); }
+      catch { if (selected.current === sid) setNotice('选择已保存，会话列表刷新未确认。'); }
+    } catch (error) {
+      controlsRevision.current++;
+      if (selected.current === sid) {
+        setNotice(errorText(error));
+        try {
+          const actual = await api.session(sid);
+          if (selected.current === sid) {
+            controlsRevision.current++;
+            if (!session) applySession(actual);
+            else setSession(previous => previous?.session_id === sid ? {
+              ...previous, active_tools: actual.active_tools, permission_mode: actual.permission_mode,
+              model_id: actual.model_id, thinking_level: actual.thinking_level,
+            } : previous);
+            if ('thinking_level' in change) setModel(actual.model_id);
+          }
+        } catch { if (selected.current === sid) setNotice(errorText(error) + ' 当前选择刷新未确认，请重新打开会话核对。'); }
+      }
+    } finally { busySend.current = false; setChangingControls(false); }
   }
 
   async function submit(followUp: boolean) {
@@ -254,6 +354,27 @@ export function useConversation(api: WebApi) {
     finally { busySend.current = false; setSubmitting(false); }
   }
 
+  async function compact() {
+    if (busySend.current || selectionPending.current || changingModel) return;
+    const sid = selected.current;
+    if (!session || !session.can_run || session.busy || currentRun.current?.status === 'running') {
+      setNotice('压缩需要已有会话处于空闲状态，并先处理待审批或恢复事项。'); return;
+    }
+    busySend.current = true;
+    setSubmitting(true);
+    setNotice('正在准备压缩上下文…');
+    const original = draftRef.current[sid] ?? '';
+    try {
+      const started = await api.compact(sid);
+      if (original.trim() === '/compact' && draftRef.current[sid] === original) writeDraft('', sid);
+      const value = await api.run(started.run_id);
+      display(value, sid);
+      void watch(started.run_id, sid, value);
+      await refreshSessions();
+    } catch (error) { if (selected.current === sid) setNotice(errorText(error)); }
+    finally { busySend.current = false; setSubmitting(false); }
+  }
+
   async function stop() {
     const live = currentRun.current;
     const sid = selected.current;
@@ -278,27 +399,66 @@ export function useConversation(api: WebApi) {
     }
   }
 
-  async function approve(decisions: ToolDecision[]) {
-    if (busySend.current || selectionPending.current || !session?.approval_run_id) return;
+  async function approve(batch: ApprovalBatch, decisions: ToolDecision[], remember: string[] = []) {
+    if (busySend.current || selectionPending.current || !session) return;
     const sid = session.session_id;
     busySend.current = true;
     setSubmitting(true);
     setNotice('');
     try {
-      const started = await api.approve(sid, session.approval_run_id, decisions);
+      const started = await api.approve(sid, batch, decisions, remember);
+      if (started.kind === 'live_child') {
+        await refreshSession(sid);
+        return;
+      }
       const value = await api.run(started.run_id);
       display(value, sid);
       void watch(started.run_id, sid, value);
       stoppedMode.current[sid] = false;
     } catch (error) {
       if (selected.current === sid) setNotice(errorText(error));
+      try {
+        await refreshSession(sid);
+      } catch {
+        if (selected.current === sid) setNotice(errorText(error) + ' 当前审批刷新未确认，请重新同步后核对。');
+      }
     } finally { busySend.current = false; setSubmitting(false); }
   }
 
-  const id = session?.session_id ?? 'new';
-  return { models, model, sessions, session, messages, run, notice, submitting, stopping, changingModel, selectingSession, recovering,
+  async function stopAgent(agentPath: string, originRunId: string) {
+    const live = currentRun.current, sid = selected.current;
+    if (!live || live.status !== 'running' || live.run_id !== originRunId) return;
+    try {
+      await api.control(live.run_id, 'stop', undefined, agentPath);
+      if (selected.current === sid) setNotice('已请求停止该子任务，其他子任务继续。');
+      await refreshSession(sid);
+    } catch (error) { if (selected.current === sid) setNotice(errorText(error)); }
+  }
+
+  async function stopApproval(batch: ApprovalBatch) {
+    if (batch.kind === 'live_child') return stopAgent(batch.agent_path, batch.origin_run_id);
+    if (busySend.current || selectionPending.current || !session) return;
+    const sid = session.session_id;
+    busySend.current = true;
+    setSubmitting(true);
+    try {
+      const started = await api.stopApproval(sid, batch);
+      const value = await api.run(started.run_id);
+      display(value, sid);
+      void watch(started.run_id, sid, value);
+      stoppedMode.current[sid] = true;
+    } catch (error) { if (selected.current === sid) setNotice(errorText(error)); }
+    finally { busySend.current = false; setSubmitting(false); }
+  }
+
+  const id = selected.current;
+  return { models, model, thinkingOptions, sessions, session, messages, run, notice, submitting, stopping, changingModel, changingControls, selectingSession, recovering,
+    managingSessions: listing.managingSessions, updateSession: listing.updateSession, reorderSessions: listing.reorderSessions, deleteSession,
     draft: drafts[id] ?? '', pending: pending[id] ?? [], pendingMode: !!stoppedMode.current[id],
-    setDraft: writeDraft, setPending: writePending, submit, stop, approve, selectSession, newSession, selectModel,
+    setDraft: writeDraft, setPending: writePending, submit, compact, stop, approve, stopAgent, stopApproval, selectSession, newSession, selectModel,
+    selectThinking: (level: string) => changeControls({ thinking_level: level }),
+    selectTools: (names: string[]) => changeControls({ active_tools: names }),
+    selectPermissionMode: (mode: PermissionMode) => changeControls({ permission_mode: mode }),
     recover: (action?: 'continue' | 'restore_approval') => {
       if (!selectionPending.current) return recover(session, action);
     },

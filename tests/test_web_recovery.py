@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage
 
 from test_async_application import StreamingToolModel
 from test_web_api import web_client, request
-from test_web_tools import start, calls
+from test_web_tools import start, calls, approval_request
 from test_session_history import database_facts
 
 
@@ -92,7 +92,7 @@ def test_continue_abandons_saved_approval_without_running_tools(monkeypatch, tmp
             result = await client.post(f'/api/sessions/{sid}/recover', json={'checkpoint_id': history['checkpoint_id'], 'action': 'continue'})
             assert result.status_code == 200
             ready = result.json()
-            assert ready['can_run'] and not ready['pending_approval'] and ready['approval_requests'] == []
+            assert ready['can_run'] and not ready['pending_approval'] and ready['approval_batches'] == []
             assert 'not executed' in ready['messages'][-1]['content'] and model.seen == []
         async with web_client(monkeypatch, tmp_path, model) as (client, app):
             assert (await client.post(f'/api/sessions/{sid}/recover', json={'checkpoint_id': history['checkpoint_id'], 'action': 'continue'})).status_code == 404
@@ -125,14 +125,14 @@ def test_cold_approval_restores_cards_and_requires_a_fresh_user_decision(monkeyp
             assert restored.status_code == 200
             pending = restored.json()
             assert pending['state'] == 'interrupted' and pending['pending_approval'] and not pending['can_run']
-            assert pending['approval_run_id'] == origin
-            assert pending['approval_requests'] == [{'tool_call_id': 'a', 'tool_name': 'read', 'target': str(outside)}]
+            batch, = pending['approval_batches']
+            assert batch['origin_run_id'] == origin
+            assert batch['items'] == [{'approval_id': batch['items'][0]['approval_id'], 'tool_call_id': 'a', 'tool_name': 'read', 'target': str(outside)}]
             assert not any(m['type'] == 'tool' for m in pending['messages'])
             assert events == [] and model.seen == [] and not app.state.delivery.runs
             assert (await client.post(endpoint, json=body)).status_code == 409
             assert (await client.post(f'/api/sessions/{sid}/runs', json=request('premature'))).status_code == 409
-            decision = {'request_id': str(uuid4()), 'origin_run_id': origin,
-                        'decisions': [{'tool_call_id': 'a', 'decision': 'approve'}]}
+            decision = approval_request(batch, ['approve'])
             response = await client.post(f'/api/sessions/{sid}/approvals', json=decision)
             assert response.status_code == 202
             run = response.json()['run_id']

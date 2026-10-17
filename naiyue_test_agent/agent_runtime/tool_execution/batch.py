@@ -69,7 +69,7 @@ class ToolBatchMiddleware(AgentMiddleware):
         async def guarded():
             control = context.get('_run_control')
             if control is not None and control.requested:
-                return stop_tool_message(request.tool_call)
+                return stop_tool_message(request.tool_call, reason=control.reason)
             observe_tool_progress(context, 'report_dispatch', request, 'preparing')
             return await handler(request)
         if request.tool_call['name'] not in self._modes(request.state, context):

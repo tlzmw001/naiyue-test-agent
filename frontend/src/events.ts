@@ -1,13 +1,8 @@
+import type { ContextSnapshot } from './contextTypes';
 import type { MessageRow, RuntimeEvent, RunView, ToolState } from './types';
+import { applyAgentEvent, textContent } from './agentEvents';
 
 const terminal = new Set(['completed', 'stopped', 'interrupted', 'failed']);
-
-export function textContent(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value)) return value.map(block => typeof block === 'string' ? block :
-    block && block.type === 'text' && typeof block.text === 'string' ? block.text : '').join('');
-  return '';
-}
 
 export function validateEvent(value: unknown): RuntimeEvent {
   const event = value as RuntimeEvent;
@@ -17,6 +12,10 @@ export function validateEvent(value: unknown): RuntimeEvent {
     throw new Error('invalid_event');
   if (event.event_type === 'run_finished' && !terminal.has(String(event.data.status)))
     throw new Error('invalid_event');
+  if (event.source != null && (['agent_path', 'agent_id', 'agent_run_id', 'parent_run_id', 'parent_tool_call_id']
+    .some(key => typeof event.source![key as keyof typeof event.source] !== 'string' || !event.source![key as keyof typeof event.source]) ||
+    !event.source.agent_path.startsWith('root/') || event.source.parent_run_id !== event.run_id ||
+    event.source.agent_path.split('/').at(-1) !== event.source.agent_id)) throw new Error('invalid_event');
   return event;
 }
 
@@ -25,10 +24,26 @@ export function applyEvent(view: RunView, event: RuntimeEvent): RunView {
       (view.session_id && event.session_id !== view.session_id)) return view;
   if (event.sequence <= view.last_sequence) return view;
   if (event.sequence !== view.last_sequence + 1) throw new Error('sequence_gap');
+  if (event.source) {
+    const batch = [...view.messages].reverse().find(row => row.type === 'ai' &&
+      row.tool_calls?.some(call => call.id === event.source!.parent_tool_call_id))?.id;
+    return { ...view, last_sequence: event.sequence, agents: { ...view.agents,
+      [event.source.agent_path]: applyAgentEvent(view.agents?.[event.source.agent_path], event, batch) } };
+  }
   let messages = view.messages;
   let tool_states = view.tool_states ?? {};
   const data = event.data;
-  if (event.event_type === 'message_delta') {
+  if (event.event_type === 'run_started') {
+    return { ...view, mode: data.mode as RunView['mode'], last_sequence: event.sequence };
+  } else if (event.event_type === 'compaction_finished' && data.trigger === 'manual') {
+    return { ...view, compaction_result: { status: String(data.status), reason: data.reason as string | null }, last_sequence: event.sequence };
+  } else if (event.event_type === 'model_context_snapshot') {
+    if (data.snapshot_json === null) return { ...view, context_snapshot: null, last_sequence: event.sequence };
+    if (typeof data.snapshot_json !== 'string') throw new Error('invalid_event');
+    const context_snapshot = JSON.parse(data.snapshot_json) as ContextSnapshot;
+    if (context_snapshot.version !== 1 || context_snapshot.model_call_id !== data.model_call_id) throw new Error('invalid_event');
+    return { ...view, context_snapshot, last_sequence: event.sequence };
+  } else if (event.event_type === 'message_delta') {
     if (typeof data.message_id !== 'string' || typeof data.text !== 'string' ||
         !Number.isInteger(data.index) || Number(data.index) < 1) throw new Error('invalid_event');
     const old = messages.find(row => row.id === data.message_id);

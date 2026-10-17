@@ -3,13 +3,15 @@
 from typing import NotRequired
 
 from langchain.agents.middleware import AgentMiddleware, AgentState
-from langchain_core.messages import SystemMessage, ToolMessage
+from langchain_core.messages import ToolMessage
 
 from .observation import aobserve_tool_dispatch
+from ..context_usage import compose_model_prompt
 
 
 _VIEW_KEY = '_naiyue_tool_view'
 _FIRST_KEY = '_naiyue_first_tool_view'
+_ROLES_KEY = '_naiyue_subagent_roles'
 
 
 class ToolExecutionState(AgentState):
@@ -26,30 +28,24 @@ def batch_tool_specs(registry, state, context):
     return registry.select(names)
 
 
-def compose_tool_prompt(base, project, specs):
-    prompt = base + (project or '')
-    if not specs:
-        return prompt
-    summaries = [f'{spec.tool.name}: {spec.prompt_snippet or spec.tool.description}' for spec in specs]
-    guidelines = dict.fromkeys(line for spec in specs for line in spec.prompt_guidelines if line)
-    return prompt + '\n\nAvailable tools:\n' + '\n'.join(summaries) + (
-        '\n\nTool guidelines:\n' + '\n'.join(guidelines) if guidelines else '')
-
-
 class ToolSetMiddleware(AgentMiddleware):
     state_schema = ToolExecutionState
 
-    def __init__(self, registry, resolve_active_tool_names, system_prompt, resolve_project_instructions=None):
+    def __init__(self, registry, resolve_active_tool_names, system_prompt, resolve_project_instructions=None, resolve_subagent_roles=None, resolve_prompt_parts=None):
         self.registry = registry
         self.resolve_active_tool_names = resolve_active_tool_names
         self.system_prompt = system_prompt
         self.resolve_project_instructions = resolve_project_instructions
+        self.resolve_subagent_roles = resolve_subagent_roles
+        self.resolve_prompt_parts = resolve_prompt_parts
 
     def prepare_tool_view(self, runtime):
         context = runtime.context
         names = self.resolve_active_tool_names(context['session_id'], context.get('agent_path', 'root'))
         view = self.registry.select(names)
         context[_VIEW_KEY] = view
+        context[_ROLES_KEY] = (tuple((role.name, role.description) for role in self.resolve_subagent_roles())
+            if any(spec.tool.name == 'subagent' for spec in view) and self.resolve_subagent_roles is not None else ())
         return {'tool_execution': {'tool_names': [spec.tool.name for spec in view]}}
 
     def before_agent(self, state, runtime):
@@ -68,16 +64,24 @@ class ToolSetMiddleware(AgentMiddleware):
     async def abefore_model(self, state, runtime):
         return self.before_model(state, runtime)
 
-    def model_inputs(self, state, runtime):
+    def _inputs(self, state, runtime):
         specs = batch_tool_specs(self.registry, state, runtime.context)
-        project = (self.resolve_project_instructions(runtime.context['session_id'])
-                   if self.resolve_project_instructions is not None else None)
-        return [spec.tool for spec in specs], compose_tool_prompt(self.system_prompt, project, specs)
+        sid = runtime.context['session_id']
+        if self.resolve_prompt_parts is not None:
+            parts = self.resolve_prompt_parts(sid)
+        else:
+            project = self.resolve_project_instructions(sid) if self.resolve_project_instructions else None
+            parts = [{'id': 'project', 'text': project}] if project else []
+        prompt = compose_model_prompt(self.system_prompt, parts, specs, runtime.context.get(_ROLES_KEY, ()))
+        return [spec.tool for spec in specs], prompt
+
+    def model_inputs(self, state, runtime):
+        tools, prompt = self._inputs(state, runtime)
+        return tools, prompt.content
 
     def _model_request(self, request):
-        tools, prompt = self.model_inputs(request.state, request.runtime)
-        return request.override(tools=tools, system_message=SystemMessage(content=prompt))
-
+        tools, prompt = self._inputs(request.state, request.runtime)
+        return request.override(tools=tools, system_message=prompt)
 
     async def awrap_model_call(self, request, handler):
         return await handler(self._model_request(request))

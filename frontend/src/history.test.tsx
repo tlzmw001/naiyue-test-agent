@@ -44,7 +44,7 @@ it('shows saved facts as read-only, never sends on Enter, and allows a new sessi
   expect(screen.getByText('saved request')).toBeTruthy();
   expect(screen.getByText('saved answer')).toBeTruthy();
   expect(screen.getByText('结果未确认')).toBeTruthy();
-  expect((screen.getByRole('combobox', { name: '模型' }) as HTMLSelectElement).disabled).toBe(true);
+  expect((screen.getByRole('button', { name: /模型与推理强度：removed-model/ }) as HTMLButtonElement).disabled).toBe(true);
   const input = screen.getByRole('textbox', { name: '消息' });
   fireEvent.change(input, { target: { value: 'do not execute' } });
   fireEvent.keyDown(input, { key: 'Enter' });
@@ -119,8 +119,8 @@ it('automatically restores approval cards without approving or cancelling the ba
   vi.mocked(api.session).mockResolvedValue(saved);
   vi.spyOn(api, 'approve');
   vi.spyOn(api, 'recover').mockResolvedValue({ ...saved, state: 'interrupted', recovery: undefined,
-    pending_approval: true, approval_run_id: 'original-run',
-    approval_requests: [{ tool_call_id: 'call', tool_name: 'bash', target: 'python -m pytest' }] });
+    pending_approval: true, approval_batches: [{ approval_batch_id: 'batch', kind: 'paused_root', agent_path: 'root', agent: null, origin_run_id: 'original-run',
+    items: [{ approval_id: 'row', tool_call_id: 'call', tool_name: 'bash', target: 'python -m pytest' }] }] });
   render(<App api={api} />);
   fireEvent.click(await screen.findByRole('button', { name: /A · 未完成/ }));
   expect(await screen.findByRole('region', { name: '工具审批' })).toBeTruthy();

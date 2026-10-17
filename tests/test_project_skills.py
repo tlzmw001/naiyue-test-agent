@@ -44,12 +44,13 @@ def test_claude_becomes_default_when_agents_has_no_usable_skill(tmp_path, agents
 
 def test_no_skills_has_no_catalog_and_keeps_project_instructions(tmp_path):
     assert format_skill_catalog(discover_project_skills(tmp_path)) is None
-    assert prepare_run_resources(None) == {'prompt': None, 'project_instructions': None, 'read_resource_roots': ()}
+    assert prepare_run_resources(None) == {'prompt_parts': [], 'project_instructions': None, 'read_resource_roots': ()}
     (tmp_path / 'AGENTS.md').write_text('PROJECT_RULE', encoding='utf-8')
     resources = prepare_run_resources(tmp_path)
-    assert 'PROJECT_RULE' in resources['prompt'] and 'available_skills' not in resources['prompt']
+    prompt = ''.join(part['text'] for part in resources['prompt_parts'])
+    assert 'PROJECT_RULE' in prompt and 'available_skills' not in prompt
     assert resources['read_resource_roots'] == ()
-    assert resources['project_instructions'] == resources['prompt']
+    assert resources['project_instructions'] == prompt
 
 
 def test_same_source_duplicate_is_deterministic_and_reported(tmp_path, caplog):

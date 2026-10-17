@@ -150,7 +150,11 @@ class _ToolCallObservationMiddleware(AgentMiddleware):
         if denied is not None:
             return denied
         try:
-            result = await await_settled(handler(request))
+            # Delegation owns its child task; shielding this orchestration would
+            # prevent cancellation from ever reaching the child. Leaf IO keeps
+            # its existing settlement protection inside the child graph.
+            result = (await handler(request) if request.tool_call['name'] == 'subagent'
+                      else await await_settled(handler(request)))
         except BaseException:
             record('tool_failed')
             raise

@@ -24,7 +24,7 @@ def test_search_settings_roundtrip_schema_and_process_snapshot(tmp_path, monkeyp
     specs = create_builtin_tools(settings)
     registry = prepare_tool_registry(specs)
     names = registry.names()
-    assert names == ('read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell')
+    assert names == ('read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent')
     assert seen == [settings.process] * 4
     schemas = {s.tool.name: s.tool.tool_call_schema.model_json_schema() for s in specs}
     assert schemas['grep']['properties']['limit']['default'] == 2

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import type { MessageRow, SessionRecovery, ToolCallRow, ToolState } from '../types';
+import type { AgentView, MessageRow, SessionRecovery, ToolCallRow, ToolState } from '../types';
 import ToolCall from './ToolCall';
 import styles from '../App.module.css';
 
@@ -8,9 +8,12 @@ function safeUrl(url: string) {
   return /^(https?:\/\/|\/[^/]|#)/i.test(url) ? url : '';
 }
 
-export default function Conversation({ messages, compacted, toolStates = {}, stoppingRunId, recovery, recovering = false, onRecover }: {
+export default function Conversation({ messages, compacted, toolStates = {}, agents = {}, stopAgent, openAgent, stoppingRunId, recovery, recovering = false, onRecover }: {
   messages: MessageRow[]; compacted: boolean; toolStates?: Record<string, ToolState>; stoppingRunId?: string; recovery?: SessionRecovery;
   recovering?: boolean; onRecover?: (action: 'continue' | 'restore_approval') => void;
+  agents?: Record<string, AgentView>;
+  stopAgent?: (agentPath: string, originRunId: string) => void;
+  openAgent?: (agentPath: string) => void;
 }) {
   const scroll = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
@@ -28,7 +31,7 @@ export default function Conversation({ messages, compacted, toolStates = {}, sto
   }
   useEffect(() => {
     if (nearBottom.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [messages, toolStates]);
+  }, [messages, toolStates, agents]);
 
   async function copy(row: MessageRow) {
     try { await navigator.clipboard.writeText(row.content); setCopied(row.id); }
@@ -78,6 +81,11 @@ export default function Conversation({ messages, compacted, toolStates = {}, sto
             const correlated = phase && (phase.batch_id ? phase.batch_id === row.id :
               phase.run_id === row.run_id || phase.run_id === result?.run_id || (!result && phase.state === 'running'));
             return <ToolCall key={call.id} call={call} result={result} phase={correlated ? phase : undefined}
+              stopAgent={stopAgent}
+              openAgent={openAgent}
+              agents={Object.values(agents).filter(agent => agent.source.parent_tool_call_id === call.id &&
+                (!agent.parent_batch_id || agent.parent_batch_id === row.id) &&
+                (!row.run_id || agent.source.parent_run_id === row.run_id))}
               unconfirmed={!result && recovery?.unconfirmed_tool_call_ids.includes(call.id)}
               stopping={correlated && phase.run_id === stoppingRunId} />;
           })}

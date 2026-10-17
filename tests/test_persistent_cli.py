@@ -194,6 +194,7 @@ def test_restricted_resume_prints_history_without_reading_input_or_running_model
 
 @async_test
 async def test_interactive_auto_recovery_waits_for_new_input_before_running(monkeypatch, tmp_path, capsys):
+    from threading import Event
     from naiyue_test_agent.application.session_storage import SessionStorage
     from test_persistent_sessions import build
     configure(monkeypatch)
@@ -206,8 +207,19 @@ async def test_interactive_auto_recovery_waits_for_new_input_before_running(monk
         storage.finish_run(row['session_id'], 'failed', row['checkpoint_id'], '', 'failed')
     capsys.readouterr()
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
+    finished = Event()
+    build_cli = cli.build_persistent_application
+    def factory(*args, **kwargs):
+        app = build_cli(*args, **kwargs)
+        app.subscribe_events(lambda event: finished.set() if event.event_type == 'run_finished' else None)
+        return app
+    monkeypatch.setattr(cli, 'build_persistent_application', factory)
     lines = iter(['new request', ':quit'])
-    monkeypatch.setattr('builtins.input', lambda _p='': next(lines))
+    def terminal_input(_p=''):
+        line = next(lines)
+        if line == ':quit': assert finished.wait(5)
+        return line
+    monkeypatch.setattr('builtins.input', terminal_input)
     assert cli.main(['--session-db', str(db), '--resume', row['session_id']]) == 0
     output = capsys.readouterr().out
     assert '只读历史' in output and '下一条新消息才会启动运行' in output

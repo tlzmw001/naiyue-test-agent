@@ -17,6 +17,7 @@ from naiyue_test_agent.contracts.session_events import (
 )
 from .context_events import ContextOperationStartedData, ContextOperationFinishedData
 from .stream_events import MessageDeltaData, ToolProgressData
+from .context_usage import ModelContextSnapshotData
 
 
 logger = logging.getLogger(__name__)
@@ -193,9 +194,11 @@ EventData = (RunStartedData | RunFinishedData | ModelCallStartedData | ModelCall
              | ToolCallStartedData | ToolCallFinishedData | MessageSnapshotData
              | ContextMessagesChangedData | MessageSnapshotUnavailableData
              | TurnStartedData | TurnFinishedData | TurnUnavailableData | ControlData | ApprovalRequestedData
-             | ContextOperationStartedData | ContextOperationFinishedData | MessageDeltaData | ToolProgressData)
+             | ContextOperationStartedData | ContextOperationFinishedData | MessageDeltaData | ToolProgressData
+             | ModelContextSnapshotData)
 
 _CORE_PAYLOADS = {
+    'model_context_snapshot': ModelContextSnapshotData,
     'tool_progress': ToolProgressData,
     'message_delta': MessageDeltaData,
     'model_call_started': ModelCallStartedData, 'model_call_finished': ModelCallFinishedData,
@@ -214,6 +217,22 @@ _PAYLOADS = {**_CORE_PAYLOADS, **SESSION_PAYLOADS}
 
 
 @dataclass(frozen=True)
+class AgentEventSource:
+    agent_path: str
+    agent_id: str
+    agent_run_id: str
+    parent_run_id: str
+    parent_tool_call_id: str
+
+    def __post_init__(self):
+        if any(not isinstance(value, str) or not value.strip() for value in (
+                self.agent_path, self.agent_id, self.agent_run_id, self.parent_run_id, self.parent_tool_call_id)):
+            raise ValueError('Agent event source requires complete identifiers')
+        if not self.agent_path.startswith('root/') or self.agent_path.rsplit('/', 1)[-1] != self.agent_id:
+            raise ValueError('Invalid agent event path')
+
+
+@dataclass(frozen=True)
 class RuntimeEvent:
     event_type: str
     session_id: str
@@ -221,6 +240,7 @@ class RuntimeEvent:
     sequence: int
     timestamp: str
     data: EventData
+    source: AgentEventSource | None = None
 
 
 class RunEventPublisher:
@@ -248,6 +268,14 @@ class RunEventPublisher:
         return self._run_id
 
     def publish(self, event_type: str, data: EventData) -> None:
+        self._publish(event_type, data, None)
+
+    def for_agent(self, source):
+        if not isinstance(source, AgentEventSource) or source.parent_run_id != self._run_id:
+            raise ValueError('Agent source does not belong to this root run')
+        return AgentEventPublisher(self, source)
+
+    def _publish(self, event_type, data, source):
         with self._lock:
             if _PAYLOADS.get(event_type) is not type(data):
                 logger.error('event_payload_invalid')
@@ -255,7 +283,7 @@ class RunEventPublisher:
             self._sequence += 1
             self._pending.append(RuntimeEvent(
                 event_type, self._session_id, self._run_id, self._sequence,
-                datetime.now(timezone.utc).isoformat(), data,
+                datetime.now(timezone.utc).isoformat(), data, source,
             ))
             if self._delivering:
                 return
@@ -286,3 +314,20 @@ class RunEventPublisher:
                                    'session_id': self._session_id, 'run_id': self._run_id,
                                    'error_type': safe_error_type(error),
                                }})
+
+
+class AgentEventPublisher:
+    """A source view; root owns ordering, delivery and failed observers."""
+
+    def __init__(self, root, source):
+        self._root, self.source = root, source
+
+    @property
+    def run_id(self):
+        return self.source.agent_run_id
+
+    def matches(self, session_id, run_id):
+        return session_id == self._root._session_id and run_id == self.run_id
+
+    def publish(self, event_type, data):
+        self._root._publish(event_type, data, self.source)
