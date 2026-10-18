@@ -2,6 +2,7 @@
 
 from native_application_helpers import async_test
 
+import json
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from tool_feedback_helpers import invoke_tool_feedback
 
 from naiyue_test_agent.tools import grep as grep_module
 from naiyue_test_agent.tools.grep import create_session_grep_tool
+from naiyue_test_agent.tools.processes import ProcessOutcome
 
 
 async def call_grep(tool, args, root):
@@ -151,6 +153,29 @@ async def test_grep_uses_rg_encoding_and_binary_reports_with_safe_text(tmp_path,
     assert 'visible.md:1: VISIBLE_VALUE' in directory.content
     assert 'binary content' in directory.content and 'non-UTF-8' in directory.content
     assert 'PRIVATE' not in caplog.text
+
+
+@async_test
+async def test_grep_binary_json_row_has_the_same_preview_on_all_platforms(tmp_path, monkeypatch):
+    target = tmp_path / 'nul.md'
+    target.write_bytes(b'PRIVATE\x00VALUE')
+    async def native_records(self, request, consume, control=None):
+        if '--files' in request.argv:
+            await consume('stdout', str(target).encode() + b'\0')
+            return ProcessOutcome(0, 'exited', True, True, True, True, 0)
+        assert '--json' in request.argv and str(target) in request.argv
+        for record in (
+            {'type': 'match', 'data': {'path': {'text': str(target)},
+                'line_number': 1, 'lines': {'text': 'PRIVATE\x00VALUE\n'}}},
+            {'type': 'end', 'data': {'path': {'text': str(target)}, 'binary_offset': 7}},
+        ):
+            await consume('stdout', json.dumps(record).encode() + b'\n')
+        return ProcessOutcome(0, 'exited', True, True, True, True, 0)
+    monkeypatch.setattr(grep_module.HostProcessRunner, 'run', native_records)
+    result = await call_grep(create_session_grep_tool(), {'pattern': 'PRIVATE', 'path': 'nul.md'}, tmp_path)
+    assert result.status == 'success' and result.content.startswith('nul.md:1: PRIVATE\n')
+    assert 'binary content' in result.content and 'not searched' in result.content
+    assert '\x00' not in result.content and 'VALUE' not in result.content
 
 
 @async_test

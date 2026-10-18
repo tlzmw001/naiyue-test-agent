@@ -171,7 +171,8 @@ class _GrepSearch:
             raise ValueError('invalid_record')
         if not await asyncio.to_thread(self._recheck, subject):
             return
-        raw = _native_bytes(data.get('lines'))
+        # rg can include bytes beyond the binary boundary on some platforms.
+        raw = _native_bytes(data.get('lines')).split(b'\0', 1)[0]
         try:
             text = raw.decode('utf-8')
         except UnicodeError:
