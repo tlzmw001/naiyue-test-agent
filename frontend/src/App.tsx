@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { browserToken, WebApi } from './api';
 import { useConversation } from './useConversation';
 import Sidebar from './components/Sidebar';
@@ -8,29 +8,43 @@ import ApprovalPanel from './components/ApprovalPanel';
 import SubagentSidebar from './components/SubagentSidebar';
 import ContextPanel, { ContextTrigger } from './components/ContextPanel';
 import SessionUsage from './components/SessionUsage';
+import WorkspaceLabel from './components/WorkspaceLabel';
+import ModelMenu from './components/ModelMenu';
 import { useContextView } from './useContext';
 import { Icon } from './components/Icons';
+import { runReconnectDelays } from './uiSettings';
+import { useSubagentList } from './useSubagentList';
+import { useTheme } from './useTheme';
+import ThemeMenu from './components/ThemeMenu';
 import styles from './App.module.css';
 
 export default function App({ api: supplied }: { api?: WebApi }) {
   const api = useMemo(() => supplied ?? new WebApi(browserToken()), [supplied]);
   const chat = useConversation(api);
+  const agents = useSubagentList(api, chat.session?.session_id, chat.run);
+  const theme = useTheme();
   const context = useContextView(api, chat.session, chat.run);
   const [contextPanel, setContextPanel] = useState(false);
+  const [modelMenu, setModelMenu] = useState(false);
+  const closeModel = useCallback(() => setModelMenu(false), []);
   const contextTrigger = useRef<HTMLButtonElement>(null);
   const closeContext = () => { setContextPanel(false); contextTrigger.current?.focus(); };
   const [navigation, setNavigation] = useState(false);
   const [agentPanel, setAgentPanel] = useState<{ sessionId: string; agentId?: string } | null>(null);
   const agentTrigger = useRef<HTMLButtonElement>(null);
   const approvalArea = useRef<HTMLDivElement>(null);
-  useEffect(() => { setAgentPanel(null); setContextPanel(false); }, [chat.session?.session_id]);
+  useEffect(() => { setAgentPanel(null); setContextPanel(false); setModelMenu(false); }, [chat.session?.session_id]);
   const closeAgents = () => { setAgentPanel(null); agentTrigger.current?.focus(); };
   const openAgent = (path?: string) => {
+    setModelMenu(false);
     setContextPanel(false);
     if (chat.session) setAgentPanel({ sessionId: chat.session.session_id, agentId: path?.split('/').at(-1) });
   };
   const busy = chat.run?.status === 'running' && !chat.run.done;
   const blocked = (!!busy && chat.run?.mode === 'compact') || (!busy && chat.session?.can_run === false) || chat.selectingSession || !chat.models.length || !!chat.run?.manual_review_required || !!chat.session?.manual_review_required || !!chat.session?.pending_approval;
+  const controlsDisabled = chat.submitting || chat.changingControls || chat.changingModel || chat.selectingSession ||
+    chat.recovering || !!chat.session?.recovery || !chat.models.length;
+  const openModels = () => { setContextPanel(false); setAgentPanel(null); setModelMenu(true); };
   const labels = { running: chat.stopping ? '正在停止' : '正在处理', completed: '本次运行完成', stopped: '已停止',
     interrupted: '等待审批', failed: '本次运行失败', unconfirmed: '执行结果未同步' };
 
@@ -44,12 +58,18 @@ export default function App({ api: supplied }: { api?: WebApi }) {
       <header className={styles.header}>
         <div className={styles.headerLeft}>
           <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="打开会话栏" onClick={() => setNavigation(true)}><Icon name="menu" /></button>
+          <ModelMenu models={chat.models} model={chat.session?.recovery ? chat.session.model_id : chat.model}
+            level={chat.session?.thinking_level ?? 'model_default'} options={chat.thinkingOptions[chat.model]} disabled={controlsDisabled}
+            open={modelMenu} toggle={() => modelMenu ? closeModel() : openModels()} close={closeModel}
+            selectModel={value => void chat.selectModel(value)} selectThinking={value => void chat.selectThinking(value)} />
         </div>
-        <div className={styles.headerActions}><div className={styles.workspacePath} title={chat.session?.workspace_root ?? ''}>
-          {chat.session?.workspace_root ?? '未设置工作区'}
-        </div><button ref={agentTrigger} className={styles.agentsButton} aria-label="打开子智能体侧栏"
+        <div className={styles.headerActions}><WorkspaceLabel api={api} session={chat.session} />
+        {!!agents.records.length && <button ref={agentTrigger} className={styles.agentsButton} aria-label="打开子智能体侧栏"
           disabled={!chat.session || chat.selectingSession} aria-expanded={!!agentPanel}
-          onClick={() => agentPanel ? closeAgents() : openAgent()}>子智能体</button></div>
+          onClick={() => agentPanel ? closeAgents() : openAgent()}>子智能体</button>}
+        {!agents.records.length && agents.error && <button className={styles.syncButton}
+          aria-label="重试读取子智能体列表" onClick={agents.retry}>重试子智能体</button>}
+        <ThemeMenu theme={theme.theme} select={theme.selectTheme} /></div>
       </header>
       <Conversation key={chat.session?.session_id ?? 'new'} messages={chat.messages} history={chat.history}
         compacted={chat.session?.has_compaction ?? false} toolStates={chat.run?.tool_states}
@@ -60,35 +80,36 @@ export default function App({ api: supplied }: { api?: WebApi }) {
         recovering={chat.recovering} onRecover={action => void chat.recover(action)}
         stoppingRunId={chat.run?.status === 'running' && chat.run.stop_requested ? chat.run.run_id : undefined} />
       <div className={styles.feedback} aria-live="polite">
-        {chat.run && <span className={`${styles.runStatus} ${busy ? styles.running : ''}`}><i />{busy && chat.run.mode === 'compact' ? '正在压缩上下文' : labels[chat.run.status]}</span>}
+        {chat.run && chat.run.status !== 'completed' && <span className={`${styles.runStatus} ${busy ? styles.running : ''}`}><i />{busy && chat.run.mode === 'compact' ? '正在压缩上下文' : labels[chat.run.status]}</span>}
+        {!!chat.connection?.attempt && !chat.connection.failed && <span role="status">正在恢复连接（{chat.connection.attempt}/{runReconnectDelays.length}）</span>}
+        {chat.connection?.failed && <span className={styles.error}>连接恢复未完成，已保留当前内容。</span>}
         {chat.run?.manual_review_required && <span className={styles.error}>执行结果需要人工核对，当前不能继续。</span>}
         {chat.run?.incomplete && <span className={styles.error}>部分消息尚未同步</span>}
         {chat.notice && <span>{chat.notice}</span>}
-        {chat.run && <button className={styles.syncButton} onClick={chat.reconnect}>重新同步</button>}
+        {chat.run && (chat.run.status !== 'completed' || chat.run.incomplete || chat.connection?.failed) &&
+          <button className={styles.syncButton} onClick={chat.reconnect}>重新同步</button>}
       </div>
       {!!chat.session?.approval_batches?.length && <div ref={approvalArea} tabIndex={-1} className={styles.approvalArea}>
         {chat.session.approval_batches.map(batch => <ApprovalPanel key={batch.approval_batch_id} batch={batch}
           disabled={chat.submitting || chat.selectingSession || !!chat.session?.manual_review_required}
           stop={() => void chat.stopApproval(batch)}
-          submit={(decisions, remember) => void chat.approve(batch, decisions, remember)} />)}
+          submit={(decisions, remember) => chat.approve(batch, decisions, remember)} />)}
       </div>}
       <Composer contextEntry={<ContextTrigger value={context.value} open={contextPanel}
         disabled={!chat.session || chat.selectingSession} triggerRef={contextTrigger}
-        toggle={() => { setAgentPanel(null); setContextPanel(value => !value); }} />} text={chat.draft} pending={chat.pending} pendingMode={chat.pendingMode} busy={!!busy}
+        toggle={() => { closeModel(); setAgentPanel(null); setContextPanel(value => !value); }} />} text={chat.draft} pending={chat.pending} pendingMode={chat.pendingMode} busy={!!busy}
         stopping={chat.stopping} sending={chat.submitting || chat.changingControls || chat.changingModel} blocked={blocked} setText={chat.setDraft}
         setPending={chat.setPending} send={value => void chat.submit(value)} stop={() => void chat.stop()}
         api={api} session={chat.session} selectMode={value => void chat.selectPermissionMode(value)}
-        models={chat.models} model={chat.model} thinkingOptions={chat.thinkingOptions[chat.model]}
-        selectModel={value => void chat.selectModel(value)} selectThinking={value => void chat.selectThinking(value)}
+        openModel={openModels}
         compact={() => void chat.compact()} openContext={() => { setAgentPanel(null); setContextPanel(true); }}
         openAgents={() => openAgent()}
-        selectTools={names => void chat.selectTools(names)} controlsDisabled={chat.submitting || chat.changingControls ||
-          chat.changingModel || chat.selectingSession || chat.recovering || !!chat.session?.recovery || !chat.models.length} />
+        selectTools={names => void chat.selectTools(names)} controlsDisabled={controlsDisabled} />
     </main>
     {contextPanel && <ContextPanel value={context.value} loading={context.loading} error={context.error}
       retry={context.retry} close={closeContext} usageContent={chat.session && <SessionUsage
         api={api} sessionId={chat.session.session_id} run={chat.run} />} />}
-    {agentPanel && agentPanel.sessionId === chat.session?.session_id && <SubagentSidebar api={api}
+    {agentPanel && agentPanel.sessionId === chat.session?.session_id && <SubagentSidebar list={agents} api={api}
       sessionId={agentPanel.sessionId} run={chat.run} initialAgentId={agentPanel.agentId}
       close={closeAgents} stopAgent={(path, runId) => void chat.stopAgent(path, runId)}
       showApprovals={() => {

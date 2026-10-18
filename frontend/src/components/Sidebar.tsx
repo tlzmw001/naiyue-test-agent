@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { Fragment, useEffect, useId, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { SessionRow } from '../types';
 import { Icon } from './Icons';
@@ -6,6 +6,14 @@ import SessionMenu from './SessionMenu';
 import SessionSearch from './SessionSearch';
 import styles from '../App.module.css';
 import sidebar from './Sidebar.module.css';
+
+const dateLabels = ['今天', '昨天', '近7天', '更早', '未来日期', '日期未知'];
+function dateBucket(row: SessionRow, now: Date) {
+  const date = new Date(row.updated_at);
+  if (!Number.isFinite(date.getTime())) return 5;
+  const days = (Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) - Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())) / 86400000;
+  return days < 0 ? 4 : days === 0 ? 0 : days === 1 ? 1 : days < 7 ? 2 : 3;
+}
 
 export default function Sidebar({ rows, selected, open, disabled, managing, onNew, onSelect, onClose, update, remove, reorder }: {
   rows: SessionRow[]; selected?: string; open: boolean; disabled: boolean;
@@ -18,6 +26,17 @@ export default function Sidebar({ rows, selected, open, disabled, managing, onNe
   const [over, setOver] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [view, setView] = useState<'manual' | 'date'>(() => {
+    try { return localStorage.getItem('naiyue.session-view') === 'date' ? 'date' : 'manual'; }
+    catch { console.warn('session_view_preference_read_failed'); return 'manual'; }
+  });
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    if (view !== 'date') return;
+    const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const timer = window.setTimeout(() => setNow(new Date()), Math.max(0, next.getTime() - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [view, now]);
   const listId = useId();
   const origin = useRef<HTMLElement | null>(null);
   const searchOrigin = useRef<HTMLElement | null>(null);
@@ -57,6 +76,7 @@ export default function Sidebar({ rows, selected, open, disabled, managing, onNe
     setMenu({ row, x: Math.max(8, Math.min(x, window.innerWidth - 204)), y: Math.max(8, Math.min(y, window.innerHeight - 270)) });
   }
   function ordered(id: string, target: string | null, pinned: boolean) {
+    if (view !== 'manual') return Promise.resolve(false);
     const source = rows.find(row => row.session_id === id);
     if (!source || !!source.pinned !== pinned || id === target) return Promise.resolve(false);
     const ids = rows.filter(row => row.session_id !== id).map(row => row.session_id);
@@ -68,7 +88,7 @@ export default function Sidebar({ rows, selected, open, disabled, managing, onNe
   const unavailable = disabled || managing;
   function pointerMove(event: ReactPointerEvent<HTMLDivElement>) {
     const current = gesture.current;
-    if (!current || current.ended || unavailable) return;
+    if (!current || current.ended || unavailable || view !== 'manual') return;
     if (!current.active && Math.hypot(event.clientX - current.x, event.clientY - current.y) < 6) return;
     if (!current.active) { current.active = true; event.currentTarget.setPointerCapture?.(event.pointerId); setDragged(current.id); }
     event.preventDefault();
@@ -77,7 +97,7 @@ export default function Sidebar({ rows, selected, open, disabled, managing, onNe
   }
   function pointerUp(event: ReactPointerEvent<HTMLDivElement>) {
     const current = gesture.current;
-    if (!current?.active || current.ended) { gesture.current = null; return; }
+    if (!current?.active || current.ended || view !== 'manual') { gesture.current = null; return; }
     current.ended = true; event.preventDefault();
     const target = current.target;
     if (!unavailable && target?.dataset.sessionId) {
@@ -107,13 +127,24 @@ export default function Sidebar({ rows, selected, open, disabled, managing, onNe
         {!rows.length && <p className={styles.emptyHistory}>还没有历史会话</p>}
         {[true, false].map(pinned => {
           const group = rows.filter(row => !!row.pinned === pinned);
+          if (!pinned && view === 'date') group.sort((a, b) => dateBucket(a, now) - dateBucket(b, now) || Date.parse(b.updated_at) - Date.parse(a.updated_at));
           if (!group.length) return null;
           return <section key={String(pinned)} role="group" aria-label={pinned ? '已置顶会话' : '普通会话'}>
-            <div className={styles.sidebarLabel}>{pinned ? '已置顶' : '最近会话'}</div>
-            {group.map(row => <div key={row.session_id} className={`${sidebar.row} ${over === row.session_id ? sidebar.over : ''}`}
+            <div className={`${styles.sidebarLabel} ${sidebar.groupHeading}`}><span>{pinned ? '已置顶' : '最近会话'}</span>
+              {!pinned && <button type="button" aria-label={view === 'date' ? '切换到手动顺序' : '按日期分组会话'} onClick={() => {
+                cancelDrag(); const next = view === 'date' ? 'manual' : 'date'; setView(next); setNow(new Date());
+                try { localStorage.setItem('naiyue.session-view', next); }
+                catch { console.warn('session_view_preference_write_failed'); }
+              }}>{view === 'date' ? '手动顺序' : '按日期'}</button>}
+            </div>
+            {!pinned && view === 'date' && <p className={sidebar.dateHint}>日期视图仅浏览，切回手动顺序可拖动。</p>}
+            {group.map((row, index) => <Fragment key={row.session_id}>
+              {!pinned && view === 'date' && (index === 0 || dateBucket(group[index - 1], now) !== dateBucket(row, now)) &&
+                <h3 className={sidebar.dateHeading}>{dateLabels[dateBucket(row, now)]}</h3>}
+              <div className={`${sidebar.row} ${over === row.session_id ? sidebar.over : ''}`}
               data-session-id={row.session_id} data-dragging={dragged === row.session_id}
               onPointerDown={event => {
-                if (unavailable || event.button !== 0 || event.pointerType === 'touch' || (event.target as Element).closest('[aria-haspopup="menu"]')) return;
+                if (unavailable || view !== 'manual' || event.button !== 0 || event.pointerType === 'touch' || (event.target as Element).closest('[aria-haspopup="menu"]')) return;
                 gesture.current = { id: row.session_id, x: event.clientX, y: event.clientY, active: false, ended: false, target: null };
               }} onPointerMove={pointerMove} onPointerUp={pointerUp}
               onPointerCancel={cancelDrag}
@@ -134,7 +165,7 @@ export default function Sidebar({ rows, selected, open, disabled, managing, onNe
               </button>
               <button type="button" className={sidebar.more} disabled={unavailable} aria-label={`${row.title ?? `未命名会话 ${row.session_id.slice(0, 8)}`}的更多操作`}
                 aria-haspopup="menu" onClick={event => { const box = event.currentTarget.getBoundingClientRect(); openMenu(row, box.right - 188, box.bottom, event.currentTarget); }}>⋯</button>
-            </div>)}
+            </div></Fragment>)}
             {dragged && !!rows.find(row => row.session_id === dragged)?.pinned === pinned &&
               <div className={sidebar.dropEnd} data-session-end={String(pinned)}>拖到这里移至组末尾</div>}
           </section>;

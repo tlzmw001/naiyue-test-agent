@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, expect, it, vi } from 'vitest';
 import App from './App';
 import { WebApi } from './api';
-import ContextPanel from './components/ContextPanel';
+import ContextPanel, { ContextTrigger } from './components/ContextPanel';
 import { useContextView } from './useContext';
 import type { ContextView } from './contextTypes';
 import { applyEvent } from './events';
@@ -17,6 +17,15 @@ const view: ContextView = { session_id: 's', current: { basis: 'next_request', m
   latest_request: { version: 1, model_call_id: 'call', model_id: 'A', run_id: 'r', recorded_at: '2026-10-17T12:00:00Z',
     status: 'returned', estimate: { ...structuredClone(estimate), estimated_input_tokens: 32800 },
     usage: { input_tokens: 33280, output_tokens: 1600, cache_read_tokens: 0, cache_write_tokens: 1200 } } };
+
+it('warns at the configured compaction threshold using the current estimate', () => {
+  const { rerender } = render(<ContextTrigger value={{ ...view, current: { ...view.current,
+    estimate: { ...estimate, estimated_input_tokens: 110000 } } }} open={false} disabled={false} toggle={vi.fn()} triggerRef={{ current: null }} />);
+  expect(screen.getByRole('button').getAttribute('data-threshold')).toBe('reached');
+  expect(screen.getByRole('button').title).toContain('压缩阈值');
+  rerender(<ContextTrigger value={view} open={false} disabled={false} toggle={vi.fn()} triggerRef={{ current: null }} />);
+  expect(screen.getByRole('button').getAttribute('data-threshold')).toBeNull();
+});
 
 it('separates estimates and provider usage, preserving zero and missing values', () => {
   const { rerender } = render(<ContextPanel usageContent={null} value={view} loading={false} error="" retry={vi.fn()} close={vi.fn()} />);
@@ -60,13 +69,15 @@ it('places the context entry in the send group and switches between sidebars wit
     last_run_status: null, messages: [], busy: false, can_run: true, has_compaction: false, active_tools: [],
     permission_mode: 'Default', active_run_id: null, latest_run_id: null, manual_review_required: false,
     pending_approval: false, live: null } as const;
+  vi.spyOn(api, 'serviceInfo').mockResolvedValue({ workspace_root: null, workspace_label: null });
   vi.spyOn(api, 'models').mockResolvedValue({ default_model_id: 'A', model_ids: ['A'] });
   vi.spyOn(api, 'sessions').mockResolvedValue([session] as any);
   vi.spyOn(api, 'session').mockResolvedValue(session as any);
   vi.spyOn(api, 'context').mockResolvedValue(view);
   vi.spyOn(api, 'sessionControlOptions').mockResolvedValue({ tools: [], permission_modes: ['Default'],
     default_permission_mode: 'Default', default_active_tools: [] });
-  vi.spyOn(api, 'subagents').mockResolvedValue([]);
+  vi.spyOn(api, 'subagents').mockResolvedValue([{ agent_id: 'saved', agent_path: 'root/tester/saved',
+    agent: 'tester', task: 'inspect', tool_call_id: 'c', status: 'completed' }]);
   const start = vi.spyOn(api, 'start');
   render(<App api={api} />);
   fireEvent.click(await screen.findByRole('button', { name: /Invalid Date/ }));

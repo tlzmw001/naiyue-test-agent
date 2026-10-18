@@ -1,0 +1,51 @@
+:root {
+  color-scheme: light dark;
+  --surface: light-dark(#fff, #1b1d20);
+  --surface-soft: light-dark(#fafafa, #202226);
+  --surface-subtle: light-dark(#f7f7f7, #24262a);
+  --surface-hover: light-dark(#f1f1f1, #303339);
+  --surface-active: light-dark(#eaeaea, #3a3e44);
+  --surface-selected: light-dark(#e3e3e3, #454a52);
+  --sidebar: var(--surface-subtle);
+  --text: light-dark(#181818, #e8e9ec);
+  --text-secondary: light-dark(#626262, #c2c6cd);
+  --muted: light-dark(#737373, #a5abb5);
+  --faint: light-dark(#9a9a9a, #939aa6);
+  --line: light-dark(#e5e5e5, #3c4149);
+  --line-strong: light-dark(#bcbcbc, #626b78);
+  --focus: light-dark(#777, #a9bad2);
+  --action-bg: light-dark(#222, #e8e9ec);
+  --on-action: light-dark(#fff, #181a1d);
+  --indicator: light-dark(#999, #b5bbc6);
+  --disabled-bg: light-dark(#d7d7d7, #474c55);
+  --danger: light-dark(#a84437, #f09c95);
+  --danger-strong: light-dark(#b53c37, #ee9b94);
+  --warning-text: light-dark(#514c41, #e5d3ad);
+  --warning-bg: light-dark(#faf8f1, #322d23);
+  --warning-line: light-dark(#ded6c4, #74613d);
+  --warning: light-dark(#9a6a19, #e9bd73);
+  --success-bg: light-dark(#e6ece7, #283a2f);
+  --success-text: light-dark(#42614e, #b0d6bc);
+  --success-line: light-dark(#8da292, #769d82);
+  --syntax-keyword: light-dark(#a12a49, #efa2b8);
+  --syntax-string: light-dark(#256348, #a7d6b1);
+  --syntax-title: light-dark(#65419a, #c7acec);
+  --syntax-number: light-dark(#1b6093, #8bc5f1);
+  --syntax-comment: light-dark(#6e7279, #a4acb9);
+  --diff-add-text: var(--syntax-string);
+  --diff-add-bg: light-dark(#eaf5ee, #233b2c);
+  --diff-remove-text: var(--syntax-keyword);
+  --diff-remove-bg: light-dark(#faeeee, #402a31);
+  --shadow-soft: light-dark(#00000005, #00000030);
+  --shadow: light-dark(#00000012, #00000066);
+  --backdrop: light-dark(#00000030, #00000088);
+  --chart-system: light-dark(#42614e, #81b798);
+  --chart-tool_definitions: light-dark(#81977d, #a5bb8c);
+  --chart-user: light-dark(#a4b19c, #a4b5a1);
+  --chart-assistant: light-dark(#8e9fa9, #95b3ca);
+  --chart-tool_results: light-dark(#b0a295, #c9ad94);
+  --chart-summary: light-dark(#c8c4bb, #a3a3bb);
+  --chart-other: light-dark(#898989, #999fa8);
+}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }

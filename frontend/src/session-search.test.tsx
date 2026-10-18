@@ -168,6 +168,8 @@ it('escapes titles, supports the existing untitled fallback and cleans up on unm
 
 it('does not read or execute a session until a result is chosen through the real App', async () => {
   const api = new WebApi('search-fixture');
+  vi.spyOn(api, 'subagents').mockResolvedValue([]);
+  vi.spyOn(api, 'serviceInfo').mockResolvedValue({ workspace_root: null, workspace_label: null });
   vi.spyOn(api, 'models').mockResolvedValue({ default_model_id: 'A', model_ids: ['A'] });
   vi.spyOn(api, 'sessions').mockResolvedValue(rows);
   vi.spyOn(api, 'sessionControlOptions').mockResolvedValue({ tools: [], default_active_tools: [], permission_modes: ['Default'], default_permission_mode: 'Default' });

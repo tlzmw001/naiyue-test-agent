@@ -26,7 +26,7 @@ function setup(read = true) {
     return <Composer text={text} setText={setText} pending={pendingTexts} setPending={vi.fn()} pendingMode={!!pendingTexts.length}
       busy={busy} sending={false} stopping={false} blocked={false} stop={vi.fn()}
       api={api} session={session} controlsDisabled={false} selectTools={vi.fn()} selectMode={vi.fn()}
-      send={follow => send(text, follow)} models={['A']} model="A" selectModel={vi.fn()} selectThinking={vi.fn()}
+      send={follow => send(text, follow)} openModel={vi.fn()}
       compact={compact} openContext={vi.fn()} openAgents={vi.fn()} />;
   }
   const view = render(<Harness />);

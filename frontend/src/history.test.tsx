@@ -15,6 +15,8 @@ function recoveryClient(checkpoint_id = 'cp1') {
     messages: [], busy: false, can_run: false, has_compaction: false, active_run_id: null, latest_run_id: null,
     manual_review_required: false, pending_approval: false, live: null, checkpoint_id,
     recovery: { kind: 'interrupted_execution', reason: 'previous_run_unfinished', actions: ['continue'], unconfirmed_tool_call_ids: [] } };
+  vi.spyOn(api, 'subagents').mockResolvedValue([]);
+  vi.spyOn(api, 'serviceInfo').mockResolvedValue({ workspace_root: null, workspace_label: null });
   vi.spyOn(api, 'models').mockResolvedValue({ default_model_id: 'A', model_ids: ['A'] });
   vi.spyOn(api, 'sessions').mockResolvedValue([history]);
   vi.spyOn(api, 'session').mockResolvedValue(history);
@@ -35,6 +37,8 @@ it('shows saved facts as read-only, never sends on Enter, and allows a new sessi
     manual_review_required: false, pending_approval: false, live: null,
     recovery: { kind: 'interrupted_execution', reason: 'previous_run_unfinished', actions: [],
       unconfirmed_tool_call_ids: ['call'] } } as SessionView;
+  vi.spyOn(api, 'subagents').mockResolvedValue([]);
+  vi.spyOn(api, 'serviceInfo').mockResolvedValue({ workspace_root: null, workspace_label: null });
   vi.spyOn(api, 'models').mockResolvedValue({ default_model_id: 'A', model_ids: ['A'] });
   vi.spyOn(api, 'sessions').mockResolvedValue([value]);
   vi.spyOn(api, 'session').mockResolvedValue(value);

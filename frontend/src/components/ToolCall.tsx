@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AgentView, MessageRow, ToolCallRow, ToolState } from '../types';
+import ToolResult from './ToolResult';
 import styles from '../App.module.css';
 import card from './ToolCall.module.css';
 
@@ -71,7 +72,7 @@ export default function ToolCall({ call, result, phase, agents = [], stopAgent, 
       </p>}
       {phase?.text && <><div className={styles.detailLabel}>最新进度 / 输出尾部</div><pre>{phase.text}</pre></>}
       <div className={styles.detailLabel}>参数</div><pre>{JSON.stringify(call.args, null, 2)}</pre>
-      {result && <><div className={styles.detailLabel}>工具结果</div><pre data-message-id={expanded ? result.id : undefined}>{result.content}</pre>
+      {result && <><div className={styles.detailLabel}>工具结果</div><ToolResult name={call.name} result={result} anchor={expanded ? result.id : undefined} />
         {result.content_truncated && <p className={styles.historyPreview}>{result.detail ?
           '当前为工具结果预览，完整内容仍保存在会话中。' : '当前为工具结果预览。'}</p>}</>}
       {phase?.reason && <p className={styles.toolReason}>原因：{phase.reason}</p>}

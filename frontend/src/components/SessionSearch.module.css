@@ -1,15 +1,15 @@
-.backdrop { position: fixed; inset: 0; z-index: 80; display: flex; justify-content: center; align-items: flex-start; padding: min(18dvh, 140px) 16px 24px; background: #00000030; }
-.dialog { width: min(520px, 100%); max-height: 100%; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: 0 12px 45px #00000018; overflow: hidden; }
+.backdrop { position: fixed; inset: 0; z-index: 80; display: flex; justify-content: center; align-items: flex-start; padding: min(18dvh, 140px) 16px 24px; background: var(--backdrop); }
+.dialog { width: min(520px, 100%); max-height: 100%; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: 0 12px 45px var(--shadow); overflow: hidden; }
 .dialog h2 { margin: 0; padding: 18px 18px 6px; font-size: 14px; font-weight: 600; color: var(--text); }
 .searchBar { display: flex; align-items: center; gap: 10px; padding: 4px 14px 12px 18px; border-bottom: 1px solid var(--line); }
 .searchBar input { width: 100%; min-width: 0; border: 0; background: transparent; color: var(--text); padding: 8px 0; font-size: 15px; }
 .searchBar input:focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; border-radius: 3px; }
 .searchBar button { flex-shrink: 0; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 22px; }
-.searchBar button:hover { background: #f3f3f3; }
+.searchBar button:hover { background: var(--surface-hover); }
 .results { padding: 7px; min-height: 0; max-height: 45dvh; overflow-y: auto; overscroll-behavior: contain; }
 .results:empty { padding: 0; }
 .result { display: flex; flex-direction: column; align-items: stretch; gap: 6px; width: 100%; border: 0; border-radius: 10px; background: transparent; padding: 11px; color: var(--text); text-align: left; }
-.result[aria-selected="true"], .result:hover:not(:disabled), .result:focus-visible { background: #f1f1f1; }
+.result[aria-selected="true"], .result:hover:not(:disabled), .result:focus-visible { background: var(--surface-hover); }
 .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .meta { display: flex; flex-wrap: wrap; gap: 10px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 .empty { margin: 0; padding: 24px 18px; color: var(--muted); font-size: 12px; text-align: center; }

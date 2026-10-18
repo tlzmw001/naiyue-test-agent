@@ -42,7 +42,7 @@ it('preserves complete escaped titles, untitled fallback and existing pin groups
   const pinned = within(screen.getByRole('group', { name: '已置顶会话' })).getByRole('button', { name: `${title} model-a` });
   expect(pinned.textContent).toBe(title);
   expect(pinned.getAttribute('title')).toBe(`${title} · model-a`);
-  const regular = within(screen.getByRole('group', { name: '普通会话' })).getAllByRole('button')[0];
+  const regular = within(screen.getByRole('group', { name: '普通会话' })).getByRole('button', { name: /model-b.*未完成/ });
   expect(regular.textContent).toMatch(/10\/17.*未完成/);
   expect(regular.textContent).not.toContain('model-b');
   expect(container.querySelector('img')).toBeNull();

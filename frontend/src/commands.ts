@@ -8,4 +8,4 @@ export const commands = [
   { name: 'agents', label: '查看子智能体' },
 ] as const;
 export type CommandName = typeof commands[number]['name'];
-export type ComposerMenu = 'commands' | 'modes' | 'tools' | 'model' | 'skills' | null;
+export type ComposerMenu = 'commands' | 'modes' | 'tools' | 'skills' | null;

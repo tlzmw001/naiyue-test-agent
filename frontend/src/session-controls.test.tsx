@@ -29,6 +29,8 @@ function setup() {
     updated_at: '', last_run_status: null, messages: [], busy: false, can_run: true, has_compaction: false,
     active_run_id: null, latest_run_id: null, active_tools: ['read'], permission_mode: 'Default',
     manual_review_required: false, pending_approval: false, live: null };
+  vi.spyOn(api, 'subagents').mockResolvedValue([]);
+  vi.spyOn(api, 'serviceInfo').mockResolvedValue({ workspace_root: null, workspace_label: null });
   vi.spyOn(api, 'models').mockResolvedValue({ default_model_id: 'A', model_ids: ['A'] });
   vi.spyOn(api, 'sessions').mockResolvedValue([session]);
   vi.spyOn(api, 'session').mockResolvedValue(session);

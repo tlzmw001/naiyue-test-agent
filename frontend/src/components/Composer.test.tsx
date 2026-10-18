@@ -18,8 +18,8 @@ async function setup(overrides: Partial<ComponentProps<typeof Composer>> = {}) {
   const props: ComponentProps<typeof Composer> = {
     text: '', pending: [], pendingMode: false, busy: false, stopping: false, sending: false, blocked: false,
     setText: vi.fn(), setPending: vi.fn(), send: vi.fn(), stop: vi.fn(), api, session, controlsDisabled: false,
-    selectTools: vi.fn(), selectMode: vi.fn(), models: ['A'], model: 'A', selectModel: vi.fn(),
-    selectThinking: vi.fn(), compact: vi.fn(), openContext: vi.fn(), openAgents: vi.fn(), ...overrides,
+    selectTools: vi.fn(), selectMode: vi.fn(), openModel: vi.fn(),
+    compact: vi.fn(), openContext: vi.fn(), openAgents: vi.fn(), ...overrides,
   };
   let view!: ReturnType<typeof render>;
   await act(async () => { view = render(<Composer {...props} />); });

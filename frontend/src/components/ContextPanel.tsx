@@ -6,8 +6,8 @@ import styles from './ContextPanel.module.css';
 const labels: Record<string, string> = { system: '系统说明', tool_definitions: '工具定义', user: '用户消息',
   assistant: '模型消息与工具调用参数', tool_results: '工具结果', summary: '历史压缩摘要', other: '其他消息',
   base: '基础提示词', project: '项目说明', skills: 'Skill 索引', tool_guidance: '工具说明与指导', subagent_roles: '子智能体角色说明' };
-const colors: Record<string, string> = { system: '#42614e', tool_definitions: '#81977d', user: '#a4b19c',
-  assistant: '#8e9fa9', tool_results: '#b0a295', summary: '#c8c4bb', other: '#898989' };
+const colors: Record<string, string> = { system: 'var(--chart-system)', tool_definitions: 'var(--chart-tool_definitions)', user: 'var(--chart-user)',
+  assistant: 'var(--chart-assistant)', tool_results: 'var(--chart-tool_results)', summary: 'var(--chart-summary)', other: 'var(--chart-other)' };
 const sourceLabel: Record<string, string> = { config: '配置', default: '默认值', unknown: '未提供' };
 const format = (value: number | null | undefined) => value == null ? '未提供' : value.toLocaleString('en-US');
 export function contextPercent(estimate?: ContextEstimate | null) {
@@ -20,9 +20,13 @@ export function ContextTrigger({ value, open, disabled, toggle, triggerRef }: {
   triggerRef: RefObject<HTMLButtonElement | null>;
 }) {
   const percent = contextPercent(value?.current.estimate);
+  const estimate = value?.current.estimate;
+  const thresholdReached = estimate?.status === 'available' && estimate.estimated_input_tokens != null &&
+    estimate.trigger_threshold_tokens != null && estimate.estimated_input_tokens >= estimate.trigger_threshold_tokens;
   const label = percent == null ? '查看上下文构成' : `查看上下文构成，预估占用${percent.toFixed(1)}%`;
   return <button type="button" ref={triggerRef} className={styles.trigger} disabled={disabled}
-    aria-label={label} title={`${label}（本地估算）`} aria-expanded={open} onClick={toggle}>
+    data-threshold={thresholdReached ? 'reached' : undefined}
+    aria-label={label} title={`${label}（本地估算${thresholdReached ? '，达到自动压缩阈值' : ''}）`} aria-expanded={open} onClick={toggle}>
     <svg width="15" height="15" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" className={styles.ring} />
       {percent != null && <circle cx="10" cy="10" r="7" pathLength="100" className={styles.filled}
         strokeDasharray={`${Math.min(100, Math.max(0, percent))} 100`} />}</svg>

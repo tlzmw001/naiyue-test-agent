@@ -1,4 +1,5 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
+import { useSubagentList } from './useSubagentList';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ApiError, WebApi } from './api';
 import { useConversation } from './useConversation';
@@ -67,7 +68,10 @@ it('keeps loaded child pages through detail refreshes and isolates a later selec
     tool_call_id: 'outer', status: 'completed' as const };
   vi.spyOn(api, 'subagents').mockResolvedValue([record]);
   vi.spyOn(api, 'subagent').mockResolvedValue({ ...record, ...page([3, 4], 'before-3'), available: true, tool_states: {} });
-  const { result } = renderHook(() => useSubagents(api, 's', null, 'child'));
+  const { result } = renderHook(() => {
+    const list = useSubagentList(api, 's');
+    return useSubagents(api, 's', list, null, 'child');
+  });
   await waitFor(() => expect(result.current.messages).toHaveLength(2));
   await act(() => result.current.history.loadOlder());
   expect(result.current.messages.map(m => m.sequence)).toEqual([1, 2, 3, 4]);
@@ -88,7 +92,10 @@ it('retains current child events when the first saved detail arrives later', asy
   const live = { source: { agent_id: 'child', agent_path: record.agent_path, agent_run_id: 'cr', parent_run_id: 'r', parent_tool_call_id: 'outer' },
     status: 'running', messages: [row(5)], tool_states: {} };
   const run = { session_id: 's', run_id: 'r', agents: { [record.agent_path]: live }, messages: [] } as unknown as RunView;
-  const { result } = renderHook(() => useSubagents(api, 's', run, 'child'));
+  const { result } = renderHook(() => {
+    const list = useSubagentList(api, 's', run);
+    return useSubagents(api, 's', list, run, 'child');
+  });
   await waitFor(() => expect(result.current.messages.some(m => m.id === 'm5')).toBe(true));
   await act(async () => resolve({ ...record, ...page([3, 4], 'before-3'), available: true, tool_states: {} }));
   expect(result.current.messages.map(m => m.sequence)).toEqual([3, 4, 5]);

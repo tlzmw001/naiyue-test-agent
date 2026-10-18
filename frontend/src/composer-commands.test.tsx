@@ -13,6 +13,8 @@ function setup() {
     state: 'ready', updated_at: '', last_run_status: null, messages: [], busy: false, can_run: true,
     has_compaction: false, active_run_id: null, latest_run_id: null, active_tools: [], permission_mode: 'Default',
     manual_review_required: false, pending_approval: false, live: null };
+  vi.spyOn(api, 'subagents').mockResolvedValue([]);
+  vi.spyOn(api, 'serviceInfo').mockResolvedValue({ workspace_root: null, workspace_label: null });
   vi.spyOn(api, 'models').mockResolvedValue({ default_model_id: 'A', model_ids: ['A', 'B'], thinking_options: {
     A: { default_level: 'low', supported_levels: ['low', 'high'] }, B: { default_level: 'model_default', supported_levels: [] } } });
   vi.spyOn(api, 'sessions').mockResolvedValue([row]);
@@ -33,10 +35,10 @@ function setup() {
 
 async function selectExisting() {
   fireEvent.click(await screen.findByRole('button', { name: /Invalid Date/ }));
-  await waitFor(() => expect((screen.getByRole('button', { name: '打开子智能体侧栏' }) as HTMLButtonElement).disabled).toBe(false));
+  await waitFor(() => expect((screen.getByRole('button', { name: '查看上下文构成' }) as HTMLButtonElement).disabled).toBe(false));
 }
 
-it('places commands before the mode and models between context and send', async () => {
+it('places commands before the mode, keeps context beside send and puts models in the header', async () => {
   setup();
   const plus = await screen.findByRole('button', { name: '指令与功能' });
   const mode = screen.getByRole('button', { name: '权限模式：Default' });
@@ -44,9 +46,10 @@ it('places commands before the mode and models between context and send', async 
   const context = screen.getByRole('button', { name: '查看上下文构成' });
   const send = screen.getByRole('button', { name: '发送消息' });
   expect(plus.compareDocumentPosition(mode) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(context.compareDocumentPosition(model) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(model.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(model.closest('form')).toBe(send.closest('form'));
+  expect(model.closest('header')).not.toBeNull();
+  expect(context.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(model.closest('form')).toBeNull();
+  expect(context.closest('form')).toBe(send.closest('form'));
   fireEvent.click(plus);
   expect(screen.getByRole('menuitem', { name: /压缩上下文.*compact/ })).toBeTruthy();
   expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['压缩上下文/compact', '技能/skills']);

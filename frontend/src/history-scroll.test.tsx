@@ -69,6 +69,46 @@ it('does not claim that a truncated live draft has already been saved', () => {
   expect(screen.getByText('较长的生成中内容暂未完整显示，完成后同步。')).toBeTruthy();
 });
 
+it('preserves a reading anchor while later streamed Markdown grows and completes', () => {
+  let draft: MessageRow = { ...row(4), provisional: true, state: 'draft', content: '**正在检查' };
+  let growingHeight = 1800;
+  const { container, rerender } = render(<Conversation compacted={false} messages={[row(1), row(2), draft]} />);
+  const scroll = container.firstElementChild as HTMLDivElement;
+  Object.defineProperties(scroll, { clientHeight: { value: 200 }, scrollHeight: { get: () => growingHeight } });
+  scroll.getBoundingClientRect = () => ({ top: 0, bottom: 200 } as DOMRect);
+  container.querySelectorAll<HTMLElement>('article').forEach((element, index) => {
+    element.getBoundingClientRect = () => ({ top: index * 600 - scroll.scrollTop,
+      bottom: (index + 1) * 600 - scroll.scrollTop } as DOMRect);
+  });
+  scroll.scrollTop = 650;
+  fireEvent.scroll(scroll);
+  const anchor = container.querySelector<HTMLElement>('[data-message-id="m2"]')!;
+  const originalOffset = anchor.getBoundingClientRect().top;
+  draft = { ...draft, content: '**正在检查**\n\n| 检查项 |\n| --- |\n| 已读 |' };
+  growingHeight = 2200;
+  rerender(<Conversation compacted={false} messages={[row(1), row(2), draft]} />);
+  expect(container.querySelector('table')).toBeTruthy();
+  expect(scroll.scrollTop).toBe(650);
+  expect(anchor.getBoundingClientRect().top).toBe(originalOffset);
+  rerender(<Conversation compacted={false} messages={[row(1), row(2), { ...draft, provisional: false, state: 'complete' }]} />);
+  expect(scroll.scrollTop).toBe(650);
+  expect(anchor.getBoundingClientRect().top).toBe(originalOffset);
+});
+
+it('follows growing streamed Markdown only while the reader remains near the bottom', () => {
+  let height = 1000;
+  const draft: MessageRow = { ...row(1), provisional: true, state: 'draft', content: '**正文' };
+  const { container, rerender } = render(<Conversation compacted={false} messages={[draft]} />);
+  const scroll = container.firstElementChild as HTMLDivElement;
+  Object.defineProperties(scroll, { clientHeight: { value: 200 }, scrollHeight: { get: () => height } });
+  scroll.scrollTop = 800;
+  fireEvent.scroll(scroll);
+  height = 1400;
+  rerender(<Conversation compacted={false} messages={[{ ...draft, content: '**正文**\n\n- [x] 已读' }]} />);
+  expect(container.querySelector('input[type="checkbox"]')).toBeTruthy();
+  expect(scroll.scrollTop).toBe(height);
+});
+
 
 it('keeps a visible orphan tool result open and anchored when its earlier parent arrives', async () => {
   const result: MessageRow = { id: 'result', type: 'tool', content: 'currently reading this result',

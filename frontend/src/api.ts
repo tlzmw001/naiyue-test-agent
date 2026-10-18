@@ -4,6 +4,11 @@ import { decodeSSE, responseBytes } from './sse';
 import type { SseFrame } from './sse';
 import type { ApprovalBatch, HistoryPage, PermissionMode, RunView, SessionControlOptions, SessionRow, SessionView, SkillCatalogView, SubagentDetail, SubagentRecord, ThinkingOptions, ToolDecision } from './types';
 
+export interface ServiceInfo {
+  workspace_root: string | null;
+  workspace_label: string | null;
+}
+
 export class ApiError extends Error {
   constructor(public code: string) { super(code); }
 }
@@ -38,6 +43,7 @@ export class WebApi {
   }
 
   models() { return this.json<{ default_model_id: string; model_ids: string[]; thinking_options?: Record<string, ThinkingOptions> }>('/models'); }
+  serviceInfo(signal?: AbortSignal) { return this.json<ServiceInfo>('/service', 'GET', undefined, signal); }
   selectThinking(id: string, model_id: string, thinking_level: string) {
     return this.json<{ model_id: string; thinking_level: string }>(`/sessions/${encodeURIComponent(id)}/thinking`, 'PATCH', { model_id, thinking_level });
   }
@@ -63,9 +69,9 @@ export class WebApi {
     if (value.live?.messages_location === 'session') value.live = { ...value.live, messages: value.messages };
     return value;
   }
-  async session(id: string) { return this.sessionView(await this.json<SessionView>(`/sessions/${encodeURIComponent(id)}`)); }
-  async prepare(id: string) {
-    return this.sessionView(await this.json<SessionView>(`/sessions/${encodeURIComponent(id)}/prepare`, 'POST'));
+  async session(id: string, signal?: AbortSignal) { return this.sessionView(await this.json<SessionView>(`/sessions/${encodeURIComponent(id)}`, 'GET', undefined, signal)); }
+  async prepare(id: string, signal?: AbortSignal) {
+    return this.sessionView(await this.json<SessionView>(`/sessions/${encodeURIComponent(id)}/prepare`, 'POST', undefined, signal));
   }
   messages(id: string, before?: string, agentId?: string, signal?: AbortSignal) {
     const query = new URLSearchParams({ ...(before ? { before } : {}), ...(agentId ? { agent_id: agentId } : {}) });
@@ -76,7 +82,7 @@ export class WebApi {
     const query = afterModel === undefined ? '' : '?' + new URLSearchParams({ after_model: afterModel });
     return this.json<SessionUsageView>(`/sessions/${encodeURIComponent(id)}/usage${query}`, 'GET', undefined, signal);
   }
-  subagents(id: string) { return this.json<SubagentRecord[]>(`/sessions/${encodeURIComponent(id)}/subagents`); }
+  subagents(id: string, signal?: AbortSignal) { return this.json<SubagentRecord[]>(`/sessions/${encodeURIComponent(id)}/subagents`, 'GET', undefined, signal); }
   subagent(id: string, agentId: string) {
     return this.json<SubagentDetail>(`/sessions/${encodeURIComponent(id)}/subagents/${encodeURIComponent(agentId)}`);
   }
@@ -95,7 +101,7 @@ export class WebApi {
       'POST', { kind, request_id: crypto.randomUUID(), ...(text === undefined ? {} : { text }),
         ...(agent_path === 'root' ? {} : { agent_path }) });
   }
-  run(id: string) { return this.json<RunView>(`/runs/${encodeURIComponent(id)}`); }
+  run(id: string, signal?: AbortSignal) { return this.json<RunView>(`/runs/${encodeURIComponent(id)}`, 'GET', undefined, signal); }
 
   approve(id: string, batch: ApprovalBatch, decisions: ToolDecision[], remember_approved: string[] = [], request_id = crypto.randomUUID()) {
     return this.json<{ run_id: string; session_id: string; kind?: 'live_child'; accepted?: boolean }>(`/sessions/${encodeURIComponent(id)}/approvals`,

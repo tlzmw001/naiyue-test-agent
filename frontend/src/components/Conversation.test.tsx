@@ -1,4 +1,5 @@
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it } from 'vitest';
 import Conversation from './Conversation';
 
@@ -12,6 +13,126 @@ it('renders model Markdown without raw HTML, executable links or remote image re
   expect(container.querySelector('img')).toBeNull();
   expect([...container.querySelectorAll('a')].some(link => link.getAttribute('href')?.startsWith('javascript:'))).toBe(false);
   expect(container.querySelector('a[href="https://example.com/docs"]')?.getAttribute('rel')).toContain('noopener');
+});
+
+it('renders aligned GFM tables in a keyboard-accessible local scrolling region', () => {
+  render(<Conversation compacted={false} messages={[{
+    id: 'table', type: 'ai', provisional: false, state: 'complete',
+    content: '| 检查项 | 结果 |\n| :--- | ---: |\n| `pytest` | [通过](https://example.com/result) |',
+  }]} />);
+  const table = screen.getByRole('table');
+  expect(screen.getAllByRole('columnheader').map(node => node.textContent)).toEqual(['检查项', '结果']);
+  expect(table.querySelector('th')?.style.textAlign).toBe('left');
+  expect(table.querySelectorAll('th')[1].style.textAlign).toBe('right');
+  expect(table.querySelector('code')?.textContent).toBe('pytest');
+  expect(screen.getByRole('link', { name: '通过' }).getAttribute('href')).toBe('https://example.com/result');
+  expect(table.parentElement?.getAttribute('role')).toBe('region');
+  expect(table.parentElement?.getAttribute('aria-label')).toBe('表格，可横向滚动');
+  expect(table.parentElement?.tabIndex).toBe(0);
+});
+
+it('renders nested task lists as read-only checked and unchecked items', async () => {
+  const user = userEvent.setup();
+  const content = '- [x] 检查配置\n  - [ ] 验证 Windows\n\n- 普通条目';
+  const { container } = render(<Conversation compacted={false} messages={[{
+    id: 'tasks', type: 'ai', content, provisional: false, state: 'complete',
+  }]} />);
+  const inputs = screen.getAllByRole<HTMLInputElement>('checkbox');
+  expect(inputs.map(input => [input.checked, input.disabled])).toEqual([[true, true], [false, true]]);
+  expect(container.querySelector('li ul li input')).toBe(inputs[1]);
+  await user.click(inputs[1]);
+  expect(inputs[1].checked).toBe(false);
+  expect(screen.getByText('普通条目').classList.contains('task-list-item')).toBe(false);
+});
+
+it('retains table DOM, keyboard focus and horizontal position across conversation scroll updates', () => {
+  const { container } = render(<Conversation compacted={false} messages={[{
+    id: 'scroll-table', type: 'ai', provisional: false, state: 'complete',
+    content: '| 检查项 |\n| --- |\n| 内容 |',
+  }]} />);
+  const scroll = container.firstElementChild as HTMLDivElement;
+  Object.defineProperties(scroll, { scrollHeight: { value: 1000 }, clientHeight: { value: 100 } });
+  const region = screen.getByRole('region', { name: '表格，可横向滚动' });
+  region.focus();
+  region.scrollLeft = 40;
+  scroll.scrollTop = 150;
+  fireEvent.scroll(scroll);
+  expect(screen.getByRole('region', { name: '表格，可横向滚动' })).toBe(region);
+  expect(document.activeElement).toBe(region);
+  expect(region.scrollLeft).toBe(40);
+});
+
+it('strikes only double tildes and preserves literal Markdown inside code', () => {
+  const { container } = render(<Conversation compacted={false} messages={[{
+    id: 'strike', type: 'ai', provisional: false, state: 'complete',
+    content: '~~旧方案~~ 和 ~普通波浪号~\n\n`~~行内原文~~`\n\n```text\n- [x] 原始代码\n```',
+  }]} />);
+  expect(container.querySelector('del')?.textContent).toBe('旧方案');
+  expect(container.querySelectorAll('del')).toHaveLength(1);
+  expect(container.textContent).toContain('~普通波浪号~');
+  expect(container.querySelector('code')?.textContent).toBe('~~行内原文~~');
+  expect(container.querySelector('pre')?.textContent).toBe('- [x] 原始代码\n');
+  expect(screen.queryByRole('checkbox')).toBeNull();
+});
+
+it('preserves the exact Markdown source when copying a rendered answer', async () => {
+  const user = userEvent.setup();
+  const content = '- [x] 完成\n\n~~旧方案~~';
+  render(<Conversation compacted={false} messages={[{
+    id: 'copy', type: 'ai', content, provisional: false, state: 'complete',
+  }]} />);
+  expect(screen.getByRole('checkbox')).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: '复制回答' }));
+  expect(await navigator.clipboard.readText()).toBe(content);
+  expect(screen.getByText('已复制')).toBeTruthy();
+});
+
+it('renders human and unfinished model Markdown while keeping tool and summary text literal', () => {
+  const content = '- [x] 完成\n\n~~旧方案~~';
+  const { container } = render(<Conversation compacted={false} messages={[
+    { id: 'human', type: 'human', content, provisional: false, state: 'complete' },
+    { id: 'draft', type: 'ai', content, provisional: true, state: 'unconfirmed' },
+    { id: 'tool', type: 'tool', content, provisional: false, state: 'complete' },
+    { id: 'summary', type: 'human', content, provisional: false, state: 'complete', is_context_summary: true },
+  ]} />);
+  const rows = container.querySelectorAll('article');
+  for (const row of Array.from(rows).slice(0, 2)) {
+    expect(row.querySelector('input[type="checkbox"]')).toBeTruthy();
+    expect(row.querySelector('del')?.textContent).toBe('旧方案');
+  }
+  for (const row of Array.from(rows).slice(2)) {
+    expect(row.querySelector('input, del')).toBeNull();
+    expect(row.textContent).toContain('- [x] 完成');
+    expect(row.textContent).toContain('~~旧方案~~');
+  }
+  expect(screen.getByText('未完成内容')).toBeTruthy();
+});
+
+it('applies existing HTML, URL and image restrictions inside GFM tables', () => {
+  const { container } = render(<Conversation compacted={false} messages={[{
+    id: 'unsafe', type: 'ai', provisional: false, state: 'complete',
+    content: '| 内容 |\n| --- |\n| [危险](javascript:alert%281%29) <img src="https://example.com/private" onerror="alert(1)"> ![占位](https://example.com/image.png) |\n\nhttps://example.com/docs',
+  }]} />);
+  expect(screen.getByRole('table')).toBeTruthy();
+  expect(container.querySelector('img, script')).toBeNull();
+  expect(container.querySelector('[onerror]')).toBeNull();
+  expect([...container.querySelectorAll('a')].some(link => /^javascript:/i.test(link.getAttribute('href') ?? ''))).toBe(false);
+  expect(screen.getByText('[图片：占位]')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'https://example.com/docs' }).getAttribute('rel')).toContain('noopener');
+});
+
+it('isolates same-named footnotes across messages and root or child Conversation instances', () => {
+  const content = '引用[^1]\n\n[^1]: 说明';
+  const messages = ['one', 'two'].map(id => ({ id, type: 'ai', content, provisional: false, state: 'complete' as const }));
+  const { container } = render(<><Conversation compacted={false} messages={messages} />
+    <Conversation compacted={false} messages={messages} /></>);
+  const notes = [...container.querySelectorAll<HTMLElement>('li[id]')];
+  expect(notes).toHaveLength(4);
+  expect(new Set(notes.map(note => note.id)).size).toBe(4);
+  for (const article of container.querySelectorAll('article')) {
+    const reference = article.querySelector('a[data-footnote-ref]');
+    expect(reference?.getAttribute('href')).toBe(`#${article.querySelector('li[id]')?.id}`);
+  }
 });
 
 it('separates left-side model replies without a speaker name and retains unfinished status', () => {

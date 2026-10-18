@@ -25,7 +25,7 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
   runCommand: (command: CommandName) => void; compactDisabled: boolean;
   api: WebApi; selectSkill: (command: string, catalog: SkillCatalogView) => void; focusEditor: () => void;
 }) {
-  const open = menu === 'model' ? null : menu;
+  const open = menu;
   const setOpen = setMenu;
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);

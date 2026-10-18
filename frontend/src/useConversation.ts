@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { ApiError, errorText, WebApi } from './api';
-import { applyEvent, validateEvent } from './events';
+import { errorText, WebApi } from './api';
+import { subscribeRun } from './runSubscription';
 import type { ApprovalBatch, PermissionMode, RunView, SessionView, ThinkingOptions, ToolDecision } from './types';
 import { useSessions } from './useSessions';
 import { useMessageHistory } from './useMessageHistory';
@@ -16,6 +16,7 @@ export function useConversation(api: WebApi) {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<Record<string, string[]>>({});
   const [notice, setNotice] = useState('');
+  const [connection, setConnection] = useState<{ session_id: string; run_id: string; attempt: number; failed: boolean } | null>(null);
   const listing = useSessions(api, setNotice);
   const { sessions, refreshSessions } = listing;
   const [submitting, setSubmitting] = useState(false);
@@ -47,7 +48,7 @@ export function useConversation(api: WebApi) {
 
   async function refreshSession(sid: string, signal?: AbortSignal, prepare = false) {
     const revision = controlsRevision.current;
-    const value = await (prepare ? api.prepare(sid) : api.session(sid));
+    const value = await (prepare ? api.prepare(sid, signal) : api.session(sid, signal));
     if (!signal?.aborted && selected.current === sid) {
       setSession(previous =>
       previous?.session_id === sid && revision !== controlsRevision.current ? {
@@ -89,57 +90,39 @@ export function useConversation(api: WebApi) {
     subscription.current?.abort();
     const controller = new AbortController();
     subscription.current = controller;
-    let view: RunView;
+    let attempts = 0;
+    setConnection({ session_id: sid, run_id: runId, attempt: 0, failed: false });
     try {
-      if (resynchronize) await refreshSession(sid, controller.signal, true);
-      if (controller.signal.aborted) return;
-      view = initial ?? await api.run(runId);
-      if (controller.signal.aborted) return;
-      display(view, sid);
-      if (view.done) {
-        await refreshSession(sid, controller.signal);
-        await refreshSessions();
-        return;
-      }
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          await api.events(runId, view.last_sequence, controller.signal, frame => {
-            if (controller.signal.aborted) return;
-            if (frame.event === 'resync_required') throw new ApiError('resync_required');
-            if (frame.event !== 'runtime') return;
-            const event = validateEvent(frame.data);
-            if (event.run_id !== runId || event.session_id !== sid) throw new Error('invalid_event');
-            view = applyEvent(view, event);
-            display(view, sid);
-            if (event.event_type === 'approval_requested') {
-              void refreshSession(sid, controller.signal)
-                .catch(error => { if (!controller.signal.aborted && selected.current === sid) setNotice(errorText(error)); });
-            }
-            if (!event.source && event.event_type === 'control_delivered' && selected.current === sid)
-              setNotice('补充消息已加入本次上下文。');
-          });
-          if (!controller.signal.aborted && view.status === 'running') throw new Error('stream_truncated');
-          break;
-        } catch (error) {
-          if (controller.signal.aborted) return;
-          if (attempt === 1) throw error;
-          await refreshSession(sid, controller.signal, true);
-          if (controller.signal.aborted) return;
-          view = await api.run(runId);
-          if (controller.signal.aborted) return;
+      const confirmed = await subscribeRun({ api, runId, sessionId: sid, signal: controller.signal, initial, resynchronize,
+        synchronize: () => refreshSession(sid, controller.signal, true),
+        reconnecting: attempt => {
+          attempts = attempt;
+          if (!controller.signal.aborted && selected.current === sid)
+            setConnection({ session_id: sid, run_id: runId, attempt, failed: false });
+        },
+        update: (view, event) => {
+          if (controller.signal.aborted || selected.current !== sid) return;
           display(view, sid);
-          if (view.done) break;
-        }
-      }
-      if (!controller.signal.aborted) {
-        const confirmed = await api.run(runId);
-        if (controller.signal.aborted) return;
-        display(confirmed, sid);
+          setConnection(previous => previous?.attempt || previous?.failed ?
+            { session_id: sid, run_id: runId, attempt: 0, failed: false } : previous);
+          if (event?.event_type === 'approval_requested') {
+            void refreshSession(sid, controller.signal).catch(error => {
+              if (!controller.signal.aborted && selected.current === sid) setNotice(errorText(error));
+            });
+          }
+          if (event && !event.source && event.event_type === 'control_delivered') setNotice('补充消息已加入本次上下文。');
+        },
+      });
+      if (!controller.signal.aborted && confirmed) {
         await refreshSession(sid, controller.signal);
         await refreshSessions();
       }
     } catch (error) {
-      if (!controller.signal.aborted && selected.current === sid) setNotice(errorText(error));
+      if (!controller.signal.aborted && selected.current === sid) {
+        console.warn('run_subscription_failed');
+        setConnection({ session_id: sid, run_id: runId, attempt: attempts, failed: true });
+        setNotice(errorText(error));
+      }
     }
   }
 
@@ -164,6 +147,7 @@ export function useConversation(api: WebApi) {
     if (busySend.current) return;
     subscription.current?.abort();
     history.cancel();
+    setConnection(null);
     const generation = ++selectionGeneration.current;
     selectionPending.current = true;
     setSelectingSession(true);
@@ -464,7 +448,8 @@ export function useConversation(api: WebApi) {
   }
 
   const id = selected.current;
-  return { models, model, thinkingOptions, sessions, session, messages, run, notice, submitting, stopping, changingModel, changingControls, selectingSession, recovering,
+  return { models, model, thinkingOptions, sessions, session, messages, run, notice,
+    connection: connection?.session_id === id && connection.run_id === run?.run_id ? connection : null, submitting, stopping, changingModel, changingControls, selectingSession, recovering,
     history: { ...history.pagination, loadOlder: history.loadOlder, disabled: selectingSession },
     managingSessions: listing.managingSessions, updateSession: listing.updateSession, reorderSessions: listing.reorderSessions, deleteSession,
     draft: drafts[id] ?? '', pending: pending[id] ?? [], pendingMode: !!stoppedMode.current[id],

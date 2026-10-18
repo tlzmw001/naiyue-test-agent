@@ -65,6 +65,10 @@ def create_web_app(settings, *, application_factory=None):
     async def models():
         return app.state.service.models()
 
+    @app.get('/api/service')
+    async def service_info():
+        return app.state.service.service_info()
+
     @app.get('/api/session-controls')
     async def session_control_options():
         return app.state.service.session_control_options()

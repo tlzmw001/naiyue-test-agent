@@ -12,6 +12,8 @@ function setup() {
   vi.spyOn(api, 'prepare').mockImplementation(id => api.session(id));
   let rows: SessionRow[] = ['one', 'two', 'three'].map((id, index) => ({ session_id: id, title: `会话${index + 1}`,
     pinned: false, model_id: 'A', workspace_root: null, state: 'ready', updated_at: '', last_run_status: null }));
+  vi.spyOn(api, 'subagents').mockResolvedValue([]);
+  vi.spyOn(api, 'serviceInfo').mockResolvedValue({ workspace_root: null, workspace_label: null });
   vi.spyOn(api, 'models').mockResolvedValue({ default_model_id: 'A', model_ids: ['A'] });
   vi.spyOn(api, 'sessions').mockImplementation(async () => [...rows]);
   vi.spyOn(api, 'session').mockImplementation(async id => ({ ...rows.find(row => row.session_id === id),

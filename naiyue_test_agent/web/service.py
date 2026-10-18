@@ -19,6 +19,11 @@ class WebService:
         return {'default_model_id': self.application.default_model_id,
                 'model_ids': list(self.application.model_ids), 'thinking_options': self.application.get_thinking_options()}
 
+    def service_info(self):
+        root = self.settings.workspace_root
+        return {'workspace_root': str(root) if root is not None else None,
+                'workspace_label': (root.name or root.anchor) if root is not None else None}
+
     async def skills(self):
         try:
             catalog = await self.application.aget_skills(self.settings.workspace_root)

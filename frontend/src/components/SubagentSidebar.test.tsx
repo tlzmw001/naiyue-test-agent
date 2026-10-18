@@ -2,6 +2,13 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, expect, it, vi } from 'vitest';
 import { WebApi } from '../api';
 import SubagentSidebar from './SubagentSidebar';
+import type { ComponentProps } from 'react';
+import { useSubagentList } from '../useSubagentList';
+
+function TestSidebar(props: Omit<ComponentProps<typeof SubagentSidebar>, 'list'>) {
+  const list = useSubagentList(props.api, props.sessionId, props.run);
+  return <SubagentSidebar {...props} list={list} />;
+}
 
 const record = { agent_id: 'abcdef123', agent_path: 'root/tester/abcdef123', agent: 'tester',
   task: 'inspect permissions', tool_call_id: 'outer', status: 'completed' as const };
@@ -22,7 +29,7 @@ function setup() {
 }
 it('selects by name then reuses the conversation stream without a detail name or approval controls', async () => {
   const props = setup();
-  const { container } = render(<SubagentSidebar {...props} sessionId="s" />);
+  const { container } = render(<TestSidebar {...props} sessionId="s" />);
   fireEvent.click(await screen.findByRole('button', { name: '查看子智能体 tester · abcdef' }));
   await screen.findByText('child explanation');
   expect(screen.getByText('delegated task')).toBeTruthy();
@@ -45,7 +52,7 @@ it('keeps live messages and progress isolated and sends approvals back to the ma
         tool_call_id: 'inner', tool_name: 'read', run_id: 'child', batch_id: 'ai', state: 'running',
         phase: 'read', activity: 'running', text: 'current progress' } },
     } } } as any;
-  render(<SubagentSidebar {...props} sessionId="s" run={run} />);
+  render(<TestSidebar {...props} sessionId="s" run={run} />);
   fireEvent.click(await screen.findByRole('button', { name: '查看子智能体 tester · abcdef' }));
   await screen.findByText('current progress');
   fireEvent.click(screen.getByRole('button', { name: '到主会话处理' }));
@@ -58,11 +65,11 @@ it('discards a late detail response after changing session and offers retry on r
   const props = setup();
   let resolve!: (value: typeof detail) => void;
   vi.mocked(props.api.subagent).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
-  const { rerender } = render(<SubagentSidebar {...props} sessionId="s" />);
+  const { rerender } = render(<TestSidebar {...props} sessionId="s" />);
   fireEvent.click(await screen.findByRole('button', { name: '查看子智能体 tester · abcdef' }));
   await waitFor(() => expect(props.api.subagent).toHaveBeenCalledOnce());
   vi.mocked(props.api.subagents).mockRejectedValueOnce(new Error('read failed'));
-  rerender(<SubagentSidebar {...props} sessionId="other" />);
+  rerender(<TestSidebar {...props} sessionId="other" />);
   await screen.findByRole('button', { name: '重试' });
   await act(async () => resolve(detail));
   expect(screen.queryByText('child explanation')).toBeNull();
@@ -76,7 +83,7 @@ it('keeps the second instance selected when the first detail returns late', asyn
   let resolveFirst!: (value: typeof detail) => void;
   vi.mocked(props.api.subagent).mockImplementationOnce(() => new Promise(done => { resolveFirst = done; }))
     .mockResolvedValueOnce({ ...detail, ...second, messages: [{ ...detail.messages[0], content: 'SECOND_INSTANCE_ONLY' }] });
-  render(<SubagentSidebar {...props} sessionId="s" />);
+  render(<TestSidebar {...props} sessionId="s" />);
   fireEvent.click(await screen.findByRole('button', { name: '查看子智能体 tester · abcdef' }));
   await waitFor(() => expect(props.api.subagent).toHaveBeenCalledOnce());
   fireEvent.click(screen.getByRole('button', { name: '返回名称列表' }));
@@ -95,7 +102,7 @@ it('keeps detail progress text when a compact root snapshot contains only phase 
     incomplete: false, manual_review_required: false, agents: { [record.agent_path]: {
       source, status: 'running', messages: [], tool_states: { inner: { tool_call_id: 'inner', tool_name: 'read',
         run_id: 'child', batch_id: 'ai', state: 'running', activity: 'running', phase: 'read' } } } } } as any;
-  render(<SubagentSidebar {...props} sessionId="s" run={run} />);
+  render(<TestSidebar {...props} sessionId="s" run={run} />);
   fireEvent.click(await screen.findByRole('button', { name: '查看子智能体 tester · abcdef' }));
   expect(await screen.findByText('DETAIL_PROGRESS_TAIL')).toBeTruthy();
 });
@@ -105,12 +112,12 @@ it('refreshes the selected detail after a compact snapshot replaces its live his
   const run = { session_id: 's', run_id: 'r', status: 'running', messages: [], done: false, last_sequence: 10,
     incomplete: false, manual_review_required: false, agents: { [record.agent_path]: {
       source, status: 'running', snapshot_sequence: 10, messages: [], tool_states: {} } } } as any;
-  const { rerender } = render(<SubagentSidebar {...props} sessionId="s" run={run} />);
+  const { rerender } = render(<TestSidebar {...props} sessionId="s" run={run} />);
   fireEvent.click(await screen.findByRole('button', { name: '查看子智能体 tester · abcdef' }));
   await screen.findByText('child explanation');
   vi.mocked(props.api.subagent).mockResolvedValue({ ...detail, messages: [...detail.messages,
     { id: 'last', type: 'ai', content: 'FRESH_SNAPSHOT_REPORT', provisional: false, state: 'complete' }] });
-  rerender(<SubagentSidebar {...props} sessionId="s" run={{ ...run, last_sequence: 20, agents: {
+  rerender(<TestSidebar {...props} sessionId="s" run={{ ...run, last_sequence: 20, agents: {
     [record.agent_path]: { ...run.agents[record.agent_path], snapshot_sequence: 20 } } }} />);
   expect(await screen.findByText('FRESH_SNAPSHOT_REPORT')).toBeTruthy();
 });

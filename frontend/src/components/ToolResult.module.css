@@ -1,0 +1,8 @@
+.result { min-width: 0; }
+.result p { margin: 8px 0; }
+.diff { white-space: pre !important; overflow-x: auto; overflow-wrap: normal !important; }
+.diff span { display: block; min-width: max-content; }
+.diff span[data-change="added"] { color: var(--diff-add-text); background: var(--diff-add-bg); }
+.diff span[data-change="removed"] { color: var(--diff-remove-text); background: var(--diff-remove-bg); }
+.notice { color: var(--muted); }
+.result summary { cursor: pointer; font-size: 11px; margin-top: 12px; }

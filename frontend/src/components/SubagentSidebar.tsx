@@ -2,17 +2,18 @@ import { useEffect, useRef } from 'react';
 import type { RunView } from '../types';
 import { WebApi } from '../api';
 import { useSubagents } from '../useSubagents';
+import type { SubagentList } from '../useSubagentList';
 import Conversation from './Conversation';
 import styles from './SubagentSidebar.module.css';
 
 const labels: Record<string, string> = { running: '运行中', awaiting_approval: '等待审批', interrupted: '等待审批',
   stopping: '正在收尾', completed: '已完成', stopped: '已停止', failed: '失败', unconfirmed: '状态未确认' };
 
-export default function SubagentSidebar({ api, sessionId, run, initialAgentId, close, stopAgent, showApprovals }: {
-  api: WebApi; sessionId: string; run?: RunView | null; initialAgentId?: string;
+export default function SubagentSidebar({ api, sessionId, run, list, initialAgentId, close, stopAgent, showApprovals }: {
+  api: WebApi; sessionId: string; run?: RunView | null; list: SubagentList; initialAgentId?: string;
   close: () => void; stopAgent: (path: string, originRunId: string) => void; showApprovals: () => void;
 }) {
-  const view = useSubagents(api, sessionId, run, initialAgentId);
+  const view = useSubagents(api, sessionId, list, run, initialAgentId);
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { closeButton.current?.focus(); }, []);
   const status = view.live?.status ?? view.record?.status;

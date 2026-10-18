@@ -1,12 +1,23 @@
-import { useLayoutEffect, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import { useId, useLayoutEffect, useRef, useState } from 'react';
+import ReactMarkdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
 import type { AgentView, HistoryControls, MessageRow, SessionRecovery, ToolCallRow, ToolState } from '../types';
 import ToolCall from './ToolCall';
+import CodeBlock from './CodeBlock';
 import styles from '../App.module.css';
 
 function safeUrl(url: string) {
   return /^(https?:\/\/|\/[^/]|#)/i.test(url) ? url : '';
 }
+
+// Stable component types preserve table focus and scroll position on UI updates.
+const markdownComponents: Components = {
+  pre: CodeBlock,
+  table: ({ children }) => <div className={styles.tableScroll} role="region" aria-label="表格，可横向滚动" tabIndex={0}><table>{children}</table></div>,
+  img: ({ alt }) => <span>{alt ? `[图片：${alt}]` : '[图片]'}</span>,
+  a: ({ node: _node, children, href, ...props }) => <a {...props} href={href} target="_blank" rel="noreferrer noopener">{children}</a>,
+};
 
 export default function Conversation({ messages, compacted, toolStates = {}, agents = {}, stopAgent, openAgent, stoppingRunId, recovery, recovering = false, onRecover, history }: {
   messages: MessageRow[]; compacted: boolean; toolStates?: Record<string, ToolState>; stoppingRunId?: string; recovery?: SessionRecovery;
@@ -16,6 +27,7 @@ export default function Conversation({ messages, compacted, toolStates = {}, age
   openAgent?: (agentPath: string) => void;
   history?: HistoryControls;
 }) {
+  const markdownId = useId();
   const scroll = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
   const anchor = useRef<{ rows: { id: string; offset: number }[]; height: number; top: number } | null>(null);
@@ -112,9 +124,11 @@ export default function Conversation({ messages, compacted, toolStates = {}, age
           {row.type === 'ai' && <hr className={styles.replyDivider} />}
           {(row.type === 'tool' || row.provisional) && <div className={styles.speaker}>{row.type === 'tool' && '工具结果'}{row.provisional && <span>{row.state === 'unconfirmed' ? '未完成内容' : '正在生成'}</span>}</div>}
           <div className={styles.messageBody} data-message-id={row.type === 'tool' ? row.id : undefined}>
-            {row.provisional || row.type === 'tool' ? <div className={styles.draftText}>{row.content}</div> : <ReactMarkdown skipHtml urlTransform={safeUrl}
-              components={{ img: ({ alt }) => <span>{alt ? `[图片：${alt}]` : '[图片]'}</span>,
-                a: ({ children, href }) => <a href={href} target="_blank" rel="noreferrer noopener">{children}</a> }}>
+            {row.type === 'tool' || (row.provisional && row.type !== 'ai') ? <div className={styles.draftText}>{row.content}</div> : <ReactMarkdown skipHtml urlTransform={safeUrl}
+              remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
+              rehypePlugins={[[rehypeHighlight, { detect: false }]]}
+              remarkRehypeOptions={{ clobberPrefix: `${markdownId}-${encodeURIComponent(row.id)}-` }}
+              components={markdownComponents}>
               {row.content}
             </ReactMarkdown>}
           </div>

@@ -1,12 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { WebApi } from '../api';
-import type { PermissionMode, SessionControlOptions, SessionView, SkillCatalogView, ThinkingOptions } from '../types';
+import type { PermissionMode, SessionControlOptions, SessionView, SkillCatalogView } from '../types';
 import { errorText } from '../api';
 import { Icon } from './Icons';
 import ComposerControls from './ComposerControls';
 import ComposerEditor from './ComposerEditor';
-import ModelMenu from './ModelMenu';
 import { commands } from '../commands';
 import type { CommandName, ComposerMenu } from '../commands';
 import styles from '../App.module.css';
@@ -14,15 +13,14 @@ import composer from './Composer.module.css';
 
 export default function Composer({ text, pending, pendingMode, busy, stopping, sending, blocked,
   setText, setPending, send, stop, api, session, controlsDisabled, selectTools, selectMode, contextEntry,
-  models, model, thinkingOptions, selectModel, selectThinking, compact, openContext, openAgents }: {
+  openModel, compact, openContext, openAgents }: {
   text: string; pending: string[]; pendingMode: boolean; busy: boolean; stopping: boolean;
   sending: boolean; blocked: boolean; setText: (text: string) => void;
   setPending: (values: string[]) => void; send: (followUp: boolean) => void; stop: () => void;
   contextEntry?: ReactNode;
   api: WebApi; session: SessionView | null; controlsDisabled: boolean;
   selectTools: (names: string[]) => void; selectMode: (mode: PermissionMode) => void;
-  models: string[]; model: string; thinkingOptions?: ThinkingOptions;
-  selectModel: (model: string) => void; selectThinking: (level: string) => void;
+  openModel: () => void;
   compact: () => void; openContext: () => void; openAgents: () => void;
 }) {
   const [followUp, setFollowUp] = useState(true);
@@ -31,7 +29,6 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
   const [optionsError, setOptionsError] = useState(false);
   const [reload, setReload] = useState(0);
   const [menu, setMenu] = useState<ComposerMenu>(null);
-  const closeMenu = useCallback(() => setMenu(null), []);
   const [commandNotice, setCommandNotice] = useState('');
   const editor = useRef<HTMLTextAreaElement>(null);
   const [checkingSkill, setCheckingSkill] = useState(false);
@@ -92,6 +89,7 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
     if (typed) setText('');
     if (command === 'context') openContext();
     else if (command === 'agents') openAgents();
+    else if (command === 'model') openModel();
     else setMenu(command === 'permissions' ? 'modes' : command);
   }
   function selectSkill(command: string, catalog: SkillCatalogView) {
@@ -169,10 +167,6 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
         <div className={styles.actionGroup}>
           {pendingMode && !busy && <span className={styles.resendLabel}>重新发送</span>}
           {contextEntry}
-          <ModelMenu models={models} model={session?.recovery ? session.model_id : model}
-            level={session?.thinking_level ?? 'model_default'} options={thinkingOptions} disabled={controlsDisabled}
-            open={menu === 'model'} toggle={() => setMenu(previous => previous === 'model' ? null : 'model')}
-            close={closeMenu} selectModel={selectModel} selectThinking={selectThinking} />
           {showStop ? <button type="button" className={styles.stopButton} aria-label="停止运行" onClick={stop} disabled={stopping}>
             <Icon name="stop" /></button> :
             <button type="submit" className={styles.sendButton} aria-label={pendingMode && !busy ? '重新发送消息' : '发送消息'}
