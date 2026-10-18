@@ -114,7 +114,7 @@ async def test_failed_registration_does_not_cancel_active_root_run(monkeypatch, 
         await asyncio.wait_for(entered.wait(), 5)
         with pytest.raises(ValueError):
             await app.aregister_subagent(role(tool_names=('missing',)))
-        assert not task.done() and app._sessions._sessions[sid]['busy']
+        assert not task.done() and app._sessions.describe_session(sid)['busy']
         assert app.get_registered_subagents() == ()
         await app.aregister_subagent(role(tool_names=()))
         release.set()

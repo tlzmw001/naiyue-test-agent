@@ -72,7 +72,9 @@ def test_current_schema_four_is_upgraded_without_losing_sessions(tmp_path):
         store.create('kept', {'thread_id': 'kept-thread', 'model_id': 'official', 'workspace_root': None,
                              'active_tool_names': (), 'permission_mode': 'Default'})
     with sqlite3.connect(path) as connection:
-        connection.executescript('''ALTER TABLE naiyue_sessions DROP COLUMN thinking_level;
+        connection.executescript('''DROP TABLE naiyue_model_invocations; DROP TABLE naiyue_model_usage_runs;
+            DROP TABLE naiyue_chat_messages; DROP TABLE naiyue_chat_sync;
+            ALTER TABLE naiyue_sessions DROP COLUMN thinking_level;
             ALTER TABLE naiyue_sessions DROP COLUMN title;
             ALTER TABLE naiyue_sessions DROP COLUMN pinned;
             ALTER TABLE naiyue_sessions DROP COLUMN sort_order;
@@ -80,7 +82,7 @@ def test_current_schema_four_is_upgraded_without_losing_sessions(tmp_path):
     with SessionStorage(path) as store:
         row = store.connection.execute('SELECT * FROM naiyue_sessions').fetchone()
         assert row['session_id'] == 'kept' and row['thinking_level'] == 'model_default'
-        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 6
+        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 10
 
 
 def test_web_selection_is_validated_authenticated_and_restored(monkeypatch, tmp_path):
@@ -100,6 +102,7 @@ def test_web_selection_is_validated_authenticated_and_restored(monkeypatch, tmp_
             assert model.seen == []
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
             web.state.service.application._catalog._thinking_capabilities['A'] = {'kind': 'openai', 'levels': ('low', 'high')}
+            assert (await client.post(f'/api/sessions/{sid}/prepare')).status_code == 200
             assert (await client.get(f'/api/sessions/{sid}')).json()['thinking_level'] == 'high'
             assert (await client.patch(f'/api/sessions/{sid}/model', json={'model_id': 'A'})).status_code == 200
             assert (await client.get(f'/api/sessions/{sid}')).json()['thinking_level'] == 'model_default'

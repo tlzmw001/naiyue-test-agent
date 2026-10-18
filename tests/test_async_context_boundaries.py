@@ -214,6 +214,8 @@ class EchoContextModel(AsyncContextModel):
 
 
 def test_context_probe_uses_real_assembly_and_state_stream_offline(monkeypatch, capsys):
+    from probe_budget_helpers import guard_fake_catalog
+    monkeypatch.setattr('scripts.provider_acceptance_budget.guard_catalog', guard_fake_catalog)
     from scripts.probe_async_model import _worker
     from naiyue_test_agent.model_access import ModelCatalog
     chosen = EchoContextModel(metadata=model(window=128000, output=16384, reserve=16384).metadata)

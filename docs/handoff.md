@@ -1,6 +1,96 @@
 # Naiyue Test Agent：当前开发学习交接
 
-## 当前交接摘要（2026-10-17）
+## 当前交接摘要（2026-10-18）
+
+- **Spec109两片已完成**：[109-02实际链与收尾](specs/109-web-replay-and-persistent-diagnostics.md#9-109-02实际结果与spec109收尾)。新增应用层有限诊断投影/写入器与同库SQL模块，schema10运行摘要/事件按根含子归组，待写/单根/工作区预算、摘要预留、TTL/整组清理及关闭排空已接线。两条认证只读API按根/序号分页，冷查询不装载图；原消息/用量/checkpoint与审批恢复保持。
+- **验证与必要修复**：新增33项，组合56/旧消费者83通过；后端2817 passed in115.33s、前端28文件198及TS/Vite211成功（/tmp/naiyue-10902-*）。官方saver.setup在订阅前完成WAL/表初始化，已复现并修正首次写竞争；源字段只投影明确身份，在途终态计入名额。原订阅名单/schema版本同步，三个只读消费者只等待诊断结算，不排除表或放宽断言。434份Python/500行/分层、依赖/链接/diff通过；主子/摘要/Auto固定8次离线请求、真实硬退出及迟到写入删除探针通过。
+- **限制与唯一下一步**：诊断允许异步滞后、尾部缺口，预算不等于物理文件/RSS；无新增诊断UI。两项独立审查任务因额度限制未执行，本轮由主代理按架构/安全/对抗清单复核。0次真实供应商，未改真实配置/用户库/依赖、无提交push，原脏树保留。下一步先讨论Spec103的GFM呈现；checkpoint修剪/两种项目重试延期，原机/更多供应商/nyt交付独立。助手验收不新增用户掌握声明，学习位置保持[路线](1.0/learning-roadmap.md)。
+
+### 此前109-01验收快照（以下为当时记录）
+
+- **109-01已实现并验收**：[Spec109实际链](specs/109-web-replay-and-persistent-diagnostics.md#7-109-01实际结果与下一片)。DeliveredRun统一维护条数/UTF-8 JSON字节和淘汰序号；默认256条/4 MiB，单条/整个缓存限制分别生效。空队列与已开SSE旧游标明确resync_required，当前根子消息、进度、停止与终态不因淘汰变为不完整。
+- **配置及验证**：现有settings.toml新增web_event_cache_bytes，严格正整数、非法局部回退，create_web_app实际接入；显式WebSettings.event_cache_bytes优先。新增26项测试，首批19项正确红灯后转绿；后端2784 passed in116.25s，前端28文件198项及TS/Vite211模块成功（/tmp/naiyue-10901-*）。68项定向、架构36项/安全26项复核通过；compileall/pip check、427份Python及42份前端生产文件500行、链接/diff检查通过。
+- **边界与唯一下一步**：缓存预算只含队列载荷，不是进程RSS或当前视图上限；原16个结束缓存清理时机保持。不改schema/Agent循环/必要保存/审批/前端协议；0次真实供应商请求，未改真实配置/用户库/依赖、未提交push，原脏树保留。下一步先讲并确认109-02持久诊断；checkpoint修剪/两种项目重试仍延期，103其余UI/原机/PyPI独立。助手验收不新增用户掌握声明，学习位置保持[路线](1.0/learning-roadmap.md)。
+
+### 此前108-03验收快照（以下为当时记录）
+
+- **Spec108三片已完成**：[108-03实际链与收尾](specs/108-persistent-model-usage.md#10-108-03实际实现与spec108收尾)。只读会话累计从schema9已提交事实汇总，现有上下文侧栏第三页按需挂载；十进制字符串保存大整数显示精度，未知/0/partial/未确认/采集缺口分开。模型分页不裁总计；冷查询不装载图，原Runtime/写入/必要保存保持。根完成刷新，旧会话/页响应失效与取消。
+- **验证与边界**：新增16后端/8前端，23项组合通过；后端2758 passed in114.04s，前端28文件198项与TS/Vite211成功（/tmp/naiyue-10803-*）。原8次主子/摘要/快详审查询800输入/80输出且无新增请求；读快照/零写入/故障与范围合同通过。真实临时IAB1440/375验证分页、长名、大整数/空态及第5次离线调用完成自动刷新2347/79；手机数字从两行修正为完整单行，文档无横向溢出，控制台0告警。架构/安全各16后端与12前端独立复跑无确认遗留。每次合计O(n)且多HTTP不冻结快照，未承诺完整供应商账单。
+- **范围与唯一下一步**：0次真实供应商请求，未改真实配置/用户库/依赖、未提交push，原脏树保留。临时进程/库/凭据/标签已清理、视口已重置，截图和有限证据见Spec。下一步先讨论持久诊断与交付缓存字节预算，不自动实现；checkpoint修剪、模型重试/安全工具重试继续延期，103其余UI/原机/PyPI保持独立。助手验收不新增用户掌握声明，学习位置保持[路线](1.0/learning-roadmap.md)。
+
+### 此前104-03验收快照（以下为当时记录）
+
+- **104三片及106 R1离线部分已完成**：[104-03组合链与实际结果](specs/104-03-concurrency-acceptance.md#6-实际结果与104收尾)。A根Write→恢复→子Read审批与B运行/保存、满额拒绝、定向停止和必要保存屏障接在同一生命周期；共享目标busy和不同目标提交通过。新增TCP探针验证两会话delta/断连/控制/根子审批/幂等、第2进程只读根子档案和显式续聊，固定7次离线模型/1次Write提交/1次Read，0次供应商请求。
+- **必要修复**：子模型已识别错误转具体ToolException时附带既有run-scoped失败描述，避免子结束事件分类丢为unknown；原cause、父error工具消息、根原异常及其他会话运行/保存保持。新增12项验收；新组合通过为补证，分类丢失有红灯复现。SDK注入沿当前ChatOpenAI转换后的类型，没有为原始异常测试扩大生产分类。
+- **最终验证**：后端2524 passed in110.02s（/tmp/naiyue-10403-backend.log），专项15 passed in13.00s（同前缀focused.log）；前端27文件189 passed、TypeScript/Vite210模块成功（frontend/build.log）。406份Python/67份前端源文件AST/500行/分层、compileall/pip check、链接及diff通过；架构/安全各自12项复跑，无确认遗留。旧崩溃/根子恢复/保存失败/关闭合同全量回归保留，不承诺任意子审批跨重启续跑。
+- **边界与唯一下一步**：[Spec107/M6缓存控制草案](specs/107-model-request-prompt-cache.md)已按本机SDK、Pi/AgentX和官方资料说明配置/调用点/口径与两片顺序，供用户讨论，尚未实施或授权实网。随后持久调用用量→持久诊断/交付缓存预算；checkpoint修剪/两种项目重试继续延期，P1只保留基线，103/原机/PyPI独立。本轮未改真实配置/用户库/依赖，未提交push，原脏树保留；104-02既有SSE reader清理告警未修复。助手验收不新增用户掌握声明，学习位置保持[路线](1.0/learning-roadmap.md)。
+
+### 此前104-02验收快照（以下为当时记录）
+
+- **104-02已实现并验收**：[Web按会话任务/范围订阅及实际链](specs/104-02-web-session-concurrency.md#7-实际结果2026-10-18)。RunDelivery按sid拥有producer、按rid查询交付，额度仍由104-01 Actor.is_busy判断。首次及重复等待started均在登记锁外；额度拒绝清本job临时占位，未知执行仍防重放。根/子审批、控制、恢复/删除及关闭均按归属，关闭异常仍等全部Web任务，主异常保持。
+- **106 E1已接线**：subscribe_events(handler, *, session_id=None)经App/Service转交，publisher按原注册顺序快照全局+本sid；根子同会话路由，原序号/过滤/故障隔离及快照保持。前端只改额度/同会话忙提示，原会话hook经新增测试和实际浏览器证明可复用，无新增Manager/生产模块、配置、依赖或schema。
+- **最终验证**：后端**2512 passed in107.93s (0:01:47)**（/tmp/naiyue-10402-backend.log），Web/观察回归203、四份新测试22通过；前端27文件189 passed、TS/Vite210模块成功（同前缀frontend-final/build-final.log）。403份Python/67份前端源文件500行、AST/分层/compileall/pip check/diff及文档链接通过，架构/安全复核无确认遗留。旧快速完成局部替身迁新订阅、compact旧文案断言对齐新合同，原行为不减，无conftest修改。
+- **页面证据/限制**：[IAB临时离线验收](specs/104-02-web-session-concurrency.md#8-浏览器证据与限制)已确认A/B并行、草稿独立、C满额/释放后重发及停止A不影响B，共3次离线模型调用；临时服务及标签已关闭。控制台检查无error，有既有SSE reader.cancel清理警告，源文件与基线一致，本片未修复它。无真实供应商、用户库或真实配置修改，无提交push，不新增用户掌握声明。
+- **唯一下一步**：先讲并确认[104-03组合验收](specs/104-03-concurrency-acceptance.md)，再做真实TCP多根/进程重开、根子/保存/文件busy及106 R1离线限流隔离；不增加模型限流器或产品重试。M6→持久用量→诊断预算随后逐项讨论，checkpoint修剪/两种项目重试延后，103/原机/PyPI保持独立。学习位置保持[路线](1.0/learning-roadmap.md)。
+
+### 此前105-04验收快照（以下为当时记录）
+
+
+- **105-04已实现并验收**：[ActiveRun、资源接线与调用链](specs/105-04-active-run-and-resource-lifecycle.md)。SessionState保留10项会话事实，ActiveRun拥有本次观察、冻结资源、控制/队列和子实例；控制关闭后仍占用到必要保存，身份校验防旧记录释放新run。历史/恢复IO归SessionPersistence、装配归Service，App显式接收依赖并等待操作完成信号和自建producer后再关共享资源。
+- **必要边界**：不恢复旧State瞬时字段、独立观察/子实例Map或装配/恢复IO兼容包装；原公开业务API、SessionPort、schema8、END→tools→END保持。关闭期间新建保存回滚竞态已由Actor引用快照修复，原异常优先；无未结算子实例才允许清理失败后的控制关闭/释放。
+- **验证**：18项新生命周期测试、88项定向回归通过；前端26文件186 passed、TS/Vite210模块成功。后端2456 passed in 101.10s (0:01:41)（`/tmp/naiyue-10504-backend-verified.log`）。395份Python AST/500行及Runtime反向应用导入0、compileall/pip check/diff检查通过；699本地目标/71标题锚点通过。架构/安全审查的关闭竞态已闭合，最终定向25通过。已有CLI替身退出时序偶发失败已保留记录，定向和整套复验通过，105-05再做确定性整理。未改配置、依赖、用户库或前端行为，无真实供应商请求，未提交push；工作区既有改动保留，不新增掌握声明。
+- **唯一下一步**：讲105-05组合验收及当前地图收尾，确认后实施；再104三片（默认10）。106 E1随104-02、R1随104-03，P1保留基线，不提前实现。学习位置保持[路线](1.0/learning-roadmap.md)。
+
+### 此前105-03及并发补充记录（以下为当时快照）
+
+- **并发补充建议已形成Spec106，供另一会话审阅，尚未实施**：[事件路由/429验收/观察CPU及Pi对照](specs/106-concurrency-events-rate-limits-and-observation.md)。建议E1随104-02接会话范围订阅，保留全局消费者/快照/故障合同；R1随104-03做离线限流故障隔离，实网429统计另定预算；P1保留约5.5ms/600条/2.5MB基线，同ID原地修改等合同先于增量优化。只写本Spec与待办/交接索引，不覆盖104/105进行中改动；25本地链接/行号、围栏、探针原样复跑和diff检查通过，无代码/配置修改或供应商请求。下一步由用户交给另一会话，将相关建议纳入其待确认实施合同；105→104顺序保持。
+
+- **废弃`test_agent`层残留已清理**：其源码早在Spec093C移除，本轮确认生产/脚本引用为0后，仅删除旧目录内2个忽略的pyc及空目录。新增[整包缺席回归](../tests/test_architecture_semantics.py:86)先复现残留目录仍可被find_spec识别为namespace，清理后架构专项16通过；README/AGENTS/当前[模块图](implementation-roadmap.md#先区分框架循环和项目代码)/project-plan/学习地图同步移除独立测试策略层，历史记录保留版本边界。最终后端2426 passed in103.23s（`/tmp/naiyue-test-agent-removal-backend-final.log`），前端26文件186 passed，TS/Vite210模块成功，compileall/pip check/diff及304本地链接目标通过。首轮未带现有fd路径导致30项失败，单例对照后按项目原工具PATH重跑全绿，未改环境文件或产品代码。未提交push，原脏树保留；105后续安排和学习进度保持。
+
+- **105-01/02/03已完成**：[105-03实际链与验收](specs/105-03-session-subagents.md#8-实际实现与验收2026-10-18)。AgentSession唯一拥有State、根运行及path子实例/driver/live审批/停止/settle；Service保留准入、共享角色定义/图和SessionPort路由。临时subagents参数和原全局子实例表已删除，借用原invoke回调与角色列表读取，未创建平行服务或复制共享图。
+- **105-03本轮结果**：4项新行为测试先红后绿，170定向通过；后端2439 passed in106.21s (0:01:46)，前端26文件186 passed及TS/Vite210模块构建成功（/tmp/naiyue-10503-backend.log及同前缀frontend/build.log）。394份Python AST/500行、compileall/pip check、680个本地链接/88个标题锚点、diff及架构/安全复核通过。7个生产文件、16个测试文件（含1新建）及1个既有验收探针迁移；两个测试观察helper随新拥有者接线，无conftest/断言放宽。未改配置、用户库、依赖或前端行为，无真实供应商请求，未提交push，不新增掌握声明。
+- **ActiveRun评估已记录**：[建议与持久化边界](specs/105-03-session-subagents.md#7-activerun建议评估本片只记录)。寿命拆分有价值，但不是已存在的误持久化修复；session_allow/pending_turn目前并非直接写元数据，待批由checkpoint恢复。close窗口和保存后release为两个时点，不可把快照/丢弃/通知一概替换成赋None。105-04开始前细化再确认，未实施新对象或权限持久化。
+- **唯一下一步**：先讲105-04持久化/装载/关闭接线，并细化ActiveRun取舍；确认后再实现。余105-04/05 → 104三片 → M6/持久用量/诊断预算 → 103其余UI；104默认10、文件busy等已确认方向保持，尚未开放并发。学习位置保持[路线](1.0/learning-roadmap.md)。
+
+### 此前101-04验收快照
+
+- **101-04及Spec101四片已完成**：[组合合同、结果与剩余边界](specs/101-web-history-pagination.md#20-101-04实施合同2026-10-18用户授权)。长历史/手动与自动压缩/独立服务重开/真实硬退出/根审批及中断子历史分别核对checkpoint、档案与页面；浏览只读不执行旧模型工具，写入副作用账本保持一次。根前置审批恢复卡片，子内部审批跨重启仅结束旧委派并保留记录。本片最小修复两处：历史sessionId取当前ref防旧闭包恢复丢行；归档/live无调用大正文不再误报参数截断。
+- **当前最终证据**：后端 **2266 passed in100.33s**（`/tmp/naiyue-101-04-backend-verified.log`），前端 **26文件186 passed**（`/tmp/naiyue-101-04-frontend-final.log`），TypeScript/Vite **210模块成功**（`/tmp/naiyue-101-04-build-final.log`）；新增TCP探针PASS、固定20次离线模型调用，17项真实退出专项通过。378份Python AST/444源文件≤500行、compileall/pip check/diff与文档链接通过；架构/安全复核及live同形发现已闭合。1440/375实际构建页验证原文/子档案、压缩草稿保留、冷审批与崩溃恢复，无横向溢出/控制台告警，截图/数值见Spec第21节。临时进程/标签/viewport覆盖已清理，证据保留；无真实供应商/配置/用户库修改、未提交push，既有100/101/103脏树保留。
+- **唯一下一步**：先讲解[Spec102剩余项](specs/102-session-state-lifecycle-refactor.md#14-与spec101的关系及下一步)的分片，首片建议SessionState及受控行为边界，确认后实施。第6/9项已完成，不重复设计；第7跨会话并发仍待定。Spec103其他UI、完整正文展开/下载、M6/usage/诊断/checkpoint修剪、PyPI及Windows/Linux原机各自独立，见[后续清单](future-work.md#清理后的当前工作顺序2026-10-17)。本轮为助手实现与验收，不新增用户掌握声明，学习位置保持[路线](1.0/learning-roadmap.md)。
+
+### 此前101-03验收快照
+
+- **101-03根/子历史分页已接线**：[合同、实际调用链/验证及下一片](specs/101-web-history-pagination.md#17-101-03实施合同2026-10-18用户授权)。新增useMessageHistory供根/子共用，单在途、范围代次/AbortSignal、ID/revision/完整性合并、SSE缺口prepare后补页；Conversation上滑前插、阅读锚点、重试/起点/回到最新。Web最终live裁窗后重算真实cursor，避免跳过被挤出档案。工具结果跨页归入父卡片时保留正在阅读的正文展开与同ID锚点；其他卡片仍默认折叠。101-01/02档案、schema8及轻量准入保持。
+- **101-03最终证据**：后端 **2261 passed in95.12s**（`/tmp/naiyue-101-03-backend-final.log`），前端 **26文件183 passed**（`/tmp/naiyue-101-03-frontend-final.log`），TS/Vite **210模块成功**（`/tmp/naiyue-101-03-build-final.log`）。新增2项后端/20项前端；compileall/pip check/diff、377份Python AST与443源文件≤500行通过，架构/安全复核无确证遗留发现。实际临时Web/SQLite/离线模型/真实Read：1440与375px首屏/上滑、503/显式重试/草稿、新消息不抢位置、历史起点、根子跨页工具正文及回到最新已验；偏移差不足0.2px，无横向溢出/控制台告警。截图/日志见Spec第18节。临时服务/标签与viewport覆盖已清理，无供应商请求/真实配置或用户库改动，既有103工作树保留，未提交/push。
+- **边界与唯一下一步**：先向用户讲解[101-04组合验收范围](specs/101-web-history-pagination.md#19-101-04实施前准备范围历史现已验收)，确认后验证长历史＋自动/手动压缩＋重启/崩溃/审批，分别检查可浏览原文和实际模型上下文、不重放副作用。大消息本片明确预览/详情身份，完整正文弹层/下载未增加。Spec102第6/9项随101-02落地，其余重构/跨会话并发/M6/usage/诊断/checkpoint修剪保持独立。本轮为助手实现，不新增用户掌握声明，学习位置见[路线](1.0/learning-roadmap.md)。下方记录保留历史时点；旧103记录中的整库失败已由101-02/03当前全量回归闭合。
+
+- **Spec103 U8侧栏单行与桌面折叠已接线、通过前端验收**：[范围/实际结果第16—17节](specs/103-web-presentation-and-interaction.md)。标题单行、模型悬停提示及同排未完成标记；桌面260→64px，保留展开/新建/搜索，仅局部状态，刷新默认展开。新增8例分两步红灯后实现，前端22文件159 passed/TS与Vite209模块成功；1440/375真实临时Web验证键盘、滚动566px保留、草稿/选中、搜索取消及菜单焦点、跨屏完整抽屉和16px长标题图标，浏览器无告警。仅Sidebar/局部CSS/新测试及本片三份文档，未改101/102文件，无供应商请求；临时资源已清理，未提交/push。整库验收仍待闭合：另一会话当前后端日志1 failed/2255 passed，未在本片重试或修其逻辑。唯一下一步：101/102收敛后端回归后整合验收；日期分组仍待讨论，学习位置保持[路线](1.0/learning-roadmap.md)。
+
+- **Spec103 U8会话标题搜索已接线，整库验收待闭合**：[范围/实际结果第14—15节](specs/103-web-presentation-and-interaction.md)。侧栏入口、Cmd/Ctrl+K浮层、本地标题筛选、原排序及显式选择复用onSelect；无选择不加载/执行，空态/IME/Tab/门禁/候选更新有覆盖。菜单切入搜索的焦点故障先红后绿修正。前端151 passed、TS/Vite209模块成功，真实临时Web/SQLite在1440/375验证筛选/精确选择/草稿/焦点/长标题，新prepare协议下也通过；无供应商请求，临时资源已清理。只改Sidebar及局部样式、新SessionSearch及其CSS/测试、本片文档，未改101/102文件。后端三轮检查未全绿：首轮5 failed/2243 passed，定向2 failed/3 passed，最终5 failed/2077 passed并中断；日志及失败域见Spec，按连续三次失败规则停止重试，未替另一会话改后端/测试。未提交/push。唯一下一步：101/102收敛当前后端回归后再整合验收，不能声称整库完成。
+
+- **Spec103 U2普通工具卡摘要已完成**：[范围/验收第12—13节](specs/103-web-presentation-and-interaction.md)。完成卡片收成工具名/关键参数/结果状态一行，运行时保留阶段/计时，结束后这些信息及原参数/正文仍可展开；长值有界省略，未知工具/缺失数据不猜值，“已有结果”不用成功勾号，错误/未执行/未确认保持明确。新增19例先红后绿，既有子任务/配对/计时断言保留；全量前端138 passed、TS/Vite207模块成功、后端2245 passed in95.48s。真实离线模型驱动只读ls/read/缺失文件，桌面1440及375px默认折叠/键盘展开/长路径/错误详情与刷新重开均通过，截图见Spec；无供应商请求，临时资源已清理。仅ToolCall/其测试/新CSS及本片文档，未改101/102文件，未提交/push。唯一下一步：用户试用工具卡，再选103下一独立切片；U1回复归属、Edit/Write结构化diff仍按原依赖后续做。
+
+- **Spec103输入`/`指令菜单已接线并验证**：[范围与验收第10—11节](specs/103-web-presentation-and-interaction.md)。复用内置定义/真实技能目录，支持前缀筛选、方向键、Tab/点击及未完整指令Enter补全，完整指令仍走原执行/技能校验；IME、Shift快捷键、草稿、不可用原因和过期请求均覆盖。新增9例先红后绿，前端119 passed、TS/Vite206模块成功；最终当前工作区后端2243 passed in94.06s。首轮曾受并行101存储迁移影响出现21项重开库失败，独立案例及新进程全量重跑通过，未改后端。真实离线页面1440/375及键盘链路、内部滚动/无横向溢出/无浏览器告警通过，截图见Spec；临时服务/库已清理。仅Composer接线/局部CSS、新编辑器/测试及本片文档，未改101/102文件、API/types/useConversation/Conversation或共享App样式，未提交/push。唯一下一步：用户试用菜单，再选103下一独立切片；学习位置保持[路线](1.0/learning-roadmap.md)。
+
+- **101-01聊天归档基础已接线**：[实施合同/调用链/验证](specs/101-web-history-pagination.md#11-101-01实施合同)。同一工作区SQLite升schema7，保留4/5→6再升7、6直接加表；collect_chat_updates沿可信根/子父链有限页增量整理，保留pending结果、原message/call ID及artifact，同ID修订保留位置，摘要不删原文。finish在资源settle后，同事务保存档案/进度/收尾；恢复先留原候选、保留三次官方更新、再合并解释消息。来源重复覆盖经真实saver多页回归修正，归档失败回滚且原运行异常优先，删除覆盖新表。
+- **本轮验证**：后端 **2245 passed in91.83s**（`/tmp/naiyue-101-01-backend-final.log`）；归档/恢复专项36 passed in14.97s。收尾另一会话ToolCall新增断言短暂失败，保留其修改并在其修正后重跑当前工作树：前端 **20文件138 passed**（`/tmp/naiyue-101-01-frontend-current.log`），TypeScript/Vite **207模块成功**（`/tmp/naiyue-101-01-build-final.log`）。新增18项后端回归，增强原压缩/恢复/重启/迁移断言；369 Python AST/≤500行、compileall/pip check、凭证形状及diff检查通过，架构/安全复核无确证遗留发现。仅临时SQLite/离线模型，无真实配置/用户库操作或模型请求；未提交/push，不新增用户掌握声明，学习位置仍见学习路线。
+- **边界与唯一下一步**：当前Web沿用原历史读取，1MiB显示/准入问题尚未由本片闭合。下一片讲解并确认101-02＋102第6项：显式准备、安全装载、轻量准入、GET只读、有界分页/正文及live覆盖；必要前端打开协议接线同片，上滑/锚点留101-03，组合验收101-04。102其余重构非全量前置、跨会话并发待决定；103 U1/U7依赖101合同，保持Composer独立，缓存/usage/诊断/checkpoint修剪各自独立。Windows/Linux原机未新增证据。
+
+- **Spec103 U5与自动增高已完成**：[实施/验证第8—9节](specs/103-web-presentation-and-interaction.md)。Composer独立切片：活动运行空草稿停止/有效草稿发送，左上方默认follow_up可切steering；成功清空/重置，失败保留，停止/compact门禁保持。高度48—180px、内部滚动及宽度重测；原props/API和空闲普通/Skill发送合同保持。新增13组件例，迁移App/controls原默认案例并扩展方式覆盖；全量前端110 passed/后端2227 passed in91.41s，TS/Vite205模块成功。真实IAB+临时离线Web/SQLite验1440/375，控制提交、停止保留、无横向溢出/控制台错误；截图和日志见Spec。只改Composer/局部CSS及3份测试，未改101/102的api/types/useConversation/Conversation/后端或共享App样式，未提交/push。其余103项待审；101/102在另一会话讨论，checkpoint修剪延后。
+
+- **Spec100流式最终参数已修复，原两项验收已闭合**：[设计第10节](specs/100-real-provider-acceptance.md)、[事件/复验及当前调用链](research/responses-final-args-2026-10-17.md)。修复前1次完整事件诊断确认：两条调用added参数空、无delta，arguments.done/output_item.done携完整参数。新增model_access/responses_stream.py借用SDK做请求局部参数归集，_build_model对Responses选择子类，继续委托官方请求/转换；文字即时流式、工具顺序、取消关闭及usage保留，未改真实配置、图/权限或前端。
+- **定向实网**：根批准2次、双子智能体6次均通过，含整批暂停、单一Ask、双待批以及一方批准完成时另一方仍等待；新增账本9/9（含诊断1），加原52累计61。原历史报告/失败不改写；停止发送。两类最终事件矛盾的漏检经架构/安全复核、先红后绿修正后闭合。最终本机验证见Spec第10节及补充报告；助手实现，不新增学习掌握声明。下一步由用户选择后续已讨论切片或提交收尾，本轮未提交/push。
+- **本次最终验证**：后端 **2227 passed in88.78s**（`/tmp/naiyue-100-final-args-backend-final.log`），聚焦146通过；前端 **18文件96 passed**、TypeScript/Vite **204模块成功**。365 Python AST/417源文件≤500行、446本地链接、compileall/pip check/diff及有限报告额度/凭证形状检查通过。新增22项回归；未改conftest、依赖或实际模型配置。Windows/Linux及浏览器实网人工操作未新增证据。
+
+- **长会话与代码设计讨论，暂不实施**：[Spec101](specs/101-web-history-pagination.md)历史懒加载/压缩只改上下文，以及[Spec102](specs/102-session-state-lifecycle-refactor.md)第1—6、8—10项已确认；第7跨会话并发仍待范围决定。[后续M6](future-work.md)供应商请求缓存策略已确认，参数/实网预算另定。[Pi研究与确认保留策略](research/pi-event-history-usage-2026-10-17.md)：聊天/用量随会话保留；Web缓存256条且4 MiB/run、16个已结束run；诊断30天/256 MiB工作区预算、1 MiB/run，整run清理并明确截断。均为待实施的可配置工程起点。当前checkpoint已写同一SQLite，没有按时间/数量自动修剪，压缩不删旧版；删除会话才事务清理主/关联子thread。临时3版重开/删除探针通过，已有持久化/压缩/子删除回归3 passed in0.78s；checkpoint修剪独立待设计，不套诊断TTL。未改产品/测试/配置或用户库，无真实模型请求；其他会话Spec100记录保持。继续讨论后统一修改。
+
+- **Spec100首轮真实验收完成，有发现**：[有限报告/结果与边界](research/provider-acceptance-2026-10-17.md)、[Spec与修正调用链](specs/100-real-provider-acceptance.md)。固定已有Responses网关模型，实际 **52/60次发送**（B8/C17/D17/E10）、SDK重试0；**16功能场景通过，根多工具批准/双子任务审批2项未通过**，不作全部通过声明。保留2条初次失败、2次定向复验及2个只读诊断；未重置额度或循环重发。图片仅Pillow，无生图API。
+- **已接线修复**：Runtime按模型节点namespace/step锚定Responses空首chunk的响应ID，增量与最终消息归并；声明Responses的摘要text块转文本，reasoning/thinking不写入，未知/图片/空/截断等仍拒绝。两处各有先红后绿回归，实网流式、Read及compact重开通过。验收器硬限制临时fixture路径/精确Bash，在批准前比对目标；NoAsk/Deny查拒绝来源，兄弟需双待批及独立完成，避免错误通过。
+- **实网证据与遗留**：图片随机像素、搜索写改读、工具错误后继续、拒绝/NoAsk/Deny、Auto输入隔离/AGENTS.md、单子任务/停止、Skill/compact重开/Steer/Follow-up/活动停止通过。快/详审分别直测，Auto本轮快审Allow，未自然升级。多调用只读诊断确认网关完成事件有参数而当前流式转换args为空；完整响应候选实网仅1call，未证明双调用，生产默认及真实配置保持。该兼容问题应先讨论下一片；推理档位未配置、其他协议/供应商/Windows/Linux原机/浏览器实网操作未覆盖。
+- **最终验证**：后端 **2205 passed in89.83s**（`/tmp/naiyue-100-backend-final-complete.log`）；前端 **18文件96 passed**（`/tmp/naiyue-100-frontend-final.log`），TypeScript/Vite **204模块成功**（`/tmp/naiyue-100-build-final.log`）。摘要63项原/新增回归通过，诊断SDK Mock3项通过；架构/安全最终独立复核无确证遗留代码发现。结构/依赖/链接检查以本轮实际命令记录为准。真实模型测试与Mock、供应商usage与本地估算分开；测试通过不证明业务效果或用户已掌握。
+- **配置/数据与下一步**：此前获准只补忽略模型配置的api=responses，未改其他值；本轮仅进程内重试/输出上限，无配置副本/用户数据库操作，临时工作区/SQLite已清理，有限JSON长期保存在research。当前停止52次，不自动再请求；下一步讨论多工具Responses流式兼容方案及两项批审批的定向复验，Windows/PyPI独立后排。本轮未提交/push，其他会话101/102设计记录保留；学习位置仍见[学习路线](1.0/learning-roadmap.md)。
+
+### 此前099阶段整合快照
 
 - **阶段整合交付**：用户确认提交并push本阶段已完成的Spec086 S1—S6与Spec094—099。提交前最终全量后端 **2143 passed in85.92s**（`/tmp/naiyue-push-20261017-backend-final.log`）、前端 **18文件96 passed**（`/tmp/naiyue-push-20261017-frontend.log`）、TypeScript/Vite **204模块成功**；AST/≤500行、compileall、pip check、文档链接及暂存diff检查通过。跨切片架构/安全复核收尾；补齐旧运行淘汰时的控制回执清理，防止删除会话后重放旧停止回执读到待发文本，新回归先红后绿并保留启动幂等断言。仅提交本阶段180个代码/测试/Spec与说明及已授权的配置样例，无真实配置、用户数据库或构建缓存。具体提交与远端同步状态以Git记录为准。
 - **Spec099会话管理已接线**：[设计、调用链与边界](specs/099-session-sidebar-management.md)。左侧右键/省略号只有重命名、置顶/取消置顶、删除；排序只用鼠标拖动，组内插入线/组末落点，拖后不切会话。名称/置顶/顺序随SQLite保存；模型按钮桌面/窄屏只显示模型名与推理档位，无指针或展开箭头。

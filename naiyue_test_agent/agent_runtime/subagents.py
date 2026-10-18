@@ -13,6 +13,7 @@ from naiyue_test_agent.model_access.messages import content_text
 from . import _build_runtime_agent, InteractiveRunState
 from .context_compaction import make_context_compaction_middleware
 from .context_recovery import recover_input_overflow
+from .session_port import SessionPort
 from .errors import RuntimeErrorPolicy
 from .invocation_context import make_invocation_context
 from .run_services import bind_run_services, current_run_services
@@ -77,22 +78,25 @@ class SubagentModelFailureMiddleware(AgentMiddleware):
             raise
 
 
-def build_subagent_runtime(spec, *, catalog, tool_registry, checkpointer, resolve_model,
-                           resolve_active_tool_names, resolve_permission_context,
-                           permission_settings, permission_reviewer, resolve_prompt_parts):
-    toolset = ToolSetMiddleware(tool_registry, resolve_active_tool_names, spec.system_prompt,
-                                resolve_prompt_parts=resolve_prompt_parts)
-    middleware = [make_context_compaction_middleware(resolve_model, model_inputs=toolset.model_inputs),
+def build_subagent_runtime(spec, *, catalog, tool_registry, checkpointer, session_port: SessionPort,
+                           permission_settings, permission_reviewer):
+    # Same permission/HITL/batch/authorization order as the root, using the child
+    # path and role inputs. No root steering/follow-up consumers are installed.
+    toolset = ToolSetMiddleware(tool_registry, session_port.resolve_active_tool_names, spec.system_prompt,
+                                resolve_prompt_parts=session_port.resolve_prompt_parts)
+    middleware = [make_context_compaction_middleware(session_port.resolve_model, model_inputs=toolset.model_inputs),
                   recover_input_overflow]
     if spec.max_model_calls is not None:
         middleware.append(ModelCallLimitMiddleware(thread_limit=spec.max_model_calls, exit_behavior='error'))
+    # Child extras keep compaction/recovery and an optional model budget;
+    # the inner model failure wrapper observes only failures from the model path.
     return _build_runtime_agent(catalog.get(spec.model_id or catalog.default_model_id),
-        tool_registry=tool_registry, resolve_active_tool_names=resolve_active_tool_names,
-        system_prompt=spec.system_prompt, response_format=None, resolve_model=resolve_model,
-        record_selection=lambda _session, _model: None, checkpointer=SubagentCheckpointSaver(checkpointer),
+        tool_registry=tool_registry, resolve_active_tool_names=session_port.resolve_active_tool_names,
+        system_prompt=spec.system_prompt, response_format=None, resolve_model=session_port.resolve_model,
+        checkpointer=SubagentCheckpointSaver(checkpointer),
         steering_middleware=middleware, state_schema=InteractiveRunState, active_stop=True, observe_turns=True,
         toolset=toolset, permission_settings=permission_settings,
-        resolve_permission_context=resolve_permission_context, permission_reviewer=permission_reviewer,
+        resolve_permission_context=session_port.resolve_permission_context, permission_reviewer=permission_reviewer,
         model_middleware=(SubagentModelFailureMiddleware(),))
 
 
@@ -121,8 +125,11 @@ async def ainvoke_subagent_step(agent, instance, *, services, resume=None, appro
         except Exception as error:
             failure = context.get('_subagent_model_failure')
             if failure is not None and failure[0] is error:
-                raise ToolException(f'Subagent model request failed ({failure[1]}/{failure[2]}). '
-                                    'No final report is available.') from error
+                feedback = ToolException(f'Subagent model request failed ({failure[1]}/{failure[2]}). '
+                                         'No final report is available.')
+                attach_failure_description(feedback, FailureDescription('model', failure[1], failure[2],
+                    'ToolException'), run_id=instance['run_id'])
+                raise feedback from error
             raise
 
 

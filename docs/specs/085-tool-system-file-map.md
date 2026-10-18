@@ -1,5 +1,12 @@
 # Spec085 附录：文件、函数与迁移消费者
 
+104-03当前补证见[组合验收](104-03-concurrency-acceptance.md#6-实际结果与104收尾)：真实Write目标busy、根Write→子Read审批及必要保存隔离通过；subagents.ainvoke_subagent_step转换已识别模型异常时复用现有同run失败标注，保留具体分类和原cause。没有新增工具、错误类、控制槽或持久化字段。
+
+当前拥有者（105-05收尾）：[组合验收与当前调用链](105-05-session-lifecycle-acceptance.md)。State是会话事实，ActiveRun是当前根运行/观察/队列/子实例，均由AgentSession持有；共享角色/图/准入/SessionPort路由归Service，装配入口assemble_runtime。保存/恢复IO归SessionPersistence，根必要保存后释放_run。public request_stop直接路由Actor，无旧私有转发。应用只等待自身操作及producer后关闭共享资源；105-05最终全量验收通过；[104-01](104-01-application-concurrency.md)已接后端默认10根额度与按会话持久化，[104-02](104-02-web-session-concurrency.md)已接Web按会话任务和106 E1订阅，组合验收已随104-03完成。下列早期记录保留原时点。
+
+版本对应（102-01/02，2026-10-18）：SessionState及创建/查询入口在session_state.py/session_controls.py，根运行已直接async；IOCall/arun_steps删除。当前链见[Spec102结果](102-session-state-lifecycle-refactor.md#18-102-02实际结果与下一片2026-10-18)，下方保留工具建设阶段的其他迁移边界。
+
+102-03已移除configured旧工厂/record_selection，根与子装配不再传空回调；测试/探针消费者及HTTP发前预算已迁移，见[当前结果](102-session-state-lifecycle-refactor.md#20-102-03实际结果与下一片2026-10-18)。[102-04已接SessionPort](102-session-state-lifecycle-refactor.md#23-102-04实际结果与下一片2026-10-18)：agent_runtime/session_port.py声明9方法，根/子建图共用同一SessionService，保留sid/path与根队列消费边界；旧项目指令回退已迁移删除。[102-05文本投影已收敛](102-05-content-projection.md#5-实际结果2026-10-18)：model_access.messages.content_text统一完整/delta投影，CLI/Runtime重复解析和Web.text_content纯别名已删除，canonical及模型图片请求保留。[102-06设置处理已收敛](102-06-web-setting-errors.md#6-实际结果2026-10-18)：WebService._apply_setting由三项入口直接调用，原准入、具体错误码/日志与成功确认边界保持；[102-07已收尾](102-07-middleware-contracts.md#5-全量验收与spec102收尾2026-10-18)：agent_runtime/__init__.py与subagents.py仅补顺序/装配区别说明，AST及排序保持；真实生产链测试在test_runtime_middleware_contracts.py，当前后端2415/前端186及构建通过。
 日期：2026-10-15，2026-10-16分片更新。属于[总 Spec085](085-tool-system-rebuild.md)，本表是最终目标清单。085-01/02/03A/03B/04/05/06/07/08及[085-09 Write/Ls](085-09-write-parents-and-ls-feedback.md)、[085-10 Edit](085-10-edit-matching-and-feedback.md)及[085-11图片](085-11-read-images.md)及[085-12共享进程](085-12-process-lifecycle.md)及[085-13搜索](085-13-search-tools.md)、[085-14双Shell](085-14-dual-shell.md)已实施。主文讲合同和调用过程，本附录供逐项勾验，不是另一套方案。
 
 实施从[085-01统一错误](085-01-unified-tool-errors.md)开始，先改行为、不搬目录；再做第1片内部的目录/依赖、注册/设置小步，之后按总Spec第2至7片推进。下表是最终目标清单，不等于085-01一次修改全部文件；当前准确14个生产文件及测试范围见该小Spec。
@@ -90,8 +97,8 @@ artifact已确认：Edit/自定义工具需要时使用原生content_and_artifac
 | `application/__init__.py`（已有装配） | 04已实现prepare_tool_registry，多种装配复用；设置加载与builtin已有真实入口，后片权限校验在实际消费者接入，不另建tool_setup转发模块 |
 | `application/session_controls.py`（已有） | 05已扩展SessionControlMixin承载活动工具；模式及会话Allow后片；resolve_active_tool_names/resolve_permission_context供固定适配器读取，不新增单独控制对象或无消费者的session_tools.py |
 | `application/session_approval.py`（新） | 从session_service移出pending解析/公开审批/prepare_resume；保存事实与官方action核对，取消重新classify |
-| `application/session_service.py` | __init__/_create_session/describe_session/_run_steps/_resume_steps；会话字段、服务传递、旧Unknown特判删掉；保留busy/部分工具保护 |
-| `application/__init__.py` | build_local_application/_assemble_application，注册表与新会话控制委托 |
+| `application/session_service.py`、`application/agent_session.py`、`application/session_execution.py` | Service保留__init__/_admit与公开路由；AgentSession拥有State和ActiveRun，内部SessionExecution负责_arun/aresume/部分工具保护及finish；创建/describe路由仍见session_controls.py |
+| `application/__init__.py` | prepare_tool_registry；内存/持久化工厂分别见async_application/async_persistent，建图调用SessionService.assemble_runtime |
 | `application/async_application.py` | build_async_local_application及异步控制委托，沿同一SessionService合同 |
 | `application/persistent.py`、`async_persistent.py` | 同一工具装配/恢复校验，资源拥有与关闭原合同保留 |
 | `application/cli_async.py` | 可信登记/会话控制薄委托，不删仍服务CLI的线程/Runner facade |
@@ -108,7 +115,7 @@ artifact已确认：Edit/自定义工具需要时使用原生content_and_artifac
 | `frontend/src/types.ts` | SessionView增加permission_mode/active_tools，四处现有会话fixture同步；不顺便实现新交互 |
 | `requirements.txt` | 新增固定Pillow依赖，保留既有版本；实际安装前按Spec批准范围执行 |
 
-`application/project_instructions.py`、现有资源/事件/清理模块默认保留；因调用点/字段必要变化才改，不为统一风格重写。`web/schemas.py`保持现有请求合同，`web/serialization.py::text_content`已支持内容块文字，复用它补事件投影，避免base64在忽略前先超帧。首版会话活动/模式控制提供应用SDK，不新增浏览器Python登记或管理HTTP接口；Shift+Tab、工具启停面板及其HTTP控制适配、图片/diff专用展示分别列后续。
+`application/project_instructions.py`、现有资源/事件/清理模块默认保留；因调用点/字段必要变化才改，不为统一风格重写。`web/schemas.py`保持现有请求合同，完整内容直接复用`model_access/messages.py::content_text`，由`web/serialization.py`补事件投影，避免base64在忽略前先超帧。首版会话活动/模式控制提供应用SDK，不新增浏览器Python登记或管理HTTP接口；Shift+Tab、工具启停面板及其HTTP控制适配、图片/diff专用展示分别列后续。
 
 ## D. 明确删除项与保留项
 

@@ -10,7 +10,7 @@ from langchain_core.messages import ToolMessage
 
 from naiyue_test_agent.agent_runtime.events import RuntimeEvent
 from naiyue_test_agent.agent_runtime.message_observation import _snapshot
-from naiyue_test_agent.web.run_delivery import DeliveredRun
+from naiyue_test_agent.web.delivered_run import DeliveredRun
 from naiyue_test_agent.web.settings import WebSettings
 
 

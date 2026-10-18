@@ -20,7 +20,7 @@ from test_dynamic_tools import DynamicModel, definition, call
 async def test_unknown_review_id_fails_before_graph_even_in_default_mode(monkeypatch, tmp_path, entry):
     reached = []
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('main', {'main': model([]), 'fast': model([])}))
-    monkeypatch.setattr(application, '_assemble_application', lambda *a, **kw: reached.append(True))
+    monkeypatch.setattr(application.SessionService, 'assemble_runtime', lambda *a, **kw: reached.append(True))
     options = settings().model_copy(update={'permissions': settings().permissions.model_copy(update={'mode': 'Default'})})
     args = dict(tools=[], settings=options, system_prompt='', response_format=None)
     with pytest.raises(ValueError):
@@ -43,12 +43,12 @@ async def test_auto_mode_restores_with_models_and_rejects_restore_without_them(m
         async with open_async_persistent_application('synthetic', database_path=path, **args) as app:
             sid = await app.acreate_session('main')
             await app.arun(sid, [('user', 'run')])
-            assert app._sessions._persistence.storage.get(sid)['permission_mode'] == 'Auto'
+            assert app._storage.get(sid)['permission_mode'] == 'Auto'
         async with open_async_persistent_application('synthetic', database_path=path, **args) as restored:
             await restored.arestore_session(sid)
             assert restored.get_permission_mode(sid) == 'Auto'
-            assert restored._sessions._sessions[sid]['session_allow'] == []
-            assert restored._sessions._sessions[sid]['run_review_project_instructions'] is None
+            assert restored._sessions.resolve_permission_context(sid)['session_allow'] == []
+            assert restored._sessions.resolve_permission_context(sid)['project_instructions'] is None
         args['settings'] = ToolSettings()
         async with open_async_persistent_application('synthetic', database_path=path, **args) as unavailable:
             with pytest.raises(SessionPersistenceError, match='invalid_permission_mode'):

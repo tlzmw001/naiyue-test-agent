@@ -87,9 +87,9 @@ async def test_approval_prepares_once_and_remember_does_not_write_settings(monke
     remembered = await app.arun(sid, [('user', 'again')])
     assert not remembered.get('approval_requests') and remembered['messages'][-1].content == 'remembered'
     assert visits == ['prepare', 'default', 'prepare']
-    assert app._sessions._sessions[sid]['session_allow']
+    assert app._sessions.resolve_permission_context(sid)['session_allow']
     other = await app.acreate_workspace_session('A', root)
-    assert app._sessions._sessions[other]['session_allow'] == []
+    assert app._sessions.resolve_permission_context(other)['session_allow'] == []
 
 
 @pytest.mark.parametrize('mode,status,pending', [('Default', None, True), ('NoAsk', 'error', False), ('BypassApprovals', 'success', False)])

@@ -104,7 +104,7 @@ async def test_model_failure_or_control_keeps_original_and_only_observed_input(m
             pub = RunEventPublisher(sid, 'control', (events.append,))
             (await ainvoke_with_message_observation(app._agent, {'messages': [('user', 'input')]},
                 context={'session_id': sid, 'run_id': 'control', '_run_event_publisher': pub},
-                config={'configurable': {'thread_id': app._sessions._sessions[sid]['thread_id']}}, publisher=pub))
+                config={'configurable': {'thread_id': app._sessions.get_thread_id(sid)}}, publisher=pub))
         else:
             await app.arun(sid, [('user', 'input')])
     assert caught.value is error
@@ -188,7 +188,7 @@ async def test_non_json_content_without_saver_is_reported_and_result_unchanged()
     _runtime_registry_1 = prepare_tool_registry([])
     _runtime_names_1 = _runtime_registry_1.names()
     graph = build_runtime_agent(model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
-                                resolve_model=lambda _s, agent_path='root': ('A', model), record_selection=lambda *_a: None)
+                                resolve_model=lambda _s, agent_path='root': ('A', model), )
     pub, events = publisher()
     result = (await ainvoke_with_message_observation(graph, {'messages': [bad]},
                                             context={'session_id': 'session', 'run_id': 'run'},
@@ -206,7 +206,7 @@ async def test_iterator_close_secondary_failure_preserves_primary_and_attempts_c
     _runtime_registry_2 = prepare_tool_registry([])
     _runtime_names_2 = _runtime_registry_2.names()
     graph = build_runtime_agent(model, tool_registry=_runtime_registry_2, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_2: names, system_prompt='', response_format=None,
-                                resolve_model=lambda _s, agent_path='root': ('A', model), record_selection=lambda *_a: None)
+                                resolve_model=lambda _s, agent_path='root': ('A', model), )
     primary = RuntimeError('PRIVATE_PRIMARY')
     closed = []
 
@@ -276,7 +276,7 @@ async def test_state_adapter_result_equals_native_invoke_with_all_output_fields(
     _runtime_registry_3 = prepare_tool_registry([])
     _runtime_names_3 = _runtime_registry_3.names()
     graph = build_runtime_agent(model, tool_registry=_runtime_registry_3, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_3: names, system_prompt='', response_format=None,
-                                resolve_model=lambda _s, agent_path='root': ('A', model), record_selection=lambda *_a: None)
+                                resolve_model=lambda _s, agent_path='root': ('A', model), )
     input = {'messages': [HumanMessage(id='input', content='run')]}
     context = {'session_id': 'session', 'run_id': 'run'}
     original = (await graph.ainvoke(input, context=context, config={}))
@@ -288,6 +288,8 @@ async def test_state_adapter_result_equals_native_invoke_with_all_output_fields(
 
 @pytest.mark.parametrize('with_control', [False, True])
 def test_real_probe_guard_counts_model_requests_not_preflight_resolution(monkeypatch, capsys, caplog, with_control):
+    from probe_budget_helpers import guard_fake_catalog
+    monkeypatch.setattr('scripts.provider_acceptance_budget.guard_catalog', guard_fake_catalog)
     import logging
     from types import SimpleNamespace
     from langchain_core.outputs import ChatGeneration, ChatResult
@@ -314,9 +316,9 @@ def test_real_probe_guard_counts_model_requests_not_preflight_resolution(monkeyp
     with caplog.at_level(logging.CRITICAL):
         _worker(SimpleNamespace(config='synthetic.json', model_id='A', with_control=with_control))
     assert len(model_calls) == 2
-    expected = ('real_message_events=PASS events=27 messages=5 model_calls=2 '
+    expected = ('real_message_events=PASS events=31 messages=5 model_calls=2 '
                 'tool_calls=1 turns=2 controls=1 pairing=verified terminal=completed\n'
-                if with_control else 'real_message_events=PASS events=23 messages=4 model_calls=2 '
+                if with_control else 'real_message_events=PASS events=27 messages=4 model_calls=2 '
                 'tool_calls=1 turns=2 pairing=verified terminal=completed\n')
     assert capsys.readouterr().out == expected
 

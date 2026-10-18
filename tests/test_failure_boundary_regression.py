@@ -16,7 +16,7 @@ from naiyue_test_agent.model_access import errors as model_errors
 async def test_model_diagnostic_failure_preserves_original(monkeypatch, diagnostic):
     model = FakeMessagesListChatModel(responses=[])
     middleware = call_observation.make_model_selection_middleware(
-        lambda _session, agent_path='root': ('A', model), lambda *_args: None,
+        lambda _session, agent_path='root': ('A', model),
     )
     request = SimpleNamespace(runtime=SimpleNamespace(context={
         'session_id': 'synthetic-session', 'run_id': 'synthetic-run',

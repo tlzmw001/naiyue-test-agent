@@ -1,0 +1,18 @@
+.form { position: relative; }
+.modeRow { display: flex; justify-content: flex-start; margin-bottom: 8px; }
+.form > .editor { resize: none; }
+.suggestions { position: absolute; bottom: calc(100% + 8px); left: 0; width: 100%; z-index: 20; background: #fff; border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 6px 24px #00000012; padding: 8px; }
+.heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; padding: 5px 9px 9px; color: var(--text); font-size: 12px; font-weight: 600; }
+.heading span { color: var(--muted); font-size: 10px; font-weight: 400; }
+.list { max-height: min(320px, 38dvh); overflow-y: auto; overscroll-behavior: contain; }
+.suggestion { width: 100%; display: flex; flex-direction: column; gap: 3px; text-align: left; border: 0; border-radius: 9px; padding: 9px 10px; background: transparent; color: var(--text); overflow-wrap: anywhere; }
+.suggestion:hover:not(:disabled), .suggestion[aria-selected="true"], .suggestion:focus-visible { background: #f3f3f3; }
+.suggestion:disabled { opacity: 0.65; cursor: not-allowed; }
+.command { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.command code { min-width: 0; font-size: 12px; white-space: normal; overflow-wrap: anywhere; }
+.command small { flex-shrink: 0; color: var(--muted); font-size: 10px; }
+.description, .reason { font-size: 11px; line-height: 1.5; color: var(--muted); white-space: pre-line; }
+.reason { font-size: 10px; }
+.message { margin: 6px 10px; color: var(--muted); font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
+.message button { border: 0; background: transparent; color: var(--text); padding: 4px; font-size: 11px; text-decoration: underline; }
+.hint { border-top: 1px solid var(--line); margin-top: 6px; padding: 8px 9px 3px; color: var(--muted); font-size: 10px; }

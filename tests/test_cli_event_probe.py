@@ -11,6 +11,8 @@ from test_application_run_events import ToolModel
 
 
 def test_real_probe_cli_option_exercises_cli_and_checks_both_replies(monkeypatch, capsys):
+    from probe_budget_helpers import guard_fake_catalog
+    monkeypatch.setattr('scripts.provider_acceptance_budget.guard_catalog', guard_fake_catalog)
     model = ToolModel(responses=[AIMessage(content='CLI_BEFORE_TOOL', tool_calls=[
         {'name': 'read_probe_value', 'args': {}, 'id': 'read'},
     ]), AIMessage(content='synthetic-value')])

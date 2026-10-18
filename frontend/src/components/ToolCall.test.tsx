@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
+import type { ToolState } from '../types';
 import Conversation from './Conversation';
 import ToolCall from './ToolCall';
 
@@ -108,4 +109,97 @@ it('binds delegated instances to their parent AI batch when outer call IDs repea
   expect(rows[0].textContent).not.toContain('tester · two');
   expect(rows[1].textContent).toContain('tester · two');
   expect(rows[1].textContent).not.toContain('tester · one');
+});
+
+it('collapses a completed tool to its identity, target and outcome, retaining progress in details', () => {
+  const { container } = render(<ToolCall call={{ id: 'ls', name: 'ls', args: { path: '.', limit: 100 } }}
+    phase={{ tool_call_id: 'ls', tool_name: 'ls', run_id: 'r', state: 'finished', outcome: 'success',
+      phase: 'list_results', completed: 8, unit: 'entries', text: 'README.md',
+      started_at: '2026-10-16T00:00:00Z', finished_at: '2026-10-16T00:00:12Z' }}
+    result={{ id: 'result', type: 'tool', content: 'README.md\nfrontend/', state: 'complete', provisional: false }} />);
+  const card = container.querySelector('details')!;
+  const summary = card.querySelector('summary')!;
+  expect(card.open).toBe(false);
+  expect(summary.textContent).toContain('ls');
+  expect(summary.querySelector('code')?.textContent).toBe('.');
+  expect(summary.textContent).toContain('成功');
+  expect(summary.textContent).not.toContain('整理目录结果');
+  expect(summary.textContent).not.toContain('已历时');
+  fireEvent.click(summary);
+  expect(card.open).toBe(true);
+  expect(screen.getByText('整理目录结果').closest('summary')).toBeNull();
+  expect(screen.getByText('已历时 12秒').closest('summary')).toBeNull();
+  expect(screen.getByText('8 entries')).toBeTruthy();
+  expect(container.querySelectorAll('pre')[2].textContent).toBe('README.md\nfrontend/');
+  expect(container.querySelector('pre')?.textContent).toBe('README.md');
+});
+
+it.each([
+  ['bash', { command: 'pytest -q' }, 'pytest -q'],
+  ['read', { path: 'src/main.py', offset: 5 }, 'src/main.py'],
+  ['write', { path: 'report.md', content: 'DO_NOT_PUT_BODY_IN_SUMMARY' }, 'report.md'],
+  ['edit', { path: 'src/app.py', edits: [{ oldText: 'before', newText: 'after' }] }, 'src/app.py'],
+  ['grep', { pattern: 'TODO', path: 'src' }, 'TODO · src'],
+  ['find', { pattern: '*.py', path: '.' }, '*.py · .'],
+  ['subagent', { agent: 'tester', task: 'DO_NOT_PUT_TASK_IN_SUMMARY' }, 'tester'],
+])('shows bounded relevant arguments for %s without putting full payloads in the summary', (name, args, target) => {
+  const { container } = render(<ToolCall call={{ id: 't', name, args }} />);
+  const summary = container.querySelector('summary')!;
+  expect(summary.querySelector('code')?.textContent).toBe(target);
+  expect(summary.textContent).not.toContain('DO_NOT_PUT');
+  expect(JSON.parse(container.querySelector('pre')!.textContent!)).toEqual(args);
+});
+
+it.each([
+  ['read', {}], ['ls', {}], ['bash', { command: 42 }], ['custom', { content: 'private body', path: 'unrecognized' }],
+])('does not invent missing targets or infer arguments of an unknown tool: %s %j', (name, args) => {
+  const { container } = render(<ToolCall call={{ id: 't', name, args }} />);
+  const summary = container.querySelector('summary')!;
+  expect(summary.querySelector('code')).toBeNull();
+  expect(summary.textContent).toContain(name);
+  expect(summary.textContent).not.toContain('private body');
+  expect(summary.textContent).toContain('待执行');
+});
+
+it('bounds long multiline summaries and preserves full original arguments and escaped content', () => {
+  const command = '<img src=x onerror=alert(1)>\n' + '长命令参数/'.repeat(80);
+  const { container } = render(<ToolCall call={{ id: 't', name: 'bash', args: { command } }} />);
+  const summary = container.querySelector('summary')!;
+  const target = summary.querySelector('code')!;
+  expect(target.textContent!.length).toBeLessThanOrEqual(160);
+  expect(target.textContent).toMatch(/…$/);
+  expect(target.textContent).not.toContain('\n');
+  expect(JSON.parse(container.querySelector('pre')!.textContent!).command).toBe(command);
+  expect(container.querySelector('img')).toBeNull();
+});
+
+it.each([
+  ['error_result', '错误结果'], ['not_executed', '未执行'], ['exception', '执行异常'],
+  ['outcome_unknown', '结果待核对'], ['new_unrecognized_outcome', '状态未确认'],
+])('keeps terminal failure or uncertainty visible in the collapsed summary: %s', (outcome, label) => {
+  const { container } = render(<ToolCall call={{ id: 't', name: 'read', args: { path: 'missing.txt' } }}
+    phase={{ tool_call_id: 't', tool_name: 'read', run_id: 'r', state: 'finished', outcome,
+      phase: 'read', reason: 'original_reason', started_at: '2026-10-16T00:00:00Z', finished_at: '2026-10-16T00:00:12Z' }} />);
+  const summary = container.querySelector('summary')!;
+  expect(summary.querySelector('code')?.textContent).toBe('missing.txt');
+  expect(summary.textContent).toContain(label);
+  expect(summary.textContent).not.toContain('成功');
+  expect(summary.textContent).not.toContain('读取文件');
+  expect(summary.textContent).not.toContain('已历时');
+  expect(screen.getByText('原因：original_reason')).toBeTruthy();
+});
+
+it('does not promote a result without a confirmed outcome, and preserves unconfirmed precedence', () => {
+  const call = { id: 't', name: 'read', args: { path: 'a.txt' } };
+  const result = { id: 'result', type: 'tool', content: 'original result', state: 'complete' as const, provisional: false };
+  const phase: ToolState = { tool_call_id: 't', tool_name: 'read', run_id: 'r', state: 'finished', outcome: 'success' };
+  const { container, rerender } = render(<ToolCall call={call} result={result} />);
+  expect(container.querySelector('summary')!.textContent).toContain('已有结果');
+  expect(container.querySelector('summary')!.textContent).not.toContain('成功');
+  expect(container.querySelector('summary [aria-hidden="true"]')!.textContent).toBe('◇');
+  rerender(<ToolCall call={call} phase={phase} result={result} unconfirmed />);
+  expect(container.querySelector('summary')!.textContent).toContain('结果未确认');
+  expect(container.querySelector('summary')!.textContent).not.toContain('成功');
+  rerender(<ToolCall call={call} phase={{ ...phase, state: 'unconfirmed' }} result={result} />);
+  expect(container.querySelector('summary')!.textContent).toContain('状态未确认');
 });

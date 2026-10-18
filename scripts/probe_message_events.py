@@ -3,6 +3,7 @@
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
+from scripts.provider_acceptance_budget import RequestBudget, guard_application_catalog
 
 import argparse
 import asyncio
@@ -29,30 +30,16 @@ async def _async_worker(args):
         logging.getLogger().setLevel(logging.CRITICAL)
         from langchain.tools import tool
         from langchain_core.messages import AIMessage, ToolMessage
-        from naiyue_test_agent import application
         from naiyue_test_agent.application.async_application import build_async_local_application
         from naiyue_test_agent.application.cli_async import AsyncCliApplication
 
         expected = secrets.token_hex(6)
-        executions, selections, events = [], [], []
+        executions, events = [], []
+        budget = RequestBudget(2)
         holder = {}
         with_control = getattr(args, 'with_control', False)
         with_cli = getattr(args, 'with_cli', False)
         displayed = []
-        original_assemble = application._assemble_interactive_runtime
-
-        def bounded_assemble(*positional, **options):
-            original_record = options['record_selection']
-
-            def record_selection(session_id, model_id):
-                if len(selections) >= 2:
-                    raise RuntimeError('Probe model-call limit reached')
-                selections.append(True)
-                original_record(session_id, model_id)
-
-            options['record_selection'] = record_selection
-            return original_assemble(*positional, **options)
-
         @tool
         def read_probe_value() -> str:
             """Return the diagnostic value generated for this run."""
@@ -67,8 +54,7 @@ async def _async_worker(args):
                     'Reply with only the exact value returned by read_probe_value.')
             return expected
 
-        # Only a test guard changes: use the formal application assembly and run.
-        with patch.object(application, '_assemble_interactive_runtime', bounded_assemble):
+        async with guard_application_catalog(budget):
             options = dict(tools=[ToolSpec(read_probe_value, read_probe_value.args_schema,
                 permissions=ToolPermission(default='allow'))],
                 system_prompt='Call the requested tool and return its exact value.', response_format=None)
@@ -112,7 +98,7 @@ async def _async_worker(args):
         messages = result['messages']
         snapshots = [e.data for e in events if e.event_type == 'message_completed']
         rows = [json.loads(data.snapshot_json) for data in snapshots]
-        assert len(selections) == 2 and len(executions) == 1
+        assert budget.snapshot()['used'] == 2 and len(executions) == 1
         assert [row['type'] for row in rows] == (
             ['human', 'ai', 'tool', 'human', 'ai'] if with_control else ['human', 'ai', 'tool', 'ai'])
         assert [row['id'] for row in rows] == [m.id for m in messages]

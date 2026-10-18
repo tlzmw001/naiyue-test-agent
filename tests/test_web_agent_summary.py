@@ -1,14 +1,14 @@
 """Root snapshots keep child histories independent and a bounded draft baseline."""
 
 import asyncio
-from types import SimpleNamespace
-from naiyue_test_agent.web.run_delivery import DeliveredRun
+from naiyue_test_agent.web.settings import WebSettings
+from naiyue_test_agent.web.delivered_run import DeliveredRun
 from naiyue_test_agent.web.agent_projection import observe_agent
 
 
 def test_root_summary_omits_all_tool_bodies_and_keeps_bounded_current_draft():
     async def scenario():
-        settings = SimpleNamespace(event_capacity=256, max_frame_bytes=1024*1024)
+        settings = WebSettings(database_path='unused', frontend_dist='unused')
         job = DeliveredRun('s', [], settings, lambda _: None)
         source = dict(agent_path='root/tester/A', agent_id='A', agent_run_id='child',
                       parent_run_id='r', parent_tool_call_id='outer')

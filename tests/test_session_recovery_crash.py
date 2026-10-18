@@ -39,7 +39,7 @@ async def test_crash_at_recovery_boundary_can_reopen_and_finish(monkeypatch, tmp
     checkpoint = original.config['configurable']['checkpoint_id']
     run_child('recover', path, sid, checkpoint, point, str(int(native)))
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         history = await app.aget_session_history(sid)
         latest = history['checkpoint_id']
         assert [m for m in history['messages'] if isinstance(m, ToolMessage) and m.tool_call_id == 'a'] == [messages[-1]]
@@ -56,6 +56,17 @@ async def test_crash_at_recovery_boundary_can_reopen_and_finish(monkeypatch, tmp
         assert snapshot.values['messages'][:3] == messages
         assert [m.tool_call_id for m in snapshot.values['messages'] if isinstance(m, ToolMessage)] == ['a', 'b']
         assert json.loads(snapshot.metadata['naiyue_recovery'])['phase'] == 'finished'
+        archived = [json.loads(r[0])['data'] for r in storage.connection.execute(
+            'SELECT body_json FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (sid,))]
+        assert [m['id'] for m in archived] == [m.id for m in snapshot.values['messages']]
+        assert archived[-1]['additional_kwargs']['naiyue_recovery']['reason'] == 'result_unconfirmed'
+        writes = storage.connection.total_changes
+        page = await app.aget_chat_page(sid, limit=1, body_bytes=16384, preview_chars=2048)
+        latest, = page['records']
+        assert page['has_more'] and latest['message_id'] == snapshot.values['messages'][-1].id
+        assert latest['parent_message_id'] == messages[1].id
+        assert json.loads(latest['body_json'])['data'] == archived[-1]
+        assert storage.connection.total_changes == writes
 
 
 @async_test
@@ -74,7 +85,7 @@ async def test_file_commit_without_tool_result_is_retained_and_never_replayed(mo
         raise AssertionError('Old file tools must not replay')
     tools = [create_session_read_tool(), create_session_write_tool()]
     async with build(monkeypatch, path, tools=tools) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         history = await app.aget_session_history(sid)
         assert history['state'] == 'running' and 'b' in history['recovery']['unconfirmed_tool_call_ids']
         monkeypatch.setattr(importlib.import_module('naiyue_test_agent.tools.write'), '_write', forbidden)
@@ -87,6 +98,12 @@ async def test_file_commit_without_tool_result_is_retained_and_never_replayed(mo
         snapshot = await app._agent.aget_state({'configurable': {'thread_id': storage.get(sid)['thread_id']}})
         result = next(m for m in snapshot.values['messages'] if isinstance(m, ToolMessage) and m.tool_call_id == 'b')
         assert result.status == 'error' and 'may already have taken effect' in result.content
+        writes = storage.connection.total_changes
+        page = await app.aget_chat_page(sid, limit=1, body_bytes=16384, preview_chars=2048)
+        latest, = page['records']
+        assert latest['message_id'] == result.id and latest['parent_message_id'] == 'ai'
+        assert json.loads(latest['body_json'])['data']['additional_kwargs']['naiyue_recovery']['reason'] == 'result_unconfirmed'
+        assert storage.connection.total_changes == writes and reached == []
         assert (await app.arun(sid, [('user', 'new input')]))['messages'][-1].content == 'answer'
         assert reached == [] and (tmp_path / 'executions').read_text() == 'write\n'
 
@@ -113,7 +130,7 @@ def install_exit_points(patch, app, point, native):
             crash('during_paired_writes', point)
         return await put(config, *args, **kwargs)
     patch.setattr(saver, 'aput', save)
-    storage = app._sessions._persistence.storage
+    storage = app._storage
     finish = storage.finish_run
     def metadata(*args):
         crash('before_metadata', point)
@@ -136,7 +153,7 @@ async def child():
                 await execute()
             else:
                 async with build(patch, Path(path)) as app:
-                    storage = app._sessions._persistence.storage
+                    storage = app._storage
                     install_exit_points(patch, app, point, False)
                     await app.arecover_session(sid, checkpoint_id=checkpoint, action='continue')
         else:
@@ -155,7 +172,7 @@ async def child():
                 {'name': 'read', 'args': {'path': 'a.txt'}, 'id': 'a'},
                 {'name': 'write', 'args': {'path': 'b.txt', 'content': 'committed effect'}, 'id': 'b'}])])
             async with build(patch, Path(path), model, [create_session_read_tool(), create_session_write_tool()]) as app:
-                storage = app._sessions._persistence.storage
+                storage = app._storage
                 sid = await app.acreate_workspace_session('A', root)
                 (root.parent / 'session-id').write_text(sid)
                 await app.arun(sid, [('user', 'fixture request')])

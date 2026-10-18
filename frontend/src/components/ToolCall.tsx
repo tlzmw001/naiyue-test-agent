@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { AgentView, MessageRow, ToolCallRow, ToolState } from '../types';
 import styles from '../App.module.css';
+import card from './ToolCall.module.css';
 
 const activities: Record<string, string> = { queued: '排队中', preparing: '准备中', running: '运行中',
   stopping: '停止中', settling: '收尾中' };
@@ -20,12 +21,13 @@ function seconds(start: string | undefined, now: number) {
   return `${Math.max(0, Math.floor((now - Date.parse(start)) / 1000))}秒`;
 }
 
-export default function ToolCall({ call, result, phase, agents = [], stopAgent, openAgent, stopping = false, unconfirmed = false }: {
+export default function ToolCall({ call, result, phase, agents = [], stopAgent, openAgent, stopping = false, unconfirmed = false, initiallyOpen = false }: {
   call: ToolCallRow; result?: MessageRow; phase?: ToolState; stopping?: boolean; unconfirmed?: boolean;
-  agents?: AgentView[];
+  agents?: AgentView[]; initiallyOpen?: boolean;
   stopAgent?: (agentPath: string, originRunId: string) => void;
   openAgent?: (agentPath: string) => void;
 }) {
+  const [expanded, setExpanded] = useState(initiallyOpen);
   const active = phase?.state === 'running';
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -43,20 +45,35 @@ export default function ToolCall({ call, result, phase, agents = [], stopAgent, 
   const label = unconfirmed ? '结果未确认' : phase?.state === 'unconfirmed' ? '状态未确认' : phase?.outcome
     ? outcomes[phase.outcome] ?? '状态未确认' : active ? stopping ? '停止中' : activities[phase?.activity ?? ''] ?? '处理中'
       : result ? result.status === 'error' ? '错误结果' : '已有结果' : '待执行';
-  return <><details className={styles.toolCall}>
-    <summary><span className={styles.toolName}>{call.name}</span><span className={styles.toolStatus}>{active && !stopping && delegation ? delegation : label}</span>
-      {phase?.phase && !delegation && <span className={styles.toolPhase}>{phases[phase.phase] ?? phase.phase}</span>}
-      {(elapsed || (active && quiet)) && <span className={styles.toolTiming}>
+  const primary = call.name === 'bash' ? call.args.command : call.name === 'subagent' ? call.args.agent :
+    ['grep', 'find'].includes(call.name) ? call.args.pattern :
+      ['read', 'write', 'edit', 'ls'].includes(call.name) ? call.args.path : undefined;
+  const location = ['grep', 'find'].includes(call.name) ? call.args.path : undefined;
+  const values = [primary, location].filter((value): value is string => typeof value === 'string' && !!value.trim());
+  const target = values.join(' · ').replace(/\s+/g, ' ').trim();
+  const preview = target.length > 160 ? `${target.slice(0, 159)}…` : target;
+  const icon = label === '成功' ? '✓' : ['错误结果', '执行异常'].includes(label) ? '!' : active ? '⋯' : '◇';
+  return <><details open={expanded} onToggle={event => setExpanded(event.currentTarget.open)} className={`${styles.toolCall} ${card.card} ${!active ? card.terminal : ''}`}>
+    <summary><span className={card.icon} aria-hidden="true">{icon}</span>
+      <span className={`${styles.toolName} ${card.name}`} title={call.name}>{call.name}</span>
+      {preview && <code className={card.target}>{preview}</code>}
+      <span className={`${styles.toolStatus} ${card.status}`}>{active && !stopping && delegation ? delegation : label}</span>
+      {active && phase?.phase && !delegation && <span className={styles.toolPhase}>{phases[phase.phase] ?? phase.phase}</span>}
+      {active && (elapsed || quiet) && <span className={styles.toolTiming}>
         {elapsed && <span>已历时 {elapsed}</span>}{active && quiet && <span>距最后活动 {quiet}</span>}
       </span>}
     </summary>
     <div className={styles.toolDetail}>
+      {!active && phase?.phase && !delegation && <div className={`${styles.toolPhase} ${card.finishedPhase}`}>{phases[phase.phase] ?? phase.phase}</div>}
+      {!active && elapsed && <div className={`${styles.toolTiming} ${card.finishedTiming}`}>已历时 {elapsed}</div>}
       {phase?.completed != null && <p className={styles.toolCounter}>
         {phase.completed}{phase.total != null ? ` / ${phase.total}` : ''}{phase.unit ? ` ${phase.unit}` : ''}
       </p>}
       {phase?.text && <><div className={styles.detailLabel}>最新进度 / 输出尾部</div><pre>{phase.text}</pre></>}
       <div className={styles.detailLabel}>参数</div><pre>{JSON.stringify(call.args, null, 2)}</pre>
-      {result && <><div className={styles.detailLabel}>工具结果</div><pre>{result.content}</pre></>}
+      {result && <><div className={styles.detailLabel}>工具结果</div><pre data-message-id={expanded ? result.id : undefined}>{result.content}</pre>
+        {result.content_truncated && <p className={styles.historyPreview}>{result.detail ?
+          '当前为工具结果预览，完整内容仍保存在会话中。' : '当前为工具结果预览。'}</p>}</>}
       {phase?.reason && <p className={styles.toolReason}>原因：{phase.reason}</p>}
     </div>
   </details>

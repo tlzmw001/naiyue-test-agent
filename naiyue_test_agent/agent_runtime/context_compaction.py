@@ -27,7 +27,7 @@ from naiyue_test_agent.model_access import (
 from naiyue_test_agent.model_access.stop_reason import normalize_stop_reason
 from naiyue_test_agent.model_access.errors import describe_model_failure
 from .context_summary_io import arun_summary_steps
-from naiyue_test_agent.model_access.messages import content_text
+from naiyue_test_agent.model_access.messages import content_text, MODEL_INPUT_METADATA_KEY
 
 
 logger = logging.getLogger(__name__)
@@ -152,14 +152,14 @@ def _summary_request(messages: list, *, split_turn_start: int | None = None) -> 
 
 
 def _record_summary_finished(correlation, observer, operation_id, started, *, response=None, error=None):
-    usage = response.usage_metadata if isinstance(response, AIMessage) else None
+    from naiyue_test_agent.model_access.usage import normalize_model_usage
+    usage = normalize_model_usage(response.usage_metadata if isinstance(response, AIMessage) else None)
     duration_ms = round((time.monotonic() - started) * 1000)
     payload = {
         'event': 'context_summary_model_finished', **correlation,
         'outcome': 'failed' if error is not None else 'returned',
         'duration_ms': duration_ms,
-        'input_tokens': usage.get('input_tokens') if usage else None,
-        'output_tokens': usage.get('output_tokens') if usage else None,
+        **usage,
     }
     if error is not None:
         payload['error_type'] = type(error).__name__
@@ -318,19 +318,25 @@ def _compaction_steps(
                 fallback_reason = f'summary_{failure.reason}'
             raise ContextCompactionError('summary_failed') from error
         _record_summary_finished(correlation, observer, operation_id, summary_started, response=response)
-        if (not isinstance(response, AIMessage) or
-                not isinstance(response.content, str) or response.tool_calls or
-                response.invalid_tool_calls):
+        if (not isinstance(response, AIMessage) or response.tool_calls or response.invalid_tool_calls):
+            raise ContextCompactionError('summary_invalid')
+        summary_text = response.content
+        if isinstance(summary_text, list) and metadata.get(MODEL_INPUT_METADATA_KEY, {}).get('api') == 'responses':
+            if any(not isinstance(part, dict) or part.get('type') not in ('text', 'reasoning', 'thinking', 'redacted_thinking')
+                    or part.get('type') == 'text' and not isinstance(part.get('text'), str) for part in summary_text):
+                raise ContextCompactionError('summary_invalid')
+            summary_text = content_text(summary_text)
+        if not isinstance(summary_text, str):
             raise ContextCompactionError('summary_invalid')
         stop_reason = normalize_stop_reason(response)
         if stop_reason in ('error', 'tool_use'):
             raise ContextCompactionError('summary_invalid')
-        if not response.content.strip() or stop_reason == 'length':
+        if not summary_text.strip() or stop_reason == 'length':
             fallback_reason = ('summary_truncated' if stop_reason == 'length'
                                else 'summary_empty')
             raise ContextCompactionError('summary_invalid')
         summary = HumanMessage(
-            content=SUMMARY_PREFIX + response.content.strip(),
+            content=SUMMARY_PREFIX + summary_text.strip(),
             additional_kwargs={SUMMARY_MARKER: True},
         )
         post_estimated = count_tokens_approximately(

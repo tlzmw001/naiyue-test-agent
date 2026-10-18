@@ -45,8 +45,8 @@ def _log_event(event) -> None:
         fields.update(status=event.data.status, stop_mode=event.data.stop_mode,
                       manual_review_required=event.data.manual_review_required)
     else:
-        for name in ('model_call_id', 'model_id', 'purpose', 'status', 'stop_reason',
-                     'tool_call_ids', 'input_tokens', 'output_tokens', 'cache_read_tokens',
+        for name in ('invocation_id', 'usage_status', 'model_call_id', 'model_id', 'purpose', 'status', 'stop_reason',
+                     'tool_call_ids', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens',
                      'tool_call_id', 'tool_name', 'boundary', 'outcome', 'reason',
                      'message_id', 'message_type', 'visibility', 'snapshot_bytes',
                      'is_context_summary', 'removed_count', 'current_count', 'stage',
@@ -55,7 +55,8 @@ def _log_event(event) -> None:
                      'rejected_count', 'stop_mode', 'count', 'operation_id', 'operation', 'trigger',
                      'before_estimate', 'original_message_count', 'after_estimate', 'removed_message_count',
                      'preserved_message_count', 'summary_input_tokens', 'summary_output_tokens',
-                     'summary_duration_ms', 'summary_message_id', 'related_operation_id', 'retry_attempts'):
+                     'summary_duration_ms', 'summary_message_id', 'related_operation_id', 'retry_attempts',
+                     'summary_cache_read_tokens', 'summary_cache_write_tokens'):
             if hasattr(event.data, name):
                 fields[name] = getattr(event.data, name)
     failure = getattr(event.data, 'failure', None)
@@ -74,13 +75,15 @@ class ApplicationEventSubscriptions:
         self._handlers = {}
         self._lock = Lock()
 
-    def subscribe(self, handler):
+    def subscribe(self, handler, *, session_id=None):
+        if session_id is not None and (not isinstance(session_id, str) or not session_id.strip()):
+            raise ValueError('A non-empty session subscription scope is required')
         if (not callable(handler) or inspect.iscoroutinefunction(handler)
                 or inspect.iscoroutinefunction(getattr(handler, '__call__', None))):
             raise TypeError('A synchronous run event observer is required')
         token = object()
         with self._lock:
-            self._handlers[token] = handler
+            self._handlers[token] = (session_id, handler)
 
         def unsubscribe():
             with self._lock:
@@ -90,12 +93,13 @@ class ApplicationEventSubscriptions:
 
     def publisher(self, session_id: str, run_id: str) -> RunEventPublisher:
         with self._lock:
-            handlers = (_log_event, *self._handlers.values())
+            handlers = (_log_event, *(handler for scope, handler in self._handlers.values()
+                                      if scope is None or scope == session_id))
         return RunEventPublisher(session_id, run_id, handlers)
 
 
 class RunObservation:
-    """Observe outcomes; the session service still owns results and cleanup."""
+    """Observe outcomes; the calling execution owner handles results and cleanup."""
 
     def __init__(self, publisher: RunEventPublisher | AgentEventPublisher, mode: str, *, progress_settings=None, stop_control=None):
         self.publisher = publisher

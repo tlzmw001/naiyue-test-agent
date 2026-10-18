@@ -81,7 +81,7 @@ def test_factory_cleanup_does_not_replace_assembly_error(monkeypatch, caplog):
             raise failure
         monkeypatch.setattr(catalog, 'aclose', close)
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: catalog)
-        monkeypatch.setattr(application, '_assemble_application', assemble)
+        monkeypatch.setattr(application.SessionService, 'assemble_runtime', assemble)
         with pytest.raises(ValueError, match='synthetic assembly failure') as caught:
             await build_async_local_application('unused', tools=[], system_prompt='', response_format=None)
         assert caught.value is failure and closed == [True]

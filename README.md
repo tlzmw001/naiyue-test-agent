@@ -1,10 +1,14 @@
 # Naiyue Test Agent
 
+当前进度：[Spec109两片](docs/specs/109-web-replay-and-persistent-diagnostics.md#9-109-02实际结果与spec109收尾)已完成Web每根256条/4 MiB重播双预算和schema10持久诊断。关键事件/根摘要分开，根子共享额度，1 MiB单根/30天/256 MiB工作区默认可配置；有限队列、关闭排空、缺口和整组淘汰已接线。新增只读诊断分页API，冷查询不装载图；原聊天/用量/checkpoint及审批恢复保持。后端2817、前端198及211模块构建通过，0次真实供应商请求。下一步先讨论Spec103的GFM消息呈现，再逐片推进其他UI；checkpoint修剪和两种项目重试继续延期，原机/更多供应商/PyPI交付独立。
+
 面向 HTTP/RPC 接口测试的 AI Agent 项目，当前已实现本地模型—工具循环、会话、事件流及统一异步应用链路；RAG 与业务评测按后续切片推进。
 
 项目目录与仓库名：`naiyue-test-agent`。初始化日期：2026-09-28。
 
 当前架构收敛见 [Spec093](docs/specs/093-architecture-semantics-and-sync-cleanup.md)：CLI/Web统一使用`AsyncApplication`，CLI保留终端线程桥；独立同步App及其持久化工厂已删除；093C继续删除历史Discount原型及本项目同步Runtime执行面，低层测试/探针迁至异步。`contracts`保留跨层共享事实，响应拒绝异常归Runtime。已学旧入口与当前函数的对应关系见[学习路线](docs/1.0/learning-roadmap.md)。
+
+[Spec102第一片](docs/specs/102-session-state-lifecycle-refactor.md#16-102-01实际结果与下一片2026-10-18)已将应用侧18字段会话字典迁为SessionState，新建/恢复共用默认值，外部读取、恢复安装和移除通过SessionService受控入口。消息/checkpoint与聊天归档保持独立；SQLite格式和公开应用API保持。[102-02](docs/specs/102-session-state-lifecycle-refactor.md#18-102-02实际结果与下一片2026-10-18)已将运行/审批恢复/保存/历史/重启恢复改为直接async，共享准入、资源准备与失败核对并删除IOCall驱动；阻塞IO和关键写入仍保留取消收尾。[102-03](docs/specs/102-session-state-lifecycle-refactor.md#20-102-03实际结果与下一片2026-10-18)已迁移测试/探针并删除旧configured工厂和选模空回调；模型选择的现有日志/事件保持。[102-04](docs/specs/102-session-state-lifecycle-refactor.md#23-102-04实际结果与下一片2026-10-18)已通过SessionPort集中声明根/子装配需要的会话方法，由同一个SessionService提供；根控制hook限定root，子模型/工具快照与权限/提示词取值沿原机制。[102-05](docs/specs/102-05-content-projection.md#5-实际结果2026-10-18)已统一完整内容/流式文本投影：content_text默认保留文字和有限图片说明，delta模式只取真实文字块；CLI转义和Responses响应ID/增量序号保持，旧重复解析及Web纯别名已删除。[102-06](docs/specs/102-06-web-setting-errors.md#6-实际结果2026-10-18)已将Web三项设置的await/异常处理合并为局部_apply_setting，门禁、具体422/日志、成功确认值及取消传播保持；[102-07](docs/specs/102-07-middleware-contracts.md#5-全量验收与spec102收尾2026-10-18)已补真实根/子装配顺序说明与生产链验收，保留当前排序；7个已确认分片全部完成。原问题第7项跨会话并发转104草案，先完成105架构收敛。
 
 当前 Web 侧栏见[Spec095](docs/specs/095-subagent-sidebar.md)：顶部“子智能体”先按名称选择实例，详情不显示名称，直接复用主会话消息流与工具卡片。审批统一留在主会话，侧栏不因审批自动打开；已保存的子记录可只读查看，不恢复或重跑旧子工具。Skills 列表与显式指令见下文。
 
@@ -14,7 +18,13 @@
 
 [Spec099：会话管理与排序](docs/specs/099-session-sidebar-management.md)已接左侧会话右键及省略号菜单，只有“重命名、置顶／取消置顶、删除”。鼠标按住会话拖动到同组目标前方或组末，松开保存顺序，刷新及服务重启后保留；置顶与普通会话分别排序，不提供上移/下移按钮。删除需确认，只清理该会话及关联子记录，不删除工作区文件；执行中的会话不可删除。输入框模型按钮直接显示当前模型名和推理强度，桌面/窄屏均不显示指针图标或展开箭头。
 
-会话SQLite当前schema6，自动事务迁移现行工作区库4/5（含thinking_level、名称、置顶及顺序）；Spec087所述旧全局库1/2/3仍不接受、不自动迁移或删除。
+会话SQLite当前schema10，自动事务迁移现行工作区库4—9（含thinking_level、名称、置顶、顺序、聊天档案、调用用量及有限持久诊断）；Spec087所述旧全局库1/2/3仍不接受、不自动迁移或删除。
+
+[Spec101：聊天归档、有界查询与滚动历史](docs/specs/101-web-history-pagination.md#14-101-02实施合同本轮授权)已接应用finish与恢复收尾：已保存checkpoint及pending消息整理到同一SQLite的独立聊天表，压缩保留原文，根/子分别存档；消息、进度和收尾元数据在本方事务中确认。Web选中会话显式POST准备已保存历史，普通GET只读档案分页；发送/压缩/审批等使用轻量状态准入，不再受整份聊天JSON大小阻断。最近窗口、签名游标、原消息JSON分块详情及跨页工具父ID已接；101-03已接根/子上滑分页、阅读锚点、失败重试和SSE缺口合并，实时终稿/已加载旧页保持，超大消息明确预览；完整正文展开界面未增加。101-04已完成长历史、自动/手动压缩、服务重开、真实进程退出及根/子审批边界的离线组合验收；恢复查看不重跑旧工具。最终证据见[Spec第21节](docs/specs/101-web-history-pagination.md#21-101-04实际结果与spec101收尾2026-10-18)。
+
+[Spec100：真实供应商有界验收](docs/specs/100-real-provider-acceptance.md)已完成首轮Responses网关验收，实际52/60次发送（B8/C17/D17/E10），16功能场景通过，根多工具批准/双子任务审批2项未通过，见[报告及未闭合问题](docs/research/provider-acceptance-2026-10-17.md)。已修复Responses消息ID归并及摘要text块处理；未改网关配置或生产流式默认。图片来自Pillow，无生图API；临时工作区/SQLite与有限报告分开，未操作用户会话库。`.venv/bin/python -m scripts.probe_provider_acceptance --config <模型配置路径> --model-id <配置内模型ID>`仍只读零请求预检；另有显式`python -m scripts.run_provider_acceptance --live --config ... --model-id ... --report <新路径>`执行器，默认失败停止，不自动重试或重置预算。当前验收已停止，不要为得到全绿无界重跑。
+
+Spec100后续已保留流式补齐Responses最终工具参数：修复前完整事件诊断确认无参数delta，完成事件有完整参数；模型接入层局部归集后仍委托官方适配器。根批次批准、双子智能体独立审批均定向实网通过，新增9次、累计61次；原52次与失败记录保留，见[修复/复验及证据边界](docs/research/responses-final-args-2026-10-17.md)。未改真实配置、权限/图或前端。
 
 ## 项目目标
 
@@ -25,7 +35,7 @@
 ## 已确认的技术方向
 
 - Python + LangChain `create_agent`，通过自定义 middleware 扩展模型—工具循环。
-- 四层架构：模型接入 → Agent 运行 → 测试 Agent 策略 → 应用入口。
+- 按职责划分模型接入、Agent运行、通用工具和应用入口；测试任务通过提示词/Skills与注册工具完成，不再保留独立`test_agent`策略层。
 - 上下文、工具/MCP、记忆和轨迹均可自定义接入；RAG、测试执行和评测保持独立模块。
 - 支持多个模型配置和按运行选择；本地模型、动态切换和故障备用按阶段验证。
 - 首期复用标准循环，不手写 StateGraph；`create_agent` 底层仍使用 LangGraph。
@@ -47,7 +57,7 @@
 1. [AGENTS.md](AGENTS.md)：工程规则与开发学习方式。
 2. [开发学习交接](docs/handoff.md)：最新进度、首个单元及新会话提示词。
 3. [项目设计与排期](docs/project-plan.md)：目标、模块边界、评测和已确认选型。
-4. [分层命名与实施路线](docs/implementation-roadmap.md)：四层职责、当前代码位置与首期小目标顺序。
+4. [分层命名与实施路线](docs/implementation-roadmap.md)：当前模块职责与调用方向，以及标明版本的早期实施顺序。
 5. [AgentX 源码参考](docs/agentx_architecture_reference.md)：2026-09-23 的静态调研记录。
 6. [首个运行层 Spec](docs/specs/001-model-selection-boundary.md)与[Lesson 1](docs/lessons/lesson-1.md)：模型调用边界按会话选模的设计、代码地图和理解检查。
 7. [首个 HTTP 业务场景 Spec](docs/specs/002-discount-policy-first-scenario.md)：历史`discount_system`契约与证据边界，需求已撤销。
@@ -175,6 +185,10 @@ python3.12 -m venv .venv
 
 模型条目的当前格式见[models.example.json](docs/examples/models.example.json)。占位URL/密钥/模型名需要自行填写；OpenAI/openai_compatible必须显式设置`api`为`chat_completions`或`responses`，按实际能力设置可选`profile.image_inputs`。旧配置没有api会在启动前报错；修改配置后重启服务，不自动迁移真实文件。
 
+缓存能力用`profile.prompt_cache`声明：`protocol`为`openai`、`openai_options`或`anthropic`，`retentions`列出实际支持的保留时间。未设置`request.prompt_cache.retention`时，自动选声明集合中的最短值，与列表顺序无关；需要较长时间时在request中覆盖。样例仅演示端点支持`in_memory`及`24h`的写法，不代表所有兼容网关都支持；能力未知就省略，明确不支持设为`false`，两者均不添加控制参数。只支持24h的模型应声明`["24h"]`。Anthropic可声明5m/1h；新OpenAI options协议可声明30m。非法或矛盾配置在启动前报错，不能根据模型别名猜能力。
+
+缓存默认参数在模型创建时设置，普通对话、子智能体、摘要和Auto各自沿用所选模型的配置；不增加请求或会话key，不改真实配置。参数存在不证明命中；供应商返回用量及费用口径仍按[M6后续分片](docs/specs/107-model-request-prompt-cache.md#6-验收与剩余分片)独立验收。
+
 将私有模型配置放在`~/.naiyue-test-agent/models.json`后，在项目根目录运行（默认配置目录由用户home决定）：
 
 ```bash
@@ -214,7 +228,7 @@ S4已接正式CLI/Web：`app.pending_approval_batches(session_id)`返回根pause
 
 ## 真实模型接入诊断
 
-模型默认配置为`~/.naiyue-test-agent/models.json`，JSON格式见[Spec004](docs/specs/004-local-model-config-format.md)，沿用私有文件权限检查（当前POSIX要求无组/其他用户访问位）。原项目文件`.env/models.json`不自动搬迁；继续使用它时显式传`--config .env/models.json`。`naiyue_test_agent.model_access.load_model_catalog` 读取并校验配置，`naiyue_test_agent.agent_runtime.build_configured_runtime_agent` 将它接到现有按会话选模的 middleware。下面的命令会调用真实模型，发送的只有随机诊断值和工具提示；最多两次模型调用，90 秒截止，不输出密钥或诊断值：
+模型默认配置为`~/.naiyue-test-agent/models.json`，JSON格式见[Spec004](docs/specs/004-local-model-config-format.md)；当前不按文件私密权限位限制读取。原项目文件`.env/models.json`不自动搬迁；需要指定其他文件时传`--config <路径>`。`load_model_catalog`读取并校验配置，正式`build_async_local_application`创建会话、按会话选模并负责关闭模型客户端。102-03已移除旧configured工厂与record_selection空回调。下面的诊断命令支持项目已有的OpenAI/兼容接口、Anthropic与Ollama适配器，会调用真实模型；仅发送随机诊断值和工具提示，HTTP发送前共用两次预算（包括摘要/Auto/子调用），仅诊断独占的OpenAI/Anthropic客户端禁用SDK重试，90秒截止，不输出密钥或诊断值。未知适配器会在发送前报错，混合目录仍使用同一预算。
 
 ```bash
 .venv/bin/python -m scripts.probe_configured_tool_loop --model-id heiyu-gpt-5.5

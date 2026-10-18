@@ -62,6 +62,8 @@ class ContextOperationFinishedData(ContextOperationStartedData):
     visibility: str | None = None
     related_operation_id: str | None = None
     retry_attempts: int = 0
+    summary_cache_read_tokens: int | None = None
+    summary_cache_write_tokens: int | None = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -77,6 +79,7 @@ class ContextOperationFinishedData(ContextOperationStartedData):
         if any(v is not None and (type(v) is not int or v < 0) for v in (
             self.after_estimate, self.removed_message_count, self.preserved_message_count,
             self.summary_input_tokens, self.summary_output_tokens, self.summary_duration_ms,
+            self.summary_cache_read_tokens, self.summary_cache_write_tokens,
         )):
             raise ValueError('Invalid context measurements')
         if type(self.retry_attempts) is not int or self.retry_attempts not in (0, 1):

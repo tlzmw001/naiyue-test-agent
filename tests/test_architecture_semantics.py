@@ -56,14 +56,13 @@ def test_application_has_one_native_async_execution_surface():
     from naiyue_test_agent import application
     from naiyue_test_agent.application.session_service import SessionService
     from naiyue_test_agent.application.session_persistence import SessionPersistence
-    from naiyue_test_agent.application import io_steps
     assert not hasattr(application, 'LocalApplication')
     assert not hasattr(application, 'build_local_application')
     assert find_spec('naiyue_test_agent.application.persistent') is None
     assert find_spec('naiyue_test_agent.application.async_session') is None
     assert not hasattr(SessionService, 'run') and not hasattr(SessionService, 'resume_tool_approval')
     assert not any(hasattr(SessionPersistence, name) for name in ('finish', 'restore', 'history', 'recover'))
-    assert not hasattr(io_steps, 'run_steps')
+    assert find_spec('naiyue_test_agent.application.io_steps') is None
 
 
 def test_runtime_has_one_async_execution_surface_and_no_historical_discount():
@@ -84,37 +83,74 @@ def test_runtime_has_one_async_execution_surface_and_no_historical_discount():
     assert 'after_model' in approval.ObservedHumanInTheLoopMiddleware.__dict__
 
 
-def test_io_step_requires_one_actual_implementation_and_settles_critical_async_io():
+def test_historical_test_agent_package_is_absent():
+    from importlib.util import find_spec
+    from pathlib import Path
+    import naiyue_test_agent
+
+    assert find_spec('naiyue_test_agent.test_agent') is None
+    assert not (Path(naiyue_test_agent.__file__).parent / 'test_agent').exists()
+
+
+@pytest.mark.parametrize('write_fails', [False, True])
+def test_application_final_save_settles_before_repeated_cancellation_escapes(monkeypatch, caplog, write_fails):
     import asyncio
-    from naiyue_test_agent.application.io_steps import IOCall, arun_steps
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from naiyue_test_agent.application import session_service, session_execution
+    from naiyue_test_agent.model_access import ModelCatalog
 
     async def scenario():
         entered, release = asyncio.Event(), asyncio.Event()
-        settled = []
-        async def write():
-            entered.set()
-            await release.wait()
-            settled.append('saved')
-        def steps():
-            try:
-                yield IOCall(async_call=write)
-            finally:
-                settled.append('closed')
-        for kwargs in ({}, {'call': lambda: None, 'async_call': write}):
-            with pytest.raises(ValueError, match='exactly one'):
-                IOCall(**kwargs)
-        task = asyncio.create_task(arun_steps(steps()))
-        await entered.wait()
-        task.cancel()
-        assert not settled
-        release.set()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        assert settled == ['saved', 'closed']
-        def blocking():
-            result = yield IOCall(lambda: 42)
-            return result
-        assert await arun_steps(blocking()) == 42
+        order, terminal = [], []
+        failure = OSError('synthetic save failure')
+        class Persistence:
+            def start(self, *_args):
+                order.append('start')
+            async def afinish(self, *_args):
+                entered.set()
+                await release.wait()
+                order.append('save_failed' if write_fails else 'saved')
+                if write_fails:
+                    raise failure
+        sessions = session_service.SessionService(ModelCatalog('A', {
+            'A': FakeMessagesListChatModel(responses=[])}))
+        from types import SimpleNamespace
+        persistence = Persistence()
+        persistence.storage = SimpleNamespace(create=lambda *args: None)
+        sessions.bind_persistence(persistence)
+        sid = sessions.create_session('A')
+        async def execute(*_args, **_kwargs):
+            order.append('execute')
+            return {'messages': []}
+        monkeypatch.setattr(session_execution, 'ainvoke_agent_run', execute)
+        def observe(event):
+            if event.event_type == 'run_finished':
+                order.append('finished')
+                terminal.append((event.data.status, sessions.describe_session(sid)['busy']))
+        sessions.subscribe_events(observe)
+        task = asyncio.create_task(sessions.arun(object(), sid, [('user', 'run')]))
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            task.cancel('cancel while saving')
+            # A loop barrier lets the first cancellation reach the shield before
+            # a distinct second cancellation; no elapsed-time assumption.
+            delivered = asyncio.get_running_loop().create_future()
+            asyncio.get_running_loop().call_soon(delivered.set_result, None)
+            await delivered
+            assert sessions.describe_session(sid)['busy'] and terminal == []
+            task.cancel('later cancellation')
+            release.set()
+            with pytest.raises(asyncio.CancelledError) as caught:
+                await task
+            assert caught.value.args == ('cancel while saving',)
+            assert order == ['start', 'execute', 'save_failed' if write_fails else 'saved', 'finished']
+            assert terminal == [('failed' if write_fails else 'completed', False)]
+            assert not sessions.describe_session(sid)['busy']
+            if write_fails:
+                assert 'drained_operation_failed' in caplog.text
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
     asyncio.run(scenario())
 
 
@@ -148,8 +184,8 @@ def test_tool_body_interrupt_is_not_mistaken_for_pre_tool_approval(monkeypatch):
             with pytest.raises(AttributeError):
                 await app.arun(sid, [('user', 'run')])
             assert effects == ['effect']
-            assert app._sessions._sessions[sid]['manual_review_required']
-            assert not app._sessions._sessions[sid]['busy']
+            assert app._sessions.describe_session(sid)['manual_review_required']
+            assert not app._sessions.describe_session(sid)['busy']
             with pytest.raises(application.SessionManualReviewRequiredError):
                 await app.arun(sid, [('user', 'retry')])
             assert effects == ['effect']

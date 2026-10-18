@@ -10,6 +10,7 @@ from langgraph.pregel import Pregel
 from langgraph.types import Command
 
 from naiyue_test_agent.contracts.failures import safe_error_type, read_failure_description
+from naiyue_test_agent.model_access.messages import content_text
 from .message_observation import MessageStateObserver, _snapshot
 from .stream_events import MessageDeltaData, SUMMARY_TAG, PERMISSION_REVIEW_TAG
 from .tool_execution.observation import observe_tool_progress
@@ -18,22 +19,13 @@ from .tool_execution.observation import observe_tool_progress
 logger = logging.getLogger(__name__)
 
 
-def _text(content):
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return ''.join(block.get('text', '') for block in content
-                       if isinstance(block, dict) and block.get('type') == 'text'
-                       and isinstance(block.get('text'), str))
-    return ''
-
-
 class _StreamState:
     def __init__(self, publisher, context):
         self.publisher = publisher
         self.observer = MessageStateObserver(publisher)
         self.context = context
         self.indices = {}
+        self.stream_ids = {}
         self.drafts = set()
         self.latest = None
         self.interrupts = {}
@@ -79,16 +71,24 @@ class _StreamState:
                 or PERMISSION_REVIEW_TAG in metadata.get('tags', ())
                 or not isinstance(message, (AIMessageChunk, AIMessage))):
             return
-        text = _text(message.content)
-        if not text:
-            return
         if not isinstance(message.id, str) or not message.id:
             observe(self.observer, self.observer.unavailable, 'snapshot', 'missing_message_id', message=message)
             return
-        self.indices[message.id] = self.indices.get(message.id, 0) + 1
-        self.drafts.add(message.id)
+        text = content_text(message.content, delta=True)
+        key = (metadata.get('langgraph_checkpoint_ns'), metadata.get('langgraph_step'))
+        # Responses announces its final response ID on an empty first chunk.
+        # Later text chunks may carry framework run IDs; aggregate state keeps
+        # the first response ID. Retain that anchor before filtering empty text.
+        if key not in self.stream_ids or (not text
+                and message.response_metadata.get('id') == message.id):
+            self.stream_ids[key] = message.id
+        if not text:
+            return
+        identity = self.stream_ids[key]
+        self.indices[identity] = self.indices.get(identity, 0) + 1
+        self.drafts.add(identity)
         emit_event(self.publisher, 'message_delta', lambda: MessageDeltaData(
-            message.id, text, self.indices[message.id]))
+            identity, text, self.indices[identity]))
 
 
 async def ainvoke_with_message_observation(agent, input, *, context, config, publisher, durability=None):

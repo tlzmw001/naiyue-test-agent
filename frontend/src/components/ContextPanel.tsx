@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { RefObject } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import type { ContextEstimate, ContextGroup, ContextView } from '../contextTypes';
 import styles from './ContextPanel.module.css';
 
@@ -69,10 +69,12 @@ function Estimate({ estimate, basis }: { estimate?: ContextEstimate | null; basi
   </>;
 }
 
-export default function ContextPanel({ value, loading, error, retry, close }: {
+export default function ContextPanel({ value, loading, error, retry, close, usageContent }: {
   value?: ContextView; loading: boolean; error: string; retry: () => void; close: () => void;
+  usageContent: ReactNode;
 }) {
-  const [tab, setTab] = useState<'current' | 'request'>('current');
+  const tabs = ['current', 'request', 'usage'] as const;
+  const [tab, setTab] = useState<(typeof tabs)[number]>('current');
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { closeButton.current?.focus(); }, []);
   const snapshot = value?.latest_request;
@@ -82,18 +84,20 @@ export default function ContextPanel({ value, loading, error, retry, close }: {
   }}>
     <header className={styles.header}><strong>上下文</strong><button ref={closeButton} className={styles.close}
       aria-label="关闭上下文" onClick={close}>×</button></header>
-    <div className={styles.scope}>主会话<span>只读查看</span></div>
-    <div className={styles.tabs} role="tablist" aria-label="上下文统计口径">{(['current', 'request'] as const).map(name =>
+    <div className={styles.scope}>{tab === 'usage' ? '会话累计' : '主会话'}<span>只读查看</span></div>
+    <div className={styles.tabs} role="tablist" aria-label="上下文统计口径">{tabs.map(name =>
       <button key={name} role="tab" aria-selected={tab === name} id={`context-tab-${name}`}
         aria-controls={`context-${name}`} tabIndex={tab === name ? 0 : -1} onClick={() => setTab(name)}
         onKeyDown={event => {
           if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
           event.preventDefault();
-          const next = event.key === 'Home' ? 'current' : event.key === 'End' ? 'request' : tab === 'current' ? 'request' : 'current';
+          const next = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs[2] :
+            tabs[(tabs.indexOf(tab) + (event.key === 'ArrowLeft' ? 2 : 1)) % tabs.length];
           setTab(next);
           event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`#context-tab-${next}`)?.focus();
-        }}>{name === 'current' ? '当前预估' : '最近请求'}</button>)}</div>
+        }}>{name === 'current' ? '当前预估' : name === 'request' ? '最近请求' : '会话累计'}</button>)}</div>
     <div className={styles.scroll}>
+      {tab === 'usage' ? <section role="tabpanel" id="context-usage" aria-labelledby="context-tab-usage">{usageContent}</section> : <>
       {error && <div className={styles.notice} role="alert">{error}<button onClick={retry}>重试</button></div>}
       {loading && <p className={styles.notice} role="status">正在读取上下文…</p>}
       {!loading && !error && <section role="tabpanel" id={`context-${tab}`} aria-labelledby={`context-tab-${tab}`}>
@@ -103,16 +107,17 @@ export default function ContextPanel({ value, loading, error, retry, close }: {
             <span>{snapshot.status === 'running' ? '请求中' : snapshot.status === 'failed' ? '请求失败' : '已返回'}</span></div>
           <p className={styles.model}>{snapshot.model_id}</p><p className={styles.meta}>对应这一次发送的输入与返回，与当前预估分别计算。</p>
           {snapshot.status === 'running' && <p className={styles.meta}>请求尚未返回，正在等待供应商报告用量。</p>}
-          <div className={styles.metrics}><div><span>供应商报告的输入<small>包含缓存命中</small></span><strong>{format(actual?.input_tokens)}</strong></div>
-            <div className={styles.cache}><span>↳ 其中缓存命中</span><strong>{format(actual?.cache_read_tokens)}</strong></div>
+          <div className={styles.metrics}><div><span>供应商报告的总输入<small>包含缓存读取与写入</small></span><strong>{format(actual?.input_tokens)}</strong></div>
+            <div className={styles.cache}><span>↳ 其中缓存读取</span><strong>{format(actual?.cache_read_tokens)}</strong></div>
+            <div className={styles.cache}><span>↳ 其中缓存写入</span><strong>{format(actual?.cache_write_tokens)}</strong></div>
             <div><span>供应商报告的输出</span><strong>{format(actual?.output_tokens)}</strong></div></div>
           <div className={styles.budget}>同一次发送前的本地估算：≈ {format(snapshot.estimate.estimated_input_tokens)} tokens。</div>
           <div className={styles.note}><p>供应商未返回的用量显示“未提供”，不记为零。</p>
             <p>分项构成均为估算，供应商报告不能精确分摊到各项。</p>
             <p>子智能体、Auto 审查和压缩摘要的调用不叠加到主会话上下文占用。</p></div>
         </> : <p className={styles.notice}>暂无已记录的模型请求。历史请求未保存的构成不会补造。</p>}
-      </section>}
+      </section>}</>}
     </div>
-    <footer className={styles.footer}><span>本地查看，不调用模型</span><button onClick={retry} disabled={loading}>刷新</button></footer>
+    {tab !== 'usage' && <footer className={styles.footer}><span>本地查看，不调用模型</span><button onClick={retry} disabled={loading}>刷新</button></footer>}
   </aside>;
 }

@@ -52,8 +52,8 @@ async def test_cleanup_failure_uses_session_diagnostic_and_preserves_control(
                     await app.arun(session, [('user', 'run')])
             assert caught.value is failure
             state = app._sessions._sessions[session]
-            assert state['manual_review_required'] and not state['busy']
-            assert state['pending_tool_approval'] is None
+            assert state.describe_session()['manual_review_required'] and not state.is_busy()
+            assert state.snapshot_for_run()['pending'] is None
             end = [event for event in events if event.event_type == 'run_finished'][-1]
             assert end.data.status == 'failed' and end.data.manual_review_required
             diagnostics = [record for record in caplog.records

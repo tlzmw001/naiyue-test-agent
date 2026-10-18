@@ -11,7 +11,6 @@ All storage, file writes and models are temporary/local fixtures.
 import asyncio
 import importlib
 import json
-from collections import deque
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Annotated, TypedDict
@@ -49,12 +48,12 @@ async def probe_continue():
             {'name': 'read', 'args': {'path': str(outside)}, 'id': 'old-call'},
         ])])
         async with build(patch, database, model, [create_session_read_tool()]) as app:
-            storage = app._sessions._persistence.storage
+            storage = app._storage
             session = await app.acreate_workspace_session('A', root)
             await app.arun(session, [HumanMessage(content='fixture request')])
             thread = storage.get(session)['thread_id']
         async with build(patch, database, tools=[create_session_read_tool()]) as app:
-            storage = app._sessions._persistence.storage
+            storage = app._storage
             agent = app._agent
             config = {'configurable': {'thread_id': thread}}
             old = await agent.aget_state(config)
@@ -79,7 +78,7 @@ async def probe_continue():
             assert (await agent.aget_state(old.config)).values['messages'] == old.values['messages']
             storage.finish_run(session, 'ready', final.config['configurable']['checkpoint_id'], '', 'recovered')
         async with build(patch, database, tools=[create_session_read_tool()]) as app:
-            storage = app._sessions._persistence.storage
+            storage = app._storage
             await app.arestore_session(session)
             result = await app.arun(session, [HumanMessage(content='inspect only')])
             assert result['messages'][-1].content == 'answer'
@@ -172,23 +171,23 @@ async def probe_approval_transport():
             {'name': 'write', 'args': {'path': str(target), 'content': 'written'}, 'id': 'write-call'},
         ])])
         async with build(patch, database, model, tools) as app:
-            storage = app._sessions._persistence.storage
+            storage = app._storage
             session = await app.acreate_workspace_session('A', root)
             result = await app.arun(session, [('user', 'fixture request')])
             assert len(result['approval_requests']) == 1 and not target.exists()
             assert calls == []
             assert not any(isinstance(message, ToolMessage) for message in result['messages'])
-            memory = dict(app._sessions._sessions[session])
         async with build(patch, database, tools=tools) as app:
-            storage = app._sessions._persistence.storage
+            storage = app._storage
             row = storage.get(session)
             snapshot = await app._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
             interrupts = tuple(item for task in snapshot.tasks for item in task.interrupts)
             pending = pending_tool_approval({**snapshot.values, '__interrupt__': interrupts})
             pending['requested_run_id'] = row['run_id']
-            memory.update(pending_tool_approval=pending, pending_turn=None, session_allow=[],
-                          steering_queue=deque(), follow_up_queue=deque(), busy=False, run_id=None)
-            app._sessions._sessions[session] = memory
+            app._sessions.install_restored_session(session, thread_id=row['thread_id'],
+                model_id=row['model_id'], thinking_level=row['thinking_level'], workspace_root=root,
+                active_tool_names=json.loads(row['active_tool_names_json']),
+                permission_mode=row['permission_mode'], pending=pending)
             result = await app.aresume_tool_approval(session, ['approve'])
             assert target.read_text() == 'written' and result['messages'][-1].content == 'answer'
             results = [message for message in result['messages'] if isinstance(message, ToolMessage)]

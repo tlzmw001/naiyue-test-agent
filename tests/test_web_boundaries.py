@@ -16,12 +16,14 @@ def test_completed_session_restores_after_web_lifespan_restart(monkeypatch, tmp_
             run = (await client.post(f'/api/sessions/{session}/runs', json=request('one'))).json()['run_id']
             await client.get(f'/api/runs/{run}/events')
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[AIMessage(content='second')])) as (client, app):
+            assert (await client.post(f'/api/sessions/{session}/prepare')).status_code == 200
             old = (await client.get(f'/api/sessions/{session}')).json()
             assert [m['content'] for m in old['messages']] == ['one', 'first']
             run = (await client.post(f'/api/sessions/{session}/runs', json=request('two'))).json()['run_id']
             await client.get(f'/api/runs/{run}/events')
-            assert [m['content'] for m in (await client.get(f'/api/runs/{run}')).json()['messages']] == [
+            assert [m['content'] for m in (await client.get(f'/api/sessions/{session}')).json()['messages']] == [
                 'one', 'first', 'two', 'second']
+            assert [m['content'] for m in (await client.get(f'/api/runs/{run}')).json()['messages']] == ['two', 'second']
     asyncio.run(scenario())
 
 
@@ -36,6 +38,7 @@ def test_model_failure_is_safe_and_restart_does_not_replay(monkeypatch, tmp_path
             assert view['status'] == 'failed' and 'PRIVATE_GATEWAY_BODY' not in stream.text
         next_model = StreamingToolModel(replies=[])
         async with web_client(monkeypatch, tmp_path, next_model) as (client, app):
+            assert (await client.post(f'/api/sessions/{session}/prepare')).status_code == 200
             response = await client.get(f'/api/sessions/{session}')
             assert response.status_code == 200 and next_model.seen == []
             history = response.json()
@@ -87,7 +90,7 @@ def test_save_failure_cannot_be_presented_as_web_completion(monkeypatch, tmp_pat
             session = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             def fail(*args):
                 raise SessionPersistenceError('PRIVATE_SAVE_BODY')
-            monkeypatch.setattr(app.state.service.application._sessions._persistence.storage, 'finish_run', fail)
+            monkeypatch.setattr(app.state.service.application._storage, 'finish_run', fail)
             run = (await client.post(f'/api/sessions/{session}/runs', json=request('one'))).json()['run_id']
             stream = await client.get(f'/api/runs/{run}/events')
             view = (await client.get(f'/api/runs/{run}')).json()

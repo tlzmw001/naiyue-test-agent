@@ -147,6 +147,7 @@ def _parent(args):
                         created.raise_for_status()
                         session = created.json()['session_id']
                     else:
+                        client.post(f'/api/sessions/{session}/prepare').raise_for_status()
                         restored = client.get('/api/sessions/' + session)
                         restored.raise_for_status()
                         assert [m['content'] for m in restored.json()['messages']] == ['BLOCK']

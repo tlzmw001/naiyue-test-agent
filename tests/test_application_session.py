@@ -39,7 +39,6 @@ async def test_sessions_continue_history_switch_models_and_isolate_threads(caplo
     agent = build_runtime_agent(
         models['A'], tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
         resolve_model=service.resolve_model,
-        record_selection=lambda _session_id, _model_id: None,
         checkpointer=InMemorySaver(),
     )
     first_session = service.create_session('A')
@@ -119,18 +118,17 @@ async def test_model_change_during_tool_call_applies_at_next_model_boundary(capl
         service.select_model(session_id, 'B')
         return 'switched'
 
-    selected = []
     _runtime_registry_2 = prepare_tool_registry([ToolSpec(switch_to_b, switch_to_b.args_schema, permissions=ToolPermission(default='allow'))])
     _runtime_names_2 = _runtime_registry_2.names()
     agent = build_runtime_agent(
         models['A'], tool_registry=_runtime_registry_2, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_2: names, system_prompt='', response_format=None,
         resolve_model=service.resolve_model,
-        record_selection=lambda _session_id, model_id: selected.append(model_id),
         checkpointer=InMemorySaver(),
     )
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         result = await service.arun(agent, session_id, [('user', 'switch after tool')])
-    assert selected == ['A', 'B']
+    assert [r.model_selection['model_id'] for r in caplog.records
+            if hasattr(r, 'model_selection')] == ['A', 'B']
     assert [message.type for message in result['messages']] == ['human', 'ai', 'tool', 'ai']
     assert result['messages'][2].tool_call_id == result['messages'][1].tool_calls[0]['id']
     run_events = [r.run_event for r in caplog.records if hasattr(r, 'run_event')]

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from contextlib import contextmanager
 from uuid import uuid4
 
 from langgraph.checkpoint.memory import InMemorySaver
@@ -18,17 +19,33 @@ logger = logging.getLogger(__name__)
 
 
 class AsyncApplication:
-    def __init__(self, catalog, sessions, agent, tool_registry):
+    def __init__(self, catalog, sessions, agent, tool_registry, *, system_prompt):
         self.default_model_id = catalog.default_model_id
         self._catalog, self._sessions, self._agent = catalog, sessions, agent
         self._tool_registry = tool_registry
+        self._system_prompt = system_prompt
         self._loop = asyncio.get_running_loop()
         self._tasks = set()
+        self._operations = {}
+        self._close_task = None
         self._closed = self._closing = False
 
     def _check_open(self):
-        if asyncio.get_running_loop() is not self._loop or self._closed or self._closing:
+        if (asyncio.get_running_loop() is not self._loop or self._closed
+                or self._closing and asyncio.current_task() not in self._operations.values()):
             raise RuntimeError('Async application must be open on its owning event loop')
+
+    @contextmanager
+    def _owned_operation(self):
+        """Track operation settlement, without owning the caller's later work."""
+        self._check_open()
+        done = self._loop.create_future()
+        self._operations[done] = asyncio.current_task()
+        try:
+            yield
+        finally:
+            self._operations.pop(done)
+            done.set_result(None)
 
     @property
     def model_ids(self):
@@ -39,34 +56,29 @@ class AsyncApplication:
         return {identity: self._catalog.thinking_options(identity) for identity in self.model_ids}
 
     async def aselect_thinking(self, session_id, model_id, level):
-        self._check_open()
-        await run_blocking(self._sessions.select_thinking, session_id, model_id, level)
+        with self._owned_operation():
+            await run_blocking(self._sessions.select_thinking, session_id, model_id, level)
 
     def get_registered_tools(self):
         self._check_open()
         return self._tool_registry.select(self._tool_registry.names())
 
     async def aget_skills(self, workspace_root):
-        self._check_open()
-        from .skills import discover_project_skills
-        return await run_blocking(discover_project_skills, workspace_root)
+        with self._owned_operation():
+            from .skills import discover_project_skills
+            return await run_blocking(discover_project_skills, workspace_root)
 
     def get_session_control_options(self):
         self._check_open()
-        permissions = self._sessions._permission_settings
-        modes = ['Default', 'NoAsk', 'Auto', 'BypassApprovals']
-        if permissions.auto is None:
-            modes.remove('Auto')
-        return {'default_active_tools': list(self._sessions._initial_active_tools),
-                'default_permission_mode': permissions.mode, 'permission_modes': modes}
+        return self._sessions.get_control_options()
 
     async def aregister_tool(self, spec):
-        self._check_open()
-        self._sessions.register_tool(spec)
+        with self._owned_operation():
+            self._sessions.register_tool(spec)
 
     async def aregister_subagent(self, spec):
-        self._check_open()
-        self._sessions.register_subagent(spec)
+        with self._owned_operation():
+            self._sessions.register_subagent(spec)
 
     def get_registered_subagents(self):
         self._check_open()
@@ -77,27 +89,22 @@ class AsyncApplication:
         return self._sessions.get_active_tools(session_id)
 
     async def aset_active_tools(self, session_id, names):
-        self._check_open()
-        await run_blocking(self._sessions.set_active_tools, session_id, names)
+        with self._owned_operation():
+            await run_blocking(self._sessions.set_active_tools, session_id, names)
 
     def get_permission_mode(self, session_id):
         self._check_open()
         return self._sessions.get_permission_mode(session_id)
 
     async def aset_permission_mode(self, session_id, mode):
-        self._check_open()
-        await run_blocking(self._sessions.set_permission_mode, session_id, mode)
+        with self._owned_operation():
+            await run_blocking(self._sessions.set_permission_mode, session_id, mode)
 
     def has_session(self, session_id):
         return self._sessions.has_session(session_id)
 
-    async def aget_session_view(self, session_id):
-        self._check_open()
-        return {**self._sessions.describe_session(session_id),
-                'messages': await self.aget_messages(session_id)}
-
-    def subscribe_events(self, handler):
-        return self._sessions.subscribe_events(handler)
+    def subscribe_events(self, handler, *, session_id=None):
+        return self._sessions.subscribe_events(handler, session_id=session_id)
 
     def configure_error_classifiers(self, *, model_id=None, model=None, runtime=None, application=None):
         self._check_open()
@@ -105,16 +112,16 @@ class AsyncApplication:
             model_id=model_id, model=model, runtime=runtime, application=application)
 
     async def acreate_session(self, model_id):
-        self._check_open()
-        return await run_blocking(self._sessions.create_session, model_id)
+        with self._owned_operation():
+            return await run_blocking(self._sessions.create_session, model_id)
 
     async def acreate_workspace_session(self, model_id, workspace_root):
-        self._check_open()
-        return await run_blocking(self._sessions.create_workspace_session, model_id, workspace_root)
+        with self._owned_operation():
+            return await run_blocking(self._sessions.create_workspace_session, model_id, workspace_root)
 
     async def aselect_model(self, session_id, model_id):
-        self._check_open()
-        return await run_blocking(self._sessions.select_model, session_id, model_id)
+        with self._owned_operation():
+            return await run_blocking(self._sessions.select_model, session_id, model_id)
 
     def steer(self, session_id, text):
         self._sessions.steer(session_id, text)
@@ -141,81 +148,76 @@ class AsyncApplication:
         return self._sessions.prepare_root_approval_submission(session_id, **submission)
 
     async def asubmit_subagent_approval(self, session_id, *, approval_batch_id, decisions, origin_run_id, remember_approved=()):
-        self._check_open()
-        return self._sessions.submit_subagent_approval(session_id, approval_batch_id=approval_batch_id,
-            decisions=decisions, origin_run_id=origin_run_id, remember_approved=remember_approved)
+        with self._owned_operation():
+            return self._sessions.submit_subagent_approval(session_id, approval_batch_id=approval_batch_id,
+                decisions=decisions, origin_run_id=origin_run_id, remember_approved=remember_approved)
 
     async def aget_messages(self, session_id):
-        self._check_open()
-        with self._sessions._lock:
-            thread = self._sessions._sessions[session_id]['thread_id']
-        snapshot = await self._agent.aget_state({'configurable': {'thread_id': thread}})
-        return [m.model_copy(deep=True) for m in snapshot.values.get('messages', [])]
+        with self._owned_operation():
+            thread = self._sessions.get_thread_id(session_id)
+            snapshot = await self._agent.aget_state({'configurable': {'thread_id': thread}})
+            return [m.model_copy(deep=True) for m in snapshot.values.get('messages', [])]
 
     async def aget_context_view(self, session_id):
-        self._check_open()
-        from .session_context import context_view
-        return await context_view(self, session_id)
+        with self._owned_operation():
+            from .session_context import context_view
+            history = None if self.has_session(session_id) else await self.aget_session_history(session_id)
+            return await context_view(session_id, sessions=self._sessions, agent=self._agent,
+                catalog=self._catalog, tool_registry=self._tool_registry,
+                system_prompt=self._system_prompt, history=history)
 
     async def aget_subagents(self, session_id):
-        self._check_open()
-        if self.has_session(session_id):
-            messages = await self.aget_messages(session_id)
-        else:
-            messages = (await self._sessions._persistence.ahistory(session_id, self._agent))['messages']
-        records = subagent_records(session_id, messages)
-        for row in records:
-            if row['status'] == 'failed':
-                snapshot = await self._agent.aget_state({'configurable': {'thread_id': f'subagent:{row["agent_id"]}'}})
-                if snapshot.values.get('run_stopped'):
-                    row['status'] = 'stopped'
-        return records
+        with self._owned_operation():
+            if self.has_session(session_id):
+                messages = await self.aget_messages(session_id)
+            else:
+                messages = (await self.aget_session_history(session_id))['messages']
+            records = subagent_records(session_id, messages)
+            for row in records:
+                if row['status'] == 'failed':
+                    snapshot = await self._agent.aget_state({'configurable': {'thread_id': f'subagent:{row["agent_id"]}'}})
+                    if snapshot.values.get('run_stopped'):
+                        row['status'] = 'stopped'
+            return records
 
     async def aget_subagent_history(self, session_id, agent_id):
-        self._check_open()
-        record = next((row for row in await self.aget_subagents(session_id) if row['agent_id'] == agent_id), None)
-        if record is None:
-            raise LookupError('Subagent does not belong to this session')
-        # Same state schema and saver as the root; no role/configuration is required to read history.
-        snapshot = await self._agent.aget_state({'configurable': {'thread_id': f'subagent:{agent_id}'}})
-        messages = [m.model_copy(deep=True) for m in snapshot.values.get('messages', [])]
-        if snapshot.values.get('run_stopped'):
-            record['status'] = 'stopped'
-        return {**record, 'messages': messages,
-                'available': bool((snapshot.config or {}).get('configurable', {}).get('checkpoint_id')),
-                'has_compaction': any(m.additional_kwargs.get('naiyue_compaction_summary') for m in messages)}
+        with self._owned_operation():
+            record = next((row for row in await self.aget_subagents(session_id) if row['agent_id'] == agent_id), None)
+            if record is None:
+                raise LookupError('Subagent does not belong to this session')
+            # Same state schema and saver as the root; no role/configuration is required to read history.
+            snapshot = await self._agent.aget_state({'configurable': {'thread_id': f'subagent:{agent_id}'}})
+            messages = [m.model_copy(deep=True) for m in snapshot.values.get('messages', [])]
+            if snapshot.values.get('run_stopped'):
+                record['status'] = 'stopped'
+            return {**record, 'messages': messages,
+                    'available': bool((snapshot.config or {}).get('configurable', {}).get('checkpoint_id')),
+                    'has_compaction': any(m.additional_kwargs.get('naiyue_compaction_summary') for m in messages)}
 
     async def _execute(self, session_id, value, resume, run_id, max_concurrency, *, remember_approved=None, stop=False, compact=False):
-        self._check_open()
-        task = asyncio.current_task()
-        already_owned = task in self._tasks
-        self._tasks.add(task)
-        try:
+        with self._owned_operation():
             if compact:
                 return await self._sessions.acompact(self._agent, session_id, run_id=run_id)
             method = self._sessions.aresume_tool_approval if resume else self._sessions.arun
             return await method(self._agent, session_id, value, run_id=run_id, max_concurrency=max_concurrency,
                                 **({'remember_approved': remember_approved, 'stop': stop} if resume else {}))
-        finally:
-            if not already_owned:
-                self._tasks.discard(task)
 
     async def arun(self, session_id, messages, *, max_concurrency=4):
-        self._check_open()
-        return await self._execute(session_id, messages, False, None, max_concurrency)
+        with self._owned_operation():
+            return await self._execute(session_id, messages, False, None, max_concurrency)
 
     async def acompact_context(self, session_id):
-        self._check_open()
-        return await self._execute(session_id, [], False, None, 4, compact=True)
+        with self._owned_operation():
+            return await self._execute(session_id, [], False, None, 4, compact=True)
 
     async def aresume_tool_approval(self, session_id, decisions, *, max_concurrency=4, remember_approved=None):
-        self._check_open()
-        return await self._execute(session_id, decisions, True, None, max_concurrency, remember_approved=remember_approved)
+        with self._owned_operation():
+            return await self._execute(session_id, decisions, True, None, max_concurrency, remember_approved=remember_approved)
 
     async def astop_tool_approval(self, session_id, *, approval_batch_id, origin_run_id, max_concurrency=4):
-        self._check_open()
-        self._sessions.validate_root_approval_stop(session_id, approval_batch_id=approval_batch_id, origin_run_id=origin_run_id)
-        return await self._execute(session_id, [], True, None, max_concurrency, stop=True)
+        with self._owned_operation():
+            self._sessions.validate_root_approval_stop(session_id, approval_batch_id=approval_batch_id, origin_run_id=origin_run_id)
+            return await self._execute(session_id, [], True, None, max_concurrency, stop=True)
 
     def _background_done(self, task):
         self._tasks.discard(task)
@@ -274,26 +276,31 @@ class AsyncApplication:
             await iterator.aclose()
 
     async def _close_resources(self):
-        for session_id in tuple(self._sessions._sessions):
-            self._sessions._request_scope_stop(session_id, reason='close')
-        results = await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
-        for result in results:
-            if isinstance(result, BaseException):
-                logger.error('owned_run_failed error_type=%s', safe_error_type(result))
-        await self._catalog.aclose()
+        try:
+            self._sessions.stop_loaded_sessions()
+            # Nested operations are covered by their outer operation. No new ingress
+            # can start after closing; these signals settle only after required IO.
+            await asyncio.gather(*tuple(self._operations))
+            results = await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException):
+                    logger.error('owned_run_failed error_type=%s', safe_error_type(result))
+            await self._catalog.aclose()
+        finally:
+            self._closed = True
 
     async def aclose(self):
-        if self._closed:
-            return
+        if asyncio.get_running_loop() is not self._loop:
+            raise RuntimeError('Async application must close on its owning event loop')
         services = current_run_services()
         if services is not None and services.publisher is not None:
             raise RuntimeError('Cannot close the application from an active run')
-        self._check_open()
-        self._closing = True
-        try:
-            await await_settled(self._close_resources())
-        finally:
-            self._closed = True
+        if asyncio.current_task() in self._operations.values() or asyncio.current_task() in self._tasks:
+            raise RuntimeError('Cannot close the application from an active operation')
+        if self._close_task is None:
+            self._closing = True
+            self._close_task = asyncio.create_task(self._close_resources())
+        await await_settled(self._close_task)
 
 
 async def build_async_local_application(config_path, *, tools, system_prompt, response_format, initial_active_tools=None, settings=None):
@@ -305,11 +312,11 @@ async def build_async_local_application(config_path, *, tools, system_prompt, re
     catalog = await acquire_blocking(application.load_model_catalog, lambda item: item.aclose(), config_path)
     try:
         await run_blocking(catalog._prepare_async_clients)
-        sessions = application.SessionService(catalog, registry, initial_active_tools=initial, permission_settings=settings.permissions, progress_settings=settings.progress)
-        agent = application._assemble_application(catalog, sessions, InMemorySaver(),
-            tool_registry=registry, system_prompt=system_prompt, response_format=response_format,
+        sessions = application.SessionService(catalog, registry, initial_active_tools=initial, permission_settings=settings.permissions, progress_settings=settings.progress,
+            max_active_runs=settings.max_active_runs)
+        agent = sessions.assemble_runtime(InMemorySaver(), system_prompt=system_prompt, response_format=response_format,
             subagents=settings.subagents, subagent_settings=settings.tools.subagent)
-        return AsyncApplication(catalog, sessions, agent, registry)
+        return AsyncApplication(catalog, sessions, agent, registry, system_prompt=system_prompt)
     except BaseException:
         try:
             await await_settled(catalog.aclose())

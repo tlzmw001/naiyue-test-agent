@@ -234,7 +234,7 @@ async def test_stop_rejects_closed_window_while_run_is_still_busy():
             assert await asyncio.to_thread(release.wait, timeout=3)
             return {'messages': []}
 
-    app = AsyncApplication(service._catalog, service, PausedAtEndAgent(), prepare_tool_registry([]))
+    app = AsyncApplication(service._catalog, service, PausedAtEndAgent(), prepare_tool_registry([]), system_prompt='')
     worker, outcomes = run_in_worker(app, session_id)
     try:
         assert await asyncio.to_thread(closed.wait, timeout=3)

@@ -17,7 +17,7 @@ from test_session_history import database_facts, approval_snapshot
 
 async def unfinished(monkeypatch, path):
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         sid = await app.acreate_session('A')
         row = storage.get(sid)
         messages = [HumanMessage(content='saved request', id='h'),
@@ -65,12 +65,12 @@ async def test_three_updates_preserve_results_then_only_new_input_calls_model(mo
         assert raw_before.checkpoint == raw_after.checkpoint and raw_before.pending_writes == raw_after.pending_writes
         marker = json.loads(snapshot.metadata['naiyue_recovery'])
         assert marker['phase'] == 'finished' and marker['source_checkpoint_id'] == original.config['configurable']['checkpoint_id']
-        row = app._sessions._persistence.storage.get(sid)
+        row = app._storage.get(sid)
         assert row['state'] == 'ready' and row['last_run_status'] == 'recovered'
         assert row['checkpoint_id'] == result['checkpoint_id'] == snapshot.config['configurable']['checkpoint_id']
         memory = app._sessions._sessions[sid]
-        assert memory['run_id'] is None and memory['session_allow'] == [] and memory['pending_tool_approval'] is None
-        assert not memory['busy'] and memory['pending_turn'] is None
+        assert memory.snapshot_for_run()['run_id'] is None and memory.resolve_permission_context()['session_allow'] == [] and memory.snapshot_for_run()['pending'] is None
+        assert not memory.is_busy() and memory.snapshot_for_run()['pending_turn'] is None
         answer = await app.arun(sid, [('user', 'new input')])
         assert answer['messages'][-1].content == ('new answer' if native else 'answer')
         assert answer['messages'][:4] == snapshot.values['messages']
@@ -80,7 +80,7 @@ async def test_three_updates_preserve_results_then_only_new_input_calls_model(mo
         async with build(monkeypatch, path) as app:
             await verify(app, False)
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         assert await app.arestore_session(sid) == sid
 
 
@@ -89,7 +89,7 @@ async def test_stale_checkpoint_and_loaded_session_never_write(monkeypatch, tmp_
     path = tmp_path / 'state.sqlite'
     sid, original, _ = await unfinished(monkeypatch, path)
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         before = database_facts(storage)
         with pytest.raises(SessionPersistenceError, match='checkpoint_mismatch'):
             await app.arecover_session(sid, checkpoint_id='old', action='continue')
@@ -107,7 +107,7 @@ async def test_saved_phase_can_be_retried_after_failure_without_duplicate_result
     path = tmp_path / 'state.sqlite'
     sid, original, _ = await unfinished(monkeypatch, path)
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         update = app._agent.aupdate_state
         saved_ids = []
         async def failed_after_save(config, values, *, as_node):
@@ -138,7 +138,7 @@ async def test_pure_approval_continue_records_cancelled_before_execution(monkeyp
     from naiyue_test_agent.tools import create_session_read_tool
     row, snapshot = await approval_snapshot(monkeypatch, tmp_path)
     async with build(monkeypatch, tmp_path / 'approval.sqlite', tools=[create_session_read_tool()]) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         await app.arecover_session(row['session_id'], checkpoint_id=snapshot.config['configurable']['checkpoint_id'], action='continue')
         result = (await app._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})).values['messages'][-1]
         assert result.additional_kwargs['naiyue_recovery']['reason'] == 'cancelled_before_approval'
@@ -150,7 +150,7 @@ async def test_invalid_pairing_is_rejected_without_writes(monkeypatch, tmp_path)
     path = tmp_path / 'state.sqlite'
     sid, original, _ = await unfinished(monkeypatch, path)
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         await app._agent.aupdate_state(original.config, {'messages': [ToolMessage(content='orphan', id='orphan', tool_call_id='other')]}, as_node='tools')
         current = await app.aget_session_history(sid)
         before = database_facts(storage)
@@ -161,16 +161,16 @@ async def test_invalid_pairing_is_rejected_without_writes(monkeypatch, tmp_path)
 
 
 @async_test
-async def test_recovery_admission_blocks_start_restore_and_other_recovery(monkeypatch, tmp_path):
+async def test_recovery_admission_blocks_same_session_start_restore_and_recovery(monkeypatch, tmp_path):
     path = tmp_path / 'state.sqlite'
     sid, original, _ = await unfinished(monkeypatch, path)
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
-        persistence = app._sessions._persistence
-        persistence._recovering = sid
+        storage = app._storage
+        persistence = app._persistence
+        persistence._recovering.add(sid)
         before = database_facts(storage)
         with pytest.raises(SessionPersistenceError, match='session_recovery_blocked'):
-            persistence.start('other', 'run')
+            persistence.start(sid, 'run')
         with pytest.raises(SessionPersistenceError, match='session_recovery_blocked'):
             await app.arestore_session(sid)
         with pytest.raises(SessionPersistenceError, match='session_recovery_blocked'):
@@ -184,7 +184,7 @@ async def test_invalid_recovery_record_never_mutates_checkpoint(monkeypatch, tmp
     path = tmp_path / 'state.sqlite'
     sid, original, _ = await unfinished(monkeypatch, path)
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         row = storage.get(sid)
         record = {'version': 1, 'recovery_id': 'a' * 32, 'session_id': sid, 'thread_id': row['thread_id'],
             'source_checkpoint_id': original.config['configurable']['checkpoint_id'], 'source_namespace': '',
@@ -206,13 +206,21 @@ async def test_current_process_state_cannot_be_bypassed(monkeypatch, tmp_path, g
     path = tmp_path / 'state.sqlite'
     sid, original, _ = await unfinished(monkeypatch, path)
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         if gate == 'blocked':
-            app._sessions._persistence._blocked.add(sid)
+            app._persistence._blocked.add(sid)
         elif gate == 'active':
-            app._sessions._persistence._active = ('other-session', 'active-run')
+            app._persistence._active[sid] = 'active-run'
         else:
-            app._sessions._sessions[sid] = {'manual_review_required': True, 'busy': False}
+            row = storage.get(sid)
+            app._sessions.install_restored_session(sid, thread_id=row['thread_id'],
+                model_id=row['model_id'], thinking_level=row['thinking_level'], workspace_root=None,
+                active_tool_names=(), permission_mode=row['permission_mode'])
+            owner, observation_run = app._sessions._admit(sid, 'review-fault', 'message')
+            run_id, observation = observation_run.run_id, observation_run.observation
+            owner.mark_manual_review(observation_run)
+            owner._cleanup_run(observation_run)
+            owner.release_run(observation_run)
         before = database_facts(storage)
         with pytest.raises(SessionPersistenceError, match='session_recovery_blocked'):
             await app.arecover_session(sid, checkpoint_id=original.config['configurable']['checkpoint_id'], action='continue')
@@ -245,7 +253,7 @@ async def test_cancelled_recovery_settles_its_write_before_allowing_retry(monkey
                 finally:
                     release.set()
                     await asyncio.gather(task, return_exceptions=True)
-            assert not app.has_session(sid) and app._sessions._persistence._recovering is None
+            assert not app.has_session(sid) and app._persistence._recovering == set()
             history = await app.aget_session_history(sid)
             assert history['checkpoint_id'] != original.config['configurable']['checkpoint_id']
             await app.arecover_session(sid, checkpoint_id=history['checkpoint_id'], action='continue')
@@ -258,7 +266,7 @@ async def test_failure_before_new_checkpoint_can_confirm_previous_finished_recor
     path = tmp_path / 'state.sqlite'
     sid, original, _ = await unfinished(monkeypatch, path)
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         first = await app.arecover_session(sid, checkpoint_id=original.config['configurable']['checkpoint_id'], action='continue')
         async def failing(*_a, **_kw):
             raise RuntimeError('fixture')
@@ -267,7 +275,7 @@ async def test_failure_before_new_checkpoint_can_confirm_previous_finished_recor
             await app.arun(sid, [('user', 'later input')])
         # The fixture failed before a new graph checkpoint; the previous finished marker remains valid.
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         history = await app.aget_session_history(sid)
         assert history['recovery']['actions'] == ['continue']
         repeated = await app.arecover_session(sid, checkpoint_id=history['checkpoint_id'], action='continue')
@@ -283,12 +291,12 @@ async def test_new_model_failure_uses_its_own_checkpoint_and_recovery_record(mon
     path = tmp_path / 'state.sqlite'
     sid, original, _ = await unfinished(monkeypatch, path)
     async with build(monkeypatch, path, Failing(responses=[])) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         first = await app.arecover_session(sid, checkpoint_id=original.config['configurable']['checkpoint_id'], action='continue')
         with pytest.raises(RuntimeError):
             await app.arun(sid, [('user', 'later input')])
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         history = await app.aget_session_history(sid)
         assert history['checkpoint_id'] != first['checkpoint_id']
         assert history['messages'][-1].content == 'later input'

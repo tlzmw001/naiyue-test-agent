@@ -1,5 +1,12 @@
 # Spec086 附录：文件、接口、清理与实施切片
 
+104-03当前补证见[组合验收](104-03-concurrency-acceptance.md#6-实际结果与104收尾)：真实Write目标busy、根Write→子Read审批及必要保存隔离通过；subagents.ainvoke_subagent_step转换已识别模型异常时复用现有同run失败标注，保留具体分类和原cause。没有新增工具、错误类、控制槽或持久化字段。
+
+当前拥有者（105-05收尾）：[组合验收与当前调用链](105-05-session-lifecycle-acceptance.md)。State是会话事实，ActiveRun是当前根运行/观察/队列/子实例，均由AgentSession持有；共享角色/图/准入/SessionPort路由归Service，装配入口assemble_runtime。保存/恢复IO归SessionPersistence，根必要保存后释放_run。public request_stop直接路由Actor，无旧私有转发。应用只等待自身操作及producer后关闭共享资源；105-05最终全量验收通过；[104-01](104-01-application-concurrency.md)已接后端默认10根额度与按会话持久化，[104-02](104-02-web-session-concurrency.md)已接Web按会话任务和106 E1订阅，组合验收已随104-03完成。下列早期记录保留原时点。
+
+版本对应（102-01/02，2026-10-18）：根State已受控封装，根运行/审批恢复及持久化直接async，共享阶段见[Spec102结果](102-session-state-lifecycle-refactor.md#18-102-02实际结果与下一片2026-10-18)。旧_resume_steps已并入aresume_tool_approval，应用IOCall/arun_steps删除；子驱动async _subagent_steps继续保留，G—L历史实施记录按当时入口理解。
+
+102-03已移除configured旧工厂/record_selection，根与子装配不再传空回调；测试/探针消费者及HTTP发前预算已迁移，见[当前结果](102-session-state-lifecycle-refactor.md#20-102-03实际结果与下一片2026-10-18)。[102-04已接SessionPort](102-session-state-lifecycle-refactor.md#23-102-04实际结果与下一片2026-10-18)：agent_runtime/session_port.py声明9方法，根/子建图共用同一SessionService，保留sid/path与根队列消费边界；旧项目指令回退已迁移删除。[102-05文本投影已收敛](102-05-content-projection.md#5-实际结果2026-10-18)：model_access.messages.content_text统一完整/delta投影，CLI/Runtime重复解析和Web.text_content纯别名已删除，canonical及模型图片请求保留。[102-06设置处理已收敛](102-06-web-setting-errors.md#6-实际结果2026-10-18)：WebService._apply_setting由三项入口直接调用，原准入、具体错误码/日志与成功确认边界保持；[102-07已收尾](102-07-middleware-contracts.md#5-全量验收与spec102收尾2026-10-18)：agent_runtime/__init__.py与subagents.py仅补顺序/装配区别说明，AST及排序保持；真实生产链测试在test_runtime_middleware_contracts.py，当前后端2415/前端186及构建通过。
 日期：2026-10-16。属于[SubAgent Spec086](086-subagent-foreground.md)。S1—S6已实施，实际范围与证据见G—L节。基于085迁移后的tools/tool_execution目录，不另留旧runtime/tools兼容路径。下表路径相对仓库根，A—F为当前文件/消费者合同，G—K保留各片当时的实施边界，L记录最终组合验收；本机证据不代表真实供应商或Windows原机。
 
 本版已按独立子运行边界重写审批、停止和保存接点；原父中断重入执行账/空GraphInterrupt/等待B后开放审批方案删除。[P4/P5探针](../research/subagent-framework-probes-2026-10-16.md)是前期框架证据；实际接线以各片验收为准。角色及已确认的一层/前台/共用权限合同不变。
@@ -11,7 +18,7 @@
 | 文件 | 必要职责、函数/数据 | 实际消费者 |
 |---|---|---|
 | `naiyue_test_agent/tools/subagent.py` | S1冻结SubAgentSpec及结构校验；S2已接agent/task输入schema、create_subagent_tool、原生coroutine入口及content_and_artifact | 配置/可信代码登记；显式测试接入后父ToolNode通过context端口委派；S3已入builtin，不导入上层 |
-| `naiyue_test_agent/application/session_subagents.py` | SessionSubagentControls：已接register/get、prepare_subagent_instance、ainvoke_subagent、settle_subagent_drivers、_subagent_steps、assert_subagents_settled | 实例child_thread_id/唯一驱动者；局部失败只收尾该实例、转ToolException，不广播兄弟；根终止另作全体收尾；复用IOCall生命周期 |
+| `naiyue_test_agent/application/session_subagents.py` | SessionSubagentControls：已接register/get、prepare_subagent_instance、ainvoke_subagent、settle_subagent_drivers、_subagent_steps、assert_subagents_settled | 实例child_thread_id/唯一驱动者；局部失败只收尾该实例、转ToolException，不广播兄弟；根终止另作全体收尾；根运行复用直接async公共阶段与受保护收尾 |
 | `naiyue_test_agent/agent_runtime/subagents.py` | build_subagent_runtime、ainvoke_subagent_step、SubagentModelFailureMiddleware、_finish_subagent_result | 单次独立thread图执行/观察/失败来源；显式共享saver；不拥有界面审批或另一套Agent循环 |
 
 不新增AgentScope/SubAgentSession、子进程Agent、消息队列、独立重试/审批/事件平台、用于将来续跑的定位接口。新生产文件各≤500行；若实际复杂度超限，按明确职责拆分并先更新本表，不把业务混进通用utils。
@@ -35,7 +42,7 @@
 | `tool_execution/observation.py` | scope、子执行片段/暂停与实例终局区别 | 观察失败隔离，授权/保存不依赖投递；不再记录父重入作为正常子恢复 |
 | `agent_runtime/active_stop.py`、`run_control.py` | finish_stopped_batch复用；request可选可信reason=user/failure/close；对应固定停止提示 | 默认用户控制不变；故障收尾不冒充人工拒绝/停止；UserStop/CancelledError身份及真实IO结果保留 |
 | `agent_runtime/events.py` | 冻结AgentEventSource、RuntimeEvent.source与RunEventPublisher.for_agent来源视图 | 一条根队列/序号；匹配子逻辑run，外层流仍root run_id |
-| `application/session_service.py` | 已混入SessionSubagentControls和SessionApprovalControls；扩展scope读取及当前实例/pending批次生命周期 | 接近500行上限，新职责放分工模块；_afinish_run在根必要保存前settle/assert子驱动收尾；权威状态不复制 |
+| `application/session_service.py` | 已混入SessionSubagentControls和SessionApprovalControls；扩展scope读取及当前实例/pending批次生命周期 | 根_afinish_run在必要保存前直接调用本会话子settle/assert；AgentSessionSubagents/AgentSessionApproval拥有实例/driver/live审批，Service只注册/解析共享角色并路由；不复制权威状态 |
 | `application/session_service.py::resolve_model` | S2新增agent_path参数，根读会话选择、子读实例冻结模型 | 不为S1登记提前改变模型选择；活动工具/权限解析归下方现有session_controls |
 | `application/session_approval.py`（现有） | SessionApprovalControls、PendingToolApproval、register_live_approval、validate_approval_submission、submit_subagent_approval（短同步投递）；根prepare_resume/is_pre_tool_approval复用 | 只提交一个实例当前批；Future唤醒唯一异步驱动者，不重新invoke父图；根/子共享校验 |
 | `application/session_controls.py` | 已扩展resolve_active_tool_names/resolve_permission_context的scope分支及request_stop/_request_scope_stop | 失败不伪装用户停止；批准历史不改写，已有真实效果保留，根主异常不被收尾覆盖 |

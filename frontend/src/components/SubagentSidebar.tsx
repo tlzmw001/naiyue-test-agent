@@ -39,6 +39,7 @@ export default function SubagentSidebar({ api, sessionId, run, initialAgentId, c
       {!view.loadingDetail && !view.messages.length && !error &&
         <p className={styles.notice}>暂无已保存消息。</p>}
       {!!view.messages.length && <Conversation key={`${sessionId}:${view.selected}`} messages={view.messages}
+        history={view.history}
         compacted={view.stored?.has_compaction ?? false} toolStates={view.toolStates}
         stoppingRunId={live?.status === 'stopping' || run?.stop_requested ? live?.source.agent_run_id : undefined} />}
       <footer className={styles.footer}>

@@ -1,6 +1,12 @@
 # 最小本地 Web 对话：使用、代码入口与证据
 
+2026-10-18当前：[Spec109两片](specs/109-web-replay-and-persistent-diagnostics.md#9-109-02实际结果与spec109收尾)已完成Web每根256条/4 MiB重播双预算和schema10持久诊断。关键事件/根摘要分开，根子共享额度，1 MiB单根/30天/256 MiB工作区默认可配置；有限队列、关闭排空、缺口和整组淘汰已接线。新增只读诊断分页API，冷查询不装载图；原聊天/用量/checkpoint及审批恢复保持。后端2817、前端198及211模块构建通过，0次真实供应商请求。下一步先讨论Spec103的GFM消息呈现，再逐片推进其他UI；checkpoint修剪和两种项目重试继续延期，原机/更多供应商/PyPI交付独立。
+
+2026-10-18：[104-03](specs/104-03-concurrency-acceptance.md#6-实际结果与104收尾)已完成真实图/SQLite组合、离线限流隔离及双进程TCP验收，104三片和106 R1离线部分收尾；后端2524、前端189及构建通过。子模型具体ToolException现保留同run分类，根异常/父工具失败/停止及其他会话合同保持。下一步讨论[M6缓存控制草案](specs/107-model-request-prompt-cache.md)，尚未实施或授权实网；持久用量/诊断随后，checkpoint修剪/两种项目重试延后。真实TCP新探针为scripts.probe_web_concurrency：两会话delta、断连继续、定向控制、根/子审批、幂等及第2进程只读档案，固定7次离线模型/1次Write提交/1次Read，0次供应商请求。
+
 聊天基础对应 [Spec077](specs/077-local-web-chat.md)，2026-10-09 已接线验证。前端参考用户确认的 ChatKit 浅色聊天外观；Agent 循环仍由现有 LangChain `create_agent` 执行。Spec077首片注册 `tools=[]`；随后 [Spec078](specs/078-web-tools-and-approval.md)已接入工作区工具及审批，最新操作见 [Web工具说明](web-tools.md)。下列测试数字和首片边界按Spec077历史时点保留。
+
+2026-10-18：[Spec101-02](specs/101-web-history-pagination.md#14-101-02实施合同本轮授权)已将选择会话改为显式POST prepare，普通GET只查档案和轻量状态；最近窗口、历史游标及正文JSON分块分别交付。101-03已接根/子上滑分页、阅读锚点、重试/起点及SSE缺口合并；旧页与实时消息按ID/revision合并，失败不清空当前内容或草稿，工具跨页归属不折叠正在阅读的正文。超大消息明确预览，完整正文展开界面未增加；101-04继续组合验收。
 
 ## 启动与操作
 
@@ -30,12 +36,14 @@ npm --prefix frontend run build
 - 浏览器刷新后从侧栏选择会话；服务仍存活且run view尚保留时可找回服务端未执行内容。浏览器草稿/本地新增待发送内容只在内存，刷新会丢失。服务重启后按[Spec092](specs/092-session-restart-recovery.md#0-2026-10-17确认打开会话自动恢复)在打开会话时自动整理状态：执行中断用三次更新保留真实结果、补未确认说明并结束旧任务；前置审批通过本地复核后直接显示审批卡片。不会自动重跑工具、调用模型/Auto或发送草稿。失败保留历史与草稿、重读当前checkpoint，停止自动重试；用户可手动重试或明确结束失效旧批次。GET仍只读，不扫描全部历史，不复活旧进度/SSE或待发送队列。
 - 事件断线可点“重新同步”。程序最多一次重读 view 并续接事件，绝不自动重发用户 POST。模型失败、保存未确认或受限会话会明确显示状态。
 
+2026-10-18：101-04已完成压缩、独立进程重开、写入后硬退出与根/子审批恢复边界的组合验收；原始聊天从档案分页读取，模型上下文继续使用压缩后的checkpoint。根前置审批可恢复卡片，子内部审批中断后结束旧委派并保留历史，不复活旧等待任务；具体证据见[Spec101第21节](specs/101-web-history-pagination.md#21-101-04实际结果与spec101收尾2026-10-18)。
+
 ## 一条真实调用链
 
 ```text
 Composer 输入 → useConversation.submit → WebApi.start（request_id）
   → POST runs → schema + token/Host/Origin 检查
-  → WebService 读取安全会话视图 → RunDelivery 去重/准入
+  → WebService._session_status 读取轻量权威状态 → RunDelivery 去重/准入
   → 独立 asyncio Task 调用 AsyncApplication.arun
   → 原 SessionService / LangChain / middleware / 模型与 checkpoint
   → 领域订阅（只更新内存 projection/有界缓冲并唤醒）
@@ -46,6 +54,8 @@ Composer 输入 → useConversation.submit → WebApi.start（request_id）
 
 控制通过独立 REST 请求调用原 `steer`、`follow_up`、`request_stop`。SSE 消费连接和 Agent 生产任务分别拥有生命周期；断开连接只是停止交付，不取消生产。HTTP 请求等待者取消也不移除已经产生的 run 登记和回执。准入、控制接受、模型返回、消息确认、持久保存与界面显示是不同事实。
 
+浏览历史链：选择会话→POST prepare→useMessageHistory.open安装近期页；接近顶部→loadOlder→GET messages(cursor,agent_id)→SQL有限页→按ID/revision前插→Conversation布局阶段恢复原正文偏移。根与选中子范围共用机制，审批仍由主会话处理。SSE缺口先prepare补录已保存边界，再synchronize补齐近期窗口与已加载末端之间的缺页，不重发执行POST、不把显示页装入模型上下文。
+
 ## 代码入口
 
 | 模块 | 职责 |
@@ -54,12 +64,14 @@ Composer 输入 → useConversation.submit → WebApi.start（request_id）
 | `web/app.py` | 生命周期/HTTP schema/路由/SSE/仅构建目录静态服务 |
 | `web/auth.py`、`headers.py` | 显式本地授权/来源/Host、CSP 与禁止缓存 |
 | `web/service.py` | 调用现有应用、选择/恢复会话、公开 DTO，不重建循环 |
-| `web/run_delivery.py` | 独立生产任务、有界回放、幂等回执、临时展示视图 |
+| `web/run_delivery.py` | 独立生产任务、幂等回执与控制，不生成全历史作为准入 |
+| `web/delivered_run.py`、`chat_history.py` | 单run临时投影/回放；历史游标/有界消息wire，均不拥有永久档案 |
+| `application/chat_queries.py`、`session_storage.py` | 档案有界SQL；连接、事务和锁仍由SessionStorage持有 |
 | `frontend/src/api.ts`、`sse.ts`、`events.ts` | 请求、UTF-8 跨 chunk 解析、事件序号及完整消息校准 |
 | `frontend/src/useConversation.ts` | 会话选择、草稿、订阅、控制与确认后的展示 |
 | `frontend/src/components/` | Sidebar/Conversation/Composer，纯 UI 展示和用户动作 |
 
-模型目录新增只读 `model_ids`，应用新增 `has_session`/`aget_session_view`，消息投影新增 DTO `seed`。运行层无新的 Web 依赖，不改现有 Agent/工具/上下文算法。公开视图只提供必要元数据和当前可用消息，不传 SDK 对象、供应商地址或密钥。
+模型目录只读 `model_ids`、应用 `has_session` 和消息投影 DTO `seed`仍有当前消费者；原Web专用 `aget_session_view`全量包装已由轻量 `aget_session_status`及显式 `aprepare_session`/档案查询替代并删除。`aget_messages`继续服务模型当前上下文与CLI/测试，不改成聊天分页。运行层无新的Web依赖。公开视图只提供必要元数据和有界消息，不传SDK对象、供应商地址或密钥。
 
 ## 验证结果与边界
 
@@ -97,7 +109,7 @@ web_probe=PASS mode=offline tcp=True sse_delta=True disconnect_keeps_run=True st
 
 ## 当前限制与下一片
 
-- 当前单用户、单 worker、全应用单活动 run；不是 SaaS 登录/租户隔离或任意多进程并发方案。
+- 当前单用户、单 worker、同一工作区不同会话可并行，每会话一个活动根run；默认最多10个根运行，含保存占用，满额拒绝且保留草稿/审批。切换仅取消显示订阅，停止按run路由；不是 SaaS 登录/租户隔离或任意多进程并发方案。
 - 首片无 Web 工具、工具卡/审批、附件/图片、模型配置编辑。已有工具仍在原应用/CLI 路径可用。
 - 恢复的是当前安全 checkpoint；被压缩的完整历史、分支、跨重启审批/异常恢复尚未做。
 - 缓冲默认 256 个事件、view/frame 上限 1MiB、保留最多 16 个完成 run；过期或缺口显式报错。请求回执最多 4096 条，达到上限拒绝新请求；保留旧回执避免淘汰后重复执行，长期持久幂等仓库待后续设计。

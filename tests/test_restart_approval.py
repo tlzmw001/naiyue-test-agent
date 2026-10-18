@@ -47,7 +47,7 @@ async def test_reopened_mixed_sequential_batch_waits_then_runs_once(monkeypatch,
         async with opened([first]) as (app, _):
             sid = await app.acreate_workspace_session('A', root)
             await app.arun(sid, [('user', 'read note and write the external result')])
-            row = app._sessions._persistence.storage.get(sid)
+            row = app._storage.get(sid)
             config = {'configurable': {'thread_id': row['thread_id']}}
             original = await app._agent.aget_state(config)
         assert not target.exists()
@@ -61,8 +61,8 @@ async def test_reopened_mixed_sequential_batch_waits_then_runs_once(monkeypatch,
             recovered = await app.arecover_session(sid, **kwargs)
             assert recovered['state'] == 'interrupted' and recovered['checkpoint_id'] == history['checkpoint_id']
             memory = app._sessions._sessions[sid]
-            assert memory['session_allow'] == [] and memory['pending_turn'] is None and not memory['busy']
-            assert memory['pending_tool_approval']['requested_run_id'] == row['run_id']
+            assert memory.resolve_permission_context()['session_allow'] == [] and memory.snapshot_for_run()['pending_turn'] is None and not memory.is_busy()
+            assert memory.snapshot_for_run()['pending']['requested_run_id'] == row['run_id']
             assert app.pending_tool_approvals(sid)[0]['tool_call_id'] == 'write-call'
             assert not target.exists() and events == []
             assert (model.seen == []) if streaming_model else model.i == 0
@@ -84,7 +84,7 @@ async def test_reopened_mixed_sequential_batch_waits_then_runs_once(monkeypatch,
             starts = [e.data.tool_call_id for e in events if e.event_type == 'tool_call_started']
             assert starts.count('read-call') == 1 and starts.count('write-call') == 1
             assert not app.pending_tool_approvals(sid)
-            assert app._sessions._persistence.storage.get(sid)['state'] == 'ready'
+            assert app._storage.get(sid)['state'] == 'ready'
     await scenario()
 
 
@@ -95,7 +95,7 @@ async def test_revalidation_failure_has_no_writes_or_installed_session(monkeypat
     settings = ToolSettings.model_validate({'permissions': {'deny': [{'tool': 'read'}]}}) if change == 'deny' else ToolSettings()
     async with open_async_persistent_application('unused', database_path=tmp_path / 'approval.sqlite', tools=[create_session_read_tool()],
             system_prompt='', response_format=None, settings=settings) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         if change == 'run':
             storage.connection.execute('UPDATE naiyue_sessions SET run_id=NULL WHERE session_id=?', (row['session_id'],))
             storage.connection.commit()
@@ -123,7 +123,7 @@ async def test_revalidation_failure_has_no_writes_or_installed_session(monkeypat
 async def test_failed_approval_metadata_save_can_be_retried_without_modifying_graph(monkeypatch, tmp_path):
     row, original = await approval_snapshot(monkeypatch, tmp_path)
     async with build(monkeypatch, tmp_path / 'approval.sqlite', tools=[create_session_read_tool()]) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         raw = await app._agent.checkpointer.aget_tuple(original.config)
         with monkeypatch.context() as patch:
             patch.setattr(storage, 'finish_run', lambda *_a: (_ for _ in ()).throw(OSError('PRIVATE_SQL')))
@@ -154,12 +154,16 @@ async def test_old_allow_must_be_proven_by_current_local_policy_without_auto(mon
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     async with open_async_persistent_application('unused', database_path=path, tools=tools, settings=settings,
             system_prompt='', response_format=None) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         sid = await app.acreate_workspace_session('A', root)
         if source == 'session_allow':
             call = prepare_permission_call(request.tool_calls[0], app._tool_registry.get('read'),
                 {'session_id': sid, 'workspace_root': root}, settings.permissions, [])
-            app._sessions._sessions[sid]['session_allow'] = [remembered_rule(call['subject'])]
+            owner, observation_run = app._sessions._admit(sid, 'allow-setup', 'message')
+            run_id, observation = observation_run.run_id, observation_run.observation
+            owner.remember_approved_rules(observation_run, [remembered_rule(call['subject'])])
+            owner._cleanup_run(observation_run)
+            owner.release_run(observation_run)
         with monkeypatch.context() as patch:
             async def review(_self, data, _context):
                 return {'decision': 'allow' if data['current_call']['id'] == 'one' else 'ask', 'source': 'auto_fast'}
@@ -170,7 +174,7 @@ async def test_old_allow_must_be_proven_by_current_local_policy_without_auto(mon
         assert [c['decision'] for c in original.values['tool_execution']['calls']] == ['allow', 'ask']
     async with open_async_persistent_application('unused', database_path=path, tools=tools,
             settings=settings if source == 'auto' else ToolSettings(), system_prompt='', response_format=None) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         reached = []
         def forbidden(*_a, **_k):
             reached.append(True)
@@ -214,10 +218,10 @@ async def test_real_process_exit_keeps_pre_tool_approval_recoverable(monkeypatch
             async with opened() as app:
                 sid = await app.acreate_workspace_session('A', path.parent / 'work')
                 if phase == 'before_terminal_metadata':
-                    app._sessions._persistence.storage.finish_run = lambda *_a: os._exit(91)
+                    app._storage.finish_run = lambda *_a: os._exit(91)
                 await app.arun(sid, [('user', 'read external file')])
             async with opened() as app:
-                storage = app._sessions._persistence.storage
+                storage = app._storage
                 original = storage.finish_run
                 def saved_then_exit(*args):
                     original(*args)
@@ -232,7 +236,7 @@ async def test_real_process_exit_keeps_pre_tool_approval_recoverable(monkeypatch
                            capture_output=True, timeout=20)
     assert child.returncode == 91, child.stderr.decode()
     async with build(monkeypatch, path, tools=[create_session_read_tool()]) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         row = storage.list_sessions()[0]
         assert row['state'] == ('running' if phase == 'before_terminal_metadata' else 'interrupted')
         history = await app.aget_session_history(row['session_id'])

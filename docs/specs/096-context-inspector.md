@@ -2,6 +2,8 @@
 
 状态：2026-10-17用户已批准并接线，验收记录见文末。入口固定在发送键左侧；只读查看，估算与供应商报告分开。
 
+后续状态（2026-10-18）：[Spec108-03](108-persistent-model-usage.md#10-108-03实际实现与spec108收尾)已在同一入口增加“会话累计”第三页签，读取独立调用表；本稿两种上下文口径保持，以下保留Spec096实施时点。累计包含子智能体/摘要/Auto，不叠加到上下文占用百分比。
+
 ## 目标与当前链路
 
 当前 `prepare_run_resources → ToolSetMiddleware.model_inputs → ModelInputMiddleware → observe_model_request → 模型 → select_model._accept` 已能装配提示词、估算预算及读取usage；估算主要在日志，Web未投影。聊天展示保留的旧内容不能作为模型上下文。使用现有LangChain近似计数，不改压缩算法、权限、工具执行或模型调用次数。

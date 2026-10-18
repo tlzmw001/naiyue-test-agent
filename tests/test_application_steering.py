@@ -184,7 +184,7 @@ async def test_natural_end_closes_steering_before_busy_gate_is_released():
             assert await asyncio.to_thread(release.wait, timeout=3)
             return {'messages': []}
 
-    app = AsyncApplication(service._catalog, service, PausedAtEndAgent(), prepare_tool_registry([]))
+    app = AsyncApplication(service._catalog, service, PausedAtEndAgent(), prepare_tool_registry([]), system_prompt='')
     worker, outcomes = run_in_worker(app, session_id)
     try:
         assert await asyncio.to_thread(closed.wait, timeout=3)
@@ -208,8 +208,8 @@ async def test_current_application_assembly_accepts_steering_callbacks():
     model = FakeMessagesListChatModel(responses=[AIMessage(content='answer')])
     catalog = ModelCatalog('A', {'A': model})
     service = application.SessionService(catalog)
-    agent = application._assemble_application(
-        catalog, service, None, tool_registry=prepare_tool_registry([]), system_prompt='', response_format=None)
+    agent = service.assemble_runtime(
+        None, system_prompt='', response_format=None)
 
     result = await service.arun(agent, service.create_session('A'), [('user', 'initial')])
     assert [message.content for message in result['messages']] == ['initial', 'answer']

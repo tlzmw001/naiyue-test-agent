@@ -23,6 +23,9 @@ def test_stream_disconnect_keeps_owned_run_and_persistence(monkeypatch, tmp_path
         entered, release = asyncio.Event(), asyncio.Event()
         chosen = StreamingToolModel(replies=[AIMessage(content='saved')], entered=entered, release=release)
         async with factory(monkeypatch, tmp_path / 'sessions.sqlite', chosen) as app:
+            subscriptions = app._sessions._events
+            application_handlers = dict(subscriptions._handlers)
+            assert list(application_handlers.values()) == [(None, app._persistence._usage.accept), (None, app._diagnostics.accept)]
             session = await app.acreate_session('A')
             iterator = app.astream_run(session, [('user', 'start')])
             first = await iterator.__anext__()
@@ -30,12 +33,13 @@ def test_stream_disconnect_keeps_owned_run_and_persistence(monkeypatch, tmp_path
             await asyncio.wait_for(entered.wait(), 5)
             producer = next(iter(app._tasks))
             await iterator.aclose()
-            assert not producer.done() and app._sessions._sessions[session]['busy']
+            assert not producer.done() and app._sessions.describe_session(session)['busy']
             release.set()
             result = await producer
             assert result['messages'][-1].content == 'saved'
             assert (await app.alist_sessions())[0]['state'] == 'ready'
-            assert app._sessions._events._handlers == {}
+            assert subscriptions._handlers == application_handlers
+        assert subscriptions._handlers == {}
     asyncio.run(scenario())
 
 

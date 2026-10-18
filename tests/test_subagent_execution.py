@@ -52,12 +52,14 @@ async def delegated_app(monkeypatch, child, *, root=None, spec=None, tools=None,
 
 def record_instances(monkeypatch, app):
     instances = []
-    prepare = app._sessions.prepare_subagent_instance
-    def record(*args, **kwargs):
-        graph, instance = prepare(*args, **kwargs)
-        instances.append(instance)
+    from naiyue_test_agent.application.agent_session import AgentSession
+    prepare = AgentSession.prepare_subagent_instance
+    def record(self, *args, **kwargs):
+        graph, instance = prepare(self, *args, **kwargs)
+        if app._sessions._sessions.get(self.session_id) is self:
+            instances.append(instance)
         return graph, instance
-    monkeypatch.setattr(app._sessions, 'prepare_subagent_instance', record)
+    monkeypatch.setattr(AgentSession, 'prepare_subagent_instance', record)
     return instances
 
 
@@ -187,7 +189,7 @@ async def test_unknown_role_is_tool_error_and_does_not_start_child(monkeypatch):
     feedback = next(message for message in result['messages'] if isinstance(message, ToolMessage))
     assert feedback.status == 'error' and 'Unknown subagent' in feedback.content
     assert result['messages'][-1].content == 'continue' and child.seen == []
-    assert app._sessions._subagent_instances == {}
+    assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
 
 
 @async_test

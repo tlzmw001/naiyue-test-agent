@@ -17,10 +17,6 @@ def encoded_size(value):
     return len(json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode('utf-8'))
 
 
-def text_content(content):
-    return content_text(content)
-
-
 def project_event_for_web(event, *, progress_max_text_bytes=ToolProgressSettings().max_text_bytes):
     """Hash a text-only snapshot copy before Web frame limits; never mutate domain events."""
     if event.event_type == 'tool_progress':
@@ -33,7 +29,7 @@ def project_event_for_web(event, *, progress_max_text_bytes=ToolProgressSettings
     row = json.loads(event.data.snapshot_json)
     if not isinstance(row.get('content'), list):
         return event
-    row.update(content=text_content(row['content']), content_projection='text')
+    row.update(content=content_text(row['content']), content_projection='text')
     snapshot = json.dumps(row, ensure_ascii=False, sort_keys=True, allow_nan=False)
     data = replace(event.data, snapshot_json=snapshot, snapshot_bytes=len(snapshot.encode('utf-8')),
                    snapshot_sha256=hashlib.sha256(snapshot.encode('utf-8')).hexdigest())
@@ -42,7 +38,7 @@ def project_event_for_web(event, *, progress_max_text_bytes=ToolProgressSettings
 
 def message_view(message):
     summary = bool(message.additional_kwargs.get('naiyue_compaction_summary'))
-    row = {'id': message.id, 'type': message.type, 'content': text_content(message.content),
+    row = {'id': message.id, 'type': message.type, 'content': content_text(message.content),
             'is_context_summary': summary, 'provisional': False, 'state': 'complete'}
     if isinstance(message.content, list):
         row['content_projection'] = 'text'

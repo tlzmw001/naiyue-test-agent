@@ -10,6 +10,7 @@ from test_async_application import StreamingToolModel
 from test_web_api import web_client, request
 from test_web_tools import start, calls, approval_request
 from test_session_history import database_facts
+from test_web_history_paging import read_pages
 
 
 def test_recover_then_wait_for_new_input_and_reject_duplicate_checkpoint(monkeypatch, tmp_path):
@@ -22,6 +23,7 @@ def test_recover_then_wait_for_new_input_and_reject_duplicate_checkpoint(monkeyp
             events = []
             backend.subscribe_events(events.append)
             endpoint = f'/api/sessions/{sid}/recover'
+            assert (await client.post(f'/api/sessions/{sid}/prepare')).status_code == 200
             view = (await client.get(f'/api/sessions/{sid}')).json()
             assert view['recovery']['actions'] == ['continue']
             body = {'checkpoint_id': view['checkpoint_id'], 'action': 'continue'}
@@ -32,9 +34,9 @@ def test_recover_then_wait_for_new_input_and_reject_duplicate_checkpoint(monkeyp
             for invalid in ({**body, 'action': 'invalid'}, {**body, 'run_id': 'invented'}):
                 assert (await client.post(endpoint, json=invalid)).status_code == 422
             assert (await client.post(endpoint, json={**body, 'action': 'restore_approval'})).status_code == 409
-            before = database_facts(backend._sessions._persistence.storage)
+            before = database_facts(backend._storage)
             assert (await client.post(endpoint, json={**body, 'checkpoint_id': 'old'})).status_code == 409
-            assert database_facts(backend._sessions._persistence.storage) == before
+            assert database_facts(backend._storage) == before
             response = await client.post(endpoint, json=body)
             assert response.status_code == 200
             ready = response.json()
@@ -56,6 +58,7 @@ def test_recovery_and_start_share_admission_lock_and_preserve_draft_on_failure(m
             sid, _ = await start(client)
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[])) as (client, app):
             endpoint = f'/api/sessions/{sid}/recover'
+            assert (await client.post(f'/api/sessions/{sid}/prepare')).status_code == 200
             history = (await client.get(f'/api/sessions/{sid}')).json()
             entered, release = asyncio.Event(), asyncio.Event()
             original = app.state.service.application.arecover_session
@@ -87,6 +90,7 @@ def test_continue_abandons_saved_approval_without_running_tools(monkeypatch, tmp
             sid, origin = await start(client)
         model = StreamingToolModel(replies=[])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
+            assert (await client.post(f'/api/sessions/{sid}/prepare')).status_code == 200
             history = (await client.get(f'/api/sessions/{sid}')).json()
             assert history['recovery']['kind'] == 'pending_approval'
             result = await client.post(f'/api/sessions/{sid}/recover', json={'checkpoint_id': history['checkpoint_id'], 'action': 'continue'})
@@ -112,10 +116,11 @@ def test_cold_approval_restores_cards_and_requires_a_fresh_user_decision(monkeyp
             backend = app.state.service.application
             events = []
             backend.subscribe_events(events.append)
-            before = database_facts(backend._sessions._persistence.storage)
+            assert (await client.post(f'/api/sessions/{sid}/prepare')).status_code == 200
+            before = database_facts(backend._storage)
             history = (await client.get(f'/api/sessions/{sid}')).json()
             assert history['recovery']['actions'] == ['restore_approval', 'continue']
-            assert database_facts(backend._sessions._persistence.storage) == before
+            assert database_facts(backend._storage) == before
             body = {'checkpoint_id': history['checkpoint_id'], 'action': 'restore_approval'}
             endpoint = f'/api/sessions/{sid}/recover'
             assert (await client.post(endpoint, json=body, headers={'Authorization': ''})).status_code == 401
@@ -142,4 +147,56 @@ def test_cold_approval_restores_cards_and_requires_a_fresh_user_decision(monkeyp
             assert ready['can_run'] and not ready['pending_approval']
             assert [m['content'] for m in ready['messages'] if m['type'] == 'tool'] == ['actual approved content']
             assert len(model.seen) == 1
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('choice', ['approve', 'reject'])
+def test_multi_page_history_and_cold_approval_never_execute_before_decision(monkeypatch, tmp_path, choice):
+    async def scenario():
+        import importlib
+        module = importlib.import_module('naiyue_test_agent.tools.read')
+        original_read, reached = module._read, []
+        def counted(*args, **kwargs):
+            reached.append(True)
+            return original_read(*args, **kwargs)
+        monkeypatch.setattr(module, '_read', counted)
+        root = tmp_path / 'work'
+        root.mkdir()
+        outside = tmp_path / 'outside.txt'
+        outside.write_text('approved once')
+        initial = StreamingToolModel(replies=[AIMessage(id=f'a{n}', content=f'old answer {n}') for n in range(3)] +
+            [calls(('read', {'path': str(outside)}, 'pending-call'))])
+        async with web_client(monkeypatch, tmp_path, initial, workspace_root=root, history_page_messages=2) as (client, web):
+            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+            endpoint = f'/api/sessions/{sid}'
+            for n in range(4):
+                response = await client.post(endpoint + '/runs', json=request(f'task {n}'))
+                await web.state.delivery.wait(response.json()['run_id'])
+            original = await read_pages(client, sid)
+            owner = original[-1]['id']
+            assert len(original) == 8 and reached == [] and len(initial.seen) == 4
+        model = StreamingToolModel(replies=[AIMessage(id='final-answer', content='decision handled')])
+        async with web_client(monkeypatch, tmp_path, model, workspace_root=root, history_page_messages=2) as (client, web):
+            prepared = (await client.post(endpoint + '/prepare')).json()
+            assert prepared['recovery']['kind'] == 'pending_approval'
+            restored = await client.post(endpoint + '/recover', json={
+                'checkpoint_id': prepared['checkpoint_id'], 'action': 'restore_approval'})
+            assert restored.status_code == 200
+            batch, = restored.json()['approval_batches']
+            store = web.state.service.application._storage
+            writes = store.connection.total_changes
+            assert await read_pages(client, sid) == original
+            assert store.connection.total_changes == writes and reached == [] and model.seen == []
+            decision = approval_request(batch, [choice])
+            response = await client.post(endpoint + '/approvals', json=decision)
+            assert response.status_code == 202
+            await web.state.delivery.wait(response.json()['run_id'])
+            repeated = await client.post(endpoint + '/approvals', json=decision)
+            assert repeated.json() == response.json()
+            rows = await read_pages(client, sid)
+            assert [row['id'] for row in rows[:8]] == [row['id'] for row in original]
+            result, = [row for row in rows if row['type'] == 'tool']
+            assert result['parent_message_id'] == owner and result['tool_call_id'] == 'pending-call'
+            assert result['status'] == ('success' if choice == 'approve' else 'error')
+            assert reached == ([True] if choice == 'approve' else []) and len(model.seen) == 1
     asyncio.run(scenario())

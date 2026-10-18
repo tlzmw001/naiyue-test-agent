@@ -34,7 +34,7 @@ async def test_success_survives_publish_fault(monkeypatch, event_type, caplog):
     monkeypatch.setattr(RunEventPublisher, 'publish', fault)
     result = await app.arun(session, [('user', 'probe')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
-    assert app._sessions._sessions[session]['busy'] is False
+    assert app._sessions.describe_session(session)['busy'] is False
     assert 'PRIVATE_EVENT_FAULT' not in caplog.text
     assert any('publish_failed' in item.message or 'observation_failed' in item.message
                for item in caplog.records)
@@ -56,7 +56,7 @@ async def test_observer_fault_does_not_change_result(monkeypatch, owner, operati
     monkeypatch.setattr(owner, operation, fault)
     result = await app.arun(session, [('user', 'probe')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
-    assert app._sessions._sessions[session]['busy'] is False
+    assert app._sessions.describe_session(session)['busy'] is False
     assert 'observation_failed' in caplog.text and 'PRIVATE_OBSERVER_FAULT' not in caplog.text
 
 
@@ -182,7 +182,7 @@ async def test_web_settles_after_missing_notifications(monkeypatch, tmp_path, mi
 @pytest.mark.parametrize('failure', [False, True])
 @async_test
 async def test_fast_web_completion_does_not_race_queued_start_callback(failure):
-    from types import SimpleNamespace
+    from naiyue_test_agent.web.settings import WebSettings
     from uuid import uuid4
     from naiyue_test_agent.web.run_delivery import RunDelivery
     from naiyue_test_agent.web.schemas import MessageInput
@@ -190,14 +190,14 @@ async def test_fast_web_completion_does_not_race_queued_start_callback(failure):
 
     class ImmediateApplication:
         def __init__(self):
-            self.handlers = []
+            from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions
+            self.events = ApplicationEventSubscriptions()
 
-        def subscribe_events(self, handler):
-            self.handlers.append(handler)
-            return lambda: self.handlers.remove(handler)
+        def subscribe_events(self, handler, *, session_id=None):
+            return self.events.subscribe(handler, session_id=session_id)
 
         async def arun(self, session, messages):
-            pub = RunEventPublisher(session, 'actual-run', tuple(self.handlers))
+            pub = self.events.publisher(session, 'actual-run')
             pub.publish('run_started', RunStartedData('message'))
             if failure:
                 raise ValueError('PRIVATE_FAST_FAILURE')
@@ -205,8 +205,8 @@ async def test_fast_web_completion_does_not_race_queued_start_callback(failure):
             return {'messages': [*messages, AIMessage(content='answer')]}
 
     async def scenario():
-        settings = SimpleNamespace(event_capacity=20, max_frame_bytes=100000,
-                                   max_receipts=20, retained_runs=10)
+        settings = WebSettings(database_path='unused', frontend_dist='unused', event_capacity=20,
+                               max_frame_bytes=100000, max_receipts=20, retained_runs=10)
         delivery = RunDelivery(ImmediateApplication(), settings)
         response = await delivery.start('s', MessageInput(request_id=str(uuid4()), text='q'), [])
         assert response['run_id'] == 'actual-run'

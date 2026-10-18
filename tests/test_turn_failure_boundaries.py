@@ -126,24 +126,24 @@ async def make_approval(monkeypatch, tmp_path):
 
 @async_test
 async def test_prepare_failure_preserves_waiting_turn_for_later_resume(monkeypatch, tmp_path):
-    from naiyue_test_agent.application import session_service
+    from naiyue_test_agent.application import session_execution
 
     app, session, events = await make_approval(monkeypatch, tmp_path)
-    saved = app._sessions._sessions[session]['pending_turn']
-    original = session_service.prepare_run_resources
+    saved = app._sessions._sessions[session].snapshot_for_run()['pending_turn']
+    original = session_execution.prepare_run_resources
     failure = OSError('PRIVATE_PREPARE')
 
     def fail_prepare(*args, **kwargs):
         raise failure
 
-    monkeypatch.setattr(session_service, 'prepare_run_resources', fail_prepare)
+    monkeypatch.setattr(session_execution, 'prepare_run_resources', fail_prepare)
     old_count = len(events)
     with pytest.raises(OSError) as caught:
         await app.aresume_tool_approval(session, ['approve'])
     assert caught.value is failure and turns(events[old_count:]) == []
-    assert app._sessions._sessions[session]['pending_turn'] == saved
+    assert app._sessions._sessions[session].snapshot_for_run()['pending_turn'] == saved
     assert events[-1].data.failure.stage == 'prepare'
-    monkeypatch.setattr(session_service, 'prepare_run_resources', original)
+    monkeypatch.setattr(session_execution, 'prepare_run_resources', original)
     await app.aresume_tool_approval(session, ['reject'])
     assert turns(events, 'turn_resumed')[0].data.turn_id == saved['turn_id']
 
@@ -171,9 +171,9 @@ async def test_failed_approval_tool_stage_requires_review_before_another_attempt
     assert caught.value is failure
     assert turns(events, 'turn_finished')[-1].data.status == 'failed'
     state = app._sessions._sessions[session]
-    assert state['manual_review_required'] and state['pending_turn'] is None
-    assert state['pending_tool_approval'] is None and not state['busy']
-    thread_id = state['thread_id']
+    assert state.describe_session()['manual_review_required'] and state.snapshot_for_run()['pending_turn'] is None
+    assert state.snapshot_for_run()['pending'] is None and not state.is_busy()
+    thread_id = state.get_thread_id()
     assert (await app._agent.aget_state({'configurable': {'thread_id': thread_id}})).next == ('tools',)
     count = len(events)
     with pytest.raises(application.SessionManualReviewRequiredError):
@@ -277,7 +277,7 @@ async def test_dynamic_runtime_has_no_app_observation_and_fits_explicit_step_bud
     _runtime_registry_1 = prepare_tool_registry([ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     _runtime_names_1 = _runtime_registry_1.names()
     graph = build_runtime_agent(model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
-                                resolve_model=lambda _s, agent_path='root': ('A', model), record_selection=lambda *_a: None)
+                                resolve_model=lambda _s, agent_path='root': ('A', model), )
     result = (await graph.ainvoke({'messages': [('user', 'run')]}, context={'session_id': 'session'},
                           config={'recursion_limit': 14}))
     assert [m.type for m in result['messages']] == ['human', 'ai', 'tool', 'ai']

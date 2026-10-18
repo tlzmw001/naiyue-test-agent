@@ -3,9 +3,8 @@
 import logging
 
 from .errors import WebError, public_error
-from .serialization import encoded_size, message_view
-from naiyue_test_agent.application.session_storage import SessionPersistenceError
-from naiyue_test_agent.model_access import ModelConfigError
+from .serialization import encoded_size
+from .chat_history import history_page, history_window
 from naiyue_test_agent.agent_runtime.async_utils import await_settled
 
 
@@ -37,22 +36,17 @@ class WebService:
         return result
 
     async def select_thinking(self, session_id, model_id, level):
-        value = await self.session(session_id)
+        value = await self._session_status(session_id)
         if 'recovery' in value:
             raise WebError('session_recovery_blocked')
-        try:
-            await self.application.aselect_thinking(session_id, model_id, level)
-        except ValueError:
-            logger.warning('web_thinking_selection_invalid')
-            raise WebError('thinking_unavailable', 422) from None
-        except Exception as error:
-            logger.error('web_thinking_selection_failed error_type=%s', type(error).__name__)
-            raise public_error(error) from None
+        await self._apply_setting(self.application.aselect_thinking(session_id, model_id, level),
+            invalid_code='thinking_unavailable', invalid_event='web_thinking_selection_invalid',
+            failure_event='web_thinking_selection_failed')
         return {'model_id': model_id, 'thinking_level': level}
 
     async def compact(self, session_id, body):
-        value = await self.session(session_id)
-        return await self.delivery.compact(session_id, body, value['messages'], can_run=value['can_run'])
+        value = await self._session_status(session_id)
+        return await self.delivery.compact(session_id, body, [], can_run=value['can_run'])
 
     def session_control_options(self):
         result = {**self.application.get_session_control_options(), 'tools': [
@@ -63,42 +57,39 @@ class WebService:
         return result
 
     async def select_tools(self, session_id, names):
-        value = await self.session(session_id)
+        value = await self._session_status(session_id)
         if 'recovery' in value:
             raise WebError('session_recovery_blocked')
-        try:
-            await self.application.aset_active_tools(session_id, names)
-        except ValueError:
-            logger.warning('web_tool_selection_invalid')
-            raise WebError('invalid_tool_selection', 422) from None
-        except Exception as error:
-            logger.error('web_tool_selection_failed error_type=%s', type(error).__name__)
-            raise public_error(error) from None
+        await self._apply_setting(self.application.aset_active_tools(session_id, names),
+            invalid_code='invalid_tool_selection', invalid_event='web_tool_selection_invalid',
+            failure_event='web_tool_selection_failed')
         return {'active_tools': list(self.application.get_active_tools(session_id))}
 
     async def select_permission_mode(self, session_id, mode):
-        value = await self.session(session_id)
+        value = await self._session_status(session_id)
         if 'recovery' in value:
             raise WebError('session_recovery_blocked')
-        try:
-            await self.application.aset_permission_mode(session_id, mode)
-        except ValueError:
-            logger.warning('web_permission_mode_unavailable')
-            raise WebError('permission_mode_unavailable', 422) from None
-        except Exception as error:
-            logger.error('web_permission_mode_failed error_type=%s', type(error).__name__)
-            raise public_error(error) from None
+        await self._apply_setting(self.application.aset_permission_mode(session_id, mode),
+            invalid_code='permission_mode_unavailable', invalid_event='web_permission_mode_unavailable',
+            failure_event='web_permission_mode_failed')
         return {'permission_mode': self.application.get_permission_mode(session_id)}
 
+    async def _apply_setting(self, operation, *, invalid_code, invalid_event, failure_event):
+        try:
+            await operation
+        except ValueError:
+            logger.warning(invalid_event)
+            raise WebError(invalid_code, 422) from None
+        except Exception as error:
+            logger.error('%s error_type=%s', failure_event, type(error).__name__)
+            raise public_error(error) from None
+
     async def sessions(self):
-        rows = await self.application.alist_sessions()
-        return [{**{key: row[key] for key in ('session_id', 'model_id', 'workspace_root',
-            'state', 'updated_at', 'last_run_status', 'title')}, 'pinned': bool(row['pinned'])} for row in rows
-            if row['workspace_root'] == (str(self.settings.workspace_root) if self.settings.workspace_root else None)]
+        rows = await self.application.alist_workspace_sessions(self.settings.workspace_root)
+        return [{**row, 'pinned': bool(row['pinned'])} for row in rows]
 
     async def update_presentation(self, session_id, body):
-        if not any(row['session_id'] == session_id for row in await self.sessions()):
-            raise WebError('session_not_found', 404)
+        await self._session_status(session_id)
         try:
             await self.application.aupdate_session_presentation(session_id, **body.model_dump(exclude_unset=True))
         except Exception as error:
@@ -117,9 +108,9 @@ class WebService:
 
     async def delete_session(self, session_id):
         async with self.delivery.start_lock:
-            if not any(row['session_id'] == session_id for row in await self.sessions()):
-                raise WebError('session_not_found', 404)
-            if self.delivery.active is not None and not self.delivery.active.task.done():
+            await self._session_status(session_id)
+            active = self.delivery.active_by_session.get(session_id)
+            if active is not None and not active.task.done():
                 raise WebError('session_busy')
 
             async def commit():
@@ -142,65 +133,109 @@ class WebService:
         except Exception as error:
             raise public_error(error) from None
 
-    async def session(self, session_id):
-        rows = await self.sessions()
-        row = next((item for item in rows if item['session_id'] == session_id), None)
-        if row is None:
-            raise WebError('session_not_found', 404)
-        root = str(self.settings.workspace_root) if self.settings.workspace_root else None
-        if row['workspace_root'] != root:
-            raise WebError('workspace_mismatch', 403)
+    async def _session_status(self, session_id):
         try:
-            value = None
-            if not self.application.has_session(session_id):
-                if row['state'] == 'ready':
-                    try:
-                        await self.application.arestore_session(session_id)
-                    except (SessionPersistenceError, ModelConfigError, ValueError):
-                        value = await self.application.aget_session_history(session_id)
-                else:
-                    value = await self.application.aget_session_history(session_id)
-            if value is None:
-                value = await self.application.aget_session_view(session_id)
+            value = await self.application.aget_session_status(session_id)
         except Exception as error:
             raise public_error(error) from None
-        messages = [message_view(m) for m in value.pop('messages')]
-        has_compaction = any(m.get('is_context_summary') for m in messages)
+        root = str(self.settings.workspace_root) if self.settings.workspace_root is not None else None
+        if value['workspace_root'] != root:
+            raise WebError('session_not_found', 404)
         read_only = 'recovery' in value
-        latest = None if read_only else self.delivery.latest.get(session_id)
-        if latest is not None:
-            live = self.delivery.get(latest).view()
-            messages = live['messages']
-        else:
-            live = None
         batches = [] if read_only else self.application.pending_approval_batches(session_id)
-        value.pop('approval_run_id', None)
-        result = {**row, **value, 'messages': messages, 'approval_batches': batches,
-            'pending_approval': bool(batches),
-            'has_compaction': has_compaction,
-            'active_run_id': value.get('run_id'), 'latest_run_id': latest,
-            'can_run': not read_only and not value['busy'] and row['state'] != 'running'
-                and not value['manual_review_required'] and not value['pending_approval'],
-            'live': live}
-        if read_only:
-            result.update(busy=False, manual_review_required=row['state'] == 'review_required',
-                          pending_approval=False)
-        if (encoded_size(result) > self.settings.max_frame_bytes and result.get('live')
-                and result['live'].get('context_snapshot') is not None):
-            result['live']['context_snapshot'] = None
+        latest = None if read_only else self.delivery.latest.get(session_id)
+        return {**value, 'approval_batches': batches, 'pending_approval': bool(batches),
+                'active_run_id': value.get('run_id'), 'latest_run_id': latest}
+
+    async def prepare(self, session_id):
+        await self._session_status(session_id)
+        try:
+            await self.application.aprepare_session(session_id)
+        except Exception as error:
+            logger.error('web_history_prepare_failed error_type=%s', type(error).__name__)
+            raise public_error(error) from None
+        return await self.session(session_id)
+
+    async def messages(self, session_id, *, agent_id=None, before=None, limit=None):
+        await self._session_status(session_id)
+        if agent_id and not any(row['agent_id'] == agent_id for row in await self.subagents(session_id)):
+            raise WebError('subagent_not_found', 404)
+        try:
+            return await history_page(self.application, self.settings, session_id,
+                                      agent_id=agent_id, before=before, limit=limit)
+        except Exception as error:
+            raise public_error(error) from None
+
+    async def message_content(self, session_id, sequence, *, agent_id=None, revision, offset):
+        await self._session_status(session_id)
+        if agent_id and not any(row['agent_id'] == agent_id for row in await self.subagents(session_id)):
+            raise WebError('subagent_not_found', 404)
+        try:
+            result = await self.application.aget_chat_message(session_id, sequence, agent_id=agent_id,
+                revision=revision, offset=offset, chars=min(self.settings.history_detail_chars,
+                    max(1, self.settings.max_frame_bytes // 12)))
+            if encoded_size(result) > self.settings.max_frame_bytes:
+                raise WebError('history_message_unavailable', 503)
+            return result
+        except Exception as error:
+            raise public_error(error) from None
+
+    async def session(self, session_id):
+        value = await self._session_status(session_id)
+        page = await self.messages(session_id)
+        latest = value['latest_run_id']
+        live = self.delivery.get(latest).view() if latest else None
+        page = history_window(page, live['messages'] if live else [], self.settings, session_id)
+        if live:
+            live = {**live, 'messages': [], 'messages_location': 'session'}
+        result = {**value, 'messages': page['messages'], 'live': live,
+                  'has_compaction': page['has_compaction'],
+                  'history': {key: item for key, item in page.items() if key != 'messages'}}
+        if encoded_size(result) > self.settings.max_frame_bytes and live and live.get('context_snapshot') is not None:
+            live['context_snapshot'] = None
             logger.warning('web_context_summary_omitted reason=view_limit')
         if encoded_size(result) > self.settings.max_frame_bytes:
             raise WebError('view_too_large')
         return result
 
     async def start(self, session_id, body):
-        value = await self.session(session_id)
+        value = await self._session_status(session_id)
         # RunDelivery handles the duplicate receipt before checking busy.
-        return await self.delivery.start(session_id, body, value['messages'], can_run=value['can_run'])
+        return await self.delivery.start(session_id, body, [], can_run=value['can_run'])
+
+    async def usage(self, session_id, *, after_model=None):
+        await self._session_status(session_id)
+        try:
+            result = await self.application.aget_model_usage(session_id,
+                model_limit=self.settings.usage_page_models, after_model=after_model)
+        except Exception as error:
+            logger.error('model_usage_view_read_failed error_type=%s', type(error).__name__)
+            raise WebError('usage_view_unavailable', 503) from None
+        if encoded_size(result) > self.settings.max_frame_bytes:
+            raise WebError('view_too_large')
+        return result
+
+    async def diagnostics(self, session_id, *, run_id=None, before=None, after=0):
+        await self._session_status(session_id)
+        try:
+            if run_id is None:
+                result = await self.application.alist_diagnostic_runs(session_id,
+                    limit=self.settings.diagnostic_page_size, before=before)
+            else:
+                result = await self.application.aget_diagnostic_events(session_id, run_id,
+                    limit=self.settings.diagnostic_page_size, after=after)
+        except Exception as error:
+            from naiyue_test_agent.application.errors import SessionPersistenceError
+            if isinstance(error, SessionPersistenceError) and error.args == ('diagnostic_run_not_found',):
+                raise WebError('diagnostic_run_not_found', 404) from None
+            logger.error('diagnostic_view_read_failed error_type=%s', type(error).__name__)
+            raise WebError('diagnostic_view_unavailable', 503) from None
+        if encoded_size(result) > self.settings.max_frame_bytes:
+            raise WebError('view_too_large')
+        return result
 
     async def context(self, session_id):
-        if not any(row['session_id'] == session_id for row in await self.sessions()):
-            raise WebError('session_not_found', 404)
+        await self._session_status(session_id)
         try:
             result = await self.application.aget_context_view(session_id)
             latest = self.delivery.latest.get(session_id)
@@ -217,44 +252,56 @@ class WebService:
         return result
 
     async def subagents(self, session_id):
-        value = await self.session(session_id)
+        value = await self._session_status(session_id)
         try:
-            records = await self.application.aget_subagents(session_id)
+            records = {r['agent_path']: r for r in await self.application.aget_chat_subagents(session_id)}
+            latest = self.delivery.latest.get(session_id)
+            if latest:
+                job = self.delivery.get(latest)
+                with job.lock:
+                    for path, agent in job.agents.items():
+                        source = agent['source']
+                        parent = next((m for m in reversed(job.projection.messages)
+                            if m['id'] == agent.get('parent_batch_id')), {})
+                        call = next((c for c in parent.get('tool_calls', []) if c['id'] == source['parent_tool_call_id']), {})
+                        records[path] = {**records.get(path, {}), 'agent_id': source['agent_id'], 'agent_path': path,
+                            'agent': path.split('/')[1], 'task': call.get('args', {}).get('task', records.get(path, {}).get('task', '')),
+                            'tool_call_id': source['parent_tool_call_id'], 'parent_batch_id': agent.get('parent_batch_id'),
+                            'status': agent['status']}
+            result = list(records.values())
+            if encoded_size(result) > self.settings.max_frame_bytes:
+                raise WebError('view_too_large')
+            return result
+        except WebError:
+            raise
         except Exception as error:
             logger.error('subagent_history_read_failed error_type=%s', type(error).__name__)
             raise WebError('subagent_history_unavailable', 503) from None
-        live = (value.get('live') or {}).get('agents', {})
-        for row in records:
-            if row['agent_path'] in live:
-                row['status'] = live[row['agent_path']]['status']
-        if encoded_size(records) > self.settings.max_frame_bytes:
-            raise WebError('view_too_large')
-        return records
 
     async def subagent(self, session_id, agent_id):
-        await self.session(session_id)
+        record = next((r for r in await self.subagents(session_id) if r['agent_id'] == agent_id), None)
+        if record is None:
+            raise WebError('subagent_not_found', 404)
         try:
-            result = await self.application.aget_subagent_history(session_id, agent_id)
-        except LookupError:
-            raise WebError('subagent_not_found', 404) from None
+            page = await history_page(self.application, self.settings, session_id, agent_id=agent_id)
+            result = {**record, **page, 'available': bool(page['coverage']['checkpoint_id']), 'tool_states': {}}
+            latest = self.delivery.latest.get(session_id)
+            live = self.delivery.get(latest).agent_view(record['agent_path']) if latest else None
+            if live:
+                window = history_window(page, live.get('messages', []), self.settings, session_id, agent_id)
+                result.update(status=live['status'], source=live['source'], tool_states=live['tool_states'],
+                              **window, available=bool(window['messages']))
+            if encoded_size(result) > self.settings.max_frame_bytes:
+                raise WebError('view_too_large')
+            return result
+        except WebError:
+            raise
         except Exception as error:
             logger.error('subagent_history_read_failed error_type=%s', type(error).__name__)
             raise WebError('subagent_history_unavailable', 503) from None
-        result['messages'] = [message_view(m) for m in result['messages']]
-        result['tool_states'] = {}
-        latest = self.delivery.latest.get(session_id)
-        live = self.delivery.get(latest).agent_view(result['agent_path']) if latest else None
-        if live:
-            rows = {row['id']: row for row in result['messages']}
-            rows.update({row['id']: row for row in live.get('messages', [])})
-            result.update(status=live['status'], source=live['source'], tool_states=live['tool_states'],
-                          messages=list(rows.values()), available=bool(rows))
-        if encoded_size(result) > self.settings.max_frame_bytes:
-            raise WebError('view_too_large')
-        return result
 
     async def select_model(self, session_id, model_id):
-        value = await self.session(session_id)
+        value = await self._session_status(session_id)
         if 'recovery' in value:
             raise WebError('session_recovery_blocked')
         try:
@@ -265,10 +312,10 @@ class WebService:
 
     async def recover(self, session_id, body):
         async with self.delivery.start_lock:
-            active = self.delivery.active
+            active = self.delivery.active_by_session.get(session_id)
             if active is not None and not active.task.done():
                 raise WebError('session_busy')
-            value = await self.session(session_id)
+            value = await self._session_status(session_id)
             if body.action not in value.get('recovery', {}).get('actions', []):
                 raise WebError('session_recovery_blocked')
             if value.get('checkpoint_id') != body.checkpoint_id:
@@ -280,14 +327,14 @@ class WebService:
             return await self.session(session_id)
 
     async def approve(self, session_id, body):
-        await self.session(session_id)
+        await self._session_status(session_id)
         async def check_current():
-            value = await self.session(session_id)
+            value = await self._session_status(session_id)
             batch = next((batch for batch in value['approval_batches']
                 if batch['approval_batch_id'] == body.approval_batch_id and batch['origin_run_id'] == body.origin_run_id), None)
             if value['manual_review_required'] or batch is None:
                 raise WebError('stale_approval')
-            prepared = {'kind': batch['kind'], 'messages': value['messages']}
+            prepared = {'kind': batch['kind'], 'messages': []}
             if batch['kind'] == 'paused_root':
                 try:
                     prepared['decisions'], prepared['remember_approved'] = self.application.prepare_root_approval_submission(
@@ -295,17 +342,18 @@ class WebService:
                         decisions=[item.model_dump() for item in body.decisions], remember_approved=body.remember_approved)
                 except ValueError:
                     raise WebError('stale_approval') from None
+                prepared['messages'] = await self.application.aget_approval_seed(session_id)
             return prepared
         # Re-read under the same admission lock as start; duplicate receipts are checked first.
         return await self.delivery.resume(session_id, body, check_current)
 
     async def stop_approval(self, session_id, body):
-        await self.session(session_id)
+        await self._session_status(session_id)
         async def check_current():
-            value = await self.session(session_id)
+            value = await self._session_status(session_id)
             batch = next((batch for batch in value['approval_batches'] if batch['kind'] == 'paused_root'
                 and batch['approval_batch_id'] == body.approval_batch_id and batch['origin_run_id'] == body.origin_run_id), None)
             if value['manual_review_required'] or batch is None:
                 raise WebError('stale_approval')
-            return {'kind': 'paused_root', 'messages': value['messages'], 'stop': True}
+            return {'kind': 'paused_root', 'messages': await self.application.aget_approval_seed(session_id), 'stop': True}
         return await self.delivery.resume(session_id, body, check_current)

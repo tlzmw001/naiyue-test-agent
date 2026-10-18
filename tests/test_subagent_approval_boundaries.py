@@ -92,15 +92,15 @@ async def test_external_cancel_invalidates_pending_and_releases_all_owned_waiter
     task = asyncio.create_task(app.arun(sid, [('user', 'run')]))
     try:
         batch = await next_approval(app, sid, queue)
-        instance, = app._sessions._subagent_instances.values()
+        instance, = app._sessions._sessions[sid]._run.subagent_instances.values()
         pending, driver = instance['approval'], instance['driver']
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, 5)
         assert pending.status == 'invalidated' and pending.future.result() == ([], None) and driver.done()
         assert instance['control'].reason == 'failure' and instance['status'] == 'stopped'
-        assert effects == [] and app._sessions._subagent_instances == {}
-        assert app.pending_subagent_approvals(sid) == [] and not app._sessions._sessions[sid]['busy']
+        assert effects == [] and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
+        assert app.pending_subagent_approvals(sid) == [] and not app._sessions.describe_session(sid)['busy']
         with pytest.raises(ValueError):
             await submit(app, sid, batch)
     finally:
@@ -111,18 +111,18 @@ def test_cli_bridge_submits_live_child_without_joining_root_worker(monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
     from naiyue_test_agent.application.cli_async import build_local_application
-    from naiyue_test_agent.application.session_approval import SessionApprovalControls
+    from naiyue_test_agent.application.session_approval import AgentSessionApproval
     registered = Event()
     child = ChildModel(replies=[call('probe', {'value': 'once'}, 'inner'), AIMessage(content='report')])
     root = ChildModel(replies=[call('subagent', {'agent': 'tester', 'task': 'check'}, 'delegate'),
                               AIMessage(content='done')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
-    register = SessionApprovalControls.register_live_approval
+    register = AgentSessionApproval.register_live_approval
     def note(self, *args, **kwargs):
         pending = register(self, *args, **kwargs)
         registered.set()
         return pending
-    monkeypatch.setattr(SessionApprovalControls, 'register_live_approval', note)
+    monkeypatch.setattr(AgentSessionApproval, 'register_live_approval', note)
     cli = build_local_application('unused', tools=[create_subagent_tool(), definition(approved=True)],
         initial_active_tools=['subagent'], system_prompt='', response_format=None,
         settings=ToolSettings(subagents=(role(),)))

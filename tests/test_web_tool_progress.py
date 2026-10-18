@@ -8,7 +8,7 @@ from pathlib import Path
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher, RunStartedData
 from naiyue_test_agent.agent_runtime.stream_events import ToolProgressData
 from naiyue_test_agent.contracts.session_events import ControlData
-from naiyue_test_agent.web.run_delivery import DeliveredRun
+from naiyue_test_agent.web.delivered_run import DeliveredRun
 from naiyue_test_agent.web.settings import WebSettings
 from naiyue_test_agent.tools.settings import ToolSettings, ToolProgressSettings
 
@@ -197,7 +197,8 @@ def test_failed_producer_without_run_terminal_does_not_leave_tools_running():
             raise OSError('synthetic producer fault')
         delivery = RunDelivery(SimpleNamespace(arun=fail), job.settings)
         job.unsubscribe = lambda: None
-        await delivery._produce(job, SimpleNamespace(text='run', request_id='request'))
+        await delivery._produce(job, SimpleNamespace(text='run', request_id='request'),
+                                receipt_key=(job.session_id, 'request'))
         assert job.done and job.status == 'unconfirmed'
         row = job.view()['tool_states']['call']
         assert row['state'] == 'unconfirmed' and row['text'] == 'first'

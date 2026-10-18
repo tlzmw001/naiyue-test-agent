@@ -49,8 +49,10 @@ export function applyEvent(view: RunView, event: RuntimeEvent): RunView {
     const old = messages.find(row => row.id === data.message_id);
     if (Number(data.index) !== 1 && Number(data.index) !== (old?.delta_index ?? 0) + 1)
       throw new Error('sequence_gap');
+    const unavailable = Number(data.index) !== 1 && old?.content_unavailable === true;
     const row: MessageRow = { id: data.message_id, type: 'ai',
-      content: (Number(data.index) === 1 ? '' : old?.content ?? '') + data.text,
+      content: unavailable ? old!.content : (Number(data.index) === 1 ? '' : old?.content ?? '') + data.text,
+      ...(unavailable ? { content_unavailable: true, content_truncated: true } : {}),
       provisional: true, state: 'draft', delta_index: Number(data.index), run_id: event.run_id };
     messages = old ? messages.map(item => item.id === row.id ? row : item) : [...messages, row];
   } else if (event.event_type === 'message_completed' || event.event_type === 'message_revised') {
@@ -103,9 +105,42 @@ export function applyEvent(view: RunView, event: RuntimeEvent): RunView {
   return { ...view, messages, tool_states, last_sequence: event.sequence };
 }
 
-export function mergeMessages(previous: MessageRow[], incoming: MessageRow[]) {
-  const updates = new Map(incoming.map(row => [row.id, { ...row, content: textContent(row.content) }]));
-  const rows = previous.map(row => updates.get(row.id) ?? row);
-  const ids = new Set(previous.map(row => row.id));
-  return [...rows, ...incoming.filter(row => !ids.has(row.id)).map(row => updates.get(row.id)!)];
+export function mergeMessages(previous: MessageRow[], incoming: MessageRow[], prepend = false) {
+  const values = new Map(previous.map(row => [row.id, row]));
+  for (const item of incoming) {
+    const row = { ...item, content: textContent(item.content) }, old = values.get(row.id);
+    if (old && ((old.revision != null && row.revision != null && old.revision > row.revision) ||
+        (!old.provisional && row.provisional) || (old.provisional && row.provisional && old.run_id === row.run_id &&
+          (old.delta_index ?? 0) > (row.delta_index ?? 0)))) continue;
+    const preview = row.content_truncated || row.content_unavailable;
+    if (old && !old.content_truncated && !old.content_unavailable && !old.provisional && preview &&
+        (old.revision == null || row.revision == null || row.revision <= old.revision)) {
+      values.set(row.id, { ...row, ...old });
+    } else values.set(row.id, { ...row,
+      ...(old?.sequence != null && row.sequence == null ? { sequence: old.sequence } : {}),
+      ...(old?.revision != null && row.revision == null ? { revision: old.revision } : {}),
+      ...(old?.detail && !row.detail ? { detail: old.detail } : {}),
+      ...(old?.parent_message_id && !row.parent_message_id ? { parent_message_id: old.parent_message_id } : {}),
+    });
+  }
+  const ids = [...new Set(previous.map(row => row.id))];
+  let prefix = 0;
+  incoming.forEach((row, index) => {
+    if (ids.includes(row.id)) return;
+    let position = -1;
+    if (row.sequence != null) {
+      position = ids.findIndex(id => values.get(id)!.sequence != null && values.get(id)!.sequence! > row.sequence!);
+      if (position < 0) {
+        let last = ids.length - 1;
+        while (last >= 0 && values.get(ids[last])!.sequence == null) last--;
+        if (last >= 0) position = last + 1;
+      }
+    }
+    if (position < 0) {
+      const next = incoming.slice(index + 1).find(item => ids.includes(item.id));
+      position = next ? ids.indexOf(next.id) : prepend ? prefix++ : ids.length;
+    }
+    ids.splice(position, 0, row.id);
+  });
+  return ids.map(id => values.get(id)!);
 }

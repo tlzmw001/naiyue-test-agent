@@ -67,7 +67,7 @@ def test_real_file_stop_pairs_error_and_saves_ready_checkpoint(monkeypatch, tmp_
             try:
                 assert await asyncio.to_thread(entered.wait, 5)
                 app.request_stop(sid)
-                assert app._sessions._sessions[sid]['busy'] and not task.done()
+                assert app._sessions.describe_session(sid)['busy'] and not task.done()
                 release.set()
                 result = await asyncio.wait_for(task, 5)
                 outputs = {m.tool_call_id: m for m in result['messages'] if isinstance(m, ToolMessage)}
@@ -78,7 +78,7 @@ def test_real_file_stop_pairs_error_and_saves_ready_checkpoint(monkeypatch, tmp_
                 assert result['run_stopped'] and len(chosen.seen) == 1
                 assert target.read_bytes() == b'PRIVATE_original' and not (root / 'later.txt').exists()
                 assert not list(root.glob('.naiyue-write-*'))
-                assert not app._sessions._sessions[sid]['busy']
+                assert not app._sessions.describe_session(sid)['busy']
                 row = (await app.alist_sessions())[0]
                 assert row['state'] == 'ready' and row['last_run_status'] == 'stopped'
                 snapshot = await app._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})

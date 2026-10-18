@@ -190,6 +190,7 @@ def test_approval_request_validation_auth_and_restart_block(monkeypatch, tmp_pat
         async with web_client(monkeypatch, tmp_path, next_model, workspace_root=root) as (client, app):
             assert (await client.post(endpoint, json=body)).status_code == 409
             view = (await client.get(f'/api/sessions/{sid}')).json()
+            view = (await client.post(f'/api/sessions/{sid}/prepare')).json()
             assert view['recovery']['kind'] == 'pending_approval'
             assert not view['can_run'] and not view['pending_approval']
             assert view['approval_batches'] == [] and view['live'] is None

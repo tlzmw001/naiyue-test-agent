@@ -126,8 +126,8 @@ async def test_recoverable_summary_failure_preserves_history_and_completes_run(
     assert result['messages'][-1].content == 'continued'
     assert not any(message.additional_kwargs.get(SUMMARY_MARKER)
                    for message in result['messages'])
-    assert app._sessions._sessions[session]['busy'] is False
-    thread = app._sessions._sessions[session]['thread_id']
+    assert app._sessions.describe_session(session)['busy'] is False
+    thread = app._sessions.get_thread_id(session)
     latest = await app._agent.aget_state({'configurable': {'thread_id': thread}})
     assert latest.values['messages'] == result['messages']
     events = _events(caplog, 'context_compaction')
@@ -173,7 +173,7 @@ async def test_original_send_budget_boundary_controls_fallback(
     assert _events(caplog, 'run_event')[-1]['event'] == (
         'run_completed' if send_margin == 0 else 'run_failed'
     )
-    assert app._sessions._sessions[session]['busy'] is False
+    assert app._sessions.describe_session(session)['busy'] is False
 
 
 @pytest.mark.parametrize('summary_result', [
@@ -202,7 +202,7 @@ async def test_nonrecoverable_summary_failure_never_falls_back(
             await app.arun(session, messages)
     assert len(model.summary_inputs) == 1
     assert model.normal_inputs == []
-    assert app._sessions._sessions[session]['busy'] is False
+    assert app._sessions.describe_session(session)['busy'] is False
     assert not any(event['event'] == 'context_compaction_fallback'
                    for event in _events(caplog, 'context_compaction'))
     assert _events(caplog, 'run_event')[-1]['event'] == 'run_failed'
@@ -224,7 +224,7 @@ async def test_normal_model_failure_after_fallback_is_still_a_failed_run(monkeyp
     assert [event['event'] for event in _events(caplog, 'run_event')] == [
         'run_started', 'run_failed',
     ]
-    assert app._sessions._sessions[session]['busy'] is False
+    assert app._sessions.describe_session(session)['busy'] is False
     assert 'PRIVATE_' not in caplog.text
 
 

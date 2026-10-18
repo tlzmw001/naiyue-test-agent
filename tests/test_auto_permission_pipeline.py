@@ -120,7 +120,7 @@ async def test_project_selection_frozen_within_run_and_refreshed_next_run(monkey
     assert fast.seen[0][-1].content == detailed.seen[0][-1].content
     await app.arun(sid, [('user', 'run two')])
     assert len(reads) == 2 and 'PROJECT_NEW' in json.loads(fast.seen[1][-1].content)['project_instructions']
-    assert app._sessions._sessions[sid]['run_review_project_instructions'] is None
+    assert app._sessions.resolve_permission_context(sid)['project_instructions'] is None
 
 
 @async_test

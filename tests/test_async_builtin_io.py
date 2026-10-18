@@ -92,12 +92,12 @@ def test_sync_tool_runs_off_loop_and_cancel_waits_for_settlement(monkeypatch):
             task.cancel()
             with pytest.raises(TimeoutError):
                 await asyncio.wait_for(asyncio.shield(task), 1)
-            assert app._sessions._sessions[session]['busy']
+            assert app._sessions.describe_session(session)['busy']
             assert not any(e.event_type == 'run_finished' for e in events)
             release.set()
             with pytest.raises(asyncio.CancelledError):
                 await task
-            assert finished.is_set() and not app._sessions._sessions[session]['busy']
+            assert finished.is_set() and not app._sessions.describe_session(session)['busy']
             assert events[-1].data.status == 'failed' and events[-1].data.manual_review_required
         finally:
             release.set()

@@ -13,7 +13,13 @@
       "provider_id": "gateway",
       "model": "<your-model-name>",
       "api": "chat_completions",
-      "profile": {"image_inputs": false}
+      "profile": {
+        "image_inputs": false,
+        "prompt_cache": {
+          "protocol": "openai",
+          "retentions": ["in_memory", "24h"]
+        }
+      }
     }
   }
 }

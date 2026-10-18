@@ -46,7 +46,6 @@ def make_agent(tools, responses, *, checkpointer=None):
     return build_runtime_agent(
         model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
         resolve_model=lambda _session, agent_path='root': ('fake', model),
-        record_selection=lambda _session, _model: None,
         checkpointer=checkpointer,
     )
 
@@ -453,7 +452,6 @@ async def test_two_sessions_share_agent_without_sharing_batch_plan():
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_2, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_2: names, system_prompt='', response_format=None,
         resolve_model=lambda _session, agent_path='root': ('fake', model),
-        record_selection=lambda _session, _model: None,
     )
 
     async def run(session):

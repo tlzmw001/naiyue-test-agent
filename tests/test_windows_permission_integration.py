@@ -55,7 +55,7 @@ async def test_extended_windows_target_denied_before_all_file_tool_execution(mon
         try:
             result = await app.arun(sid, [('user', 'operate')])
             assert len(prepared) == 1
-            config = {'configurable': {'thread_id': app._sessions._sessions[sid]['thread_id']}}
+            config = {'configurable': {'thread_id': app._sessions.get_thread_id(sid)}}
             snapshots = ([item async for item in app._agent.aget_state_history(config)])
             batches = [item.values['tool_execution']['calls'] for item in snapshots
                        if item.values.get('tool_execution', {}).get('calls')]

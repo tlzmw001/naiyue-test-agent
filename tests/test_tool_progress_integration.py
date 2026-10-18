@@ -66,7 +66,7 @@ def test_progress_arrives_during_unfinished_async_application_tool(monkeypatch, 
             assert all('PROGRESS_ONLY' not in str(m.content) for m in result['messages'])
             assert all('PROGRESS_ONLY' not in str(m.content) for m in chosen.seen[1])
             snapshot = await app._agent.aget_state({'configurable': {
-                'thread_id': app._sessions._sessions[sid]['thread_id']}})
+                'thread_id': app._sessions.get_thread_id(sid)}})
             assert 'PROGRESS_ONLY' not in str(snapshot.values)
             EventSequenceChecker.assert_healthy(events, caplog.records)
         finally:
@@ -194,7 +194,7 @@ def test_broken_progress_receiver_keeps_real_write_and_original_io_failure(monke
             assert message.status == 'error' and 'I/O' in message.content
             assert (tmp_path / 'file.txt').read_bytes() == b'written'
             assert not list(tmp_path.glob('.naiyue-write-*'))
-            assert events[-1].data.status == 'completed' and not app._sessions._sessions[sid]['busy']
+            assert events[-1].data.status == 'completed' and not app._sessions.describe_session(sid)['busy']
             assert 'tool_progress_unavailable' in caplog.text and 'PRIVATE_' not in caplog.text
         finally:
             await app.aclose()

@@ -125,7 +125,7 @@ async def test_host_bash_timeout_returns_error_and_model_continues(monkeypatch, 
     assert message.status == 'error' and message.tool_call_id == 'bash-1'
     assert 'timed out' in message.content and 'Inspect side effects' in message.content
     assert result['messages'][-1].content == 'done'
-    assert not app._sessions._sessions[session].get('manual_review_required')
+    assert not app._sessions.describe_session(session)['manual_review_required']
 
 @async_test
 async def test_host_bash_output_is_bounded(monkeypatch, tmp_path):

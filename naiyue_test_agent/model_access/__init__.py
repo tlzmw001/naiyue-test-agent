@@ -16,6 +16,8 @@ from naiyue_test_agent.config_paths import get_models_path
 from naiyue_test_agent.contracts.failures import normalize_classifiers
 from .errors import describe_model_failure
 from .messages import MODEL_INPUT_METADATA_KEY
+from .responses_stream import ResponsesChatOpenAI
+from .prompt_cache import prompt_cache_model_settings
 
 from naiyue_test_agent.model_access.thinking import (
     MODEL_DEFAULT,
@@ -35,6 +37,7 @@ DEFAULT_COMPACTION_RESERVE_TOKENS = 16384
 DEFAULT_COMPACTION_KEEP_RECENT_TOKENS = 20000
 DEFAULT_COMPACTION_SUMMARY_OUTPUT_TOKENS = 2048
 MODEL_LIMITS_METADATA_KEY = 'naiyue_model_limits'
+MODEL_ID_METADATA_KEY = 'naiyue_model_id'
 COMPACTION_RESERVE_METADATA_KEY = 'naiyue_compaction_reserve'
 COMPACTION_KEEP_RECENT_METADATA_KEY = 'naiyue_compaction_keep_recent'
 COMPACTION_SUMMARY_OUTPUT_METADATA_KEY = 'naiyue_compaction_summary_output'
@@ -182,17 +185,18 @@ def _build_model(kind: str, model_name: str, provider: dict, model_id: str,
                  api: str | None) -> BaseChatModel:
     try:
         output_limit = limit_metadata['max_output_tokens']
-        metadata = {MODEL_LIMITS_METADATA_KEY: limit_metadata,
+        metadata = {MODEL_ID_METADATA_KEY: model_id, MODEL_LIMITS_METADATA_KEY: limit_metadata,
                     COMPACTION_RESERVE_METADATA_KEY: reserve_metadata,
                     COMPACTION_KEEP_RECENT_METADATA_KEY: keep_metadata,
                     COMPACTION_SUMMARY_OUTPUT_METADATA_KEY: summary_output_metadata,
                     MODEL_INPUT_METADATA_KEY: {'kind': kind, 'api': api}}
+        openai_model = ResponsesChatOpenAI if api == 'responses' else ChatOpenAI
         if kind == 'openai':
-            return ChatOpenAI(model=model_name, api_key=provider['api_key'],
+            return openai_model(model=model_name, api_key=provider['api_key'],
                               max_tokens=output_limit, metadata=metadata, use_responses_api=api == 'responses',
                               **thinking_settings, **request_settings)
         if kind == 'openai_compatible':
-            return ChatOpenAI(model=model_name, api_key=provider['api_key'],
+            return openai_model(model=model_name, api_key=provider['api_key'],
                               base_url=provider['base_url'], max_tokens=output_limit,
                               metadata=metadata, use_responses_api=api == 'responses',
                               **thinking_settings, **request_settings)
@@ -280,7 +284,8 @@ def load_model_catalog(path: str | Path | None = None) -> ModelCatalog:
                 raise ModelConfigError(f'models.{model_id}.api must be chat_completions or responses')
         elif 'api' in entry:
             raise ModelConfigError(f'models.{model_id}.api only applies to OpenAI adapters')
-        profile = _object(entry.get('profile', {}), f'models.{model_id}.profile', set(), {'image_inputs'})
+        profile = _object(entry.get('profile', {}), f'models.{model_id}.profile', set(),
+                          {'image_inputs', 'prompt_cache'})
         if 'image_inputs' in profile and type(profile['image_inputs']) is not bool:
             raise ModelConfigError(f'models.{model_id}.profile.image_inputs must be a boolean')
         limit_metadata = {}
@@ -339,7 +344,7 @@ def load_model_catalog(path: str | Path | None = None) -> ModelCatalog:
         request = {}
         if 'request' in entry:
             request = _object(entry['request'], f'models.{model_id}.request', set(),
-                              {'timeout_seconds', 'sdk_max_retries'})
+                              {'timeout_seconds', 'sdk_max_retries', 'prompt_cache'})
         timeout_seconds = request.get('timeout_seconds', DEFAULT_REQUEST_TIMEOUT_SECONDS)
         if (type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds)
                 or timeout_seconds <= 0):
@@ -350,6 +355,10 @@ def load_model_catalog(path: str | Path | None = None) -> ModelCatalog:
         if provider['kind'] == 'ollama' and 'sdk_max_retries' in request:
             raise ModelConfigError(f'models.{model_id}.request.sdk_max_retries is unsupported for ollama')
         request_settings = {'timeout': timeout_seconds, 'max_retries': sdk_max_retries}
+        try:
+            request_settings.update(prompt_cache_model_settings(profile, request, provider['kind']))
+        except ValueError as exc:
+            raise ModelConfigError(f'models.{model_id}.{exc}') from None
         selection = ThinkingSelection(MODEL_DEFAULT, MODEL_DEFAULT, {})
         if 'thinking' in entry:
             thinking = _object(entry['thinking'], f'models.{model_id}.thinking',

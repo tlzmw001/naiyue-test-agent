@@ -294,7 +294,7 @@ async def test_complete_message_visibility_is_not_saver_confirmation(monkeypatch
 
     worker = asyncio.create_task(run())
 
-    config = {'configurable': {'thread_id': app._sessions._sessions[session]['thread_id']}}
+    config = {'configurable': {'thread_id': app._sessions.get_thread_id(session)}}
     try:
         assert await asyncio.to_thread(ai_seen.wait, timeout=5) and await asyncio.to_thread(save_entered.wait, timeout=5)
         saved = saver.get_tuple(config)

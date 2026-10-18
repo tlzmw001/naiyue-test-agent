@@ -1,7 +1,8 @@
 import type { ContextView } from './contextTypes';
+import type { SessionUsageView } from './usageTypes';
 import { decodeSSE, responseBytes } from './sse';
 import type { SseFrame } from './sse';
-import type { ApprovalBatch, PermissionMode, RunView, SessionControlOptions, SessionRow, SessionView, SkillCatalogView, SubagentDetail, SubagentRecord, ThinkingOptions, ToolDecision } from './types';
+import type { ApprovalBatch, HistoryPage, PermissionMode, RunView, SessionControlOptions, SessionRow, SessionView, SkillCatalogView, SubagentDetail, SubagentRecord, ThinkingOptions, ToolDecision } from './types';
 
 export class ApiError extends Error {
   constructor(public code: string) { super(code); }
@@ -32,8 +33,8 @@ export class WebApi {
     return response;
   }
 
-  private async json<T>(path: string, method = 'GET', body?: object): Promise<T> {
-    return (await this.response(path, { method, ...(body ? { body: JSON.stringify(body) } : {}) })).json();
+  private async json<T>(path: string, method = 'GET', body?: object, signal?: AbortSignal): Promise<T> {
+    return (await this.response(path, { method, ...(body ? { body: JSON.stringify(body) } : {}), ...(signal ? { signal } : {}) })).json();
   }
 
   models() { return this.json<{ default_model_id: string; model_ids: string[]; thinking_options?: Record<string, ThinkingOptions> }>('/models'); }
@@ -58,14 +59,29 @@ export class WebApi {
   reorderSessions(session_ids: string[]) { return this.json<SessionRow[]>('/session-order', 'PUT', { session_ids }); }
   deleteSession(id: string) { return this.json<{ session_id: string }>(`/sessions/${encodeURIComponent(id)}`, 'DELETE'); }
   create(model_id: string) { return this.json<{ session_id: string }>('/sessions', 'POST', { model_id }); }
-  session(id: string) { return this.json<SessionView>(`/sessions/${encodeURIComponent(id)}`); }
+  private sessionView(value: SessionView) {
+    if (value.live?.messages_location === 'session') value.live = { ...value.live, messages: value.messages };
+    return value;
+  }
+  async session(id: string) { return this.sessionView(await this.json<SessionView>(`/sessions/${encodeURIComponent(id)}`)); }
+  async prepare(id: string) {
+    return this.sessionView(await this.json<SessionView>(`/sessions/${encodeURIComponent(id)}/prepare`, 'POST'));
+  }
+  messages(id: string, before?: string, agentId?: string, signal?: AbortSignal) {
+    const query = new URLSearchParams({ ...(before ? { before } : {}), ...(agentId ? { agent_id: agentId } : {}) });
+    return this.json<HistoryPage>(`/sessions/${encodeURIComponent(id)}/messages?${query}`, 'GET', undefined, signal);
+  }
   context(id: string) { return this.json<ContextView>(`/sessions/${encodeURIComponent(id)}/context`); }
+  usage(id: string, afterModel?: string, signal?: AbortSignal) {
+    const query = afterModel === undefined ? '' : '?' + new URLSearchParams({ after_model: afterModel });
+    return this.json<SessionUsageView>(`/sessions/${encodeURIComponent(id)}/usage${query}`, 'GET', undefined, signal);
+  }
   subagents(id: string) { return this.json<SubagentRecord[]>(`/sessions/${encodeURIComponent(id)}/subagents`); }
   subagent(id: string, agentId: string) {
     return this.json<SubagentDetail>(`/sessions/${encodeURIComponent(id)}/subagents/${encodeURIComponent(agentId)}`);
   }
-  recover(id: string, checkpoint_id: string, action: 'continue' | 'restore_approval') {
-    return this.json<SessionView>(`/sessions/${encodeURIComponent(id)}/recover`, 'POST', { checkpoint_id, action });
+  async recover(id: string, checkpoint_id: string, action: 'continue' | 'restore_approval') {
+    return this.sessionView(await this.json<SessionView>(`/sessions/${encodeURIComponent(id)}/recover`, 'POST', { checkpoint_id, action }));
   }
   select(id: string, model_id: string) {
     return this.json<{ model_id: string }>(`/sessions/${encodeURIComponent(id)}/model`, 'PATCH', { model_id });
@@ -104,7 +120,8 @@ export function errorText(error: unknown): string {
     unauthorized: '访问链接已失效，请从启动终端重新打开。',
     invalid_host: '请使用启动时提供的本地地址。',
     invalid_origin: '请求来源不匹配，请从本地页面操作。',
-    session_busy: '上一轮或另一个会话仍在运行，输入内容已保留。',
+    session_busy: '当前会话仍在运行或收尾，输入内容已保留。',
+    run_capacity_exceeded: '应用运行名额已满，请等待其他任务结束后重试；输入和审批选择已保留。',
     stale_run: '这次运行已结束，请刷新状态后操作。',
     stale_approval: '审批批次已变化，请重新同步后核对当前调用。',
     session_recovery_blocked: '该会话尚不能安全恢复，请先核对之前的执行状态。',
@@ -128,6 +145,9 @@ export function errorText(error: unknown): string {
     thinking_unavailable: '该推理档位不可用，或模型选择已变化，请核对后重试。',
     subagent_not_found: '该子智能体记录不在当前会话中，请返回列表重新选择。',
     subagent_history_unavailable: '子智能体记录读取失败，可以重试；当前任务不会因此重跑。',
+    history_cursor_stale: '历史消息已修订，请重新准备并同步显示。',
+    invalid_history_cursor: '历史分页位置无效，请重新打开会话。',
+    history_message_unavailable: '该消息暂时无法显示，可以重试；原运行不会重跑。',
   };
   return messages[code] ?? '操作未确认，内容已保留。请检查连接或重新同步。';
 }

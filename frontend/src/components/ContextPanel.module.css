@@ -47,8 +47,24 @@
 .footer { border-top: 1px solid #eee; padding: 10px 22px; display: flex; align-items: center; justify-content: space-between; color: #737373; font-size: 10px; }
 .trigger { display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 0; background: transparent; color: #777; border-radius: 7px; padding: 7px 5px; min-width: 29px; font-size: 11px; white-space: nowrap; }
 .trigger:hover, .trigger[aria-expanded="true"] { background: #f1f1f1; color: #333; }
+.usage .metrics strong { font-size: 20px; overflow-wrap: anywhere; text-align: right; min-width: 0; }
+.usage .metrics > div > span { flex: 1; min-width: 100px; }
+.usageBreakdown { border-bottom: 1px solid #eee; font-size: 12px; }
+.usageBreakdown summary { padding: 13px 0; cursor: pointer; }
+.usageRow { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; line-height: 1.7; }
+.usageRow > span { min-width: 0; overflow-wrap: anywhere; }
+.usageRow > span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.usageRow small { display: block; font-size: 10px; color: #737373; }
+.usagePages, .usageFooter { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 16px; }
+.usagePages button, .usageFooter button { border: 0; background: transparent; color: #536057; padding: 6px 0; font-size: 11px; text-decoration: underline; }
+.usageFooter { border-top: 1px solid #eee; padding-top: 10px; font-size: 10px; color: #737373; }
 .ring, .filled { fill: none; stroke-width: 2; }
 .ring { stroke: #ddd; }
 .filled { stroke: #777; transform: rotate(-90deg); transform-origin: center; }
 @media (max-width: 1100px) { .panel { position: fixed; right: 0; top: 0; bottom: 0; z-index: 6; width: min(100%, 440px); box-shadow: -12px 0 35px #00000012; } }
-@media (max-width: 480px) { .trigger { font-size: 10px; gap: 4px; padding-inline: 3px; } }
+@media (max-width: 480px) {
+  .trigger { font-size: 10px; gap: 4px; padding-inline: 3px; }
+  .usage .metrics > div { flex-wrap: wrap; }
+  .usage .metrics > div > span { flex-basis: 100%; }
+  .usage .metrics strong { flex-basis: 100%; }
+}

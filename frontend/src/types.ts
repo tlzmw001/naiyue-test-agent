@@ -45,11 +45,19 @@ export interface SubagentRecord {
 }
 export interface SubagentDetail extends SubagentRecord {
   available: boolean; has_compaction: boolean; messages: MessageRow[];
+  has_more?: boolean; next_cursor?: string | null; coverage?: HistoryPage['coverage'];
   tool_states: Record<string, ToolState>; source?: AgentEventSource;
 }
 
 export interface MessageRow {
   id: string;
+  sequence?: number;
+  revision?: number;
+  parent_message_id?: string | null;
+  content_truncated?: boolean;
+  arguments_truncated?: boolean;
+  tool_calls_truncated?: boolean;
+  detail?: { sequence: number; revision: number };
   type: string;
   content: string;
   content_projection?: 'text';
@@ -66,6 +74,8 @@ export interface MessageRow {
 }
 
 export interface RunView {
+  messages_location?: 'session';
+  coverage?: { kind: 'window'; first_message_id: string | null };
   mode?: 'message' | 'approval_resume' | 'compact';
   compaction_result?: { status: string; reason?: string | null } | null;
   session_id: string;
@@ -96,6 +106,8 @@ export interface SessionRow {
 }
 
 export interface SessionView extends SessionRow {
+  history_ready?: boolean;
+  history?: Omit<HistoryPage, 'messages'>;
   thinking_level?: string;
   checkpoint_id?: string | null;
   active_tools: string[];
@@ -111,6 +123,19 @@ export interface SessionView extends SessionRow {
   live: RunView | null;
   approval_batches?: ApprovalBatch[];
   recovery?: SessionRecovery;
+}
+
+export interface HistoryPage {
+  messages: MessageRow[];
+  has_more: boolean;
+  next_cursor: string | null;
+  coverage: { checkpoint_id: string | null; sync_revision: number; history_version: number; upper: number };
+  has_compaction: boolean;
+}
+
+export interface HistoryControls {
+  enabled: boolean; hasMore: boolean; loading: boolean; error: string; disabled?: boolean;
+  loadOlder: () => Promise<void>;
 }
 
 export interface SessionRecovery {

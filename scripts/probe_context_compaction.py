@@ -68,7 +68,6 @@ def _make_agent(summary_model):
         middleware=[
             make_model_selection_middleware(
                 lambda session_id, agent_path='root': (selected[session_id], models[selected[session_id]]),
-                lambda _session_id, _model_id: None,
             ),
             summary,
         ],

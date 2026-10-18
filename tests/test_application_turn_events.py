@@ -92,7 +92,7 @@ async def test_approval_pauses_and_resumes_same_turn_then_starts_next(monkeypatc
     assert [e.event_type for e in turns(events)] == ['turn_started', 'turn_suspended']
     first = turns(events)[0]
     state = app._sessions._sessions[session]
-    saved = json.loads(json.dumps(state['pending_turn']))
+    saved = json.loads(json.dumps(state.snapshot_for_run()['pending_turn']))
     assert saved['turn_id'] == first.data.turn_id and saved['status'] == 'suspended'
     assert 'PRIVATE_' not in repr(saved)
     result = await app.aresume_tool_approval(session, [decision])
@@ -104,7 +104,7 @@ async def test_approval_pauses_and_resumes_same_turn_then_starts_next(monkeypatc
     assert finishes[0].data.turn_id == first.data.turn_id and finishes[0].data.status == 'completed'
     assert finishes[0].data.error_result_count == (1 if decision == 'reject' else 0)
     assert finishes[0].data.tool_message_ids == (next(m.id for m in result['messages'] if m.type == 'tool'),)
-    assert state['pending_turn'] is None and state['pending_tool_approval'] is None
+    assert state.snapshot_for_run()['pending_turn'] is None and state.snapshot_for_run()['pending'] is None
 
 
 @async_test

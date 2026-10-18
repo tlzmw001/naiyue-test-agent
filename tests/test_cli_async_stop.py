@@ -85,7 +85,12 @@ def test_explicit_resubmit_clears_only_admitted_pending_input(monkeypatch, capsy
             if blocked:
                 bridge = apps[0]
                 def require_review():
-                    next(iter(bridge._app._sessions._sessions.values()))['manual_review_required'] = True
+                    sessions = bridge._app._sessions
+                    sid = sessions.loaded_session_ids()[0]
+                    owner, observation_run = sessions._admit(sid, 'review-fault', 'message')
+                    run_id, observation = observation_run.run_id, observation_run.observation
+                    owner.mark_manual_review(observation_run)
+                    owner._cleanup_run(observation_run)
                 bridge._submit(require_review)
         if line == ':pending':
             workers[-1].join(5)

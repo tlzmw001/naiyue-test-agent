@@ -1,0 +1,126 @@
+{
+  "status": "passed",
+  "model_id": "heiyu-gpt-5.5",
+  "api": "responses",
+  "sdk_retries": 0,
+  "budget": {
+    "limit": 9,
+    "used": 1,
+    "stopped": false,
+    "models": {
+      "heiyu-gpt-5.5": 1
+    }
+  },
+  "cases": [
+    {
+      "batch": "100F",
+      "name": "final_argument_events",
+      "status": "passed",
+      "checks": {
+        "confirmed_final_argument_gap": true
+      },
+      "http": {
+        "limit": 1,
+        "used": 1,
+        "stopped": false,
+        "models": {
+          "heiyu-gpt-5.5": 1
+        }
+      },
+      "seconds": 5.051,
+      "stream_confirmed_messages": 0,
+      "diagnostic": {
+        "events": [
+          {
+            "type": "response.created"
+          },
+          {
+            "type": "response.in_progress"
+          },
+          {
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "initial_argument_chars": 0
+          },
+          {
+            "type": "response.function_call_arguments.done",
+            "output_index": 0,
+            "final_argument_chars": 35,
+            "matches_accumulated": false
+          },
+          {
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "final_argument_chars": 35,
+            "matches_accumulated": false
+          },
+          {
+            "type": "response.output_item.added",
+            "output_index": 1,
+            "initial_argument_chars": 0
+          },
+          {
+            "type": "response.function_call_arguments.done",
+            "output_index": 1,
+            "final_argument_chars": 36,
+            "matches_accumulated": false
+          },
+          {
+            "type": "response.output_item.done",
+            "output_index": 1,
+            "final_argument_chars": 36,
+            "matches_accumulated": false
+          },
+          {
+            "type": "other"
+          },
+          {
+            "type": "response.completed"
+          }
+        ],
+        "native_calls": 2,
+        "lc_calls": 2,
+        "arguments": [
+          {
+            "native_object": true,
+            "lc_equals_native": false,
+            "keys": [],
+            "agent_string": false,
+            "task_string": false
+          },
+          {
+            "native_object": true,
+            "lc_equals_native": false,
+            "keys": [],
+            "agent_string": false,
+            "task_string": false
+          }
+        ],
+        "expected_arguments": false
+      },
+      "stream_unmatched_messages": 0,
+      "summary_vendor_usage": [],
+      "tool_outcomes": [],
+      "event_counts": {},
+      "vendor_usage": []
+    }
+  ],
+  "batches": [
+    {
+      "name": "100F",
+      "limit": 9,
+      "used": 1,
+      "stopped": false,
+      "models": {
+        "heiyu-gpt-5.5": 1
+      }
+    }
+  ],
+  "not_covered": [
+    "thinking_levels_unconfigured",
+    "chat_completions",
+    "other_providers",
+    "windows_linux_native",
+    "browser_manual_live"
+  ]
+}

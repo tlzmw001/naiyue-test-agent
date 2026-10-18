@@ -101,10 +101,10 @@ async def test_explicit_overflow_forces_compaction_below_local_threshold(monkeyp
     assert count_tokens_approximately(retry) < count_tokens_approximately(model.normal_inputs[0])
     assert result['messages'] == [*retry[1:], result['messages'][-1]]
     assert result['messages'][-1].content == 'recovered'
-    thread = app._sessions._sessions[session]['thread_id']
+    thread = app._sessions.get_thread_id(session)
     latest = await app._agent.aget_state({'configurable': {'thread_id': thread}})
     assert latest.values['messages'] == result['messages']
-    assert app._sessions._sessions[session]['busy'] is False
+    assert app._sessions.describe_session(session)['busy'] is False
     recovery = _events(caplog, 'context_recovery')
     assert [event['event'] for event in recovery] == [
         'context_overflow_detected', 'context_overflow_retry_started',
@@ -158,9 +158,9 @@ async def test_second_model_failure_stops_without_committing_summary(monkeypatch
             await app.arun(session, messages)
     assert caught.value is second_error
     assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == 1
-    thread = app._sessions._sessions[session]['thread_id']
+    thread = app._sessions.get_thread_id(session)
     assert (await app._agent.aget_state({'configurable': {'thread_id': thread}})).values['messages'] == messages
-    assert app._sessions._sessions[session]['busy'] is False
+    assert app._sessions.describe_session(session)['busy'] is False
     recovery = _events(caplog, 'context_recovery')
     assert recovery[-1]['event'] == 'context_overflow_recovery_failed'
     assert recovery[-1]['stage'] == 'retry'
@@ -183,7 +183,7 @@ async def test_forced_summary_failure_cannot_fall_back_to_rejected_input(monkeyp
     assert not any(event['event'] == 'context_compaction_fallback'
                    for event in _events(caplog, 'context_compaction'))
     assert _events(caplog, 'context_recovery')[-1]['stage'] == 'compact'
-    assert app._sessions._sessions[session]['busy'] is False
+    assert app._sessions.describe_session(session)['busy'] is False
 
 
 @pytest.mark.parametrize(('messages', 'summaries', 'reason'), [
@@ -272,7 +272,7 @@ async def test_rejected_retry_response_does_not_commit_compaction(monkeypatch):
     messages = _history()
     with pytest.raises(ModelResponseRejected, match='invalid_tool_calls'):
         await app.arun(session, messages)
-    thread = app._sessions._sessions[session]['thread_id']
+    thread = app._sessions.get_thread_id(session)
     assert (await app._agent.aget_state({'configurable': {'thread_id': thread}})).values['messages'] == messages
     assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == 1
 

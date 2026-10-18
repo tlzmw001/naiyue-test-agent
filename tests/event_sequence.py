@@ -8,6 +8,7 @@ class EventSequenceChecker:
         self._sequence = 0
         self._finished = False
         self._model_calls = {}
+        self._model_invocations = set()
         self._tool_calls = {}
         self._turns = {}
         self._controls = {}
@@ -89,6 +90,16 @@ class EventSequenceChecker:
                 if key not in calls or calls[key] != subject:
                     raise ValueError('Call result does not match its start')
                 del calls[key]
+        if event_type.startswith('model_invocation_'):
+            key = data.invocation_id
+            if event_type.endswith('_started'):
+                if key in self._model_invocations:
+                    raise ValueError('Model invocation already started')
+                self._model_invocations.add(key)
+            else:
+                if key not in self._model_invocations:
+                    raise ValueError('Model invocation result has no start')
+                self._model_invocations.remove(key)
         self._sequence += 1
         self._finished = event_type == 'run_finished'
 

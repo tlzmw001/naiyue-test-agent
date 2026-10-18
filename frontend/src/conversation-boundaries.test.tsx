@@ -15,6 +15,7 @@ function session(id: string): SessionView {
 }
 function setup() {
   const api = new WebApi('synthetic-test-access');
+  vi.spyOn(api, 'prepare').mockImplementation(id => api.session(id));
   vi.spyOn(api, 'models').mockResolvedValue({ default_model_id: 'A', model_ids: ['A', 'B'] });
   vi.spyOn(api, 'sessions').mockResolvedValue([]);
   vi.spyOn(api, 'events').mockImplementation(async (_id, _after, signal) => {

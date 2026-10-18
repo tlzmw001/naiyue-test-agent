@@ -22,7 +22,7 @@ async def invoke_tool_feedback(spec, args, *, call_id, context=None, permission_
     _runtime_names_1 = _runtime_registry_1.names()
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
-        resolve_model=lambda _, agent_path='root': ('fake', model), record_selection=lambda *_: None,
+        resolve_model=lambda _, agent_path='root': ('fake', model),
         checkpointer=InMemorySaver(),
         resolve_permission_context=lambda _sid, agent_path='root': {'mode': permission_mode, 'session_allow': []},
     )

@@ -24,12 +24,12 @@ def build(monkeypatch, storage, names=None, specs=None):
 async def test_empty_selection_survives_reopen(monkeypatch, tmp_path):
     path = tmp_path / 'sessions.sqlite'
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         sid = await app.acreate_session('A')
         await app.aset_active_tools(sid, [])
         assert json.loads(storage.get(sid)['active_tool_names_json']) == []
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         await app.arestore_session(sid)
         assert app.get_active_tools(sid) == ()
         assert app._sessions.describe_session(sid)['active_tools'] == []
@@ -38,7 +38,7 @@ async def test_empty_selection_survives_reopen(monkeypatch, tmp_path):
 @async_test
 async def test_save_failure_keeps_old_selection(monkeypatch, tmp_path):
     async with build(monkeypatch, tmp_path / 'sessions.sqlite') as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         sid = await app.acreate_session('A')
         def fail(*args):
             raise SessionPersistenceError('synthetic_save_failed')
@@ -54,12 +54,12 @@ async def test_save_failure_keeps_old_selection(monkeypatch, tmp_path):
 async def test_invalid_saved_selection_fails_without_publishing(monkeypatch, tmp_path, saved):
     path = tmp_path / 'sessions.sqlite'
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         sid = await app.acreate_session('A')
         storage.connection.execute('UPDATE naiyue_sessions SET active_tool_names_json=? WHERE session_id=?', (saved, sid))
         storage.connection.commit()
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         with pytest.raises(SessionPersistenceError, match='invalid_active_tools'):
             await app.arestore_session(sid)
         assert not app._sessions.has_session(sid)

@@ -12,6 +12,7 @@ from langchain_core.messages.utils import count_tokens_approximately
 
 from naiyue_test_agent.model_access import MODEL_LIMITS_METADATA_KEY, COMPACTION_RESERVE_METADATA_KEY
 from naiyue_test_agent.model_access.messages import is_image_block
+from naiyue_test_agent.model_access.usage import normalize_model_usage
 
 
 logger = logging.getLogger(__name__)
@@ -128,9 +129,7 @@ def finish_snapshot(snapshot, response=None):
     result = {**snapshot, 'status': 'returned' if response is not None else 'failed'}
     usage = message.usage_metadata if message is not None else None
     if usage:
-        result['usage'] = {'input_tokens': _number(usage.get('input_tokens')),
-            'output_tokens': _number(usage.get('output_tokens')),
-            'cache_read_tokens': _number((usage.get('input_token_details') or {}).get('cache_read'))}
+        result['usage'] = normalize_model_usage(usage)
     if message is not None:
         message.response_metadata[SNAPSHOT_KEY] = result
     return result
@@ -192,12 +191,16 @@ def read_snapshot(value):
             raise ValueError('invalid_estimate_status')
         usage = value['usage']
         if usage is not None and (not isinstance(usage, dict)
-                or set(usage) != {'input_tokens', 'output_tokens', 'cache_read_tokens'}
+                or not {'input_tokens', 'output_tokens', 'cache_read_tokens'} <= set(usage)
+                or set(usage) - {'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens'}
                 or any(number is not None and _number(number) is None for number in usage.values())):
             raise ValueError('invalid_snapshot_usage')
         if len(json.dumps(value, allow_nan=False).encode('utf-8')) > 16384:
             raise ValueError('invalid_snapshot_size')
-        return deepcopy(value)
+        result = deepcopy(value)
+        if usage is not None:
+            result['usage'].setdefault('cache_write_tokens', None)
+        return result
     except (TypeError, ValueError, KeyError):
         logger.warning('saved_context_snapshot_invalid')
         return None

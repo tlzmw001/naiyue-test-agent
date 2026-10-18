@@ -32,6 +32,51 @@ def _check_call_subject(call_id, label):
 
 
 @dataclass(frozen=True)
+class ModelInvocationStartedData:
+    invocation_id: str
+    model_id: str | None
+    purpose: str | None
+
+    def __post_init__(self):
+        _check_call_subject(self.invocation_id, self.model_id)
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', self.invocation_id):
+            raise ValueError('Invalid invocation identifier')
+        if self.purpose not in (None, 'agent', 'summary', 'auto_fast', 'auto_detailed'):
+            raise ValueError('Invalid invocation purpose')
+
+
+@dataclass(frozen=True)
+class ModelInvocationFinishedData:
+    invocation_id: str
+    status: str
+    usage_status: str = 'unavailable'
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    error_type: str | None = None
+
+    def __post_init__(self):
+        _check_call_subject(self.invocation_id, None)
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', self.invocation_id):
+            raise ValueError('Invalid invocation identifier')
+        if self.status not in ('returned', 'failed', 'cancelled'):
+            raise ValueError('Invalid invocation outcome')
+        if self.usage_status not in ('final', 'partial', 'unavailable'):
+            raise ValueError('Invalid invocation usage status')
+        values = (self.input_tokens, self.output_tokens, self.cache_read_tokens, self.cache_write_tokens)
+        if any(value is not None and (type(value) is not int or value < 0) for value in values):
+            raise ValueError('Invalid invocation usage')
+        if ((self.usage_status == 'unavailable') != all(value is None for value in values)
+                or self.usage_status == 'final' and self.status != 'returned'
+                or self.usage_status == 'partial' and self.status == 'returned'):
+            raise ValueError('Invocation usage does not match outcome')
+        if self.error_type is not None and (self.status == 'returned' or not isinstance(self.error_type, str)
+                or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,99}', self.error_type)):
+            raise ValueError('Invalid invocation error type')
+
+
+@dataclass(frozen=True)
 class ModelCallStartedData:
     model_call_id: str
     model_id: str | None
@@ -54,6 +99,7 @@ class ModelCallFinishedData:
     output_tokens: int | None = None
     cache_read_tokens: int | None = None
     failure: RunFailureData | None = None
+    cache_write_tokens: int | None = None
 
     def __post_init__(self):
         _check_call_subject(self.model_call_id, self.model_id)
@@ -67,7 +113,7 @@ class ModelCallFinishedData:
                 or any(not isinstance(item, str) for item in self.tool_call_ids)):
             raise ValueError('Tool identifiers must be an immutable tuple')
         if any(value is not None and (type(value) is not int or value < 0)
-               for value in (self.input_tokens, self.output_tokens, self.cache_read_tokens)):
+               for value in (self.input_tokens, self.output_tokens, self.cache_read_tokens, self.cache_write_tokens)):
             raise ValueError('Invalid model usage metadata')
 
 
@@ -195,9 +241,11 @@ EventData = (RunStartedData | RunFinishedData | ModelCallStartedData | ModelCall
              | ContextMessagesChangedData | MessageSnapshotUnavailableData
              | TurnStartedData | TurnFinishedData | TurnUnavailableData | ControlData | ApprovalRequestedData
              | ContextOperationStartedData | ContextOperationFinishedData | MessageDeltaData | ToolProgressData
-             | ModelContextSnapshotData)
+             | ModelContextSnapshotData | ModelInvocationStartedData | ModelInvocationFinishedData)
 
 _CORE_PAYLOADS = {
+    'model_invocation_started': ModelInvocationStartedData,
+    'model_invocation_finished': ModelInvocationFinishedData,
     'model_context_snapshot': ModelContextSnapshotData,
     'tool_progress': ToolProgressData,
     'message_delta': MessageDeltaData,

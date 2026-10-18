@@ -3,14 +3,10 @@
 import json
 import logging
 from hashlib import sha256
-from uuid import uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
-from langgraph.graph import END
 
-from naiyue_test_agent.model_access import ModelConfigError
 from naiyue_test_agent.tools.permissions import PermissionMechanismError
-from .io_steps import IOCall
 from .session_approval import pending_tool_approval, is_pre_tool_approval
 from .session_storage import SessionPersistenceError, STATES
 
@@ -98,47 +94,6 @@ def classify_recovery(row, snapshot):
     return _classification('interrupted_execution', reason, missing)
 
 
-def history_steps(persistence, session_id, agent):
-    row = yield IOCall(persistence.storage.get, (session_id,))
-    value = {key: row[key] for key in ('session_id', 'state', 'model_id', 'thinking_level', 'workspace_root', 'permission_mode')}
-    value.update(messages=[], active_tools=[], checkpoint_id=None, checkpoint_ns='',
-                 confirmed_checkpoint_id=row['checkpoint_id'], confirmed_checkpoint_ns=row['checkpoint_ns'])
-    config = {'configurable': {'thread_id': row['thread_id']}}
-    try:
-        snapshot = yield IOCall(args=(config,), async_call=agent.aget_state)
-    except Exception as error:
-        logger.error('session_history_read_failed error_type=%s', type(error).__name__)
-        value['recovery'] = _classification('unavailable', 'checkpoint_unreadable')
-        return value
-    recovery = classify_recovery(row, snapshot)
-    if _identity_matches(row, snapshot):
-        value['checkpoint_id'] = snapshot.config.get('configurable', {}).get('checkpoint_id')
-        messages = snapshot.values.get('messages', []) if isinstance(snapshot.values, dict) else None
-        if isinstance(messages, list) and all(isinstance(m, BaseMessage) for m in messages):
-            value['messages'] = messages
-    unavailable = None
-    try:
-        _, names = yield from persistence._configuration_steps(row)
-        value['active_tools'] = list(names)
-    except (ValueError, TypeError, ModelConfigError, SessionPersistenceError) as error:
-        unavailable = 'saved_configuration_unavailable'
-        logger.warning('session_history_configuration_unavailable error_type=%s', type(error).__name__)
-    with persistence.sessions._lock:
-        if session_id in persistence.sessions._sessions:
-            unavailable = 'session_current_process'
-    with persistence._lock:
-        if (session_id in persistence._blocked or persistence._recovering == session_id
-                or persistence._active and persistence._active[0] == session_id):
-            unavailable = 'session_current_process'
-    if unavailable:
-        recovery = _classification('unavailable', unavailable, recovery['unconfirmed_tool_call_ids'])
-    if recovery['kind'] == 'unavailable':
-        logger.warning('session_history_unavailable reason=%s', recovery['reason'])
-    elif recovery['kind'] in ('interrupted_execution', 'pending_approval') and value['checkpoint_id']:
-        recovery['actions'] = (['restore_approval', 'continue'] if recovery['kind'] == 'pending_approval'
-                               else ['continue'])
-    value['recovery'] = recovery
-    return value
 
 
 def recovery_record(row, snapshot):
@@ -196,14 +151,13 @@ def build_recovery_update(snapshot, record):
     return {'messages': additions, 'tool_execution': {}, 'run_stopped': False}
 
 
-def validate_saved_approval(persistence, row, snapshot, root, names):
+def validate_saved_approval(settings, registry, row, snapshot, root, names):
     """Recheck local authority; never load file contents, review with AI or grant access."""
     from naiyue_test_agent.agent_runtime.tool_execution.permissions import prepare_permission_call
     try:
         if not isinstance(row['run_id'], str) or not row['run_id']:
             raise ValueError('Missing source run')
         batch = snapshot.values['tool_execution']
-        settings = persistence.sessions._permission_settings
         settings.validate_mode(batch['mode'])
         if batch['mode'] not in ('Default', 'Auto') or batch.get('session_allow') != []:
             # Recursive tools also consume the batch's remembered scopes. A
@@ -212,7 +166,7 @@ def validate_saved_approval(persistence, row, snapshot, root, names):
         selected = batch['tool_names']
         if not isinstance(selected, list) or not set(selected).issubset(names):
             raise ValueError('Saved tools are unavailable')
-        specs = {spec.tool.name: spec for spec in persistence.sessions._tool_registry.select(selected)}
+        specs = {spec.tool.name: spec for spec in registry.select(selected)}
         context = {'session_id': row['session_id'], 'agent_path': 'root', 'workspace_root': root}
         for saved in batch['calls']:
             current = prepare_permission_call(saved, specs[saved['name']], context, settings, [])
@@ -236,82 +190,3 @@ def validate_saved_approval(persistence, row, snapshot, root, names):
     except (ValueError, TypeError, KeyError, AttributeError, PermissionMechanismError) as error:
         logger.warning('session_approval_revalidation_failed error_type=%s', type(error).__name__)
         raise SessionPersistenceError('approval_restore_unavailable') from error
-
-
-def recovery_steps(persistence, session_id, agent, checkpoint_id, action):
-    if action not in ('continue', 'restore_approval'):
-        raise SessionPersistenceError('invalid_recovery_action')
-    row = yield IOCall(persistence.storage.get, (session_id,))
-    root, names = yield from persistence._configuration_steps(row)
-    binding = yield IOCall(persistence.storage.get_workspace_binding)
-    if binding and str(root) != binding['root_path']:
-        raise SessionPersistenceError('workspace_mismatch')
-    config = {'configurable': {'thread_id': row['thread_id']}}
-    try:
-        snapshot = yield IOCall(args=(config,), async_call=agent.aget_state)
-    except Exception as error:
-        logger.error('session_recovery_read_failed error_type=%s', type(error).__name__)
-        raise SessionPersistenceError('checkpoint_unreadable') from error
-    if not _identity_matches(row, snapshot):
-        raise SessionPersistenceError('checkpoint_mismatch')
-    actual = snapshot.config['configurable'].get('checkpoint_id')
-    if not actual or checkpoint_id != actual:
-        raise SessionPersistenceError('checkpoint_mismatch')
-    classification = classify_recovery(row, snapshot)
-    if classification['kind'] not in ('interrupted_execution', 'pending_approval'):
-        raise SessionPersistenceError('session_recovery_blocked')
-    if action == 'restore_approval':
-        if classification['kind'] != 'pending_approval':
-            raise SessionPersistenceError('session_recovery_blocked')
-        pending = yield IOCall(validate_saved_approval, (persistence, row, snapshot, root, names))
-        try:
-            yield IOCall(persistence.storage.finish_run, (session_id, 'interrupted', actual, '', 'interrupted'))
-            persistence._install_session(row, root, names, recovering=True, pending=pending)
-        except Exception as error:
-            logger.error('session_approval_restore_save_failed error_type=%s', type(error).__name__)
-            raise SessionPersistenceError('session_save_unconfirmed') from error
-        return {'session_id': session_id, 'checkpoint_id': actual, 'checkpoint_ns': '', 'state': 'interrupted'}
-    record = recovery_record(row, snapshot)
-    if record is not None:
-        source_config = {'configurable': {'thread_id': row['thread_id'], 'checkpoint_ns': '',
-                                         'checkpoint_id': record['source_checkpoint_id']}}
-        try:
-            source = yield IOCall(args=(source_config,), async_call=agent.aget_state)
-        except Exception as error:
-            logger.error('session_recovery_source_read_failed error_type=%s', type(error).__name__)
-            raise SessionPersistenceError('checkpoint_unreadable') from error
-        if (not _identity_matches(row, source) or not source.created_at
-                or source.config['configurable'].get('checkpoint_id') != record['source_checkpoint_id']
-                or (source.metadata or {}).get('naiyue_recovery') is not None
-                or record['pre_tool_approval'] and not is_pre_tool_approval(source, source.values.get('messages', []))):
-            raise SessionPersistenceError('invalid_recovery_record')
-    record = record or {
-        'version': 1, 'recovery_id': uuid4().hex, 'session_id': session_id, 'thread_id': row['thread_id'],
-        'source_checkpoint_id': actual, 'source_namespace': '', 'original_state': row['state'],
-        'pre_tool_approval': classification['kind'] == 'pending_approval', 'phase': None,
-    }
-    try:
-        phases = ('cleared', 'paired', 'finished')
-        start = phases.index(record['phase']) + 1 if record['phase'] else 0
-        for phase in phases[start:]:
-            values = build_recovery_update(snapshot, record) if phase == 'paired' else None
-            node = 'tools' if phase == 'paired' else END
-            record = {**record, 'phase': phase}
-            marked = {**snapshot.config, 'metadata': {'naiyue_recovery': json.dumps(record, sort_keys=True)}}
-            updated = yield IOCall(args=(marked, values), kwargs={'as_node': node}, async_call=agent.aupdate_state)
-            snapshot = yield IOCall(args=(config,), async_call=agent.aget_state)
-            if (not _identity_matches(row, snapshot) or snapshot.config != updated
-                    or recovery_record(row, snapshot) != record):
-                raise SessionPersistenceError('session_save_unconfirmed')
-        missing, invalid = _message_facts(snapshot.values.get('messages', []))
-        if (snapshot.next or snapshot.tasks or missing or invalid or snapshot.values.get('tool_execution') != {}
-                or snapshot.values.get('run_stopped') is not False):
-            raise SessionPersistenceError('session_save_unconfirmed')
-        actual = snapshot.config['configurable']['checkpoint_id']
-        yield IOCall(persistence.storage.finish_run, (session_id, 'ready', actual, '', 'recovered'))
-        persistence._install_session(row, root, names, recovering=True)
-    except Exception as error:
-        logger.error('session_recovery_save_failed error_type=%s', type(error).__name__)
-        raise SessionPersistenceError('session_save_unconfirmed') from error
-    return {'session_id': session_id, 'checkpoint_id': actual, 'checkpoint_ns': '',
-            'recovery_id': record['recovery_id'], 'state': 'ready'}

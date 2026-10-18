@@ -9,6 +9,7 @@ afterEach(cleanup);
 
 function recoveryClient(checkpoint_id = 'cp1') {
   const api = new WebApi('synthetic-test-access');
+  vi.spyOn(api, 'prepare').mockImplementation(id => api.session(id));
   const history: SessionView = { session_id: 'old', model_id: 'A', workspace_root: '/work', state: 'failed',
     updated_at: '2026-10-17T10:00:00Z', last_run_status: 'failed', active_tools: [], permission_mode: 'Default',
     messages: [], busy: false, can_run: false, has_compaction: false, active_run_id: null, latest_run_id: null,
@@ -23,6 +24,7 @@ function recoveryClient(checkpoint_id = 'cp1') {
 
 it('shows saved facts as read-only, never sends on Enter, and allows a new session', async () => {
   const api = new WebApi('synthetic-test-access');
+  vi.spyOn(api, 'prepare').mockImplementation(id => api.session(id));
   const value = { session_id: 'old', model_id: 'removed-model', workspace_root: '/work', state: 'running',
     updated_at: '2026-10-17T10:00:00Z', last_run_status: null,
     active_tools: [], permission_mode: 'Default', messages: [

@@ -66,16 +66,17 @@ async def test_root_stop_between_saved_interrupt_and_registration_cannot_leave_a
     effects = []
     app, root = await delegated_app(monkeypatch, child, tools=[definition(calls=effects, approved=True)])
     instances = record_instances(monkeypatch, app)
-    register = app._sessions.register_live_approval
-    def stop_then_register(instance, *args):
+    from naiyue_test_agent.application.agent_session import AgentSession
+    register = AgentSession.register_live_approval
+    def stop_then_register(self, instance, *args):
         app.request_stop(instance['session_id'], run_id=instance['root_run_id'])
-        return register(instance, *args)
-    monkeypatch.setattr(app._sessions, 'register_live_approval', stop_then_register)
+        return register(self, instance, *args)
+    monkeypatch.setattr(AgentSession, 'register_live_approval', stop_then_register)
     sid = await app.acreate_session('A')
     result = await asyncio.wait_for(app.arun(sid, [('user', 'start')]), 5)
     assert result['run_stopped'] and effects == [] and len(root.seen) == 1
     assert instances[0]['status'] == 'stopped' and instances[0]['settled']
-    assert app.pending_approval_batches(sid) == [] and app._sessions._subagent_instances == {}
+    assert app.pending_approval_batches(sid) == [] and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
 
 
 @async_test
@@ -104,9 +105,10 @@ async def test_cross_thread_stop_is_visible_before_approval_registration_and_not
     effects, errors, stoppers = [], [], []
     app, root = await delegated_app(monkeypatch, child, tools=[definition(calls=effects, approved=True)])
     instances = record_instances(monkeypatch, app)
-    register = app._sessions.register_live_approval
+    from naiyue_test_agent.application.agent_session import AgentSession
+    register = AgentSession.register_live_approval
     notified, release = Event(), Event()
-    def stop_then_register(instance, *args):
+    def stop_then_register(self, instance, *args):
         request = instance['control'].request
         def delayed_notification(reason='user'):
             notified.set()
@@ -120,8 +122,8 @@ async def test_cross_thread_stop_is_visible_before_approval_registration_and_not
         stoppers.append(stopper)
         stopper.start()
         assert notified.wait(5)
-        return register(instance, *args)
-    monkeypatch.setattr(app._sessions, 'register_live_approval', stop_then_register)
+        return register(self, instance, *args)
+    monkeypatch.setattr(AgentSession, 'register_live_approval', stop_then_register)
     try:
         result = await asyncio.wait_for(app.arun(await app.acreate_session('A'), [('user', 'start')]), 5)
         assert result['messages'][-1].content == 'root done' and len(root.seen) == 2

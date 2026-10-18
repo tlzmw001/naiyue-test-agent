@@ -27,7 +27,7 @@ def graph(tools, calls, *, checkpointer=None):
     _runtime_names_1 = _runtime_registry_1.names()
     return build_runtime_agent(
         model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
-        resolve_model=lambda _, agent_path='root': ('fake', model), record_selection=lambda *_: None,
+        resolve_model=lambda _, agent_path='root': ('fake', model),
         checkpointer=checkpointer,
     )
 
@@ -214,7 +214,7 @@ async def test_uncertain_commit_is_not_replayed_or_quarantined(
         assert target.read_text(encoding='utf-8') == ('new' if after_replace else 'old')
         assert [p.name for p in tmp_path.iterdir()] == ['case.md']
         assert attempts == [True]
-        assert not app._sessions._sessions[session]['manual_review_required']
+        assert not app._sessions.describe_session(session)['manual_review_required']
         conversions = [r.tool_error for r in caplog.records if hasattr(r, 'tool_error')]
         assert len(conversions) == 1 and conversions[0]['cause_type'] == 'OSError'
         assert 'PRIVATE_' not in caplog.text + feedback.content

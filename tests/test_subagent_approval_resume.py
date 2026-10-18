@@ -14,12 +14,14 @@ from test_subagent_execution import ChildModel, delegated_app, record_instances,
 
 def approval_notifications(monkeypatch, app):
     queue = asyncio.Queue()
-    register = app._sessions.register_live_approval
-    def notify(*args, **kwargs):
-        pending = register(*args, **kwargs)
-        queue.put_nowait(pending.approval_batch_id)
+    from naiyue_test_agent.application.agent_session import AgentSession
+    register = AgentSession.register_live_approval
+    def notify(self, *args, **kwargs):
+        pending = register(self, *args, **kwargs)
+        if app._sessions._sessions.get(self.session_id) is self:
+            queue.put_nowait(pending.approval_batch_id)
         return pending
-    monkeypatch.setattr(app._sessions, 'register_live_approval', notify)
+    monkeypatch.setattr(AgentSession, 'register_live_approval', notify)
     return queue
 
 
@@ -94,7 +96,7 @@ async def test_a_approved_and_finished_while_b_still_runs_whole_child_batch_wait
             {'configurable': {'thread_id': a['child_thread_id']}})
         assert sum(isinstance(m, HumanMessage) for m in snapshot.values['messages']) == 1
         assert not snapshot.next and not snapshot.interrupts
-        assert app.pending_subagent_approvals(sid) == [] and app._sessions._subagent_instances == {}
+        assert app.pending_subagent_approvals(sid) == [] and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
     finally:
         b_release.set()
         await cancel_run(task)
@@ -147,7 +149,7 @@ async def test_invalid_submission_keeps_original_pending_and_does_not_execute(mo
         with pytest.raises(ValueError):
             await app.asubmit_subagent_approval(target, **kwargs)
         assert app.pending_subagent_approvals(sid) == [batch] and effects == []
-        assert app._sessions._sessions[sid]['session_allow'] == []
+        assert app._sessions.resolve_permission_context(sid)['session_allow'] == []
         await submit(app, sid, batch)
         with pytest.raises(ValueError):
             await submit(app, sid, batch)

@@ -32,7 +32,11 @@
 .agentLink span { margin-left: 8px; color: #999; }
 .agentState { color: #777; font-size: 11px; white-space: nowrap; }
 .delegatedTask { font-size: 12px; color: #777; margin: 6px 0; }
-.conversation { flex: 1; min-height: 0; overflow-y: auto; position: relative; padding: 20px 28px; }
+.conversation { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; position: relative; padding: 20px 28px; }
+.historyStatus { min-height: 32px; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin-bottom: 12px; color: #858585; font-size: 12px; }
+.historyStatus button { border: 0; background: transparent; color: #626262; text-decoration: underline; text-underline-offset: 3px; padding: 6px 8px; cursor: pointer; }
+.historyStatus button:disabled { cursor: default; opacity: .5; }
+.historyPreview { color: #767676; font-size: 12px; line-height: 1.5; margin: 8px 0; }
 .welcome { max-width: 768px; width: 100%; height: 100%; margin: auto; display: flex; flex-direction: column; justify-content: center; align-items: center; padding-bottom: 25px; }
 .welcomeMark { border: 1px solid var(--line); border-radius: 18px; width: 55px; height: 55px; display: grid; place-items: center; font-size: 25px; margin-bottom: 25px; }
 .welcome h1 { font-size: 30px; font-weight: 600; letter-spacing: -.6px; margin: 0 0 12px; }

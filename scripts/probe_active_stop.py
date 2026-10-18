@@ -58,7 +58,7 @@ async def _worker(args):
             app.request_stop(session)
             result = await task
             snapshot = await app._agent.aget_state({'configurable': {
-                'thread_id': app._sessions._sessions[session]['thread_id']}})
+                'thread_id': app._sessions.get_thread_id(session)}})
             assert len(calls) == 1 and result['run_stopped']
             assert not any(m.type == 'ai' for m in result['messages'])
             assert not snapshot.next and not any(t.error or t.interrupts for t in snapshot.tasks)

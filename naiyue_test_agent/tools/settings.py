@@ -220,15 +220,44 @@ class ToolProgressSettings(BaseModel):
     max_text_bytes: int = Field(default=8192, gt=0)
 
 
+class UsagePersistenceSettings(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
+
+    max_pending_events: int = Field(default=1024, gt=0)
+    max_pending_bytes: int = Field(default=4194304, gt=0)
+
+
+class DiagnosticSettings(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
+
+    max_pending_events: int = Field(default=1024, gt=0)
+    max_pending_bytes: int = Field(default=4194304, gt=0)
+    max_run_bytes: int = Field(default=1048576, gt=0)
+    summary_reserve_bytes: int = Field(default=4096, ge=2048)
+    max_workspace_bytes: int = Field(default=268435456, gt=0)
+    retention_days: int = Field(default=30, gt=0)
+    cleanup_batch_runs: int = Field(default=32, gt=0, le=1024)
+
+    @model_validator(mode='after')
+    def check_budgets(self):
+        if not self.summary_reserve_bytes < self.max_run_bytes <= self.max_workspace_bytes:
+            raise ValueError('Diagnostic run and workspace budgets are inconsistent')
+        return self
+
+
 class ToolSettings(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
 
+    max_active_runs: int = Field(default=10, gt=0)
+    web_event_cache_bytes: int = Field(default=4194304, gt=0)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     tools: BuiltinToolSettings = Field(default_factory=BuiltinToolSettings)
     permissions: PermissionSettings = Field(default_factory=PermissionSettings)
     process: ProcessSettings = Field(default_factory=ProcessSettings)
     tool_output: ToolOutputSettings = Field(default_factory=ToolOutputSettings)
     progress: ToolProgressSettings = Field(default_factory=ToolProgressSettings)
+    usage_persistence: UsagePersistenceSettings = Field(default_factory=UsagePersistenceSettings)
+    diagnostics: DiagnosticSettings = Field(default_factory=DiagnosticSettings)
     subagents: tuple[SubAgentSpec, ...] = ()
 
     @field_validator('subagents', mode='before')
@@ -265,10 +294,18 @@ def load_tool_settings(path: str | Path | None = None) -> ToolSettings:
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
         logger.error('permission_settings_unavailable error_type=%s', type(error).__name__)
         raise ValueError('Permission settings could not be read or parsed') from error
-    if set(raw) - {'tools', 'permissions', 'process', 'tool_output', 'storage', 'progress', 'subagents'}:
+    if set(raw) - {'max_active_runs', 'web_event_cache_bytes', 'tools', 'permissions', 'process', 'tool_output', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics'}:
         raise ValueError('Unknown runtime settings section')
     storage = StorageSettings.model_validate(raw.get('storage', {}))
     permissions = PermissionSettings.model_validate(raw.get('permissions', {}))
+    max_active_runs = raw.get('max_active_runs', ToolSettings.model_fields['max_active_runs'].default)
+    if type(max_active_runs) is not int or max_active_runs <= 0:
+        logger.warning('max_active_runs_fallback reason=invalid')
+        max_active_runs = ToolSettings.model_fields['max_active_runs'].default
+    web_event_cache_bytes = raw.get('web_event_cache_bytes', ToolSettings.model_fields['web_event_cache_bytes'].default)
+    if type(web_event_cache_bytes) is not int or web_event_cache_bytes <= 0:
+        logger.warning('web_event_cache_bytes_fallback reason=invalid')
+        web_event_cache_bytes = ToolSettings.model_fields['web_event_cache_bytes'].default
     try:
         tools = BuiltinToolSettings.model_validate(raw.get('tools', {}))
     except ValidationError:
@@ -290,8 +327,20 @@ def load_tool_settings(path: str | Path | None = None) -> ToolSettings:
         logger.warning('tool_progress_settings_fallback reason=invalid')
         progress = ToolProgressSettings()
     try:
+        usage_persistence = UsagePersistenceSettings.model_validate(raw.get('usage_persistence', {}))
+    except ValidationError:
+        logger.warning('usage_persistence_settings_fallback reason=invalid')
+        usage_persistence = UsagePersistenceSettings()
+    try:
+        diagnostics = DiagnosticSettings.model_validate(raw.get('diagnostics', {}))
+    except ValidationError:
+        logger.warning('diagnostic_settings_fallback reason=invalid')
+        diagnostics = DiagnosticSettings()
+    try:
         return ToolSettings(storage=storage, tools=tools, permissions=permissions, process=process, tool_output=tool_output,
-                            progress=progress, subagents=raw.get('subagents', ()))
+                            progress=progress, usage_persistence=usage_persistence,
+                            subagents=raw.get('subagents', ()), max_active_runs=max_active_runs,
+                            web_event_cache_bytes=web_event_cache_bytes, diagnostics=diagnostics)
     except ValidationError as error:
         logger.error('subagent_settings_invalid error_type=%s', type(error).__name__)
         raise ValueError('Subagent settings are invalid') from None

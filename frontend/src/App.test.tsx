@@ -8,6 +8,7 @@ afterEach(cleanup);
 
 function client() {
   const api = new WebApi('synthetic-test-access');
+  vi.spyOn(api, 'prepare').mockImplementation(id => api.session(id));
   const row = { session_id: 's', model_id: 'A', workspace_root: null, state: 'ready',
     updated_at: '2026-10-09T10:00:00Z', last_run_status: null };
   vi.spyOn(api, 'models').mockResolvedValue({ default_model_id: 'A', model_ids: ['A'] });
@@ -41,6 +42,7 @@ it('renders an empty conversation, then sends a real input and keeps editor avai
   await waitFor(() => expect(api.events).toHaveBeenCalled());
   expect((input as HTMLTextAreaElement).disabled).toBe(false);
   fireEvent.change(input, { target: { value: 'steering' } });
+  fireEvent.change(screen.getByRole('combobox', { name: '发送方式' }), { target: { value: 'steering' } });
   fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
   await waitFor(() => expect(api.control).toHaveBeenCalledWith('r', 'steering', 'steering'));
 });

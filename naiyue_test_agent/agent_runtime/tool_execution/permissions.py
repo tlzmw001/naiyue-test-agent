@@ -153,10 +153,12 @@ class AutoPermissionReviewer:
         return decision.decision
 
     def _diagnostic(self, context, stage, decision, reason, response=None, error=None):
+        from naiyue_test_agent.model_access.usage import normalize_model_usage
         usage = response.usage_metadata if isinstance(response, AIMessage) else None
-        tokens = {key: usage[key] if usage and type(usage.get(key)) is int and usage[key] >= 0 else None
-                  for key in ('input_tokens', 'output_tokens', 'total_tokens')}
         try:
+            tokens = normalize_model_usage(usage)
+            tokens['total_tokens'] = (usage['total_tokens'] if usage
+                and type(usage.get('total_tokens')) is int and usage['total_tokens'] >= 0 else None)
             logger.info('auto_permission_review', extra={'permission_review': {
                 'session_id': event_label(context.get('session_id')), 'run_id': event_label(context.get('run_id')),
                 'tool_call_id': event_label(context.get('_review_call_id')), 'stage': stage,
@@ -184,7 +186,7 @@ class AutoPermissionReviewer:
             try:
                 if control is not None and control.requested:
                     raise UserStop()
-                response = yield model, self._messages(data, stage)
+                response = yield stage, model, self._messages(data, stage)
                 if control is not None and control.requested:
                     raise UserStop()
                 decision = self._decision(response)
@@ -204,9 +206,9 @@ class AutoPermissionReviewer:
         try:
             pending = next(steps)
             while True:
-                model, messages = pending
+                stage, model, messages = pending
                 async def invoke():
-                    config = {'tags': [PERMISSION_REVIEW_TAG], 'callbacks': []}
+                    config = {'tags': [PERMISSION_REVIEW_TAG, PERMISSION_REVIEW_TAG + '_' + stage], 'callbacks': []}
                     if native_async_model(model):
                         return await model.ainvoke(messages, config=config)
                     return await run_blocking(model.invoke, messages, config=config)

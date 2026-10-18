@@ -12,7 +12,8 @@ export interface ContextEstimate {
 export interface ContextSnapshot {
   version: 1; model_call_id: string; model_id: string | null; run_id: string | null;
   recorded_at: string; status: 'running' | 'returned' | 'failed'; estimate: ContextEstimate;
-  usage: { input_tokens: number | null; output_tokens: number | null; cache_read_tokens: number | null } | null;
+  usage: { input_tokens: number | null; output_tokens: number | null;
+    cache_read_tokens: number | null; cache_write_tokens: number | null } | null;
 }
 export interface ContextView {
   session_id: string;

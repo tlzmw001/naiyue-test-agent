@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, errorText, WebApi } from './api';
-import { applyEvent, mergeMessages, validateEvent } from './events';
-import type { ApprovalBatch, MessageRow, PermissionMode, RunView, SessionView, ThinkingOptions, ToolDecision } from './types';
+import { applyEvent, validateEvent } from './events';
+import type { ApprovalBatch, PermissionMode, RunView, SessionView, ThinkingOptions, ToolDecision } from './types';
 import { useSessions } from './useSessions';
+import { useMessageHistory } from './useMessageHistory';
 
 export function useConversation(api: WebApi) {
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState('');
   const [thinkingOptions, setThinkingOptions] = useState<Record<string, ThinkingOptions>>({});
   const [session, setSession] = useState<SessionView | null>(null);
-  const [messages, setMessages] = useState<MessageRow[]>([]);
+  const history = useMessageHistory(api);
+  const messages = history.messages;
   const [run, setRun] = useState<RunView | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<Record<string, string[]>>({});
@@ -43,14 +45,17 @@ export function useConversation(api: WebApi) {
     setPending(pendingRef.current);
   };
 
-  async function refreshSession(sid: string, signal?: AbortSignal) {
+  async function refreshSession(sid: string, signal?: AbortSignal, prepare = false) {
     const revision = controlsRevision.current;
-    const value = await api.session(sid);
-    if (!signal?.aborted && selected.current === sid) setSession(previous =>
+    const value = await (prepare ? api.prepare(sid) : api.session(sid));
+    if (!signal?.aborted && selected.current === sid) {
+      setSession(previous =>
       previous?.session_id === sid && revision !== controlsRevision.current ? {
         ...value, active_tools: previous.active_tools, permission_mode: previous.permission_mode,
         model_id: previous.model_id, thinking_level: previous.thinking_level,
       } : value);
+      await history.synchronize({ ...value.history, messages: value.messages });
+    }
     return value;
   }
 
@@ -62,11 +67,11 @@ export function useConversation(api: WebApi) {
     return () => { disposed = true; subscription.current?.abort(); };
   }, [api]);
 
-  function display(view: RunView, sid: string, replace = false) {
+  function display(view: RunView, sid: string) {
     if (selected.current !== sid) return;
     currentRun.current = view;
     setRun(view);
-    setMessages(previous => replace ? view.messages : mergeMessages(previous, view.messages));
+    history.merge(view.messages);
     if (view.mode === 'compact' && view.status === 'completed' && view.compaction_result) {
       const status = view.compaction_result.status;
       setNotice(status === 'applied' ? '上下文已压缩，原任务不会自动继续。' : status === 'skipped' ?
@@ -79,13 +84,15 @@ export function useConversation(api: WebApi) {
     }
   }
 
-  async function watch(runId: string, sid: string, initial?: RunView) {
+  async function watch(runId: string, sid: string, initial?: RunView, resynchronize = false) {
     if (selected.current !== sid) return;
     subscription.current?.abort();
     const controller = new AbortController();
     subscription.current = controller;
     let view: RunView;
     try {
+      if (resynchronize) await refreshSession(sid, controller.signal, true);
+      if (controller.signal.aborted) return;
       view = initial ?? await api.run(runId);
       if (controller.signal.aborted) return;
       display(view, sid);
@@ -116,6 +123,8 @@ export function useConversation(api: WebApi) {
         } catch (error) {
           if (controller.signal.aborted) return;
           if (attempt === 1) throw error;
+          await refreshSession(sid, controller.signal, true);
+          if (controller.signal.aborted) return;
           view = await api.run(runId);
           if (controller.signal.aborted) return;
           display(view, sid);
@@ -134,12 +143,13 @@ export function useConversation(api: WebApi) {
     }
   }
 
-  function applySession(value: SessionView) {
+  function applySession(value: SessionView, replace = false) {
     const id = value.session_id;
     selected.current = id;
     setSession(value);
     setModel(models.includes(value.model_id) ? value.model_id : models[0] ?? '');
-    setMessages(value.messages);
+    if (replace || history.sessionId !== id) history.open(id, undefined, { ...value.history, messages: value.messages });
+    else void history.synchronize({ ...value.history, messages: value.messages });
     currentRun.current = value.live;
     setRun(value.live);
     setStopping(value.live?.status === 'running' && value.live.stop_requested === true);
@@ -153,14 +163,15 @@ export function useConversation(api: WebApi) {
   async function selectSession(id: string) {
     if (busySend.current) return;
     subscription.current?.abort();
+    history.cancel();
     const generation = ++selectionGeneration.current;
     selectionPending.current = true;
     setSelectingSession(true);
     setNotice('');
     try {
-      const value = await api.session(id);
+      const value = await api.prepare(id);
       if (generation !== selectionGeneration.current) return;
-      applySession(value);
+      applySession(value, true);
       if (value.recovery?.kind === 'interrupted_execution' && value.recovery.actions.includes('continue') ||
           value.recovery?.kind === 'pending_approval' && value.recovery.actions.includes('restore_approval'))
         await recover(value);
@@ -191,7 +202,7 @@ export function useConversation(api: WebApi) {
       if (selected.current === sid) {
         subscription.current?.abort(); selectionGeneration.current++; controlsRevision.current++;
         selected.current = 'new'; currentRun.current = null;
-        setSession(null); setMessages([]); setRun(null); setStopping(false);
+        setSession(null); history.reset(); setRun(null); setStopping(false);
       }
       return true;
     } finally { busySend.current = false; }
@@ -219,7 +230,7 @@ export function useConversation(api: WebApi) {
     } catch (error) {
       if (selected.current === sid) {
         setNotice(errorText(error));
-        try { applySession(await api.session(sid)); }
+        try { applySession(await api.prepare(sid)); }
         catch { setNotice(errorText(error) + ' 当前历史刷新未确认，请重新选择会话。'); }
       }
     } finally {
@@ -335,6 +346,7 @@ export function useConversation(api: WebApi) {
         writeDraft('', 'new');
         const value = await api.session(sid);
         setSession(value);
+        history.open(sid, undefined, { ...value.history, messages: value.messages });
       }
       if (live?.status === 'running' && !live.done) {
         await api.control(live.run_id, followUp ? 'follow_up' : 'steering', combined);
@@ -453,6 +465,7 @@ export function useConversation(api: WebApi) {
 
   const id = selected.current;
   return { models, model, thinkingOptions, sessions, session, messages, run, notice, submitting, stopping, changingModel, changingControls, selectingSession, recovering,
+    history: { ...history.pagination, loadOlder: history.loadOlder, disabled: selectingSession },
     managingSessions: listing.managingSessions, updateSession: listing.updateSession, reorderSessions: listing.reorderSessions, deleteSession,
     draft: drafts[id] ?? '', pending: pending[id] ?? [], pendingMode: !!stoppedMode.current[id],
     setDraft: writeDraft, setPending: writePending, submit, compact, stop, approve, stopAgent, stopApproval, selectSession, newSession, selectModel,
@@ -462,6 +475,6 @@ export function useConversation(api: WebApi) {
     recover: (action?: 'continue' | 'restore_approval') => {
       if (!selectionPending.current) return recover(session, action);
     },
-    reconnect: () => { const live = currentRun.current; if (live) void watch(live.run_id, selected.current); },
+    reconnect: () => { const live = currentRun.current; if (live) void watch(live.run_id, selected.current, undefined, true); },
   };
 }

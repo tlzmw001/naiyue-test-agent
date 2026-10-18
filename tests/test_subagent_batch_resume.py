@@ -134,8 +134,8 @@ async def test_remember_approved_child_target_applies_to_parent_only_in_same_ses
         await submit(app, sid, batch, remember=[batch['items'][0]['approval_id']])
         result = await asyncio.wait_for(task, 5)
         assert result['messages'][-1].content == 'done' and effects == [('probe', 'same'), ('probe', 'same')]
-        assert len(app._sessions._sessions[sid]['session_allow']) == 1
-        assert app._sessions._sessions[other]['session_allow'] == []
+        assert len(app._sessions.resolve_permission_context(sid)['session_allow']) == 1
+        assert app._sessions.resolve_permission_context(other)['session_allow'] == []
         result = await app.arun(other, [('user', 'same target')])
         assert result['__interrupt__'] and effects == [('probe', 'same'), ('probe', 'same')]
         await app.aresume_tool_approval(other, ['reject'])
@@ -212,6 +212,6 @@ async def test_two_asks_require_complete_batch_and_apply_reversed_rows_by_saved_
         assert effects == [('probe', 'second')]
         messages = {m.tool_call_id: m for m in child.seen[-1] if isinstance(m, ToolMessage)}
         assert messages['first'].status == 'error' and messages['second'].status == 'success'
-        assert app._sessions._sessions[sid]['session_allow'][0]['args'] == {'value': 'second'}
+        assert app._sessions.resolve_permission_context(sid)['session_allow'][0]['args'] == {'value': 'second'}
     finally:
         await cancel_run(task)

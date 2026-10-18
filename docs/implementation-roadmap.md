@@ -1,34 +1,40 @@
 # Naiyue Test Agent：分层命名与首期实施路线
 
-版本边界（2026-10-17）：下列早期同步阶段是历史实施记录。[Spec093](specs/093-architecture-semantics-and-sync-cleanup.md)已迁移其应用测试/探针并删除独立同步App。当前产品唯一执行链是CLI线程桥/Web → AsyncApplication → SessionService.arun/aresume_tool_approval → arun_steps → 原生异步图；低层Runtime同步策略、工具IO和框架同步hook仍按实际调用保留。
+2026-10-18当前：[Spec109两片](specs/109-web-replay-and-persistent-diagnostics.md#9-109-02实际结果与spec109收尾)已完成Web每根256条/4 MiB重播双预算和schema10持久诊断。关键事件/根摘要分开，根子共享额度，1 MiB单根/30天/256 MiB工作区默认可配置；有限队列、关闭排空、缺口和整组淘汰已接线。新增只读诊断分页API，冷查询不装载图；原聊天/用量/checkpoint及审批恢复保持。后端2817、前端198及211模块构建通过，0次真实供应商请求。下一步先讨论Spec103的GFM消息呈现，再逐片推进其他UI；checkpoint修剪和两种项目重试继续延期，原机/更多供应商/PyPI交付独立。
 
+版本边界（2026-10-18，105-02更新）：下列早期同步阶段为历史实施记录。[Spec093](specs/093-architecture-semantics-and-sync-cleanup.md)已删除独立同步App；当前产品唯一执行链为CLI线程桥/Web → AsyncApplication → SessionService协调准入 → AgentSession执行/审批恢复 → 直接await原生异步图 → 对象受保护收尾。IOCall/arun_steps已由[102-02](specs/102-session-state-lifecycle-refactor.md#18-102-02实际结果与下一片2026-10-18)删除，工具IO、CLI线程桥和框架同步hook按实际调用保留。
+
+102-03已迁移配置/选模测试与有界探针，删除build_configured_runtime_agent和record_selection；当前入口及发前预算边界见[本片结果](specs/102-session-state-lifecycle-refactor.md#20-102-03实际结果与下一片2026-10-18)。[102-04](specs/102-session-state-lifecycle-refactor.md#23-102-04实际结果与下一片2026-10-18)已接SessionPort：根/子Runtime共用同一SessionService，保留各middleware真实方法依赖，根控制hook限定root；旧项目指令回退已清理。[102-05](specs/102-05-content-projection.md#5-实际结果2026-10-18)已将CLI/Web完整内容与Runtime增量文本接到content_text，保留strict/图片/响应ID/终端转义差异并删除旧解析及Web别名。[102-06](specs/102-06-web-setting-errors.md#6-实际结果2026-10-18)已接WebService局部_apply_setting，三项门禁/错误码/成功确认及取消保持；[102-07](specs/102-07-middleware-contracts.md#5-全量验收与spec102收尾2026-10-18)已补standalone/root/child装配顺序说明及实际生产链验收，两处生产AST不变；当前7个已确认分片收尾，原问题第7跨会话并发转104草案，先做105架构收敛。
 状态：2026-09-30 更新实施顺序。这里确定职责和先后顺序；各功能的输入输出、文件范围和验收断言由对应阶段 Spec 确定。首期约 15–30 小时，包含学习时间，以一个可验证的 HTTP/RPC 测试闭环优先，不把远期能力算作首期完成。
 
 ## 先区分框架循环和项目代码
 
-Pi 的 `pi-ai` 提供统一模型 API，`pi-agent-core` 自己实现 Agent 循环、工具执行和状态。本项目复用 LangChain ChatModel 与 `create_agent` 的循环；项目实现的是模型接入配置、框架运行边界、测试策略和应用会话规则。因此按**实际职责**命名，不复制 Pi 的包名或声称自写循环。AgentX 的请求装配、会话与模型配置可作职责对照，但其 Java LangChain4j API 不直接搬到本项目。
+Pi 的 `pi-ai` 提供统一模型 API，`pi-agent-core` 自己实现 Agent 循环、工具执行和状态。本项目复用 LangChain ChatModel 与 `create_agent` 的循环；项目实现的是模型接入配置、框架运行边界、通用工具和应用会话规则。因此按**实际职责**命名，不复制 Pi 的包名或声称自写循环。AgentX 的请求装配、会话与模型配置可作职责对照，但其 Java LangChain4j API 不直接搬到本项目。
 
-四层是**逻辑职责**，从上到下的项目代码依赖方向如下；独立的检索、测试执行、评测和存储组件在具体 Spec 中接入，不为它们预建空目录。
+当前模块关系（2026-10-18）：`test_agent`历史原型源码已在Spec093C删除，本次清掉遗留字节码和空目录，不再把它作为应用与运行时之间的一层。测试工作由通用Agent结合提示词/Skills和注册工具完成；独立检索、测试执行与评测按具体需求接入，不预建策略包。以下图只展示核心装配与调用方向，contracts和持久化等共享模块按实际消费者使用。
 
 ```mermaid
 flowchart TB
-    A[application：任务、会话、CLI/Web 入口]
-    B[test_agent：测试提示词、工具与策略装配]
-    C[agent_runtime：create_agent 接线与运行边界]
-    D[model_access：模型配置与构造]
-    A --> B --> C --> D
+    E[CLI/Web 入口] --> A[application：任务、会话与装配]
+    A --> C[agent_runtime：create_agent 接线与运行边界]
+    A --> D[model_access：模型配置与构造]
+    A --> T[tools：工具注册与执行能力]
+    C --> D
+    C --> T
 ```
 
-| 逻辑层 / 暂定 Python 名称 | 拥有的职责 | 当前事实 |
+| 模块 | 拥有的职责 | 当前入口 |
 | --- | --- | --- |
-| 模型接入 `model_access` | 配置模型 ID、供应商/端点/本地凭证，构造并校验 `BaseChatModel`；本地模型通过实际支持的协议接入 | 已有 `.env/models.json` 加载与四类适配对象构造；HeiyuCode 配置完成真实工具循环，OpenAI 官方/Claude/Ollama 尚无真实模型调用证据 |
-| Agent 运行适配 `agent_runtime` | 装配或调用 `create_agent`，在模型/工具调用边界传递可信 context、调用记录与错误 | 已归入 `agent_runtime/` 包；选模、checkpointer、同步事件及进程内 Steering/Follow-up/优雅停止均有假模型接线证据。尚无活动取消、流式或压缩 |
-| 测试 Agent 策略 `test_agent` | 决定本次测试任务使用的提示词、证据与工具契约；将独立的检索/执行能力接入 Agent | 已有固定折扣场景的结构化输出实验；运行层已有通用 `read` 且 CLI 可选接入，测试策略尚未使用该工具，`write/bash` 未实现 |
-| 应用与入口 `application` | 会话归属、选中模型、切换提交与运行请求；CLI 和本地 Web 调同一应用服务 | [Spec 014](specs/014-in-memory-session-service.md) 已有进程内会话服务、内部线程映射、切换提交和同会话 busy 拦截；[Spec 016](specs/016-local-application-composition.md) 已将一份模型目录、服务、Agent 和内存 checkpoint 配对。CLI 已支持进程内交互式 Steering/Follow-up；仍无 Web、身份授权或持久化。后续可在这一层内拆入口与服务，不改变四层的逻辑划分 |
+| 模型接入 `model_access` | 读取模型配置，构造并校验供应商适配器，处理供应商参数、消息和失败描述 | `load_model_catalog`与`ModelCatalog` |
+| Agent运行适配 `agent_runtime` | 接线`create_agent`，在模型/工具边界处理可信context、观察、控制、上下文和审批 | `_assemble_interactive_runtime`及原生异步运行入口 |
+| 通用工具 `tools` | 提供文件、搜索、Shell、子任务等工具能力及注册契约；运行时负责调度与审批接线 | `ToolRegistry`及具体工具实现 |
+| 应用 `application`与CLI/Web入口 | 装配模型/工具/运行时，管理会话与持久化，接受任务并投影结果 | `SessionService.assemble_runtime`、`AsyncApplication`与`AgentSession`；归属迁移进度见顶部105说明 |
 
-`agent_runtime` 接收装配时注入的解析函数并在调用模型时使用，不静态 import `application`。因此框架回调进入项目 middleware 属于控制反转，不意味着项目下层依赖上层。当前文件承载选模与同步失败观测；新增职责时再按实际边界决定是否拆包，不先创建占位目录。
+`agent_runtime`通过SessionPort调用受信任会话能力，不静态import `application`。因此框架回调进入项目middleware属于控制反转，不意味着项目下层依赖上层；新增职责按实际边界决定是否拆包，不先创建占位目录。
 
 ## 实施顺序与每步证据
+
+以下为早期各阶段的实施记录，状态词对应当时版本；当前入口、执行方式和后续顺序以上方说明及handoff为准，其中“四层/测试策略层”属于已撤销的历史划分。
 
 | 顺序 | 一个小目标 | 完成证据 | 学习重点 |
 | --- | --- | --- | --- |

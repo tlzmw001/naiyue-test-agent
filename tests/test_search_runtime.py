@@ -205,7 +205,7 @@ async def test_unconfirmed_cleanup_is_never_converted_to_search_feedback(monkeyp
             with pytest.raises(ProcessCleanupError) as caught:
                 await app.arun(sid, [('user', 'search')])
             assert caught.value is failure
-            assert app._sessions._sessions[sid]['manual_review_required']
+            assert app._sessions.describe_session(sid)['manual_review_required']
             assert len(model.seen) == 1
         finally:
             await app.aclose()

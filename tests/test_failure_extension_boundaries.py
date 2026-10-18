@@ -33,7 +33,7 @@ async def test_application_unknown_match_is_not_treated_as_no_match(monkeypatch)
         raise error
 
     app.configure_error_classifiers(application=[describe])
-    monkeypatch.setattr(application.session_service, 'ainvoke_agent_run', fail)
+    monkeypatch.setattr(application.session_execution, 'ainvoke_agent_run', fail)
     with pytest.raises(ReportStorageError) as caught:
         await app.arun(await app.acreate_session('A'), [('user', 'probe')])
     assert caught.value is error

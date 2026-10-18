@@ -106,14 +106,15 @@ async def test_max_calls_omitted_does_not_install_an_implicit_small_limit(monkey
 async def test_mismatched_parent_permit_cannot_start_child(monkeypatch):
     child = ChildModel(replies=[])
     app, _ = await delegated_app(monkeypatch, child)
-    original = app._sessions.prepare_subagent_instance
-    def mismatch(*args, **kwargs):
+    from naiyue_test_agent.application.agent_session import AgentSession
+    original = AgentSession.prepare_subagent_instance
+    def mismatch(self, *args, **kwargs):
         context = kwargs['parent_context']
         kwargs['parent_context'] = {**context, '_execution_permit': {
             **context['_execution_permit'], 'args': {'agent': 'other', 'task': 'different'},
         }}
-        return original(*args, **kwargs)
-    monkeypatch.setattr(app._sessions, 'prepare_subagent_instance', mismatch)
+        return original(self, *args, **kwargs)
+    monkeypatch.setattr(AgentSession, 'prepare_subagent_instance', mismatch)
     with pytest.raises(PermissionMechanismError, match='permit'):
         await app.arun(await app.acreate_session('A'), [('user', 'start')])
-    assert child.seen == [] and app._sessions._subagent_instances == {}
+    assert child.seen == [] and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())

@@ -52,10 +52,14 @@ async def test_checkpointer_continues_messages_and_switches_model_between_invoke
     selections = []
     _runtime_registry_3 = prepare_tool_registry([])
     _runtime_names_3 = _runtime_registry_3.names()
+    def resolve_model(session_id, agent_path='root'):
+        model_id = selected[session_id]
+        selections.append((session_id, model_id))
+        return model_id, models[model_id]
+
     agent = build_runtime_agent(
         models['A'], tool_registry=_runtime_registry_3, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_3: names, system_prompt='', response_format=None,
-        resolve_model=lambda session_id, agent_path='root': (selected[session_id], models[selected[session_id]]),
-        record_selection=lambda session_id, model_id: selections.append((session_id, model_id)),
+        resolve_model=resolve_model,
         checkpointer=InMemorySaver(),
     )
 
@@ -109,12 +113,13 @@ async def test_switches_model_after_tool_result_in_same_run():
 
     def resolve_model(session_id, agent_path='root'):
         model_id = selected[session_id]
+        selections.append((session_id, model_id))
         return model_id, models[model_id]
 
     agent = create_agent(
         model=models['A'], tools=[switch_to_b], context_schema=RunContext,
         middleware=[make_model_selection_middleware(
-            resolve_model, lambda session_id, model_id: selections.append((session_id, model_id))
+            resolve_model
         )],
     )
     result = (await agent.ainvoke(
@@ -139,12 +144,13 @@ async def test_model_selection_is_isolated_by_session(caplog):
 
     def resolve_model(session_id, agent_path='root'):
         model_id = selected[session_id]
+        selections.append((session_id, model_id))
         return model_id, models[model_id]
 
     agent = create_agent(
         model=models['A'], tools=[], context_schema=RunContext,
         middleware=[make_model_selection_middleware(
-            resolve_model, lambda session_id, model_id: selections.append((session_id, model_id))
+            resolve_model
         )],
     )
     answer_s1 = (await agent.ainvoke({'messages': [('user', 'ping')]}, context={'session_id': 's1'}))
@@ -176,7 +182,6 @@ async def test_successful_model_call_records_reported_cache_usage(
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_4, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_4: names, system_prompt='', response_format=None,
         resolve_model=lambda _session_id, agent_path='root': ('model-A', model),
-        record_selection=lambda _session_id, _model_id: None,
     )
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
@@ -187,6 +192,7 @@ async def test_successful_model_call_records_reported_cache_usage(
     assert events == [{
         'event': 'model_call_usage', 'model_id': 'model-A',
         'input_tokens': expected_input, 'cache_read_tokens': expected_cached,
+        'output_tokens': usage['output_tokens'] if usage else None, 'cache_write_tokens': None,
     }]
     assert result['messages'][-1].content == 'unchanged answer'
     assert 'unchanged answer' not in caplog.text
@@ -204,7 +210,7 @@ async def test_missing_session_id_fails_before_model_call(caplog):
 
     agent = create_agent(
         model=model, tools=[], context_schema=RunContext,
-        middleware=[make_model_selection_middleware(resolve_model, lambda _session_id, _model_id: None)],
+        middleware=[make_model_selection_middleware(resolve_model)],
     )
 
     with pytest.raises(ValueError, match='session_id'):
@@ -214,21 +220,24 @@ async def test_missing_session_id_fails_before_model_call(caplog):
 
 
 @async_test
-async def test_selection_recorder_failure_is_not_a_model_call_failure(caplog):
+async def test_model_resolver_failure_is_not_a_model_call_failure(caplog):
     model = FakeListChatModel(responses=['unexpected'])
 
-    def fail_recording(_session_id, _model_id):
-        raise RuntimeError('selection recorder failed')
+    failure = RuntimeError('model resolver failed')
+
+    def fail_resolving(_session_id, agent_path='root'):
+        raise failure
 
     agent = create_agent(
         model=model, tools=[], context_schema=RunContext,
         middleware=[make_model_selection_middleware(
-            lambda _session_id, agent_path='root': ('model-A', model), fail_recording,
+            fail_resolving,
         )],
     )
 
-    with pytest.raises(RuntimeError, match='selection recorder failed'):
+    with pytest.raises(RuntimeError, match='model resolver failed') as caught:
         (await agent.ainvoke({'messages': [('user', 'ping')]}, context={'session_id': 's1'}))
+    assert caught.value is failure
     assert not any(hasattr(record, 'model_failure') for record in caplog.records)
 
 
@@ -248,12 +257,15 @@ async def test_model_failure_records_safe_event_and_propagates_same_exception(
 
     model = FailingModel(responses=['unused'])
     selections = []
+
+    def resolve_model(session_id, agent_path='root'):
+        selections.append((session_id, 'model-A'))
+        return 'model-A', model
     _runtime_registry_5 = prepare_tool_registry([])
     _runtime_names_5 = _runtime_registry_5.names()
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_5, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_5: names, system_prompt='', response_format=None,
-        resolve_model=lambda session_id, agent_path='root': ('model-A', model),
-        record_selection=lambda session_id, model_id: selections.append((session_id, model_id)),
+        resolve_model=resolve_model,
     )
 
     with caplog.at_level(logging.ERROR, logger='naiyue_test_agent.agent_runtime'):
@@ -295,7 +307,6 @@ async def test_openai_authentication_failure_is_classified_without_leaking_respo
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_6, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_6: names, system_prompt='', response_format=None,
         resolve_model=lambda _session_id, agent_path='root': ('model-A', model),
-        record_selection=lambda _session_id, _model_id: None,
     )
 
     with caplog.at_level(logging.ERROR, logger='naiyue_test_agent.agent_runtime'):
@@ -331,7 +342,6 @@ async def test_openai_transport_failure_reaches_agent_as_terminal_error(error_ty
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_7, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_7: names, system_prompt='', response_format=None,
         resolve_model=lambda _session_id, agent_path='root': ('model-A', model),
-        record_selection=lambda _session_id, _model_id: None,
     )
 
     with caplog.at_level(logging.ERROR, logger='naiyue_test_agent.agent_runtime'):
@@ -372,7 +382,6 @@ async def test_non_openai_failure_reaches_agent_event_without_leaking_body(
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_8, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_8: names, system_prompt='', response_format=None,
         resolve_model=lambda _session_id, agent_path='root': ('model-A', model),
-        record_selection=lambda _session_id, _model_id: None,
     )
 
     with caplog.at_level(logging.ERROR, logger='naiyue_test_agent.agent_runtime'):

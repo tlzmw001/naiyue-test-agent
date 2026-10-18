@@ -47,12 +47,19 @@ def test_model_layer_does_not_export_retired_runtime_error_alias(name):
     assert not hasattr(errors, name)
 
 
-def test_current_assembly_has_one_natural_end_control_callback():
+def test_current_assembly_requires_port_with_one_natural_end_boundary():
     from naiyue_test_agent.agent_runtime import _assemble_interactive_runtime
     parameters = inspect.signature(_assemble_interactive_runtime).parameters
     assert 'finish_pending_messages' not in parameters
-    for name in ('is_stop_requested', 'finish_run_boundary', 'prepare_control_messages'):
-        assert parameters[name].default is inspect.Parameter.empty
+    assert parameters['session_port'].default is inspect.Parameter.empty
+    for name in ('is_stop_requested', 'finish_run_boundary', 'prepare_control_messages',
+                 'resolve_model', 'resolve_permission_context', 'resolve_active_tool_names',
+                 'drain_steering', 'resolve_prompt_parts', 'resolve_subagent_roles',
+                 'resolve_project_instructions'):
+        assert name not in parameters
+    from naiyue_test_agent.agent_runtime.session_port import SessionPort
+    assert callable(SessionPort.finish_run_boundary)
+    assert not hasattr(SessionPort, 'finish_pending_messages')
 
 
 def test_central_run_services_still_prevent_closing_from_active_run(monkeypatch):
@@ -71,9 +78,11 @@ def test_central_run_services_still_prevent_closing_from_active_run(monkeypatch)
 
 
 def test_configured_probe_uses_current_async_graph_without_network(monkeypatch, capsys):
+    from probe_budget_helpers import guard_fake_catalog
+    monkeypatch.setattr('scripts.provider_acceptance_budget.guard_catalog', guard_fake_catalog)
     import sys
     from langchain_core.messages import AIMessage
-    from naiyue_test_agent import agent_runtime
+    from naiyue_test_agent import application
     from naiyue_test_agent.model_access import ModelCatalog
     from scripts import probe_configured_tool_loop as probe
     from test_agent_runtime import ToolCapableFake
@@ -82,7 +91,7 @@ def test_configured_probe_uses_current_async_graph_without_network(monkeypatch, 
         AIMessage(content='', tool_calls=[{'name': 'read_probe_value', 'args': {}, 'id': 'probe'}]),
         AIMessage(content='offline-value'),
     ])
-    monkeypatch.setattr(agent_runtime, 'load_model_catalog',
+    monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _: ModelCatalog('fake', {'fake': model}))
     monkeypatch.setattr(probe.secrets, 'token_hex', lambda _: 'offline-value')
     monkeypatch.setattr(sys, 'argv',
@@ -95,3 +104,13 @@ def test_configured_probe_uses_current_async_graph_without_network(monkeypatch, 
     assert asyncio.run(probe.main()) == 0
     assert capsys.readouterr().out == (
         'status=PASS model_calls=2 tool_executions=1 final_matches_tool_result=true\n')
+
+
+def test_configured_factory_and_selection_callback_are_retired():
+    from naiyue_test_agent import agent_runtime
+    from naiyue_test_agent.agent_runtime.call_observation import _ModelSelectionMiddleware
+    assert not hasattr(agent_runtime, 'build_configured_runtime_agent')
+    for function in (agent_runtime.build_runtime_agent, agent_runtime._assemble_interactive_runtime,
+                     agent_runtime._build_runtime_agent, agent_runtime.make_model_selection_middleware,
+                     _ModelSelectionMiddleware):
+        assert 'record_selection' not in inspect.signature(function).parameters

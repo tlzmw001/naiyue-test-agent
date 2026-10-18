@@ -24,6 +24,7 @@ it('shows each selected mode as its name and chevron without a status circle', (
 
 function setup() {
   const api = new WebApi('synthetic-test-access');
+  vi.spyOn(api, 'prepare').mockImplementation(id => api.session(id));
   const session: SessionView = { session_id: 's', model_id: 'A', workspace_root: '/workspace', state: 'ready',
     updated_at: '', last_run_status: null, messages: [], busy: false, can_run: true, has_compaction: false,
     active_run_id: null, latest_run_id: null, active_tools: ['read'], permission_mode: 'Default',
@@ -146,14 +147,21 @@ it('keeps confirmed choices when an older run refresh returns after saving', asy
   fireEvent.click(screen.getByRole('button', { name: /工具.*1/ }));
   fireEvent.click(screen.getByRole('checkbox', { name: /bash/ }));
   await waitFor(() => expect(api.selectTools).toHaveBeenCalledExactlyOnceWith('s', ['read', 'bash']));
+  // Reconnect now prepares first, then reads terminal state. Keep both reads
+  // independently pending so a later confirmation cannot hide an old-response regression.
+  let finishLatest!: (value: SessionView) => void;
+  vi.mocked(api.session).mockImplementationOnce(() => new Promise(resolve => { finishLatest = resolve; }));
   await act(async () => finish(session));
+  await waitFor(() => expect(finishLatest).toBeTypeOf('function'));
   expect(screen.getByRole('button', { name: '权限模式：NoAsk' })).toBeTruthy();
   expect((screen.getByRole('checkbox', { name: /bash/ }) as HTMLInputElement).checked).toBe(true);
   fireEvent.click(screen.getByRole('checkbox', { name: /read/ }));
   await waitFor(() => expect(api.selectTools).toHaveBeenLastCalledWith('s', ['bash']));
+  await act(async () => finishLatest({ ...session, permission_mode: 'NoAsk', active_tools: ['read', 'bash'] }));
+  expect((screen.getByRole('checkbox', { name: /read/ }) as HTMLInputElement).checked).toBe(false);
 });
 
-it('uses the chosen send mode for a running main agent without starting a new run', async () => {
+it.each(['follow_up', 'steering'] as const)('uses %s for a running main agent without starting a new run', async kind => {
   const { api, session } = setup();
   const live: RunView = { session_id: 's', run_id: 'r', status: 'running', messages: [],
     last_sequence: 0, incomplete: false, done: false, manual_review_required: false };
@@ -163,11 +171,13 @@ it('uses the chosen send mode for a running main agent without starting a new ru
   });
   vi.spyOn(api, 'control').mockResolvedValue({ accepted: true, retained: [] });
   fireEvent.click(await screen.findByRole('button', { name: /Invalid Date/ }));
-  const selector = await screen.findByRole('combobox', { name: '发送方式' });
-  expect((selector as HTMLSelectElement).value).toBe('steering');
-  fireEvent.change(selector, { target: { value: 'follow_up' } });
+  await screen.findByRole('button', { name: '停止运行' });
+  expect(screen.queryByRole('combobox', { name: '发送方式' })).toBeNull();
   fireEvent.change(screen.getByRole('textbox', { name: '消息' }), { target: { value: 'next task' } });
+  const selector = screen.getByRole('combobox', { name: '发送方式' });
+  expect((selector as HTMLSelectElement).value).toBe('follow_up');
+  if (kind === 'steering') fireEvent.change(selector, { target: { value: kind } });
   fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
-  await waitFor(() => expect(api.control).toHaveBeenCalledExactlyOnceWith('r', 'follow_up', 'next task'));
+  await waitFor(() => expect(api.control).toHaveBeenCalledExactlyOnceWith('r', kind, 'next task'));
   expect(api.start).not.toHaveBeenCalled();
 });

@@ -15,6 +15,8 @@ import sys
 import tempfile
 import time
 from unittest.mock import patch
+from contextlib import AsyncExitStack
+from scripts.provider_acceptance_budget import RequestBudget, guard_application_catalog
 
 
 def _worker(args):
@@ -29,51 +31,43 @@ async def _async__worker(args):
     from langchain_core.outputs import ChatGeneration, ChatResult
     from naiyue_test_agent import application
     from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-    from naiyue_test_agent.application.session_storage import SessionStorage
     from naiyue_test_agent.model_access import ModelCatalog
+
+    budget = RequestBudget(1)
 
     class HistoryModel(FakeMessagesListChatModel):
         def _generate(self, messages, *_positional, **kwargs):
+            budget.reserve('offline')
             found = any(isinstance(m, HumanMessage) and args_value in str(m.content) for m in messages)
             answer = 'SAVED' if args.worker == 'save' else args_value if found else 'MISSING'
             return ChatResult(generations=[ChatGeneration(message=AIMessage(
                 content=answer, response_metadata={'finish_reason': 'stop'}))])
 
     args_value = args.value
-    original = application._assemble_interactive_runtime
-    calls = []
-    def bounded_assemble(*positional, **options):
-        record = options['record_selection']
-        def bounded_record(*args):
-            if calls:
-                raise RuntimeError('Model call budget exceeded')
-            calls.append(True)
-            record(*args)
-        options['record_selection'] = bounded_record
-        return original(*positional, **options)
-
-    with patch.object(application, '_assemble_interactive_runtime', bounded_assemble):
-        with patch.object(application, 'load_model_catalog',
-                          application.load_model_catalog if args.real else
-                          lambda _p: ModelCatalog('offline', {'offline': HistoryModel(responses=[])})):
-            async with open_async_persistent_application(args.config, database_path=args.database, tools=[],
-                    system_prompt='Keep the synthetic test fact. Answer only the requested exact value.', response_format=None) as app:
-                storage = app._sessions._persistence.storage
-                if args.worker == 'save':
-                    session = await app.acreate_session(app.default_model_id)
-                    prompt = f'The synthetic test fact is {args.value}. Remember it and reply only SAVED.'
-                else:
-                    session = await app.arestore_session(args.session)
-                    prompt = 'What is the synthetic test fact from the earlier conversation? Reply with only its exact value.'
-                result = await app.arun(session, [('user', prompt)])
-                row = storage.get(session)
-                assert len(calls) == 1 and row['state'] == 'ready'
-                history_used = result['messages'][-1].text.strip() == args.value if args.worker == 'resume' else None
-                if args.worker == 'resume':
-                    assert history_used
-                print(json.dumps({'status': 'returned', 'session_id': session, 'thread_id': row['thread_id'],
-                                  'run_id': row['run_id'], 'checkpoint_id': row['checkpoint_id'],
-                                  'history_used': history_used}), flush=True)
+    async with AsyncExitStack() as resources:
+        if args.real:
+            await resources.enter_async_context(guard_application_catalog(budget))
+        else:
+            resources.enter_context(patch.object(application, 'load_model_catalog',
+                lambda _p: ModelCatalog('offline', {'offline': HistoryModel(responses=[])})))
+        async with open_async_persistent_application(args.config, database_path=args.database, tools=[],
+                system_prompt='Keep the synthetic test fact. Answer only the requested exact value.', response_format=None) as app:
+            storage = app._storage
+            if args.worker == 'save':
+                session = await app.acreate_session(app.default_model_id)
+                prompt = f'The synthetic test fact is {args.value}. Remember it and reply only SAVED.'
+            else:
+                session = await app.arestore_session(args.session)
+                prompt = 'What is the synthetic test fact from the earlier conversation? Reply with only its exact value.'
+            result = await app.arun(session, [('user', prompt)])
+            row = storage.get(session)
+            assert budget.snapshot()['used'] == 1 and row['state'] == 'ready'
+            history_used = result['messages'][-1].text.strip() == args.value if args.worker == 'resume' else None
+            if args.worker == 'resume':
+                assert history_used
+            print(json.dumps({'status': 'returned', 'session_id': session, 'thread_id': row['thread_id'],
+                              'run_id': row['run_id'], 'checkpoint_id': row['checkpoint_id'],
+                              'history_used': history_used}), flush=True)
 
 
 def main():

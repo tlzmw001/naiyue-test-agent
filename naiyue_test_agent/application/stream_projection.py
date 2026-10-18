@@ -48,6 +48,10 @@ class StreamingMessageProjection:
                 return
             row.update(provisional=False, state='complete', visibility=data.visibility,
                        session_id=event.session_id, run_id=event.run_id)
+            if row['type'] == 'tool':
+                parent = next((m for m in reversed(self.messages) if m['type'] != 'tool'), None)
+                row['parent_message_id'] = (parent['id'] if parent and any(
+                    c['id'] == row['tool_call_id'] for c in parent.get('tool_calls', [])) else None)
             self._messages[(event.session_id, row['id'])] = row
         elif event.event_type == 'message_snapshot_unavailable':
             self.incomplete = True

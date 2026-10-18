@@ -27,6 +27,8 @@ def create_web_app(settings, *, application_factory=None):
     @asynccontextmanager
     async def lifespan(app):
         tool_settings = settings.runtime_settings if settings.runtime_settings is not None else load_tool_settings()
+        delivery_settings = settings if 'event_cache_bytes' in settings.model_fields_set else settings.model_copy(
+            update={'event_cache_bytes': tool_settings.web_event_cache_bytes})
         tools = create_builtin_tools(tool_settings)
         initial_tools = [spec.tool.name for spec in tools if spec.tool.name not in ('bash', 'powershell')] if settings.workspace_root is not None else []
         factory = application_factory or (lambda: open_async_persistent_application(
@@ -35,9 +37,9 @@ def create_web_app(settings, *, application_factory=None):
             workspace_binding={'workspace_id': settings.workspace_id, 'root_path': str(settings.workspace_root)}
                 if settings.workspace_id is not None else None))
         async with factory() as application:
-            delivery = RunDelivery(application, settings, progress_settings=tool_settings.progress)
+            delivery = RunDelivery(application, delivery_settings, progress_settings=tool_settings.progress)
             app.state.delivery = delivery
-            app.state.service = WebService(application, delivery, settings)
+            app.state.service = WebService(application, delivery, delivery_settings)
             try:
                 yield
             finally:
@@ -95,6 +97,25 @@ def create_web_app(settings, *, application_factory=None):
     async def session(session_id: str):
         return await app.state.service.session(session_id)
 
+    @app.post('/api/sessions/{session_id}/prepare')
+    async def prepare(session_id: str):
+        return await app.state.service.prepare(session_id)
+
+    @app.get('/api/sessions/{session_id}/messages')
+    async def messages(session_id: str, before: str | None = Query(default=None, max_length=4096),
+                       agent_id: str | None = Query(default=None, max_length=128),
+                       limit: int | None = Query(default=None, ge=1, le=256)):
+        return await app.state.service.messages(session_id, agent_id=agent_id, before=before, limit=limit)
+
+    @app.get('/api/sessions/{session_id}/messages/{sequence}/content')
+    async def message_content(session_id: str, sequence: int, revision: int = Query(ge=1),
+                              offset: int = Query(default=0, ge=0),
+                              agent_id: str | None = Query(default=None, max_length=128)):
+        if sequence < 1:
+            raise WebError('invalid_request', 422)
+        return await app.state.service.message_content(session_id, sequence, agent_id=agent_id,
+                                                        revision=revision, offset=offset)
+
     @app.get('/api/sessions/{session_id}/subagents')
     async def subagents(session_id: str):
         return await app.state.service.subagents(session_id)
@@ -102,6 +123,19 @@ def create_web_app(settings, *, application_factory=None):
     @app.get('/api/sessions/{session_id}/context')
     async def context(session_id: str):
         return await app.state.service.context(session_id)
+
+    @app.get('/api/sessions/{session_id}/usage')
+    async def usage(session_id: str, after_model: str | None = Query(default=None, min_length=1, max_length=128)):
+        return await app.state.service.usage(session_id, after_model=after_model)
+
+    @app.get('/api/sessions/{session_id}/diagnostics')
+    async def diagnostic_runs(session_id: str, before: int | None = Query(default=None, ge=1, le=2**63 - 1)):
+        return await app.state.service.diagnostics(session_id, before=before)
+
+    @app.get('/api/sessions/{session_id}/diagnostics/{run_id}')
+    async def diagnostic_events(session_id: str, run_id: str,
+                                after: int = Query(default=0, ge=0, le=2**63 - 1)):
+        return await app.state.service.diagnostics(session_id, run_id=run_id, after=after)
 
     @app.get('/api/sessions/{session_id}/subagents/{agent_id}')
     async def subagent(session_id: str, agent_id: str):

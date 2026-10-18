@@ -26,8 +26,8 @@ def image_description(block):
     return f'[image: {mime}{dimensions}; pixels omitted from text projection]'
 
 
-def content_text(content, *, strict=False):
-    """For summary/Web, retain text and finite image metadata, never encoded pixels."""
+def content_text(content, *, strict=False, delta=False):
+    """Project complete content or only the text blocks of a streaming delta."""
     if isinstance(content, str):
         return content
     if not isinstance(content, list):
@@ -37,11 +37,14 @@ def content_text(content, *, strict=False):
     parts = []
     for block in content:
         if isinstance(block, str):
-            parts.append(block)
+            if not delta:
+                parts.append(block)
         elif isinstance(block, dict) and block.get('type') == 'text' and isinstance(block.get('text'), str):
             parts.append(block['text'])
-        elif is_image_block(block):
-            parts.append('\n' + image_description(block) + '\n')
+        elif (isinstance(block, dict) and isinstance(block.get('type'), str)
+              and is_image_block(block)):
+            if not delta:
+                parts.append('\n' + image_description(block) + '\n')
         elif strict:
             raise ValueError('unsupported_content_block')
     return ''.join(parts)

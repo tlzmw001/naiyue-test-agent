@@ -204,7 +204,7 @@ async def test_application_extension_is_local_and_has_correct_stage(monkeypatch)
     def fail(*_args, **_kwargs):
         raise error
 
-    monkeypatch.setattr(application.session_service, 'prepare_run_resources', fail)
+    monkeypatch.setattr(application.session_execution, 'prepare_run_resources', fail)
     for item in (app, other):
         with pytest.raises(ReportStorageError) as caught:
             await item.arun(await item.acreate_session('A'), [('user', 'probe')])

@@ -6,6 +6,7 @@ import { WebApi } from './api';
 afterEach(cleanup);
 it('opens children only on request, keeps approval in main and links delegation to the exact detail', async () => {
   const api = new WebApi('test');
+  vi.spyOn(api, 'prepare').mockImplementation(id => api.session(id));
   const record = { agent_id: 'abcdef123', agent_path: 'root/tester/abcdef123', agent: 'tester',
     task: 'inspect', tool_call_id: 'outer', status: 'awaiting_approval' as const };
   const source = { ...record, agent_run_id: 'child', parent_run_id: 'r', parent_tool_call_id: 'outer' };

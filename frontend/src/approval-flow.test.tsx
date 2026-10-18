@@ -16,6 +16,7 @@ const pending: SessionView = { session_id: 's', model_id: 'A', workspace_root: '
   approval_batches: [batch], live: paused };
 function setup() {
   const api = new WebApi('synthetic-test-access');
+  vi.spyOn(api, 'prepare').mockImplementation(id => api.session(id));
   vi.spyOn(api, 'models').mockResolvedValue({ default_model_id: 'A', model_ids: ['A'] });
   vi.spyOn(api, 'sessions').mockResolvedValue([]);
   vi.spyOn(api, 'session').mockResolvedValue(pending);

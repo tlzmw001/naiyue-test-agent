@@ -121,6 +121,7 @@ def _parent(args):
                         response.raise_for_status()
                         sid = response.json()['session_id']
                     else:
+                        client.post(f'/api/sessions/{sid}/prepare').raise_for_status()
                         restored = client.get(f'/api/sessions/{sid}')
                         restored.raise_for_status()
                         assert {'external-one', 'external-two', 'listing'} == {

@@ -1,0 +1,8 @@
+.card > summary { gap: 4px 8px; }
+.terminal > summary { flex-wrap: nowrap; }
+.icon { width: 14px; flex-shrink: 0; text-align: center; color: var(--muted); font-size: 12px; font-weight: 600; }
+.name { flex-shrink: 0; max-width: 35%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.target { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
+.status { flex-shrink: 0; white-space: nowrap; }
+.finishedPhase, .finishedTiming { padding-left: 0; margin: 8px 0; }
+.card > summary:focus-visible { outline: 2px solid var(--muted); outline-offset: 3px; border-radius: 12px; }

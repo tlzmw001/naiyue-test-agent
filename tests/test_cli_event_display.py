@@ -230,3 +230,28 @@ def test_cli_ignores_older_unseen_progress_and_reports_unfinished_call_as_unconf
     view(event('run_finished', 6, status='stopped', manual_review_required=False, failure=None))
     assert 'OLD' not in '\n'.join(lines)
     assert '状态未确认' in '\n'.join(lines) and '已停止' in lines[-1]
+
+
+@pytest.mark.parametrize('route', ['history', 'event', 'fallback'])
+def test_image_metadata_is_visible_once_with_terminal_escaping_and_no_pixels(route):
+    from test_content_projection import IMAGE, DESCRIPTION
+    content = ['前缀', {'type': 'text', 'text': 'caption\x1b[31m'}, IMAGE]
+    saved = AIMessage(id='image', content=content)
+    if route == 'history':
+        lines = []
+        view = CliEventDisplay('session', writer=lines.append)
+        view.show_history({'messages': [saved], 'recovery': {'kind': 'ready', 'reason': 'ready',
+                                                          'unconfirmed_tool_call_ids': []}})
+    else:
+        view, lines = display()
+        if route == 'event':
+            view(message(2, identity='image', row={'content': content}))
+            view(message(3, identity='image', row={'content': content}))
+        view.finish_result({'messages': [HumanMessage(content='q', id='h'), saved]}, input_message_id='h')
+    output = '\n'.join(lines)
+    assert output.count(DESCRIPTION) == 1 and output.count('前缀caption') == 1
+    assert '\x1b' not in output and '\\x1b[31m' in output
+    assert 'PRIVATE_PIXELS' not in output and 'private.example' not in output
+    assert output.count('非文本内容') == 1
+    if route == 'event':
+        assert '消息观察不完整' not in output

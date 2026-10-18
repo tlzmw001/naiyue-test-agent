@@ -8,6 +8,7 @@ from naiyue_test_agent.tools import ToolSpec
 from naiyue_test_agent.application import prepare_tool_registry
 
 import json
+from contextlib import AsyncExitStack
 import logging
 from types import SimpleNamespace
 
@@ -16,7 +17,7 @@ from langchain.tools import tool
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from naiyue_test_agent.agent_runtime import build_configured_runtime_agent
+from naiyue_test_agent.agent_runtime import build_runtime_agent
 from naiyue_test_agent.agent_runtime.context_observation import observe_model_request
 from naiyue_test_agent.model_access import (
     ModelConfigError, bind_model_output_limit, load_model_catalog,
@@ -126,17 +127,18 @@ async def test_budget_observation_follows_model_switch_and_missing_usage(tmp_pat
 
     _runtime_registry_1 = prepare_tool_registry([ToolSpec(switch_model, switch_model.args_schema, permissions=ToolPermission(default='allow'))])
     _runtime_names_1 = _runtime_registry_1.names()
-    agent = build_configured_runtime_agent(
-        _config(tmp_path, first_limits={'context_window_tokens': 120,
-                                        'max_output_tokens': 16},
-                second_limits={'context_window_tokens': 200,
-                               'max_output_tokens': 32}),
-        tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='BASE', response_format=None,
-        select_model_id=lambda session_id: selected[session_id],
-        record_selection=lambda _session_id, _model_id: None,
-    )
-    with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        (await agent.ainvoke({'messages': [('user', 'SECRET_REQUEST')]}, context={'session_id': 's1'}))
+    async with AsyncExitStack() as resources:
+        catalog = load_model_catalog(_config(
+            tmp_path, first_limits={'context_window_tokens': 120, 'max_output_tokens': 16},
+            second_limits={'context_window_tokens': 200, 'max_output_tokens': 32}))
+        resources.push_async_callback(catalog.aclose)
+        agent = build_runtime_agent(
+            catalog.get('first'), tool_registry=_runtime_registry_1,
+            resolve_active_tool_names=lambda _sid, agent_path='root': _runtime_names_1,
+            system_prompt='BASE', response_format=None,
+            resolve_model=lambda sid, agent_path='root': (selected[sid], catalog.get(selected[sid])))
+        with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
+            await agent.ainvoke({'messages': [('user', 'SECRET_REQUEST')]}, context={'session_id': 's1'})
 
     events = [record.model_context_budget for record in caplog.records
               if hasattr(record, 'model_context_budget')]
@@ -179,15 +181,17 @@ async def test_budget_observation_on_model_error_preserves_failure(tmp_path, mon
     monkeypatch.setattr('naiyue_test_agent.model_access.ChatOpenAI', fake_openai)
     _runtime_registry_2 = prepare_tool_registry([])
     _runtime_names_2 = _runtime_registry_2.names()
-    agent = build_configured_runtime_agent(
-        _config(tmp_path), tool_registry=_runtime_registry_2, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_2: names, system_prompt='', response_format=None,
-        select_model_id=lambda _session_id: 'first',
-        record_selection=lambda _session_id, _model_id: None,
-    )
-    with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        with pytest.raises(RuntimeError) as caught:
-            (await agent.ainvoke({'messages': [('user', 'SECRET_REQUEST')]},
-                         context={'session_id': 's1'}))
+    async with AsyncExitStack() as resources:
+        catalog = load_model_catalog(_config(tmp_path))
+        resources.push_async_callback(catalog.aclose)
+        agent = build_runtime_agent(
+            catalog.get('first'), tool_registry=_runtime_registry_2,
+            resolve_active_tool_names=lambda _sid, agent_path='root': _runtime_names_2,
+            system_prompt='', response_format=None,
+            resolve_model=lambda _sid, agent_path='root': ('first', catalog.get('first')))
+        with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
+            with pytest.raises(RuntimeError) as caught:
+                await agent.ainvoke({'messages': [('user', 'SECRET_REQUEST')]}, context={'session_id': 's1'})
 
     assert caught.value is failure
     budgets = [record.model_context_budget for record in caplog.records

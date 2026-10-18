@@ -4,7 +4,6 @@ import asyncio
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
-from naiyue_test_agent.application import prepare_tool_registry
 
 import argparse
 
@@ -30,16 +29,12 @@ async def main() -> int:
     signal.alarm(90)
 
     from langchain.tools import tool
-    from naiyue_test_agent.agent_runtime import build_configured_runtime_agent
+    from naiyue_test_agent.application.async_application import build_async_local_application
+    from scripts.provider_acceptance_budget import RequestBudget, guard_application_catalog
 
     expected = secrets.token_hex(6)
     executions = []
-    selections = []
-
-    def record_selection(session_id: str, model_id: str) -> None:
-        if len(selections) >= 2:
-            raise RuntimeError('Configured probe model-call limit reached')
-        selections.append((session_id, model_id))
+    budget = RequestBudget(2)
 
     @tool
     def read_probe_value() -> str:
@@ -50,29 +45,24 @@ async def main() -> int:
         return expected
 
     try:
-        _runtime_registry_1 = prepare_tool_registry([ToolSpec(read_probe_value, read_probe_value.args_schema, permissions=ToolPermission(default='allow'))])
-        _runtime_names_1 = _runtime_registry_1.names()
-        agent = build_configured_runtime_agent(
-            args.config,
-            tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names,
-            system_prompt='Use the requested diagnostic tool and return its exact value.',
-            response_format=None,
-            select_model_id=lambda _session_id: args.model_id,
-            record_selection=record_selection,
-        )
-        result = (await agent.ainvoke(
-            {'messages': [('user',
-                           'Call read_probe_value exactly once. Reply only with the value returned by the tool.')]},
-            context={'session_id': 'configured-probe'},
-            config={'recursion_limit': 14},
-        ))
+        async with guard_application_catalog(budget):
+            app = await build_async_local_application(args.config,
+                tools=[ToolSpec(read_probe_value, read_probe_value.args_schema,
+                                permissions=ToolPermission(default='allow'))],
+                system_prompt='Call the requested tool, then return exactly its result.', response_format=None)
+            try:
+                session = await app.acreate_session(args.model_id)
+                result = await app.arun(session, [('user',
+                    'Call read_probe_value exactly once, then reply only with the exact value it returns.')])
+            finally:
+                await app.aclose()
         messages = result['messages']
         calls = [call for message in messages if message.type == 'ai'
                  for call in message.tool_calls]
         tool_messages = [message for message in messages if message.type == 'tool']
         if not (len(executions) == len(calls) == len(tool_messages) == 1
                 and calls[0]['id'] == tool_messages[0].tool_call_id
-                and messages[-1].content.strip() == expected and len(selections) == 2):
+                and messages[-1].content.strip() == expected and budget.snapshot()['used'] == 2):
             raise AssertionError('Configured tool-loop contract failed')
     except Exception as exc:
         print(f'status=FAIL error_type={type(exc).__name__}')

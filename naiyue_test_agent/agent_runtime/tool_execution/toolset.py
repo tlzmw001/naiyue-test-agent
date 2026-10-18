@@ -31,11 +31,10 @@ def batch_tool_specs(registry, state, context):
 class ToolSetMiddleware(AgentMiddleware):
     state_schema = ToolExecutionState
 
-    def __init__(self, registry, resolve_active_tool_names, system_prompt, resolve_project_instructions=None, resolve_subagent_roles=None, resolve_prompt_parts=None):
+    def __init__(self, registry, resolve_active_tool_names, system_prompt, *, resolve_subagent_roles=None, resolve_prompt_parts=None):
         self.registry = registry
         self.resolve_active_tool_names = resolve_active_tool_names
         self.system_prompt = system_prompt
-        self.resolve_project_instructions = resolve_project_instructions
         self.resolve_subagent_roles = resolve_subagent_roles
         self.resolve_prompt_parts = resolve_prompt_parts
 
@@ -67,11 +66,7 @@ class ToolSetMiddleware(AgentMiddleware):
     def _inputs(self, state, runtime):
         specs = batch_tool_specs(self.registry, state, runtime.context)
         sid = runtime.context['session_id']
-        if self.resolve_prompt_parts is not None:
-            parts = self.resolve_prompt_parts(sid)
-        else:
-            project = self.resolve_project_instructions(sid) if self.resolve_project_instructions else None
-            parts = [{'id': 'project', 'text': project}] if project else []
+        parts = self.resolve_prompt_parts(sid) if self.resolve_prompt_parts is not None else []
         prompt = compose_model_prompt(self.system_prompt, parts, specs, runtime.context.get(_ROLES_KEY, ()))
         return [spec.tool for spec in specs], prompt
 

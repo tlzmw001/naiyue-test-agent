@@ -2,7 +2,8 @@
 
 import json
 from copy import deepcopy
-from .serialization import encoded_size, text_content
+from naiyue_test_agent.model_access.messages import content_text
+from .serialization import encoded_size
 
 
 def summarize_agent(agent, draft_budget):
@@ -63,7 +64,7 @@ def observe_agent(agents, event, parent_messages=()):
         message = json.loads(data['snapshot_json'])
         if message.get('is_context_summary'):
             return
-        row = {**message, 'content': text_content(message['content']), 'provisional': False,
+        row = {**message, 'content': content_text(message['content']), 'provisional': False,
                'state': 'complete', 'run_id': source['agent_run_id']}
         old = next((item for item in messages if item['id'] == message['id']), None)
         if old is None:
@@ -82,7 +83,7 @@ def observe_agent(agents, event, parent_messages=()):
                     'run_id': source['agent_run_id'], 'state': prior.get('state', 'pending')}
         elif message['type'] == 'tool' and message['tool_call_id'] in states:
             states[message['tool_call_id']]['result'] = {'id': message['id'], 'type': 'tool',
-                'content': text_content(message['content']), 'tool_call_id': message['tool_call_id'],
+                'content': content_text(message['content']), 'tool_call_id': message['tool_call_id'],
                 'status': message.get('status', 'success'), 'state': 'complete', 'provisional': False}
     elif kind in ('tool_call_started', 'tool_call_finished', 'tool_progress'):
         call_id = data['tool_call_id']

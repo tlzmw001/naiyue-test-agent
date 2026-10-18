@@ -64,7 +64,7 @@ async def test_restart_pairs_root_delegation_without_replaying_child_or_reviving
         assert history['state'] == 'running'
         assert history['recovery']['kind'] == 'interrupted_execution'
         assert history['recovery']['unconfirmed_tool_call_ids'] == ['outer']
-        row = app._sessions._persistence.storage.get(sid)
+        row = app._storage.get(sid)
         config = {'configurable': {'thread_id': row['thread_id']}}
         source = await app._agent.aget_state(config)
         child_graph = app._sessions._subagents['worker']['agent']
@@ -76,7 +76,15 @@ async def test_restart_pairs_root_delegation_without_replaying_child_or_reviving
         recovered = await app.arecover_session(sid, checkpoint_id=history['checkpoint_id'], action='continue')
         assert recovered['state'] == 'ready'
         assert not reached and not root.seen and not child.seen and not events
-        assert app._sessions._subagent_instances == {} and app.pending_approval_batches(sid) == []
+        storage = app._storage
+        child_head, = [r for r in storage.chat_heads(sid) if r['agent_path'] != 'root']
+        assert child_head['thread_id'] == info['child_thread_id']
+        archived_child = [json.loads(r[0])['data'] for r in storage.connection.execute(
+            'SELECT body_json FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? ORDER BY sequence',
+            (sid, info['child_thread_id']))]
+        assert [r['id'] for r in archived_child] == [m.id for m in original_child.values['messages']]
+        assert any(r['tool_calls'] for r in archived_child if r['type'] == 'ai')
+        assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values()) and app.pending_approval_batches(sid) == []
         saved = await app._agent.aget_state(config)
         assert not saved.next and not saved.tasks and saved.values['tool_execution'] == {}
         assert saved.values['messages'][:-1] == source.values['messages']
@@ -85,6 +93,16 @@ async def test_restart_pairs_root_delegation_without_replaying_child_or_reviving
         assert feedback.tool_call_id == 'outer' and feedback.status == 'error'
         assert feedback.additional_kwargs['naiyue_recovery']['reason'] == 'result_unconfirmed'
         assert 'not automatically replayed' in feedback.content
+        writes = storage.connection.total_changes
+        root_page = await app.aget_chat_page(sid, limit=1, body_bytes=16384, preview_chars=2048)
+        assert root_page['records'][0]['message_id'] == feedback.id
+        records = await app.aget_chat_subagents(sid)
+        child_id = info['child_thread_id'].removeprefix('subagent:')
+        assert any(row['agent_id'] == child_id for row in records)
+        child_page = await app.aget_chat_page(sid, agent_id=child_id, limit=1, body_bytes=16384, preview_chars=2048)
+        assert child_page['has_more']
+        assert child_page['records'][0]['message_id'] == original_child.values['messages'][-1].id
+        assert storage.connection.total_changes == writes and not root.seen and not child.seen and not reached
         unchanged = await child_graph.aget_state(child_config)
         assert unchanged.config == original_child.config and unchanged.values == original_child.values
         assert (await app.alist_sessions())[0]['state'] == 'ready'
@@ -114,11 +132,12 @@ async def crash_child():
                     'child_thread_id': instances[0]['child_thread_id']}), encoding='utf-8')
                 os._exit(91)
             if point == 'approval':
-                announce = app._sessions.announce_approval
+                from naiyue_test_agent.application import session_subagents
+                announce = session_subagents.announce_approval
                 def saved(observation, batch):
                     announce(observation, batch)
                     exit_now()
-                patch.setattr(app._sessions, 'announce_approval', saved)
+                patch.setattr(session_subagents, 'announce_approval', saved)
             else:
                 module = importlib.import_module('naiyue_test_agent.tools.write')
                 write = module._write

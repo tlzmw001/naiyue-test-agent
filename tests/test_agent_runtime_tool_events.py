@@ -36,7 +36,6 @@ def build_fake_agent(spec, responses):
     return build_runtime_agent(
         model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
         resolve_model=lambda _session_id, agent_path='root': ('fake-model', model),
-        record_selection=lambda _session_id, _model_id: None,
     )
 
 
@@ -192,7 +191,6 @@ async def test_async_runs_emit_correlated_start_model_and_terminal_events(caplog
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
         resolve_model=lambda _session_id, agent_path='root': ('model-A', model),
-        record_selection=lambda _session_id, _model_id: None,
         checkpointer=InMemorySaver(),
     )
 
@@ -258,7 +256,6 @@ async def test_async_run_failure_emits_terminal_event_and_rethrows_same_error(ca
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_2, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_2: names, system_prompt='', response_format=None,
         resolve_model=lambda _session_id, agent_path='root': ('model-A', model),
-        record_selection=lambda _session_id, _model_id: None,
     )
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):

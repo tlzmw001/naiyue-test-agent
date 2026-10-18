@@ -45,8 +45,8 @@ def test_stop_review_pairs_calls_and_never_executes_or_leaves_an_interrupt(monke
             assert len(finished) == 1 and finished[0].outcome == 'not_executed' and finished[0].reason == 'user_stop'
             assert events[-1].event_type == 'run_finished' and events[-1].data.status == 'stopped'
             row = app._sessions._sessions[sid]
-            assert row['busy'] is False and row['run_review_project_instructions'] is None
-            state = await app._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
+            assert row.is_busy() is False and row.resolve_permission_context()['project_instructions'] is None
+            state = await app._agent.aget_state({'configurable': {'thread_id': row.get_thread_id()}})
             assert not state.next and not any(t.interrupts for t in state.tasks)
         finally:
             release.set()
@@ -71,8 +71,8 @@ def test_external_cancellation_during_review_preserves_cancellation_and_cleanup(
                 await asyncio.wait_for(task, 5)
             assert executed == [] and app.pending_tool_approvals(sid) == []
             row = app._sessions._sessions[sid]
-            assert not row['busy'] and row['run_id'] is None and row['run_review_project_instructions'] is None
-            assert row['manual_review_required'] is True
+            assert not row.is_busy() and row.snapshot_for_run()['run_id'] is None and row.resolve_permission_context()['project_instructions'] is None
+            assert row.describe_session()['manual_review_required'] is True
             assert events[-1].event_type == 'run_finished' and events[-1].data.status == 'failed'
             assert events[-1].data.failure.category == 'cancelled' and events[-1].data.failure.reason == 'task_cancelled'
         finally:

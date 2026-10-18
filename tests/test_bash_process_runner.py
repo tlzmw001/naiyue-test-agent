@@ -51,7 +51,7 @@ def test_async_bash_timeout_is_tool_error_and_next_model_runs(monkeypatch, tmp_p
             assert 'timed out' in message.content and 'EARLY' in message.content
             assert 'output_complete=' in message.content
             assert result['messages'][-1].content == 'inspect before retry'
-            assert not app._sessions._sessions[sid].get('manual_review_required')
+            assert not app._sessions.describe_session(sid)['manual_review_required']
             finished = [e for e in events if e.event_type == 'tool_call_finished']
             assert finished[-1].data.outcome == 'error_result'
             assert events[-1].data.status == 'completed'
@@ -109,7 +109,7 @@ def test_user_stop_skips_later_serial_command_after_whole_batch_approval(monkeyp
             assert commands == ['printf started; sleep 60'] and not (tmp_path / 'forbidden').exists()
             assert result['run_stopped'] and len(model.seen) == 1
         finally:
-            if app._sessions._sessions[sid]['busy']:
+            if app._sessions.describe_session(sid)['busy']:
                 app.request_stop(sid)
             if task is not None:
                 await asyncio.gather(task, return_exceptions=True)

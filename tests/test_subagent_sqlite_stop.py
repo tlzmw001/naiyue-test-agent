@@ -42,13 +42,13 @@ async def test_child_save_failure_or_success_does_not_change_root_save_contract(
             assert instances[0]['status'] == 'failed' and instances[0]['settled']
         else:
             async def fail_root_save(*args): raise error
-            monkeypatch.setattr(app._sessions._persistence, 'afinish', fail_root_save)
+            monkeypatch.setattr(app._persistence, 'afinish', fail_root_save)
             with pytest.raises(OSError) as caught: await app.arun(sid, [('user', 'run')])
             assert caught.value is error
             assert instances[0]['status'] == 'completed' and instances[0]['settled']
             assert [(e.source is None, e.data.status) for e in events if e.event_type == 'run_finished'] == [
                 (False, 'completed'), (True, 'failed')]
-            assert not app._sessions._sessions[sid]['busy'] and not app._sessions._subagent_instances
+            assert not app._sessions.describe_session(sid)['busy'] and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
     if fail_child:
         async with open_async_persistent_application('unused', **options) as restored:
             await restored.arestore_session(sid)

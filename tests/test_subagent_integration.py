@@ -54,7 +54,7 @@ async def test_real_read_write_report_ready_reopen_and_new_delegation(monkeypatc
             else:
                 assert await app.arestore_session(sid) == sid
                 assert await app.aget_messages(sid) == saved_root
-                assert app._sessions._subagent_instances == {}
+                assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
             result = await app.arun(sid, [('user', f'check round {round_number}')])
             saved_root = await app.aget_messages(sid)
             assert saved_root == result['messages']
@@ -62,7 +62,7 @@ async def test_real_read_write_report_ready_reopen_and_new_delegation(monkeypatc
             instance, = instances
             identities.append(instance['agent_path'])
             assert instance['status'] == 'completed' and instance['settled']
-            assert app._sessions._subagent_instances == {} and app.pending_approval_batches(sid) == []
+            assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values()) and app.pending_approval_batches(sid) == []
             graph = app._sessions._subagents['writer']['agent']
             snapshot = await graph.aget_state({'configurable': {'thread_id': instance['child_thread_id']}})
             assert not snapshot.next and not snapshot.interrupts
@@ -138,7 +138,7 @@ async def test_sync_sdk_fallback_waits_for_real_worker_before_releasing_owner(mo
         elif action == 'close': closing = asyncio.create_task(app.aclose())
         else: app.request_stop(sid, agent_path=instance['agent_path'])
         await asyncio.wait_for(notified.wait(), 5)
-        assert not task.done() and app._sessions._sessions[sid]['busy']
+        assert not task.done() and app._sessions.describe_session(sid)['busy']
         assert not instance['settled'] and 'driver' in instance and not closed
         assert child.trace == [('sdk_started', child.trace[0][1], instance['agent_path'])]
         assert child.trace[0][1] != get_ident()
@@ -152,7 +152,7 @@ async def test_sync_sdk_fallback_waits_for_real_worker_before_releasing_owner(mo
         if closing is not None: await asyncio.wait_for(closing, 5)
         assert [item[0] for item in child.trace] == ['sdk_started', 'sdk_finished']
         assert instance['settled'] and instance['status'] == 'stopped' and 'driver' not in instance
-        assert app._sessions._subagent_instances == {} and not app._sessions._sessions[sid]['busy']
+        assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values()) and not app._sessions.describe_session(sid)['busy']
         assert current_run_services() is None
         assert not any(e.source and e.event_type == 'run_finished' and e.data.status == 'completed' for e in events)
         assert closed == (['closed'] if action == 'close' else [])

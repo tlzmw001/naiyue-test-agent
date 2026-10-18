@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.utils import count_tokens_approximately
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application import session_service
+from naiyue_test_agent.application import session_execution
 from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.model_access import ModelCatalog
 from skill_helpers import write_skill
@@ -207,13 +207,13 @@ async def test_disappearing_optional_resource_after_discovery_is_a_tool_error(mo
     path = write_skill(tmp_path)
     model = RecordingModel(responses=[_read_call(path), AIMessage(content='handled')])
     app = await build_app(monkeypatch, model, tools=[create_session_read_tool()])
-    original = session_service.ainvoke_agent_run_with_resources
+    original = session_execution.ainvoke_agent_run_with_resources
 
     async def invoke_after_move(*args, **kwargs):
         path.parent.rename(tmp_path / 'moved-resource')
         return await original(*args, **kwargs)
 
-    monkeypatch.setattr(session_service, 'ainvoke_agent_run_with_resources', invoke_after_move)
+    monkeypatch.setattr(session_execution, 'ainvoke_agent_run_with_resources', invoke_after_move)
     result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'read')])
     output = next(msg for msg in result['messages'] if isinstance(msg, ToolMessage))
     assert output.status == 'error' and output in model.inputs[-1]

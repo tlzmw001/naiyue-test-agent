@@ -121,7 +121,7 @@ async def test_root_stop_invalidates_two_pending_children_before_any_tool_starts
         assert result['run_stopped'] and effects == [] and len(root.seen) == 1
         assert all(p.status == 'invalidated' and p.future.done() for p in pending)
         assert all(i['status'] == 'stopped' and i['settled'] for i in instances)
-        assert app.pending_approval_batches(sid) == [] and app._sessions._subagent_instances == {}
+        assert app.pending_approval_batches(sid) == [] and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
     finally:
         await cancel_run(task)
 
@@ -151,9 +151,9 @@ async def test_root_mechanism_failure_settles_sibling_approval_without_claiming_
         with pytest.raises(ModelResponseRejected): await asyncio.wait_for(task, 5)
         assert effects == [] and b['control'].reason == 'failure' and b['status'] == 'stopped'
         assert pending.status == 'invalidated' and pending.future.done()
-        assert all(i['settled'] for i in instances) and app._sessions._subagent_instances == {}
+        assert all(i['settled'] for i in instances) and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
         assert not any(e.event_type == 'control_accepted' and e.data.kind == 'stop' for e in events)
-        assert not app._sessions._sessions[sid]['busy']
+        assert not app._sessions.describe_session(sid)['busy']
     finally:
         release.set()
         await cancel_run(task)

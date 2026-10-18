@@ -16,24 +16,27 @@ const estimate = { status: 'available', estimated_input_tokens: 34000, context_w
 const view: ContextView = { session_id: 's', current: { basis: 'next_request', model_id: 'A', estimate: structuredClone(estimate) },
   latest_request: { version: 1, model_call_id: 'call', model_id: 'A', run_id: 'r', recorded_at: '2026-10-17T12:00:00Z',
     status: 'returned', estimate: { ...structuredClone(estimate), estimated_input_tokens: 32800 },
-    usage: { input_tokens: 33280, output_tokens: 1600, cache_read_tokens: 0 } } };
+    usage: { input_tokens: 33280, output_tokens: 1600, cache_read_tokens: 0, cache_write_tokens: 1200 } } };
 
 it('separates estimates and provider usage, preserving zero and missing values', () => {
-  const { rerender } = render(<ContextPanel value={view} loading={false} error="" retry={vi.fn()} close={vi.fn()} />);
+  const { rerender } = render(<ContextPanel usageContent={null} value={view} loading={false} error="" retry={vi.fn()} close={vi.fn()} />);
   expect(screen.getByText('输入预估 34,000')).toBeTruthy();
   fireEvent.keyDown(screen.getByRole('tab', { name: '当前预估' }), { key: 'ArrowRight' });
   expect(document.activeElement).toBe(screen.getByRole('tab', { name: '最近请求' }));
   expect(screen.getByText('33,280')).toBeTruthy();
   expect(screen.getByText('0')).toBeTruthy();
-  expect(screen.getByText(/包含缓存命中/)).toBeTruthy();
-  rerender(<ContextPanel value={{ ...view, latest_request: { ...view.latest_request!, usage: null } }}
+  expect(screen.getByText('1,200')).toBeTruthy();
+  expect(screen.getByText(/包含缓存读取与写入/)).toBeTruthy();
+  expect(screen.getByText('↳ 其中缓存写入')).toBeTruthy();
+  rerender(<ContextPanel usageContent={null} value={{ ...view, latest_request: { ...view.latest_request!, usage: null } }}
     loading={false} error="" retry={vi.fn()} close={vi.fn()} />);
-  expect(screen.getAllByText('未提供')).toHaveLength(3);
+  expect(screen.getAllByText('未提供')).toHaveLength(4);
   expect(screen.queryByText('33,280')).toBeNull();
 });
 
 it('discards a previous session response and supports retry', async () => {
   const api = new WebApi('test');
+  vi.spyOn(api, 'prepare').mockImplementation(id => api.session(id));
   let finish!: (value: ContextView) => void;
   vi.spyOn(api, 'context').mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
     .mockRejectedValueOnce(new Error('network')).mockResolvedValue({ ...view, session_id: 'new' });
@@ -52,6 +55,7 @@ it('discards a previous session response and supports retry', async () => {
 
 it('places the context entry in the send group and switches between sidebars without sending', async () => {
   const api = new WebApi('test');
+  vi.spyOn(api, 'prepare').mockImplementation(id => api.session(id));
   const session = { session_id: 's', model_id: 'A', workspace_root: null, state: 'ready', updated_at: '',
     last_run_status: null, messages: [], busy: false, can_run: true, has_compaction: false, active_tools: [],
     permission_mode: 'Default', active_run_id: null, latest_run_id: null, manual_review_required: false,

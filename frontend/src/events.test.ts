@@ -31,3 +31,18 @@ it('validates network event envelopes at runtime', () => {
   expect(() => validateEvent({ version: 1, sequence: '1' })).toThrow('invalid_event');
   expect(() => validateEvent(event(1, 'run_finished', { status: 'stoped' }))).toThrow('invalid_event');
 });
+
+it('consumes invocation facts without replacing conversation or context usage', () => {
+  const original = { messages: [{ id: 'answer', type: 'ai', content: 'done' }], last_sequence: 0,
+    status: 'running', context_snapshot: { model_call_id: 'logical' } } as any;
+  let view = applyEvent(original, validateEvent(event(1, 'model_invocation_started', {
+    invocation_id: 'actual', model_id: 'A', purpose: 'summary',
+  })));
+  view = applyEvent(view, validateEvent(event(2, 'model_invocation_finished', {
+    invocation_id: 'actual', status: 'returned', usage_status: 'final', input_tokens: 100,
+  })));
+  expect(view.last_sequence).toBe(2);
+  expect(view.messages).toBe(original.messages);
+  expect(view.context_snapshot).toBe(original.context_snapshot);
+  expect(view.status).toBe('running');
+});

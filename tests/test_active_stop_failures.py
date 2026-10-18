@@ -65,7 +65,7 @@ def test_stop_save_failure_does_not_publish_stopped(monkeypatch, tmp_path):
             def fail(*args):
                 raise SessionPersistenceError('synthetic_save_failure')
 
-            monkeypatch.setattr(app._sessions._persistence.storage, 'finish_run', fail)
+            monkeypatch.setattr(app._storage, 'finish_run', fail)
             task = asyncio.create_task(app.arun(session, [('user', 'start')]))
             await asyncio.wait_for(entered.wait(), 5)
             app.request_stop(session)

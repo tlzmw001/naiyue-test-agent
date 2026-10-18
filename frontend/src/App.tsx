@@ -7,6 +7,7 @@ import Composer from './components/Composer';
 import ApprovalPanel from './components/ApprovalPanel';
 import SubagentSidebar from './components/SubagentSidebar';
 import ContextPanel, { ContextTrigger } from './components/ContextPanel';
+import SessionUsage from './components/SessionUsage';
 import { useContextView } from './useContext';
 import { Icon } from './components/Icons';
 import styles from './App.module.css';
@@ -50,7 +51,8 @@ export default function App({ api: supplied }: { api?: WebApi }) {
           disabled={!chat.session || chat.selectingSession} aria-expanded={!!agentPanel}
           onClick={() => agentPanel ? closeAgents() : openAgent()}>子智能体</button></div>
       </header>
-      <Conversation messages={chat.messages} compacted={chat.session?.has_compaction ?? false} toolStates={chat.run?.tool_states}
+      <Conversation key={chat.session?.session_id ?? 'new'} messages={chat.messages} history={chat.history}
+        compacted={chat.session?.has_compaction ?? false} toolStates={chat.run?.tool_states}
         agents={chat.run?.agents}
         stopAgent={(path, runId) => void chat.stopAgent(path, runId)}
         openAgent={path => openAgent(path)}
@@ -84,7 +86,8 @@ export default function App({ api: supplied }: { api?: WebApi }) {
           chat.changingModel || chat.selectingSession || chat.recovering || !!chat.session?.recovery || !chat.models.length} />
     </main>
     {contextPanel && <ContextPanel value={context.value} loading={context.loading} error={context.error}
-      retry={context.retry} close={closeContext} />}
+      retry={context.retry} close={closeContext} usageContent={chat.session && <SessionUsage
+        api={api} sessionId={chat.session.session_id} run={chat.run} />} />}
     {agentPanel && agentPanel.sessionId === chat.session?.session_id && <SubagentSidebar api={api}
       sessionId={agentPanel.sessionId} run={chat.run} initialAgentId={agentPanel.agentId}
       close={closeAgents} stopAgent={(path, runId) => void chat.stopAgent(path, runId)}

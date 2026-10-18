@@ -63,7 +63,9 @@ class ContextOperationObserver:
             record = self._records[op]
             record['metrics'].update(summary_duration_ms=token_count(duration_ms),
                                      summary_input_tokens=token_count(usage.get('input_tokens') if usage else None),
-                                     summary_output_tokens=token_count(usage.get('output_tokens') if usage else None))
+                                     summary_output_tokens=token_count(usage.get('output_tokens') if usage else None),
+                                     summary_cache_read_tokens=token_count(usage.get('cache_read_tokens') if usage else None),
+                                     summary_cache_write_tokens=token_count(usage.get('cache_write_tokens') if usage else None))
             if error is not None:
                 record['error_type'] = safe_error_type(error)
 

@@ -23,6 +23,7 @@ from naiyue_test_agent.agent_runtime.events import (
 from naiyue_test_agent.model_access.errors import (
     unknown_failure_diagnostics,
 )
+from naiyue_test_agent.model_access.usage import normalize_model_usage
 from .errors import (
     ModelResponseRejected,
     describe_failure_in_context, run_failure_data,
@@ -37,16 +38,14 @@ logger = logging.getLogger('naiyue_test_agent.agent_runtime')
 
 def make_model_selection_middleware(
     resolve_model: Callable[[str, str], tuple[str, BaseChatModel]],
-    record_selection: Callable[[str, str], None],
 ):
     """Choose the session model with the same gates in sync and async calls."""
-    return _ModelSelectionMiddleware(resolve_model, record_selection)
+    return _ModelSelectionMiddleware(resolve_model)
 
 
 class _ModelSelectionMiddleware(AgentMiddleware):
-    def __init__(self, resolve_model, record_selection):
+    def __init__(self, resolve_model):
         self.resolve_model = resolve_model
-        self.record_selection = record_selection
 
     @property
     def name(self):
@@ -63,7 +62,6 @@ class _ModelSelectionMiddleware(AgentMiddleware):
         model_id, model = self.resolve_model(session_id, context.get('agent_path', 'root'))
         if not model_id:
             raise ValueError('Resolved model_id must not be empty')
-        self.record_selection(session_id, model_id)
         if run_id:
             logger.info(
                 'model_selected',
@@ -104,17 +102,13 @@ class _ModelSelectionMiddleware(AgentMiddleware):
                         **correlation,
                     }},
                 )
-        usage = message.usage_metadata if message is not None else None
-        details = (usage.get('input_token_details') or {}) if usage else {}
-        input_tokens = usage.get('input_tokens') if usage else None
-        cache_read_tokens = details.get('cache_read')
+        usage = normalize_model_usage(message.usage_metadata if message is not None else None)
         logger.info(
-            'model_call_usage input_tokens=%s cache_read_tokens=%s',
-            input_tokens, cache_read_tokens,
+            'model_call_usage input_tokens=%s cache_read_tokens=%s cache_write_tokens=%s',
+            usage['input_tokens'], usage['cache_read_tokens'], usage['cache_write_tokens'],
             extra={'model_usage': {
                 'event': 'model_call_usage', 'model_id': model_id,
-                'input_tokens': input_tokens, 'cache_read_tokens': cache_read_tokens,
-                **correlation,
+                **usage, **correlation,
             }},
         )
 
@@ -135,12 +129,11 @@ class _ModelSelectionMiddleware(AgentMiddleware):
             call_id, event_label(model_id), 'accepted',
             message.response_metadata[MODEL_STOP_REASON_KEY],
             tuple(call['id'] for call in message.tool_calls if isinstance(call.get('id'), str)),
-            token_count(input_tokens), token_count(usage.get('output_tokens') if usage else None),
-            token_count(cache_read_tokens),
+            **usage,
         ))
         return response
 
-    def _failed(self, request, error, model_id, call_id):
+    def _failed(self, request, error, model_id, call_id, response=None):
         context = request.runtime.context
         run_id = context.get('run_id')
         correlation = {'run_id': run_id} if run_id else {}
@@ -165,13 +158,16 @@ class _ModelSelectionMiddleware(AgentMiddleware):
         )
         if not isinstance(error, GraphBubbleUp):
             failure = run_failure_data(description)
+            message = next((item for item in response.result if isinstance(item, AIMessage)), None) if response else None
+            usage = normalize_model_usage(message.usage_metadata if message is not None else None)
             _emit(context, 'model_call_finished', lambda: ModelCallFinishedData(
-                call_id, event_label(model_id), 'failed', failure=failure,
+                call_id, event_label(model_id), 'failed', failure=failure, **usage,
             ), primary_error=error)
 
 
     async def awrap_model_call(self, request, handler):
         model_id, call_id, model = self._prepare(request)
+        response = None
         try:
             control = request.runtime.context.get('_run_control')
             if control is not None and native_async_model(model):
@@ -180,7 +176,7 @@ class _ModelSelectionMiddleware(AgentMiddleware):
                 response = await handler(request.override(model=model))
             return self._accept(request, response, model_id, call_id)
         except (Exception, asyncio.CancelledError, UserStop) as error:
-            self._failed(request, error, model_id, call_id)
+            self._failed(request, error, model_id, call_id, response)
             raise
 
 

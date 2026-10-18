@@ -155,42 +155,50 @@ class PendingToolApproval:
                 'items': items}
 
 
+def announce_approval(observation, batch):
+    items = tuple(ApprovalItemData(**{key: row[key] for key in
+        ('approval_id', 'tool_call_id', 'tool_name', 'target', 'workspace') if key in row}) for row in batch['items'])
+    observe(observation.controls, observation.controls.approval_requested,
+            tuple(row.tool_call_id for row in items), batch['approval_batch_id'], items)
+
+
 class SessionApprovalControls:
-    @staticmethod
-    def announce_approval(observation, batch):
-        items = tuple(ApprovalItemData(**{key: row[key] for key in
-            ('approval_id', 'tool_call_id', 'tool_name', 'target', 'workspace') if key in row}) for row in batch['items'])
-        observe(observation.controls, observation.controls.approval_requested,
-                tuple(row.tool_call_id for row in items), batch['approval_batch_id'], items)
+    """Route public approval operations to one session."""
 
     def pending_approval_batches(self, session_id):
-        with self._lock:
-            session = self._sessions[session_id]
-            pending = session['pending_tool_approval']
-            batches = [root_approval_batch(session_id, pending)] if pending is not None and not session['busy'] else []
-            return batches + [pending.public() for (sid, _), instance in self._subagent_instances.items()
-                if sid == session_id and (pending := instance.get('approval')) is not None and pending.status == 'pending']
+        return self._session(session_id).pending_approval_batches()
+
+    def pending_subagent_approvals(self, session_id):
+        return self._session(session_id).pending_subagent_approvals()
+
+    def submit_subagent_approval(self, session_id, *, approval_batch_id, decisions, origin_run_id, remember_approved=()):
+        return self._session(session_id).submit_subagent_approval(approval_batch_id=approval_batch_id,
+            decisions=decisions, origin_run_id=origin_run_id, remember_approved=remember_approved)
 
     def prepare_root_approval_submission(self, session_id, *, approval_batch_id, origin_run_id, decisions, remember_approved=()):
-        with self._lock:
-            row = self._sessions[session_id]
-            pending = row['pending_tool_approval']
-            if pending is None or row['busy'] or row['manual_review_required']:
-                raise ValueError('Root approval is no longer pending')
-            batch = root_approval_batch(session_id, pending)
-            if batch['approval_batch_id'] != approval_batch_id or batch['origin_run_id'] != origin_run_id:
-                raise ValueError('Root approval targets a stale batch')
-            return resolve_approval_rows(pending, [item['approval_id'] for item in batch['items']], decisions, remember_approved)
+        return self._session(session_id).prepare_root_approval_submission(
+            approval_batch_id=approval_batch_id, origin_run_id=origin_run_id,
+            decisions=decisions, remember_approved=remember_approved)
 
     def validate_root_approval_stop(self, session_id, *, approval_batch_id, origin_run_id):
+        self._session(session_id).validate_root_approval_stop(
+            approval_batch_id=approval_batch_id, origin_run_id=origin_run_id)
+
+
+class AgentSessionApproval:
+    """One session owns pending child approvals and their live futures."""
+
+    def pending_approval_batches(self):
         with self._lock:
-            session = self._sessions[session_id]
-            pending = session['pending_tool_approval']
-            if pending is None or session['busy'] or session['manual_review_required']:
-                raise ValueError('Root approval is no longer pending')
-            batch = root_approval_batch(session_id, pending)
-            if batch['approval_batch_id'] != approval_batch_id or batch['origin_run_id'] != origin_run_id:
-                raise ValueError('Root approval targets a stale batch')
+            row = self._state
+            batch = (root_approval_batch(self.session_id, row.pending_tool_approval)
+                if row.pending_tool_approval is not None and self._run is None else None)
+            batches = [batch] if batch is not None else []
+            return batches + [pending.public() for instance in (self._run.subagent_instances.values() if self._run else ())
+                if (pending := instance.get('approval')) is not None and pending.status == 'pending']
+
+    def pending_subagent_approvals(self):
+        return [batch for batch in self.pending_approval_batches() if batch['kind'] == 'live_child']
 
     def register_live_approval(self, instance, result, snapshot):
         messages = snapshot.values.get('messages', [])
@@ -202,10 +210,11 @@ class SessionApprovalControls:
                 or result['__interrupt__'][0].id != snapshot.tasks[0].interrupts[0].id):
             raise PermissionMechanismError('Child approval does not match its saved checkpoint')
         with self._lock:
-            session = self._sessions[instance['session_id']]
-            if (not session['busy'] or session['run_id'] != instance['root_run_id'] or instance.get('approval') is not None):
+            self._require_subagent(instance)
+            run = self._run
+            if (run is None or run.run_id != instance['root_run_id'] or instance.get('approval') is not None):
                 raise PermissionMechanismError('Child approval requires an active unstopped instance')
-            if session['stop_requested'] or instance['control'].requested or instance['status'] == 'stopping':
+            if run.stop_requested or instance['control'].requested or instance['status'] == 'stopping':
                 return None
             future = asyncio.get_running_loop().create_future()
             pending = PendingToolApproval(uuid4().hex, instance['session_id'], instance['agent_path'],
@@ -216,17 +225,15 @@ class SessionApprovalControls:
             instance['phase'] = 'awaiting'
         return pending
 
-    def pending_subagent_approvals(self, session_id):
-        return [batch for batch in self.pending_approval_batches(session_id) if batch['kind'] == 'live_child']
-
-    def validate_approval_submission(self, session_id, approval_batch_id, origin_run_id, decisions, remember_approved):
+    def validate_approval_submission(self, approval_batch_id, origin_run_id, decisions, remember_approved):
         """Called under the session lock; accept only this live instance's batch."""
-        session = self._sessions[session_id]
+        session_id = self.session_id
+        run = self._run
         if (not isinstance(approval_batch_id, str) or not isinstance(origin_run_id, str)
-                or not session['busy'] or session['run_id'] != origin_run_id or session['stop_requested']):
+                or run is None or run.run_id != origin_run_id or run.stop_requested):
             raise ValueError('Approval targets a stale or stopped run')
-        instance = next((instance for (sid, _), instance in self._subagent_instances.items()
-                         if sid == session_id and instance.get('approval') is not None
+        instance = next((instance for instance in (self._run.subagent_instances.values() if self._run else ())
+                         if instance.get('approval') is not None
                          and instance['approval'].approval_batch_id == approval_batch_id), None)
         if instance is None:
             raise ValueError('Approval batch is no longer pending')
@@ -238,19 +245,21 @@ class SessionApprovalControls:
         grants, rules = prepare_resume(session_id, pending.prepared, ordered, remembered, agent_path=pending.agent_path)
         return pending, ordered, grants, rules
 
-    def submit_subagent_approval(self, session_id, *, approval_batch_id, decisions, origin_run_id, remember_approved=()):
+    def submit_subagent_approval(self, *, approval_batch_id, decisions, origin_run_id, remember_approved=()):
         with self._lock:
             pending, ordered, grants, rules = self.validate_approval_submission(
-                session_id, approval_batch_id, origin_run_id, decisions, remember_approved)
+                approval_batch_id, origin_run_id, decisions, remember_approved)
             pending.decisions = tuple(ordered)
             pending.status = 'accepted'
-            session = self._sessions[session_id]
-            session['session_allow'].extend(rule for rule in rules if rule not in session['session_allow'])
+            for rule in rules:
+                if rule not in self._state.session_allow:
+                    self._state.session_allow.append(deepcopy(rule))
         pending.future.set_result((ordered, grants))
         return {'accepted': True, 'run_id': pending.origin_run_id}
 
     def release_live_approval(self, instance):
         with self._lock:
+            self._require_subagent(instance)
             pending = instance.pop('approval', None)
             if pending is not None and pending.status == 'pending':
                 pending.status = 'invalidated'

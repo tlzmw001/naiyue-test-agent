@@ -65,7 +65,7 @@ async def test_delayed_accept_notification_cannot_be_overtaken_by_delivery(monke
         AIMessage(id='first', content='done'), AIMessage(id='second', content='done'),
     ])
     entered, release_accept = Event(), Event()
-    original = app._sessions._record_steering
+    original = app._sessions._sessions[session]._record_steering
     accepted_errors = []
 
     def pause_accept(event, *args):
@@ -74,7 +74,7 @@ async def test_delayed_accept_notification_cannot_be_overtaken_by_delivery(monke
             assert release_accept.wait(timeout=5)
         original(event, *args)
 
-    monkeypatch.setattr(app._sessions, '_record_steering', pause_accept)
+    monkeypatch.setattr(app._sessions._sessions[session], '_record_steering', pause_accept)
 
     def accept():
         try:
@@ -141,12 +141,12 @@ async def test_failure_discards_unprocessed_request_and_preserves_primary(monkey
     assert observed[-1].data.reason == 'run_failed' and observed[-1].data.kind == kind
     assert observed[0].data.control_id == observed[1].data.control_id
     assert observed[-1].sequence < events[-1].sequence and events[-1].data.status == 'failed'
-    assert session not in app._sessions._active_runs
+    assert app._sessions._sessions[session]._run is None
 
 
 @async_test
 async def test_approval_preparation_failure_is_discarded_not_submitted_or_applied(monkeypatch, tmp_path):
-    from naiyue_test_agent.application import session_service
+    from naiyue_test_agent.application import session_execution
 
     app, session, events = await make_approval(monkeypatch, tmp_path)
     count = len(events)
@@ -155,7 +155,7 @@ async def test_approval_preparation_failure_is_discarded_not_submitted_or_applie
     def fail_prepare(*args, **kwargs):
         raise failure
 
-    monkeypatch.setattr(session_service, 'prepare_run_resources', fail_prepare)
+    monkeypatch.setattr(session_execution, 'prepare_run_resources', fail_prepare)
     with pytest.raises(OSError) as caught:
         await app.aresume_tool_approval(session, ['approve'])
     assert caught.value is failure
@@ -278,7 +278,7 @@ async def test_old_cleanup_control_notifications_keep_their_run_before_next_run(
         release.set()
         await asyncio.wait_for(asyncio.shield(worker), 6)
     assert worker.done() and len(outcomes) == 1 and isinstance(outcomes[0], dict), outcomes
-    assert not app._sessions._sessions[session]['busy']
+    assert not app._sessions.describe_session(session)['busy']
     new_result = await app.arun(session, [('user', 'new')])
     new_start = next(e for e in events if e.event_type == 'run_started' and e.run_id != old_run)
     assert new_result['messages'][-1].content == 'new'
@@ -288,7 +288,7 @@ async def test_old_cleanup_control_notifications_keep_their_run_before_next_run(
     assert discarded[0].sequence < next(e.sequence for e in events
         if e.run_id == old_run and e.event_type == 'run_finished')
     assert not controls([e for e in events if e.run_id == new_start.run_id])
-    assert session not in app._sessions._active_runs
+    assert app._sessions._sessions[session]._run is None
 
 
 @async_test
@@ -364,7 +364,7 @@ async def test_control_publish_failure_does_not_undo_accepted_input_or_fail_run(
     app, session, events, outcomes, worker, release, _calls = await blocked_app(monkeypatch, [
         AIMessage(id='one', content='one'), AIMessage(id='two', content='two'),
     ])
-    publisher = app._sessions._active_runs[session].publisher
+    publisher = app._sessions._sessions[session]._run.observation.publisher
     original = publisher.publish
 
     def fail_control(event_type, data):
@@ -380,7 +380,7 @@ async def test_control_publish_failure_does_not_undo_accepted_input_or_fail_run(
         release.set()
         await asyncio.wait_for(asyncio.shield(worker), 6)
     assert [m.content for m in result['messages'] if m.type == 'human'] == ['initial', 'still delivered']
-    assert events[-1].data.status == 'completed' and session not in app._sessions._active_runs
+    assert events[-1].data.status == 'completed' and app._sessions._sessions[session]._run is None
     assert 'control_event_publish_failed' in caplog.text and 'PRIVATE_' not in caplog.text
 
 

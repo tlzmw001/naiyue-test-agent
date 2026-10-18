@@ -41,7 +41,7 @@ def test_read_only_preview_and_report_survive_checkpoint_reopen(monkeypatch, tmp
         (root / 'AGENTS.md').write_text('SECRET_PROJECT')
         reply = AIMessage(content='SECRET_REPLY', usage_metadata={
             'input_tokens': 100, 'output_tokens': 8, 'total_tokens': 108,
-            'input_token_details': {'cache_read': 0}})
+            'input_token_details': {'cache_read': 0, 'cache_creation': 20}})
         model = model_with_limits([reply])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
@@ -56,7 +56,7 @@ def test_read_only_preview_and_report_survive_checkpoint_reopen(monkeypatch, tmp
             value = (await client.get(endpoint)).json()
             saved = value['latest_request']
             assert saved['model_call_id']
-            assert saved['usage'] == {'input_tokens': 100, 'output_tokens': 8, 'cache_read_tokens': 0}
+            assert saved['usage'] == {'input_tokens': 100, 'output_tokens': 8, 'cache_read_tokens': 0, 'cache_write_tokens': 20}
             assert saved['estimate']['estimated_input_tokens'] < value['current']['estimate']['estimated_input_tokens']
             system = next(row for row in saved['estimate']['groups'] if row['id'] == 'system')
             assert any(row['id'] == 'project' and row['source'] == 'AGENTS.md' for row in system['children'])
@@ -249,12 +249,13 @@ def test_optional_context_statistics_do_not_overflow_main_delivery(monkeypatch, 
 
 
 def test_oversized_stat_event_keeps_its_sequence_with_an_omitted_payload():
-    from types import SimpleNamespace
+    from naiyue_test_agent.web.settings import WebSettings
     from naiyue_test_agent.agent_runtime.events import RunEventPublisher, RunStartedData, RunFinishedData
     from naiyue_test_agent.agent_runtime.context_usage import estimate_context, request_snapshot, ModelContextSnapshotData
-    from naiyue_test_agent.web.run_delivery import DeliveredRun
+    from naiyue_test_agent.web.delivered_run import DeliveredRun
     async def scenario():
-        job = DeliveredRun('s', [], SimpleNamespace(max_frame_bytes=800, event_capacity=20), lambda _: None)
+        job = DeliveredRun('s', [], WebSettings(database_path='unused', frontend_dist='unused',
+            max_frame_bytes=800, event_capacity=20), lambda _: None)
         publisher = RunEventPublisher('s', 'r', (job.observe,))
         publisher.publish('run_started', RunStartedData('message'))
         snapshot = request_snapshot({'_naiyue_model_call_id': 'call', '_naiyue_model_id': 'A', 'run_id': 'r'},

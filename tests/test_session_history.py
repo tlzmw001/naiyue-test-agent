@@ -1,6 +1,6 @@
 """Read saved facts without installing a session or resuming graph tasks."""
 
-from native_application_helpers import async_test
+from native_application_helpers import async_test, await_diagnostics_idle
 
 import asyncio
 from copy import deepcopy
@@ -24,14 +24,14 @@ def database_facts(storage):
 async def test_reopened_history_is_read_only_and_preserves_saved_messages(monkeypatch, tmp_path, state):
     path = tmp_path / 'state.sqlite'
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         sid = await app.acreate_session('A')
         original = (await app.arun(sid, [HumanMessage(content='saved question', id='human')]))['messages']
         row = storage.get(sid)
         storage.finish_run(sid, state, row['checkpoint_id'], '', state)
     model = ToolModel(responses=[])
     async with build(monkeypatch, path, model) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         before = database_facts(storage)
         events = []
         app.subscribe_events(events.append)
@@ -49,7 +49,7 @@ async def test_reopened_history_is_read_only_and_preserves_saved_messages(monkey
 async def test_history_uses_latest_checkpoint_instead_of_confirmed_pointer(monkeypatch, tmp_path):
     path = tmp_path / 'state.sqlite'
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         sid = await app.acreate_session('A')
         await app.arun(sid, [('user', 'old')])
         row = storage.get(sid)
@@ -58,7 +58,7 @@ async def test_history_uses_latest_checkpoint_instead_of_confirmed_pointer(monke
             {'id': 'unconfirmed', 'name': 'read', 'args': {'path': 'x'}}])]}, as_node='model')
         storage.finish_run(sid, 'running', row['checkpoint_id'], '', None)
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         before = database_facts(storage)
         view = await app.aget_session_history(sid)
         assert view['checkpoint_id'] != view['confirmed_checkpoint_id'] == row['checkpoint_id']
@@ -73,7 +73,7 @@ async def approval_snapshot(monkeypatch, tmp_path):
     async with build(monkeypatch, tmp_path / 'approval.sqlite', ToolModel(responses=[AIMessage(content='', tool_calls=[
             {'name': 'read', 'args': {'path': str(tmp_path / 'outside')}, 'id': 'call'}])]),
             [create_session_read_tool()]) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         sid = await app.acreate_workspace_session('A', root)
         await app.arun(sid, [('user', 'read outside')])
         row = storage.get(sid)
@@ -122,7 +122,7 @@ async def test_approval_classification_requires_exact_saved_shape(monkeypatch, t
 async def test_no_checkpoint_distinguishes_never_run_from_missing(monkeypatch, tmp_path, state, kind):
     path = tmp_path / 'state.sqlite'
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         sid = await app.acreate_session('A')
         storage.finish_run(sid, state, None, '', None)
     async with build(monkeypatch, path) as app:
@@ -136,7 +136,8 @@ async def test_no_checkpoint_distinguishes_never_run_from_missing(monkeypatch, t
 async def test_unavailable_history_retains_only_safe_readable_facts(monkeypatch, tmp_path, caplog, failure):
     path = tmp_path / 'state.sqlite'
     async def verify(app):
-        storage = app._sessions._persistence.storage
+        storage = app._storage
+        await await_diagnostics_idle(app)
         if failure == 'read':
             async def broken(*_a):
                 raise ValueError('PRIVATE_CHECKPOINT')
@@ -179,15 +180,15 @@ async def test_native_history_matches_reopened_and_does_not_install_or_call_mode
         async with factory(monkeypatch, path, StreamingToolModel(replies=[AIMessage(content='saved')])) as app:
             sid = await app.acreate_session('A')
             await app.arun(sid, [('user', 'question')])
-            storage = app._sessions._persistence.storage
+            storage = app._storage
             row = storage.get(sid)
             storage.finish_run(sid, 'failed', row['checkpoint_id'], '', 'failed')
         model = StreamingToolModel(replies=[])
         async with factory(monkeypatch, path, model) as app:
-            before = database_facts(app._sessions._persistence.storage)
+            before = database_facts(app._storage)
             view = await app.aget_session_history(sid)
             assert not app._sessions.has_session(sid) and model.seen == []
-            assert database_facts(app._sessions._persistence.storage) == before
+            assert database_facts(app._storage) == before
         return sid, view
     sid, asynchronous = await scenario()
     async with build(monkeypatch, path) as app:
@@ -231,7 +232,7 @@ async def test_reopened_real_approval_never_prepares_or_executes_tools_or_auto(m
         reached.append(True)
         raise AssertionError('History must only read')
     async with build(monkeypatch, tmp_path / 'approval.sqlite', ToolModel(responses=[]), [create_session_read_tool()]) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         before = database_facts(storage)
         for name in ('ainvoke', 'aupdate_state'):
             monkeypatch.setattr(app._agent, name, forbidden)
@@ -255,7 +256,7 @@ async def test_history_preserves_artifacts_and_pairs_reused_call_ids_by_batch(mo
             ToolMessage(content=[{'type': 'text', 'text': f'result{index}'}], id=f'r{index}',
                 tool_call_id='same', artifact={'record': [index]}, status='success')])
     async with build(monkeypatch, path) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         sid = await app.acreate_session('A')
         row = storage.get(sid)
         await app._agent.aupdate_state({'configurable': {'thread_id': row['thread_id']}}, {'messages': messages}, as_node='tools')
@@ -291,7 +292,7 @@ async def test_latest_history_projects_completed_pending_writes_without_replay(m
             calls.append('fail')
             raise RuntimeError('PRIVATE_EXECUTION')
         async with build(monkeypatch, path) as app:
-            storage = app._sessions._persistence.storage
+            storage = app._storage
             sid = await app.acreate_session('A')
             row = storage.get(sid)
             config = {'configurable': {'thread_id': row['thread_id']}}
@@ -307,11 +308,11 @@ async def test_latest_history_projects_completed_pending_writes_without_replay(m
                         {'name': 'fast', 'args': {}, 'id': 'fast'}, {'name': 'fail', 'args': {}, 'id': 'fail'}])]}, config)
             storage.finish_run(sid, 'failed', None, '', 'failed')
         async with build(monkeypatch, path) as app:
-            storage = app._sessions._persistence.storage
+            storage = app._storage
             async with AsyncSqliteSaver.from_conn_string(str(path)) as saver:
                 graph = builder.compile(checkpointer=saver)
                 before = database_facts(storage)
-                view = await app._sessions._persistence.ahistory(sid, graph)
+                view = await app._persistence.ahistory(sid, graph)
                 assert [m.content for m in view['messages']] == ['', 'saved result']
                 assert view['recovery']['kind'] == 'interrupted_execution' and not app._sessions.has_session(sid)
                 assert view['recovery']['unconfirmed_tool_call_ids'] == ['fail']

@@ -19,6 +19,7 @@ from naiyue_test_agent.storage_files import (
     acquire_store_lock, check_store_file, open_store_file, release_store_lock,
 )
 from naiyue_test_agent.workspaces import check_workspace_relocation
+from . import chat_queries, model_usage_storage, diagnostic_storage
 
 
 class SessionStorage:
@@ -55,7 +56,7 @@ class SessionStorage:
             self.connection.row_factory = sqlite3.Row
             if existing:
                 version = self.connection.execute('SELECT version FROM naiyue_store_info').fetchall()
-                if len(version) != 1 or version[0][0] not in (4, 5, 6):
+                if len(version) != 1 or version[0][0] not in (4, 5, 6, 7, 8, 9, 10):
                     raise SessionPersistenceError('unsupported_store_schema')
                 if version[0][0] in (4, 5):
                     with self.connection:
@@ -88,6 +89,10 @@ class SessionStorage:
                         title TEXT, pinned INTEGER NOT NULL DEFAULT 0,
                         sort_order INTEGER NOT NULL DEFAULT 0);
                 ''')
+            self._migrate_chat_schema()
+            chat_queries.migrate_chat_queries(self.connection)
+            model_usage_storage.initialize(self.connection)
+            diagnostic_storage.initialize(self.connection)
             self.checkpoint_connection = sqlite3.connect(self.path, check_same_thread=False)
             self._stack.callback(self.checkpoint_connection.close)
         except (OSError, sqlite3.Error, SessionPersistenceError) as error:
@@ -99,6 +104,137 @@ class SessionStorage:
             if isinstance(error, SessionPersistenceError):
                 raise
             raise SessionPersistenceError('storage_unavailable') from error
+
+    def _migrate_chat_schema(self):
+        if self.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] >= 7:
+            return
+        with self.connection:
+            self.connection.execute('BEGIN')
+            self.connection.execute('''CREATE TABLE naiyue_chat_sync(
+                session_id TEXT NOT NULL, thread_id TEXT NOT NULL, checkpoint_ns TEXT NOT NULL,
+                agent_path TEXT NOT NULL, checkpoint_id TEXT NOT NULL, revision INTEGER NOT NULL,
+                PRIMARY KEY(session_id,thread_id,checkpoint_ns))''')
+            self.connection.execute('''CREATE TABLE naiyue_chat_messages(
+                session_id TEXT NOT NULL, thread_id TEXT NOT NULL, checkpoint_ns TEXT NOT NULL,
+                message_id TEXT NOT NULL, sequence INTEGER NOT NULL, revision INTEGER NOT NULL,
+                body_json TEXT NOT NULL, body_hash TEXT NOT NULL, kind TEXT NOT NULL,
+                source_checkpoint_id TEXT NOT NULL,
+                PRIMARY KEY(session_id,thread_id,checkpoint_ns,message_id),
+                UNIQUE(session_id,thread_id,checkpoint_ns,sequence))''')
+            self.connection.execute('UPDATE naiyue_store_info SET version=7')
+
+    def save_model_usage_event(self, event):
+        with self._lock, self.connection:
+            self.connection.execute('BEGIN IMMEDIATE')
+            model_usage_storage.save_event(self.connection, event)
+
+    def finish_model_usage_run(self, session_id, run_id, **summary):
+        with self._lock, self.connection:
+            self.connection.execute('BEGIN IMMEDIATE')
+            return model_usage_storage.finish_run(self.connection, session_id, run_id, **summary)
+
+    def read_model_usage(self, session_id, *, model_limit, after_model=None):
+        try:
+            with self._lock, self.connection:
+                self.connection.execute('BEGIN')
+                return model_usage_storage.read_summary(self.connection, session_id,
+                    model_limit=model_limit, after_model=after_model)
+        except sqlite3.Error as error:
+            logger.error('model_usage_read_failed error_type=%s', type(error).__name__)
+            raise SessionPersistenceError('usage_read_failed') from error
+
+    def chat_heads(self, session_id):
+        return self._read('SELECT * FROM naiyue_chat_sync WHERE session_id=?', (session_id,))
+
+    def prepare_diagnostics(self, settings):
+        with self._lock, self.connection:
+            self.connection.execute('BEGIN IMMEDIATE')
+            return diagnostic_storage.prepare(self.connection, settings)
+
+    def save_diagnostic_event(self, record, settings):
+        with self._lock, self.connection:
+            self.connection.execute('BEGIN IMMEDIATE')
+            return diagnostic_storage.save_event(self.connection, record, settings)
+
+    def finish_diagnostic_run(self, record, settings, **summary):
+        with self._lock, self.connection:
+            self.connection.execute('BEGIN IMMEDIATE')
+            return diagnostic_storage.finish_run(self.connection, record, settings, **summary)
+
+    def prune_diagnostics(self, settings, *, now=None):
+        with self._lock, self.connection:
+            self.connection.execute('BEGIN IMMEDIATE')
+            return diagnostic_storage.prune(self.connection, settings, now=now)
+
+    def read_diagnostic_runs(self, session_id, *, limit=50, before=None):
+        with self._lock, self.connection:
+            self.connection.execute('BEGIN')
+            return diagnostic_storage.read_runs(self.connection, session_id, limit=limit, before=before)
+
+    def read_diagnostic_events(self, session_id, run_id, *, limit=50, after=0):
+        with self._lock, self.connection:
+            self.connection.execute('BEGIN')
+            return diagnostic_storage.read_events(self.connection, session_id, run_id, limit=limit, after=after)
+
+    def _write_chat_updates(self, session_id, updates):
+        for update in updates:
+            scope = (session_id, update.thread_id, update.checkpoint_ns)
+            head = self.connection.execute('''SELECT revision,history_version FROM naiyue_chat_sync
+                WHERE session_id=? AND thread_id=? AND checkpoint_ns=?''', scope).fetchone()
+            if (head['revision'] if head else 0) != update.expected_revision:
+                raise SessionPersistenceError('chat_history_stale')
+            history_version = head['history_version'] if head else 0
+            sequence = self.connection.execute('''SELECT COALESCE(MAX(sequence),0) FROM naiyue_chat_messages
+                WHERE session_id=? AND thread_id=? AND checkpoint_ns=?''', scope).fetchone()[0]
+            for message in update.messages:
+                key = (*scope, message['message_id'])
+                saved = self.connection.execute('''SELECT body_hash,parent_message_id FROM naiyue_chat_messages
+                    WHERE session_id=? AND thread_id=? AND checkpoint_ns=? AND message_id=?''', key).fetchone()
+                if saved and saved['body_hash'] == message['body_hash'] and saved['parent_message_id'] == message.get('parent_message_id'):
+                    continue
+                if saved:
+                    history_version += 1
+                    self.connection.execute('''UPDATE naiyue_chat_messages SET body_json=?,body_hash=?,kind=?,
+                        source_checkpoint_id=?,parent_message_id=?,message_type=?,revision=revision+1
+                        WHERE session_id=? AND thread_id=? AND checkpoint_ns=? AND message_id=?''',
+                        (message['body_json'], message['body_hash'], message['kind'], message['source_checkpoint_id'],
+                         message.get('parent_message_id'), message.get('message_type'), *key))
+                else:
+                    sequence += 1
+                    self.connection.execute('''INSERT INTO naiyue_chat_messages VALUES(?,?,?,?,?,1,?,?,?,?,?,?)''',
+                        (*key, sequence, message['body_json'], message['body_hash'], message['kind'], message['source_checkpoint_id'],
+                         message.get('message_type'), message.get('parent_message_id')))
+            self.connection.execute('''INSERT INTO naiyue_chat_sync VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(session_id,thread_id,checkpoint_ns) DO UPDATE SET
+                checkpoint_id=excluded.checkpoint_id,revision=excluded.revision,
+                history_version=excluded.history_version,stopped=excluded.stopped''',
+                (*scope, update.agent_path, update.checkpoint_id, update.expected_revision + 1, history_version, update.stopped))
+
+    def save_chat_updates(self, session_id, updates):
+        try:
+            with self._lock, self.connection:
+                self.connection.execute('BEGIN IMMEDIATE')
+                self.get(session_id)
+                self._write_chat_updates(session_id, updates)
+        except sqlite3.Error as error:
+            logger.error('chat_history_write_failed error_type=%s', type(error).__name__)
+            raise SessionPersistenceError('session_save_unconfirmed') from error
+
+    def read_chat_page(self, session_id, thread_id, **query):
+        with self._lock:
+            return chat_queries.read_page(self, session_id, thread_id, **query)
+
+    def read_chat_message(self, session_id, thread_id, sequence, **query):
+        with self._lock:
+            return chat_queries.read_message(self, session_id, thread_id, sequence, **query)
+
+    def read_approval_seed(self, session_id, thread_id, batch_id):
+        with self._lock:
+            return chat_queries.approval_seed(self, session_id, thread_id, batch_id)
+
+    def chat_subagents(self, session_id):
+        with self._lock:
+            return chat_queries.subagent_records(self, session_id, self.get(session_id)['thread_id'])
 
     def get_workspace_binding(self):
         rows = self._read('SELECT workspace_id,root_path FROM naiyue_workspace')
@@ -178,6 +314,12 @@ class SessionStorage:
     def list_sessions(self):
         return self._read('SELECT * FROM naiyue_sessions ORDER BY pinned DESC,sort_order ASC,created_at DESC,session_id ASC')
 
+    def list_workspace_sessions(self, workspace_root):
+        root = str(workspace_root) if workspace_root is not None else None
+        return self._read('''SELECT session_id,model_id,workspace_root,state,updated_at,last_run_status,title,pinned
+            FROM naiyue_sessions WHERE workspace_root IS ?
+            ORDER BY pinned DESC,sort_order ASC,created_at DESC,session_id ASC''', (root,))
+
     def update_presentation(self, session_id, *, title=None, pinned=None):
         if title is None and pinned is None:
             raise ValueError('invalid_session_presentation')
@@ -194,7 +336,7 @@ class SessionStorage:
         root = str(workspace_root) if workspace_root is not None else None
         try:
             with self._lock, self.connection:
-                self.connection.execute('BEGIN')
+                self.connection.execute('BEGIN IMMEDIATE')
                 rows = self.connection.execute('SELECT session_id,pinned FROM naiyue_sessions WHERE workspace_root IS ?', (root,)).fetchall()
                 pins = {row['session_id']: row['pinned'] for row in rows}
                 if len(identities) != len(pins) or set(identities) != set(pins):
@@ -209,12 +351,18 @@ class SessionStorage:
     def delete(self, session_id, child_threads):
         try:
             with self._lock, self.connection:
-                self.connection.execute('BEGIN')
+                self.connection.execute('BEGIN IMMEDIATE')
                 row = self.get(session_id)
                 threads = [(key,) for key in {row['thread_id'], *child_threads}]
                 # One transaction across the current official SQLite tables and our metadata.
                 self.connection.executemany('DELETE FROM writes WHERE thread_id=?', threads)
                 self.connection.executemany('DELETE FROM checkpoints WHERE thread_id=?', threads)
+                self.connection.execute('DELETE FROM naiyue_chat_messages WHERE session_id=?', (session_id,))
+                self.connection.execute('DELETE FROM naiyue_chat_sync WHERE session_id=?', (session_id,))
+                self.connection.execute('DELETE FROM naiyue_model_invocations WHERE session_id=?', (session_id,))
+                self.connection.execute('DELETE FROM naiyue_model_usage_runs WHERE session_id=?', (session_id,))
+                self.connection.execute('DELETE FROM naiyue_diagnostic_events WHERE session_id=?', (session_id,))
+                self.connection.execute('DELETE FROM naiyue_diagnostic_runs WHERE session_id=?', (session_id,))
                 self.connection.execute('DELETE FROM naiyue_sessions WHERE session_id=?', (session_id,))
         except sqlite3.Error as error:
             logger.error('session_delete_failed error_type=%s', type(error).__name__)
@@ -240,12 +388,20 @@ class SessionStorage:
         self._write("UPDATE naiyue_sessions SET state='running',run_id=?,updated_at=? WHERE session_id=?",
                     (run_id, self._now(), session_id))
 
-    def finish_run(self, session_id, state, checkpoint_id, checkpoint_ns, last_run_status):
+    def finish_run(self, session_id, state, checkpoint_id, checkpoint_ns, last_run_status, chat_updates=()):
         if state not in STATES:
             raise SessionPersistenceError('invalid_session_state')
-        self._write('''UPDATE naiyue_sessions SET state=?,checkpoint_id=?,checkpoint_ns=?,
-            last_run_status=?,updated_at=? WHERE session_id=?''',
-            (state, checkpoint_id, checkpoint_ns, last_run_status, self._now(), session_id))
+        try:
+            with self._lock, self.connection:
+                self.connection.execute('BEGIN IMMEDIATE')
+                self.get(session_id)
+                self._write_chat_updates(session_id, chat_updates)
+                self.connection.execute('''UPDATE naiyue_sessions SET state=?,checkpoint_id=?,checkpoint_ns=?,
+                    last_run_status=?,updated_at=? WHERE session_id=?''',
+                    (state, checkpoint_id, checkpoint_ns, last_run_status, self._now(), session_id))
+        except sqlite3.Error as error:
+            logger.error('session_storage_write_failed error_type=%s', type(error).__name__)
+            raise SessionPersistenceError('session_save_unconfirmed') from error
 
     def close(self):
         if not self._closed:

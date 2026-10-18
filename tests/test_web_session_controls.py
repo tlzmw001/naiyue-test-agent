@@ -45,6 +45,7 @@ def test_tool_and_mode_selection_are_session_local_and_survive_reopen(monkeypatc
             assert untouched['permission_mode'] == 'Default' and 'bash' not in untouched['active_tools']
             assert model.seen == []
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
+            assert (await client.post(endpoint + '/prepare')).status_code == 200
             restored = (await client.get(endpoint)).json()
             assert restored['active_tools'] == ['read', 'bash'] and restored['permission_mode'] == 'NoAsk'
             assert (await client.patch(endpoint + '/tools', json={'active_tools': []})).json() == {'active_tools': []}
@@ -107,6 +108,7 @@ def test_changes_do_not_authorize_or_remove_an_existing_approval(monkeypatch, tm
             assert len(model.seen) == 1
             assert not any(row['type'] == 'tool' for row in after['messages'])
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]), workspace_root=root) as (client, app):
+            assert (await client.post(endpoint + '/prepare')).status_code == 200
             assert 'recovery' in (await client.get(endpoint)).json()
             assert (await client.patch(endpoint + '/tools', json={'active_tools': ['read']})).status_code == 409
             assert (await client.patch(endpoint + '/permission-mode', json={'permission_mode': 'Default'})).status_code == 409

@@ -103,7 +103,7 @@ async def test_complete_turn_compaction_switches_model_and_keeps_old_checkpoint(
     assert [m.content for m in second['messages'][:2]] == [
         'FIRST_FACT_' + 'x' * 100, 'A-one',
     ]
-    thread_id = app._sessions._sessions[session]['thread_id']
+    thread_id = app._sessions.get_thread_id(session)
     history = [item async for item in app._agent.aget_state_history({'configurable': {'thread_id': thread_id}})]
     assert any(snapshot.values.get('messages') and
                snapshot.values['messages'][0].content.startswith('FIRST_FACT_')
@@ -186,8 +186,8 @@ async def test_summary_failure_keeps_original_messages_and_releases_run(
         with pytest.raises(ContextCompactionError, match=reason):
             await app.arun(session, [('user', 'third')])
     assert b.normal_inputs == []
-    assert app._sessions._sessions[session]['busy'] is False
-    thread_id = app._sessions._sessions[session]['thread_id']
+    assert app._sessions.describe_session(session)['busy'] is False
+    thread_id = app._sessions.get_thread_id(session)
     latest = await app._agent.aget_state({'configurable': {'thread_id': thread_id}})
     assert latest.values['messages'][0].content.startswith('FIRST_FACT_')
     assert latest.values['messages'][-1].content == 'third'
@@ -235,8 +235,8 @@ async def test_summary_that_cannot_fit_preserved_turn_never_calls_normal_model(
 
     assert len(b.summary_inputs) == 1
     assert b.normal_inputs == []
-    assert app._sessions._sessions[session]['busy'] is False
-    thread_id = app._sessions._sessions[session]['thread_id']
+    assert app._sessions.describe_session(session)['busy'] is False
+    thread_id = app._sessions.get_thread_id(session)
     latest = await app._agent.aget_state({'configurable': {'thread_id': thread_id}})
     assert latest.values['messages'][0].content.startswith('OLD_FACT_')
     assert latest.values['messages'][-1].content == 'new question'
@@ -402,7 +402,7 @@ async def test_soft_threshold_skips_or_splits_at_a_safe_message_boundary(
     assert any(event['event'] == 'context_compaction_skipped'
                and event['reason'] == 'no_safe_cut_within_send_budget'
                for event in events) is fits_send_budget
-    assert app._sessions._sessions[session]['busy'] is False
+    assert app._sessions.describe_session(session)['busy'] is False
 
 
 @async_test

@@ -51,10 +51,15 @@ class NativeAsyncModel(BaseChatModel):
 def runtime(models, selected, selections=None):
     _runtime_registry_1 = prepare_tool_registry([])
     _runtime_names_1 = _runtime_registry_1.names()
+    def resolve_model(sid, agent_path='root'):
+        model_id = selected[sid]
+        if selections is not None:
+            selections.append((sid, model_id))
+        return model_id, models[model_id]
+
     return build_runtime_agent(
         next(iter(models.values())), tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
-        resolve_model=lambda sid, agent_path='root': (selected[sid], models[selected[sid]]),
-        record_selection=lambda sid, mid: selections.append((sid, mid)) if selections is not None else None,
+        resolve_model=resolve_model,
         checkpointer=InMemorySaver(),
     )
 
@@ -206,7 +211,7 @@ def test_task_cancellation_propagates_and_closes_model_call():
 @pytest.mark.parametrize('messages', [[], [HumanMessage(content='PRIVATE')]])
 def test_async_missing_ai_message_is_rejected(messages):
     async def scenario():
-        middleware = make_model_selection_middleware(lambda _, agent_path='root': ('A', object()), lambda *_: None)
+        middleware = make_model_selection_middleware(lambda _, agent_path='root': ('A', object()))
         request = SimpleNamespace(runtime=SimpleNamespace(context=context()))
         request.override = lambda **_: request
 
@@ -222,7 +227,7 @@ def test_async_missing_ai_message_is_rejected(messages):
 def test_async_graph_control_exception_is_preserved():
     async def scenario():
         events, error = [], GraphBubbleUp('PRIVATE')
-        middleware = make_model_selection_middleware(lambda _, agent_path='root': ('A', object()), lambda *_: None)
+        middleware = make_model_selection_middleware(lambda _, agent_path='root': ('A', object()))
         request = SimpleNamespace(runtime=SimpleNamespace(context=context(events)))
         request.override = lambda **_: request
 
@@ -239,7 +244,7 @@ def test_async_graph_control_exception_is_preserved():
 @async_test
 async def test_request_override_failure_preserves_exception_and_closes_call():
     events, error = [], ValueError('PRIVATE override failure')
-    middleware = make_model_selection_middleware(lambda _, agent_path='root': ('A', object()), lambda *_: None)
+    middleware = make_model_selection_middleware(lambda _, agent_path='root': ('A', object()))
     request = SimpleNamespace(runtime=SimpleNamespace(context=context(events)))
 
     def override(**_kwargs):

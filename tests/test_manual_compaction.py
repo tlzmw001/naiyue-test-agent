@@ -12,6 +12,7 @@ from naiyue_test_agent.model_access import (MODEL_LIMITS_METADATA_KEY, COMPACTIO
     COMPACTION_KEEP_RECENT_METADATA_KEY, COMPACTION_SUMMARY_OUTPUT_METADATA_KEY)
 from test_async_application import StreamingToolModel
 from test_web_api import web_client, request
+from test_web_history_paging import read_pages
 
 
 def compact_model():
@@ -60,8 +61,11 @@ def test_manual_compaction_summarizes_once_saves_and_is_idempotent(monkeypatch, 
             assert len(model.seen) == 3
             assert (await client.post(endpoint + '/runs', json={**body, 'text': 'cannot reuse'})).status_code == 409
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
+            assert (await client.post(endpoint + '/prepare')).status_code == 200
             reopened = (await client.get(endpoint)).json()
-            assert [message['id'] for message in reopened['messages']] == [message.id for message in saved]
+            assert [message['id'] for message in reopened['messages']] == [message['id'] for message in before]
+            assert all(not message['is_context_summary'] for message in reopened['messages'])
+            assert [message.id for message in await web.state.service.application.aget_messages(sid)] == [message.id for message in saved]
             assert reopened['has_compaction'] and reopened['can_run']
             assert len(model.seen) == 3
     asyncio.run(scenario())
@@ -236,4 +240,54 @@ def test_small_model_manual_compaction_never_splits_the_latest_user_turn():
             await _acompact_messages(messages, model, model_id='A', context={}, system_messages=[], tools=[], force=True, trigger='manual')
         assert model.seen == []
         assert messages[2].id == 'recent-user' and len(messages) == 6
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('automatic', [False, True])
+def test_multi_page_compaction_keeps_original_chat_after_reopen(monkeypatch, tmp_path, automatic):
+    async def scenario():
+        model = compact_model()
+        model.metadata[COMPACTION_KEEP_RECENT_METADATA_KEY]['tokens'] = 1
+        model.replies = [AIMessage(id=f'answer-{n}', content=f'ANSWER_{n} ' + 'x' * 2000) for n in range(4)]
+        async with web_client(monkeypatch, tmp_path, model, history_page_messages=2) as (client, web):
+            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+            endpoint = f'/api/sessions/{sid}'
+            for n in range(4):
+                run = (await client.post(endpoint + '/runs', json=request(f'USER_{n} ' + 'y' * 2000))).json()['run_id']
+                await web.state.delivery.wait(run)
+            original = await read_pages(client, sid)
+            first = (await client.get(endpoint + '/messages')).json()
+            model.replies = [AIMessage(content='Short summary of older work.'), AIMessage(id='following', content='following answer')]
+            if automatic:
+                estimate = (await client.get(endpoint + '/context')).json()['current']['estimate']['estimated_input_tokens']
+                window = model.metadata[MODEL_LIMITS_METADATA_KEY]['context_window_tokens']
+                model.metadata[COMPACTION_RESERVE_METADATA_KEY]['tokens'] = window - estimate + 100
+                response = await client.post(endpoint + '/runs', json=request('new task'))
+            else:
+                response = await client.post(endpoint + '/compact', json={'request_id': str(uuid4())})
+            assert response.status_code == 202
+            await web.state.delivery.wait(response.json()['run_id'])
+            app = web.state.service.application
+            saved = await app.aget_messages(sid)
+            assert saved[0].additional_kwargs['naiyue_compaction_summary']
+            assert not any('USER_0' in str(message.content) for message in saved)
+            if not automatic:
+                assert len(model.seen) == 5
+                following = await client.post(endpoint + '/runs', json=request('new task'))
+                await web.state.delivery.wait(following.json()['run_id'])
+            assert len(model.seen) == 6
+            assert any(m.additional_kwargs.get('naiyue_compaction_summary') for m in model.seen[-1])
+            assert not any('USER_0' in str(m.content) or 'ANSWER_0' in str(m.content) for m in model.seen[-1])
+            older = await client.get(endpoint + '/messages', params={'before': first['next_cursor']})
+            assert older.status_code == 200 and older.json()['coverage']['upper'] == first['coverage']['upper']
+            before_close = await read_pages(client, sid)
+            assert before_close[:len(original)] == original
+            saved_ids = [m.id for m in await app.aget_messages(sid)]
+        async with web_client(monkeypatch, tmp_path, model, history_page_messages=2) as (client, web):
+            assert (await client.post(endpoint + '/prepare')).status_code == 200
+            writes = web.state.service.application._storage.connection.total_changes
+            assert await read_pages(client, sid) == before_close
+            assert [m.id for m in await web.state.service.application.aget_messages(sid)] == saved_ids
+            assert web.state.service.application._storage.connection.total_changes == writes
+            assert len(model.seen) == 6
     asyncio.run(scenario())

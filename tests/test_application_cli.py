@@ -382,14 +382,21 @@ def test_tty_stop_rejection_is_not_reported_as_accepted(monkeypatch, capsys):
 
 
 def test_tty_input_after_acceptance_window_closes_starts_next_run(monkeypatch, capsys):
-    entered, release = Event(), Event()
+    entered, release, second_entered, second_release = (Event() for _ in range(4))
+    workers = []
+    original_thread = cli.Thread
+    def track_worker(*args, **kwargs):
+        worker = original_thread(*args, **kwargs)
+        workers.append(worker)
+        return worker
+    monkeypatch.setattr(cli, 'Thread', track_worker)
 
     class ClosingApp:
         default_model_id = 'A'
 
         def __init__(self):
             self.requests = []
-            self.steer_attempts = 0
+            self.steer_attempts = self.stop_attempts = 0
 
         def create_workspace_session(self, _model_id, root):
             assert root == Path.cwd()
@@ -403,11 +410,21 @@ def test_tty_input_after_acceptance_window_closes_starts_next_run(monkeypatch, c
             if len(self.requests) == 1:
                 entered.set()
                 assert release.wait(timeout=3)
+            else:
+                second_entered.set()
+                assert second_release.wait(timeout=3)
             return {'messages': [messages[0], AIMessage(content=self.requests[-1] + ' answer')]}
 
         def steer(self, _session_id, _text):
             self.steer_attempts += 1
             release.set()
+            raise application.SessionBusyError('Window already closed')
+
+        def request_stop(self, _session_id):
+            self.stop_attempts += 1
+            second_release.set()
+            workers[-1].join(timeout=5)
+            assert not workers[-1].is_alive()
             raise application.SessionBusyError('Window already closed')
 
     app = ClosingApp()
@@ -419,13 +436,23 @@ def test_tty_input_after_acceptance_window_closes_starts_next_run(monkeypatch, c
         line = next(entries)
         if line == 'second':
             assert entered.wait(timeout=3)
+        if line == ':quit':
+            assert second_entered.wait(timeout=3)
         return line
 
     monkeypatch.setattr('builtins.input', terminal_input)
 
-    assert cli.main(['--no-session', '--config', 'synthetic.json']) == 0
+    try:
+        assert cli.main(['--no-session', '--config', 'synthetic.json']) == 0
+    finally:
+        release.set()
+        second_release.set()
+        for worker in workers:
+            worker.join(timeout=5)
+            assert not worker.is_alive()
     output = capsys.readouterr().out
     assert app.steer_attempts == 1
+    assert app.stop_attempts == 1
     assert app.requests == ['first', 'second']
     assert output.count('first answer') == 1
     assert output.count('second answer') == 1

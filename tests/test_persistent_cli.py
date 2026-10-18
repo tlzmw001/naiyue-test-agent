@@ -225,7 +225,7 @@ async def test_interactive_auto_recovery_waits_for_new_input_before_running(monk
     assert '只读历史' in output and '下一条新消息才会启动运行' in output
     assert output.count('本次运行完成') == 1
     async with build(monkeypatch, db) as app:
-        storage = app._sessions._persistence.storage
+        storage = app._storage
         history = await app.aget_session_history(row['session_id'])
         assert [m.content for m in history['messages']] == ['saved request', 'answer', 'new request', 'answer']
 

@@ -4,6 +4,41 @@
 
 ## 清理后的当前工作顺序（2026-10-17）
 
+优先推进：[Spec101长会话历史懒加载与操作准入解耦](specs/101-web-history-pagination.md)。101-01/02已接finish同步＋消费前补录、schema8档案、显式准备、轻量准入、只读SQL分页/正文分块及有界live；普通GET不装载/写库，发送、compact和审批不再依赖整份显示view。101-03已接根/子前端上滑/锚点/重试与补偿合并；101-04已完成压缩/重启/真实崩溃/根子审批边界组合验收，101-04当时后端2266、前端186及210模块构建通过，证据见[第21节](specs/101-web-history-pagination.md#21-101-04实际结果与spec101收尾2026-10-18)。102-01/02已完成SessionState、受控状态入口及直接async/公共阶段，当前2282后端/186前端及210模块构建通过，见[实际结果](specs/102-session-state-lifecycle-refactor.md#18-102-02实际结果与下一片2026-10-18)。102-03已删除旧工厂/选模空回调并迁移消费者，当前后端2298/前端186/构建通过，见[本片结果](specs/102-session-state-lifecycle-refactor.md#20-102-03实际结果与下一片2026-10-18)。102-04已接SessionPort根/子实际装配与根控制边界，当前后端2302/前端186及构建通过，见[本片结果](specs/102-session-state-lifecycle-refactor.md#23-102-04实际结果与下一片2026-10-18)。102-05已统一完整/流式文本投影并删除重复入口，当前后端2345/前端186及210模块构建通过，见[本片结果](specs/102-05-content-projection.md#5-实际结果2026-10-18)。102-06已收敛Web设置异常处理，当前后端2407/前端186及构建通过，见[本片结果](specs/102-06-web-setting-errors.md#6-实际结果2026-10-18)。102-07已完成顺序说明与根子生产链验收，后端2415/前端186及构建通过，见[收尾结果](specs/102-07-middleware-contracts.md#5-全量验收与spec102收尾2026-10-18)。用户最新调整：进入Spec103前先收敛会话架构，105五片在104三片之前，具体顺序与待审阅入口见下节盘点。[Spec102](specs/102-session-state-lifecycle-refactor.md)第6/9项随101-02完成，其余已确认范围由102-01—07全部完成，第7跨会话并发转104草案且依赖105。Spec103 U1/U7消费101身份与覆盖合同，已完成Composer等独立成果保留。M6缓存、持久usage/诊断和checkpoint修剪独立，不混入本片。
+
+
+## 进入103前的已记录事项盘点（2026-10-18）
+
+并发补充核查见[Spec106](specs/106-concurrency-events-rate-limits-and-observation.md)，E1与R1离线部分已完成、P1仅保留基线：会话范围事件订阅已随104-02接入；104-03限流故障隔离已完成，真实429/HTTP尝试统计另定有界验收；完整消息观察约5.5ms/600条/2.5MB列性能基线，先保留同ID修订/压缩/恢复合同，后续有瓶颈证据再优化。不自动增加供应商限流器或项目重试，不改变105→104顺序。
+
+用户最新要求：暂停进入103；先把旧Spec/研究中已经记录、但尚未讨论完整做法的事项逐项讨论，方案确认后逐项实施。本节是当前优先级与设计状态，不把候选能力自动升级为已批准实现。历史段落里的“暂不实施”须结合后续分片结果判断，不能仅按关键词当作未完成。
+
+[Spec108三片](specs/108-persistent-model-usage.md#10-108-03实际实现与spec108收尾)已完成调用事实、schema9持久保存及只读会话累计查询/展示。上下文侧栏第三页按模型分页、按用途/根子来源汇总，未知/0/部分报告/采集缺口分开；压缩不减少累计，根完成自动刷新，累计不混入上下文百分比。后端2758、前端198及211模块构建通过，临时IAB1440/375验收通过，0次真实供应商请求。109-01已完成Web重播字节预算，见[Spec109](specs/109-web-replay-and-persistent-diagnostics.md#7-109-01实际结果与下一片)；109-02持久诊断也已完成，下一步先讨论Spec103的GFM消息呈现；checkpoint修剪和两种项目重试保持延期，103其余UI/原机/PyPI独立。 session_allow/pending_turn仍为内存事实，待批从checkpoint恢复，不新增权限持久化。
+
+| 顺序/事项 | 当前事实与待讨论点 | 来源 |
+|---|---|---|
+| 已完成：会话架构收敛 | 105五片已完成，后端2464 passed in 100.59s (0:01:40)/前端186及构建通过；CLI退出时序已确定性验证；没有新增生产服务或并发许可 | [105总Spec](specs/105-session-ownership-refactor.md)、[105-05](specs/105-05-session-lifecycle-acceptance.md) |
+| 已完成：跨会话并发 | 104三片已完成；默认10、保存后释放、按会话Web/事件、组合及106 R1离线隔离已验收；实网/原机仍独立 | [104-01实现](specs/104-01-application-concurrency.md)、[Spec104草案](specs/104-cross-session-concurrency.md)、[Spec102第8节](specs/102-session-state-lifecycle-refactor.md#8-讨论g跨会话并发是能力升级) |
+| 已完成：模型缓存控制与用量口径 | M6-01/02已接构造默认及四项用量，主子/摘要/Auto/快照/UI同步，有界异步入口可用但未执行实网 | [Spec107](specs/107-model-request-prompt-cache.md#7-m6-01实际结果与下一片)、[Spec007](specs/007-prompt-cache-usage-observation.md) |
+| 已完成：调用用量事实与持久化 | 108三片事实/保存/只读累计UI已完成，2758后端/198前端及构建通过；未知不补0，查询不运行模型或装载图 | [Spec108](specs/108-persistent-model-usage.md#10-108-03实际实现与spec108收尾) |
+| 已完成：Web交付缓存字节预算 | 109-01每根256条/4 MiB，空缓存与已开SSE旧游标重同步，当前投影/执行保持；启动配置与显式覆盖已接线 | [109-01结果](specs/109-web-replay-and-persistent-diagnostics.md#7-109-01实际结果与下一片) |
+| 已完成：持久诊断 | schema10根摘要/有限事件、1 MiB/30天/256 MiB、待写预算/关闭排空/故障降级/整组淘汰及冷只读分页API已完成；不改执行恢复权威 | [109-02结果](specs/109-web-replay-and-persistent-diagnostics.md#9-109-02实际结果与spec109收尾) |
+| 明确延后，重新讨论是否纳入：checkpoint安全修剪 | 多版本checkpoint仍保留；完整聊天档案已独立不等于可删旧checkpoint。保护最新状态、审批、pending writes、恢复锚点和子实例归属，不能套用诊断TTL | [checkpoint边界第7节](research/pi-event-history-usage-2026-10-17.md#7-当前checkpoint保存与清理边界) |
+| 用户确认后放：项目侧模型重试 | 当前已有SDK有限重试；尚未决定改成项目控制。要先比较尝试级观察与外部重试，避免叠加次数，并明确流式部分输出边界 | 本文M3、[Spec010](specs/010-model-request-policy.md) |
+| 用户确认后放：证明未执行后的工具安全重试 | 当前异步链继续阻止不确定结果的重放；“有充分证据证明工具未执行后能否重新审批”另议，不等同模型SDK重试 | [Spec093](specs/093-architecture-semantics-and-sync-cleanup.md) |
+
+用户本轮明确：项目侧模型重试、证明工具未执行后的安全重试均记录往后放，不纳入本轮进入103前的设计/实施。
+
+2026-10-18当前复盘结论：101/102/105、104三片、M6两片已全部完成；108三片已完成调用事实/持久保存/只读累计查询和UI，Spec109两片交付缓存字节预算及持久诊断均已完成，下一步先讨论103剩余UI的GFM呈现。106 E1/R1离线完成，P1仅保留基线。checkpoint修剪和项目侧模型/安全工具重试为用户明确延后项，不自动恢复；103剩余UI、原机验收、PyPI及长期能力保持独立。
+
+Windows/Linux原机及其他供应商实网矩阵属于验收缺口，另列；沙箱、长期记忆、后台/多层子Agent等仍沿原独立范围，不因本次盘点全部开工。101完整正文UI归入后续呈现范围，本轮不抢入103。
+
+跨会话行为已整理为[Spec104供审阅草案](specs/104-cross-session-concurrency.md)，依赖105完成后实施：同一服务不同会话可并行，同会话一个根run；用户确认启动总配置max_active_runs默认10，满额明确拒绝并保留草稿、不排队的方案保持。名额按AgentSession拥有的busy持有至必要保存完成，不能按观察对象是否已移除计数；State只经对象受控接口读取。根审批暂停并收尾后释放，继续执行重新准入；父run等待子审批时继续占用，子审批不再申请。停止控制不因满额被拒；保存失败只阻断本会话，但全库故障仍可能影响其他保存。分104-01应用/持久化、104-02 Web、104-03组合验收，不改真实配置。[Pi核对第9.1节](specs/104-cross-session-concurrency.md#91-pi定向源码核对与本项目取舍2026-10-18)：按会话运行/装载/事件/控制及断开后继续可参照，SDK与实验server路径区分；未发现同类总额度，10为本项目选择。
+
+并发术语/隔离澄清：一个会话同时只有一次主智能体任务运行，内部仍可并行多个工具/子智能体；共用编译图不等于共用会话历史。当前会话拥有独立thread、消息/checkpoint、运行控制与临时授权，但同一服务的多个会话绑定相同workspace_root，工具访问同一份真实项目文件。用户接受共享目录与Write/Edit目标busy，现有匹配/提交检查保留；busy只协调本进程同目标重叠操作，不覆盖Bash、外部编辑器或整次任务。运行中代码和命令产物仍可能受其他会话修改影响。worktree已比较Git机制、Codex/Claude入口及项目/执行目录改动，作为后续独立能力讨论，不在104提前加入空接口。
+
+新增前端问题与交互候选：[Spec103](specs/103-web-presentation-and-interaction.md)的U5主按钮/发送方式、自动增高、斜杠补全及U2普通工具摘要已完成；U8标题搜索、单行标题/模型悬停提示、桌面收起已接线，当时前端159与TS/Vite209模块、1440/375px临时页面通过；整库历史红灯已由101-04当前全量回归闭合，具体见第15—17节。其余GFM、工作区/自动标题、回复块、工具结构化diff、代码/流式呈现、日期分组/审批/主题及结构仍按切片审阅，未批准全量实施。圆环提示、一次自动重同步、逐项记住已有；日期分组/排序、多项审批、Write diff与思考投影边界待定。101/102由另一会话推进，checkpoint安全修剪延后。
+
 下表是下一阶段的安排与边界，下文保留历史需求与证据，不把已完成项目重新列为待实现。
 
 | 顺序 | 工作 | 当前状态与下一步 |
@@ -15,8 +50,9 @@
 | 已完成 | 输入框指令/手动压缩及模型推理设置（Spec097） | [加号与/compact、模型菜单](specs/097-composer-commands-model-thinking.md)已接原摘要/保存/停止；加号不重复现有图标入口，手动保留最近完整轮，推理档位从配置读取、会话隔离并保存。 |
 | 已完成 | 技能列表与显式指令（Spec098） | [/skills及加号技能列表](specs/098-skills-picker-and-explicit-command.md)已接当前项目两来源、元数据查询/刷新、草稿前缀及原消息/Read链；可发现不等于已读取/实际使用，无全局来源扩展。 |
 | 已完成 | 会话管理与鼠标排序（Spec099） | [右键/省略号菜单与持久顺序](specs/099-session-sidebar-management.md)已接重命名、置顶和确认删除，排序只用鼠标拖动、分组内保存。根子历史原子删除及恢复/取消竞态有回归；模型按钮只显示名称/推理强度。 |
-| 1 | 其余聊天管理UI | Skills基础入口已接；Steering/Follow-up已有发送方式入口，不重复建设。图片、diff/patch、Shell归档展示可另切片。不上传任意Python插件。 |
-| 2 | 真实供应商与浏览器验收 | 用明确模型配置和有界请求验证Auto快审/详审、图片接口、真实子委派/审批/停止、流式故障及多会话；本机假模型和既有部分真实模型探针不能代替这些证据。每组先明确调用预算、目标及预期，不自行扩大真实请求。 |
+| 已完成 | Spec102已确认收敛范围 | 102-01—07七片均已完成，原第6/9项随101落地；当前后端2415/前端186及构建通过。原问题第7跨会话并发转104草案，先做105，不标并发完成。 |
+| 暂缓，先处理下节记录事项 | Spec103其余聊天管理UI | Skills基础入口已接；Steering/Follow-up已有发送方式入口，不重复建设。图片、diff/patch、Shell归档展示可另切片。不上传任意Python插件。 |
+| 2（本次核心验收已闭合） | 后续供应商/接口验收 | [Spec100补充](research/responses-final-args-2026-10-17.md)：保留流式、补齐最终工具参数，根多工具批准/双子智能体独立审批均定向通过。新增9次、累计61次，原52次和失败保留；本次停止发送。推理档位/其他供应商接口/浏览器实网操作仍未覆盖，按具体需求另定预算，不重复整轮。 |
 | 3 | PyPI本地Web交付 | 方向已确定，尚无Python打包元数据、wheel或干净安装证据。补前端静态资源打包、rg/fd交付或安装前置、安装后CLI/Web/工作区数据/配置/升级验证；不启动桌面/npm/SaaS交付。 |
 | 待环境 | Windows/Linux原机（WIN1/TE2） | 087/088/089修复及本机mock已完成，原生平台未验收。获得环境后核对双Shell、路径/文件提交、进程树停止、平台锁与SQLite恢复；无Windows电脑不标完成，也不阻塞其他切片。 |
 | 后续独立设计 | 沙箱、长期/跨会话记忆、RAG/MCP及HTTP/RPC业务闭环 | 进程接口有预留，隔离本体未实现；长期记忆不预设复用会话SQLite。Discount历史需求已删除，业务需重新选一个真实接口场景、确定用例/执行/结果证据和评测闭环。非响应工具硬取消、崩溃副作用安全重试、跨进程幂等与更广恢复均未在086承诺。 |
@@ -95,12 +131,12 @@ Web 遗留：①更多真实供应商工具/审批及浏览器模型失败、部
 
 | ID | 待做或待补证据 | 当前边界与完成判据 |
 | --- | --- | --- |
-| M1 | 模型错误分类扩展与真实服务验证 | [Spec 006](specs/006-model-call-failure-event.md)已有同步失败事件；[Spec 008](specs/008-openai-authentication-failure.md)验证 OpenAI SDK 认证失败及当前网关无效凭证 401；[Spec 009](specs/009-non-openai-model-errors.md)实现 Anthropic/Ollama 稳定粗分类；[Spec 010](specs/010-model-request-policy.md)补 OpenAI SDK 超时/连接失败。[Spec 021](specs/021-unknown-model-observation.md)为同步路径未分类异常补安全异常类型及可信 SDK HTTP 状态，但日志尚未持久化或接入评测。其他 SDK/网关错误、歧义状态及真实 Anthropic/Ollama 服务行为仍待逐类取证；继续验证脱敏、原异常传播和重试边界。八类设计基线见[项目计划第 16 节](project-plan.md#16-模型层-thinking-与失败分类设计)。 |
+| M1 | 模型错误分类扩展与真实服务验证 | [Spec 006](specs/006-model-call-failure-event.md)已有同步失败事件；[Spec 008](specs/008-openai-authentication-failure.md)验证 OpenAI SDK 认证失败及当前网关无效凭证 401；[Spec 009](specs/009-non-openai-model-errors.md)实现 Anthropic/Ollama 稳定粗分类；[Spec 010](specs/010-model-request-policy.md)补 OpenAI SDK 超时/连接失败。[Spec 021](specs/021-unknown-model-observation.md)为同步路径未分类异常补安全异常类型及可信 SDK HTTP 状态，但日志尚未持久化或接入评测。其他 SDK/网关错误、歧义状态及真实 Anthropic/Ollama 服务行为仍待逐类取证；继续验证脱敏、原异常传播和重试边界。八类设计基线见[项目计划第 16 节](project-plan.md#16-模型层-thinking-与失败分类设计2026-09-30)。 |
 | M2 | 异步、流式、取消及部分输出失败 | [Spec073](specs/073-async-model-call-middleware.md)已有无工具runtime的原生异步模型等待、响应门禁、内存checkpoint与取消异常传播测试，以及一次有界真实模型成功请求。[Spec074](specs/074-async-context-model-chain.md)随后接通prompt/摘要/一次恢复与状态流，新增34例、全量846例及真实摘要→回答通过。[Spec075](specs/075-integrated-async-application.md)已接应用/工具/存储和文本delta/完整校准，36例新增及882例、真实跨进程正常链路通过；活动取消、真实部分输出失败、SDK重试/副作用unknown和生产负载仍未验，不能把安全排空当作主动停止。 |
 | M3 | 超时与有限重试 | [Spec 010](specs/010-model-request-policy.md)已对在线模型显式设置默认 60 秒 HTTP 超时与 2 次 SDK 重试，对 Ollama 设置 60 秒 HTTP 超时；本机 HTTP mock 验证在线 SDK 对 503 最多尝试 3 次。尚无整个 Agent turn 的严格墙钟预算、尝试级轨迹、取消及流式部分输出后的安全重试策略；Ollama 重试待本地模型可用后单独设计。终局失败不能变成普通 `AIMessage`。2026-10-10用户要求记录后续考虑项目侧外部重试：先比较保留SDK重试并补尝试观测，与由项目控制单次模型请求重试两种方案，尚未决定替换。若采用外部重试，需避免与SDK重试叠加，明确总请求次数/时间预算、可重试条件和取消传播；记录关联call_id、attempt序号、耗时、安全分类及退避，不记录凭据或原始请求/响应。验收至少覆盖首次成功、重试后成功、耗尽失败、不可重试直接失败、等待中取消及总次数约束；流式已输出内容、工具副作用和整个Agent run不能未经设计直接重放。 |
 | M4 | 推理等级真实能力 | [Spec 005](specs/005-model-access-thinking.md)只证明配置、回退及本机适配器参数；HeiyuCode、OpenAI 官方、Claude、Ollama 的具体模型对所选等级的接受与实际效果未验证。能力信息按具体供应商/模型核验；不能把本地 `supported_levels` 当成远端事实。 |
 | M5 | 每次调用可选的 thinking 等级 | 当前只在加载模型配置时确定默认等级。同会话下一轮修改等级的提交时点、成本边界与轨迹仍需设计及测试；保留 `model_default` 与显式 `off` 的区别。 |
-| M6 | 提示词缓存控制与效果对照 | [Spec 007](specs/007-prompt-cache-usage-observation.md) 已记录同步模型成功调用的缓存读取量；HeiyuCode 两次合成请求中第二次报告 `cache_read_tokens=6912`，但尚未设置供应商专用缓存策略，也没有延迟、成本或长期命中率对照。控制参数须按供应商协议验证，不能把缺失统计当成零或把 LangChain 整体响应缓存混进来。 |
+| M6 | 提示词缓存控制与效果对照 | [M6-01](specs/107-model-request-prompt-cache.md#7-m6-01实际结果与下一片)已接profile.prompt_cache能力、request.prompt_cache.retention覆盖及模型构造默认；无覆盖选该模型声明的最短，未知/false不传。主/子/摘要/Auto及真实适配器离线验证通过，未生成动态key或修改Runtime。M6-02已统一缓存创建/读取/总输入及已有事件/快照/Web消费者、未知口径，提供有界异步入口；108三片调用事实/保存/累计查询UI已完成。历史Spec007的网关用量不证明当前命中或省费，实网尚未授权。 |
 | M7 | 模型发现与更多真实供应商接入 | 当前列表来自 `.env/models.json`。模型 ID/能力自动发现要逐供应商核验；OpenAI 官方、Claude、本地 Ollama 目前只有本机构造/假模型证据，需真实模型→工具→模型与错误路径验证。用户目前没有本地模型，Ollama 实网验收暂缓，不将其作为当前切片的前置条件。 |
 
 ### WIN1：工具建设后全项目Windows兼容性复盘
@@ -174,7 +210,7 @@ CLI已按[Spec 068](specs/068-cli-event-display.md)消费同一事件接口，�
 | C1 | 连续会话与实际切换 | [Spec 011](specs/011-in-memory-agent-continuation.md)已有内存 checkpointer；[Spec 014](specs/014-in-memory-session-service.md)已用应用服务和假模型验证同进程历史延续、A→B 切换、不同会话隔离、同会话 busy 拦截及失败释放。[Spec070](specs/070-persistent-session-implementation.md)已补本地安全结束会话跨进程恢复、持久选模与工作区、状态/确认checkpoint一致性和默认CLI；真实默认模型两进程延续通过。仍无可信Web身份/归属授权、真实跨供应商历史兼容、完整持久轨迹/历史树；opaque `session_id` 不能当权限凭证。[架构草案](agent-runtime-architecture-draft.md) |
 | C2 | 通用受限文件工具 | [Spec 027](specs/027-workspace-read-tool.md)已完成首个只读 `read`；[Spec 028](specs/028-read-file-pagination.md)已增加 `offset/limit` 按行续读，单页**文件正文**最多 64 KiB/2000 行，续读提示另计；[Spec 029](specs/029-session-workspace-read-boundary.md)和[Spec 030](specs/030-read-permission-and-approval.md)已完成可信工作区与同进程 Read 审批边界。[Spec 033](specs/033-ls-tool.md)已实现 `ls`：默认当前工作区、排序/目录标记、500 条/50 KiB 限制、工作区外审批，按用户选择显示全部名称（含 dotfiles），但不放宽 Read 内容权限。用户确认超长单行由 Read 返回错误，不做行内游标；Bash 已接入，但超长单行时提示模型改用 Bash 的实际回退路径仍未验证。跨页文件变更没有快照、深页需要从文件开头重新扫描，read/ls/find/grep 已在临时工作区用已配置的真实模型完成合成样本调用并核对结果与原调用 ID；仍没有稳定性或答案质量评测；路径检查与打开之间仍有 TOCTOU 窗口，不能宣称沙箱。`ls` 的条目上限不限制目录扫描/排序成本，极大目录性能待代表性样本评估。[Spec 034](specs/034-find-and-grep-tools.md)已完成 `find` 与 `grep` 的独立工具、CLI 接线、`.gitignore` 文件发现、正文权限过滤及同进程审批；`rg` 为显式运行前提，缺失时返回工具错误，极大目录内存峰值与打包环境可用性仍待验证。已按 [Spec 035](specs/035-read-tool-rename.md)将工具完整改名为 `read`；同步批次调度已按 [Spec 037](specs/037-conditional-tool-batch-scheduling.md)接线；首个真实 `write` 已按 [Spec 038](specs/038-workspace-write-tool-design.md)在 CLI 接线：工作区内 UTF-8 整文件创建/覆盖、现有父目录、1 MiB 默认上限、目标级进程内冲突和临时文件替换；假模型与真实临时文件测试已验证结果回填和读写读顺序，临时工作区已有一次真实模型 write→edit→read 成功链路，业务写入质量仍未验证。现已按 [Spec 039](specs/039-workspace-edit-tool.md)接入工作区内现有 UTF-8 文件的精确多处替换，验证快照变化冲突、原 ID 结果回填与 CLI 接线；Pi 的模糊匹配、完整 diff 展示尚未实现；Bash 已由后续切片实施。工作区外可审批写入需先有可审查内容/差异并绑定授权的界面，不能复用只读的仅路径审批。每种新工具各自定义权限动作及执行校验。用户提到的 `base` 是否为命令工具需在该切片确认。不要把“设计用例”“生成 pytest”做成固定流程工具。 |
 | C4 | 首次执行生成代码前的安全边界 | 未有可宣称的沙箱。用户确认先在单用户本地 CLI 中显式启用审批式宿主机 Bash，作为开发实验；它能访问当前用户可访问的工作区外文件和网络，不满足自动/无人值守、Web/SaaS 或生产测试执行的隔离门槛。上述场景仍须先验证目标白名单、方法/路径/文件权限、运行预算、审批与 OS 隔离；审批不等于隔离。用户停止请求须阻止后续调度并标记已开始工具副作用的未知状态，不能声称自动回滚。 |
-| C5 | 关联轨迹与基础评测 | [Spec 013](specs/013-synchronous-run-events.md)与[Spec 015](specs/015-synchronous-tool-events.md)已在同步入口用结构化日志关联 run 开始/终局、选模、模型用量/失败及工具开始/完成/失败；旧路径未统一接入，也未配置日志消费者。下一切片须设计安全的事件消费与交付边界，区分日志诊断、Web 实时流、持久轨迹；若需要跨并发工具严格排序，再设计 per-run 序号与背压。未来还需检索/上下文/产物及取消事件和独立结果/过程评分器。以固定样本报告成功和失败案例，区分调用成功、用例质量和业务缺陷检出。 |
+| C5 | 持久轨迹、会话用量/费用与基础评测 | 用户2026-10-17确认[保存与淘汰方向](research/pi-event-history-usage-2026-10-17.md#6-用户确认的保存与淘汰方向尚未实施)：Spec101聊天档案已完成，Spec108三片调用事实/保存/累计查询UI已完成，聊天/用量随会话保留；Web事件256条且4 MiB/run、最近16个已结束run；诊断按工作区30天/256 MiB、单run1 MiB，旧run整组清理、活动不删、超限显式不完整。额度是可配置工程起点，未实施/实测；必要保存/迁移合同须在实施Spec明确。当前checkpoint已存同一SQLite，多版没有自动修剪，压缩不删旧版，删除会话才事务清理主/关联子thread；checkpoint修剪独立设计，不套诊断TTL。Pi主链完整消息/usage写JSONL且全条目统计，可选span接口不证明默认持久追踪。本项目现有ID/有界交付不等于完整持久追踪。独立业务/过程评测另需固定样本与评分。 |
 | C6 | 应用服务与本地 Web | [Spec 016](specs/016-local-application-composition.md) 已有进程内统一装配，并用假模型验证两轮历史与事件；[Spec 017](specs/017-local-cli-entry.md) 的同步 CLI 已调用同一服务，真实模型验证两轮合成文本输入，但不含测试工具或业务能力。尚无 Web 入口或身份认证。未来本地 Web 应调用同一服务，展示真实会话、模型选择、轨迹与测试结果；上线前验证回环监听、授权、浏览器来源和文件操作边界，不用假数据冒充运行结果。 |
 | C7 | RPC 接口测试扩展 | 首个受控样本是 HTTP 折扣接口。HTTP 闭环稳定后，再选一条可复现 RPC 契约，验证协议客户端、超时、错误码、断言与清理；不能把 HTTP 通过写成 RPC 已支持。 |
 | C8 | 权限与审批的后续扩展 | [Spec 029](specs/029-session-workspace-read-boundary.md)已将可信工作区按 run 注入；[Spec 030](specs/030-read-permission-and-approval.md)已对会话版 Read 实现工作区内 `allow`、敏感/无效路径 `deny`、工作区外普通文件 `ask`，通过 LangGraph interrupt/checkpoint/resume 做同进程审批，批准后按调用 ID 和目标重验并一次性授权。假模型验证批准、拒绝、同轮多工具、目标变化、跨会话隔离及 CLI 命令。尚待真实供应商验证、审批异常后的 checkpoint 一致性处理、跨重启持久恢复、用户身份归属和多用户隔离；路径校验与打开之间仍有 TOCTOU 窗口。受限 Auto 与完全信任模式的动作清单、审计及实际隔离分别写 Spec，不能用本地审批冒充沙箱或 SaaS 授权。 |

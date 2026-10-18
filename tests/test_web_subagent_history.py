@@ -43,13 +43,13 @@ def test_saved_child_history_after_web_restart_and_safe_read_failure(monkeypatch
             assert detail['messages'][-1]['content'] == 'child report'
             assert 'child file content' in str(detail['messages'])
             assert detail['tool_states'] == {} and detail['available']
-            backend = web.state.service.application._agent.checkpointer
-            original = backend.aget_tuple
-            async def fail(config):
-                if config['configurable']['thread_id'].startswith('subagent:'):
+            backend = web.state.service.application._storage
+            original = backend.read_chat_page
+            def fail(session_id, thread_id, **query):
+                if thread_id.startswith('subagent:'):
                     raise OSError('PRIVATE_DISK_ERROR')
-                return await original(config)
-            monkeypatch.setattr(backend, 'aget_tuple', fail)
+                return original(session_id, thread_id, **query)
+            monkeypatch.setattr(backend, 'read_chat_page', fail)
             failed = await client.get(endpoint)
             assert failed.status_code == 503 and failed.json()['error']['code'] == 'subagent_history_unavailable'
             assert 'PRIVATE_DISK_ERROR' not in failed.text + caplog.text
@@ -58,8 +58,8 @@ def test_saved_child_history_after_web_restart_and_safe_read_failure(monkeypatch
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize('count, detail_status', [(9, 200), (18, 409)])
-def test_large_child_history_does_not_block_main_approval(monkeypatch, tmp_path, count, detail_status):
+@pytest.mark.parametrize('count', [9, 18])
+def test_large_child_history_does_not_block_main_approval(monkeypatch, tmp_path, count):
     from test_web_tools import approval_request
     async def scenario():
         workspace = tmp_path / 'workspace'
@@ -84,11 +84,9 @@ def test_large_child_history_does_not_block_main_approval(monkeypatch, tmp_path,
                 batch, = response.json()['approval_batches']
                 record, = (await client.get(f'/api/sessions/{sid}/subagents')).json()
                 detail = await client.get(f'/api/sessions/{sid}/subagents/{record["agent_id"]}')
-                assert detail.status_code == detail_status
-                if detail_status == 200:
-                    assert len(detail.json()['messages']) >= 20
-                else:
-                    assert detail.json()['error']['code'] == 'view_too_large'
+                assert detail.status_code == 200 and len(detail.content) <= web.state.delivery.settings.max_frame_bytes
+                assert len(detail.json()['messages']) >= 20
+                assert any(row.get('content_truncated') for row in detail.json()['messages'])
                 assert 'a' * 64000 not in str(response.json()['live']['agents'])
                 assert (await client.post(f'/api/sessions/{sid}/approvals', json=approval_request(batch, ['approve']))).status_code == 202
                 await web.state.delivery.get(run).task

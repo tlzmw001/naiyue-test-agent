@@ -92,7 +92,7 @@ def test_formal_arun_preserves_history_events_and_cleanup(monkeypatch):
             ends = [e for e in events if e.event_type == 'run_finished']
             assert len(ends) == 2 and all(e.data.status == 'completed' for e in ends)
             assert ends[0].run_id != ends[1].run_id
-            assert not app._sessions._sessions[session]['busy']
+            assert not app._sessions.describe_session(session)['busy']
         finally:
             await app.aclose()
     asyncio.run(scenario())

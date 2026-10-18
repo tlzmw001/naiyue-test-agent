@@ -56,7 +56,7 @@ def test_failed_run_keeps_confirmed_checkpoint_and_blocks_restart(monkeypatch, t
             assert caught.value is error
             failed = (await app.alist_sessions())[0]
             assert failed['state'] == 'failed' and failed['checkpoint_id'] == first['checkpoint_id']
-            assert not app._sessions._sessions[session]['busy']
+            assert not app._sessions.describe_session(session)['busy']
         async with factory(monkeypatch, path, StreamingToolModel(replies=[])) as app:
             with pytest.raises(SessionPersistenceError, match='session_recovery_blocked'):
                 await app.arestore_session(session)
@@ -74,12 +74,12 @@ def test_save_failure_never_publishes_completed(monkeypatch, tmp_path):
             def fail(*args, **kwargs):
                 raise SessionPersistenceError('synthetic_save_failure')
 
-            monkeypatch.setattr(app._sessions._persistence.storage, 'finish_run', fail)
+            monkeypatch.setattr(app._storage, 'finish_run', fail)
             with pytest.raises(SessionPersistenceError, match='session_save_unconfirmed'):
                 await app.arun(session, [('user', 'one')])
             assert events[-1].event_type == 'run_finished' and events[-1].data.status == 'failed'
             assert not any(e.event_type == 'run_finished' and e.data.status == 'completed' for e in events)
-            assert not app._sessions._sessions[session]['busy']
+            assert not app._sessions.describe_session(session)['busy']
             assert (await app.alist_sessions())[0]['state'] == 'running'
     asyncio.run(scenario())
 
@@ -93,7 +93,7 @@ def test_metadata_commit_wait_keeps_loop_responsive_and_busy(monkeypatch, tmp_pa
             session = await app.acreate_session('A')
             events = []
             app.subscribe_events(events.append)
-            storage = app._sessions._persistence.storage
+            storage = app._storage
             original = storage.finish_run
 
             def commit(*args, **kwargs):
@@ -105,7 +105,7 @@ def test_metadata_commit_wait_keeps_loop_responsive_and_busy(monkeypatch, tmp_pa
             task = asyncio.create_task(app.arun(session, [('user', 'one')]))
             try:
                 await asyncio.wait_for(entered.wait(), 5)
-                assert not task.done() and app._sessions._sessions[session]['busy']
+                assert not task.done() and app._sessions.describe_session(session)['busy']
                 assert not any(e.event_type == 'run_finished' for e in events)
                 release.set()
                 await task

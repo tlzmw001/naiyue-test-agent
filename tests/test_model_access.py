@@ -1,10 +1,6 @@
 
-from native_application_helpers import async_test
 
-from naiyue_test_agent.tools.permissions import ToolPermission
 
-from naiyue_test_agent.tools import ToolSpec
-from naiyue_test_agent.application import prepare_tool_registry
 import json
 from pathlib import Path
 
@@ -16,12 +12,9 @@ import openai
 from ollama import ResponseError
 import pytest
 
-from langchain.tools import tool
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage
-from langgraph.checkpoint.memory import InMemorySaver
 
-from naiyue_test_agent.agent_runtime import build_configured_runtime_agent
 from naiyue_test_agent.model_access import ModelConfigError, load_model_catalog
 from naiyue_test_agent.model_access.errors import classify_model_failure
 from naiyue_test_agent.model_access.thinking import resolve_thinking_level
@@ -399,92 +392,3 @@ def test_duplicate_json_key_is_rejected(tmp_path):
 def test_missing_config_is_rejected(tmp_path):
     with pytest.raises(ModelConfigError, match='models.json'):
         load_model_catalog(tmp_path / 'models.json')
-
-
-@async_test
-async def test_configured_agent_uses_file_and_switches_after_tool_result(tmp_path, monkeypatch):
-    selected = {'s1': 'first'}
-    received_settings = {}
-    models = {
-        'model-first': ToolCapableFake(responses=[AIMessage(
-            content='', tool_calls=[{'name': 'switch_to_second', 'args': {}, 'id': 'call-1'}]
-        )]),
-        'model-second': ToolCapableFake(responses=[AIMessage(content='answer-from-second')]),
-    }
-    def fake_chat_openai(*, model, **kwargs):
-        received_settings[model] = kwargs
-        return models[model]
-
-    monkeypatch.setattr('naiyue_test_agent.model_access.ChatOpenAI', fake_chat_openai)
-    config = {
-        'schema_version': 1,
-        'default_model_id': 'first',
-        'providers': {'p': {'kind': 'openai', 'api_key': 'test-key'}},
-        'models': {
-            'first': {'provider_id': 'p', 'model': 'model-first', 'api': 'chat_completions',
-                      'thinking': {'supported_levels': ['off', 'low', 'high'],
-                                   'default_level': 'high'}},
-            'second': {'provider_id': 'p', 'model': 'model-second', 'api': 'chat_completions'},
-        },
-    }
-    selections = []
-
-    @tool
-    def switch_to_second() -> str:
-        """Select the second configured model for this test session."""
-        selected['s1'] = 'second'
-        return 'selected second'
-
-    _runtime_registry_1 = prepare_tool_registry([ToolSpec(switch_to_second, switch_to_second.args_schema, permissions=ToolPermission(default='allow'))])
-    _runtime_names_1 = _runtime_registry_1.names()
-    agent = build_configured_runtime_agent(
-        write_config(tmp_path, config),
-        tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='Test model selection.', response_format=None,
-        select_model_id=lambda session_id: selected[session_id],
-        record_selection=lambda session_id, model_id: selections.append((session_id, model_id)),
-    )
-    result = (await agent.ainvoke({'messages': [('user', 'switch, then answer')]}, context={'session_id': 's1'}))
-
-    assert selections == [('s1', 'first'), ('s1', 'second')]
-    assert [message.type for message in result['messages']] == ['human', 'ai', 'tool', 'ai']
-    assert result['messages'][2].tool_call_id == result['messages'][1].tool_calls[0]['id']
-    assert result['messages'][-1].content == 'answer-from-second'
-    assert received_settings['model-first']['reasoning_effort'] == 'high'
-    assert received_settings['model-first']['timeout'] == 60
-    assert received_settings['model-first']['max_retries'] == 2
-    assert 'reasoning_effort' not in received_settings['model-second']
-    assert received_settings['model-second']['timeout'] == 60
-    assert received_settings['model-second']['max_retries'] == 2
-
-
-@async_test
-async def test_configured_agent_forwards_checkpointer_for_continuous_messages(tmp_path, monkeypatch):
-    model = FakeMessagesListChatModel(responses=[
-        AIMessage(content='first answer'), AIMessage(content='second answer'),
-    ])
-    monkeypatch.setattr('naiyue_test_agent.model_access.ChatOpenAI', lambda **_kwargs: model)
-    config_path = write_config(tmp_path, {
-        'schema_version': 1,
-        'default_model_id': 'first',
-        'providers': {'p': {'kind': 'openai', 'api_key': 'test-key'}},
-        'models': {'first': {'provider_id': 'p', 'model': 'model-first', 'api': 'chat_completions'}},
-    })
-    _runtime_registry_2 = prepare_tool_registry([])
-    _runtime_names_2 = _runtime_registry_2.names()
-    agent = build_configured_runtime_agent(
-        config_path, tool_registry=_runtime_registry_2, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_2: names, system_prompt='', response_format=None,
-        select_model_id=lambda _session_id: 'first',
-        record_selection=lambda _session_id, _model_id: None,
-        checkpointer=InMemorySaver(),
-    )
-    invoke_options = {
-        'context': {'session_id': 's1'},
-        'config': {'configurable': {'thread_id': 'internal-thread-s1'}},
-    }
-
-    (await agent.ainvoke({'messages': [('user', 'first question')]}, **invoke_options))
-    result = (await agent.ainvoke({'messages': [('user', 'second question')]}, **invoke_options))
-
-    assert [message.content for message in result['messages']] == [
-        'first question', 'first answer', 'second question', 'second answer',
-    ]

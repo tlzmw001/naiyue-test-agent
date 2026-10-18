@@ -6,22 +6,13 @@ from threading import RLock
 from time import monotonic
 
 from langchain_core.messages import AIMessage
+from naiyue_test_agent.model_access.messages import content_text
 from naiyue_test_agent.tools.settings import ToolProgressSettings
 
 
 def _safe_text(text):
     return ''.join(char if char in '\n\t' or char.isprintable()
                    else f'\\x{ord(char):02x}' for char in str(text))
-
-
-def _text(content):
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return ''.join(block if isinstance(block, str) else block.get('text', '')
-                       if isinstance(block, dict) and block.get('type') == 'text'
-                       and isinstance(block.get('text'), str) else '' for block in content)
-    return ''
 
 
 class CliEventDisplay:
@@ -71,7 +62,7 @@ class CliEventDisplay:
             recovery = history['recovery']
             self.write(f'状态：{recovery["kind"]}；原因：{recovery["reason"]}')
             for message in history['messages']:
-                self.write(f'[{message.type}]\n{_text(message.content)}')
+                self.write(f'[{message.type}]\n{content_text(message.content)}')
                 if isinstance(message, AIMessage):
                     for call in message.tool_calls:
                         self.write(f'已保存工具请求：{call["name"]}（{call["id"]}）\n'
@@ -208,7 +199,7 @@ class CliEventDisplay:
 
     def _message(self, row, *, revised=False, visibility='graph_values'):
         identity = row.get('id')
-        content = _text(row.get('content'))
+        content = content_text(row.get('content'))
         fingerprint = hashlib.sha256(content.encode('utf-8')).hexdigest()
         if row.get('type') == 'ai':
             if content.strip() and (revised or self._texts.get(identity) != fingerprint):
@@ -297,7 +288,7 @@ class CliEventDisplay:
                 for i, message in enumerate(messages[start:], start):
                     if isinstance(message, AIMessage):
                         identity = message.id or f'result-{i}'
-                        text = _text(message.content)
+                        text = content_text(message.content)
                         if text.strip() and self._texts.get(identity) != hashlib.sha256(text.encode('utf-8')).hexdigest():
                             self._incomplete_notice()
                         self._message({'id': identity, 'type': 'ai',

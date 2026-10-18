@@ -42,8 +42,8 @@ def test_user_stop_terminates_bash_and_preserves_partial_output(monkeypatch, tmp
             assert not any(m.content == 'must not run' for m in result['messages'])
             with pytest.raises(ProcessLookupError):
                 os.kill(pid, 0)
-            assert not app._sessions._sessions[session].get('manual_review_required')
-            assert not app._sessions._sessions[session]['busy']
+            assert not app._sessions.describe_session(session)['manual_review_required']
+            assert not app._sessions.describe_session(session)['busy']
         finally:
             if pid is not None:
                 try:

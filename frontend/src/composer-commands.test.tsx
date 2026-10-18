@@ -8,6 +8,7 @@ afterEach(cleanup);
 
 function setup() {
   const api = new WebApi('fixture');
+  vi.spyOn(api, 'prepare').mockImplementation(id => api.session(id));
   const row: SessionView = { session_id: 's', model_id: 'A', thinking_level: 'model_default', workspace_root: null,
     state: 'ready', updated_at: '', last_run_status: null, messages: [], busy: false, can_run: true,
     has_compaction: false, active_run_id: null, latest_run_id: null, active_tools: [], permission_mode: 'Default',
@@ -92,7 +93,7 @@ it('keeps failed compact commands and unknown commands out of the model', async 
   const input = screen.getByRole('textbox', { name: '消息' });
   fireEvent.change(input, { target: { value: '/compact' } });
   fireEvent.keyDown(input, { key: 'Enter' });
-  await screen.findByText(/另一个会话仍在运行/);
+  await screen.findByText(/当前会话仍在运行或收尾/);
   expect((input as HTMLTextAreaElement).value).toBe('/compact');
   fireEvent.change(input, { target: { value: '/not_supported' } });
   fireEvent.keyDown(input, { key: 'Enter' });

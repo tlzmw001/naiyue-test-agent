@@ -67,7 +67,7 @@ def test_delete_removes_all_checkpoints_and_delivery_without_touching_other_sess
             sid, kept = [(await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id'] for _ in range(2)]
             run = (await client.post(f'/api/sessions/{sid}/runs', json=request('hello'))).json()['run_id']
             await web.state.delivery.wait(run)
-            store = web.state.service.application._sessions._persistence.storage
+            store = web.state.service.application._storage
             thread = store.get(sid)['thread_id']
             assert store.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (thread,)).fetchone()[0] > 0
             response = await client.delete(f'/api/sessions/{sid}')
@@ -124,13 +124,15 @@ def test_delete_includes_child_history_removed_from_latest_parent_checkpoint(mon
             await web.state.delivery.wait(run)
             child, = await app.aget_subagents(sid)
             child_thread = f'subagent:{child["agent_id"]}'
-            store = app._sessions._persistence.storage
+            store = app._storage
             assert store.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (child_thread,)).fetchone()[0] > 0
             thread = store.get(sid)['thread_id']
             await app._agent.aupdate_state({'configurable': {'thread_id': thread}}, {'messages': [
                 RemoveMessage(id=REMOVE_ALL_MESSAGES), HumanMessage(content='summary'), AIMessage(content='compacted')]}, as_node='model')
             assert await app.aget_subagents(sid) == []
-            app._sessions._subagent_instances.clear()  # Emulate a restart: ownership must come from saved older root history.
+            # Run ownership is gone: deletion must use saved older root history.
+            for owner in app._sessions._sessions.values():
+                assert owner._run is None
             assert (await client.delete(f'/api/sessions/{sid}')).status_code == 200
             assert store.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (child_thread,)).fetchone()[0] == 0
             assert store.connection.execute('SELECT count(*) FROM writes WHERE thread_id=?', (child_thread,)).fetchone()[0] == 0
@@ -148,7 +150,9 @@ def test_schema_five_migration_keeps_recency_then_persists_manual_order(tmp_path
                                'active_tool_names': (), 'permission_mode': 'Default'})
         store.select_thinking('recent', 'high')
     with sqlite3.connect(path) as connection:
-        connection.executescript('''ALTER TABLE naiyue_sessions DROP COLUMN title;
+        connection.executescript('''DROP TABLE naiyue_model_invocations; DROP TABLE naiyue_model_usage_runs;
+            DROP TABLE naiyue_chat_messages; DROP TABLE naiyue_chat_sync;
+            ALTER TABLE naiyue_sessions DROP COLUMN title;
             ALTER TABLE naiyue_sessions DROP COLUMN pinned;
             ALTER TABLE naiyue_sessions DROP COLUMN sort_order;
             UPDATE naiyue_store_info SET version=5;''')
@@ -179,7 +183,7 @@ def test_restore_holds_ownership_until_session_install_before_deletion(monkeypat
                 return snapshot
 
             monkeypatch.setattr(app._agent, 'aget_state', pause)
-            reading = asyncio.create_task(client.get(f'/api/sessions/{sid}'))
+            reading = asyncio.create_task(client.post(f'/api/sessions/{sid}/prepare'))
             try:
                 await asyncio.wait_for(entered.wait(), 5)
                 deleting = await client.delete(f'/api/sessions/{sid}')
@@ -199,7 +203,7 @@ def test_cancelled_delete_still_revokes_completed_run_cache(monkeypatch, tmp_pat
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             run = (await client.post(f'/api/sessions/{sid}/runs', json=request('hello'))).json()['run_id']
             await web.state.delivery.wait(run)
-            store = web.state.service.application._sessions._persistence.storage
+            store = web.state.service.application._storage
             loop, committed, release = asyncio.get_running_loop(), asyncio.Event(), Event()
             original = store.delete
 
@@ -267,7 +271,7 @@ def test_delete_failure_rolls_back_metadata_and_history(monkeypatch, tmp_path, c
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             run = (await client.post(f'/api/sessions/{sid}/runs', json=request('hello'))).json()['run_id']
             await web.state.delivery.wait(run)
-            store = web.state.service.application._sessions._persistence.storage
+            store = web.state.service.application._storage
             store.connection.execute("CREATE TRIGGER fail_delete BEFORE DELETE ON naiyue_sessions BEGIN SELECT RAISE(ABORT,'PRIVATE_DETAIL'); END")
             response = await client.delete(f'/api/sessions/{sid}')
             assert response.status_code == 409 and response.json()['error']['code'] == 'session_delete_unconfirmed'

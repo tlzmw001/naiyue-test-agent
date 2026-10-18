@@ -33,3 +33,17 @@ async def build_application(*args, **kwargs):
     app = await build_async_local_application(*args, **kwargs)
     _resources.get().push_async_callback(app.aclose)
     return app
+
+
+async def await_diagnostics_idle(app):
+    """Quiesce optional IO before attributing a database snapshot to a read."""
+    sink = app._diagnostics
+    async def idle():
+        while True:
+            with sink._lock:
+                if not sink._runs:
+                    return
+            if sink._task.done():
+                raise AssertionError('Diagnostic writer stopped before settling')
+            await asyncio.sleep(0)
+    await asyncio.wait_for(idle(), 5)

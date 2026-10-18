@@ -1,6 +1,7 @@
 """Actual tools store one task result before another task fails."""
 
 import asyncio
+import json
 
 from langchain.tools import tool
 from langchain_core.messages import AIMessage, ToolMessage
@@ -53,7 +54,12 @@ def test_recovery_keeps_completed_pending_writes_and_original_task_records(monke
             sid = await app.acreate_session('A')
             with pytest.raises(PermissionMechanismError):
                 await app.arun(sid, [('user', 'fixture')])
-            row = app._sessions._persistence.storage.get(sid)
+            row = app._storage.get(sid)
+            storage = app._storage
+            archived = [json.loads(r[0])['data'] for r in storage.connection.execute(
+                'SELECT body_json FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (sid,))]
+            actual = [r for r in archived if r.get('tool_call_id') == 'a']
+            assert len(actual) == 1 and actual[0]['content'] == 'actual A' and actual[0]['artifact'] == {'record': [1]}
         model.seen.clear()
         async with opened() as app:
             config = {'configurable': {'thread_id': row['thread_id']}}
@@ -72,4 +78,9 @@ def test_recovery_keeps_completed_pending_writes_and_original_task_records(monke
             assert results[0].id == next(m.id for m in snapshot.values['messages'] if isinstance(m, ToolMessage))
             assert results[1].status == 'error' and calls == ['a', 'b']
             assert model.seen == [] and events == [] and final.next == () and final.tasks == ()
+            storage = app._storage
+            archived = [json.loads(r[0])['data'] for r in storage.connection.execute(
+                'SELECT body_json FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (sid,))]
+            assert [r['id'] for r in archived] == [m.id for m in final.values['messages']]
+            assert archived[-1]['additional_kwargs']['naiyue_recovery']['reason'] == 'result_unconfirmed'
     asyncio.run(scenario())

@@ -58,7 +58,6 @@ async def main() -> None:
     agent = build_runtime_agent(
         model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
         resolve_model=lambda _session, agent_path='root': ('fake', model),
-        record_selection=lambda _session, _model: None,
     )
     result = (await ainvoke_agent_run(
         agent, [('user', 'probe')], session_id='probe-session',

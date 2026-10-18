@@ -300,7 +300,7 @@ def test_timeout_returns_raw_output_to_model_without_cli_control_sequences(monke
         assert '\x1b' not in output
         assert 'output:\nEARLY\n' in bash_results(results[0])[0].content
         assert '\x1b' not in bash_results(results[0])[0].content
-        assert not app._app._sessions._sessions[session].get('manual_review_required')
+        assert not app._app._sessions.describe_session(session)['manual_review_required']
 
 
 def test_timeout_cli_resumes_model_and_archive_remains_in_tool_result(
@@ -313,7 +313,7 @@ def test_timeout_cli_resumes_model_and_archive_remains_in_tool_result(
         cli._resume_and_print(app, session, ['approve'])
         output = capsys.readouterr().out
         assert 'done' in output and '工具副作用无法确认' not in output
-        assert not app._app._sessions._sessions[session].get('manual_review_required')
+        assert not app._app._sessions.describe_session(session)['manual_review_required']
 
 
 def make_cli_app(monkeypatch, command: str, *, timeout: int | None = None, settings=None, output_settings=None):

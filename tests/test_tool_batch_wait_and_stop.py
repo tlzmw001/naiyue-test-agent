@@ -229,7 +229,7 @@ async def test_sync_app_settles_first_tool_then_skips_later_without_another_mode
             if concurrency == 2:
                 assert await asyncio.to_thread(later_dispatched.wait, 5)
             app.request_stop(session)
-            assert app._sessions._sessions[session]['busy'] and not task.done()
+            assert app._sessions.describe_session(session)['busy'] and not task.done()
         finally:
             release.set()
         result = await asyncio.wait_for(asyncio.shield(task), 5)
@@ -243,9 +243,9 @@ async def test_sync_app_settles_first_tool_then_skips_later_without_another_mode
         assert finished['first-call'].outcome == 'success'
         assert finished['later-call'].outcome == 'not_executed' and finished['later-call'].reason == 'user_stop'
         assert events[-1].data.status == 'stopped' and not events[-1].data.manual_review_required
-        snapshot = await app._agent.aget_state({'configurable': {'thread_id': app._sessions._sessions[session]['thread_id']}})
+        snapshot = await app._agent.aget_state({'configurable': {'thread_id': app._sessions.get_thread_id(session)}})
         assert not snapshot.next and not any(task.error or task.interrupts for task in snapshot.tasks)
-        assert not app._sessions._sessions[session]['busy']
+        assert not app._sessions.describe_session(session)['busy']
         EventSequenceChecker.assert_healthy(events, caplog.records)
     finally:
         release.set()

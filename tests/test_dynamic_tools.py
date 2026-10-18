@@ -244,7 +244,7 @@ async def test_dynamic_approval_without_checkpointer_fails_before_execution(tmp_
     model = DynamicModel(responses=[call('gated')])
     graph = build_runtime_agent(model, tool_registry=registry,
         resolve_active_tool_names=lambda _sid, agent_path='root': ('gated',),
-        system_prompt='', response_format=None, resolve_model=lambda _, agent_path='root': ('A', model), record_selection=lambda *_: None)
+        system_prompt='', response_format=None, resolve_model=lambda _, agent_path='root': ('A', model), )
     registry.register(definition('gated', approved=True, calls=calls))
     with pytest.raises(ValueError, match='checkpointer'):
         (await graph.ainvoke({'messages': [('user', 'run')]}, context={'session_id': 's', 'workspace_root': tmp_path}))
