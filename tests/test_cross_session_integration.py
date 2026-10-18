@@ -8,7 +8,7 @@ from uuid import uuid4
 from langchain_core.messages import AIMessage
 
 from native_application_helpers import async_test
-from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools import write as write_module
 from test_async_application import call
 from test_cross_session_concurrency import SessionModel, gated
@@ -24,7 +24,7 @@ async def test_root_child_approvals_capacity_and_concurrent_save_reopen(monkeypa
     workspace.mkdir()
     outside = tmp_path / 'approved.txt'
     model, commits = SessionModel(replies=[]), []
-    settings = ToolSettings(max_active_runs=2, subagents=(role(model_id=None, tool_names=('read',)),))
+    settings = AppSettings(max_active_runs=2, subagents=(role(model_id=None, tool_names=('read',)),))
     replace = write_module.os.replace
     def record(source, target):
         result = replace(source, target)
@@ -82,7 +82,7 @@ async def test_root_child_approvals_capacity_and_concurrent_save_reopen(monkeypa
             assert (await client.post(f'/api/sessions/{d}/runs', json=request(d))).status_code == 409
             assert d not in model.requests and backend._storage.get(d)['run_id'] is None
             checkpoint = await backend._agent.aget_state({'configurable': {
-                'thread_id': backend._sessions.get_thread_id(d)}})
+                'thread_id': backend._sessions.require(d).get_thread_id()}})
             assert not checkpoint.values
             finish = backend._storage.finish_run
             def hold(sid, *args, **kwargs):
@@ -95,7 +95,7 @@ async def test_root_child_approvals_capacity_and_concurrent_save_reopen(monkeypa
             approved = await client.post(f'/api/sessions/{a}/approvals', json=child_body)
             assert approved.status_code == 202 and approved.json()['run_id'] == resumed_id
             await asyncio.wait_for(saved.wait(), 5)
-            assert backend._sessions.describe_session(a)['busy']
+            assert backend._sessions.require(a).describe_session()['busy']
             assert not backend._sessions._sessions[a]._run.controls_open
             release_b.set()
             await delivery.wait(rb)
@@ -152,7 +152,7 @@ async def test_real_write_busy_in_shared_workspace_does_not_block_other_target(m
         return result
     monkeypatch.setattr(write_module.os, 'replace', hold)
     async with web_client(monkeypatch, tmp_path, model, workspace_root=tmp_path,
-                          runtime_settings=ToolSettings(max_active_runs=3)) as (client, web):
+                          runtime_settings=AppSettings(max_active_runs=3)) as (client, web):
         a, b, c = await sessions(client, 3)
         for sid, path, content in ((a, 'shared.txt', 'OWNER'), (b, 'shared.txt', 'LOSER'), (c, 'other.txt', 'OTHER')):
             model.responses[sid] = [call('write', {'path': path, 'content': content}, sid), AIMessage(content='finished ' + sid)]

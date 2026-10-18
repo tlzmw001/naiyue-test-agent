@@ -1,5 +1,7 @@
 """Default paths and Read settings are consumed by real application entries."""
 
+from naiyue_test_agent import settings as application_settings
+
 from native_application_helpers import async_test
 
 import json
@@ -56,7 +58,7 @@ def test_cli_loads_read_settings_and_default_model_path(monkeypatch, tmp_path, c
     root = tmp_path / '.naiyue-test-agent'
     root.mkdir()
     (root / 'settings.toml').write_text(content)
-    monkeypatch.setattr(module, 'get_agent_dir', lambda: root)
+    monkeypatch.setattr(application_settings, 'get_agent_dir', lambda: root)
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     (workspace / 'doc.md').write_text('first\nsecond\n')
@@ -101,7 +103,7 @@ async def test_web_uses_the_same_settings_loader(monkeypatch, tmp_path, content,
     root = tmp_path / 'agent-settings'
     root.mkdir()
     (root / 'settings.toml').write_text(content)
-    monkeypatch.setattr(module, 'get_agent_dir', lambda: root)
+    monkeypatch.setattr(application_settings, 'get_agent_dir', lambda: root)
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     (workspace / 'doc.md').write_text('first\nsecond\n')
@@ -154,7 +156,8 @@ async def test_two_applications_keep_their_own_read_budget(monkeypatch, tmp_path
 
 @async_test
 async def test_approval_resume_keeps_the_original_startup_settings(monkeypatch, tmp_path):
-    from naiyue_test_agent.tools import create_session_read_tool, load_tool_settings
+    from naiyue_test_agent.tools import create_session_read_tool
+    from naiyue_test_agent.settings import load_settings
     from test_application_run_events import make_app, ToolModel
     from test_async_application import call
     workspace = tmp_path / 'workspace'
@@ -163,7 +166,7 @@ async def test_approval_resume_keeps_the_original_startup_settings(monkeypatch, 
     document.write_text('a\nb\nc\n')
     path = tmp_path / 'settings.toml'
     path.write_text('[tools.read]\ndefault_limit=1\n')
-    reader = create_session_read_tool(settings=load_tool_settings(path).tools.read)
+    reader = create_session_read_tool(settings=load_settings(path).tools.read)
     app = await make_app(monkeypatch,
         ToolModel(responses=[call('read', {'path': str(document)}), AIMessage(content='done')]),
         [reader])
@@ -199,7 +202,7 @@ async def test_entries_wire_ls_write_and_edit_settings(monkeypatch, tmp_path, en
         '[tools.ls]\ndefault_limit=1\n'
         '[tools.write]\nmax_input_bytes=4\n'
         '[tools.edit]\nmax_input_bytes=9\n')
-    monkeypatch.setattr(module, 'get_agent_dir', lambda: root)
+    monkeypatch.setattr(application_settings, 'get_agent_dir', lambda: root)
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     directory = workspace / 'sub'

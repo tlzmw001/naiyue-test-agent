@@ -10,7 +10,8 @@ from naiyue_test_agent.agent_runtime.stream_events import ToolProgressData
 from naiyue_test_agent.contracts.session_events import ControlData
 from naiyue_test_agent.web.delivered_run import DeliveredRun
 from naiyue_test_agent.web.settings import WebSettings
-from naiyue_test_agent.tools.settings import ToolSettings, ToolProgressSettings
+from naiyue_test_agent.tools.settings import ToolProgressSettings
+from naiyue_test_agent.settings import AppSettings
 
 
 def setup_job(**options):
@@ -95,7 +96,7 @@ def test_finished_and_foreign_or_old_progress_cannot_revert_current_snapshot():
 
 def test_progress_text_is_utf8_bounded_before_sse_and_snapshot_without_mutating_domain_event():
     async def scenario():
-        settings = ToolSettings(progress=ToolProgressSettings(max_text_bytes=7))
+        settings = AppSettings(progress=ToolProgressSettings(max_text_bytes=7))
         job, publisher = setup_job(runtime_settings=settings)
         start(publisher)
         progress(publisher, text='prefix你好世界')
@@ -150,7 +151,7 @@ def test_http_receives_progress_before_tool_returns_and_restores_latest_after_re
         # Exercise startup loader wiring too; no actual user config is changed.
         from importlib import import_module
         web_module = import_module('naiyue_test_agent.web.app')
-        monkeypatch.setattr(web_module, 'load_tool_settings', lambda: ToolSettings(
+        monkeypatch.setattr(web_module, 'load_settings', lambda: AppSettings(
             progress=ToolProgressSettings(max_text_bytes=9)))
         async with web_client(monkeypatch, tmp_path, model, event_capacity=2) as (client, app):
             backend = app.state.service.application

@@ -12,7 +12,7 @@ from test_model_usage_storage import seed
 
 
 def limits(**values):
-    from naiyue_test_agent.tools.settings import DiagnosticSettings
+    from naiyue_test_agent.settings import DiagnosticSettings
     return DiagnosticSettings(**values)
 
 
@@ -206,11 +206,11 @@ def test_diagnostic_budget_validation_is_strict(value):
 
 def test_diagnostic_sample_and_invalid_section_use_existing_config_loader(tmp_path, caplog):
     from pathlib import Path
-    from naiyue_test_agent.tools.settings import load_tool_settings
+    from naiyue_test_agent.settings import load_settings
     sample = Path(__file__).resolve().parents[1] / 'docs/examples/settings.example.toml'
-    assert load_tool_settings(sample).diagnostics.retention_days == 30
+    assert load_settings(sample).diagnostics.retention_days == 30
     path = tmp_path / 'settings.toml'
     path.write_text('max_active_runs=3\n[diagnostics]\nmax_run_bytes=0\n')
-    settings = load_tool_settings(path)
+    settings = load_settings(path)
     assert settings.max_active_runs == 3 and settings.diagnostics.max_run_bytes == 1048576
     assert 'diagnostic_settings_fallback' in caplog.text

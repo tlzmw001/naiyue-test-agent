@@ -9,7 +9,8 @@ from langchain_core.messages import AIMessage
 from naiyue_test_agent import application
 from naiyue_test_agent.application import cli
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import ToolSettings, create_subagent_tool
+from naiyue_test_agent.tools import create_subagent_tool
+from naiyue_test_agent.settings import AppSettings
 from test_subagent_execution import ChildModel, role
 from test_async_application import StreamingToolModel, call
 from test_dynamic_tools import definition
@@ -28,8 +29,8 @@ def test_interactive_quit_stops_running_child_before_joining_worker(monkeypatch,
     child.on_request = wait_for_stop
     root = StreamingToolModel(replies=[call('subagent', {'agent': 'tester', 'task': 'check'}, 'outer')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
-    monkeypatch.setattr(cli, 'load_tool_settings', lambda: ToolSettings(subagents=(role(),)))
-    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _: [create_subagent_tool(), definition()])
+    monkeypatch.setattr(cli, 'load_settings', lambda: AppSettings(subagents=(role(),)))
+    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _, *, process_settings, output_settings, progress_settings: [create_subagent_tool(), definition()])
     build = cli.build_local_application
     def factory(*args, **kwargs):
         app = build(*args, **kwargs)

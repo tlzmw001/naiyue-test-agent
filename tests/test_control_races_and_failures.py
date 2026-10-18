@@ -278,7 +278,7 @@ async def test_old_cleanup_control_notifications_keep_their_run_before_next_run(
         release.set()
         await asyncio.wait_for(asyncio.shield(worker), 6)
     assert worker.done() and len(outcomes) == 1 and isinstance(outcomes[0], dict), outcomes
-    assert not app._sessions.describe_session(session)['busy']
+    assert not app._sessions.require(session).describe_session()['busy']
     new_result = await app.arun(session, [('user', 'new')])
     new_start = next(e for e in events if e.event_type == 'run_started' and e.run_id != old_run)
     assert new_result['messages'][-1].content == 'new'

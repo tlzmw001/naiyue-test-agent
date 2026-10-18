@@ -154,7 +154,7 @@ async def test_unsubscribe_failure_is_observable_and_does_not_retain_an_active_j
         sid, = await sessions(client, 1)
         subscriptions = web.state.service.application._sessions._events
         application_handlers = dict(subscriptions._handlers)
-        assert list(application_handlers.values()) == [(None, web.state.service.application._persistence._usage.accept),
+        assert list(application_handlers.values()) == [(None, web.state.service.application._usage.accept),
                                                       (None, web.state.service.application._diagnostics.accept)]
         subscribe = subscriptions.subscribe
         def failing_subscription(handler, **kwargs):

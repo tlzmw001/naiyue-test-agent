@@ -13,7 +13,7 @@ from naiyue_test_agent.agent_runtime.tool_execution.permissions import (
     AutoPermissionReviewer, collect_human_messages, prepare_review_input,
 )
 from naiyue_test_agent.model_access import ModelCatalog, MODEL_LIMITS_METADATA_KEY
-from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from test_dynamic_tools import DynamicModel
 
 
@@ -28,7 +28,7 @@ def model(responses, *, window=4096, output=128):
 
 
 def settings(**values):
-    return ToolSettings.model_validate({'permissions': {'mode': 'Auto', 'auto': {
+    return AppSettings.model_validate({'permissions': {'mode': 'Auto', 'auto': {
         'fast_model_id': 'fast', 'detailed_model_id': 'detail', **values}}})
 
 
@@ -187,10 +187,10 @@ def test_invalid_auto_fields_fail_validation(values):
 
 
 def test_settings_loader_keeps_auto_configuration_and_tool_budgets(tmp_path):
-    from naiyue_test_agent.tools.settings import load_tool_settings
+    from naiyue_test_agent.settings import load_settings
     path = tmp_path / 'settings.toml'
     path.write_text('[permissions]\nmode="Auto"\n[permissions.auto]\nfast_model_id="fast"\ndetailed_model_id="detail"\nmax_reason_chars=80\n[tools.read]\ndefault_limit=12\n')
-    loaded = load_tool_settings(path)
+    loaded = load_settings(path)
     assert loaded.permissions.mode == 'Auto' and loaded.permissions.auto.max_reason_chars == 80
     assert loaded.tools.read.default_limit == 12
 

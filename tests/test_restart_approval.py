@@ -14,7 +14,7 @@ from naiyue_test_agent.application.async_persistent import open_async_persistent
 from naiyue_test_agent.application.session_storage import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import create_session_read_tool, create_session_write_tool
-from naiyue_test_agent.tools.settings import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from test_application_run_events import ToolModel
 from test_async_application import StreamingToolModel
 from test_session_history import approval_snapshot, database_facts
@@ -92,7 +92,7 @@ async def test_reopened_mixed_sequential_batch_waits_then_runs_once(monkeypatch,
 @async_test
 async def test_revalidation_failure_has_no_writes_or_installed_session(monkeypatch, tmp_path, change):
     row, original = await approval_snapshot(monkeypatch, tmp_path)
-    settings = ToolSettings.model_validate({'permissions': {'deny': [{'tool': 'read'}]}}) if change == 'deny' else ToolSettings()
+    settings = AppSettings.model_validate({'permissions': {'deny': [{'tool': 'read'}]}}) if change == 'deny' else AppSettings()
     async with open_async_persistent_application('unused', database_path=tmp_path / 'approval.sqlite', tools=[create_session_read_tool()],
             system_prompt='', response_format=None, settings=settings) as app:
         storage = app._storage
@@ -142,7 +142,7 @@ async def test_old_allow_must_be_proven_by_current_local_policy_without_auto(mon
     root = tmp_path / 'work'
     root.mkdir()
     first, second = tmp_path / 'first', tmp_path / 'second'
-    settings = ToolSettings.model_validate({'permissions': (
+    settings = AppSettings.model_validate({'permissions': (
         {'allow': [{'tool': 'read', 'path': str(first)}]} if source == 'config_allow' else
         {'mode': 'Auto', 'auto': {'fast_model_id': 'A', 'detailed_model_id': 'A'}} if source == 'auto' else {})})
     request = AIMessage(content='', tool_calls=[
@@ -173,7 +173,7 @@ async def test_old_allow_must_be_proven_by_current_local_policy_without_auto(mon
         original = await app._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
         assert [c['decision'] for c in original.values['tool_execution']['calls']] == ['allow', 'ask']
     async with open_async_persistent_application('unused', database_path=path, tools=tools,
-            settings=settings if source == 'auto' else ToolSettings(), system_prompt='', response_format=None) as app:
+            settings=settings if source == 'auto' else AppSettings(), system_prompt='', response_format=None) as app:
         storage = app._storage
         reached = []
         def forbidden(*_a, **_k):

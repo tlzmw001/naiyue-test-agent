@@ -40,7 +40,7 @@ async def test_close_reopen_preserves_ids_tool_history_and_has_no_old_tool_execu
     async with build(monkeypatch, db, tools=[create_session_read_tool()]) as second:
         storage = second._storage
         assert await second.arestore_session(session) == session
-        assert second._sessions.get_thread_id(session) == thread
+        assert second._sessions.require(session).get_thread_id() == thread
         later = await second.arun(session, [('user', 'continue')])
         assert [m.id for m in later['messages'][:4]] == first_ids
         assert sum(isinstance(m, ToolMessage) for m in later['messages']) == 1
@@ -62,7 +62,7 @@ async def test_start_write_failure_calls_no_model_and_still_cleans_up(monkeypatc
             await app.arun(session, [('user', 'q')])
         assert not any(e.event_type == 'model_call_started' for e in events)
         assert events[-1].data.status == 'failed'
-        assert not app._sessions.describe_session(session)['busy']
+        assert not app._sessions.require(session).describe_session()['busy']
 
 
 @async_test
@@ -79,7 +79,7 @@ async def test_final_save_failure_has_no_completed_and_blocks_uncertain_state(mo
             await app.arun(session, [('user', 'q')])
         assert storage.get(session)['state'] == 'running'
         assert events[-1].data.status == 'failed'
-        assert not app._sessions.describe_session(session)['busy']
+        assert not app._sessions.require(session).describe_session()['busy']
         with pytest.raises(SessionPersistenceError):
             await app.arun(session, [('user', 'must not execute')])
 
@@ -151,7 +151,7 @@ async def test_cleanup_failure_never_leaves_session_ready(monkeypatch, tmp_path)
         with pytest.raises(ValueError):
             await app.arun(session, [('user', 'q')])
         assert storage.get(session)['state'] != 'ready'
-        assert not app._sessions.describe_session(session)['busy']
+        assert not app._sessions.require(session).describe_session()['busy']
 
 
 @async_test

@@ -153,7 +153,7 @@ async def test_root_mechanism_failure_settles_sibling_approval_without_claiming_
         assert pending.status == 'invalidated' and pending.future.done()
         assert all(i['settled'] for i in instances) and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
         assert not any(e.event_type == 'control_accepted' and e.data.kind == 'stop' for e in events)
-        assert not app._sessions.describe_session(sid)['busy']
+        assert not app._sessions.require(sid).describe_session()['busy']
     finally:
         release.set()
         await cancel_run(task)

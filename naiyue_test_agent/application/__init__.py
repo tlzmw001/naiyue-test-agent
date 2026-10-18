@@ -2,7 +2,7 @@
 
 from naiyue_test_agent.model_access import load_model_catalog
 from naiyue_test_agent.tools.registry import ToolRegistry, ToolSpec
-from naiyue_test_agent.tools.settings import load_tool_settings
+from naiyue_test_agent.settings import load_settings
 from naiyue_test_agent.tools.permission_rules import validate_permission_rules
 
 

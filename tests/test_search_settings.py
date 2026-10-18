@@ -3,7 +3,8 @@
 import pytest
 from pydantic import ValidationError
 
-from naiyue_test_agent.tools import GrepSettings, FindSettings, ToolSettings, create_builtin_tools, load_tool_settings
+from naiyue_test_agent.tools import GrepSettings, FindSettings, create_builtin_tools
+from naiyue_test_agent.settings import AppSettings, load_settings
 from naiyue_test_agent.application import prepare_tool_registry
 
 
@@ -20,8 +21,8 @@ def test_search_settings_roundtrip_schema_and_process_snapshot(tmp_path, monkeyp
         'default_context_lines=1\nmax_context_lines=2\n'
         '[tools.find]\ndefault_limit=4\nmax_limit=5\nmax_record_bytes=512\n'
         '[process]\nmax_pending_output_bytes=8192\n')
-    settings = load_tool_settings(path)
-    specs = create_builtin_tools(settings)
+    settings = load_settings(path)
+    specs = create_builtin_tools(settings.tools, process_settings=settings.process, output_settings=settings.tool_output, progress_settings=settings.progress)
     registry = prepare_tool_registry(specs)
     names = registry.names()
     assert names == ('read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent')
@@ -51,7 +52,7 @@ def test_invalid_search_budgets_fall_back_without_losing_deny(tmp_path, caplog, 
     path = tmp_path / 'settings.toml'
     path.write_text('[permissions]\ndeny=[{tool="grep",path="${workspace}/private"}]\n'
                     f'[tools.{section}]\n{content}\n')
-    settings = load_tool_settings(path)
-    assert settings.tools == ToolSettings().tools
+    settings = load_settings(path)
+    assert settings.tools == AppSettings().tools
     assert len(settings.permissions.deny) == 1
     assert 'tool_settings_fallback' in caplog.text and 'PRIVATE' not in caplog.text

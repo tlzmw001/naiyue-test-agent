@@ -9,6 +9,11 @@ from langchain_core.messages import ToolMessage
 logger = logging.getLogger(__name__)
 
 
+def validate_tool_concurrency(limit):
+    if type(limit) is not int or limit <= 0:
+        raise ValueError('Tool concurrency must be a positive integer')
+
+
 class AsyncBatchPlan:
     def __init__(self, call_ids, sequential, run_id, error_type):
         self.call_ids = tuple(call_ids)
@@ -31,8 +36,7 @@ class AsyncBatchPlan:
     async def execute(self, call_id, name, handler, limit):
         if call_id not in self.call_ids:
             raise self.error_type('Tool call is outside the current batch.')
-        if type(limit) is not int or limit <= 0:
-            raise ValueError('Tool concurrency must be a positive integer')
+        validate_tool_concurrency(limit)
         if not self.sequential:
             if self.semaphore is None:
                 self.semaphore = asyncio.Semaphore(limit)

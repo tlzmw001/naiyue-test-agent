@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from naiyue_test_agent.tools.permission_rules import PermissionSettings
 from naiyue_test_agent.agent_runtime.tool_execution.permissions import AutoPermissionReviewer
+from naiyue_test_agent.agent_runtime.tool_execution.async_batch import validate_tool_concurrency
 from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions, RunObservation
 from naiyue_test_agent.application.session_controls import SessionControlMixin
 from naiyue_test_agent.application.session_subagents import SessionSubagentControls
@@ -13,13 +14,12 @@ from naiyue_test_agent.tools.registry import ToolRegistry
 from naiyue_test_agent.contracts.failures import normalize_classifiers
 from naiyue_test_agent.agent_runtime.errors import RuntimeErrorPolicy
 from naiyue_test_agent.agent_runtime.model_usage_observation import install_model_usage_callback
-from .session_approval import SessionApprovalControls
 from .failure_policy import ApplicationErrorPolicy
 from .errors import SessionBusyError
 from .agent_session import AgentSession
 
 
-class SessionService(SessionControlMixin, SessionSubagentControls, SessionApprovalControls):
+class SessionService(SessionControlMixin, SessionSubagentControls):
     """Locate sessions and coordinate admission; each session drives its run."""
 
     def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None, max_active_runs=10):
@@ -40,8 +40,15 @@ class SessionService(SessionControlMixin, SessionSubagentControls, SessionApprov
         self._events = ApplicationEventSubscriptions()
         self._persistence = None
         self._assembled = False
+        self._runtime_ready = False
+        self._system_prompt = None
         self._runtime_classifiers = ()
         self._application_classifiers = ()
+
+    def require(self, session_id) -> AgentSession:
+        """Borrow an already loaded owner; registry coordination stays here."""
+        with self._lock:
+            return self._sessions[session_id]
 
     def bind_persistence(self, persistence):
         """Resolve the startup construction cycle once, before any sessions."""
@@ -56,15 +63,19 @@ class SessionService(SessionControlMixin, SessionSubagentControls, SessionApprov
         from naiyue_test_agent.tools.settings import SubAgentOutputSettings
         with self._lock:
             self._assembled = True
-        self._system_prompt = system_prompt
+            self._runtime_ready = False
         self.configure_subagent_runtime(checkpointer, subagent_settings or SubAgentOutputSettings())
         for spec in subagents:
             self.register_subagent(spec)
-        return _assemble_interactive_runtime(self._catalog.get(self._catalog.default_model_id),
+        agent = _assemble_interactive_runtime(self._catalog.get(self._catalog.default_model_id),
             tool_registry=self._tool_registry, session_port=self,
             permission_settings=self._permission_settings, permission_reviewer=self._permission_reviewer,
             system_prompt=system_prompt, response_format=response_format,
             checkpointer=checkpointer, observe_turns=True)
+        with self._lock:
+            self._system_prompt = system_prompt
+            self._runtime_ready = True
+        return agent
 
     def get_control_options(self):
         modes = ['Default', 'NoAsk', 'Auto', 'BypassApprovals']
@@ -101,22 +112,20 @@ class SessionService(SessionControlMixin, SessionSubagentControls, SessionApprov
         return self._events.subscribe(handler, session_id=session_id)
 
     def resolve_model(self, session_id: str, agent_path='root'):
-        return self._session(session_id).resolve_model(agent_path)
+        return self.require(session_id).resolve_model(agent_path)
 
     def resolve_prompt_parts(self, session_id):
-        return self._session(session_id).resolve_prompt_parts()
+        return self.require(session_id).resolve_prompt_parts()
 
-    def select_model(self, session_id: str, model_id: str) -> None:
-        self._session(session_id).select_model(model_id)
 
     def _admit(self, session_id, run_id, mode, *, decisions=None, remember_approved=None, stop=False):
         with self._lock:
             session = self._sessions[session_id]
             run_id = run_id or uuid4().hex
             observation = RunObservation(self._events.publisher(session_id, run_id), mode,
-                                         progress_settings=self._progress_settings)
-            observation.runtime_errors = RuntimeErrorPolicy(self._runtime_classifiers, self._catalog.failure_describer())
-            observation.application_errors = ApplicationErrorPolicy(self._application_classifiers)
+                progress_settings=self._progress_settings,
+                runtime_errors=RuntimeErrorPolicy(self._runtime_classifiers, self._catalog.failure_describer()),
+                application_errors=ApplicationErrorPolicy(self._application_classifiers))
             capacity_available = (mode == 'approval_resume' and stop or
                 sum(actor.is_busy() for actor in self._sessions.values()) < self._max_active_runs)
             run = session.admit_run(run_id, mode, observation, decisions=decisions,
@@ -124,24 +133,23 @@ class SessionService(SessionControlMixin, SessionSubagentControls, SessionApprov
                               capacity_available=capacity_available)
         return session, run
 
-    def pending_tool_approvals(self, session_id: str) -> list[dict[str, str]]:
-        return self._session(session_id).pending_tool_approvals()
 
     async def arun(self, agent, session_id, messages, *, run_id=None, max_concurrency=4):
-        if type(max_concurrency) is not int or max_concurrency <= 0:
-            raise ValueError('Tool concurrency must be a positive integer')
+        validate_tool_concurrency(max_concurrency)
         session, run = self._admit(session_id, run_id, 'message')
-        return await session._arun(agent, messages, run=run,
+        return await session.arun(agent, messages, run=run,
                                    max_concurrency=max_concurrency)
 
     async def acompact(self, agent, session_id, *, run_id=None):
+        with self._lock:
+            if not self._runtime_ready:
+                raise RuntimeError('Session runtime must be assembled before compaction')
         session, run = self._admit(session_id, run_id, 'compact')
-        return await session._arun(agent, [], run=run,
+        return await session.arun(agent, [], run=run,
                                    compact=True, system_prompt=self._system_prompt)
 
     async def aresume_tool_approval(self, agent, session_id, decisions, *, run_id=None, max_concurrency=4, remember_approved=None, stop=False):
-        if type(max_concurrency) is not int or max_concurrency <= 0:
-            raise ValueError('Tool concurrency must be a positive integer')
+        validate_tool_concurrency(max_concurrency)
         session, run = self._admit(session_id, run_id, 'approval_resume',
             decisions=decisions, remember_approved=remember_approved, stop=stop)
         return await session.aresume_tool_approval(agent, decisions, run=run, max_concurrency=max_concurrency,

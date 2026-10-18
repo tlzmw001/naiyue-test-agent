@@ -52,14 +52,14 @@ def test_session_selection_is_local_and_model_change_resets_override(tmp_path):
     try:
         sessions = SessionService(catalog)
         first, second = sessions.create_session('official'), sessions.create_session('official')
-        sessions.select_thinking(first, 'official', 'high')
-        assert sessions.describe_session(first)['thinking_level'] == 'high'
+        sessions.require(first).select_thinking('official', 'high')
+        assert sessions.require(first).describe_session()['thinking_level'] == 'high'
         assert sessions.resolve_model(first)[1].reasoning_effort == 'high'
         assert sessions.resolve_model(second)[1] is catalog.get('official')
-        sessions.select_model(first, 'claude')
-        assert sessions.describe_session(first)['thinking_level'] == 'model_default'
+        sessions.require(first).select_model('claude')
+        assert sessions.require(first).describe_session()['thinking_level'] == 'model_default'
         with pytest.raises(ValueError):
-            sessions.select_thinking(first, 'official', 'low')
+            sessions.require(first).select_thinking('official', 'low')
         assert sessions.resolve_model(first)[1] is catalog.get('claude')
     finally:
         asyncio.run(catalog.aclose())

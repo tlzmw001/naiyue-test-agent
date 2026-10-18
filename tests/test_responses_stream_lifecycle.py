@@ -67,7 +67,7 @@ def test_text_is_delivered_before_tool_completion_and_http_always_closes(monkeyp
             return httpx.Response(200, stream=Body(), headers={'content-type': 'text/event-stream'})
         monkeypatch.setattr(httpx.AsyncHTTPTransport, 'handle_async_request', transport)
         catalog = configured(tmp_path)
-        catalog._prepare_async_clients()
+        catalog.prepare_async_clients()
         model = catalog.get('test')
         model.max_retries = model.root_async_client.max_retries = 0
         stream = model.astream([HumanMessage(content='synthetic')])
@@ -120,7 +120,7 @@ def test_concurrent_calls_do_not_share_parameter_buffers_or_replace_sdk(monkeypa
                                   headers={'content-type': 'text/event-stream'})
         monkeypatch.setattr(httpx.AsyncHTTPTransport, 'handle_async_request', transport)
         catalog = configured(tmp_path)
-        catalog._prepare_async_clients()
+        catalog.prepare_async_clients()
         model = catalog.get('test')
         sdk = model.root_async_client
         async def invoke(label):

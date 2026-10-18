@@ -3,7 +3,8 @@
 from langchain_core.messages import AIMessage
 
 from native_application_helpers import async_test
-from naiyue_test_agent.tools import SubAgentSpec, ToolSettings, create_builtin_tools
+from naiyue_test_agent.tools import SubAgentSpec, create_builtin_tools
+from naiyue_test_agent.settings import AppSettings
 from test_subagent_execution import ChildModel, delegated_app
 
 
@@ -40,7 +41,7 @@ async def test_role_index_is_short_dynamic_and_absent_when_tool_inactive(monkeyp
 
 
 def test_subagent_is_registered_with_public_schema_and_parallel_unknown_effects():
-    spec = next(spec for spec in create_builtin_tools(ToolSettings()) if spec.tool.name == 'subagent')
+    spec = next(spec for spec in create_builtin_tools(AppSettings().tools) if spec.tool.name == 'subagent')
     assert set(spec.input_schema.model_fields) == {'agent', 'task'}
     assert spec.execution_mode == 'parallel' and spec.side_effects == 'unknown'
     assert spec.tool.response_format == 'content_and_artifact'

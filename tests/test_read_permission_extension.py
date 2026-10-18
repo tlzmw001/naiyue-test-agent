@@ -8,7 +8,8 @@ from langchain_core.messages import AIMessage, ToolMessage
 from pathlib import Path
 from dataclasses import replace
 from naiyue_test_agent.tools.permissions import FilePermission
-from naiyue_test_agent.tools import create_session_read_tool, ToolSettings
+from naiyue_test_agent.tools import create_session_read_tool
+from naiyue_test_agent.settings import AppSettings
 from test_application_run_events import ToolModel
 from naiyue_test_agent import application
 from naiyue_test_agent.model_access import ModelCatalog
@@ -25,7 +26,7 @@ async def make_reader(monkeypatch, root, path, decide, **rules):
     ])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     app = await build_application('synthetic', tools=[reader], system_prompt='', response_format=None,
-        settings=ToolSettings.model_validate({'permissions': rules}))
+        settings=AppSettings.model_validate({'permissions': rules}))
     return app, await app.acreate_workspace_session('A', root), reader
 
 

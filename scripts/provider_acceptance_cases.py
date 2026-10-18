@@ -11,7 +11,7 @@ from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.model_access import load_model_catalog, COMPACTION_SUMMARY_OUTPUT_METADATA_KEY
 from naiyue_test_agent.model_access.messages import content_text
-from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.builtin import create_builtin_tools
 from .provider_acceptance_budget import guard_catalog
 from .provider_acceptance_scope import FixturePermission
@@ -72,7 +72,7 @@ class CaseEnvironment:
 
     @asynccontextmanager
     async def open_app(self, names=(), *, settings=None, database='state.sqlite', initial=None, catalog_setup=None):
-        settings = settings or ToolSettings()
+        settings = settings or AppSettings()
         catalog = load_model_catalog(self.config)
         # Select the agreed model in memory; never create a config/credential copy.
         catalog._models = {self.model_id: catalog.get(self.model_id)}
@@ -86,7 +86,7 @@ class CaseEnvironment:
         previous = application.load_model_catalog
         application.load_model_catalog = lambda _: catalog
         specs = [replace(spec, permissions=FixturePermission(spec.tool.name, spec.permissions, self.root))
-                 for spec in create_builtin_tools(settings) if spec.tool.name in names]
+                 for spec in create_builtin_tools(settings.tools, process_settings=settings.process, output_settings=settings.tool_output, progress_settings=settings.progress) if spec.tool.name in names]
         try:
             async with open_async_persistent_application(self.config, database_path=self.root / database,
                     tools=specs, initial_active_tools=initial, settings=settings,

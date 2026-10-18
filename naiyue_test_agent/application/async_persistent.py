@@ -4,7 +4,6 @@ import logging
 from contextlib import asynccontextmanager
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-from langgraph._internal._constants import CONFIG_KEY_DURABILITY
 
 from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking, await_settled, acquire_blocking
@@ -19,9 +18,10 @@ logger = logging.getLogger(__name__)
 
 
 class AsyncPersistentApplication(AsyncApplication):
-    def __init__(self, catalog, sessions, agent, tool_registry, *, system_prompt, persistence, storage, diagnostics):
+    def __init__(self, catalog, sessions, agent, tool_registry, *, system_prompt, persistence, storage, usage, diagnostics):
         super().__init__(catalog, sessions, agent, tool_registry, system_prompt=system_prompt)
         self._persistence, self._storage = persistence, storage
+        self._usage = usage
         self._diagnostics = diagnostics
 
     async def _close_resources(self):
@@ -29,7 +29,7 @@ class AsyncPersistentApplication(AsyncApplication):
             await super()._close_resources()
         finally:
             try:
-                await self._persistence._usage.aclose()
+                await self._usage.aclose()
             finally:
                 await self._diagnostics.aclose()
 
@@ -75,7 +75,7 @@ class AsyncPersistentApplication(AsyncApplication):
 
     async def aget_approval_seed(self, session_id):
         with self._owned_operation():
-            identity = self._sessions.approval_seed_identity(session_id)
+            identity = self._sessions.require(session_id).approval_seed_identity()
             if identity is None:
                 return []
             thread_id, batch_id = identity
@@ -117,7 +117,7 @@ class AsyncPersistentApplication(AsyncApplication):
 
 @asynccontextmanager
 async def open_async_persistent_application(config_path, *, database_path, tools, system_prompt, response_format, initial_active_tools=None, settings=None, workspace_binding=None):
-    settings = settings if settings is not None else application.load_tool_settings()
+    settings = settings if settings is not None else application.load_settings()
     registry = application.prepare_tool_registry(tools)
     application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
     initial = registry.names() if initial_active_tools is None else initial_active_tools
@@ -129,7 +129,7 @@ async def open_async_persistent_application(config_path, *, database_path, tools
         if workspace_binding is not None:
             await run_blocking(storage.bind_workspace, workspace_binding['workspace_id'], workspace_binding['root_path'])
         catalog = await acquire_blocking(application.load_model_catalog, lambda item: item.aclose(), config_path)
-        await run_blocking(catalog._prepare_async_clients)
+        await run_blocking(catalog.prepare_async_clients)
         async with AsyncSqliteSaver.from_conn_string(str(storage.path)) as saver:
             # Diagnostics can write at run_started, before the first graph read.
             # Finish the official WAL/schema initialization before subscribing.
@@ -143,9 +143,8 @@ async def open_async_persistent_application(config_path, *, database_path, tools
                 sessions.bind_persistence(persistence)
                 agent = sessions.assemble_runtime(saver, system_prompt=system_prompt, response_format=response_format,
                     subagents=settings.subagents, subagent_settings=settings.tools.subagent)
-                agent = agent.with_config({'configurable': {CONFIG_KEY_DURABILITY: 'sync'}})
                 app = AsyncPersistentApplication(catalog, sessions, agent, registry, system_prompt=system_prompt,
-                    persistence=persistence, storage=storage, diagnostics=diagnostics)
+                    persistence=persistence, storage=storage, usage=usage, diagnostics=diagnostics)
                 try:
                     yield app
                 except BaseException as error:

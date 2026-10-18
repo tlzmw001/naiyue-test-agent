@@ -39,7 +39,7 @@ def test_stop_cancels_model_without_fake_answer_and_can_start_again(monkeypatch)
             assert result['run_stopped'] is True
             assert [m.type for m in result['messages']] == ['human']
             snapshot = await app._agent.aget_state({'configurable': {
-                'thread_id': app._sessions.get_thread_id(session)}})
+                'thread_id': app._sessions.require(session).get_thread_id()}})
             assert not snapshot.next and not any(t.error for t in snapshot.tasks)
             assert events[-1].data.status == 'stopped' and events[-1].data.stop_mode == 'active'
             assert events[-1].data.manual_review_required is False
@@ -131,7 +131,7 @@ def test_stop_drains_started_tool_but_skips_waiting_tool(monkeypatch, sequential
         try:
             assert await asyncio.to_thread(entered.wait, 5)
             app.request_stop(session)
-            assert app._sessions.describe_session(session)['busy']
+            assert app._sessions.require(session).describe_session()['busy']
             with pytest.raises(application.SessionBusyError):
                 await app.arun(session, [('user', 'cannot overlap')])
             release.set()
@@ -250,7 +250,7 @@ def test_stop_during_real_write_waits_for_atomic_replace(monkeypatch, tmp_path):
         try:
             assert await asyncio.to_thread(entered.wait, 5)
             app.request_stop(session)
-            assert target.read_text() == 'old' and app._sessions.describe_session(session)['busy']
+            assert target.read_text() == 'old' and app._sessions.require(session).describe_session()['busy']
             release.set()
             result = await asyncio.wait_for(task, 5)
             assert target.read_text() == 'new' and result['run_stopped']

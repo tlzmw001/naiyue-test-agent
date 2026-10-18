@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from native_application_helpers import async_test
 from naiyue_test_agent.application.agent_session import AgentSession
 from naiyue_test_agent.application.errors import SessionBusyError
-from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.permissions import PermissionMechanismError
 from test_async_application import StreamingToolModel, call
 from test_dynamic_tools import definition
@@ -80,7 +80,7 @@ async def test_two_sessions_own_their_child_approval_and_stop_independently(monk
 @async_test
 async def test_role_registered_after_session_creation_uses_shared_graph(monkeypatch):
     child = ChildModel(replies=[AIMessage(content='child report')])
-    app, _ = await delegated_app(monkeypatch, child, settings=ToolSettings(subagents=()))
+    app, _ = await delegated_app(monkeypatch, child, settings=AppSettings(subagents=()))
     sid = await app.acreate_session('A')
     owner = app._sessions._sessions[sid]
     assert (owner._run.subagent_instances if owner._run else {}) == {}

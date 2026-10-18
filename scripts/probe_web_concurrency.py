@@ -86,7 +86,8 @@ def _catalog(root):
 def _worker(args):
     import uvicorn
     from naiyue_test_agent import application
-    from naiyue_test_agent.tools import SubAgentSpec, ToolSettings, write as write_module
+    from naiyue_test_agent.tools import SubAgentSpec, write as write_module
+    from naiyue_test_agent.settings import AppSettings
     from naiyue_test_agent.web.app import create_web_app
     from naiyue_test_agent.web.settings import WebSettings
 
@@ -109,7 +110,7 @@ def _worker(args):
         listener.listen(128)
         port = listener.getsockname()[1]
         settings = WebSettings(config_path='unused', database_path=root / 'sessions.sqlite', frontend_dist=assets,
-            workspace_root=workspace, port=port, access_token=ACCESS, runtime_settings=ToolSettings(max_active_runs=2,
+            workspace_root=workspace, port=port, access_token=ACCESS, runtime_settings=AppSettings(max_active_runs=2,
                 subagents=(SubAgentSpec(name='tester', description='Read approved fixture', system_prompt='Read fixture',
                                        tool_names=('read',)),)))
         app = create_web_app(settings)

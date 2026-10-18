@@ -67,7 +67,7 @@ async def test_success_events_follow_cleanup_without_changing_result(monkeypatch
     def observe(event):
         received.append(event)
         owner = app._sessions._sessions[session]
-        states.append({**app._sessions.describe_session(session),
+        states.append({**app._sessions.require(session).describe_session(),
             'run_prompt_parts': owner.resolve_prompt_parts(),
             'steering_open': owner.snapshot_for_run()['steering_open'],
             'stop_requested': owner.is_stop_requested()})

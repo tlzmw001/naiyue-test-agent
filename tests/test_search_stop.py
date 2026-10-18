@@ -129,7 +129,7 @@ def test_active_stop_keeps_partial_result_and_ends_without_next_model(monkeypatc
             with pytest.raises(ProcessLookupError):
                 os.kill(pid, 0)
         finally:
-            if app._sessions.describe_session(sid)['busy']:
+            if app._sessions.require(sid).describe_session()['busy']:
                 app.request_stop(sid)
             if pid is not None:
                 try:

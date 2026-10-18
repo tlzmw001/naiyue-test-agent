@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from pydantic import Field
 
 from naiyue_test_agent import application
-from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools import (
     WriteSettings, create_session_read_tool, create_session_write_tool,
 )
@@ -41,7 +41,7 @@ async def make_app(monkeypatch, responses, tools=None, *, permissions=None):
     app = await build_application(
         Path('synthetic.json'),
         tools=tools or [create_session_write_tool()],
-        system_prompt='', response_format=None, settings=ToolSettings.model_validate({'permissions': permissions or {}}),
+        system_prompt='', response_format=None, settings=AppSettings.model_validate({'permissions': permissions or {}}),
     )
     return app, model
 

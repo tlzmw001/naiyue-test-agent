@@ -95,12 +95,12 @@ def test_large_sqlite_counter_is_unknown_instead_of_overflowing(tmp_path, caplog
 
 
 def test_usage_settings_are_configurable_and_invalid_budgets_fall_back(tmp_path, caplog):
-    from naiyue_test_agent.tools.settings import load_tool_settings
+    from naiyue_test_agent.settings import load_settings
     path = tmp_path / 'settings.toml'
     path.write_text('[usage_persistence]\nmax_pending_events=3\nmax_pending_bytes=2048\n')
-    assert load_tool_settings(path).usage_persistence.max_pending_events == 3
+    assert load_settings(path).usage_persistence.max_pending_events == 3
     path.write_text('[usage_persistence]\nmax_pending_events=0\n')
-    assert load_tool_settings(path).usage_persistence.max_pending_events == 1024
+    assert load_settings(path).usage_persistence.max_pending_events == 1024
     assert 'usage_persistence_settings_fallback' in caplog.text
 
 

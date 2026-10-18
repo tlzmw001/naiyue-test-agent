@@ -1,5 +1,7 @@
 """Declarative roles reuse registration at real memory, SQLite, CLI and Web entries."""
 
+from naiyue_test_agent import settings as application_settings
+
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 import traceback
@@ -11,14 +13,15 @@ from native_application_helpers import async_test, build_application
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.model_access import ModelCatalog, ModelConfigError
-from naiyue_test_agent.tools import SubAgentSpec, ToolSettings, load_tool_settings
+from naiyue_test_agent.tools import SubAgentSpec
+from naiyue_test_agent.settings import AppSettings, load_settings
 from test_async_application import StreamingToolModel
 from test_dynamic_tools import definition
 
 
 def test_current_sample_defaults_and_commented_role_are_loadable(tmp_path):
     sample = Path(__file__).resolve().parents[1] / 'docs/examples/settings.example.toml'
-    defaults = load_tool_settings(sample)
+    defaults = load_settings(sample)
     assert defaults.subagents == ()
     assert defaults.tools.subagent.max_result_lines == 2000
     assert defaults.tools.subagent.max_result_bytes == 65_536
@@ -27,7 +30,7 @@ def test_current_sample_defaults_and_commented_role_are_loadable(tmp_path):
     enabled = '\n'.join(line[2:] if line.startswith('# ') else line for line in block.splitlines())
     path = tmp_path / 'settings.toml'
     path.write_text(enabled, encoding='utf-8')
-    spec, = load_tool_settings(path).subagents
+    spec, = load_settings(path).subagents
     assert spec.name == 'tester' and spec.tool_names == ('read', 'grep', 'find', 'ls', 'bash')
     assert spec.model_id is None and spec.max_model_calls is None
     assert '最终返回检查范围' in spec.system_prompt
@@ -42,11 +45,11 @@ tool_names = ["probe"]
 
 
 def test_settings_parse_frozen_definitions_and_keep_missing_roles_empty(tmp_path):
-    assert load_tool_settings(tmp_path / 'missing.toml').subagents == ()
+    assert load_settings(tmp_path / 'missing.toml').subagents == ()
     path = tmp_path / 'settings.toml'
     path.write_text(CONFIG + '\n[[subagents]]\nname="writer"\ndescription="Write tests"\n'
                     'system_prompt="Work with evidence"\ntool_names=[]\nmodel_id="A"\nmax_model_calls=3\n')
-    settings = load_tool_settings(path)
+    settings = load_settings(path)
     spec, writer = settings.subagents
     assert isinstance(settings.subagents, tuple) and isinstance(spec, SubAgentSpec)
     assert spec.tool_names == ('probe',) and spec.model_id is None and spec.max_model_calls is None
@@ -55,7 +58,7 @@ def test_settings_parse_frozen_definitions_and_keep_missing_roles_empty(tmp_path
         spec.description = 'changed'
     with pytest.raises(ValidationError):
         settings.subagents = ()
-    assert ToolSettings(subagents=(spec,)).subagents[0] is spec
+    assert AppSettings(subagents=(spec,)).subagents[0] is spec
 
 
 @pytest.mark.parametrize('content', [
@@ -76,7 +79,7 @@ def test_invalid_role_settings_fail_without_budget_fallback_or_prompt_leak(tmp_p
     path = tmp_path / 'settings.toml'
     path.write_text(content)
     with pytest.raises(ValueError, match='Subagent settings') as caught:
-        load_tool_settings(path)
+        load_settings(path)
     assert 'subagent_settings_invalid' in caplog.text
     assert 'PRIVATE' not in caplog.text + str(caught.value)
     assert 'PRIVATE' not in ''.join(traceback.format_exception(caught.value))
@@ -86,8 +89,8 @@ def test_invalid_role_settings_fail_without_budget_fallback_or_prompt_leak(tmp_p
 def test_invalid_tool_budget_keeps_valid_role_definitions(tmp_path, caplog):
     path = tmp_path / 'settings.toml'
     path.write_text(CONFIG + '\n[tools.read]\nmax_limit=0\n')
-    settings = load_tool_settings(path)
-    assert settings.tools == ToolSettings().tools
+    settings = load_settings(path)
+    assert settings.tools == AppSettings().tools
     assert settings.subagents[0].name == 'tester'
     assert settings.subagents[0].tool_names == ('probe',)
     assert 'tool_settings_fallback' in caplog.text and 'PRIVATE_CONFIG_PROMPT' not in caplog.text
@@ -96,7 +99,7 @@ def test_invalid_tool_budget_keeps_valid_role_definitions(tmp_path, caplog):
 @async_test
 async def test_configured_roles_are_a_startup_snapshot_and_custom_tools_are_referenced(monkeypatch, tmp_path):
     from naiyue_test_agent.tools import settings as module
-    monkeypatch.setattr(module, 'get_agent_dir', lambda: tmp_path)
+    monkeypatch.setattr(application_settings, 'get_agent_dir', lambda: tmp_path)
     path = tmp_path / 'settings.toml'
     path.write_text(CONFIG)
     models = []
@@ -143,7 +146,7 @@ async def test_invalid_startup_dependencies_raise_and_release_owned_resources(mo
                         tool_names=('missing',) if failure == 'tool' else (),
                         model_id='missing' if failure == 'model' else None)
     valid = SubAgentSpec('valid', 'Valid', 'Prompt', ())
-    options = dict(tools=[], system_prompt='', response_format=None, settings=ToolSettings(subagents=(valid, spec)))
+    options = dict(tools=[], system_prompt='', response_format=None, settings=AppSettings(subagents=(valid, spec)))
     error_type = ValueError if failure == 'tool' else ModelConfigError
     database = tmp_path / 'roles.sqlite'
     with pytest.raises(error_type):
@@ -164,11 +167,11 @@ async def test_persistent_app_reregisters_current_config_without_persisting_defi
     path = tmp_path / 'settings.toml'
     path.write_text(CONFIG)
     options = dict(database_path=tmp_path / 'roles.sqlite', tools=[definition()], system_prompt='', response_format=None)
-    async with open_async_persistent_application('unused', settings=load_tool_settings(path), **options) as app:
+    async with open_async_persistent_application('unused', settings=load_settings(path), **options) as app:
         assert [spec.name for spec in app.get_registered_subagents()] == ['tester']
         await app.aregister_subagent(SubAgentSpec('temporary', 'Temporary', 'Prompt', ()))
     path.write_text(CONFIG.replace('name = "tester"', 'name = "updated"'))
-    async with open_async_persistent_application('unused', settings=load_tool_settings(path), **options) as app:
+    async with open_async_persistent_application('unused', settings=load_settings(path), **options) as app:
         assert [spec.name for spec in app.get_registered_subagents()] == ['updated']
 
 
@@ -179,7 +182,7 @@ def test_cli_main_consumes_configured_roles_and_reports_registration_failures(mo
     root = tmp_path / 'settings'
     root.mkdir()
     (root / 'settings.toml').write_text(CONFIG.replace('["probe"]', '["missing"]' if invalid else '["read"]'))
-    monkeypatch.setattr(module, 'get_agent_dir', lambda: root)
+    monkeypatch.setattr(application_settings, 'get_agent_dir', lambda: root)
     model = StreamingToolModel(replies=[])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     seen = []
@@ -208,7 +211,7 @@ async def test_web_lifespan_consumes_the_same_role_configuration(monkeypatch, tm
     root = tmp_path / 'settings'
     root.mkdir()
     (root / 'settings.toml').write_text(CONFIG.replace('["probe"]', '["missing"]' if invalid else '["read"]'))
-    monkeypatch.setattr(module, 'get_agent_dir', lambda: root)
+    monkeypatch.setattr(application_settings, 'get_agent_dir', lambda: root)
     model = StreamingToolModel(replies=[])
     async def scenario():
         async with web_client(monkeypatch, tmp_path, model, workspace_root=tmp_path) as (client, web):

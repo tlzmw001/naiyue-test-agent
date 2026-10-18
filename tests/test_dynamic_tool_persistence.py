@@ -32,7 +32,7 @@ async def test_empty_selection_survives_reopen(monkeypatch, tmp_path):
         storage = app._storage
         await app.arestore_session(sid)
         assert app.get_active_tools(sid) == ()
-        assert app._sessions.describe_session(sid)['active_tools'] == []
+        assert app._sessions.require(sid).describe_session()['active_tools'] == []
 
 
 @async_test

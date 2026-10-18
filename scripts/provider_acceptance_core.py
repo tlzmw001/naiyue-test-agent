@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from naiyue_test_agent.application.stream_projection import StreamingMessageProjection
 from naiyue_test_agent.model_access.messages import is_image_block
-from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.permission_rules import PermissionRule, PermissionSettings
 from .provider_acceptance_cases import require, paired_tools, final_text, run_turn, expected_calls, single_line_read
 from .provider_acceptance_preflight import create_image_fixture
@@ -98,7 +98,7 @@ async def approve(env):
     permitted = env.root / 'allowed.txt'
     outside.write_text('APPROVED_VALUE')
     permitted.write_text('ALLOW_VALUE')
-    settings = ToolSettings(permissions=PermissionSettings(allow=(PermissionRule(tool='read', path=str(permitted)),)))
+    settings = AppSettings(permissions=PermissionSettings(allow=(PermissionRule(tool='read', path=str(permitted)),)))
     async with env.open_app(['read'], settings=settings) as app:
         sid = await env.session(app)
         first = await app.arun(sid, [('user', f'In a SINGLE tool batch call read twice: first {permitted}, '
@@ -151,7 +151,7 @@ async def no_ask(env):
 
 
 async def deny_rule(env):
-    settings = ToolSettings(permissions=PermissionSettings(mode='BypassApprovals',
+    settings = AppSettings(permissions=PermissionSettings(mode='BypassApprovals',
         allow=(PermissionRule(tool='read', path='${workspace}/**'),),
         deny=(PermissionRule(tool='read', path='${workspace}/blocked.txt'),)))
     async with env.open_app(['read'], settings=settings) as app:

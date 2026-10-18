@@ -62,7 +62,7 @@ def guard_catalog(catalog, budget):
             raise ValueError('This acceptance guard supports only OpenAI-compatible, Anthropic and Ollama models')
         if re.fullmatch(r'[A-Za-z0-9_.:/-]{1,128}', identity) is None:
             raise ValueError('Invalid acceptance model label')
-    catalog._prepare_async_clients()
+    catalog.prepare_async_clients()
     owned = {id(client) for client, _ in catalog._owned_http_clients}
     clients, sdks, seen = [], [], set()
     for identity, model in models:

@@ -10,7 +10,8 @@ from native_application_helpers import async_test, build_application
 from naiyue_test_agent import application
 from naiyue_test_agent.application.cli_async import build_local_application
 from naiyue_test_agent.model_access import ModelCatalog, ModelConfigError
-from naiyue_test_agent.tools import SubAgentSpec, ToolSettings
+from naiyue_test_agent.tools import SubAgentSpec
+from naiyue_test_agent.settings import AppSettings
 from test_async_application import StreamingToolModel
 from test_dynamic_tools import definition
 
@@ -50,7 +51,7 @@ async def test_registration_preserves_identity_and_app_scope_without_activating_
     model = StreamingToolModel(replies=[])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     app = await build_application('unused', tools=[definition()], initial_active_tools=[],
-                                  system_prompt='', response_format=None, settings=ToolSettings())
+                                  system_prompt='', response_format=None, settings=AppSettings())
     graph = app._agent
     first, second = await app.acreate_session('A'), await app.acreate_session('A')
     spec, other = role(), role(name='researcher', tool_names=())
@@ -66,7 +67,7 @@ async def test_registration_preserves_identity_and_app_scope_without_activating_
     assert app.get_registered_subagents() == registered and app._agent is graph
     assert model.seen == [] and not app._tasks
     isolated = await build_application('unused', tools=[], system_prompt='', response_format=None,
-                                       settings=ToolSettings())
+                                       settings=AppSettings())
     assert isolated.get_registered_subagents() == ()
 
 
@@ -79,7 +80,7 @@ async def test_failed_registration_keeps_existing_definitions_and_safe_diagnosti
     model = StreamingToolModel(replies=[])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     app = await build_application('unused', tools=[definition()], system_prompt='', response_format=None,
-                                  settings=ToolSettings())
+                                  settings=AppSettings())
     original = role()
     await app.aregister_subagent(original)
     invalid = {
@@ -105,7 +106,7 @@ async def test_failed_registration_does_not_cancel_active_root_run(monkeypatch, 
     model = StreamingToolModel(replies=[AIMessage(content='done')], entered=entered, release=release)
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     app = await build_application('unused', tools=[], system_prompt='', response_format=None,
-                                  settings=ToolSettings())
+                                  settings=AppSettings())
     sid = await app.acreate_session('A')
     events = []
     app.subscribe_events(events.append)
@@ -114,7 +115,7 @@ async def test_failed_registration_does_not_cancel_active_root_run(monkeypatch, 
         await asyncio.wait_for(entered.wait(), 5)
         with pytest.raises(ValueError):
             await app.aregister_subagent(role(tool_names=('missing',)))
-        assert not task.done() and app._sessions.describe_session(sid)['busy']
+        assert not task.done() and app._sessions.require(sid).describe_session()['busy']
         assert app.get_registered_subagents() == ()
         await app.aregister_subagent(role(tool_names=()))
         release.set()
@@ -134,7 +135,7 @@ async def test_registration_uses_owner_loop_and_rejects_closed_application(monke
     model = StreamingToolModel(replies=[])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     app = await build_application('unused', tools=[], system_prompt='', response_format=None,
-                                  settings=ToolSettings())
+                                  settings=AppSettings())
     spec = role(tool_names=())
 
     async def foreign_loop():
@@ -156,7 +157,7 @@ def test_cli_registration_and_query_use_existing_event_loop_bridge(monkeypatch):
     model = StreamingToolModel(replies=[])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     app = build_local_application('unused', tools=[definition()], initial_active_tools=[],
-                                  system_prompt='', response_format=None, settings=ToolSettings())
+                                  system_prompt='', response_format=None, settings=AppSettings())
     spec = role()
     try:
         assert app.register_subagent(spec) is None

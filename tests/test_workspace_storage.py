@@ -111,14 +111,14 @@ def test_binding_failure_rolls_back_all_roots(tmp_path):
 
 
 def test_storage_root_setting_is_absolute_and_does_not_silently_fallback(tmp_path):
-    from naiyue_test_agent.tools.settings import load_tool_settings
+    from naiyue_test_agent.settings import load_settings
     config = tmp_path / 'settings.toml'
     data = tmp_path / 'another-drive'
     config.write_text('[storage]\ndata_dir=' + json.dumps(str(data)) + '\n')
-    assert load_tool_settings(config).storage.data_dir == data
+    assert load_settings(config).storage.data_dir == data
     config.write_text('[storage]\ndata_dir="relative/data"\n')
     with pytest.raises(ValueError):
-        load_tool_settings(config)
+        load_settings(config)
 
 
 def test_unavailable_data_root_does_not_fallback(tmp_path):

@@ -8,7 +8,8 @@ from langchain_core.messages import AIMessage, ToolMessage
 from native_application_helpers import async_test
 from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
 from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services, current_run_services
-from naiyue_test_agent.tools import SubAgentSpec, ToolSettings, create_builtin_tools
+from naiyue_test_agent.tools import SubAgentSpec, create_builtin_tools
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.settings import SubAgentOutputSettings
 from test_async_application import call
 from test_subagent_execution import ChildModel, delegated_app, record_instances, role
@@ -22,7 +23,7 @@ from test_subagent_execution import ChildModel, delegated_app, record_instances,
 @async_test
 async def test_result_budget_from_settings_preserves_prefix_and_marks_truncation(monkeypatch, text, settings, expected):
     child = ChildModel(replies=[AIMessage(content=text)])
-    configured = ToolSettings(subagents=(role(),), tools={'subagent': SubAgentOutputSettings(**settings)})
+    configured = AppSettings(subagents=(role(),), tools={'subagent': SubAgentOutputSettings(**settings)})
     app, _ = await delegated_app(monkeypatch, child, settings=configured)
     result = await app.arun(await app.acreate_session('A'), [('user', 'report')])
     feedback = next(message for message in result['messages'] if isinstance(message, ToolMessage))
@@ -125,7 +126,7 @@ async def test_external_cancel_settles_child_and_restores_parent_services(monkey
             assert instance['status'] == 'stopped' and driver.done() and instance['settled']
             assert instance['control'].reason == 'failure'
             assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values()) and 'driver' not in instance
-            assert not app._sessions.describe_session(sid)['busy']
+            assert not app._sessions.require(sid).describe_session()['busy']
             assert current_run_services() is previous
         finally:
             release.set()
@@ -133,7 +134,7 @@ async def test_external_cancel_settles_child_and_restores_parent_services(monkey
 
 
 def test_subagent_builtin_has_a_real_coroutine_and_hides_runtime():
-    spec = next(spec for spec in create_builtin_tools(ToolSettings()) if spec.tool.name == 'subagent')
+    spec = next(spec for spec in create_builtin_tools(AppSettings().tools) if spec.tool.name == 'subagent')
     assert spec.tool.coroutine is not None and 'runtime' not in spec.input_schema.model_fields
 
 
@@ -153,5 +154,5 @@ async def test_finished_roots_release_instances_and_drivers_but_keep_checkpoints
         snapshot = await app._sessions._subagents['tester']['agent'].aget_state(
             {'configurable': {'thread_id': instances[-1]['child_thread_id']}})
         assert snapshot.values['messages'][-1].content == 'report' + 'x' * 20000
-        assert not app._sessions.describe_session(sid)['busy']
+        assert not app._sessions.require(sid).describe_session()['busy']
     assert len(instances) == 2

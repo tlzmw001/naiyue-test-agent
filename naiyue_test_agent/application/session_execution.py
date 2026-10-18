@@ -49,11 +49,12 @@ class SessionExecution:
                 'event': 'session_manual_review_required', 'session_id': session_id, 'run_id': run_id,
             }})
 
-    async def _arun(self, agent, messages, *, run,
+    async def arun(self, agent, messages, *, run,
                     max_concurrency=4, compact=False, system_prompt=None):
         session_id, run_id, observation = self.session_id, run.run_id, run.observation
         facts = self.snapshot_for_run()
         thread_id, workspace_root = facts['thread_id'], facts['workspace_root']
+        options = {'durability': 'sync'} if self._persistence is not None else {}
 
         primary_error = None
         try:
@@ -77,11 +78,11 @@ class SessionExecution:
                 with observation.bind(ainvoke_subagent=self._invoke_subagent):
                     result = await ainvoke_agent_run_with_resources(agent, messages,
                         session_id=session_id, thread_id=thread_id, run_id=run_id, workspace_root=workspace_root,
-                        read_resource_roots=resources['read_resource_roots'], max_concurrency=max_concurrency)
+                        read_resource_roots=resources['read_resource_roots'], max_concurrency=max_concurrency, **options)
             else:
                 with observation.bind(ainvoke_subagent=self._invoke_subagent):
                     result = await ainvoke_agent_run(agent, messages, session_id=session_id,
-                        thread_id=thread_id, run_id=run_id, max_concurrency=max_concurrency)
+                        thread_id=thread_id, run_id=run_id, max_concurrency=max_concurrency, **options)
             observation.stage = 'finalize'
             pending = pending_tool_approval(result)
             if pending is not None:
@@ -138,6 +139,7 @@ class SessionExecution:
         facts = self.snapshot_for_run()
         pending = facts['pending']
         thread_id, workspace_root = facts['thread_id'], facts['workspace_root']
+        options = {'durability': 'sync'} if self._persistence is not None else {}
 
         primary_error = None
         try:
@@ -157,7 +159,7 @@ class SessionExecution:
                 result = await aresume_agent_run_with_resources(agent, session_id=session_id,
                     thread_id=thread_id, run_id=run_id, workspace_root=workspace_root, decisions=decisions,
                     approval_grants=grants, read_resource_roots=resources['read_resource_roots'],
-                    max_concurrency=max_concurrency)
+                    max_concurrency=max_concurrency, **options)
             observation.stage = 'finalize'
             next_pending = pending_tool_approval(result)
             if next_pending is not None:

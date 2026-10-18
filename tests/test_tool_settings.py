@@ -1,5 +1,7 @@
 """Configured Read uses one validated budget for schema, feedback, and IO."""
 
+from naiyue_test_agent import settings as application_settings
+
 from native_application_helpers import async_test
 
 from pathlib import Path
@@ -15,10 +17,10 @@ async def invoke_tool_feedback(reader, args, root):
 
 
 def test_missing_settings_use_defaults_without_creating_a_file(tmp_path, caplog):
-    from naiyue_test_agent.tools.settings import ToolSettings, load_tool_settings
+    from naiyue_test_agent.settings import AppSettings, load_settings
     path = tmp_path / 'absent' / 'settings.toml'
-    settings = load_tool_settings(path)
-    assert settings == ToolSettings()
+    settings = load_settings(path)
+    assert settings == AppSettings()
     assert not path.parent.exists()
     assert 'tool_settings_fallback' not in caplog.text
 
@@ -27,19 +29,19 @@ def test_default_directory_is_shared_with_model_configuration(monkeypatch, tmp_p
     from naiyue_test_agent.config_paths import get_agent_dir, get_models_path
     from naiyue_test_agent.tools import settings as module
     monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path))
-    monkeypatch.setattr(module, 'get_agent_dir', get_agent_dir)
+    monkeypatch.setattr(application_settings, 'get_agent_dir', get_agent_dir)
     root = tmp_path / '.naiyue-test-agent'
     root.mkdir()
     (root / 'settings.toml').write_text('[tools.read]\ndefault_limit=2\n')
     assert get_models_path() == root / 'models.json'
-    assert module.load_tool_settings().tools.read.default_limit == 2
+    assert application_settings.load_settings().tools.read.default_limit == 2
 
 
 def test_valid_settings_fill_missing_fields_and_are_frozen(tmp_path):
-    from naiyue_test_agent.tools.settings import load_tool_settings
+    from naiyue_test_agent.settings import load_settings
     path = tmp_path / 'settings.toml'
     path.write_text('[tools.read]\ndefault_limit=2\nmax_limit=5\n')
-    settings = load_tool_settings(path)
+    settings = load_settings(path)
     assert settings.tools.read.default_limit == 2
     assert settings.tools.read.max_limit == 5
     assert settings.tools.read.max_output_bytes == 65536
@@ -58,34 +60,34 @@ def test_valid_settings_fill_missing_fields_and_are_frozen(tmp_path):
     '[tools.read]\nunknown="PRIVATE_VALUE"\n',
 ])
 def test_invalid_settings_warn_and_fall_back_as_a_whole(tmp_path, caplog, content):
-    from naiyue_test_agent.tools.settings import ToolSettings, load_tool_settings
+    from naiyue_test_agent.settings import AppSettings, load_settings
     path = tmp_path / 'settings.toml'
     path.write_text(content)
-    assert load_tool_settings(path) == ToolSettings()
+    assert load_settings(path) == AppSettings()
     assert sum(r.message.startswith('tool_settings_fallback') for r in caplog.records) == 1
     assert 'PRIVATE' not in caplog.text
 
 
 @pytest.mark.parametrize('failure', [PermissionError('PRIVATE_PATH'), UnicodeDecodeError('utf8', b'\xff', 0, 1, 'PRIVATE')])
 def test_unreadable_settings_warn_without_disclosing_raw_errors(monkeypatch, tmp_path, caplog, failure):
-    from naiyue_test_agent.tools.settings import ToolSettings, load_tool_settings
+    from naiyue_test_agent.settings import AppSettings, load_settings
     def fail(*args, **kwargs):
         raise failure
     monkeypatch.setattr(Path, 'open', fail)
     with pytest.raises(ValueError, match='Permission settings could not be read or parsed'):
-        load_tool_settings(tmp_path / 'settings.toml')
+        load_settings(tmp_path / 'settings.toml')
     assert 'permission_settings_unavailable' in caplog.text
     assert 'PRIVATE' not in caplog.text
 
 
 def test_programming_failure_is_not_converted_to_default_settings(monkeypatch, tmp_path):
-    from naiyue_test_agent.tools.settings import load_tool_settings
+    from naiyue_test_agent.settings import load_settings
     error = RuntimeError('programming failure')
     def fail(*args, **kwargs):
         raise error
     monkeypatch.setattr(Path, 'open', fail)
     with pytest.raises(RuntimeError) as caught:
-        load_tool_settings(tmp_path / 'settings.toml')
+        load_settings(tmp_path / 'settings.toml')
     assert caught.value is error
 
 

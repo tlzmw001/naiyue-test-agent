@@ -13,7 +13,7 @@ from test_model_usage_storage import facts
 
 def writer(storage, subscriptions, **limits):
     from naiyue_test_agent.application.model_usage_persistence import ModelUsagePersistence
-    from naiyue_test_agent.tools.settings import UsagePersistenceSettings
+    from naiyue_test_agent.settings import UsagePersistenceSettings
     return ModelUsagePersistence(storage, subscriptions.subscribe, UsagePersistenceSettings(**limits))
 
 

@@ -10,7 +10,8 @@ from native_application_helpers import async_test, build_application
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import SubAgentSpec, ToolSettings, create_subagent_tool
+from naiyue_test_agent.tools import SubAgentSpec, create_subagent_tool
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.permissions import PermissionMechanismError
 from test_async_application import StreamingToolModel, call
 from test_auto_permission_review import model as reviewer_model, verdict
@@ -38,7 +39,7 @@ async def test_auto_reviews_original_human_request_not_delegated_task(monkeypatc
     fast, detail = reviewer_model([verdict()]), reviewer_model([])
     catalog = ModelCatalog('A', {'A': root, 'B': child, 'fast': fast, 'detail': detail})
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: catalog)
-    settings = ToolSettings(subagents=(role(),), permissions={'mode': 'Auto', 'auto': {
+    settings = AppSettings(subagents=(role(),), permissions={'mode': 'Auto', 'auto': {
         'fast_model_id': 'fast', 'detailed_model_id': 'detail'}})
     effects = []
     app = await build_application('unused', tools=[create_subagent_tool(), definition(calls=effects, approved=True)],
@@ -59,7 +60,7 @@ async def test_child_checkpoint_and_parent_report_share_sqlite_without_sharing_t
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
     async with open_async_persistent_application('unused', database_path=tmp_path / 'shared.sqlite',
             tools=[create_subagent_tool(), definition()], initial_active_tools=['subagent'],
-            system_prompt='', response_format=None, settings=ToolSettings(subagents=(role(),))) as app:
+            system_prompt='', response_format=None, settings=AppSettings(subagents=(role(),))) as app:
         instances = record_instances(monkeypatch, app)
         sid = await app.acreate_session('A')
         await app.arun(sid, [('user', 'root task')])

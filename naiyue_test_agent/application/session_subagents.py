@@ -65,9 +65,6 @@ class SessionSubagentControls:
         return await session.ainvoke_subagent(agent, task, role=role, parent_context=parent_context,
             parent_state=parent_state, parent_tool_call_id=parent_tool_call_id)
 
-    def subagent_status(self, session_id, agent_path):
-        return self._session(session_id).subagent_status(agent_path)
-
 
 class AgentSessionSubagents:
     """One session owns its child instances, drivers and cancellation."""
@@ -143,8 +140,7 @@ class AgentSessionSubagents:
             instance['publisher_view'] = instance['publisher'].for_agent(source)
             observation = RunObservation(instance['publisher_view'],
                 'approval_resume' if resume else 'message', progress_settings=self._progress_settings,
-                stop_control=instance['control'])
-            observation.runtime_errors = instance['errors']
+                stop_control=instance['control'], runtime_errors=instance['errors'])
             observe(observation.turns, observation.turns.restore, instance['pending_turn'])
             pending = None
             try:

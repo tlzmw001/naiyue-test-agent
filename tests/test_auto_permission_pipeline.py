@@ -9,7 +9,8 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from naiyue_test_agent import application
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import ToolSettings, create_session_read_tool
+from naiyue_test_agent.tools import create_session_read_tool
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.permission_rules import PermissionRule
 from test_dynamic_tools import DynamicModel, definition, call
 from test_auto_permission_review import model, verdict, settings
@@ -75,7 +76,7 @@ async def test_explicit_rules_do_not_call_review_models(monkeypatch, decision):
 @async_test
 async def test_auto_configuration_requires_both_known_models_before_graph(monkeypatch):
     with pytest.raises(ValueError):
-        ToolSettings.model_validate({'permissions': {'mode': 'Auto'}})
+        AppSettings.model_validate({'permissions': {'mode': 'Auto'}})
     primary = DynamicModel(responses=[])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('main', {'main': primary}))
     with pytest.raises(ValueError):

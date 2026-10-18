@@ -47,7 +47,7 @@ async def test_sessions_continue_history_switch_models_and_isolate_threads(caplo
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         first = await service.arun(agent, first_session, [('user', 'private-first')])
-        service.select_model(first_session, 'B')
+        service.require(first_session).select_model('B')
         second = await service.arun(agent, first_session, [('user', 'private-second')])
         other = await service.arun(agent, other_session, [('user', 'private-other')])
 
@@ -86,12 +86,12 @@ async def test_invalid_model_and_unknown_session_do_not_change_selection():
         service.create_session('missing')
     session_id = service.create_session('A')
     with pytest.raises(ModelConfigError):
-        service.select_model(session_id, 'missing')
+        service.require(session_id).select_model('missing')
     assert service.resolve_model(session_id) == ('A', models['A'])
     with pytest.raises(KeyError):
         service.resolve_model('not-a-session')
     with pytest.raises(KeyError):
-        service.select_model('not-a-session', 'B')
+        service.require('not-a-session').select_model('B')
 
     class UnexpectedAgent:
         async def ainvoke(self, *_args, **_kwargs):
@@ -115,7 +115,7 @@ async def test_model_change_during_tool_call_applies_at_next_model_boundary(capl
     @tool
     def switch_to_b() -> str:
         """Switch the current test session to model B."""
-        service.select_model(session_id, 'B')
+        service.require(session_id).select_model('B')
         return 'switched'
 
     _runtime_registry_2 = prepare_tool_registry([ToolSpec(switch_to_b, switch_to_b.args_schema, permissions=ToolPermission(default='allow'))])

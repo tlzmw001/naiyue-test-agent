@@ -162,29 +162,6 @@ def announce_approval(observation, batch):
             tuple(row.tool_call_id for row in items), batch['approval_batch_id'], items)
 
 
-class SessionApprovalControls:
-    """Route public approval operations to one session."""
-
-    def pending_approval_batches(self, session_id):
-        return self._session(session_id).pending_approval_batches()
-
-    def pending_subagent_approvals(self, session_id):
-        return self._session(session_id).pending_subagent_approvals()
-
-    def submit_subagent_approval(self, session_id, *, approval_batch_id, decisions, origin_run_id, remember_approved=()):
-        return self._session(session_id).submit_subagent_approval(approval_batch_id=approval_batch_id,
-            decisions=decisions, origin_run_id=origin_run_id, remember_approved=remember_approved)
-
-    def prepare_root_approval_submission(self, session_id, *, approval_batch_id, origin_run_id, decisions, remember_approved=()):
-        return self._session(session_id).prepare_root_approval_submission(
-            approval_batch_id=approval_batch_id, origin_run_id=origin_run_id,
-            decisions=decisions, remember_approved=remember_approved)
-
-    def validate_root_approval_stop(self, session_id, *, approval_batch_id, origin_run_id):
-        self._session(session_id).validate_root_approval_stop(
-            approval_batch_id=approval_batch_id, origin_run_id=origin_run_id)
-
-
 class AgentSessionApproval:
     """One session owns pending child approvals and their live futures."""
 

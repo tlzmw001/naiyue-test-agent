@@ -4,7 +4,7 @@ from pathlib import Path
 import secrets
 
 from naiyue_test_agent.config_paths import get_models_path
-from naiyue_test_agent.tools.settings import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -17,12 +17,12 @@ class WebSettings(BaseModel):
     frontend_dist: Path
     workspace_root: Path | None = None
     workspace_id: str | None = None
-    runtime_settings: ToolSettings | None = Field(default=None, exclude=True, repr=False)
+    runtime_settings: AppSettings | None = Field(default=None, exclude=True, repr=False)
     host: str = '127.0.0.1'
     port: int = Field(default=0, ge=0, le=65535)
     access_token: str = Field(default_factory=lambda: secrets.token_urlsafe(32), min_length=8, repr=False)
     event_capacity: int = Field(default=256, gt=0)
-    event_cache_bytes: int = Field(default=ToolSettings.model_fields['web_event_cache_bytes'].default, gt=0, strict=True)
+    event_cache_bytes: int = Field(default=AppSettings.model_fields['web_event_cache_bytes'].default, gt=0, strict=True)
     max_frame_bytes: int = Field(default=1024 * 1024, gt=0)
     retained_runs: int = Field(default=16, gt=0)
     max_receipts: int = Field(default=4096, gt=0)

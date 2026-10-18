@@ -34,7 +34,7 @@ async def test_success_survives_publish_fault(monkeypatch, event_type, caplog):
     monkeypatch.setattr(RunEventPublisher, 'publish', fault)
     result = await app.arun(session, [('user', 'probe')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
-    assert app._sessions.describe_session(session)['busy'] is False
+    assert app._sessions.require(session).describe_session()['busy'] is False
     assert 'PRIVATE_EVENT_FAULT' not in caplog.text
     assert any('publish_failed' in item.message or 'observation_failed' in item.message
                for item in caplog.records)
@@ -56,7 +56,7 @@ async def test_observer_fault_does_not_change_result(monkeypatch, owner, operati
     monkeypatch.setattr(owner, operation, fault)
     result = await app.arun(session, [('user', 'probe')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
-    assert app._sessions.describe_session(session)['busy'] is False
+    assert app._sessions.require(session).describe_session()['busy'] is False
     assert 'observation_failed' in caplog.text and 'PRIVATE_OBSERVER_FAULT' not in caplog.text
 
 

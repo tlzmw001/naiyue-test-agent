@@ -221,14 +221,14 @@ async def test_unrepresentable_patch_filename_does_not_inject_headers(tmp_path, 
 
 
 def test_edit_feedback_limits_load_from_commented_sample_and_explicit_settings(tmp_path):
-    from naiyue_test_agent.tools.settings import load_tool_settings
+    from naiyue_test_agent.settings import load_settings
     sample = Path(__file__).resolve().parents[1] / 'docs/examples/settings.example.toml'
-    assert load_tool_settings(sample).tools.edit == EditSettings()
+    assert load_settings(sample).tools.edit == EditSettings()
     names = ('max_normalization_buffer_bytes', 'max_affected_line_bytes',
              'max_diff_bytes', 'max_preview_bytes', 'max_patch_bytes')
     configured = tmp_path / 'settings.toml'
     configured.write_text('[tools.edit]\n' + '\n'.join(f'{name}={101 + i}' for i, name in enumerate(names)))
-    result = load_tool_settings(configured).tools.edit
+    result = load_settings(configured).tools.edit
     assert [getattr(result, name) for name in names] == list(range(101, 106))
 
 

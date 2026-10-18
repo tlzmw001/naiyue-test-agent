@@ -124,7 +124,7 @@ async def test_active_stop_has_cancelled_invocation_and_original_stop_effect(mon
 
 @async_test
 async def test_auto_stages_remain_distinct_when_they_share_the_agent_model(monkeypatch, tmp_path):
-    from naiyue_test_agent.tools import ToolSettings
+    from naiyue_test_agent.settings import AppSettings
     from test_auto_permission_review import settings as review_settings, verdict
     from test_dynamic_tools import definition
     sent, events, effects = [], [], []
@@ -138,7 +138,7 @@ async def test_auto_stages_remain_distinct_when_they_share_the_agent_model(monke
         if any(m['role'] == 'tool' for m in body['messages']):
             return completion_response(body, text='done')
         return completion_response(body, call=('probe', {'value': 'approved'}, 'probe'))
-    options = ToolSettings(permissions=review_settings(fast_model_id='root', detailed_model_id='root').permissions)
+    options = AppSettings(permissions=review_settings(fast_model_id='root', detailed_model_id='root').permissions)
     async with cached_application(monkeypatch, tmp_path, serve, settings=options,
             tools=[definition(calls=effects, approved=True)]) as (app, _):
         app.subscribe_events(events.append)

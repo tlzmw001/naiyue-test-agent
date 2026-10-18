@@ -7,7 +7,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from native_application_helpers import async_test
-from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from test_async_application import call
 from test_cross_session_concurrency import SessionModel, gated
 from test_subagent_execution import role
@@ -25,7 +25,7 @@ async def test_paused_root_at_capacity_preserves_decisions_or_can_be_stopped(mon
     outside.write_text('approved content')
     model = SessionModel(replies=[])
     async with web_client(monkeypatch, tmp_path, model, workspace_root=workspace,
-                          runtime_settings=ToolSettings(max_active_runs=1)) as (client, web):
+                          runtime_settings=AppSettings(max_active_runs=1)) as (client, web):
         a, b = await sessions(client, 2)
         model.responses[a] = [call('read', {'path': str(outside)}, 'read-a'), AIMessage(content='approved')]
         delivery, backend = web.state.delivery, web.state.service.application
@@ -83,7 +83,7 @@ async def test_child_approval_resumes_only_its_parent_or_all_jobs_close(monkeypa
     outside = tmp_path / 'outside.txt'
     outside.write_text('child private result')
     model = SessionModel(replies=[])
-    settings = ToolSettings(max_active_runs=2, subagents=(role(model_id=None, tool_names=('read',)),))
+    settings = AppSettings(max_active_runs=2, subagents=(role(model_id=None, tool_names=('read',)),))
     async with web_client(monkeypatch, tmp_path, model, workspace_root=workspace,
                           runtime_settings=settings) as (client, web):
         a, b, c = await sessions(client, 3)

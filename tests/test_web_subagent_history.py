@@ -4,7 +4,7 @@ import asyncio
 import pytest
 
 from langchain_core.messages import AIMessage
-from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from test_async_application import call
 from test_subagent_execution import ChildModel, role
 from test_web_api import web_client, request
@@ -17,7 +17,7 @@ def test_saved_child_history_after_web_restart_and_safe_read_failure(monkeypatch
         (workspace / 'test.txt').write_text('child file content')
         model = ChildModel(replies=[call('subagent', {'agent': 'tester', 'task': 'inspect test'}, 'outer'),
             call('read', {'path': 'test.txt'}, 'inner'), AIMessage(content='child report'), AIMessage(content='root done')])
-        settings = ToolSettings(subagents=(role(tool_names=('read',), model_id=None),))
+        settings = AppSettings(subagents=(role(tool_names=('read',), model_id=None),))
         async with web_client(monkeypatch, tmp_path, model, workspace_root=workspace, runtime_settings=settings) as (client, web):
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             run = (await client.post(f'/api/sessions/{sid}/runs', json=request('inspect'))).json()['run_id']
@@ -70,7 +70,7 @@ def test_large_child_history_does_not_block_main_approval(monkeypatch, tmp_path,
         model = ChildModel(replies=[call('subagent', {'agent': 'tester', 'task': 'many reads'}, 'outer'),
             *(call('read', {'path': 'large.txt'}, f'inner-{i}') for i in range(count)),
             call('read', {'path': str(outside)}, 'ask'), AIMessage(content='child report'), AIMessage(content='root done')])
-        settings = ToolSettings(subagents=(role(tool_names=('read',), model_id=None),))
+        settings = AppSettings(subagents=(role(tool_names=('read',), model_id=None),))
         async with web_client(monkeypatch, tmp_path, model, workspace_root=workspace, runtime_settings=settings) as (client, web):
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             run = (await client.post(f'/api/sessions/{sid}/runs', json=request('inspect'))).json()['run_id']
@@ -105,7 +105,7 @@ def test_stopped_child_history_status_survives_restart(monkeypatch, tmp_path):
         outside.write_text('not read')
         model = ChildModel(replies=[call('subagent', {'agent': 'tester', 'task': 'pending read'}, 'outer'),
             call('read', {'path': str(outside)}, 'ask'), AIMessage(content='root continued')])
-        settings = ToolSettings(subagents=(role(tool_names=('read',), model_id=None),))
+        settings = AppSettings(subagents=(role(tool_names=('read',), model_id=None),))
         async with web_client(monkeypatch, tmp_path, model, workspace_root=workspace, runtime_settings=settings) as (client, web):
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             run = (await client.post(f'/api/sessions/{sid}/runs', json=request('inspect'))).json()['run_id']

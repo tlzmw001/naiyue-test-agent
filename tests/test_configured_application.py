@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage
 from naiyue_test_agent.application.async_application import build_async_local_application
 from naiyue_test_agent.tools import ToolSpec
 from naiyue_test_agent.tools.permissions import ToolPermission
-from naiyue_test_agent.tools.settings import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from test_model_access import ToolCapableFake, write_config
 
 
@@ -50,7 +50,7 @@ async def test_configured_agent_uses_file_and_switches_after_tool_result(tmp_pat
         write_config(tmp_path, config),
         tools=[ToolSpec(switch_to_second, switch_to_second.args_schema,
                         permissions=ToolPermission(default='allow'))],
-        system_prompt='Test model selection.', response_format=None, settings=ToolSettings())
+        system_prompt='Test model selection.', response_format=None, settings=AppSettings())
     try:
         session = await app.acreate_session('first')
         holder.update(app=app, session=session)
@@ -85,13 +85,13 @@ async def test_configured_agent_forwards_checkpointer_for_continuous_messages(tm
         'models': {'first': {'provider_id': 'p', 'model': 'model-first', 'api': 'chat_completions'}},
     })
     app = await build_async_local_application(config_path, tools=[], system_prompt='',
-                                              response_format=None, settings=ToolSettings())
+                                              response_format=None, settings=AppSettings())
     try:
         session = await app.acreate_session('first')
-        thread = app._sessions.get_thread_id(session)
+        thread = app._sessions.require(session).get_thread_id()
         await app.arun(session, [('user', 'first question')])
         result = await app.arun(session, [('user', 'second question')])
-        assert app._sessions.get_thread_id(session) == thread
+        assert app._sessions.require(session).get_thread_id() == thread
     finally:
         await app.aclose()
 

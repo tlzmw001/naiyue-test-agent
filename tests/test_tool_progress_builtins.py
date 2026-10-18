@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent import tools
 from naiyue_test_agent.tools.permissions import execution_environment
 from naiyue_test_agent.tools.processes import ProcessOutcome
@@ -24,8 +25,8 @@ def test_each_builtin_reports_actual_work_with_one_configured_budget(monkeypatch
             await consume('stdout', b'7.4.0' if '-EncodedCommand' not in request.argv else b'\x1b[31mSHELL_OUTPUT\x1b[0m\n')
             return ProcessOutcome(0, 'exited', True, True, True, True, 0)
         monkeypatch.setattr(HostProcessRunner, 'run', run)
-    settings = tools.ToolSettings.model_validate({'progress': {'min_interval_milliseconds': 0, 'max_text_bytes': 6}})
-    spec = next(item for item in tools.create_builtin_tools(settings) if item.tool.name == name)
+    settings = AppSettings.model_validate({'progress': {'min_interval_milliseconds': 0, 'max_text_bytes': 6}})
+    spec = next(item for item in tools.create_builtin_tools(settings.tools, process_settings=settings.process, output_settings=settings.tool_output, progress_settings=settings.progress) if item.tool.name == name)
     args = {'read': {'path': target.name}, 'ls': {}, 'find': {'pattern': '*.txt'},
             'grep': {'pattern': 'PRIVATE', 'path': target.name},
             'write': {'path': target.name, 'content': 'PRIVATE_NEW_BODY'},

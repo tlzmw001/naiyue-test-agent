@@ -151,7 +151,8 @@ async def test_root_start_approval_consumed_once_child_approval_does_not_reenter
     from native_application_helpers import build_application
     from naiyue_test_agent import application
     from naiyue_test_agent.model_access import ModelCatalog
-    from naiyue_test_agent.tools import create_subagent_tool, ToolSettings
+    from naiyue_test_agent.tools import create_subagent_tool
+    from naiyue_test_agent.settings import AppSettings
     from naiyue_test_agent.tools.permissions import ToolPermission
     effects, consumed = [], []
     child = ChildModel(replies=[call('probe', {'value': 'once'}, 'inner'), AIMessage(content='report')])
@@ -160,7 +161,7 @@ async def test_root_start_approval_consumed_once_child_approval_does_not_reenter
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
     app = await build_application('unused', tools=[replace(create_subagent_tool(), permissions=ToolPermission()),
         definition(calls=effects, approved=True)], initial_active_tools=['subagent'],
-        system_prompt='', response_format=None, settings=ToolSettings(subagents=(role(),)))
+        system_prompt='', response_format=None, settings=AppSettings(subagents=(role(),)))
     queue = approval_notifications(monkeypatch, app)
     instances = record_instances(monkeypatch, app)
     consume = OneUseApprovalGrants.consume

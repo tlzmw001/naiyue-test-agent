@@ -101,7 +101,8 @@ class ApplicationEventSubscriptions:
 class RunObservation:
     """Observe outcomes; the calling execution owner handles results and cleanup."""
 
-    def __init__(self, publisher: RunEventPublisher | AgentEventPublisher, mode: str, *, progress_settings=None, stop_control=None):
+    def __init__(self, publisher: RunEventPublisher | AgentEventPublisher, mode: str, *, progress_settings=None, stop_control=None,
+                 runtime_errors=None, application_errors=None):
         self.publisher = publisher
         self.mode = mode
         self.stage = 'prepare'
@@ -113,8 +114,8 @@ class RunObservation:
         self.stop_control = stop_control if stop_control is not None else RunControl()
         self.context_operations = ContextOperationObserver(publisher)
         self.tool_progress = ToolProgressObserver(publisher, progress_settings)
-        self.runtime_errors = RuntimeErrorPolicy()
-        self.application_errors = ApplicationErrorPolicy()
+        self.runtime_errors = runtime_errors if runtime_errors is not None else RuntimeErrorPolicy()
+        self.application_errors = application_errors if application_errors is not None else ApplicationErrorPolicy()
 
     def _describe_failure(self, error):
         reported = read_failure_description(error, run_id=self.publisher.run_id)

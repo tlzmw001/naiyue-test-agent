@@ -15,7 +15,8 @@ from native_application_helpers import async_test
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_application import build_async_local_application
 from naiyue_test_agent.model_access import load_model_catalog
-from naiyue_test_agent.tools import ToolSettings, create_subagent_tool
+from naiyue_test_agent.tools import create_subagent_tool
+from naiyue_test_agent.settings import AppSettings
 from test_auto_permission_review import verdict, settings as review_settings
 from test_dynamic_tools import definition
 from test_model_access import write_config
@@ -59,7 +60,7 @@ async def cached_application(monkeypatch, tmp_path, serve, *, tools=(), settings
     config['models']['root']['thinking'] = {'supported_levels': ['low'], 'default_level': 'model_default'}
     catalog = load_model_catalog(write_config(tmp_path, config))
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: catalog)
-    app = await build_async_local_application('unused', tools=list(tools), settings=settings or ToolSettings(),
+    app = await build_async_local_application('unused', tools=list(tools), settings=settings or AppSettings(),
         initial_active_tools=[spec.tool.name for spec in tools], system_prompt='ROOT', response_format=None)
     async with httpx.AsyncClient(transport=httpx.MockTransport(serve)) as transport:
         for name in catalog.model_ids:
@@ -96,7 +97,7 @@ async def test_root_child_summary_and_auto_use_own_model_defaults(monkeypatch, t
         if len(results) == 1:
             return completion_response(body, call=('subagent', {'agent': 'tester', 'task': 'CHECK'}, 'delegate'))
         return completion_response(body, text='older details ' * 500)
-    options = ToolSettings(permissions=review_settings().permissions, subagents=(role(model_id='child'),))
+    options = AppSettings(permissions=review_settings().permissions, subagents=(role(model_id='child'),))
     async with cached_application(monkeypatch, tmp_path, serve, settings=options,
                                   tools=[definition(calls=effects, approved=True), create_subagent_tool()]) as (app, catalog):
         defaults = {name: deepcopy(catalog.get(name).model_kwargs) for name in catalog.model_ids}
@@ -202,7 +203,7 @@ async def test_responses_sdk_stream_and_tool_binding_keep_constructor_defaults(t
     config['models']['gateway'].update(api='responses', profile={
         'prompt_cache': {'protocol': protocol, 'retentions': retentions}}, request={'sdk_max_retries': 0})
     catalog = load_model_catalog(write_config(tmp_path, config))
-    catalog._prepare_async_clients()
+    catalog.prepare_async_clients()
     sent = []
     def serve(request):
         sent.append(json.loads(request.content))

@@ -161,9 +161,10 @@ async def test_invalid_initial_registry_precedes_model_and_storage_acquisition(m
 
 
 def test_builtin_collection_has_real_schemas_settings_and_capability_declarations():
-    from naiyue_test_agent.tools import create_builtin_tools, ToolSettings
-    settings = ToolSettings.model_validate({'tools': {'ls': {'default_limit': 2}}})
-    specs = create_builtin_tools(settings)
+    from naiyue_test_agent.tools import create_builtin_tools
+    from naiyue_test_agent.settings import AppSettings
+    settings = AppSettings.model_validate({'tools': {'ls': {'default_limit': 2}}})
+    specs = create_builtin_tools(settings.tools, process_settings=settings.process, output_settings=settings.tool_output, progress_settings=settings.progress)
     assert [spec.tool.name for spec in specs] == ['read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent']
     assert [spec.execution_mode for spec in specs] == ['parallel'] * 4 + ['sequential'] * 4 + ['parallel']
     assert [spec.side_effects for spec in specs] == ['read_only'] * 4 + ['may_mutate'] * 4 + ['unknown']

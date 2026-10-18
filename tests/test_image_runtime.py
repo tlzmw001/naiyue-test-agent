@@ -11,7 +11,8 @@ from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.model_access.messages import MODEL_INPUT_METADATA_KEY
-from naiyue_test_agent.tools import ToolSettings, create_session_read_tool
+from naiyue_test_agent.tools import create_session_read_tool
+from naiyue_test_agent.settings import AppSettings
 from test_async_application import StreamingToolModel
 from test_edit_tool import RecordingFake
 from test_read_images import png_bytes
@@ -31,7 +32,7 @@ async def test_image_runtime_and_sqlite_reopen_keep_pixels_without_carriers(monk
     model = StreamingToolModel(replies=replies, **options) if native_model else RecordingFake(responses=replies, **options)
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     database = tmp_path / 'images.sqlite'
-    arguments = dict(tools=[create_session_read_tool()], settings=ToolSettings(), system_prompt='', response_format=None)
+    arguments = dict(tools=[create_session_read_tool()], settings=AppSettings(), system_prompt='', response_format=None)
     async def scenario():
         async with open_async_persistent_application('synthetic', database_path=database, **arguments) as app:
             sid = await app.acreate_workspace_session('A', tmp_path)
@@ -60,7 +61,7 @@ async def test_switching_to_vision_model_uses_saved_pixels_without_reading_again
                            metadata={MODEL_INPUT_METADATA_KEY: {'api': 'chat_completions'}})
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': first, 'B': second}))
     app = await build_application('synthetic', tools=[create_session_read_tool()],
-        settings=ToolSettings(), system_prompt='', response_format=None)
+        settings=AppSettings(), system_prompt='', response_format=None)
     sid = await app.acreate_workspace_session('A', tmp_path)
     result = await app.arun(sid, [('user', 'inspect')])
     pixels = next(m for m in result['messages'] if isinstance(m, ToolMessage)).content[-1]['base64']
@@ -111,7 +112,7 @@ async def test_image_approval_resumes_once_without_decoder_before_approval(monke
     model = RecordingFake(responses=[read_call(str(outside)), AIMessage(content='done')], profile={'image_inputs': True})
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     app = await build_application('synthetic', tools=[create_session_read_tool()],
-        settings=ToolSettings(), system_prompt='', response_format=None)
+        settings=AppSettings(), system_prompt='', response_format=None)
     sid = await app.acreate_workspace_session('A', root)
     entered, real_read = [], module.read_image
     def read(*args, **kwargs):

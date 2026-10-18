@@ -41,7 +41,7 @@ def test_stop_during_approval_hook_finishes_without_executing_tool(monkeypatch, 
             result_message = next(m for m in result['messages'] if isinstance(m, ToolMessage))
             assert result_message.status == 'error' and 'user stopped' in result_message.content
             snapshot = await app._agent.aget_state({'configurable': {
-                'thread_id': app._sessions.get_thread_id(session)}})
+                'thread_id': app._sessions.require(session).get_thread_id()}})
             assert not snapshot.next and not any(t.interrupts for t in snapshot.tasks)
         finally:
             release.set()

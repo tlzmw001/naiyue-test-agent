@@ -28,10 +28,10 @@ def test_new_and_restored_sessions_share_methods_but_not_configuration():
     a, b = service._sessions[first], service._sessions['saved']
     assert isinstance(a, AgentSession) and type(a) is type(b)
     assert type(a).select_model is type(b).select_model
-    service.select_model(first, 'B')
+    service.require(first).select_model('B')
     assert a.resolve_model()[0] == 'B' and b.resolve_model()[0] == 'A'
     assert service._catalog.get('B') is a.resolve_model()[1]
-    assert service.get_thread_id('saved') == 'saved-thread'
+    assert service.require('saved').get_thread_id() == 'saved-thread'
 
 
 def test_run_snapshots_and_allow_rules_do_not_leak_nested_mutation():
@@ -76,16 +76,16 @@ def test_configuration_failure_does_not_commit_memory(operation):
     service.bind_persistence(SimpleNamespace(storage=storage))
     sid, other = service.create_session('A'), service.create_session('A')
     assert isinstance(service._sessions[sid], AgentSession)
-    previous = service.describe_session(sid)
-    actions = {'model': lambda: service.select_model(sid, 'B'),
-        'thinking': lambda: service.select_thinking(sid, 'A', 'high'),
-        'tools': lambda: service.set_active_tools(sid, []),
-        'mode': lambda: service.set_permission_mode(sid, 'NoAsk')}
+    previous = service.require(sid).describe_session()
+    actions = {'model': lambda: service.require(sid).select_model('B'),
+        'thinking': lambda: service.require(sid).select_thinking('A', 'high'),
+        'tools': lambda: service.require(sid).set_active_tools([]),
+        'mode': lambda: service.require(sid).set_permission_mode('NoAsk')}
     with pytest.raises(OSError) as caught:
         actions[operation]()
     assert caught.value is failure and len(writes) == 1
-    assert service.describe_session(sid) == previous
-    assert service.describe_session(other)['model_id'] == 'A'
+    assert service.require(sid).describe_session() == previous
+    assert service.require(other).describe_session()['model_id'] == 'A'
 
 
 def test_configuration_io_leaves_state_lock_available_until_commit():
@@ -99,15 +99,15 @@ def test_configuration_io_leaves_state_lock_available_until_commit():
     sid = service.create_session('A')
     assert isinstance(service._sessions[sid], AgentSession)
     with ThreadPoolExecutor(max_workers=2) as workers:
-        selection = workers.submit(service.select_model, sid, 'B')
+        selection = workers.submit(service.require(sid).select_model, 'B')
         try:
             assert entered.wait(5)
-            reading = workers.submit(service.describe_session, sid)
+            reading = workers.submit(service.require(sid).describe_session)
             assert reading.result(timeout=5)['model_id'] == 'A'
         finally:
             release.set()
         selection.result(timeout=5)
-    assert service.describe_session(sid)['model_id'] == 'B'
+    assert service.require(sid).describe_session()['model_id'] == 'B'
 
 
 def test_duplicate_admission_is_atomic_and_stale_transitions_are_rejected():
@@ -134,7 +134,7 @@ def test_duplicate_admission_is_atomic_and_stale_transitions_are_rejected():
                        lambda: a.freeze_run_resources('stale', [], None)):
         with pytest.raises(SessionBusyError):
             transition()
-    assert service.describe_session(sid)['run_id'] == rid
+    assert service.require(sid).describe_session()['run_id'] == rid
 
 
 def test_closing_controls_keeps_busy_until_persistent_finish_releases_it():
@@ -145,13 +145,13 @@ def test_closing_controls_keeps_busy_until_persistent_finish_releases_it():
     a, observation_run = service._admit(sid, 'run-a', 'message')
     rid, observation = observation_run.run_id, observation_run.observation
     assert isinstance(a, AgentSession)
-    service.steer(sid, 'steering')
-    service.follow_up(sid, 'follow-up')
+    service.require(sid).steer('steering')
+    service.require(sid).follow_up('follow-up')
     assert a._cleanup_run(observation_run) is False
     assert a.is_busy() and a._run is observation_run and not observation_run.controls_open
     assert service.drain_steering(sid) == []
     a.release_run(observation_run)
-    assert not a.is_busy() and service.describe_session(sid)['run_id'] is None
+    assert not a.is_busy() and service.require(sid).describe_session()['run_id'] is None
 
 
 def test_invalid_resume_does_not_start_a_run_or_remember_allow():

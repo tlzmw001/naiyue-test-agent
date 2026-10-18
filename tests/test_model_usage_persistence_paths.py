@@ -20,8 +20,8 @@ async def test_application_saves_before_return_reopens_and_cleans_subscription(m
         before = rows(app._storage)
         assert len(before) == 1 and before[0]['input_tokens'] == 100
         assert before[0]['session_id'] == sid and before[0]['status'] == 'returned'
-        assert not app._sessions.describe_session(sid)['busy']
-        sink = app._persistence._usage
+        assert not app._sessions.require(sid).describe_session()['busy']
+        sink = app._usage
     assert sink._task.done() and app._sessions._events._handlers == {}
     async with build(monkeypatch, path) as reopened:
         assert rows(reopened._storage) == before
@@ -54,7 +54,8 @@ async def test_usage_save_failure_preserves_result_or_original_error(monkeypatch
 async def test_native_root_child_summary_and_same_model_auto_are_saved_once(monkeypatch, tmp_path):
     import json
     from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-    from naiyue_test_agent.tools import ToolSettings, create_subagent_tool
+    from naiyue_test_agent.tools import create_subagent_tool
+    from naiyue_test_agent.settings import AppSettings
     from test_prompt_cache_call_paths import cached_application, completion_response
     from test_auto_permission_review import settings as review_settings, verdict
     from test_dynamic_tools import definition
@@ -78,7 +79,7 @@ async def test_native_root_child_summary_and_same_model_auto_are_saved_once(monk
         if len(results) == 1:
             return completion_response(body, call=('subagent', {'agent': 'tester', 'task': 'CHECK'}, 'delegate'))
         return completion_response(body, text='older details ' * 500)
-    options = ToolSettings(permissions=review_settings(fast_model_id='root', detailed_model_id='root').permissions,
+    options = AppSettings(permissions=review_settings(fast_model_id='root', detailed_model_id='root').permissions,
                            subagents=(role(model_id='child'),))
     tools = [definition(calls=effects, approved=True), create_subagent_tool()]
     # Reuse the existing offline native catalog/transport; both production

@@ -13,7 +13,7 @@ from naiyue_test_agent.application.async_application import build_async_local_ap
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.application.errors import SessionBusyError
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools.settings import ToolSettings, load_tool_settings
+from naiyue_test_agent.settings import AppSettings, load_settings
 from test_async_application import StreamingToolModel
 
 
@@ -41,7 +41,7 @@ async def concurrent_app(monkeypatch, path=None, *, settings=None, model=None, t
     model = model if model is not None else SessionModel(replies=[])
     models = {'A': model, **({'B': child} if child is not None else {})}
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', models))
-    kwargs = dict(tools=list(tools), system_prompt='', response_format=None, settings=settings or ToolSettings())
+    kwargs = dict(tools=list(tools), system_prompt='', response_format=None, settings=settings or AppSettings())
     if path is not None:
         async with open_async_persistent_application('unused', database_path=path, **kwargs) as app:
             yield app, model
@@ -68,25 +68,25 @@ async def drain(tasks, model):
 def test_invalid_capacity_falls_back_without_losing_permissions(tmp_path, caplog, raw):
     path = tmp_path / 'settings.toml'
     path.write_text(f'max_active_runs={raw}\n[permissions]\ndeny=[{{tool="read",path="/private/**"}}]\n')
-    settings = load_tool_settings(path)
+    settings = load_settings(path)
     assert settings.max_active_runs == 10 and len(settings.permissions.deny) == 1
     assert sum(r.message == 'max_active_runs_fallback reason=invalid' for r in caplog.records) == 1
     assert 'PRIVATE' not in caplog.text
 
 
 def test_capacity_configuration_defaults_validation_and_permission_failure(tmp_path):
-    assert ToolSettings().max_active_runs == load_tool_settings(tmp_path / 'missing').max_active_runs == 10
+    assert AppSettings().max_active_runs == load_settings(tmp_path / 'missing').max_active_runs == 10
     path = tmp_path / 'settings.toml'
     path.write_text('max_active_runs=2\n')
-    assert load_tool_settings(path).max_active_runs == 2
+    assert load_settings(path).max_active_runs == 2
     for invalid in (0, -1, True, 1.5, '2'):
         with pytest.raises(ValidationError):
-            ToolSettings(max_active_runs=invalid)
+            AppSettings(max_active_runs=invalid)
         with pytest.raises(ValueError):
             application.SessionService(ModelCatalog('A', {'A': SessionModel(replies=[])}), max_active_runs=invalid)
     path.write_text('max_active_runs=0\n[permissions]\nmode="invalid"\n')
     with pytest.raises(ValueError):
-        load_tool_settings(path)
+        load_settings(path)
 
 
 @pytest.mark.parametrize('persistent', [False, True])
@@ -94,7 +94,7 @@ def test_capacity_configuration_defaults_validation_and_permission_failure(tmp_p
 @async_test
 async def test_capacity_is_atomic_and_rejection_has_no_run_effects(monkeypatch, tmp_path, persistent, limit):
     from naiyue_test_agent.application import RunCapacityExceededError
-    settings = ToolSettings() if limit is None else ToolSettings(max_active_runs=limit)
+    settings = AppSettings() if limit is None else AppSettings(max_active_runs=limit)
     count = limit or 10
     async with concurrent_app(monkeypatch, tmp_path / 'state.sqlite' if persistent else None,
                               settings=settings) as (app, model):
@@ -107,7 +107,7 @@ async def test_capacity_is_atomic_and_rejection_has_no_run_effects(monkeypatch, 
                 task = asyncio.create_task(app.arun(sid, [('user', sid)]))
                 tasks.append(task)
                 await asyncio.wait_for(entered.wait(), 5)
-            assert all(app._sessions.describe_session(sid)['busy'] for sid in ids[:-1])
+            assert all(app._sessions.require(sid).describe_session()['busy'] for sid in ids[:-1])
             if persistent:
                 assert set(app._persistence._active) == set(ids[:-1])
             with pytest.raises(SessionBusyError):
@@ -117,8 +117,8 @@ async def test_capacity_is_atomic_and_rejection_has_no_run_effects(monkeypatch, 
             with pytest.raises(RunCapacityExceededError):
                 await app.acompact_context(ids[-1])
             assert ids[-1] not in model.requests and not any(e.session_id == ids[-1] for e in events)
-            assert not app._sessions.describe_session(ids[-1])['busy']
-            snapshot = await app._agent.aget_state({'configurable': {'thread_id': app._sessions.get_thread_id(ids[-1])}})
+            assert not app._sessions.require(ids[-1]).describe_session()['busy']
+            snapshot = await app._agent.aget_state({'configurable': {'thread_id': app._sessions.require(ids[-1]).get_thread_id()}})
             assert not snapshot.values and not snapshot.config['configurable'].get('checkpoint_id')
             if persistent:
                 assert app._storage.get(ids[-1])['run_id'] is None
@@ -157,7 +157,7 @@ async def test_active_compaction_consumes_capacity_until_its_finish(monkeypatch,
             await release.wait()
         return await original(self, messages)
     async with concurrent_app(monkeypatch, tmp_path / 'state.sqlite', model=model,
-                              settings=ToolSettings(max_active_runs=1)) as (app, _):
+                              settings=AppSettings(max_active_runs=1)) as (app, _):
         a, b = [await app.acreate_session('A') for _ in range(2)]
         await app.arun(a, [('user', 'old task')])
         await app.arun(a, [('user', 'recent task')])
@@ -170,7 +170,7 @@ async def test_active_compaction_consumes_capacity_until_its_finish(monkeypatch,
                 await app.arun(b, [('user', 'not started')])
             release.set()
             assert (await task)['compaction_status'] == 'applied'
-            assert app._persistence._active == {} and not app._sessions.describe_session(a)['busy']
+            assert app._persistence._active == {} and not app._sessions.require(a).describe_session()['busy']
             model.replies.append(AIMessage(content='new task'))
             assert (await app.arun(b, [('user', 'start after compaction')]))['messages'][-1].content == 'new task'
             assert len(model.seen) == 4

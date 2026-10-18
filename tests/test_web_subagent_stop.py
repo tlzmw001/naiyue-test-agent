@@ -3,7 +3,7 @@
 import asyncio
 from uuid import uuid4
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from test_async_application import call
 from test_subagent_execution import ChildModel, role
 from test_web_api import web_client, request
@@ -22,7 +22,7 @@ def test_http_stop_only_a_while_b_waits_in_model_and_reject_stale_child_approval
             if any(isinstance(m, HumanMessage) and m.content == 'B' for m in messages):
                 entered.set(); await release.wait()
         model.on_request = hold_b
-        runtime = ToolSettings(subagents=(role(model_id=None, tool_names=('read',)),))
+        runtime = AppSettings(subagents=(role(model_id=None, tool_names=('read',)),))
         async with web_client(monkeypatch, tmp_path, model, workspace_root=workspace, runtime_settings=runtime) as (client, web):
             app = web.state.service.application
             app.subscribe_events(lambda event: notified.set() if event.source and event.event_type == 'approval_requested' else None)

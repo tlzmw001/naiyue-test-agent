@@ -13,7 +13,7 @@ from langchain_openai import ChatOpenAI
 
 from naiyue_test_agent import application
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools.settings import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from scripts import provider_acceptance_budget as limits
 
 
@@ -29,7 +29,7 @@ def install_transport(monkeypatch, *, extra_tool=False):
     catalog = ModelCatalog('main', {'main': model})
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: catalog)
     monkeypatch.setattr('naiyue_test_agent.model_access.load_model_catalog', lambda _: catalog)
-    monkeypatch.setattr(application, 'load_tool_settings', ToolSettings)
+    monkeypatch.setattr(application, 'load_settings', AppSettings)
     monkeypatch.setenv('LANGSMITH_TRACING', 'false')
     monkeypatch.setenv('LANGCHAIN_TRACING_V2', 'false')
     original = limits.guard_catalog

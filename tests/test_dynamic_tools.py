@@ -14,7 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_application import build_async_local_application
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import ToolSpec, ToolSettings, create_builtin_tools
+from naiyue_test_agent.tools import ToolSpec, create_builtin_tools
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.permissions import ToolPermission, require_tool_permit
 from naiyue_test_agent.tools.schemas import build_tool_schemas
 
@@ -215,7 +216,7 @@ async def test_tool_prompt_guidelines_and_project_instructions_compose_once(monk
 
 
 def test_builtin_catalog_includes_bash_without_a_special_flag():
-    specs = create_builtin_tools(ToolSettings())
+    specs = create_builtin_tools(AppSettings().tools)
     assert [spec.tool.name for spec in specs] == ['read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent']
 
 

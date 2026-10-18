@@ -17,7 +17,7 @@ def test_catalog_closes_shared_sdk_clients_once(monkeypatch):
     async def scenario():
         model = ChatOpenAI(model='synthetic', api_key='synthetic-test-key', base_url='https://example.invalid')
         catalog = ModelCatalog('A', {'A': model, 'B': model})
-        catalog._prepare_async_clients()
+        catalog.prepare_async_clients()
         counts = []
         sync_close, async_close = model.root_client._client.close, model.root_async_client._client.aclose
 

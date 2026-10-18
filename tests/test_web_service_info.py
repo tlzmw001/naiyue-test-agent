@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.web.service import WebService
 from test_async_application import StreamingToolModel
 from test_web_api import web_client
@@ -18,7 +18,7 @@ def test_service_info_reads_binding_without_session_or_model_access(monkeypatch,
         workspace = tmp_path / '项目与代码'
         workspace.mkdir()
         model = StreamingToolModel(replies=[])
-        async with web_client(monkeypatch, tmp_path, model, runtime_settings=ToolSettings(),
+        async with web_client(monkeypatch, tmp_path, model, runtime_settings=AppSettings(),
                               workspace_root=workspace if bound else None) as (client, web):
             service = web.state.service
             original = service.application
@@ -38,7 +38,7 @@ def test_service_info_reads_binding_without_session_or_model_access(monkeypatch,
 def test_service_info_retains_auth_host_and_origin_checks(monkeypatch, tmp_path):
     async def scenario():
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]),
-                              runtime_settings=ToolSettings(), workspace_root=tmp_path) as (client, _):
+                              runtime_settings=AppSettings(), workspace_root=tmp_path) as (client, _):
             for headers, status in [({'Authorization': ''}, 401),
                                     ({'Host': 'untrusted.example'}, 403),
                                     ({'Origin': 'https://untrusted.example'}, 403)]:
@@ -55,7 +55,7 @@ def test_service_info_uses_canonical_startup_binding(monkeypatch, tmp_path):
         workspace.mkdir()
         given = workspace / '..' / workspace.name
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]),
-                              runtime_settings=ToolSettings(), workspace_root=given) as (client, _):
+                              runtime_settings=AppSettings(), workspace_root=given) as (client, _):
             assert (await client.get('/api/service')).json() == {
                 'workspace_root': str(workspace.resolve()), 'workspace_label': workspace.name}
     asyncio.run(scenario())

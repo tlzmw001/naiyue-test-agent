@@ -63,14 +63,14 @@ def test_parallel_fatal_waits_for_other_started_tool_before_terminal(monkeypatch
             # The peer is held by an Event; this is a liveness deadline, not a timing race.
             with pytest.raises(TimeoutError):
                 await asyncio.wait_for(asyncio.shield(task), 1)
-            assert app._sessions.describe_session(session)['busy']
+            assert app._sessions.require(session).describe_session()['busy']
             assert not any(e.event_type == 'run_finished' for e in events)
             release.set()
             with pytest.raises(RuntimeError) as caught:
                 await task
             assert caught.value is original and settled.is_set()
             assert events[-1].data.status == 'failed'
-            assert app._sessions.describe_session(session)['manual_review_required']
+            assert app._sessions.require(session).describe_session()['manual_review_required']
         finally:
             release.set()
             await asyncio.gather(task, return_exceptions=True)

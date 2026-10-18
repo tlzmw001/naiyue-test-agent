@@ -105,7 +105,7 @@ class ModelCatalog:
         from .catalog_lifecycle import aclose_models
         await aclose_models(self._owned_http_clients)
 
-    def _prepare_async_clients(self):
+    def prepare_async_clients(self):
         from .catalog_lifecycle import prepare_owned_clients
         if not self._owned_http_clients:
             prepare_owned_clients(self._models.values(), self._owned_http_clients)

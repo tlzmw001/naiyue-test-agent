@@ -126,7 +126,7 @@ def test_application_final_save_settles_before_repeated_cancellation_escapes(mon
         def observe(event):
             if event.event_type == 'run_finished':
                 order.append('finished')
-                terminal.append((event.data.status, sessions.describe_session(sid)['busy']))
+                terminal.append((event.data.status, sessions.require(sid).describe_session()['busy']))
         sessions.subscribe_events(observe)
         task = asyncio.create_task(sessions.arun(object(), sid, [('user', 'run')]))
         try:
@@ -137,7 +137,7 @@ def test_application_final_save_settles_before_repeated_cancellation_escapes(mon
             delivered = asyncio.get_running_loop().create_future()
             asyncio.get_running_loop().call_soon(delivered.set_result, None)
             await delivered
-            assert sessions.describe_session(sid)['busy'] and terminal == []
+            assert sessions.require(sid).describe_session()['busy'] and terminal == []
             task.cancel('later cancellation')
             release.set()
             with pytest.raises(asyncio.CancelledError) as caught:
@@ -145,7 +145,7 @@ def test_application_final_save_settles_before_repeated_cancellation_escapes(mon
             assert caught.value.args == ('cancel while saving',)
             assert order == ['start', 'execute', 'save_failed' if write_fails else 'saved', 'finished']
             assert terminal == [('failed' if write_fails else 'completed', False)]
-            assert not sessions.describe_session(sid)['busy']
+            assert not sessions.require(sid).describe_session()['busy']
             if write_fails:
                 assert 'drained_operation_failed' in caplog.text
         finally:
@@ -184,8 +184,8 @@ def test_tool_body_interrupt_is_not_mistaken_for_pre_tool_approval(monkeypatch):
             with pytest.raises(AttributeError):
                 await app.arun(sid, [('user', 'run')])
             assert effects == ['effect']
-            assert app._sessions.describe_session(sid)['manual_review_required']
-            assert not app._sessions.describe_session(sid)['busy']
+            assert app._sessions.require(sid).describe_session()['manual_review_required']
+            assert not app._sessions.require(sid).describe_session()['busy']
             with pytest.raises(application.SessionManualReviewRequiredError):
                 await app.arun(sid, [('user', 'retry')])
             assert effects == ['effect']

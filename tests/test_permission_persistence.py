@@ -11,7 +11,8 @@ from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import ToolSettings, create_session_read_tool
+from naiyue_test_agent.tools import create_session_read_tool
+from naiyue_test_agent.settings import AppSettings
 from test_dynamic_tools import DynamicModel, definition
 from test_permission_pipeline import call
 
@@ -20,7 +21,7 @@ def persistent(monkeypatch, storage, replies):
     model = DynamicModel(responses=replies)
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     return open_async_persistent_application('synthetic', database_path=storage, tools=[create_session_read_tool()],
-        settings=ToolSettings(), system_prompt='', response_format=None)
+        settings=AppSettings(), system_prompt='', response_format=None)
 
 
 @async_test
@@ -41,7 +42,7 @@ async def test_mode_persists_but_remembered_target_does_not(monkeypatch, tmp_pat
         await app.arestore_session(sid)
         assert app.get_permission_mode(sid) == 'NoAsk'
         assert app._sessions.resolve_permission_context(sid)['session_allow'] == []
-        assert app._sessions.describe_session(sid)['permission_mode'] == 'NoAsk'
+        assert app._sessions.require(sid).describe_session()['permission_mode'] == 'NoAsk'
 
 
 @async_test
@@ -84,7 +85,7 @@ def test_v2_database_is_rejected_without_migration(tmp_path):
 async def test_unknown_rule_stops_before_loading_model_catalog(monkeypatch):
     reached = []
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: reached.append(True))
-    settings = ToolSettings.model_validate({'permissions': {'deny': [{'tool': 'missing'}]}})
+    settings = AppSettings.model_validate({'permissions': {'deny': [{'tool': 'missing'}]}})
     with pytest.raises(ValueError, match='unknown tool'):
         await build_application('synthetic', tools=[create_session_read_tool()],
             settings=settings, system_prompt='', response_format=None)
@@ -98,7 +99,7 @@ async def test_dynamic_registration_validates_wildcard_rule_before_publishing(mo
     from naiyue_test_agent.tools.permissions import ToolPermission
     model = DynamicModel(responses=[])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
-    settings = ToolSettings.model_validate({'permissions': {'allow': [{'tool': '*', 'args': {'value': 'ok'}}]}})
+    settings = AppSettings.model_validate({'permissions': {'allow': [{'tool': '*', 'args': {'value': 'ok'}}]}})
     app = await build_application('synthetic', tools=[definition()], settings=settings,
         system_prompt='', response_format=None)
     @tool

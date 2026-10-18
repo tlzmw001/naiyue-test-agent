@@ -61,7 +61,7 @@ def test_public_stream_preserves_final_arguments_and_usage(monkeypatch, tmp_path
 
     async def run():
         catalog = configured(tmp_path)
-        catalog._prepare_async_clients()
+        catalog.prepare_async_clients()
         model = catalog.get('test')
         original = model.root_async_client
         model.include_response_headers = headers

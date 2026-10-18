@@ -8,7 +8,8 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
-from naiyue_test_agent.tools import create_builtin_tools, ToolSettings
+from naiyue_test_agent.tools import create_builtin_tools
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.permissions import (
     FilePermission, ToolPermission, OneUseApprovalGrants, PermissionMechanismError,
 )
@@ -38,7 +39,7 @@ async def test_file_and_directory_aliases_use_real_target_without_replacing_link
         args['content'] = 'after'
     elif tool_name == 'edit':
         args['edits'] = [{'oldText': 'before', 'newText': 'after'}]
-    spec = next(s for s in create_builtin_tools(ToolSettings()) if s.tool.name == tool_name)
+    spec = next(s for s in create_builtin_tools(AppSettings().tools) if s.tool.name == tool_name)
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[{'name': tool_name, 'args': args, 'id': 'op'}]), AIMessage(content='done')])
     app = await build(monkeypatch, model, [spec])
     sid = await app.acreate_workspace_session('A', root)
@@ -60,7 +61,7 @@ async def test_directory_permission_still_filters_denied_and_unapproved_private_
     for filename, body in [('ordinary.txt', 'NEEDLE_OK'), ('denied.txt', 'NEEDLE_DENIED'),
                            ('.private', 'NEEDLE_PRIVATE'), ('secret.key', 'NEEDLE_KEY')]:
         (directory / filename).write_text(body)
-    spec = next(s for s in create_builtin_tools(ToolSettings()) if s.tool.name == name)
+    spec = next(s for s in create_builtin_tools(AppSettings().tools) if s.tool.name == name)
     options = {'deny': [{'tool': name, 'path': str(directory / 'denied.txt')}]}
     if explicit_allow:
         options['allow'] = [{'tool': name, 'path': str(directory) + '/**'}]

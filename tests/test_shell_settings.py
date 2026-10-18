@@ -7,21 +7,22 @@ from pydantic import ValidationError
 
 
 def test_shell_defaults_and_configured_schema(tmp_path):
-    from naiyue_test_agent.tools import ToolSettings, load_tool_settings, create_builtin_tools
+    from naiyue_test_agent.tools import create_builtin_tools
+    from naiyue_test_agent.settings import AppSettings, load_settings
     path = tmp_path / 'settings.toml'
     path.write_text('[tools.bash]\nmax_command_chars=20\nprobe_timeout_seconds=1\n'
                     '[tools.bash.environment]\nunset_env=["PRIVATE"]\n'
                     'path_prepend=["/tools"]\n[tools.bash.environment.values]\nTEST="yes"\n'
                     '[tool_output]\nmax_workspace_archive_bytes=10000\n')
-    settings = load_tool_settings(path)
+    settings = load_settings(path)
     assert settings.tools.bash.environment.values == {'TEST': 'yes'}
     assert settings.tool_output.max_workspace_archive_bytes == 10000
-    defaults = ToolSettings()
+    defaults = AppSettings()
     assert defaults.tools.bash.max_output_lines == 2000
     assert defaults.tools.bash.max_output_bytes == 65536
     assert defaults.tools.powershell.execution_policy == 'inherit'
     assert defaults.tools.bash.environment.unset_env == ['BASH_ENV', 'NAIYUE_WEB_TOKEN']
-    specs = {s.tool.name: s for s in create_builtin_tools(settings)}
+    specs = {s.tool.name: s for s in create_builtin_tools(settings.tools, process_settings=settings.process, output_settings=settings.tool_output, progress_settings=settings.progress)}
     assert set(specs) == {'read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent'}
     for name in ('bash', 'powershell'):
         spec = specs[name]
@@ -45,22 +46,22 @@ def test_shell_defaults_and_configured_schema(tmp_path):
     'environment={unset_env=["A=B"]}', 'environment={values={X="bad\u0000value"}}',
 ])
 def test_invalid_shell_budgets_fallback_keeps_permission_rules(tmp_path, caplog, entry):
-    from naiyue_test_agent.tools import ToolSettings, load_tool_settings
+    from naiyue_test_agent.settings import AppSettings, load_settings
     path = tmp_path / 'settings.toml'
     # NUL is escaped as TOML unicode so the document remains syntactically valid.
     path.write_text('[permissions]\nmode="NoAsk"\n[tools.bash]\n' + entry.replace('\0', '\\u0000'))
-    settings = load_tool_settings(path)
-    assert settings.tools == ToolSettings().tools
+    settings = load_settings(path)
+    assert settings.tools == AppSettings().tools
     assert settings.permissions.mode == 'NoAsk'
     assert 'tool_settings_fallback' in caplog.text
 
 
 def test_workspace_budget_fallback_is_independent(tmp_path, caplog):
-    from naiyue_test_agent.tools import load_tool_settings
+    from naiyue_test_agent.settings import load_settings
     path = tmp_path / 'settings.toml'
     path.write_text('[permissions]\nmode="NoAsk"\n[tools.bash]\nmax_output_bytes=32\n'
                     '[tool_output]\nmax_workspace_archive_bytes=0\n')
-    settings = load_tool_settings(path)
+    settings = load_settings(path)
     assert settings.tools.bash.max_output_bytes == 32
     assert settings.tool_output.max_workspace_archive_bytes == 134217728
     assert settings.permissions.mode == 'NoAsk'
@@ -90,10 +91,10 @@ def test_windows_environment_is_case_insensitive():
 
 
 def test_partial_environment_config_keeps_shell_specific_default_removals(tmp_path):
-    from naiyue_test_agent.tools import load_tool_settings
+    from naiyue_test_agent.settings import load_settings
     path = tmp_path / 'settings.toml'
     path.write_text('[tools.bash.environment.values]\nTEST="yes"\n'
                     '[tools.powershell.environment]\npath_prepend=["/tools"]\n')
-    settings = load_tool_settings(path)
+    settings = load_settings(path)
     assert settings.tools.bash.environment.unset_env == ['BASH_ENV', 'NAIYUE_WEB_TOKEN']
     assert settings.tools.powershell.environment.unset_env == ['NAIYUE_WEB_TOKEN']

@@ -12,7 +12,8 @@ from native_application_helpers import async_test, build_application
 from naiyue_test_agent import application, agent_runtime
 from naiyue_test_agent.agent_runtime.tool_execution.permissions import fixed_permission_context
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import SubAgentSpec, ToolSettings, create_subagent_tool
+from naiyue_test_agent.tools import SubAgentSpec, create_subagent_tool
+from naiyue_test_agent.settings import AppSettings
 from test_async_application import StreamingToolModel
 from test_dynamic_tools import definition
 from test_subagent_execution import ChildModel, record_instances
@@ -50,7 +51,7 @@ async def test_application_passes_the_same_port_to_root_and_child_assembly(monke
     root = StreamingToolModel(replies=[AIMessage(content='done')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root}))
     app = await build_application('unused', tools=[create_subagent_tool()], system_prompt='', response_format=None,
-        settings=ToolSettings(subagents=(SubAgentSpec('tester', 'Check', 'Child', ()),)))
+        settings=AppSettings(subagents=(SubAgentSpec('tester', 'Check', 'Child', ()),)))
     assert {kind for kind, _ in captured} == {'root', 'child'}
     retired = {'resolve_model', 'resolve_active_tool_names', 'resolve_permission_context',
         'drain_steering', 'is_stop_requested', 'finish_run_boundary', 'prepare_control_messages',
@@ -98,7 +99,7 @@ async def test_two_children_keep_scopes_while_root_switches_and_queues_controls(
     (tmp_path / 'AGENTS.md').write_text('PROJECT_PORT_CONSTRAINT', encoding='utf-8')
     app = await build_application('unused', tools=[create_subagent_tool(), definition()],
         initial_active_tools=['subagent'], system_prompt='ROOT_PORT_PROMPT', response_format=None,
-        settings=ToolSettings(subagents=(SubAgentSpec('tester', 'Check', 'CHILD_PORT_PROMPT', ('probe',), model_id='B'),)))
+        settings=AppSettings(subagents=(SubAgentSpec('tester', 'Check', 'CHILD_PORT_PROMPT', ('probe',), model_id='B'),)))
     instances = record_instances(monkeypatch, app)
     sid = await app.acreate_workspace_session('A', tmp_path)
     other = await app.acreate_session('A')

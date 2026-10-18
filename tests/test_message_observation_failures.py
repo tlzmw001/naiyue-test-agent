@@ -104,7 +104,7 @@ async def test_model_failure_or_control_keeps_original_and_only_observed_input(m
             pub = RunEventPublisher(sid, 'control', (events.append,))
             (await ainvoke_with_message_observation(app._agent, {'messages': [('user', 'input')]},
                 context={'session_id': sid, 'run_id': 'control', '_run_event_publisher': pub},
-                config={'configurable': {'thread_id': app._sessions.get_thread_id(sid)}}, publisher=pub))
+                config={'configurable': {'thread_id': app._sessions.require(sid).get_thread_id()}}, publisher=pub))
         else:
             await app.arun(sid, [('user', 'input')])
     assert caught.value is error

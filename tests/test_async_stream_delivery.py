@@ -25,7 +25,7 @@ def test_stream_disconnect_keeps_owned_run_and_persistence(monkeypatch, tmp_path
         async with factory(monkeypatch, tmp_path / 'sessions.sqlite', chosen) as app:
             subscriptions = app._sessions._events
             application_handlers = dict(subscriptions._handlers)
-            assert list(application_handlers.values()) == [(None, app._persistence._usage.accept), (None, app._diagnostics.accept)]
+            assert list(application_handlers.values()) == [(None, app._usage.accept), (None, app._diagnostics.accept)]
             session = await app.acreate_session('A')
             iterator = app.astream_run(session, [('user', 'start')])
             first = await iterator.__anext__()
@@ -33,7 +33,7 @@ def test_stream_disconnect_keeps_owned_run_and_persistence(monkeypatch, tmp_path
             await asyncio.wait_for(entered.wait(), 5)
             producer = next(iter(app._tasks))
             await iterator.aclose()
-            assert not producer.done() and app._sessions.describe_session(session)['busy']
+            assert not producer.done() and app._sessions.require(session).describe_session()['busy']
             release.set()
             result = await producer
             assert result['messages'][-1].content == 'saved'

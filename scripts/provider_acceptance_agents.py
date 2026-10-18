@@ -7,7 +7,8 @@ from unittest.mock import patch
 from langchain_core.messages import ToolMessage
 
 from naiyue_test_agent.agent_runtime.tool_execution.permissions import AutoPermissionReviewer
-from naiyue_test_agent.tools import ToolSettings, SubAgentSpec
+from naiyue_test_agent.tools import SubAgentSpec
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.permission_rules import PermissionSettings, AutoPermissionSettings
 from .provider_acceptance_cases import require, paired_tools, final_text, run_turn, expected_calls, single_line_read
 from .provider_acceptance_core import nonce
@@ -39,7 +40,7 @@ async def review_roles(env):
 
 async def auto_pipeline(env):
     secret, seen, diagnostics, usage = nonce(), [], [], []
-    settings = ToolSettings(permissions=PermissionSettings(mode='Auto', auto=review_settings(env)))
+    settings = AppSettings(permissions=PermissionSettings(mode='Auto', auto=review_settings(env)))
     async with env.open_app(['read', 'bash'], settings=settings) as app:
         sid = await env.session(app)
         (env.root / 'work' / 'seed.txt').write_text(secret)
@@ -77,7 +78,7 @@ async def auto_pipeline(env):
 
 
 def child_settings(env):
-    return ToolSettings(subagents=(SubAgentSpec('tester', 'Read the requested synthetic file and report its contents.',
+    return AppSettings(subagents=(SubAgentSpec('tester', 'Read the requested synthetic file and report its contents.',
         'Read exactly the path in your task once. Return only its exact file contents, excluding read pagination metadata; do not call any other tool. '
         'If refused, report the refusal and do not retry.', ('read',), model_id=env.model_id, max_model_calls=2),))
 
@@ -146,10 +147,10 @@ async def siblings(env):
                 await asyncio.sleep(0.05)
             second = remaining[0]
             require(first['agent_path'] != second['agent_path'], 'sibling_distinct_paths')
-            instance = app._sessions.subagent_status(sid, first['agent_path'])
+            instance = app._sessions.require(sid).subagent_status(first['agent_path'])
             while not instance['settled']:
                 await asyncio.sleep(0.05)
-                instance = app._sessions.subagent_status(sid, first['agent_path'])
+                instance = app._sessions.require(sid).subagent_status(first['agent_path'])
             require(instance['status'] == 'completed' and not task.done(), 'first_finishes_while_second_waits')
             require(any(batch['approval_batch_id'] == second['approval_batch_id']
                         for batch in app.pending_subagent_approvals(sid)), 'second_remains_pending')

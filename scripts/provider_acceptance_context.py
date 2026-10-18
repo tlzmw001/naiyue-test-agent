@@ -79,7 +79,7 @@ async def stop_stream(env):
         require(requested, 'stop_after_real_delta')
         terminal = [event for event in env.events if event.event_type == 'run_finished']
         require(len(terminal) == 1 and terminal[0].data.status == 'stopped', 'stream_stop_terminal')
-        require(not app._sessions.describe_session(sid)['busy'], 'stopped_owner_released')
+        require(not app._sessions.require(sid).describe_session()['busy'], 'stopped_owner_released')
     return {'active_stop': True, 'local_settle': True, 'remote_cancel_not_proven': True}
 
 

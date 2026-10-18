@@ -9,7 +9,7 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.model_access import ModelCatalog
 
@@ -25,7 +25,7 @@ async def make_app(monkeypatch, responses, *, permissions=None):
                         lambda _path: ModelCatalog('A', {'A': model}))
     return await build_application(
         Path('synthetic.json'), tools=[create_session_read_tool()],
-        system_prompt='', response_format=None, settings=ToolSettings.model_validate({'permissions': permissions or {}}),
+        system_prompt='', response_format=None, settings=AppSettings.model_validate({'permissions': permissions or {}}),
     )
 
 

@@ -14,7 +14,8 @@ from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime.context_compaction import _serialize_text_history
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import ToolSettings, create_session_edit_tool
+from naiyue_test_agent.tools import create_session_edit_tool
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools import edit as module
 from naiyue_test_agent.tools import edit_matching
 from naiyue_test_agent.web.serialization import message_view
@@ -36,7 +37,7 @@ async def test_edit_json_artifact_survives_sqlite_reopen_but_is_not_model_payloa
     model = StreamingToolModel(replies=replies) if native_model else RecordingFake(responses=replies)
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     tools, events = [create_session_edit_tool()], []
-    options = dict(tools=tools, settings=ToolSettings(), system_prompt='', response_format=None)
+    options = dict(tools=tools, settings=AppSettings(), system_prompt='', response_format=None)
     database = tmp_path / 'sessions.sqlite'
     async def scenario():
         async with open_async_persistent_application('synthetic', database_path=database, **options) as app:
@@ -126,7 +127,7 @@ async def test_approval_does_not_read_original_for_preview(monkeypatch, tmp_path
     model = RecordingFake(responses=[AIMessage(content='', tool_calls=[tool_call(str(outside))]), AIMessage(content='done')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     app = await build_application('synthetic', tools=[create_session_edit_tool()],
-        settings=ToolSettings(), system_prompt='', response_format=None)
+        settings=AppSettings(), system_prompt='', response_format=None)
     sid = await app.acreate_workspace_session('A', root)
     calls, real_scan = [], module._scan_target
     def scan(*args, **kwargs):

@@ -39,7 +39,7 @@ async def test_stage_failure_keeps_original_exception_and_cleans(monkeypatch, st
     assert terminal.status == 'failed' and terminal.failure.stage == stage
     assert terminal.failure.error_type == 'RuntimeError'
     assert terminal.failure.category == 'unknown'
-    assert not app._sessions.describe_session(session)['busy']
+    assert not app._sessions.require(session).describe_session()['busy']
     assert 'PRIVATE_' not in caplog.text + repr(received)
 
 
@@ -72,7 +72,7 @@ async def test_cleanup_failure_is_reported_without_masking_primary(monkeypatch, 
     assert caught.value is (primary if has_primary else secondary)
     assert received[-1].data.status == 'failed'
     assert received[-1].data.failure.stage == ('prepare' if has_primary else 'cleanup')
-    assert not app._sessions.describe_session(session)['busy']
+    assert not app._sessions.require(session).describe_session()['busy']
     assert 'PRIVATE_' not in caplog.text
 
 
@@ -110,7 +110,7 @@ async def test_accepted_approval_failure_is_cleaned_and_keeps_pending(monkeypatc
     assert len(received) == 4 and received[2].data.mode == 'approval_resume'
     assert received[-1].data.status == 'failed'
     assert received[-1].data.failure.stage == ('prepare' if failure_stage == 'grant' else 'execute')
-    assert not app._sessions.describe_session(session)['busy']
+    assert not app._sessions.require(session).describe_session()['busy']
     assert app.pending_tool_approvals(session) == paused['approval_requests']
 
 
@@ -131,7 +131,7 @@ async def test_process_control_is_not_converted_to_completed_or_failed(monkeypat
         await app.arun(session, [('user', 'run')])
     assert caught.value is control
     assert [e.event_type for e in received] == ['run_started']
-    assert not app._sessions.describe_session(session)['busy']
+    assert not app._sessions.require(session).describe_session()['busy']
 
 
 @pytest.mark.parametrize('diagnostic_failure', ['raises', 'invalid_codes'])
@@ -195,5 +195,5 @@ async def test_terminal_publish_fault_does_not_replace_primary(monkeypatch, capl
     with pytest.raises(RuntimeError) as caught:
         await app.arun(session, [('user', 'run')])
     assert caught.value is failure
-    assert not app._sessions.describe_session(session)['busy']
+    assert not app._sessions.require(session).describe_session()['busy']
     assert 'run_event_publish_failed' in caplog.text and 'PRIVATE_' not in caplog.text

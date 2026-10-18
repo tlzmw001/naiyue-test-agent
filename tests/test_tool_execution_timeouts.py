@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from naiyue_test_agent.tools import create_builtin_tools
 from naiyue_test_agent.tools.processes import HostProcessRunner, ProcessOutcome
 from naiyue_test_agent.tools.shell import ShellAdapter
-from naiyue_test_agent.tools.settings import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from tool_feedback_helpers import invoke_tool_feedback
 
 
@@ -20,7 +20,7 @@ def spec(request, monkeypatch):
     # Exercise the actual tool factory without requiring PowerShell on macOS.
     monkeypatch.setattr(ShellAdapter, 'resolve_executable', lambda *args, **kwargs: 'owned-shell')
     monkeypatch.setattr(ShellAdapter, 'probe_version', lambda *args: '7.4')
-    return next(item for item in create_builtin_tools(ToolSettings()) if item.tool.name == request.param)
+    return next(item for item in create_builtin_tools(AppSettings().tools) if item.tool.name == request.param)
 
 
 def args_for(spec):
@@ -89,8 +89,8 @@ async def test_invalid_timeout_is_tool_feedback_without_starting_process(spec, m
 
 
 def test_obsolete_execution_default_fields_are_absent_but_probe_cleanup_remain():
-    from naiyue_test_agent.tools.settings import ToolSettings
-    settings = ToolSettings()
+    from naiyue_test_agent.settings import AppSettings
+    settings = AppSettings()
     for shell in (settings.tools.bash, settings.tools.powershell):
         assert not hasattr(shell, 'default_timeout_seconds') and not hasattr(shell, 'max_timeout_seconds')
         assert shell.probe_timeout_seconds > 0
@@ -103,11 +103,11 @@ def test_obsolete_execution_default_fields_are_absent_but_probe_cleanup_remain()
     ('bash', 'max_timeout_seconds'), ('powershell', 'default_timeout_seconds'),
     ('powershell', 'max_timeout_seconds'), ('grep', 'timeout_seconds'), ('find', 'timeout_seconds')])
 def test_old_timeout_config_keys_are_rejected_without_compatibility_read(tmp_path, caplog, section, key):
-    from naiyue_test_agent.tools.settings import load_tool_settings
+    from naiyue_test_agent.settings import load_settings
     path = tmp_path / 'settings.toml'
     path.write_text(f'[permissions]\nmode="NoAsk"\n[tools.{section}]\n{key}=600\n')
-    loaded = load_tool_settings(path)
-    assert loaded.tools == ToolSettings().tools and loaded.permissions.mode == 'NoAsk'
+    loaded = load_settings(path)
+    assert loaded.tools == AppSettings().tools and loaded.permissions.mode == 'NoAsk'
     assert 'tool_settings_fallback' in caplog.text
 
 

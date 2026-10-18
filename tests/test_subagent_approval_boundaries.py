@@ -10,7 +10,8 @@ from native_application_helpers import async_test, build_application
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import ToolSettings, create_subagent_tool
+from naiyue_test_agent.tools import create_subagent_tool
+from naiyue_test_agent.settings import AppSettings
 from test_async_application import StreamingToolModel, call
 from test_auto_permission_review import model as review_model, verdict
 from test_dynamic_tools import definition
@@ -27,7 +28,7 @@ async def test_auto_runs_once_before_pause_with_original_human_input(monkeypatch
     fast, detail = review_model([verdict('ask')]), review_model([verdict('ask')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {
         'A': root, 'B': child, 'fast': fast, 'detail': detail}))
-    settings = ToolSettings(subagents=(role(),), permissions={'mode': 'Auto', 'auto': {
+    settings = AppSettings(subagents=(role(),), permissions={'mode': 'Auto', 'auto': {
         'fast_model_id': 'fast', 'detailed_model_id': 'detail'}})
     app = await build_application('unused', tools=[create_subagent_tool(), definition(calls=effects, approved=True)],
         initial_active_tools=['subagent'], system_prompt='', response_format=None, settings=settings)
@@ -56,7 +57,7 @@ async def test_sqlite_child_approval_resumes_original_thread_and_parent_saves_re
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
     async with open_async_persistent_application('unused', database_path=tmp_path / 'state.sqlite',
             tools=[create_subagent_tool(), definition(calls=effects, approved=True)], initial_active_tools=['subagent'],
-            system_prompt='', response_format=None, settings=ToolSettings(subagents=(role(max_model_calls=2),))) as app:
+            system_prompt='', response_format=None, settings=AppSettings(subagents=(role(max_model_calls=2),))) as app:
         queue = approval_notifications(monkeypatch, app)
         instances = record_instances(monkeypatch, app)
         sid = await app.acreate_session('A')
@@ -100,7 +101,7 @@ async def test_external_cancel_invalidates_pending_and_releases_all_owned_waiter
         assert pending.status == 'invalidated' and pending.future.result() == ([], None) and driver.done()
         assert instance['control'].reason == 'failure' and instance['status'] == 'stopped'
         assert effects == [] and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
-        assert app.pending_subagent_approvals(sid) == [] and not app._sessions.describe_session(sid)['busy']
+        assert app.pending_subagent_approvals(sid) == [] and not app._sessions.require(sid).describe_session()['busy']
         with pytest.raises(ValueError):
             await submit(app, sid, batch)
     finally:
@@ -125,7 +126,7 @@ def test_cli_bridge_submits_live_child_without_joining_root_worker(monkeypatch):
     monkeypatch.setattr(AgentSessionApproval, 'register_live_approval', note)
     cli = build_local_application('unused', tools=[create_subagent_tool(), definition(approved=True)],
         initial_active_tools=['subagent'], system_prompt='', response_format=None,
-        settings=ToolSettings(subagents=(role(),)))
+        settings=AppSettings(subagents=(role(),)))
     gate = cli._submit(asyncio.Event)
     async def hold_root_final(_messages):
         if len(root.seen) == 1:

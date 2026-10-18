@@ -16,8 +16,8 @@ from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.application.session_storage import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import (SubAgentSpec, ToolSettings, create_subagent_tool,
-                                    create_session_read_tool, create_session_write_tool)
+from naiyue_test_agent.tools import SubAgentSpec, create_subagent_tool, create_session_read_tool, create_session_write_tool
+from naiyue_test_agent.settings import AppSettings
 from test_async_application import StreamingToolModel, call
 from test_subagent_execution import ChildModel, record_instances
 
@@ -25,7 +25,7 @@ from test_subagent_execution import ChildModel, record_instances
 def options(folder):
     return dict(database_path=folder / 'state.sqlite', tools=[create_subagent_tool(),
         create_session_read_tool(), create_session_write_tool()], initial_active_tools=['subagent'],
-        system_prompt='', response_format=None, settings=ToolSettings(subagents=(
+        system_prompt='', response_format=None, settings=AppSettings(subagents=(
             SubAgentSpec('worker', 'Inspect or write the requested file', 'Report the result.',
                          ('read', 'write'), model_id='B'),)))
 

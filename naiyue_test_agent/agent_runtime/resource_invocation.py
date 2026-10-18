@@ -24,15 +24,17 @@ def _check_resources(workspace_root, read_resource_roots):
 
 
 async def ainvoke_agent_run_with_resources(agent, messages, *, session_id, thread_id, run_id,
-                                         workspace_root, read_resource_roots, max_concurrency=4):
+                                         workspace_root, read_resource_roots, max_concurrency=4, durability=None):
     _check_resources(workspace_root, read_resource_roots)
     return await ainvoke_agent_run(agent, messages, session_id=session_id, thread_id=thread_id, run_id=run_id,
-        workspace_root=workspace_root, read_resource_roots=read_resource_roots, max_concurrency=max_concurrency)
+        workspace_root=workspace_root, read_resource_roots=read_resource_roots, max_concurrency=max_concurrency,
+        **({'durability': durability} if durability is not None else {}))
 
 
 async def aresume_agent_run_with_resources(agent, *, session_id, thread_id, run_id, workspace_root,
-                                         read_resource_roots, decisions, approval_grants, max_concurrency=4):
+                                         read_resource_roots, decisions, approval_grants, max_concurrency=4, durability=None):
     _check_resources(workspace_root, read_resource_roots)
     return await ainvoke_agent_run(agent, Command(resume={'decisions': [{'type': item} for item in decisions]}),
         session_id=session_id, thread_id=thread_id, run_id=run_id, workspace_root=workspace_root,
-        read_resource_roots=read_resource_roots, approval_grants=approval_grants, max_concurrency=max_concurrency)
+        read_resource_roots=read_resource_roots, approval_grants=approval_grants, max_concurrency=max_concurrency,
+        **({'durability': durability} if durability is not None else {}))

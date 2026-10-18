@@ -1,5 +1,7 @@
 """Per-tool limits must affect public schemas and actual file IO together."""
 
+from naiyue_test_agent import settings as application_settings
+
 from native_application_helpers import async_test
 
 import pytest
@@ -19,7 +21,7 @@ from tool_feedback_helpers import invoke_tool_feedback
               'max_diff_bytes': 65536, 'max_preview_bytes': 65536, 'max_patch_bytes': 1048576}),
 ])
 def test_file_settings_defaults_are_frozen(name, defaults):
-    setting = getattr(module.ToolSettings().tools, name)
+    setting = getattr(application_settings.AppSettings().tools, name)
     assert setting.model_dump() == defaults
     with pytest.raises(ValidationError, match='frozen'):
         setting.max_path_chars = 10
@@ -40,7 +42,7 @@ def test_file_settings_load_together_and_invalid_group_falls_back(tmp_path, capl
                     'max_output_bytes=128\nmax_path_chars=20\n'
                     '[tools.write]\nmax_input_bytes=4\n'
                     '[tools.edit]\nmax_input_bytes=12\n')
-    settings = module.load_tool_settings(path)
+    settings = application_settings.load_settings(path)
     assert settings.tools.ls.default_limit == 2
     assert settings.tools.ls.max_limit == 5
     assert settings.tools.ls.max_output_bytes == 128
@@ -50,7 +52,7 @@ def test_file_settings_load_together_and_invalid_group_falls_back(tmp_path, capl
     path.write_text('[tools.ls]\ndefault_limit=6\nmax_limit=5\n'
                     '[tools.write]\nmax_input_bytes=4\n'
                     'PRIVATE_CONFIG_VALUE="PRIVATE_CONTENT"\n')
-    assert module.load_tool_settings(path) == module.ToolSettings()
+    assert application_settings.load_settings(path) == application_settings.AppSettings()
     assert 'tool_settings_fallback reason=invalid' in caplog.text
     assert 'PRIVATE_CONFIG_VALUE' not in caplog.text and 'PRIVATE_CONTENT' not in caplog.text
     with pytest.raises(ValidationError, match='default_limit'):

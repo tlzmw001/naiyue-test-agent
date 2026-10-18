@@ -124,7 +124,7 @@ def test_preview_fault_does_not_change_checkpoint_or_start_model(monkeypatch, tm
 def test_child_usage_does_not_replace_root_snapshot(monkeypatch, tmp_path):
     from test_subagent_execution import ChildModel, role
     from test_async_application import call
-    from naiyue_test_agent.tools import ToolSettings
+    from naiyue_test_agent.settings import AppSettings
     async def scenario():
         model = ChildModel(replies=[call('subagent', {'agent': 'tester', 'task': 'child task'}, 'outer'),
             AIMessage(content='child', usage_metadata={'input_tokens': 900, 'output_tokens': 3, 'total_tokens': 903}),
@@ -132,7 +132,7 @@ def test_child_usage_does_not_replace_root_snapshot(monkeypatch, tmp_path):
         root = tmp_path / 'workspace'
         root.mkdir()
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root,
-                runtime_settings=ToolSettings(subagents=(role(tool_names=(), model_id=None),))) as (client, web):
+                runtime_settings=AppSettings(subagents=(role(tool_names=(), model_id=None),))) as (client, web):
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             run = (await client.post(f'/api/sessions/{sid}/runs', json=request('parent task'))).json()['run_id']
             await web.state.delivery.wait(run)

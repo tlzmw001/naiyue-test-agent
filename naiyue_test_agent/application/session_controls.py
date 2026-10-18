@@ -202,10 +202,6 @@ class AgentSessionControls:
 class SessionControlMixin:
     """Multi-session registry/routing; instance State belongs to AgentSession."""
 
-    def _session(self, session_id):
-        with self._lock:
-            return self._sessions[session_id]
-
     def create_session(self, model_id: str) -> str:
         return self._create_session(model_id, None)
 
@@ -244,26 +240,17 @@ class SessionControlMixin:
         with self._lock:
             return session_id in self._sessions
 
-    def describe_session(self, session_id):
-        return self._session(session_id).describe_session()
-
-    def get_thread_id(self, session_id):
-        return self._session(session_id).get_thread_id()
 
     def loaded_session_ids(self):
         with self._lock:
             return tuple(self._sessions)
 
-    def snapshot_for_context(self, session_id):
-        return self._session(session_id).snapshot_for_context()
 
     def context_snapshot_is_current(self, session_id, snapshot):
         with self._lock:
             session = self._sessions.get(session_id)
             return session is not None and session.context_snapshot_is_current(snapshot)
 
-    def approval_seed_identity(self, session_id):
-        return self._session(session_id).approval_seed_identity()
 
     def install_restored_session(self, session_id, *, thread_id, model_id, thinking_level,
                                  workspace_root, active_tool_names, permission_mode, pending=None):
@@ -299,51 +286,27 @@ class SessionControlMixin:
         with self._lock:
             self._sessions.pop(session_id, None)
 
-    def select_thinking(self, session_id, model_id, level):
-        self._session(session_id).select_thinking(model_id, level)
 
     def register_tool(self, spec):
         self._tool_registry.register(spec, permission_settings=self._permission_settings)
 
-    def get_permission_mode(self, session_id):
-        return self._session(session_id).get_permission_mode()
-
-    def set_permission_mode(self, session_id, mode):
-        self._session(session_id).set_permission_mode(mode)
 
     def resolve_permission_context(self, session_id, agent_path='root'):
-        return self._session(session_id).resolve_permission_context(agent_path)
+        return self.require(session_id).resolve_permission_context(agent_path)
 
-    def get_active_tools(self, session_id):
-        return self._session(session_id).get_active_tools()
 
     def resolve_active_tool_names(self, session_id, agent_path='root'):
-        return self._session(session_id).get_active_tools(agent_path)
+        return self.require(session_id).get_active_tools(agent_path)
 
-    def set_active_tools(self, session_id, names):
-        self._session(session_id).set_active_tools(names)
-
-    def steer(self, session_id: str, text: str) -> None:
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError('A non-empty steering message is required')
-        self._session(session_id).steer(text)
-
-    def follow_up(self, session_id: str, text: str) -> None:
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError('A non-empty follow-up message is required')
-        self._session(session_id).follow_up(text)
-
-    def request_stop(self, session_id: str, *, run_id: str | None = None, agent_path='root') -> list[str]:
-        return self._session(session_id).request_scope_stop(run_id=run_id, agent_path=agent_path)
 
     def is_stop_requested(self, session_id: str) -> bool:
-        return self._session(session_id).is_stop_requested()
+        return self.require(session_id).is_stop_requested()
 
     def drain_steering(self, session_id: str) -> list[str]:
-        return self._session(session_id).drain_steering()
+        return self.require(session_id).drain_steering()
 
     def finish_run_boundary(self, session_id: str) -> tuple[bool, list[str]]:
-        return self._session(session_id).finish_run_boundary()
+        return self.require(session_id).finish_run_boundary()
 
     def prepare_control_messages(self, session_id: str, messages: list[str]) -> list[HumanMessage]:
-        return self._session(session_id).prepare_control_messages(messages)
+        return self.require(session_id).prepare_control_messages(messages)

@@ -1,5 +1,7 @@
 """Bounded native custom reports and run-owned dispatch identity checks."""
 
+from naiyue_test_agent import settings as application_settings
+
 from dataclasses import asdict
 import asyncio
 from types import SimpleNamespace
@@ -147,10 +149,10 @@ def test_dispatch_progress_uses_registered_identity_and_event_data_is_validated(
 def test_progress_settings_are_loaded_and_invalid_budgets_fall_back(tmp_path, caplog):
     source = tmp_path / 'settings.toml'
     source.write_text('[progress]\nenabled=true\nmin_interval_milliseconds=0\nmax_text_bytes=40\n')
-    loaded = settings_module.load_tool_settings(source)
+    loaded = application_settings.load_settings(source)
     assert loaded.progress.max_text_bytes == 40 and loaded.progress.min_interval_milliseconds == 0
     source.write_text('[progress]\nmax_text_bytes=-1\n[tools.read]\ndefault_limit=7\n')
-    loaded = settings_module.load_tool_settings(source)
+    loaded = application_settings.load_settings(source)
     assert loaded.progress == settings_module.ToolProgressSettings() and loaded.tools.read.default_limit == 7
     assert 'tool_progress_settings_fallback' in caplog.text
 

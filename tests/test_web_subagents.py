@@ -4,7 +4,7 @@ import asyncio
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, ToolMessage
-from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from test_async_application import call
 from test_subagent_execution import ChildModel, role
 from test_web_api import web_client, request
@@ -19,7 +19,7 @@ def test_live_child_approval_is_busy_idempotent_and_keeps_one_sse(monkeypatch, t
         outside.write_text('CHILD_ONLY_FILE')
         model = ChildModel(replies=[call('subagent', {'agent': 'tester', 'task': 'read outside'}, 'outer'),
             call('read', {'path': str(outside)}, 'inner'), AIMessage(content='child report'), AIMessage(content='root done')])
-        settings = ToolSettings(subagents=(role(tool_names=('read',), model_id=None),))
+        settings = AppSettings(subagents=(role(tool_names=('read',), model_id=None),))
         async with web_client(monkeypatch, tmp_path, model, workspace_root=workspace, runtime_settings=settings) as (client, web):
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             run = (await client.post(f'/api/sessions/{sid}/runs', json=request('user task'))).json()['run_id']

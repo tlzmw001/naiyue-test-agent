@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 from native_application_helpers import async_test
-from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.web.delivered_run import DeliveredRun
 from test_cross_session_concurrency import SessionModel, gated
 from test_web_api import web_client, request
@@ -77,7 +77,7 @@ async def test_a_b_run_together_stop_and_sse_keep_their_owners(monkeypatch, tmp_
 @async_test
 async def test_capacity_rejection_removes_only_its_pending_receipt_and_is_retryable(monkeypatch, tmp_path):
     model = SessionModel(replies=[])
-    async with web_client(monkeypatch, tmp_path, model, runtime_settings=ToolSettings(max_active_runs=1)) as (client, web):
+    async with web_client(monkeypatch, tmp_path, model, runtime_settings=AppSettings(max_active_runs=1)) as (client, web):
         a, b = await sessions(client, 2)
         entered, release = gated(model, a)
         try:
@@ -89,7 +89,7 @@ async def test_capacity_rejection_removes_only_its_pending_receipt_and_is_retrya
             delivery, backend = web.state.delivery, web.state.service.application
             assert b not in delivery.active_by_session and (b, body['request_id']) not in delivery.pending_receipts
             assert (b, body['request_id']) not in delivery.receipts and b not in delivery.latest
-            assert b not in model.requests and not backend._sessions.describe_session(b)['busy']
+            assert b not in model.requests and not backend._sessions.require(b).describe_session()['busy']
             assert backend._storage.get(b)['run_id'] is None
             release.set()
             await delivery.wait(first.json()['run_id'])
@@ -131,7 +131,7 @@ async def test_start_wait_outside_registration_lock_does_not_block_other_session
             assert not waiting.done() and not duplicate.done() and len(model.requests[a]) == 1
             if observation == 'delayed':
                 job = web.state.delivery.active_by_session[a]
-                state = web.state.service.application._sessions.describe_session(a)
+                state = web.state.service.application._sessions.require(a).describe_session()
                 job.run_id = state['run_id']
                 job._ready(job.run_id)
                 assert (await waiting).json() == (await duplicate).json()

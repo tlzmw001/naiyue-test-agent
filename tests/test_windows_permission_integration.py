@@ -10,7 +10,8 @@ from langchain_core.messages import AIMessage, ToolMessage
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_application import build_async_local_application
 from naiyue_test_agent.agent_runtime.tool_execution import permissions as pipeline
-from naiyue_test_agent.tools import create_builtin_tools, ToolSettings, permissions
+from naiyue_test_agent.tools import create_builtin_tools, permissions
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.permissions import FilePermission
 from naiyue_test_agent.model_access import ModelCatalog
 from test_dynamic_tools import DynamicModel
@@ -30,10 +31,10 @@ async def test_extended_windows_target_denied_before_all_file_tool_execution(mon
             prepared.append(dict(arguments))
             return dict(operation=self.operation, workspace='C:/work', requested=target,
                 resolved=target, kind='file', anchor={'path': 'C:/work', 'device': 1, 'inode': 2})
-    settings = ToolSettings.model_validate({'permissions': {
+    settings = AppSettings.model_validate({'permissions': {
         'mode': 'BypassApprovals', 'deny': [{'tool': tool_name, 'path': 'C:/work/private.txt'}],
         'allow': [{'tool': tool_name, 'path': 'C:/work/**'}]}})
-    original = next(spec for spec in create_builtin_tools(settings) if spec.tool.name == tool_name)
+    original = next(spec for spec in create_builtin_tools(settings.tools, process_settings=settings.process, output_settings=settings.tool_output, progress_settings=settings.progress) if spec.tool.name == tool_name)
     spec = replace(original, permissions=WindowsPermission('path', original.permissions.operation))
     def never(*args, **kwargs):
         pytest.fail('Denied file tool entered execution')
@@ -55,7 +56,7 @@ async def test_extended_windows_target_denied_before_all_file_tool_execution(mon
         try:
             result = await app.arun(sid, [('user', 'operate')])
             assert len(prepared) == 1
-            config = {'configurable': {'thread_id': app._sessions.get_thread_id(sid)}}
+            config = {'configurable': {'thread_id': app._sessions.require(sid).get_thread_id()}}
             snapshots = ([item async for item in app._agent.aget_state_history(config)])
             batches = [item.values['tool_execution']['calls'] for item in snapshots
                        if item.values.get('tool_execution', {}).get('calls')]

@@ -12,7 +12,7 @@ from naiyue_test_agent.application import cli
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools.settings import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.workspaces import prepare_workspace
 from test_application_run_events import ToolModel
 
@@ -24,8 +24,8 @@ def test_cli_directory_move_restores_same_session_history_and_new_working_root(t
     elsewhere.mkdir()
     monkeypatch.chdir(a)
     monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path))
-    options = ToolSettings.model_validate({'storage': {'data_dir': data}})
-    monkeypatch.setattr(cli, 'load_tool_settings', lambda: options)
+    options = AppSettings.model_validate({'storage': {'data_dir': data}})
+    monkeypatch.setattr(cli, 'load_settings', lambda: options)
     model = ToolModel(responses=[AIMessage(content='first answer'), AIMessage(content='second answer')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     lines = iter(['first user request', ':quit'])
@@ -84,9 +84,9 @@ def test_web_entry_passes_one_settings_snapshot_and_workspace_identity(tmp_path,
     from test_async_application import StreamingToolModel
     monkeypatch.chdir(tmp_path)
     (tmp_path / 'index.html').write_text('<html>fixture</html>')
-    settings = ToolSettings.model_validate({'storage': {'data_dir': tmp_path / 'data'}})
+    settings = AppSettings.model_validate({'storage': {'data_dir': tmp_path / 'data'}})
     calls, captured = [], []
-    monkeypatch.setattr(entry, 'load_tool_settings', lambda: (calls.append(True), settings)[1])
+    monkeypatch.setattr(entry, 'load_settings', lambda: (calls.append(True), settings)[1])
     monkeypatch.setattr(entry, 'create_web_app', lambda value: captured.append(value))
     monkeypatch.setattr(entry.uvicorn.Server, 'run', lambda self, **kw: setattr(self, 'started', True))
     monkeypatch.setenv('NAIYUE_WEB_PORT', '0')
@@ -99,7 +99,7 @@ def test_web_entry_passes_one_settings_snapshot_and_workspace_identity(tmp_path,
     assert 'runtime_settings' not in configured.model_dump()
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': StreamingToolModel(replies=[])}))
     # Lifespan must consume the snapshot, and bind before accepting HTTP operations.
-    monkeypatch.setattr('naiyue_test_agent.web.app.load_tool_settings', lambda: pytest.fail('settings loaded twice'))
+    monkeypatch.setattr('naiyue_test_agent.web.app.load_settings', lambda: pytest.fail('settings loaded twice'))
     app = create_web_app(configured)
     async def scenario():
         async with app.router.lifespan_context(app):

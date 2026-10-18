@@ -11,7 +11,8 @@ from langchain_core.messages import AIMessage, ToolMessage
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_application import build_async_local_application
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import create_session_find_tool, create_session_grep_tool, FindSettings, ToolSettings
+from naiyue_test_agent.tools import create_session_find_tool, create_session_grep_tool, FindSettings
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.processes import HostProcessRunner, ProcessOutcome, ProcessCleanupError
 from naiyue_test_agent.tools.process_protocol import ProcessProtocol
 from test_async_application import StreamingToolModel, make_app, call
@@ -40,7 +41,7 @@ async def test_external_batch_starts_nothing_before_approval_and_filters_before_
             {'name': 'find', 'id': 'f', 'args': {'pattern': '*', 'path': str(outside)}},
         ]), AIMessage(content='done')])
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
-        settings = ToolSettings.model_validate({'permissions': {'deny': [
+        settings = AppSettings.model_validate({'permissions': {'deny': [
             {'tool': '*', 'path': str(outside / 'denied.txt')}]}})
         app = await build_async_local_application('unused', tools=[create_session_grep_tool(),
             create_session_find_tool()], settings=settings, system_prompt='', response_format=None)
@@ -205,7 +206,7 @@ async def test_unconfirmed_cleanup_is_never_converted_to_search_feedback(monkeyp
             with pytest.raises(ProcessCleanupError) as caught:
                 await app.arun(sid, [('user', 'search')])
             assert caught.value is failure
-            assert app._sessions.describe_session(sid)['manual_review_required']
+            assert app._sessions.require(sid).describe_session()['manual_review_required']
             assert len(model.seen) == 1
         finally:
             await app.aclose()

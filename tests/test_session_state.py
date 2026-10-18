@@ -47,7 +47,7 @@ def test_new_and_restored_states_use_one_dataclass_and_isolate_mutable_defaults(
         assert left is not right
         left.append('only-first')
         assert not right
-    assert sessions.get_thread_id('saved') == 'saved-thread'
+    assert sessions.require('saved').get_thread_id() == 'saved-thread'
     assert set(sessions.loaded_session_ids()) == {fresh, 'saved'}
 
 
@@ -55,29 +55,29 @@ def test_purpose_snapshots_are_bounded_and_do_not_expose_live_state():
     sessions = service()
     sid = sessions.create_session('A')
     finish = sessions._sessions[sid].snapshot_for_finish()
-    assert finish == {'thread_id': sessions.get_thread_id(sid), 'manual_review_required': False}
+    assert finish == {'thread_id': sessions.require(sid).get_thread_id(), 'manual_review_required': False}
     finish['manual_review_required'] = True
-    assert sessions.describe_session(sid)['manual_review_required'] is False
-    view = sessions.snapshot_for_context(sid)
+    assert sessions.require(sid).describe_session()['manual_review_required'] is False
+    view = sessions.require(sid).snapshot_for_context()
     assert set(view) == {'thread_id', 'model_id', 'workspace_root', 'active_tool_names',
                          'busy', 'pending_approval', 'manual_review_required'}
     assert isinstance(view['active_tool_names'], tuple)
     assert sessions.context_snapshot_is_current(sid, view)
     view['model_id'] = 'outside-mutation'
-    assert sessions.describe_session(sid)['model_id'] == 'A'
+    assert sessions.require(sid).describe_session()['model_id'] == 'A'
     assert not sessions.context_snapshot_is_current(sid, view)
-    public = sessions.describe_session(sid)
+    public = sessions.require(sid).describe_session()
     public['active_tools'].append('outside-mutation')
-    assert sessions.get_active_tools(sid) == ()
+    assert sessions.require(sid).get_active_tools() == ()
 
 
 def test_context_snapshot_is_invalidated_by_selection_busy_pending_and_removal():
     sessions = service()
     sid = sessions.create_session('A')
-    original = sessions.snapshot_for_context(sid)
-    sessions.select_model(sid, 'B')
+    original = sessions.require(sid).snapshot_for_context()
+    sessions.require(sid).select_model('B')
     assert not sessions.context_snapshot_is_current(sid, original)
-    current = sessions.snapshot_for_context(sid)
+    current = sessions.require(sid).snapshot_for_context()
     owner, observation_run = sessions._admit(sid, 'context-run', 'message')
     run_id, observation = observation_run.run_id, observation_run.observation
     assert not sessions.context_snapshot_is_current(sid, current)
@@ -92,7 +92,7 @@ def test_restored_pending_is_detached_and_duplicate_install_does_not_replace_sta
     sessions = service()
     pending = {'batch_id': 'b1', 'items': [{'args': {'path': 'original'}}]}
     sessions.install_restored_session('saved', **restored_config(), pending=pending)
-    assert sessions.approval_seed_identity('saved') == ('saved-thread', 'b1')
+    assert sessions.require('saved').approval_seed_identity() == ('saved-thread', 'b1')
     pending['items'][0]['args']['path'] = 'outside-mutation'
     assert sessions._sessions['saved'].snapshot_for_run()['pending']['items'][0]['args']['path'] == 'original'
     existing = sessions._sessions['saved']
@@ -100,7 +100,7 @@ def test_restored_pending_is_detached_and_duplicate_install_does_not_replace_sta
         sessions.install_restored_session('saved', **restored_config())
     assert sessions._sessions['saved'] is existing
     fresh = sessions.create_session('A')
-    assert sessions.approval_seed_identity(fresh) is None
+    assert sessions.require(fresh).approval_seed_identity() is None
 
 
 def test_delete_guard_holds_only_the_admission_boundary_and_rejects_busy():
@@ -136,7 +136,7 @@ async def test_real_persistent_restore_preserves_configuration_but_resets_transi
         sid = await app.acreate_session('A')
         await app.arun(sid, [('user', 'save')])
         await app.aset_permission_mode(sid, 'NoAsk')
-        thread = app._sessions.get_thread_id(sid)
+        thread = app._sessions.require(sid).get_thread_id()
     async with build(monkeypatch, database) as app:
         await app.arestore_session(sid)
         state = app._sessions._sessions[sid]

@@ -11,7 +11,8 @@ from native_application_helpers import async_test, build_application
 from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime.run_services import current_run_services
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import SubAgentSpec, ToolSettings, create_subagent_tool, create_session_read_tool, load_tool_settings
+from naiyue_test_agent.tools import SubAgentSpec, create_subagent_tool, create_session_read_tool
+from naiyue_test_agent.settings import AppSettings, load_settings
 from naiyue_test_agent.tools.permissions import ToolPermission, PermissionMechanismError
 from test_async_application import StreamingToolModel, call
 from test_dynamic_tools import definition
@@ -43,7 +44,7 @@ async def delegated_app(monkeypatch, child, *, root=None, spec=None, tools=None,
     root = root or StreamingToolModel(replies=[
         call('subagent', {'agent': 'tester', 'task': 'check this task'}, 'delegate'), AIMessage(content='root done')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
-    settings = settings or ToolSettings(subagents=(spec or role(),))
+    settings = settings or AppSettings(subagents=(spec or role(),))
     app = await build_application('unused', tools=[create_subagent_tool(), *(tools or [definition()])],
                                   initial_active_tools=['subagent'], system_prompt='ROOT_PROMPT',
                                   response_format=None, settings=settings)
@@ -116,7 +117,7 @@ async def test_model_call_limit_from_toml_counts_requests_and_keeps_tool_effects
     child = ChildModel(replies=[call('probe', {'value': 'actual'}, 'inner'), AIMessage(content='done')])
     effects = []
     probe = definition(calls=effects, approved=True, permissions=ToolPermission(default='allow'))
-    app, root = await delegated_app(monkeypatch, child, settings=load_tool_settings(path), tools=[probe])
+    app, root = await delegated_app(monkeypatch, child, settings=load_settings(path), tools=[probe])
     instances = record_instances(monkeypatch, app)
     result = await app.arun(await app.acreate_session('A'), [('user', 'verify')])
     feedback = next(message for message in result['messages'] if isinstance(message, ToolMessage))
@@ -164,7 +165,7 @@ async def test_inherited_child_model_is_frozen_when_root_model_switches(monkeypa
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': original, 'B': alternate}))
     spec = SubAgentSpec('tester', 'Check', 'CHILD_ROLE_PROMPT', ('probe',))
     app = await build_application('unused', tools=[create_subagent_tool(), definition()], initial_active_tools=['subagent'],
-                                  system_prompt='ROOT_PROMPT', response_format=None, settings=ToolSettings(subagents=(spec,)))
+                                  system_prompt='ROOT_PROMPT', response_format=None, settings=AppSettings(subagents=(spec,)))
     instances = record_instances(monkeypatch, app)
     sid = await app.acreate_session('A')
     async def switch_during_child(messages):

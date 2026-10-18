@@ -8,7 +8,7 @@ import pytest
 
 from native_application_helpers import async_test
 from naiyue_test_agent.application.errors import RunCapacityExceededError, SessionPersistenceError
-from naiyue_test_agent.tools.settings import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from test_cross_session_concurrency import concurrent_app, drain, gated
 from test_session_recovery import unfinished
 
@@ -52,7 +52,7 @@ async def test_start_io_does_not_hold_coordination_lock_and_rolls_back_only_its_
             else:
                 assert (await tasks[1])['messages'][-1].content == 'done:' + b
             assert set(app._persistence._active) == {a} and not tasks[0].done()
-            assert not app._sessions.describe_session(b)['busy']
+            assert not app._sessions.require(b).describe_session()['busy']
         finally:
             release.set()
             await drain(tasks, model)
@@ -91,7 +91,7 @@ async def test_storage_reserves_writer_before_reading_its_write_transaction(monk
 async def test_failure_or_stop_releases_only_its_session(monkeypatch, tmp_path, caplog, outcome):
     primary, save_error = RuntimeError('PRIVATE_MODEL'), OSError('PRIVATE_SAVE')
     async with concurrent_app(monkeypatch, tmp_path / 'state.sqlite',
-                              settings=ToolSettings(max_active_runs=2)) as (app, model):
+                              settings=AppSettings(max_active_runs=2)) as (app, model):
         a, b, c = [await app.acreate_session('A') for _ in range(3)]
         events, tasks = [], []
         app.subscribe_events(events.append)
@@ -130,8 +130,8 @@ async def test_failure_or_stop_releases_only_its_session(monkeypatch, tmp_path, 
                     assert caught.value is primary
                 else:
                     assert caught.value.__cause__ is save_error
-            assert not app._sessions.describe_session(a)['busy']
-            assert not tasks[1].done() and app._sessions.describe_session(b)['busy']
+            assert not app._sessions.require(a).describe_session()['busy']
+            assert not tasks[1].done() and app._sessions.require(b).describe_session()['busy']
             assert app._persistence._active == {b: b_run}
             assert app._storage.get(b)['state'] == 'running'
             assert not any(e.session_id == b and e.event_type == 'run_finished' for e in events)
@@ -152,7 +152,7 @@ async def test_failure_or_stop_releases_only_its_session(monkeypatch, tmp_path, 
 @async_test
 async def test_required_save_holds_capacity_while_another_session_runs(monkeypatch, tmp_path):
     async with concurrent_app(monkeypatch, tmp_path / 'state.sqlite',
-                              settings=ToolSettings(max_active_runs=2)) as (app, model):
+                              settings=AppSettings(max_active_runs=2)) as (app, model):
         a, b, c = [await app.acreate_session('A') for _ in range(3)]
         entered, release = asyncio.Event(), Event()
         loop, finish = asyncio.get_running_loop(), app._storage.finish_run
@@ -236,7 +236,7 @@ async def test_close_waits_for_every_root_before_catalog_close(monkeypatch, tmp_
         tasks, closed = [], []
         close = app._catalog.aclose
         async def closing():
-            closed.append([app._sessions.describe_session(sid)['busy'] for sid in ids])
+            closed.append([app._sessions.require(sid).describe_session()['busy'] for sid in ids])
             assert app._persistence._active == {}
             await close()
         monkeypatch.setattr(app._catalog, 'aclose', closing)

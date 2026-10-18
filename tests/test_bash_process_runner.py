@@ -7,7 +7,8 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent.tools import create_builtin_tools
 from naiyue_test_agent.tools.bash import create_session_bash_tool
-from naiyue_test_agent.tools.settings import ProcessSettings, ToolSettings, load_tool_settings
+from naiyue_test_agent.tools.settings import ProcessSettings
+from naiyue_test_agent.settings import AppSettings, load_settings
 from test_async_application import StreamingToolModel, make_app, call
 
 
@@ -19,8 +20,8 @@ def test_bash_has_native_async_entry_and_shared_process_settings(tmp_path, monke
         captured.append(settings)
         return original(settings)
     monkeypatch.setattr(module, 'HostProcessRunner', factory)
-    settings = ToolSettings(process=ProcessSettings(max_pending_output_bytes=4096))
-    bash = next(spec for spec in create_builtin_tools(settings) if spec.tool.name == 'bash')
+    settings = AppSettings(process=ProcessSettings(max_pending_output_bytes=4096))
+    bash = next(spec for spec in create_builtin_tools(settings.tools, process_settings=settings.process, output_settings=settings.tool_output, progress_settings=settings.progress) if spec.tool.name == 'bash')
     assert bash.tool.coroutine is not None
     assert captured == [settings.process, settings.process]
     assert set(bash.tool.tool_call_schema.model_json_schema()['properties']) == {'command', 'timeout'}
@@ -51,7 +52,7 @@ def test_async_bash_timeout_is_tool_error_and_next_model_runs(monkeypatch, tmp_p
             assert 'timed out' in message.content and 'EARLY' in message.content
             assert 'output_complete=' in message.content
             assert result['messages'][-1].content == 'inspect before retry'
-            assert not app._sessions.describe_session(sid)['manual_review_required']
+            assert not app._sessions.require(sid).describe_session()['manual_review_required']
             finished = [e for e in events if e.event_type == 'tool_call_finished']
             assert finished[-1].data.outcome == 'error_result'
             assert events[-1].data.status == 'completed'
@@ -64,10 +65,10 @@ def test_async_bash_timeout_is_tool_error_and_next_model_runs(monkeypatch, tmp_p
 def test_settings_snapshot_validates_process_budgets_without_affecting_permissions(tmp_path, caplog):
     path = tmp_path / 'settings.toml'
     path.write_text('[permissions]\nmode="NoAsk"\n[process]\ncleanup_timeout_seconds=2.0\nmax_pending_output_bytes=4096\n')
-    valid = load_tool_settings(path)
+    valid = load_settings(path)
     assert valid.process.cleanup_timeout_seconds == 2 and valid.process.max_pending_output_bytes == 4096
     path.write_text('[permissions]\nmode="NoAsk"\n[process]\nmax_pending_output_bytes=0\n')
-    fallback = load_tool_settings(path)
+    fallback = load_settings(path)
     assert fallback.process == ProcessSettings() and fallback.permissions.mode == 'NoAsk'
     assert 'process_settings_fallback' in caplog.text
 
@@ -109,7 +110,7 @@ def test_user_stop_skips_later_serial_command_after_whole_batch_approval(monkeyp
             assert commands == ['printf started; sleep 60'] and not (tmp_path / 'forbidden').exists()
             assert result['run_stopped'] and len(model.seen) == 1
         finally:
-            if app._sessions.describe_session(sid)['busy']:
+            if app._sessions.require(sid).describe_session()['busy']:
                 app.request_stop(sid)
             if task is not None:
                 await asyncio.gather(task, return_exceptions=True)

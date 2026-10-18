@@ -33,7 +33,7 @@ def test_root_window_cursor_covers_archive_displaced_by_a_live_draft(monkeypatch
 
 
 def test_child_window_cursor_covers_archive_displaced_by_later_tool_results(monkeypatch, tmp_path):
-    from naiyue_test_agent.tools import ToolSettings
+    from naiyue_test_agent.settings import AppSettings
     from test_async_application import call
     from test_subagent_execution import ChildModel, role
     async def scenario():
@@ -48,7 +48,7 @@ def test_child_window_cursor_covers_archive_displaced_by_later_tool_results(monk
         model = ChildModel(replies=[call('subagent', {'agent': 'tester', 'task': 'reads'}, 'outer'),
             *(call('read', {'path': 'sample'}, f'inner-{i}') for i in range(10)),
             AIMessage(content='child done'), AIMessage(content='root done')], on_request=gate)
-        runtime = ToolSettings(subagents=(role(tool_names=('read',), model_id=None),))
+        runtime = AppSettings(subagents=(role(tool_names=('read',), model_id=None),))
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root, runtime_settings=runtime,
                               history_page_messages=2) as (client, web):
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']

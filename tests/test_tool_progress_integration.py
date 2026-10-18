@@ -66,7 +66,7 @@ def test_progress_arrives_during_unfinished_async_application_tool(monkeypatch, 
             assert all('PROGRESS_ONLY' not in str(m.content) for m in result['messages'])
             assert all('PROGRESS_ONLY' not in str(m.content) for m in chosen.seen[1])
             snapshot = await app._agent.aget_state({'configurable': {
-                'thread_id': app._sessions.get_thread_id(sid)}})
+                'thread_id': app._sessions.require(sid).get_thread_id()}})
             assert 'PROGRESS_ONLY' not in str(snapshot.values)
             EventSequenceChecker.assert_healthy(events, caplog.records)
         finally:
@@ -194,7 +194,7 @@ def test_broken_progress_receiver_keeps_real_write_and_original_io_failure(monke
             assert message.status == 'error' and 'I/O' in message.content
             assert (tmp_path / 'file.txt').read_bytes() == b'written'
             assert not list(tmp_path.glob('.naiyue-write-*'))
-            assert events[-1].data.status == 'completed' and not app._sessions.describe_session(sid)['busy']
+            assert events[-1].data.status == 'completed' and not app._sessions.require(sid).describe_session()['busy']
             assert 'tool_progress_unavailable' in caplog.text and 'PRIVATE_' not in caplog.text
         finally:
             await app.aclose()
@@ -209,12 +209,13 @@ def test_application_variants_use_startup_progress_settings(monkeypatch, tmp_pat
         from naiyue_test_agent.application.async_application import build_async_local_application
         from naiyue_test_agent.application.async_persistent import open_async_persistent_application
         from naiyue_test_agent.model_access import ModelCatalog
-        from naiyue_test_agent.tools import ToolSettings, create_session_read_tool
+        from naiyue_test_agent.tools import create_session_read_tool
+        from naiyue_test_agent.settings import AppSettings
         (tmp_path / 'file.txt').write_text('real content')
         replies = [call('read', {'path': 'file.txt'}, 'read'), AIMessage(content='done')]
         chosen = StreamingToolModel(replies=replies) if native_model else ToolModel(responses=replies)
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': chosen}))
-        settings = ToolSettings.model_validate({'progress': {'enabled': False}})
+        settings = AppSettings.model_validate({'progress': {'enabled': False}})
         options = dict(tools=[create_session_read_tool()], system_prompt='', response_format=None, settings=settings)
         owner = open_async_persistent_application('unused', database_path=tmp_path / 'session.sqlite', **options) if persistent else None
         app = await owner.__aenter__() if owner else await build_async_local_application('unused', **options)

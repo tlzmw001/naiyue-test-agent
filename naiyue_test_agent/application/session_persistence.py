@@ -47,7 +47,7 @@ class SessionPersistence:
             busy=False, run_id=None, manual_review_required=row['state'] == 'review_required', pending_approval=False)
         loaded = self.sessions.has_session(session_id)
         if loaded:
-            value.update(self.sessions.describe_session(session_id))
+            value.update(self.sessions.require(session_id).describe_session())
         else:
             value.update(deepcopy(self._prepared.get(session_id, {'recovery': {'kind': 'unavailable',
                 'reason': 'session_not_prepared', 'actions': [], 'unconfirmed_tool_call_ids': []}})))

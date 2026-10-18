@@ -8,7 +8,8 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from native_application_helpers import async_test
 from naiyue_test_agent.application.errors import RunCapacityExceededError, SessionPendingApprovalError
-from naiyue_test_agent.tools import ToolSettings, create_subagent_tool
+from naiyue_test_agent.tools import create_subagent_tool
+from naiyue_test_agent.settings import AppSettings
 from test_async_application import call
 from test_cross_session_concurrency import concurrent_app, drain, gated
 from test_dynamic_tools import definition
@@ -20,7 +21,7 @@ from test_subagent_approval_resume import approval_notifications, next_approval,
 @async_test
 async def test_paused_root_reapplies_capacity_without_consuming_approval(monkeypatch, tmp_path, stop):
     effects, events = [], []
-    async with concurrent_app(monkeypatch, tmp_path / 'state.sqlite', settings=ToolSettings(max_active_runs=1),
+    async with concurrent_app(monkeypatch, tmp_path / 'state.sqlite', settings=AppSettings(max_active_runs=1),
                               tools=[definition(calls=effects, approved=True)]) as (app, model):
         a, b = [await app.acreate_workspace_session('A', tmp_path) for _ in range(2)]
         model.responses[a] = [call('probe', {'value': 'approved-value'}, 'one'), AIMessage(content='after approval')]
@@ -73,7 +74,7 @@ async def test_paused_root_reapplies_capacity_without_consuming_approval(monkeyp
 async def test_child_approval_keeps_parent_slot_and_needs_no_extra_slot(monkeypatch, tmp_path, close):
     effects, events = [], []
     child = ChildModel(replies=[call('probe', {'value': 'child'}, 'inner'), AIMessage(content='report')])
-    settings = ToolSettings(max_active_runs=2, subagents=(role(),))
+    settings = AppSettings(max_active_runs=2, subagents=(role(),))
     async with concurrent_app(monkeypatch, tmp_path / 'state.sqlite', settings=settings, child=child,
                               tools=[create_subagent_tool(), definition(calls=effects, approved=True)]) as (app, model):
         a, b, c = [await app.acreate_workspace_session('A', tmp_path) for _ in range(3)]

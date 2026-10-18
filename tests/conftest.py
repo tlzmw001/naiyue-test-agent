@@ -1,11 +1,11 @@
-"""Keep automatic tool-setting discovery independent of developer configuration."""
+"""Keep automatic application-setting discovery independent of developer configuration."""
 
 import pytest
 
 
 @pytest.fixture(autouse=True)
 def isolated_tool_settings(monkeypatch, tmp_path, request):
-    from naiyue_test_agent.tools import settings
+    from naiyue_test_agent import settings
     monkeypatch.setattr(settings, 'get_agent_dir', lambda: tmp_path / 'agent-settings')
 
     entry_modules = {

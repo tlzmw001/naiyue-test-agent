@@ -13,7 +13,8 @@ from native_application_helpers import async_test
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import ToolSettings, create_subagent_tool
+from naiyue_test_agent.tools import create_subagent_tool
+from naiyue_test_agent.settings import AppSettings
 from test_async_application import StreamingToolModel, call
 from test_auto_permission_review import model as review_model, settings as auto_settings, verdict
 from test_cross_session_concurrency import SessionModel, concurrent_app, drain, gated
@@ -40,7 +41,7 @@ async def test_rate_limit_root_or_child_has_no_cross_session_cascade(monkeypatch
     model = SessionModel(replies=[])
     children = StreamingToolModel(replies=[failure]) if child else None
     specs = [create_subagent_tool(), definition()] if child else []
-    options = ToolSettings(max_active_runs=2, subagents=(role(),) if child else ())
+    options = AppSettings(max_active_runs=2, subagents=(role(),) if child else ())
     async with concurrent_app(monkeypatch, tmp_path / 'state.sqlite', model=model,
                               settings=options, tools=specs, child=children) as (app, _):
         a, b, c = [await app.acreate_session('A') for _ in range(3)]
@@ -124,7 +125,7 @@ async def test_auto_rate_limit_requires_human_while_other_root_runs(monkeypatch,
 
 @async_test
 async def test_stop_during_model_wait_then_other_root_rate_limit_is_isolated(monkeypatch, tmp_path, caplog):
-    async with concurrent_app(monkeypatch, tmp_path / 'state.sqlite', settings=ToolSettings(max_active_runs=2)) as (app, model):
+    async with concurrent_app(monkeypatch, tmp_path / 'state.sqlite', settings=AppSettings(max_active_runs=2)) as (app, model):
         a, b, c = [await app.acreate_session('A') for _ in range(3)]
         model.responses[b] = [rate_limit('sdk')]
         tasks = []

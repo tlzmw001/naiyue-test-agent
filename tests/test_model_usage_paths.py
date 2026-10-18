@@ -8,7 +8,8 @@ from langchain_core.messages import AIMessage
 
 from native_application_helpers import async_test
 from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
-from naiyue_test_agent.tools import ToolSettings, create_subagent_tool
+from naiyue_test_agent.tools import create_subagent_tool
+from naiyue_test_agent.settings import AppSettings
 from test_prompt_cache_call_paths import cached_application, completion_response
 from test_auto_permission_review import settings as review_settings, verdict
 from test_dynamic_tools import definition
@@ -41,7 +42,7 @@ async def test_root_child_summary_and_auto_report_independent_cache_usage(monkey
         return completion_response(body, text=text, call=call, usage={'prompt_tokens': total,
             'completion_tokens': 10, 'total_tokens': total + 10,
             'prompt_tokens_details': {'cached_tokens': read, 'cache_write_tokens': write}})
-    settings = ToolSettings(permissions=review_settings().permissions, subagents=(role(model_id='child'),))
+    settings = AppSettings(permissions=review_settings().permissions, subagents=(role(model_id='child'),))
     async with cached_application(monkeypatch, tmp_path, serve, settings=settings,
             tools=[definition(calls=effects, approved=True), create_subagent_tool()]) as (app, _):
         app.subscribe_events(events.append)

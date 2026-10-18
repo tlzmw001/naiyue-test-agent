@@ -4,7 +4,7 @@ import asyncio
 
 from langchain_core.messages import AIMessage
 
-from naiyue_test_agent.tools.settings import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from test_async_application import StreamingToolModel
 from test_web_api import request, web_client
 from test_web_tools import calls
@@ -75,7 +75,7 @@ def test_invalid_or_unavailable_selections_do_not_change_state(monkeypatch, tmp_
 
 def test_options_follow_configured_default_and_auto_availability(monkeypatch, tmp_path):
     async def scenario():
-        settings = ToolSettings.model_validate({'permissions': {'mode': 'NoAsk', 'auto': {
+        settings = AppSettings.model_validate({'permissions': {'mode': 'NoAsk', 'auto': {
             'fast_model_id': 'A', 'detailed_model_id': 'A'}}})
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]), runtime_settings=settings) as (client, app):
             options = (await client.get('/api/session-controls')).json()

@@ -13,7 +13,8 @@ from naiyue_test_agent.application.errors import (
     SessionBusyError, SessionPendingApprovalError, SessionPersistenceError,
 )
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import ToolSettings, create_subagent_tool
+from naiyue_test_agent.tools import create_subagent_tool
+from naiyue_test_agent.settings import AppSettings
 from test_async_application import StreamingToolModel, call
 from test_dynamic_tools import definition
 from test_subagent_execution import ChildModel, record_instances, role
@@ -26,7 +27,7 @@ def persistent_delegation(monkeypatch, path, root, child, effects):
     return open_async_persistent_application('unused', database_path=path,
         tools=[create_subagent_tool(), definition(calls=effects, approved=True)],
         initial_active_tools=['probe', 'subagent'], system_prompt='ROOT_ROLE',
-        response_format=None, settings=ToolSettings(subagents=(role(),)))
+        response_format=None, settings=AppSettings(subagents=(role(),)))
 
 
 @pytest.mark.parametrize('outcome', ['success', 'save_failure', 'primary_error', 'cancel', 'close'])
@@ -267,7 +268,7 @@ async def test_compaction_reopens_configuration_and_archive_without_run_resource
         page = await app.aget_chat_page(sid, limit=50, body_bytes=128000, preview_chars=100)
         assert page['has_compaction'] and not page['has_more']
         assert {r['message_id'] for r in page['records']} == {m.id for m in original}
-        thread = app._sessions.get_thread_id(sid)
+        thread = app._sessions.require(sid).get_thread_id()
     async with persistent_delegation(monkeypatch, path, root, child, effects) as app:
         await app.aprepare_session(sid)
         owner = app._sessions._sessions[sid]

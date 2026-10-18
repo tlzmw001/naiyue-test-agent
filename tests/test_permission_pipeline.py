@@ -10,7 +10,8 @@ from langchain_core.messages import AIMessage, ToolMessage
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_application import build_async_local_application
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import create_session_read_tool, ToolSettings
+from naiyue_test_agent.tools import create_session_read_tool
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.permissions import FilePermission
 from test_dynamic_tools import DynamicModel
 
@@ -20,7 +21,7 @@ def call(path, identity='c1', **args):
 
 
 def settings(**permissions):
-    return ToolSettings.model_validate({'permissions': permissions})
+    return AppSettings.model_validate({'permissions': permissions})
 
 
 async def build(monkeypatch, model, specs=None, **permissions):

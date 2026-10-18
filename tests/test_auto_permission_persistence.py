@@ -10,7 +10,7 @@ from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.application.session_storage import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import ToolSettings
+from naiyue_test_agent.settings import AppSettings
 from test_auto_permission_review import model, settings, verdict
 from test_dynamic_tools import DynamicModel, definition, call
 
@@ -49,7 +49,7 @@ async def test_auto_mode_restores_with_models_and_rejects_restore_without_them(m
             assert restored.get_permission_mode(sid) == 'Auto'
             assert restored._sessions.resolve_permission_context(sid)['session_allow'] == []
             assert restored._sessions.resolve_permission_context(sid)['project_instructions'] is None
-        args['settings'] = ToolSettings()
+        args['settings'] = AppSettings()
         async with open_async_persistent_application('synthetic', database_path=path, **args) as unavailable:
             with pytest.raises(SessionPersistenceError, match='invalid_permission_mode'):
                 await unavailable.arestore_session(sid)

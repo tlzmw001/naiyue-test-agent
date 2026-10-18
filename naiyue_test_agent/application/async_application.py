@@ -57,7 +57,7 @@ class AsyncApplication:
 
     async def aselect_thinking(self, session_id, model_id, level):
         with self._owned_operation():
-            await run_blocking(self._sessions.select_thinking, session_id, model_id, level)
+            await run_blocking(self._sessions.require(session_id).select_thinking, model_id, level)
 
     def get_registered_tools(self):
         self._check_open()
@@ -86,19 +86,19 @@ class AsyncApplication:
 
     def get_active_tools(self, session_id):
         self._check_open()
-        return self._sessions.get_active_tools(session_id)
+        return self._sessions.require(session_id).get_active_tools()
 
     async def aset_active_tools(self, session_id, names):
         with self._owned_operation():
-            await run_blocking(self._sessions.set_active_tools, session_id, names)
+            await run_blocking(self._sessions.require(session_id).set_active_tools, names)
 
     def get_permission_mode(self, session_id):
         self._check_open()
-        return self._sessions.get_permission_mode(session_id)
+        return self._sessions.require(session_id).get_permission_mode()
 
     async def aset_permission_mode(self, session_id, mode):
         with self._owned_operation():
-            await run_blocking(self._sessions.set_permission_mode, session_id, mode)
+            await run_blocking(self._sessions.require(session_id).set_permission_mode, mode)
 
     def has_session(self, session_id):
         return self._sessions.has_session(session_id)
@@ -121,40 +121,43 @@ class AsyncApplication:
 
     async def aselect_model(self, session_id, model_id):
         with self._owned_operation():
-            return await run_blocking(self._sessions.select_model, session_id, model_id)
+            return await run_blocking(self._sessions.require(session_id).select_model, model_id)
 
     def steer(self, session_id, text):
-        self._sessions.steer(session_id, text)
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError('A non-empty steering message is required')
+        self._sessions.require(session_id).steer(text)
 
     def follow_up(self, session_id, text):
-        self._sessions.follow_up(session_id, text)
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError('A non-empty follow-up message is required')
+        self._sessions.require(session_id).follow_up(text)
 
     def request_stop(self, session_id, *, run_id=None, agent_path='root'):
-        return self._sessions.request_stop(session_id, run_id=run_id, agent_path=agent_path)
+        return self._sessions.require(session_id).request_scope_stop(run_id=run_id, agent_path=agent_path)
 
     def pending_tool_approvals(self, session_id):
-        return self._sessions.pending_tool_approvals(session_id)
+        return self._sessions.require(session_id).pending_tool_approvals()
 
     def pending_subagent_approvals(self, session_id):
         self._check_open()
-        return self._sessions.pending_subagent_approvals(session_id)
+        return self._sessions.require(session_id).pending_subagent_approvals()
 
     def pending_approval_batches(self, session_id):
         self._check_open()
-        return self._sessions.pending_approval_batches(session_id)
+        return self._sessions.require(session_id).pending_approval_batches()
 
     def prepare_root_approval_submission(self, session_id, **submission):
         self._check_open()
-        return self._sessions.prepare_root_approval_submission(session_id, **submission)
+        return self._sessions.require(session_id).prepare_root_approval_submission(**submission)
 
     async def asubmit_subagent_approval(self, session_id, *, approval_batch_id, decisions, origin_run_id, remember_approved=()):
         with self._owned_operation():
-            return self._sessions.submit_subagent_approval(session_id, approval_batch_id=approval_batch_id,
-                decisions=decisions, origin_run_id=origin_run_id, remember_approved=remember_approved)
+            return self._sessions.require(session_id).submit_subagent_approval(approval_batch_id=approval_batch_id, decisions=decisions, origin_run_id=origin_run_id, remember_approved=remember_approved)
 
     async def aget_messages(self, session_id):
         with self._owned_operation():
-            thread = self._sessions.get_thread_id(session_id)
+            thread = self._sessions.require(session_id).get_thread_id()
             snapshot = await self._agent.aget_state({'configurable': {'thread_id': thread}})
             return [m.model_copy(deep=True) for m in snapshot.values.get('messages', [])]
 
@@ -216,7 +219,7 @@ class AsyncApplication:
 
     async def astop_tool_approval(self, session_id, *, approval_batch_id, origin_run_id, max_concurrency=4):
         with self._owned_operation():
-            self._sessions.validate_root_approval_stop(session_id, approval_batch_id=approval_batch_id, origin_run_id=origin_run_id)
+            self._sessions.require(session_id).validate_root_approval_stop(approval_batch_id=approval_batch_id, origin_run_id=origin_run_id)
             return await self._execute(session_id, [], True, None, max_concurrency, stop=True)
 
     def _background_done(self, task):
@@ -267,7 +270,7 @@ class AsyncApplication:
 
     async def astream_stop_tool_approval(self, session_id, *, approval_batch_id, origin_run_id, max_concurrency=4, capacity=256):
         self._check_open()
-        self._sessions.validate_root_approval_stop(session_id, approval_batch_id=approval_batch_id, origin_run_id=origin_run_id)
+        self._sessions.require(session_id).validate_root_approval_stop(approval_batch_id=approval_batch_id, origin_run_id=origin_run_id)
         iterator = self._stream(session_id, [], True, max_concurrency, capacity, stop=True)
         try:
             async for event in iterator:
@@ -304,14 +307,14 @@ class AsyncApplication:
 
 
 async def build_async_local_application(config_path, *, tools, system_prompt, response_format, initial_active_tools=None, settings=None):
-    settings = settings if settings is not None else application.load_tool_settings()
+    settings = settings if settings is not None else application.load_settings()
     registry = application.prepare_tool_registry(tools)
     application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
     initial = registry.names() if initial_active_tools is None else initial_active_tools
     registry.select(initial)
     catalog = await acquire_blocking(application.load_model_catalog, lambda item: item.aclose(), config_path)
     try:
-        await run_blocking(catalog._prepare_async_clients)
+        await run_blocking(catalog.prepare_async_clients)
         sessions = application.SessionService(catalog, registry, initial_active_tools=initial, permission_settings=settings.permissions, progress_settings=settings.progress,
             max_active_runs=settings.max_active_runs)
         agent = sessions.assemble_runtime(InMemorySaver(), system_prompt=system_prompt, response_format=response_format,

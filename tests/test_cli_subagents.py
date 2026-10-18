@@ -10,7 +10,8 @@ from langchain_core.messages import AIMessage
 from naiyue_test_agent import application
 from naiyue_test_agent.application import cli
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import ToolSettings, create_subagent_tool
+from naiyue_test_agent.tools import create_subagent_tool
+from naiyue_test_agent.settings import AppSettings
 from test_subagent_execution import ChildModel, role
 from test_async_application import StreamingToolModel, call
 from test_dynamic_tools import definition
@@ -23,9 +24,9 @@ def test_pipe_child_approval_and_exit_never_join_an_unresolved_child(monkeypatch
     root = StreamingToolModel(replies=[call('subagent', {'agent': 'tester', 'task': 'check'}, 'outer'), AIMessage(content='root done')])
     child = ChildModel(replies=[call('probe', {'value': 'once'}, 'inner'), AIMessage(content='child report')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
-    settings = ToolSettings(subagents=(role(),))
-    monkeypatch.setattr(cli, 'load_tool_settings', lambda: settings)
-    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _: [create_subagent_tool(), definition(calls=effects, approved=True)])
+    settings = AppSettings(subagents=(role(),))
+    monkeypatch.setattr(cli, 'load_settings', lambda: settings)
+    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _, *, process_settings, output_settings, progress_settings: [create_subagent_tool(), definition(calls=effects, approved=True)])
     build = cli.build_local_application
     def factory(*args, **kwargs):
         app = build(*args, **kwargs)
@@ -72,8 +73,8 @@ def test_pipe_approval_waits_for_preceding_queued_request(monkeypatch, capsys):
         call('subagent', {'agent': 'tester', 'task': 'second task'}, 'outer'), AIMessage(content='second done')])
     child = ChildModel(replies=[call('probe', {'value': 'second'}, 'inner'), AIMessage(content='child report')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
-    monkeypatch.setattr(cli, 'load_tool_settings', lambda: ToolSettings(subagents=(role(),)))
-    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _: [create_subagent_tool(), definition(calls=effects, approved=True)])
+    monkeypatch.setattr(cli, 'load_settings', lambda: AppSettings(subagents=(role(),)))
+    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _, *, process_settings, output_settings, progress_settings: [create_subagent_tool(), definition(calls=effects, approved=True)])
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: False))
     lines = iter(['first', 'second', ':approve', ':quit'])
     def read(_prompt=''):
@@ -105,8 +106,8 @@ def test_pipe_does_not_reselect_submitted_root_batch_before_resume_starts(monkey
         call('subagent', {'agent': 'tester', 'task': 'second'}, 'outer'), AIMessage(content='second done')])
     child = ChildModel(replies=[call('probe', {'value': 'second'}, 'inner'), AIMessage(content='report')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
-    monkeypatch.setattr(cli, 'load_tool_settings', lambda: ToolSettings(subagents=(role(),)))
-    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _: [create_subagent_tool(), definition(calls=effects, approved=True)])
+    monkeypatch.setattr(cli, 'load_settings', lambda: AppSettings(subagents=(role(),)))
+    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _, *, process_settings, output_settings, progress_settings: [create_subagent_tool(), definition(calls=effects, approved=True)])
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: False))
     resume = cli._resume_and_print
     def delayed(*args, **kwargs):

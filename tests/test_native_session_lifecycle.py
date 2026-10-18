@@ -10,7 +10,7 @@ import pytest
 
 @pytest.mark.parametrize('module_name, names', [
     ('session_service', ('arun', 'acompact', 'aresume_tool_approval')),
-    ('session_execution', ('_arun', 'aresume_tool_approval', '_areview_partial_state',
+    ('session_execution', ('arun', 'aresume_tool_approval', '_areview_partial_state',
                            '_prepare_resources', '_on_failure', '_afinish_run')),
     ('session_subagents', ('ainvoke_subagent', '_subagent_steps', 'settle_subagent_drivers')),
     ('session_persistence', ('afinish', 'arecover', 'arestore', 'ahistory', '_aprepare_saved_configuration', '_read_history', '_recover_checkpoint')),

@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from naiyue_test_agent.config_paths import get_data_dir, get_models_path
-from naiyue_test_agent.tools import load_tool_settings
+from naiyue_test_agent.settings import load_settings
 from naiyue_test_agent.workspaces import prepare_workspace
 import socket
 
@@ -34,7 +34,7 @@ def main(argv=None):
         parser.error('--new-workspace conflicts with --session-db')
     logging.basicConfig(level=logging.WARNING, format='%(levelname)s %(name)s %(message)s')
     try:
-        tool_settings = load_tool_settings()
+        tool_settings = load_settings()
         location = prepare_workspace(args.workspace or Path.cwd(), data_dir=get_data_dir(tool_settings.storage),
             database_path=args.session_db, new_workspace=args.new_workspace)
         options = {'access_token': os.environ['NAIYUE_WEB_TOKEN']} if 'NAIYUE_WEB_TOKEN' in os.environ else {}

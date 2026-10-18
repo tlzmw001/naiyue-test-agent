@@ -67,7 +67,7 @@ def test_control_uses_owned_observation_and_flushes_without_state_lock():
     with ThreadPoolExecutor(max_workers=1) as worker:
         def handler(event):
             if event.event_type == 'control_accepted':
-                checks.append(worker.submit(service.describe_session, sid).result(timeout=5))
+                checks.append(worker.submit(service.require(sid).describe_session).result(timeout=5))
         service.subscribe_events(handler)
         owner, observation_run = service._admit(sid, 'run', 'message')
         rid, observation = observation_run.run_id, observation_run.observation
@@ -138,10 +138,10 @@ async def test_execution_uses_owned_child_lifecycle(monkeypatch, fails):
             raise failure
         monkeypatch.setattr(session_execution, 'ainvoke_agent_run', execute)
         with pytest.raises(RuntimeError) as caught:
-            await owner._arun(app._agent, [('user', 'question')], run=observation_run)
+            await owner.arun(app._agent, [('user', 'question')], run=observation_run)
         assert caught.value is failure
     else:
-        result = await owner._arun(app._agent, [('user', 'question')], run=observation_run)
+        result = await owner.arun(app._agent, [('user', 'question')], run=observation_run)
         assert result['messages'][-1].content == 'PRIVATE_REPLY'
     expected = [('stop', sid, rid)] if fails else []
     assert calls == expected + [('settle', sid, rid), ('assert', sid, rid)]

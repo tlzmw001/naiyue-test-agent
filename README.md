@@ -1,8 +1,10 @@
 # Naiyue Test Agent
 
-当前进度：[Spec109两片](docs/specs/109-web-replay-and-persistent-diagnostics.md#9-109-02实际结果与spec109收尾)已完成Web每根256条/4 MiB重播双预算和schema10持久诊断。关键事件/根摘要分开，根子共享额度，1 MiB单根/30天/256 MiB工作区默认可配置；有限队列、关闭排空、缺口和整组淘汰已接线。新增只读诊断分页API，冷查询不装载图；原聊天/用量/checkpoint及审批恢复保持。后端2817、前端198及211模块构建通过，0次真实供应商请求。下一步先讨论Spec103的GFM消息呈现，再逐片推进其他UI；checkpoint修剪和两种项目重试继续延期，原机/更多供应商/PyPI交付独立。
+当前进度：[Spec103纯前端连续分片](docs/specs/103-frontend-completion.md#5-实际实现与验收2026-10-18)已完成现有Edit差异、模型页头与阈值提示、有界重连、可选日期视图、共享子实例入口、三按钮审批和浅/深/系统主题；此前GFM/流式Markdown/代码块/工作区短标签保持。前端35文件280项、TS/Vite523模块及本批后端快照2825项通过，真实1440/375离线页面验收通过，0次供应商请求。B3自动标题、U1请求归属和完整Write/Edit投影仍需后端方案，U12/U13独立；Spec110清理已完成（见下文），checkpoint修剪/两种重试/原机/PyPI范围保持。
 
 面向 HTTP/RPC 接口测试的 AI Agent 项目，当前已实现本地模型—工具循环、会话、事件流及统一异步应用链路；RAG 与业务评测按后续切片推进。
+
+[Spec110 R1—R9](docs/specs/110-application-boundary-cleanup.md#11-实际实现与验收2026-10-18)已完成应用边界清理：应用内部经`SessionService.require`直接调用`AgentSession`，删除20个重复路由；启动总配置改为项目级`AppSettings/load_settings`，工具只接具体预算。根图使用公开durability参数，策略构造、并发校验、执行命名/装配状态和usage关闭归属已收敛，原SessionPort/准入/保存与关闭合同保持。当前后端2865、前端280及TS/Vite构建通过，未调用真实供应商；下方历史Spec/课堂中的旧内部入口按该Spec映射到当前代码。
 
 项目目录与仓库名：`naiyue-test-agent`。初始化日期：2026-09-28。
 

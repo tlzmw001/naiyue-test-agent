@@ -214,7 +214,7 @@ async def test_uncertain_commit_is_not_replayed_or_quarantined(
         assert target.read_text(encoding='utf-8') == ('new' if after_replace else 'old')
         assert [p.name for p in tmp_path.iterdir()] == ['case.md']
         assert attempts == [True]
-        assert not app._sessions.describe_session(session)['manual_review_required']
+        assert not app._sessions.require(session).describe_session()['manual_review_required']
         conversions = [r.tool_error for r in caplog.records if hasattr(r, 'tool_error')]
         assert len(conversions) == 1 and conversions[0]['cause_type'] == 'OSError'
         assert 'PRIVATE_' not in caplog.text + feedback.content

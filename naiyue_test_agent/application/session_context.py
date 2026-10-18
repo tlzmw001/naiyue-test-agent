@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 async def context_view(session_id, *, sessions, agent, catalog, tool_registry, system_prompt, history=None):
     config = None
     if sessions.has_session(session_id):
-        row = sessions.snapshot_for_context(session_id)
+        row = sessions.require(session_id).snapshot_for_context()
         config = {'configurable': {'thread_id': row['thread_id']}}
         snapshot = await agent.aget_state(config)
         messages = snapshot.values.get('messages', [])

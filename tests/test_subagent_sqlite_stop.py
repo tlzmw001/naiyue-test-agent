@@ -5,7 +5,8 @@ from langchain_core.messages import AIMessage, ToolMessage
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools import ToolSettings, create_subagent_tool
+from naiyue_test_agent.tools import create_subagent_tool
+from naiyue_test_agent.settings import AppSettings
 from native_application_helpers import async_test
 from test_async_application import StreamingToolModel, call
 from test_subagent_execution import ChildModel, record_instances, role
@@ -20,7 +21,7 @@ async def test_child_save_failure_or_success_does_not_change_root_save_contract(
     child = ChildModel(replies=[AIMessage(content='saved child report')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
     options = dict(database_path=tmp_path / 'state.sqlite', tools=[create_subagent_tool(), definition()],
-        initial_active_tools=['subagent'], system_prompt='', response_format=None, settings=ToolSettings(subagents=(role(),)))
+        initial_active_tools=['subagent'], system_prompt='', response_format=None, settings=AppSettings(subagents=(role(),)))
     events = []
     async with open_async_persistent_application('unused', **options) as app:
         instances = record_instances(monkeypatch, app)
@@ -48,7 +49,7 @@ async def test_child_save_failure_or_success_does_not_change_root_save_contract(
             assert instances[0]['status'] == 'completed' and instances[0]['settled']
             assert [(e.source is None, e.data.status) for e in events if e.event_type == 'run_finished'] == [
                 (False, 'completed'), (True, 'failed')]
-            assert not app._sessions.describe_session(sid)['busy'] and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
+            assert not app._sessions.require(sid).describe_session()['busy'] and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
     if fail_child:
         async with open_async_persistent_application('unused', **options) as restored:
             await restored.arestore_session(sid)

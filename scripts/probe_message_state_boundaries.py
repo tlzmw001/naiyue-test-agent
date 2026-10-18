@@ -247,7 +247,7 @@ async def steering_stop_and_partial_failure(resources):
         assert error is failure
     else:
         raise AssertionError('Expected tool failure')
-    config = {'configurable': {'thread_id': app._sessions.get_thread_id(session)}}
+    config = {'configurable': {'thread_id': app._sessions.require(session).get_thread_id()}}
     saved = await probe.graph.checkpointer.aget_tuple(config)
     pending_tools = []
     for _task, channel, value in saved.pending_writes:

@@ -8,23 +8,23 @@ from .grep import create_session_grep_tool
 from .ls import create_session_ls_tool
 from .read import create_session_read_tool
 from .registry import ToolSpec
-from .settings import ToolSettings
+from .settings import BuiltinToolSettings
 from .subagent import create_subagent_tool
 from .write import create_session_write_tool
 
 
-def create_builtin_tools(settings: ToolSettings) -> list[ToolSpec]:
+def create_builtin_tools(settings: BuiltinToolSettings, *, process_settings=None, output_settings=None, progress_settings=None) -> list[ToolSpec]:
     specs = [
-        create_session_read_tool(settings=settings.tools.read, progress_settings=settings.progress),
-        create_session_ls_tool(settings=settings.tools.ls, progress_settings=settings.progress),
-        create_session_find_tool(settings=settings.tools.find, process_settings=settings.process, progress_settings=settings.progress),
-        create_session_grep_tool(settings=settings.tools.grep, process_settings=settings.process, progress_settings=settings.progress),
-        create_session_write_tool(settings=settings.tools.write, progress_settings=settings.progress),
-        create_session_edit_tool(settings=settings.tools.edit, progress_settings=settings.progress),
-        create_session_bash_tool(process_settings=settings.process,
-            settings=settings.tools.bash, output_settings=settings.tool_output, progress_settings=settings.progress),
-        create_session_powershell_tool(process_settings=settings.process,
-            settings=settings.tools.powershell, output_settings=settings.tool_output, progress_settings=settings.progress),
+        create_session_read_tool(settings=settings.read, progress_settings=progress_settings),
+        create_session_ls_tool(settings=settings.ls, progress_settings=progress_settings),
+        create_session_find_tool(settings=settings.find, process_settings=process_settings, progress_settings=progress_settings),
+        create_session_grep_tool(settings=settings.grep, process_settings=process_settings, progress_settings=progress_settings),
+        create_session_write_tool(settings=settings.write, progress_settings=progress_settings),
+        create_session_edit_tool(settings=settings.edit, progress_settings=progress_settings),
+        create_session_bash_tool(process_settings=process_settings,
+            settings=settings.bash, output_settings=output_settings, progress_settings=progress_settings),
+        create_session_powershell_tool(process_settings=process_settings,
+            settings=settings.powershell, output_settings=output_settings, progress_settings=progress_settings),
         create_subagent_tool(),
     ]
     return specs

@@ -3,9 +3,10 @@
 import pytest
 
 from naiyue_test_agent.application import prepare_tool_registry
-from naiyue_test_agent.tools import create_session_read_tool, create_session_bash_tool, ToolSettings
+from naiyue_test_agent.tools import create_session_read_tool, create_session_bash_tool
+from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.permission_rules import PermissionRule, match_rules, validate_permission_rules
-from naiyue_test_agent.tools.settings import load_tool_settings
+from naiyue_test_agent.settings import load_settings
 
 
 @pytest.mark.parametrize('pattern,path,matched', [
@@ -28,7 +29,7 @@ def test_component_glob(pattern, path, matched):
 def test_invalid_rule_rejected_before_agent(rule):
     registry = prepare_tool_registry([create_session_read_tool(), create_session_bash_tool()])
     with pytest.raises(ValueError):
-        settings = ToolSettings.model_validate({'permissions': {'allow': [rule]}})
+        settings = AppSettings.model_validate({'permissions': {'allow': [rule]}})
         validate_permission_rules(settings.permissions, registry.select(registry.names()))
 
 
@@ -50,11 +51,11 @@ def test_permission_or_file_syntax_error_never_falls_back(tmp_path, content):
     path = tmp_path / 'settings.toml'
     path.write_text(content)
     with pytest.raises(ValueError):
-        load_tool_settings(path)
+        load_settings(path)
 
 
 def test_bad_tool_budget_preserves_valid_permissions(tmp_path):
     path = tmp_path / 'settings.toml'
     path.write_text('[permissions]\nmode="NoAsk"\n[tools.read]\nmax_limit=0\n')
-    loaded = load_tool_settings(path)
+    loaded = load_settings(path)
     assert loaded.permissions.mode == 'NoAsk' and loaded.tools.read.max_limit == 2000

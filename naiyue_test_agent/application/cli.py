@@ -17,7 +17,8 @@ from naiyue_test_agent.application import (
     SessionBusyError, SessionManualReviewRequiredError, SessionPendingApprovalError,
 )
 from naiyue_test_agent.application.project_instructions import BASE_SYSTEM_PROMPT
-from naiyue_test_agent.tools import create_builtin_tools, load_tool_settings
+from naiyue_test_agent.tools import create_builtin_tools
+from naiyue_test_agent.settings import load_settings
 from naiyue_test_agent.tools.processes import ProcessCleanupError
 from naiyue_test_agent.tools.output import (
     clear_shell_outputs, preview_shell_outputs,
@@ -166,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     restored = None
     history = None
     try:
-        tool_settings = load_tool_settings()
+        tool_settings = load_settings()
         args.workspace = resolve_workspace_root(args.workspace or Path.cwd())
         if not args.no_session:
             location = prepare_workspace(args.workspace, data_dir=get_data_dir(tool_settings.storage),
@@ -186,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
                 restored = storage.get(selected)
                 if str(args.workspace) != restored['workspace_root']:
                     raise SessionPersistenceError('workspace_mismatch')
-        tools = create_builtin_tools(tool_settings)
+        tools = create_builtin_tools(tool_settings.tools, process_settings=tool_settings.process, output_settings=tool_settings.tool_output, progress_settings=tool_settings.progress)
         initial_tools = [spec.tool.name for spec in tools if spec.tool.name not in ('bash', 'powershell')]
         factory = build_local_application if storage is None else build_persistent_application
         options = {} if storage is None else {'storage': storage}
