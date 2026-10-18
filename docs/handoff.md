@@ -2,6 +2,8 @@
 
 ## 当前交接摘要（2026-10-18）
 
+- **正式发行验收进行中**：用户确认业务已提交push、PyPI已配置，授权全量及五平台验证通过后发布`v0.1.0`。当前业务基线`dd1d358`本地/远端一致；本轮后端2948 passed in126.30s、前端39文件289 passed及生产构建成功，465份Python结构/500行、compileall、pip/diff通过。首轮CI的两个inline Python步骤因runner临时脚本不含checkout导入路径失败，已用两例真实执行回归复现并修正，打包59项和actionlint通过；架构/安全复核无新增阻断。唯一下一步：推送修复并等待同一提交的完整五平台CI，再创建标签发布与核对公开安装；结果续记[Spec112第10节](specs/112-pypi-packaging-and-release.md#10-正式发行验收2026-10-18)。尚未创建标签或上传PyPI，未改真实配置/用户库。
+
 - **本轮集成验收与提交范围**：用户授权把Spec111会话能力、Spec112打包/CI和Spec113最新前端格式一起提交push到origin/main，按三个主题拆分。最终后端**2948 passed in123.74s**（`/tmp/naiyue-ship-backend-final.log`）、前端**39文件289 passed**及TS/Vite通过；465份Python AST/源文件500行/compileall/pip/diff、架构与安全只读复核通过。补真实Uvicorn缺配置指引回归并修复实际lifespan错误回传，24项定向与独立复验通过。
 - **包与页面证据**：最终源码macOS ARM64候选267文件，twine/白名单和源码外干净安装通过，包内原生工具/Find/Grep/Web/CLI/审批恢复/SQLite重开正常，0次供应商。1440浅/深色与375px生产页面无横向溢出、控制台无warn/error，截图`/tmp/naiyue-ship-{desktop,dark,mobile}.png`。临时页/服务/工作区已清理，viewport复位。无真实配置/用户库/课堂记录改动，构建工具装于忽略目录的独立环境。
 - **唯一下一步与边界**：核对本批Git推送和对应远端CI；Windows/Linux及其他架构安装仍以各平台job为准。没有创建版本标签或发布PyPI，正式发版需另行授权。此前实施摘要中的“未提交/待稳定”保留其快照时点含义；当前提交、push与CI身份以Git/Actions记录为准。

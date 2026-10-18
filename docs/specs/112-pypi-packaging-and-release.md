@@ -6,6 +6,8 @@
 
 本轮实施发布准备，不创建正式标签、不上传 PyPI、不修改真实模型配置或会话库。外部账号邮箱/2FA 及 PyPI Pending Publisher 由用户配置；正式发布前单独核对提交与产物。
 
+2026-10-18 后续授权：用户已提交并推送业务修改、配置 PyPI；重新全量验证和五平台安装验证，通过后创建 `v0.1.0` 并正式发布。上述“仅发布准备”是初始阶段边界；当前按该后续授权执行，实际发布结果以文末验收和 Actions/PyPI 记录为准。
+
 目标体验：`pip install naiyue-test-agent` 安装后，`nyt` 启动本地 Web，`nyt chat` 进入已有终端交互，`nyt --help/--version` 无需模型配置即可运行。现有 `python -m` 入口及业务合同保持。
 
 ## 2. 当前链路与缺口
@@ -95,7 +97,7 @@ Pending Publisher：项目 naiyue-test-agent、owner tlzmw001、repo naiyue-test
 ## 7. 验收清单
 
 - [x] 先运行新增测试，确认预期失败，再实现并转绿。
-- [ ] 全部既有后端/前端测试和构建通过；新文件不超过500行。
+- [x] 全部既有后端/前端测试和构建通过；新文件不超过500行。
 - [x] 本机候选 wheel 构建、白名单、真实二进制、源码外干净安装、Web/CLI 与临时运行/审批/重开验证通过（非冻结提交）。
 - [x] 五目标候选归档可构建与检查，Python/前端指纹一致。
 - [ ] 对应 OS 真正运行测试由 CI 证据确认，不能用本机交叉打包替代。
@@ -125,3 +127,11 @@ Pending Publisher：项目 naiyue-test-agent、owner tlzmw001、repo naiyue-test
 
 
 提交前联合验证：后端2948 passed in123.74s、前端39文件289通过及TS/Vite成功；缺配置真实启动与Web生命周期24项通过，架构独立复跑确认修复。最终macOS ARM64候选267文件、3,561,109字节，application_sha256=817011664dff46ea7a73de4333c3d21a8c86536d8f98d00f1f3bf2e042eb7eb7；twine/白名单与源码外全新venv安装通过，工具/Web/API/审批/SQLite/CLI链正常且0模型网络请求。报告`build/ship-review-20261018/install-smoke.json`、日志`/tmp/naiyue-ship-wheel-{final,check,install}.log`。本轮仅提交push主分支，不推v标签或上传PyPI；五平台实跑与正式发行仍沿远端CI与单独发版授权。
+
+## 10. 正式发行验收（2026-10-18）
+
+用户业务提交 `dd1d358` 本地与远端一致且初始工作区干净。重新执行后端全量 **2948 passed in126.30s**（`/tmp/nyt-release-dd1d358-backend.log`）；前端 **39文件289 passed**、TS/Vite生产构建成功（同前缀 `frontend.log` / `build.log`），保留既有chunk体积提示；465份Python AST/500行、compileall、pip check和diff检查通过。
+
+首轮远端CI的targets和frontend整理步骤真实失败：`shell: python`将脚本保存在checkout外，导入仓库`scripts`包时抛出ModuleNotFoundError。新增两项回归从checkout外的runner脚本执行完整步骤并清除PYTHON环境，两例正确红灯；两处步骤在本地导入前显式加入checkout路径，三份打包测试 **59 passed in2.02s**、actionlint通过，未变更产品代码和发布权限。架构/安全独立复核无新增发行阻断。
+
+当前等待修复提交的完整五平台CI；标签和PyPI发行需在该提交的验证成功后执行，不能将首次跳过的五平台任务视为通过。

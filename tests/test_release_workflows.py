@@ -1,13 +1,47 @@
 """A tag cannot publish until the complete tested platform matrix has succeeded."""
 
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 
 import pytest
 import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize('job', ['targets', 'frontend'])
+def test_inline_python_runs_from_a_runner_script_outside_checkout(tmp_path, job):
+    workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)
+    code = next(step['run'] for step in workflow['jobs'][job]['steps']
+                if step.get('shell') == 'python')
+    workspace = tmp_path / 'checkout'
+    for name in ('scripts/native_assets.py', 'scripts/release_artifacts.py',
+                 'release/native-tools.json', 'naiyue_test_agent/__init__.py'):
+        target = workspace / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / name, target)
+    frontend = workspace / 'frontend'
+    (frontend / 'dist/assets').mkdir(parents=True)
+    (frontend / 'dist/index.html').write_text('<html></html>')
+    (frontend / 'dist/assets/app.js').write_text('console.log("fixture")')
+    (frontend / 'package-lock.json').write_text(json.dumps({'packages': {}}))
+    runner = tmp_path / 'runner.py'
+    runner.write_text(code)
+    env = {key: value for key, value in os.environ.items() if not key.startswith('PYTHON')}
+    env.update({'GITHUB_OUTPUT': str(tmp_path / 'outputs'), 'GITHUB_REF_TYPE': 'branch'})
+    result = subprocess.run([sys.executable, str(runner)], cwd=workspace, env=env,
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    if job == 'targets':
+        matrix = json.loads((tmp_path / 'outputs').read_text().removeprefix('matrix='))
+        assert len(matrix['include']) == 5
+    else:
+        assert (workspace / 'build/frontend-assets/web/index.html').read_text() == '<html></html>'
 
 
 def test_publish_waits_for_shared_ci_and_uses_only_oidc():
