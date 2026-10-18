@@ -213,7 +213,9 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as error:
         logger.error('cli_initialization_failed error_type=%s', type(error).__name__)
         emit(f'初始化失败（{type(error).__name__}）')
-        if str(error) == 'workspace_id_conflict':
+        if isinstance(error, ModelConfigError) and not args.config.expanduser().is_file():
+            emit(f'未找到模型配置：{args.config}；请创建该文件或使用 --config 指定配置。配置格式见 README。')
+        elif str(error) == 'workspace_id_conflict':
             emit('检测到工作区副本；请使用 --new-workspace 为副本创建独立历史')
         elif str(error) == 'storage_in_use':
             emit('该工作区数据库已被其他服务占用，请先关闭该服务')

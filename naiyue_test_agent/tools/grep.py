@@ -6,11 +6,12 @@ import json
 import logging
 import os
 from pathlib import Path
-import shutil
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import StructuredTool, ToolException
 from pydantic import BaseModel, ConfigDict, Field
+
+from naiyue_test_agent.resources import resolve_tool_binary
 
 from .paths import prepare_file_subject, verify_file_target
 from .permissions import FilePermission, require_file_target, candidate_access
@@ -82,7 +83,7 @@ class _GrepSearch:
         self.progress = progress or ToolProgress(None)
         self.candidates = 0
         self.target, self.runtime, self.settings, self.runner = target, runtime, settings, runner
-        self.binary = shutil.which('rg')
+        self.binary = resolve_tool_binary('rg')
         if self.binary is None:
             raise ToolException(GREP_NO_RG)
         self.root = target if target.is_dir() else target.parent

@@ -1,6 +1,6 @@
 """Local HTTP boundary; the lifespan owns one existing async application."""
 
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 import logging
 
 from fastapi import Depends, FastAPI, Query, Request
@@ -13,6 +13,7 @@ from naiyue_test_agent.application.async_persistent import open_async_persistent
 from naiyue_test_agent.application.project_instructions import BASE_SYSTEM_PROMPT
 from naiyue_test_agent.tools import create_builtin_tools
 from naiyue_test_agent.settings import load_settings
+from naiyue_test_agent.model_access import ModelConfigError
 from .auth import authorize
 from .errors import WebError
 from .run_delivery import RunDelivery
@@ -37,7 +38,12 @@ def create_web_app(settings, *, application_factory=None):
             system_prompt=BASE_SYSTEM_PROMPT, response_format=None, initial_active_tools=initial_tools, settings=tool_settings,
             workspace_binding={'workspace_id': settings.workspace_id, 'root_path': str(settings.workspace_root)}
                 if settings.workspace_id is not None else None))
-        async with factory() as application:
+        async with AsyncExitStack() as stack:
+            try:
+                application = await stack.enter_async_context(factory())
+            except ModelConfigError as error:
+                app.state.startup_error = error
+                raise
             delivery = RunDelivery(application, delivery_settings, progress_settings=tool_settings.progress)
             app.state.delivery = delivery
             app.state.service = WebService(application, delivery, delivery_settings)

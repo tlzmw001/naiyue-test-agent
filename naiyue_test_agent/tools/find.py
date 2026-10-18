@@ -4,12 +4,13 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-import shutil
 import sys
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import StructuredTool, ToolException
 from pydantic import BaseModel, ConfigDict, Field
+
+from naiyue_test_agent.resources import resolve_tool_binary
 
 from .paths import prepare_file_subject, verify_file_target
 from .permissions import FilePermission, require_file_target, candidate_access
@@ -58,7 +59,7 @@ async def _find_files(target, pattern, limit, runtime, *, settings, runner, prog
     progress = progress or ToolProgress(None)
     if not pattern.strip() or '\x00' in pattern:
         raise ToolException('find needs a valid non-empty glob pattern such as *.py or src/**/*.py.')
-    binary = shutil.which('fd') or shutil.which('fdfind')
+    binary = resolve_tool_binary('fd')
     if binary is None:
         raise ToolException(FIND_NO_FD)
     control = runtime.context.get('_run_control')

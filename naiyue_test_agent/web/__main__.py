@@ -7,6 +7,8 @@ from pathlib import Path
 
 from naiyue_test_agent.config_paths import get_data_dir, get_models_path
 from naiyue_test_agent.settings import load_settings
+from naiyue_test_agent.resources import frontend_directory, PackageResourceError
+from naiyue_test_agent.model_access import ModelConfigError
 from naiyue_test_agent.workspaces import prepare_workspace
 import socket
 
@@ -27,19 +29,19 @@ def main(argv=None):
     parser.add_argument('--new-workspace', action='store_true')
     parser.add_argument('--host', default=os.environ.get('NAIYUE_WEB_HOST', '127.0.0.1'))
     parser.add_argument('--port', type=int, default=int(os.environ.get('NAIYUE_WEB_PORT', '0')))
-    parser.add_argument('--frontend-dist', type=Path,
-                        default=Path(__file__).resolve().parents[2] / 'frontend' / 'dist')
+    parser.add_argument('--frontend-dist', type=Path)
     args = parser.parse_args(argv)
     if args.new_workspace and args.session_db is not None:
         parser.error('--new-workspace conflicts with --session-db')
     logging.basicConfig(level=logging.WARNING, format='%(levelname)s %(name)s %(message)s')
     try:
+        frontend_dist = args.frontend_dist if args.frontend_dist is not None else frontend_directory()
         tool_settings = load_settings()
         location = prepare_workspace(args.workspace or Path.cwd(), data_dir=get_data_dir(tool_settings.storage),
             database_path=args.session_db, new_workspace=args.new_workspace)
         options = {'access_token': os.environ['NAIYUE_WEB_TOKEN']} if 'NAIYUE_WEB_TOKEN' in os.environ else {}
         settings = WebSettings(config_path=args.config, workspace_root=location.root, workspace_id=location.workspace_id,
-            runtime_settings=tool_settings, database_path=location.database_path, frontend_dist=args.frontend_dist, host=args.host, port=args.port,
+            runtime_settings=tool_settings, database_path=location.database_path, frontend_dist=frontend_dist, host=args.host, port=args.port,
             **options)
         if not (settings.frontend_dist / 'index.html').is_file():
             print('前端尚未构建，请先执行 npm --prefix frontend run build')
@@ -56,7 +58,13 @@ def main(argv=None):
             print('默认持久会话；工作区启用文件工具，工具由会话活动集合选择，Bash 执行仍需审批。Ctrl-C 等待安全收尾。', flush=True)
             server = uvicorn.Server(uvicorn.Config(app, host=settings.host, port=settings.port,
                 workers=1, log_level='warning', access_log=False))
-            server.run(sockets=[listener])
+            try:
+                server.run(sockets=[listener])
+            except SystemExit:
+                error = getattr(app.state, 'startup_error', None)
+                if not server.started and isinstance(error, ModelConfigError):
+                    raise error from None
+                raise
             return 0 if server.started else 1
     except KeyboardInterrupt:
         print('收到退出信号，本地 Web 服务已退出。')
@@ -64,7 +72,11 @@ def main(argv=None):
     except Exception as error:
         logger.error('web_startup_failed error_type=%s', type(error).__name__)
         print(f'启动失败（{type(error).__name__}）')
-        if str(error) == 'workspace_id_conflict':
+        if isinstance(error, PackageResourceError):
+            print(str(error))
+        elif isinstance(error, ModelConfigError) and not args.config.expanduser().is_file():
+            print(f'未找到模型配置：{args.config}；请创建该文件或使用 --config 指定配置。配置格式见 README。')
+        elif str(error) == 'workspace_id_conflict':
             print('检测到工作区副本；请使用 --new-workspace 为副本创建独立历史')
         elif str(error) == 'storage_in_use':
             print('该工作区数据库已被其他服务占用，请先关闭该服务')

@@ -1,0 +1,56 @@
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: [checks]
+    runs-on: ubuntu-22.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/naiyue-test-agent/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          merge-multiple: true
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  published-install:
+    needs: [checks, publish]
+    name: PyPI install / ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.checks.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-${{ matrix.target }}
+          path: dist
+      - run: python -m scripts.verify_wheel_install --wheel-dir dist --from-pypi --output build/pypi-install.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pypi-install-${{ matrix.target }}
+          path: build/pypi-install.json
+          if-no-files-found: warn

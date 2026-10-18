@@ -125,7 +125,7 @@ async def test_grep_external_directory_is_not_bulk_approved(tmp_path):
 
 @async_test
 async def test_grep_missing_rg_is_actionable_tool_error(monkeypatch, tmp_path):
-    monkeypatch.setattr(grep_module.shutil, 'which', lambda _name: None)
+    monkeypatch.setattr(grep_module, 'resolve_tool_binary', lambda _name: None)
     result = (await call_grep(create_session_grep_tool(), {'pattern': 'x'}, tmp_path))
     assert result.status == 'error'
     assert 'rg' in result.content

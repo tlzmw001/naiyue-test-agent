@@ -93,7 +93,7 @@ async def test_find_rejects_traversal_non_directory_and_outside_without_grant(tm
 
 @async_test
 async def test_find_missing_fd_is_actionable_tool_error(monkeypatch, tmp_path):
-    monkeypatch.setattr(find_module.shutil, 'which', lambda _name: None)
+    monkeypatch.setattr(find_module, 'resolve_tool_binary', lambda _name: None)
     result = (await call_find(create_session_find_tool(), {'pattern': '*.md'}, tmp_path))
     assert result.status == 'error'
     assert 'fd' in result.content

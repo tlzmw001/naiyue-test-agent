@@ -59,8 +59,8 @@ def owned_native_program(monkeypatch, root):
         f'else:\n print({json.dumps(event)!r},flush=True)\n'
         f' open({str(marker)!r},"w").write(str(os.getpid()))\n time.sleep(60)\n')
     binary.chmod(0o700)
-    which = module.shutil.which
-    monkeypatch.setattr(module.shutil, 'which', lambda name: str(binary) if name == 'rg' else which(name))
+    resolve = module.resolve_tool_binary
+    monkeypatch.setattr(module, 'resolve_tool_binary', lambda name: str(binary) if name == 'rg' else resolve(name))
     return marker
 
 
