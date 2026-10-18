@@ -1,16 +1,16 @@
-.menu { position: fixed; width: 188px; z-index: 60; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 30px var(--shadow); }
-.menu > button { display: block; width: 100%; padding: 9px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--text); font-size: 12px; text-align: left; }
+.menu { position: fixed; width: 188px; z-index: 60; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); box-shadow: 0 8px 30px var(--shadow); }
+.menu > button { display: block; width: 100%; padding: 9px 10px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text); font-size: var(--fs-ui); text-align: left; }
 .menu > button:hover:not(:disabled), .menu > button:focus-visible { background: var(--surface-hover); }
 .separator { height: 1px; background: var(--surface-active); margin: 4px; }
 .menu > .delete { color: var(--danger-strong); }
-.menu p { color: var(--danger); font-size: 11px; padding: 4px 10px; }
+.menu p { color: var(--danger); font-size: var(--fs-caption); padding: 4px 10px; }
 .backdrop { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 20px; background: var(--backdrop); }
-.dialog { width: min(380px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 22px; box-shadow: 0 12px 45px var(--shadow); }
-.dialog h2 { margin: 0 0 18px; font-size: 16px; color: var(--text); font-weight: 600; }
-.dialog label { display: block; color: var(--text-secondary); font-size: 12px; }
-.dialog input { width: 100%; display: block; margin-top: 8px; padding: 10px; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); font-size: 13px; }
-.dialog p { font-size: 13px; line-height: 1.8; color: var(--text-secondary); margin: 8px 0; overflow-wrap: anywhere; }
+.dialog { width: min(380px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 22px; box-shadow: 0 12px 45px var(--shadow); }
+.dialog h2 { margin: 0 0 18px; font-size: var(--fs-body); color: var(--text); font-weight: var(--fw-semibold); }
+.dialog label { display: block; color: var(--text-secondary); font-size: var(--fs-caption); }
+.dialog input { width: 100%; display: block; margin-top: 8px; padding: 10px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); color: var(--text); font-size: var(--fs-ui); }
+.dialog p { font-size: var(--fs-meta); line-height: var(--lh-relaxed); color: var(--text-secondary); margin: 8px 0; overflow-wrap: anywhere; }
 .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
-.actions button { padding: 9px 15px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 12px; }
+.actions button { padding: 9px 15px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font-size: var(--fs-ui); }
 .actions .primary { background: var(--action-bg); border-color: var(--text); color: var(--on-action); }
 .actions .danger { background: var(--danger-strong); border-color: var(--danger-strong); color: var(--on-action); }

@@ -1,4 +1,4 @@
 .choices { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
-.choices button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--text-secondary); font-size: 12px; }
+.choices button { padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); color: var(--text-secondary); font-size: var(--fs-meta); }
 .choices button:hover:not(:disabled) { background: var(--surface-hover); }
 .choices button[aria-pressed="true"] { background: var(--success-bg); color: var(--success-text); border-color: var(--success-line); }

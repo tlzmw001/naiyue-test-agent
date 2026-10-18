@@ -49,3 +49,29 @@
 }
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }
+/* Spec113 type and shape scale: one step per role; 12px is the smallest UI text. */
+:root {
+  --fs-caption: 12px;
+  --fs-meta: 13px;
+  --fs-ui: 14px;
+  --fs-body: 16px;
+  --fs-lead: 18px;
+  --fs-heading: 20px;
+  --fs-display: 28px;
+  --fs-icon: 20px;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --lh-tight: 1.3;
+  --lh-ui: 1.5;
+  --lh-relaxed: 1.65;
+  --lh-body: 1.75;
+  --r-mark: 2px;
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 24px;
+  --r-full: 999px;
+  --font-mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}

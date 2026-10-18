@@ -1,28 +1,28 @@
-.row { position: relative; border-radius: 12px; user-select: none; }
+.row { position: relative; border-radius: var(--r-md); user-select: none; }
 .row:hover, .row:focus-within, .row:has([aria-current="true"]) { background: var(--surface-active); }
 .row[data-dragging="true"] { opacity: .45; }
 .row > .select { flex-direction: row; align-items: center; gap: 6px; padding-right: 38px; min-width: 0; }
 .heading { flex: 1; min-width: 0; }
 .heading svg { flex-shrink: 0; }
 .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.state { flex-shrink: 0; padding: 0; font-size: 10px; }
-.search { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; margin: 10px 0 0; padding: 10px 13px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 12px; text-align: left; }
+.state { flex-shrink: 0; padding: 0; font-size: var(--fs-caption); }
+.search { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; margin: 2px 0 0; padding: 9px 12px; border: 0; border-radius: var(--r-md); background: transparent; color: var(--text-secondary); font-size: var(--fs-ui); text-align: left; }
 .search:hover, .search:focus-visible { background: var(--surface-active); }
 .search svg { flex-shrink: 0; }
 .search > .label { flex: 1; }
-.search kbd { font: inherit; font-size: 10px; white-space: nowrap; }
-.fold { display: none; margin-left: auto; width: 28px; height: 30px; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 26px; }
+.search kbd { font: inherit; font-size: var(--fs-caption); white-space: nowrap; color: var(--muted); }
+.fold { display: none; margin-left: auto; width: 28px; height: 30px; place-items: center; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font-size: var(--fs-icon); }
 .fold:hover { background: var(--surface-selected); }
-.more { position: absolute; right: 5px; top: 9px; width: 28px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 20px; opacity: 0; }
+.more { position: absolute; right: 5px; top: 6px; width: 28px; height: 28px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font-size: var(--fs-icon); opacity: 0; }
 .row:hover .more, .row:focus-within .more { opacity: 1; }
 .more:hover { background: var(--surface-selected); }
 .over { box-shadow: inset 0 2px var(--focus); }
-.dropEnd { padding: 10px; margin: 2px 4px 10px; border: 1px dashed var(--line-strong); border-radius: 7px; color: var(--muted); font-size: 11px; text-align: center; }
+.dropEnd { padding: 10px; margin: 2px 4px 10px; border: 1px dashed var(--line-strong); border-radius: var(--r-sm); color: var(--muted); font-size: var(--fs-caption); text-align: center; }
 .groupHeading { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.groupHeading button { border: 0; border-radius: 4px; padding: 3px; color: inherit; background: transparent; font-size: 10px; }
+.groupHeading button { border: 0; border-radius: var(--r-xs); padding: 3px; color: inherit; background: transparent; font-size: var(--fs-caption); }
 .groupHeading button:hover { background: var(--surface-active); }
-.dateHeading { color: var(--muted); font-size: 11px; font-weight: 500; margin: 14px 14px 6px; }
-.dateHint { color: var(--muted); font-size: 10px; margin: 0 14px 10px; line-height: 1.6; }
+.dateHeading { color: var(--muted); font-size: var(--fs-caption); font-weight: var(--fw-medium); margin: 14px 14px 6px; }
+.dateHint { color: var(--muted); font-size: var(--fs-caption); margin: 0 14px 10px; line-height: var(--lh-relaxed); }
 @media (hover: none) { .more { opacity: 1; } }
 @media (min-width: 761px) {
   .fold { display: grid; }

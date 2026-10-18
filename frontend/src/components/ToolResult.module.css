@@ -5,4 +5,8 @@
 .diff span[data-change="added"] { color: var(--diff-add-text); background: var(--diff-add-bg); }
 .diff span[data-change="removed"] { color: var(--diff-remove-text); background: var(--diff-remove-bg); }
 .notice { color: var(--muted); }
-.result summary { cursor: pointer; font-size: 11px; margin-top: 12px; }
+.result summary { cursor: pointer; font-size: var(--fs-caption); margin-top: 12px; }
+
+.result button { border: 1px solid var(--line); border-radius: var(--r-xs); padding: 6px 10px; margin: 6px 6px 0 0; background: var(--surface); color: var(--text-secondary); font: inherit; font-size: var(--fs-meta); cursor: pointer; }
+.result button:hover { background: var(--surface-hover); }
+.result button:disabled { opacity: .5; cursor: default; }
