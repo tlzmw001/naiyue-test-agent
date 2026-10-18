@@ -135,3 +135,7 @@ Pending Publisher：项目 naiyue-test-agent、owner tlzmw001、repo naiyue-test
 首轮远端CI的targets和frontend整理步骤真实失败：`shell: python`将脚本保存在checkout外，导入仓库`scripts`包时抛出ModuleNotFoundError。新增两项回归从checkout外的runner脚本执行完整步骤并清除PYTHON环境，两例正确红灯；两处步骤在本地导入前显式加入checkout路径，三份打包测试 **59 passed in2.02s**、actionlint通过，未变更产品代码和发布权限。架构/安全独立复核无新增发行阻断。
 
 当前等待修复提交的完整五平台CI；标签和PyPI发行需在该提交的验证成功后执行，不能将首次跳过的五平台任务视为通过。
+
+首轮Linux后端另有两项现有断言失败（2946通过）：rg的JSON匹配行可能含NUL后的字节；Linux文件名精确匹配不能依赖macOS的Unicode等价。发行修复限定为：Grep在已有匹配行解码前截取首个NUL之前的预览，保留原binary/end和未完整搜索提示；Read在原路径缺失后的有限候选中补充NFC名字逐个可分解字符的NFD形式，再与既有引号规则组合，不遍历目录、不重选已审批路径。生产影响仅`tools/grep.py`、`tools/paths.py`，对应原测试保留，新增确定性原生JSON记录及精确名称探针；正常工具消息与权限/重验链保持，失败仍走既有工具错误。修复后重新全量验证并等待同提交CI。
+
+两项平台回归在本机先复现预期红灯，再转绿；相关122项通过。使用发行固定rg/fd运行完整后端 **2952 passed in124.64s**（`/tmp/nyt-release-platform-full.log`），前端仍为本轮已验证的相同源码/产物。修复后macOS ARM64候选267文件、3,561,323字节，application_sha256=`686099809e2efd56569d2296ac68c37d4e58cd2654191fcb36723c822c0d7e8e`；twine/白名单/源码外全新安装通过，工具/Web/API/审批恢复/SQLite重开/CLI全部正常，0供应商请求（`build/release-platformfix-install.json`）。安全独立64项回归通过，原授权和审批重验链未改；465份Python AST/500行、compileall/pip/diff、actionlint通过。远端`0ff7df8`五平台构建/安装已全部成功，但其Linux全量尚缺这两处修复，正式门禁必须使用接下来的最终提交。

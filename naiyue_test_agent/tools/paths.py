@@ -80,7 +80,15 @@ def prepare_file_subject(path, workspace, operation, *, allow_read_aliases=True)
                 bases = (normalized, re.sub(r' (AM|PM)(?=\.|$)', '\u202f' + r'\1', normalized, flags=re.IGNORECASE))
                 variants = []
                 for base in bases:
-                    for form in (base, unicodedata.normalize('NFC', base), unicodedata.normalize('NFD', base)):
+                    canonical = unicodedata.normalize('NFC', base)
+                    forms = [base, canonical, unicodedata.normalize('NFD', base)]
+                    # Mixed composition is distinct on Linux; probe finite names,
+                    # without relying on macOS's filesystem normalization.
+                    for index, char in enumerate(canonical):
+                        decomposed = unicodedata.normalize('NFD', char)
+                        if decomposed != char:
+                            forms.append(canonical[:index] + decomposed + canonical[index + 1:])
+                    for form in forms:
                         variants.extend((form, form.replace("'", '\u2019')))
                 for variant in dict.fromkeys(variants):
                     if os.name == 'nt':

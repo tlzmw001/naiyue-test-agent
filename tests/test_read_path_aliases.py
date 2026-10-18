@@ -26,6 +26,19 @@ async def test_read_selects_an_existing_finite_filename_variant(tmp_path, actual
     assert result.status == 'success' and result.content == 'selected'
 
 
+def test_read_alias_combines_quote_and_partial_unicode_forms(tmp_path, monkeypatch):
+    actual = tmp_path / 'cafe\u0301 d’écran.txt'
+    actual.write_text('selected')
+    original = Path.lstat
+    def exact_only(path, *args, **kwargs):
+        if path.parent == tmp_path and path.name != actual.name:
+            raise FileNotFoundError(path)
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'lstat', exact_only)
+    subject = prepare_file_subject("café d'écran.txt", tmp_path, 'read')
+    assert subject['requested'] == str(actual)
+
+
 @async_test
 async def test_exact_name_wins_even_when_compatibility_target_exists(tmp_path):
     (tmp_path / '@note.txt').write_text('exact')
