@@ -100,10 +100,10 @@ Pending Publisher：项目 naiyue-test-agent、owner tlzmw001、repo naiyue-test
 - [x] 全部既有后端/前端测试和构建通过；新文件不超过500行。
 - [x] 本机候选 wheel 构建、白名单、真实二进制、源码外干净安装、Web/CLI 与临时运行/审批/重开验证通过（非冻结提交）。
 - [x] 五目标候选归档可构建与检查，Python/前端指纹一致。
-- [ ] 对应 OS 真正运行测试由 CI 证据确认，不能用本机交叉打包替代。
+- [x] 对应 OS 真正运行测试由 CI 证据确认，不能用本机交叉打包替代。
 - [x] README、MIT、第三方声明齐全，候选包按白名单检查无私有配置/开发材料。
 - [x] 标签版本门禁、同提交全部通过门禁、OIDC 最小权限和公开安装后验已接线。
-- [ ] 用户配置 PyPI 信任关系后，单独核对提交/产物再正式发版；本轮不声称已发布或远端 CI 已通过。
+- [ ] 正式上传 PyPI 并通过五平台公开安装后验；当前上传被 PyPI 项目名/发布器绑定拒绝，见第10节。
 
 ## 8. 本轮实现与证据（2026-10-18）
 
@@ -139,3 +139,15 @@ Pending Publisher：项目 naiyue-test-agent、owner tlzmw001、repo naiyue-test
 首轮Linux后端另有两项现有断言失败（2946通过）：rg的JSON匹配行可能含NUL后的字节；Linux文件名精确匹配不能依赖macOS的Unicode等价。发行修复限定为：Grep在已有匹配行解码前截取首个NUL之前的预览，保留原binary/end和未完整搜索提示；Read在原路径缺失后的有限候选中补充NFC名字逐个可分解字符的NFD形式，再与既有引号规则组合，不遍历目录、不重选已审批路径。生产影响仅`tools/grep.py`、`tools/paths.py`，对应原测试保留，新增确定性原生JSON记录及精确名称探针；正常工具消息与权限/重验链保持，失败仍走既有工具错误。修复后重新全量验证并等待同提交CI。
 
 两项平台回归在本机先复现预期红灯，再转绿；相关122项通过。使用发行固定rg/fd运行完整后端 **2952 passed in124.64s**（`/tmp/nyt-release-platform-full.log`），前端仍为本轮已验证的相同源码/产物。修复后macOS ARM64候选267文件、3,561,323字节，application_sha256=`686099809e2efd56569d2296ac68c37d4e58cd2654191fcb36723c822c0d7e8e`；twine/白名单/源码外全新安装通过，工具/Web/API/审批恢复/SQLite重开/CLI全部正常，0供应商请求（`build/release-platformfix-install.json`）。安全独立64项回归通过，原授权和审批重验链未改；465份Python AST/500行、compileall/pip/diff、actionlint通过。远端`0ff7df8`五平台构建/安装已全部成功，但其Linux全量尚缺这两处修复，正式门禁必须使用接下来的最终提交。
+
+### 冻结提交与标签实证
+
+最终产品提交为 `bf66c64083e4d825c2309a2aba48a8ebcc93f8c1`，三项修复分别提交为`0ff7df8`、`8d5df9b`、`bf66c64`并推送。其[主分支CI](https://github.com/tlzmw001/naiyue-test-agent/actions/runs/39150378504)全部成功，Linux后端 **2952 passed in423.30s**，五平台实际构建/白名单/twine/全新安装及集中指纹检查通过。
+
+复核远端提交、包版本、无冲突标签和PyPI尚无0.1.0后，在该提交创建并推送`v0.1.0`。[标签发布工作流](https://github.com/tlzmw001/naiyue-test-agent/actions/runs/39151037235)的全部发行前门禁再次成功：Linux后端 **2952 passed in422.69s**，前端39文件289项及生产构建、五平台安装和集中检查均通过。取回该run的五份wheel，逐份比较138个生产Python文件与冻结源码一致，版本0.1.0、application_sha256均为上述`68609980…`；报告与归档位于忽略目录`build/release-v010-published/`。
+
+### PyPI上传阻塞，未发布成功
+
+该run的publish job在上传首个文件时收到HTTP400：`Non-user identities cannot create new projects`。日志提示Pending Publisher的项目名与上传元数据不一致；五份wheel的METADATA已逐份核对为`Name: naiyue-test-agent`、`Version: 0.1.0`，GitHub环境为`pypi`且无额外审批。公开PyPI版本JSON仍为404；后置五平台公开安装被跳过，不能宣称已发布或公开安装通过。
+
+按[PyPI官方上传排错说明](https://docs.pypi.org/trusted-publishers/troubleshooting/#upload-errors)，需要用户核对账号Publishing及Your projects中实际绑定的项目名；该失败可能已将Pending Publisher转换成另一个名称的项目。账号配置修正前不改包名、不移动标签、不盲目重复上传。用户核对完成后，重跑原run的失败任务，继续使用同一批已验证wheel，再核对PyPI文件/摘要和五平台公开安装。真实配置/会话库均未修改，真实供应商请求0次。
