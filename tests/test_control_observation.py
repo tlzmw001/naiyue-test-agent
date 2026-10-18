@@ -1,11 +1,19 @@
 """Control facts remain FIFO, immutable, and independent of input text."""
 
 from event_sequence import CheckedPublisher
+from uuid import uuid4
 
 from langchain_core.messages import HumanMessage
 
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher, RunStartedData
 from naiyue_test_agent.agent_runtime.control_observation import ControlObserver
+
+
+def prepare(observer, texts):
+    # Input ownership moved to application code; this observer only records supplied IDs.
+    messages = [HumanMessage(id=uuid4().hex, content=text) for text in texts]
+    observer.record_messages(messages)
+    return messages
 
 
 def make_observer():
@@ -24,7 +32,7 @@ def test_start_gate_and_same_text_have_distinct_control_and_message_ids():
     observer.start()
     observer.select('steering', 2)
     observer.flush()
-    messages = observer.prepare_messages(['same', 'same'])
+    messages = prepare(observer, ['same', 'same'])
     assert len({m.id for m in messages}) == 2
     assert [m.content for m in messages] == ['same', 'same']
     observer.observe(messages)
@@ -59,7 +67,7 @@ def test_recovery_view_confirms_only_actual_human_message_id():
     observer.start()
     observer.accept('steering', queue_size=0)
     observer.select('steering', 1)
-    expected = observer.prepare_messages(['text'])[0]
+    expected = prepare(observer, ['text'])[0]
     observer.observe([HumanMessage(id='different', content='text')])
     assert not any(e.event_type == 'control_delivered' for e in events)
     observer.observe([expected], visibility='recovery_view')
@@ -74,7 +82,7 @@ def test_unprepared_old_batch_cannot_claim_delivery_of_next_batch():
     observer.select('steering', 1)
     observer.accept('steering', queue_size=0)
     observer.select('steering', 1)
-    messages = observer.prepare_messages(['second'])
+    messages = prepare(observer, ['second'])
     observer.observe(messages)
     observer.close('run_completed')
     observer.flush()
@@ -98,7 +106,7 @@ def test_disabled_delivery_does_not_accumulate_a_second_notification_history(mon
         observer.accept('steering', queue_size=0)
         observer.flush()
         observer.select('steering', 1)
-        messages = observer.prepare_messages(['same'])
+        messages = prepare(observer, ['same'])
         observer.observe(messages)
     assert not observer._outbox and not observer._records
     assert 'control_event_publish_failed' in caplog.text and 'PRIVATE_' not in caplog.text

@@ -10,7 +10,7 @@ afterEach(cleanup);
 function setup() {
   const api = new WebApi('test-access');
   const views: Record<string, SessionView> = Object.fromEntries(['A', 'B'].map(id => [id, {
-    session_id: id, title: id, model_id: 'model', workspace_root: '/workspace', state: 'ready',
+    session_id: id, conversation_revision: 0, title: id, model_id: 'model', workspace_root: '/workspace', state: 'ready',
     updated_at: '', last_run_status: null, messages: [], busy: false, can_run: true, has_compaction: false,
     active_run_id: null, latest_run_id: null, active_tools: [], permission_mode: 'Default',
     manual_review_required: false, pending_approval: false, live: null,
@@ -82,7 +82,7 @@ it('keeps a capacity-rejected draft and distinguishes it from the current sessio
   await act(async () => result.current.submit(false));
   expect(result.current.draft).toBe('keep task B');
   expect(result.current.notice).toContain('运行名额已满');
-  expect(api.start).toHaveBeenCalledExactlyOnceWith('B', 'keep task B');
+  expect(api.start).toHaveBeenCalledExactlyOnceWith('B', 'keep task B', undefined, 0);
   expect(api.run).not.toHaveBeenCalled();
   expect(errorText(new ApiError('session_busy'))).toContain('当前会话');
   expect(errorText(new ApiError('session_busy'))).not.toContain('另一个会话');

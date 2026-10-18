@@ -63,6 +63,8 @@ class SessionExecution:
                 await run_blocking(self._persistence.start, session_id, run_id)
             resources = await self._prepare_resources(run)
             messages = mark_human_messages(messages)
+            if messages:
+                run.reply_id = messages[-1].additional_kwargs.get('naiyue_reply_id')
             observation.stage = 'execute'
             if compact:
                 model_id, model = self.resolve_model()

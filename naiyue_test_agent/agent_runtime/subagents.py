@@ -109,8 +109,8 @@ async def ainvoke_subagent_step(agent, instance, *, services, resume=None, appro
                        _human_review_messages=instance['human_messages'])
         if resume is None:
             seed = HumanMessage(content=instance['task'], id=instance['seed_id'],
-                                additional_kwargs={'naiyue_input_source': 'delegated_task'})
-            input = {'messages': [seed]}
+                                additional_kwargs={'naiyue_input_source': 'delegated_task', 'naiyue_reply_id': instance['seed_id'], 'naiyue_input_kind': 'delegated_task'})
+            input = {'messages': [seed], 'active_reply_id': instance['seed_id']}
         else:
             identity, decisions = resume
             input = Command(resume={identity: {'decisions': [{'type': item} for item in decisions]}})

@@ -37,12 +37,20 @@ def bounded_message(row, settings, budget):
     value = {**row, 'content': content_text(row.get('content', ''))}
     if encoded_size(value) <= budget:
         return value
+    if value.get('reasoning'):
+        value['reasoning'] = value['reasoning'][:settings.history_preview_chars]
+        value['reasoning_truncated'] = True
+    if value.get('file_change'):
+        change = value['file_change']
+        value['file_change'] = {**change, 'diff': '', 'preview': '', 'diff_truncated': True, 'preview_truncated': True}
     value.update(content=value['content'][:settings.history_preview_chars], content_truncated=True)
     if value.get('provisional'):
         value['content_unavailable'] = True
     if value.get('tool_calls'):
         value['tool_calls'] = [{**c, 'args': {}} for c in value['tool_calls']]
         value['arguments_truncated'] = True
+    while encoded_size(value) > budget and value.get('reasoning'):
+        value['reasoning'] = value['reasoning'][:len(value['reasoning']) // 2]
     while encoded_size(value) > budget and value['content']:
         value['content'] = value['content'][:len(value['content']) // 2]
     while encoded_size(value) > budget and value.get('tool_calls'):
@@ -92,13 +100,20 @@ def record_view(record):
         value = dict(id=record['message_id'], type=record['message_type'], content=record['preview'],
                      is_context_summary=record['kind'] == 'context_summary', content_truncated=True,
                      provisional=False, state='complete')
+        if record.get('reasoning_preview'):
+            value.update(reasoning=record['reasoning_preview'], reasoning_truncated=True)
         if record['message_type'] == 'tool':
+            if record.get('file_change_json'):
+                from naiyue_test_agent.tools.file_change import change_projection
+                change = change_projection(json.loads(record['file_change_json']))
+                if change is not None:
+                    value['file_change'] = change
             value.update(tool_call_id=record['tool_call_id'], name=record['name'], status=record['status'])
         elif record['message_type'] == 'ai':
             value['tool_calls'] = [{**call, 'args': {}} for call in record.get('calls', [])]
             value['arguments_truncated'] = bool(record['calls'])
             value['tool_calls_truncated'] = record['tool_calls_truncated']
-    return {**value, 'sequence': record['sequence'], 'revision': record['revision'],
+    return {**value, 'reply_id': record.get('reply_id'), 'sequence': record['sequence'], 'revision': record['revision'],
             'parent_message_id': record['parent_message_id'],
             'detail': {'sequence': record['sequence'], 'revision': record['revision']}}
 

@@ -49,11 +49,20 @@ def observe_agent(agents, event, parent_messages=()):
             for row in states.values():
                 if row['state'] == 'running':
                     row.update(state='unconfirmed', finished_at=event['timestamp'])
+    elif kind == 'message_reasoning_delta':
+        from naiyue_test_agent.application.stream_projection import reasoning_draft
+        old = next((row for row in messages if row['id'] == data['message_id']), None)
+        row = reasoning_draft(old, message_id=data['message_id'], text=data['text'], index=data['index'],
+                              reply_id=data.get('reply_id'), run_id=source['agent_run_id'])
+        if old is None:
+            messages.append(row)
+        else:
+            old.update(row)
     elif kind == 'message_delta':
         old = next((row for row in messages if row['id'] == data['message_id']), None)
         if data['index'] != 1 and data['index'] != (old or {}).get('delta_index', 0) + 1:
             raise ValueError('Child message delta gap')
-        row = dict(id=data['message_id'], type='ai',
+        row = dict(id=data['message_id'], type='ai', reply_id=data.get('reply_id'),
             content=('' if data['index'] == 1 else old['content']) + data['text'],
             provisional=True, state='draft', delta_index=data['index'], run_id=source['agent_run_id'])
         if old is None:

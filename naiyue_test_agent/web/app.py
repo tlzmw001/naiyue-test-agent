@@ -5,7 +5,7 @@ import logging
 
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from starlette.staticfiles import StaticFiles
 
@@ -17,7 +17,7 @@ from naiyue_test_agent.model_access import ModelConfigError
 from .auth import authorize
 from .errors import WebError
 from .run_delivery import RunDelivery
-from .schemas import ActiveToolsInput, ApprovalInput, ApprovalStopInput, CompactInput, ControlInput, MessageInput, NewSession, PermissionModeInput, RecoveryInput, SessionOrder, SessionPresentation, ThinkingInput
+from .schemas import ActiveToolsInput, ApprovalInput, ApprovalStopInput, CompactInput, ControlInput, MessageInput, NewSession, PermissionModeInput, RecoveryInput, RegenerateInput, SessionOrder, SessionPresentation, ThinkingInput
 from .service import WebService
 from .headers import LocalHeaders
 
@@ -112,6 +112,10 @@ def create_web_app(settings, *, application_factory=None):
     async def prepare(session_id: str):
         return await app.state.service.prepare(session_id)
 
+    @app.post('/api/sessions/{session_id}/regenerate')
+    async def regenerate(session_id: str, body: RegenerateInput):
+        return await app.state.service.regenerate(session_id, body)
+
     @app.get('/api/sessions/{session_id}/messages')
     async def messages(session_id: str, before: str | None = Query(default=None, max_length=4096),
                        agent_id: str | None = Query(default=None, max_length=128),
@@ -120,12 +124,38 @@ def create_web_app(settings, *, application_factory=None):
 
     @app.get('/api/sessions/{session_id}/messages/{sequence}/content')
     async def message_content(session_id: str, sequence: int, revision: int = Query(ge=1),
-                              offset: int = Query(default=0, ge=0),
+                              conversation_revision: int = Query(default=0, ge=0), offset: int = Query(default=0, ge=0),
                               agent_id: str | None = Query(default=None, max_length=128)):
         if sequence < 1:
             raise WebError('invalid_request', 422)
         return await app.state.service.message_content(session_id, sequence, agent_id=agent_id,
-                                                        revision=revision, offset=offset)
+                                                        revision=revision, offset=offset, conversation_revision=conversation_revision)
+
+    @app.get('/api/sessions/{session_id}/messages/{sequence}/reasoning')
+    async def message_reasoning(session_id: str, sequence: int, revision: int = Query(ge=1),
+                                conversation_revision: int = Query(ge=0), offset: int = Query(default=0, ge=0),
+                                agent_id: str | None = Query(default=None, max_length=128)):
+        if sequence < 1:
+            raise WebError('invalid_request', 422)
+        return await app.state.service.message_reasoning(session_id, sequence, revision=revision, offset=offset,
+            conversation_revision=conversation_revision, agent_id=agent_id)
+
+    @app.get('/api/sessions/{session_id}/messages/{sequence}/change')
+    async def file_change(session_id: str, sequence: int, revision: int = Query(ge=1),
+                          conversation_revision: int = Query(default=0, ge=0),
+                          agent_id: str | None = Query(default=None, max_length=128)):
+        if sequence < 1:
+            raise WebError('invalid_request', 422)
+        return await app.state.service.file_change(session_id, sequence, revision=revision, agent_id=agent_id, conversation_revision=conversation_revision)
+
+    @app.get('/api/sessions/{session_id}/messages/{sequence}/patch')
+    async def file_patch(session_id: str, sequence: int, revision: int = Query(ge=1),
+                         conversation_revision: int = Query(default=0, ge=0),
+                         agent_id: str | None = Query(default=None, max_length=128)):
+        if sequence < 1:
+            raise WebError('invalid_request', 422)
+        text = await app.state.service.file_change(session_id, sequence, revision=revision, agent_id=agent_id, patch=True, conversation_revision=conversation_revision)
+        return Response(text, media_type='text/x-diff', headers={'Content-Disposition': 'attachment; filename="change.patch"'})
 
     @app.get('/api/sessions/{session_id}/subagents')
     async def subagents(session_id: str):

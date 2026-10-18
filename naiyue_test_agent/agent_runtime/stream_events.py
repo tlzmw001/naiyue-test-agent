@@ -14,6 +14,7 @@ class MessageDeltaData:
     text: str
     index: int
     provisional: Literal[True] = True
+    reply_id: str | None = None
 
     def __post_init__(self):
         if not isinstance(self.message_id, str) or not self.message_id:
@@ -22,6 +23,11 @@ class MessageDeltaData:
             raise ValueError('Delta requires text')
         if type(self.index) is not int or self.index <= 0 or self.provisional is not True:
             raise ValueError('Invalid provisional delta')
+
+
+@dataclass(frozen=True)
+class MessageReasoningDeltaData(MessageDeltaData):
+    block_index: int = 0
 
 
 @dataclass(frozen=True)

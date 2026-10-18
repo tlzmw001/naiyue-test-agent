@@ -45,6 +45,7 @@ class DiagnosticSettings(BaseModel):
 class AppSettings(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
 
+    session_title_max_chars: int = Field(default=40, gt=0, le=120)
     max_active_runs: int = Field(default=10, gt=0)
     web_event_cache_bytes: int = Field(default=4194304, gt=0)
     storage: StorageSettings = Field(default_factory=StorageSettings)
@@ -91,7 +92,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
         logger.error('permission_settings_unavailable error_type=%s', type(error).__name__)
         raise ValueError('Permission settings could not be read or parsed') from error
-    if set(raw) - {'max_active_runs', 'web_event_cache_bytes', 'tools', 'permissions', 'process', 'tool_output', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics'}:
+    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'tools', 'permissions', 'process', 'tool_output', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics'}:
         raise ValueError('Unknown runtime settings section')
     storage = StorageSettings.model_validate(raw.get('storage', {}))
     permissions = PermissionSettings.model_validate(raw.get('permissions', {}))
@@ -99,6 +100,10 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
     if type(max_active_runs) is not int or max_active_runs <= 0:
         logger.warning('max_active_runs_fallback reason=invalid')
         max_active_runs = AppSettings.model_fields['max_active_runs'].default
+    title_chars = raw.get('session_title_max_chars', 40)
+    if type(title_chars) is not int or not 1 <= title_chars <= 120:
+        logger.warning('session_title_budget_fallback reason=invalid')
+        title_chars = 40
     web_event_cache_bytes = raw.get('web_event_cache_bytes', AppSettings.model_fields['web_event_cache_bytes'].default)
     if type(web_event_cache_bytes) is not int or web_event_cache_bytes <= 0:
         logger.warning('web_event_cache_bytes_fallback reason=invalid')
@@ -137,7 +142,8 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         return AppSettings(storage=storage, tools=tools, permissions=permissions, process=process, tool_output=tool_output,
                             progress=progress, usage_persistence=usage_persistence,
                             subagents=raw.get('subagents', ()), max_active_runs=max_active_runs,
-                            web_event_cache_bytes=web_event_cache_bytes, diagnostics=diagnostics)
+                            web_event_cache_bytes=web_event_cache_bytes, diagnostics=diagnostics,
+                            session_title_max_chars=title_chars)
     except ValidationError as error:
         logger.error('subagent_settings_invalid error_type=%s', type(error).__name__)
         raise ValueError('Subagent settings are invalid') from None

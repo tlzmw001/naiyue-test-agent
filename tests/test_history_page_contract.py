@@ -1,5 +1,7 @@
 """Archive cursors bind ownership and revisions, independently of appending context."""
 
+from legacy_store_schema import remove_reply_schema
+
 import asyncio
 import json
 import sqlite3
@@ -120,6 +122,7 @@ def test_schema_seven_migration_recovers_types_and_tool_parent_ids(monkeypatch, 
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             await run(client, web, sid)
         with sqlite3.connect(tmp_path / 'sessions.sqlite') as connection:
+            remove_reply_schema(connection)
             connection.executescript('''DROP TABLE naiyue_model_invocations; DROP TABLE naiyue_model_usage_runs;
             ALTER TABLE naiyue_chat_sync DROP COLUMN history_version;
                 ALTER TABLE naiyue_chat_sync DROP COLUMN stopped;

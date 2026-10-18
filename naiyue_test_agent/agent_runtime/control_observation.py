@@ -65,7 +65,7 @@ class ControlObserver:
             ids = self._queue_ids[kind]
             for _ in range(count):
                 control_id = ids.popleft() if ids else None
-                message_id = uuid4().hex if control_id else None
+                message_id = None
                 batch.append((control_id, message_id))
                 if control_id:
                     record = self._records[control_id]
@@ -75,14 +75,15 @@ class ControlObserver:
                 self._batches.clear()
                 self._batches.append(batch)
 
-    def prepare_messages(self, texts):
+    def record_messages(self, messages):
         with self._record_lock:
             batch = self._batches.popleft() if self._batches else []
-        if len(batch) != len(texts):
-            logger.error('control_message_batch_unavailable')
-            return [HumanMessage(content=text) for text in texts]
-        return [HumanMessage(id=message_id, content=text)
-                for text, (_control_id, message_id) in zip(texts, batch, strict=True)]
+            if len(batch) != len(messages):
+                logger.error('control_message_batch_unavailable')
+                return
+            for message, (control_id, _) in zip(messages, batch, strict=True):
+                if control_id in self._records:
+                    self._records[control_id]['message_id'] = message.id
 
     def observe(self, messages, *, visibility='graph_values'):
         visible = {m.id for m in messages if isinstance(m, HumanMessage)}

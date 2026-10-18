@@ -49,6 +49,11 @@ class LsSettings(BaseModel):
 class WriteSettings(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
 
+    max_diff_input_bytes: int = Field(default=1048576, gt=0)
+    max_diff_bytes: int = Field(default=65536, gt=0)
+    max_preview_bytes: int = Field(default=65536, gt=0)
+    max_patch_bytes: int = Field(default=1048576, gt=0)
+
     max_input_bytes: int = Field(default=1048576, gt=0)
     max_path_chars: int = Field(default=4096, gt=0)
 

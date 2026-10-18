@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AgentView, MessageRow, ToolCallRow, ToolState } from '../types';
+import type { AgentView, ChangeLoader, MessageRow, ToolCallRow, ToolState } from '../types';
 import ToolResult from './ToolResult';
 import styles from '../App.module.css';
 import card from './ToolCall.module.css';
@@ -22,7 +22,8 @@ function seconds(start: string | undefined, now: number) {
   return `${Math.max(0, Math.floor((now - Date.parse(start)) / 1000))}秒`;
 }
 
-export default function ToolCall({ call, result, phase, agents = [], stopAgent, openAgent, stopping = false, unconfirmed = false, initiallyOpen = false }: {
+export default function ToolCall({ call, result, phase, loadChange, agents = [], stopAgent, openAgent, stopping = false, unconfirmed = false, initiallyOpen = false }: {
+  loadChange?: ChangeLoader;
   call: ToolCallRow; result?: MessageRow; phase?: ToolState; stopping?: boolean; unconfirmed?: boolean;
   agents?: AgentView[]; initiallyOpen?: boolean;
   stopAgent?: (agentPath: string, originRunId: string) => void;
@@ -72,7 +73,7 @@ export default function ToolCall({ call, result, phase, agents = [], stopAgent, 
       </p>}
       {phase?.text && <><div className={styles.detailLabel}>最新进度 / 输出尾部</div><pre>{phase.text}</pre></>}
       <div className={styles.detailLabel}>参数</div><pre>{JSON.stringify(call.args, null, 2)}</pre>
-      {result && <><div className={styles.detailLabel}>工具结果</div><ToolResult name={call.name} result={result} anchor={expanded ? result.id : undefined} />
+      {result && <><div className={styles.detailLabel}>工具结果</div><ToolResult loadChange={loadChange} name={call.name} result={result} anchor={expanded ? result.id : undefined} />
         {result.content_truncated && <p className={styles.historyPreview}>{result.detail ?
           '当前为工具结果预览，完整内容仍保存在会话中。' : '当前为工具结果预览。'}</p>}</>}
       {phase?.reason && <p className={styles.toolReason}>原因：{phase.reason}</p>}

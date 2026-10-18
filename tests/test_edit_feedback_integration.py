@@ -63,7 +63,11 @@ async def test_edit_json_artifact_survives_sqlite_reopen_but_is_not_model_payloa
     assert count_tokens_approximately([restored]) == count_tokens_approximately([without])
     assert _serialize_text_history([restored]) == _serialize_text_history([without])
     assert 'artifact' not in message_view(restored)
-    assert 'patch_omitted' not in json.dumps([asdict(event) for event in events])
+    # The new UI contract exposes a bounded explicit change, never raw artifacts or patches.
+    projected = [json.loads(event.data.snapshot_json) for event in events if event.event_type == 'message_completed']
+    changes = [row['file_change'] for row in projected if row.get('file_change')]
+    assert changes and all(change['operation'] == 'edit' and 'patch' not in change for change in changes)
+    assert all('artifact' not in row for row in projected)
     assert any(isinstance(m, ToolMessage) and m.tool_call_id == 'edit-json' for m in model.seen[1])
 
 

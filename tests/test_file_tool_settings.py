@@ -15,7 +15,8 @@ from tool_feedback_helpers import invoke_tool_feedback
 @pytest.mark.parametrize('name, defaults', [
     ('ls', {'default_limit': 500, 'max_limit': 2000,
             'max_output_bytes': 51200, 'max_path_chars': 4096}),
-    ('write', {'max_input_bytes': 1048576, 'max_path_chars': 4096}),
+    ('write', {'max_input_bytes': 1048576, 'max_path_chars': 4096, 'max_diff_input_bytes': 1048576,
+               'max_diff_bytes': 65536, 'max_preview_bytes': 65536, 'max_patch_bytes': 1048576}),
     ('edit', {'max_input_bytes': 1048576, 'max_path_chars': 4096,
               'max_normalization_buffer_bytes': 1048576, 'max_affected_line_bytes': 1048576,
               'max_diff_bytes': 65536, 'max_preview_bytes': 65536, 'max_patch_bytes': 1048576}),

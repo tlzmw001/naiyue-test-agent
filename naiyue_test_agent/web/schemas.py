@@ -45,6 +45,11 @@ class CompactInput(BaseModel):
     request_id: str = Field(pattern=r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
 
 
+class RegenerateInput(CompactInput):
+    expected_reply_id: str = Field(min_length=1, max_length=128)
+    expected_conversation_revision: int = Field(ge=0)
+
+
 class ActiveToolsInput(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     active_tools: list[Annotated[str, Field(min_length=1, max_length=256)]] = Field(max_length=256)
@@ -65,6 +70,7 @@ class MessageInput(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     request_id: str = Field(pattern=r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
     text: str = Field(min_length=1, max_length=32768)
+    expected_conversation_revision: int | None = Field(default=None, ge=0)
 
     @model_validator(mode='after')
     def meaningful_text(self):

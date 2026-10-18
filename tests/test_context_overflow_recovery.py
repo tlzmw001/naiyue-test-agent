@@ -68,7 +68,8 @@ def _history():
         message.id = f'history-{index}'
         if isinstance(message, HumanMessage):
             message.additional_kwargs['naiyue_human_input'] = True
-    return messages
+    from naiyue_test_agent.application.session_controls import mark_human_messages
+    return mark_human_messages(messages)
 
 
 def _events(caplog, attribute):

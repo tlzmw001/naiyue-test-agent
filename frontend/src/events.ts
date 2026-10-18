@@ -1,5 +1,6 @@
 import type { ContextSnapshot } from './contextTypes';
 import type { MessageRow, RuntimeEvent, RunView, ToolState } from './types';
+import { reasoningDelta } from './reasoning';
 import { applyAgentEvent, textContent } from './agentEvents';
 
 const terminal = new Set(['completed', 'stopped', 'interrupted', 'failed']);
@@ -43,6 +44,8 @@ export function applyEvent(view: RunView, event: RuntimeEvent): RunView {
     const context_snapshot = JSON.parse(data.snapshot_json) as ContextSnapshot;
     if (context_snapshot.version !== 1 || context_snapshot.model_call_id !== data.model_call_id) throw new Error('invalid_event');
     return { ...view, context_snapshot, last_sequence: event.sequence };
+  } else if (event.event_type === 'message_reasoning_delta') {
+    messages = reasoningDelta(messages, data, event.run_id);
   } else if (event.event_type === 'message_delta') {
     if (typeof data.message_id !== 'string' || typeof data.text !== 'string' ||
         !Number.isInteger(data.index) || Number(data.index) < 1) throw new Error('invalid_event');
@@ -50,7 +53,7 @@ export function applyEvent(view: RunView, event: RuntimeEvent): RunView {
     if (Number(data.index) !== 1 && Number(data.index) !== (old?.delta_index ?? 0) + 1)
       throw new Error('sequence_gap');
     const unavailable = Number(data.index) !== 1 && old?.content_unavailable === true;
-    const row: MessageRow = { id: data.message_id, type: 'ai',
+    const row: MessageRow = { ...old, id: data.message_id, type: 'ai', reply_id: data.reply_id as string | null,
       content: unavailable ? old!.content : (Number(data.index) === 1 ? '' : old?.content ?? '') + data.text,
       ...(unavailable ? { content_unavailable: true, content_truncated: true } : {}),
       provisional: true, state: 'draft', delta_index: Number(data.index), run_id: event.run_id };
@@ -60,7 +63,7 @@ export function applyEvent(view: RunView, event: RuntimeEvent): RunView {
     const snapshot = JSON.parse(data.snapshot_json);
     if (typeof snapshot.id !== 'string' || typeof snapshot.type !== 'string') throw new Error('invalid_event');
     if (!snapshot.is_context_summary) {
-      const row: MessageRow = { id: snapshot.id, type: snapshot.type, content: textContent(snapshot.content),
+      const row: MessageRow = { ...snapshot, id: snapshot.id, type: snapshot.type, content: textContent(snapshot.content),
         ...(snapshot.tool_calls ? { tool_calls: snapshot.tool_calls } : {}),
         ...(snapshot.type === 'tool' ? { tool_call_id: snapshot.tool_call_id, status: snapshot.status, name: snapshot.name } : {}),
         state: 'complete', provisional: false, run_id: event.run_id };

@@ -2,8 +2,9 @@ import { useId, useLayoutEffect, useRef, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import type { AgentView, HistoryControls, MessageRow, SessionRecovery, ToolCallRow, ToolState } from '../types';
+import type { AgentView, ChangeLoader, ReasoningLoader, HistoryControls, MessageRow, SessionRecovery, ToolCallRow, ToolState } from '../types';
 import ToolCall from './ToolCall';
+import ReasoningContent from './ReasoningContent';
 import CodeBlock from './CodeBlock';
 import styles from '../App.module.css';
 
@@ -19,7 +20,9 @@ const markdownComponents: Components = {
   a: ({ node: _node, children, href, ...props }) => <a {...props} href={href} target="_blank" rel="noreferrer noopener">{children}</a>,
 };
 
-export default function Conversation({ messages, compacted, toolStates = {}, agents = {}, stopAgent, openAgent, stoppingRunId, recovery, recovering = false, onRecover, history }: {
+export default function Conversation({ messages, compacted, toolStates = {}, agents = {}, stopAgent, openAgent, stoppingRunId, recovery, recovering = false, onRecover, history, loadChange, loadReasoning, regenerate, lastReplyId, canRegenerate }: {
+  regenerate?: () => void; lastReplyId?: string | null; canRegenerate?: boolean;
+  loadChange?: ChangeLoader; loadReasoning?: ReasoningLoader;
   messages: MessageRow[]; compacted: boolean; toolStates?: Record<string, ToolState>; stoppingRunId?: string; recovery?: SessionRecovery;
   recovering?: boolean; onRecover?: (action: 'continue' | 'restore_approval') => void;
   agents?: Record<string, AgentView>;
@@ -46,6 +49,11 @@ export default function Conversation({ messages, compacted, toolStates = {}, age
       const call = parent?.tool_calls?.find(item => item.id === row.tool_call_id);
       if (call) { results.set(call, row); matchedResults.add(row.id); }
     }
+  }
+  const groups = new Map<string, MessageRow[]>();
+  for (const row of messages) if (row.type === 'ai') {
+    const key = row.reply_id ?? row.id;
+    groups.set(key, [...(groups.get(key) ?? []), row]);
   }
   function rememberPosition() {
     const element = scroll.current;
@@ -81,7 +89,7 @@ export default function Conversation({ messages, compacted, toolStates = {}, age
   }
 
   async function copy(row: MessageRow) {
-    try { await navigator.clipboard.writeText(row.content); setCopied(row.id); }
+    try { await navigator.clipboard.writeText((groups.get(row.reply_id ?? row.id) ?? [row]).map(item => item.content).filter(Boolean).join('\n\n')); setCopied(row.id); }
     catch { setCopied('failed'); }
   }
 
@@ -121,8 +129,9 @@ export default function Conversation({ messages, compacted, toolStates = {}, age
       {compacted && <p className={styles.compactionNote}>较早上下文已压缩，原始聊天记录仍可查看。</p>}
       {messages.filter(row => !matchedResults.has(row.id)).map(row => <article key={row.id} data-message-id={row.type === 'tool' ? undefined : row.id} className={`${styles.message} ${row.type === 'human' && !row.is_context_summary ? styles.userMessage : styles.assistantMessage}`}>
         {row.is_context_summary ? <details className={styles.summary}><summary>较早会话摘要</summary><pre>{row.content}</pre></details> : <>
-          {row.type === 'ai' && <hr className={styles.replyDivider} />}
+          {row.type === 'ai' && groups.get(row.reply_id ?? row.id)?.[0].id === row.id && <hr className={styles.replyDivider} />}
           {(row.type === 'tool' || row.provisional) && <div className={styles.speaker}>{row.type === 'tool' && '工具结果'}{row.provisional && <span>{row.state === 'unconfirmed' ? '未完成内容' : '正在生成'}</span>}</div>}
+          {row.reasoning && <ReasoningContent row={row} loadReasoning={loadReasoning} />}
           <div className={styles.messageBody} data-message-id={row.type === 'tool' ? row.id : undefined}>
             {row.type === 'tool' || (row.provisional && row.type !== 'ai') ? <div className={styles.draftText}>{row.content}</div> : <ReactMarkdown skipHtml urlTransform={safeUrl}
               remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
@@ -141,7 +150,7 @@ export default function Conversation({ messages, compacted, toolStates = {}, age
             const phase = toolStates[call.id];
             const correlated = phase && (phase.batch_id ? phase.batch_id === row.id :
               phase.run_id === row.run_id || phase.run_id === result?.run_id || (!result && phase.state === 'running'));
-            return <ToolCall key={call.id} call={call} result={result} phase={correlated ? phase : undefined}
+            return <ToolCall loadChange={loadChange} key={call.id} call={call} result={result} phase={correlated ? phase : undefined}
               initiallyOpen={!!result && standaloneResults.current.has(result.id) &&
                 !!anchor.current?.rows.some(item => item.id === result.id)}
               stopAgent={stopAgent}
@@ -152,8 +161,10 @@ export default function Conversation({ messages, compacted, toolStates = {}, age
               unconfirmed={!result && recovery?.unconfirmed_tool_call_ids.includes(call.id)}
               stopping={correlated && phase.run_id === stoppingRunId} />;
           })}
-          {row.type === 'ai' && row.content && <button className={styles.copyButton} onClick={() => void copy(row)}
-            aria-label="复制回答">{copied === row.id ? '已复制' : copied === 'failed' ? '复制未成功' : '复制'}</button>}
+          {row.type === 'ai' && groups.get(row.reply_id ?? row.id)?.at(-1)?.id === row.id && groups.get(row.reply_id ?? row.id)?.some(item => item.content) && <button className={styles.copyButton} onClick={() => void copy(row)}
+            aria-label="复制回答">{copied === row.id ? '已复制' : copied === 'failed' ? '复制未成功' : history?.hasMore && !messages.some(item => item.type === 'human' && item.reply_id === row.reply_id) ? '复制已加载内容' : '复制'}</button>}
+          {regenerate && lastReplyId && row.reply_id === lastReplyId && row.type === 'ai' && groups.get(lastReplyId)?.at(-1)?.id === row.id &&
+            <button className={styles.copyButton} disabled={!canRegenerate} onClick={regenerate}>重新生成</button>}
         </>}
       </article>)}
     </div>}

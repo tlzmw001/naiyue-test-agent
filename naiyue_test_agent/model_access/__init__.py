@@ -17,6 +17,7 @@ from naiyue_test_agent.contracts.failures import normalize_classifiers
 from .errors import describe_model_failure
 from .messages import MODEL_INPUT_METADATA_KEY
 from .responses_stream import ResponsesChatOpenAI
+from .completions_reasoning import ReasoningChatOpenAI
 from .prompt_cache import prompt_cache_model_settings
 
 from naiyue_test_agent.model_access.thinking import (
@@ -129,6 +130,8 @@ class ModelCatalog:
         if level not in capability.get('levels', ()):
             raise ValueError('Unsupported thinking level')
         settings = native_thinking_settings(capability['kind'], level)
+        if getattr(model, 'use_responses_api', False) and model.reasoning is not None:
+            settings = {'reasoning_effort': None, 'reasoning': {**model.reasoning, 'effort': settings.pop('reasoning_effort')}, **settings}
         if capability['kind'] == 'anthropic':
             # Materialize lazy SDK properties before copying, so both views borrow them.
             model._client, model._async_client
@@ -184,13 +187,20 @@ def _build_model(kind: str, model_name: str, provider: dict, model_id: str,
                  keep_metadata: dict, summary_output_metadata: dict,
                  api: str | None) -> BaseChatModel:
     try:
+        request_settings = dict(request_settings)
+        extension = request_settings.pop('_reasoning_output', None)
+        summary = request_settings.pop('_reasoning_summary', None)
+        if summary is not None:
+            thinking_settings = dict(thinking_settings)
+            effort = thinking_settings.pop('reasoning_effort', None)
+            thinking_settings['reasoning'] = {'summary': summary, **({'effort': effort} if effort is not None else {})}
         output_limit = limit_metadata['max_output_tokens']
         metadata = {MODEL_ID_METADATA_KEY: model_id, MODEL_LIMITS_METADATA_KEY: limit_metadata,
                     COMPACTION_RESERVE_METADATA_KEY: reserve_metadata,
                     COMPACTION_KEEP_RECENT_METADATA_KEY: keep_metadata,
                     COMPACTION_SUMMARY_OUTPUT_METADATA_KEY: summary_output_metadata,
                     MODEL_INPUT_METADATA_KEY: {'kind': kind, 'api': api}}
-        openai_model = ResponsesChatOpenAI if api == 'responses' else ChatOpenAI
+        openai_model = ResponsesChatOpenAI if api == 'responses' else ReasoningChatOpenAI if extension else ChatOpenAI
         if kind == 'openai':
             return openai_model(model=model_name, api_key=provider['api_key'],
                               max_tokens=output_limit, metadata=metadata, use_responses_api=api == 'responses',
@@ -285,9 +295,11 @@ def load_model_catalog(path: str | Path | None = None) -> ModelCatalog:
         elif 'api' in entry:
             raise ModelConfigError(f'models.{model_id}.api only applies to OpenAI adapters')
         profile = _object(entry.get('profile', {}), f'models.{model_id}.profile', set(),
-                          {'image_inputs', 'prompt_cache'})
+                          {'image_inputs', 'prompt_cache', 'reasoning_output'})
         if 'image_inputs' in profile and type(profile['image_inputs']) is not bool:
             raise ModelConfigError(f'models.{model_id}.profile.image_inputs must be a boolean')
+        if 'reasoning_output' in profile and (profile['reasoning_output'] != 'reasoning_content' or api != 'chat_completions'):
+            raise ModelConfigError(f'models.{model_id}.profile.reasoning_output requires reasoning_content Chat Completions')
         limit_metadata = {}
         for field, default, source_field in (
             ('context_window_tokens', DEFAULT_CONTEXT_WINDOW_TOKENS,
@@ -344,7 +356,7 @@ def load_model_catalog(path: str | Path | None = None) -> ModelCatalog:
         request = {}
         if 'request' in entry:
             request = _object(entry['request'], f'models.{model_id}.request', set(),
-                              {'timeout_seconds', 'sdk_max_retries', 'prompt_cache'})
+                              {'timeout_seconds', 'sdk_max_retries', 'prompt_cache', 'reasoning_summary'})
         timeout_seconds = request.get('timeout_seconds', DEFAULT_REQUEST_TIMEOUT_SECONDS)
         if (type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds)
                 or timeout_seconds <= 0):
@@ -359,6 +371,12 @@ def load_model_catalog(path: str | Path | None = None) -> ModelCatalog:
             request_settings.update(prompt_cache_model_settings(profile, request, provider['kind']))
         except ValueError as exc:
             raise ModelConfigError(f'models.{model_id}.{exc}') from None
+        if 'reasoning_summary' in request:
+            if api != 'responses' or request['reasoning_summary'] not in ('auto', 'concise', 'detailed'):
+                raise ModelConfigError(f'models.{model_id}.request.reasoning_summary requires a supported Responses summary')
+            request_settings['_reasoning_summary'] = request['reasoning_summary']
+        if 'reasoning_output' in profile:
+            request_settings['_reasoning_output'] = profile['reasoning_output']
         selection = ThinkingSelection(MODEL_DEFAULT, MODEL_DEFAULT, {})
         if 'thinking' in entry:
             thinking = _object(entry['thinking'], f'models.{model_id}.thinking',

@@ -61,21 +61,24 @@ class RunDelivery:
             raise WebError('request_window_full')
         return key, fingerprint, deepcopy(old[1]) if old else None
 
-    async def start(self, session_id, body, rows, *, can_run=True):
-        return await self._launch(session_id, body, rows, can_run=can_run)
+    async def start(self, session_id, body, rows, *, can_run=True, conversation_revision=0):
+        return await self._launch(session_id, body, rows, can_run=can_run, conversation_revision=conversation_revision)
 
-    async def compact(self, session_id, body, rows, *, can_run=True):
-        return await self._launch(session_id, body, rows, can_run=can_run, compact=True)
+    async def regenerate(self, session_id, body, rows, *, can_run=True):
+        return await self._launch(session_id, body, rows, can_run=can_run, regenerate=True)
+
+    async def compact(self, session_id, body, rows, *, can_run=True, conversation_revision=0):
+        return await self._launch(session_id, body, rows, can_run=can_run, compact=True, conversation_revision=conversation_revision)
 
     async def resume(self, session_id, body, check_current):
         return await self._launch(session_id, body, [], resume_check=check_current)
 
-    async def _launch(self, session_id, body, rows, *, can_run=True, resume_check=None, compact=False):
+    async def _launch(self, session_id, body, rows, *, can_run=True, resume_check=None, compact=False, regenerate=False, conversation_revision=0):
         async with self.start_lock:
             if self._closing:
                 raise WebError('session_unavailable', 503)
             key, fingerprint, old = self._cached(session_id, body.request_id, {**body.model_dump(),
-                '_operation': 'compact' if compact else 'approval' if resume_check else 'message'})
+                '_operation': 'regenerate' if regenerate else 'compact' if compact else 'approval' if resume_check else 'message'})
             if old is not None:
                 return old
             pending = self.pending_receipts.get(key)
@@ -111,17 +114,19 @@ class RunDelivery:
 
                 previous = self.runs.get(self.latest.get(session_id))
                 states = {}
-                if previous is not None:
+                if previous is not None and not regenerate:
                     rows, states = previous.seed_data()
                 if prepared is not None:
                     present = {row['id'] for row in rows}
                     rows = [*rows, *(row for row in prepared['messages'] if row['id'] not in present)]
                 job = DeliveredRun(session_id, rows, self.settings, register, progress_settings=self.progress_settings)
+                job.conversation_revision = (body.expected_conversation_revision + 1 if regenerate else
+                    (prepared or {}).get('conversation_revision', conversation_revision))
                 job.tool_states = states
                 job.unsubscribe = self.application.subscribe_events(job.observe, session_id=session_id)
                 self.pending_receipts[key] = (fingerprint, job)
                 self.active_by_session[session_id] = job
-                job.task = asyncio.create_task(self._produce(job, body, receipt_key=key, prepared=prepared, compact=compact))
+                job.task = asyncio.create_task(self._produce(job, body, receipt_key=key, prepared=prepared, compact=compact, regenerate=regenerate))
         # Missing observations may keep this future pending for the whole run.
         # That must not hold the registration lock or cancel the producer.
         run_id = await asyncio.shield(job.started)
@@ -137,9 +142,11 @@ class RunDelivery:
             if self.latest.get(old.session_id) == key:
                 self.latest.pop(old.session_id, None)
 
-    async def _produce(self, job, body, *, receipt_key, prepared=None, compact=False):
+    async def _produce(self, job, body, *, receipt_key, prepared=None, compact=False, regenerate=False):
         try:
-            if compact:
+            if regenerate:
+                result = await self.application.aregenerate_last_reply(job.session_id, **body.model_dump())
+            elif compact:
                 result = await self.application.acompact_context(job.session_id)
                 if job.compaction_result is None and result.get('compaction_status') is not None:
                     with job.lock:
@@ -153,7 +160,9 @@ class RunDelivery:
                         remember_approved=prepared['remember_approved'])
             else:
                 result = await self.application.arun(job.session_id,
-                    [HumanMessage(content=body.text, id=body.request_id)])
+                    [HumanMessage(content=body.text, id=body.request_id)],
+                    **({'expected_conversation_revision': body.expected_conversation_revision}
+                       if body.expected_conversation_revision is not None else {}))
             if job.status == 'running':
                 with job.lock:
                     job.status = ('interrupted' if result.get('approval_requests') else

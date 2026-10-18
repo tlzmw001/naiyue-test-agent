@@ -23,6 +23,7 @@ class DeliveredRun:
     def __init__(self, session_id, rows, settings, on_started, *, progress_settings=None):
         self.session_id, self.settings = session_id, settings
         self.run_id = None
+        self.conversation_revision = 0
         self.started = asyncio.get_running_loop().create_future()
         self.started.add_done_callback(lambda future: future.exception() if not future.cancelled() else None)
         self.changed = asyncio.Event()
@@ -165,7 +166,7 @@ class DeliveredRun:
             rows = recent_rows([row for row in self.projection.messages if not row.get('identity_only')], self.settings)
             batches = {row['id'] for row in rows if row['type'] == 'ai'} | {
                 row.get('parent_message_id') for row in rows if row['type'] == 'tool'}
-            value = {'session_id': self.session_id, 'run_id': self.run_id, 'status': self.status, 'mode': self.mode,
+            value = {'session_id': self.session_id, 'conversation_revision': self.conversation_revision, 'run_id': self.run_id, 'status': self.status, 'mode': self.mode,
                 'messages': rows, 'last_sequence': self.last_sequence,
                 'incomplete': self.projection.incomplete, 'done': self.done,
                 'manual_review_required': self.manual_review_required, 'failure': self.failure,

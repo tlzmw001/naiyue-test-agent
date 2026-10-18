@@ -13,10 +13,20 @@ from langchain_core.messages import HumanMessage, convert_to_messages
 
 from .errors import SessionBusyError, SessionPersistenceError
 from .session_state import SessionState
+from naiyue_test_agent.contracts.replies import reply_identity, QueuedInput
 from naiyue_test_agent.tools.read import resolve_workspace_root
 
 
 logger = logging.getLogger('naiyue_test_agent.application')
+
+
+def _tag_inputs(messages, *, kind='ordinary', reply_id=None):
+    identity = reply_id or uuid4().hex
+    return [message if kind == 'ordinary' and reply_identity(message) else message.model_copy(update={'id': message.id or uuid4().hex,
+        'additional_kwargs': {**message.additional_kwargs, 'naiyue_reply_id': identity,
+                              'naiyue_input_kind': kind}})
+        if isinstance(message, HumanMessage) and not message.additional_kwargs.get('naiyue_compaction_summary')
+        else message for message in messages]
 
 
 def mark_human_messages(messages):
@@ -26,7 +36,7 @@ def mark_human_messages(messages):
         if isinstance(message, HumanMessage) and not extra.get('naiyue_compaction_summary'):
             extra['naiyue_human_input'] = True
         result.append(message.model_copy(update={'additional_kwargs': extra}))
-    return result
+    return _tag_inputs(result)
 
 
 class AgentSessionControls:
@@ -43,7 +53,7 @@ class AgentSessionControls:
                 raise SessionBusyError('Session is not accepting steering messages')
             control, run_id = self._current_control(), row.run_id
             size = len(row.steering_queue)
-            row.steering_queue.append(text)
+            row.steering_queue.append(QueuedInput(uuid4().hex, text, 'steering'))
             if control:
                 observe(control, control.accept, 'steering', queue_size=size)
         self._record_steering('steering_accepted', self.session_id, run_id, 1)
@@ -57,7 +67,7 @@ class AgentSessionControls:
                 raise SessionBusyError('Session is not accepting follow-up messages')
             control, run_id = self._current_control(), row.run_id
             size = len(row.follow_up_queue)
-            row.follow_up_queue.append(text)
+            row.follow_up_queue.append(QueuedInput(uuid4().hex, text, 'follow_up'))
             if control:
                 observe(control, control.accept, 'follow_up', queue_size=size)
         self._record_follow_up('follow_up_accepted', self.session_id, run_id, 1)
@@ -82,7 +92,7 @@ class AgentSessionControls:
                 if reason == 'user' and ((not row.steering_open and (active is None or active.mode != 'compact'))
                                         or (active is not None and active.stage == 'finalize')):
                     raise SessionBusyError('Session is no longer accepting stop requests')
-                retained = [*row.steering_queue, *row.follow_up_queue]
+                retained = [item.text for item in [*row.steering_queue, *row.follow_up_queue]]
                 row.stop_requested, row.steering_open = True, False
                 if active is not None:
                     stop_control = active.stop_control
@@ -181,10 +191,16 @@ class AgentSessionControls:
     def prepare_control_messages(self, messages):
         with self._lock:
             control = self._current_control()
-        prepared = (observe(control, control.prepare_messages, messages,
-            fallback=[HumanMessage(content=text) for text in messages]) if control is not None
-            else [HumanMessage(content=text) for text in messages])
-        return mark_human_messages(prepared)
+            run = self._run
+            kind = messages[0].kind
+            prepared = [HumanMessage(id=item.message_id, content=item.text) for item in messages]
+            prepared = _tag_inputs(mark_human_messages(prepared), kind=kind,
+                                  reply_id=run.reply_id if run and kind == 'steering' else None)
+            if run and prepared:
+                run.reply_id = prepared[-1].additional_kwargs['naiyue_reply_id']
+        if control is not None:
+            observe(control, control.record_messages, prepared)
+        return prepared
 
     @staticmethod
     def _record_steering(event: str, session_id: str, run_id: str, count: int) -> None:
@@ -253,7 +269,7 @@ class SessionControlMixin:
 
 
     def install_restored_session(self, session_id, *, thread_id, model_id, thinking_level,
-                                 workspace_root, active_tool_names, permission_mode, pending=None):
+                                 workspace_root, active_tool_names, permission_mode, pending=None, conversation_revision=0):
         from .agent_session import AgentSession
         with self._lock:
             if session_id in self._sessions:
@@ -261,7 +277,7 @@ class SessionControlMixin:
             state = SessionState(thread_id=thread_id, model_id=model_id,
                 thinking_level=thinking_level, workspace_root=workspace_root,
                 active_tool_names=tuple(active_tool_names), permission_mode=permission_mode,
-                pending_tool_approval=deepcopy(pending))
+                pending_tool_approval=deepcopy(pending), conversation_revision=conversation_revision)
             self._sessions[session_id] = AgentSession(session_id, state, catalog=self._catalog,
                 tool_registry=self._tool_registry, permission_settings=self._permission_settings,
                 persistence=self._persistence, invoke_subagent=self.ainvoke_subagent,

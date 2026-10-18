@@ -74,8 +74,10 @@ def test_control_uses_owned_observation_and_flushes_without_state_lock():
         observation.start()
         owner.steer('change direction')
         owner.follow_up('next task')
-        assert service.drain_steering(sid) == ['change direction']
-        assert service.finish_run_boundary(sid) == (False, ['next task'])
+        assert [item.text for item in service.drain_steering(sid)] == ['change direction']
+        stopped, queued = service.finish_run_boundary(sid)
+        assert stopped is False and [(item.kind, item.text) for item in queued] == [('follow_up', 'next task')]
+        assert queued[0].message_id
     assert len(checks) == 2
     assert all(row['run_id'] == rid and row['busy'] for row in checks)
     owner._cleanup_run(observation_run)

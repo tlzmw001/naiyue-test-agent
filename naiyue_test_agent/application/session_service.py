@@ -118,7 +118,7 @@ class SessionService(SessionControlMixin, SessionSubagentControls):
         return self.require(session_id).resolve_prompt_parts()
 
 
-    def _admit(self, session_id, run_id, mode, *, decisions=None, remember_approved=None, stop=False):
+    def _admit(self, session_id, run_id, mode, *, decisions=None, remember_approved=None, stop=False, expected_conversation_revision=None):
         with self._lock:
             session = self._sessions[session_id]
             run_id = run_id or uuid4().hex
@@ -130,13 +130,13 @@ class SessionService(SessionControlMixin, SessionSubagentControls):
                 sum(actor.is_busy() for actor in self._sessions.values()) < self._max_active_runs)
             run = session.admit_run(run_id, mode, observation, decisions=decisions,
                               remember_approved=remember_approved, stop=stop,
-                              capacity_available=capacity_available)
+                              capacity_available=capacity_available, expected_conversation_revision=expected_conversation_revision)
         return session, run
 
 
-    async def arun(self, agent, session_id, messages, *, run_id=None, max_concurrency=4):
+    async def arun(self, agent, session_id, messages, *, run_id=None, max_concurrency=4, expected_conversation_revision=None):
         validate_tool_concurrency(max_concurrency)
-        session, run = self._admit(session_id, run_id, 'message')
+        session, run = self._admit(session_id, run_id, 'message', expected_conversation_revision=expected_conversation_revision)
         return await session.arun(agent, messages, run=run,
                                    max_concurrency=max_concurrency)
 

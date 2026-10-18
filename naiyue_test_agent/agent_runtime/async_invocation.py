@@ -3,6 +3,8 @@
 import logging
 
 from langgraph.types import Command
+from langchain_core.messages import BaseMessage
+from naiyue_test_agent.contracts.replies import reply_identity
 
 from .invocation_context import make_invocation_context
 from .async_message_observation import ainvoke_with_message_observation
@@ -21,7 +23,8 @@ async def ainvoke_agent_run(agent, messages, *, session_id, thread_id, run_id,
     logger.info('run_started', extra={'run_event': {'event': 'run_started', **correlation}})
     context = make_invocation_context(session_id, run_id, workspace_root, approval_grants, read_resource_roots)
     context['_max_concurrency'] = max_concurrency
-    input = messages if isinstance(messages, Command) else {'messages': messages}
+    input = messages if isinstance(messages, Command) else {'messages': messages,
+        'active_reply_id': next((reply_identity(m) for m in reversed(messages) if isinstance(m, BaseMessage) and reply_identity(m)), None)}
     config = {'configurable': {'thread_id': thread_id}, 'max_concurrency': max_concurrency}
     options = {'durability': durability} if durability is not None else {}
     try:

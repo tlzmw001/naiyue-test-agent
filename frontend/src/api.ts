@@ -2,7 +2,7 @@ import type { ContextView } from './contextTypes';
 import type { SessionUsageView } from './usageTypes';
 import { decodeSSE, responseBytes } from './sse';
 import type { SseFrame } from './sse';
-import type { ApprovalBatch, HistoryPage, PermissionMode, RunView, SessionControlOptions, SessionRow, SessionView, SkillCatalogView, SubagentDetail, SubagentRecord, ThinkingOptions, ToolDecision } from './types';
+import type { ApprovalBatch, FileChangeView, HistoryPage, PermissionMode, RunView, SessionControlOptions, SessionRow, SessionView, SkillCatalogView, SubagentDetail, SubagentRecord, ThinkingOptions, ToolDecision } from './types';
 
 export interface ServiceInfo {
   workspace_root: string | null;
@@ -47,6 +47,10 @@ export class WebApi {
   selectThinking(id: string, model_id: string, thinking_level: string) {
     return this.json<{ model_id: string; thinking_level: string }>(`/sessions/${encodeURIComponent(id)}/thinking`, 'PATCH', { model_id, thinking_level });
   }
+  regenerate(id: string, expected_reply_id: string, expected_conversation_revision: number, request_id = crypto.randomUUID()) {
+    return this.json<{ run_id?: string; session_id: string; status?: string }>(`/sessions/${encodeURIComponent(id)}/regenerate`, 'POST',
+      { request_id, expected_reply_id, expected_conversation_revision });
+  }
   compact(id: string, request_id = crypto.randomUUID()) {
     return this.json<{ run_id: string; session_id: string }>(`/sessions/${encodeURIComponent(id)}/compact`, 'POST', { request_id });
   }
@@ -77,6 +81,17 @@ export class WebApi {
     const query = new URLSearchParams({ ...(before ? { before } : {}), ...(agentId ? { agent_id: agentId } : {}) });
     return this.json<HistoryPage>(`/sessions/${encodeURIComponent(id)}/messages?${query}`, 'GET', undefined, signal);
   }
+  messageReasoning(id: string, row: { sequence?: number; revision?: number }, offset: number, conversationRevision: number, agentId?: string) {
+    const query = new URLSearchParams({ revision: String(row.revision), offset: String(offset), conversation_revision: String(conversationRevision),
+      ...(agentId ? { agent_id: agentId } : {}) });
+    return this.json<{ text: string; next_offset: number; complete: boolean }>(`/sessions/${encodeURIComponent(id)}/messages/${row.sequence}/reasoning?${query}`);
+  }
+  async fileChange(id: string, row: { sequence?: number; revision?: number }, patch = false, agentId?: string, conversationRevision = 0) {
+    if (!row.sequence || !row.revision) throw new ApiError('change_unavailable');
+    const query = new URLSearchParams({ revision: String(row.revision), conversation_revision: String(conversationRevision), ...(agentId ? { agent_id: agentId } : {}) });
+    const path = `/sessions/${encodeURIComponent(id)}/messages/${row.sequence}/${patch ? 'patch' : 'change'}?${query}`;
+    return patch ? (await this.response(path)).text() : this.json<FileChangeView>(path);
+  }
   context(id: string) { return this.json<ContextView>(`/sessions/${encodeURIComponent(id)}/context`); }
   usage(id: string, afterModel?: string, signal?: AbortSignal) {
     const query = afterModel === undefined ? '' : '?' + new URLSearchParams({ after_model: afterModel });
@@ -92,9 +107,9 @@ export class WebApi {
   select(id: string, model_id: string) {
     return this.json<{ model_id: string }>(`/sessions/${encodeURIComponent(id)}/model`, 'PATCH', { model_id });
   }
-  start(id: string, text: string, request_id = crypto.randomUUID()) {
+  start(id: string, text: string, request_id = crypto.randomUUID(), expected_conversation_revision?: number) {
     return this.json<{ run_id: string; session_id: string }>(`/sessions/${encodeURIComponent(id)}/runs`,
-      'POST', { text, request_id });
+      'POST', { text, request_id, expected_conversation_revision });
   }
   control(id: string, kind: 'steering' | 'follow_up' | 'stop', text?: string, agent_path = 'root') {
     return this.json<{ accepted: boolean; retained: string[] }>(`/runs/${encodeURIComponent(id)}/controls`,

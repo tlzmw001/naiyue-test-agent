@@ -36,7 +36,7 @@ class ExecutionAuthorizationMiddleware(AgentMiddleware):
         elif decision != 'allow':
             raise PermissionMechanismError('Invalid saved permission decision')
         local = {**context, '_execution_permit': binding, '_permission_rules': self.settings,
-                 '_session_allow': batch.get('session_allow', [])}
+                 '_session_allow': batch.get('session_allow', []), '_permission_mode': batch['mode']}
         return request.override(runtime=replace(request.runtime, context=local))
 
 

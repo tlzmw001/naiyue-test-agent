@@ -30,6 +30,7 @@ from naiyue_test_agent.agent_runtime.call_observation import (
     make_model_selection_middleware,
 )
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher, AgentEventPublisher
+from .reply_identity import ReplyIdentityMiddleware
 from .active_stop import StopModelMiddleware, StopBoundaryMiddleware
 from .run_control import RunControl
 from .session_port import SessionPort
@@ -129,7 +130,7 @@ def _assemble_interactive_runtime(
         messages = session_port.drain_steering(session_id)
         if messages:
             prepared = session_port.prepare_control_messages(session_id, messages)
-            return {'messages': prepared}
+            return {'messages': prepared, 'active_reply_id': prepared[-1].additional_kwargs.get('naiyue_reply_id')}
         return None
 
     @after_agent(can_jump_to=['model'])
@@ -141,7 +142,7 @@ def _assemble_interactive_runtime(
         if messages:
             prepared = session_port.prepare_control_messages(session_id, messages)
             return {
-                'messages': prepared,
+                'messages': prepared, 'active_reply_id': prepared[-1].additional_kwargs.get('naiyue_reply_id'),
                 'jump_to': 'model',
             }
         return None
@@ -192,7 +193,7 @@ def _build_runtime_agent(
         response_format=response_format,
         context_schema=RunContext,
         state_schema=state_schema,
-        middleware=[*([StopModelMiddleware()] if active_stop else []), *([TurnBoundaryMiddleware()] if observe_turns else []),
+        middleware=[ReplyIdentityMiddleware(), *([StopModelMiddleware()] if active_stop else []), *([TurnBoundaryMiddleware()] if observe_turns else []),
                     make_model_selection_middleware(resolve_model),
                     toolset, ToolBatchMiddleware(tool_registry), _record_tool_call,
                     ToolErrorMiddleware(on_error=tool_error_feedback), ExecutionAuthorizationMiddleware(permission_settings),

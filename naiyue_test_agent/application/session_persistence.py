@@ -3,6 +3,7 @@
 import logging
 import json
 import asyncio
+import unicodedata
 from copy import deepcopy
 from threading import Lock
 
@@ -26,12 +27,13 @@ logger = logging.getLogger(__name__)
 
 
 class SessionPersistence:
-    def __init__(self, storage, sessions, *, catalog, tool_registry, permission_settings, usage_persistence=None):
+    def __init__(self, storage, sessions, *, catalog, tool_registry, permission_settings, usage_persistence=None, title_max_chars=40):
         self.storage = storage
         self.sessions = sessions
         self._catalog, self._tool_registry = catalog, tool_registry
         self._permission_settings = permission_settings
         self._usage = usage_persistence
+        self._title_max_chars = title_max_chars
         self._lock = Lock()
         self._active = {}
         self._blocked = set()
@@ -42,7 +44,7 @@ class SessionPersistence:
     async def astatus(self, session_id):
         row = await run_blocking(self.storage.get, session_id)
         value = {key: row[key] for key in ('session_id', 'model_id', 'thinking_level', 'workspace_root',
-            'state', 'updated_at', 'last_run_status', 'title', 'permission_mode', 'checkpoint_id')}
+            'state', 'updated_at', 'last_run_status', 'title', 'permission_mode', 'checkpoint_id', 'conversation_revision')}
         value.update(pinned=bool(row['pinned']), active_tools=json.loads(row['active_tool_names_json']),
             busy=False, run_id=None, manual_review_required=row['state'] == 'review_required', pending_approval=False)
         loaded = self.sessions.has_session(session_id)
@@ -57,6 +59,9 @@ class SessionPersistence:
         value['can_run'] = (loaded and not blocked and row['state'] != 'running' and not value['busy']
                             and not value['manual_review_required'] and not value['pending_approval'])
         value.pop('approval_run_id', None)
+        from .reply_storage import latest
+        boundary = await run_blocking(latest, self.storage, session_id)
+        value['last_reply_id'] = boundary['reply_id'] if boundary else None
         return value
 
 
@@ -81,6 +86,7 @@ class SessionPersistence:
                 updates = await collect_chat_updates(agent, self.storage, session_id, snapshot=snapshot)
                 await run_blocking(self.storage.save_chat_updates, session_id, updates)
                 self._prepared[session_id] = saved
+                await self._ensure_title(session_id)
             except Exception as error:
                 self._prepared.pop(session_id, None)
                 logger.error('chat_history_prepare_failed error_type=%s', type(error).__name__)
@@ -160,6 +166,7 @@ class SessionPersistence:
                 updates = await await_settled(collect_chat_updates(agent, self.storage, session_id, snapshot=snapshot))
                 await run_blocking(self.storage.finish_run, session_id, state, checkpoint_id, namespace, status, updates)
                 self._prepared[session_id] = {}
+                await self._ensure_title(session_id)
             except Exception as error:
                 with self._lock:
                     self._blocked.add(session_id)
@@ -169,6 +176,24 @@ class SessionPersistence:
                 with self._lock:
                     self._active.pop(session_id, None)
 
+
+    async def _ensure_title(self, session_id):
+        try:
+            row = await run_blocking(self.storage.get, session_id)
+            if row['title'] is not None:
+                return
+            records = await run_blocking(self.storage._read, """SELECT body_json FROM naiyue_chat_messages
+                WHERE session_id=? AND thread_id=? AND message_type='human' AND kind='message'
+                ORDER BY sequence LIMIT 1""", (session_id, row['thread_id']))
+            if records:
+                from naiyue_test_agent.model_access.messages import content_text
+                content = content_text(json.loads(records[0]['body_json'])['data']['content'])
+                content = ''.join(' ' if unicodedata.category(c).startswith('C') else c for c in content)
+                title = ' '.join(content.split())[:self._title_max_chars].strip()
+                if title:
+                    await run_blocking(self.storage.ensure_title, session_id, title)
+        except Exception as error:
+            logger.warning('session_title_save_failed error_type=%s', type(error).__name__)
 
     async def ahistory(self, session_id, agent):
         return await self._read_history(session_id, agent)
@@ -236,7 +261,7 @@ class SessionPersistence:
                 raise SessionPersistenceError('session_recovery_blocked')
             self.sessions.install_restored_session(session_id, thread_id=row['thread_id'],
                 model_id=row['model_id'], thinking_level=row['thinking_level'], workspace_root=root,
-                active_tool_names=names, permission_mode=row['permission_mode'], pending=pending)
+                active_tool_names=names, permission_mode=row['permission_mode'], pending=pending, conversation_revision=row['conversation_revision'])
 
 
     async def _read_history(self, session_id, agent, *, snapshot=None, include_messages=True):

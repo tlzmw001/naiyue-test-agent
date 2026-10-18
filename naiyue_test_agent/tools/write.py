@@ -21,6 +21,7 @@ from .settings import WriteSettings
 from .registry import ToolSpec
 from .control import check_tool_stop
 from .progress import ToolProgress
+from .file_change import write_feedback, read_feedback_allowed
 
 
 logger = logging.getLogger(__name__)
@@ -121,6 +122,7 @@ def _write(
     expected_content: bytes | None = None,
     control=None,
     progress=None,
+    feedback_artifact=None, feedback_settings=None, feedback_read_allowed=False, feedback_path=None,
 ) -> str:
     check_tool_stop(control, WRITE_STOPPED)
     progress = progress or ToolProgress(None)
@@ -195,6 +197,10 @@ def _write(
                 existed = target.exists()
                 existing_mode = (stat.S_IMODE(target.stat().st_mode) & 0o777
                                  if existed else None)
+                feedback_stat = target.stat() if existed else None
+                if feedback_artifact is not None:
+                    feedback_artifact.update(write_feedback(target, content, feedback_settings,
+                        read_allowed=feedback_read_allowed, display_path=feedback_path))
                 check_tool_stop(control, WRITE_STOPPED)
                 with tempfile.NamedTemporaryFile(
                     mode='wb', prefix='.naiyue-write-', dir=target.parent,
@@ -230,6 +236,12 @@ def _write(
                 logger.warning('write_failed phase=prepare error_type=%s', type(error).__name__)
                 raise ToolException(WRITE_IO_FAILURE) from error
 
+            if feedback_artifact is not None:
+                current_stat = target.stat() if target.exists() else None
+                fields = ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
+                if (current_stat is None) != (feedback_stat is None) or current_stat is not None and any(
+                        getattr(current_stat, field) != getattr(feedback_stat, field) for field in fields):
+                    raise ToolException(WRITE_CHANGED)
             progress.report(phase='commit')
             check_tool_stop(control, WRITE_STOPPED)
             _replace_temp(temporary, target, existed=existed)
@@ -252,8 +264,8 @@ def create_session_write_tool(*, settings: WriteSettings | None = None, progress
     public_schema, execution_schema = build_tool_schemas('WriteInput', _WriteInput,
         path=(str, Field(min_length=1, max_length=settings.max_path_chars)))
 
-    @tool('write', args_schema=execution_schema)
-    def write(path: str, content: str, runtime: ToolRuntime[dict, dict]) -> str:
+    @tool('write', args_schema=execution_schema, response_format='content_and_artifact')
+    def write(path: str, content: str, runtime: ToolRuntime[dict, dict]) -> tuple:
         """Create or completely overwrite one authorized UTF-8 file.
 
         Missing parent directories are created after authorization. This tool cannot make partial edits.
@@ -263,11 +275,16 @@ def create_session_write_tool(*, settings: WriteSettings | None = None, progress
         if not isinstance(root, Path) or not root.is_absolute():
             logger.warning('write_failed phase=context error_type=MissingWorkspaceContext')
             raise ToolException(WRITE_NO_WORKSPACE)
+        check_tool_stop(context.get('_run_control'), WRITE_STOPPED)
         target = require_file_target(runtime, path, operation='write')
         progress = ToolProgress(runtime, progress_settings)
         try:
-            return _write(root, str(target), content, settings.max_input_bytes,
-                          subject=context['_execution_permit']['subject'], control=context.get('_run_control'), progress=progress)
+            artifact = {}
+            result = _write(root, str(target), content, settings.max_input_bytes,
+                          subject=context['_execution_permit']['subject'], control=context.get('_run_control'), progress=progress,
+                          feedback_artifact=artifact, feedback_settings=settings,
+                          feedback_read_allowed=read_feedback_allowed(runtime, path), feedback_path=path)
+            return result, artifact
         finally:
             progress.flush()
 

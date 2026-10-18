@@ -30,15 +30,18 @@ export default function App({ api: supplied }: { api?: WebApi }) {
   const contextTrigger = useRef<HTMLButtonElement>(null);
   const closeContext = () => { setContextPanel(false); contextTrigger.current?.focus(); };
   const [navigation, setNavigation] = useState(false);
-  const [agentPanel, setAgentPanel] = useState<{ sessionId: string; agentId?: string } | null>(null);
+  const [agentPanel, setAgentPanel] = useState<{ sessionId: string; agentId?: string; revision: number } | null>(null);
   const agentTrigger = useRef<HTMLButtonElement>(null);
   const approvalArea = useRef<HTMLDivElement>(null);
-  useEffect(() => { setAgentPanel(null); setContextPanel(false); setModelMenu(false); }, [chat.session?.session_id]);
+  useEffect(() => {
+    setAgentPanel(panel => panel?.sessionId === chat.session?.session_id && panel?.revision === (chat.session?.conversation_revision ?? 0) ? panel : null);
+    setContextPanel(false); setModelMenu(false);
+  }, [chat.session?.session_id, chat.session?.conversation_revision]);
   const closeAgents = () => { setAgentPanel(null); agentTrigger.current?.focus(); };
   const openAgent = (path?: string) => {
     setModelMenu(false);
     setContextPanel(false);
-    if (chat.session) setAgentPanel({ sessionId: chat.session.session_id, agentId: path?.split('/').at(-1) });
+    if (chat.session) setAgentPanel({ sessionId: chat.session.session_id, agentId: path?.split('/').at(-1), revision: chat.session.conversation_revision ?? 0 });
   };
   const busy = chat.run?.status === 'running' && !chat.run.done;
   const blocked = (!!busy && chat.run?.mode === 'compact') || (!busy && chat.session?.can_run === false) || chat.selectingSession || !chat.models.length || !!chat.run?.manual_review_required || !!chat.session?.manual_review_required || !!chat.session?.pending_approval;
@@ -71,7 +74,11 @@ export default function App({ api: supplied }: { api?: WebApi }) {
           aria-label="重试读取子智能体列表" onClick={agents.retry}>重试子智能体</button>}
         <ThemeMenu theme={theme.theme} select={theme.selectTheme} /></div>
       </header>
-      <Conversation key={chat.session?.session_id ?? 'new'} messages={chat.messages} history={chat.history}
+      <Conversation regenerate={() => void chat.regenerate()} lastReplyId={chat.session?.last_reply_id}
+        canRegenerate={!!chat.session?.can_run && !chat.submitting && !chat.selectingSession}
+        key={chat.session?.session_id ?? 'new'} messages={chat.messages} history={chat.history}
+        loadReasoning={(row, offset) => api.messageReasoning(chat.session!.session_id, row, offset, chat.session?.conversation_revision ?? 0)}
+        loadChange={(row, patch) => api.fileChange(chat.session!.session_id, row, patch, undefined, chat.session?.conversation_revision ?? 0)}
         compacted={chat.session?.has_compaction ?? false} toolStates={chat.run?.tool_states}
         agents={chat.run?.agents}
         stopAgent={(path, runId) => void chat.stopAgent(path, runId)}
@@ -109,7 +116,7 @@ export default function App({ api: supplied }: { api?: WebApi }) {
     {contextPanel && <ContextPanel value={context.value} loading={context.loading} error={context.error}
       retry={context.retry} close={closeContext} usageContent={chat.session && <SessionUsage
         api={api} sessionId={chat.session.session_id} run={chat.run} />} />}
-    {agentPanel && agentPanel.sessionId === chat.session?.session_id && <SubagentSidebar list={agents} api={api}
+    {agentPanel && agentPanel.sessionId === chat.session?.session_id && agentPanel.revision === (chat.session?.conversation_revision ?? 0) && <SubagentSidebar conversationRevision={chat.session?.conversation_revision ?? 0} list={agents} api={api}
       sessionId={agentPanel.sessionId} run={chat.run} initialAgentId={agentPanel.agentId}
       close={closeAgents} stopAgent={(path, runId) => void chat.stopAgent(path, runId)}
       showApprovals={() => {

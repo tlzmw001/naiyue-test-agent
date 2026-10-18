@@ -49,7 +49,21 @@ export interface SubagentDetail extends SubagentRecord {
   tool_states: Record<string, ToolState>; source?: AgentEventSource;
 }
 
+export interface FileChangeView {
+  type: string; version: number; operation: string; path: string;
+  firstChangedLine?: number | null; diff: string; preview: string;
+  diff_truncated?: boolean; preview_truncated?: boolean; patch_omitted?: boolean;
+  unavailable_reason?: string | null; detail_available?: boolean;
+}
+export type ReasoningLoader = (row: MessageRow, offset: number) => Promise<{ text: string; next_offset: number; complete: boolean }>;
+export type ChangeLoader = (row: MessageRow, patch?: boolean) => Promise<FileChangeView | string>;
+
 export interface MessageRow {
+  file_change?: FileChangeView;
+  reply_id?: string | null;
+  reasoning?: string;
+  reasoning_index?: number;
+  reasoning_truncated?: boolean;
   id: string;
   sequence?: number;
   revision?: number;
@@ -106,6 +120,8 @@ export interface SessionRow {
 }
 
 export interface SessionView extends SessionRow {
+  conversation_revision?: number;
+  last_reply_id?: string | null;
   history_ready?: boolean;
   history?: Omit<HistoryPage, 'messages'>;
   thinking_level?: string;

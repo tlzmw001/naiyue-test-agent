@@ -1,5 +1,7 @@
 """Independent invocation facts survive reopen and reject conflicting identities."""
 
+from legacy_store_schema import remove_reply_schema
+
 import sqlite3
 import pytest
 
@@ -75,11 +77,12 @@ def test_schema_eight_migrates_without_changing_sessions_or_chat(tmp_path):
     with SessionStorage(path) as store:
         seed(store)
     with sqlite3.connect(path) as connection:
+        remove_reply_schema(connection)
         connection.executescript('''DROP TABLE IF EXISTS naiyue_model_invocations;
             DROP TABLE IF EXISTS naiyue_model_usage_runs;
             UPDATE naiyue_store_info SET version=8;''')
     with SessionStorage(path) as store:
-        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 10
+        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 12
         assert store.get('s')['thread_id'] == 'thread-s' and store.chat_heads('s') == []
         assert rows(store) == []
 
@@ -123,6 +126,7 @@ def test_usage_ddl_failure_rolls_back_without_damaging_existing_schema(monkeypat
     with SessionStorage(path) as store:
         seed(store)
     with sqlite3.connect(path) as connection:
+        remove_reply_schema(connection)
         connection.executescript('''DROP TABLE naiyue_model_invocations; DROP TABLE naiyue_model_usage_runs;
             UPDATE naiyue_store_info SET version=8;''')
     connect = sqlite3.connect

@@ -19,7 +19,9 @@ from naiyue_test_agent.tools.permissions import execution_environment
 
 def invoke_body(spec, root, args, control):
     """Enter the real tool body with a valid, already reviewed execution permit."""
-    context = {'session_id': 'file-stop', 'workspace_root': root, '_run_control': control}
+    from naiyue_test_agent.tools.permission_rules import PermissionSettings
+    context = {'session_id': 'file-stop', 'workspace_root': root, '_run_control': control,
+               '_permission_rules': PermissionSettings(), '_session_allow': [], '_permission_mode': 'Default'}
     subject = spec.permissions.prepare(args, context)
     subject.update(args=args, path_field='path', execution_environment=execution_environment())
     context['_execution_permit'] = {'call_id': 'file', 'session_id': 'file-stop',
@@ -199,7 +201,7 @@ def test_commit_boundary_preserves_original_or_confirmed_success(monkeypatch, tm
             {'edits': [{'oldText': 'original', 'newText': 'replacement'}]})}
     if stage == 'replace':
         result = invoke_body(spec, tmp_path, args, control)
-        assert 'replaced' in (result if name == 'write' else result[0])
+        assert 'replaced' in result[0]
         assert target.read_bytes() == b'replacement'
     else:
         with pytest.raises(ToolException, match='stopped'):
@@ -275,7 +277,7 @@ def test_busy_held_until_stopped_temp_cleanup_settles(monkeypatch, tmp_path, nam
     monkeypatch.setattr(write_module.os, 'fsync', original_sync)
     result = invoke_body(create_session_write_tool(), tmp_path,
                          {'path': target.name, 'content': 'after'}, RunControl())
-    assert 'replaced' in result and target.read_bytes() == b'after'
+    assert 'replaced' in result[0] and target.read_bytes() == b'after'
     assert not list(tmp_path.glob('.naiyue-write-*'))
 
 
@@ -326,7 +328,7 @@ def test_stopped_temp_cleanup_failure_is_visible_without_overwriting_primary_err
     original_unlink(unlinked[0])
     monkeypatch.setattr(write_module.os, 'fsync', original_sync)
     assert 'replaced' in invoke_body(create_session_write_tool(), tmp_path,
-                                    {'path': target.name, 'content': 'after'}, RunControl())
+                                    {'path': target.name, 'content': 'after'}, RunControl())[0]
 
 
 @pytest.mark.parametrize('name', ['write', 'edit'])
@@ -377,5 +379,5 @@ def test_stop_inside_started_replace_waits_for_true_result_and_holds_busy(monkey
         finally:
             release.set()
         result = task.result(timeout=5)
-    assert 'replaced' in (result if name == 'write' else result[0])
+    assert 'replaced' in result[0]
     assert target.read_bytes() == b'replacement' and not list(tmp_path.glob('.naiyue-write-*'))

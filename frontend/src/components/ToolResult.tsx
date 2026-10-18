@@ -1,7 +1,9 @@
-import type { MessageRow } from '../types';
+import FileChange from './FileChange';
+import type { ChangeLoader, MessageRow } from '../types';
 import styles from './ToolResult.module.css';
 
-export default function ToolResult({ name, result, anchor }: { name: string; result: MessageRow; anchor?: string }) {
+export default function ToolResult({ name, result, anchor, loadChange }: { name: string; result: MessageRow; anchor?: string; loadChange?: ChangeLoader }) {
+  if (result.file_change && result.status !== 'error') return <FileChange result={result} loadChange={loadChange} anchor={anchor} />;
   const match = name === 'edit' && result.status !== 'error' &&
     /^edit replaced \d+ block\(s\); \d+ bytes\nfirstChangedLine=(\d+)\n([\s\S]*)$/.exec(result.content);
   if (!match) return <pre data-message-id={anchor}>{result.content}</pre>;

@@ -47,9 +47,9 @@ export function useConversation(api: WebApi) {
   };
 
   async function refreshSession(sid: string, signal?: AbortSignal, prepare = false) {
-    const revision = controlsRevision.current;
+    const revision = controlsRevision.current, generation = selectionGeneration.current;
     const value = await (prepare ? api.prepare(sid, signal) : api.session(sid, signal));
-    if (!signal?.aborted && selected.current === sid) {
+    if (!signal?.aborted && selected.current === sid && generation === selectionGeneration.current) {
       setSession(previous =>
       previous?.session_id === sid && revision !== controlsRevision.current ? {
         ...value, active_tools: previous.active_tools, permission_mode: previous.permission_mode,
@@ -336,7 +336,7 @@ export function useConversation(api: WebApi) {
         await api.control(live.run_id, followUp ? 'follow_up' : 'steering', combined);
         setNotice(followUp ? 'Follow-up 已排队，将在自然结束后处理。' : '补充消息已排队。');
       } else {
-        const started = await api.start(sid, combined);
+        const started = await api.start(sid, combined, undefined, session?.conversation_revision);
         const value = await api.run(started.run_id);
         currentRun.current = value;
         display(value, sid);
@@ -348,6 +348,25 @@ export function useConversation(api: WebApi) {
       await refreshSessions();
     } catch (error) { setNotice(errorText(error)); }
     finally { busySend.current = false; setSubmitting(false); }
+  }
+
+  async function regenerate() {
+    if (busySend.current || !session?.can_run || !session.last_reply_id || selectionPending.current) return;
+    if (!window.confirm('将重新执行最后一次任务。工作区文件不会回滚，工具可能再次执行。继续吗？')) return;
+    const sid = session.session_id, generation = ++selectionGeneration.current;
+    busySend.current = true; setSubmitting(true); subscription.current?.abort(); history.cancel();
+    try {
+      await api.regenerate(sid, session.last_reply_id, session.conversation_revision ?? 0);
+      const value = await api.prepare(sid);
+      if (generation === selectionGeneration.current && selected.current === sid) applySession(value, true);
+      await refreshSessions();
+    } catch (error) {
+      if (selected.current === sid) {
+        setNotice(errorText(error));
+        try { const value = await api.prepare(sid); if (selected.current === sid) applySession(value, true); }
+        catch { if (selected.current === sid) setNotice('重生成状态尚未确认，请重新选择会话核对。'); }
+      }
+    } finally { busySend.current = false; setSubmitting(false); }
   }
 
   async function compact() {
@@ -453,7 +472,7 @@ export function useConversation(api: WebApi) {
     history: { ...history.pagination, loadOlder: history.loadOlder, disabled: selectingSession },
     managingSessions: listing.managingSessions, updateSession: listing.updateSession, reorderSessions: listing.reorderSessions, deleteSession,
     draft: drafts[id] ?? '', pending: pending[id] ?? [], pendingMode: !!stoppedMode.current[id],
-    setDraft: writeDraft, setPending: writePending, submit, compact, stop, approve, stopAgent, stopApproval, selectSession, newSession, selectModel,
+    setDraft: writeDraft, setPending: writePending, submit, compact, regenerate, stop, approve, stopAgent, stopApproval, selectSession, newSession, selectModel,
     selectThinking: (level: string) => changeControls({ thinking_level: level }),
     selectTools: (names: string[]) => changeControls({ active_tools: names }),
     selectPermissionMode: (mode: PermissionMode) => changeControls({ permission_mode: mode }),

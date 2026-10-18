@@ -122,3 +122,6 @@ Pending Publisher：项目 naiyue-test-agent、owner tlzmw001、repo naiyue-test
 ## 9. 提交前集成复核补充
 
 真实Uvicorn启动验证发现：lifespan装配的ModelConfigError被Server.run转为SystemExit(3)，入口原except不可达，首次缺配置没有指引。修复保持实际装配顺序：lifespan通过AsyncExitStack进入原application_factory，只有进入失败的ModelConfigError记在当前app.state.startup_error，仍向Uvicorn原样抛出；Web入口只将对应启动SystemExit转换回同一异常，交现有安全诊断与配置指引。存储先失败时仍显示存储错误，不提前读取模型配置、不新增装配或模型调用。新增真实子进程回归，禁止仅mock Server.run证明接线。
+
+
+提交前联合验证：后端2948 passed in123.74s、前端39文件289通过及TS/Vite成功；缺配置真实启动与Web生命周期24项通过，架构独立复跑确认修复。最终macOS ARM64候选267文件、3,561,109字节，application_sha256=817011664dff46ea7a73de4333c3d21a8c86536d8f98d00f1f3bf2e042eb7eb7；twine/白名单与源码外全新venv安装通过，工具/Web/API/审批/SQLite/CLI链正常且0模型网络请求。报告`build/ship-review-20261018/install-smoke.json`、日志`/tmp/naiyue-ship-wheel-{final,check,install}.log`。本轮仅提交push主分支，不推v标签或上传PyPI；五平台实跑与正式发行仍沿远端CI与单独发版授权。

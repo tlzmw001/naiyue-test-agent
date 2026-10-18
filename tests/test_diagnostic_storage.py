@@ -1,5 +1,7 @@
 """Finite diagnostic groups are separate from execution state and chat/usage."""
 
+from legacy_store_schema import remove_reply_schema
+
 from datetime import datetime, timedelta, timezone
 import json
 import sqlite3
@@ -32,11 +34,12 @@ def test_schema_nine_migrates_and_reopen_preserves_facts(tmp_path):
     with SessionStorage(path) as store:
         seed(store)
     with sqlite3.connect(path) as connection:
+        remove_reply_schema(connection)
         connection.executescript('DROP TABLE IF EXISTS naiyue_diagnostic_events; '
                                 'DROP TABLE IF EXISTS naiyue_diagnostic_runs; '
                                 'UPDATE naiyue_store_info SET version=9;')
     with SessionStorage(path) as store:
-        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 10
+        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 12
         cfg = limits()
         store.save_diagnostic_event(fact(), cfg)
         store.save_diagnostic_event(fact('tool_call_started', ToolCallStartedData('t', 'read'), sequence=3), cfg)

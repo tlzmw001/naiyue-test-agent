@@ -64,3 +64,10 @@ it('does not append a delta to a bounded draft preview as if it were complete', 
   expect(complete.messages[0].content).toBe('complete original');
   expect(complete.messages[0].content_unavailable).toBeUndefined();
 });
+
+it('sends the displayed conversation revision with an ordinary task', async () => {
+  const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ run_id: 'r', session_id: 's' })));
+  vi.stubGlobal('fetch', fetcher);
+  await new WebApi('synthetic-access').start('s', 'task', '00000000-0000-4000-8000-000000000001', 3);
+  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ text: 'task', request_id: '00000000-0000-4000-8000-000000000001', expected_conversation_revision: 3 });
+});

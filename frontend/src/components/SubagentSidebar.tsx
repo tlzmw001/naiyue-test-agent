@@ -9,8 +9,8 @@ import styles from './SubagentSidebar.module.css';
 const labels: Record<string, string> = { running: '运行中', awaiting_approval: '等待审批', interrupted: '等待审批',
   stopping: '正在收尾', completed: '已完成', stopped: '已停止', failed: '失败', unconfirmed: '状态未确认' };
 
-export default function SubagentSidebar({ api, sessionId, run, list, initialAgentId, close, stopAgent, showApprovals }: {
-  api: WebApi; sessionId: string; run?: RunView | null; list: SubagentList; initialAgentId?: string;
+export default function SubagentSidebar({ api, sessionId, conversationRevision = 0, run, list, initialAgentId, close, stopAgent, showApprovals }: {
+  conversationRevision?: number; api: WebApi; sessionId: string; run?: RunView | null; list: SubagentList; initialAgentId?: string;
   close: () => void; stopAgent: (path: string, originRunId: string) => void; showApprovals: () => void;
 }) {
   const view = useSubagents(api, sessionId, list, run, initialAgentId);
@@ -39,7 +39,7 @@ export default function SubagentSidebar({ api, sessionId, run, list, initialAgen
       {view.loadingDetail && !view.messages.length && <p className={styles.notice} role="status">正在读取消息…</p>}
       {!view.loadingDetail && !view.messages.length && !error &&
         <p className={styles.notice}>暂无已保存消息。</p>}
-      {!!view.messages.length && <Conversation key={`${sessionId}:${view.selected}`} messages={view.messages}
+      {!!view.messages.length && <Conversation loadReasoning={(row, offset) => api.messageReasoning(sessionId, row, offset, conversationRevision, view.selected)} loadChange={(row, patch) => api.fileChange(sessionId, row, patch, view.selected, conversationRevision)} key={`${sessionId}:${view.selected}`} messages={view.messages}
         history={view.history}
         compacted={view.stored?.has_compaction ?? false} toolStates={view.toolStates}
         stoppingRunId={live?.status === 'stopping' || run?.stop_requested ? live?.source.agent_run_id : undefined} />}

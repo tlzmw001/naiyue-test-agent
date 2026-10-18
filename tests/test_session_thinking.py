@@ -1,5 +1,7 @@
 """Session overrides use validated capabilities without mutating shared adapters."""
 
+from legacy_store_schema import remove_reply_schema
+
 import asyncio
 import sqlite3
 
@@ -72,6 +74,7 @@ def test_current_schema_four_is_upgraded_without_losing_sessions(tmp_path):
         store.create('kept', {'thread_id': 'kept-thread', 'model_id': 'official', 'workspace_root': None,
                              'active_tool_names': (), 'permission_mode': 'Default'})
     with sqlite3.connect(path) as connection:
+        remove_reply_schema(connection)
         connection.executescript('''DROP TABLE naiyue_model_invocations; DROP TABLE naiyue_model_usage_runs;
             DROP TABLE naiyue_chat_messages; DROP TABLE naiyue_chat_sync;
             ALTER TABLE naiyue_sessions DROP COLUMN thinking_level;
@@ -82,7 +85,7 @@ def test_current_schema_four_is_upgraded_without_losing_sessions(tmp_path):
     with SessionStorage(path) as store:
         row = store.connection.execute('SELECT * FROM naiyue_sessions').fetchone()
         assert row['session_id'] == 'kept' and row['thinking_level'] == 'model_default'
-        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 10
+        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 12
 
 
 def test_web_selection_is_validated_authenticated_and_restored(monkeypatch, tmp_path):

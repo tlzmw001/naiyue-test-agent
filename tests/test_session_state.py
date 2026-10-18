@@ -34,7 +34,7 @@ def test_new_and_restored_states_use_one_dataclass_and_isolate_mutable_defaults(
     assert isinstance(first, AgentSession) and type(first) is type(second)
     first_state, second_state = (SessionState(**restored_config()) for _ in range(2))
     assert is_dataclass(first_state) and type(first_state) is type(second_state)
-    assert len(fields(first_state)) == 10
+    assert len(fields(first_state)) == 11
     assert not hasattr(first_state, '__getitem__')
     for name in ('session_allow',):
         left, right = getattr(first_state, name), getattr(second_state, name)

@@ -39,15 +39,31 @@ def read_page(storage, session_id, thread_id, *, limit, body_bytes, preview_char
     upper = maximum if upper is None else upper
     if upper > maximum:
         raise SessionPersistenceError('history_cursor_stale')
-    records = storage._read('''SELECT message_id,sequence,revision,message_type,parent_message_id,
+    records = storage._read('''SELECT message_id,sequence,revision,message_type,parent_message_id,reply_id,
         CASE WHEN length(CAST(body_json AS BLOB))<=? THEN body_json END AS body_json,
         CASE WHEN json_type(body_json,'$.data.content')='text'
             THEN substr(json_extract(body_json,'$.data.content'),1,?) ELSE '' END AS preview,
+        substr(COALESCE(json_extract(body_json,'$.data.additional_kwargs.reasoning_content'),
+            (SELECT COALESCE(json_extract(c.value,'$.reasoning'),json_extract(c.value,'$.thinking'),
+                json_extract(c.value,'$.summary[0].text')) FROM json_each(body_json,'$.data.content') c
+                WHERE c.type='object' AND json_extract(c.value,'$.type') IN ('reasoning','thinking') LIMIT 1)),1,?) AS reasoning_preview,
+        CASE WHEN json_extract(body_json,'$.data.artifact.type')='file_change'
+            AND json_extract(body_json,'$.data.artifact.version')=1
+            AND json_extract(body_json,'$.data.artifact.operation') IN ('write','edit')
+            AND length(json_extract(body_json,'$.data.artifact.path'))<=4096
+        THEN json_object('type','file_change','version',1,
+            'operation',json_extract(body_json,'$.data.artifact.operation'),
+            'path',json_extract(body_json,'$.data.artifact.path'),
+            'firstChangedLine',json_extract(body_json,'$.data.artifact.firstChangedLine'),
+            'unavailable_reason',substr(json_extract(body_json,'$.data.artifact.unavailable_reason'),1,80),
+            'diff','','preview','','diff_truncated',json('true'),'preview_truncated',json('true'),
+            'patch_omitted',json(CASE WHEN json_type(body_json,'$.data.artifact.patch')='text' THEN 'false' ELSE 'true' END))
+        END AS file_change_json,
         json_extract(body_json,'$.data.tool_call_id') AS tool_call_id,
         json_extract(body_json,'$.data.name') AS name,json_extract(body_json,'$.data.status') AS status,
         kind FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? AND checkpoint_ns=? AND kind='message'
         AND sequence<=? AND sequence<? ORDER BY sequence DESC LIMIT ?''',
-        (body_bytes, preview_chars, *scope, upper, before if before is not None else upper + 1, limit + 1))
+        (body_bytes, preview_chars, preview_chars, *scope, upper, before if before is not None else upper + 1, limit + 1))
     has_more = len(records) > limit
     records = records[:limit]
     for record in records:
@@ -63,14 +79,15 @@ def read_page(storage, session_id, thread_id, *, limit, body_bytes, preview_char
                 WHERE session_id=? AND thread_id=? AND checkpoint_ns=? AND kind='context_summary' LIMIT 1''', scope))}
 
 
-def read_message(storage, session_id, thread_id, sequence, *, revision, offset, chars):
-    records = storage._read('''SELECT revision,length(body_json) AS characters,substr(body_json,?,?) AS body_json_chunk
+def read_message(storage, session_id, thread_id, sequence, *, revision, offset, chars, conversation_revision=0):
+    records = storage._read('''SELECT revision,length(body_json) AS characters,substr(body_json,?,?) AS body_json_chunk,
+        (SELECT conversation_revision FROM naiyue_sessions WHERE session_id=?) AS conversation_revision
         FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? AND checkpoint_ns='' AND sequence=?''',
-        (offset + 1, chars, session_id, thread_id, sequence))
+        (offset + 1, chars, session_id, session_id, thread_id, sequence))
     if not records:
         raise SessionPersistenceError('history_message_not_found')
     record = records[0]
-    if record['revision'] != revision:
+    if record.pop('conversation_revision') != conversation_revision or record['revision'] != revision:
         raise SessionPersistenceError('history_cursor_stale')
     if offset > record['characters']:
         raise SessionPersistenceError('history_invalid_offset')

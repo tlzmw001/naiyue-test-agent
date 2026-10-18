@@ -41,7 +41,7 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
     def describe_session(self):
         with self._lock:
             row = self._state
-            return {'session_id': self.session_id, 'model_id': row.model_id,
+            return {'session_id': self.session_id, 'conversation_revision': row.conversation_revision, 'model_id': row.model_id,
                 'thinking_level': row.thinking_level,
                 'active_tools': list(row.active_tool_names), 'permission_mode': row.permission_mode,
                 'workspace_root': str(row.workspace_root) if row.workspace_root else None,
@@ -50,6 +50,12 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
                 'pending_approval': row.pending_tool_approval is not None,
                 'approval_run_id': (row.pending_tool_approval.get('requested_run_id')
                     if row.pending_tool_approval is not None else None)}
+
+    def activate_regenerated_thread(self, run, thread_id, revision):
+        with self._lock:
+            self._require_run(run)
+            self._state.thread_id = thread_id
+            self._state.conversation_revision = revision
 
     def get_thread_id(self):
         with self._lock:
@@ -159,10 +165,12 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
         with self._lock:
             return deepcopy((self._run.prompt_parts if self._run else []))
 
-    def admit_run(self, run_id, mode, observation, *, decisions=None, remember_approved=None, stop=False, capacity_available=True):
+    def admit_run(self, run_id, mode, observation, *, decisions=None, remember_approved=None, stop=False, capacity_available=True, expected_conversation_revision=None):
         resuming = mode == 'approval_resume'
         with self._lock:
             row = self._state
+            if expected_conversation_revision is not None and row.conversation_revision != expected_conversation_revision:
+                raise ValueError('conversation_stale')
             if row.manual_review_required:
                 raise SessionManualReviewRequiredError('Session requires manual review after an uncertain tool outcome')
             pending = row.pending_tool_approval

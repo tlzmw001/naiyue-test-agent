@@ -164,7 +164,7 @@ async def test_control_messages_keep_human_provenance_when_optional_observation_
     from naiyue_test_agent.agent_runtime.control_observation import ControlObserver
     def fail(*args):
         raise RuntimeError('PRIVATE_OBSERVATION')
-    monkeypatch.setattr(ControlObserver, 'prepare_messages', fail)
+    monkeypatch.setattr(ControlObserver, 'record_messages', fail)
     primary = DynamicModel(responses=[call(call_id='one'), call(call_id='two'), AIMessage(content='first end'),
                                       call(call_id='three'), AIMessage(content='done')])
     fast, detailed = model([verdict(), verdict(), verdict()]), model([])
@@ -181,7 +181,10 @@ async def test_control_messages_keep_human_provenance_when_optional_observation_
     assert [[h['content'] for h in data['human_messages']] for data in inputs] == [
         ['initial task'], ['initial task', 'steering task'], ['initial task', 'steering task', 'follow-up task']]
     assert result['messages'][0].id == 'human' and result['messages'][0].additional_kwargs == {
-        'custom': 'preserved', 'naiyue_human_input': True}
+        'custom': 'preserved', 'naiyue_human_input': True, 'naiyue_input_kind': 'ordinary',
+        'naiyue_reply_id': result['messages'][0].additional_kwargs['naiyue_reply_id']}
+    assert result['messages'][0].additional_kwargs['naiyue_reply_id']
+    assert source.additional_kwargs == {'custom': 'preserved'}
     assert source.additional_kwargs == {'custom': 'preserved'}
     assert 'observation_failed' in caplog.text and 'PRIVATE_OBSERVATION' not in caplog.text
 

@@ -2,6 +2,15 @@
 
 ## 当前交接摘要（2026-10-18）
 
+- **本轮集成验收与提交范围**：用户授权把Spec111会话能力、Spec112打包/CI和Spec113最新前端格式一起提交push到origin/main，按三个主题拆分。最终后端**2948 passed in123.74s**（`/tmp/naiyue-ship-backend-final.log`）、前端**39文件289 passed**及TS/Vite通过；465份Python AST/源文件500行/compileall/pip/diff、架构与安全只读复核通过。补真实Uvicorn缺配置指引回归并修复实际lifespan错误回传，24项定向与独立复验通过。
+- **包与页面证据**：最终源码macOS ARM64候选267文件，twine/白名单和源码外干净安装通过，包内原生工具/Find/Grep/Web/CLI/审批恢复/SQLite重开正常，0次供应商。1440浅/深色与375px生产页面无横向溢出、控制台无warn/error，截图`/tmp/naiyue-ship-{desktop,dark,mobile}.png`。临时页/服务/工作区已清理，viewport复位。无真实配置/用户库/课堂记录改动，构建工具装于忽略目录的独立环境。
+- **唯一下一步与边界**：核对本批Git推送和对应远端CI；Windows/Linux及其他架构安装仍以各平台job为准。没有创建版本标签或发布PyPI，正式发版需另行授权。此前实施摘要中的“未提交/待稳定”保留其快照时点含义；当前提交、push与CI身份以Git/Actions记录为准。
+
+- **Spec112发布准备已落地，最终整体验收待并行代码稳定**：[PyPI/nyt/五平台合同与证据](specs/112-pypi-packaging-and-release.md#8-本轮实现与证据2026-10-18)。MIT、精简用户README、明确打包白名单、包内rg/fd/前端、nyt/Web/chat及五平台CI/OIDC已接线；共享前端构建一次，各wheel比较代码指纹。PyPI一次性操作见[发行指南](releasing.md)，本轮未提交/push/tag/上传。
+- **112验证与下一步**：发布专项与工具/启动回归95通过，五目标候选构建/归档/twine及macARM源码外干净安装、生产工具/审批/SQLite重开/CLI通过，0次模型请求；前端快照39文件288通过及构建成功，actionlint/AST/500行/pip/diff通过，安全发现已由红灯关闭。并行修改期间全量后端快照35失败1494通过且等待分支停滞，218.07s后仅中断本任务测试进程，保留日志且不改另一会话业务；候选不是冻结发行物。**唯一下一步：待界面/逻辑改动稳定后，统一全量验收并从同一提交重建五包，再检查远端CI；用户可先配置PyPI Pending Publisher。**
+
+- **Spec111五项已实现并离线验收**：[当前调用链、配置、故障及证据](specs/111-remaining-conversation-features.md#13-实际实现调用链与验收2026-10-18)。本地首任务标题、真实reply归属/一次操作栏、Write/Edit差异预览及patch、最后任务替换式重生成、根子可见思考均接线；schema12。历史编辑/版本选择/文件回滚不在范围，较早完整档案与累计用量保持。
+- **111验证与边界**：后端全量2946 passed in125.64s，随后新增压缩/子审批/重生成/两次重开组合1 passed；前端39文件289 passed及TS/Vite成功。429份Python AST/500行/compileall/pip/diff通过；独立架构/安全发现均由失败回归关闭，修后12后端/5前端通过。真实临时Web/SQLite/原图6次离线调用、1440/375、下载patch/重生成/冷历史通过，控制台无warn/error。0次供应商、未改真实配置/用户库/学习掌握，临时资源已收尾；未提交push，Spec112/113并行工作完整保留。唯一下一步：查看本批代码与页面，再按用户指令提交或安排独立验收，延期项目不自动开工。
 - **本批提交范围**：用户已授权将当前全部改动按Spec103 Web体验与Spec110应用边界拆成两个提交并一起push到origin/main。下列实现验收为提交前快照，历史“未提交push”描述保留其时点含义；实际提交/远端状态以Git记录为准。
 - **Spec110 R1—R9已完成**：[当前主链、删除项与验收](specs/110-application-boundary-cleanup.md#11-实际实现与验收2026-10-18)。App经require直接进入AgentSession，删除20个重复路由及审批路由mixin；配置归项目级AppSettings/load_settings，工具只收具体预算。根公开durability、策略构造、共享并发校验、明确arun/装配完成状态及usage关闭归属均已接线；原准入/SessionPort/审批/取消/必要保存/关闭/冷查询合同保持，工厂不加_prepare_shared。
 - **110验证与边界**：新增40项覆盖（首批24红/8绿、durability8红后转绿），原有合同保持，最终后端2865 passed in119.83s（/tmp/naiyue-110-backend-final.log）、前端35文件280 passed、TS/Vite523模块成功。438份Python语法/500行/依赖边界、pip check及diff通过，架构/安全只读复核91/136项无确认发现；0次真实供应商，未改真实配置/用户库或提交push，并行103成果保留。课堂进度保持；下一步仍按下述103后端事项讨论。

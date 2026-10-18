@@ -42,6 +42,17 @@ class AsyncPersistentApplication(AsyncApplication):
         with self._owned_operation():
             return await self._persistence.astatus(session_id)
 
+    async def aget_regeneration_action(self, session_id, request_id):
+        with self._owned_operation():
+            from .reply_storage import action
+            return await run_blocking(action, self._storage, session_id, request_id)
+
+    async def aregenerate_last_reply(self, session_id, *, request_id, expected_reply_id, expected_conversation_revision):
+        with self._owned_operation():
+            from .session_regeneration import regenerate
+            return await regenerate(self, session_id, request_id=request_id, expected_reply_id=expected_reply_id,
+                                    expected_conversation_revision=expected_conversation_revision)
+
     async def aget_model_usage(self, session_id, *, model_limit, after_model=None):
         with self._owned_operation():
             return await run_blocking(self._storage.read_model_usage, session_id,
@@ -68,6 +79,43 @@ class AsyncPersistentApplication(AsyncApplication):
             row = await run_blocking(storage.get, session_id)
             return await run_blocking(storage.read_chat_message, session_id,
                                       'subagent:' + agent_id if agent_id else row['thread_id'], sequence, **query)
+
+    async def aget_message_reasoning(self, session_id, sequence, *, revision, agent_id, conversation_revision, offset, chars, max_bytes):
+        with self._owned_operation():
+            import json
+            from langchain_core.messages import messages_from_dict
+            from naiyue_test_agent.model_access.reasoning import visible_reasoning
+            from .errors import SessionPersistenceError
+            row = await run_blocking(self._storage.get, session_id)
+            thread = 'subagent:' + agent_id if agent_id else row['thread_id']
+            records = await run_blocking(self._storage._read, """SELECT revision,
+                CASE WHEN length(CAST(body_json AS BLOB))<=? THEN body_json END AS body
+                FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? AND sequence=? AND message_type='ai'
+                AND (SELECT conversation_revision FROM naiyue_sessions WHERE session_id=?)=?""",
+                (max_bytes, session_id, thread, sequence, session_id, conversation_revision))
+            if not records or records[0]['revision'] != revision or records[0]['body'] is None:
+                raise SessionPersistenceError('history_cursor_stale')
+            text = visible_reasoning(messages_from_dict([json.loads(records[0]['body'])])[0])
+            if offset > len(text):
+                raise SessionPersistenceError('history_invalid_offset')
+            chunk = text[offset:offset + chars]
+            return {'text': chunk, 'next_offset': offset + len(chunk), 'complete': offset + len(chunk) >= len(text)}
+
+    async def aget_file_change(self, session_id, sequence, *, revision, agent_id=None, conversation_revision=0, max_bytes):
+        with self._owned_operation():
+            row = await run_blocking(self._storage.get, session_id)
+            thread = 'subagent:' + agent_id if agent_id else row['thread_id']
+            records = await run_blocking(self._storage._read, """SELECT revision,
+                CASE WHEN length(CAST(json_extract(body_json,'$.data.artifact') AS BLOB))<=?
+                THEN json_extract(body_json,'$.data.artifact') END AS artifact
+                FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? AND sequence=? AND message_type='tool'
+                AND (SELECT conversation_revision FROM naiyue_sessions WHERE session_id=?)=?""",
+                (max_bytes, session_id, thread, sequence, session_id, conversation_revision))
+            if not records or records[0]['revision'] != revision or records[0]['artifact'] is None:
+                from .errors import SessionPersistenceError
+                raise SessionPersistenceError('history_cursor_stale')
+            import json
+            return json.loads(records[0]['artifact'])
 
     async def aget_chat_subagents(self, session_id):
         with self._owned_operation():
@@ -139,7 +187,8 @@ async def open_async_persistent_application(config_path, *, database_path, tools
             async with (ModelUsagePersistence(storage, sessions.subscribe_events, settings.usage_persistence) as usage,
                         DiagnosticPersistence(storage, sessions.subscribe_events, settings.diagnostics) as diagnostics):
                 persistence = SessionPersistence(storage, sessions, catalog=catalog, tool_registry=registry,
-                    permission_settings=settings.permissions, usage_persistence=usage)
+                    permission_settings=settings.permissions, usage_persistence=usage,
+                    title_max_chars=settings.session_title_max_chars)
                 sessions.bind_persistence(persistence)
                 agent = sessions.assemble_runtime(saver, system_prompt=system_prompt, response_format=response_format,
                     subagents=settings.subagents, subagent_settings=settings.tools.subagent)

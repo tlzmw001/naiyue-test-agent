@@ -169,7 +169,7 @@ def build_edit_feedback(collector, path, used_fuzzy):
     patch_omitted = missing or unsupported_path or len(patch.encode('utf-8')) > settings.max_patch_bytes
     diff, truncated = _bounded(body, settings.max_diff_bytes)
     preview, preview_truncated = _bounded(''.join(previews), settings.max_preview_bytes)
-    artifact = {'firstChangedLine': collector.first_line, 'used_fuzzy': used_fuzzy,
+    artifact = {'type': 'file_change', 'version': 1, 'operation': 'edit', 'path': path, 'firstChangedLine': collector.first_line, 'used_fuzzy': used_fuzzy,
                 'diff': diff, 'diff_truncated': truncated or missing,
                 'preview': preview, 'preview_truncated': preview_truncated or missing,
                 'patch': None if patch_omitted else patch, 'patch_omitted': patch_omitted}

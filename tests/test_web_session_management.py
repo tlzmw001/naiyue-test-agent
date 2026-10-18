@@ -1,5 +1,7 @@
 """Presentation changes never execute the agent; deletion removes only owned history."""
 
+from legacy_store_schema import remove_reply_schema
+
 import asyncio
 import sqlite3
 from threading import Event
@@ -150,6 +152,7 @@ def test_schema_five_migration_keeps_recency_then_persists_manual_order(tmp_path
                                'active_tool_names': (), 'permission_mode': 'Default'})
         store.select_thinking('recent', 'high')
     with sqlite3.connect(path) as connection:
+        remove_reply_schema(connection)
         connection.executescript('''DROP TABLE naiyue_model_invocations; DROP TABLE naiyue_model_usage_runs;
             DROP TABLE naiyue_chat_messages; DROP TABLE naiyue_chat_sync;
             ALTER TABLE naiyue_sessions DROP COLUMN title;

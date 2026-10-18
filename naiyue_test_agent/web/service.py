@@ -49,9 +49,24 @@ class WebService:
             failure_event='web_thinking_selection_failed')
         return {'model_id': model_id, 'thinking_level': level}
 
+    async def regenerate(self, session_id, body):
+        value = await self._session_status(session_id)
+        saved = await self.application.aget_regeneration_action(session_id, body.request_id)
+        if saved:
+            if (saved['reply_id'], saved['revision']) != (body.expected_reply_id, body.expected_conversation_revision):
+                raise WebError('request_id_conflict')
+            if saved['run_id'] in self.delivery.runs:
+                return {'session_id': session_id, 'run_id': saved['run_id']}
+            if (session_id, body.request_id) not in self.delivery.pending_receipts:
+                return {'session_id': session_id, 'status': saved['status'], 'replayed': True}
+        elif (value.get('last_reply_id') != body.expected_reply_id
+                or value.get('conversation_revision') != body.expected_conversation_revision):
+            raise WebError('regeneration_stale')
+        return await self.delivery.regenerate(session_id, body, [], can_run=value['can_run'])
+
     async def compact(self, session_id, body):
         value = await self._session_status(session_id)
-        return await self.delivery.compact(session_id, body, [], can_run=value['can_run'])
+        return await self.delivery.compact(session_id, body, [], can_run=value['can_run'], conversation_revision=value['conversation_revision'])
 
     def session_control_options(self):
         result = {**self.application.get_session_control_options(), 'tools': [
@@ -171,13 +186,13 @@ class WebService:
         except Exception as error:
             raise public_error(error) from None
 
-    async def message_content(self, session_id, sequence, *, agent_id=None, revision, offset):
+    async def message_content(self, session_id, sequence, *, agent_id=None, revision, offset, conversation_revision=0):
         await self._session_status(session_id)
         if agent_id and not any(row['agent_id'] == agent_id for row in await self.subagents(session_id)):
             raise WebError('subagent_not_found', 404)
         try:
             result = await self.application.aget_chat_message(session_id, sequence, agent_id=agent_id,
-                revision=revision, offset=offset, chars=min(self.settings.history_detail_chars,
+                revision=revision, offset=offset, conversation_revision=conversation_revision, chars=min(self.settings.history_detail_chars,
                     max(1, self.settings.max_frame_bytes // 12)))
             if encoded_size(result) > self.settings.max_frame_bytes:
                 raise WebError('history_message_unavailable', 503)
@@ -185,11 +200,50 @@ class WebService:
         except Exception as error:
             raise public_error(error) from None
 
+    async def message_reasoning(self, session_id, sequence, *, revision, offset, conversation_revision, agent_id=None):
+        await self._session_status(session_id)
+        if agent_id and not any(row['agent_id'] == agent_id for row in await self.subagents(session_id)):
+            raise WebError('subagent_not_found', 404)
+        try:
+            return await self.application.aget_message_reasoning(session_id, sequence, revision=revision, agent_id=agent_id,
+                conversation_revision=conversation_revision, offset=offset, chars=min(self.settings.history_detail_chars,
+                    max(1, self.settings.max_frame_bytes // 12)), max_bytes=self.settings.max_frame_bytes * 2)
+        except Exception as error:
+            logger.warning('web_reasoning_read_failed error_type=%s', type(error).__name__)
+            raise public_error(error) from None
+
+    async def file_change(self, session_id, sequence, *, revision, agent_id=None, patch=False, conversation_revision=0):
+        await self._session_status(session_id)
+        if agent_id and not any(row['agent_id'] == agent_id for row in await self.subagents(session_id)):
+            raise WebError('subagent_not_found', 404)
+        try:
+            from naiyue_test_agent.tools.file_change import change_projection
+            artifact = await self.application.aget_file_change(session_id, sequence, revision=revision,
+                agent_id=agent_id, conversation_revision=conversation_revision, max_bytes=self.settings.max_frame_bytes * 2)
+            projection = change_projection(artifact, preview_bytes=self.settings.max_frame_bytes // 4)
+            if projection is None:
+                raise WebError('change_unavailable', 404)
+            if patch:
+                value = artifact.get('patch')
+                if artifact.get('patch_omitted') or not isinstance(value, str):
+                    raise WebError('patch_unavailable', 404)
+                if len(value.encode('utf-8')) > self.settings.max_frame_bytes:
+                    raise WebError('view_too_large')
+                return value
+            if encoded_size(projection) > self.settings.max_frame_bytes:
+                raise WebError('view_too_large')
+            return projection
+        except Exception as error:
+            logger.warning('web_file_change_read_failed error_type=%s', type(error).__name__)
+            raise public_error(error) from None
+
     async def session(self, session_id):
         value = await self._session_status(session_id)
         page = await self.messages(session_id)
         latest = value['latest_run_id']
         live = self.delivery.get(latest).view() if latest else None
+        if live and live.get('conversation_revision', 0) != value.get('conversation_revision', 0):
+            live = None
         page = history_window(page, live['messages'] if live else [], self.settings, session_id)
         if live:
             live = {**live, 'messages': [], 'messages_location': 'session'}
@@ -206,7 +260,7 @@ class WebService:
     async def start(self, session_id, body):
         value = await self._session_status(session_id)
         # RunDelivery handles the duplicate receipt before checking busy.
-        return await self.delivery.start(session_id, body, [], can_run=value['can_run'])
+        return await self.delivery.start(session_id, body, [], can_run=value['can_run'], conversation_revision=value['conversation_revision'])
 
     async def usage(self, session_id, *, after_model=None):
         await self._session_status(session_id)
@@ -339,7 +393,7 @@ class WebService:
                 if batch['approval_batch_id'] == body.approval_batch_id and batch['origin_run_id'] == body.origin_run_id), None)
             if value['manual_review_required'] or batch is None:
                 raise WebError('stale_approval')
-            prepared = {'kind': batch['kind'], 'messages': []}
+            prepared = {'kind': batch['kind'], 'messages': [], 'conversation_revision': value['conversation_revision']}
             if batch['kind'] == 'paused_root':
                 try:
                     prepared['decisions'], prepared['remember_approved'] = self.application.prepare_root_approval_submission(
@@ -360,5 +414,5 @@ class WebService:
                 and batch['approval_batch_id'] == body.approval_batch_id and batch['origin_run_id'] == body.origin_run_id), None)
             if value['manual_review_required'] or batch is None:
                 raise WebError('stale_approval')
-            return {'kind': 'paused_root', 'messages': await self.application.aget_approval_seed(session_id), 'stop': True}
+            return {'kind': 'paused_root', 'messages': await self.application.aget_approval_seed(session_id), 'stop': True, 'conversation_revision': value['conversation_revision']}
         return await self.delivery.resume(session_id, body, check_current)

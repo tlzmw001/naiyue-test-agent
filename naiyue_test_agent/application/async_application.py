@@ -197,17 +197,18 @@ class AsyncApplication:
                     'available': bool((snapshot.config or {}).get('configurable', {}).get('checkpoint_id')),
                     'has_compaction': any(m.additional_kwargs.get('naiyue_compaction_summary') for m in messages)}
 
-    async def _execute(self, session_id, value, resume, run_id, max_concurrency, *, remember_approved=None, stop=False, compact=False):
+    async def _execute(self, session_id, value, resume, run_id, max_concurrency, *, remember_approved=None, stop=False, compact=False, expected_conversation_revision=None):
         with self._owned_operation():
             if compact:
                 return await self._sessions.acompact(self._agent, session_id, run_id=run_id)
             method = self._sessions.aresume_tool_approval if resume else self._sessions.arun
             return await method(self._agent, session_id, value, run_id=run_id, max_concurrency=max_concurrency,
-                                **({'remember_approved': remember_approved, 'stop': stop} if resume else {}))
+                                **({'remember_approved': remember_approved, 'stop': stop} if resume else
+                                   {'expected_conversation_revision': expected_conversation_revision}))
 
-    async def arun(self, session_id, messages, *, max_concurrency=4):
+    async def arun(self, session_id, messages, *, max_concurrency=4, expected_conversation_revision=None):
         with self._owned_operation():
-            return await self._execute(session_id, messages, False, None, max_concurrency)
+            return await self._execute(session_id, messages, False, None, max_concurrency, expected_conversation_revision=expected_conversation_revision)
 
     async def acompact_context(self, session_id):
         with self._owned_operation():

@@ -16,7 +16,7 @@ from naiyue_test_agent.contracts.session_events import (
     RunStartedData, RunFinishedData, ControlData, ApprovalRequestedData, SESSION_PAYLOADS,
 )
 from .context_events import ContextOperationStartedData, ContextOperationFinishedData
-from .stream_events import MessageDeltaData, ToolProgressData
+from .stream_events import MessageDeltaData, MessageReasoningDeltaData, ToolProgressData
 from .context_usage import ModelContextSnapshotData
 
 
@@ -240,7 +240,7 @@ EventData = (RunStartedData | RunFinishedData | ModelCallStartedData | ModelCall
              | ToolCallStartedData | ToolCallFinishedData | MessageSnapshotData
              | ContextMessagesChangedData | MessageSnapshotUnavailableData
              | TurnStartedData | TurnFinishedData | TurnUnavailableData | ControlData | ApprovalRequestedData
-             | ContextOperationStartedData | ContextOperationFinishedData | MessageDeltaData | ToolProgressData
+             | ContextOperationStartedData | ContextOperationFinishedData | MessageDeltaData | MessageReasoningDeltaData | ToolProgressData
              | ModelContextSnapshotData | ModelInvocationStartedData | ModelInvocationFinishedData)
 
 _CORE_PAYLOADS = {
@@ -249,6 +249,7 @@ _CORE_PAYLOADS = {
     'model_context_snapshot': ModelContextSnapshotData,
     'tool_progress': ToolProgressData,
     'message_delta': MessageDeltaData,
+    'message_reasoning_delta': MessageReasoningDeltaData,
     'model_call_started': ModelCallStartedData, 'model_call_finished': ModelCallFinishedData,
     'tool_call_started': ToolCallStartedData, 'tool_call_finished': ToolCallFinishedData,
     'message_completed': MessageSnapshotData, 'message_revised': MessageSnapshotData,

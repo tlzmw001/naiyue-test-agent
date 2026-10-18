@@ -1,5 +1,7 @@
 """Bounded ancestry reads, ownership, migrations and archive deletion."""
 
+from legacy_store_schema import remove_reply_schema
+
 import sqlite3
 from types import SimpleNamespace
 
@@ -98,12 +100,13 @@ def test_schema_six_migration_preserves_rows_and_does_not_backfill(tmp_path):
     with SessionStorage(path) as storage:
         create_row(storage)
     with sqlite3.connect(path) as connection:
+        remove_reply_schema(connection)
         connection.executescript('''DROP TABLE naiyue_model_invocations; DROP TABLE naiyue_model_usage_runs;
             DROP TABLE naiyue_chat_messages; DROP TABLE naiyue_chat_sync;
             UPDATE naiyue_store_info SET version=6;''')
     with SessionStorage(path) as storage:
         assert storage.get('s')['thread_id'] == 's'
-        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 10
+        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 12
         assert storage.chat_heads('s') == [] and rows(storage, 's') == []
 
 
@@ -111,6 +114,7 @@ def test_chat_migration_is_atomic_on_ddl_failure(monkeypatch, tmp_path):
     path = tmp_path / 'six.sqlite'
     with SessionStorage(path): pass
     with sqlite3.connect(path) as connection:
+        remove_reply_schema(connection)
         connection.executescript('''DROP TABLE naiyue_model_invocations; DROP TABLE naiyue_model_usage_runs;
             DROP TABLE naiyue_chat_messages; DROP TABLE naiyue_chat_sync;
             UPDATE naiyue_store_info SET version=6;''')

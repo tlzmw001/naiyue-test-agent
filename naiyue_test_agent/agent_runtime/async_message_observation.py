@@ -4,7 +4,7 @@ from .observation import observe, emit_event
 
 import logging
 
-from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langgraph.errors import GraphBubbleUp
 from langgraph.pregel import Pregel
 from langgraph.types import Command
@@ -12,7 +12,7 @@ from langgraph.types import Command
 from naiyue_test_agent.contracts.failures import safe_error_type, read_failure_description
 from naiyue_test_agent.model_access.messages import content_text
 from .message_observation import MessageStateObserver, _snapshot
-from .stream_events import MessageDeltaData, SUMMARY_TAG, PERMISSION_REVIEW_TAG
+from .stream_events import MessageReasoningDeltaData, MessageDeltaData, SUMMARY_TAG, PERMISSION_REVIEW_TAG
 from .tool_execution.observation import observe_tool_progress
 
 
@@ -25,6 +25,7 @@ class _StreamState:
         self.observer = MessageStateObserver(publisher)
         self.context = context
         self.indices = {}
+        self.reasoning_indices = {}
         self.stream_ids = {}
         self.drafts = set()
         self.latest = None
@@ -74,6 +75,8 @@ class _StreamState:
         if not isinstance(message.id, str) or not message.id:
             observe(self.observer, self.observer.unavailable, 'snapshot', 'missing_message_id', message=message)
             return
+        from naiyue_test_agent.model_access.reasoning import visible_reasoning
+        reasoning = visible_reasoning(message)
         text = content_text(message.content, delta=True)
         key = (metadata.get('langgraph_checkpoint_ns'), metadata.get('langgraph_step'))
         # Responses announces its final response ID on an empty first chunk.
@@ -82,13 +85,18 @@ class _StreamState:
         if key not in self.stream_ids or (not text
                 and message.response_metadata.get('id') == message.id):
             self.stream_ids[key] = message.id
+        identity = self.stream_ids[key]
+        if reasoning:
+            self.reasoning_indices[identity] = self.reasoning_indices.get(identity, 0) + 1
+            self.drafts.add(identity)
+            emit_event(self.publisher, 'message_reasoning_delta', lambda: MessageReasoningDeltaData(
+                identity, reasoning, self.reasoning_indices[identity], reply_id=(self.latest or {}).get('active_reply_id')))
         if not text:
             return
-        identity = self.stream_ids[key]
         self.indices[identity] = self.indices.get(identity, 0) + 1
         self.drafts.add(identity)
         emit_event(self.publisher, 'message_delta', lambda: MessageDeltaData(
-            identity, text, self.indices[identity]))
+            identity, text, self.indices[identity], reply_id=(self.latest or {}).get('active_reply_id')))
 
 
 async def ainvoke_with_message_observation(agent, input, *, context, config, publisher, durability=None):
@@ -104,7 +112,9 @@ async def ainvoke_with_message_observation(agent, input, *, context, config, pub
     if agent.checkpointer:
         try:
             baseline = (await agent.aget_state(config)).values.get('messages', [])
-            observe(stream.observer, stream.observer.seed, baseline)
+            incoming = {m.id for m in input.get('messages', []) if isinstance(m, BaseMessage)
+                        and m.additional_kwargs.get('naiyue_input_source') == 'regenerated_task'} if isinstance(input, dict) else set()
+            observe(stream.observer, stream.observer.seed, [m for m in baseline if m.id not in incoming])
         except GraphBubbleUp:
             raise
         except Exception as error:
