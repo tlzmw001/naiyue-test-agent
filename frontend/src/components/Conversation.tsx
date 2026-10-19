@@ -1,8 +1,8 @@
-import { useId, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import rehypeHighlight from 'rehype-highlight';
-import type { AgentView, ChangeLoader, ReasoningLoader, HistoryControls, MessageRow, SessionRecovery, ToolCallRow, ToolState } from '../types';
+import type { AgentView, ChangeLoader, ContentLoader, ReasoningLoader, HistoryControls, MessageRow, SessionRecovery, ToolCallRow, ToolState } from '../types';
+import { ApiError } from '../api';
 import ToolCall from './ToolCall';
 import ReasoningContent from './ReasoningContent';
 import CodeBlock from './CodeBlock';
@@ -20,9 +20,16 @@ const markdownComponents: Components = {
   a: ({ node: _node, children, href, ...props }) => <a {...props} href={href} target="_blank" rel="noreferrer noopener">{children}</a>,
 };
 
-export default function Conversation({ messages, compacted, toolStates = {}, agents = {}, stopAgent, openAgent, stoppingRunId, recovery, recovering = false, onRecover, history, loadChange, loadReasoning, regenerate, lastReplyId, canRegenerate }: {
+// Progress/loading updates must not reparse unchanged long message bodies.
+const MessageMarkdown = memo(function MessageMarkdown({ content, prefix }: { content: string; prefix: string }) {
+  return <ReactMarkdown skipHtml urlTransform={safeUrl}
+    remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
+    remarkRehypeOptions={{ clobberPrefix: prefix }} components={markdownComponents}>{content}</ReactMarkdown>;
+});
+
+export default function Conversation({ messages: sourceMessages, compacted, toolStates = {}, agents = {}, stopAgent, openAgent, stoppingRunId, recovery, recovering = false, onRecover, history, loadChange, loadReasoning, loadContent, contentScope = '', regenerate, lastReplyId, canRegenerate }: {
   regenerate?: () => void; lastReplyId?: string | null; canRegenerate?: boolean;
-  loadChange?: ChangeLoader; loadReasoning?: ReasoningLoader;
+  loadChange?: ChangeLoader; loadReasoning?: ReasoningLoader; loadContent?: ContentLoader; contentScope?: string;
   messages: MessageRow[]; compacted: boolean; toolStates?: Record<string, ToolState>; stoppingRunId?: string; recovery?: SessionRecovery;
   recovering?: boolean; onRecover?: (action: 'continue' | 'restore_approval') => void;
   agents?: Record<string, AgentView>;
@@ -38,6 +45,60 @@ export default function Conversation({ messages, compacted, toolStates = {}, age
   const standaloneResults = useRef(new Set<string>());
   const [away, setAway] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const [contents, setContents] = useState<Record<string, { text?: string; pending?: boolean; error?: string }>>({});
+  const contentRequests = useRef(new Map<string, AbortController>());
+  const contentKey = (row: MessageRow) => JSON.stringify([contentScope, row.id, row.detail?.sequence, row.detail?.revision]);
+  const contentKeys = useRef(new Set<string>());
+  contentKeys.current = new Set(sourceMessages.filter(row => row.detail && row.content_truncated && !row.provisional).map(contentKey));
+  useEffect(() => {
+    for (const [key, controller] of contentRequests.current) if (!contentKeys.current.has(key)) {
+      controller.abort(); contentRequests.current.delete(key);
+    }
+    setContents(previous => {
+      const entries = Object.entries(previous).filter(([key]) => contentKeys.current.has(key));
+      return entries.length === Object.keys(previous).length ? previous : Object.fromEntries(entries);
+    });
+  }, [sourceMessages, contentScope]);
+  useEffect(() => () => { for (const controller of contentRequests.current.values()) controller.abort(); }, []);
+  const messages = sourceMessages.map(row => {
+    const saved = contentKeys.current.has(contentKey(row)) ? contents[contentKey(row)]?.text : undefined;
+    return saved === undefined ? row : { ...row, content: saved, content_truncated: false, content_unavailable: false };
+  });
+  async function loadSavedContent(row: MessageRow) {
+    const key = contentKey(row);
+    if (!loadContent || !contentKeys.current.has(key) || contentRequests.current.has(key)) return;
+    const controller = new AbortController();
+    contentRequests.current.set(key, controller);
+    setContents(previous => ({ ...previous, [key]: { pending: true } }));
+    try {
+      const text = await loadContent(row, controller.signal);
+      if (!controller.signal.aborted && contentKeys.current.has(key)) {
+        setContents(previous => ({ ...previous, [key]: { text } }));
+        setCopied(null);
+      }
+    } catch (error) {
+      if (!controller.signal.aborted && contentKeys.current.has(key)) setContents(previous => ({ ...previous, [key]: {
+        error: error instanceof ApiError && error.code === 'history_cursor_stale'
+          ? '消息已变化，请重新同步后重试。' : '读取完整内容失败，可以重试。',
+      } }));
+    } finally { if (contentRequests.current.get(key) === controller) contentRequests.current.delete(key); }
+  }
+  const latestAssistant = [...sourceMessages].reverse().find(row => row.type === 'ai' && !row.is_context_summary);
+  useEffect(() => {
+    if (latestAssistant?.detail && latestAssistant.content_truncated && !latestAssistant.provisional &&
+        !contents[contentKey(latestAssistant)]) void loadSavedContent(latestAssistant);
+  }, [sourceMessages, contentScope, contents, loadContent]);
+  function contentControl(row: MessageRow) {
+    if (!row.content_truncated && !row.content_unavailable) return undefined;
+    const saved = contents[contentKey(row)];
+    return <div className={styles.historyPreview}>
+      <p>{row.provisional ? '较长的生成中内容暂未完整显示，完成后同步。' : row.detail ?
+        '当前为消息预览，完整内容仍保存在会话中。' : '当前为消息预览。'}</p>
+      {loadContent && row.detail && !row.provisional && <button className={styles.copyButton} disabled={saved?.pending}
+        onClick={() => void loadSavedContent(row)}>{saved?.pending ? '正在加载完整内容…' : '加载完整内容'}</button>}
+      {saved?.error && <p role="alert">{saved.error}</p>}
+    </div>;
+  }
   const results = new Map<ToolCallRow, MessageRow>();
   const matchedResults = new Set<string>();
   const byId = new Map(messages.map(row => [row.id, row]));
@@ -128,29 +189,22 @@ export default function Conversation({ messages, compacted, toolStates = {}, age
       </aside>}
       {compacted && <p className={styles.compactionNote}>较早上下文已压缩，原始聊天记录仍可查看。</p>}
       {messages.filter(row => !matchedResults.has(row.id)).map(row => <article key={row.id} data-message-id={row.type === 'tool' ? undefined : row.id} className={`${styles.message} ${row.type === 'human' && !row.is_context_summary ? styles.userMessage : styles.assistantMessage}`}>
-        {row.is_context_summary ? <details className={styles.summary}><summary>较早会话摘要</summary><pre>{row.content}</pre></details> : <>
+        {row.is_context_summary ? <><details className={styles.summary}><summary>较早会话摘要</summary><pre>{row.content}</pre></details>{contentControl(row)}</> : <>
           {row.type === 'ai' && groups.get(row.reply_id ?? row.id)?.[0].id === row.id && <hr className={styles.replyDivider} />}
           {(row.type === 'tool' || row.provisional) && <div className={styles.speaker}>{row.type === 'tool' && '工具结果'}{row.provisional && <span>{row.state === 'unconfirmed' ? '未完成内容' : '正在生成'}</span>}</div>}
           {row.reasoning && <ReasoningContent row={row} loadReasoning={loadReasoning} />}
           <div className={styles.messageBody} data-message-id={row.type === 'tool' ? row.id : undefined}>
-            {row.type === 'tool' || (row.provisional && row.type !== 'ai') ? <div className={styles.draftText}>{row.content}</div> : <ReactMarkdown skipHtml urlTransform={safeUrl}
-              remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
-              rehypePlugins={[[rehypeHighlight, { detect: false }]]}
-              remarkRehypeOptions={{ clobberPrefix: `${markdownId}-${encodeURIComponent(row.id)}-` }}
-              components={markdownComponents}>
-              {row.content}
-            </ReactMarkdown>}
+            {row.type === 'tool' || (row.provisional && row.type !== 'ai') ? <div className={styles.draftText}>{row.content}</div> :
+              <MessageMarkdown content={row.content} prefix={`${markdownId}-${encodeURIComponent(row.id)}-`} />}
           </div>
-          {(row.content_truncated || row.content_unavailable) && <p className={styles.historyPreview}>
-            {row.provisional ? '较长的生成中内容暂未完整显示，完成后同步。' : row.detail ?
-              '当前为消息预览，完整内容仍保存在会话中。' : '当前为消息预览。'}</p>}
+          {contentControl(row)}
           {(row.arguments_truncated || row.tool_calls_truncated) && <p className={styles.historyPreview}>工具调用信息未完整显示。</p>}
           {row.tool_calls?.map(call => {
             const result = results.get(call);
             const phase = toolStates[call.id];
             const correlated = phase && (phase.batch_id ? phase.batch_id === row.id :
               phase.run_id === row.run_id || phase.run_id === result?.run_id || (!result && phase.state === 'running'));
-            return <ToolCall loadChange={loadChange} key={call.id} call={call} result={result} phase={correlated ? phase : undefined}
+            return <ToolCall loadChange={loadChange} contentControl={result && contentControl(result)} key={call.id} call={call} result={result} phase={correlated ? phase : undefined}
               initiallyOpen={!!result && standaloneResults.current.has(result.id) &&
                 !!anchor.current?.rows.some(item => item.id === result.id)}
               stopAgent={stopAgent}
@@ -162,7 +216,9 @@ export default function Conversation({ messages, compacted, toolStates = {}, age
               stopping={correlated && phase.run_id === stoppingRunId} />;
           })}
           {row.type === 'ai' && groups.get(row.reply_id ?? row.id)?.at(-1)?.id === row.id && groups.get(row.reply_id ?? row.id)?.some(item => item.content) && <button className={styles.copyButton} onClick={() => void copy(row)}
-            aria-label="复制回答">{copied === row.id ? '已复制' : copied === 'failed' ? '复制未成功' : history?.hasMore && !messages.some(item => item.type === 'human' && item.reply_id === row.reply_id) ? '复制已加载内容' : '复制'}</button>}
+            aria-label="复制回答">{copied === row.id ? '已复制' : copied === 'failed' ? '复制未成功' :
+              groups.get(row.reply_id ?? row.id)?.some(item => item.content_truncated || item.content_unavailable) ||
+              history?.hasMore && !messages.some(item => item.type === 'human' && item.reply_id === row.reply_id) ? '复制已加载内容' : '复制'}</button>}
           {regenerate && lastReplyId && row.reply_id === lastReplyId && row.type === 'ai' && groups.get(lastReplyId)?.at(-1)?.id === row.id &&
             <button className={styles.copyButton} disabled={!canRegenerate} onClick={regenerate}>重新生成</button>}
         </>}

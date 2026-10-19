@@ -1,8 +1,9 @@
 import type { ContextView } from './contextTypes';
 import type { SessionUsageView } from './usageTypes';
 import { decodeSSE, responseBytes } from './sse';
+import { textContent } from './agentEvents';
 import type { SseFrame } from './sse';
-import type { ApprovalBatch, FileChangeView, HistoryPage, PermissionMode, RunView, SessionControlOptions, SessionRow, SessionView, SkillCatalogView, SubagentDetail, SubagentRecord, ThinkingOptions, ToolDecision } from './types';
+import type { ApprovalBatch, FileChangeView, HistoryPage, MessageRow, PermissionMode, RunView, SessionControlOptions, SessionRow, SessionView, SkillCatalogView, SubagentDetail, SubagentRecord, ThinkingOptions, ToolDecision } from './types';
 
 export interface ServiceInfo {
   workspace_root: string | null;
@@ -85,6 +86,37 @@ export class WebApi {
     const query = new URLSearchParams({ revision: String(row.revision), offset: String(offset), conversation_revision: String(conversationRevision),
       ...(agentId ? { agent_id: agentId } : {}) });
     return this.json<{ text: string; next_offset: number; complete: boolean }>(`/sessions/${encodeURIComponent(id)}/messages/${row.sequence}/reasoning?${query}`);
+  }
+  async messageContent(id: string, row: MessageRow, conversationRevision: number, agentId?: string, signal?: AbortSignal) {
+    const identity = row.detail;
+    if (!identity) throw new ApiError('history_message_unavailable');
+    const chunks: string[] = [];
+    let offset = 0, characters: number | undefined;
+    while (true) {
+      signal?.throwIfAborted();
+      const query = new URLSearchParams({ revision: String(identity.revision), offset: String(offset),
+        conversation_revision: String(conversationRevision), ...(agentId ? { agent_id: agentId } : {}) });
+      const part = await this.json<{ revision: number; characters: number; body_json_chunk: string; next_offset: number; complete: boolean }>(
+        `/sessions/${encodeURIComponent(id)}/messages/${identity.sequence}/content?${query}`, 'GET', undefined, signal);
+      signal?.throwIfAborted();
+      if (part.revision !== identity.revision || typeof part.body_json_chunk !== 'string' ||
+          !Number.isSafeInteger(part.characters) || part.characters < 1 ||
+          !Number.isSafeInteger(part.next_offset) || part.next_offset <= offset || part.next_offset > part.characters ||
+          part.next_offset !== offset + Array.from(part.body_json_chunk).length ||
+          typeof part.complete !== 'boolean' || part.complete !== (part.next_offset === part.characters) ||
+          (characters !== undefined && characters !== part.characters)) throw new ApiError('history_content_invalid');
+      characters = part.characters;
+      chunks.push(part.body_json_chunk);
+      offset = part.next_offset;
+      if (part.complete) break;
+    }
+    let saved;
+    try { saved = JSON.parse(chunks.join('')); }
+    catch { throw new ApiError('history_content_invalid'); }
+    if (saved?.type !== row.type || saved?.data?.id !== row.id ||
+        (typeof saved.data.content !== 'string' && !Array.isArray(saved.data.content)))
+      throw new ApiError('history_content_invalid');
+    return textContent(saved.data.content);
   }
   async fileChange(id: string, row: { sequence?: number; revision?: number }, patch = false, agentId?: string, conversationRevision = 0) {
     if (!row.sequence || !row.revision) throw new ApiError('change_unavailable');

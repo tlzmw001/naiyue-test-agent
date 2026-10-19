@@ -120,6 +120,12 @@ export function mergeMessages(previous: MessageRow[], incoming: MessageRow[], pr
         (old.revision == null || row.revision == null || row.revision <= old.revision)) {
       values.set(row.id, { ...row, ...old });
     } else values.set(row.id, { ...row,
+      // A saved preview can arrive before full-body loading. Keep the verified
+      // streamed prefix visible, while its preview flag still requests calibration.
+      ...(preview && old?.provisional && !old.content_unavailable &&
+        (old.revision == null || row.revision == null || old.revision === row.revision) &&
+        (!old.run_id || !row.run_id || old.run_id === row.run_id) &&
+        old.content.length > row.content.length && old.content.startsWith(row.content) ? { content: old.content } : {}),
       ...(old?.sequence != null && row.sequence == null ? { sequence: old.sequence } : {}),
       ...(old?.revision != null && row.revision == null ? { revision: old.revision } : {}),
       ...(old?.detail && !row.detail ? { detail: old.detail } : {}),

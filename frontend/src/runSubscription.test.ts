@@ -77,3 +77,24 @@ it('does not subscribe again when synchronization finds a terminal snapshot', as
   expect((await pending)?.status).toBe('interrupted');
   expect(events).toHaveBeenCalledTimes(1); expect(synchronize).toHaveBeenCalledTimes(1);
 });
+
+it('recovers a frame gap from a completed snapshot without replaying execution', async () => {
+  const { api, run, events, synchronize, update, options } = setup();
+  const complete = { ...live, status: 'completed' as const, done: true, last_sequence: 9, messages: [
+    { id: 'large', type: 'ai', content: 'saved preview', provisional: false, state: 'complete' as const,
+      content_truncated: true, sequence: 2, revision: 1, detail: { sequence: 2, revision: 1 } },
+  ] };
+  run.mockResolvedValueOnce(live).mockResolvedValueOnce(complete);
+  events.mockImplementationOnce(async (_id, _after, _signal, receive) => {
+    receive({ event: 'resync_required', data: { code: 'resync_required' } });
+  });
+  const start = vi.spyOn(api, 'start'), approve = vi.spyOn(api, 'approve'), control = vi.spyOn(api, 'control');
+  const pending = subscribeRun(options);
+  await vi.advanceTimersByTimeAsync(250);
+  expect(await pending).toEqual(complete);
+  expect(synchronize).toHaveBeenCalledTimes(1);
+  expect(events).toHaveBeenCalledTimes(1);
+  expect(update).toHaveBeenLastCalledWith(complete);
+  expect(start).not.toHaveBeenCalled(); expect(approve).not.toHaveBeenCalled(); expect(control).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+});

@@ -74,13 +74,16 @@ def recent_rows(rows, settings, *, budget=None):
     return list(reversed(selected))
 
 
-def history_window(page, live_rows, settings, session_id, agent_id=None):
+def history_window(page, live_rows, settings, session_id, agent_id=None, *, restore_saved_drafts=False):
     archived = {row['id']: row for row in page['messages']}
     messages = dict(archived)
     for row in live_rows:
         if row.get('identity_only'):
             continue
         saved = archived.get(row['id'], {})
+        if restore_saved_drafts and saved and row.get('provisional'):
+            messages[row['id']] = {**saved, **{key: row[key] for key in ('session_id', 'run_id') if key in row}}
+            continue
         messages[row['id']] = {**row, **{key: saved[key] for key in ('sequence', 'revision', 'detail') if key in saved},
                                'parent_message_id': row.get('parent_message_id') or saved.get('parent_message_id')}
     rows = recent_rows(list(messages.values()), settings)

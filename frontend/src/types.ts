@@ -56,6 +56,7 @@ export interface FileChangeView {
   unavailable_reason?: string | null; detail_available?: boolean;
 }
 export type ReasoningLoader = (row: MessageRow, offset: number) => Promise<{ text: string; next_offset: number; complete: boolean }>;
+export type ContentLoader = (row: MessageRow, signal: AbortSignal) => Promise<string>;
 export type ChangeLoader = (row: MessageRow, patch?: boolean) => Promise<FileChangeView | string>;
 
 export interface MessageRow {

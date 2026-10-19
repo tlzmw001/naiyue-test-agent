@@ -89,24 +89,26 @@ class DeliveredRun:
                     payload = wire_event(event)
                     payload_bytes = encoded_size(payload)
                     logger.warning('web_context_snapshot_omitted reason=view_limit')
+                self.projection(event)
+                if event.source is not None:
+                    observe_agent(self.agents, payload, self.projection.messages)
+                else:
+                    if event.event_type == 'run_started':
+                        self.mode = event.data.mode
+                    if event.event_type == 'compaction_finished' and event.data.trigger == 'manual':
+                        self.compaction_result = {'status': event.data.status, 'reason': event.data.reason}
+                    self._observe_tool(payload)
+                    if event.event_type == 'model_context_snapshot':
+                        self.context_snapshot = json.loads(event.data.snapshot_json) if event.data.snapshot_json else None
+                if (event.source is None and event.event_type == 'control_accepted' and event.data.kind == 'stop'
+                        and self.status == 'running'):
+                    self.stop_requested = True
                 if payload_bytes > self.settings.max_frame_bytes:
-                    self.projection.incomplete = True
+                    # Transport gaps recover from the bounded view, like cache eviction.
+                    self._evicted_through = max(self._evicted_through, event.sequence)
+                    logger.warning('web_event_frame_omitted event_type=%s reason=frame_limit', event.event_type)
                 else:
                     self._retain_event(payload, payload_bytes)
-                    self.projection(event)
-                    if event.source is not None:
-                        observe_agent(self.agents, payload, self.projection.messages)
-                    else:
-                        if event.event_type == 'run_started':
-                            self.mode = event.data.mode
-                        if event.event_type == 'compaction_finished' and event.data.trigger == 'manual':
-                            self.compaction_result = {'status': event.data.status, 'reason': event.data.reason}
-                        self._observe_tool(payload)
-                        if event.event_type == 'model_context_snapshot':
-                            self.context_snapshot = json.loads(event.data.snapshot_json) if event.data.snapshot_json else None
-                    if (event.source is None and event.event_type == 'control_accepted' and event.data.kind == 'stop'
-                            and self.status == 'running'):
-                        self.stop_requested = True
                 if event.source is None and event.event_type == 'run_finished':
                     self.status = event.data.status
                     self.manual_review_required = event.data.manual_review_required
@@ -126,7 +128,7 @@ class DeliveredRun:
         while len(self.events) > self.settings.event_capacity or self.event_bytes > self.settings.event_cache_bytes:
             removed = self.events.popleft()
             self.event_bytes -= encoded_size(removed)
-            self._evicted_through = removed['sequence']
+            self._evicted_through = max(self._evicted_through, removed['sequence'])
 
     def _observe_tool(self, event):
         kind, data = event['event_type'], event['data']

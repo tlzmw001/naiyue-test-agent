@@ -77,6 +77,8 @@ export default function App({ api: supplied }: { api?: WebApi }) {
       <Conversation regenerate={() => void chat.regenerate()} lastReplyId={chat.session?.last_reply_id}
         canRegenerate={!!chat.session?.can_run && !chat.submitting && !chat.selectingSession}
         key={chat.session?.session_id ?? 'new'} messages={chat.messages} history={chat.history}
+        contentScope={`${chat.session?.session_id}:${chat.session?.conversation_revision ?? 0}`}
+        loadContent={(row, signal) => api.messageContent(chat.session!.session_id, row, chat.session?.conversation_revision ?? 0, undefined, signal)}
         loadReasoning={(row, offset) => api.messageReasoning(chat.session!.session_id, row, offset, chat.session?.conversation_revision ?? 0)}
         loadChange={(row, patch) => api.fileChange(chat.session!.session_id, row, patch, undefined, chat.session?.conversation_revision ?? 0)}
         compacted={chat.session?.has_compaction ?? false} toolStates={chat.run?.tool_states}

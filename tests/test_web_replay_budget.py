@@ -116,13 +116,56 @@ async def test_foreign_duplicate_and_old_events_do_not_change_replay_accounting(
 
 
 @async_test
-async def test_frame_limit_still_marks_actual_projection_gap():
-    job, publisher, _ = new_job(event_cache_bytes=10000, max_frame_bytes=500)
-    delta(publisher, text='x' * 2000)
-    assert job.view()['incomplete']
+async def test_frame_limit_requires_resync_without_damaging_the_live_projection():
+    job, publisher, _ = new_job(event_cache_bytes=10000, max_frame_bytes=4096)
+    delta(publisher, text='x' * 20000)
+    assert job.view()['incomplete'] is False
+    row = job.view()['messages'][0]
+    assert row['content'].startswith('xxx') and row['content_truncated']
+    assert encoded_size(job.view()) <= job.settings.max_frame_bytes
     assert job.event_bytes == sum(encoded_size(item) for item in job.events)
     with pytest.raises(WebError, match='resync_required'):
-        job.check_cursor(job.last_sequence)
+        job.check_cursor(job.last_sequence - 1)
+    job.check_cursor(job.last_sequence)
+
+
+@async_test
+async def test_frame_gap_watermark_cannot_move_back_when_older_cached_events_are_evicted():
+    from naiyue_test_agent.agent_runtime.message_observation import _snapshot
+    job, publisher, _ = new_job(event_capacity=2, event_cache_bytes=10000, max_frame_bytes=4096)
+    delta(publisher, text='short')
+    publisher.publish('message_completed', _snapshot(AIMessage(id='message', content='x' * 20000), 'graph_values'))
+    omitted = job.last_sequence
+    publisher.publish('run_finished', RunFinishedData('completed'))
+    job.done = True
+    assert job._evicted_through == omitted
+    assert job.view()['messages'][0]['provisional'] is False
+    assert job.view()['incomplete'] is False
+    with pytest.raises(WebError, match='resync_required'):
+        job.check_cursor(omitted - 1)
+    job.check_cursor(job.last_sequence)
+    assert [frame async for frame in job.stream(omitted)] == [
+        {'event': 'runtime', 'id': str(job.last_sequence), 'data': job.events[-1]}]
+
+
+@async_test
+async def test_oversized_child_completion_updates_its_snapshot_without_crossing_into_root():
+    from naiyue_test_agent.agent_runtime.events import AgentEventSource
+    from naiyue_test_agent.agent_runtime.message_observation import _snapshot
+    job, publisher, events = new_job(max_frame_bytes=4096)
+    delta(publisher, text='root text')
+    event = replace(events[-1], sequence=job.last_sequence + 1, event_type='message_completed',
+        data=_snapshot(AIMessage(id='child-message', content='child text' * 2000), 'graph_values'),
+        source=AgentEventSource('root/tester/child', 'child', 'child-run', 'run', 'delegate'))
+    job.observe(event)
+    row = job.agent_view('root/tester/child')['messages'][0]
+    assert row['provisional'] is False and row['state'] == 'complete' and row['content_truncated']
+    assert job.view()['messages'][0]['content'] == 'root text'
+    assert job.view()['incomplete'] is False
+    assert all(encoded_size(item) <= job.settings.max_frame_bytes for item in job.events)
+    with pytest.raises(WebError, match='resync_required'):
+        job.check_cursor(event.sequence - 1)
+    job.check_cursor(event.sequence)
 
 
 @async_test

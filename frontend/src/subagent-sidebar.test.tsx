@@ -6,6 +6,13 @@ import { applyEvent } from './events';
 import type { RunView } from './types';
 import type { SseFrame } from './sse';
 
+// jsdom cannot start browser workers; retain real coloring while the dedicated
+// Conversation.highlight suite verifies the worker lifecycle and failures.
+vi.mock('./code-highlight-client', async () => {
+  const { highlightCode } = await import('./code-highlight');
+  return { requestHighlight: async (code: string, language: string) => highlightCode({ id: 0, code, language }).parts };
+});
+
 afterEach(cleanup);
 it('opens children only on request, keeps approval in main and links delegation to the exact detail', async () => {
   const api = new WebApi('test');
@@ -92,7 +99,7 @@ it.each(['completed', 'stopped'])('renders child deltas and %s in the real sideb
   expect(within(panel).getByText('正在生成')).toBeTruthy();
   expect(within(panel).getByRole<HTMLInputElement>('checkbox').disabled).toBe(true);
   const code = panel.querySelector('pre code');
-  expect(code?.querySelector('.hljs-keyword')?.textContent).toBe('return');
+  await waitFor(() => expect(code?.querySelector('.hljs-keyword')?.textContent).toBe('return'));
   expect(within(panel).getByRole('button', { name: '复制代码' })).toBeTruthy();
   expect(within(screen.getByRole('main')).queryByRole('button', { name: '复制代码' })).toBeNull();
   expect(within(screen.getByRole('main')).queryByText('子任务检查')).toBeNull();

@@ -27,6 +27,18 @@ function setup() {
   const close = vi.fn(), showApprovals = vi.fn(), stopAgent = vi.fn();
   return { api, close, showApprovals, stopAgent };
 }
+it('loads a child preview using its own saved scope and conversation revision', async () => {
+  const props = setup();
+  const preview = { ...detail.messages[1], id: 'child-preview', content: 'child preview', content_truncated: true,
+    sequence: 2, revision: 3, detail: { sequence: 2, revision: 3 } };
+  vi.mocked(props.api.subagent).mockResolvedValue({ ...detail, messages: [preview] });
+  const load = vi.spyOn(props.api, 'messageContent').mockResolvedValue('complete saved child body');
+  render(<TestSidebar {...props} sessionId="s" conversationRevision={4} />);
+  fireEvent.click(await screen.findByRole('button', { name: '查看子智能体 tester · abcdef' }));
+  expect(await screen.findByText('complete saved child body')).toBeTruthy();
+  expect(load).toHaveBeenCalledWith('s', expect.objectContaining({ id: 'child-preview', detail: preview.detail }),
+    4, record.agent_id, expect.any(AbortSignal));
+});
 it('selects by name then reuses the conversation stream without a detail name or approval controls', async () => {
   const props = setup();
   const { container } = render(<TestSidebar {...props} sessionId="s" />);

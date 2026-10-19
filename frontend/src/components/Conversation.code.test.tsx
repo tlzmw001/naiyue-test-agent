@@ -1,10 +1,21 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { MessageRow } from '../types';
+import { highlightCode, type HighlightRequest } from '../code-highlight';
 import Conversation from './Conversation';
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+// jsdom has no Worker. Exercise the real transformer through its async protocol;
+// controlled scheduling/cancellation/faults have a separate regression suite.
+class LoopbackWorker {
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  postMessage(request: HighlightRequest) {
+    queueMicrotask(() => this.onmessage?.({ data: highlightCode(request) } as MessageEvent));
+  }
+  terminate() { this.onmessage = null; }
+}
+beforeEach(() => vi.stubGlobal('Worker', LoopbackWorker));
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const message = (content: string, provisional = false): MessageRow => ({
   id: 'code-message', type: 'ai', content, provisional, state: provisional ? 'draft' : 'complete',
 });
@@ -14,11 +25,11 @@ const view = (content: string, provisional = false) =>
 it.each([
   ['python', 'def check():\n    return "测试"'], ['js', 'const value = "测试";'],
   ['json', '{"ok": true}'], ['bash', 'echo "测试"'],
-])('labels and highlights %s while keeping the code text', (language, code) => {
+])('labels and highlights %s while keeping the code text', async (language, code) => {
   const { container } = render(view(`\`\`\`${language}\n${code}\n\`\`\``));
   expect(screen.getByText(language, { selector: 'span' })).toBeTruthy();
   expect(container.querySelector('pre code')?.textContent).toBe(code + '\n');
-  expect(container.querySelector('pre code span[class^="hljs-"]')).not.toBeNull();
+  await waitFor(() => expect(container.querySelector('pre code span[class^="hljs-"]')).not.toBeNull());
   expect(screen.getByRole('button', { name: '复制代码' })).toBeTruthy();
 });
 
@@ -112,12 +123,12 @@ it('keeps stopped code highlighted and copyable with the unfinished marker', asy
   const row = { ...message('```python\nreturn "partial"', true), state: 'unconfirmed' as const };
   const { container } = render(<Conversation compacted={false} messages={[row]} />);
   expect(screen.getByText('未完成内容')).toBeTruthy();
-  expect(container.querySelector('.hljs-keyword')?.textContent).toBe('return');
+  await waitFor(() => expect(container.querySelector('.hljs-keyword')?.textContent).toBe('return'));
   await user.click(screen.getByRole('button', { name: '复制代码' }));
   expect(await navigator.clipboard.readText()).toBe('return "partial"\n');
 });
 
-it('keeps highlighted code intact through 32 bounded updates without adding source text', () => {
+it('keeps highlighted code intact through 32 bounded updates without adding source text', async () => {
   const { container, rerender } = render(view('```python\n', true));
   let code = '';
   for (let i = 0; i < 32; i++) {
@@ -128,6 +139,6 @@ it('keeps highlighted code intact through 32 bounded updates without adding sour
   expect(new TextEncoder().encode(code).byteLength).toBeGreaterThanOrEqual(8192);
   const region = screen.getByRole('region', { name: '代码，可横向滚动' });
   expect(within(region).queryByRole('button')).toBeNull();
-  expect(container.querySelectorAll('.hljs-string')).toHaveLength(32);
+  await waitFor(() => expect(container.querySelectorAll('.hljs-string')).toHaveLength(32));
   expect(screen.getAllByRole('button', { name: '复制代码' })).toHaveLength(1);
 });

@@ -27,6 +27,7 @@ export function useConversation(api: WebApi) {
   const [changingControls, setChangingControls] = useState(false);
   const selectionGeneration = useRef(0);
   const controlsRevision = useRef(0);
+  const approvalRevision = useRef(0);
   const selectionPending = useRef(false);
   const selected = useRef<string>('new');
   const currentRun = useRef<RunView | null>(null);
@@ -46,10 +47,11 @@ export function useConversation(api: WebApi) {
     setPending(pendingRef.current);
   };
 
-  async function refreshSession(sid: string, signal?: AbortSignal, prepare = false) {
-    const revision = controlsRevision.current, generation = selectionGeneration.current;
+  async function refreshSession(sid: string, signal?: AbortSignal, prepare = false): Promise<SessionView> {
+    const revision = controlsRevision.current, generation = selectionGeneration.current, approvals = approvalRevision.current;
     const value = await (prepare ? api.prepare(sid, signal) : api.session(sid, signal));
     if (!signal?.aborted && selected.current === sid && generation === selectionGeneration.current) {
+      if (approvals !== approvalRevision.current) return refreshSession(sid, signal, prepare);
       setSession(previous =>
       previous?.session_id === sid && revision !== controlsRevision.current ? {
         ...value, active_tools: previous.active_tools, permission_mode: previous.permission_mode,
@@ -422,6 +424,12 @@ export function useConversation(api: WebApi) {
     setNotice('');
     try {
       const started = await api.approve(sid, batch, decisions, remember);
+      // A receipt retires only this batch; execution and other approvals may still be pending.
+      approvalRevision.current++; setSession(current => {
+        if (current?.session_id !== sid) return current;
+        const batches = current.approval_batches?.filter(item => item.approval_batch_id !== batch.approval_batch_id) ?? [];
+        return { ...current, approval_batches: batches, pending_approval: batches.length > 0 };
+      });
       if (started.kind === 'live_child') {
         await refreshSession(sid);
         return;
@@ -458,6 +466,11 @@ export function useConversation(api: WebApi) {
     setSubmitting(true);
     try {
       const started = await api.stopApproval(sid, batch);
+      approvalRevision.current++; setSession(current => {
+        if (current?.session_id !== sid) return current;
+        const batches = current.approval_batches?.filter(item => item.approval_batch_id !== batch.approval_batch_id) ?? [];
+        return { ...current, approval_batches: batches, pending_approval: batches.length > 0 };
+      });
       const value = await api.run(started.run_id);
       display(value, sid);
       void watch(started.run_id, sid, value);

@@ -239,12 +239,13 @@ class WebService:
 
     async def session(self, session_id):
         value = await self._session_status(session_id)
-        page = await self.messages(session_id)
         latest = value['latest_run_id']
         live = self.delivery.get(latest).view() if latest else None
         if live and live.get('conversation_revision', 0) != value.get('conversation_revision', 0):
             live = None
-        page = history_window(page, live['messages'] if live else [], self.settings, session_id)
+        page = await self.messages(session_id)
+        page = history_window(page, live['messages'] if live else [], self.settings, session_id,
+                              restore_saved_drafts=bool(live and live['done'] and live['status'] == 'completed'))
         if live:
             live = {**live, 'messages': [], 'messages_location': 'session'}
         result = {**value, 'messages': page['messages'], 'live': live,
@@ -338,16 +339,20 @@ class WebService:
             raise WebError('subagent_history_unavailable', 503) from None
 
     async def subagent(self, session_id, agent_id):
+        value = await self._session_status(session_id)
         record = next((r for r in await self.subagents(session_id) if r['agent_id'] == agent_id), None)
         if record is None:
             raise WebError('subagent_not_found', 404)
         try:
+            latest = self.delivery.latest.get(session_id)
+            job = self.delivery.get(latest) if latest else None
+            settled = bool(job and job.done)
+            live = job.agent_view(record['agent_path']) if job and job.conversation_revision == value.get('conversation_revision', 0) else None
             page = await history_page(self.application, self.settings, session_id, agent_id=agent_id)
             result = {**record, **page, 'available': bool(page['coverage']['checkpoint_id']), 'tool_states': {}}
-            latest = self.delivery.latest.get(session_id)
-            live = self.delivery.get(latest).agent_view(record['agent_path']) if latest else None
             if live:
-                window = history_window(page, live.get('messages', []), self.settings, session_id, agent_id)
+                window = history_window(page, live.get('messages', []), self.settings, session_id, agent_id,
+                                        restore_saved_drafts=settled and live['status'] == 'completed')
                 result.update(status=live['status'], source=live['source'], tool_states=live['tool_states'],
                               **window, available=bool(window['messages']))
             if encoded_size(result) > self.settings.max_frame_bytes:
