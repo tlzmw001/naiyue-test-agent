@@ -103,7 +103,7 @@ Pending Publisher：项目 naiyue-test-agent、owner tlzmw001、repo naiyue-test
 - [x] 对应 OS 真正运行测试由 CI 证据确认，不能用本机交叉打包替代。
 - [x] README、MIT、第三方声明齐全，候选包按白名单检查无私有配置/开发材料。
 - [x] 标签版本门禁、同提交全部通过门禁、OIDC 最小权限和公开安装后验已接线。
-- [ ] 正式上传 PyPI 并通过五平台公开安装后验；当前上传被 PyPI 项目名/发布器绑定拒绝，见第10节。
+- [x] 正式上传 PyPI 并通过五平台公开安装后验；0.1.0五份文件摘要与已验证产物一致，见第10节。
 
 ## 8. 本轮实现与证据（2026-10-18）
 
@@ -146,8 +146,18 @@ Pending Publisher：项目 naiyue-test-agent、owner tlzmw001、repo naiyue-test
 
 复核远端提交、包版本、无冲突标签和PyPI尚无0.1.0后，在该提交创建并推送`v0.1.0`。[标签发布工作流](https://github.com/tlzmw001/naiyue-test-agent/actions/runs/39151037235)的全部发行前门禁再次成功：Linux后端 **2952 passed in422.69s**，前端39文件289项及生产构建、五平台安装和集中检查均通过。取回该run的五份wheel，逐份比较138个生产Python文件与冻结源码一致，版本0.1.0、application_sha256均为上述`68609980…`；报告与归档位于忽略目录`build/release-v010-published/`。
 
-### PyPI上传阻塞，未发布成功
+### 首次PyPI上传阻塞（历史尝试）
 
-该run的publish job在上传首个文件时收到HTTP400：`Non-user identities cannot create new projects`。日志提示Pending Publisher的项目名与上传元数据不一致；五份wheel的METADATA已逐份核对为`Name: naiyue-test-agent`、`Version: 0.1.0`，GitHub环境为`pypi`且无额外审批。公开PyPI版本JSON仍为404；后置五平台公开安装被跳过，不能宣称已发布或公开安装通过。
+该run首次publish job在上传首个文件时收到HTTP400：`Non-user identities cannot create new projects`。日志提示Pending Publisher的项目名与上传元数据不一致；五份wheel的METADATA已逐份核对为`Name: naiyue-test-agent`、`Version: 0.1.0`，GitHub环境为`pypi`且无额外审批。当时公开PyPI版本JSON为404，后置五平台公开安装被跳过；该次尝试未发布成功。
 
 按[PyPI官方上传排错说明](https://docs.pypi.org/trusted-publishers/troubleshooting/#upload-errors)，需要用户核对账号Publishing及Your projects中实际绑定的项目名；该失败可能已将Pending Publisher转换成另一个名称的项目。账号配置修正前不改包名、不移动标签、不盲目重复上传。用户核对完成后，重跑原run的失败任务，继续使用同一批已验证wheel，再核对PyPI文件/摘要和五平台公开安装。真实配置/会话库均未修改，真实供应商请求0次。
+
+### 重试发布与五平台公开安装通过
+
+用户回复“再试一次”后，确认工作区干净、标签仍指向`bf66c64`、PyPI尚无0.1.0，执行`gh run rerun 39151037235 --failed`。原run第2次尝试的publish成功，[PyPI 0.1.0](https://pypi.org/project/naiyue-test-agent/0.1.0/)正式包含五份wheel；沿用原标签和已验证产物，没有重新构建或改动产品代码。
+
+本机重新运行五包归档检查，并查询正式PyPI JSON、下载全部五个发行文件：文件集合、大小、SHA-256和归档报告逐项与原验证产物一致，结果`build/release-v010-published/pypi-verification.json`。首轮公开安装Linux两架构/macOS Intel通过，Windows x64/macOS ARM64在安装前元数据查询阶段持续404并耗尽12次等待；正式元数据与文件已能获取后，仅重跑这两个失败校验，未重复上传。
+
+原run第3次尝试整体**success**，五平台`python -m scripts.verify_wheel_install --wheel-dir dist --from-pypi --output build/pypi-install.json`全部通过。取回五份报告并再次核对版本0.1.0、实际文件SHA、包内原生工具、前端/API、Find/Grep、审批恢复、SQLite重开和CLI六项结果均passed，provider_requests=0。报告与最终workflow身份位于`build/release-v010-final-reports/`；[成功的发布工作流](https://github.com/tlzmw001/naiyue-test-agent/actions/runs/39151037235)关联源提交仍为`bf66c64083e4d825c2309a2aba48a8ebcc93f8c1`。
+
+当前状态：Spec112首版发行合同全部验收，正式包名`naiyue-test-agent`、版本0.1.0、命令`nyt`；可从公开PyPI安装。用户模型配置与工作区数据保持原位置，本轮未发真实模型请求。后续用户使用按README配置模型并启动Web或chat；新的开发事项另行讨论。
