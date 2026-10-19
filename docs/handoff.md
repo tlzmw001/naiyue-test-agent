@@ -1,6 +1,20 @@
 # Naiyue Test Agent：当前开发学习交接
 
-## 当前交接摘要（2026-10-18）
+## 当前交接摘要（2026-10-19）
+
+- **v0.1.1发行收尾**：用户已授权提交全部近期改动、push、打`v0.1.1`并发布PyPI；范围为Spec114全文/Worker/超帧恢复与审批面板、Spec115名称清单权限、Spec116 AITest/Web工具。三项按主题分别提交，Python唯一版本升为`0.1.1`，前端独立构建版本按发行指南保持。
+- **本轮发行前验证**：`PATH="$PWD/build/release-native-0ff7df8/bin:$PATH" .venv/bin/python -m pytest tests -q`实际**3004 passed in125.93s**；前端**44文件347 passed**，TypeScript/Vite成功（保留chunk大小提示）。首轮缺`fd`的32项失败经现有原生工具PATH复跑关闭，未改环境文件。144份生产Python AST/500行、compileall、pip check和diff检查通过；安全/架构专项无阻断。最终macOS ARM64 wheel 274文件、归档/新增模块/Worker与twine通过；源码外全新安装的原生工具/Find/Grep/Web/API/审批恢复/SQLite重开/CLI全passed，0次供应商请求。日志`/tmp/nyt-v011-*.log`，报告`build/release-v011-final/install-smoke.json`。
+- **当前下一步**：确认本次主分支CI成功后推送`v0.1.1`，跟踪五平台检查、PyPI上传及公开安装；远端状态以Actions和PyPI实际结果为准。真实AITest业务及百度/Tavily账户/质量仍未验收，不因发行升级证据。未修改真实配置、用户数据库或学习记录；下方“未提交/未发布”保留历史快照含义。
+
+- **Spec116工具已实现，本地未提交/发布**：[合同与证据](specs/116-aitest-and-web-tools.md)、[配置及使用](aitest-web-tools.md)。新增aitest_kit直接argv/doctor-report与严格help默认Allow、claude技能优先；web_search百度→Tavily失败/空回退，每家30秒且0不限；web_fetch公共/私有审批、DNS绑定/逐跳Deny/正文提取及共用代理。Shell原输出/停止/清理主体供三种进程工具复用，无新SDK、数据库或前端功能；真实配置与另一会话dirty成果保留。
+- **116验收与下一步**：新增27项通过，后端最终**3004 passed in121.66s**，前端**44文件347 passed**及TS/Vite成功；144生产源码AST/500行、compileall/pip/diff通过，独立架构/安全复核通过。本地HTTP真实审批、HTTPS直连/HTTP CONNECT原SNI/审查IP/证书校验通过，0次真实搜索供应商调用。未验收真实AITest业务、两家账户/额度/搜索质量或Windows实机；唯一下一步是配置AITest测试环境与两家Key后做小预算真实验收。旧会话需在现有工具菜单启用新工具；学习位置不变，不修改课堂记录。
+- **116同名CLI补证**：临时创建真正名为`aitest`的本机可执行程序，默认名称/空前缀经真实PATH查找与进程执行，离线应用模型完成help/doctor/report、Ask暂停/批准/拒绝及非零退出反馈；4次实际启动，1项探针通过。参数/工作目录逐项校验，未修改生产代码、真实配置或安装AITest，详见[Spec116补充验证](specs/116-aitest-and-web-tools.md#同名cli补充验证2026-10-19)。此证据仅覆盖本机POSIX包装链路，真实业务与Windows边界保持。
+
+- **当前补丁状态**：[Spec115](specs/115-name-listing-permissions.md)名称清单及[Spec114第9—10节](specs/114-complete-message-content.md#10-已授权超大完成事件的有界交付与状态恢复2026-10-19)全文/Worker/超帧恢复已本地接线。超帧仍更新投影，旧SSE游标要求重同步，新快照可恢复；成功收尾仅用归档校正旧草稿，实时确认内容/图片投影保留。最新累计后端2977 passed in121.67s、前端44文件347 passed、TS/Vite成功，日志在`build/approval-panel-fix/`。默认1MiB预算下1.24MB回复真实页面自动全文且逐字一致，无永久未确认/待同步提示，0次供应商，无真实配置/用户库或发布操作。
+- **审批提交后面板收起已修复**：`useConversation.approve/stopApproval`收到成功回执即从会话视图移除对应批次，不等恢复运行结束；失败保留原批次，其他子批次及新批次继续显示。提交前发出的旧刷新跨越回执时重新读当前快照，避免旧面板复现；后续快照失败保留已接受事实及同步错误提示。新增6项回归首轮5红/1绿后转绿；真实临时Web/SQLite先注入一次409，失败选择保留，重试成功后任务仍在生成但审批面板为0，2次离线模型调用、0次供应商；截图`build/approval-panel-fix/accepted-running.png`。临时页/服务/库已清理，无提交/push/发布，未改审批执行或权限语义。
+- **边界与唯一下一步**：默认超帧交付缺口已关闭；失败/停止/审批/未收尾不伪造完成，真观察故障仍保留诊断。超大高亮受超时/节点预算保护，可能保留完整纯色，不承诺任意大小无卡顿。Windows截图text浅色在本机未复现，仍待浏览器/主题/强制深色情况，本片未改CSS。下一步由用户查看当前补丁并确定提交/发布范围；学习进度保持，全部当前未提交成果保留。
+
+- **Spec114 预览正文入口已补齐，本地未提交/发布**：[完整内容加载与验收](specs/114-complete-message-content.md#6-实际结果与边界)。根/子会话、工具结果及摘要的保存预览可按需加载全文，沿用已有有界 content GET、认证/版本校验及 Markdown/复制；失败保留预览可重试，范围变化取消/忽略旧结果。前端新增16项，定向22/全量305 passed，TS/Vite成功；后端2952 passed in120.30s。临时生产页面55KB代码加载后与保存原文逐字一致且尾部可见，横向滚动/高亮正常、控制台无warn/error。权限仅核查未改：Auto下ls隐藏项跳过与注册skill读取成功可同时发生，无人工审批；不能从跳过标记推断整个项目不可读。0次供应商，未改真实配置/用户库；Windows PyPI0.1.0仍须后续补丁发布升级。下一步：用户查看本次问题结论与本地修改，再确定补丁提交/发布范围；学习进度保持。
 
 - **v0.1.0已正式发布并完成五平台公开安装验收**：[PyPI版本](https://pypi.org/project/naiyue-test-agent/0.1.0/)，产品标签`v0.1.0`指向`bf66c64`。[主分支CI](https://github.com/tlzmw001/naiyue-test-agent/actions/runs/39150378504)和[发布工作流](https://github.com/tlzmw001/naiyue-test-agent/actions/runs/39151037235)最终成功；发行前后端本地2952项/标签Linux2952项、前端39文件289项及构建、五平台打包/全新安装/白名单/138份Python源码与指纹通过。用户授权重试后原run第2次上传成功；Windows/macOS ARM首次公开元数据查询404，重跑这两项后第3次尝试整体success。五份正式文件的元数据、实际下载大小/SHA和归档与原产物一致，五平台从公开PyPI安装的原生工具/Web/API/Find/Grep/审批/SQLite/CLI全部passed，0次供应商请求。结果在`build/release-v010-published/pypi-verification.json`及`build/release-v010-final-reports/`，详见[Spec112第10节](specs/112-pypi-packaging-and-release.md#10-正式发行验收2026-10-18)。本轮只重试原任务并记录结果，未改产品代码、标签、真实配置或用户库。下一步由用户按README配置模型后运行`nyt`或`nyt chat`；学习位置和新开发范围保持原约定，下方均为历史快照。
 
