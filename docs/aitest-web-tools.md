@@ -1,6 +1,6 @@
 # AITest 与 Web 工具配置
 
-Spec116新增 `aitest_kit`、`web_search`、`web_fetch`，复用既有CLI/Web工具启停和权限模式。当前为源码能力，尚未随新的PyPI版本发布。
+Spec116新增 `aitest_kit`、`web_search`、`web_fetch`，复用既有CLI/Web工具启停和权限模式，已随 [PyPI 0.1.1](https://pypi.org/project/naiyue-test-agent/0.1.1/) 发布。
 配置在用户目录的 `~/.naiyue-test-agent/settings.toml`（Windows为 `%USERPROFILE%\.naiyue-test-agent\settings.toml`）；
 完整带注释字段见[样例](examples/settings.example.toml)。文件不自动改写，改动后重启；已保存会话的活动工具集合不会自动扩展，可在工具菜单启用。
 
