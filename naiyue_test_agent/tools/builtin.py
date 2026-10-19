@@ -11,9 +11,12 @@ from .registry import ToolSpec
 from .settings import BuiltinToolSettings
 from .subagent import create_subagent_tool
 from .write import create_session_write_tool
+from .aitest_kit import create_aitest_kit_tool
+from .web_search import create_web_search_tool
+from .web_fetch import create_web_fetch_tool
 
 
-def create_builtin_tools(settings: BuiltinToolSettings, *, process_settings=None, output_settings=None, progress_settings=None) -> list[ToolSpec]:
+def create_builtin_tools(settings: BuiltinToolSettings, *, process_settings=None, output_settings=None, progress_settings=None, network_settings=None) -> list[ToolSpec]:
     specs = [
         create_session_read_tool(settings=settings.read, progress_settings=progress_settings),
         create_session_ls_tool(settings=settings.ls, progress_settings=progress_settings),
@@ -26,5 +29,11 @@ def create_builtin_tools(settings: BuiltinToolSettings, *, process_settings=None
         create_session_powershell_tool(process_settings=process_settings,
             settings=settings.powershell, output_settings=output_settings, progress_settings=progress_settings),
         create_subagent_tool(),
+        create_aitest_kit_tool(settings=settings.aitest_kit, process_settings=process_settings,
+            output_settings=output_settings, progress_settings=progress_settings),
+        create_web_search_tool(settings=settings.web_search, network_settings=network_settings,
+            progress_settings=progress_settings),
+        create_web_fetch_tool(settings=settings.web_fetch, network_settings=network_settings,
+            progress_settings=progress_settings),
     ]
     return specs

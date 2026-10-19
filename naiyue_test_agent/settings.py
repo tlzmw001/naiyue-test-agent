@@ -7,6 +7,7 @@ import tomllib
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .config_paths import StorageSettings, get_agent_dir
+from .tools.web_settings import NetworkSettings
 from .tools.permission_rules import PermissionSettings
 from .tools.subagent import SubAgentSpec
 from .tools.settings import (
@@ -49,6 +50,7 @@ class AppSettings(BaseModel):
     max_active_runs: int = Field(default=10, gt=0)
     web_event_cache_bytes: int = Field(default=4194304, gt=0)
     storage: StorageSettings = Field(default_factory=StorageSettings)
+    network: NetworkSettings = Field(default_factory=NetworkSettings)
     tools: BuiltinToolSettings = Field(default_factory=BuiltinToolSettings)
     permissions: PermissionSettings = Field(default_factory=PermissionSettings)
     process: ProcessSettings = Field(default_factory=ProcessSettings)
@@ -92,8 +94,13 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
         logger.error('permission_settings_unavailable error_type=%s', type(error).__name__)
         raise ValueError('Permission settings could not be read or parsed') from error
-    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'tools', 'permissions', 'process', 'tool_output', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics'}:
+    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'tools', 'permissions', 'process', 'tool_output', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'network'}:
         raise ValueError('Unknown runtime settings section')
+    try:
+        network = NetworkSettings.model_validate(raw.get('network', {}))
+    except ValidationError:
+        logger.error('network_settings_invalid')
+        raise ValueError('Network settings are invalid') from None
     storage = StorageSettings.model_validate(raw.get('storage', {}))
     permissions = PermissionSettings.model_validate(raw.get('permissions', {}))
     max_active_runs = raw.get('max_active_runs', AppSettings.model_fields['max_active_runs'].default)
@@ -139,7 +146,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         logger.warning('diagnostic_settings_fallback reason=invalid')
         diagnostics = DiagnosticSettings()
     try:
-        return AppSettings(storage=storage, tools=tools, permissions=permissions, process=process, tool_output=tool_output,
+        return AppSettings(storage=storage, tools=tools, network=network, permissions=permissions, process=process, tool_output=tool_output,
                             progress=progress, usage_persistence=usage_persistence,
                             subagents=raw.get('subagents', ()), max_active_runs=max_active_runs,
                             web_event_cache_bytes=web_event_cache_bytes, diagnostics=diagnostics,

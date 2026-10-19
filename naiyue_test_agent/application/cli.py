@@ -187,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
                 restored = storage.get(selected)
                 if str(args.workspace) != restored['workspace_root']:
                     raise SessionPersistenceError('workspace_mismatch')
-        tools = create_builtin_tools(tool_settings.tools, process_settings=tool_settings.process, output_settings=tool_settings.tool_output, progress_settings=tool_settings.progress)
+        tools = create_builtin_tools(tool_settings.tools, process_settings=tool_settings.process, output_settings=tool_settings.tool_output, progress_settings=tool_settings.progress, network_settings=tool_settings.network)
         initial_tools = [spec.tool.name for spec in tools if spec.tool.name not in ('bash', 'powershell')]
         factory = build_local_application if storage is None else build_persistent_application
         options = {} if storage is None else {'storage': storage}

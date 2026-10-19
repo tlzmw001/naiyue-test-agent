@@ -217,7 +217,7 @@ async def test_tool_prompt_guidelines_and_project_instructions_compose_once(monk
 
 def test_builtin_catalog_includes_bash_without_a_special_flag():
     specs = create_builtin_tools(AppSettings().tools)
-    assert [spec.tool.name for spec in specs] == ['read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent']
+    assert [spec.tool.name for spec in specs] == ['read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent', 'aitest_kit', 'web_search', 'web_fetch']
 
 
 @pytest.mark.parametrize('field, value', [('prompt_snippet', 1), ('prompt_guidelines', ['guide']), ('prompt_guidelines', (1,))])

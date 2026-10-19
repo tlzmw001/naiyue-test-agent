@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .web_settings import WebSearchSettings, WebFetchSettings
+
 
 class ReadImageSettings(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
@@ -127,12 +129,10 @@ class EnvironmentSettings(BaseModel):
         return self
 
 
-class ShellSettings(BaseModel):
+class ProcessToolSettings(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
 
     executable: str | None = Field(default=None, min_length=1)
-    max_command_chars: int = Field(default=8192, gt=0)
-    probe_timeout_seconds: float = Field(default=5, gt=0, allow_inf_nan=False)
     max_output_lines: int = Field(default=2000, gt=0)
     max_output_bytes: int = Field(default=65536, gt=0)
     max_archive_bytes: int = Field(default=16777216, gt=0)
@@ -161,6 +161,11 @@ class ShellSettings(BaseModel):
         return self
 
 
+class ShellSettings(ProcessToolSettings):
+    max_command_chars: int = Field(default=8192, gt=0)
+    probe_timeout_seconds: float = Field(default=5, gt=0, allow_inf_nan=False)
+
+
 class BashSettings(ShellSettings):
     environment: EnvironmentSettings = Field(default_factory=lambda: EnvironmentSettings(
         unset_env=['BASH_ENV', 'NAIYUE_WEB_TOKEN']))
@@ -170,6 +175,22 @@ class PowerShellSettings(ShellSettings):
     execution_policy: Literal['inherit', 'bypass'] = 'inherit'
     environment: EnvironmentSettings = Field(default_factory=lambda: EnvironmentSettings(
         unset_env=['NAIYUE_WEB_TOKEN']))
+
+
+class AITestSettings(ProcessToolSettings):
+    executable: str = Field(default='aitest', min_length=1)
+    prefix_args: list[str] = Field(default_factory=list)
+    max_args: int = Field(default=128, gt=0)
+    max_argument_chars: int = Field(default=8192, gt=0)
+    environment: EnvironmentSettings = Field(default_factory=lambda: EnvironmentSettings(
+        unset_env=['NAIYUE_WEB_TOKEN']))
+
+    @field_validator('prefix_args')
+    @classmethod
+    def literal_arguments(cls, values):
+        if any('\0' in value for value in values):
+            raise ValueError('Invalid CLI argument')
+        return values
 
 
 class ToolOutputSettings(BaseModel):
@@ -196,6 +217,9 @@ class BuiltinToolSettings(BaseModel):
     find: FindSettings = Field(default_factory=FindSettings)
     bash: BashSettings = Field(default_factory=BashSettings)
     powershell: PowerShellSettings = Field(default_factory=PowerShellSettings)
+    aitest_kit: AITestSettings = Field(default_factory=AITestSettings)
+    web_search: WebSearchSettings = Field(default_factory=WebSearchSettings)
+    web_fetch: WebFetchSettings = Field(default_factory=WebFetchSettings)
     subagent: SubAgentOutputSettings = Field(default_factory=SubAgentOutputSettings)
 
 

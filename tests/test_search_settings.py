@@ -25,8 +25,9 @@ def test_search_settings_roundtrip_schema_and_process_snapshot(tmp_path, monkeyp
     specs = create_builtin_tools(settings.tools, process_settings=settings.process, output_settings=settings.tool_output, progress_settings=settings.progress)
     registry = prepare_tool_registry(specs)
     names = registry.names()
-    assert names == ('read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent')
-    assert seen == [settings.process] * 4
+    assert names == ('read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent', 'aitest_kit', 'web_search', 'web_fetch')
+    # Find/Grep, Bash/PowerShell and the direct AITest CLI all use this snapshot.
+    assert seen == [settings.process] * 5
     schemas = {s.tool.name: s.tool.tool_call_schema.model_json_schema() for s in specs}
     assert schemas['grep']['properties']['limit']['default'] == 2
     assert schemas['grep']['properties']['context']['maximum'] == 2

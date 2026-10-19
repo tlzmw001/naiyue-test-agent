@@ -3,7 +3,7 @@
 # 文件缺失使用默认；读取失败、TOML语法错误、权限/storage/角色定义非法会终止启动。
 # max_active_runs / web_event_cache_bytes / tools / process / tool_output / progress / usage_persistence / diagnostics额度非法时分别警告并回退该部分默认，保留合法权限规则。
 # 权限规则启动时读取并校验，不随工具调用重新读文件；修改文件后重启服务。
-# 已接八执行工具及通用subagent；tools.subagent配置报告预算，[[subagents]]配置角色。
+# 已接文件/Shell/subagent及aitest_kit/web_search/web_fetch；[[subagents]]配置角色。
 # 完整目标字段见 tool-runtime.example.toml，不能直接整份套用。
 
 # 同一应用最多同时占用的根运行数，严格正整数；默认10，非法时警告回退10。
@@ -82,6 +82,55 @@ cleanup_batch_runs = 32
 # 保留开头完整行；首行过长时保留完整字符前缀。截断提示另计；完整历史留在子checkpoint。
 max_result_lines = 2000
 max_result_bytes = 65_536
+
+# Web工具专用网络设置，不改变模型供应商、Bash或待测项目自身的网络配置。
+# auto：读取系统/环境HTTP_PROXY、HTTPS_PROXY、ALL_PROXY及NO_PROXY；无代理时直连。
+# direct：忽略代理。proxy：必须配置proxy，失败也不会偷偷直连。
+# 支持HTTP(S)代理；SOCKS需要额外依赖，首版不支持。TLS校验保持开启，遵循SSL_CERT_FILE/SSL_CERT_DIR。
+# 网络配置非法会终止启动，避免将强制代理误回退为直连；修改后重启。
+[network]
+mode = "auto"
+# proxy = "http://127.0.0.1:7890"  # 只在mode="proxy"时使用；填写自己的代理地址。
+
+# 直接启动AITest CLI，无Shell解析。默认从有效PATH查找aitest。
+# 也可以用独立虚拟环境Python：executable="/path/to/venv/bin/python"，prefix_args=["-m", "aitest_kit.cli"]。
+# Windows可用单引号路径，如executable='D:\tools\venv\Scripts\python.exe'。
+# aitest-kit是用户测试环境依赖，不强制安装到Agent环境。修改后重启。
+[tools.aitest_kit]
+executable = "aitest"
+prefix_args = []
+max_args = 128                 # 模型args数组最大元素数，不含可信prefix_args。
+max_argument_chars = 8192      # 模型args所有元素的总字符预算。
+max_output_lines = 2000        # 合并stdout/stderr返回尾部的最大行数。
+max_output_bytes = 65536       # 返回尾部UTF-8字节预算。
+max_archive_bytes = 16777216   # 单次完整/原始输出归档预算，另受tool_output工作区总预算限制。
+output_encoding = "utf-8"
+[tools.aitest_kit.environment]
+path_prepend = []              # 在继承的PATH前增加目录，可选择用户测试环境。
+unset_env = ["NAIYUE_WEB_TOKEN"] # 最后移除指定变量，其余默认继承父进程。
+values = {}                   # 显式覆盖；真实凭证不要写进共享配置/提交。
+
+[tools.web_search]
+provider_order = ["baidu", "tavily"] # 失败/空结果顺序回退；每家最多一次，可调换顺序。
+request_timeout_seconds = 30   # 每家请求的总等待秒数；0不限，调用timeout可覆盖。
+default_results = 5           # 未传max_results时的结果数。
+max_results = 10              # 模型可请求的最大结果数，范围1—20。
+max_query_chars = 2000         # 查询文本的最大字符数。
+max_response_bytes = 2097152   # 单家响应体预算；首版不接收压缩响应，避免解压超预算。
+max_output_bytes = 65536       # 给模型的搜索结果正文UTF-8预算。
+[tools.web_search.baidu]
+endpoint = "https://qianfan.baidubce.com/v2/ai_search/web_search"
+api_key_env = "BAIDU_SEARCH_API_KEY" # 环境变量名，不是Key；启动服务的终端须提供该变量。
+[tools.web_search.tavily]
+endpoint = "https://api.tavily.com/search"
+api_key_env = "TAVILY_API_KEY"       # Basic固定1 credit；不自动启用Advanced/付费计划。
+
+[tools.web_fetch]
+request_timeout_seconds = 30   # 一次读取含重定向的总等待秒数；0不限。
+max_url_chars = 8192           # 输入及重定向URL的最大字符数。
+max_response_bytes = 2097152   # 最大下载字节数；仅HTML/文本/JSON，不接压缩、PDF或JS页面渲染。
+max_output_bytes = 65536       # 返回可见正文UTF-8预算，截断会明确提示。
+max_redirects = 5             # 每跳重新检查目标及Deny；私有新目标可能需要重新发起审批。
 
 [progress]
 # 是否产生工具进度事件；不影响工具结果、停止、权限或执行期限。

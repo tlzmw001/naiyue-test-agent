@@ -172,7 +172,7 @@ def test_application_settings_are_aggregated_outside_the_tool_package(tmp_path):
     tools = create_builtin_tools(settings.tools, process_settings=settings.process,
         output_settings=settings.tool_output, progress_settings=settings.progress)
     assert {spec.tool.name for spec in tools} == {
-        'read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent'}
+        'read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent', 'aitest_kit', 'web_search', 'web_fetch'}
 
 
 def test_catalog_client_preparation_has_an_explicit_consumer_method():

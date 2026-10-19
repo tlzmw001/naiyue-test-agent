@@ -6,6 +6,7 @@
 - 终端 CLI：多轮对话、恢复历史、审批、停止、Steering 和 Follow-up。
 - 模型接入：OpenAI、兼容 OpenAI 的接口、Anthropic、Ollama。
 - 工具：Read、Ls、Find、Grep、Write、Edit、Bash、PowerShell，以及一层前台子 Agent。
+- `0.1.1` 新增 `aitest_kit`、百度/Tavily 回退的 `web_search` 和 `web_fetch`，配置见[工具说明](docs/aitest-web-tools.md)。
 - Find/Grep 使用安装包内的 `fd` / `rg`；前端已经构建，使用发行包无需 Node.js 或 npm。
 
 ## 安装

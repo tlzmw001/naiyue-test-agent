@@ -1,5 +1,7 @@
 # Spec085 附录：文件、函数与迁移消费者
 
+Spec116新增AITest与Web工具：[当前合同及调用链](116-aitest-and-web-tools.md)。tools/aitest_kit.py负责argv和默认审批；tools/process_execution.py抽取Shell原执行主体供三种进程工具共用；web_search.py负责百度/Tavily适配回退，web_fetch.py负责DNS审查/逐跳授权与文本提取，web_network.py负责HTTP/代理/取消/下载预算，web_settings.py负责配置。CLI/Web仍经create_builtin_tools登记，应用与runtime权限架构保持。
+
 104-03当前补证见[组合验收](104-03-concurrency-acceptance.md#6-实际结果与104收尾)：真实Write目标busy、根Write→子Read审批及必要保存隔离通过；subagents.ainvoke_subagent_step转换已识别模型异常时复用现有同run失败标注，保留具体分类和原cause。没有新增工具、错误类、控制槽或持久化字段。
 
 当前拥有者（105-05收尾）：[组合验收与当前调用链](105-05-session-lifecycle-acceptance.md)。State是会话事实，ActiveRun是当前根运行/观察/队列/子实例，均由AgentSession持有；共享角色/图/准入/SessionPort路由归Service，装配入口assemble_runtime。保存/恢复IO归SessionPersistence，根必要保存后释放_run。public request_stop直接路由Actor，无旧私有转发。应用只等待自身操作及producer后关闭共享资源；105-05最终全量验收通过；[104-01](104-01-application-concurrency.md)已接后端默认10根额度与按会话持久化，[104-02](104-02-web-session-concurrency.md)已接Web按会话任务和106 E1订阅，组合验收已随104-03完成。下列早期记录保留原时点。

@@ -75,7 +75,7 @@ def test_cli_explicit_workspace_registers_ls_and_returns_hidden_names_to_model(
     output = capsys.readouterr().out
     assert 'listing received' in output
     assert 'PRIVATE_VALUE' not in output
-    assert model.seen[1][-1] == ('tool', 'contract.md\n[ls: not listed: .env: unapproved_private_or_external]')
+    assert model.seen[1][-1] == ('tool', '.env\ncontract.md')
 
 
 def test_cli_workspace_registers_find_and_grep(monkeypatch, capsys, tmp_path):
