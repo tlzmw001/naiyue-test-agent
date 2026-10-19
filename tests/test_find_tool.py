@@ -33,7 +33,7 @@ async def test_find_glob_paths_hidden_names_and_gitignore(tmp_path):
     assert set(tool.tool.tool_call_schema.model_fields) == {'pattern', 'path', 'limit', 'timeout'}
     result = (await call_find(tool, {'pattern': '*.md'}, tmp_path))
     assert result.status == 'success'
-    assert result.content == 'root.md\nsrc/inner.md\n[find: not searched: .hidden.md: unapproved_private_or_external]'
+    assert result.content == '.hidden.md\nroot.md\nsrc/inner.md'
     assert (await call_find(tool, {'pattern': '*.md', 'path': 'src'}, tmp_path)).content == 'inner.md'
     assert (await call_find(tool, {'pattern': 'src/**/*.py'}, tmp_path)).content == (
         'src/code.py\nsrc/nested/deep/more.py'

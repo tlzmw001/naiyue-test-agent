@@ -85,7 +85,7 @@ class FilePermission:
         for key in ('requested', 'resolved'):
             if not permission_path(subject[key], windows=windows).is_relative_to(root):
                 return 'ask'
-        if not hidden_or_private(subject):
+        if self.operation == 'list' or not hidden_or_private(subject):
             return 'allow'
         for resource in subject.get('resource_roots', ()):
             scope = permission_path(resource, windows=windows)
@@ -183,12 +183,12 @@ def candidate_access(runtime, candidate, *, operation):
     windows = parent['execution_environment']['platform'] == 'windows'
     inside = permission_path(subject['resolved'], windows=windows).is_relative_to(
         permission_path(parent['resolved'], windows=windows))
-    # The approved directory itself may be hidden or external. Its ordinary
-    # descendants inherit that approval; newly hidden descendants still do not.
+    # Listing names inherits the approved directory scope, including dotfiles.
+    # Content searches still require permission for private descendants.
     relative_subject = {**subject, 'workspace': parent['resolved']}
-    if inside and not hidden_or_private(relative_subject):
+    if inside and (operation == 'list' or not hidden_or_private(relative_subject)):
         return True, None
-    return False, 'unapproved_private_or_external'
+    return False, 'unapproved_external_target' if operation == 'list' else 'unapproved_private_or_external'
 
 
 def skipped_scope_message(tool_name, skipped, max_bytes):

@@ -127,17 +127,20 @@ async def test_rg_config_cannot_override_reviewed_native_arguments(monkeypatch, 
 
 @async_test
 async def test_fd_permission_filter_happens_before_result_count(monkeypatch, tmp_path):
-    from naiyue_test_agent.tools import find as module
-    target = tmp_path / 'visible.txt'
-    hidden = tmp_path / '.hidden.txt'
-    target.touch(); hidden.touch()
+    root = tmp_path / 'work'
+    root.mkdir()
+    target = root / 'visible.txt'
+    outside = tmp_path / 'outside.txt'
+    outside.touch(); target.touch()
+    alias = root / 'external.txt'
+    alias.symlink_to(outside)
     async def stream(self, request, consume, control=None):
-        await consume('stdout', str(hidden).encode() + b'\0' + str(target).encode() + b'\0')
+        await consume('stdout', str(alias).encode() + b'\0' + str(target).encode() + b'\0')
         return ProcessOutcome(0, 'exited', True, True, True, True, 0)
     monkeypatch.setattr(HostProcessRunner, 'run', stream)
-    result = (await invoke(create_session_find_tool(settings=FindSettings(default_limit=1)), tmp_path, pattern='*.txt'))
+    result = (await invoke(create_session_find_tool(settings=FindSettings(default_limit=1)), root, pattern='*.txt'))
     assert result.status == 'success' and result.content.startswith('visible.txt\n')
-    assert '.hidden.txt: unapproved_private_or_external' in result.content
+    assert 'external.txt: unapproved_external_target' in result.content
     assert 'truncated' not in result.content
 
 

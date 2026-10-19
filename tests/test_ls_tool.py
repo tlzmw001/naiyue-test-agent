@@ -75,13 +75,14 @@ async def test_ls_shows_hidden_sensitive_and_external_symlink_names(tmp_path):
 
     assert result.status == 'success'
     lines = result.content.splitlines()
-    assert lines[0] == 'visible.md'
-    assert lines[1].startswith('[ls: not listed: ')
-    for name in ('.env', '.github', '.gitignore', '.private', 'cert.pem',
-                 'external-link', 'private.key', 'secret-alias', 'broken-link'):
-        assert name + ': ' in lines[1]
+    assert {'.env', '.github/', '.gitignore', '.private/', 'cert.pem', 'private.key', 'secret-alias', 'visible.md'} <= set(lines)
+    skipped = next(line for line in lines if line.startswith('[ls: not listed: '))
+    for name in ('external-link', 'broken-link'):
+        assert name + ': ' in skipped
+    assert 'external-link: unapproved_external_target' in skipped
+    assert 'SECRET' not in result.content
     hidden = (await call_ls(create_session_ls_tool(), {'path': '.github'}, root))
-    assert hidden.status == 'error' and 'NoAsk' in hidden.content
+    assert hidden.status == 'success' and hidden.content == 'workflow.yml'
 
 
 

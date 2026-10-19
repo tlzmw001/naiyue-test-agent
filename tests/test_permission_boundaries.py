@@ -55,7 +55,7 @@ async def test_file_and_directory_aliases_use_real_target_without_replacing_link
 @pytest.mark.parametrize('name,args', [('ls', {}), ('find', {'pattern': '*'}), ('grep', {'pattern': 'NEEDLE'})])
 @pytest.mark.parametrize('explicit_allow', [False, True])
 @async_test
-async def test_directory_permission_still_filters_denied_and_unapproved_private_children(monkeypatch, tmp_path, name, args, explicit_allow):
+async def test_directory_permission_filters_deny_and_keeps_content_checks(monkeypatch, tmp_path, name, args, explicit_allow):
     root, directory = tmp_path / 'workspace', tmp_path / 'outside'
     root.mkdir(); directory.mkdir()
     for filename, body in [('ordinary.txt', 'NEEDLE_OK'), ('denied.txt', 'NEEDLE_DENIED'),
@@ -78,7 +78,7 @@ async def test_directory_permission_still_filters_denied_and_unapproved_private_
     message = outputs(result)['search']
     assert message.status == 'success' and 'ordinary.txt' in message.content
     assert 'denied.txt: deny' in message.content and 'NEEDLE_DENIED' not in message.content
-    if explicit_allow:
+    if explicit_allow or name in ('ls', 'find'):
         assert '.private' in message.content and 'secret.key' in message.content
         assert 'unapproved_private_or_external' not in message.content
     else:

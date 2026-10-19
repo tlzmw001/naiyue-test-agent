@@ -160,7 +160,10 @@ def create_session_find_tool(*, settings=None, process_settings=None, progress_s
 
     def find_files(pattern: str, runtime: ToolRuntime[dict, dict], path: str = '.',
                    limit: int = settings.default_limit, timeout: int | None = None) -> str:
-        """Find permitted files and directories by native fd glob and smart case."""
+        """Find file and directory names, including dotfiles, by fd glob and smart case.
+
+        Listing a name does not authorize reading or changing its contents.
+        """
         return run_async_sync(lambda: afind_files(pattern, runtime, path, limit, timeout))
 
     async def afind_files(pattern: str, runtime: ToolRuntime[dict, dict], path: str = '.',
