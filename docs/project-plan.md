@@ -1,5 +1,7 @@
 # Naiyue Test Agent：项目设计记录
 
+2026-10-20发行范围更新：用户确认后续取消Intel macOS，仅保留macOS Apple Silicon、Linux x86_64/ARM64、Windows x64四目标。构建/CI/完整发行检查统一消费目标配置，当前依赖版本保持；MCP本机门禁与其他原机证据分别见[Spec117-08](specs/117-08-mcp-delivery-verification.md)。下方“五平台”条目为对应历史时点。
+
 2026-10-18当前补充：Spec111五项已实现，当前类/方法链和离线验收见[Spec111第13节](specs/111-remaining-conversation-features.md#13-实际实现调用链与验收2026-10-18)；Spec113统一字号/字重/行高/圆角已实现，原来记录的B3/U1/完整diff及收窄后的U12/U13不再是待实施事项。Spec112的PyPI/nyt/五平台构建与CI已接线，源外macOS ARM64候选安装已验，其他原机、远端CI及正式发布分别核对。用户本轮授权将三项当前成果分别提交并统一push到origin/main，不创建版本标签或发布PyPI。下面条目保留各阶段时点。
 
 2026-10-18当前：[Spec103纯前端连续分片](specs/103-frontend-completion.md#5-实际实现与验收2026-10-18)已完成现有Edit差异、模型页头与阈值提示、有界重连、可选日期视图、共享子实例入口、三按钮审批和浅/深/系统主题；此前GFM/流式Markdown/代码块/工作区短标签保持。前端35文件280项、TS/Vite523模块及本批后端快照2825项通过，真实1440/375离线页面验收通过，0次供应商请求。B3自动标题、U1请求归属和完整Write/Edit投影仍需后端方案，U12/U13独立；Spec110并行清理的验收另列，checkpoint修剪/两种重试/原机/PyPI范围保持。

@@ -45,7 +45,7 @@ python -m scripts.build_release --target macos-arm64 --output build/candidate
 python -m scripts.verify_wheel_install --wheel-dir build/candidate --output build/install-smoke.json
 ```
 
-目标名：`macos-arm64`、`macos-x86_64`、`linux-x86_64`、`linux-arm64`、`windows-x86_64`。同平台安装测试必须在对应 OS/架构运行；交叉构建与归档检查不能代替运行验证。已存在的同名产物不会被覆盖，需要选择新的候选目录。
+目标名：`macos-arm64`、`linux-x86_64`、`linux-arm64`、`windows-x86_64`。同平台安装测试必须在对应 OS/架构运行；交叉构建与归档检查不能代替运行验证。已存在的同名产物不会被覆盖，需要选择新的候选目录。
 
 构建器只从 `release/native-tools.json` 指定的上游资产下载，校验固定 SHA-256；在全新暂存树复制 Python、前端和许可证；成品检查按白名单拒绝额外文件。Linux 原生资源检查静态 ELF，macOS 从 Mach-O 最低系统版本生成标签；平台 wheel 不绑定 CPython ABI。
 
@@ -53,14 +53,28 @@ python -m scripts.verify_wheel_install --wheel-dir build/candidate --output buil
 
 ## 每次发版
 
-1. 核对工作区、变更范围和目标提交。其他会话仍在改代码时，候选包仅作探针；等改动稳定后统一验证。五份 wheel 的 Python/前端指纹必须一致。
+1. 核对工作区、变更范围和目标提交。其他会话仍在改代码时，候选包仅作探针；等改动稳定后统一验证。四份 wheel 的 Python/前端指纹必须一致。
 2. 修改唯一 Python 版本事实 `naiyue_test_agent.__version__`；pyproject 从该值读取版本。前端 package.json 是独立构建项目的版本，不作为 Python 发布版本来源。
 3. 跑全部测试、前端构建与安装 smoke，提交并确认主分支 CI 成功。
 4. 在确认的提交上创建并推送对应标签，例如 `v0.1.0`。此步骤会正式上传 PyPI，须核对授权、提交和产物后执行。
-5. Publish 自动调用 CI：校验标签、全部后端测试、前端测试/构建、五平台安装 smoke、集中白名单/版本/源码指纹检查全部通过，才上传五份 wheel。
-6. 发布后的五平台 job 查询 PyPI 元数据、核对发行文件 SHA-256、下载正式文件，并通过普通 PyPI 安装再次验证产品链路。
+5. Publish 自动调用 CI：校验标签、全部后端测试、前端测试/构建、四平台安装 smoke、集中白名单/版本/源码指纹检查全部通过，才上传四份 wheel。
+6. 发布后的四平台 job 查询 PyPI 元数据、核对发行文件 SHA-256、下载正式文件，并通过普通 PyPI 安装再次验证产品链路。
 
-CI 安装 smoke 使用全新 venv、临时 home/workspace/SQLite、源码外 cwd 和移除系统工具的 PATH。验证命令、包内 rg/fd、生产 Find/Grep、前端/API、审批恢复、SQLite 重开与 CLI；使用确定性模型，模型网络请求为零。报告作为 Actions artifact 保存，不进入产品包。
+CI 安装 smoke 使用全新 venv、临时 home/workspace/SQLite、源码外 cwd 和移除系统工具的 PATH。验证命令、包内 rg/fd、生产 Find/Grep、前端/API、审批恢复、SQLite 重开与 CLI；使用确定性模型，模型网络请求为零。报告作为 Actions artifact 保存，不进入产品包。安装检查现在要求本包及全部依赖均以wheel安装
+（`--only-binary=:all:`），不允许CI预装编译器掩盖用户机器缺少二进制依赖的问题。
+
+MCP专项通过原安装worker的必经路径运行，复用离线模型与checkout中的
+`tests/mcp_discovery_fixture.py`，不引入pytest到安装环境。检查禁用路径零MCP IO、
+只读list零工具调用、运行中新增/选用/审批、根与子实例复用、普通失败与结果未知、
+停用旧待审、TTL重建及冷历史零重放，报告写入`install.mcp`。任一断言失败均阻断
+安装检查，原生工具/Web/CLI/内置工具检查保持。
+
+2026-10-20用户确认取消Intel macOS，当前发行矩阵仅保留上述四目标；
+`release/native-tools.json`同时决定构建目标、CI安装和发布后安装范围。完整发行
+检查要求恰好包含这四个不同目标，拒绝额外旧Intel包、缺包及重复包，并继续检查
+版本与应用源码指纹一致。既有依赖版本保持；历史已发布的Intel文件不受影响。
+四目标二进制标签解析、本机macARM安装与MCP主链已验证，Linux双架构及Windows
+原机结果待本批提交的CI。详见[08交付记录](specs/117-08-mcp-delivery-verification.md)。
 
 ## 失败处理
 

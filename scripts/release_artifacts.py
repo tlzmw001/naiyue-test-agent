@@ -176,8 +176,9 @@ def inspect_wheel(path):
 def inspect_release(wheels, version):
     from scripts.native_assets import load_config
     reports = [inspect_wheel(path) for path in wheels]
-    if len(reports) != 5 or {item['target'] for item in reports} != set(load_config()['targets']):
-        raise ValueError('A release requires exactly five distinct platform wheels')
+    targets = set(load_config()['targets'])
+    if len(reports) != len(targets) or {item['target'] for item in reports} != targets:
+        raise ValueError(f'A release requires exactly {len(targets)} distinct platform wheels')
     if any(item['version'] != version for item in reports):
         raise ValueError('Release artifact version mismatch')
     if len({item['application_sha256'] for item in reports}) != 1:

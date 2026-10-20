@@ -7,13 +7,6 @@
       "triple": "aarch64-apple-darwin",
       "wheel_tag": null
     },
-    "macos-x86_64": {
-      "os": "macos",
-      "machine": "x86_64",
-      "runner": "macos-15-intel",
-      "triple": "x86_64-apple-darwin",
-      "wheel_tag": null
-    },
     "linux-x86_64": {
       "os": "linux",
       "machine": "x86_64",
@@ -50,11 +43,6 @@
           "sha256": "3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4",
           "binary": "ripgrep-15.2.0-aarch64-apple-darwin/rg"
         },
-        "macos-x86_64": {
-          "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-apple-darwin.tar.gz",
-          "sha256": "af7825fcc69a2afc7a7aea55fc9af90e26421d8f20fe59df32e233c0b8a231c1",
-          "binary": "ripgrep-15.2.0-x86_64-apple-darwin/rg"
-        },
         "linux-x86_64": {
           "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz",
           "sha256": "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c",
@@ -83,11 +71,6 @@
           "url": "https://github.com/sharkdp/fd/releases/download/v10.5.0/fd-v10.5.0-aarch64-apple-darwin.tar.gz",
           "sha256": "b67e1836c468e42e411984b56e52fa7abec08c2bd22c867398e7cc134aac5e12",
           "binary": "fd-v10.5.0-aarch64-apple-darwin/fd"
-        },
-        "macos-x86_64": {
-          "url": "https://github.com/sharkdp/fd/releases/download/v10.5.0/fd-v10.5.0-x86_64-apple-darwin.tar.gz",
-          "sha256": "7e31028c62c6955877735d0406807aa484c2a5e6f86235a59e26c29c301da590",
-          "binary": "fd-v10.5.0-x86_64-apple-darwin/fd"
         },
         "linux-x86_64": {
           "url": "https://github.com/sharkdp/fd/releases/download/v10.5.0/fd-v10.5.0-x86_64-unknown-linux-musl.tar.gz",

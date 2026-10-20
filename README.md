@@ -8,6 +8,7 @@
 - 工具：Read、Ls、Find、Grep、Write、Edit、Bash、PowerShell，以及一层前台子 Agent。
 - `0.1.1` 新增 `aitest_kit`、百度/Tavily 回退的 `web_search` 和 `web_fetch`，配置见[工具说明](docs/aitest-web-tools.md)。
 - Find/Grep 使用安装包内的 `fd` / `rg`；前端已经构建，使用发行包无需 Node.js 或 npm。
+- 当前源码支持 `nyt mcp list` 只读发现及根/子 Agent 调用本地/远程 MCP 工具，复用活动工具选择、审批与会话连接，支持按服务显式开启空闲回收；应用运行中可刷新配置以新增服务、调整名单和启停，CLI/Web显示来源、结果状态和归档位置，重启保留历史、旧 MCP 待审需取消后重新发起，见[MCP客户端配置](docs/mcp-client.md)。此项尚未发布。
 
 ## 安装
 
@@ -28,7 +29,7 @@ python -m pip install naiyue-test-agent
 nyt --version
 ```
 
-首版发行目标：macOS Apple Silicon / Intel、Linux x86_64 / ARM64、Windows x64。每个平台分别提供 wheel，pip 自动选择。Linux 目标为 glibc 环境；Windows ARM 和 Alpine 暂未列入支持范围。macOS 标签标识内置程序的最低系统要求，Python 和第三方依赖可能有更高要求。跨平台运行结果以相应 CI 为准。
+当前发行目标：macOS Apple Silicon、Linux x86_64 / ARM64、Windows x64。每个平台分别提供 wheel，pip 自动选择。Linux 目标为 glibc 环境；Intel Mac、Windows ARM 和 Alpine 暂未列入支持范围。macOS 标签标识内置程序的最低系统要求，Python 和第三方依赖可能有更高要求。跨平台运行结果以相应 CI 为准。
 
 ## 配置模型
 
@@ -113,7 +114,7 @@ python -m pip install --upgrade naiyue-test-agent
 
 从源码开发时安装 `requirements.txt` 和 `requirements-web.txt`，并在 PATH 中提供 `rg` / `fd`。前端开发使用仓库 `frontend/` 下的 npm 配置。源码入口仍支持 `python -m naiyue_test_agent.web` 和 `python -m naiyue_test_agent.application.cli`。
 
-发布维护、五平台构建和 PyPI 首次授权步骤见 [发行指南](https://github.com/tlzmw001/naiyue-test-agent/blob/main/docs/releasing.md)。项目设计与开发记录保留在 GitHub 仓库，不进入 wheel。
+发布维护、四平台构建和 PyPI 首次授权步骤见 [发行指南](https://github.com/tlzmw001/naiyue-test-agent/blob/main/docs/releasing.md)。项目设计与开发记录保留在 GitHub 仓库，不进入 wheel。
 
 ## 许可证
 

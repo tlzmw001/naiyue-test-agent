@@ -1,5 +1,7 @@
 # Spec112：PyPI 本地 Web、nyt 与五平台发行
 
+版本边界（2026-10-20）：本文保留原五平台发行的设计和历史验收。用户已确认后续取消Intel macOS，当前四平台范围及门禁见[Spec117-08](117-08-mcp-delivery-verification.md#用户确认四平台发行范围2026-10-20)和[发行指南](../releasing.md)，以release/native-tools.json为当前目标事实；此决定不改历史发布文件，也不复用本文历史发版授权发布当前工作树。
+
 ## 1. 状态与目标
 
 2026-10-18 用户授权：先写 Spec，再实现打包、nyt、macOS/Linux/Windows 五平台 CI/CD；项目自身沿用 MIT，重写安装用户 README，发布包仅包含必要运行内容。

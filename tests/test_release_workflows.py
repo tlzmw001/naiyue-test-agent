@@ -39,7 +39,12 @@ def test_inline_python_runs_from_a_runner_script_outside_checkout(tmp_path, job)
     assert result.returncode == 0, result.stderr
     if job == 'targets':
         matrix = json.loads((tmp_path / 'outputs').read_text().removeprefix('matrix='))
-        assert len(matrix['include']) == 5
+        assert matrix['include'] == [
+            {'target': 'macos-arm64', 'runner': 'macos-14'},
+            {'target': 'linux-x86_64', 'runner': 'ubuntu-22.04'},
+            {'target': 'linux-arm64', 'runner': 'ubuntu-24.04-arm'},
+            {'target': 'windows-x86_64', 'runner': 'windows-2022'},
+        ]
     else:
         assert (workspace / 'build/frontend-assets/web/index.html').read_text() == '<html></html>'
 
@@ -80,9 +85,9 @@ def test_complete_release_rejects_missing_and_duplicate_targets(monkeypatch):
     monkeypatch.setattr(release_artifacts, 'inspect_wheel', lambda p: {
         'target': p.name, 'version': '0.1.0', 'application_sha256': 'same-source'})
     release_artifacts.inspect_release(paths, '0.1.0')
-    with pytest.raises(ValueError, match='five'):
+    with pytest.raises(ValueError, match='distinct platform wheels'):
         release_artifacts.inspect_release(paths[:-1], '0.1.0')
-    with pytest.raises(ValueError, match='five'):
+    with pytest.raises(ValueError, match='distinct platform wheels'):
         release_artifacts.inspect_release([*paths[:-1], paths[0]], '0.1.0')
     with pytest.raises(ValueError, match='version'):
         release_artifacts.inspect_release(paths, '0.2.0')
@@ -95,3 +100,22 @@ def test_complete_release_rejects_mixed_application_snapshots(monkeypatch):
         'target': p.name, 'version': '0.1.0', 'application_sha256': p.name})
     with pytest.raises(ValueError, match='source'):
         release_artifacts.inspect_release([Path(name) for name in targets], '0.1.0')
+
+
+def test_release_targets_and_native_assets_exclude_intel_macos():
+    from scripts.native_assets import load_config
+    config = load_config()
+    targets = {'macos-arm64', 'linux-x86_64', 'linux-arm64', 'windows-x86_64'}
+    assert set(config['targets']) == targets
+    for tool in config['tools'].values():
+        assert set(tool['assets']) == targets
+
+
+def test_complete_release_rejects_extra_old_intel_wheel(monkeypatch):
+    from scripts import release_artifacts
+    paths = [Path(name) for name in ('macos-arm64', 'linux-x86_64', 'linux-arm64', 'windows-x86_64')]
+    monkeypatch.setattr(release_artifacts, 'inspect_wheel', lambda p: {
+        'target': p.name, 'version': '0.1.0', 'application_sha256': 'same-source'})
+    release_artifacts.inspect_release(paths, '0.1.0')
+    with pytest.raises(ValueError, match='distinct platform wheels'):
+        release_artifacts.inspect_release([*paths, Path('macos-x86_64')], '0.1.0')
