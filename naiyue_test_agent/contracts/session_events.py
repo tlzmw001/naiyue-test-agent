@@ -91,6 +91,8 @@ class ApprovalItemData:
     tool_name: str
     target: str
     workspace: str | None = None
+    remember_scope: Literal['tool'] | None = None
+    mcp_source: dict | None = None
 
 
 @dataclass(frozen=True)

@@ -63,6 +63,9 @@ class CliEventDisplay:
             self.write(f'状态：{recovery["kind"]}；原因：{recovery["reason"]}')
             for message in history['messages']:
                 self.write(f'[{message.type}]\n{content_text(message.content)}')
+                if message.type == 'tool':
+                    from naiyue_test_agent.mcp_client.presentation import result_projection
+                    self._mcp_result(result_projection(message.artifact, name=message.name))
                 if isinstance(message, AIMessage):
                     for call in message.tool_calls:
                         self.write(f'已保存工具请求：{call["name"]}（{call["id"]}）\n'
@@ -201,6 +204,8 @@ class CliEventDisplay:
         identity = row.get('id')
         content = content_text(row.get('content'))
         fingerprint = hashlib.sha256(content.encode('utf-8')).hexdigest()
+        if row.get('type') == 'tool' and row.get('mcp_result'):
+            fingerprint = hashlib.sha256(json.dumps([content, row['mcp_result']], sort_keys=True).encode()).hexdigest()
         if row.get('type') == 'ai':
             if content.strip() and (revised or self._texts.get(identity) != fingerprint):
                 prefix = ('失败后状态中的助手消息：\n' if visibility == 'recovery_view' else '')
@@ -221,11 +226,26 @@ class CliEventDisplay:
                     self.write(f'工具请求：{call.get("name", "工具")}')
                     self._requested_tools.add(call_id)
                     self._tools[call_id] = call.get('name', '工具')
-        elif row.get('type') == 'tool' and row.get('status') == 'error' and content.strip():
+        elif row.get('type') == 'tool':
             if self._texts.get(identity) != fingerprint:
-                name = row.get('name') or self._tools.get(row.get('tool_call_id'), '工具')
-                self.write(f'工具 {name} 的错误说明：\n{content}')
+                self._mcp_result(row.get('mcp_result'))
+                if row.get('status') == 'error' and content.strip():
+                    name = row.get('name') or self._tools.get(row.get('tool_call_id'), '工具')
+                    self.write(f'工具 {name} 的错误说明：\n{content}')
                 self._texts[identity] = fingerprint
+
+    def _mcp_result(self, result):
+        if not result:
+            return
+        labels = {'success': '成功', 'tool_error': '工具返回错误', 'not_executed': '未执行',
+                  'outcome_unknown': '结果未知，请核对远端副作用；未自动重试', 'unsupported_result': '返回内容暂不支持'}
+        source = result['source']
+        self.write(f"MCP {source['server_id']}/{source['remote_tool']}：{labels[result['outcome']]}")
+        if result.get('truncated'):
+            status = '完整' if result.get('archive_complete') else '不完整或不可用'
+            self.write(f"结果已截断；归档{status}" + (f"（{result['archive_reason']}）" if result.get('archive_reason') else ''))
+            for key, path in result.get('archive_paths', {}).items():
+                self.write(f'归档 {key}：{path}')
 
     def _finish(self, data):
         if self._terminal:

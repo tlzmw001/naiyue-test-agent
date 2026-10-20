@@ -3,33 +3,63 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 import re
+import inspect
 from threading import Lock
-from typing import Literal
+from typing import Literal, get_origin, get_type_hints
 
 from langchain_core.tools import BaseTool
+from langchain.tools import ToolRuntime
 from pydantic import BaseModel
 from .permissions import ToolPermission
+from .json_schema import JsonInputContract
 
 
 @dataclass(frozen=True)
 class ToolSpec:
     tool: BaseTool
-    input_schema: type[BaseModel]
+    input_schema: type[BaseModel] | dict
     execution_mode: Literal['parallel', 'sequential'] = 'parallel'
     side_effects: Literal['read_only', 'may_mutate', 'unknown'] = 'unknown'
     prompt_snippet: str = ''
     prompt_guidelines: tuple[str, ...] = ()
     permissions: object = field(default_factory=ToolPermission)
+    _json_input: JsonInputContract | None = field(default=None, init=False, repr=False, compare=False)
+
+    def _checked_json_input(self) -> JsonInputContract:
+        contract = self._json_input
+        if contract is None:
+            raise ValueError('JSON schema tool must be registered before validation')
+        if self.input_schema != contract.schema or self.tool.args_schema != contract.schema:
+            raise ValueError('Registered tool JSON schema changed')
+        return contract
 
     def validate_input(self, args):
+        if isinstance(self.input_schema, dict):
+            return self._checked_json_input().validate(args)
         # Runtime-injected fields are overwritten by ToolNode, including any
         # model-supplied value. Match that boundary before permission preparation.
         injected = set(self.tool.args_schema.model_fields) - set(self.input_schema.model_fields)
         return self.input_schema.model_validate({key: value for key, value in args.items() if key not in injected})
 
 
-def _validate_input_schema(item: BaseTool, public: type[BaseModel]) -> None:
+def _validate_input_schema(item: BaseTool, public: type[BaseModel] | dict):
     execution = item.args_schema
+    if isinstance(public, dict):
+        if not isinstance(execution, dict) or execution != public:
+            raise ValueError('Tool public and execution JSON schema must match')
+        callback = getattr(item, 'coroutine', None)
+        if not inspect.iscoroutinefunction(callback) or getattr(item, 'func', None) is not None:
+            raise ValueError('JSON schema tools require an async execution function')
+        annotation = get_type_hints(callback, include_extras=True).get('runtime')
+        if annotation is not ToolRuntime and get_origin(annotation) is not ToolRuntime:
+            raise ValueError('JSON schema tools require an injected runtime: ToolRuntime')
+        parameters = inspect.signature(callback).parameters
+        keyword_arguments = {p.name for p in parameters.values() if p.kind == inspect.Parameter.VAR_KEYWORD}
+        if (len(keyword_arguments) != 1 or set(parameters) != {'runtime', *keyword_arguments}
+                or parameters['runtime'].kind not in (inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                                                      inspect.Parameter.KEYWORD_ONLY)):
+            raise ValueError('JSON schema tools must take runtime and **arguments')
+        return JsonInputContract(public)
     if (not isinstance(public, type) or not issubclass(public, BaseModel)
             or not isinstance(execution, type) or not issubclass(execution, public)):
         raise ValueError('Tool input schema must be the execution model or its public base')
@@ -59,7 +89,7 @@ def _validate_input_schema(item: BaseTool, public: type[BaseModel]) -> None:
                 raise ValueError('Tool input and execution schema validators must match')
 
 
-def _validate_spec(spec: ToolSpec) -> None:
+def _validate_spec(spec: ToolSpec):
     if not isinstance(spec, ToolSpec):
         raise ValueError('Tool registration requires ToolSpec')
     item = spec.tool
@@ -81,13 +111,18 @@ def _validate_spec(spec: ToolSpec) -> None:
         raise ValueError('Use ToolException for public feedback; handle_tool_error must be disabled.')
     if item.return_direct or item.response_format not in ('content', 'content_and_artifact'):
         raise ValueError('Unsupported tool result or routing contract')
-    _validate_input_schema(item, spec.input_schema)
+    if spec._json_input is not None:
+        spec._checked_json_input()
+    contract = _validate_input_schema(item, spec.input_schema)
     for name in ('prepare', 'default_decision'):
-        import inspect
         callback = getattr(spec.permissions, name, None)
         if not callable(callback) or inspect.iscoroutinefunction(callback):
             raise ValueError('Tool permission callbacks must be synchronous')
     path_field = getattr(spec.permissions, 'path_field', None)
+    if contract is not None:
+        if not isinstance(spec.permissions, ToolPermission) or path_field is not None:
+            raise ValueError('JSON schema tools support tool-level permissions only')
+        return contract
     if path_field is not None and path_field not in spec.input_schema.model_fields:
         raise ValueError('File permission path field must be a public argument')
 
@@ -100,13 +135,18 @@ class ToolRegistry:
         self._lock = Lock()
 
     def register(self, spec: ToolSpec, *, permission_settings=None) -> None:
-        _validate_spec(spec)
+        contract = _validate_spec(spec)
         with self._lock:
             if spec.tool.name in self._specs:
                 raise ValueError('Duplicate tool name in registration')
             if permission_settings is not None:
                 from .permission_rules import validate_permission_rules
                 validate_permission_rules(permission_settings, (*self._specs.values(), spec))
+            if contract is not None:
+                from copy import deepcopy
+                object.__setattr__(spec, 'input_schema', deepcopy(contract.schema))
+                spec.tool.args_schema = deepcopy(contract.schema)
+                object.__setattr__(spec, '_json_input', contract)
             self._specs[spec.tool.name] = spec
 
     def get(self, name: str) -> ToolSpec:
@@ -114,6 +154,31 @@ class ToolRegistry:
             if name not in self._specs:
                 raise ValueError('Unknown tool name')
             return self._specs[name]
+
+    def publish_mcp_tools(self, specs, *, permission_settings):
+        """Validate the complete service update before exposing any definition."""
+        from naiyue_test_agent.mcp_client.tools import MCPPermission
+        contracts = [_validate_spec(spec) for spec in specs]
+        if any(not isinstance(spec.permissions, MCPPermission) for spec in specs):
+            raise ValueError('MCP publication requires MCP definitions')
+        if len({spec.tool.name for spec in specs}) != len(specs):
+            raise ValueError('Duplicate MCP tool name')
+        with self._lock:
+            for spec in specs:
+                old = self._specs.get(spec.tool.name)
+                if old is not None and (not isinstance(old.permissions, MCPPermission)
+                        or old.permissions.server_id != spec.permissions.server_id):
+                    raise ValueError('MCP registration conflicts with another tool')
+            candidate = {**self._specs, **{spec.tool.name: spec for spec in specs}}
+            from .permission_rules import validate_permission_rules
+            validate_permission_rules(permission_settings, tuple(candidate.values()))
+            for spec, contract in zip(specs, contracts, strict=True):
+                if contract is not None:
+                    from copy import deepcopy
+                    object.__setattr__(spec, 'input_schema', deepcopy(contract.schema))
+                    spec.tool.args_schema = deepcopy(contract.schema)
+                    object.__setattr__(spec, '_json_input', contract)
+            self._specs = candidate
 
     def select(self, names: Sequence[str]) -> tuple[ToolSpec, ...]:
         if not isinstance(names, (list, tuple)) or any(not isinstance(name, str) for name in names):
@@ -129,3 +194,9 @@ class ToolRegistry:
     def names(self) -> tuple[str, ...]:
         with self._lock:
             return tuple(self._specs)
+
+    def select_available(self, names):
+        """Prepare new requests; saved batches must continue using select()."""
+        from naiyue_test_agent.mcp_client.tools import MCPPermission
+        return tuple(spec for spec in self.select(names) if not isinstance(spec.permissions, MCPPermission)
+                     or spec.permissions.unavailable_reason() is None)

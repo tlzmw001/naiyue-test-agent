@@ -280,7 +280,7 @@ export function useConversation(api: WebApi) {
       controlsRevision.current++;
       if (selected.current === sid) {
         setSession(previous => previous?.session_id === sid ? { ...previous, ...confirmed } : previous);
-        setNotice('active_tools' in change ? '工具选择已保存，下一次模型请求生效。' : 'permission_mode' in change ?
+        setNotice('active_tools' in change ? '' : 'permission_mode' in change ?
           '权限模式已保存，下一批工具调用生效；当前审批保持原样。' : '推理强度已保存，下一次模型请求生效。');
       }
       try { await refreshSessions(); }

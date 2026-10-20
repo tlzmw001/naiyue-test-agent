@@ -38,6 +38,10 @@ def _snapshot(message, visibility, *, reply_id=None):
         change = change_projection(message.artifact)
         if change is not None:
             row['file_change'] = change
+        from naiyue_test_agent.mcp_client.presentation import result_projection
+        mcp = result_projection(message.artifact, name=message.name)
+        if mcp is not None:
+            row['mcp_result'] = mcp
         row.update(tool_call_id=message.tool_call_id, status=message.status)
     if isinstance(message, ChatMessage):
         row['role'] = message.role

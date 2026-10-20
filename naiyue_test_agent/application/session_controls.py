@@ -238,7 +238,8 @@ class SessionControlMixin:
                 tool_registry=self._tool_registry, permission_settings=self._permission_settings,
                 persistence=self._persistence, invoke_subagent=self.ainvoke_subagent,
                 registered_subagents=self.get_registered_subagents, progress_settings=self._progress_settings,
-                subagent_result_settings=getattr(self, '_subagent_result_settings', None))
+                subagent_result_settings=getattr(self, '_subagent_result_settings', None),
+                mcp_resources=self.mcp_resources)
             self._sessions[session_id] = session
         try:
             if self._persistence is not None:
@@ -282,7 +283,8 @@ class SessionControlMixin:
                 tool_registry=self._tool_registry, permission_settings=self._permission_settings,
                 persistence=self._persistence, invoke_subagent=self.ainvoke_subagent,
                 registered_subagents=self.get_registered_subagents, progress_settings=self._progress_settings,
-                subagent_result_settings=getattr(self, '_subagent_result_settings', None))
+                subagent_result_settings=getattr(self, '_subagent_result_settings', None),
+                mcp_resources=self.mcp_resources)
 
     @contextmanager
     def deletion_guard(self, session_id):

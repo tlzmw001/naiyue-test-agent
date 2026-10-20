@@ -2,6 +2,7 @@
 
 import logging
 import asyncio
+import sys
 from contextvars import Context
 from uuid import uuid4
 
@@ -128,9 +129,19 @@ class AgentSessionSubagents:
                 instance['status'] = 'failed'
             raise
         finally:
-            self.release_live_approval(instance)
-            instance.pop('driver', None)
-            instance['settled'] = driver.done()
+            primary = sys.exception()
+            try:
+                if self._mcp_resources is not None:
+                    await self._mcp_resources.release_instance(self.session_id, instance['agent_path'])
+            except BaseException as error:
+                logger.error('subagent_mcp_cleanup_failed error_type=%s', safe_error_type(error))
+                if primary is None:
+                    instance['status'] = 'failed'
+                    raise
+            finally:
+                self.release_live_approval(instance)
+                instance.pop('driver', None)
+                instance['settled'] = driver.done()
 
     async def _subagent_steps(self, graph, instance):
         resume, grants = None, None

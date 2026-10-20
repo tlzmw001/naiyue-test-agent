@@ -61,3 +61,20 @@ zstandard==0.25.0
 aiosqlite==0.22.1
 langgraph-checkpoint-sqlite==3.1.1
 sqlite-vec==0.1.9
+
+# JSON Schema tool input contracts (MCP-01).
+attrs==26.1.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+referencing==0.37.0
+rpds-py==2026.9.1
+
+# Official MCP client (MCP-02).
+mcp==2.3.0
+mcp-types==2.3.0
+PyJWT==2.15.1
+cryptography==50.0.2
+cffi==2.1.1
+python-multipart==0.0.32
+sse-starlette==3.5.0
+pycparser==3.11

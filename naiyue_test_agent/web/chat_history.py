@@ -112,6 +112,11 @@ def record_view(record):
                 if change is not None:
                     value['file_change'] = change
             value.update(tool_call_id=record['tool_call_id'], name=record['name'], status=record['status'])
+            if record.get('mcp_artifact_json'):
+                from naiyue_test_agent.mcp_client.presentation import result_projection
+                mcp = result_projection(json.loads(record['mcp_artifact_json']), name=record['name'])
+                if mcp is not None:
+                    value['mcp_result'] = mcp
         elif record['message_type'] == 'ai':
             value['tool_calls'] = [{**call, 'args': {}} for call in record.get('calls', [])]
             value['arguments_truncated'] = bool(record['calls'])

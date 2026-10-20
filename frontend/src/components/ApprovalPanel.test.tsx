@@ -6,6 +6,13 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const requests = [{ approval_id: 'one', tool_call_id: 'one', tool_name: 'read', target: '/outside/one' },
   { approval_id: 'two', tool_call_id: 'two', tool_name: 'read', target: '/outside/two' }];
 const batch = { approval_batch_id: 'batch', kind: 'paused_root' as const, agent_path: 'root', agent: null, origin_run_id: 'r', items: requests };
+it('labels MCP tool-wide session trust explicitly and submits the same row identity', () => {
+  const submit = vi.fn();
+  render(<ApprovalPanel batch={{ ...batch, items: [{ ...requests[0], tool_name: 'mcp__local__echo', remember_scope: 'tool' }] }}
+    disabled={false} submit={submit} />);
+  fireEvent.click(screen.getByRole('button', { name: '本会话始终允许此工具 1' }));
+  expect(submit).toHaveBeenCalledExactlyOnceWith([{ approval_id: 'one', decision: 'approve' }], ['one']);
+});
 it('requires an explicit decision for every call and submits one ordered batch', () => {
   const submit = vi.fn();
   render(<ApprovalPanel batch={batch} disabled={false} submit={submit} />);

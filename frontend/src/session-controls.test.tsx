@@ -64,10 +64,11 @@ it('keeps mode and tools inside the composer, and creates a session without send
 it('selects the registered tools for the current main agent and preserves a failed selection', async () => {
   const { api } = setup();
   fireEvent.click(await screen.findByRole('button', { name: /工具.*1/ }));
-  expect(screen.getByText(/不修改子 Agent 的角色工具集合/)).toBeTruthy();
+  expect(screen.getByText('下一次模型调用生效。')).toBeTruthy();
   fireEvent.click(screen.getByRole('checkbox', { name: /bash/ }));
   await waitFor(() => expect(api.selectTools).toHaveBeenCalledExactlyOnceWith('s', ['read', 'bash']));
   await waitFor(() => expect((screen.getByRole('checkbox', { name: /bash/ }) as HTMLInputElement).checked).toBe(true));
+  expect(screen.queryByText(/工具选择已保存/)).toBeNull();
   vi.mocked(api.selectTools).mockRejectedValueOnce(new ApiError('invalid_tool_selection'));
   fireEvent.click(screen.getByRole('checkbox', { name: /read/ }));
   await screen.findByText(/工具选择无效/);
@@ -181,5 +182,42 @@ it.each(['follow_up', 'steering'] as const)('uses %s for a running main agent wi
   if (kind === 'steering') fireEvent.change(selector, { target: { value: kind } });
   fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
   await waitFor(() => expect(api.control).toHaveBeenCalledExactlyOnceWith('r', kind, 'next task'));
+  expect(api.start).not.toHaveBeenCalled();
+});
+
+it('refreshes MCP before loading the new tools through the existing refresh button', async () => {
+  const { api } = setup();
+  let finish!: (value: { servers: [] }) => void;
+  const refresh = vi.spyOn(api, 'refreshMcp').mockReturnValue(new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(await screen.findByRole('button', { name: /工具.*1/ }));
+  expect(screen.queryByRole('button', { name: '刷新 MCP 配置' })).toBeNull();
+  expect(refresh).not.toHaveBeenCalled();
+  expect(api.sessionControlOptions).toHaveBeenCalledOnce();
+  const old = await vi.mocked(api.sessionControlOptions).mock.results[0].value;
+  vi.mocked(api.sessionControlOptions).mockResolvedValue({ ...old,
+    tools: [...old.tools, { name: 'mcp__local__echo', description: 'external' }] });
+  fireEvent.click(screen.getByRole('button', { name: '刷新工具与模式' }));
+  expect(refresh).toHaveBeenCalledOnce();
+  expect(api.sessionControlOptions).toHaveBeenCalledOnce();
+  finish({ servers: [] });
+  const checkbox = await screen.findByRole('checkbox', { name: /mcp__local__echo/ }) as HTMLInputElement;
+  expect(checkbox.checked).toBe(false);
+  expect(api.sessionControlOptions).toHaveBeenCalledTimes(2);
+  expect(api.create).not.toHaveBeenCalled();
+  expect(api.selectTools).not.toHaveBeenCalled();
+  expect(api.start).not.toHaveBeenCalled();
+  expect(screen.queryByText('MCP 配置刷新完成')).toBeNull();
+});
+
+it('still reloads effective tool options when MCP configuration refresh fails', async () => {
+  const { api } = setup();
+  vi.spyOn(api, 'refreshMcp').mockRejectedValue(new Error('PRIVATE'));
+  fireEvent.click(await screen.findByRole('button', { name: /工具.*1/ }));
+  fireEvent.click(screen.getByRole('button', { name: '刷新工具与模式' }));
+  await screen.findByText(/MCP 配置刷新失败/);
+  await waitFor(() => expect(api.sessionControlOptions).toHaveBeenCalledTimes(2));
+  expect(await screen.findByRole('checkbox', { name: /read/ })).toBeTruthy();
+  expect(screen.queryByText('PRIVATE')).toBeNull();
+  expect(api.create).not.toHaveBeenCalled();
   expect(api.start).not.toHaveBeenCalled();
 });

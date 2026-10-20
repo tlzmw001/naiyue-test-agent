@@ -59,6 +59,10 @@ def read_page(storage, session_id, thread_id, *, limit, body_bytes, preview_char
             'diff','','preview','','diff_truncated',json('true'),'preview_truncated',json('true'),
             'patch_omitted',json(CASE WHEN json_type(body_json,'$.data.artifact.patch')='text' THEN 'false' ELSE 'true' END))
         END AS file_change_json,
+        CASE WHEN json_type(body_json,'$.data.artifact')='object'
+            AND json_type(body_json,'$.data.artifact.source')='object'
+            AND length(CAST(json_remove(json_extract(body_json,'$.data.artifact'),'$.structured_content') AS BLOB))<=4096
+        THEN json_remove(json_extract(body_json,'$.data.artifact'),'$.structured_content') END AS mcp_artifact_json,
         json_extract(body_json,'$.data.tool_call_id') AS tool_call_id,
         json_extract(body_json,'$.data.name') AS name,json_extract(body_json,'$.data.status') AS status,
         kind FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? AND checkpoint_ns=? AND kind='message'

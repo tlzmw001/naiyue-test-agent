@@ -99,7 +99,7 @@ def main():
         install_report = root / 'pip-install.json'
         subprocess.run([str(python), '-m', 'pip', 'install', '--disable-pip-version-check',
             '--index-url', 'https://pypi.org/simple', '--report', str(install_report),
-            '--only-binary=naiyue-test-agent', *install], cwd=outside, env=env, check=True, timeout=300)
+            '--only-binary=:all:', *install], cwd=outside, env=env, check=True, timeout=300)
         verify_install_report(json.loads(install_report.read_text(encoding='utf-8')), info, from_pypi=args.from_pypi)
         subprocess.run([str(python), '-m', 'pip', 'check'], cwd=outside, env=env, check=True, timeout=30)
         nyt = bin_path / ('nyt.exe' if os.name == 'nt' else 'nyt')

@@ -76,6 +76,19 @@ class AsyncApplication:
         with self._owned_operation():
             self._sessions.register_tool(spec)
 
+    def get_mcp_status(self):
+        self._check_open()
+        resources = self._sessions.mcp_resources
+        return resources.server_status() if resources is not None else {'servers': []}
+
+    async def arefresh_mcp(self, settings_path=None):
+        with self._owned_operation():
+            from naiyue_test_agent.mcp_client.settings import load_mcp_settings
+            from naiyue_test_agent.mcp_client.refresh import refresh_mcp
+            settings = await run_blocking(load_mcp_settings, settings_path)
+            return await refresh_mcp(self._sessions.mcp_resources, self._tool_registry, settings,
+                borrow_mcp=self._sessions.borrow_mcp, permission_settings=self._sessions._permission_settings)
+
     async def aregister_subagent(self, spec):
         with self._owned_operation():
             self._sessions.register_subagent(spec)
@@ -280,18 +293,32 @@ class AsyncApplication:
             await iterator.aclose()
 
     async def _close_resources(self):
+        primary = None
         try:
             self._sessions.stop_loaded_sessions()
             # Nested operations are covered by their outer operation. No new ingress
             # can start after closing; these signals settle only after required IO.
-            await asyncio.gather(*tuple(self._operations))
-            results = await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
-            for result in results:
-                if isinstance(result, BaseException):
-                    logger.error('owned_run_failed error_type=%s', safe_error_type(result))
-            await self._catalog.aclose()
+            try:
+                if self._sessions.mcp_resources is not None:
+                    await self._sessions.mcp_resources.aclose()
+            finally:
+                await asyncio.gather(*tuple(self._operations))
+                results = await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
+                for result in results:
+                    if isinstance(result, BaseException):
+                        logger.error('owned_run_failed error_type=%s', safe_error_type(result))
+        except BaseException as error:
+            primary = error
+            raise
         finally:
-            self._closed = True
+            try:
+                await self._catalog.aclose()
+            except BaseException as error:
+                if primary is None:
+                    raise
+                logger.error('model_cleanup_secondary_failed error_type=%s', safe_error_type(error))
+            finally:
+                self._closed = True
 
     async def aclose(self):
         if asyncio.get_running_loop() is not self._loop:
@@ -310,18 +337,34 @@ class AsyncApplication:
 async def build_async_local_application(config_path, *, tools, system_prompt, response_format, initial_active_tools=None, settings=None):
     settings = settings if settings is not None else application.load_settings()
     registry = application.prepare_tool_registry(tools)
-    application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
     initial = registry.names() if initial_active_tools is None else initial_active_tools
-    registry.select(initial)
+    if not any(server.enabled for server in settings.mcp.servers.values()):
+        application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
+        registry.select(initial)
     catalog = await acquire_blocking(application.load_model_catalog, lambda item: item.aclose(), config_path)
+    resources = None
     try:
         await run_blocking(catalog.prepare_async_clients)
+        from naiyue_test_agent.mcp_client.resources import MCPSessionResources
+        resources = MCPSessionResources(settings.mcp, settings.network, output_settings=settings.tool_output)
+        from naiyue_test_agent.mcp_client.tools import register_mcp_tools
+        # Definitions precede SessionService; execution starts only after assembly.
+        def borrow_mcp(session_id, agent_path, server_id):
+            return sessions.borrow_mcp(session_id, agent_path, server_id)
+        await register_mcp_tools(registry, resources, settings.tool_output, borrow_mcp=borrow_mcp)
+        application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
+        registry.select(initial)
         sessions = application.SessionService(catalog, registry, initial_active_tools=initial, permission_settings=settings.permissions, progress_settings=settings.progress,
-            max_active_runs=settings.max_active_runs)
+            max_active_runs=settings.max_active_runs, mcp_resources=resources)
         agent = sessions.assemble_runtime(InMemorySaver(), system_prompt=system_prompt, response_format=response_format,
             subagents=settings.subagents, subagent_settings=settings.tools.subagent)
         return AsyncApplication(catalog, sessions, agent, registry, system_prompt=system_prompt)
     except BaseException:
+        if resources is not None:
+            try:
+                await await_settled(resources.aclose())
+            except BaseException as error:
+                logger.error('mcp_cleanup_secondary_failed error_type=%s', safe_error_type(error))
         try:
             await await_settled(catalog.aclose())
         except BaseException as error:

@@ -11,6 +11,7 @@ from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.tools import ToolException
 from langgraph.errors import GraphBubbleUp
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from naiyue_test_agent.tools.json_schema import JsonToolInputError
 from typing import Literal
 
 from naiyue_test_agent.tools.permission_rules import match_rules
@@ -229,6 +230,9 @@ def prepare_permission_call(call, spec, context, settings, session_allow):
     prepared = {'id': call['id'], 'name': call['name'], 'args': call['args']}
     try:
         args = spec.validate_input(call['args']).model_dump(mode='json')
+    except JsonToolInputError as error:
+        return {**prepared, 'validation': 'invalid',
+                'validation_feedback': f'Invalid {call["name"]} arguments at {error}'}
     except ValidationError:
         return {**prepared, 'validation': 'invalid'}
     prepared['validation'] = 'valid'

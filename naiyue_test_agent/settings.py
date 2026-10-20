@@ -7,6 +7,7 @@ import tomllib
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .config_paths import StorageSettings, get_agent_dir
+from .mcp_client.settings import MCPSettings
 from .tools.web_settings import NetworkSettings
 from .tools.permission_rules import PermissionSettings
 from .tools.subagent import SubAgentSpec
@@ -51,6 +52,7 @@ class AppSettings(BaseModel):
     web_event_cache_bytes: int = Field(default=4194304, gt=0)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     network: NetworkSettings = Field(default_factory=NetworkSettings)
+    mcp: MCPSettings = Field(default_factory=MCPSettings)
     tools: BuiltinToolSettings = Field(default_factory=BuiltinToolSettings)
     permissions: PermissionSettings = Field(default_factory=PermissionSettings)
     process: ProcessSettings = Field(default_factory=ProcessSettings)
@@ -94,8 +96,13 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
         logger.error('permission_settings_unavailable error_type=%s', type(error).__name__)
         raise ValueError('Permission settings could not be read or parsed') from error
-    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'tools', 'permissions', 'process', 'tool_output', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'network'}:
+    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'tools', 'permissions', 'process', 'tool_output', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'network', 'mcp'}:
         raise ValueError('Unknown runtime settings section')
+    try:
+        mcp = MCPSettings.model_validate(raw.get('mcp', {}))
+    except ValidationError:
+        logger.error('mcp_settings_invalid')
+        raise ValueError('MCP settings are invalid') from None
     try:
         network = NetworkSettings.model_validate(raw.get('network', {}))
     except ValidationError:
@@ -146,7 +153,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         logger.warning('diagnostic_settings_fallback reason=invalid')
         diagnostics = DiagnosticSettings()
     try:
-        return AppSettings(storage=storage, tools=tools, network=network, permissions=permissions, process=process, tool_output=tool_output,
+        return AppSettings(storage=storage, tools=tools, network=network, mcp=mcp, permissions=permissions, process=process, tool_output=tool_output,
                             progress=progress, usage_persistence=usage_persistence,
                             subagents=raw.get('subagents', ()), max_active_runs=max_active_runs,
                             web_event_cache_bytes=web_event_cache_bytes, diagnostics=diagnostics,

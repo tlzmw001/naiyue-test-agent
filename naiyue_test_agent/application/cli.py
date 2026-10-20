@@ -321,6 +321,10 @@ def main(argv: list[str] | None = None) -> int:
             if not line:
                 continue
             command, *rest = line.split(maxsplit=1)
+            if command in (':mcp-refresh', ':tools'):
+                from .cli_mcp import handle_mcp_command
+                handle_mcp_command(app, session_id, line, emit)
+                continue
             if command != ':outputs':
                 output_clear_plan = None
             if command == ':quit':

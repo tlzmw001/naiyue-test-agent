@@ -1,4 +1,5 @@
 import type { ContextView } from './contextTypes';
+import type { McpRefreshResult } from './types';
 import type { SessionUsageView } from './usageTypes';
 import { decodeSSE, responseBytes } from './sse';
 import { textContent } from './agentEvents';
@@ -56,6 +57,7 @@ export class WebApi {
     return this.json<{ run_id: string; session_id: string }>(`/sessions/${encodeURIComponent(id)}/compact`, 'POST', { request_id });
   }
   sessionControlOptions() { return this.json<SessionControlOptions>('/session-controls'); }
+  refreshMcp() { return this.json<McpRefreshResult>('/mcp/refresh', 'POST', {}); }
   skills() { return this.json<SkillCatalogView>('/skills'); }
   selectTools(id: string, active_tools: string[]) {
     return this.json<{ active_tools: string[] }>(`/sessions/${encodeURIComponent(id)}/tools`, 'PATCH', { active_tools });

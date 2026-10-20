@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { AgentView, ChangeLoader, MessageRow, ToolCallRow, ToolState } from '../types';
-import ToolResult from './ToolResult';
+import ToolResult, { mcpOutcomes } from './ToolResult';
 import styles from '../App.module.css';
 import card from './ToolCall.module.css';
 
@@ -45,7 +45,7 @@ export default function ToolCall({ call, result, phase, loadChange, contentContr
     not_executed: '未执行', exception: '执行异常', outcome_unknown: '结果待核对' };
   const delegation = agents.length ? agents.some(agent => agent.status === 'awaiting_approval')
     ? '等待子任务审批' : '等待子任务结果' : null;
-  const label = unconfirmed ? '结果未确认' : phase?.state === 'unconfirmed' ? '状态未确认' : phase?.outcome
+  const label = unconfirmed ? '结果未确认' : result?.mcp_result ? mcpOutcomes[result.mcp_result.outcome] : phase?.state === 'unconfirmed' ? '状态未确认' : phase?.outcome
     ? outcomes[phase.outcome] ?? '状态未确认' : active ? stopping ? '停止中' : activities[phase?.activity ?? ''] ?? '处理中'
       : result ? result.status === 'error' ? '错误结果' : '已有结果' : '待执行';
   const primary = call.name === 'bash' ? call.args.command : call.name === 'subagent' ? call.args.agent :

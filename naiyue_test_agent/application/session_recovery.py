@@ -158,6 +158,9 @@ def validate_saved_approval(settings, registry, row, snapshot, root, names):
         if not isinstance(row['run_id'], str) or not row['run_id']:
             raise ValueError('Missing source run')
         batch = snapshot.values['tool_execution']
+        if any('mcp' in call.get('subject', {}) for call in batch['calls']):
+            # A new owner cannot inherit an old connection's reviewed identity.
+            raise ValueError('Saved MCP calls require cancellation and a new reviewed call')
         settings.validate_mode(batch['mode'])
         if batch['mode'] not in ('Default', 'Auto') or batch.get('session_allow') != []:
             # Recursive tools also consume the batch's remembered scopes. A

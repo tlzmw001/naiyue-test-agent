@@ -126,6 +126,8 @@ class SessionPersistence:
             async for snapshot in agent.aget_state_history({'configurable': {'thread_id': row['thread_id']}}):
                 children.update(f'subagent:{item["agent_id"]}' for item in subagent_records(session_id, snapshot.values.get('messages', [])))
             children.update(self.sessions.child_thread_ids(session_id))
+            if self.sessions.mcp_resources is not None:
+                await self.sessions.mcp_resources.release_session(session_id)
             await run_blocking(self.storage.delete, session_id, children)
             with self._lock:
                 self.sessions.remove_session(session_id)
@@ -301,8 +303,12 @@ class SessionPersistence:
         if recovery['kind'] == 'unavailable':
             logger.warning('session_history_unavailable reason=%s', recovery['reason'])
         elif recovery['kind'] in ('interrupted_execution', 'pending_approval') and value['checkpoint_id']:
-            recovery['actions'] = (['restore_approval', 'continue'] if recovery['kind'] == 'pending_approval'
-                                   else ['continue'])
+            if (recovery['kind'] == 'pending_approval' and any(
+                    'mcp' in call.get('subject', {}) for call in snapshot.values['tool_execution']['calls'])):
+                recovery.update(reason='mcp_approval_requires_new_call', actions=['continue'])
+            else:
+                recovery['actions'] = (['restore_approval', 'continue'] if recovery['kind'] == 'pending_approval'
+                                       else ['continue'])
         value['recovery'] = recovery
         return value
 

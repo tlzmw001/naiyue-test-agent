@@ -136,7 +136,11 @@ def matches_session_allow(rules, subject):
         if (rule['tool_name'] == subject['tool_name'] and rule['operation'] == subject['operation']
                 and same_workspace
                 and rule['environment'] == subject['execution_environment']):
-            if 'resolved' in subject:
+            if 'mcp' in subject or 'mcp' in rule:
+                if (rule.get('mcp') == subject.get('mcp') and rule.get('mcp') is not None
+                        and rule.get('session_id') == subject.get('session_id')):
+                    return True
+            elif 'resolved' in subject:
                 if rule.get('target') is not None and permission_path(rule['target'], windows=windows) == permission_path(subject['resolved'], windows=windows):
                     return True
             elif 'command' in subject['args']:
@@ -150,7 +154,9 @@ def matches_session_allow(rules, subject):
 def remembered_rule(subject):
     rule = {'tool_name': subject['tool_name'], 'operation': subject['operation'],
             'workspace': subject.get('workspace'), 'environment': subject['execution_environment']}
-    if 'resolved' in subject:
+    if 'mcp' in subject:
+        rule.update(mcp=dict(subject['mcp']), session_id=subject['session_id'])
+    elif 'resolved' in subject:
         rule['target'] = subject['resolved']
     elif 'command' in subject['args']:
         rule['command'] = subject['args']['command']

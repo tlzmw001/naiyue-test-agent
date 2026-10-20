@@ -22,11 +22,12 @@ from .agent_session import AgentSession
 class SessionService(SessionControlMixin, SessionSubagentControls):
     """Locate sessions and coordinate admission; each session drives its run."""
 
-    def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None, max_active_runs=10):
+    def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None, max_active_runs=10, mcp_resources=None):
         if type(max_active_runs) is not int or max_active_runs <= 0:
             raise ValueError('Root run capacity must be a positive integer')
         self._max_active_runs = max_active_runs
         self._progress_settings = progress_settings
+        self.mcp_resources = mcp_resources
         self._permission_settings = permission_settings if permission_settings is not None else PermissionSettings()
         install_model_usage_callback(catalog)
         self._permission_reviewer = AutoPermissionReviewer.from_catalog(catalog, self._permission_settings.auto)
@@ -49,6 +50,32 @@ class SessionService(SessionControlMixin, SessionSubagentControls):
         """Borrow an already loaded owner; registry coordination stays here."""
         with self._lock:
             return self._sessions[session_id]
+
+    def borrow_mcp(self, session_id, agent_path, server_id):
+        """Internal resource access; tool authorization remains a separate boundary."""
+        from naiyue_test_agent.agent_runtime.run_services import current_run_services
+        from naiyue_test_agent.mcp_client.resources import MCPResourceError
+        session = self.require(session_id)
+        if agent_path != 'root':
+            if not session.is_busy():
+                raise MCPResourceError('mcp_instance_not_active')
+            try:
+                status = session.subagent_status(agent_path)
+            except KeyError:
+                raise MCPResourceError('mcp_instance_not_active') from None
+            if status['settled'] or status['status'] != 'running':
+                raise MCPResourceError('mcp_instance_not_active')
+        services = current_run_services()
+        if services and services.publisher:
+            source = getattr(services.publisher, 'source', None)
+            current_path = source.agent_path if source is not None else 'root'
+            if (not services.publisher.matches(session_id, services.publisher.run_id)
+                    or current_path != agent_path):
+                raise MCPResourceError('mcp_scope_mismatch')
+        if self.mcp_resources is None:
+            raise MCPResourceError('mcp_server_not_enabled')
+        return self.mcp_resources.borrow(session_id, agent_path, server_id,
+                                         control=services.control if services else None)
 
     def bind_persistence(self, persistence):
         """Resolve the startup construction cycle once, before any sessions."""

@@ -4,6 +4,10 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+class MCPRefreshInput(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+
+
 class NewSession(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     model_id: str = Field(min_length=1, max_length=128)

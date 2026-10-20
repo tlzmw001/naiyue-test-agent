@@ -69,9 +69,31 @@ class WebService:
         return await self.delivery.compact(session_id, body, [], can_run=value['can_run'], conversation_revision=value['conversation_revision'])
 
     def session_control_options(self):
-        result = {**self.application.get_session_control_options(), 'tools': [
-            {'name': spec.tool.name, 'description': spec.tool.description}
-            for spec in self.application.get_registered_tools()]}
+        from naiyue_test_agent.mcp_client.presentation import permission_source
+        roles = self.application.get_registered_subagents()
+        tools = []
+        for spec in self.application.get_registered_tools():
+            row = {'name': spec.tool.name, 'description': spec.tool.description}
+            source = permission_source(spec.permissions)
+            if source is not None:
+                reason = spec.permissions.unavailable_reason()
+                row.update(mcp_source=source, subagent_roles=[role.name for role in roles if spec.tool.name in role.tool_names],
+                           available=reason is None, unavailable_reason=reason)
+            tools.append(row)
+        result = {**self.application.get_session_control_options(), 'tools': tools,
+                  'mcp_servers': self.application.get_mcp_status()['servers']}
+        if encoded_size(result) > self.settings.max_frame_bytes:
+            raise WebError('view_too_large')
+        return result
+
+    async def refresh_mcp(self):
+        try:
+            result = await self.application.arefresh_mcp()
+        except ValueError:
+            raise WebError('mcp_settings_invalid', 422) from None
+        except Exception as error:
+            logger.error('web_mcp_refresh_failed error_type=%s', type(error).__name__)
+            raise WebError('mcp_refresh_unavailable', 503) from None
         if encoded_size(result) > self.settings.max_frame_bytes:
             raise WebError('view_too_large')
         return result

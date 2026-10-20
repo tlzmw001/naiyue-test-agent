@@ -4,6 +4,15 @@ import { afterEach, expect, it } from 'vitest';
 import Conversation from './Conversation';
 
 afterEach(cleanup);
+it('explains why a saved MCP approval requires a new call and only offers cancellation', () => {
+  render(<Conversation compacted={false} messages={[]} recovery={{ kind: 'pending_approval',
+    reason: 'mcp_approval_requires_new_call', actions: ['continue'], unconfirmed_tool_call_ids: ['old'] }}
+    onRecover={() => {}} />);
+  expect(screen.getByText('之前的 MCP 调用需要按当前工具定义重新审批。请先取消旧批次，再发起新调用。')).toBeTruthy();
+  expect(screen.queryByText('mcp_approval_requires_new_call', { exact: false })).toBeNull();
+  expect(screen.queryByRole('button', { name: '重试恢复待审批' })).toBeNull();
+  expect(screen.getByRole('button', { name: '结束旧运行并继续会话' })).toBeTruthy();
+});
 it('renders model Markdown without raw HTML, executable links or remote image requests', () => {
   const { container } = render(<Conversation compacted={false} messages={[{
     id: 'm', type: 'ai', provisional: false, state: 'complete',

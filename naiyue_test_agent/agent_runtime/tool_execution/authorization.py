@@ -19,6 +19,9 @@ class ExecutionAuthorizationMiddleware(AgentMiddleware):
         if (call is None or call['name'] != request.tool_call['name'] or call['args'] != request.tool_call['args']):
             raise PermissionMechanismError('Tool call does not match its prepared permission')
         if call['validation'] == 'invalid':
+            if isinstance(call.get('validation_feedback'), str):
+                return ToolMessage(content=call['validation_feedback'], tool_call_id=call['id'],
+                    name=call['name'], status='error', additional_kwargs={'naiyue_not_executed': 'invalid_arguments'})
             return request
         if call['validation'] == 'target_error':
             raise ToolException(call['feedback'])

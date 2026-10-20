@@ -176,7 +176,9 @@ export default function Conversation({ messages: sourceMessages, compacted, tool
         <p>{recovery.kind === 'pending_approval' ? '上次运行保存在工具审批前，当前尚未恢复审批。' :
           recovery.kind === 'unavailable' ? '当前无法安全恢复此会话。下方仅展示能够读取的已保存消息。' :
           '上次运行未正常结束。下方是已保存消息，旧调用没有自动重跑。'}</p>
-        <span>原因：{recovery.reason}</span>
+        {recovery.reason === 'mcp_approval_requires_new_call'
+          ? <p>之前的 MCP 调用需要按当前工具定义重新审批。请先取消旧批次，再发起新调用。</p>
+          : <span>原因：{recovery.reason}</span>}
         {onRecover && <div className={styles.recoveryActions}>
           {recovery.actions.includes('restore_approval') && <button onClick={() => onRecover('restore_approval')}
             disabled={recovering}>{recovering ? '正在恢复待审批…' : '重试恢复待审批'}</button>}

@@ -21,7 +21,7 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
 
     def __init__(self, session_id, state: SessionState, *, catalog, tool_registry,
                  permission_settings, persistence=None, invoke_subagent=None, registered_subagents=None,
-                 progress_settings=None, subagent_result_settings=None):
+                 progress_settings=None, subagent_result_settings=None, mcp_resources=None):
         self.session_id = session_id
         self._state = state
         self._catalog = catalog
@@ -33,10 +33,13 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
         self._registered_subagents = registered_subagents
         self._progress_settings = progress_settings
         self._subagent_result_settings = subagent_result_settings
+        self._mcp_resources = mcp_resources
         self._lock = Lock()
         self._model_selection_lock = Lock()
         self._tool_selection_lock = Lock()
         self._permission_selection_lock = Lock()
+        if self._mcp_resources is not None:
+            self._mcp_resources.set_session_occupied(session_id, state.pending_tool_approval is not None)
 
     def describe_session(self):
         with self._lock:
@@ -198,6 +201,8 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
             run = ActiveRun(run_id, observation, steering_open=mode != 'compact' and not stop,
                             stop_requested=stop)
             self._run = run
+            if self._mcp_resources is not None:
+                self._mcp_resources.set_session_occupied(self.session_id, True)
             return run
 
     def _require_run(self, run):
@@ -285,3 +290,5 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
             if run.controls_open or run.subagent_instances:
                 raise SessionBusyError('Run cleanup has not settled')
             self._run = None
+            if self._mcp_resources is not None:
+                self._mcp_resources.set_session_occupied(self.session_id, self._state.pending_tool_approval is not None)

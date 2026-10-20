@@ -66,6 +66,42 @@ await app.aset_active_tools(session_id, [*app.get_active_tools(session_id), 'lin
 
 注册名需唯一；注册只登记定义，启用由会话活动集合决定。更新在下一次工具集合装配时生效，不改变已经准备好的批次。纯代码文件改变仍需Python重新加载/服务重启，当前不提供磁盘插件自动加载。同步应用对应 `register_tool` / `set_active_tools`。
 
+## JSON Schema输入工具
+
+2026-10-20补充：[MCP-01](specs/117-01-json-schema-tool-contract.md)正式支持JSON Schema输入合同。内置工具仍保留原Pydantic模型；后续[04](specs/117-04-mcp-agent-tools.md)已接根Agent的MCP适配，下面01部分只描述通用注册/参数合同。
+
+JSON工具使用异步StructuredTool，执行函数声明`runtime: ToolRuntime`（可参数化）和`**arguments`，不同时提供同步func。例子是本地参数回显，不连接外部服务：
+
+```python
+import json
+from langchain.tools import ToolRuntime
+from langchain_core.tools import StructuredTool
+from naiyue_test_agent.tools import ToolSpec
+from naiyue_test_agent.tools.permissions import ToolPermission, require_tool_permit
+
+schema = {
+    'type': 'object', 'properties': {'value': {'type': 'integer'}},
+    'required': ['value'], 'additionalProperties': False,
+}
+
+async def echo_values(runtime: ToolRuntime, **arguments):
+    require_tool_permit(runtime)
+    return json.dumps(arguments, ensure_ascii=False)
+
+item = StructuredTool(name='echo_values', description='Echo validated arguments',
+                      args_schema=schema, coroutine=echo_values)
+spec = ToolSpec(item, schema, execution_mode='sequential',
+                permissions=ToolPermission(default='ask'))
+```
+
+将spec放入现有应用工厂的tools列表或aregister_tool，继续按原活动集合/审批入口使用。JSON分支固定Draft2020-12，根显式object；内部引用由本地registry解析，外部引用和其他方言拒绝，不访问网络。注册schema本身也须为有限、无循环的JSON；只检查schema位置，不把default/enum中的业务对象解释成引用。
+
+参数不作类型转换、不补default、不删额外字段；additionalProperties按声明执行，format仅注解。顶层runtime/config/run_manager保留，嵌套业务字段可同名。校验成功返回RootModel包装以保留validate_input(...).model_dump(mode='json')接口，权威仍是JSON Schema；错误为安全JsonToolInputError，只含必要路径/校验类型，不含原值。
+
+原始schema和validator在注册时保存独立副本。模型侧通过既有ToolSetMiddleware传标准function描述字典，执行侧仍路由原工具；这避免框架重写引用和字面数据，不保证每个供应商接受所有Schema特性。模型视图、参数准备、执行分派和再次注册均检查合同未被修改；待审批期间也不能替换schema后继续使用旧许可。
+
+首版JSON工具只支持ToolPermission及工具级规则；针对它的args/path规则明确拒绝。全局文件path规则继续仅作用于文件工具。无效参数不产生审批、工具执行为0；混合批保持原审批顺序，原调用ID配对且事件为not_executed。合法待批批次可按原restore_approval恢复；含invalid的保存批次仍按既有合同拒绝恢复，反馈字段本身可在checkpoint往返，不改变存储schema。
+
 ## 三层分别保证什么
 
 | 负责层 | 当前保证 | 作者仍需做的事 |

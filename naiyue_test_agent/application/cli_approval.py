@@ -15,6 +15,10 @@ def show_approval_batches(batches, write):
             target = json.dumps(item['target'], ensure_ascii=False)
             workspace = f" 工作区={json.dumps(item['workspace'], ensure_ascii=False)} 命令=" if 'workspace' in item else ' → '
             write(f"待审批 {index}: {item['tool_name']}{workspace}{target}")
+            if source := item.get('mcp_source'):
+                write(f"MCP 来源：{source['server_id']}/{source['remote_tool']}；外部工具，副作用未知。")
+            if item.get('remember_scope') == 'tool':
+                write('记住此项：本会话始终允许此工具；参数可变化，根与子任务共用；配置或工具定义改变后失效。')
     if batches:
         write('用 :approve [批次ID] / :deny [批次ID]；多项用 :review [批次ID] approve reject ...；'
               '--remember=1,2 仅在本会话记住指定批准项；:approvals 查看当前批次')

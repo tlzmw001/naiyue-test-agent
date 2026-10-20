@@ -94,6 +94,8 @@ def validate_permission_rules(settings, specs):
         for name, value in rule.args.items():
             annotations = []
             for spec in candidates:
+                if isinstance(spec.input_schema, dict):
+                    raise ValueError('JSON schema tools do not support argument permission rules')
                 field = spec.input_schema.model_fields.get(name)
                 if field is None:
                     raise ValueError('Permission rule refers to an unknown public argument')

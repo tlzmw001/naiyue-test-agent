@@ -42,7 +42,7 @@ async def context_view(session_id, *, sessions, agent, catalog, tool_registry, s
             root = Path(row['workspace_root']) if row['workspace_root'] else None
             resources = await run_blocking(prepare_run_resources, root,
                 enable_skills='read' in tool_registry.names())
-            specs = tool_registry.select(row['active_tool_names'])
+            specs = tool_registry.select_available(row['active_tool_names'])
             roles = [(r.name, r.description) for r in sessions.get_registered_subagents()] if any(
                 s.tool.name == 'subagent' for s in specs) else ()
             system = compose_model_prompt(system_prompt, resources['prompt_parts'], specs, roles)
@@ -50,7 +50,8 @@ async def context_view(session_id, *, sessions, agent, catalog, tool_registry, s
             current = {'basis': 'next_request', 'model_id': row['model_id'], 'estimate': estimate}
             if config is not None:
                 after = await agent.aget_state(config)
-                if (not sessions.context_snapshot_is_current(session_id, row)
+                if (tool_registry.select_available(row['active_tool_names']) != specs
+                        or not sessions.context_snapshot_is_current(session_id, row)
                         or after.config != snapshot.config):
                     current = {'basis': 'unavailable', 'estimate': None}
         except Exception as error:

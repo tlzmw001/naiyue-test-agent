@@ -111,7 +111,9 @@ async def web_scenario(root):
             assert restored['can_run'] and not restored['busy']
             assert any(message['content'] == 'installed-ok' for message in restored['messages'])
             assert len(model.seen) == 2, 'Reopen executed model/tool work'
-    return workspace, model
+    from release_mcp_smoke import mcp_scenario
+    mcp = await mcp_scenario(root, OfflineModel)
+    return workspace, model, mcp
 
 
 def main():
@@ -130,7 +132,7 @@ def main():
         assert hashlib.sha256(binary.read_bytes()).hexdigest() == tool['sha256']
         version = subprocess.run([str(binary), '--version'], capture_output=True, text=True, check=True, timeout=10)
         assert tool['version'] in version.stdout
-    workspace, _ = asyncio.run(web_scenario(root))
+    workspace, _, mcp = asyncio.run(web_scenario(root))
     from naiyue_test_agent.application import cli
     output = io.StringIO()
     with patch('builtins.input', return_value=':quit'), redirect_stdout(output):
@@ -139,7 +141,7 @@ def main():
     print(json.dumps({'target': native['target'], 'version': naiyue_test_agent.__version__,
         'installed_package': str(installed), 'native_tools': 'passed', 'frontend_api': 'passed',
         'find_grep': 'passed', 'approval_resume': 'passed', 'sqlite_reopen': 'passed', 'cli': 'passed',
-        'provider_requests': 0}))
+        'provider_requests': 0, 'mcp': mcp}))
 
 
 if __name__ == '__main__':

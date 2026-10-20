@@ -32,7 +32,7 @@ def pending_tool_approval(result):
         subject = call['subject']
         items.append({'tool_call_id': call['id'], 'tool_name': call['name'],
                       'target': subject.get('resolved', subject.get('target', call['name'])),
-                      'workspace': subject.get('workspace') if 'command' in call['args'] else None,
+                      'workspace': subject.get('workspace') if 'command' in call['args'] and 'mcp' not in subject else None,
                       'prepared': call})
     return {'items': items, 'batch_id': batch['batch_id'], 'message_count': len(result['messages'])}
 
@@ -66,7 +66,10 @@ def prepare_resume(session_id, pending, decisions, remember_approved, *, agent_p
 
 
 def public_approvals(pending):
+    from naiyue_test_agent.mcp_client.presentation import source_projection
     return [dict({'tool_call_id': item['tool_call_id'], 'tool_name': item['tool_name'], 'target': str(item['target'])},
+                 **({'remember_scope': 'tool'} if item['prepared']['subject'].get('mcp') is not None else {}),
+                 **({'mcp_source': source} if (source := source_projection(item['prepared']['subject'].get('mcp'))) else {}),
                  **({'workspace': str(item['workspace'])} if item['workspace'] is not None else {}))
             for item in pending['items']]
 
@@ -157,7 +160,7 @@ class PendingToolApproval:
 
 def announce_approval(observation, batch):
     items = tuple(ApprovalItemData(**{key: row[key] for key in
-        ('approval_id', 'tool_call_id', 'tool_name', 'target', 'workspace') if key in row}) for row in batch['items'])
+        ('approval_id', 'tool_call_id', 'tool_name', 'target', 'workspace', 'remember_scope', 'mcp_source') if key in row}) for row in batch['items'])
     observe(observation.controls, observation.controls.approval_requested,
             tuple(row.tool_call_id for row in items), batch['approval_batch_id'], items)
 

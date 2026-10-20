@@ -2,8 +2,22 @@ import type { ContextSnapshot } from './contextTypes';
 export type RunStatus = 'running' | 'completed' | 'stopped' | 'interrupted' | 'failed' | 'unconfirmed';
 export type PermissionMode = 'Default' | 'NoAsk' | 'Auto' | 'BypassApprovals';
 export interface ThinkingOptions { default_level: string; supported_levels: string[]; }
+export interface McpSource { server_id: string; remote_tool: string; transport?: 'stdio' | 'streamable_http'; }
+export interface McpServerStatus {
+  server_id: string; status: 'enabled' | 'disabled' | 'error'; enabled: boolean;
+  selected_tools: string[]; draining?: boolean; error?: string;
+}
+export interface McpRefreshResult { servers: McpServerStatus[]; }
+export interface McpResultView {
+  version: 1; source: McpSource;
+  outcome: 'success' | 'tool_error' | 'not_executed' | 'outcome_unknown' | 'unsupported_result';
+  truncated?: boolean; result_bytes?: number; archive_complete?: boolean;
+  archive_paths?: { raw?: string; text?: string }; archive_reason?: string;
+}
 export interface SessionControlOptions {
-  tools: { name: string; description: string }[];
+  tools: { name: string; description: string; mcp_source?: McpSource; subagent_roles?: string[];
+    available?: boolean; unavailable_reason?: string | null }[];
+  mcp_servers?: McpServerStatus[];
   permission_modes: PermissionMode[];
   default_permission_mode: PermissionMode;
   default_active_tools: string[];
@@ -21,7 +35,7 @@ export interface ToolState {
   unit?: 'bytes' | 'lines' | 'entries' | 'matches' | null; text?: string;
   started_at?: string; last_activity_at?: string; finished_at?: string;
 }
-export interface ApprovalRequest { approval_id: string; tool_call_id: string; tool_name: string; target: string; workspace?: string; }
+export interface ApprovalRequest { approval_id: string; tool_call_id: string; tool_name: string; target: string; workspace?: string; remember_scope?: 'tool'; mcp_source?: McpSource; }
 export interface ToolDecision { approval_id: string; decision: 'approve' | 'reject'; }
 export interface ApprovalBatch {
   approval_batch_id: string; kind: 'paused_root' | 'live_child'; agent_path: string;
@@ -60,6 +74,7 @@ export type ContentLoader = (row: MessageRow, signal: AbortSignal) => Promise<st
 export type ChangeLoader = (row: MessageRow, patch?: boolean) => Promise<FileChangeView | string>;
 
 export interface MessageRow {
+  mcp_result?: McpResultView;
   file_change?: FileChangeView;
   reply_id?: string | null;
   reasoning?: string;

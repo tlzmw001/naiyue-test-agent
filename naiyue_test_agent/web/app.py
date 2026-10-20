@@ -20,6 +20,7 @@ from .run_delivery import RunDelivery
 from .schemas import ActiveToolsInput, ApprovalInput, ApprovalStopInput, CompactInput, ControlInput, MessageInput, NewSession, PermissionModeInput, RecoveryInput, RegenerateInput, SessionOrder, SessionPresentation, ThinkingInput
 from .service import WebService
 from .headers import LocalHeaders
+from .schemas import MCPRefreshInput
 
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,10 @@ def create_web_app(settings, *, application_factory=None):
     @app.get('/api/session-controls')
     async def session_control_options():
         return app.state.service.session_control_options()
+
+    @app.post('/api/mcp/refresh')
+    async def refresh_mcp(body: MCPRefreshInput | None = None):
+        return await app.state.service.refresh_mcp()
 
     @app.get('/api/skills')
     async def skills():

@@ -1,6 +1,7 @@
 """One request's original definitions, shared by prompt, budget and execution."""
 
 from typing import NotRequired
+from copy import deepcopy
 
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import ToolMessage
@@ -41,7 +42,7 @@ class ToolSetMiddleware(AgentMiddleware):
     def prepare_tool_view(self, runtime):
         context = runtime.context
         names = self.resolve_active_tool_names(context['session_id'], context.get('agent_path', 'root'))
-        view = self.registry.select(names)
+        view = self.registry.select_available(names)
         context[_VIEW_KEY] = view
         context[_ROLES_KEY] = (tuple((role.name, role.description) for role in self.resolve_subagent_roles())
             if any(spec.tool.name == 'subagent' for spec in view) and self.resolve_subagent_roles is not None else ())
@@ -68,7 +69,18 @@ class ToolSetMiddleware(AgentMiddleware):
         sid = runtime.context['session_id']
         parts = self.resolve_prompt_parts(sid) if self.resolve_prompt_parts is not None else []
         prompt = compose_model_prompt(self.system_prompt, parts, specs, runtime.context.get(_ROLES_KEY, ()))
-        return [spec.tool for spec in specs], prompt
+        tools = []
+        for spec in specs:
+            if isinstance(spec.input_schema, dict):
+                contract = spec._checked_json_input()
+                # Keep arbitrary JSON Schema/data intact. BaseTool conversion
+                # rewrites refs; the public function-dict input passes through.
+                tools.append({'type': 'function', 'function': {
+                    'name': spec.tool.name, 'description': spec.tool.description,
+                    'parameters': deepcopy(contract.schema)}})
+            else:
+                tools.append(spec.tool)
+        return tools, prompt
 
     def model_inputs(self, state, runtime):
         tools, prompt = self._inputs(state, runtime)
@@ -84,7 +96,9 @@ class ToolSetMiddleware(AgentMiddleware):
     def _tool_request(self, request):
         specs = batch_tool_specs(self.registry, request.state, request.runtime.context)
         spec = next((spec for spec in specs if spec.tool.name == request.tool_call['name']), None)
-        return request.override(tool=spec.tool) if spec else None
+        if spec is not None and isinstance(spec.input_schema, dict):
+            spec._checked_json_input()
+        return (request.override(tool=spec.tool), spec) if spec else None
 
     @staticmethod
     def _unavailable(request):
@@ -96,7 +110,23 @@ class ToolSetMiddleware(AgentMiddleware):
     async def awrap_tool_call(self, request, handler):
         selected = self._tool_request(request)
         if selected is not None:
-            return await handler(selected)
+            from naiyue_test_agent.mcp_client.presentation import complete_result
+            from naiyue_test_agent.mcp_client.tools import MCPPermission
+            selected_request, spec = selected
+            if isinstance(spec.permissions, MCPPermission):
+                prepared = next((call for call in request.state.get('tool_execution', {}).get('calls', [])
+                                 if call['id'] == request.tool_call['id']), None)
+                reason = spec.permissions.unavailable_reason()
+                if prepared is not None and prepared.get('subject', {}).get('mcp') not in (None, spec.permissions.identity()):
+                    reason = 'definition_changed'
+                if reason:
+                    async def unavailable(_):
+                        return ToolMessage(content='MCP tool is disabled or its definition changed. '
+                            'No tools/call was sent. Request a new call after reviewing the current tools.',
+                            name=request.tool_call['name'], tool_call_id=request.tool_call['id'], status='error',
+                            additional_kwargs={'naiyue_not_executed': reason})
+                    return complete_result(await aobserve_tool_dispatch(request, handler, unavailable), spec.permissions)
+            return complete_result(await handler(selected_request), spec.permissions)
         async def denied(_):
             return self._unavailable(request)
         return await aobserve_tool_dispatch(request, handler, denied)

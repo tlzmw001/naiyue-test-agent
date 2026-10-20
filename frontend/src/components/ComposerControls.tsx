@@ -1,6 +1,6 @@
-import { useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { PermissionMode, SessionControlOptions, SkillCatalogView } from '../types';
+import type { McpRefreshResult, PermissionMode, SessionControlOptions, SkillCatalogView } from '../types';
 import type { WebApi } from '../api';
 import SkillsMenu from './SkillsMenu';
 import { commands } from '../commands';
@@ -30,6 +30,18 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const previousSession = useRef(sessionId);
+  const [refreshingMcp, setRefreshingMcp] = useState(false);
+  const [mcpReport, setMcpReport] = useState<McpRefreshResult | null>(null);
+  const [mcpError, setMcpError] = useState(false);
+  const mcpPending = useRef(false);
+  const enabledCount = options ? tools.filter(name => options.tools.some(tool => tool.name === name && tool.available !== false)).length : tools.length;
+  async function refreshMcp() {
+    if (mcpPending.current) return;
+    mcpPending.current = true; setRefreshingMcp(true); setMcpError(false);
+    try { setMcpReport(await api.refreshMcp()); }
+    catch { console.warn('mcp_configuration_refresh_failed'); setMcpError(true); }
+    finally { mcpPending.current = false; setRefreshingMcp(false); reload(); }
+  }
   const id = useId();
   useEffect(() => {
     if (previousSession.current !== null && previousSession.current !== sessionId) setOpen(null);
@@ -70,10 +82,10 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
       onClick={event => toggle('modes', event.currentTarget)} disabled={disabled} title="权限模式 · Shift + Tab 切换">
       {mode ?? '权限模式'} <span className={styles.chevron}>⌃</span>
     </button>
-    <button type="button" className={styles.trigger} aria-label={`工具 · ${tools.length} 项启用`}
+    <button type="button" className={styles.trigger} aria-label={`工具 · ${enabledCount} 项启用`}
       aria-expanded={open === 'tools'} aria-controls={open === 'tools' ? id : undefined}
       onClick={event => toggle('tools', event.currentTarget)} disabled={disabled}>
-      工具 <span className={styles.count}>{options ? tools.length : '…'}</span>
+      工具 <span className={styles.count}>{options ? enabledCount : '…'}</span>
     </button>
     {open === 'commands' && <section role="menu" aria-label="指令与功能" className={styles.popover}>
       <div className={styles.heading}>指令与功能</div>
@@ -105,16 +117,32 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
             <legend className={styles.srOnly}>选择主 Agent 工具</legend>
             {!options?.tools.length && <p className={styles.note}>没有已注册工具</p>}
             {options?.tools.map(tool => <label key={tool.name} className={styles.option}>
-              <input type="checkbox" checked={tools.includes(tool.name)} onChange={event =>
+              <input type="checkbox" disabled={tool.available === false} checked={tools.includes(tool.name)} onChange={event =>
                 selectTools(event.target.checked ? [...tools, tool.name] : tools.filter(name => name !== tool.name))} />
-              <span><strong>{tool.name}</strong><small className={styles.toolDescription} title={tool.description}>{tool.description}</small></span>
+              <span><strong>{tool.name}</strong>
+                {tool.mcp_source && <small>MCP 来源：{tool.mcp_source.server_id} / {tool.mcp_source.remote_tool}
+                  {tool.mcp_source.transport && ` · ${tool.mcp_source.transport}`}</small>}
+                {!!tool.subagent_roles?.length && <small>子 Agent 角色：{tool.subagent_roles.join('、')}</small>}
+                {tool.available === false && <small>{tool.unavailable_reason === 'server_disabled' ? '服务已停用' :
+                  tool.unavailable_reason === 'tool_disabled' ? '工具已从服务允许名单移除' : '工具定义已变化，请刷新 MCP 配置'}；保留已保存的会话选择。</small>}
+                <small className={styles.toolDescription} title={tool.description}>{tool.description}</small></span>
             </label>)}
           </fieldset>}
         </div>
         <p className={styles.note}>{open === 'modes' ? '下一批工具调用生效，已有审批保持原样。' :
-          '下一次模型请求生效；不修改子 Agent 的角色工具集合，也不会停止当前调用。'}</p>
-        <button type="button" className={styles.refresh} onClick={reload}>刷新工具与模式</button>
+          '下一次模型调用生效。'}</p>
+        <button type="button" className={styles.refresh} disabled={refreshingMcp}
+          onClick={open === 'tools' ? () => void refreshMcp() : reload}>
+          {refreshingMcp ? '正在刷新…' : '刷新工具与模式'}</button>
       </>}
+      {open === 'tools' && <div aria-live="polite">
+        {mcpError && <p role="status" className={styles.note}>MCP 配置刷新失败，请检查配置后重试；已生效配置保持。</p>}
+        {(mcpReport?.servers ?? options?.mcp_servers ?? []).map(server => <p key={server.server_id} className={styles.note}>
+          {server.server_id}：{server.status === 'error' ? server.enabled ? '刷新失败，原服务仍启用' : '刷新失败，服务未启用' :
+            server.enabled ? '已启用' : server.draining ? '已停用，在途调用收尾中' : '已停用'}
+          {server.error === 'connection_configuration_changed' && '；连接配置已变化，本次未应用，请停用并收尾后再启用。'}
+        </p>)}
+      </div>}
     </section>}
   </div>;
 }

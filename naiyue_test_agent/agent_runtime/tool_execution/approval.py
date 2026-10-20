@@ -71,6 +71,12 @@ class ObservedHumanInTheLoopMiddleware(HumanInTheLoopMiddleware):
             observe(controls, controls.approval_applied)
         for message in (update or {}).get('messages', []):
             if isinstance(message, ToolMessage) and message.status == 'error':
+                from naiyue_test_agent.mcp_client.presentation import source_projection
+                prepared = next((call for call in state.get('tool_execution', {}).get('calls', [])
+                    if call['id'] == message.tool_call_id and call['name'] == message.name), None)
+                source = source_projection(prepared['subject'].get('mcp')) if prepared is not None else None
+                if source is not None:
+                    message.artifact = {'type': 'mcp_result', 'version': 1, 'source': source, 'outcome': 'not_executed'}
                 call_id, name = message.tool_call_id, event_label(message.name)
                 _emit(runtime.context, 'tool_call_started', lambda: ToolCallStartedData(call_id, name, 'approval_resolution'))
                 _emit(runtime.context, 'tool_call_finished', lambda: ToolCallFinishedData(

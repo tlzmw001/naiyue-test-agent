@@ -167,10 +167,11 @@ class AsyncPersistentApplication(AsyncApplication):
 async def open_async_persistent_application(config_path, *, database_path, tools, system_prompt, response_format, initial_active_tools=None, settings=None, workspace_binding=None):
     settings = settings if settings is not None else application.load_settings()
     registry = application.prepare_tool_registry(tools)
-    application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
     initial = registry.names() if initial_active_tools is None else initial_active_tools
-    registry.select(initial)
-    storage, catalog, app = None, None, None
+    if not any(server.enabled for server in settings.mcp.servers.values()):
+        application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
+        registry.select(initial)
+    storage, catalog, app, resources = None, None, None, None
     primary = None
     try:
         storage = await acquire_blocking(SessionStorage, lambda item: run_blocking(item.close), database_path)
@@ -178,12 +179,21 @@ async def open_async_persistent_application(config_path, *, database_path, tools
             await run_blocking(storage.bind_workspace, workspace_binding['workspace_id'], workspace_binding['root_path'])
         catalog = await acquire_blocking(application.load_model_catalog, lambda item: item.aclose(), config_path)
         await run_blocking(catalog.prepare_async_clients)
+        from naiyue_test_agent.mcp_client.resources import MCPSessionResources
+        resources = MCPSessionResources(settings.mcp, settings.network, output_settings=settings.tool_output)
+        from naiyue_test_agent.mcp_client.tools import register_mcp_tools
+        # Definitions precede SessionService; execution starts only after assembly.
+        def borrow_mcp(session_id, agent_path, server_id):
+            return sessions.borrow_mcp(session_id, agent_path, server_id)
+        await register_mcp_tools(registry, resources, settings.tool_output, borrow_mcp=borrow_mcp)
+        application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
+        registry.select(initial)
         async with AsyncSqliteSaver.from_conn_string(str(storage.path)) as saver:
             # Diagnostics can write at run_started, before the first graph read.
             # Finish the official WAL/schema initialization before subscribing.
             await saver.setup()
             sessions = application.SessionService(catalog, registry, initial_active_tools=initial, permission_settings=settings.permissions, progress_settings=settings.progress,
-                max_active_runs=settings.max_active_runs)
+                max_active_runs=settings.max_active_runs, mcp_resources=resources)
             async with (ModelUsagePersistence(storage, sessions.subscribe_events, settings.usage_persistence) as usage,
                         DiagnosticPersistence(storage, sessions.subscribe_events, settings.diagnostics) as diagnostics):
                 persistence = SessionPersistence(storage, sessions, catalog=catalog, tool_registry=registry,
@@ -213,6 +223,13 @@ async def open_async_persistent_application(config_path, *, database_path, tools
         primary = error
         raise
     finally:
+        if resources is not None and app is None:
+            try:
+                await await_settled(resources.aclose())
+            except BaseException as error:
+                if primary is None:
+                    raise
+                logger.error('mcp_cleanup_secondary_failed error_type=%s', type(error).__name__)
         if catalog is not None and app is None:
             try:
                 await await_settled(catalog.aclose())

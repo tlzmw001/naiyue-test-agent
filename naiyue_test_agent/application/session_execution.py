@@ -68,7 +68,7 @@ class SessionExecution:
             observation.stage = 'execute'
             if compact:
                 model_id, model = self.resolve_model()
-                specs = self._tool_registry.select(self.get_active_tools())
+                specs = self._tool_registry.select_available(self.get_active_tools())
                 roles = [(role.name, role.description) for role in self._registered_subagents()] if any(
                     spec.tool.name == 'subagent' for spec in specs) else ()
                 system = compose_model_prompt(system_prompt, self.resolve_prompt_parts(), specs, roles)

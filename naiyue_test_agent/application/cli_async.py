@@ -60,6 +60,9 @@ class AsyncCliApplication:
     def get_registered_tools(self):
         return self._submit(self._app.get_registered_tools)
 
+    def refresh_mcp(self):
+        return self._submit(self._app.arefresh_mcp)
+
     def register_subagent(self, spec):
         return self._submit(lambda: self._app.aregister_subagent(spec))
 
