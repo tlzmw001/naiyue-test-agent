@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 class MCPResourceError(RuntimeError):
     """Locally selected safe resource failure, without protocol/credential bodies."""
 
+    retryable = False
+
 
 @dataclass(frozen=True)
 class MCPLease:
@@ -26,6 +28,14 @@ def exception_leaves(error):
     if isinstance(error, BaseExceptionGroup):
         return [leaf for member in error.exceptions for leaf in exception_leaves(member)]
     return [error]
+
+
+def is_retryable_mcp_error(error):
+    from .connections import MCPResponsePolicyError
+    from ..tools.retry import is_transient_error
+    if isinstance(error, BaseExceptionGroup):
+        return bool(error.exceptions) and all(is_retryable_mcp_error(item) for item in error.exceptions)
+    return not isinstance(error, MCPResponsePolicyError) and is_transient_error(error)
 
 
 class ConnectionOwner:
@@ -67,7 +77,9 @@ class ConnectionOwner:
             if not self.ready.done():
                 self.startup_failed = True
                 code = 'mcp_connect_timeout' if isinstance(error, TimeoutError) else 'mcp_connect_failed'
-                self.ready.set_exception(MCPResourceError(code))
+                failure = MCPResourceError(code)
+                failure.retryable = is_retryable_mcp_error(error)
+                self.ready.set_exception(failure)
         finally:
             self.invalid = True
             if not self.ready.done():

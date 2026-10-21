@@ -54,8 +54,7 @@ def test_manual_proxy_credentials_and_bypass_load_without_exposing_secrets(tmp_p
      'proxy_username': 'PRIVATE_OTHER', 'proxy_password': 'PRIVATE_OTHER_PASSWORD'},
     {'no_proxy': 'localhost'}, {'no_proxy': ['']}, {'no_proxy': [' ']},
     {'no_proxy': ['https://corp.example']}, {'no_proxy': ['corp.example/path']},
-    {'no_proxy': ['corp.example:8080']}, {'no_proxy': ['*.corp.example']},
-    {'no_proxy': ['10.0.0.0/8']}, {'no_proxy': [True]},
+    {'no_proxy': ['corp.example:8080']}, {'no_proxy': [True]},
 ])
 def test_invalid_manual_network_settings_hide_inputs(fields):
     from naiyue_test_agent.tools.web_settings import NetworkSettings

@@ -32,7 +32,7 @@ def create_web_app(settings, *, application_factory=None):
         tool_settings = settings.runtime_settings if settings.runtime_settings is not None else load_settings()
         delivery_settings = settings if 'event_cache_bytes' in settings.model_fields_set else settings.model_copy(
             update={'event_cache_bytes': tool_settings.web_event_cache_bytes})
-        tools = create_builtin_tools(tool_settings.tools, process_settings=tool_settings.process, output_settings=tool_settings.tool_output, progress_settings=tool_settings.progress, network_settings=tool_settings.network)
+        tools = create_builtin_tools(tool_settings.tools, process_settings=tool_settings.process, output_settings=tool_settings.tool_output, progress_settings=tool_settings.progress, network_settings=tool_settings.network, retry_settings=tool_settings.tool_retry)
         initial_tools = []
         if settings.workspace_root is not None:
             initial_tools = tool_settings.default_active_tools

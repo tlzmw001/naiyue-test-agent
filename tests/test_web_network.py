@@ -20,7 +20,7 @@ def test_proxy_modes_respect_no_proxy_and_never_implicitly_go_direct(monkeypatch
 
 
 def test_deadline_and_stop_settle_request_before_returning():
-    from naiyue_test_agent.tools.web_network import await_request
+    from naiyue_test_agent.tools.retry import await_attempt
     async def scenario():
         started, settled = asyncio.Event(), asyncio.Event()
         async def pending():
@@ -30,7 +30,7 @@ def test_deadline_and_stop_settle_request_before_returning():
             finally:
                 settled.set()
         with pytest.raises(TimeoutError):
-            await await_request(pending, .05, None)
+            await await_attempt(pending, .05, None)
         assert started.is_set() and settled.is_set()
         started.clear()
         settled.clear()
@@ -39,13 +39,13 @@ def test_deadline_and_stop_settle_request_before_returning():
             @property
             def requested(self):
                 return signal.is_set()
-        task = asyncio.create_task(await_request(pending, 0, Control()))
+        task = asyncio.create_task(await_attempt(pending, 0, Control()))
         await started.wait()
         signal.set()
         with pytest.raises(ToolException, match='stopped'):
             await task
         assert settled.is_set()
-        assert await await_request(lambda: asyncio.sleep(0, result=42), 0, None) == 42
+        assert await await_attempt(lambda: asyncio.sleep(0, result=42), 0, None) == 42
     asyncio.run(scenario())
 
 

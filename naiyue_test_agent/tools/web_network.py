@@ -1,6 +1,5 @@
 """Web-tool network ownership: proxies, bounded bodies, cancellation and DNS pins."""
 
-import asyncio
 import ipaddress
 import logging
 import os
@@ -13,7 +12,6 @@ import httpx
 import certifi
 from langchain_core.tools import ToolException
 
-from .control import check_tool_stop
 from .web_settings import NetworkSettings
 
 
@@ -63,6 +61,16 @@ def selected_proxy(value, settings):
         address = None
         host = host.encode('idna').decode('ascii').lower()
     for pattern in settings.no_proxy:
+        if pattern == '*':
+            return None
+        if '/' in pattern:
+            if address is not None and address in ipaddress.ip_network(pattern):
+                return None
+            continue
+        if pattern.startswith('*.'):
+            if address is None and host.endswith(pattern[1:]):
+                return None
+            continue
         try:
             bypass_address = ipaddress.ip_address(pattern)
         except ValueError:
@@ -115,23 +123,6 @@ def open_client(value, settings=None, *, target_hostname=None):
     tls = target_tls_context(target_hostname) if target_hostname else httpx.create_ssl_context(trust_env=True)
     return httpx.AsyncClient(proxy=proxy, verify=tls, trust_env=False, timeout=None,
         follow_redirects=False, headers={'Accept-Encoding': 'identity'})
-
-
-async def await_request(call, seconds, control):
-    """Cancel and settle one owned HTTP task before timeout/stop can trigger fallback."""
-    check_tool_stop(control, 'Web request stopped by the user; no fallback search was started.')
-    task = asyncio.create_task(call())
-    try:
-        async with asyncio.timeout(seconds or None):
-            while not task.done():
-                check_tool_stop(control, 'Web request stopped by the user; no fallback search was started.')
-                await asyncio.wait((task,), timeout=0.05)
-            check_tool_stop(control, 'Web request stopped by the user; no fallback search was started.')
-            return task.result()
-    finally:
-        if not task.done():
-            task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
 
 
 async def download(client, method, url, *, max_bytes, progress=None, **kwargs):

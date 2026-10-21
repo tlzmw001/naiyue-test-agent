@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from .config_paths import StorageSettings, get_agent_dir
 from .mcp_client.settings import MCPSettings
 from .tools.web_settings import NetworkSettings
+from .tools.retry_settings import ToolRetrySettings
 from .tools.permission_rules import PermissionSettings
 from .tools.subagent import SubAgentSpec
 from .tools.settings import (
@@ -54,6 +55,7 @@ class AppSettings(BaseModel):
     default_active_tools: tuple[str, ...] | None = None
     storage: StorageSettings = Field(default_factory=StorageSettings)
     network: NetworkSettings = Field(default_factory=NetworkSettings)
+    tool_retry: ToolRetrySettings = Field(default_factory=ToolRetrySettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
     tools: BuiltinToolSettings = Field(default_factory=BuiltinToolSettings)
     permissions: PermissionSettings = Field(default_factory=PermissionSettings)
@@ -109,7 +111,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
         logger.error('permission_settings_unavailable error_type=%s', type(error).__name__)
         raise ValueError('Permission settings could not be read or parsed') from error
-    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'default_active_tools', 'tools', 'permissions', 'process', 'tool_output', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'network', 'mcp'}:
+    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'default_active_tools', 'tools', 'permissions', 'process', 'tool_output', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'network', 'mcp', 'tool_retry'}:
         raise ValueError('Unknown runtime settings section')
     try:
         default_active_tools = AppSettings.active_tool_names(raw.get('default_active_tools'))
@@ -126,6 +128,11 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
     except ValidationError:
         logger.error('network_settings_invalid')
         raise ValueError('Network settings are invalid') from None
+    try:
+        tool_retry = ToolRetrySettings.model_validate(raw.get('tool_retry', {}))
+    except ValidationError:
+        logger.error('tool_retry_settings_invalid')
+        raise ValueError('Tool retry settings are invalid') from None
     storage = StorageSettings.model_validate(raw.get('storage', {}))
     permissions = PermissionSettings.model_validate(raw.get('permissions', {}))
     max_active_runs = raw.get('max_active_runs', AppSettings.model_fields['max_active_runs'].default)
@@ -171,7 +178,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         logger.warning('diagnostic_settings_fallback reason=invalid')
         diagnostics = DiagnosticSettings()
     try:
-        return AppSettings(storage=storage, tools=tools, network=network, mcp=mcp, permissions=permissions, process=process, tool_output=tool_output,
+        return AppSettings(storage=storage, tools=tools, network=network, mcp=mcp, tool_retry=tool_retry, permissions=permissions, process=process, tool_output=tool_output,
                             default_active_tools=default_active_tools,
                             progress=progress, usage_persistence=usage_persistence,
                             subagents=raw.get('subagents', ()), max_active_runs=max_active_runs,

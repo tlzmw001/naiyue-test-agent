@@ -11,7 +11,7 @@ from langchain.tools import ToolRuntime
 from langchain_core.tools import StructuredTool, ToolException
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import web_network
+from . import web_network, retry
 from .control import check_tool_stop
 from .permission_rules import match_rules
 from .permissions import ToolPermission, require_tool_permit, matches_session_allow
@@ -102,7 +102,7 @@ def _redirect_allowed(subject, runtime):
         or context['_permission_mode'] == 'BypassApprovals' or not subject['private'])
 
 
-def create_web_fetch_tool(*, settings=None, network_settings=None, progress_settings=None):
+def create_web_fetch_tool(*, settings=None, network_settings=None, progress_settings=None, retry_settings=None):
     settings = settings or WebFetchSettings()
     network = network_settings or NetworkSettings()
     public, execution = build_tool_schemas('WebFetchInput', _FetchInput,
@@ -115,6 +115,8 @@ def create_web_fetch_tool(*, settings=None, network_settings=None, progress_sett
             raise ToolException('web_fetch target does not match its reviewed URL.')
         control = runtime.context.get('_run_control')
         progress = ToolProgress(runtime, progress_settings)
+        budget = retry.RetryBudget(retry_settings, 'web_fetch',
+            settings.request_timeout_seconds if timeout is None else timeout, control=control, progress=progress)
         async def request_chain():
             current = subject
             for hop in range(settings.max_redirects + 1):
@@ -151,15 +153,32 @@ def create_web_fetch_tool(*, settings=None, network_settings=None, progress_sett
                                             'Reissue web_fetch with the redirect URL if appropriate: ' + target['url'])
                     current = next_subject
                     continue
+                if status in retry.RETRYABLE_HTTP_STATUS:
+                    return status, headers, None
                 if not 200 <= status < 300:
                     raise ToolException(f'web_fetch failed: HTTP {status}. No response body was returned.')
                 text = readable_content(data, headers, str(original))
                 progress.flush()
-                return web_network.bounded_text(
+                return status, headers, web_network.bounded_text(
                     f'URL: {original}\nContent (untrusted external data):\n{text}', settings.max_output_bytes)
         try:
-            return await web_network.await_request(request_chain,
-                settings.request_timeout_seconds if timeout is None else timeout, control)
+            while True:
+                failure = None
+                headers = {}
+                try:
+                    status, headers, text = await budget.attempt(request_chain)
+                except Exception as error:
+                    if not retry.is_transient_error(error):
+                        raise
+                    failure = error
+                else:
+                    if text is not None:
+                        return text
+                budget.schedule('fetch', retry_after=retry.retry_after_seconds(headers))
+                if not await budget.claim_retry('fetch'):
+                    if failure is not None:
+                        raise failure
+                    raise ToolException(f'web_fetch failed: HTTP {status}. No response body was returned.')
         except (TimeoutError, httpx.TimeoutException) as error:
             logger.warning('web_fetch_failed reason=timeout')
             raise ToolException('web_fetch timed out. Check the network/proxy or retry with a different timeout.') from error
@@ -173,7 +192,8 @@ def create_web_fetch_tool(*, settings=None, network_settings=None, progress_sett
     item = StructuredTool.from_function(coroutine=fetch, name='web_fetch', args_schema=execution,
         description=('Fetch an HTTP(S) URL as readable HTML/text/JSON. Public targets default to Allow; '
             'private/local targets require permission. Redirects are checked separately. '
-            'No browser login, JavaScript, PDF or OCR. timeout=0 disables the configured request deadline. '
+            'No browser login, JavaScript, PDF or OCR. timeout covers all attempts, redirects and backoff. '
+            'timeout=0 disables the total deadline; a configured per-attempt limit can still apply. '
             f'Download limit {settings.max_response_bytes} bytes; returned text limit {settings.max_output_bytes} bytes.'))
     item.handle_validation_error = 'Invalid web_fetch arguments. Provide an HTTP(S) URL and optional nonnegative integer timeout.'
     return ToolSpec(item, public, side_effects='read_only', permissions=WebFetchPermission(),

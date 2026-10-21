@@ -25,19 +25,53 @@ class NetworkSettings(BaseModel):
         for value in values:
             if not isinstance(value, str) or not value or value != value.strip():
                 raise ValueError('Invalid proxy bypass host')
+            if value == '*':
+                hosts.append(value)
+                continue
+            if '/' in value:
+                prefix = value.rsplit('/', 1)[1]
+                if '%' in value or not prefix.isascii() or not prefix.isdecimal():
+                    raise ValueError('Invalid proxy bypass network')
+                try:
+                    hosts.append(str(ipaddress.ip_network(value, strict=False)))
+                except ValueError:
+                    raise ValueError('Invalid proxy bypass network') from None
+                continue
+            wildcard = value.startswith('*.')
+            if '*' in value and not wildcard:
+                parts = value.split('.')
+                if not 2 <= len(parts) <= 4 or '*' not in parts:
+                    raise ValueError('Invalid proxy bypass wildcard')
+                index = parts.index('*')
+                if not index or any(part != '*' for part in parts[index:]):
+                    raise ValueError('Invalid proxy bypass wildcard')
+                network = '.'.join(parts[:index] + ['0'] * (4 - index)) + '/' + str(index * 8)
+                try:
+                    hosts.append(str(ipaddress.IPv4Network(network)))
+                except ValueError:
+                    raise ValueError('Invalid proxy bypass wildcard') from None
+                continue
+            host = value[2:] if wildcard else value
+            if wildcard and host.startswith('.'):
+                raise ValueError('Invalid proxy bypass wildcard')
             try:
-                normalized = ipaddress.ip_address(value).compressed
+                normalized = ipaddress.ip_address(host).compressed
             except ValueError:
                 try:
-                    normalized = value.lstrip('.').rstrip('.').encode('idna').decode('ascii').lower()
+                    normalized = host.lstrip('.').rstrip('.').encode('idna').decode('ascii').lower()
                 except UnicodeError:
                     raise ValueError('Invalid proxy bypass host') from None
-                if (value.startswith('..') or value.endswith('..') or len(normalized) > 253
+                if (host.startswith('..') or host.endswith('..') or len(normalized) > 253
                         or not all(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', part)
                                    for part in normalized.split('.'))):
                     raise ValueError('Invalid proxy bypass host')
-                if value.startswith('.'):
+                if wildcard:
+                    normalized = '*.' + normalized
+                elif value.startswith('.'):
                     normalized = '.' + normalized
+            else:
+                if wildcard:
+                    raise ValueError('IP bypass wildcards require trailing whole octets')
             hosts.append(normalized)
         return tuple(hosts)
 

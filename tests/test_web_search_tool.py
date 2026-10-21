@@ -76,23 +76,27 @@ def test_both_empty_is_success_both_errors_is_tool_error(monkeypatch):
         assert ('No results' if status == 200 else 'http_401') in result.content
 
 
-def test_configured_per_provider_deadline_and_zero_are_actually_forwarded(monkeypatch):
+def test_total_deadline_reserves_fallback_and_zero_retains_attempt_cap(monkeypatch):
     from naiyue_test_agent.tools.web_search import create_web_search_tool
     from naiyue_test_agent.tools import web_network
     for key in ('BAIDU_SEARCH_API_KEY', 'TAVILY_API_KEY'):
         monkeypatch.setenv(key, 'synthetic')
     observed = []
-    original = web_network.await_request
+    from naiyue_test_agent.tools import retry
+    from naiyue_test_agent.tools.retry_settings import ToolRetrySettings
+    monkeypatch.setattr(retry, 'monotonic', lambda: 0)
+    original = retry.await_attempt
     async def record(call, seconds, control):
         observed.append(seconds)
         return await original(call, seconds, control)
-    monkeypatch.setattr(web_network, 'await_request', record)
+    monkeypatch.setattr(retry, 'await_attempt', record)
     monkeypatch.setattr(web_network, 'open_client', lambda *a, **k: httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _: httpx.Response(429))))
     for args in ({'query': 'docs'}, {'query': 'docs', 'timeout': 0}):
-        result = asyncio.run(invoke_tool_feedback(create_web_search_tool(), args, call_id='search'))
+        result = asyncio.run(invoke_tool_feedback(create_web_search_tool(
+            retry_settings=ToolRetrySettings(max_retries=0)), args, call_id='search'))
         assert result.status == 'error'
-    assert observed == [30, 30, 0, 0]
+    assert observed == [15, 30, 30, 30]
 
 
 def test_stop_during_first_provider_settles_without_starting_second(monkeypatch):

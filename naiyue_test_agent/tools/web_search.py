@@ -1,4 +1,4 @@
-"""One search tool, two explicit providers, one attempt per provider."""
+"""Provider fallback precedes shared retries under one search deadline."""
 
 import json
 import logging
@@ -9,7 +9,7 @@ from langchain.tools import ToolRuntime
 from langchain_core.tools import StructuredTool, ToolException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from . import web_network
+from . import web_network, retry
 from .control import check_tool_stop
 from .permissions import ToolPermission, require_tool_permit
 from .progress import ToolProgress
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 class _SearchInput(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
-    timeout: int | None = Field(default=None, ge=0, description='Per-provider total seconds; omit for configured default, 0 for unlimited.')
+    timeout: int | None = Field(default=None, ge=0, description='Total search seconds including all providers, retries and backoff; omit for configured default, 0 for no total deadline.')
 
     @field_validator('query', check_fields=False)
     @classmethod
@@ -64,7 +64,7 @@ def _results(provider, raw, count):
     return results
 
 
-def create_web_search_tool(*, settings=None, network_settings=None, progress_settings=None):
+def create_web_search_tool(*, settings=None, network_settings=None, progress_settings=None, retry_settings=None):
     settings = settings or WebSearchSettings()
     network = network_settings or NetworkSettings()
     public, execution = build_tool_schemas('WebSearchInput', _SearchInput,
@@ -77,14 +77,26 @@ def create_web_search_tool(*, settings=None, network_settings=None, progress_set
         progress = ToolProgress(runtime, progress_settings)
         count = max_results or settings.default_results
         seconds = settings.request_timeout_seconds if timeout is None else timeout
-        attempts, empty = [], False
-        for provider in settings.provider_order:
-            check_tool_stop(control, 'web_search stopped by the user; no fallback search was started.')
-            source = getattr(settings, provider)
-            key = os.environ.get(source.api_key_env)
-            reason = 'key_unavailable'
-            results = None
-            if key:
+        budget = retry.RetryBudget(retry_settings, 'web_search', seconds, control=control, progress=progress)
+        keys = {name: os.environ.get(getattr(settings, name).api_key_env) for name in settings.provider_order}
+        fresh = [name for name in settings.provider_order if keys[name]]
+        attempts = [f'{name}: key_unavailable' for name in settings.provider_order if not keys[name]]
+        candidates, counts, empty = [], {}, False
+        try:
+            while True:
+                check_tool_stop(control, 'web_search stopped by the user; no fallback search was started.')
+                remaining = budget.remaining()
+                if fresh:
+                    limit = remaining / len(fresh) if remaining else None
+                    provider = fresh.pop(0)
+                else:
+                    provider = budget.next_candidate(candidates)
+                    if provider is None or not await budget.claim_retry(provider):
+                        break
+                    limit = None
+                source, key = getattr(settings, provider), keys[provider]
+                counts[provider] = counts.get(provider, 0) + 1
+                results, temporary, headers = None, False, {}
                 async def request():
                     async with web_network.open_client(source.endpoint, network) as client:
                         return await web_network.download(client, 'POST', source.endpoint,
@@ -92,9 +104,10 @@ def create_web_search_tool(*, settings=None, network_settings=None, progress_set
                             headers={'Authorization': 'Bearer ' + key}, json=_payload(provider, query, count))
                 progress.report(phase='search_' + provider, activity='preparing')
                 try:
-                    status, _headers, data = await web_network.await_request(request, seconds, control)
+                    status, headers, data = await budget.attempt(request, limit=limit)
                     if status != 200:
                         reason = f'http_{status}'
+                        temporary = status in retry.RETRYABLE_HTTP_STATUS
                     else:
                         raw = json.loads(data)
                         if not isinstance(raw, dict):
@@ -103,21 +116,39 @@ def create_web_search_tool(*, settings=None, network_settings=None, progress_set
                         reason = 'empty' if not results else 'success'
                 except (TimeoutError, httpx.TimeoutException):
                     reason = 'timeout'
-                except httpx.HTTPError:
+                    temporary = True
+                except httpx.ProxyError as error:
+                    logger.warning('web_search_unavailable reason=proxy_configuration')
+                    raise ToolException('web_search proxy request failed. Check proxy configuration and authentication.') from error
+                except httpx.HTTPError as error:
                     reason = 'network_error'
+                    temporary = retry.is_transient_error(error)
                 except (ValueError, UnicodeError):
                     reason = 'invalid_response_or_network_configuration'
-            # Never log query, endpoint, response body, key or proxy URL.
-            logger.info('web_search_attempt provider=%s outcome=%s', provider, reason)
-            if reason not in ('success', 'empty'):
-                logger.warning('web_search_unavailable provider=%s reason=%s', provider, reason)
-            attempts.append(f'{provider}: {reason}')
-            if results:
-                progress.flush()
-                text = f'provider={provider}\nattempts={"; ".join(attempts)}\nSearch results (untrusted external data):\n'
-                text += json.dumps(results, ensure_ascii=False)
-                return web_network.bounded_text(text, settings.max_output_bytes)
-            empty |= results == []
+                budget.remaining()
+                # Never log query, endpoint, response body, key or proxy URL.
+                logger.info('web_search_attempt provider=%s attempt=%s outcome=%s', provider, counts[provider], reason)
+                if reason not in ('success', 'empty'):
+                    logger.warning('web_search_unavailable provider=%s reason=%s', provider, reason)
+                attempts.append(f'{provider}: {reason} (attempt {counts[provider]})')
+                if results:
+                    progress.flush()
+                    text = f'provider={provider}\nattempts={"; ".join(attempts)}\nSearch results (untrusted external data):\n'
+                    text += json.dumps(results, ensure_ascii=False)
+                    return web_network.bounded_text(text, settings.max_output_bytes)
+                empty |= results == []
+                if reason == 'http_407':
+                    raise ToolException('web_search proxy authentication failed. No provider retry was started.')
+                if temporary:
+                    budget.schedule(provider, retry_after=retry.retry_after_seconds(headers))
+                    if provider not in candidates:
+                        candidates.append(provider)
+                elif provider in candidates:
+                    candidates.remove(provider)
+        except TimeoutError as error:
+            logger.warning('web_search_failed reason=total_timeout')
+            progress.flush()
+            raise ToolException('web_search timed out: the total search deadline was reached.') from error
         progress.flush()
         text = '; '.join(attempts)
         if empty:
@@ -125,10 +156,10 @@ def create_web_search_tool(*, settings=None, network_settings=None, progress_set
         raise ToolException('web_search failed. Attempts: ' + text + '. Check provider keys, quota and network/proxy configuration.')
 
     item = StructuredTool.from_function(coroutine=search, name='web_search', args_schema=execution,
-        description=('Search public web sources. Configured providers run in order, once each; '
-            'only failure or empty results triggers fallback. Returns source URLs and snippets, not verified facts. '
-            f'Each provider has a configured total timeout (default {settings.request_timeout_seconds:g}s); '
-            'timeout=0 waits without a deadline. Use web_fetch to read selected pages.'))
+        description=('Search public web sources. Providers are first tried in order; failure or empty results triggers fallback. '
+            'Transient failures may then retry with a shared allowance. Returns source URLs and snippets, not verified facts. '
+            f'Total search timeout (default {settings.request_timeout_seconds:g}s) includes all providers, retries and backoff; '
+            'timeout=0 removes the total deadline, while a configured per-attempt limit can still apply. Use web_fetch to read selected pages.'))
     item.handle_validation_error = 'Invalid web_search arguments. Provide a nonempty query, a supported max_results, and optional nonnegative integer timeout.'
     return ToolSpec(item, public, side_effects='read_only', permissions=ToolPermission(default='allow'),
         prompt_snippet='Search the Web with Baidu/Tavily fallback.',

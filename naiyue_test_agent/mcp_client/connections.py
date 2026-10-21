@@ -94,6 +94,10 @@ async def _stdio_transport(settings, environment=None):
             raise ValueError('mcp_stdio_diagnostic_drain_failed')
 
 
+class MCPResponsePolicyError(httpx2.ReadError):
+    """Permanent local response refusal, distinct from a transient read failure."""
+
+
 class _LimitedJSONStream(httpx2.AsyncByteStream):
     def __init__(self, inner, limit):
         self.inner, self.limit = inner, limit
@@ -103,7 +107,7 @@ class _LimitedJSONStream(httpx2.AsyncByteStream):
         async for chunk in self.inner:
             count += len(chunk)
             if count > self.limit:
-                raise httpx2.ReadError('mcp_response_budget_exceeded')
+                raise MCPResponsePolicyError('mcp_response_budget_exceeded')
             yield chunk
 
     async def aclose(self):
@@ -120,7 +124,7 @@ class _BudgetTransport(httpx2.AsyncBaseTransport):
         response = await self.inner.handle_async_request(request)
         if response.headers.get('content-encoding', 'identity').lower().strip() != 'identity':
             await response.aclose()
-            raise httpx2.ReadError('mcp_compressed_response_unsupported')
+            raise MCPResponsePolicyError('mcp_compressed_response_unsupported')
         if response.headers.get('content-type', '').split(';')[0].strip() == 'application/json':
             return httpx2.Response(response.status_code, headers=response.headers,
                 stream=_LimitedJSONStream(response.stream, self.limit), extensions=response.extensions)

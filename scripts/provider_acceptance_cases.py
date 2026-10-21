@@ -86,7 +86,7 @@ class CaseEnvironment:
         previous = application.load_model_catalog
         application.load_model_catalog = lambda _: catalog
         specs = [replace(spec, permissions=FixturePermission(spec.tool.name, spec.permissions, self.root))
-                 for spec in create_builtin_tools(settings.tools, process_settings=settings.process, output_settings=settings.tool_output, progress_settings=settings.progress) if spec.tool.name in names]
+                 for spec in create_builtin_tools(settings.tools, process_settings=settings.process, output_settings=settings.tool_output, progress_settings=settings.progress, retry_settings=settings.tool_retry) if spec.tool.name in names]
         try:
             async with open_async_persistent_application(self.config, database_path=self.root / database,
                     tools=specs, initial_active_tools=initial, settings=settings,

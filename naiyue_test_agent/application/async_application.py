@@ -346,7 +346,7 @@ async def build_async_local_application(config_path, *, tools, system_prompt, re
     try:
         await run_blocking(catalog.prepare_async_clients)
         from naiyue_test_agent.mcp_client.resources import MCPSessionResources
-        resources = MCPSessionResources(settings.mcp, settings.network, output_settings=settings.tool_output)
+        resources = MCPSessionResources(settings.mcp, settings.network, output_settings=settings.tool_output, retry_settings=settings.tool_retry)
         from naiyue_test_agent.mcp_client.tools import register_mcp_tools
         # Definitions precede SessionService; execution starts only after assembly.
         def borrow_mcp(session_id, agent_path, server_id):
