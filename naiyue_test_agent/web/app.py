@@ -20,6 +20,7 @@ from .run_delivery import RunDelivery
 from .schemas import ActiveToolsInput, ApprovalInput, ApprovalStopInput, CompactInput, ControlInput, MessageInput, NewSession, PermissionModeInput, RecoveryInput, RegenerateInput, SessionOrder, SessionPresentation, ThinkingInput
 from .service import WebService
 from .headers import LocalHeaders
+from .windows_disconnect import windows_disconnect_handler
 from .schemas import MCPRefreshInput
 
 
@@ -44,6 +45,7 @@ def create_web_app(settings, *, application_factory=None):
             workspace_binding={'workspace_id': settings.workspace_id, 'root_path': str(settings.workspace_root)}
                 if settings.workspace_id is not None else None))
         async with AsyncExitStack() as stack:
+            stack.enter_context(windows_disconnect_handler())
             try:
                 application = await stack.enter_async_context(factory())
             except ModelConfigError as error:

@@ -16,6 +16,7 @@ export function useConversation(api: WebApi) {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<Record<string, string[]>>({});
   const [notice, setNotice] = useState('');
+  const [lastSubmission, setLastSubmission] = useState<{ session_id: string } | null>(null);
   const [connection, setConnection] = useState<{ session_id: string; run_id: string; attempt: number; failed: boolean } | null>(null);
   const listing = useSessions(api, setNotice);
   const { sessions, refreshSessions } = listing;
@@ -336,9 +337,11 @@ export function useConversation(api: WebApi) {
       }
       if (live?.status === 'running' && !live.done) {
         await api.control(live.run_id, followUp ? 'follow_up' : 'steering', combined);
+        setLastSubmission({ session_id: sid });
         setNotice(followUp ? 'Follow-up 已排队，将在自然结束后处理。' : '补充消息已排队。');
       } else {
         const started = await api.start(sid, combined, undefined, session?.conversation_revision);
+        setLastSubmission({ session_id: sid });
         const value = await api.run(started.run_id);
         currentRun.current = value;
         display(value, sid);
@@ -480,7 +483,7 @@ export function useConversation(api: WebApi) {
   }
 
   const id = selected.current;
-  return { models, model, thinkingOptions, sessions, session, messages, run, notice,
+  return { models, model, thinkingOptions, sessions, session, messages, run, notice, lastSubmission,
     connection: connection?.session_id === id && connection.run_id === run?.run_id ? connection : null, submitting, stopping, changingModel, changingControls, selectingSession, recovering,
     history: { ...history.pagination, loadOlder: history.loadOlder, disabled: selectingSession },
     managingSessions: listing.managingSessions, updateSession: listing.updateSession, reorderSessions: listing.reorderSessions, deleteSession,

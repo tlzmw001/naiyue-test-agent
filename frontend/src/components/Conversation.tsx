@@ -27,7 +27,8 @@ const MessageMarkdown = memo(function MessageMarkdown({ content, prefix }: { con
     remarkRehypeOptions={{ clobberPrefix: prefix }} components={markdownComponents}>{content}</ReactMarkdown>;
 });
 
-export default function Conversation({ messages: sourceMessages, compacted, toolStates = {}, agents = {}, stopAgent, openAgent, stoppingRunId, recovery, recovering = false, onRecover, history, loadChange, loadReasoning, loadContent, contentScope = '', regenerate, lastReplyId, canRegenerate }: {
+export default function Conversation({ messages: sourceMessages, compacted, toolStates = {}, agents = {}, stopAgent, openAgent, stoppingRunId, recovery, recovering = false, onRecover, history, loadChange, loadReasoning, loadContent, contentScope = '', regenerate, lastReplyId, canRegenerate, scrollAfterSend = false, lastSubmission }: {
+  scrollAfterSend?: boolean; lastSubmission?: { session_id: string } | null;
   regenerate?: () => void; lastReplyId?: string | null; canRegenerate?: boolean;
   loadChange?: ChangeLoader; loadReasoning?: ReasoningLoader; loadContent?: ContentLoader; contentScope?: string;
   messages: MessageRow[]; compacted: boolean; toolStates?: Record<string, ToolState>; stoppingRunId?: string; recovery?: SessionRecovery;
@@ -40,6 +41,7 @@ export default function Conversation({ messages: sourceMessages, compacted, tool
   const markdownId = useId();
   const scroll = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
+  const previousSubmission = useRef(lastSubmission);
   const anchor = useRef<{ rows: { id: string; offset: number }[]; height: number; top: number } | null>(null);
   const loadingPage = useRef(false);
   const standaloneResults = useRef(new Set<string>());
@@ -128,6 +130,9 @@ export default function Conversation({ messages: sourceMessages, compacted, tool
   useLayoutEffect(() => {
     const element = scroll.current;
     if (!element) return;
+    const sent = lastSubmission && lastSubmission !== previousSubmission.current;
+    previousSubmission.current = lastSubmission;
+    if (sent && scrollAfterSend) { nearBottom.current = true; setAway(false); }
     if (nearBottom.current) element.scrollTop = element.scrollHeight;
     else if (anchor.current) {
       const nodes = Array.from(element.querySelectorAll<HTMLElement>('[data-message-id]'));
@@ -138,7 +143,7 @@ export default function Conversation({ messages: sourceMessages, compacted, tool
     }
     rememberPosition();
     standaloneResults.current = new Set(messages.filter(row => row.type === 'tool' && !matchedResults.has(row.id)).map(row => row.id));
-  }, [messages, toolStates, agents, history?.loading, history?.error]);
+  }, [messages, toolStates, agents, history?.loading, history?.error, lastSubmission, scrollAfterSend]);
 
   async function loadOlder() {
     if (!history || history.loading || history.disabled || loadingPage.current) return;

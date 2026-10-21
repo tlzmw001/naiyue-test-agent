@@ -6,6 +6,7 @@ import SkillsMenu from './SkillsMenu';
 import { commands } from '../commands';
 import type { CommandName, ComposerMenu } from '../commands';
 import { Icon } from './Icons';
+import { sendScrollOptions, type SendScroll } from '../useSendScroll';
 import styles from './ComposerControls.module.css';
 
 const modes: { name: PermissionMode; description: string }[] = [
@@ -16,7 +17,8 @@ const modes: { name: PermissionMode; description: string }[] = [
 ];
 
 export default function ComposerControls({ options, mode, tools, disabled, loading, error, reload, selectMode, selectTools, sessionId,
-  menu, setMenu, runCommand, compactDisabled, api, selectSkill, focusEditor }: {
+  menu, setMenu, runCommand, compactDisabled, api, selectSkill, focusEditor, sendScroll }: {
+  sendScroll?: { preference: SendScroll; select: (value: SendScroll) => void };
   options: SessionControlOptions | null; mode?: PermissionMode; tools: string[]; disabled: boolean;
   loading: boolean; error: boolean; reload: () => void;
   selectMode: (mode: PermissionMode) => void; selectTools: (names: string[]) => void;
@@ -29,6 +31,9 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
   const setOpen = setMenu;
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
+  const scrollTrigger = useRef<HTMLButtonElement>(null);
+  const scrollMenu = useRef<HTMLElement>(null);
+  const [scrollMenuMode, setScrollMenuMode] = useState<'pointer' | 'keyboard' | null>(null);
   const previousSession = useRef(sessionId);
   const [refreshingMcp, setRefreshingMcp] = useState(false);
   const [mcpReport, setMcpReport] = useState<McpRefreshResult | null>(null);
@@ -48,6 +53,10 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
     previousSession.current = sessionId;
   }, [sessionId]);
   useEffect(() => {
+    if (scrollMenuMode === 'keyboard') scrollMenu.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
+  }, [scrollMenuMode]);
+  useEffect(() => {
+    setScrollMenuMode(null);
     if (!open) return;
     function outside(event: PointerEvent) {
       if (!root.current?.contains(event.target as Node)) setOpen(null);
@@ -65,9 +74,15 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
   }
 
   return <div className={styles.controls} ref={root} onKeyDown={event => {
+    if (open === 'commands' && scrollMenuMode && ['ArrowLeft', 'Escape'].includes(event.key)) {
+      event.preventDefault(); setScrollMenuMode(null); scrollTrigger.current?.focus(); return;
+    }
     if (event.key === 'Escape' && open) { event.preventDefault(); setOpen(null); trigger.current ? trigger.current.focus() : focusEditor(); }
     if (open === 'commands' && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
-      const items = Array.from(root.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? []);
+      const currentMenu = (event.target as HTMLElement).closest('[role="menu"]') ?? root.current?.querySelector('[role="menu"]');
+      if (currentMenu !== scrollMenu.current) setScrollMenuMode(null);
+      const items = Array.from(currentMenu?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled), [role="menuitemradio"]:not(:disabled)') ?? [])
+        .filter(item => item.closest('[role="menu"]') === currentMenu);
       const current = items.indexOf(document.activeElement as HTMLButtonElement);
       const index = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 :
         (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
@@ -94,6 +109,24 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
         onClick={() => { setOpen(null); runCommand(command.name); }}>
         <span>{command.label}</span><kbd>/{command.name}</kbd>
       </button>)}
+      {sendScroll && <div className={styles.submenuRoot} onMouseEnter={() => setScrollMenuMode('pointer')}
+        onMouseLeave={() => setScrollMenuMode(null)} onBlur={event => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setScrollMenuMode(null);
+        }}>
+        <button type="button" ref={scrollTrigger} role="menuitem" className={styles.command}
+          aria-haspopup="menu" aria-expanded={!!scrollMenuMode} aria-controls={scrollMenuMode ? `${id}-scroll` : undefined}
+          onClick={() => setScrollMenuMode('keyboard')} onKeyDown={event => {
+            if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); setScrollMenuMode('keyboard'); }
+          }}><span>发送后滚动</span><span className={styles.chevron} aria-hidden="true">›</span></button>
+        {scrollMenuMode && <section id={`${id}-scroll`} ref={scrollMenu} role="menu" aria-label="发送后滚动"
+          className={`${styles.popover} ${styles.submenu}`}>
+          {(Object.keys(sendScrollOptions) as SendScroll[]).map(value => <button key={value} type="button"
+            role="menuitemradio" aria-checked={sendScroll.preference === value} className={styles.command}
+            onClick={() => { sendScroll.select(value); setOpen(null); trigger.current?.focus(); }}>
+            <span>{sendScrollOptions[value]}</span><span aria-hidden="true">{sendScroll.preference === value ? '✓' : ''}</span>
+          </button>)}
+        </section>}
+      </div>}
       <p className={styles.note}>可在输入框输入以上指令。压缩需先结束运行并处理审批。</p>
     </section>}
     {open === 'skills' && <SkillsMenu api={api} readEnabled={tools.includes('read')} className={styles.popover}

@@ -8,12 +8,14 @@ import ComposerControls from './ComposerControls';
 import ComposerEditor from './ComposerEditor';
 import { commands } from '../commands';
 import type { CommandName, ComposerMenu } from '../commands';
+import type { SendScroll } from '../useSendScroll';
 import styles from '../App.module.css';
 import composer from './Composer.module.css';
 
 export default function Composer({ text, pending, pendingMode, busy, stopping, sending, blocked,
   setText, setPending, send, stop, api, session, controlsDisabled, selectTools, selectMode, contextEntry,
-  openModel, compact, openContext, openAgents }: {
+  openModel, compact, openContext, openAgents, sendScroll }: {
+  sendScroll?: { preference: SendScroll; select: (value: SendScroll) => void };
   text: string; pending: string[]; pendingMode: boolean; busy: boolean; stopping: boolean;
   sending: boolean; blocked: boolean; setText: (text: string) => void;
   setPending: (values: string[]) => void; send: (followUp: boolean) => void; stop: () => void;
@@ -160,6 +162,7 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
         }} />
       <div className={styles.composerActions}>
         <ComposerControls sessionId={session?.session_id ?? null} options={options} mode={mode} tools={tools}
+          sendScroll={sendScroll}
           menu={menu} setMenu={setMenu} runCommand={runCommand} compactDisabled={compactDisabled}
           api={api} selectSkill={selectSkill} focusEditor={() => editor.current?.focus()}
           disabled={controlsDisabled} loading={loadingOptions} error={optionsError} reload={() => setReload(value => value + 1)}

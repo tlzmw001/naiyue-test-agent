@@ -17,6 +17,7 @@ import { runReconnectDelays } from './uiSettings';
 import { useSubagentList } from './useSubagentList';
 import { useTheme } from './useTheme';
 import ThemeMenu from './components/ThemeMenu';
+import { useSendScroll } from './useSendScroll';
 import styles from './App.module.css';
 
 export default function App({ api: supplied }: { api?: WebApi }) {
@@ -24,6 +25,7 @@ export default function App({ api: supplied }: { api?: WebApi }) {
   const chat = useConversation(api);
   const agents = useSubagentList(api, chat.session?.session_id, chat.run);
   const theme = useTheme();
+  const sendScroll = useSendScroll();
   const context = useContextView(api, chat.session, chat.run);
   const [contextPanel, setContextPanel] = useState(false);
   const [modelMenu, setModelMenu] = useState(false);
@@ -76,6 +78,8 @@ export default function App({ api: supplied }: { api?: WebApi }) {
         <ThemeMenu theme={theme.theme} select={theme.selectTheme} /></div>
       </header>
       <Conversation regenerate={() => void chat.regenerate()} lastReplyId={chat.session?.last_reply_id}
+        scrollAfterSend={sendScroll.preference === 'latest'}
+        lastSubmission={chat.lastSubmission?.session_id === chat.session?.session_id ? chat.lastSubmission : null}
         canRegenerate={!!chat.session?.can_run && !chat.submitting && !chat.selectingSession}
         key={chat.session?.session_id ?? 'new'} messages={chat.messages} history={chat.history}
         contentScope={`${chat.session?.session_id}:${chat.session?.conversation_revision ?? 0}`}
@@ -105,7 +109,7 @@ export default function App({ api: supplied }: { api?: WebApi }) {
           stop={() => void chat.stopApproval(batch)}
           submit={(decisions, remember) => chat.approve(batch, decisions, remember)} />)}
       </div>}
-      <Composer contextEntry={<ContextTrigger value={context.value} open={contextPanel}
+      <Composer sendScroll={sendScroll} contextEntry={<ContextTrigger value={context.value} open={contextPanel}
         disabled={!chat.session || chat.selectingSession} triggerRef={contextTrigger}
         toggle={() => { closeModel(); setAgentPanel(null); setContextPanel(value => !value); }} />} text={chat.draft} pending={chat.pending} pendingMode={chat.pendingMode} busy={!!busy}
         stopping={chat.stopping} sending={chat.submitting || chat.changingControls || chat.changingModel} blocked={blocked} setText={chat.setDraft}
