@@ -7,8 +7,9 @@
 - 模型接入：OpenAI、兼容 OpenAI 的接口、Anthropic、Ollama。
 - 工具：Read、Ls、Find、Grep、Write、Edit、Bash、PowerShell，以及一层前台子 Agent。
 - `0.1.1` 新增 `aitest_kit`、百度/Tavily 回退的 `web_search` 和 `web_fetch`，配置见[工具说明](docs/aitest-web-tools.md)。
+- `0.2.0` 统一模型请求准备与上下文预算，补充调用次数、耗时和 SDK HTTP 尝试诊断；支持分离配置代理地址、用户名/密码、直连名单及新会话默认工具，见[设置示例](docs/examples/settings.example.toml)。
 - Find/Grep 使用安装包内的 `fd` / `rg`；前端已经构建，使用发行包无需 Node.js 或 npm。
-- 当前源码支持 `nyt mcp list` 只读发现及根/子 Agent 调用本地/远程 MCP 工具，复用活动工具选择、审批与会话连接，支持按服务显式开启空闲回收；应用运行中可刷新配置以新增服务、调整名单和启停，CLI/Web显示来源、结果状态和归档位置，重启保留历史、旧 MCP 待审需取消后重新发起，见[MCP客户端配置](docs/mcp-client.md)。此项尚未发布。
+- `0.2.0` 支持 `nyt mcp list` 只读发现及根/子 Agent 调用本地/远程 MCP 工具，复用活动工具选择、审批与会话连接，支持按服务显式开启空闲回收；应用运行中可刷新配置以新增服务、调整名单和启停，CLI/Web显示来源、结果状态和归档位置，重启保留历史、旧 MCP 待审需取消后重新发起，见[MCP客户端配置](docs/mcp-client.md)。
 
 ## 安装
 
@@ -95,6 +96,8 @@ nyt chat --help
 ```
 
 常用交互命令：`:quit` 退出、`:stop` 停止、`:approve` / `:deny` 处理审批。完整交互说明以终端提示为准。
+
+`0.2.0` 支持只读查询：`:usage` 查看当前会话累计模型用量和调用耗时，`:diagnostics` 列最近运行，`:diagnostics <run_id>` 查看模型、工具和 HTTP 尝试明细；有后续页时会打印下一页命令。Web 在原上下文侧栏的“会话累计”和“运行诊断”查看同一批已保存事实。临时会话 `--no-session` 无持久化查询；诊断只在有限保留范围内可用。口径与入口见[调用观测说明](docs/web-chat.md#调用观测与只读查询)。
 
 Web 与终端各自启动应用实例，同一工作区数据库由一个实例持有。切换入口前先关闭正在占用该数据库的服务。
 
