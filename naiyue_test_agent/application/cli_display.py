@@ -130,7 +130,7 @@ class CliEventDisplay:
             self._incomplete_notice()
         elif kind == 'run_finished':
             self._finish(data)
-        elif kind == 'model_call_started':
+        elif kind == 'model_call_started' and data.purpose == 'agent':
             self.write('模型正在处理请求')
         elif kind == 'tool_call_started':
             self._tools[data.tool_call_id] = data.tool_name or '工具'

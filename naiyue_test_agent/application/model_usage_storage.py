@@ -15,13 +15,17 @@ def _usage_bucket():
     return {'recorded_calls': 0, 'status_counts': dict.fromkeys(
         ('started', 'returned', 'failed', 'cancelled', 'unconfirmed'), 0),
         'usage_status_counts': dict.fromkeys(('final', 'partial', 'unavailable'), 0),
-        'totals': dict.fromkeys(_METRICS, 0), 'reported': dict.fromkeys(_METRICS, 0)}
+        'totals': dict.fromkeys(_METRICS, 0), 'reported': dict.fromkeys(_METRICS, 0),
+        'duration_total': 0, 'duration_reported': 0}
 
 
 def _add_usage(bucket, row):
     bucket['recorded_calls'] += 1
     bucket['status_counts'][row['status']] += 1
     bucket['usage_status_counts'][row['usage_status']] += 1
+    if row['duration_ms'] is not None:
+        bucket['duration_total'] += row['duration_ms']
+        bucket['duration_reported'] += 1
     for key in _METRICS:
         if row[key] is not None:
             bucket['totals'][key] += row[key]
@@ -30,6 +34,9 @@ def _add_usage(bucket, row):
 
 def _usage_view(bucket):
     return {key: bucket[key] for key in ('recorded_calls', 'status_counts', 'usage_status_counts')} | {
+        'duration': {'known_sum_ms': str(bucket['duration_total']) if bucket['duration_reported'] else None,
+            'reported_calls': bucket['duration_reported'],
+            'unknown_calls': bucket['recorded_calls'] - bucket['duration_reported']},
         'metrics': {key: {'known_sum': str(bucket['totals'][key]) if bucket['reported'][key] else None,
             'reported_calls': bucket['reported'][key],
             'unknown_calls': bucket['recorded_calls'] - bucket['reported'][key]} for key in _METRICS}}
@@ -53,7 +60,7 @@ def read_summary(connection, session_id, *, model_limit, after_model=None):
         'root_agent', 'child_agent', 'summary', 'auto_fast', 'auto_detailed', 'unattributed')}
     scopes = {name: _usage_bucket() for name in ('root', 'child')}
     for row in connection.execute('''SELECT model_id,purpose,agent_path,status,usage_status,
-        input_tokens,output_tokens,cache_read_tokens,cache_write_tokens
+        input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,duration_ms
         FROM naiyue_model_invocations WHERE session_id=?''', (session_id,)):
         scope = 'root' if row['agent_path'] == 'root' else 'child'
         activity = scope + '_agent' if row['purpose'] == 'agent' else row['purpose'] or 'unattributed'
@@ -116,10 +123,21 @@ def _run(connection, session_id, run_id):
                        (session_id, run_id))
 
 
+def migrate_duration(connection):
+    """Run after all existing schema12 owners have initialized their tables."""
+    if connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] >= 13:
+        return
+    with connection:
+        connection.execute('BEGIN')
+        connection.execute('''ALTER TABLE naiyue_model_invocations ADD COLUMN duration_ms INTEGER
+            CHECK(duration_ms IS NULL OR (typeof(duration_ms)='integer' AND duration_ms>=0))''')
+        connection.execute('UPDATE naiyue_store_info SET version=13')
+
+
 def save_event(connection, event):
     data, source = event.data, event.source
-    if not ((event.event_type == 'model_invocation_started' and type(data) is ModelInvocationStartedData)
-            or (event.event_type == 'model_invocation_finished' and type(data) is ModelInvocationFinishedData)):
+    if not ((event.event_type == 'model_call_started' and type(data) is ModelInvocationStartedData)
+            or (event.event_type == 'model_call_finished' and type(data) is ModelInvocationFinishedData)):
         raise ValueError('usage_event_invalid')
     scope = (event.session_id, event.run_id, source.agent_path if source else 'root',
              source.agent_id if source else None, source.agent_run_id if source else None,
@@ -150,14 +168,14 @@ def save_event(connection, event):
             value = None
         counts.append(value)
     usage_status = data.usage_status if any(value is not None for value in counts) else 'unavailable'
-    terminal = (data.status, usage_status, *counts, data.error_type)
-    fields = ('status', 'usage_status', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'error_type')
+    terminal = (data.status, usage_status, *counts, data.error_type, data.duration_ms)
+    fields = ('status', 'usage_status', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'error_type', 'duration_ms')
     if previous is not None and previous['finished_at'] is not None:
         if tuple(previous[key] for key in fields) != terminal:
             raise ValueError('usage_terminal_conflict')
         return
     connection.execute('''UPDATE naiyue_model_invocations SET status=?,usage_status=?,input_tokens=?,
-        output_tokens=?,cache_read_tokens=?,cache_write_tokens=?,error_type=?,finished_at=? WHERE invocation_id=?''',
+        output_tokens=?,cache_read_tokens=?,cache_write_tokens=?,error_type=?,duration_ms=?,finished_at=? WHERE invocation_id=?''',
         (*terminal, event.timestamp, data.invocation_id))
     if previous is None or previous['started_at'] is None:
         connection.execute('''UPDATE naiyue_model_usage_runs SET capture_incomplete=1,reason=COALESCE(reason,'missing_start')

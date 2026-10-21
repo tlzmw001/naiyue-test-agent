@@ -38,7 +38,7 @@ async def test_text_response_is_one_turn_inside_run_and_finishes_after_message(m
     assert end.data.assistant_message_id == result['messages'][-1].id
     assert end.data.status == 'completed' and end.data.tool_message_ids == ()
     model_start = next(e for e in events if e.event_type == 'model_call_started')
-    assert start.sequence < model_start.sequence and start.data.model_call_id == model_start.data.model_call_id
+    assert start.sequence < model_start.sequence and start.data.model_call_id != model_start.data.invocation_id
     message_end = next(e for e in events if e.event_type == 'message_completed' and e.data.message_type == 'ai')
     assert message_end.sequence < end.sequence < events[-1].sequence
     assert [e.sequence for e in events] == list(range(1, len(events) + 1))

@@ -218,7 +218,8 @@ def test_context_probe_uses_real_assembly_and_state_stream_offline(monkeypatch, 
     monkeypatch.setattr('scripts.provider_acceptance_budget.guard_catalog', guard_fake_catalog)
     from scripts.probe_async_model import _worker
     from naiyue_test_agent.model_access import ModelCatalog
-    chosen = EchoContextModel(metadata=model(window=128000, output=16384, reserve=16384).metadata)
+    chosen = EchoContextModel(metadata={**model(window=128000, output=16384, reserve=16384).metadata,
+        'naiyue_model_id': 'A'})
     monkeypatch.setattr('naiyue_test_agent.model_access.load_model_catalog', lambda _: ModelCatalog('A', {'A': chosen}))
     args = SimpleNamespace(config='unused.json', model_id=None, timeout_seconds=5, with_context=True)
     asyncio.run(_worker(args))

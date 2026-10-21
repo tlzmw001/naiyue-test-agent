@@ -8,6 +8,7 @@ import ApprovalPanel from './components/ApprovalPanel';
 import SubagentSidebar from './components/SubagentSidebar';
 import ContextPanel, { ContextTrigger } from './components/ContextPanel';
 import SessionUsage from './components/SessionUsage';
+import SessionDiagnostics from './components/SessionDiagnostics';
 import WorkspaceLabel from './components/WorkspaceLabel';
 import ModelMenu from './components/ModelMenu';
 import { useContextView } from './useContext';
@@ -117,7 +118,8 @@ export default function App({ api: supplied }: { api?: WebApi }) {
     </main>
     {contextPanel && <ContextPanel value={context.value} loading={context.loading} error={context.error}
       retry={context.retry} close={closeContext} usageContent={chat.session && <SessionUsage
-        api={api} sessionId={chat.session.session_id} run={chat.run} />} />}
+        api={api} sessionId={chat.session.session_id} run={chat.run} />}
+      diagnosticContent={chat.session && <SessionDiagnostics api={api} sessionId={chat.session.session_id} run={chat.run} />} />}
     {agentPanel && agentPanel.sessionId === chat.session?.session_id && agentPanel.revision === (chat.session?.conversation_revision ?? 0) && <SubagentSidebar conversationRevision={chat.session?.conversation_revision ?? 0} list={agents} api={api}
       sessionId={agentPanel.sessionId} run={chat.run} initialAgentId={agentPanel.agentId}
       close={closeAgents} stopAgent={(path, runId) => void chat.stopAgent(path, runId)}

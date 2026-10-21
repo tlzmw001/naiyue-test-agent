@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import ContextPanel from './components/ContextPanel';
 import SessionUsage from './components/SessionUsage';
@@ -15,19 +15,25 @@ function view(sid = 's', sum = '3500'): any {
     capture: { recorded_runs: 1, incomplete_runs: 0, dropped_events: '0' } };
 }
 
-it('loads only when cumulative tab is opened and cycles all three tabs', async () => {
+it('loads only when cumulative tab is opened and cycles all four tabs', async () => {
   const api = new WebApi('test');
   const usage = vi.spyOn(api, 'usage').mockResolvedValue(view());
   render(<ContextPanel loading={false} error="" retry={vi.fn()} close={vi.fn()}
     usageContent={<SessionUsage api={api} sessionId="s" run={null} />} />);
   expect(usage).not.toHaveBeenCalled();
   fireEvent.keyDown(screen.getByRole('tab', { name: '当前预估' }), { key: 'End' });
+  expect(document.activeElement).toBe(screen.getByRole('tab', { name: '运行诊断' }));
+  expect(usage).not.toHaveBeenCalled();
+  fireEvent.keyDown(screen.getByRole('tab', { name: '运行诊断' }), { key: 'ArrowLeft' });
   expect(document.activeElement).toBe(screen.getByRole('tab', { name: '会话累计' }));
   expect(await screen.findByText('3,500')).toBeTruthy();
   expect(screen.getByText('0')).toBeTruthy();
-  expect(screen.getByText('未提供')).toBeTruthy();
+  expect(within(screen.getByText('↳ 其中缓存读取').closest('div')!).getByText('未提供')).toBeTruthy();
+  expect(within(screen.getByText('已记录模型调用耗时').closest('div')!).getByText('未提供')).toBeTruthy();
   expect(usage).toHaveBeenCalledTimes(1);
   fireEvent.keyDown(screen.getByRole('tab', { name: '会话累计' }), { key: 'ArrowRight' });
+  expect(document.activeElement).toBe(screen.getByRole('tab', { name: '运行诊断' }));
+  fireEvent.keyDown(screen.getByRole('tab', { name: '运行诊断' }), { key: 'ArrowRight' });
   expect(document.activeElement).toBe(screen.getByRole('tab', { name: '当前预估' }));
 });
 

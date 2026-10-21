@@ -11,6 +11,7 @@ from collections import deque
 from typing import Literal
 
 from naiyue_test_agent.contracts.failures import safe_error_type, RunFailureData
+from naiyue_test_agent.contracts.timing import validate_duration
 from .turn_events import TurnStartedData, TurnFinishedData, TurnUnavailableData
 from naiyue_test_agent.contracts.session_events import (
     RunStartedData, RunFinishedData, ControlData, ApprovalRequestedData, SESSION_PAYLOADS,
@@ -55,8 +56,13 @@ class ModelInvocationFinishedData:
     cache_read_tokens: int | None = None
     cache_write_tokens: int | None = None
     error_type: str | None = None
+    duration_ms: int | None = None
+    http_capture_status: Literal['complete', 'incomplete', 'unavailable'] | None = None
 
     def __post_init__(self):
+        validate_duration(self.duration_ms)
+        if self.http_capture_status not in (None, 'complete', 'incomplete', 'unavailable'):
+            raise ValueError('Invalid HTTP capture status')
         _check_call_subject(self.invocation_id, None)
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', self.invocation_id):
             raise ValueError('Invalid invocation identifier')
@@ -77,44 +83,30 @@ class ModelInvocationFinishedData:
 
 
 @dataclass(frozen=True)
-class ModelCallStartedData:
-    model_call_id: str
-    model_id: str | None
-    purpose: Literal['agent'] = 'agent'
+class ModelHttpAttemptStartedData:
+    attempt_id: str
+    invocation_id: str
 
     def __post_init__(self):
-        _check_call_subject(self.model_call_id, self.model_id)
-        if self.purpose != 'agent':
-            raise ValueError('Invalid model call purpose')
+        if any(not isinstance(v, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', v)
+               for v in (self.attempt_id, self.invocation_id)):
+            raise ValueError('Invalid HTTP attempt identity')
 
 
 @dataclass(frozen=True)
-class ModelCallFinishedData:
-    model_call_id: str
-    model_id: str | None
-    status: Literal['accepted', 'failed']
-    stop_reason: str | None = None
-    tool_call_ids: tuple[str, ...] = ()
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    cache_read_tokens: int | None = None
-    failure: RunFailureData | None = None
-    cache_write_tokens: int | None = None
+class ModelHttpAttemptFinishedData(ModelHttpAttemptStartedData):
+    status: Literal['response_headers', 'unconfirmed']
+    http_status: int | None = None
+    response_headers_ms: int | None = None
 
     def __post_init__(self):
-        _check_call_subject(self.model_call_id, self.model_id)
-        if self.status not in ('accepted', 'failed'):
-            raise ValueError('Invalid model call outcome')
-        if self.stop_reason not in (None, 'stop', 'tool_use', 'length', 'error', 'unknown'):
-            raise ValueError('Invalid normalized stop reason')
-        if (self.status == 'failed') != isinstance(self.failure, RunFailureData):
-            raise ValueError('Invalid model failure details')
-        if (type(self.tool_call_ids) is not tuple
-                or any(not isinstance(item, str) for item in self.tool_call_ids)):
-            raise ValueError('Tool identifiers must be an immutable tuple')
-        if any(value is not None and (type(value) is not int or value < 0)
-               for value in (self.input_tokens, self.output_tokens, self.cache_read_tokens, self.cache_write_tokens)):
-            raise ValueError('Invalid model usage metadata')
+        super().__post_init__()
+        validate_duration(self.response_headers_ms)
+        if self.status == 'response_headers':
+            if type(self.http_status) is not int or not 100 <= self.http_status <= 599:
+                raise ValueError('Invalid HTTP response status')
+        elif self.status != 'unconfirmed' or self.http_status is not None or self.response_headers_ms is not None:
+            raise ValueError('Invalid HTTP attempt outcome')
 
 
 @dataclass(frozen=True)
@@ -137,8 +129,10 @@ class ToolCallFinishedData:
     outcome: Literal['success', 'error_result', 'not_executed', 'exception', 'outcome_unknown']
     reason: str | None = None
     failure: RunFailureData | None = None
+    duration_ms: int | None = None
 
     def __post_init__(self):
+        validate_duration(self.duration_ms)
         _check_call_subject(self.tool_call_id, self.tool_name)
         if self.boundary not in ('dispatch', 'approval_resolution'):
             raise ValueError('Invalid tool observation boundary')
@@ -236,21 +230,23 @@ class MessageSnapshotUnavailableData:
             raise ValueError('Invalid observation error type')
 
 
-EventData = (RunStartedData | RunFinishedData | ModelCallStartedData | ModelCallFinishedData
+EventData = (RunStartedData | RunFinishedData
              | ToolCallStartedData | ToolCallFinishedData | MessageSnapshotData
              | ContextMessagesChangedData | MessageSnapshotUnavailableData
              | TurnStartedData | TurnFinishedData | TurnUnavailableData | ControlData | ApprovalRequestedData
              | ContextOperationStartedData | ContextOperationFinishedData | MessageDeltaData | MessageReasoningDeltaData | ToolProgressData
-             | ModelContextSnapshotData | ModelInvocationStartedData | ModelInvocationFinishedData)
+             | ModelContextSnapshotData | ModelInvocationStartedData | ModelInvocationFinishedData
+             | ModelHttpAttemptStartedData | ModelHttpAttemptFinishedData)
 
 _CORE_PAYLOADS = {
-    'model_invocation_started': ModelInvocationStartedData,
-    'model_invocation_finished': ModelInvocationFinishedData,
+    'model_call_started': ModelInvocationStartedData,
+    'model_call_finished': ModelInvocationFinishedData,
+    'model_http_attempt_started': ModelHttpAttemptStartedData,
+    'model_http_attempt_finished': ModelHttpAttemptFinishedData,
     'model_context_snapshot': ModelContextSnapshotData,
     'tool_progress': ToolProgressData,
     'message_delta': MessageDeltaData,
     'message_reasoning_delta': MessageReasoningDeltaData,
-    'model_call_started': ModelCallStartedData, 'model_call_finished': ModelCallFinishedData,
     'tool_call_started': ToolCallStartedData, 'tool_call_finished': ToolCallFinishedData,
     'message_completed': MessageSnapshotData, 'message_revised': MessageSnapshotData,
     'context_messages_changed': ContextMessagesChangedData,

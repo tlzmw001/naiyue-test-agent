@@ -89,9 +89,14 @@ def _ensure(connection, record, settings):
         return None
     started = record['event_type'] == 'run_started' and record['source'] is None
     summary = {'session_id': key[0], 'run_id': key[1], 'started_at': record['timestamp'] if started else None,
-        'last_observed_at': record['timestamp'], 'finished_at': None, 'status': None, 'failure': None,
+        'last_observed_at': record['timestamp'], 'finished_at': None, 'status': None, 'failure': None, 'duration_ms': None,
         'capture_state': 'open', 'capture_incomplete': not started, 'reason': None if started else 'missing_start',
         'dropped_events': 0, 'last_sequence': 0, 'event_count': 0}
+    enabled = started and record['data'].get('http_observation_version') == 1
+    summary['http_attempts'] = {'status': 'complete' if enabled else 'unavailable',
+        'observed_attempts': 0 if enabled else None, 'response_headers': 0 if enabled else None,
+        'unconfirmed': 0 if enabled else None}
+    summary['_http_pending_models'] = 0
     body = _json(summary)
     connection.execute('''INSERT INTO naiyue_diagnostic_runs
         (session_id,run_id,capture_state,summary_bytes,reserve_bytes,summary_json) VALUES(?,?,'open',?,?,?)''',
@@ -125,6 +130,21 @@ def save_event(connection, record, settings):
         connection.execute('INSERT INTO naiyue_diagnostic_events VALUES(?,?,?,?,?)',
                            (row['session_id'], row['run_id'], record['sequence'], body, amount))
         summary['event_count'] += 1
+        http = summary.get('http_attempts')
+        if http is not None and http['status'] != 'unavailable':
+            kind, data = record['event_type'], record['data']
+            if kind == 'model_http_attempt_started':
+                http['observed_attempts'] += 1
+            elif kind == 'model_http_attempt_finished':
+                http[data['status']] += 1
+            elif kind == 'model_call_started':
+                summary['_http_pending_models'] += 1
+            elif kind == 'model_call_finished':
+                summary['_http_pending_models'] -= 1
+                if data.get('http_capture_status') != 'complete':
+                    http['status'] = 'partial'
+            elif kind == 'run_finished' and data.get('http_capture_status') == 'incomplete':
+                http['status'] = 'partial'
         _update(connection, row, summary, event_bytes=row['event_bytes'] + amount)
     return True
 
@@ -146,15 +166,21 @@ def finish_run(connection, record, settings, *, reason=None, dropped_events=0):
     summary['reason'] = reason or summary['reason'] or (None if terminal else 'missing_terminal')
     if terminal:
         summary.update(status=record['data'].get('status'), failure=record['data'].get('failure'),
-                       finished_at=record['timestamp'])
+                       finished_at=record['timestamp'], duration_ms=record['data'].get('duration_ms'))
     _update(connection, row, summary, closed_at=_now())
     prune(connection, settings)
     return True
 
 
 def _summary(row):
-    return {**json.loads(row['summary_json']), 'capture_id': row['capture_id'],
-            'payload_bytes': row['event_bytes'] + row['summary_bytes']}
+    summary = {'duration_ms': None, **json.loads(row['summary_json'])}
+    http = summary.setdefault('http_attempts', {'status': 'unavailable', 'observed_attempts': None,
+        'response_headers': None, 'unconfirmed': None})
+    pending = summary.pop('_http_pending_models', 0)
+    if http['status'] != 'unavailable' and (summary['capture_incomplete'] or pending
+            or http['observed_attempts'] != http['response_headers'] + http['unconfirmed']):
+        http['status'] = 'partial'
+    return {**summary, 'capture_id': row['capture_id'], 'payload_bytes': row['event_bytes'] + row['summary_bytes']}
 
 
 def _check_query(connection, session_id, limit):

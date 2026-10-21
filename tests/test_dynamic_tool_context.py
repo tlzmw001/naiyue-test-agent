@@ -15,28 +15,27 @@ from test_dynamic_tools import DynamicModel, call, definition
 
 
 @async_test
-async def test_first_view_precedes_compaction_and_is_consumed_once(monkeypatch):
-    from naiyue_test_agent.agent_runtime import context_compaction as compaction
+async def test_each_request_prepares_one_view_before_compaction_and_model(monkeypatch):
+    from naiyue_test_agent.agent_runtime import request_preparation
     from naiyue_test_agent.agent_runtime.tool_execution.toolset import ToolSetMiddleware
     trace, budgets = [], []
-    resolve = application.SessionService.resolve_active_tool_names
+    resolve = application.SessionService.resolve_request_configuration
     def selected(self, *args):
         trace.append('selection')
         return resolve(self, *args)
-    monkeypatch.setattr(application.SessionService, 'resolve_active_tool_names', selected)
+    monkeypatch.setattr(application.SessionService, 'resolve_request_configuration', selected)
     def budget(**kwargs):
         trace.append('compaction')
         budgets.append(kwargs)
         return None
-    async def abudget(**kwargs):
-        return budget(**kwargs)
-    monkeypatch.setattr(compaction, '_acompact_messages', budget)
-    monkeypatch.setattr(compaction, '_acompact_messages', abudget)
-    before = ToolSetMiddleware.before_model
-    def before_model(self, state, runtime):
-        trace.append('before_model')
-        return before(self, state, runtime)
-    monkeypatch.setattr(ToolSetMiddleware, 'before_model', before_model)
+    async def abudget(messages, model, **kwargs):
+        return budget(messages=messages, model=model, **kwargs)
+    monkeypatch.setattr(request_preparation, '_acompact_messages', abudget)
+    prepare = ToolSetMiddleware.prepare_tool_view
+    def prepare_view(self, runtime, **kwargs):
+        trace.append('tool_view')
+        return prepare(self, runtime, **kwargs)
+    monkeypatch.setattr(ToolSetMiddleware, 'prepare_tool_view', prepare_view)
     spec = definition(prompt_snippet='PROMPT_SNIPPET')
     model = DynamicModel(responses=[call(), AIMessage(content='done')])
     model.on_request = lambda _: trace.append('model')
@@ -49,9 +48,11 @@ async def test_first_view_precedes_compaction_and_is_consumed_once(monkeypatch):
         finally:
             await app.aclose()
     await scenario()
-    assert trace == ['selection', 'compaction', 'before_model', 'model', 'before_model', 'selection', 'model']
-    assert budgets[0]['tools'] == [spec.tool] and budgets[0]['tools'][0] is spec.tool
-    assert budgets[0]['system_messages'][0].content == model.seen[0][0].content
+    assert trace == ['selection', 'tool_view', 'compaction', 'model'] * 2
+    assert len(budgets) == 2
+    for index, request in enumerate(budgets):
+        assert request['tools'] == [spec.tool] and request['tools'][0] is spec.tool
+        assert request['system_messages'][0].content == model.seen[index][0].content
 
 
 @async_test

@@ -10,17 +10,17 @@ from test_subagent_execution import ChildModel, delegated_app
 
 @async_test
 async def test_role_index_is_short_dynamic_and_absent_when_tool_inactive(monkeypatch):
-    from naiyue_test_agent.agent_runtime import context_compaction
+    from naiyue_test_agent.agent_runtime import request_preparation
     from test_dynamic_tools import DynamicModel, call
     root = DynamicModel(responses=[call(), AIMessage(content='first done'), AIMessage(content='inactive done')])
     child = ChildModel(replies=[])
     app, _ = await delegated_app(monkeypatch, child, root=root)
     budget_prompts = []
-    compact = context_compaction._acompact_messages
-    async def record_budget(**kwargs):
+    compact = request_preparation._acompact_messages
+    async def record_budget(messages, model, **kwargs):
         budget_prompts.append(kwargs['system_messages'][0].content)
-        return await compact(**kwargs)
-    monkeypatch.setattr(context_compaction, '_acompact_messages', record_budget)
+        return await compact(messages, model, **kwargs)
+    monkeypatch.setattr(request_preparation, '_acompact_messages', record_budget)
     sid = await app.acreate_session('A')
     await app.aset_active_tools(sid, ['subagent', 'probe'])
     async def add_on_first_request(number):
@@ -36,8 +36,7 @@ async def test_role_index_is_short_dynamic_and_absent_when_tool_inactive(monkeyp
     await app.arun(sid, [('user', 'without delegation')])
     assert 'WRITER_SHORT_DESCRIPTION' not in root.seen[-1][0].content
     assert 'Verify tests' not in root.seen[-1][0].content and child.seen == []
-    # Proactive compaction runs at invocation entry, not on every loop turn.
-    assert budget_prompts == [root.seen[0][0].content, root.seen[2][0].content]
+    assert budget_prompts == [messages[0].content for messages in root.seen]
 
 
 def test_subagent_is_registered_with_public_schema_and_parallel_unknown_effects():

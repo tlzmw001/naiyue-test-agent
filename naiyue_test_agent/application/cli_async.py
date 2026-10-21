@@ -93,6 +93,16 @@ class AsyncCliApplication:
     def select_model(self, session_id, model_id):
         return self._submit(lambda: self._app.aselect_model(session_id, model_id))
 
+    def get_model_usage(self, session_id, *, model_limit=20, after_model=None):
+        return self._submit(lambda: self._app.aget_model_usage(session_id,
+            model_limit=model_limit, after_model=after_model))
+
+    def list_diagnostic_runs(self, session_id, *, limit=50, before=None):
+        return self._submit(lambda: self._app.alist_diagnostic_runs(session_id, limit=limit, before=before))
+
+    def get_diagnostic_events(self, session_id, run_id, *, limit=50, after=0):
+        return self._submit(lambda: self._app.aget_diagnostic_events(session_id, run_id, limit=limit, after=after))
+
     def get_permission_mode(self, session_id):
         return self._submit(lambda: self._app.get_permission_mode(session_id))
 

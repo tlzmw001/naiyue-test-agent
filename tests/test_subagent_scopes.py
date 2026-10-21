@@ -79,18 +79,19 @@ async def test_child_checkpoint_and_parent_report_share_sqlite_without_sharing_t
 
 @async_test
 async def test_subagent_scope_is_used_by_model_selection_and_compaction(monkeypatch):
-    from naiyue_test_agent.agent_runtime import context_compaction
+    from naiyue_test_agent.agent_runtime import request_preparation
     child = ChildModel(replies=[AIMessage(content='done')])
     app, _ = await delegated_app(monkeypatch, child)
     seen = []
-    compact = context_compaction._acompact_messages
-    async def record(**kwargs):
-        seen.append((kwargs['context']['agent_path'], kwargs['model_id'], kwargs['model']))
-        return await compact(**kwargs)
-    monkeypatch.setattr(context_compaction, '_acompact_messages', record)
+    compact = request_preparation._acompact_messages
+    async def record(messages, model, **kwargs):
+        seen.append((kwargs['context']['agent_path'], kwargs['model_id'], model))
+        return await compact(messages, model, **kwargs)
+    monkeypatch.setattr(request_preparation, '_acompact_messages', record)
     await app.arun(await app.acreate_session('A'), [('user', 'start')])
     child_scopes = [item for item in seen if item[0] != 'root']
     assert len(child_scopes) == 1 and child_scopes[0][1:] == ('B', child)
+    assert len([item for item in seen if item[0] == 'root']) == 2
 
 
 @async_test

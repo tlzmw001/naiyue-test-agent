@@ -8,6 +8,8 @@ from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_ollama import ChatOllama
 
+from .http_observation import install_http_hooks, close_http_observation, client_token
+
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +21,8 @@ def prepare_owned_clients(models, owned):
             continue
         seen.add(id(model))
         if isinstance(model, ChatOllama):
+            install_http_hooks(model._async_client._client, asynchronous=True)
+            install_http_hooks(model._client._client, asynchronous=False)
             owned.extend(((model._async_client._client, True), (model._client._client, False)))
             continue
         if isinstance(model, ChatOpenAI):
@@ -39,6 +43,8 @@ def prepare_owned_clients(models, owned):
         owned.append((sync_http, False))
         async_http = transport_module.AsyncClient(**options)
         owned.append((async_http, True))
+        install_http_hooks(sync_http, asynchronous=False)
+        install_http_hooks(async_http, asynchronous=True)
         sync = sync.with_options(http_client=sync_http)
         asynchronous = asynchronous.with_options(http_client=async_http)
         if isinstance(model, ChatOpenAI):
@@ -55,6 +61,7 @@ async def aclose_models(clients):
         if id(client) in seen:
             continue
         seen.add(id(client))
+        close_http_observation(client)
         try:
             if asynchronous:
                 await client.aclose()
@@ -65,3 +72,14 @@ async def aclose_models(clients):
             primary = primary or error
     if primary is not None:
         raise primary
+
+
+def model_http_tokens(model):
+    if isinstance(model, ChatOpenAI):
+        clients = (model.root_client._client, model.root_async_client._client)
+    elif isinstance(model, (ChatAnthropic, ChatOllama)):
+        clients = (model._client._client, model._async_client._client)
+    else:
+        return ()
+    tokens = tuple(client_token(client) for client in clients)
+    return tokens if all(token is not None for token in tokens) else ()

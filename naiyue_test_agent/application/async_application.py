@@ -355,7 +355,8 @@ async def build_async_local_application(config_path, *, tools, system_prompt, re
         application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
         registry.select(initial)
         sessions = application.SessionService(catalog, registry, initial_active_tools=initial, permission_settings=settings.permissions, progress_settings=settings.progress,
-            max_active_runs=settings.max_active_runs, mcp_resources=resources)
+            max_active_runs=settings.max_active_runs, mcp_resources=resources,
+            http_attempt_limit=settings.diagnostics.max_pending_events)
         agent = sessions.assemble_runtime(InMemorySaver(), system_prompt=system_prompt, response_format=response_format,
             subagents=settings.subagents, subagent_settings=settings.tools.subagent)
         return AsyncApplication(catalog, sessions, agent, registry, system_prompt=system_prompt)

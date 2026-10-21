@@ -147,6 +147,16 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
                 identity, level = self._run.subagent_instances[agent_path]['model_id'], 'model_default'
         return identity, self._catalog.with_thinking(identity, level)
 
+    def resolve_request_configuration(self, agent_path='root'):
+        with self._lock:
+            if agent_path == 'root':
+                row = self._state
+                identity, level, names = row.model_id, row.thinking_level, row.active_tool_names
+            else:
+                instance = self._run.subagent_instances[agent_path]
+                identity, level, names = instance['model_id'], 'model_default', instance['tool_names']
+        return identity, self._catalog.with_thinking(identity, level), tuple(names)
+
     def get_active_tools(self, agent_path='root'):
         with self._lock:
             return (self._state.active_tool_names if agent_path == 'root'

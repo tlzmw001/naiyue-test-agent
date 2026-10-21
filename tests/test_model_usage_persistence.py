@@ -49,7 +49,7 @@ async def test_capacity_includes_started_io_and_overflow_preserves_accepted_fact
             release.set()
         report = await sink.aflush_run('s', 'r')
         assert report == {'capture_incomplete': True, 'reason': 'buffer_overflow', 'dropped_events': 1}
-        assert [e.event_type for e in saved] == ['model_invocation_started']
+        assert [e.event_type for e in saved] == ['model_call_started']
         assert finished[-1]['dropped_events'] == 1
     assert 'model_usage_buffer_overflow' in caplog.text
 

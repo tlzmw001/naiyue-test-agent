@@ -45,7 +45,7 @@ async def test_start_end_pairing_uses_framework_id_and_existing_scope(tags, purp
         await handler.on_llm_end(output({'input_tokens': 100, 'output_tokens': 5, 'total_tokens': 105,
             'input_token_details': {'cache_read': 20, 'cache_creation': 30}}), run_id=identity, tags=tags)
     start, end = events[1:]
-    assert start.event_type == 'model_invocation_started' and end.event_type == 'model_invocation_finished'
+    assert start.event_type == 'model_call_started' and end.event_type == 'model_call_finished'
     assert start.data.invocation_id == end.data.invocation_id == str(identity)
     assert start.data.model_id == 'configured-model' and start.data.purpose == purpose
     assert end.data.status == 'returned' and end.data.usage_status == 'final'

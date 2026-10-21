@@ -133,7 +133,7 @@ async def test_custom_model_error_reaches_model_and_run_events_without_core_edit
     model_end = next(e.data for e in events if e.event_type == 'model_call_finished')
     terminal = events[-1].data
     assert terminal.status == 'failed'
-    assert model_end.failure == terminal.failure
+    assert model_end.status == 'failed' and model_end.error_type == terminal.failure.error_type
     assert terminal.failure.reason == 'vendor_quota'
 
 

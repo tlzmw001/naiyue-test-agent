@@ -7,8 +7,8 @@ class EventSequenceChecker:
     def __init__(self):
         self._sequence = 0
         self._finished = False
-        self._model_calls = {}
         self._model_invocations = set()
+        self._http_attempts = {}
         self._tool_calls = {}
         self._turns = {}
         self._controls = {}
@@ -73,9 +73,7 @@ class EventSequenceChecker:
                         or (event_type == 'turn_suspended') != (data.status == 'suspended')):
                     raise ValueError('Turn result does not match its start')
                 del self._turns[key]
-        if event_type.startswith('model_call_'):
-            key, subject, calls = data.model_call_id, data.model_id, self._model_calls
-        elif event_type.startswith('tool_call_'):
+        if event_type.startswith('tool_call_'):
             key, subject, calls = data.tool_call_id, (data.tool_name, data.boundary), self._tool_calls
         else:
             calls = None
@@ -90,7 +88,17 @@ class EventSequenceChecker:
                 if key not in calls or calls[key] != subject:
                     raise ValueError('Call result does not match its start')
                 del calls[key]
-        if event_type.startswith('model_invocation_'):
+        if event_type.startswith('model_http_attempt_'):
+            key = data.attempt_id
+            if event_type.endswith('_started'):
+                if key in self._http_attempts or data.invocation_id not in self._model_invocations:
+                    raise ValueError('Invalid HTTP attempt start')
+                self._http_attempts[key] = data.invocation_id
+            else:
+                if self._http_attempts.get(key) != data.invocation_id:
+                    raise ValueError('HTTP attempt result does not match its start')
+                del self._http_attempts[key]
+        if event_type.startswith('model_call_'):
             key = data.invocation_id
             if event_type.endswith('_started'):
                 if key in self._model_invocations:
@@ -99,6 +107,8 @@ class EventSequenceChecker:
             else:
                 if key not in self._model_invocations:
                     raise ValueError('Model invocation result has no start')
+                if key in self._http_attempts.values():
+                    raise ValueError('Model terminal has unfinished HTTP attempts')
                 self._model_invocations.remove(key)
         self._sequence += 1
         self._finished = event_type == 'run_finished'
@@ -122,7 +132,8 @@ class EventSequenceChecker:
                 continue
             code = record.getMessage().split()[0]
             if code in ('observation_failed', 'event_observer_failed', 'event_payload_invalid',
-                        'control_message_batch_unavailable') or code.endswith(
+                        'control_message_batch_unavailable', 'model_http_context_unavailable',
+                        'model_http_capture_incomplete') or code.endswith(
                             ('_publish_failed', '_observation_failed', '_reporting_failed')):
                 faults.append(record.getMessage())
         assert not faults, f'Unexpected observation diagnostics: {faults}'

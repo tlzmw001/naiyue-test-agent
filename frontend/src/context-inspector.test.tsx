@@ -27,6 +27,16 @@ it('warns at the configured compaction threshold using the current estimate', ()
   expect(screen.getByRole('button').getAttribute('data-threshold')).toBeNull();
 });
 
+it('keeps a usable total and omits unavailable composition without an extra notice', () => {
+  const partial: ContextView = { ...view, current: { ...view.current,
+    estimate: { ...estimate, groups: [], groups_status: 'unavailable' } } };
+  render(<ContextPanel usageContent={null} value={partial} loading={false} error="" retry={vi.fn()} close={vi.fn()} />);
+  expect(screen.getByText('输入预估 34,000')).toBeTruthy();
+  expect(screen.queryByText('输入构成')).toBeNull();
+  expect(screen.queryByText(/当前预估暂不可用/)).toBeNull();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
 it('separates estimates and provider usage, preserving zero and missing values', () => {
   const { rerender } = render(<ContextPanel usageContent={null} value={view} loading={false} error="" retry={vi.fn()} close={vi.fn()} />);
   expect(screen.getByText('输入预估 34,000')).toBeTruthy();

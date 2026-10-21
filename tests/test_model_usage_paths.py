@@ -45,16 +45,28 @@ async def test_root_child_summary_and_auto_report_independent_cache_usage(monkey
     settings = AppSettings(permissions=review_settings().permissions, subagents=(role(model_id='child'),))
     async with cached_application(monkeypatch, tmp_path, serve, settings=settings,
             tools=[definition(calls=effects, approved=True), create_subagent_tool()]) as (app, _):
+        from naiyue_test_agent.model_access.http_observation import install_http_hooks
+        for identity in app._catalog.model_ids:
+            install_http_hooks(app._catalog.get(identity).root_async_client._client, asynchronous=True)
         app.subscribe_events(events.append)
         sid = await app.acreate_session('root')
         await app.arun(sid, [('user', 'old task')])
         await app.arun(sid, [('user', 'recent task')])
         assert (await app.acompact_context(sid))['compaction_status'] == 'applied'
     ends = [e for e in events if e.event_type == 'model_call_finished']
-    assert len(ends) == 5 and len(sent) == 8
-    starts = [e for e in events if e.event_type == 'model_invocation_started']
-    results = [e for e in events if e.event_type == 'model_invocation_finished']
+    assert len(ends) == len(sent) == 8
+    attempts = [e for e in events if e.event_type == 'model_http_attempt_started']
+    responses = [e for e in events if e.event_type == 'model_http_attempt_finished']
+    assert len(attempts) == len(responses) == len(sent) == 8
+    assert {e.data.invocation_id for e in attempts} == {e.data.invocation_id for e in ends}
+    assert all(e.data.http_capture_status == 'complete' for e in ends)
+    for attempt in attempts:
+        owner = next(e for e in ends if e.data.invocation_id == attempt.data.invocation_id)
+        assert (attempt.session_id, attempt.run_id, attempt.source) == (owner.session_id, owner.run_id, owner.source)
+    starts = [e for e in events if e.event_type == 'model_call_started']
+    results = [e for e in events if e.event_type == 'model_call_finished']
     assert len(starts) == len(results) == 8
+    assert all(type(e.data.duration_ms) is int and e.data.duration_ms >= 0 for e in results)
     assert {e.data.invocation_id for e in starts} == {e.data.invocation_id for e in results}
     assert len({e.data.invocation_id for e in starts}) == 8
     assert sorted(e.data.purpose for e in starts) == ['agent'] * 5 + ['auto_detailed', 'auto_fast', 'summary']
@@ -65,10 +77,6 @@ async def test_root_child_summary_and_auto_report_independent_cache_usage(monkey
         assert (start.session_id, start.run_id, start.source) == (finish.session_id, finish.run_id, finish.source)
         assert bool(start.source) == (start.data.model_id == 'child')
     assert effects == [('probe', 'parent')]
-    for event in ends:
-        total, read, write = totals[event.data.model_id]
-        assert (event.data.input_tokens, event.data.cache_read_tokens, event.data.cache_write_tokens) == (total, read, write)
-        assert bool(event.source) == (event.data.model_id == 'child')
     operation = next(e.data for e in events if e.event_type == 'compaction_finished')
     assert (operation.summary_input_tokens, operation.summary_cache_read_tokens, operation.summary_cache_write_tokens) == (100, 30, 20)
     reviews = [r.permission_review for r in caplog.records if hasattr(r, 'permission_review')]
@@ -76,7 +84,10 @@ async def test_root_child_summary_and_auto_report_independent_cache_usage(monkey
         ('fast', 300, 0, 90), ('detailed', 400, 100, 120)]
     app_logs = [r.application_event for r in caplog.records if hasattr(r, 'application_event')]
     assert next(r for r in app_logs if r['event'] == 'compaction_finished')['summary_cache_write_tokens'] == 20
-    assert all(r['cache_write_tokens'] in (20, 60) for r in app_logs if r['event'] == 'model_call_finished')
+    assert sorted(r['cache_write_tokens'] for r in app_logs if r['event'] == 'model_call_finished') == [20] * 5 + [60, 90, 120]
+    terminals = [e for e in events if e.event_type in ('run_finished', 'tool_call_finished')]
+    assert terminals and any(e.source for e in terminals if e.event_type == 'run_finished')
+    assert all(type(e.data.duration_ms) is int and e.data.duration_ms >= 0 for e in terminals)
     assert not any(word in caplog.text for word in ('observation_failed', 'run_event_publish_failed'))
 
 
@@ -96,9 +107,10 @@ async def test_rejected_final_response_still_reports_usage_and_unchanged_failure
             await app.arun(await app.acreate_session('root'), [('user', 'task')])
         assert caught.value.reason == 'invalid_tool_calls'
     end = next(e.data for e in events if e.event_type == 'model_call_finished')
-    assert end.status == 'failed' and end.failure.reason == 'invalid_tool_calls'
+    assert end.status == 'returned'
+    assert events[-1].data.failure.reason == 'invalid_tool_calls'
     assert (end.input_tokens, end.output_tokens, end.cache_read_tokens, end.cache_write_tokens) == (100, 10, 30, 20)
-    invocation = next(e.data for e in events if e.event_type == 'model_invocation_finished')
+    invocation = next(e.data for e in events if e.event_type == 'model_call_finished')
     assert invocation.status == 'returned' and invocation.usage_status == 'final'
     assert invocation.input_tokens == 100
 
@@ -155,7 +167,7 @@ async def test_invalid_cache_statistics_do_not_reject_a_successful_response(monk
     finally:
         await app.aclose()
     end = next(e.data for e in events if e.event_type == 'model_call_finished')
-    assert end.status == 'accepted' and end.input_tokens == 100
+    assert end.status == 'returned' and end.input_tokens == 100
     assert end.cache_write_tokens is None and end.cache_read_tokens == 0
     assert 'model_usage_invalid' in caplog.text and 'observation_failed' not in caplog.text
 
@@ -176,9 +188,9 @@ async def test_invalid_auto_verdict_retains_reported_usage_without_granting_perm
 
 @pytest.mark.parametrize('bad', [True, -1, 'PRIVATE', 1.5])
 def test_new_event_fields_keep_existing_validation(bad):
-    from naiyue_test_agent.agent_runtime.events import ModelCallFinishedData
+    from naiyue_test_agent.agent_runtime.events import ModelInvocationFinishedData
     from naiyue_test_agent.agent_runtime.context_events import ContextOperationFinishedData
     with pytest.raises(ValueError):
-        ModelCallFinishedData('call', 'A', 'accepted', cache_write_tokens=bad)
+        ModelInvocationFinishedData('call', 'returned', cache_write_tokens=bad)
     with pytest.raises(ValueError):
         ContextOperationFinishedData('operation', 'compaction', 'A', 'manual', summary_cache_write_tokens=bad)

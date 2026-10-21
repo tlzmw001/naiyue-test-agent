@@ -11,7 +11,6 @@ from ..context_usage import compose_model_prompt
 
 
 _VIEW_KEY = '_naiyue_tool_view'
-_FIRST_KEY = '_naiyue_first_tool_view'
 _ROLES_KEY = '_naiyue_subagent_roles'
 
 
@@ -39,30 +38,15 @@ class ToolSetMiddleware(AgentMiddleware):
         self.resolve_subagent_roles = resolve_subagent_roles
         self.resolve_prompt_parts = resolve_prompt_parts
 
-    def prepare_tool_view(self, runtime):
+    def prepare_tool_view(self, runtime, *, names=None):
         context = runtime.context
-        names = self.resolve_active_tool_names(context['session_id'], context.get('agent_path', 'root'))
+        if names is None:
+            names = self.resolve_active_tool_names(context['session_id'], context.get('agent_path', 'root'))
         view = self.registry.select_available(names)
         context[_VIEW_KEY] = view
         context[_ROLES_KEY] = (tuple((role.name, role.description) for role in self.resolve_subagent_roles())
             if any(spec.tool.name == 'subagent' for spec in view) and self.resolve_subagent_roles is not None else ())
         return {'tool_execution': {'tool_names': [spec.tool.name for spec in view]}}
-
-    def before_agent(self, state, runtime):
-        update = self.prepare_tool_view(runtime)
-        runtime.context[_FIRST_KEY] = True
-        return update
-
-    async def abefore_agent(self, state, runtime):
-        return self.before_agent(state, runtime)
-
-    def before_model(self, state, runtime):
-        if runtime.context.pop(_FIRST_KEY, False):
-            return None
-        return self.prepare_tool_view(runtime)
-
-    async def abefore_model(self, state, runtime):
-        return self.before_model(state, runtime)
 
     def _inputs(self, state, runtime):
         specs = batch_tool_specs(self.registry, state, runtime.context)
@@ -81,17 +65,6 @@ class ToolSetMiddleware(AgentMiddleware):
             else:
                 tools.append(spec.tool)
         return tools, prompt
-
-    def model_inputs(self, state, runtime):
-        tools, prompt = self._inputs(state, runtime)
-        return tools, prompt.content
-
-    def _model_request(self, request):
-        tools, prompt = self._inputs(request.state, request.runtime)
-        return request.override(tools=tools, system_message=prompt)
-
-    async def awrap_model_call(self, request, handler):
-        return await handler(self._model_request(request))
 
     def _tool_request(self, request):
         specs = batch_tool_specs(self.registry, request.state, request.runtime.context)

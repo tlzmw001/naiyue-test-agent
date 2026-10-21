@@ -106,7 +106,7 @@ def test_schema_six_migration_preserves_rows_and_does_not_backfill(tmp_path):
             UPDATE naiyue_store_info SET version=6;''')
     with SessionStorage(path) as storage:
         assert storage.get('s')['thread_id'] == 's'
-        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 12
+        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 13
         assert storage.chat_heads('s') == [] and rows(storage, 's') == []
 
 

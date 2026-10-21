@@ -57,11 +57,21 @@ def runtime(models, selected, selections=None):
             selections.append((sid, model_id))
         return model_id, models[model_id]
 
+    from naiyue_test_agent.model_access import ModelCatalog
+    from naiyue_test_agent.agent_runtime.model_usage_observation import install_model_usage_callback
+    install_model_usage_callback(ModelCatalog(next(iter(models)), models))
     return build_runtime_agent(
         next(iter(models.values())), tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
         resolve_model=resolve_model,
         checkpointer=InMemorySaver(),
     )
+
+
+async def invoke(graph, inputs, *, context, config):
+    # Direct graph tests install the same callback and run scope as SessionService.
+    from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
+    with bind_run_services(RunServices(publisher=context.get('_run_event_publisher'))):
+        return await graph.ainvoke(inputs, context=context, config=config)
 
 
 def context(events=None, sid='s', rid='r'):
@@ -83,7 +93,7 @@ def test_native_model_wait_does_not_block_other_coroutine():
         model = NativeAsyncModel(response=AIMessage(content='answer', response_metadata={'finish_reason': 'stop'}),
                                  entered=entered, release=release)
         graph = runtime({'A': model}, {'s': 'A'})
-        task = asyncio.create_task(graph.ainvoke({'messages': [('user', 'question')]},
+        task = asyncio.create_task(invoke(graph, {'messages': [('user', 'question')]},
                                                 context=context(), config=config()))
         try:
             await asyncio.wait_for(entered.wait(), 5)
@@ -112,10 +122,10 @@ def test_native_async_selection_switch_and_checkpoint_isolation():
         models = {mid: NativeAsyncModel(response=AIMessage(content=mid)) for mid in ('A', 'B')}
         selected, selections = {'s': 'A', 'other': 'B'}, []
         graph = runtime(models, selected, selections)
-        await graph.ainvoke({'messages': [('user', 'first')]}, context=context(), config=config())
+        await invoke(graph, {'messages': [('user', 'first')]}, context=context(), config=config())
         selected['s'] = 'B'
-        result = await graph.ainvoke({'messages': [('user', 'second')]}, context=context(rid='r2'), config=config())
-        other = await graph.ainvoke({'messages': [('user', 'isolated')]},
+        result = await invoke(graph, {'messages': [('user', 'second')]}, context=context(rid='r2'), config=config())
+        other = await invoke(graph, {'messages': [('user', 'isolated')]},
                                    context=context(sid='other'), config=config('other'))
         assert selections == [('s', 'A'), ('s', 'B'), ('other', 'B')]
         assert [m.content for m in result['messages']] == ['first', 'A', 'second', 'B']
@@ -140,11 +150,12 @@ def test_async_gate_rejects_unusable_response(message, reason, caplog):
         events = []
         graph = runtime({'A': NativeAsyncModel(response=message)}, {'s': 'A'})
         with pytest.raises(ModelResponseRejected) as caught:
-            await graph.ainvoke({'messages': [('user', 'PRIVATE')]}, context=context(events), config=config())
+            await invoke(graph, {'messages': [('user', 'PRIVATE')]}, context=context(events), config=config())
         assert caught.value.reason == reason
-        assert [e.event_type for e in events] == ['run_started', 'model_call_started', 'model_context_snapshot', 'model_context_snapshot', 'model_call_finished']
-        assert events[-1].data.status == 'failed'
-        assert events[-1].data.failure.reason == reason
+        assert [e.event_type for e in events] == ['run_started', 'model_context_snapshot', 'model_call_started', 'model_call_finished', 'model_context_snapshot']
+        assert events[3].data.status == 'returned'
+        from naiyue_test_agent.contracts.failures import read_failure_description
+        assert read_failure_description(caught.value, run_id='r').reason == reason
         assert not any(isinstance(m, AIMessage) for m in (await graph.aget_state(config())).values['messages'])
         assert 'PRIVATE' not in caplog.text + str(caught.value)
     asyncio.run(scenario())
@@ -156,10 +167,11 @@ def test_async_original_error_and_safe_failure_event(caplog):
         error = RuntimeError('PRIVATE PROVIDER BODY')
         graph = runtime({'A': NativeAsyncModel(response=AIMessage(content='unused'), error=error)}, {'s': 'A'})
         with pytest.raises(RuntimeError) as caught:
-            await graph.ainvoke({'messages': [('user', 'PRIVATE')]}, context=context(events), config=config())
+            await invoke(graph, {'messages': [('user', 'PRIVATE')]}, context=context(events), config=config())
         assert caught.value is error
-        assert events[-1].data.failure.error_type == 'RuntimeError'
-        assert events[-1].data.failure.category == 'unknown'
+        assert events[3].data.error_type == 'RuntimeError'
+        from naiyue_test_agent.contracts.failures import read_failure_description
+        assert read_failure_description(error, run_id='r').category == 'unknown'
         assert 'PRIVATE' not in caplog.text + str(events)
     asyncio.run(scenario())
 
@@ -173,11 +185,12 @@ def test_async_usage_unknown_reason_and_call_pairing(caplog):
                             'input_token_details': {'cache_read': 4}}))
         graph = runtime({'A': model}, {'s': 'A'})
         with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-            result = await graph.ainvoke({'messages': [('user', 'PRIVATE')]}, context=context(events), config=config())
+            result = await invoke(graph, {'messages': [('user', 'PRIVATE')]}, context=context(events), config=config())
         assert result['messages'][-1].response_metadata['naiyue_stop_reason'] == 'unknown'
-        start, prepared, returned, end = events[1:]
-        assert prepared.data.model_call_id == returned.data.model_call_id == start.data.model_call_id
-        assert start.data.model_call_id == end.data.model_call_id
+        prepared, start, end, returned = events[1:]
+        assert prepared.data.model_call_id == returned.data.model_call_id
+        assert prepared.data.model_call_id != start.data.invocation_id
+        assert start.data.invocation_id == end.data.invocation_id
         assert (end.data.input_tokens, end.data.output_tokens, end.data.cache_read_tokens) == (9, 2, 4)
         assert any(hasattr(record, 'model_response') for record in caplog.records)
         assert 'PRIVATE' not in caplog.text + str(events)
@@ -189,17 +202,18 @@ def test_task_cancellation_propagates_and_closes_model_call():
         entered, release, events = asyncio.Event(), asyncio.Event(), []
         graph = runtime({'A': NativeAsyncModel(response=AIMessage(content='unused'), entered=entered, release=release)},
                         {'s': 'A'})
-        task = asyncio.create_task(graph.ainvoke({'messages': [('user', 'question')]},
+        task = asyncio.create_task(invoke(graph, {'messages': [('user', 'question')]},
                                                 context=context(events), config=config()))
         try:
             await asyncio.wait_for(entered.wait(), 5)
             task.cancel()
-            with pytest.raises(asyncio.CancelledError):
+            with pytest.raises(asyncio.CancelledError) as caught:
                 await task
-            assert events[-1].event_type == 'model_call_finished'
-            assert events[-1].data.status == 'failed'
-            assert events[-1].data.failure.category == 'cancelled'
-            assert events[-1].data.failure.reason == 'task_cancelled'
+            end = next(e.data for e in events if e.event_type == 'model_call_finished')
+            assert end.status == 'cancelled'
+            from naiyue_test_agent.contracts.failures import read_failure_description
+            failure = read_failure_description(caught.value, run_id='r')
+            assert failure.category == 'cancelled' and failure.reason == 'task_cancelled'
             assert not any(isinstance(m, AIMessage) for m in (await graph.aget_state(config())).values['messages'])
         finally:
             if not task.done():
@@ -214,6 +228,7 @@ def test_async_missing_ai_message_is_rejected(messages):
         middleware = make_model_selection_middleware(lambda _, agent_path='root': ('A', object()))
         request = SimpleNamespace(runtime=SimpleNamespace(context=context()))
         request.override = lambda **_: request
+        await middleware.abefore_model({}, request.runtime)
 
         async def handler(_request):
             return ModelResponse(result=messages)
@@ -230,6 +245,7 @@ def test_async_graph_control_exception_is_preserved():
         middleware = make_model_selection_middleware(lambda _, agent_path='root': ('A', object()))
         request = SimpleNamespace(runtime=SimpleNamespace(context=context(events)))
         request.override = lambda **_: request
+        await middleware.abefore_model({}, request.runtime)
 
         async def handler(_request):
             raise error
@@ -237,7 +253,7 @@ def test_async_graph_control_exception_is_preserved():
         with pytest.raises(GraphBubbleUp) as caught:
             await middleware.awrap_model_call(request, handler)
         assert caught.value is error
-        assert [e.event_type for e in events] == ['run_started', 'model_call_started']
+        assert [e.event_type for e in events] == ['run_started']
     asyncio.run(scenario())
 
 
@@ -251,6 +267,7 @@ async def test_request_override_failure_preserves_exception_and_closes_call():
         raise error
 
     request.override = override
+    await middleware.abefore_model({}, request.runtime)
 
     async def async_handler(_request):
         raise AssertionError('No model call should be made')
@@ -258,6 +275,7 @@ async def test_request_override_failure_preserves_exception_and_closes_call():
     with pytest.raises(ValueError) as caught:
         await middleware.awrap_model_call(request, async_handler)
     assert caught.value is error
-    assert [e.event_type for e in events] == ['run_started', 'model_call_started', 'model_call_finished']
-    assert events[-1].data.status == 'failed'
+    assert [e.event_type for e in events] == ['run_started']
+    from naiyue_test_agent.contracts.failures import read_failure_description
+    assert read_failure_description(error, run_id='r').error_type == 'ValueError'
     assert 'PRIVATE' not in str(events)

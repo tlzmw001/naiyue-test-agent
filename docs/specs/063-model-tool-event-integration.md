@@ -2,6 +2,8 @@
 
 状态：2026-10-08，已按用户授权 TDD 接线；验证见第 7 节。仅同步生命周期元数据，不代表消息、turn、异步或活动取消已完成。
 
+版本边界：本文件保留063时点的逻辑模型事件合同。2026-10-20的[Spec118-01](118-request-preparation-and-context-budget.md#13-118-01实际实现与验收)已统一为callback来源model_call_*，按invocation_id配对，终态returned/failed/cancelled；不再使用本文旧逻辑accepted模型载荷。选模、门禁及turn/run失败职责仍保留，工具合同不因本次改名改变。
+
 ## 目标与来源
 
 沿 Spec 061 第二片，把 app.subscribe_events 的同一每 run 发布器接到模型和工具处理。保持原结果、异常、消息、调度、审批、旧日志和公开函数签名。本片没有正文、token delta、工具实时输出、turn/消息完成、CLI 展示迁移、异步或活动取消。

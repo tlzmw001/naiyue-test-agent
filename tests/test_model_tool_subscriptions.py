@@ -1,4 +1,4 @@
-"""Logical model and tool calls share application run metadata notifications."""
+"""Callback model and tool calls share application run metadata notifications."""
 
 from naiyue_test_agent.agent_runtime.async_invocation import ainvoke_agent_run
 
@@ -49,7 +49,7 @@ async def test_one_tool_loop_has_correlated_immutable_safe_events(monkeypatch, c
         assert value == 'PRIVATE_ARGUMENT'
         return 'PRIVATE_OUTPUT'
 
-    model = ToolModel(responses=[
+    model = ToolModel(metadata={'naiyue_model_id': 'A'}, responses=[
         AIMessage(content='PRIVATE_MODEL', tool_calls=[
             {'name': 'probe', 'args': {'value': 'PRIVATE_ARGUMENT'}, 'id': 'probe-1'},
         ], response_metadata={'finish_reason': 'tool_calls'}, usage_metadata={
@@ -72,18 +72,21 @@ async def test_one_tool_loop_has_correlated_immutable_safe_events(monkeypatch, c
     # Native streams report one message_delta for each text reply;
     # Registered dispatches report queued/preparing; each model input also emits
     # its prepared and returned context statistics, outside this metadata filter.
-    assert [e.sequence for e in events] == [1, 4, 10, 12, 15, 19, 25, 28]
+    assert [e.sequence for e in events] == [1, 5, 6, 10, 13, 18, 19, 24]
     assert all(e.session_id == session and e.run_id == events[0].run_id for e in events)
     starts = events_of(events, 'model_call_started')
     ends = events_of(events, 'model_call_finished')
-    assert [e.data.model_call_id for e in starts] == [e.data.model_call_id for e in ends]
-    assert len({e.data.model_call_id for e in starts}) == 2
+    assert [e.data.invocation_id for e in starts] == [e.data.invocation_id for e in ends]
+    assert len({e.data.invocation_id for e in starts}) == 2
     assert all(e.data.model_id == 'A' and e.data.purpose == 'agent' for e in starts)
-    assert ends[0].data.status == 'accepted' and ends[0].data.stop_reason == 'tool_use'
-    assert ends[0].data.tool_call_ids == ('probe-1',)
+    assert ends[0].data.status == 'returned'
+    first_reply = next(m for m in result['messages'] if isinstance(m, AIMessage))
+    assert first_reply.response_metadata['naiyue_stop_reason'] == 'tool_use'
+    assert tuple(call['id'] for call in first_reply.tool_calls) == ('probe-1',)
     assert (ends[0].data.input_tokens, ends[0].data.output_tokens,
             ends[0].data.cache_read_tokens) == (11, 3, 6)
-    assert ends[1].data.stop_reason == 'stop' and ends[1].data.input_tokens is None
+    assert result['messages'][-1].response_metadata['naiyue_stop_reason'] == 'stop'
+    assert ends[1].data.status == 'returned' and ends[1].data.input_tokens is None
     tool_start, tool_end = events[3], events[4]
     assert tool_start.data.tool_call_id == tool_end.data.tool_call_id == 'probe-1'
     assert tool_start.data.boundary == tool_end.data.boundary == 'dispatch'
@@ -122,8 +125,9 @@ async def test_model_failure_has_no_accepted_end_and_preserves_exception(monkeyp
         'run_started', 'model_call_started', 'model_call_finished', 'run_finished',
     ]
     end = events[2].data
-    assert end.status == 'failed' and end.failure is not None
-    assert end.failure.reason == ('timeout' if kind == 'timeout' else 'stop_reason_error')
+    assert end.status == ('failed' if kind == 'timeout' else 'returned')
+    assert end.error_type == ('TimeoutError' if kind == 'timeout' else None)
+    assert events[-1].data.failure.reason == ('timeout' if kind == 'timeout' else 'stop_reason_error')
     assert events[-1].data.status == 'failed'
     assert 'PRIVATE_' not in repr(events) + caplog.text
 
@@ -157,9 +161,9 @@ async def test_bounded_input_recovery_is_one_logical_model_call(monkeypatch):
     result = await app.arun(await app.acreate_session('A'), _history())
     assert result['messages'][-1].content == 'recovered'
     assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == 1
-    assert len(events_of(events, 'model_call_started')) == 1
-    assert len(events_of(events, 'model_call_finished')) == 1
-    assert events_of(events, 'model_call_finished')[0].data.status == 'accepted'
+    assert len(events_of(events, 'model_call_started')) == 3
+    assert len(events_of(events, 'model_call_finished')) == 3
+    assert [e.data.status for e in events_of(events, 'model_call_finished')] == ['failed', 'returned', 'returned']
 
 
 @async_test
@@ -221,5 +225,6 @@ async def test_partial_invalid_tool_response_is_failed_before_dispatch(monkeypat
     with pytest.raises(ModelResponseRejected) as caught:
         await app.arun(await app.acreate_session('A'), [('user', 'run')])
     assert caught.value.reason == 'invalid_tool_calls' and called == []
-    assert events_of(events, 'model_call_finished')[0].data.status == 'failed'
+    assert events_of(events, 'model_call_finished')[0].data.status == 'returned'
+    assert events[-1].data.failure.reason == 'invalid_tool_calls'
     assert events_of(events, 'tool_call_started') == []

@@ -109,10 +109,10 @@ async def test_explicit_overflow_recovery_waits_for_gate_and_state_and_is_one_mo
     assert recovery_end.data.related_operation_id == compaction_start.data.operation_id
     assert compaction_start.data.trigger == 'overflow' and compaction_end.data.status == 'applied'
     assert recovery_end.data.status == 'recovered' and recovery_end.data.retry_attempts == 1
-    assert recovery_end.data.model_call_id == next(e.data.model_call_id for e in events if e.event_type == 'model_call_started')
+    assert recovery_end.data.model_call_id == next(e.data.model_call_id for e in events if e.event_type == 'turn_started')
     assert result['messages'][0].id == compaction_end.data.summary_message_id
     assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == 1
-    assert sum(e.event_type == 'model_call_started' for e in events) == 1
+    assert sum(e.event_type == 'model_call_started' for e in events) == 3
     assert sum(e.event_type == 'turn_started' for e in events) == 1
 
 

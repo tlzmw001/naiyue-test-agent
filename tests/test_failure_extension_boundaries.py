@@ -85,7 +85,8 @@ async def test_async_custom_model_is_described_once_and_keeps_original(monkeypat
             assert caught.value is error
             assert calls == [error]
             model_end = next(e.data for e in events if e.event_type == 'model_call_finished')
-            assert events[-1].data.failure == model_end.failure
+            assert model_end.status == 'failed'
+            assert model_end.error_type == events[-1].data.failure.error_type
             assert events[-1].data.failure.reason == 'vendor_quota'
         finally:
             await app.aclose()

@@ -39,7 +39,7 @@ def test_schema_nine_migrates_and_reopen_preserves_facts(tmp_path):
                                 'DROP TABLE IF EXISTS naiyue_diagnostic_runs; '
                                 'UPDATE naiyue_store_info SET version=9;')
     with SessionStorage(path) as store:
-        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 12
+        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 13
         cfg = limits()
         store.save_diagnostic_event(fact(), cfg)
         store.save_diagnostic_event(fact('tool_call_started', ToolCallStartedData('t', 'read'), sequence=3), cfg)

@@ -1,4 +1,4 @@
-"""Offline research: compare accepted calls, graph values, and saved state."""
+"""Offline research: compare returned model calls, graph values, and saved state."""
 
 from naiyue_test_agent.tools.permissions import ToolPermission
 
@@ -41,7 +41,7 @@ class StateProbe:
         self.values = []
         self.task_starts = []
         self.update_nodes = []
-        self.accepted_ai_counts = []
+        self.returned_ai_counts = []
         self.timeline = []
         self.runs = []
         self.aliases = {}
@@ -51,9 +51,9 @@ class StateProbe:
 
     def record_event(self, event):
         self.timeline.append(event.event_type)
-        if event.event_type == 'model_call_finished' and event.data.status == 'accepted':
+        if event.event_type == 'model_call_finished' and event.data.status == 'returned':
             latest = self.values[-1] if self.values else []
-            self.accepted_ai_counts.append(sum(row['role'] == 'ai' for row in latest))
+            self.returned_ai_counts.append(sum(row['role'] == 'ai' for row in latest))
 
     def rows(self, messages):
         rows = []
@@ -120,7 +120,7 @@ def report(case, probe, **extra):
     print(json.dumps({
         'case': case, 'value_shapes': shapes,
         'model_task_starts': probe.task_starts.count('model'),
-        'accepted_ai_counts': probe.accepted_ai_counts, **extra,
+        'returned_ai_counts': probe.returned_ai_counts, **extra,
     }, ensure_ascii=False))
 
 
@@ -137,10 +137,10 @@ async def normal_and_followup(resources):
     app, session, probe = await make_app(model, tools=[ToolSpec(probe_value, probe_value.args_schema, permissions=ToolPermission(default='allow'))], resources=resources)
     result = await app.arun(session, [('user', 'question')])
     assert [row['role'] for row in probe.values[-1]] == ['human', 'ai', 'tool', 'ai']
-    assert probe.accepted_ai_counts == [0, 1]
+    assert probe.returned_ai_counts == [0, 1]
     assert len({row['id'] for row in probe.values[-1]}) == 4
     assert len(result['messages']) == 4
-    report('normal_tool', probe, model_accepted_precedes_new_ai_value=True)
+    report('normal_tool', probe, model_returned_precedes_new_ai_value=True)
 
     holder = {}
     queued = False

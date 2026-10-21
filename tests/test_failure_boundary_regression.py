@@ -22,6 +22,7 @@ async def test_model_diagnostic_failure_preserves_original(monkeypatch, diagnost
         'session_id': 'synthetic-session', 'run_id': 'synthetic-run',
     }))
     request.override = lambda **_kwargs: request
+    await middleware.abefore_model({}, request.runtime)
     primary = RuntimeError('PRIVATE_PRIMARY')
 
     called = []

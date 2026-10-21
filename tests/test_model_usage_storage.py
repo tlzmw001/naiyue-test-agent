@@ -19,8 +19,8 @@ def seed(store, sid='s'):
 def facts(sid='s', rid='r', identity='call', *, input_tokens=100):
     events = []
     publisher = RunEventPublisher(sid, rid, (events.append,))
-    publisher.publish('model_invocation_started', ModelInvocationStartedData(identity, 'A', 'agent'))
-    publisher.publish('model_invocation_finished', ModelInvocationFinishedData(identity, 'returned', 'final',
+    publisher.publish('model_call_started', ModelInvocationStartedData(identity, 'A', 'agent'))
+    publisher.publish('model_call_finished', ModelInvocationFinishedData(identity, 'returned', 'final',
         input_tokens=input_tokens, output_tokens=0, cache_read_tokens=20, cache_write_tokens=10))
     return events
 
@@ -82,7 +82,7 @@ def test_schema_eight_migrates_without_changing_sessions_or_chat(tmp_path):
             DROP TABLE IF EXISTS naiyue_model_usage_runs;
             UPDATE naiyue_store_info SET version=8;''')
     with SessionStorage(path) as store:
-        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 12
+        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 13
         assert store.get('s')['thread_id'] == 'thread-s' and store.chat_heads('s') == []
         assert rows(store) == []
 
@@ -152,8 +152,8 @@ def test_partial_and_unknown_counts_stay_distinct_from_zero(tmp_path, status, us
         seed(store)
         events = []
         publisher = RunEventPublisher('s', 'r', (events.append,))
-        publisher.publish('model_invocation_started', ModelInvocationStartedData('call', 'A', 'summary'))
-        publisher.publish('model_invocation_finished', ModelInvocationFinishedData('call', status, usage_status,
+        publisher.publish('model_call_started', ModelInvocationStartedData('call', 'A', 'summary'))
+        publisher.publish('model_call_finished', ModelInvocationFinishedData('call', status, usage_status,
             input_tokens=100 if usage_status == 'partial' else None,
             output_tokens=0 if usage_status == 'partial' else None, error_type='RuntimeError'))
         for event in events:

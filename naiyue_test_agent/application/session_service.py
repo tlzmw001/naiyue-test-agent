@@ -22,14 +22,14 @@ from .agent_session import AgentSession
 class SessionService(SessionControlMixin, SessionSubagentControls):
     """Locate sessions and coordinate admission; each session drives its run."""
 
-    def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None, max_active_runs=10, mcp_resources=None):
+    def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None, max_active_runs=10, mcp_resources=None, http_attempt_limit=None):
         if type(max_active_runs) is not int or max_active_runs <= 0:
             raise ValueError('Root run capacity must be a positive integer')
         self._max_active_runs = max_active_runs
         self._progress_settings = progress_settings
         self.mcp_resources = mcp_resources
         self._permission_settings = permission_settings if permission_settings is not None else PermissionSettings()
-        install_model_usage_callback(catalog)
+        install_model_usage_callback(catalog, http_attempt_limit=http_attempt_limit)
         self._permission_reviewer = AutoPermissionReviewer.from_catalog(catalog, self._permission_settings.auto)
         self._catalog = catalog
         self._tool_registry = tool_registry if tool_registry is not None else ToolRegistry()
@@ -140,6 +140,9 @@ class SessionService(SessionControlMixin, SessionSubagentControls):
 
     def resolve_model(self, session_id: str, agent_path='root'):
         return self.require(session_id).resolve_model(agent_path)
+
+    def resolve_request_configuration(self, session_id: str, agent_path='root'):
+        return self.require(session_id).resolve_request_configuration(agent_path)
 
     def resolve_prompt_parts(self, session_id):
         return self.require(session_id).resolve_prompt_parts()

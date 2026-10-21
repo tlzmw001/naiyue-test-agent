@@ -2,6 +2,10 @@
 
 日期：2026-10-18。状态：**108-01/02/03已实施并完成离线验收**。本片继承Spec107/M6-02的四项用量口径。保留原脏树，不改真实模型配置、用户库、依赖或既有公开应用API；108-03只新增只读查询，0次真实供应商请求，不提交/push。
 
+2026-10-20协议边界：下文两组模型事件为108实施时点；[Spec118-01](118-request-preparation-and-context-budget.md#13-118-01实际实现与验收)已将callback执行事实统一发布为model_call_started/finished并移除逻辑事件，不双发model_invocation_*。invocation_id、SQLite表及本Spec的用量口径保持；历史诊断保留原协议，不按新名称重新解释。
+
+当前扩展：[Spec119-01](119-call-observability.md#12-119-01实际接线与验收2026-10-20)已追加模型duration_ms、schema13迁移及原全部查询bucket的duration汇总；旧行NULL，未知不填0。本文schema9与原字段形状是108实施时点，当前耗时及兼容合同以119为准，CLI/Web展示已由119-03接入。
+
 ## 1. 分片及当前链
 
 | 分片 | 交付边界 |

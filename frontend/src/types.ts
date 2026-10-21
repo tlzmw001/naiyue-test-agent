@@ -184,7 +184,14 @@ export interface RuntimeEvent {
   sequence: number;
   timestamp?: string;
   event_type: string;
-  data: Record<string, unknown>;
+  data: Record<string, unknown> & {
+    duration_ms?: number | null;
+    http_observation_version?: number | null;
+    http_capture_status?: 'complete' | 'incomplete' | 'unavailable' | null;
+    attempt_id?: string;
+    response_headers_ms?: number | null;
+    http_status?: number | null;
+  };
   source?: AgentEventSource | null;
 }
 export interface SkillEntry {

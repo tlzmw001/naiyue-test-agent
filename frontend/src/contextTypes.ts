@@ -4,6 +4,7 @@ export interface ContextGroup {
 }
 export interface ContextEstimate {
   status: 'available' | 'unavailable'; estimated_input_tokens: number | null;
+  groups_status?: 'available' | 'unavailable';
   context_window_tokens: number | null; max_output_tokens: number | null;
   compaction_reserve_tokens: number | null; trigger_threshold_tokens: number | null;
   context_window_source: string; max_output_source: string; compaction_reserve_source: string;

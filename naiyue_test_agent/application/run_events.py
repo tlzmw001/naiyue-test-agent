@@ -1,6 +1,8 @@
 """Application-owned subscriptions and run outcome observation."""
 
 from naiyue_test_agent.contracts.failures import safe_error_type
+from naiyue_test_agent.contracts.timing import start_timer, elapsed_ms
+from naiyue_test_agent.model_access.http_observation import bind_http_run
 
 from naiyue_test_agent.agent_runtime.observation import observe, emit_event
 
@@ -41,9 +43,11 @@ def _log_event(event) -> None:
                       parent_tool_call_id=event.source.parent_tool_call_id)
     if isinstance(event.data, RunStartedData):
         fields['mode'] = event.data.mode
+        fields['http_observation_version'] = event.data.http_observation_version
     elif isinstance(event.data, RunFinishedData):
         fields.update(status=event.data.status, stop_mode=event.data.stop_mode,
-                      manual_review_required=event.data.manual_review_required)
+                      manual_review_required=event.data.manual_review_required, duration_ms=event.data.duration_ms,
+                      http_capture_status=event.data.http_capture_status)
     else:
         for name in ('invocation_id', 'usage_status', 'model_call_id', 'model_id', 'purpose', 'status', 'stop_reason',
                      'tool_call_ids', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens',
@@ -56,7 +60,8 @@ def _log_event(event) -> None:
                      'before_estimate', 'original_message_count', 'after_estimate', 'removed_message_count',
                      'preserved_message_count', 'summary_input_tokens', 'summary_output_tokens',
                      'summary_duration_ms', 'summary_message_id', 'related_operation_id', 'retry_attempts',
-                     'summary_cache_read_tokens', 'summary_cache_write_tokens'):
+                     'summary_cache_read_tokens', 'summary_cache_write_tokens', 'duration_ms',
+                     'attempt_id', 'http_status', 'response_headers_ms', 'http_capture_status'):
             if hasattr(event.data, name):
                 fields[name] = getattr(event.data, name)
     failure = getattr(event.data, 'failure', None)
@@ -109,6 +114,8 @@ class RunObservation:
         self.status = 'completed'
         self.failure = None
         self._suppress_terminal = False
+        self._started_ns = None
+        self._http_gap = False
         self.turns = TurnObserver(publisher)
         self.controls = ControlObserver(publisher)
         self.stop_control = stop_control if stop_control is not None else RunControl()
@@ -134,11 +141,15 @@ class RunObservation:
         services = RunServices(self.publisher, self.runtime_errors, self.stop_control,
                                self.turns, self.controls, self.context_operations, tool_progress=self.tool_progress,
                                ainvoke_subagent=ainvoke_subagent)
-        with bind_run_services(services):
+        with bind_run_services(services), bind_http_run(self.report_http_gap):
             yield
 
+    def report_http_gap(self):
+        self._http_gap = True
+
     def start(self) -> None:
-        emit_event(self.publisher, 'run_started', lambda: RunStartedData(self.mode))
+        self._started_ns = start_timer()
+        emit_event(self.publisher, 'run_started', lambda: RunStartedData(self.mode, http_observation_version=1))
         observe(self.controls, self.controls.start)
 
     def result(self, result, pending) -> None:
@@ -182,4 +193,6 @@ class RunObservation:
             emit_event(self.publisher, 'run_finished', lambda: RunFinishedData(
                 self.status, 'active' if self.status == 'stopped' else None,
                 manual_review_required, self.failure,
+                duration_ms=elapsed_ms(self._started_ns),
+                http_capture_status='incomplete' if self._http_gap else 'complete',
             ))

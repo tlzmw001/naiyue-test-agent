@@ -20,6 +20,7 @@ async def test_application_saves_before_return_reopens_and_cleans_subscription(m
         before = rows(app._storage)
         assert len(before) == 1 and before[0]['input_tokens'] == 100
         assert before[0]['session_id'] == sid and before[0]['status'] == 'returned'
+        assert type(before[0]['duration_ms']) is int and before[0]['duration_ms'] >= 0
         assert not app._sessions.require(sid).describe_session()['busy']
         sink = app._usage
     assert sink._task.done() and app._sessions._events._handlers == {}
@@ -87,6 +88,9 @@ async def test_native_root_child_summary_and_same_model_auto_are_saved_once(monk
     async with cached_application(monkeypatch, tmp_path, serve, settings=options, tools=tools):
         async with open_async_persistent_application('unused', database_path=tmp_path / 'state.sqlite',
                 tools=tools, settings=options, system_prompt='ROOT', response_format=None) as app:
+            from naiyue_test_agent.model_access.http_observation import install_http_hooks
+            for identity in app._catalog.model_ids:
+                install_http_hooks(app._catalog.get(identity).root_async_client._client, asynchronous=True)
             sid = await app.acreate_session('root')
             await app.arun(sid, [('user', 'old task')])
             await app.arun(sid, [('user', 'recent task')])
@@ -98,11 +102,14 @@ async def test_native_root_child_summary_and_same_model_auto_are_saved_once(monk
             assert child['model_id'] == 'child' and child['agent_path'].startswith('root/tester/')
             assert child['parent_run_id'] == child['run_id'] and child['parent_tool_call_id'] == 'delegate'
             assert all(r['status'] == 'returned' and r['input_tokens'] == 100 for r in saved)
+            assert all(type(r['duration_ms']) is int and r['duration_ms'] >= 0 for r in saved)
             assert all(r['capture_incomplete'] == 0 for r in app._storage._read('SELECT * FROM naiyue_model_usage_runs'))
             summary = await app.aget_model_usage(sid, model_limit=1)
             assert summary['recorded_calls'] == len(sent) == 8
             assert summary['metrics']['input_tokens']['known_sum'] == '800'
             assert summary['metrics']['output_tokens']['known_sum'] == '80'
+            assert summary['duration'] == {'known_sum_ms': str(sum(r['duration_ms'] for r in saved)),
+                                           'reported_calls': 8, 'unknown_calls': 0}
             assert summary['capture']['incomplete_runs'] == 0
             assert summary['models']['next_after'] is not None
             page = await app.aget_model_usage(sid, model_limit=1, after_model=summary['models']['next_after'])
@@ -113,14 +120,22 @@ async def test_native_root_child_summary_and_same_model_auto_are_saved_once(monk
             await app._diagnostics.aclose()
             captures = (await app.alist_diagnostic_runs(sid))['runs']
             assert len(captures) == 3 and all(not r['capture_incomplete'] for r in captures)
+            assert all(type(r['duration_ms']) is int and r['duration_ms'] >= 0 for r in captures)
             diagnostic_events = []
             for capture in captures:
                 diagnostic_events.extend((await app.aget_diagnostic_events(sid, capture['run_id'], limit=100))['events'])
-            starts = [e for e in diagnostic_events if e['event_type'] == 'model_invocation_started']
+            starts = [e for e in diagnostic_events if e['event_type'] == 'model_call_started']
             assert len(starts) == len(sent) == 8
             assert {e['data']['purpose'] for e in starts} == {'agent', 'summary', 'auto_fast', 'auto_detailed'}
             assert any(e['source'] and e['source']['agent_run_id'] for e in starts)
             assert any(e['event_type'] == 'compaction_finished' for e in diagnostic_events)
+            assert sum(r['http_attempts']['observed_attempts'] for r in captures) == len(sent) == 8
+            assert all(r['http_attempts']['status'] == 'complete' for r in captures)
+            http = [e for e in diagnostic_events if e['event_type'] == 'model_http_attempt_started']
+            assert len(http) == 8 and any(e['source'] for e in http)
+            finishes = [e for e in diagnostic_events if e['event_type'] in
+                        ('model_call_finished', 'tool_call_finished', 'run_finished')]
+            assert all(type(e['data']['duration_ms']) is int and e['data']['duration_ms'] >= 0 for e in finishes)
             await app.adelete_session(sid)
             assert rows(app._storage) == [] and app._storage._read('SELECT * FROM naiyue_model_usage_runs') == []
             assert app._storage._read('SELECT * FROM naiyue_diagnostic_runs') == []

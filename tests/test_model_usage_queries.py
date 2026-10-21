@@ -21,9 +21,9 @@ def record(store, identity, *, sid='s', model='A', purpose='agent', child=False,
            status='returned', usage='final', amount=100, output=0):
     events = []
     pub = RunEventPublisher(sid, 'r', (events.append,))
-    pub.publish('model_invocation_started', ModelInvocationStartedData(identity, model, purpose))
+    pub.publish('model_call_started', ModelInvocationStartedData(identity, model, purpose))
     if status != 'started':
-        pub.publish('model_invocation_finished', ModelInvocationFinishedData(identity, status, usage,
+        pub.publish('model_call_finished', ModelInvocationFinishedData(identity, status, usage,
             input_tokens=amount, output_tokens=output, cache_read_tokens=None,
             cache_write_tokens=None if usage == 'unavailable' else 0))
     for event in events:

@@ -97,6 +97,7 @@ def graph_for(models, selected=None, project='PROJECT'):
     _runtime_names_1 = _runtime_registry_1.names()
     port = SimpleNamespace(
         resolve_model=lambda sid, agent_path='root': (selected[sid], models[selected[sid]]),
+        resolve_request_configuration=lambda sid, agent_path='root': (selected[sid], models[selected[sid]], _runtime_names_1),
         resolve_active_tool_names=lambda _sid, agent_path='root': _runtime_names_1,
         resolve_permission_context=fixed_permission_context,
         resolve_prompt_parts=lambda _sid: [{'id': 'project', 'text': project}] if project else [],
@@ -148,7 +149,7 @@ def test_proactive_compaction_prompt_and_checkpoint(mode):
         assert any(s.values.get('messages') and s.values['messages'][0].id == 'old-user' for s in snapshots)
         if mode == 'stream':
             updates = [part['data'] for part in parts if part['type'] == 'updates']
-            assert any('compact_before_new_run.before_agent' in row for row in updates)
+            assert any('select_model.before_model' in row for row in updates)
             assert any(part['type'] == 'values' and
                        part['data']['messages'][0].additional_kwargs.get(SUMMARY_MARKER) for part in parts)
     asyncio.run(scenario())

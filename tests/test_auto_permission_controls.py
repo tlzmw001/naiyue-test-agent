@@ -99,7 +99,7 @@ def test_native_async_review_is_not_a_main_model_stream_or_turn(monkeypatch):
             assert all('bounded reason' not in str(e) for e in events)
             assert ''.join(e.data.text for e in events if e.event_type == 'message_delta') == 'done'
             requests = [e for e in events if e.event_type == 'model_call_started']
-            assert len(requests) == 2 and all(e.data.purpose == 'agent' for e in requests)
+            assert [e.data.purpose for e in requests] == ['agent', 'auto_fast', 'auto_detailed', 'agent']
         finally:
             await app.aclose()
     asyncio.run(scenario())

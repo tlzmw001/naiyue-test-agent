@@ -25,7 +25,10 @@ async def _worker(args):
     from scripts.provider_acceptance_budget import RequestBudget, guard_catalog
     from naiyue_test_agent.agent_runtime.tool_execution.permissions import fixed_permission_context
 
+    from naiyue_test_agent.agent_runtime.model_usage_observation import install_model_usage_callback
+    from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
     catalog = load_model_catalog(args.config)
+    install_model_usage_callback(catalog)
     try:
         budget = RequestBudget(2 if args.with_context else 1)
         guard_catalog(catalog, budget)
@@ -58,6 +61,7 @@ async def _worker(args):
             model = model.model_copy(update={'metadata': metadata})
             port = SimpleNamespace(
                 resolve_model=resolve_model,
+                resolve_request_configuration=lambda sid, path: (*resolve_model(sid, path), ()),
                 resolve_active_tool_names=lambda _sid, agent_path='root': (),
                 resolve_permission_context=fixed_permission_context,
                 resolve_prompt_parts=lambda _: [{'id': 'project',
@@ -82,17 +86,18 @@ async def _worker(args):
                       HumanMessage(content='Keep that code for the next question.'),
                       AIMessage(content='Acknowledged.'),
                       HumanMessage(content='Reply only with the synthetic code from earlier conversation.')]
-        async with asyncio.timeout(args.timeout_seconds):
-            if args.with_context:
-                result, summary_visible = None, False
-                async for part in graph.astream({'messages': inputs}, context=context, config=config,
-                                               stream_mode=['updates', 'values'], version='v2'):
-                    if part['type'] == 'values':
-                        result = part['data']
-                        summary_visible |= bool(result['messages'][0].additional_kwargs.get(SUMMARY_MARKER))
-                assert summary_visible
-            else:
-                result = await graph.ainvoke({'messages': inputs}, context=context, config=config)
+        with bind_run_services(RunServices(publisher=publisher)):
+            async with asyncio.timeout(args.timeout_seconds):
+                if args.with_context:
+                    result, summary_visible = None, False
+                    async for part in graph.astream({'messages': inputs}, context=context, config=config,
+                                                   stream_mode=['updates', 'values'], version='v2'):
+                        if part['type'] == 'values':
+                            result = part['data']
+                            summary_visible |= bool(result['messages'][0].additional_kwargs.get(SUMMARY_MARKER))
+                    assert summary_visible
+                else:
+                    result = await graph.ainvoke({'messages': inputs}, context=context, config=config)
         messages = result['messages']
         assert isinstance(messages[-1], AIMessage)
         if args.with_context:
@@ -102,12 +107,17 @@ async def _worker(args):
         else:
             assert len(messages) == 2 and kinds == ['normal']
         assert messages[-1].content.strip() == marker and not messages[-1].tool_calls
-        assert [event.data.model_id for event in events
-                if event.event_type == 'model_call_started'] == [model_id]
+        starts = [event for event in events if event.event_type == 'model_call_started']
+        ends = [event for event in events if event.event_type == 'model_call_finished']
+        assert [event.data.model_id for event in starts] == [model_id] * len(kinds)
+        assert [event.data.invocation_id for event in starts] == [event.data.invocation_id for event in ends]
+        assert all(event.data.status == 'returned' for event in ends)
+        snapshots = [event for event in events if event.event_type == 'model_context_snapshot']
+        assert len(snapshots) == 2
+        assert snapshots[0].data.model_call_id == snapshots[1].data.model_call_id
+        assert snapshots[0].data.model_call_id != starts[-1].data.invocation_id
         assert budget.snapshot()['used'] == (2 if args.with_context else 1)
-        assert [e.event_type for e in events] == ['run_started', 'model_call_started', 'model_context_snapshot', 'model_context_snapshot', 'model_call_finished']
-        assert events[1].data.model_call_id == events[2].data.model_call_id == events[3].data.model_call_id == events[4].data.model_call_id
-        assert events[4].data.status == 'accepted'
+        assert not any(event.event_type.startswith('model_invocation_') for event in events)
         snapshot = await graph.aget_state(config)
         assert [m.id for m in snapshot.values['messages']] == [m.id for m in messages]
         label = 'async_context_probe' if args.with_context else 'async_model_probe'

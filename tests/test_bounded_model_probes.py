@@ -20,7 +20,7 @@ from scripts import provider_acceptance_budget as limits
 def install_transport(monkeypatch, *, extra_tool=False):
     attempts, guarded = [], []
     model = ChatOpenAI(model='synthetic', api_key='synthetic', base_url='https://example.invalid/v1',
-        max_retries=2, use_responses_api=False, metadata={'naiyue_model_limits': {
+        max_retries=2, use_responses_api=False, metadata={'naiyue_model_id': 'main', 'naiyue_model_limits': {
             'model_id': 'main', 'context_window_tokens': 128000, 'max_output_tokens': 1024,
             'context_window_source': 'config', 'max_output_source': 'config'},
             'naiyue_compaction_reserve': {'tokens': 16384, 'source': 'config'},

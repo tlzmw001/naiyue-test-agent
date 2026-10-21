@@ -6,11 +6,8 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Callable
 from xml.sax.saxutils import escape, quoteattr
 
-from langchain.agents.middleware import AgentMiddleware, hook_config
-from .run_control import UserStop, native_async_model
 from .errors import ContextCompactionError, RuntimeErrorPolicy
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
@@ -27,7 +24,7 @@ from naiyue_test_agent.model_access import (
 from naiyue_test_agent.model_access.stop_reason import normalize_stop_reason
 from naiyue_test_agent.model_access.errors import describe_model_failure
 from .context_summary_io import arun_summary_steps
-from naiyue_test_agent.model_access.messages import content_text, MODEL_INPUT_METADATA_KEY
+from naiyue_test_agent.model_access.messages import content_text, prepare_model_messages, MODEL_INPUT_METADATA_KEY
 
 
 logger = logging.getLogger(__name__)
@@ -175,26 +172,57 @@ def _compaction_steps(
 ):
     """Share safe compaction between proactive and rejected-request paths."""
     session_id = context.get('session_id')
+    model_messages = prepare_model_messages(messages, model)
     metadata = getattr(model, 'metadata', None)
+    if metadata is None:
+        metadata = {}
     if not isinstance(metadata, dict):
-        return None
+        raise ValueError('Invalid compaction metadata')
     limits = metadata.get(MODEL_LIMITS_METADATA_KEY)
     reserve = metadata.get(COMPACTION_RESERVE_METADATA_KEY)
     keep = metadata.get(COMPACTION_KEEP_RECENT_METADATA_KEY)
     summary_output = metadata.get(COMPACTION_SUMMARY_OUTPUT_METADATA_KEY)
-    if not all(isinstance(item, dict) for item in
-               (limits, reserve, keep, summary_output)):
+    missing = False
+    for item, fields in ((limits, ('context_window_tokens', 'max_output_tokens')),
+            (reserve, ('tokens',)), (keep, ('tokens',)), (summary_output, ('tokens',))):
+        if item is None:
+            missing = True
+            continue
+        if not isinstance(item, dict):
+            raise ValueError('Invalid compaction settings')
+        for field in fields:
+            if field not in item:
+                missing = True
+            elif type(item[field]) is not int or item[field] <= 0:
+                raise ValueError('Invalid compaction token setting')
+    if (limits is not None and {'context_window_tokens', 'max_output_tokens'} <= limits.keys()
+            and limits['max_output_tokens'] >= limits['context_window_tokens']):
+        raise ValueError('Invalid compaction input budget')
+    if missing:
+        logger.warning('context_budget_unverified', extra={'context_preparation': {
+            'event': 'context_budget_unverified', 'session_id': session_id, 'run_id': context.get('run_id'),
+            'model_id': model_id, 'reason': 'missing_budget_metadata', 'force': force,
+        }})
+        if force:
+            raise ContextCompactionError('compaction_unavailable')
         return None
     window = limits['context_window_tokens']
     output = limits['max_output_tokens']
     headroom = max(output, reserve['tokens'])
     try:
         estimated = count_tokens_approximately(
-            [*system_messages, *messages], tools=tools,
+            [*system_messages, *model_messages], tools=tools,
         )
     except Exception as error:
         logger.warning('context_compaction_estimate_unavailable error_type=%s',
                        type(error).__name__)
+        logger.warning('context_budget_unverified', extra={'context_preparation': {
+            'event': 'context_budget_unverified', 'session_id': session_id, 'run_id': context.get('run_id'),
+            'model_id': model_id, 'reason': 'initial_estimate_unavailable', 'force': force,
+            'error_type': type(error).__name__,
+        }})
+        if force:
+            raise ContextCompactionError('compaction_unavailable') from error
         return None
     threshold = max(0, window - headroom)
     if not force and estimated <= threshold and headroom < window:
@@ -241,8 +269,8 @@ def _compaction_steps(
         projected = None
         if cutoff:
             projected = count_tokens_approximately(
-                [*system_messages, HumanMessage(content=SUMMARY_PREFIX),
-                 *messages[cutoff:]], tools=tools,
+                [*system_messages, *prepare_model_messages(
+                    [HumanMessage(content=SUMMARY_PREFIX), *messages[cutoff:]], model)], tools=tools,
             ) + summary_output['tokens']
         if cutoff == 0 or projected > window - output:
             for candidate in range(max(cutoff + 1, 1), len(messages) - 1):
@@ -273,8 +301,8 @@ def _compaction_steps(
                         summary_output['tokens'] > window):
                     continue
                 projected = count_tokens_approximately(
-                    [*system_messages, HumanMessage(content=SUMMARY_PREFIX),
-                     *messages[candidate:]], tools=tools,
+                    [*system_messages, *prepare_model_messages(
+                        [HumanMessage(content=SUMMARY_PREFIX), *messages[candidate:]], model)], tools=tools,
                 ) + summary_output['tokens']
                 if projected <= window - output:
                     cutoff = candidate
@@ -340,7 +368,7 @@ def _compaction_steps(
             additional_kwargs={SUMMARY_MARKER: True},
         )
         post_estimated = count_tokens_approximately(
-            [*system_messages, summary, *preserved], tools=tools,
+            [*system_messages, *prepare_model_messages([summary, *preserved], model)], tools=tools,
         )
         if post_estimated > window - output:
             raise ContextCompactionError('compacted_request_over_budget')
@@ -422,42 +450,3 @@ async def _acompact_messages(
         messages, model, model_id=model_id, context=context,
         system_messages=system_messages, tools=tools, force=force, trigger=trigger,
     ))
-
-
-def make_context_compaction_middleware(
-    resolve_model: Callable[[str, str], tuple[str, BaseChatModel]], *, model_inputs: Callable,
-):
-    """Use the same request definitions and prompt prepared before compaction."""
-    return _ContextCompactionMiddleware(resolve_model, model_inputs)
-
-
-class _ContextCompactionMiddleware(AgentMiddleware):
-    def __init__(self, resolve_model, model_inputs):
-        self.resolve_model = resolve_model
-        self.model_inputs = model_inputs
-
-    @property
-    def name(self):
-        return 'compact_before_new_run'
-
-    def _arguments(self, state, runtime):
-        context = runtime.context or {}
-        session_id = context.get('session_id')
-        model_id, model = self.resolve_model(session_id, context.get('agent_path', 'root'))
-        tools, prompt = self.model_inputs(state, runtime)
-        return dict(
-            messages=state['messages'], model=model, model_id=model_id, context=context,
-            system_messages=[SystemMessage(content=prompt)], tools=tools,
-        )
-
-
-    @hook_config(can_jump_to=['end'])
-    async def abefore_agent(self, state, runtime):
-        control = (runtime.context or {}).get('_run_control')
-        arguments = self._arguments(state, runtime)
-        if control is None or not native_async_model(arguments['model']):
-            return await _acompact_messages(**arguments)
-        try:
-            return await control.await_model(lambda: _acompact_messages(**arguments))
-        except UserStop:
-            return {'run_stopped': True, 'jump_to': 'end'}

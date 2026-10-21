@@ -10,14 +10,13 @@ import re
 from collections.abc import Callable
 from uuid import uuid4
 
-from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware import AgentMiddleware, hook_config
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
-from langgraph.errors import GraphBubbleUp
 from .run_control import UserStop, native_async_model
+from .request_preparation import PREPARED_REQUEST_KEY, prepare_request
 
 from naiyue_test_agent.agent_runtime.events import (
-    ModelCallStartedData, ModelCallFinishedData,
     RunEventPublisher, AgentEventPublisher,
 )
 from naiyue_test_agent.model_access.errors import (
@@ -38,28 +37,48 @@ logger = logging.getLogger('naiyue_test_agent.agent_runtime')
 
 def make_model_selection_middleware(
     resolve_model: Callable[[str, str], tuple[str, BaseChatModel]],
+    *, toolset=None, resolve_request_configuration=None, compact=False,
 ):
-    """Choose the session model with the same gates in sync and async calls."""
-    return _ModelSelectionMiddleware(resolve_model)
+    """Prepare one model configuration and retain the existing response gates."""
+    return _ModelSelectionMiddleware(resolve_model, toolset=toolset,
+        resolve_request_configuration=resolve_request_configuration, compact=compact)
 
 
 class _ModelSelectionMiddleware(AgentMiddleware):
-    def __init__(self, resolve_model):
+    def __init__(self, resolve_model, *, toolset=None, resolve_request_configuration=None, compact=False):
         self.resolve_model = resolve_model
+        self.toolset = toolset
+        self.resolve_request_configuration = resolve_request_configuration
+        self.compact = compact
 
     @property
     def name(self):
         return 'select_model'
 
-    def _prepare(self, request):
-        context = request.runtime.context
+    def _prepare(self, runtime):
+        context = runtime.context or {}
+        context.pop(PREPARED_REQUEST_KEY, None)
         session_id = context.get('session_id') if context else None
         if not isinstance(session_id, str) or not session_id.strip():
             raise ValueError('A non-empty session_id is required')
         run_id = context.get('run_id') if context else None
         correlation = {'run_id': run_id} if run_id else {}
 
-        model_id, model = self.resolve_model(session_id, context.get('agent_path', 'root'))
+        call_id = uuid4().hex
+        context['_naiyue_model_call_id'] = call_id
+        context.pop('_naiyue_model_id', None)
+        turns = context.get('_turn_observer')
+        if turns is not None:
+            observe(turns, turns.begin, call_id)
+        context_operations = context.get('_context_observer')
+        if context_operations is not None:
+            observe(context_operations, context_operations.model_call_started, call_id)
+        path = context.get('agent_path', 'root')
+        if self.resolve_request_configuration is not None:
+            model_id, model, names = self.resolve_request_configuration(session_id, path)
+        else:
+            model_id, model = self.resolve_model(session_id, path)
+            names = None
         if not model_id:
             raise ValueError('Resolved model_id must not be empty')
         if run_id:
@@ -69,17 +88,31 @@ class _ModelSelectionMiddleware(AgentMiddleware):
                     'event': 'model_selected', 'model_id': model_id, **correlation,
                 }},
             )
-        call_id = uuid4().hex
-        context['_naiyue_model_call_id'] = call_id
         context['_naiyue_model_id'] = event_label(model_id)
-        context_operations = context.get('_context_observer')
-        if context_operations is not None:
-            observe(context_operations, context_operations.model_call_started, call_id)
-        turns = context.get('_turn_observer')
-        if turns is not None:
-            observe(turns, turns.begin, call_id)
-        _emit(context, 'model_call_started', lambda: ModelCallStartedData(call_id, event_label(model_id)))
-        return model_id, call_id, model
+        return {'model_id': model_id, 'model_call_id': call_id, 'model': model,
+                'active_tool_names': names}
+
+    @hook_config(can_jump_to=['end'])
+    async def abefore_model(self, state, runtime):
+        context = runtime.context or {}
+        control = context.get('_run_control') if context else None
+        if control is not None and control.requested:
+            return {'run_stopped': True, 'jump_to': 'end'}
+        try:
+            prepared = self._prepare(runtime)
+            return await prepare_request(state, runtime, prepared, toolset=self.toolset, compact=self.compact)
+        except (Exception, asyncio.CancelledError, UserStop) as error:
+            operations = context.get('_context_observer')
+            if operations is not None:
+                observe(operations, operations.model_call_failed, context.get('_naiyue_model_call_id'), error)
+            description = describe_failure_in_context(error, context, source='runtime')
+            logger.error('model_request_preparation_failed error_type=%s', safe_error_type(error))
+            turns = context.get('_turn_observer')
+            if turns is not None:
+                observe(turns, turns.fail, run_failure_data(description))
+            if isinstance(error, UserStop):
+                return {'run_stopped': True, 'jump_to': 'end'}
+            raise
 
     def _accept(self, request, response, model_id, call_id):
         context = request.runtime.context
@@ -125,16 +158,9 @@ class _ModelSelectionMiddleware(AgentMiddleware):
             observe(turns, turns.accept, message)
         if context_operations is not None:
             observe(context_operations, context_operations.model_call_accepted, call_id)
-        _emit(context, 'model_call_finished', lambda: ModelCallFinishedData(
-            call_id, event_label(model_id), 'accepted',
-            message.response_metadata[MODEL_STOP_REASON_KEY],
-            tuple(call['id'] for call in message.tool_calls if isinstance(call.get('id'), str)),
-            **usage,
-        ))
         return response
 
-    def _failed(self, request, error, model_id, call_id, response=None):
-        context = request.runtime.context
+    def _failed(self, context, error, model_id, call_id):
         run_id = context.get('run_id')
         correlation = {'run_id': run_id} if run_id else {}
         context_operations = context.get('_context_observer')
@@ -156,27 +182,24 @@ class _ModelSelectionMiddleware(AgentMiddleware):
                 'category': category, 'reason': reason, **details, **correlation,
             }},
         )
-        if not isinstance(error, GraphBubbleUp):
-            failure = run_failure_data(description)
-            message = next((item for item in response.result if isinstance(item, AIMessage)), None) if response else None
-            usage = normalize_model_usage(message.usage_metadata if message is not None else None)
-            _emit(context, 'model_call_finished', lambda: ModelCallFinishedData(
-                call_id, event_label(model_id), 'failed', failure=failure, **usage,
-            ), primary_error=error)
+        return description
 
 
     async def awrap_model_call(self, request, handler):
-        model_id, call_id, model = self._prepare(request)
+        prepared = request.runtime.context[PREPARED_REQUEST_KEY]
+        model_id, call_id, model = prepared['model_id'], prepared['model_call_id'], prepared['model']
         response = None
         try:
+            configured = request.override(**{key: prepared[key] for key in ('model', 'tools', 'system_message')
+                                              if key in prepared})
             control = request.runtime.context.get('_run_control')
             if control is not None and native_async_model(model):
-                response = await control.await_model(lambda: handler(request.override(model=model)))
+                response = await control.await_model(lambda: handler(configured))
             else:
-                response = await handler(request.override(model=model))
+                response = await handler(configured)
             return self._accept(request, response, model_id, call_id)
         except (Exception, asyncio.CancelledError, UserStop) as error:
-            self._failed(request, error, model_id, call_id, response)
+            self._failed(request.runtime.context, error, model_id, call_id)
             raise
 
 

@@ -104,16 +104,16 @@ async def test_sequence_checker_is_asserted_outside_delivery(monkeypatch):
 
 @async_test
 async def test_payload_construction_failure_is_optional(monkeypatch, caplog):
-    from naiyue_test_agent.agent_runtime import call_observation
+    from naiyue_test_agent.agent_runtime import model_usage_observation
     app = await make_app(monkeypatch)
 
     def fault(*_args):
         raise ValueError('PRIVATE_PAYLOAD_FAULT')
 
-    monkeypatch.setattr(call_observation, 'ModelCallStartedData', fault)
+    monkeypatch.setattr(model_usage_observation, 'ModelInvocationStartedData', fault)
     result = await app.arun(await app.acreate_session('A'), [('user', 'probe')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
-    assert 'publish_failed' in caplog.text and 'PRIVATE_PAYLOAD_FAULT' not in caplog.text
+    assert 'model_usage_observation_failed' in caplog.text and 'PRIVATE_PAYLOAD_FAULT' not in caplog.text
 
 
 def test_reentrant_notifications_preserve_listener_order():

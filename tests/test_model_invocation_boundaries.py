@@ -15,7 +15,10 @@ from test_model_invocation_observation import callback, metadata, output
 
 @async_test
 @pytest.mark.parametrize('cancel', [True, False])
-async def test_owner_task_closes_missing_framework_error_hook_once(cancel):
+async def test_owner_task_closes_missing_framework_error_hook_once(monkeypatch, cancel):
+    from naiyue_test_agent.contracts import timing
+    tick = [0]
+    monkeypatch.setattr(timing, 'monotonic_ns', lambda: tick[0])
     events, identity = [], uuid4()
     handler, entered, release, closed = callback(), asyncio.Event(), asyncio.Event(), asyncio.Event()
     failure = RuntimeError('PRIVATE_FAILURE')
@@ -28,6 +31,7 @@ async def test_owner_task_closes_missing_framework_error_hook_once(cancel):
     task = asyncio.create_task(call())
     task.add_done_callback(lambda _: closed.set())
     await entered.wait()
+    tick[0] = 17_900_000
     task.cancel() if cancel else release.set()
     with pytest.raises(asyncio.CancelledError if cancel else RuntimeError) as caught:
         await task
@@ -39,6 +43,7 @@ async def test_owner_task_closes_missing_framework_error_hook_once(cancel):
     assert len(events) == 2 and handler._active == {}
     assert events[-1].data.status == ('cancelled' if cancel else 'failed')
     assert events[-1].data.usage_status == 'unavailable'
+    assert events[-1].data.duration_ms == 17
     assert 'PRIVATE' not in repr(events)
 
 
@@ -103,11 +108,11 @@ def test_event_checker_rejects_unpaired_invocations_before_isolated_delivery():
     publisher = CheckedPublisher('s', 'r', ())
     publisher.publish('run_started', RunStartedData('message'))
     with pytest.raises(ValueError, match='has no start'):
-        publisher.publish('model_invocation_finished', ModelInvocationFinishedData('missing', 'returned'))
-    publisher.publish('model_invocation_started', ModelInvocationStartedData('call', 'A', 'agent'))
+        publisher.publish('model_call_finished', ModelInvocationFinishedData('missing', 'returned'))
+    publisher.publish('model_call_started', ModelInvocationStartedData('call', 'A', 'agent'))
     with pytest.raises(ValueError, match='already started'):
-        publisher.publish('model_invocation_started', ModelInvocationStartedData('call', 'A', 'agent'))
-    publisher.publish('model_invocation_finished', ModelInvocationFinishedData('call', 'returned'))
+        publisher.publish('model_call_started', ModelInvocationStartedData('call', 'A', 'agent'))
+    publisher.publish('model_call_finished', ModelInvocationFinishedData('call', 'returned'))
 
 
 def test_web_serialization_keeps_invocation_identity_and_unknown_usage_explicit():
@@ -115,8 +120,8 @@ def test_web_serialization_keeps_invocation_identity_and_unknown_usage_explicit(
     from naiyue_test_agent.web.serialization import wire_event, project_event_for_web
     events = []
     publisher = RunEventPublisher('s', 'r', (events.append,))
-    publisher.publish('model_invocation_started', ModelInvocationStartedData('call', 'A', 'auto_fast'))
-    publisher.publish('model_invocation_finished', ModelInvocationFinishedData('call', 'cancelled'))
+    publisher.publish('model_call_started', ModelInvocationStartedData('call', 'A', 'auto_fast'))
+    publisher.publish('model_call_finished', ModelInvocationFinishedData('call', 'cancelled'))
     rows = [wire_event(project_event_for_web(event)) for event in events]
     assert rows[0]['data'] == {'invocation_id': 'call', 'model_id': 'A', 'purpose': 'auto_fast'}
     assert rows[1]['data']['invocation_id'] == 'call' and rows[1]['data']['usage_status'] == 'unavailable'

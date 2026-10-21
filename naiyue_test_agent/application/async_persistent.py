@@ -193,7 +193,8 @@ async def open_async_persistent_application(config_path, *, database_path, tools
             # Finish the official WAL/schema initialization before subscribing.
             await saver.setup()
             sessions = application.SessionService(catalog, registry, initial_active_tools=initial, permission_settings=settings.permissions, progress_settings=settings.progress,
-                max_active_runs=settings.max_active_runs, mcp_resources=resources)
+                max_active_runs=settings.max_active_runs, mcp_resources=resources,
+                http_attempt_limit=settings.diagnostics.max_pending_events)
             async with (ModelUsagePersistence(storage, sessions.subscribe_events, settings.usage_persistence) as usage,
                         DiagnosticPersistence(storage, sessions.subscribe_events, settings.diagnostics) as diagnostics):
                 persistence = SessionPersistence(storage, sessions, catalog=catalog, tool_registry=registry,

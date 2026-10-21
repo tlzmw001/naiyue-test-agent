@@ -30,7 +30,7 @@ async def test_real_tool_error_is_recorded_without_failing_root_or_copying_bodie
         page = store.read_diagnostic_events(sid, runs[0]['run_id'], limit=100)
         assert not page['summary']['capture_incomplete']
         assert any(e['event_type'] == 'tool_call_finished' and e['data']['outcome'] == 'error_result' for e in page['events'])
-        assert any(e['event_type'] == 'model_invocation_finished' for e in page['events'])
+        assert any(e['event_type'] == 'model_call_finished' for e in page['events'])
         assert 'PRIVATE' not in json.dumps(page)
         assert store.connection.execute('SELECT COUNT(*) FROM naiyue_chat_messages WHERE session_id=?', (sid,)).fetchone()[0] == 4
         queries = ('SELECT COUNT(*) FROM naiyue_chat_messages', 'SELECT COUNT(*) FROM naiyue_model_invocations',

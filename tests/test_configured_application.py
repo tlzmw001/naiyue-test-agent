@@ -24,6 +24,7 @@ async def test_configured_agent_uses_file_and_switches_after_tool_result(tmp_pat
     }
     def fake_chat_openai(*, model, **kwargs):
         received_settings[model] = kwargs
+        models[model].metadata = kwargs['metadata']
         return models[model]
 
     monkeypatch.setattr('naiyue_test_agent.model_access.ChatOpenAI', fake_chat_openai)

@@ -109,6 +109,7 @@ async def test_model_hook_rejects_response_without_ai_message(result_messages, c
         'session_id': 's', 'run_id': 'r',
     }))
     request.override = lambda **_kwargs: request
+    await middleware.abefore_model({}, request.runtime)
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(RuntimeError) as caught:

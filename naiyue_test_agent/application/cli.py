@@ -231,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
     worker: Thread | None = None
     try:
         emit(f'当前模型：{restored["model_id"] if restored else app.default_model_id}')
-        emit(f'{"持久会话" if storage is not None else "临时会话"}：{session_id}')
+        emit(f'{"持久会话" if storage is not None else "临时会话"}：{session_id}\n只读查询：:usage；:diagnostics [run_id]')
         interactive = sys.stdin.isatty()
         if history is not None:
             display.show_history(history)
@@ -321,6 +321,10 @@ def main(argv: list[str] | None = None) -> int:
             if not line:
                 continue
             command, *rest = line.split(maxsplit=1)
+            if command in (':usage', ':diagnostics'):
+                from .cli_observation import handle_observation_command
+                handle_observation_command(app, session_id, line, emit, persistent=storage is not None)
+                continue
             if command in (':mcp-refresh', ':tools'):
                 from .cli_mcp import handle_mcp_command
                 handle_mcp_command(app, session_id, line, emit)

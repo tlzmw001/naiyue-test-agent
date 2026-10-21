@@ -42,7 +42,7 @@ class ModelUsagePersistence:
             self._loop.call_soon_threadsafe(self._wake)
 
     def accept(self, event):
-        if event.event_type not in ('model_invocation_started', 'model_invocation_finished'):
+        if event.event_type not in ('model_call_started', 'model_call_finished'):
             return
         key = (event.session_id, event.run_id)
         try:

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from threading import RLock
+from weakref import ref
 
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.callbacks.base import BaseCallbackManager
@@ -10,10 +11,14 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import LLMResult, ChatGenerationChunk
 
 from naiyue_test_agent.contracts.failures import safe_error_type
+from naiyue_test_agent.contracts.timing import start_timer, elapsed_ms
 from naiyue_test_agent.model_access import MODEL_ID_METADATA_KEY
 from naiyue_test_agent.model_access.usage import normalize_model_usage
+from naiyue_test_agent.model_access.http_observation import HttpCallObservation, report_http_gap
+from naiyue_test_agent.model_access.catalog_lifecycle import model_http_tokens
 from .call_observation import event_label
-from .events import ModelInvocationStartedData, ModelInvocationFinishedData
+from .events import (ModelInvocationStartedData, ModelInvocationFinishedData,
+                     ModelHttpAttemptStartedData, ModelHttpAttemptFinishedData)
 from .observation import emit_event
 from .run_control import UserStop
 from .run_services import current_run_services
@@ -55,11 +60,40 @@ class ModelUsageCallback(AsyncCallbackHandler):
     def __init__(self):
         self._active = {}
         self._lock = RLock()
+        self._http_attempt_limit, self._http_models = None, {}
+
+    def configure_http(self, catalog, limit):
+        if limit is not None:
+            if type(limit) is not int or limit <= 0:
+                raise ValueError('HTTP observation capacity must be positive')
+            self._http_attempt_limit = limit
+            self._http_models.update({identity: ref(catalog.get(identity)) for identity in catalog.model_ids})
+
+    def _http_call(self, data, publisher):
+        call = None
+        try:
+            model_ref = self._http_models.get(data.model_id)
+            model = model_ref() if model_ref is not None else None
+            def emit(kind, attempt_id, status, http_status, duration):
+                payload = (ModelHttpAttemptStartedData(attempt_id, data.invocation_id) if kind == 'started' else
+                           ModelHttpAttemptFinishedData(attempt_id, data.invocation_id, status, http_status, duration))
+                publisher.publish('model_http_attempt_' + kind, payload)
+            call = HttpCallObservation(data.invocation_id, emit, limit=self._http_attempt_limit,
+                                       tokens=model_http_tokens(model))
+            call.bind()
+            return call
+        except Exception as error:
+            if call is not None:
+                call.release()
+            report_http_gap()
+            logger.warning('model_http_observation_failed error_type=%s', safe_error_type(error))
+            return None
 
     async def on_chat_model_start(self, serialized, messages, *, run_id, metadata=None, tags=None, **kwargs):
         services = current_run_services()
         if services is None or services.publisher is None:
             return
+        started = start_timer()
         try:
             model_id = event_label((metadata or {}).get(MODEL_ID_METADATA_KEY))
             if model_id is None:
@@ -71,10 +105,11 @@ class ModelUsageCallback(AsyncCallbackHandler):
                 if data.invocation_id in self._active:
                     logger.warning('model_usage_duplicate_start')
                     return
-                self._active[data.invocation_id] = (services.publisher, owner, done)
+                http_call = self._http_call(data, services.publisher)
+                self._active[data.invocation_id] = (services.publisher, owner, done, started, http_call)
             if owner is not None:
                 owner.add_done_callback(done)
-            emit_event(services.publisher, 'model_invocation_started', data)
+            emit_event(services.publisher, 'model_call_started', data)
         except Exception as error:
             logger.error('model_usage_observation_failed error_type=%s', safe_error_type(error))
 
@@ -90,16 +125,26 @@ class ModelUsageCallback(AsyncCallbackHandler):
             record = self._active.pop(str(run_id), None)
         if record is None:
             return
-        publisher, owner, done = record
+        publisher, owner, done, started, http_call = record
+        duration = elapsed_ms(started)
         if owner is not None:
             owner.remove_done_callback(done)
+        capture_status = 'incomplete'
+        if http_call is not None:
+            try:
+                capture_status = http_call.close()
+            except Exception as fault:
+                http_call.release()
+                report_http_gap()
+                logger.warning('model_http_observation_failed error_type=%s', safe_error_type(fault))
         try:
             usage = _usage(response, failed=status != 'returned')
             reported = any(value is not None for value in usage.values())
             usage_status = ('final' if status == 'returned' else 'partial') if reported else 'unavailable'
-            emit_event(publisher, 'model_invocation_finished', lambda: ModelInvocationFinishedData(
+            emit_event(publisher, 'model_call_finished', lambda: ModelInvocationFinishedData(
                 str(run_id), status, usage_status, **usage,
-                error_type=safe_error_type(error) if error is not None else None))
+                error_type=safe_error_type(error) if error is not None else None, duration_ms=duration,
+                http_capture_status=capture_status))
         except Exception as fault:
             logger.error('model_usage_observation_failed error_type=%s', safe_error_type(fault))
 
@@ -112,9 +157,10 @@ class ModelUsageCallback(AsyncCallbackHandler):
             self._finish(identity, status, None, error)
 
 
-def install_model_usage_callback(catalog):
+def install_model_usage_callback(catalog, *, http_attempt_limit=None):
     """App startup only; preserve existing callbacks and shared model ownership."""
     callback, seen = ModelUsageCallback(), set()
+    callback.configure_http(catalog, http_attempt_limit)
     for identity in catalog.model_ids:
         model = catalog.get(identity)
         if id(model) in seen:
@@ -122,7 +168,9 @@ def install_model_usage_callback(catalog):
         seen.add(id(model))
         existing = model.callbacks
         handlers = existing.handlers if isinstance(existing, BaseCallbackManager) else existing or []
-        if any(isinstance(handler, ModelUsageCallback) for handler in handlers):
+        installed = next((handler for handler in handlers if isinstance(handler, ModelUsageCallback)), None)
+        if installed is not None:
+            installed.configure_http(catalog, http_attempt_limit)
             continue
         if isinstance(existing, BaseCallbackManager):
             model.callbacks = existing.copy()

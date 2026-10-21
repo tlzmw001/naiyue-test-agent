@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { WebApi } from '../api';
 import type { RunView } from '../types';
 import type { SessionUsageView, UsageBucket, UsageMetric } from '../usageTypes';
+import { formatDuration } from '../observationFormat';
 import styles from './ContextPanel.module.css';
 
 const activityLabels: Record<string, string> = { root_agent: '主智能体', child_agent: '子智能体',
@@ -22,6 +23,10 @@ function Breakdown({ title, rows, open = false }: { title: string; rows: (UsageB
     {rows.map(row => <div className={styles.usageRow} key={row.label}>
       <span>{row.label}<small>{row.recorded_calls} 次调用</small></span>
       <span>输入 {format(row.metrics.input_tokens.known_sum)}<small>输出 {format(row.metrics.output_tokens.known_sum)}</small>
+        <small>耗时 {formatDuration(row.duration?.known_sum_ms)}</small>
+        {row.duration?.reported_calls != null && <small>覆盖 {row.duration.reported_calls} 次</small>}
+        {(row.duration?.unknown_calls ?? row.recorded_calls) > 0 &&
+          <small>另有 {row.duration?.unknown_calls ?? row.recorded_calls} 次未提供</small>}
         {(row.metrics.input_tokens.unknown_calls > 0 || row.metrics.output_tokens.unknown_calls > 0) && <small>含未提供项</small>}</span>
     </div>)}
   </details>;
@@ -67,6 +72,10 @@ export default function SessionUsage({ api, sessionId, run }: { api: WebApi; ses
           <Metric label="↳ 其中缓存读取" value={value.metrics.cache_read_tokens} cache />
           <Metric label="↳ 其中缓存写入" value={value.metrics.cache_write_tokens} cache />
           <Metric label="已知输出" value={value.metrics.output_tokens} />
+          <div><span>已记录模型调用耗时<small>覆盖 {value.duration?.reported_calls ?? 0} 次调用</small>
+            {(value.duration?.unknown_calls ?? value.recorded_calls) > 0 &&
+              <small>另有 {value.duration?.unknown_calls ?? value.recorded_calls} 次未提供</small>}</span>
+            <strong>{formatDuration(value.duration?.known_sum_ms)}</strong></div>
         </div>
         <p className={styles.meta}>已保存调用 {value.recorded_calls} 次 · {Object.entries(value.status_counts)
           .filter(([, count]) => count > 0).map(([name, count]) => `${statusLabels[name]} ${count} 次`).join(' · ')}</p>
@@ -85,7 +94,8 @@ export default function SessionUsage({ api, sessionId, run }: { api: WebApi; ses
         已知丢失 {format(value.capture.dropped_events)} 条事实。</p>}
       <div className={styles.note}><p>仅汇总已保存记录；压缩不会减少累计消耗。</p>
         <p>总输入已包含缓存分项。各分组是同一批记录的不同分类。</p>
-        <p>未知用量不记为零；已保存记录不代表完整供应商账单。</p></div>
+        <p>未知用量不记为零；已保存记录不代表完整供应商账单。</p>
+        <p>并发调用耗时之和不等于整次运行的经过时间。</p></div>
     </>}
     <div className={styles.usageFooter}><span>本地查看，不调用模型</span>
       <button onClick={refresh} disabled={!state} aria-label="刷新累计用量">刷新</button></div>

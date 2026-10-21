@@ -27,15 +27,15 @@ async def test_native_model_identity_callbacks_and_thinking_binding_are_wired(mo
         assert (await app.arun(sid, [('user', 'PRIVATE_TASK')]))['messages'][-1].content == 'done'
         assert catalog.get('root').metadata[MODEL_ID_METADATA_KEY] == 'root'
         assert catalog.get('root').reasoning_effort is None
-    starts = [e for e in events if e.event_type == 'model_invocation_started']
-    ends = [e for e in events if e.event_type == 'model_invocation_finished']
+    starts = [e for e in events if e.event_type == 'model_call_started']
+    ends = [e for e in events if e.event_type == 'model_call_finished']
     assert len(starts) == len(ends) == len(sent) == 1
     assert starts[0].data.model_id == 'root' and starts[0].data.purpose == 'agent'
     assert starts[0].data.invocation_id == ends[0].data.invocation_id
     assert ends[0].data.input_tokens == 100 and ends[0].data.usage_status == 'final'
     assert sent[0]['reasoning_effort'] == 'low' and 'naiyue_model_id' not in sent[0]
     logs = [r.application_event for r in caplog.records if hasattr(r, 'application_event')]
-    assert next(r for r in logs if r['event'] == 'model_invocation_finished')['invocation_id'] == ends[0].data.invocation_id
+    assert next(r for r in logs if r['event'] == 'model_call_finished')['invocation_id'] == ends[0].data.invocation_id
     assert 'PRIVATE_TASK' not in repr(logs)
 
 
@@ -47,14 +47,14 @@ async def test_overflow_is_three_invocations_but_one_logical_call(monkeypatch):
     events = []
     app.subscribe_events(events.append)
     await app.arun(await app.acreate_session('A'), _history())
-    starts = [e for e in events if e.event_type == 'model_invocation_started']
-    ends = [e for e in events if e.event_type == 'model_invocation_finished']
+    starts = [e for e in events if e.event_type == 'model_call_started']
+    ends = [e for e in events if e.event_type == 'model_call_finished']
     assert len(starts) == len(ends) == 3
     assert len({e.data.invocation_id for e in starts}) == 3
     assert [e.data.purpose for e in starts] == ['agent', 'summary', 'agent']
     assert [e.data.status for e in ends] == ['failed', 'returned', 'returned']
     assert {e.data.invocation_id for e in starts} == {e.data.invocation_id for e in ends}
-    assert sum(e.event_type == 'model_call_started' for e in events) == 1
+    assert sum(e.event_type == 'turn_started' for e in events) == 1
     assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == 1
 
 
@@ -87,10 +87,10 @@ async def test_concurrent_sessions_and_failure_do_not_share_invocation_or_scope(
             release.set()
             await task
     for sid, status in ((a, 'returned'), (b, 'returned'), (c, 'failed')):
-        pair = [e for e in events if e.session_id == sid and e.event_type.startswith('model_invocation_')]
+        pair = [e for e in events if e.session_id == sid and e.event_type.startswith('model_call_')]
         assert len(pair) == 2 and pair[0].data.invocation_id == pair[1].data.invocation_id
         assert pair[1].data.status == status
-    assert len({e.data.invocation_id for e in events if e.event_type == 'model_invocation_started'}) == 3
+    assert len({e.data.invocation_id for e in events if e.event_type == 'model_call_started'}) == 3
     assert sent == ['hold', 'healthy', 'fail']
 
 
@@ -116,7 +116,7 @@ async def test_active_stop_has_cancelled_invocation_and_original_stop_effect(mon
         finally:
             release.set()
             await asyncio.gather(task, return_exceptions=True)
-    pair = [e for e in events if e.event_type.startswith('model_invocation_')]
+    pair = [e for e in events if e.event_type.startswith('model_call_')]
     assert len(pair) == 2 and pair[0].data.invocation_id == pair[1].data.invocation_id
     assert pair[-1].data.status == 'cancelled' and pair[-1].data.usage_status == 'unavailable'
     assert events[-1].event_type == 'run_finished'
@@ -144,8 +144,8 @@ async def test_auto_stages_remain_distinct_when_they_share_the_agent_model(monke
         app.subscribe_events(events.append)
         result = await app.arun(await app.acreate_session('root'), [('user', 'task')])
         assert result['messages'][-1].content == 'done'
-    starts = [e for e in events if e.event_type == 'model_invocation_started']
-    ends = [e for e in events if e.event_type == 'model_invocation_finished']
+    starts = [e for e in events if e.event_type == 'model_call_started']
+    ends = [e for e in events if e.event_type == 'model_call_finished']
     assert len(starts) == len(ends) == len(sent) == 4
     assert [e.data.purpose for e in starts] == ['agent', 'auto_fast', 'auto_detailed', 'agent']
     assert {e.data.model_id for e in starts} == {'root'}

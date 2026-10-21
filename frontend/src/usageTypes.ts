@@ -5,6 +5,7 @@ export interface UsageMetric {
 }
 
 export interface UsageBucket {
+  duration?: { known_sum_ms: string | null; reported_calls: number; unknown_calls: number };
   recorded_calls: number;
   status_counts: Record<'started' | 'returned' | 'failed' | 'cancelled' | 'unconfirmed', number>;
   usage_status_counts: Record<'final' | 'partial' | 'unavailable', number>;

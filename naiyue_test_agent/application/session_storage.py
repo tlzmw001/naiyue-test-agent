@@ -56,7 +56,7 @@ class SessionStorage:
             self.connection.row_factory = sqlite3.Row
             if existing:
                 version = self.connection.execute('SELECT version FROM naiyue_store_info').fetchall()
-                if len(version) != 1 or version[0][0] not in (4, 5, 6, 7, 8, 9, 10, 11, 12):
+                if len(version) != 1 or version[0][0] not in (4, 5, 6, 7, 8, 9, 10, 11, 12, 13):
                     raise SessionPersistenceError('unsupported_store_schema')
                 if version[0][0] in (4, 5):
                     with self.connection:
@@ -95,6 +95,7 @@ class SessionStorage:
             diagnostic_storage.initialize(self.connection)
             reply_storage.initialize(self.connection)
             reply_storage.initialize_regeneration(self.connection)
+            model_usage_storage.migrate_duration(self.connection)
             self.checkpoint_connection = sqlite3.connect(self.path, check_same_thread=False)
             self._stack.callback(self.checkpoint_connection.close)
         except (OSError, sqlite3.Error, SessionPersistenceError) as error:

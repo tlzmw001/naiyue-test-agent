@@ -150,19 +150,19 @@ def test_failure_payload_cannot_hide_mutable_or_raw_error_content(fields):
 
 
 def test_call_pairing_and_payload_identity_are_enforced():
-    from naiyue_test_agent.agent_runtime.events import ModelCallStartedData, ModelCallFinishedData
+    from naiyue_test_agent.agent_runtime.events import ModelInvocationStartedData, ModelInvocationFinishedData
 
     received = []
     publisher = CheckedPublisher('session', 'run', (received.append,))
     publisher.publish('run_started', RunStartedData('message'))
-    publisher.publish('model_call_started', ModelCallStartedData('call', 'A'))
+    publisher.publish('model_call_started', ModelInvocationStartedData('call', 'A', 'agent'))
     with pytest.raises(ValueError):
-        publisher.publish('model_call_started', ModelCallStartedData('call', 'A'))
+        publisher.publish('model_call_started', ModelInvocationStartedData('call', 'A', 'agent'))
     with pytest.raises(ValueError):
-        publisher.publish('model_call_finished', ModelCallFinishedData('call', 'B', 'accepted'))
-    publisher.publish('model_call_finished', ModelCallFinishedData('call', 'A', 'accepted'))
+        publisher.publish('model_call_finished', ModelInvocationFinishedData('other', 'returned'))
+    publisher.publish('model_call_finished', ModelInvocationFinishedData('call', 'returned'))
     with pytest.raises(ValueError):
-        publisher.publish('model_call_finished', ModelCallFinishedData('call', 'A', 'accepted'))
+        publisher.publish('model_call_finished', ModelInvocationFinishedData('call', 'returned'))
     publisher.publish('run_finished', RunFinishedData('completed'))
     assert [e.sequence for e in received] == [1, 2, 3, 4]
 
@@ -186,14 +186,14 @@ def test_nested_run_service_bindings_restore_parent_and_reset():
 @pytest.mark.parametrize('kind', ['model_start', 'tool_start', 'model_finish', 'tool_finish'])
 def test_call_payload_rejects_mutable_subjects(kind):
     from naiyue_test_agent.agent_runtime.events import (
-        ModelCallStartedData, ModelCallFinishedData, ToolCallStartedData, ToolCallFinishedData,
+        ModelInvocationStartedData, ModelInvocationFinishedData, ToolCallStartedData, ToolCallFinishedData,
     )
     with pytest.raises(ValueError):
         if kind == 'model_start':
-            ModelCallStartedData('call', {'mutable': True})
+            ModelInvocationStartedData('call', {'mutable': True}, 'agent')
         elif kind == 'tool_start':
             ToolCallStartedData('call', ['mutable'])
         elif kind == 'model_finish':
-            ModelCallFinishedData('call', {'mutable': True}, 'accepted')
+            ModelInvocationFinishedData('call', {'mutable': True})
         else:
             ToolCallFinishedData('call', ['mutable'], 'dispatch', 'success')

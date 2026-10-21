@@ -86,8 +86,17 @@ def _system_children(message, total):
 
 
 def estimate_context(model, system_message, messages, tools):
-    result = {'status': 'unavailable', 'estimated_input_tokens': None, 'groups': [],
-        'image_count': 0, 'estimator': 'framework_approximate', **_budget(model)}
+    result = {'status': 'unavailable', 'groups_status': 'unavailable',
+        'estimated_input_tokens': None, 'groups': [],
+        'image_count': sum(is_image_block(block) for message in messages
+            if isinstance(message.content, list) for block in message.content),
+        'estimator': 'framework_approximate', **_budget(model)}
+    try:
+        total = count_tokens_approximately([*([system_message] if system_message else []), *messages], tools=tools)
+    except Exception as error:
+        logger.warning('context_total_estimate_unavailable error_type=%s', type(error).__name__)
+        return result
+    result.update(status='available', estimated_input_tokens=total)
     try:
         rows = {name: {'id': name, 'tokens': 0, 'count': 0} for name in GROUPS}
         if system_message is not None:
@@ -95,7 +104,6 @@ def estimate_context(model, system_message, messages, tools):
             row.update(tokens=count_tokens_approximately([system_message]), count=1)
             row['children'] = _system_children(system_message, row['tokens'])
         rows['tool_definitions'].update(tokens=count_tokens_approximately([], tools=tools), count=len(tools))
-        images = 0
         for message in messages:
             if message.additional_kwargs.get('naiyue_compaction_summary'):
                 group = 'summary'
@@ -105,13 +113,10 @@ def estimate_context(model, system_message, messages, tools):
                 group = {'human': 'user', 'ai': 'assistant', 'tool': 'tool_results'}.get(message.type, 'other')
             rows[group]['tokens'] += count_tokens_approximately([message])
             rows[group]['count'] += 1
-            if isinstance(message.content, list):
-                images += sum(is_image_block(block) for block in message.content)
-        total = count_tokens_approximately([*([system_message] if system_message else []), *messages], tools=tools)
         if sum(row['tokens'] for row in rows.values()) != total:
             raise ValueError('context_estimate_not_additive')
-        result.update(status='available', estimated_input_tokens=total,
-            groups=[row for row in rows.values() if row['count'] or row['tokens']], image_count=images)
+        result.update(groups_status='available',
+            groups=[row for row in rows.values() if row['count'] or row['tokens']])
     except Exception as error:
         logger.warning('context_composition_unavailable error_type=%s', type(error).__name__)
     return result
@@ -174,7 +179,8 @@ def read_snapshot(value):
         counts = ('estimated_input_tokens', 'image_count', 'context_window_tokens',
             'max_output_tokens', 'compaction_reserve_tokens', 'trigger_threshold_tokens')
         sources = ('context_window_source', 'max_output_source', 'compaction_reserve_source')
-        if (not isinstance(estimate, dict) or set(estimate) != {*counts, *sources, 'status', 'groups', 'estimator'}
+        fields = {*counts, *sources, 'status', 'groups', 'estimator'}
+        if (not isinstance(estimate, dict) or set(estimate) not in (fields, fields | {'groups_status'})
                 or estimate['estimator'] != 'framework_approximate'
                 or any(estimate[key] is not None and _number(estimate[key]) is None for key in counts)
                 or any(estimate[key] not in ('config', 'default', 'unknown') for key in sources)):
@@ -184,10 +190,16 @@ def read_snapshot(value):
                 or not all(_valid_group(row) for row in groups)
                 or len({row['id'] for row in groups}) != len(groups)):
             raise ValueError('invalid_estimate_groups')
+        groups_status = estimate.get('groups_status', estimate['status'])
+        if groups_status not in ('available', 'unavailable'):
+            raise ValueError('invalid_composition_status')
         if estimate['status'] == 'available':
-            if _number(estimate['estimated_input_tokens']) != sum(row['tokens'] for row in groups):
+            if (_number(estimate['estimated_input_tokens']) is None
+                    or groups_status == 'available' and estimate['estimated_input_tokens'] != sum(row['tokens'] for row in groups)
+                    or groups_status == 'unavailable' and groups):
                 raise ValueError('invalid_estimate_total')
-        elif estimate['status'] != 'unavailable' or groups or estimate['estimated_input_tokens'] is not None:
+        elif (estimate['status'] != 'unavailable' or groups or estimate['estimated_input_tokens'] is not None
+                or groups_status != 'unavailable'):
             raise ValueError('invalid_estimate_status')
         usage = value['usage']
         if usage is not None and (not isinstance(usage, dict)

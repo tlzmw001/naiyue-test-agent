@@ -256,7 +256,7 @@ async def test_input_overflow_only_publishes_committed_summary_and_not_summary_a
     completed = messages(events)
     assert sum(e.data.is_context_summary for e in completed) == 1
     assert len([row for row in rows(events) if row['type'] == 'ai' and row['content'] == 'recovered']) == 1
-    assert sum(e.event_type == 'model_call_started' for e in events) == 1
+    assert sum(e.event_type == 'model_call_started' for e in events) == 3
     assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == 1
     assert result['messages'][0].id == next(e.data.message_id for e in completed if e.data.is_context_summary)
     assert any(e.event_type == 'context_messages_changed' for e in events)

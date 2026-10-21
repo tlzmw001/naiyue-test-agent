@@ -11,7 +11,6 @@ import logging
 
 from naiyue_test_agent.model_access.messages import content_text
 from . import _build_runtime_agent, InteractiveRunState
-from .context_compaction import make_context_compaction_middleware
 from .context_recovery import recover_input_overflow
 from .session_port import SessionPort
 from .errors import RuntimeErrorPolicy
@@ -84,8 +83,7 @@ def build_subagent_runtime(spec, *, catalog, tool_registry, checkpointer, sessio
     # path and role inputs. No root steering/follow-up consumers are installed.
     toolset = ToolSetMiddleware(tool_registry, session_port.resolve_active_tool_names, spec.system_prompt,
                                 resolve_prompt_parts=session_port.resolve_prompt_parts)
-    middleware = [make_context_compaction_middleware(session_port.resolve_model, model_inputs=toolset.model_inputs),
-                  recover_input_overflow]
+    middleware = [recover_input_overflow]
     if spec.max_model_calls is not None:
         middleware.append(ModelCallLimitMiddleware(thread_limit=spec.max_model_calls, exit_behavior='error'))
     # Child extras keep compaction/recovery and an optional model budget;
@@ -97,7 +95,8 @@ def build_subagent_runtime(spec, *, catalog, tool_registry, checkpointer, sessio
         steering_middleware=middleware, state_schema=InteractiveRunState, active_stop=True, observe_turns=True,
         toolset=toolset, permission_settings=permission_settings,
         resolve_permission_context=session_port.resolve_permission_context, permission_reviewer=permission_reviewer,
-        model_middleware=(SubagentModelFailureMiddleware(),))
+        model_middleware=(SubagentModelFailureMiddleware(),),
+        resolve_request_configuration=session_port.resolve_request_configuration, compact_requests=True)
 
 
 async def ainvoke_subagent_step(agent, instance, *, services, resume=None, approval_grants=None):

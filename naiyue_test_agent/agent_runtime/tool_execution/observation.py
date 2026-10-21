@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.errors import GraphBubbleUp
 
 from naiyue_test_agent.tools.processes import ProcessCleanupError
+from naiyue_test_agent.contracts.timing import start_timer, elapsed_ms
 from naiyue_test_agent.model_access.stop_reason import MODEL_STOP_REASON_KEY
 from ..call_observation import event_label, _emit
 from ..errors import describe_failure_in_context, run_failure_data
@@ -176,6 +177,7 @@ def tool_guard_reason(request):
 
 
 async def aobserve_tool_dispatch(request, handler, dispatch):
+    started = start_timer()
     context = request.runtime.context
     call_id, name = request.tool_call['id'], event_label(request.tool_call['name'])
     _emit(context, 'tool_call_started', lambda: ToolCallStartedData(call_id, name))
@@ -200,11 +202,13 @@ async def aobserve_tool_dispatch(request, handler, dispatch):
         description = describe_failure_in_context(error, context, source='tool')
         _emit(context, 'tool_call_finished', lambda: ToolCallFinishedData(
             call_id, name, 'dispatch', outcome, failure=run_failure_data(description),
+            duration_ms=elapsed_ms(started),
         ), primary_error=error)
         raise
     reason = (result.additional_kwargs.get('naiyue_not_executed') if isinstance(result, ToolMessage) else None)
     reason = reason or (tool_guard_reason(request) if entered else 'prior_batch_failed')
     outcome = ('not_executed' if reason is not None else 'error_result'
                if isinstance(result, ToolMessage) and result.status == 'error' else 'success')
-    _emit(context, 'tool_call_finished', lambda: ToolCallFinishedData(call_id, name, 'dispatch', outcome, reason))
+    _emit(context, 'tool_call_finished', lambda: ToolCallFinishedData(
+        call_id, name, 'dispatch', outcome, reason, duration_ms=elapsed_ms(started)))
     return result

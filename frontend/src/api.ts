@@ -1,6 +1,7 @@
 import type { ContextView } from './contextTypes';
 import type { McpRefreshResult } from './types';
 import type { SessionUsageView } from './usageTypes';
+import type { DiagnosticEvents, DiagnosticRuns } from './diagnosticTypes';
 import { decodeSSE, responseBytes } from './sse';
 import { textContent } from './agentEvents';
 import type { SseFrame } from './sse';
@@ -130,6 +131,14 @@ export class WebApi {
   usage(id: string, afterModel?: string, signal?: AbortSignal) {
     const query = afterModel === undefined ? '' : '?' + new URLSearchParams({ after_model: afterModel });
     return this.json<SessionUsageView>(`/sessions/${encodeURIComponent(id)}/usage${query}`, 'GET', undefined, signal);
+  }
+  diagnosticRuns(id: string, before?: number, signal?: AbortSignal) {
+    const query = before === undefined ? '' : '?' + new URLSearchParams({ before: String(before) });
+    return this.json<DiagnosticRuns>(`/sessions/${encodeURIComponent(id)}/diagnostics${query}`, 'GET', undefined, signal);
+  }
+  diagnosticEvents(id: string, runId: string, after = 0, signal?: AbortSignal) {
+    const query = new URLSearchParams({ after: String(after) });
+    return this.json<DiagnosticEvents>(`/sessions/${encodeURIComponent(id)}/diagnostics/${encodeURIComponent(runId)}?${query}`, 'GET', undefined, signal);
   }
   subagents(id: string, signal?: AbortSignal) { return this.json<SubagentRecord[]>(`/sessions/${encodeURIComponent(id)}/subagents`, 'GET', undefined, signal); }
   subagent(id: string, agentId: string) {

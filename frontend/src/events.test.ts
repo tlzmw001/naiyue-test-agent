@@ -35,10 +35,10 @@ it('validates network event envelopes at runtime', () => {
 it('consumes invocation facts without replacing conversation or context usage', () => {
   const original = { messages: [{ id: 'answer', type: 'ai', content: 'done' }], last_sequence: 0,
     status: 'running', context_snapshot: { model_call_id: 'logical' } } as any;
-  let view = applyEvent(original, validateEvent(event(1, 'model_invocation_started', {
+  let view = applyEvent(original, validateEvent(event(1, 'model_call_started', {
     invocation_id: 'actual', model_id: 'A', purpose: 'summary',
   })));
-  view = applyEvent(view, validateEvent(event(2, 'model_invocation_finished', {
+  view = applyEvent(view, validateEvent(event(2, 'model_call_finished', {
     invocation_id: 'actual', status: 'returned', usage_status: 'final', input_tokens: 100,
   })));
   expect(view.last_sequence).toBe(2);

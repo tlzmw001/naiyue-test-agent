@@ -22,7 +22,7 @@ from test_subagent_execution import ChildModel, record_instances
 def test_protocol_names_the_existing_behavior_without_state_or_application_imports():
     from typing import get_type_hints
     from naiyue_test_agent.agent_runtime.session_port import SessionPort
-    expected = {'resolve_model', 'resolve_active_tool_names', 'resolve_permission_context',
+    expected = {'resolve_request_configuration', 'resolve_model', 'resolve_active_tool_names', 'resolve_permission_context',
         'resolve_prompt_parts', 'get_registered_subagents', 'is_stop_requested',
         'drain_steering', 'finish_run_boundary', 'prepare_control_messages'}
     assert SessionPort._is_protocol
@@ -69,6 +69,7 @@ async def test_interactive_graph_rejects_child_scope_without_consuming_root_cont
     model = StreamingToolModel(replies=[])
     port = SimpleNamespace(
         resolve_model=lambda sid, path: ('A', model),
+        resolve_request_configuration=lambda sid, path: ('A', model, ()),
         resolve_active_tool_names=lambda sid, path: (),
         resolve_permission_context=fixed_permission_context,
         resolve_prompt_parts=lambda sid: [], get_registered_subagents=lambda: (),

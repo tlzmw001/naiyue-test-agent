@@ -5,7 +5,7 @@
 .close:hover { background: var(--surface-hover); }
 .scope { display: flex; justify-content: space-between; padding: 0 22px 15px; font-size: var(--fs-caption); color: var(--text-secondary); }
 .scope span { background: var(--surface-hover); border-radius: var(--r-xs); padding: 3px 6px; font-size: var(--fs-caption); }
-.tabs { display: flex; gap: 22px; padding: 0 22px; border-bottom: 1px solid var(--line); }
+.tabs { display: flex; justify-content: space-between; gap: 10px; padding: 0 22px; border-bottom: 1px solid var(--line); }
 .tabs button { padding: 12px 0; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: var(--fs-meta); }
 .tabs button[aria-selected="true"] { color: var(--text); border-color: var(--text); }
 .scroll { flex: 1; min-height: 0; overflow: auto; padding: 20px 22px; }

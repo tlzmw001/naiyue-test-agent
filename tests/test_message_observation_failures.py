@@ -316,9 +316,9 @@ def test_real_probe_guard_counts_model_requests_not_preflight_resolution(monkeyp
     with caplog.at_level(logging.CRITICAL):
         _worker(SimpleNamespace(config='synthetic.json', model_id='A', with_control=with_control))
     assert len(model_calls) == 2
-    expected = ('real_message_events=PASS events=31 messages=5 model_calls=2 '
+    expected = ('real_message_events=PASS events=27 messages=5 model_calls=2 '
                 'tool_calls=1 turns=2 controls=1 pairing=verified terminal=completed\n'
-                if with_control else 'real_message_events=PASS events=27 messages=4 model_calls=2 '
+                if with_control else 'real_message_events=PASS events=23 messages=4 model_calls=2 '
                 'tool_calls=1 turns=2 pairing=verified terminal=completed\n')
     assert capsys.readouterr().out == expected
 

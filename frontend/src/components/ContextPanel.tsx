@@ -63,21 +63,24 @@ function Estimate({ estimate, basis }: { estimate?: ContextEstimate | null; basi
       扣除输出预留后，还可容纳约 <strong>{format(remaining)}</strong> tokens。</>}<br />
       输出预留来源：{sourceLabel[estimate.max_output_source]}；压缩预留 {format(estimate.compaction_reserve_tokens)}（{sourceLabel[estimate.compaction_reserve_source]}）。<br />
       自动压缩检查阈值：{format(estimate.trigger_threshold_tokens)}。</div>
+    {estimate.groups_status !== 'unavailable' && <>
     <div className={styles.section}>输入构成<small>各项均为本地估算</small></div>
     <div className={styles.composition} aria-hidden="true">{estimate.groups.map(row => <i key={row.id}
       style={{ background: colors[row.id], width: (total > 0 ? row.tokens / total * 100 : 0) + '%' }} />)}</div>
     {estimate.groups.map(row => <Group key={row.id} row={row} total={total} />)}
+    </>}
     <div className={styles.note}><p>Skill 正文经 Read 读取后计入“工具结果”。</p>
       {!!estimate.image_count && <p>包含 {estimate.image_count} 张图片，图片 token 使用框架固定粗估，可能与实际有明显差异。</p>}
       <p>采用通用近似计数；中文和不同模型可能有误差。实际发送前仍会检查压缩条件。</p></div>
   </>;
 }
 
-export default function ContextPanel({ value, loading, error, retry, close, usageContent }: {
+export default function ContextPanel({ value, loading, error, retry, close, usageContent, diagnosticContent }: {
   value?: ContextView; loading: boolean; error: string; retry: () => void; close: () => void;
   usageContent: ReactNode;
+  diagnosticContent?: ReactNode;
 }) {
-  const tabs = ['current', 'request', 'usage'] as const;
+  const tabs = ['current', 'request', 'usage', 'diagnostics'] as const;
   const [tab, setTab] = useState<(typeof tabs)[number]>('current');
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { closeButton.current?.focus(); }, []);
@@ -88,20 +91,21 @@ export default function ContextPanel({ value, loading, error, retry, close, usag
   }}>
     <header className={styles.header}><strong>上下文</strong><button ref={closeButton} className={styles.close}
       aria-label="关闭上下文" onClick={close}>×</button></header>
-    <div className={styles.scope}>{tab === 'usage' ? '会话累计' : '主会话'}<span>只读查看</span></div>
+    <div className={styles.scope}>{tab === 'usage' ? '会话累计' : tab === 'diagnostics' ? '运行诊断' : '主会话'}<span>只读查看</span></div>
     <div className={styles.tabs} role="tablist" aria-label="上下文统计口径">{tabs.map(name =>
       <button key={name} role="tab" aria-selected={tab === name} id={`context-tab-${name}`}
         aria-controls={`context-${name}`} tabIndex={tab === name ? 0 : -1} onClick={() => setTab(name)}
         onKeyDown={event => {
           if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
           event.preventDefault();
-          const next = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs[2] :
-            tabs[(tabs.indexOf(tab) + (event.key === 'ArrowLeft' ? 2 : 1)) % tabs.length];
+          const next = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs[tabs.length - 1] :
+            tabs[(tabs.indexOf(tab) + (event.key === 'ArrowLeft' ? tabs.length - 1 : 1)) % tabs.length];
           setTab(next);
           event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`#context-tab-${next}`)?.focus();
-        }}>{name === 'current' ? '当前预估' : name === 'request' ? '最近请求' : '会话累计'}</button>)}</div>
+        }}>{name === 'current' ? '当前预估' : name === 'request' ? '最近请求' : name === 'usage' ? '会话累计' : '运行诊断'}</button>)}</div>
     <div className={styles.scroll}>
-      {tab === 'usage' ? <section role="tabpanel" id="context-usage" aria-labelledby="context-tab-usage">{usageContent}</section> : <>
+      {tab === 'usage' || tab === 'diagnostics' ? <section role="tabpanel" id={`context-${tab}`} aria-labelledby={`context-tab-${tab}`}>
+        {tab === 'usage' ? usageContent : diagnosticContent}</section> : <>
       {error && <div className={styles.notice} role="alert">{error}<button onClick={retry}>重试</button></div>}
       {loading && <p className={styles.notice} role="status">正在读取上下文…</p>}
       {!loading && !error && <section role="tabpanel" id={`context-${tab}`} aria-labelledby={`context-tab-${tab}`}>
@@ -122,6 +126,6 @@ export default function ContextPanel({ value, loading, error, retry, close, usag
         </> : <p className={styles.notice}>暂无已记录的模型请求。历史请求未保存的构成不会补造。</p>}
       </section>}</>}
     </div>
-    {tab !== 'usage' && <footer className={styles.footer}><span>本地查看，不调用模型</span><button onClick={retry} disabled={loading}>刷新</button></footer>}
+    {tab !== 'usage' && tab !== 'diagnostics' && <footer className={styles.footer}><span>本地查看，不调用模型</span><button onClick={retry} disabled={loading}>刷新</button></footer>}
   </aside>;
 }

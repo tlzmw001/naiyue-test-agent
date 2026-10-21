@@ -4,13 +4,18 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .failures import RunFailureData
+from .timing import validate_duration
 
 
 @dataclass(frozen=True)
 class RunStartedData:
     mode: Literal['message', 'approval_resume', 'compact']
+    http_observation_version: int | None = None
 
     def __post_init__(self):
+        if self.http_observation_version is not None and (type(self.http_observation_version) is not int
+                                                       or self.http_observation_version != 1):
+            raise ValueError('Invalid HTTP observation version')
         if self.mode not in ('message', 'approval_resume', 'compact'):
             raise ValueError('Invalid run start mode')
 
@@ -22,8 +27,13 @@ class RunFinishedData:
     stop_mode: Literal['active'] | None = None
     manual_review_required: bool = False
     failure: RunFailureData | None = None
+    duration_ms: int | None = None
+    http_capture_status: Literal['complete', 'incomplete', 'unavailable'] | None = None
 
     def __post_init__(self):
+        validate_duration(self.duration_ms)
+        if self.http_capture_status not in (None, 'complete', 'incomplete', 'unavailable'):
+            raise ValueError('Invalid HTTP capture status')
         if self.status not in ('completed', 'stopped', 'interrupted', 'failed'):
             raise ValueError('Invalid run terminal status')
         if self.stop_mode != ('active' if self.status == 'stopped' else None):

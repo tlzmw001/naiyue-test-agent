@@ -13,9 +13,6 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from naiyue_test_agent.agent_runtime.tool_execution.batch import ToolBatchMiddleware
 from naiyue_test_agent.agent_runtime.context_observation import observe_model_request
-from naiyue_test_agent.agent_runtime.context_compaction import (
-    make_context_compaction_middleware,
-)
 from naiyue_test_agent.agent_runtime.context_recovery import recover_input_overflow
 from .tool_execution.toolset import ToolSetMiddleware, ToolExecutionState
 from naiyue_test_agent.tools.permissions import (
@@ -150,19 +147,13 @@ def _assemble_interactive_runtime(
     toolset = ToolSetMiddleware(tool_registry, session_port.resolve_active_tool_names, system_prompt,
                                 resolve_subagent_roles=session_port.get_registered_subagents,
                                 resolve_prompt_parts=session_port.resolve_prompt_parts)
-    compaction_middleware = make_context_compaction_middleware(
-        session_port.resolve_model, model_inputs=toolset.model_inputs,
-    )
-    # Root only: freeze the tool view before compaction; steering enters before
-    # model requests and follow-ups at natural end. Children do not drain these.
     return _build_runtime_agent(
         default_model, tool_registry=tool_registry, resolve_active_tool_names=session_port.resolve_active_tool_names, system_prompt=system_prompt,
         response_format=response_format, resolve_model=session_port.resolve_model,
         checkpointer=checkpointer,
-        steering_middleware=[reset_run_control, compaction_middleware,
-                             inject_before_model,
-                             inject_at_natural_end,
-                             recover_input_overflow],
+        steering_middleware=[recover_input_overflow],
+        request_controls=[reset_run_control, inject_before_model, inject_at_natural_end],
+        resolve_request_configuration=session_port.resolve_request_configuration, compact_requests=True,
         toolset=toolset, state_schema=InteractiveRunState,
         observe_turns=observe_turns, active_stop=True, permission_settings=permission_settings, resolve_permission_context=session_port.resolve_permission_context,
         permission_reviewer=permission_reviewer,
@@ -173,12 +164,14 @@ def _build_runtime_agent(
     default_model, *, tool_registry, resolve_active_tool_names, system_prompt, response_format, resolve_model,
     checkpointer, steering_middleware, state_schema=None,
     observe_turns=False, active_stop=False, toolset=None, permission_settings=None, resolve_permission_context=fixed_permission_context,
-    permission_reviewer=None, model_middleware=(),
+    permission_reviewer=None, model_middleware=(), request_controls=(),
+    resolve_request_configuration=None, compact_requests=False,
 ):
     permission_settings = permission_settings if permission_settings is not None else PermissionSettings()
     toolset = toolset or ToolSetMiddleware(tool_registry, resolve_active_tool_names, system_prompt)
     # Framework order: before hooks forward, after hooks reversed, first wrap outer.
-    # Model wraps: select_model -> toolset -> [overflow recovery] -> ModelInput ->
+    # Before model: root controls -> fixed request preparation -> model.
+    # Model wraps: fixed request/gates -> [overflow recovery] -> ModelInput ->
     # request observation -> [child failure capture] -> model (stop wraps outside).
     # after_model: [stop] -> permissions -> batch approval -> [extra checks] ->
     # batch plan -> [turn ready]. Interrupts/errors/jumps may skip later hooks.
@@ -194,7 +187,9 @@ def _build_runtime_agent(
         context_schema=RunContext,
         state_schema=state_schema,
         middleware=[ReplyIdentityMiddleware(), *([StopModelMiddleware()] if active_stop else []), *([TurnBoundaryMiddleware()] if observe_turns else []),
-                    make_model_selection_middleware(resolve_model),
+                    *request_controls,
+                    make_model_selection_middleware(resolve_model, toolset=toolset,
+                        resolve_request_configuration=resolve_request_configuration, compact=compact_requests),
                     toolset, ToolBatchMiddleware(tool_registry), _record_tool_call,
                     ToolErrorMiddleware(on_error=tool_error_feedback), ExecutionAuthorizationMiddleware(permission_settings),
                     *steering_middleware, BatchApprovalMiddleware(has_checkpointer=checkpointer is not None),

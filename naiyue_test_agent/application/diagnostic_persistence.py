@@ -12,7 +12,8 @@ from naiyue_test_agent.contracts.failures import safe_error_type
 
 
 logger = logging.getLogger(__name__)
-_KINDS = frozenset(('run_started', 'run_finished', 'model_invocation_started', 'model_invocation_finished',
+_KINDS = frozenset(('run_started', 'run_finished',
+    'model_http_attempt_started', 'model_http_attempt_finished',
     'model_call_started', 'model_call_finished', 'tool_call_started', 'tool_call_finished', 'approval_requested',
     'compaction_started', 'compaction_finished', 'context_recovery_started', 'context_recovery_finished',
     'control_accepted', 'control_delivered', 'control_applied', 'control_discarded', 'control_outcome_unknown',
@@ -20,7 +21,7 @@ _KINDS = frozenset(('run_started', 'run_finished', 'model_invocation_started', '
 _LABELS = ('mode', 'status', 'stop_mode', 'model_id', 'purpose', 'invocation_id', 'model_call_id',
     'tool_call_id', 'tool_name', 'boundary', 'outcome', 'reason', 'error_type', 'approval_batch_id',
     'control_id', 'kind', 'operation_id', 'operation', 'trigger', 'related_operation_id', 'origin_run_id',
-    'message_id', 'message_type', 'visibility')
+    'message_id', 'message_type', 'visibility', 'attempt_id', 'http_capture_status')
 _COUNTS = ('before_estimate', 'after_estimate', 'original_message_count', 'removed_message_count',
            'preserved_message_count', 'retry_attempts')
 
@@ -44,6 +45,18 @@ def project_diagnostic_event(event):
         value = getattr(event.data, name, None)
         if type(value) is int and 0 <= value <= 2**63 - 1:
             data[name] = value
+    if hasattr(event.data, 'duration_ms'):
+        value = event.data.duration_ms
+        valid = value is None or type(value) is int and 0 <= value <= 2**63 - 1
+        data['duration_ms'] = value if valid else None
+        omitted |= not valid
+    for name, maximum, minimum in (('http_observation_version', 1, 1), ('http_status', 599, 100),
+                                    ('response_headers_ms', 2**63 - 1, 0)):
+        if hasattr(event.data, name):
+            value = getattr(event.data, name)
+            valid = value is None or type(value) is int and minimum <= value <= maximum
+            data[name] = value if valid else None
+            omitted |= not valid
     for name in ('manual_review_required',):
         value = getattr(event.data, name, None)
         if type(value) is bool:
