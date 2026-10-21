@@ -6,7 +6,7 @@ import logging
 import os
 import socket
 import ssl
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from urllib.request import getproxies, proxy_bypass_environment
 
 import httpx
@@ -54,9 +54,29 @@ def resolve_target(value):
 def selected_proxy(value, settings):
     if settings.mode == 'direct':
         return None
-    if settings.mode == 'proxy':
-        return settings.proxy
     url = urlsplit(value)
+    host = (url.hostname or '').rstrip('.')
+    try:
+        address = ipaddress.ip_address(host)
+        host = address.compressed
+    except ValueError:
+        address = None
+        host = host.encode('idna').decode('ascii').lower()
+    for pattern in settings.no_proxy:
+        try:
+            bypass_address = ipaddress.ip_address(pattern)
+        except ValueError:
+            if address is None and proxy_bypass_environment(host, {'no': pattern}):
+                return None
+        else:
+            if address == bypass_address:
+                return None
+    if settings.mode == 'proxy':
+        if settings.proxy_username is None:
+            return settings.proxy
+        proxy = urlsplit(settings.proxy)
+        credentials = quote(settings.proxy_username, safe='') + ':' + quote(settings.proxy_password, safe='')
+        return proxy._replace(netloc=credentials + '@' + proxy.netloc).geturl()
     proxies = getproxies()
     if proxy_bypass_environment(url.netloc, proxies):
         return None

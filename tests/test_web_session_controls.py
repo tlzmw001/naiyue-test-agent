@@ -1,6 +1,7 @@
 """Browser selections use real session storage and the original permission batch."""
 
 import asyncio
+import pytest
 
 from langchain_core.messages import AIMessage
 
@@ -8,6 +9,71 @@ from naiyue_test_agent.settings import AppSettings
 from test_async_application import StreamingToolModel
 from test_web_api import request, web_client
 from test_web_tools import calls
+
+
+@pytest.mark.parametrize('names', [[], ['powershell', 'read']])
+def test_configured_default_tools_only_apply_to_new_sessions(monkeypatch, tmp_path, names):
+    async def scenario():
+        root = tmp_path / 'workspace'
+        root.mkdir()
+        model = StreamingToolModel(replies=[])
+        settings = AppSettings.model_validate({'default_active_tools': names})
+        async with web_client(monkeypatch, tmp_path, model, workspace_root=root, runtime_settings=settings) as (client, app):
+            assert (await client.get('/api/session-controls')).json()['default_active_tools'] == names
+            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+            assert (await client.get(f'/api/sessions/{sid}')).json()['active_tools'] == names
+            response = await client.patch(f'/api/sessions/{sid}/tools', json={'active_tools': ['grep']})
+            assert response.json() == {'active_tools': ['grep']}
+        changed = AppSettings.model_validate({'default_active_tools': ['find']})
+        async with web_client(monkeypatch, tmp_path, model, workspace_root=root, runtime_settings=changed) as (client, app):
+            assert (await client.post(f'/api/sessions/{sid}/prepare')).status_code == 200
+            assert (await client.get(f'/api/sessions/{sid}')).json()['active_tools'] == ['grep']
+            new = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+            assert (await client.get(f'/api/sessions/{new}')).json()['active_tools'] == ['find']
+        assert model.seen == []
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('rootless', [False, True])
+def test_default_tool_validation_and_rootless_web_boundary(monkeypatch, tmp_path, rootless):
+    async def scenario():
+        settings = AppSettings.model_validate({'default_active_tools': ['read' if rootless else 'unknown']})
+        options = {} if rootless else {'workspace_root': tmp_path}
+        if rootless:
+            async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]), runtime_settings=settings) as (client, app):
+                assert (await client.get('/api/session-controls')).json()['default_active_tools'] == []
+        else:
+            with pytest.raises(ValueError, match='Unknown tool name'):
+                async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]), runtime_settings=settings, **options):
+                    raise AssertionError('Unknown tool must fail startup')
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('valid', [True, False])
+def test_configured_mcp_default_is_validated_after_discovery_and_still_requires_approval(monkeypatch, tmp_path, valid):
+    from test_async_application import call
+    from test_mcp_connections import facts, process_alive, stdio_settings
+    async def scenario():
+        audit = tmp_path / 'mcp.jsonl'
+        settings = AppSettings.model_validate({
+            'default_active_tools': ['mcp__local__echo' if valid else 'mcp__local__missing'],
+            'mcp': {'servers': {'local': stdio_settings(audit, 'stateful', allowed_tools=['echo']).model_dump()}}})
+        model = StreamingToolModel(replies=[call('mcp__local__echo', {'text': 'hello'})])
+        if not valid:
+            with pytest.raises(ValueError, match='Unknown tool name'):
+                async with web_client(monkeypatch, tmp_path, model, workspace_root=tmp_path, runtime_settings=settings):
+                    raise AssertionError('Unknown MCP default must fail startup')
+        else:
+            async with web_client(monkeypatch, tmp_path, model, workspace_root=tmp_path, runtime_settings=settings) as (client, app):
+                options = (await client.get('/api/session-controls')).json()
+                assert options['default_active_tools'] == ['mcp__local__echo']
+                sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+                run = (await client.post(f'/api/sessions/{sid}/runs', json=request('call MCP'))).json()['run_id']
+                await client.get(f'/api/runs/{run}/events')
+                assert (await client.get(f'/api/sessions/{sid}')).json()['approval_batches']
+        assert not [row for row in facts(audit) if row['event'] == 'call']
+        assert all(not process_alive(row['pid']) for row in facts(audit) if row['event'] == 'start')
+    asyncio.run(scenario())
 
 
 def test_control_options_are_authenticated_and_expose_only_public_metadata(monkeypatch, tmp_path):

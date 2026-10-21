@@ -1,26 +1,67 @@
 """Settings for host CLI integration and bounded, credential-free Web configuration."""
 
+import ipaddress
+import re
 from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 class NetworkSettings(BaseModel):
-    model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
+    model_config = ConfigDict(strict=True, extra='forbid', frozen=True, hide_input_in_errors=True)
 
     mode: Literal['auto', 'direct', 'proxy'] = 'auto'
-    proxy: str | None = Field(default=None, repr=False)
+    proxy: str | None = Field(default=None, repr=False, exclude=True)
+    proxy_username: str | None = Field(default=None, repr=False, exclude=True)
+    proxy_password: str | None = Field(default=None, repr=False, exclude=True)
+    no_proxy: tuple[str, ...] = ()
+
+    @field_validator('no_proxy', mode='before')
+    @classmethod
+    def bypass_hosts(cls, values):
+        if not isinstance(values, (list, tuple)):
+            raise ValueError('Proxy bypass requires a list of hosts')
+        hosts = []
+        for value in values:
+            if not isinstance(value, str) or not value or value != value.strip():
+                raise ValueError('Invalid proxy bypass host')
+            try:
+                normalized = ipaddress.ip_address(value).compressed
+            except ValueError:
+                try:
+                    normalized = value.lstrip('.').rstrip('.').encode('idna').decode('ascii').lower()
+                except UnicodeError:
+                    raise ValueError('Invalid proxy bypass host') from None
+                if (value.startswith('..') or value.endswith('..') or len(normalized) > 253
+                        or not all(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', part)
+                                   for part in normalized.split('.'))):
+                    raise ValueError('Invalid proxy bypass host')
+                if value.startswith('.'):
+                    normalized = '.' + normalized
+            hosts.append(normalized)
+        return tuple(hosts)
 
     @model_validator(mode='after')
     def proxy_configuration(self):
         if self.mode == 'proxy' and not self.proxy:
             raise ValueError('Forced proxy mode requires a proxy URL')
+        credentials = self.proxy_username is not None or self.proxy_password is not None
+        if credentials and (not self.proxy or not self.proxy_username or self.proxy_password is None):
+            raise ValueError('Proxy authentication requires a URL, username and password')
+        if any(any(char in value for char in '\0\r\n')
+               for value in (self.proxy_username, self.proxy_password) if value is not None):
+            raise ValueError('Invalid proxy authentication')
         if self.proxy is not None:
-            url = urlsplit(self.proxy)
+            try:
+                url = urlsplit(self.proxy)
+                _ = url.port
+            except ValueError:
+                raise ValueError('Invalid proxy URL') from None
             if (url.scheme not in ('http', 'https') or not url.hostname
                     or any(ord(c) < 33 for c in self.proxy)):
                 raise ValueError('Only HTTP(S) proxy URLs are supported')
-            _ = url.port
+            if credentials and (url.username is not None or url.password is not None):
+                raise ValueError('Conflicting proxy authentication sources')
         return self
 
 

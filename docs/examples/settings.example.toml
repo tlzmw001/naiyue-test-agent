@@ -6,6 +6,12 @@
 # 已接文件/Shell/subagent及aitest_kit/web_search/web_fetch；[[subagents]]配置角色。
 # 完整目标字段见 tool-runtime.example.toml，不能直接整份套用。
 
+# CLI/Web新根会话的初始工具；省略保留当前默认（内置工具但不含Bash/PowerShell/MCP）。
+# []表示零工具；明确列表按顺序选择，可包含已登记的mcp__服务ID__原工具名。
+# 名称非法/重复或未登记会报错；旧会话保留自己保存的选择，子角色仍用tool_names。
+# PowerShell被选中仍受权限/Auto审批控制；修改后重启，对之后新建会话生效。
+# default_active_tools = ["read", "ls", "find", "grep", "write", "edit", "powershell", "web_search", "web_fetch"]
+
 # 同一应用最多同时占用的根运行数，严格正整数；默认10，非法时警告回退10。
 # 普通任务、手动压缩、根审批恢复计入；必要保存结束才释放，子任务不另占根额度。
 # 满额立即拒绝、不排队；不是单批工具并发量，也不是所有模型请求的限流。
@@ -83,14 +89,21 @@ cleanup_batch_runs = 32
 max_result_lines = 2000
 max_result_bytes = 65_536
 
-# Web工具专用网络设置，不改变模型供应商、Bash或待测项目自身的网络配置。
+# Web工具与远程HTTP MCP的网络设置，不改变模型供应商、Bash或待测项目自身的网络配置。
 # auto：读取系统/环境HTTP_PROXY、HTTPS_PROXY、ALL_PROXY及NO_PROXY；无代理时直连。
-# direct：忽略代理。proxy：必须配置proxy，失败也不会偷偷直连。
+# direct：忽略代理。proxy：先检查本配置no_proxy，其他目标必须使用proxy，失败不偷偷直连。
 # 支持HTTP(S)代理；SOCKS需要额外依赖，首版不支持。TLS校验保持开启，遵循SSL_CERT_FILE/SSL_CERT_DIR。
 # 网络配置非法会终止启动，避免将强制代理误回退为直连；修改后重启。
 [network]
 mode = "auto"
 # proxy = "http://127.0.0.1:7890"  # 只在mode="proxy"时使用；填写自己的代理地址。
+# 有认证时分开填写原始用户名/密码，特殊字符由程序编码；两项需同时提供，可显式空密码。
+# proxy_username = "alice"
+# proxy_password = 'p@ss#word'
+# 仍支持旧的带认证proxy URL，但不能再同时填写上述两项；凭据不进入公共转储/日志。
+# 配置名单先于proxy/auto代理选择；域名匹配自身及点边界子域，IP按地址匹配。
+# 不填协议/端口/路径/CIDR/通配符。auto随后仍使用系统/环境NO_PROXY，proxy只使用本名单。
+no_proxy = []  # 例如 ["localhost", "127.0.0.1", "::1", ".corp.example", "192.168.1.20"]
 
 # 直接启动AITest CLI，无Shell解析。默认从有效PATH查找aitest。
 # 也可以用独立虚拟环境Python：executable="/path/to/venv/bin/python"，prefix_args=["-m", "aitest_kit.cli"]。

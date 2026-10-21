@@ -11,6 +11,50 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 
+@pytest.mark.parametrize('names', [[], ['powershell', 'read']])
+def test_cli_wires_configured_default_tools_without_model_requests(monkeypatch, tmp_path, names):
+    from naiyue_test_agent import application
+    from naiyue_test_agent.application import cli
+    from naiyue_test_agent.model_access import ModelCatalog
+    from test_application_workspace import ToolCapableFake
+    root = tmp_path / 'settings'
+    root.mkdir()
+    (root / 'settings.toml').write_text('default_active_tools = ' + json.dumps(names))
+    monkeypatch.setattr(application_settings, 'get_agent_dir', lambda: root)
+    model = ToolCapableFake(responses=[])
+    monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
+    observed = []
+    original = cli.build_local_application
+    def build(*args, **kwargs):
+        observed.append(tuple(kwargs['initial_active_tools']))
+        return original(*args, **kwargs)
+    monkeypatch.setattr(cli, 'build_local_application', build)
+    monkeypatch.setattr('builtins.input', lambda *_: ':quit')
+    assert cli.main(['--no-session', '--workspace', str(tmp_path)]) == 0
+    assert observed == [tuple(names)]
+
+
+@pytest.mark.parametrize('initial, expected', [(None, ('read',)), ([], ()), (['read'], ('read',))])
+@async_test
+async def test_sdk_tool_parameter_keeps_its_existing_precedence(monkeypatch, tmp_path, initial, expected):
+    from naiyue_test_agent import application
+    from naiyue_test_agent.application.async_application import build_async_local_application
+    from naiyue_test_agent.model_access import ModelCatalog
+    from naiyue_test_agent.settings import AppSettings
+    from naiyue_test_agent.tools import create_session_read_tool
+    from test_async_application import StreamingToolModel
+    model = StreamingToolModel(replies=[])
+    monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
+    app = await build_async_local_application('unused', tools=[create_session_read_tool()], system_prompt='',
+        response_format=None, settings=AppSettings(default_active_tools=['powershell']), initial_active_tools=initial)
+    try:
+        sid = await app.acreate_workspace_session('A', tmp_path)
+        assert app.get_active_tools(sid) == expected
+        assert model.seen == []
+    finally:
+        await app.aclose()
+
+
 @async_test
 async def test_model_catalog_reads_the_default_user_file(monkeypatch, tmp_path):
     from naiyue_test_agent import model_access

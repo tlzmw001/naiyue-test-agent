@@ -99,3 +99,40 @@ def test_library_log_redaction_is_scoped_and_restored(caplog):
     assert 'PRIVATE' not in caplog.text
     assert 'unrelated-public-message' in caplog.text
     assert 'mcp_library_diagnostic' in caplog.text
+
+
+@pytest.mark.parametrize('bypass', [False, True])
+def test_mcp_resources_preserve_authenticated_proxy_and_apply_bypass(monkeypatch, bypass):
+    from contextlib import asynccontextmanager
+    from mcp.client import streamable_http
+    from naiyue_test_agent.mcp_client import connections
+    from naiyue_test_agent.mcp_client.resources import MCPSessionResources
+    from naiyue_test_agent.mcp_client.settings import MCPSettings, MCPServerSettings
+    from naiyue_test_agent.tools.web_settings import NetworkSettings
+    observed = []
+    original = httpx2.AsyncHTTPTransport
+    def transport(**kwargs):
+        observed.append(kwargs['proxy'])
+        return original(**kwargs)
+    monkeypatch.setattr(httpx2, 'AsyncHTTPTransport', transport)
+    @asynccontextmanager
+    async def sdk(url, *, http_client, **kwargs):
+        assert 'Proxy-Authorization' not in http_client.headers
+        yield 'fixture-streams'
+    monkeypatch.setattr(streamable_http, 'streamable_http_client', sdk)
+    async def scenario():
+        network = NetworkSettings(mode='proxy', proxy='http://proxy.invalid:8080',
+            proxy_username='alice', proxy_password='p@ss#word', no_proxy=['.corp.example'] if bypass else [])
+        resources = MCPSessionResources(MCPSettings(), network)
+        other = MCPSessionResources(MCPSettings(), network.model_copy(update={'proxy_password': 'different'}))
+        try:
+            server = MCPServerSettings(enabled=True, transport='streamable_http', url='https://api.corp.example/mcp')
+            other._salt = resources._salt
+            assert resources._configuration('remote', server)[1] != other._configuration('remote', server)[1]
+            async with connections._http_transport(server, resources._network) as result:
+                assert result == 'fixture-streams'
+        finally:
+            await resources.aclose()
+            await other.aclose()
+    asyncio.run(scenario())
+    assert observed == [None if bypass else 'http://alice:p%40ss%23word@proxy.invalid:8080']

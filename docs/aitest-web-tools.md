@@ -62,5 +62,15 @@ Tavily固定Basic，auto_parameters/answer/raw_content关闭；成功结果不�
 当前依赖支持HTTP(S)代理，不承诺SOCKS。TLS验证开启，支持SSL_CERT_FILE/SSL_CERT_DIR；HTTPS经CONNECT代理也保留原域名校验。
 本设置仅用于Web工具，不改变模型客户端、AITest内部HTTP测试或Shell程序的网络设置。
 
+同一网络策略也用于远程HTTP MCP。可配置 `proxy_username`、`proxy_password`，直接填写
+原始值，无需手工URL编码；两项需同时提供，不能和proxy URL内的认证混用。`no_proxy`
+列表先检查主机直连例外，之后再按proxy/auto选择代理；域名匹配自身及点边界子域，
+IP按地址匹配，不接受协议、端口、路径、CIDR或通配表达式。网络设置修改后重启。
+
+顶层 `default_active_tools` 可以设置CLI/Web新根会话初始工具，例如
+`["read", "grep", "powershell", "aitest_kit", "web_search", "web_fetch"]`。
+省略维持原默认，显式`[]`表示零工具；旧会话保留已保存选择。工具被选中不免除审批，
+且此字段不影响AITest执行程序、子角色名单或SDK显式initial_active_tools。
+
 下载、输出及重定向预算可配。首版请求identity编码，并在读正文前拒绝压缩响应，避免自动解压突破预算。
 网页正文作为不可信数据提供给模型，不授予工具执行权限。网络服务实际可用性、免费额度及搜索质量需要真实账户/网络另行验收。

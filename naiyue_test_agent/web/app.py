@@ -33,7 +33,11 @@ def create_web_app(settings, *, application_factory=None):
         delivery_settings = settings if 'event_cache_bytes' in settings.model_fields_set else settings.model_copy(
             update={'event_cache_bytes': tool_settings.web_event_cache_bytes})
         tools = create_builtin_tools(tool_settings.tools, process_settings=tool_settings.process, output_settings=tool_settings.tool_output, progress_settings=tool_settings.progress, network_settings=tool_settings.network)
-        initial_tools = [spec.tool.name for spec in tools if spec.tool.name not in ('bash', 'powershell')] if settings.workspace_root is not None else []
+        initial_tools = []
+        if settings.workspace_root is not None:
+            initial_tools = tool_settings.default_active_tools
+            if initial_tools is None:
+                initial_tools = [spec.tool.name for spec in tools if spec.tool.name not in ('bash', 'powershell')]
         factory = application_factory or (lambda: open_async_persistent_application(
             settings.config_path, database_path=settings.database_path, tools=tools,
             system_prompt=BASE_SYSTEM_PROMPT, response_format=None, initial_active_tools=initial_tools, settings=tool_settings,

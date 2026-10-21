@@ -23,7 +23,8 @@ class MCPSessionResources:
     def __init__(self, settings: MCPSettings, network: NetworkSettings, *, output_settings=None):
         self._loop = asyncio.get_running_loop()
         settings = MCPSettings.model_validate(settings.model_dump())
-        network = NetworkSettings.model_validate(network.model_dump())
+        # Public dumps omit proxy credentials; trusted internal copies must retain them.
+        network = NetworkSettings.model_validate(dict(network))
         from ..tools.settings import ToolOutputSettings
         self._salt = secrets.token_bytes(32)
         self._network = network
@@ -133,7 +134,7 @@ class MCPSessionResources:
         references = set(server.headers_env.values()) | {ref[2:-1] for ref in server.env.values()}
         environment = {name: os.environ.get(name) for name in references}
         connection = server.model_dump(exclude={'enabled', 'allowed_tools'})
-        content = json.dumps([server_id, connection, self._network.model_dump(), environment],
+        content = json.dumps([server_id, connection, dict(self._network), environment],
                              sort_keys=True, separators=(',', ':')).encode()
         return environment, hmac.new(self._salt, content, hashlib.sha256).hexdigest()
 

@@ -2,6 +2,7 @@
 
 import logging
 from pathlib import Path
+import re
 import tomllib
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -50,6 +51,7 @@ class AppSettings(BaseModel):
     session_title_max_chars: int = Field(default=40, gt=0, le=120)
     max_active_runs: int = Field(default=10, gt=0)
     web_event_cache_bytes: int = Field(default=4194304, gt=0)
+    default_active_tools: tuple[str, ...] | None = None
     storage: StorageSettings = Field(default_factory=StorageSettings)
     network: NetworkSettings = Field(default_factory=NetworkSettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
@@ -61,6 +63,17 @@ class AppSettings(BaseModel):
     usage_persistence: UsagePersistenceSettings = Field(default_factory=UsagePersistenceSettings)
     diagnostics: DiagnosticSettings = Field(default_factory=DiagnosticSettings)
     subagents: tuple[SubAgentSpec, ...] = ()
+
+    @field_validator('default_active_tools', mode='before')
+    @classmethod
+    def active_tool_names(cls, value):
+        if value is None:
+            return None
+        if (not isinstance(value, (list, tuple))
+                or any(not isinstance(name, str) or not re.fullmatch(r'[a-zA-Z0-9_.-]+', name) for name in value)
+                or len(set(value)) != len(value)):
+            raise ValueError('Default active tools require unique tool names')
+        return tuple(value)
 
     @field_validator('subagents', mode='before')
     @classmethod
@@ -96,8 +109,13 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
         logger.error('permission_settings_unavailable error_type=%s', type(error).__name__)
         raise ValueError('Permission settings could not be read or parsed') from error
-    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'tools', 'permissions', 'process', 'tool_output', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'network', 'mcp'}:
+    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'default_active_tools', 'tools', 'permissions', 'process', 'tool_output', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'network', 'mcp'}:
         raise ValueError('Unknown runtime settings section')
+    try:
+        default_active_tools = AppSettings.active_tool_names(raw.get('default_active_tools'))
+    except ValueError:
+        logger.error('default_active_tools_invalid')
+        raise ValueError('Default active tools are invalid') from None
     try:
         mcp = MCPSettings.model_validate(raw.get('mcp', {}))
     except ValidationError:
@@ -154,6 +172,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         diagnostics = DiagnosticSettings()
     try:
         return AppSettings(storage=storage, tools=tools, network=network, mcp=mcp, permissions=permissions, process=process, tool_output=tool_output,
+                            default_active_tools=default_active_tools,
                             progress=progress, usage_persistence=usage_persistence,
                             subagents=raw.get('subagents', ()), max_active_runs=max_active_runs,
                             web_event_cache_bytes=web_event_cache_bytes, diagnostics=diagnostics,

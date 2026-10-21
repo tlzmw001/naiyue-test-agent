@@ -67,6 +67,15 @@ TLS 始终验证证书；代理复用 settings.toml 已有 `[network]` 的 auto/
 选择。auto 服从系统/环境代理与 NO_PROXY，不做代理健康探测或故障后直连回退。
 SDK使用独立 httpx2 客户端；只允许 SDK 在同源内跟随重定向，不跨源转发请求。
 
+手动认证可分别填写 `proxy`、`proxy_username`、`proxy_password`，用户名密码按原文填写；
+保留旧的URL内认证，但两种来源不能混用。配置 `no_proxy` 列表命中的主机直接连接，
+优先于proxy/auto的代理选择；支持主机、域名及子域、IPv4/IPv6，不带协议/端口/路径。
+网络修改需重启，MCP刷新不会重载它。代理失败不切直连；stdio程序自身的联网仍独立配置。
+
+顶层 `default_active_tools` 可包含已登记的 `mcp__服务ID__原工具名`，用于CLI/Web新根会话
+默认选中。须先启用服务、加入allowed_tools并发现成功；未知名称启动失败，选中仍需审批。
+省略字段保持原默认，`[]`表示零工具；旧会话和子角色工具名单不被覆盖。
+
 loopback HTTP 可用于本地服务；其他 HTTP 要显式设置 `allow_insecure_http = true`。
 所有明文 HTTP 都禁止 headers_env，避免发送自定义认证头；需要认证时使用 HTTPS。
 stdio 字段与 HTTP 字段互斥，不接受独立旧 SSE transport。

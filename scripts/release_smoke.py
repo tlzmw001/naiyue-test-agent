@@ -22,7 +22,8 @@ async def web_scenario(root):
     from naiyue_test_agent import application
     from naiyue_test_agent.model_access import ModelCatalog
     from naiyue_test_agent.resources import frontend_directory
-    from naiyue_test_agent.settings import AppSettings
+    from naiyue_test_agent.settings import load_settings
+    from naiyue_test_agent.tools.web_network import selected_proxy
     from naiyue_test_agent.web.app import create_web_app
     from naiyue_test_agent.web.settings import WebSettings
 
@@ -58,9 +59,19 @@ async def web_scenario(root):
         {'name': 'read', 'args': {'path': str(outside)}, 'id': 'read-approved'},
     ]), AIMessage(content='installed-ok')])
     application.load_model_catalog = lambda _: ModelCatalog('offline', {'offline': model})
+    configuration = root / 'fixture-settings.toml'
+    configuration.write_text('default_active_tools=["read","find","grep"]\n'
+        '[network]\nmode="proxy"\nproxy="http://proxy.invalid:8080"\n'
+        'proxy_username="install-user"\nproxy_password="install@password#"\n'
+        'no_proxy=[".corp.example","127.0.0.1"]\n', encoding='utf-8')
+    runtime_settings = load_settings(configuration)
+    assert selected_proxy('https://docs.corp.example', runtime_settings.network) is None
+    assert selected_proxy('https://public.example', runtime_settings.network) == (
+        'http://install-user:install%40password%23@proxy.invalid:8080')
+    assert 'install@password#' not in repr(runtime_settings) + str(runtime_settings.model_dump())
     settings = WebSettings(config_path=root / 'unused.json', database_path=root / 'sessions.sqlite',
         frontend_dist=frontend_directory(), workspace_root=workspace,
-        runtime_settings=AppSettings(), access_token='offline-install-smoke', port=8123)
+        runtime_settings=runtime_settings, access_token='offline-install-smoke', port=8123)
     origin = settings.origin
     headers = {'Authorization': 'Bearer offline-install-smoke', 'Origin': origin}
     app = create_web_app(settings)
@@ -78,6 +89,7 @@ async def web_scenario(root):
             response = await client.post('/api/sessions', json={'model_id': 'offline'})
             assert response.status_code == 201, response.text
             session = response.json()['session_id']
+            assert (await client.get(f'/api/sessions/{session}')).json()['active_tools'] == ['read', 'find', 'grep']
             response = await client.post(f'/api/sessions/{session}/runs',
                 json={'request_id': str(uuid4()), 'text': 'inspect installed tools'})
             assert response.status_code == 202, response.text
@@ -141,6 +153,7 @@ def main():
     print(json.dumps({'target': native['target'], 'version': naiyue_test_agent.__version__,
         'installed_package': str(installed), 'native_tools': 'passed', 'frontend_api': 'passed',
         'find_grep': 'passed', 'approval_resume': 'passed', 'sqlite_reopen': 'passed', 'cli': 'passed',
+        'configuration': 'passed',
         'provider_requests': 0, 'mcp': mcp}))
 
 
