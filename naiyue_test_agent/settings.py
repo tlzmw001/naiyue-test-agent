@@ -8,6 +8,7 @@ import tomllib
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .config_paths import StorageSettings, get_agent_dir
+from .checkpoint_settings import CheckpointRetentionSettings
 from .mcp_client.settings import MCPSettings
 from .tools.web_settings import NetworkSettings
 from .tools.retry_settings import ToolRetrySettings
@@ -64,6 +65,7 @@ class AppSettings(BaseModel):
     progress: ToolProgressSettings = Field(default_factory=ToolProgressSettings)
     usage_persistence: UsagePersistenceSettings = Field(default_factory=UsagePersistenceSettings)
     diagnostics: DiagnosticSettings = Field(default_factory=DiagnosticSettings)
+    checkpoint_retention: CheckpointRetentionSettings = Field(default_factory=CheckpointRetentionSettings)
     subagents: tuple[SubAgentSpec, ...] = ()
 
     @field_validator('default_active_tools', mode='before')
@@ -111,7 +113,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
         logger.error('permission_settings_unavailable error_type=%s', type(error).__name__)
         raise ValueError('Permission settings could not be read or parsed') from error
-    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'default_active_tools', 'tools', 'permissions', 'process', 'tool_output', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'network', 'mcp', 'tool_retry'}:
+    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'default_active_tools', 'tools', 'permissions', 'process', 'tool_output', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'checkpoint_retention', 'network', 'mcp', 'tool_retry'}:
         raise ValueError('Unknown runtime settings section')
     try:
         default_active_tools = AppSettings.active_tool_names(raw.get('default_active_tools'))
@@ -178,11 +180,17 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         logger.warning('diagnostic_settings_fallback reason=invalid')
         diagnostics = DiagnosticSettings()
     try:
+        checkpoint_retention = CheckpointRetentionSettings.model_validate(raw.get('checkpoint_retention', {}))
+    except ValidationError:
+        logger.warning('checkpoint_retention_invalid action=disabled')
+        checkpoint_retention = CheckpointRetentionSettings(enabled=False)
+    try:
         return AppSettings(storage=storage, tools=tools, network=network, mcp=mcp, tool_retry=tool_retry, permissions=permissions, process=process, tool_output=tool_output,
                             default_active_tools=default_active_tools,
                             progress=progress, usage_persistence=usage_persistence,
                             subagents=raw.get('subagents', ()), max_active_runs=max_active_runs,
                             web_event_cache_bytes=web_event_cache_bytes, diagnostics=diagnostics,
+                            checkpoint_retention=checkpoint_retention,
                             session_title_max_chars=title_chars)
     except ValidationError as error:
         logger.error('subagent_settings_invalid error_type=%s', type(error).__name__)

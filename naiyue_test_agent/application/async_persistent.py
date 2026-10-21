@@ -199,7 +199,8 @@ async def open_async_persistent_application(config_path, *, database_path, tools
                         DiagnosticPersistence(storage, sessions.subscribe_events, settings.diagnostics) as diagnostics):
                 persistence = SessionPersistence(storage, sessions, catalog=catalog, tool_registry=registry,
                     permission_settings=settings.permissions, usage_persistence=usage,
-                    title_max_chars=settings.session_title_max_chars)
+                    title_max_chars=settings.session_title_max_chars,
+                    checkpoint_settings=settings.checkpoint_retention)
                 sessions.bind_persistence(persistence)
                 agent = sessions.assemble_runtime(saver, system_prompt=system_prompt, response_format=response_format,
                     subagents=settings.subagents, subagent_settings=settings.tools.subagent)

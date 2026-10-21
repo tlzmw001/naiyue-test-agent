@@ -153,6 +153,12 @@ async def test_delete_clears_archive_and_progress_only_for_selected_session(monk
 async def test_actual_saver_backfill_pages_after_saved_archive_is_absent(monkeypatch, tmp_path):
     from naiyue_test_agent.application.chat_history import collect_chat_updates
     from test_application_run_events import ToolModel
+    from naiyue_test_agent import application
+    from naiyue_test_agent.settings import AppSettings
+    from naiyue_test_agent.checkpoint_settings import CheckpointRetentionSettings
+    # Generate the pre-retention schema6 fixture; all backfill assertions remain.
+    monkeypatch.setattr(application, 'load_settings', lambda: AppSettings(
+        checkpoint_retention=CheckpointRetentionSettings(enabled=False)))
     model = ToolModel(responses=[AIMessage(id=f'answer-{index}', content=f'answer {index}') for index in range(12)])
     async with build(monkeypatch, tmp_path / 'state.sqlite', model) as app:
         sid = await app.acreate_session('A')

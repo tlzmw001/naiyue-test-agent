@@ -27,13 +27,14 @@ logger = logging.getLogger(__name__)
 
 
 class SessionPersistence:
-    def __init__(self, storage, sessions, *, catalog, tool_registry, permission_settings, usage_persistence=None, title_max_chars=40):
+    def __init__(self, storage, sessions, *, catalog, tool_registry, permission_settings, usage_persistence=None, title_max_chars=40, checkpoint_settings=None):
         self.storage = storage
         self.sessions = sessions
         self._catalog, self._tool_registry = catalog, tool_registry
         self._permission_settings = permission_settings
         self._usage = usage_persistence
         self._title_max_chars = title_max_chars
+        self._checkpoint_settings = checkpoint_settings
         self._lock = Lock()
         self._active = {}
         self._blocked = set()
@@ -126,6 +127,8 @@ class SessionPersistence:
             async for snapshot in agent.aget_state_history({'configurable': {'thread_id': row['thread_id']}}):
                 children.update(f'subagent:{item["agent_id"]}' for item in subagent_records(session_id, snapshot.values.get('messages', [])))
             children.update(self.sessions.child_thread_ids(session_id))
+            children.update(item['thread_id'] for item in await run_blocking(self.storage.chat_heads, session_id)
+                            if item['thread_id'] != row['thread_id'])
             if self.sessions.mcp_resources is not None:
                 await self.sessions.mcp_resources.release_session(session_id)
             await run_blocking(self.storage.delete, session_id, children)
@@ -174,6 +177,14 @@ class SessionPersistence:
                     self._blocked.add(session_id)
                 logger.error('session_persistence_finalize_failed error_type=%s', type(error).__name__)
                 raise SessionPersistenceError('session_save_unconfirmed') from error
+            else:
+                if state == 'ready' and self._checkpoint_settings is not None:
+                    try:
+                        from .checkpoint_retention import prune_after_finish
+                        await await_settled(prune_after_finish(agent, self.storage, session_id, run_id,
+                            self._checkpoint_settings, snapshot=snapshot))
+                    except Exception as error:
+                        logger.error('checkpoint_retention_failed error_type=%s', type(error).__name__)
             finally:
                 with self._lock:
                     self._active.pop(session_id, None)
