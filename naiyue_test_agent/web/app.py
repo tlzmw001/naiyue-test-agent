@@ -14,6 +14,7 @@ from naiyue_test_agent.application.project_instructions import BASE_SYSTEM_PROMP
 from naiyue_test_agent.tools import create_builtin_tools
 from naiyue_test_agent.settings import load_settings
 from naiyue_test_agent.model_access import ModelConfigError
+from naiyue_test_agent.application.errors import SessionPersistenceError
 from .auth import authorize
 from .errors import WebError
 from .run_delivery import RunDelivery
@@ -51,6 +52,9 @@ def create_web_app(settings, *, application_factory=None):
             except ModelConfigError as error:
                 app.state.startup_error = error
                 raise
+            except SessionPersistenceError as error:
+                app.state.startup_error = error
+                raise SessionPersistenceError('storage_startup_failed') from None
             delivery = RunDelivery(application, delivery_settings, progress_settings=tool_settings.progress)
             app.state.delivery = delivery
             app.state.service = WebService(application, delivery, delivery_settings)

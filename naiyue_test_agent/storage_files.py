@@ -16,7 +16,7 @@ def check_store_file(path):
         raise OSError(errno.EINVAL, 'unsafe_store_file')
 
 
-def _windows_open(path, exclusive_create):
+def _windows_open(path, exclusive_create, *, readonly=False):
     import ctypes
     from ctypes import wintypes
     import msvcrt
@@ -36,8 +36,8 @@ def _windows_open(path, exclusive_create):
     kernel.GetFileInformationByHandle.restype = wintypes.BOOL
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel.CloseHandle.restype = wintypes.BOOL
-    handle = kernel.CreateFileW(str(path), 0x80000000 | 0x40000000, 0x1 | 0x2,
-                                None, 1 if exclusive_create else 4, 0x00200000 | 0x80, None)
+    handle = kernel.CreateFileW(str(path), 0x80000000 | (0 if readonly else 0x40000000), 0x1 | 0x2,
+                                None, 3 if readonly else 1 if exclusive_create else 4, 0x00200000 | 0x80, None)
     if handle == wintypes.HANDLE(-1).value:
         raise ctypes.WinError(ctypes.get_last_error())
     try:
@@ -46,7 +46,7 @@ def _windows_open(path, exclusive_create):
             raise ctypes.WinError(ctypes.get_last_error())
         if info.attributes & (0x400 | 0x10) or info.links != 1:
             raise OSError(errno.EINVAL, 'unsafe_store_file')
-        fd = msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY | os.O_NOINHERIT)
+        fd = msvcrt.open_osfhandle(handle, (os.O_RDONLY if readonly else os.O_RDWR) | os.O_BINARY | os.O_NOINHERIT)
     except BaseException:
         kernel.CloseHandle(handle)
         raise
@@ -69,6 +69,42 @@ def open_store_file(path, *, exclusive_create=False):
         os.close(fd)
         raise
     return fd
+
+
+def open_store_readonly(path):
+    """Open an existing regular single-link file; never create or follow it."""
+    path = Path(path)
+    check_store_file(path)  # Reject FIFOs before a blocking POSIX open.
+    fd = (_windows_open(path, False, readonly=True) if os.name == 'nt'
+          else os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK))
+    try:
+        os.set_inheritable(fd, False)
+        info, named = os.fstat(fd), path.lstat()
+        if not _regular(info) or not _regular(named) or (info.st_dev, info.st_ino) != (named.st_dev, named.st_ino):
+            raise OSError(errno.EINVAL, 'unsafe_store_file')
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def check_store_directory(path):
+    """Validate the existing directory chain without resolving away links."""
+    path = Path(path).absolute()
+    for directory in reversed((path, *path.parents)):
+        info = directory.lstat()
+        if not stat.S_ISDIR(info.st_mode) or getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise OSError(errno.EINVAL, 'unsafe_store_directory')
+
+
+def sync_store_directory(path):
+    # Windows CRT cannot open directories for fsync. File flushes still apply.
+    if os.name != 'nt':
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
 
 def acquire_store_lock(fd, *, blocking=False):

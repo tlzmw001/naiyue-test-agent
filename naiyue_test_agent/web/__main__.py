@@ -10,6 +10,8 @@ from naiyue_test_agent.settings import load_settings
 from naiyue_test_agent.resources import frontend_directory, PackageResourceError
 from naiyue_test_agent.model_access import ModelConfigError
 from naiyue_test_agent.workspaces import prepare_workspace
+from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.application.startup_display import startup_messages
 import socket
 
 import uvicorn
@@ -62,9 +64,12 @@ def main(argv=None):
                 server.run(sockets=[listener])
             except SystemExit:
                 error = getattr(app.state, 'startup_error', None)
-                if not server.started and isinstance(error, ModelConfigError):
-                    raise error from None
+                if not server.started and isinstance(error, (ModelConfigError, SessionPersistenceError)):
+                    raise error
                 raise
+            error = getattr(app.state, 'startup_error', None) if not server.started else None
+            if isinstance(error, (ModelConfigError, SessionPersistenceError)):
+                raise error
             return 0 if server.started else 1
     except KeyboardInterrupt:
         print('收到退出信号，本地 Web 服务已退出。')
@@ -74,12 +79,9 @@ def main(argv=None):
         print(f'启动失败（{type(error).__name__}）')
         if isinstance(error, PackageResourceError):
             print(str(error))
-        elif isinstance(error, ModelConfigError) and not args.config.expanduser().is_file():
-            print(f'未找到模型配置：{args.config}；请创建该文件或使用 --config 指定配置。配置格式见 README。')
-        elif str(error) == 'workspace_id_conflict':
-            print('检测到工作区副本；请使用 --new-workspace 为副本创建独立历史')
-        elif str(error) == 'storage_in_use':
-            print('该工作区数据库已被其他服务占用，请先关闭该服务')
+        else:
+            for message in startup_messages(error, args.config):
+                print(message)
         return 1
 
 

@@ -14,7 +14,10 @@ logger = logging.getLogger(__name__)
 STATES = {'ready', 'running', 'failed', 'interrupted', 'review_required'}
 
 
-from .errors import SessionPersistenceError
+from .errors import SessionPersistenceError, StorageStartupError
+from .storage_migrations import initialize_store
+from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage_maintenance import check_restore_marker
 from naiyue_test_agent.storage_files import (
     acquire_store_lock, check_store_file, open_store_file, release_store_lock,
 )
@@ -38,6 +41,7 @@ class SessionStorage:
             except BlockingIOError as error:
                 raise SessionPersistenceError('storage_in_use') from error
             self._stack.callback(release_store_lock, fd)
+            check_restore_marker(self.path)
             try:
                 check_store_file(self.path)
                 existing = True
@@ -54,77 +58,23 @@ class SessionStorage:
             self.connection = sqlite3.connect(self.path, check_same_thread=False)
             self._stack.callback(self.connection.close)
             self.connection.row_factory = sqlite3.Row
-            if existing:
-                version = self.connection.execute('SELECT version FROM naiyue_store_info').fetchall()
-                if len(version) != 1 or version[0][0] not in (4, 5, 6, 7, 8, 9, 10, 11, 12, 13):
-                    raise SessionPersistenceError('unsupported_store_schema')
-                if version[0][0] in (4, 5):
-                    with self.connection:
-                        self.connection.execute('BEGIN')
-                        if version[0][0] == 4:
-                            self.connection.execute("ALTER TABLE naiyue_sessions ADD COLUMN thinking_level TEXT NOT NULL DEFAULT 'model_default'")
-                        self.connection.execute('ALTER TABLE naiyue_sessions ADD COLUMN title TEXT')
-                        self.connection.execute('ALTER TABLE naiyue_sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0')
-                        self.connection.execute('ALTER TABLE naiyue_sessions ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0')
-                        rows = self.connection.execute('SELECT session_id FROM naiyue_sessions ORDER BY updated_at DESC,session_id').fetchall()
-                        self.connection.executemany('UPDATE naiyue_sessions SET sort_order=? WHERE session_id=?',
-                                                    [(index, row[0]) for index, row in enumerate(rows)])
-                        self.connection.execute('UPDATE naiyue_store_info SET version=6')
-            else:
-                self.connection.executescript('''
-                    CREATE TABLE naiyue_store_info(version INTEGER NOT NULL);
-                    INSERT INTO naiyue_store_info VALUES(6);
-                    CREATE TABLE naiyue_workspace(
-                        singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-                        workspace_id TEXT NOT NULL, root_path TEXT NOT NULL);
-                    CREATE TABLE naiyue_sessions(
-                        session_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL UNIQUE,
-                        model_id TEXT NOT NULL, workspace_root TEXT,
-                        state TEXT NOT NULL, run_id TEXT, checkpoint_id TEXT,
-                        checkpoint_ns TEXT NOT NULL DEFAULT '',
-                        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-                        last_run_status TEXT, active_tool_names_json TEXT NOT NULL,
-                        permission_mode TEXT NOT NULL DEFAULT 'Default',
-                        thinking_level TEXT NOT NULL DEFAULT 'model_default',
-                        title TEXT, pinned INTEGER NOT NULL DEFAULT 0,
-                        sort_order INTEGER NOT NULL DEFAULT 0);
-                ''')
-            self._migrate_chat_schema()
-            chat_queries.migrate_chat_queries(self.connection)
-            model_usage_storage.initialize(self.connection)
-            diagnostic_storage.initialize(self.connection)
-            reply_storage.initialize(self.connection)
-            reply_storage.initialize_regeneration(self.connection)
-            model_usage_storage.migrate_duration(self.connection)
+            initialize_store(self.connection, self.path, existing=existing)
             self.checkpoint_connection = sqlite3.connect(self.path, check_same_thread=False)
             self._stack.callback(self.checkpoint_connection.close)
-        except (OSError, sqlite3.Error, SessionPersistenceError) as error:
+        except BaseException as error:
             logger.error('session_storage_open_failed error_type=%s', type(error).__name__)
             try:
                 self.close()
-            except SessionPersistenceError:
-                pass  # close() logged the secondary failure; preserve the opening failure.
+            except BaseException as closing_error:
+                logger.error('session_storage_cleanup_secondary_failed error_type=%s', type(closing_error).__name__)
             if isinstance(error, SessionPersistenceError):
                 raise
-            raise SessionPersistenceError('storage_unavailable') from error
-
-    def _migrate_chat_schema(self):
-        if self.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] >= 7:
-            return
-        with self.connection:
-            self.connection.execute('BEGIN')
-            self.connection.execute('''CREATE TABLE naiyue_chat_sync(
-                session_id TEXT NOT NULL, thread_id TEXT NOT NULL, checkpoint_ns TEXT NOT NULL,
-                agent_path TEXT NOT NULL, checkpoint_id TEXT NOT NULL, revision INTEGER NOT NULL,
-                PRIMARY KEY(session_id,thread_id,checkpoint_ns))''')
-            self.connection.execute('''CREATE TABLE naiyue_chat_messages(
-                session_id TEXT NOT NULL, thread_id TEXT NOT NULL, checkpoint_ns TEXT NOT NULL,
-                message_id TEXT NOT NULL, sequence INTEGER NOT NULL, revision INTEGER NOT NULL,
-                body_json TEXT NOT NULL, body_hash TEXT NOT NULL, kind TEXT NOT NULL,
-                source_checkpoint_id TEXT NOT NULL,
-                PRIMARY KEY(session_id,thread_id,checkpoint_ns,message_id),
-                UNIQUE(session_id,thread_id,checkpoint_ns,sequence))''')
-            self.connection.execute('UPDATE naiyue_store_info SET version=7')
+            if isinstance(error, ValueError) and str(error) == 'restore_incomplete':
+                raise StorageStartupError('restore_incomplete', database_path=self.path, phase='restore_guard',
+                    target_schema=CURRENT_SCHEMA) from error
+            if isinstance(error, (OSError, sqlite3.Error)):
+                raise SessionPersistenceError('storage_unavailable') from error
+            raise
 
     def save_model_usage_event(self, event):
         with self._lock, self.connection:

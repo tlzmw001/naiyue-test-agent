@@ -29,6 +29,7 @@ from naiyue_test_agent.application.cli_display import CliEventDisplay
 from naiyue_test_agent.application.cli_async import build_local_application, build_persistent_application
 from naiyue_test_agent.application.cli_approval import handle_approval, handle_scope_stop, show_approval_batches, settle_cli_worker
 from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+from naiyue_test_agent.application.startup_display import startup_messages
 
 
 logger = logging.getLogger(__name__)
@@ -215,12 +216,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as error:
         logger.error('cli_initialization_failed error_type=%s', type(error).__name__)
         emit(f'初始化失败（{type(error).__name__}）')
-        if isinstance(error, ModelConfigError) and not args.config.expanduser().is_file():
-            emit(f'未找到模型配置：{args.config}；请创建该文件或使用 --config 指定配置。配置格式见 README。')
-        elif str(error) == 'workspace_id_conflict':
-            emit('检测到工作区副本；请使用 --new-workspace 为副本创建独立历史')
-        elif str(error) == 'storage_in_use':
-            emit('该工作区数据库已被其他服务占用，请先关闭该服务')
+        for message in startup_messages(error, args.config):
+            emit(message)
         if app is not None and callable(getattr(app, 'close', None)):
             try:
                 app.close()

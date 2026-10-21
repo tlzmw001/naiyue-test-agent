@@ -11,7 +11,13 @@ import stat
 import tempfile
 from uuid import UUID, uuid4
 
-from .storage_files import acquire_store_lock, check_store_file, open_store_file, release_store_lock
+from .storage_files import (
+    acquire_store_lock, check_store_directory, check_store_file, open_store_file,
+    open_store_readonly, release_store_lock,
+)
+
+
+from .storage_maintenance import check_restore_marker
 
 
 logger = logging.getLogger(__name__)
@@ -22,6 +28,39 @@ class WorkspaceLocation:
     workspace_id: str
     root: Path
     database_path: Path
+
+
+def locate_workspace(root, *, data_dir, database_path=None):
+    """Locate maintenance files even if the database itself cannot be opened."""
+    root = Path(root).expanduser().resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError('invalid_workspace_root')
+    try:
+        directory = root / '.naiyue'
+        try:
+            check_store_directory(directory)
+        except FileNotFoundError:
+            return None
+        marker = directory / 'workspace.json'
+        try:
+            fd = open_store_readonly(marker)
+        except FileNotFoundError:
+            return None
+        with os.fdopen(fd, 'rb') as stream:
+            raw = stream.read(4097)
+        if len(raw) > 4096:
+            raise ValueError('invalid_workspace_manifest')
+        value = json.loads(raw)
+        identity = value['workspace_id']
+        if (set(value) != {'version', 'workspace_id'} or type(value['version']) is not int
+                or value['version'] != 1 or str(UUID(identity)) != identity):
+            raise ValueError('invalid_workspace_manifest')
+        database = (Path(database_path).expanduser().absolute() if database_path is not None
+                    else Path(data_dir).expanduser().absolute() / 'workspaces' / identity / 'sessions.sqlite')
+        return WorkspaceLocation(identity, root, database)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError) as error:
+        logger.error('workspace_locate_failed error_type=%s', type(error).__name__)
+        raise ValueError('invalid_workspace_manifest') from error
 
 
 def _read_marker(root):
@@ -78,20 +117,44 @@ def check_workspace_relocation(identity, old_root, root):
 
 def _read_binding(database):
     try:
-        check_store_file(database)
+        database.parent.stat()
     except (FileNotFoundError, NotADirectoryError):
-        return None
-    for suffix in ('-wal', '-shm', '-journal'):
+        return None  # No target or maintenance directory can exist; long owner rechecks.
+    stack, primary = ExitStack(), None
+    try:
+        fd = open_store_file(database.with_name(database.name + '.lock'))
+        stack.callback(os.close, fd)
         try:
-            check_store_file(database.with_name(database.name + suffix))
+            acquire_store_lock(fd)
+        except BlockingIOError as error:
+            raise ValueError('storage_in_use') from error
+        stack.callback(release_store_lock, fd)
+        check_restore_marker(database)
+        try:
+            check_store_file(database)
         except FileNotFoundError:
-            pass
-    with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as connection:
-        connection.row_factory = sqlite3.Row
-        rows = connection.execute('SELECT workspace_id,root_path FROM naiyue_workspace').fetchall()
-        if len(rows) > 1:
-            raise ValueError('invalid_workspace_binding')
-        return dict(rows[0]) if rows else None
+            return None
+        for suffix in ('-wal', '-shm', '-journal'):
+            try:
+                check_store_file(database.with_name(database.name + suffix))
+            except FileNotFoundError:
+                pass
+        with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as connection:
+            connection.row_factory = sqlite3.Row
+            rows = connection.execute('SELECT workspace_id,root_path FROM naiyue_workspace').fetchall()
+            if len(rows) > 1:
+                raise ValueError('invalid_workspace_binding')
+            return dict(rows[0]) if rows else None
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        try:
+            stack.close()
+        except OSError as error:
+            logger.error('workspace_database_lock_cleanup_failed error_type=%s', type(error).__name__)
+            if primary is None:
+                raise
 
 
 def prepare_workspace(root, *, data_dir, database_path=None, new_workspace=False, create=True):

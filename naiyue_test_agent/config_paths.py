@@ -1,6 +1,8 @@
 """Default user paths shared by model, tool, and application configuration."""
 
 from pathlib import Path
+import logging
+import tomllib
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -33,3 +35,17 @@ class StorageSettings(BaseModel):
 
 def get_data_dir(settings: StorageSettings) -> Path:
     return settings.data_dir if settings.data_dir is not None else get_agent_dir() / 'data'
+
+
+def load_storage_settings() -> StorageSettings:
+    """Maintenance consumes only storage; no model or tool configuration."""
+    try:
+        try:
+            with (get_agent_dir() / 'settings.toml').open('rb') as stream:
+                raw = tomllib.load(stream)
+        except FileNotFoundError:
+            return StorageSettings()
+        return StorageSettings.model_validate(raw.get('storage', {}))
+    except (OSError, ValueError, TypeError, RecursionError) as error:
+        logging.getLogger(__name__).error('storage_settings_invalid error_type=%s', type(error).__name__)
+        raise ValueError('storage_settings_invalid') from error

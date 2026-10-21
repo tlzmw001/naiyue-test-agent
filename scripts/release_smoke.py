@@ -5,6 +5,7 @@ from contextlib import redirect_stdout
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -46,10 +47,13 @@ async def web_scenario(root):
             reply = self.replies.pop(0)
             yield ChatGenerationChunk(message=AIMessageChunk(content=reply.content,
                 tool_calls=reply.tool_calls, id=uuid4().hex,
-                response_metadata={'finish_reason': 'tool_calls' if reply.tool_calls else 'stop'}))
+                response_metadata={'finish_reason': 'tool_calls' if reply.tool_calls else 'stop'},
+                usage_metadata=reply.usage_metadata))
 
     workspace = root / 'workspace'
     workspace.mkdir()
+    from naiyue_test_agent.workspaces import prepare_workspace
+    location = prepare_workspace(workspace, data_dir=root / 'data', database_path=root / 'sessions.sqlite')
     (workspace / 'sample.py').write_text('needle installed\n', encoding='utf-8')
     outside = root / 'outside.txt'
     outside.write_text('approved outside content', encoding='utf-8')
@@ -70,7 +74,7 @@ async def web_scenario(root):
         'http://install-user:install%40password%23@proxy.invalid:8080')
     assert 'install@password#' not in repr(runtime_settings) + str(runtime_settings.model_dump())
     settings = WebSettings(config_path=root / 'unused.json', database_path=root / 'sessions.sqlite',
-        frontend_dist=frontend_directory(), workspace_root=workspace,
+        frontend_dist=frontend_directory(), workspace_root=workspace, workspace_id=location.workspace_id,
         runtime_settings=runtime_settings, access_token='offline-install-smoke', port=8123)
     origin = settings.origin
     headers = {'Authorization': 'Bearer offline-install-smoke', 'Origin': origin}
@@ -144,7 +148,10 @@ def main():
         assert hashlib.sha256(binary.read_bytes()).hexdigest() == tool['sha256']
         version = subprocess.run([str(binary), '--version'], capture_output=True, text=True, check=True, timeout=10)
         assert tool['version'] in version.stdout
-    workspace, _, mcp = asyncio.run(web_scenario(root))
+    workspace, model, mcp = asyncio.run(web_scenario(root))
+    from release_storage_smoke import storage_scenario
+    nyt = Path(sys.executable).with_name('nyt.exe' if os.name == 'nt' else 'nyt')
+    storage = asyncio.run(storage_scenario(root, type(model), [str(nyt)]))
     from naiyue_test_agent.application import cli
     output = io.StringIO()
     with patch('builtins.input', return_value=':quit'), redirect_stdout(output):
@@ -153,8 +160,7 @@ def main():
     print(json.dumps({'target': native['target'], 'version': naiyue_test_agent.__version__,
         'installed_package': str(installed), 'native_tools': 'passed', 'frontend_api': 'passed',
         'find_grep': 'passed', 'approval_resume': 'passed', 'sqlite_reopen': 'passed', 'cli': 'passed',
-        'configuration': 'passed',
-        'provider_requests': 0, 'mcp': mcp}))
+        'configuration': 'passed', **storage, 'mcp': mcp}))
 
 
 if __name__ == '__main__':

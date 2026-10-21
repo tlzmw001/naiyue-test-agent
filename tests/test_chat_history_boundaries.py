@@ -126,8 +126,11 @@ def test_chat_migration_is_atomic_on_ddl_failure(monkeypatch, tmp_path):
         return connection
     with monkeypatch.context() as patch:
         patch.setattr(sqlite3, 'connect', denied)
-        with pytest.raises(SessionPersistenceError, match='storage_unavailable'):
+        with pytest.raises(SessionPersistenceError, match='migration_failed') as caught:
             SessionStorage(path)
+    from naiyue_test_agent.storage_backup import validate_backup
+    assert (caught.value.source_schema, caught.value.current_schema, caught.value.target_schema) == (6, 6, 13)
+    assert validate_backup(path, caught.value.backup_id)['source_schema'] == 6
     with sqlite3.connect(path) as connection:
         assert connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 6
         assert connection.execute("SELECT name FROM sqlite_master WHERE name LIKE 'naiyue_chat_%'").fetchall() == []

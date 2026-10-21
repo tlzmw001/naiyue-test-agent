@@ -138,8 +138,11 @@ def test_usage_ddl_failure_rolls_back_without_damaging_existing_schema(monkeypat
     from naiyue_test_agent.application.errors import SessionPersistenceError
     with monkeypatch.context() as patch:
         patch.setattr(sqlite3, 'connect', denied)
-        with pytest.raises(SessionPersistenceError, match='storage_unavailable'):
+        with pytest.raises(SessionPersistenceError, match='migration_failed') as caught:
             SessionStorage(path)
+    from naiyue_test_agent.storage_backup import validate_backup
+    assert (caught.value.source_schema, caught.value.current_schema, caught.value.target_schema) == (8, 8, 13)
+    assert validate_backup(path, caught.value.backup_id)['source_schema'] == 8
     with sqlite3.connect(path) as connection:
         assert connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 8
         assert connection.execute("SELECT 1 FROM sqlite_master WHERE name='naiyue_model_usage_runs'").fetchone() is None
