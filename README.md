@@ -8,6 +8,7 @@
 - 工具：Read、Ls、Find、Grep、Write、Edit、Bash、PowerShell，以及一层前台子 Agent。
 - `0.1.1` 新增 `aitest_kit`、百度/Tavily 回退的 `web_search` 和 `web_fetch`，配置见[工具说明](docs/aitest-web-tools.md)。
 - `0.2.0` 统一模型请求准备与上下文预算，补充调用次数、耗时和 SDK HTTP 尝试诊断；支持分离配置代理地址、用户名/密码、直连名单及新会话默认工具，见[设置示例](docs/examples/settings.example.toml)。
+- `0.3.0` 新增 Bash/PowerShell 后台任务及统一辅助侧栏，支持按既有子 Agent 实例续跑；同时交付外部工具有限重试、CIDR/通配直连规则、迁移前备份、显式还原及任务收尾 checkpoint 修剪。配置与范围见[设置示例](docs/examples/settings.example.toml)、[后台任务](docs/specs/125-background-shell-tasks.md)和[子实例续跑](docs/specs/126-subagent-continuation.md)。
 - Find/Grep 使用安装包内的 `fd` / `rg`；前端已经构建，使用发行包无需 Node.js 或 npm。
 - `0.2.0` 支持 `nyt mcp list` 只读发现及根/子 Agent 调用本地/远程 MCP 工具，复用活动工具选择、审批与会话连接，支持按服务显式开启空闲回收；应用运行中可刷新配置以新增服务、调整名单和启停，CLI/Web显示来源、结果状态和归档位置，重启保留历史、旧 MCP 待审需取消后重新发起，见[MCP客户端配置](docs/mcp-client.md)。
 
@@ -110,6 +111,23 @@ Web 与终端各自启动应用实例，同一工作区数据库由一个实例�
 ## 工具、权限与数据
 
 有工作区时默认启用文件工具。Bash / PowerShell 需要启用，并受权限规则及审批控制；解释器需由操作系统环境提供。命令使用当前用户的宿主文件和网络权限，当前不提供沙箱隔离。
+
+Bash/PowerShell可在应用设置中配置执行总上限（秒）；未配或`0`仍不限时。模型调用的`timeout`省略/null/0使用该配置，正整数只能缩短上限；配置非法会阻止启动。Find/Grep、AITest和网络工具继续使用各自期限。当前源码已支持主Agent显式设置background=true跨轮执行，通过task_list/task_output/task_stop查询与停止；应用退出时停止受管命令。后台任务列表保留在本次应用内存中，重启不接管旧进程；主Agent前台命令默认等待120秒后自动转后台，执行总期限不重置；已结束后台任务的简短状态在下一次用户输入时进入主Agent系统提示词，单批条数/完整提示UTF-8字节由max_notice_items/max_notice_bytes配置（默认20/8192，严格正整数）；成功接受模型响应后确认，失败保留，不自动唤醒模型。
+
+独立管理入口见[Spec125-05](docs/specs/125-05-background-management.md)：CLI输入`:tasks`分页查看本应用任务，`:tasks before`继续下一页，`:task output ID`查看输出，`:task stop ID`停止；这些命令在Agent运行中也可用。Web顶部的侧栏图标统一打开“子智能体／后台任务／上下文”三个页签；输入框旁的上下文图标仍可直接跳到上下文页签。任务页签显示当前工作区的活动数、所属会话、状态、输出尾部与归档引用，并提供停止；图标再次点击、关闭按钮或Esc均可收起。切换聊天保留面板，子Agent详情按新会话重新定位；切页签保留已挂载的内容选择。页面可见时每3秒刷新有限任务元数据，任务页签可见且选中任务时才读尾部，隐藏页面暂停读取。完成只更新界面提示；查看不会消费下一轮模型通知，也不会启动新推理。清理未确认保留“需核对”，读取失败显示未知并允许刷新。[06组合验收与性能范围](docs/specs/125-06-background-acceptance.md)区分本机运行、跨平台构建和真实模型效果。
+
+当前源码的[子Agent续跑](docs/specs/126-subagent-continuation.md)已接入原`subagent`工具：主Agent省略`agent_id`创建干净实例，传返回的完整ID继续同会话中成功且保存确认的实例。结果包含ID与报告，Web工具卡显示正文；`max_model_calls`仍限制本次委派，后续委派重新计数，同次审批恢复共用额度。[生命周期第二片](docs/specs/126-02-subagent-continuation-lifecycle.md)补齐正常重开、父/子压缩、重新生成退役及修剪/备份还原一致性；恢复不重放旧子工具，不把未确认实例推断为可续跑。[查找与展示第三片](docs/specs/126-03-subagent-discovery-delivery.md)将新建、继续与查询合并为一个“子智能体”开关：启用subagent即配套开放只读subagent_list，旧会话不改库；模型按需查询，不自动读取列表。每页条数/完整JSON字节/任务预览长度可通过tools.subagent配置，默认20/8192/160。CLI/Web按稳定实例区分当前委派与审批恢复，侧栏显示可继续候选或原因；停止绑定当前子执行/审批，已有历史继续保留。[标准安装验收](docs/specs/126-04-subagent-acceptance.md)使用共享固定模型场景，核对同ID三次委派、关闭重开后的历史、每次调用限额和真实文件写入次数。用户直聊不做；这些源码变更尚未发布。
+
+```toml
+[shell_tasks]
+max_execution_seconds = 0
+foreground_wait_seconds = 120
+max_background_archive_bytes = 67108864
+max_notice_items = 20
+max_notice_bytes = 8192
+```
+
+Shell/AITest/MCP的受管输出归档位于`<workspace_root>/naiyue-agent-output/`，每次调用分别受自身额度约束；已移除工作区累计归档额度，旧`tool_output.max_workspace_archive_bytes`告警并忽略。日志不自动删除，手动清理仍需预览并确认。前台归档触限只停止归档，后台任务触限会停止自身。存在活动后台任务或未确认的收尾时，拒绝删除所属会话或清理输出；停止后才能继续。任务完成不自动发起模型请求，用户下一轮可按任务ID查询。
 
 会话、checkpoint、聊天归档和用量等保存在工作区关联的用户数据目录中，默认位于 `~/.naiyue-test-agent/data/`。模型上下文压缩保留独立聊天归档。安装或升级应用不迁移或清理这些数据。
 
