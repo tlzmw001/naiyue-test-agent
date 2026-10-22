@@ -146,6 +146,10 @@ diff/preview预算不足只限制相应反馈，不能让已成功的精确修�
 
 发行前重新验证：后端**4240 passed in299.46s**，前端50文件415通过、TS/Vite构建退出0；225份Python源码AST/500行及103份前端源行数、两个修改测试、compileall、pip check、diff检查通过。四目标标准wheel构建、完整发行集合/版本/源码指纹与Twine通过；所有打包Python字节及README元数据与暂存内容一致。Mac ARM64全新venv、源码外实际Read→Edit→Read及原安装门禁通过，0供应商。安全50项/架构82项独立专项通过，无阻断。
 
-证据：`build/release-0.3.1-3g03njo4/`。提交后先确认主分支CI，再在同一提交创建v0.3.1并验证PyPI四文件哈希和公开安装；本段尚不宣称远端CI或发布完成。交叉构建不作为Windows/Linux原机证据。
+实际发布：修复提交`62aec510e734a25105cba52ae87ff11773f07caf`已推送origin/main；[主分支CI39785682591](https://github.com/tlzmw001/naiyue-test-agent/actions/runs/39785682591)全部通过，后端4240 passed in572.38s。随后创建并推送[v0.3.1](https://github.com/tlzmw001/naiyue-test-agent/tree/v0.3.1)，标签指向同一提交；[发布39787367851](https://github.com/tlzmw001/naiyue-test-agent/actions/runs/39787367851)标签后端4240 passed in841.18s、前端/四平台构建和安装/完整发行检查/上传通过，[PyPI 0.3.1](https://pypi.org/project/naiyue-test-agent/0.3.1/)四份wheel的文件名和SHA-256均与标签产物一致。四份wheel的182个Python文件及README均核对发布提交，应用指纹与本地候选一致。
 
-以上是本机macOS文件IO、假模型、官方payload转换和SQLite证据，无真实模型、Windows或沙箱验证。真实配置/依赖未改，未提交/push。下一步审阅[085-11图片](085-11-read-images.md)，不自动实现。
+首次发布后macOS ARM64/Linux ARM64的pip索引仍只列到0.3.0，未进入应用执行；公开Simple索引出现四文件后仅重跑失败安装job，第二次流水线全绿。四份公开PyPI安装报告逐项匹配版本及发行SHA、Read→Edit→Read通过、0供应商，包括Windows原生runner；没有重传文件、移动标签或修改源代码。额外本机公开验证首次下载TLS EOF，重试又遇旧索引，未计作通过；本机候选安装与四平台CI公开安装分别为独立证据。
+
+证据：`build/release-0.3.1-3g03njo4/{release-gate.json,main-ci.json,publish-final.json,publish-artifact-check.json,pypi-public-hashes.json,pypi-install-reports/,pypi-install-summary.json}`。真实配置/用户库/依赖未改，未验证真实模型或用户原始工作目录中的具体任务；下一步在目标Windows环境升级0.3.1并确认用户场景。
+
+历史实施说明（发布前）：以上是本机macOS文件IO、假模型、官方payload转换和SQLite证据，无真实模型、Windows或沙箱验证。真实配置/依赖未改，未提交/push。下一步审阅[085-11图片](085-11-read-images.md)，不自动实现。当前发布状态以上方0.3.1实际结果为准。
