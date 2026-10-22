@@ -28,6 +28,15 @@ def file_stamp(info):
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
+def require_file_stamp(info, expected, *, same_source=True):
+    """Keep full same-source stamps; cross-source times differ on Windows."""
+    current = file_stamp(info)
+    changed = current != expected if same_source else current[:3] != expected[:3]
+    if changed:
+        raise ToolException(WRITE_CHANGED)
+    return current
+
+
 def normalize_text(text):
     text = text.replace('\r\n', '\n').replace('\r', '\n')
     return '\n'.join(unicodedata.normalize('NFKC', line).rstrip().translate(_VARIANTS)
@@ -95,8 +104,7 @@ def scan_normalized_matches(target, old_parts, snapshot, settings, chunk_bytes, 
     tail, spans = '', []
     digest = hashlib.sha256()
     with target.open('rb') as source:
-        if file_stamp(os.fstat(source.fileno())) != snapshot['stamp']:
-            raise ToolException(WRITE_CHANGED)
+        require_file_stamp(os.fstat(source.fileno()), snapshot['stamp'])
         offset = 0
         for raw in _source_lines(source, min(settings.max_affected_line_bytes, budget), chunk_bytes, control=control, progress=progress):
             check_tool_stop(control, EDIT_STOPPED)
@@ -133,9 +141,9 @@ def scan_normalized_matches(target, old_parts, snapshot, settings, chunk_bytes, 
             spans = mapped[-overlap:] if overlap else []
             offset += len(raw)
             check_tool_stop(control, EDIT_STOPPED)
-        if (offset != snapshot['size'] or digest.digest() != snapshot['digest']
-                or file_stamp(os.fstat(source.fileno())) != snapshot['stamp']):
+        if offset != snapshot['size'] or digest.digest() != snapshot['digest']:
             raise ToolException(WRITE_CHANGED)
+        require_file_stamp(os.fstat(source.fileno()), snapshot['stamp'])
     if any(location is None for location in locations):
         raise ToolException(EDIT_NOT_FOUND)
     check_tool_stop(control, EDIT_STOPPED)

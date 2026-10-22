@@ -54,17 +54,22 @@ async def web_scenario(root):
     workspace.mkdir()
     from naiyue_test_agent.workspaces import prepare_workspace
     location = prepare_workspace(workspace, data_dir=root / 'data', database_path=root / 'sessions.sqlite')
-    (workspace / 'sample.py').write_text('needle installed\n', encoding='utf-8')
+    (workspace / 'sample.py').write_bytes(b'needle installed\n')
     outside = root / 'outside.txt'
     outside.write_text('approved outside content', encoding='utf-8')
     model = OfflineModel(replies=[AIMessage(content='', tool_calls=[
         {'name': 'find', 'args': {'pattern': '*.py'}, 'id': 'find-installed'},
         {'name': 'grep', 'args': {'pattern': 'needle', 'glob': '*.py'}, 'id': 'grep-installed'},
+        {'name': 'read', 'args': {'path': 'sample.py'}, 'id': 'read-edit-before'},
+        {'name': 'edit', 'args': {'path': 'sample.py', 'edits': [
+            {'oldText': 'needle installed', 'newText': 'needle edited'},
+        ]}, 'id': 'edit-installed'},
+        {'name': 'read', 'args': {'path': 'sample.py'}, 'id': 'read-edit-after'},
         {'name': 'read', 'args': {'path': str(outside)}, 'id': 'read-approved'},
     ]), AIMessage(content='installed-ok')])
     application.load_model_catalog = lambda _: ModelCatalog('offline', {'offline': model})
     configuration = root / 'fixture-settings.toml'
-    configuration.write_text('default_active_tools=["read","find","grep"]\n'
+    configuration.write_text('default_active_tools=["read","find","grep","edit"]\n'
         '[network]\nmode="proxy"\nproxy="http://proxy.invalid:8080"\n'
         'proxy_username="install-user"\nproxy_password="install@password#"\n'
         'no_proxy=[".corp.example","127.0.0.1"]\n', encoding='utf-8')
@@ -93,7 +98,7 @@ async def web_scenario(root):
             response = await client.post('/api/sessions', json={'model_id': 'offline'})
             assert response.status_code == 201, response.text
             session = response.json()['session_id']
-            assert (await client.get(f'/api/sessions/{session}')).json()['active_tools'] == ['read', 'find', 'grep']
+            assert (await client.get(f'/api/sessions/{session}')).json()['active_tools'] == ['read', 'find', 'grep', 'edit']
             response = await client.post(f'/api/sessions/{session}/runs',
                 json={'request_id': str(uuid4()), 'text': 'inspect installed tools'})
             assert response.status_code == 202, response.text
@@ -113,10 +118,15 @@ async def web_scenario(root):
             await client.get(f'/api/runs/{resumed}/events')
             assert (await client.get(f'/api/runs/{resumed}')).json()['status'] == 'completed'
             returned = {message.tool_call_id: message for message in model.seen[1] if isinstance(message, ToolMessage)}
-            assert set(returned) == {'find-installed', 'grep-installed', 'read-approved'}
+            assert set(returned) == {'find-installed', 'grep-installed', 'read-approved',
+                'read-edit-before', 'edit-installed', 'read-edit-after'}
             assert all(message.status == 'success' for message in returned.values())
             assert 'sample.py' in returned['find-installed'].content
             assert 'needle installed' in returned['grep-installed'].content
+            assert returned['read-edit-before'].content == 'needle installed\n'
+            assert 'firstChangedLine=1' in returned['edit-installed'].content
+            assert returned['read-edit-after'].content == 'needle edited\n'
+            assert (workspace / 'sample.py').read_bytes() == b'needle edited\n'
             assert returned['read-approved'].content == 'approved outside content'
     reopened = create_web_app(settings)
     async with reopened.router.lifespan_context(reopened):
@@ -163,7 +173,8 @@ def main():
     assert '当前模型' in output.getvalue()
     print(json.dumps({'target': native['target'], 'version': naiyue_test_agent.__version__,
         'installed_package': str(installed), 'native_tools': 'passed', 'frontend_api': 'passed',
-        'find_grep': 'passed', 'approval_resume': 'passed', 'sqlite_reopen': 'passed', 'cli': 'passed',
+        'find_grep': 'passed', 'read_edit_read': 'passed',
+        'approval_resume': 'passed', 'sqlite_reopen': 'passed', 'cli': 'passed',
         'configuration': 'passed', **storage, 'mcp': mcp, 'background_tasks': background,
         'subagent_continuation': subagents}))
 

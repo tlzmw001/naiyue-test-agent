@@ -23,7 +23,7 @@ from .registry import ToolSpec
 from .permissions import FilePermission, require_file_target
 from .paths import verify_file_target
 from .edit_matching import (EDIT_NOT_UNIQUE, EDIT_STOPPED,
-                            file_stamp as _stamp, prepare_edit_plan)
+                            file_stamp, require_file_stamp, prepare_edit_plan)
 from .edit_diff import EditFeedback, build_edit_feedback
 from .control import check_tool_stop
 from .progress import ToolProgress
@@ -79,6 +79,7 @@ def _scan_target(target: Path, old_parts: list[bytes], *, control=None, progress
         before = os.fstat(source.fileno())
         if not stat.S_ISREG(before.st_mode):
             raise ValueError('not_regular_file')
+        stamp = file_stamp(before)
         head = source.read(len(_UTF8_BOM))
         check_tool_stop(control, EDIT_STOPPED)
         if head == _UTF8_BOM:
@@ -115,16 +116,15 @@ def _scan_target(target: Path, old_parts: list[bytes], *, control=None, progress
             check_tool_stop(control, EDIT_STOPPED)
         check_tool_stop(control, EDIT_STOPPED)
         decoder.decode(b'', final=True)
-        if _stamp(os.fstat(source.fileno())) != _stamp(before):
-            raise ToolException(WRITE_CHANGED)
+        require_file_stamp(os.fstat(source.fileno()), stamp)
     if newline is None and previous_byte == b'\r':
         newline = b'\r'
     check_tool_stop(control, EDIT_STOPPED)
-    return locations, digest.digest(), offset, _stamp(before), stat.S_IMODE(before.st_mode), newline
+    return locations, digest.digest(), offset, stamp, stat.S_IMODE(before.st_mode), newline
 
 
 def _copy_to_temp(
-    root: Path, path: str, target: Path, matches: list[tuple[int, int, bytes]],
+    root: Path, target: Path, matches: list[tuple[int, int, bytes]],
     original_digest: bytes, original_size: int, original_stamp: tuple[int, ...],
     original_mode: int, *, subject: dict, settings: EditSettings, used_fuzzy: bool,
     control=None,
@@ -137,15 +137,15 @@ def _copy_to_temp(
     collector = EditFeedback(matches, settings)
     try:
         try:
-            if verify_file_target(subject) != target or _resolve_write_target(root, path) != target:
+            if verify_file_target(subject) != target:
                 raise ToolException(WRITE_CHANGED)
+            path_stamp = require_file_stamp(target.stat(), original_stamp, same_source=False)
             with target.open('rb') as source, tempfile.NamedTemporaryFile(
                 mode='wb', prefix='.naiyue-write-', dir=target.parent, delete=False,
             ) as output:
                 temporary = Path(output.name)
                 check_tool_stop(control, EDIT_STOPPED)
-                if _stamp(os.fstat(source.fileno())) != original_stamp:
-                    raise ToolException(WRITE_CHANGED)
+                require_file_stamp(os.fstat(source.fileno()), original_stamp)
                 digest = hashlib.sha256()
                 output_digest = hashlib.sha256()
                 position = 0
@@ -188,9 +188,9 @@ def _copy_to_temp(
                     progress.report(phase='temp_copy', completed=position, unit='bytes')
                     check_tool_stop(control, EDIT_STOPPED)
                 check_tool_stop(control, EDIT_STOPPED)
-                if (position != original_size or digest.digest() != original_digest
-                        or _stamp(os.fstat(source.fileno())) != original_stamp):
+                if position != original_size or digest.digest() != original_digest:
                     raise ToolException(WRITE_CHANGED)
+                require_file_stamp(os.fstat(source.fileno()), original_stamp)
                 if output_digest.digest() == original_digest:
                     raise ToolException(EDIT_NO_CHANGE)
                 display_path = target.relative_to(root).as_posix() if target.is_relative_to(root) else target.as_posix()
@@ -207,9 +207,9 @@ def _copy_to_temp(
                 progress.report(phase='fsync')
                 os.fsync(output.fileno())
                 check_tool_stop(control, EDIT_STOPPED)
-            if (verify_file_target(subject) != target or _resolve_write_target(root, path) != target
-                    or _stamp(target.stat()) != original_stamp):
+            if verify_file_target(subject) != target:
                 raise ToolException(WRITE_CHANGED)
+            require_file_stamp(target.stat(), path_stamp)
         except (OSError, ValueError, RuntimeError) as error:
             logger.warning('edit_failed phase=prepare error_type=%s', type(error).__name__)
             raise ToolException(EDIT_IO_FAILURE) from error
@@ -266,7 +266,7 @@ def _edit(root: Path, path: str, edits: list[EditReplacement], settings: EditSet
             logger.warning('edit_failed phase=scan error_type=%s', type(error).__name__)
             raise ToolException(EDIT_IO_FAILURE) from error
         snapshot = plan['snapshot']
-        return _copy_to_temp(root, path, target, plan['matches'], snapshot['digest'],
+        return _copy_to_temp(root, target, plan['matches'], snapshot['digest'],
             snapshot['size'], snapshot['stamp'], snapshot['mode'], subject=subject,
             settings=settings, used_fuzzy=plan['used_fuzzy'], control=control, progress=progress)
 

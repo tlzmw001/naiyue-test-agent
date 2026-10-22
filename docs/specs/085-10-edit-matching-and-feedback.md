@@ -72,4 +72,80 @@ diff/preview预算不足只限制相应反馈，不能让已成功的精确修�
 - `.venv/bin/python -m compileall -q naiyue_test_agent tests scripts`、`.venv/bin/python -m pip check`、`git diff --check`：退出0；pip为`No broken requirements found.`。
 - 245个Python文件AST正确且全部≤500行；当前注释配置样例经产品loader加载和五键覆盖测试通过。
 
+## Windows稳定文件误报冲突修正（2026-10-22，0.3.0发布后）
+
+用户反馈Windows上Read后Edit报冲突、期间未改文件。当前Read仅返回正文，不登记跨调用版本；Edit会重新扫描并建立自己的本次快照。源码缺陷在`_copy_to_temp`提交前：以`target.stat()`的完整stamp比较精确扫描时`os.fstat()`的stamp。CPython3.12 Windows句柄路径可分别报告ChangeTime与兼容保留的CreationTime，内容/身份/大小/mtime均未变时ctime也可能不同。
+
+一手依据：[句柄ChangeTime装配](https://github.com/python/cpython/blob/v3.12.10/Python/fileutils.c#L1036-L1040)、[路径stat将birthtime复制为ctime](https://github.com/python/cpython/blob/v3.12.10/Modules/posixmodule.c#L2015-L2017)。本次在本机模拟这项平台差异，不将注入探针称为Windows原机实测；用户本次原始错误文本尚未取得。
+
+修正限于同一提交校验：复制前保存路径完整stamp，与扫描句柄交叉核对dev/ino/size；复制中继续用完整句柄stamp和SHA-256核对原源文件；提交前完整路径stamp与路径前值比较。保留路径/权限重验、临时文件、同目标reserve、原子替换及清理；没有移除ctime保护，也不增加跨Read版本缓存或改公开入参。
+
+新增`tests/test_edit_windows_metadata.py`，沿正式图执行Read→Edit→Read，覆盖精确及归一化两分支；稳定句柄ctime偏移时预期成功。另覆提交前路径五字段漂移、句柄ctime真实漂移及路径/句柄dev/ino/size不一致，均须拒绝、保留原文并清临时文件。首轮**2 failed / 9 passed**，两条正常分支按预期误报冲突；单点修正后定向169通过。局部stat替身只用于这份测试，没有修改conftest/共享helper。
+
+发行安装门禁同步增强：`scripts/release_smoke.py`在原Web/审批/原生工具链中加入真实Read→Edit→Read，显式核对三个配对结果、diff首行和最终文件字节，报告`read_edit_read=passed`。临时输入固定写LF字节，避免Windows文本写入自动换行影响跨平台断言；不放宽原生工具/审批/重开原有断言。未来Windows CI和公开安装门禁会执行这条链，本轮尚未push触发远端验证。
+
+同形扫描：`_scan_target`、复制中的两处句柄复核及`edit_matching.scan_normalized_matches`均为句柄与句柄快照比较，保留；`write`的反馈/提交stat同为路径来源，保留；`output.py`仅使用路径元数据列归档，不执行这类跨源冲突比较，保留。本次唯一修正的生产位置是Edit提交前的跨源比较。
+
+证据目录：`build/edit-windows-64u5bzpg/`。
+
+| 验证 | 实际结果 |
+| --- | --- |
+| `pytest -q tests/test_edit_windows_metadata.py`（修复前） | 2 failed / 9 passed；`edit-windows-red.log` |
+| Read/Edit/Write及反馈/CLI定向组合 | 169 passed in3.53s；`edit-windows-focused.log` |
+| `PATH="$PWD/build/spec120-8ndt27vu/test-assets/bin:$PATH" .venv/bin/python -m pytest tests -q` | **4239 passed in293.46s**；`backend.log` |
+| `npm --prefix frontend test -- --run` / `npm --prefix frontend run build` | **50文件415 passed**；TypeScript/Vite退出0 |
+| 标准`build_release --target macos-arm64` / Twine /源码比对 | 构建及Twine通过，wheel中的edit.py与当前源码逐字节一致 |
+| 标准`verify_wheel_install --wheel-dir .../wheel` | 全新venv、源码外正式Web调用Read→Edit→Read通过；原生工具/存储/MCP/后台/子实例门禁通过，0真实供应商请求 |
+| AST/500行、compileall、pip check、diff | 通过；无破损依赖 |
+
+本轮仅本地源码修复及候选包验证，版本仍0.3.0，没有提交/push/tag/PyPI发布；公开0.3.0包不会因此改变。Windows原机确认、远端CI和后续补丁发布仍是独立步骤。
+
+## Edit校验收敛实施约定（2026-10-22，按用户纠偏收回范围）
+
+目标：删除同一阶段重复的路径解析，集中已有元数据比较规则；不增加拒写条件，不改变公开Edit入参、权限模式、匹配算法或Write合同。用户明确指出本次目的是减少过多校验，目录移动后的清理改进不属于本片。
+
+当前数据流：`require_file_target → _edit首次_resolve → reserve → 精确扫描 → 必要的归一化 → 复制前verify+resolve → 复制/反馈/fsync → 提交前verify+resolve → _replace_temp`。元数据比较分散在精确、归一化及复制阶段。
+
+实现后数据流：`require_file_target → _edit原首次_resolve及已有文件检查 → reserve → 精确扫描 → 必要的归一化 → 复制前verify → 复制/反馈/fsync → 提交前verify → _replace_temp`。仅去掉复制前和提交前紧邻verify的重复`_resolve_write_target`；verify仍核对原始subject的requested/resolved/anchor，不缓存跨阶段授权结果。扫描前不增加新的许可复核。
+
+影响范围：生产仅`tools/edit.py`与`tools/edit_matching.py`；沿用`tests/test_edit_windows_metadata.py`，新增一个摘要保护回归用例；`tests/test_file_tool_stop.py`将旧解析调用次数的停止注入迁至当前提交前复核，停止/原文/清理断言保留；本Spec与handoff同步。上一轮`release_smoke.py`实际Read→Edit→Read门禁保留。本轮不修改共享paths/permissions/write实现，不新增模块/类/依赖，不改真实配置或版本，不提交或发布。
+
+内部接口：在已有`edit_matching.file_stamp`旁增加`require_file_stamp(info, expected, *, same_source=True)`。同源完整比较dev/ino/size/mtime/ctime；跨源显式`same_source=False`只比dev/ino/size；不匹配抛原`WRITE_CHANGED`，成功返回当前stamp，以记录复制前的路径快照。沿用原五元组与snapshot字典，大小和SHA-256比较仍在扫描/复制消费者处，不创建通用resolver。`_copy_to_temp`移除因重复resolve删除而失去用途的私有path参数并同步调用方；公开Tool API不变。
+
+正常链：扫描建立句柄快照，必要时归一化复核同一内容，复制阶段用同源句柄完整stamp及摘要核对源内容，以独立路径stamp保护最终目标；Windows稳定的路径/句柄ctime差异仍允许。同文件reserve、停止、UTF-8/BOM/换行、反馈、模式位/DACL与原子替换保持原合同。
+
+失败链：沿用原有复制前/提交前路径复核、执行中内容冲突、同源stamp漂移及跨源身份/大小不一致的处理；不添加扫描前失效许可的新规则。现有临时文件清理逻辑原样保留，不扩大为对外部移动目录后临时文件的可靠清理承诺。共享Write允许缺失目标/建目录的行为保持。
+
+验证：重构以已有行为回归为准，保留精确2遍/归一化3遍读取、并发Write/Edit、换链、复制中外改、停止/IO/反馈/替换失败及原Windows断言。新增摘要用例验证“同长度内容被改动，即使报告的元数据稳定也仍冲突”，不修改共享测试基础设施。
+
+范围纠偏记录：最初新增阶段矩阵扩大到扫描前拒读及父目录移动清理，实施前5失败、扩展实现后仍1失败。用户拒绝扩展后，新增矩阵原文及失败证据保存在`build/edit-checks-uq0016ck/exploratory/`，未修改断言伪装通过；新增扫描前保护已撤回，目录移动清理缺口未解决，不计入本片已通过验收。原有产品测试未删除、放宽或skip。
+
+首轮全后端4239通过、1失败：旧停止用例在第三次`_resolve_write_target`调用注入停止，但Edit已移除后两次冗余解析，导致注入未触发。按内部调用迁移规则，将Edit注入迁至现有第二次`verify_file_target`（提交前），Write仍在原第三次解析；不恢复冗余、不放宽停止/原文/临时清理断言，并显式断言停止确已请求。失败日志保留为`backend.log`。
+
+完成后执行定向、全后端、前端/构建、AST/行数/依赖/diff和标准本机wheel/源码外安装，结果随后补录。此片为行为保持重构，不将退出范围的失败实验称作已修复的TDD用例。
+
+本片证据目录：`build/edit-checks-uq0016ck/`，`before/`保留实施起点，`slice.diff`记录本片增量。
+
+| 验证 | 实际结果 |
+| --- | --- |
+| Edit/Read/Write/反馈/CLI定向组合 | 172 passed in4.96s；`focused.log` |
+| 停止用例迁移后专项组合 | 107 passed in2.12s；`stop-focused.log`；原行为断言保留 |
+| `PATH="$PWD/build/spec120-8ndt27vu/test-assets/bin:$PATH" .venv/bin/python -m pytest tests -q` | **4240 passed in293.15s**；最终`backend-final.log`；首轮失败已按内部测试注入迁移关闭 |
+| `npm --prefix frontend test -- --run` | 50文件415 passed；`frontend-test.log` |
+| `npm --prefix frontend run build` | TypeScript/Vite退出0；原有chunk大小提示保留 |
+| 标准`build_release --target macos-arm64` / Twine | 构建退出0、Twine PASSED；`wheel-build.log`/`twine.log` |
+| wheel源码字节 / 标准`verify_wheel_install` | 两份生产源码逐字节匹配；全新venv、源码外真实Read→Edit→Read及原安装门禁通过，0供应商；`wheel-sources.json`/`install.json` |
+| AST/500行、compileall、pip check、diff | 通过；生产307/176行，Windows回归162行、停止用例386行；原11项Windows断言未变 |
+| 独立只读复核 | 安全43项/架构50项/停止迁移32项通过，无阻断；`review.json` |
+
+本片未增加拒写条件或目录清理机制。构建后的生产源码未再变化；停止测试迁移后不重复构建同一源码。Windows原机仍未验证，版本保持0.3.0，没有提交/push或发布。
+
+## 0.3.1发行验收（2026-10-22）
+
+用户随后授权发布0.3.1。范围为本次Windows Edit修复、重复校验收敛、对应回归与正式安装门禁；版本唯一事实改为0.3.1。README仅提交0.3.1条目，配置指南、实际配置、依赖、并行记忆/研究/学习成果不纳入。上方“未提交/未发布”描述为本地实施阶段时点。
+
+发行前重新验证：后端**4240 passed in299.46s**，前端50文件415通过、TS/Vite构建退出0；225份Python源码AST/500行及103份前端源行数、两个修改测试、compileall、pip check、diff检查通过。四目标标准wheel构建、完整发行集合/版本/源码指纹与Twine通过；所有打包Python字节及README元数据与暂存内容一致。Mac ARM64全新venv、源码外实际Read→Edit→Read及原安装门禁通过，0供应商。安全50项/架构82项独立专项通过，无阻断。
+
+证据：`build/release-0.3.1-3g03njo4/`。提交后先确认主分支CI，再在同一提交创建v0.3.1并验证PyPI四文件哈希和公开安装；本段尚不宣称远端CI或发布完成。交叉构建不作为Windows/Linux原机证据。
+
 以上是本机macOS文件IO、假模型、官方payload转换和SQLite证据，无真实模型、Windows或沙箱验证。真实配置/依赖未改，未提交/push。下一步审阅[085-11图片](085-11-read-images.md)，不自动实现。

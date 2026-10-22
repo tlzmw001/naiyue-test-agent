@@ -10,6 +10,7 @@
 - `0.2.0` 统一模型请求准备与上下文预算，补充调用次数、耗时和 SDK HTTP 尝试诊断；支持分离配置代理地址、用户名/密码、直连名单及新会话默认工具，见[设置示例](docs/examples/settings.example.toml)。
 - `0.3.0` 新增 Bash/PowerShell 后台任务及统一辅助侧栏，支持按既有子 Agent 实例续跑；同时交付外部工具有限重试、CIDR/通配直连规则、迁移前备份、显式还原及任务收尾 checkpoint 修剪。配置与范围见[设置示例](docs/examples/settings.example.toml)、[后台任务](docs/specs/125-background-shell-tasks.md)和[子实例续跑](docs/specs/126-subagent-continuation.md)。
 - Find/Grep 使用安装包内的 `fd` / `rg`；前端已经构建，使用发行包无需 Node.js 或 npm。
+- `0.3.1` 修复 Windows 下稳定文件在 Read 后 Edit 误报冲突的问题，删除 Edit 两处重复路径解析并集中元数据比较规则；保留内容冲突与原子替换保护，安装验证增加实际 Read → Edit → Read 链路。
 - `0.2.0` 支持 `nyt mcp list` 只读发现及根/子 Agent 调用本地/远程 MCP 工具，复用活动工具选择、审批与会话连接，支持按服务显式开启空闲回收；应用运行中可刷新配置以新增服务、调整名单和启停，CLI/Web显示来源、结果状态和归档位置，重启保留历史、旧 MCP 待审需取消后重新发起，见[MCP客户端配置](docs/mcp-client.md)。
 
 ## 安装

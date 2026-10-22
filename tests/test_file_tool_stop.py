@@ -336,20 +336,23 @@ def test_stop_during_final_target_recheck_prevents_commit(monkeypatch, tmp_path,
     target = tmp_path / 'file.txt'
     target.write_text('original')
     module = write_module if name == 'write' else edit_module
-    original, calls, control = module._resolve_write_target, [], RunControl()
-    def resolve(*args, **kwargs):
+    recheck = '_resolve_write_target' if name == 'write' else 'verify_file_target'
+    final_check = 3 if name == 'write' else 2
+    original, calls, control = getattr(module, recheck), [], RunControl()
+    def check(*args, **kwargs):
         result = original(*args, **kwargs)
         calls.append(result)
-        if len(calls) == 3:
+        if len(calls) == final_check:
             control.request()
         return result
-    monkeypatch.setattr(module, '_resolve_write_target', resolve)
+    monkeypatch.setattr(module, recheck, check)
     spec = create_session_write_tool() if name == 'write' else create_session_edit_tool()
     args = {'path': target.name, **({'content': 'replacement'} if name == 'write' else
             {'edits': [{'oldText': 'original', 'newText': 'replacement'}]})}
     with pytest.raises(ToolException, match='stopped'):
         invoke_body(spec, tmp_path, args, control)
-    assert len(calls) == 3 and target.read_bytes() == b'original'
+    assert len(calls) == final_check and control.requested
+    assert target.read_bytes() == b'original'
     assert not list(tmp_path.glob('.naiyue-write-*'))
 
 
