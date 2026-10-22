@@ -19,7 +19,7 @@ from tests.storage_backup_fixture import artifact, source_store
 def test_invalid_backup_is_visible_and_never_accepted(tmp_path, caplog, fault):
     from naiyue_test_agent.storage_backup import create_backup, validate_backup, list_backups
     with closing(source_store(tmp_path)[0]) as source:
-        manifest = create_backup(source.connection, source.path, target_schema=13)
+        manifest = create_backup(source.connection, source.path, target_schema=14)
         backup_id = manifest['backup_id']
         directory = artifact(source.path, backup_id)
         info, snapshot = directory / 'manifest.json', directory / 'database.sqlite'
@@ -78,8 +78,8 @@ def test_id_is_not_a_path(tmp_path, identity):
 def test_higher_planned_target_is_diagnostic_and_listing_is_read_only_sorted(tmp_path):
     from naiyue_test_agent.storage_backup import create_backup, validate_backup, list_backups
     with closing(source_store(tmp_path)[0]) as source:
-        first = create_backup(source.connection, source.path, target_schema=13)
-        second = create_backup(source.connection, source.path, target_schema=13)
+        first = create_backup(source.connection, source.path, target_schema=14)
+        second = create_backup(source.connection, source.path, target_schema=14)
         root = artifact(source.path, '')
         for value, stamp in ((first, '2026-01-01T00:00:00+00:00'), (second, '2026-01-02T00:00:00+00:00')):
             value['created_at'], value['target_schema'] = stamp, 999
@@ -100,8 +100,8 @@ def test_higher_planned_target_is_diagnostic_and_listing_is_read_only_sorted(tmp
 def test_deeply_nested_manifest_does_not_hide_healthy_backups(tmp_path, caplog):
     from naiyue_test_agent.storage_backup import create_backup, validate_backup, list_backups
     with closing(source_store(tmp_path)[0]) as source:
-        good = create_backup(source.connection, source.path, target_schema=13)
-        bad = create_backup(source.connection, source.path, target_schema=13)
+        good = create_backup(source.connection, source.path, target_schema=14)
+        bad = create_backup(source.connection, source.path, target_schema=14)
         (artifact(source.path, bad['backup_id']) / 'manifest.json').write_text('[' * 20000 + '0' + ']' * 20000)
         with pytest.raises(ValueError, match='backup_invalid'):
             validate_backup(source.path, bad['backup_id'])
@@ -116,7 +116,7 @@ def test_deeply_nested_manifest_does_not_hide_healthy_backups(tmp_path, caplog):
 def test_snapshot_ownership_and_structure_cannot_be_replaced_by_matching_hash(tmp_path, fault):
     from naiyue_test_agent.storage_backup import create_backup, validate_backup
     with closing(source_store(tmp_path)[0]) as source:
-        saved = create_backup(source.connection, source.path, target_schema=13)
+        saved = create_backup(source.connection, source.path, target_schema=14)
         target, expected = source.path, saved['workspace_id']
         if fault == 'other_database':
             target = source.path.with_name('other.sqlite')

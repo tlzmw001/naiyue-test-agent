@@ -12,7 +12,7 @@ it('stops the exact child scope and disables repeated stop during cleanup', () =
   const call = { id: 'outer', name: 'subagent', args: {} };
   const { rerender } = render(<ToolCall call={call} agents={[agent]} stopAgent={stop} />);
   fireEvent.click(screen.getByRole('button', { name: '停止该子任务' }));
-  expect(stop).toHaveBeenCalledWith('root/tester/A', 'root-run');
+  expect(stop).toHaveBeenCalledWith('root/tester/A', 'root-run', 'segment');
   rerender(<ToolCall call={call} agents={[{ ...agent, status: 'stopping' }]} stopAgent={stop} />);
   expect((screen.getByRole('button', { name: '正在停止子任务…' }) as HTMLButtonElement).disabled).toBe(true);
 });

@@ -1,5 +1,6 @@
 """Scope stops settle one child without changing its sibling's authority."""
 
+import json
 import asyncio
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
@@ -52,7 +53,7 @@ async def test_stop_one_pending_child_keeps_sibling_running_and_decision_history
         result = await asyncio.wait_for(task, 5)
         feedback = {m.tool_call_id: m for m in result['messages'] if isinstance(m, ToolMessage)}
         assert feedback['outer-A'].status == 'error' and 'stopped' in feedback['outer-A'].content.lower()
-        assert feedback['outer-B'].content == 'B report' and result['messages'][-1].content == 'root continued'
+        assert json.loads(feedback['outer-B'].content)['report'] == 'B report' and result['messages'][-1].content == 'root continued'
         assert [(e.data.status) for e in events if e.source and e.source.agent_path == a['agent_path']
                 and e.event_type == 'run_finished'] == ['interrupted', 'stopped']
     finally:

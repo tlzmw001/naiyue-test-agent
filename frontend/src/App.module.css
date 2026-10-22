@@ -27,8 +27,10 @@
 .workspaceRetry { flex-shrink: 0; border: 0; border-radius: var(--r-xs); padding: 3px 5px; background: transparent; color: var(--text-secondary); font: inherit; }
 .workspaceRetry:hover { background: var(--surface-hover); }
 .headerActions { display: flex; min-width: 0; align-items: center; gap: 16px; }
-.agentsButton { border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); padding: 7px 10px; color: var(--text-secondary); font-size: var(--fs-meta); white-space: nowrap; cursor: pointer; }
-.agentsButton:disabled { opacity: .5; cursor: default; }
+.activityDot { position: absolute; right: 4px; top: 4px; width: 5px; height: 5px; border-radius: var(--r-full); background: var(--success-text); }
+.headerActions > button { position: relative; }
+.sidebarEmpty { margin: 20px 22px; font-size: var(--fs-meta); color: var(--muted); }
+@media (max-width: 700px) { .headerActions { gap: 8px; } }
 .delegatedAgent { border-bottom: 1px solid var(--line); padding: 12px 0; font-size: var(--fs-meta); }
 .delegatedHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .agentLink { border: 0; background: transparent; padding: 0; color: var(--text); cursor: pointer; text-align: left; overflow-wrap: anywhere; }

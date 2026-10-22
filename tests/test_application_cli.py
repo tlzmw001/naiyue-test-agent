@@ -97,8 +97,8 @@ def test_cli_defaults_to_current_workspace_and_selects_default_tools(monkeypatch
 
     assert cli.main(['--no-session', '--config', 'synthetic.json']) == 0
     assert 'answer' in capsys.readouterr().out
-    assert [spec.tool.name for spec in tools_seen] == ['read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent', 'aitest_kit', 'web_search', 'web_fetch']
-    assert choices == [['read', 'ls', 'find', 'grep', 'write', 'edit', 'subagent', 'aitest_kit', 'web_search', 'web_fetch']]
+    assert [spec.tool.name for spec in tools_seen] == ['read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent', 'subagent_list', 'aitest_kit', 'web_search', 'web_fetch', 'task_list', 'task_output', 'task_stop']
+    assert choices == [['read', 'ls', 'find', 'grep', 'write', 'edit', 'subagent', 'aitest_kit', 'web_search', 'web_fetch', 'task_list', 'task_output', 'task_stop']]
 
 
 def test_cli_invalid_model_empty_line_and_unknown_command_do_not_call_model(monkeypatch, capsys):

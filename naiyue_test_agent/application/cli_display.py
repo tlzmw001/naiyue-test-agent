@@ -99,11 +99,16 @@ class CliEventDisplay:
     def _render_child(self, event):
         source = event.source
         child = self._agents.get(source.agent_path)
+        if child is not None and event.event_type != 'run_started' and child._run_id != source.agent_run_id:
+            return
         if child is None:
             child = CliEventDisplay(self.session_id, progress_settings=self._progress_settings,
                 writer=lambda text: self.write(f'[{source.agent_path}] {text}'))
             self._agents[source.agent_path] = child
         if event.event_type == 'run_started':
+            if event.data.mode == 'message':
+                child.begin_call()
+            child._run_id = source.agent_run_id
             child._terminal = False
             child.write('子 Agent 正在执行')
         elif event.event_type in ('message_completed', 'message_revised'):

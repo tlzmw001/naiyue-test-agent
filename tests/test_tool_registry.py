@@ -164,10 +164,10 @@ def test_builtin_collection_has_real_schemas_settings_and_capability_declaration
     from naiyue_test_agent.tools import create_builtin_tools
     from naiyue_test_agent.settings import AppSettings
     settings = AppSettings.model_validate({'tools': {'ls': {'default_limit': 2}}})
-    specs = create_builtin_tools(settings.tools, process_settings=settings.process, output_settings=settings.tool_output, progress_settings=settings.progress)
-    assert [spec.tool.name for spec in specs] == ['read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent', 'aitest_kit', 'web_search', 'web_fetch']
-    assert [spec.execution_mode for spec in specs] == ['parallel'] * 4 + ['sequential'] * 4 + ['parallel', 'sequential', 'parallel', 'parallel']
-    assert [spec.side_effects for spec in specs] == ['read_only'] * 4 + ['may_mutate'] * 4 + ['unknown', 'may_mutate', 'read_only', 'read_only']
+    specs = create_builtin_tools(settings.tools, process_settings=settings.process, shell_task_settings=settings.shell_tasks, progress_settings=settings.progress)
+    assert [spec.tool.name for spec in specs] == ['read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent', 'subagent_list', 'aitest_kit', 'web_search', 'web_fetch', 'task_list', 'task_output', 'task_stop']
+    assert [spec.execution_mode for spec in specs] == ['parallel'] * 4 + ['sequential'] * 4 + ['parallel', 'parallel', 'sequential', 'parallel', 'parallel', 'parallel', 'parallel', 'sequential']
+    assert [spec.side_effects for spec in specs] == ['read_only'] * 4 + ['may_mutate'] * 4 + ['unknown', 'read_only', 'may_mutate', 'read_only', 'read_only', 'read_only', 'read_only', 'may_mutate']
     assert specs[1].input_schema.model_fields['limit'].default == 2
     assert all('runtime' not in spec.input_schema.model_fields for spec in specs)
     assert all(issubclass(spec.tool.args_schema, spec.input_schema) for spec in specs)

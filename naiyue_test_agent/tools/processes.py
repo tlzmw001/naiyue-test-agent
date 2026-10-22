@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Thread
 from typing import Literal
+from collections.abc import Callable
 
 from .process_protocol import ProcessProtocol
 from .settings import ProcessSettings
@@ -28,6 +29,9 @@ class ProcessRequest:
     merge_output: bool = False
     eof_policy: Literal['shell', 'complete'] = 'complete'
     execution_environment: dict[str, str] = field(default_factory=lambda: {'kind': 'host'})
+    on_started: Callable[[], None] | None = field(default=None, compare=False, repr=False)
+    on_execution_started: Callable[[float], None] | None = field(default=None, compare=False, repr=False)
+    on_exited: Callable[[], None] | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -65,9 +69,12 @@ class HostProcessRunner:
         if control is not None and control.requested:
             return ProcessOutcome(None, 'user_stop', True, True, True, True, 0)
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + seconds if seconds is not None else None
+        origin = loop.time()
+        deadline = origin + seconds if seconds is not None else None
+        if request.on_execution_started is not None:
+            request.on_execution_started(origin)
         protocol = ProcessProtocol(self.settings.max_pending_output_bytes,
-                                   merge_output=request.merge_output)
+                                   merge_output=request.merge_output, on_exited=request.on_exited)
         options = ({'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt'
                    else {'start_new_session': True})
         spawn = asyncio.create_task(loop.subprocess_exec(lambda: protocol, *request.argv,
@@ -81,6 +88,8 @@ class HostProcessRunner:
             # Shield creation: cancellation still leaves us responsible for the eventual handle.
             termination = await self._await_spawn(spawn, control, deadline)
             if termination == 'ready':
+                if request.on_started is not None:
+                    request.on_started()
                 consumer = asyncio.create_task(protocol.deliver(consume))
                 termination = await self._watch(protocol, consumer, request, control, deadline)
         except BaseException as error:

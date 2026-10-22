@@ -6,7 +6,7 @@ import sqlite3
 from uuid import UUID
 
 
-CURRENT_SCHEMA = 13
+CURRENT_SCHEMA = 14
 SUPPORTED_SCHEMAS = frozenset(range(4, CURRENT_SCHEMA + 1))
 
 
@@ -60,6 +60,9 @@ def check_snapshot(path):
             required['naiyue_regenerations'] = 'session_id request_id reply_id revision old_thread_id new_thread_id run_id status obsolete_children'
         if version >= 13:
             required['naiyue_model_invocations'] += ' duration_ms'
+        if version >= 14:
+            from .application.subagent_storage import FIELDS
+            required['naiyue_subagent_instances'] = ' '.join(FIELDS)
         if 'checkpoints' in tables or 'writes' in tables:
             required['checkpoints'] = 'thread_id checkpoint_ns checkpoint_id parent_checkpoint_id type checkpoint metadata'
             required['writes'] = 'thread_id checkpoint_ns checkpoint_id task_id idx channel type value'
@@ -67,6 +70,17 @@ def check_snapshot(path):
             # Names come exclusively from the fixed schema map above.
             columns = {row[1] for row in connection.execute(f'PRAGMA table_info("{table}")')}
             if table not in tables or not set(fields.split()).issubset(columns):
+                raise ValueError('backup_invalid')
+        if version >= 14:
+            if connection.execute('''SELECT 1 FROM naiyue_subagent_instances s
+                    WHERE NOT EXISTS(SELECT 1 FROM naiyue_sessions p WHERE p.session_id=s.session_id)
+                    OR length(s.agent_id)!=64 OR s.agent_id GLOB '*[^0-9a-f]*'
+                    OR s.child_thread_id!='subagent:'||s.agent_id
+                    OR s.agent_path!='root/'||s.agent||'/'||s.agent_id
+                    OR EXISTS(SELECT 1 FROM naiyue_chat_sync h WHERE h.thread_id=s.child_thread_id
+                        AND (h.session_id!=s.session_id OR h.agent_path!=s.agent_path))
+                    OR EXISTS(SELECT 1 FROM naiyue_sessions p WHERE p.thread_id=s.child_thread_id)
+                    LIMIT 1''').fetchone():
                 raise ValueError('backup_invalid')
         bindings = connection.execute('SELECT singleton,workspace_id,root_path FROM naiyue_workspace').fetchall()
         if len(bindings) > 1:
@@ -80,13 +94,16 @@ def check_snapshot(path):
         references = [('naiyue_sessions', 'thread_id,checkpoint_ns,checkpoint_id')]
         if version >= 7:
             references.append(('naiyue_chat_sync', 'thread_id,checkpoint_ns,checkpoint_id'))
+        if version >= 14:
+            references.append(('naiyue_subagent_instances', 'child_thread_id,checkpoint_ns,checkpoint_id'))
         for table, columns in references:
+            thread_column = 'child_thread_id' if table == 'naiyue_subagent_instances' else 'thread_id'
             if 'checkpoints' not in tables:
                 if connection.execute(f'SELECT 1 FROM {table} WHERE checkpoint_id IS NOT NULL LIMIT 1').fetchone():
                     raise ValueError('backup_invalid')
                 continue
             if connection.execute(f'''SELECT 1 FROM {table} s WHERE s.checkpoint_id IS NOT NULL
-                    AND NOT EXISTS(SELECT 1 FROM checkpoints c WHERE c.thread_id=s.thread_id
+                    AND NOT EXISTS(SELECT 1 FROM checkpoints c WHERE c.thread_id=s.{thread_column}
                     AND c.checkpoint_ns=s.checkpoint_ns AND c.checkpoint_id=s.checkpoint_id) LIMIT 1''').fetchone():
                 raise ValueError('backup_invalid')
         return {'source_schema': version, 'workspace_id': identity}

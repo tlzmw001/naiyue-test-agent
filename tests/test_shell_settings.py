@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 
-def test_shell_defaults_and_configured_schema(tmp_path):
+def test_shell_defaults_and_configured_schema(tmp_path, caplog):
     from naiyue_test_agent.tools import create_builtin_tools
     from naiyue_test_agent.settings import AppSettings, load_settings
     path = tmp_path / 'settings.toml'
@@ -16,18 +16,19 @@ def test_shell_defaults_and_configured_schema(tmp_path):
                     '[tool_output]\nmax_workspace_archive_bytes=10000\n')
     settings = load_settings(path)
     assert settings.tools.bash.environment.values == {'TEST': 'yes'}
-    assert settings.tool_output.max_workspace_archive_bytes == 10000
+    assert 'tool_output' not in settings.model_dump()
+    assert 'tool_output_settings_removed' in caplog.text
     defaults = AppSettings()
     assert defaults.tools.bash.max_output_lines == 2000
     assert defaults.tools.bash.max_output_bytes == 65536
     assert defaults.tools.powershell.execution_policy == 'inherit'
     assert defaults.tools.bash.environment.unset_env == ['BASH_ENV', 'NAIYUE_WEB_TOKEN']
-    specs = {s.tool.name: s for s in create_builtin_tools(settings.tools, process_settings=settings.process, output_settings=settings.tool_output, progress_settings=settings.progress)}
-    assert set(specs) == {'read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent', 'aitest_kit', 'web_search', 'web_fetch'}
+    specs = {s.tool.name: s for s in create_builtin_tools(settings.tools, process_settings=settings.process, shell_task_settings=settings.shell_tasks, progress_settings=settings.progress)}
+    assert set(specs) == {'read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent', 'subagent_list', 'aitest_kit', 'web_search', 'web_fetch', 'task_list', 'task_output', 'task_stop'}
     for name in ('bash', 'powershell'):
         spec = specs[name]
         schema = spec.tool.tool_call_schema.model_json_schema()
-        assert set(schema['properties']) == {'command', 'timeout'}
+        assert set(schema['properties']) == {'command', 'timeout', 'background'}
         assert spec.execution_mode == 'sequential' and spec.side_effects == 'may_mutate'
         assert spec.permissions.default == 'ask' and spec.tool.coroutine is not None
     assert specs['bash'].input_schema.model_json_schema()['properties']['command']['maxLength'] == 20
@@ -56,16 +57,17 @@ def test_invalid_shell_budgets_fallback_keeps_permission_rules(tmp_path, caplog,
     assert 'tool_settings_fallback' in caplog.text
 
 
-def test_workspace_budget_fallback_is_independent(tmp_path, caplog):
+def test_removed_workspace_budget_is_ignored_without_fallback(tmp_path, caplog):
     from naiyue_test_agent.settings import load_settings
     path = tmp_path / 'settings.toml'
     path.write_text('[permissions]\nmode="NoAsk"\n[tools.bash]\nmax_output_bytes=32\n'
                     '[tool_output]\nmax_workspace_archive_bytes=0\n')
     settings = load_settings(path)
     assert settings.tools.bash.max_output_bytes == 32
-    assert settings.tool_output.max_workspace_archive_bytes == 134217728
+    assert 'tool_output' not in settings.model_dump()
     assert settings.permissions.mode == 'NoAsk'
-    assert 'tool_output_settings_fallback' in caplog.text
+    assert 'tool_output_settings_removed' in caplog.text
+    assert 'tool_output_settings_fallback' not in caplog.text
 
 
 def test_environment_inherits_overrides_prepends_and_removes_last(monkeypatch):

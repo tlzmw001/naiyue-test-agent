@@ -95,6 +95,7 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
 
     # This is fixture construction on a CLOSED disposable database, never a product downgrade command.
     with closing(sqlite3.connect(database)) as connection:
+        connection.execute('DROP TABLE naiyue_subagent_instances')
         connection.execute('ALTER TABLE naiyue_model_invocations DROP COLUMN duration_ms')
         connection.execute('UPDATE naiyue_store_info SET version=12')
         connection.commit()
@@ -136,7 +137,8 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
         with patch.object(AutoPermissionReviewer, 'areview', side_effect=AssertionError('Unexpected Auto call')) as auto:
             async with opened(parent, child) as app:
                 current = _facts(database)
-                assert current.pop('naiyue_store_info') == [{'version': 13}]
+                assert current.pop('naiyue_store_info') == [{'version': 14}]
+                assert app._storage.connection.execute('SELECT COUNT(*) FROM naiyue_subagent_instances').fetchone()[0] == 0
                 expected = {key: value for key, value in before.items() if key != 'naiyue_store_info'}
                 assert all(row.pop('duration_ms') is None for row in current['naiyue_model_invocations'])
                 assert current == expected
@@ -153,7 +155,8 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
                 assert summary['status_counts'] == usage['status_counts'] and summary['recorded_calls'] == 2
                 assert await app.alist_diagnostic_runs(normal)
                 await app.arestore_session(delegated)
-                assert await app.aget_chat_subagents(delegated) == children
+                assert await app.aget_chat_subagents(delegated) == [
+                    {**child, 'resume_available': False, 'resume_reason': 'legacy_instance'} for child in children]
                 assert await app.aget_chat_page(delegated, agent_id=child_id, limit=50,
                     body_bytes=16384, preview_chars=2048) == child_page
                 try:

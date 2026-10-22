@@ -34,7 +34,7 @@ export default function Conversation({ messages: sourceMessages, compacted, tool
   messages: MessageRow[]; compacted: boolean; toolStates?: Record<string, ToolState>; stoppingRunId?: string; recovery?: SessionRecovery;
   recovering?: boolean; onRecover?: (action: 'continue' | 'restore_approval') => void;
   agents?: Record<string, AgentView>;
-  stopAgent?: (agentPath: string, originRunId: string) => void;
+  stopAgent?: (agentPath: string, originRunId: string, agentRunId?: string) => void;
   openAgent?: (agentPath: string) => void;
   history?: HistoryControls;
 }) {

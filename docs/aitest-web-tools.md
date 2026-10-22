@@ -24,7 +24,7 @@ prefix_args = ["-m", "aitest_kit.cli"]
 
 Windows可将executable指向测试venv的 `Scripts\python.exe`。或者保留默认 `aitest`，在environment.path_prepend中配置其Scripts/bin目录。
 环境默认继承父进程，支持显式覆盖和最后移除；Web访问令牌默认不传给子进程。
-所有操作继承宿主用户实际权限，尚无沙箱。每次新进程，输出/进度/停止/归档与Shell共享。
+所有操作继承宿主用户实际权限，尚无沙箱。每次新进程，输出/进度/停止/归档与Shell共享。 Spec125-01移除共享归档器的工作区累计额度，AITest仍保留每调用`max_archive_bytes`，raw/text合计；目录固定为`<workspace_root>/naiyue-agent-output/`，不自动删除。AITest的timeout不采用`shell_tasks`执行上限。
 
 AITest任务优先读取项目 `.claude/skills` 的匹配SKILL.md；详细步骤、knowledge_refs、失败分类由技能/项目资料提供。
 没有硬编码子命令工作流，生成pytest始终是输出；不要手改来掩盖用例/生成问题。

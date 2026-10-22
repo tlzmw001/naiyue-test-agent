@@ -21,10 +21,10 @@ def test_bash_has_native_async_entry_and_shared_process_settings(tmp_path, monke
         return original(settings)
     monkeypatch.setattr(module, 'HostProcessRunner', factory)
     settings = AppSettings(process=ProcessSettings(max_pending_output_bytes=4096))
-    bash = next(spec for spec in create_builtin_tools(settings.tools, process_settings=settings.process, output_settings=settings.tool_output, progress_settings=settings.progress) if spec.tool.name == 'bash')
+    bash = next(spec for spec in create_builtin_tools(settings.tools, process_settings=settings.process, shell_task_settings=settings.shell_tasks, progress_settings=settings.progress) if spec.tool.name == 'bash')
     assert bash.tool.coroutine is not None
     assert captured == [settings.process, settings.process]
-    assert set(bash.tool.tool_call_schema.model_json_schema()['properties']) == {'command', 'timeout'}
+    assert set(bash.tool.tool_call_schema.model_json_schema()['properties']) == {'command', 'timeout', 'background'}
 
 
 def test_async_bash_timeout_is_tool_error_and_next_model_runs(monkeypatch, tmp_path):

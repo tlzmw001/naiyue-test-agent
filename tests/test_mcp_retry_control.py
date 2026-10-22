@@ -13,7 +13,6 @@ from naiyue_test_agent.mcp_client.settings import MCPServerSettings
 from naiyue_test_agent.mcp_client.tools import create_mcp_tool
 from naiyue_test_agent.tools.permissions import execution_environment
 from naiyue_test_agent.tools.retry_settings import ToolRetrySettings
-from naiyue_test_agent.tools.settings import ToolOutputSettings
 
 
 @pytest.mark.parametrize('stage', ['preflight', 'retry_wait'])
@@ -37,7 +36,7 @@ def test_graph_control_is_not_converted_or_retried(monkeypatch, stage, fault):
         resources = SimpleNamespace(retry_settings=ToolRetrySettings(initial_delay_seconds=0),
                                     tool_unavailable=lambda *_: None)
         spec = create_mcp_tool(borrow, MCPServerSettings(transport='stdio', command='synthetic'),
-                              'config', catalog, tool, ToolOutputSettings(), resources=resources)
+                              'config', catalog, tool, resources=resources)
         subject = {'operation': 'mcp_call', 'mcp': spec.permissions.identity(),
                    'args': {}, 'execution_environment': execution_environment()}
         runtime = SimpleNamespace(context={'session_id': 's', '_execution_permit': {
@@ -77,7 +76,7 @@ def test_deadline_includes_resource_wait_and_settles_before_return(monkeypatch, 
             attempt_timeout_seconds=.01 if deadline == 'attempt' else 30), tool_unavailable=lambda *_: None)
         spec = create_mcp_tool(borrow, MCPServerSettings(transport='stdio', command='synthetic',
             call_timeout_seconds=.01 if deadline == 'total' else 0),
-            'config', catalog, tool, ToolOutputSettings(), resources=resources)
+            'config', catalog, tool, resources=resources)
         subject = {'operation': 'mcp_call', 'mcp': spec.permissions.identity(),
                    'args': {}, 'execution_environment': execution_environment()}
         runtime = SimpleNamespace(context={'session_id': 's', '_execution_permit': {

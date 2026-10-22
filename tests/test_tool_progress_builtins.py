@@ -26,7 +26,7 @@ def test_each_builtin_reports_actual_work_with_one_configured_budget(monkeypatch
             return ProcessOutcome(0, 'exited', True, True, True, True, 0)
         monkeypatch.setattr(HostProcessRunner, 'run', run)
     settings = AppSettings.model_validate({'progress': {'min_interval_milliseconds': 0, 'max_text_bytes': 6}})
-    spec = next(item for item in tools.create_builtin_tools(settings.tools, process_settings=settings.process, output_settings=settings.tool_output, progress_settings=settings.progress) if item.tool.name == name)
+    spec = next(item for item in tools.create_builtin_tools(settings.tools, process_settings=settings.process, shell_task_settings=settings.shell_tasks, progress_settings=settings.progress) if item.tool.name == name)
     args = {'read': {'path': target.name}, 'ls': {}, 'find': {'pattern': '*.txt'},
             'grep': {'pattern': 'PRIVATE', 'path': target.name},
             'write': {'path': target.name, 'content': 'PRIVATE_NEW_BODY'},

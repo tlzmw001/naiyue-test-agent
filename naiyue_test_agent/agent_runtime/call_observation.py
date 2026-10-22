@@ -158,6 +158,15 @@ class _ModelSelectionMiddleware(AgentMiddleware):
             observe(turns, turns.accept, message)
         if context_operations is not None:
             observe(context_operations, context_operations.model_call_accepted, call_id)
+        prepared = context.get(PREPARED_REQUEST_KEY, {})
+        notices, tasks = prepared.get('background_notices'), context.get('_process_tasks')
+        control = context.get('_run_control')
+        if notices is not None and tasks is not None and not (control is not None and control.requested):
+            try:
+                tasks.acknowledge_notices(notices, session_id=context['session_id'],
+                    workspace_root=context.get('workspace_root'), run_id=context['run_id'])
+            except Exception as error:
+                logger.warning('background_notice_ack_failed error_type=%s', safe_error_type(error))
         return response
 
     def _failed(self, context, error, model_id, call_id):

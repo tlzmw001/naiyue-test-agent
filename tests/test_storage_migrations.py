@@ -11,7 +11,7 @@ from naiyue_test_agent.storage_backup import list_backups, validate_backup
 from tests.storage_backup_fixture import artifact, closed_store
 
 
-@pytest.mark.parametrize('version', range(4, 13))
+@pytest.mark.parametrize('version', range(4, 14))
 def test_existing_store_is_backed_up_before_any_migration(tmp_path, monkeypatch, version):
     from naiyue_test_agent.application import storage_migrations
     database, root, identity = closed_store(tmp_path, version=version)
@@ -25,7 +25,7 @@ def test_existing_store_is_backed_up_before_any_migration(tmp_path, monkeypatch,
         return result
     monkeypatch.setattr(storage_migrations, 'create_backup', backup)
     with SessionStorage(database) as storage:
-        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 13
+        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 14
         assert storage.get('S')['state'] == 'running'
     assert len(observed) == 1 and observed[0]['source_schema'] == version
     snapshot = artifact(database, observed[0]['backup_id']) / 'database.sqlite'
@@ -44,7 +44,7 @@ def test_new_and_current_stores_do_not_backup_but_keep_recovery_initialization(t
         run = storage.connection.execute('SELECT capture_incomplete,reason FROM naiyue_model_usage_runs').fetchone()
         assert tuple(run) == (1, 'interrupted_execution')
     with SessionStorage(tmp_path / 'new.sqlite') as storage:
-        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 13
+        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 14
     assert list_backups(database) == []
 
 
@@ -63,7 +63,7 @@ def test_backup_failure_stops_migrations_releases_lock_and_keeps_original_cause(
             SessionStorage(database)
     error = caught.value
     assert error.__cause__ is original
-    assert (error.source_schema, error.current_schema, error.target_schema, error.phase, error.backup_id) == (6, 6, 13, 'backup', None)
+    assert (error.source_schema, error.current_schema, error.target_schema, error.phase, error.backup_id) == (6, 6, 14, 'backup', None)
     with closing(sqlite3.connect(database)) as connection:
         assert connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 6
         assert not connection.execute("SELECT 1 FROM sqlite_master WHERE name='naiyue_chat_sync'").fetchone()
@@ -89,7 +89,7 @@ def test_middle_failure_rolls_back_only_its_step_and_next_start_resumes_committe
             SessionStorage(database)
     error = caught.value
     assert error.__cause__ is original
-    assert (error.source_schema, error.current_schema, error.target_schema, error.phase) == (6, 7, 13, 'schema_8')
+    assert (error.source_schema, error.current_schema, error.target_schema, error.phase) == (6, 7, 14, 'schema_8')
     assert validate_backup(database, error.backup_id)['source_schema'] == 6
     with closing(sqlite3.connect(database)) as connection:
         assert connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 7
@@ -116,14 +116,14 @@ def test_version_read_failure_after_commit_keeps_backup_phase_and_primary_error(
             SessionStorage(database)
     error = caught.value
     assert error.__cause__ is original
-    assert (error.source_schema, error.current_schema, error.target_schema, error.phase) == (6, None, 13, 'schema_8')
+    assert (error.source_schema, error.current_schema, error.target_schema, error.phase) == (6, None, 14, 'schema_8')
     assert validate_backup(database, error.backup_id)['source_schema'] == 6
     with closing(sqlite3.connect(database)) as connection:
         assert connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 7
     assert 'migration_version_unavailable' in caplog.text and 'PRIVATE-version-read' not in caplog.text
 
 
-@pytest.mark.parametrize('version', [3, 14, 'unknown'])
+@pytest.mark.parametrize('version', [3, 15, 'unknown'])
 def test_unknown_version_is_rejected_before_backup_or_changes(tmp_path, monkeypatch, version):
     from naiyue_test_agent.application import storage_migrations
     database, _, _ = closed_store(tmp_path)

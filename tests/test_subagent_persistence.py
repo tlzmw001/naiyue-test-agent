@@ -1,5 +1,6 @@
 """Child checkpoint failure is local; root persistence remains mandatory."""
 
+import json
 import asyncio
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
@@ -73,7 +74,7 @@ async def test_failed_child_save_does_not_stop_sibling_pending_approval(monkeypa
         result = await asyncio.wait_for(task, 5)
         reports = {m.tool_call_id: m for m in result['messages'] if isinstance(m, ToolMessage)}
         assert reports['outer-A'].status == 'error' and 'checkpoint' in reports['outer-A'].content.lower()
-        assert reports['outer-B'].content == 'B report' and effects == [('probe', 'B')]
+        assert json.loads(reports['outer-B'].content)['report'] == 'B report' and effects == [('probe', 'B')]
         assert result['messages'][-1].content == 'root continued'
         assert not any(e.data.status == 'completed' for e in events if e.source and
                        e.source.agent_path == a['agent_path'] and e.event_type == 'run_finished')

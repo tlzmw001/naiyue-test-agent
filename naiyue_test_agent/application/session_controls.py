@@ -74,7 +74,7 @@ class AgentSessionControls:
         if control:
             observe(control, control.flush)
 
-    def request_scope_stop(self, *, run_id=None, agent_path='root', reason='user'):
+    def request_scope_stop(self, *, run_id=None, agent_path='root', reason='user', agent_run_id=None, approval_batch_id=None):
         targets = []
         with self._lock:
             row = self._run
@@ -108,6 +108,11 @@ class AgentSessionControls:
                     if reason != 'user':
                         return []
                     raise SessionBusyError('Subagent is no longer accepting stop requests')
+                if agent_run_id is not None and instance['run_id'] != agent_run_id:
+                    raise SessionBusyError('Stop request targets a different child execution')
+                if approval_batch_id is not None and (instance.get('approval') is None
+                        or instance['approval'].approval_batch_id != approval_batch_id):
+                    raise SessionBusyError('Stop request targets a different child approval')
                 candidates = [instance]
             else:
                 candidates = [instance for instance in row.subagent_instances.values()
@@ -239,7 +244,7 @@ class SessionControlMixin:
                 persistence=self._persistence, invoke_subagent=self.ainvoke_subagent,
                 registered_subagents=self.get_registered_subagents, progress_settings=self._progress_settings,
                 subagent_result_settings=getattr(self, '_subagent_result_settings', None),
-                mcp_resources=self.mcp_resources)
+                mcp_resources=self.mcp_resources, process_tasks=self.background_tasks)
             self._sessions[session_id] = session
         try:
             if self._persistence is not None:
@@ -284,7 +289,7 @@ class SessionControlMixin:
                 persistence=self._persistence, invoke_subagent=self.ainvoke_subagent,
                 registered_subagents=self.get_registered_subagents, progress_settings=self._progress_settings,
                 subagent_result_settings=getattr(self, '_subagent_result_settings', None),
-                mcp_resources=self.mcp_resources)
+                mcp_resources=self.mcp_resources, process_tasks=self.background_tasks)
 
     @contextmanager
     def deletion_guard(self, session_id):

@@ -14,7 +14,7 @@ from .processes import HostProcessRunner, ProcessRequest
 from .process_execution import execute_process_request
 from .registry import ToolSpec
 from .schemas import ExecutionTimeout, build_tool_schemas
-from .settings import AITestSettings, ToolOutputSettings
+from .settings import AITestSettings
 from .shell import build_environment
 
 
@@ -46,7 +46,7 @@ class _AITestInput(BaseModel):
         return values
 
 
-def create_aitest_kit_tool(*, settings=None, process_settings=None, output_settings=None, progress_settings=None):
+def create_aitest_kit_tool(*, settings=None, process_settings=None, progress_settings=None):
     settings = settings or AITestSettings()
     public, execution = build_tool_schemas('AITestInput', _AITestInput,
         args=(list[str], Field(min_length=1, max_length=settings.max_args)))
@@ -67,7 +67,7 @@ def create_aitest_kit_tool(*, settings=None, process_settings=None, output_setti
         request = ProcessRequest([executable, *settings.prefix_args, *args], root, environment,
             timeout or None, merge_output=True, eof_policy='shell', execution_environment=execution_environment())
         return await execute_process_request(request, runtime, name='aitest_kit', label='AITest',
-            settings=settings, runner=runner, output_settings=output_settings or ToolOutputSettings(),
+            settings=settings, runner=runner,
             progress_settings=progress_settings)
 
     item = StructuredTool.from_function(coroutine=execute, name='aitest_kit', args_schema=execution,

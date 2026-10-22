@@ -1,6 +1,7 @@
 """Multi-session registration, shared definitions and root run admission."""
 
 from threading import Lock
+from contextlib import ExitStack
 from uuid import uuid4
 
 from naiyue_test_agent.tools.permission_rules import PermissionSettings
@@ -17,12 +18,14 @@ from naiyue_test_agent.agent_runtime.model_usage_observation import install_mode
 from .failure_policy import ApplicationErrorPolicy
 from .errors import SessionBusyError
 from .agent_session import AgentSession
+from .background_tasks import BackgroundProcessManager
+from naiyue_test_agent.tools.subagent import subagent_selection
 
 
 class SessionService(SessionControlMixin, SessionSubagentControls):
     """Locate sessions and coordinate admission; each session drives its run."""
 
-    def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None, max_active_runs=10, mcp_resources=None, http_attempt_limit=None):
+    def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None, max_active_runs=10, mcp_resources=None, http_attempt_limit=None, shell_task_settings=None):
         if type(max_active_runs) is not int or max_active_runs <= 0:
             raise ValueError('Root run capacity must be a positive integer')
         self._max_active_runs = max_active_runs
@@ -32,9 +35,10 @@ class SessionService(SessionControlMixin, SessionSubagentControls):
         install_model_usage_callback(catalog, http_attempt_limit=http_attempt_limit)
         self._permission_reviewer = AutoPermissionReviewer.from_catalog(catalog, self._permission_settings.auto)
         self._catalog = catalog
+        self.background_tasks = BackgroundProcessManager(shell_task_settings)
         self._tool_registry = tool_registry if tool_registry is not None else ToolRegistry()
         initial = self._tool_registry.names() if initial_active_tools is None else initial_active_tools
-        self._initial_active_tools = tuple(spec.tool.name for spec in self._tool_registry.select(initial))
+        self._initial_active_tools = tuple(spec.tool.name for spec in self._tool_registry.select(subagent_selection(initial)))
         self._sessions: dict[str, AgentSession] = {}
         self._subagents: dict[str, dict] = {}
         self._lock = Lock()
@@ -119,6 +123,15 @@ class SessionService(SessionControlMixin, SessionSubagentControls):
         for session in sessions:
             session.request_scope_stop(reason='close')
 
+    def output_guard(self, root):
+        stack = ExitStack()
+        with self._lock:
+            if any(session.is_busy() and session.snapshot_for_context()['workspace_root'] == root
+                   for session in self._sessions.values()):
+                raise ValueError('Workspace has an active run')
+            stack.enter_context(self.background_tasks.output_guard(root))
+        return stack
+
     def configure_error_classifiers(self, *, model_id=None, model=None, runtime=None, application=None):
         runtime = normalize_classifiers(runtime) if runtime is not None else None
         application = normalize_classifiers(application) if application is not None else None
@@ -144,13 +157,15 @@ class SessionService(SessionControlMixin, SessionSubagentControls):
     def resolve_request_configuration(self, session_id: str, agent_path='root'):
         return self.require(session_id).resolve_request_configuration(agent_path)
 
-    def resolve_prompt_parts(self, session_id):
-        return self.require(session_id).resolve_prompt_parts()
+    def resolve_prompt_parts(self, session_id, agent_path='root'):
+        return self.require(session_id).resolve_prompt_parts(agent_path)
 
 
     def _admit(self, session_id, run_id, mode, *, decisions=None, remember_approved=None, stop=False, expected_conversation_revision=None):
         with self._lock:
             session = self._sessions[session_id]
+            if self.background_tasks.is_cleaning(session.snapshot_for_context()['workspace_root']):
+                raise SessionBusyError('Workspace output cleanup is active')
             run_id = run_id or uuid4().hex
             observation = RunObservation(self._events.publisher(session_id, run_id), mode,
                 progress_settings=self._progress_settings,

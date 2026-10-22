@@ -1,5 +1,7 @@
 # Spec095：子智能体侧栏
 
+2026-10-22版本入口：本篇保留原前台一层/一次委派的历史合同；当前已由[Spec126](126-subagent-continuation.md)扩展为可按ID继续的稳定实例，max_model_calls按本次委派计数。用户只启用subagent，配套只读list；侧栏多次报告与当前执行/审批绑定见[03](126-03-subagent-discovery-delivery.md)，共享安装验收见[04](126-04-subagent-acceptance.md)。用户直聊仍不提供。
+
 状态：已实现，本机确定性验证通过。承接 Spec086、094；用户 2026-10-17 批准本片实现。
 
 ## 目标与界面合同

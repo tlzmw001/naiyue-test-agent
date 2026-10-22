@@ -91,6 +91,9 @@ async def collect_chat_updates(agent, storage, session_id, *, snapshot=None, pre
         heads = {item['thread_id']: item for item in await run_blocking(storage.chat_heads, session_id)}
         prior = {item.thread_id: item for item in previous}
         scopes = {row['thread_id']: 'root'}
+        registered = await run_blocking(storage._read, '''SELECT session_id,agent_id,agent,child_thread_id,agent_path FROM naiyue_subagent_instances
+            WHERE session_id=? AND last_parent_run_id=?''', (session_id, row['run_id']))
+        scopes.update({item['child_thread_id']: item['agent_path'] for item in registered})
         updates = []
         queue = list(scopes.items())
         for thread_id, agent_path in queue:
@@ -137,7 +140,7 @@ async def collect_chat_updates(agent, storage, session_id, *, snapshot=None, pre
                         'message_type': message.type, 'parent_message_id': parent,
                     }
                 if agent_path == 'root':
-                    for child in subagent_records(session_id, messages):
+                    for child in subagent_records(session_id, messages, owned_instances={item['agent_id']: item for item in registered}):
                         key = 'subagent:' + child['agent_id']
                         if key not in scopes:
                             scopes[key] = child['agent_path']

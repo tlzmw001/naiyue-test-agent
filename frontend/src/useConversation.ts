@@ -4,6 +4,7 @@ import { subscribeRun } from './runSubscription';
 import type { ApprovalBatch, PermissionMode, RunView, SessionView, ThinkingOptions, ToolDecision } from './types';
 import { useSessions } from './useSessions';
 import { useMessageHistory } from './useMessageHistory';
+import { stopObservedSubagent } from './subagentControls';
 
 export function useConversation(api: WebApi) {
   const [models, setModels] = useState<string[]>([]);
@@ -451,18 +452,17 @@ export function useConversation(api: WebApi) {
     } finally { busySend.current = false; setSubmitting(false); }
   }
 
-  async function stopAgent(agentPath: string, originRunId: string) {
-    const live = currentRun.current, sid = selected.current;
-    if (!live || live.status !== 'running' || live.run_id !== originRunId) return;
+  async function stopAgent(agentPath: string, originRunId: string, agentRunId?: string, approvalBatchId?: string) {
+    const sid = selected.current;
     try {
-      await api.control(live.run_id, 'stop', undefined, agentPath);
+      if (!await stopObservedSubagent(api, currentRun.current, agentPath, originRunId, agentRunId, approvalBatchId)) return;
       if (selected.current === sid) setNotice('已请求停止该子任务，其他子任务继续。');
       await refreshSession(sid);
     } catch (error) { if (selected.current === sid) setNotice(errorText(error)); }
   }
 
   async function stopApproval(batch: ApprovalBatch) {
-    if (batch.kind === 'live_child') return stopAgent(batch.agent_path, batch.origin_run_id);
+    if (batch.kind === 'live_child') return stopAgent(batch.agent_path, batch.origin_run_id, undefined, batch.approval_batch_id);
     if (busySend.current || selectionPending.current || !session) return;
     const sid = session.session_id;
     busySend.current = true;

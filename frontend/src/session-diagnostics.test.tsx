@@ -26,7 +26,7 @@ function detail(rid = 'r', sid = 's', next: number | null = null): any {
 it('opens the fourth tab lazily and cycles four keyboard targets independently of context errors', async () => {
   const api = new WebApi('test');
   const read = vi.spyOn(api, 'diagnosticRuns').mockResolvedValue(list());
-  render(<ContextPanel loading={false} error="context unavailable" retry={vi.fn()} close={vi.fn()} usageContent={null}
+  render(<ContextPanel loading={false} error="context unavailable" retry={vi.fn()} usageContent={null}
     diagnosticContent={<SessionDiagnostics api={api} sessionId="s" run={null} />} />);
   expect(read).not.toHaveBeenCalled();
   fireEvent.keyDown(screen.getByRole('tab', { name: '当前预估' }), { key: 'End' });

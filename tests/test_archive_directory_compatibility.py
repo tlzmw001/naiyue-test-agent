@@ -7,14 +7,14 @@ import stat
 import pytest
 
 from naiyue_test_agent.tools.output import ShellOutputArchive, _directory, preview_shell_outputs, clear_shell_outputs
-from naiyue_test_agent.tools.settings import BashSettings, ToolOutputSettings
+from naiyue_test_agent.tools.settings import BashSettings
 
 
 def test_owned_0755_archive_can_save_read_and_clear(tmp_path):
     directory = _directory(tmp_path, create=True)
     directory.chmod(0o755)
     original_mode = stat.S_IMODE(directory.stat().st_mode)
-    archive = ShellOutputArchive(tmp_path, BashSettings(), ToolOutputSettings())
+    archive = ShellOutputArchive(tmp_path, BashSettings())
     archive.record(b'hello', activate=True)
     result = archive.finish()
     assert result.complete

@@ -1,5 +1,6 @@
 """A live child approval uses the parent's existing HTTP job and event stream."""
 
+import json
 import asyncio
 from uuid import uuid4
 
@@ -69,7 +70,7 @@ def test_live_child_approval_is_busy_idempotent_and_keeps_one_sse(monkeypatch, t
             assert any(event['source'] and event['event_type'] == 'tool_call_started' for event in events)
             final = (await client.get(f'/api/sessions/{sid}')).json()
             assert not final['busy'] and final['approval_batches'] == [] and final['live']['status'] == 'completed'
-            assert [m['content'] for m in final['messages'] if m['type'] == 'tool'] == ['child report']
+            assert [json.loads(m['content'])['report'] for m in final['messages'] if m['type'] == 'tool'] == ['child report']
             assert next(m for m in model.seen[2] if isinstance(m, ToolMessage)).content == 'CHILD_ONLY_FILE'
             assert len(web.state.service.application._sessions.resolve_permission_context(sid)['session_allow']) == 1
     asyncio.run(scenario())

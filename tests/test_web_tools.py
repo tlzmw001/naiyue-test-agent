@@ -154,14 +154,14 @@ def test_web_bash_opt_in_approval_and_safe_command(monkeypatch, tmp_path):
             assert 'bash' in [spec.tool.name for spec in backend.get_registered_tools()]
             assert 'bash' not in backend.get_active_tools(sid)
             assert 'powershell' in [spec.tool.name for spec in backend.get_registered_tools()]
-            assert set(backend.get_active_tools(sid)) == {'read', 'ls', 'find', 'grep', 'write', 'edit', 'subagent', 'aitest_kit', 'web_search', 'web_fetch'}
+            assert set(backend.get_active_tools(sid)) == {'read', 'ls', 'find', 'grep', 'write', 'edit', 'subagent', 'aitest_kit', 'web_search', 'web_fetch', 'task_list', 'task_output', 'task_stop'}
             await backend.aset_active_tools(sid, ['bash'])
             assert (await client.get(f'/api/sessions/{sid}')).json()['active_tools'] == ['bash']
             origin = (await client.post(f'/api/sessions/{sid}/runs', json=request('use shell'))).json()['run_id']
             await client.get(f'/api/runs/{origin}/events')
             value = (await client.get(f'/api/sessions/{sid}')).json()
             batch, = value['approval_batches']
-            assert batch['items'][0]['target'] == 'printf WEB-BASH'
+            assert batch['items'][0]['target'] == '[automatic background after 120s; original execution deadline applies] printf WEB-BASH'
             response = await client.post(f'/api/sessions/{sid}/approvals', json=approval_request(batch, ['approve']))
             response.raise_for_status()
             await client.get(f'/api/runs/{response.json()["run_id"]}/events')

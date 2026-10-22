@@ -1,5 +1,6 @@
 """Result budgets, compilation, failure identity and cancellation boundaries."""
 
+import json
 import asyncio
 
 import pytest
@@ -17,8 +18,8 @@ from test_subagent_execution import ChildModel, delegated_app, record_instances,
 
 @pytest.mark.parametrize('text, settings, expected', [
     ('a\nb\nc\n', {'max_result_lines': 2}, 'a\nb\n'),
-    ('中中\nend', {'max_result_bytes': 4}, '中'),
-    ('one\nlonger\nlast', {'max_result_bytes': 8}, 'one\n'),
+    ('中中\nend', {'max_result_bytes': 151}, '中'),
+    ('one\nlonger\nlast', {'max_result_bytes': 155}, 'one\n'),
 ])
 @async_test
 async def test_result_budget_from_settings_preserves_prefix_and_marks_truncation(monkeypatch, text, settings, expected):
@@ -27,8 +28,11 @@ async def test_result_budget_from_settings_preserves_prefix_and_marks_truncation
     app, _ = await delegated_app(monkeypatch, child, settings=configured)
     result = await app.arun(await app.acreate_session('A'), [('user', 'report')])
     feedback = next(message for message in result['messages'] if isinstance(message, ToolMessage))
-    assert feedback.content.startswith(expected + '\n[subagent:')
-    assert 'truncated' in feedback.content and feedback.artifact['truncated'] is True
+    envelope = json.loads(feedback.content)
+    assert envelope['report'] == expected
+    assert envelope['truncated'] is True and feedback.artifact['truncated'] is True
+    assert envelope['agent_id'] == feedback.artifact['agent_id']
+    assert len(feedback.content.encode('utf-8')) <= configured.tools.subagent.max_result_bytes
     assert len(child.seen) == 1
 
 
@@ -39,7 +43,7 @@ async def test_content_blocks_and_usage_are_projected_without_thinking_or_full_h
     app, _ = await delegated_app(monkeypatch, child)
     result = await app.arun(await app.acreate_session('A'), [('user', 'report')])
     feedback = next(message for message in result['messages'] if isinstance(message, ToolMessage))
-    assert feedback.content == 'report' and 'PRIVATE_THINKING' not in str(feedback.artifact)
+    assert json.loads(feedback.content)['report'] == 'report' and 'PRIVATE_THINKING' not in str(feedback.artifact)
     assert feedback.artifact['usage']['total_tokens'] == 5 and 'messages' not in feedback.artifact
 
 

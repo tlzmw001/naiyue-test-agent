@@ -193,17 +193,14 @@ class AITestSettings(ProcessToolSettings):
         return values
 
 
-class ToolOutputSettings(BaseModel):
-    model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
-
-    max_workspace_archive_bytes: int = Field(default=134217728, gt=0)
-
-
 class SubAgentOutputSettings(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
 
     max_result_lines: int = Field(default=2000, gt=0)
     max_result_bytes: int = Field(default=65536, gt=0)
+    max_list_items: int = Field(default=20, gt=0)
+    max_list_bytes: int = Field(default=8192, gt=0)
+    task_preview_chars: int = Field(default=160, gt=0)
 
 
 class BuiltinToolSettings(BaseModel):

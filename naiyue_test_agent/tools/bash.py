@@ -36,5 +36,5 @@ class BashAdapter(ShellAdapter):
         return [executable, '--noprofile', '--norc', '-c', command]
 
 
-def create_session_bash_tool(*, process_settings=None, settings=None, output_settings=None, progress_settings=None):
-    return build_shell_tool(BashAdapter(), settings or BashSettings(), process_settings, output_settings, progress_settings)
+def create_session_bash_tool(*, process_settings=None, settings=None, shell_task_settings=None, progress_settings=None):
+    return build_shell_tool(BashAdapter(), settings or BashSettings(), process_settings, shell_task_settings, progress_settings)

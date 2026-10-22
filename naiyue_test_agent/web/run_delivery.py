@@ -215,7 +215,9 @@ class RunDelivery:
                 raise WebError('stale_run')
             try:
                 if body.kind == 'stop':
-                    retained = self.application.request_stop(job.session_id, run_id=run_id, agent_path=body.agent_path)
+                    options = {key: value for key, value in (('agent_run_id', body.agent_run_id),
+                        ('approval_batch_id', body.approval_batch_id)) if value is not None}
+                    retained = self.application.request_stop(job.session_id, run_id=run_id, agent_path=body.agent_path, **options)
                     if body.agent_path == 'root':
                         with job.lock:
                             job.retained = list(retained)

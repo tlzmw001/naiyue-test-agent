@@ -41,6 +41,18 @@ def test_new_thread_does_not_inherit_another_runs_services():
     assert values == [None]
 
 
+def test_background_notice_projection_is_root_and_exact_scope_only(tmp_path):
+    from naiyue_test_agent.tools.background_tasks import BackgroundNoticeSnapshot
+    notice = BackgroundNoticeSnapshot('s', tmp_path, 'r', (('a' * 32, 1),), 'status')
+    with bind_run_services(RunServices(background_notices=notice)):
+        assert make_invocation_context('s', 'r', tmp_path, None, ())['_background_notices'] is notice
+        for sid, run, root, path in [('other', 'r', tmp_path, 'root'), ('s', 'other', tmp_path, 'root'),
+                ('s', 'r', tmp_path / 'other', 'root'), ('s', 'r', tmp_path, 'root/tester/1')]:
+            assert '_background_notices' not in make_invocation_context(sid, run, root, None, (), agent_path=path)
+    with bind_run_services(RunServices(publisher=RunEventPublisher('foreign', 'r', ()), background_notices=notice)):
+        assert '_background_notices' not in make_invocation_context('s', 'r', tmp_path, None, ())
+
+
 def test_session_contract_types_are_shared_without_application_imports():
     from naiyue_test_agent.contracts import session_events
     from naiyue_test_agent.contracts.failures import RunFailureData

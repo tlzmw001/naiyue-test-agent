@@ -35,10 +35,10 @@ export function useSubagents(api: WebApi, sessionId: string, list: SubagentList,
     }).catch(error => { if (current) setDetailError(errorText(error)); })
       .finally(() => { if (current) setLoadingDetail(false); });
     return () => { current = false; };
-  }, [api, sessionId, selected, currentRun?.done, selectedLive?.status, selectedLive?.snapshot_sequence, hasLiveMessages, revision]);
+  }, [api, sessionId, selected, currentRun?.done, selectedLive?.source.agent_run_id, selectedLive?.status, selectedLive?.snapshot_sequence, hasLiveMessages, revision]);
 
   const stored = detail?.sid === sessionId && detail.value.agent_id === selected ? detail.value : undefined;
-  const record = stored ?? list.records.find(row => row.agent_id === selected);
+  const record = list.records.find(row => row.agent_id === selected) ?? stored;
   const live = record ? currentRun?.agents?.[record.agent_path] : undefined;
   useEffect(() => {
     if (selected && live?.messages) history.merge(live.messages.filter(row => !row.content_unavailable));

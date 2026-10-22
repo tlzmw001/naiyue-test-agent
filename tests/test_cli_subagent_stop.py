@@ -30,7 +30,7 @@ def test_interactive_quit_stops_running_child_before_joining_worker(monkeypatch,
     root = StreamingToolModel(replies=[call('subagent', {'agent': 'tester', 'task': 'check'}, 'outer')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
     monkeypatch.setattr(cli, 'load_settings', lambda: AppSettings(subagents=(role(),)))
-    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _, *, process_settings, output_settings, progress_settings, network_settings, retry_settings: [create_subagent_tool(), definition()])
+    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _, *, process_settings, shell_task_settings, progress_settings, network_settings, retry_settings: [create_subagent_tool(), definition()])
     build = cli.build_local_application
     def factory(*args, **kwargs):
         app = build(*args, **kwargs)

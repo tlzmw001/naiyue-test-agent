@@ -73,6 +73,8 @@ class WebService:
         roles = self.application.get_registered_subagents()
         tools = []
         for spec in self.application.get_registered_tools():
+            if spec.tool.name == 'subagent_list':
+                continue
             row = {'name': spec.tool.name, 'description': spec.tool.description}
             source = permission_source(spec.permissions)
             if source is not None:
@@ -341,7 +343,8 @@ class WebService:
             if latest:
                 job = self.delivery.get(latest)
                 with job.lock:
-                    for path, agent in job.agents.items():
+                    agents = job.agents if job.conversation_revision == value.get('conversation_revision', 0) else {}
+                    for path, agent in agents.items():
                         source = agent['source']
                         parent = next((m for m in reversed(job.projection.messages)
                             if m['id'] == agent.get('parent_batch_id')), {})
@@ -350,6 +353,8 @@ class WebService:
                             'agent': path.split('/')[1], 'task': call.get('args', {}).get('task', records.get(path, {}).get('task', '')),
                             'tool_call_id': source['parent_tool_call_id'], 'parent_batch_id': agent.get('parent_batch_id'),
                             'status': agent['status']}
+                        if agent['status'] in ('running', 'stopping', 'awaiting_approval', 'interrupted'):
+                            records[path].update(resume_available=False, resume_reason=agent['status'])
             result = list(records.values())
             if encoded_size(result) > self.settings.max_frame_bytes:
                 raise WebError('view_too_large')

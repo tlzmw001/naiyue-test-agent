@@ -1,7 +1,7 @@
 """Bounded reads of archived facts through the owning SessionStorage connection."""
 
 from .errors import SessionPersistenceError
-from .subagent_history import subagent_identity
+from .subagent_history import subagent_target
 
 
 def migrate_chat_queries(connection):
@@ -114,15 +114,20 @@ def approval_seed(storage, session_id, thread_id, batch_id):
 
 def subagent_records(storage, session_id, root_thread):
     calls = storage._read('''SELECT m.message_id,json_extract(c.value,'$.id') AS call_id,
-        json_extract(c.value,'$.args.agent') AS agent,json_extract(c.value,'$.args.task') AS task
+        json_extract(c.value,'$.args.agent') AS agent,json_extract(c.value,'$.args.task') AS task,
+        json_extract(c.value,'$.args.agent_id') AS target_id
         FROM naiyue_chat_messages m,json_each(m.body_json,'$.data.tool_calls') c
         WHERE m.session_id=? AND m.thread_id=? AND m.message_type='ai'
         AND json_extract(c.value,'$.name')='subagent' ORDER BY m.sequence''', (session_id, root_thread))
-    records = []
+    records = {}
+    owned = storage.get_subagent_references(session_id)
     for call in calls:
         if not all(isinstance(call[k], str) for k in ('call_id', 'agent', 'task')):
             continue
-        identity = subagent_identity(session_id, call['message_id'], call['call_id'])
+        identity = subagent_target(session_id, call['message_id'], call['call_id'], call['target_id'],
+            agent=call['agent'], owned_instances=owned)
+        if identity is None:
+            continue
         results = storage._read('''SELECT json_extract(body_json,'$.data.status') AS status FROM naiyue_chat_messages
             WHERE session_id=? AND thread_id=? AND parent_message_id=?
             AND json_extract(body_json,'$.data.tool_call_id')=? ORDER BY sequence DESC LIMIT 1''',
@@ -132,6 +137,6 @@ def subagent_records(storage, session_id, root_thread):
         status = 'unconfirmed' if not results else 'failed' if results[0]['status'] == 'error' else 'completed'
         if heads and heads[0]['stopped']:
             status = 'stopped'
-        records.append(dict(agent_id=identity, agent_path=f'root/{call["agent"]}/{identity}', agent=call['agent'],
-            task=call['task'], tool_call_id=call['call_id'], parent_batch_id=call['message_id'], status=status))
-    return records
+        records[identity] = dict(agent_id=identity, agent_path=f'root/{call["agent"]}/{identity}', agent=call['agent'],
+            task=call['task'], tool_call_id=call['call_id'], parent_batch_id=call['message_id'], status=status)
+    return list(records.values())

@@ -1,5 +1,6 @@
 """HTTP scope and paused-root stops preserve admission, correlation and one producer."""
 
+import json
 import asyncio
 from uuid import uuid4
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -31,10 +32,14 @@ def test_http_stop_only_a_while_b_waits_in_model_and_reject_stale_child_approval
             try:
                 await asyncio.wait_for(notified.wait(), 5); await asyncio.wait_for(entered.wait(), 5)
                 batch, = (await client.get(f'/api/sessions/{sid}')).json()['approval_batches']
-                body = {'request_id': str(uuid4()), 'kind': 'stop', 'agent_path': batch['agent_path']}
+                source = web.state.delivery.get(run).agents[batch['agent_path']]['source']
+                body = {'request_id': str(uuid4()), 'kind': 'stop', 'agent_path': batch['agent_path'],
+                        'agent_run_id': source['agent_run_id'], 'approval_batch_id': batch['approval_batch_id']}
                 endpoint = f'/api/runs/{run}/controls'
                 assert (await client.post(endpoint, json=body, headers={'Authorization': ''})).status_code == 401
                 assert (await client.post(endpoint, json={**body, 'agent_path': 'root/tester/other'})).status_code == 409
+                assert (await client.post(endpoint, json={**body, 'agent_run_id': 'stale'})).status_code == 409
+                assert (await client.post(endpoint, json={**body, 'approval_batch_id': 'stale'})).status_code == 409
                 assert (await client.post(endpoint, json={**body, 'kind': 'steering', 'text': 'x'})).status_code == 422
                 receipt = await client.post(endpoint, json=body)
                 assert receipt.status_code == 202 and receipt.json()['retained'] == []
@@ -49,7 +54,7 @@ def test_http_stop_only_a_while_b_waits_in_model_and_reject_stale_child_approval
                 final = (await client.get(f'/api/runs/{run}')).json()
                 assert final['status'] == 'completed' and final['agents'][batch['agent_path']]['status'] == 'stopped'
                 reports = {m['tool_call_id']: m for m in final['messages'] if m['type'] == 'tool'}
-                assert reports['outer-A']['status'] == 'error' and reports['outer-B']['content'] == 'B report'
+                assert reports['outer-A']['status'] == 'error' and json.loads(reports['outer-B']['content'])['report'] == 'B report'
                 assert (await client.post(endpoint, json={**body, 'request_id': str(uuid4())})).status_code == 409
             finally:
                 release.set()

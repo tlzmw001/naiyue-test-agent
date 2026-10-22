@@ -9,13 +9,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from .config_paths import StorageSettings, get_agent_dir
 from .checkpoint_settings import CheckpointRetentionSettings
+from .shell_task_settings import ShellTaskSettings
 from .mcp_client.settings import MCPSettings
 from .tools.web_settings import NetworkSettings
 from .tools.retry_settings import ToolRetrySettings
 from .tools.permission_rules import PermissionSettings
 from .tools.subagent import SubAgentSpec
 from .tools.settings import (
-    BuiltinToolSettings, ProcessSettings, ToolOutputSettings, ToolProgressSettings,
+    BuiltinToolSettings, ProcessSettings, ToolProgressSettings,
 )
 
 
@@ -61,7 +62,7 @@ class AppSettings(BaseModel):
     tools: BuiltinToolSettings = Field(default_factory=BuiltinToolSettings)
     permissions: PermissionSettings = Field(default_factory=PermissionSettings)
     process: ProcessSettings = Field(default_factory=ProcessSettings)
-    tool_output: ToolOutputSettings = Field(default_factory=ToolOutputSettings)
+    shell_tasks: ShellTaskSettings = Field(default_factory=ShellTaskSettings)
     progress: ToolProgressSettings = Field(default_factory=ToolProgressSettings)
     usage_persistence: UsagePersistenceSettings = Field(default_factory=UsagePersistenceSettings)
     diagnostics: DiagnosticSettings = Field(default_factory=DiagnosticSettings)
@@ -103,7 +104,7 @@ class AppSettings(BaseModel):
 
 
 def load_settings(path: str | Path | None = None) -> AppSettings:
-    """Permission uncertainty fails startup; only invalid budgets fall back."""
+    """Permission and execution-policy uncertainty fail startup."""
     source = Path(path) if path is not None else get_agent_dir() / 'settings.toml'
     try:
         with source.open('rb') as stream:
@@ -113,8 +114,18 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
         logger.error('permission_settings_unavailable error_type=%s', type(error).__name__)
         raise ValueError('Permission settings could not be read or parsed') from error
-    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'default_active_tools', 'tools', 'permissions', 'process', 'tool_output', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'checkpoint_retention', 'network', 'mcp', 'tool_retry'}:
+    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'default_active_tools', 'tools', 'permissions', 'process', 'tool_output', 'shell_tasks', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'checkpoint_retention', 'network', 'mcp', 'tool_retry'}:
         raise ValueError('Unknown runtime settings section')
+    if 'tool_output' in raw:
+        legacy_output = raw['tool_output']
+        if not isinstance(legacy_output, dict) or set(legacy_output) - {'max_workspace_archive_bytes'}:
+            raise ValueError('Unknown tool output settings')
+        logger.warning('tool_output_settings_removed key=max_workspace_archive_bytes action=ignored')
+    try:
+        shell_tasks = ShellTaskSettings.model_validate(raw.get('shell_tasks', {}))
+    except ValidationError:
+        logger.error('shell_task_settings_invalid')
+        raise ValueError('Shell task settings are invalid') from None
     try:
         default_active_tools = AppSettings.active_tool_names(raw.get('default_active_tools'))
     except ValueError:
@@ -160,11 +171,6 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         logger.warning('process_settings_fallback reason=invalid')
         process = ProcessSettings()
     try:
-        tool_output = ToolOutputSettings.model_validate(raw.get('tool_output', {}))
-    except ValidationError:
-        logger.warning('tool_output_settings_fallback reason=invalid')
-        tool_output = ToolOutputSettings()
-    try:
         progress = ToolProgressSettings.model_validate(raw.get('progress', {}))
     except ValidationError:
         logger.warning('tool_progress_settings_fallback reason=invalid')
@@ -185,7 +191,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         logger.warning('checkpoint_retention_invalid action=disabled')
         checkpoint_retention = CheckpointRetentionSettings(enabled=False)
     try:
-        return AppSettings(storage=storage, tools=tools, network=network, mcp=mcp, tool_retry=tool_retry, permissions=permissions, process=process, tool_output=tool_output,
+        return AppSettings(storage=storage, tools=tools, network=network, mcp=mcp, tool_retry=tool_retry, permissions=permissions, process=process, shell_tasks=shell_tasks,
                             default_active_tools=default_active_tools,
                             progress=progress, usage_persistence=usage_persistence,
                             subagents=raw.get('subagents', ()), max_active_runs=max_active_runs,

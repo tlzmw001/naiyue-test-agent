@@ -35,5 +35,5 @@ class PowerShellAdapter(ShellAdapter):
         return [*argv, '-EncodedCommand', script]
 
 
-def create_session_powershell_tool(*, process_settings=None, settings=None, output_settings=None, progress_settings=None):
-    return build_shell_tool(PowerShellAdapter(), settings or PowerShellSettings(), process_settings, output_settings, progress_settings)
+def create_session_powershell_tool(*, process_settings=None, settings=None, shell_task_settings=None, progress_settings=None):
+    return build_shell_tool(PowerShellAdapter(), settings or PowerShellSettings(), process_settings, shell_task_settings, progress_settings)

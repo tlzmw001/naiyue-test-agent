@@ -8,6 +8,7 @@ from langchain_core.messages import ToolMessage
 
 from .observation import aobserve_tool_dispatch
 from ..context_usage import compose_model_prompt
+from naiyue_test_agent.tools.subagent import subagent_request_tools
 
 
 _VIEW_KEY = '_naiyue_tool_view'
@@ -42,6 +43,7 @@ class ToolSetMiddleware(AgentMiddleware):
         context = runtime.context
         if names is None:
             names = self.resolve_active_tool_names(context['session_id'], context.get('agent_path', 'root'))
+        names = subagent_request_tools(names, self.registry, agent_path=context.get('agent_path', 'root'))
         view = self.registry.select_available(names)
         context[_VIEW_KEY] = view
         context[_ROLES_KEY] = (tuple((role.name, role.description) for role in self.resolve_subagent_roles())
@@ -51,7 +53,7 @@ class ToolSetMiddleware(AgentMiddleware):
     def _inputs(self, state, runtime):
         specs = batch_tool_specs(self.registry, state, runtime.context)
         sid = runtime.context['session_id']
-        parts = self.resolve_prompt_parts(sid) if self.resolve_prompt_parts is not None else []
+        parts = self.resolve_prompt_parts(sid, runtime.context.get('agent_path', 'root')) if self.resolve_prompt_parts is not None else []
         prompt = compose_model_prompt(self.system_prompt, parts, specs, runtime.context.get(_ROLES_KEY, ()))
         tools = []
         for spec in specs:

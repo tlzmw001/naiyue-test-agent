@@ -23,6 +23,7 @@ from .service import WebService
 from .headers import LocalHeaders
 from .windows_disconnect import windows_disconnect_handler
 from .schemas import MCPRefreshInput
+from .background_tasks import router as background_task_router
 
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ def create_web_app(settings, *, application_factory=None):
         tool_settings = settings.runtime_settings if settings.runtime_settings is not None else load_settings()
         delivery_settings = settings if 'event_cache_bytes' in settings.model_fields_set else settings.model_copy(
             update={'event_cache_bytes': tool_settings.web_event_cache_bytes})
-        tools = create_builtin_tools(tool_settings.tools, process_settings=tool_settings.process, output_settings=tool_settings.tool_output, progress_settings=tool_settings.progress, network_settings=tool_settings.network, retry_settings=tool_settings.tool_retry)
+        tools = create_builtin_tools(tool_settings.tools, process_settings=tool_settings.process, shell_task_settings=tool_settings.shell_tasks, progress_settings=tool_settings.progress, network_settings=tool_settings.network, retry_settings=tool_settings.tool_retry)
         initial_tools = []
         if settings.workspace_root is not None:
             initial_tools = tool_settings.default_active_tools
@@ -69,6 +70,7 @@ def create_web_app(settings, *, application_factory=None):
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None,
                   dependencies=[Depends(access)])
     app.add_middleware(LocalHeaders)
+    app.include_router(background_task_router)
 
     @app.exception_handler(WebError)
     async def web_error(request, error):

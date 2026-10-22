@@ -53,6 +53,7 @@ class RunContext(TypedDict):
     parent_run_id: NotRequired[str]
     root_run_id: NotRequired[str]
     ainvoke_subagent: NotRequired[Callable]
+    alist_subagents: NotRequired[Callable]
     run_id: NotRequired[str]
     workspace_root: NotRequired[Path]
     approval_grants: NotRequired[OneUseApprovalGrants]

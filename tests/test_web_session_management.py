@@ -131,13 +131,15 @@ def test_delete_includes_child_history_removed_from_latest_parent_checkpoint(mon
             thread = store.get(sid)['thread_id']
             await app._agent.aupdate_state({'configurable': {'thread_id': thread}}, {'messages': [
                 RemoveMessage(id=REMOVE_ALL_MESSAGES), HumanMessage(content='summary'), AIMessage(content='compacted')]}, as_node='model')
-            assert await app.aget_subagents(sid) == []
-            # Run ownership is gone: deletion must use saved older root history.
+            assert not any(getattr(message, 'tool_calls', []) for message in await app.aget_messages(sid))
+            assert await app.aget_subagents(sid) == [child]
+            # The prompt no longer references the child; the persisted registry still owns it.
             for owner in app._sessions._sessions.values():
                 assert owner._run is None
             assert (await client.delete(f'/api/sessions/{sid}')).status_code == 200
             assert store.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (child_thread,)).fetchone()[0] == 0
             assert store.connection.execute('SELECT count(*) FROM writes WHERE thread_id=?', (child_thread,)).fetchone()[0] == 0
+            assert store.get_subagent_references(sid) == {}
             assert len(model.seen) == 3
     asyncio.run(scenario())
 

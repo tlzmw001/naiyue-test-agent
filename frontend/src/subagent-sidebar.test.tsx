@@ -42,19 +42,22 @@ it('opens children only on request, keeps approval in main and links delegation 
   vi.spyOn(api, 'subagent').mockResolvedValue({ ...record, messages: child.messages, available: true,
     has_compaction: false, tool_states: {} });
   const approve = vi.spyOn(api, 'approve').mockResolvedValue({ kind: 'live_child', accepted: true, session_id: 's', run_id: 'r' });
+  const stop = vi.spyOn(api, 'control').mockResolvedValue({ accepted: true, retained: [] });
   render(<App api={api} />);
   fireEvent.click(await screen.findByRole('button', { name: /A · 未完成/ }));
   await screen.findByRole('region', { name: '工具审批' });
-  expect(screen.queryByRole('complementary', { name: '子智能体' })).toBeNull();
+  expect(screen.queryByRole('region', { name: '子智能体' })).toBeNull();
   expect(screen.queryByText('CHILD_PUBLIC_TEXT')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '查看子智能体 tester · abcdef' }));
-  const panel = await screen.findByRole('complementary', { name: '子智能体' });
+  const panel = await screen.findByRole('region', { name: '子智能体' });
   await within(panel).findByText('CHILD_PUBLIC_TEXT');
   expect(within(panel).getByRole('table')).toBeTruthy();
   expect(within(panel).getByRole<HTMLInputElement>('checkbox').disabled).toBe(true);
   expect(within(panel).getByText('旧说明').tagName).toBe('DEL');
   expect(within(panel).queryByText(/tester/)).toBeNull();
   expect(within(panel).queryByRole('radio')).toBeNull();
+  fireEvent.click(within(panel).getByRole('button', { name: '停止该子智能体' }));
+  await waitFor(() => expect(stop).toHaveBeenCalledWith('r', 'stop', undefined, record.agent_path, 'child', undefined));
   const main = screen.getByRole('main');
   fireEvent.click(within(main).getByRole('button', { name: '批准 1' }));
   await waitFor(() => expect(approve).toHaveBeenCalledWith('s', batch, [{ approval_id: 'a', decision: 'approve' }], []));
@@ -94,7 +97,7 @@ it.each(['completed', 'stopped'])('renders child deltas and %s in the real sideb
   fireEvent.click(await screen.findByRole('button', { name: /A · 未完成/ }));
   await waitFor(() => expect(receive).toBeTypeOf('function'));
   fireEvent.click(screen.getByRole('button', { name: '查看子智能体 tester · child-' }));
-  const panel = await screen.findByRole('complementary', { name: '子智能体' });
+  const panel = await screen.findByRole('region', { name: '子智能体' });
   expect((await within(panel).findByText('子任务检查')).tagName).toBe('STRONG');
   expect(within(panel).getByText('正在生成')).toBeTruthy();
   expect(within(panel).getByRole<HTMLInputElement>('checkbox').disabled).toBe(true);

@@ -1,5 +1,6 @@
 """Complete file-tool lifecycle and SDK thread fallback through the real app."""
 
+import json
 import asyncio
 from threading import Event, get_ident
 from typing import Any
@@ -72,7 +73,7 @@ async def test_real_read_write_report_ready_reopen_and_new_delegation(monkeypatc
             assert [m.name for m in messages if isinstance(m, ToolMessage)] == ['read', 'write', 'read']
             assert next(m for m in messages if isinstance(m, ToolMessage) and m.tool_call_id == 'read-output').content == body
             feedback = [m for m in saved_root if isinstance(m, ToolMessage)][-1]
-            assert feedback.status == 'success' and feedback.content == report
+            assert feedback.status == 'success' and json.loads(feedback.content)['report'] == report
             assert feedback.artifact['agent_path'] == instance['agent_path']
             assert feedback.artifact['status'] == 'completed'
             assert 'leaf input stays in the child' not in str(saved_root)

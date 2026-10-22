@@ -18,7 +18,7 @@ def handle_mcp_command(app, session_id, line, write):
                 return
             write(json.dumps(app.refresh_mcp(), ensure_ascii=False))
             return
-        specs = {spec.tool.name: spec for spec in app.get_registered_tools()}
+        specs = {spec.tool.name: spec for spec in app.get_registered_tools() if spec.tool.name != 'subagent_list'}
         selected = list(app.get_active_tools(session_id))
         if len(parts) == 1:
             for name, spec in specs.items():

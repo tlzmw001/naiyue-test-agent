@@ -1,8 +1,4 @@
-.panel { width: 420px; min-width: 0; flex-shrink: 0; border-left: 1px solid var(--line); display: flex; flex-direction: column; background: var(--surface); min-height: 0; }
-.header { min-height: 72px; padding: 18px 22px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); }
-.header strong { font-size: var(--fs-ui); font-weight: var(--fw-semibold); }
-.close { border: 0; background: transparent; color: var(--muted); font-size: var(--fs-icon); width: 28px; height: 28px; border-radius: var(--r-sm); cursor: pointer; }
-.close:hover { background: var(--surface-hover); }
+.panel { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface); }
 .selection { padding: 16px 22px; border-bottom: 1px solid var(--line); }
 .selectionTop, .rowTop { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .back { border: 0; background: transparent; color: var(--muted); padding: 0; font-size: var(--fs-meta); cursor: pointer; }
@@ -24,7 +20,3 @@
 .textButton { border: 0; background: transparent; padding: 0; color: inherit; font-size: var(--fs-caption); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .stop { border: 1px solid var(--line); background: var(--surface); color: var(--text-secondary); border-radius: var(--r-sm); padding: 8px 12px; font-size: var(--fs-meta); cursor: pointer; }
 .stop:disabled { cursor: default; opacity: .5; }
-@media (max-width: 1100px) {
-  .panel { position: fixed; right: 0; top: 0; bottom: 0; z-index: 6; width: min(100%, 440px); box-shadow: -12px 0 35px var(--shadow); }
-  .header { min-height: 65px; }
-}

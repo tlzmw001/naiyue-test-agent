@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.errors import GraphBubbleUp
 
 from naiyue_test_agent.agent_runtime.async_utils import await_settled, run_blocking
@@ -27,11 +27,14 @@ logger = logging.getLogger('naiyue_test_agent.application')
 class SessionExecution:
     """Internal part of AgentSession; it borrows shared graphs and IO."""
 
-    async def _prepare_resources(self, run):
+    async def _prepare_resources(self, run, *, include_background=False):
         workspace_root = self.snapshot_for_context()['workspace_root']
+        notices = (self._process_tasks.notice_snapshot(session_id=self.session_id,
+            workspace_root=workspace_root, run_id=run.run_id)
+            if include_background and self._process_tasks is not None else None)
         resources = await run_blocking(prepare_run_resources, workspace_root,
                                       enable_skills='read' in self._tool_registry.names())
-        self.freeze_run_resources(run, resources['prompt_parts'], resources['project_instructions'])
+        self.freeze_run_resources(run, resources['prompt_parts'], resources['project_instructions'], notices)
         return resources
 
     async def _on_failure(self, agent, run, error, *, require_review=False):
@@ -61,14 +64,17 @@ class SessionExecution:
             observation.start()
             if self._persistence is not None:
                 await run_blocking(self._persistence.start, session_id, run_id)
-            resources = await self._prepare_resources(run)
             messages = mark_human_messages(messages)
+            resources = await self._prepare_resources(run, include_background=not compact and any(
+                isinstance(message, HumanMessage) and message.additional_kwargs.get('naiyue_human_input')
+                for message in messages))
             if messages:
                 run.reply_id = messages[-1].additional_kwargs.get('naiyue_reply_id')
             observation.stage = 'execute'
             if compact:
                 model_id, model = self.resolve_model()
-                specs = self._tool_registry.select_available(self.get_active_tools())
+                from naiyue_test_agent.tools.subagent import subagent_request_tools
+                specs = self._tool_registry.select_available(subagent_request_tools(self.get_active_tools(), self._tool_registry))
                 roles = [(role.name, role.description) for role in self._registered_subagents()] if any(
                     spec.tool.name == 'subagent' for spec in specs) else ()
                 system = compose_model_prompt(system_prompt, self.resolve_prompt_parts(), specs, roles)
@@ -77,12 +83,14 @@ class SessionExecution:
                         run_id=run_id, model_id=model_id, model=model, system_message=system,
                         tools=[spec.tool for spec in specs])
             elif workspace_root is not None:
-                with observation.bind(ainvoke_subagent=self._invoke_subagent):
+                with observation.bind(ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
+                                      background_notices=run.background_notices):
                     result = await ainvoke_agent_run_with_resources(agent, messages,
                         session_id=session_id, thread_id=thread_id, run_id=run_id, workspace_root=workspace_root,
                         read_resource_roots=resources['read_resource_roots'], max_concurrency=max_concurrency, **options)
             else:
-                with observation.bind(ainvoke_subagent=self._invoke_subagent):
+                with observation.bind(ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
+                                      background_notices=run.background_notices):
                     result = await ainvoke_agent_run(agent, messages, session_id=session_id,
                         thread_id=thread_id, run_id=run_id, max_concurrency=max_concurrency, **options)
             observation.stage = 'finalize'
@@ -157,7 +165,7 @@ class SessionExecution:
                 rejected_count=decisions.count('reject'),
             )
             observation.stage = 'execute'
-            with observation.bind(ainvoke_subagent=self._invoke_subagent):
+            with observation.bind(ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks):
                 result = await aresume_agent_run_with_resources(agent, session_id=session_id,
                     thread_id=thread_id, run_id=run_id, workspace_root=workspace_root, decisions=decisions,
                     approval_grants=grants, read_resource_roots=resources['read_resource_roots'],
@@ -210,6 +218,9 @@ class SessionExecution:
         try:
             if self._persistence is not None:
                 await self._persistence.afinish(session_id, run_id, agent, observation, self.snapshot_for_finish())
+            elif secondary is None:
+                from .subagent_records import finish_memory
+                finish_memory(self, run)
         except Exception as error:
             if primary_error is None and secondary is None:
                 secondary = error

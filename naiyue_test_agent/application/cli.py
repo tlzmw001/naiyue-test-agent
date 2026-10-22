@@ -20,9 +20,6 @@ from naiyue_test_agent.application.project_instructions import BASE_SYSTEM_PROMP
 from naiyue_test_agent.tools import create_builtin_tools
 from naiyue_test_agent.settings import load_settings
 from naiyue_test_agent.tools.processes import ProcessCleanupError
-from naiyue_test_agent.tools.output import (
-    clear_shell_outputs, preview_shell_outputs,
-)
 from naiyue_test_agent.tools.read import resolve_workspace_root
 from naiyue_test_agent.model_access import ModelConfigError
 from naiyue_test_agent.application.cli_display import CliEventDisplay
@@ -188,10 +185,10 @@ def main(argv: list[str] | None = None) -> int:
                 restored = storage.get(selected)
                 if str(args.workspace) != restored['workspace_root']:
                     raise SessionPersistenceError('workspace_mismatch')
-        tools = create_builtin_tools(tool_settings.tools, process_settings=tool_settings.process, output_settings=tool_settings.tool_output, progress_settings=tool_settings.progress, network_settings=tool_settings.network, retry_settings=tool_settings.tool_retry)
+        tools = create_builtin_tools(tool_settings.tools, process_settings=tool_settings.process, shell_task_settings=tool_settings.shell_tasks, progress_settings=tool_settings.progress, network_settings=tool_settings.network, retry_settings=tool_settings.tool_retry)
         initial_tools = tool_settings.default_active_tools
         if initial_tools is None:
-            initial_tools = [spec.tool.name for spec in tools if spec.tool.name not in ('bash', 'powershell')]
+            initial_tools = [spec.tool.name for spec in tools if spec.tool.name not in ('bash', 'powershell', 'subagent_list')]
         factory = build_local_application if storage is None else build_persistent_application
         options = {} if storage is None else {'storage': storage}
         app = factory(
@@ -230,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
     worker: Thread | None = None
     try:
         emit(f'当前模型：{restored["model_id"] if restored else app.default_model_id}')
-        emit(f'{"持久会话" if storage is not None else "临时会话"}：{session_id}\n只读查询：:usage；:diagnostics [run_id]')
+        emit(f'{"持久会话" if storage is not None else "临时会话"}：{session_id}\n查询：:usage；:diagnostics [run_id]；:tasks；后台管理：:task output/stop ID')
         interactive = sys.stdin.isatty()
         if history is not None:
             display.show_history(history)
@@ -320,6 +317,10 @@ def main(argv: list[str] | None = None) -> int:
             if not line:
                 continue
             command, *rest = line.split(maxsplit=1)
+            if command in (':tasks', ':task'):
+                from .cli_background import handle_background_command
+                handle_background_command(app, line, emit)
+                continue
             if command in (':usage', ':diagnostics'):
                 from .cli_observation import handle_observation_command
                 handle_observation_command(app, session_id, line, emit, persistent=storage is not None)
@@ -361,7 +362,7 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 try:
                     if action == 'clear':
-                        output_clear_plan = preview_shell_outputs(output_workspace)
+                        output_clear_plan = app.preview_shell_outputs(output_workspace)
                         if output_clear_plan.file_count:
                             emit(f'将清理 {output_clear_plan.file_count} 个文件，'
                                   f'{output_clear_plan.total_bytes} 字节；'
@@ -372,7 +373,7 @@ def main(argv: list[str] | None = None) -> int:
                     elif output_clear_plan is None:
                         emit('请先输入 :outputs clear 查看待清理文件')
                     else:
-                        count, size = clear_shell_outputs(output_clear_plan)
+                        count, size = app.clear_shell_outputs(output_clear_plan)
                         output_clear_plan = None
                         emit(f'已清理 {count} 个文件，{size} 字节')
                 except (OSError, ValueError, UnicodeError) as error:

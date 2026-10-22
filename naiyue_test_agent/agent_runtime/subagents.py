@@ -8,6 +8,7 @@ from langgraph.errors import GraphBubbleUp
 from langgraph.types import Command
 from langgraph.checkpoint.base import BaseCheckpointSaver
 import logging
+import json
 
 from naiyue_test_agent.model_access.messages import content_text
 from . import _build_runtime_agent, InteractiveRunState
@@ -61,6 +62,13 @@ class SubagentCheckpointSaver(BaseCheckpointSaver):
         return await self._io('writes', self.backend.aput_writes, config, writes, task_id, task_path)
 
 
+class SubagentCallLimitMiddleware(ModelCallLimitMiddleware):
+    async def abefore_agent(self, state, runtime):
+        if runtime.context.get('_subagent_new_delegation'):
+            return {'thread_model_call_count': 0}
+        return None
+
+
 class SubagentModelFailureMiddleware(AgentMiddleware):
     async def awrap_model_call(self, request, handler):
         context = request.runtime.context
@@ -83,19 +91,18 @@ def build_subagent_runtime(spec, *, catalog, tool_registry, checkpointer, sessio
     # path and role inputs. No root steering/follow-up consumers are installed.
     toolset = ToolSetMiddleware(tool_registry, session_port.resolve_active_tool_names, spec.system_prompt,
                                 resolve_prompt_parts=session_port.resolve_prompt_parts)
-    middleware = [recover_input_overflow]
-    if spec.max_model_calls is not None:
-        middleware.append(ModelCallLimitMiddleware(thread_limit=spec.max_model_calls, exit_behavior='error'))
+    limit = ([SubagentCallLimitMiddleware(thread_limit=spec.max_model_calls, exit_behavior='error')]
+             if spec.max_model_calls is not None else [])
     # Child extras keep compaction/recovery and an optional model budget;
     # the inner model failure wrapper observes only failures from the model path.
     return _build_runtime_agent(catalog.get(spec.model_id or catalog.default_model_id),
         tool_registry=tool_registry, resolve_active_tool_names=session_port.resolve_active_tool_names,
         system_prompt=spec.system_prompt, response_format=None, resolve_model=session_port.resolve_model,
         checkpointer=SubagentCheckpointSaver(checkpointer),
-        steering_middleware=middleware, state_schema=InteractiveRunState, active_stop=True, observe_turns=True,
+        steering_middleware=[recover_input_overflow], state_schema=InteractiveRunState, active_stop=True, observe_turns=True,
         toolset=toolset, permission_settings=permission_settings,
         resolve_permission_context=session_port.resolve_permission_context, permission_reviewer=permission_reviewer,
-        model_middleware=(SubagentModelFailureMiddleware(),),
+        model_middleware=(*limit, SubagentModelFailureMiddleware()),
         resolve_request_configuration=session_port.resolve_request_configuration, compact_requests=True)
 
 
@@ -105,7 +112,7 @@ async def ainvoke_subagent_step(agent, instance, *, services, resume=None, appro
             approval_grants, instance['read_resource_roots'], agent_path=instance['agent_path'])
         context.update(parent_tool_call_id=instance['parent_tool_call_id'], parent_run_id=instance['parent_run_id'],
                        root_run_id=instance['root_run_id'], _subagent_model_id=instance['model_id'],
-                       _human_review_messages=instance['human_messages'])
+                       _human_review_messages=instance['human_messages'], _subagent_new_delegation=resume is None)
         if resume is None:
             seed = HumanMessage(content=instance['task'], id=instance['seed_id'],
                                 additional_kwargs={'naiyue_input_source': 'delegated_task', 'naiyue_reply_id': instance['seed_id'], 'naiyue_input_kind': 'delegated_task'})
@@ -116,6 +123,7 @@ async def ainvoke_subagent_step(agent, instance, *, services, resume=None, appro
         config = {'configurable': {'thread_id': instance['child_thread_id']},
                   'max_concurrency': instance['max_concurrency']}
         try:
+            instance['input_started'] = True
             return await ainvoke_with_message_observation(agent, input, context=context, config=config,
                 publisher=services.publisher, durability='sync')
         except ModelCallLimitExceededError as error:
@@ -132,6 +140,11 @@ async def ainvoke_subagent_step(agent, instance, *, services, resume=None, appro
             raise
 
 
+def subagent_result_envelope(instance, report='', *, truncated=False):
+    return json.dumps(dict(agent_id=instance['agent_id'], agent=instance['role'], status='completed',
+        report=report, truncated=truncated), ensure_ascii=False, separators=(',', ':'))
+
+
 def _finish_subagent_result(result, instance, settings):
     if result.get('__interrupt__'):
         raise ValueError('An interrupted child has no final report')
@@ -144,24 +157,32 @@ def _finish_subagent_result(result, instance, settings):
     text = content_text(last.content)
     if not text.strip():
         raise ToolException('Subagent finished without a text report.')
-    pieces, size = [], 0
-    for line in text.splitlines(keepends=True):
-        encoded = line.encode('utf-8')
-        if len(pieces) == settings.max_result_lines:
-            break
-        if size + len(encoded) > settings.max_result_bytes:
-            if not pieces:
-                pieces.append(encoded[:settings.max_result_bytes].decode('utf-8', errors='ignore'))
-            break
-        pieces.append(line)
-        size += len(encoded)
-    report = ''.join(pieces)
+    report = ''
+    for line in text.splitlines(keepends=True)[:settings.max_result_lines]:
+        candidate = subagent_result_envelope(instance, report + line)
+        if len(candidate.encode('utf-8')) <= settings.max_result_bytes:
+            report += line
+            continue
+        if not report:
+            low, high = 0, len(line)
+            while low < high:
+                middle = (low + high + 1) // 2
+                candidate = subagent_result_envelope(instance, line[:middle])
+                if len(candidate.encode('utf-8')) <= settings.max_result_bytes:
+                    low = middle
+                else:
+                    high = middle - 1
+            report = line[:low]
+        break
     truncated = report != text
-    if truncated:
-        report += '\n[subagent: report truncated by configured line/byte budget; full child history remains in its checkpoint]'
-    usages = [message.usage_metadata for message in messages if isinstance(message, AIMessage)]
+    content = subagent_result_envelope(instance, report, truncated=truncated)
+    if len(content.encode('utf-8')) > settings.max_result_bytes:
+        raise ToolException('Subagent result budget cannot hold its instance metadata.')
+    usages = [message.usage_metadata for message in messages if isinstance(message, AIMessage)
+              and message.additional_kwargs.get('naiyue_reply_id') == instance['seed_id']]
     usage = ({key: sum(item[key] for item in usages) for key in ('input_tokens', 'output_tokens', 'total_tokens')}
              if usages and all(item is not None for item in usages) else None)
-    return report, {'agent_path': instance['agent_path'], 'agent': instance['role'],
+    return content, {'agent_path': instance['agent_path'], 'agent': instance['role'],
+                    'agent_id': instance['agent_id'], 'delegation_id': instance['delegation_id'],
                     'model_id': instance['model_id'], 'status': 'completed',
                     'usage': usage, 'truncated': truncated}

@@ -6,9 +6,9 @@ import pytest
 def accumulator(tmp_path, **limits):
     from naiyue_test_agent.tools.output import ShellOutputArchive
     from naiyue_test_agent.tools.output_text import OutputAccumulator
-    from naiyue_test_agent.tools.settings import BashSettings, ToolOutputSettings
+    from naiyue_test_agent.tools.settings import BashSettings
     settings = BashSettings(**limits)
-    return OutputAccumulator(settings), ShellOutputArchive(tmp_path, settings, ToolOutputSettings())
+    return OutputAccumulator(settings), ShellOutputArchive(tmp_path, settings)
 
 
 def capture(acc, archive, chunks):
@@ -85,22 +85,31 @@ def test_raw_and_view_count_against_same_budget(tmp_path):
     assert acc.text == '123456'
 
 
-def test_workspace_budget_shared_and_legacy_files_still_clearable(tmp_path):
+def test_calls_have_independent_budgets_and_legacy_files_still_clearable(tmp_path):
     from naiyue_test_agent.tools.output import ShellOutputArchive, preview_shell_outputs, clear_shell_outputs
     from naiyue_test_agent.tools.output_text import OutputAccumulator
-    from naiyue_test_agent.tools.settings import BashSettings, ToolOutputSettings
-    settings = BashSettings(max_output_bytes=2)
-    shared = ToolOutputSettings(max_workspace_archive_bytes=9)
-    first = capture(OutputAccumulator(settings), ShellOutputArchive(tmp_path, settings, shared), [b'first'])
-    second = capture(OutputAccumulator(settings), ShellOutputArchive(tmp_path, settings, shared), [b'second'])
-    assert first.complete and not second.complete and second.reason == 'workspace_limit'
+    from naiyue_test_agent.tools.settings import BashSettings
+    settings = BashSettings(max_output_bytes=2, max_archive_bytes=6)
+    first = capture(OutputAccumulator(settings), ShellOutputArchive(tmp_path, settings), [b'first'])
+    second = capture(OutputAccumulator(settings), ShellOutputArchive(tmp_path, settings), [b'second'])
+    assert first.complete and second.complete and second.reason is None
     directory = tmp_path / 'naiyue-agent-output'
     legacy = directory / ('a' * 32 + '-stdout.log')
     legacy.write_bytes(b'old')
     plan = preview_shell_outputs(tmp_path)
-    assert plan.file_count == 3 and plan.total_bytes == 12
-    assert clear_shell_outputs(plan) == (3, 12)
+    assert plan.file_count == 3 and plan.total_bytes == 14
+    assert clear_shell_outputs(plan) == (3, 14)
     assert not legacy.exists()
+
+
+def test_archive_writes_do_not_scan_existing_history(tmp_path, monkeypatch):
+    import naiyue_test_agent.tools.output as module
+    acc, archive = accumulator(tmp_path, max_output_bytes=2)
+    def unexpected_scan(*args):
+        pytest.fail('Writing this call must not scan all historical archives')
+    monkeypatch.setattr(module, '_snapshot', unexpected_scan)
+    result = capture(acc, archive, [b'first', b'second'])
+    assert result.complete and result.saved_bytes == 11
 
 
 def test_archive_disk_error_does_not_stop_tail(tmp_path, monkeypatch, caplog):

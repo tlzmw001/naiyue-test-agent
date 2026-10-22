@@ -3,6 +3,29 @@ import { afterEach, expect, it } from 'vitest';
 import ToolCall from './ToolCall';
 
 afterEach(cleanup);
+
+it('shows a subagent report as text and preserves its instance ID and raw envelope', () => {
+  const envelope = { agent_id: 'a'.repeat(64), agent: 'tester', status: 'completed',
+    report: 'first line\n<unsafe> second line', truncated: true };
+  const raw = JSON.stringify(envelope);
+  const { container } = render(<ToolCall call={{ id: 'child', name: 'subagent', args: {} }}
+    result={{ id: 'report', type: 'tool', content: raw, provisional: false, state: 'complete', status: 'success' }} />);
+  fireEvent.click(screen.getByText('subagent', { exact: true }));
+  expect(screen.getByText(envelope.agent_id)).toBeTruthy();
+  expect(screen.getByLabelText('子智能体报告').textContent).toBe(envelope.report);
+  expect(screen.getByText(/完整报告可在子智能体历史中查看/)).toBeTruthy();
+  expect(screen.getByLabelText('原始工具结果').textContent).toBe(raw);
+  expect(container.querySelector('unsafe')).toBeNull();
+});
+
+it.each(['legacy plain report', '{"report":42}'])('keeps an older or invalid subagent envelope readable: %s', raw => {
+  render(<ToolCall call={{ id: 'child', name: 'subagent', args: {} }}
+    result={{ id: 'report', type: 'tool', content: raw, provisional: false, state: 'complete', status: 'success' }} />);
+  fireEvent.click(screen.getByText('subagent', { exact: true }));
+  expect(screen.getByText(raw)).toBeTruthy();
+  expect(screen.queryByLabelText('子智能体报告')).toBeNull();
+});
+
 const content = 'edit replaced 1 block(s); 18 bytes\nfirstChangedLine=2\n@@ -1,3 +1,3 @@\n context\n-old value\n+new <tag>\n';
 const call = { id: 'c', name: 'edit', args: { path: 'a.txt' } };
 const result = { id: 'result', type: 'tool', content, provisional: false, state: 'complete' as const, status: 'success' as const };

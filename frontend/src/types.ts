@@ -56,6 +56,8 @@ export interface SubagentRecord {
   agent_id: string; agent_path: string; agent: string; task: string; tool_call_id: string;
   status: AgentView['status'];
   parent_batch_id?: string | null;
+  resume_available?: boolean;
+  resume_reason?: string | null;
 }
 export interface SubagentDetail extends SubagentRecord {
   available: boolean; has_compaction: boolean; messages: MessageRow[];

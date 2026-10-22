@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -15,6 +16,7 @@ import urllib.request
 import venv
 
 from scripts.release_artifacts import inspect_wheel
+from scripts.release_subagent_smoke import verify_subagent_report
 
 
 def published_file(info, destination):
@@ -93,6 +95,10 @@ def main():
         env.update({'HOME': str(home), 'USERPROFILE': str(home), 'PATH': str(bin_path),
             'LANGSMITH_TRACING': 'false', 'LANGCHAIN_TRACING_V2': 'false', 'PYTHONUTF8': '1',
             'PIP_CONFIG_FILE': os.devnull})
+        shell = (shutil.which('pwsh') or shutil.which('powershell.exe')) if os.name == 'nt' else shutil.which('bash')
+        if shell is None:
+            raise RuntimeError('Installed background verification requires a host Shell')
+        env['NYT_SMOKE_SHELL'] = shell  # The native-tool gate keeps PATH restricted.
         outside = root / 'outside-checkout'
         outside.mkdir()
         install = ['naiyue-test-agent==' + info['version']] if args.from_pypi else [str(wheel)]
@@ -114,6 +120,7 @@ def main():
             print(result.stderr, file=sys.stderr)
             raise RuntimeError('Installed product smoke failed')
         report = {**info, 'install': json.loads(result.stdout.strip().splitlines()[-1])}
+        verify_subagent_report(report['install'].get('subagent_continuation'))
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')

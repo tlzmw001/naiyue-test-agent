@@ -93,7 +93,7 @@ it('stops a live child without stopping its parent or reconnecting SSE', async (
   await waitFor(() => expect(events).toHaveBeenCalledTimes(1));
   vi.mocked(api.session).mockResolvedValue({ ...active, pending_approval: false, approval_batches: [] });
   await act(async () => result.current.stopApproval(liveBatch));
-  expect(stop).toHaveBeenCalledWith('origin', 'stop', undefined, 'root/tester/A');
+  expect(stop).toHaveBeenCalledWith('origin', 'stop', undefined, 'root/tester/A', undefined, liveBatch.approval_batch_id);
   expect(result.current.stopping).toBe(false);
   expect(result.current.pendingMode).toBe(false);
   expect(result.current.run?.status).toBe('running');

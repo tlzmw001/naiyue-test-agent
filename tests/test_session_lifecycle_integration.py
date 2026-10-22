@@ -1,5 +1,6 @@
 """Session ownership through approvals, required saving and SQLite reopening."""
 
+import json
 import asyncio
 from threading import Event
 
@@ -134,7 +135,7 @@ async def test_root_then_child_approval_keeps_owner_until_required_save(
                 result = await task
                 assert result['messages'][-1].content == 'root done'
                 feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage) and m.name == 'subagent')
-                assert feedback.content == 'child report' and feedback.artifact['agent_path'] == instance['agent_path']
+                assert json.loads(feedback.content)['report'] == 'child report' and feedback.artifact['agent_path'] == instance['agent_path']
             if closing_task:
                 await closing_task
             assert owner._run is None and not owner.is_busy() and app._operations == {}

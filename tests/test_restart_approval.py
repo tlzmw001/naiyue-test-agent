@@ -218,7 +218,7 @@ async def test_real_process_exit_keeps_pre_tool_approval_recoverable(monkeypatch
             async with opened() as app:
                 sid = await app.acreate_workspace_session('A', path.parent / 'work')
                 if phase == 'before_terminal_metadata':
-                    app._storage.finish_run = lambda *_a: os._exit(91)
+                    app._storage.finish_run = lambda *_a, **_k: os._exit(91)
                 await app.arun(sid, [('user', 'read external file')])
             async with opened() as app:
                 storage = app._storage

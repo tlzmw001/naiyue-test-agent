@@ -14,7 +14,7 @@ def saved_store(tmp_path, *, version=12, bound=True):
     from naiyue_test_agent.storage_backup import create_backup
     from naiyue_test_agent.workspaces import locate_workspace
     with closing(source_store(tmp_path, version=version, bound=bound)[0]) as source:
-        saved = create_backup(source.connection, source.path, target_schema=13)
+        saved = create_backup(source.connection, source.path, target_schema=14)
         database = source.path
     location = locate_workspace(tmp_path / 'workspace', data_dir=None, database_path=database)
     return location, saved

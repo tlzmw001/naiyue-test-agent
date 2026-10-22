@@ -10,11 +10,13 @@ export function textContent(value: unknown): string {
 
 export function applyAgentEvent(previous: AgentView | undefined, event: RuntimeEvent, parentBatchId?: string): AgentView {
   const source = event.source!;
+  const kind = event.event_type, data = event.data;
+  if (previous && previous.source.agent_run_id !== source.agent_run_id && kind !== 'run_started') return previous;
+  if (kind === 'run_started' && data.mode === 'message') previous = undefined;
   const agent: AgentView = { ...previous, source, status: previous?.status ?? 'running',
     parent_batch_id: previous?.parent_batch_id ?? parentBatchId,
     messages: [...(previous?.messages ?? [])],
     tool_states: Object.assign(Object.create(null), previous?.tool_states) };
-  const kind = event.event_type, data = event.data;
   if (kind === 'run_started' && agent.status !== 'stopping') agent.status = 'running';
   else if (kind === 'control_accepted' && data.kind === 'stop') agent.status = 'stopping';
   else if (kind === 'approval_requested') agent.status = 'awaiting_approval';

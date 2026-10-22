@@ -25,6 +25,11 @@ def summarize_agent(agent, draft_budget):
 def observe_agent(agents, event, parent_messages=()):
     source, kind, data = event['source'], event['event_type'], event['data']
     path = source['agent_path']
+    previous = agents.get(path)
+    if previous and previous['source']['agent_run_id'] != source['agent_run_id'] and kind != 'run_started':
+        return
+    if kind == 'run_started' and data.get('mode') == 'message':
+        agents[path] = {'source': source, 'status': 'running', 'tool_states': {}, 'messages': []}
     agent = agents.setdefault(path, {'source': source, 'status': 'running', 'tool_states': {}, 'messages': []})
     agent['source'] = source
     if not agent.get('parent_batch_id'):

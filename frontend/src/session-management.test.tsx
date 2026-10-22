@@ -111,16 +111,19 @@ it('requires deletion confirmation, then clears the selected session and its dra
   expect(api.create).not.toHaveBeenCalled();
 });
 
-it('keeps other drafts and a failed deletion intact', async () => {
+it.each([
+  { code: 'session_delete_unconfirmed', notice: /删除未确认/ },
+  { code: 'session_background_tasks_active', notice: /先停止后台任务/ },
+])('keeps drafts and deletion intact for $code', async ({ code, notice }) => {
   const { api } = setup();
   fireEvent.click(await screen.findByRole('button', { name: '会话1 A' }));
   await waitFor(() => expect(api.session).toHaveBeenCalledWith('one'));
   const editor = screen.getByRole('textbox', { name: '消息' });
   fireEvent.change(editor, { target: { value: 'keep this task' } });
-  vi.mocked(api.deleteSession).mockRejectedValueOnce(new ApiError('session_delete_unconfirmed'));
+  vi.mocked(api.deleteSession).mockRejectedValueOnce(new ApiError(code));
   await menu('会话2'); fireEvent.click(screen.getByRole('menuitem', { name: '删除' }));
   fireEvent.click(within(screen.getByRole('dialog', { name: '删除会话' })).getByRole('button', { name: '删除会话' }));
-  await screen.findByText(/删除未确认/);
+  await screen.findByText(notice);
   expect(screen.getByRole('button', { name: '会话2 A' })).toBeTruthy();
   expect((editor as HTMLTextAreaElement).value).toBe('keep this task');
   fireEvent.click(screen.getByRole('button', { name: '取消' }));

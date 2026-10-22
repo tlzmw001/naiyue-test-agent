@@ -167,7 +167,8 @@ def validate_saved_approval(settings, registry, row, snapshot, root, names):
             # saved nonempty scope must not survive merely by clearing memory.
             raise ValueError('Saved temporary authority cannot be restored')
         selected = batch['tool_names']
-        if not isinstance(selected, list) or not set(selected).issubset(names):
+        from naiyue_test_agent.tools.subagent import subagent_request_tools
+        if not isinstance(selected, list) or not set(selected).issubset(subagent_request_tools(names, registry)):
             raise ValueError('Saved tools are unavailable')
         specs = {spec.tool.name: spec for spec in registry.select(selected)}
         context = {'session_id': row['session_id'], 'agent_path': 'root', 'workspace_root': root}

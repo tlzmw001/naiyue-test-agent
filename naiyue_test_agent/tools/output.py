@@ -114,11 +114,10 @@ def clear_shell_outputs(plan: ClearPlan) -> tuple[int, int]:
 class ShellOutputArchive:
     """Spool the buffered prefix on overflow; derive a text view only if needed."""
 
-    def __init__(self, root: Path, settings, output_settings):
+    def __init__(self, root: Path, settings):
         self._root = root
         self._settings = settings
         self._command_limit = settings.max_archive_bytes
-        self._workspace_limit = output_settings.max_workspace_archive_bytes
         self._lock = Lock()
         self._prefix = bytearray()
         self._handles: dict[str, object] = {}
@@ -129,6 +128,62 @@ class ShellOutputArchive:
         self._written = 0
         self._reason: str | None = None
         self._blocked = False
+        self._blocking_reason = None
+
+    def snapshot(self) -> ArchiveResult:
+        with self._lock:
+            return self._result()
+
+    def promote(self, limit):
+        """Raise/change policy without erasing a previously discarded interval."""
+        with self._lock:
+            if self._closed:
+                return None
+            self._command_limit = limit
+            if self._blocking_reason == 'command_limit' and self._written < limit:
+                self._blocked = False
+                self._blocking_reason = None
+            if self._written >= limit:
+                self._blocked = True
+                self._blocking_reason = 'command_limit'
+                self._reason = self._reason or 'command_limit'
+            self._activate()
+            return self._blocking_reason or ('command_limit' if self._written >= limit else None)
+
+    @property
+    def blocking_reason(self):
+        with self._lock:
+            return self._blocking_reason
+
+    @property
+    def limit_reached(self):
+        with self._lock:
+            return self._written >= self._command_limit
+
+    @property
+    def writers_closed(self):
+        with self._lock:
+            return self._closed and all(handle.closed for handle in self._handles.values())
+
+    def available(self):
+        with self._lock, _GLOBAL_LOCK:
+            if not self._paths:
+                return True
+            try:
+                directory = _directory(self._root, create=False)
+                if directory is None:
+                    return False
+                for relative in self._paths.values():
+                    info = (self._root / relative).lstat()
+                    if (not stat.S_ISREG(info.st_mode)
+                            or getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                        return False
+                return True
+            except FileNotFoundError:
+                return False
+            except (OSError, ValueError, UnicodeError) as error:
+                logger.warning('shell_archive_unavailable error_type=%s', type(error).__name__)
+                return False
 
     def record(self, chunk: bytes, *, activate: bool) -> None:
         with self._lock:
@@ -158,11 +213,8 @@ class ShellOutputArchive:
         try:
             with _GLOBAL_LOCK:
                 directory = _directory(self._root, create=True)
-                existing = _snapshot(directory)
-                used = sum(item[1] for item in existing)
                 command_remaining = self._command_limit - self._written
-                workspace_remaining = self._workspace_limit - used
-                allowed = min(len(data), command_remaining, workspace_remaining)
+                allowed = min(len(data), command_remaining)
                 if stream == 'text' and allowed < len(data):
                     allowed = len(data[:allowed].decode('utf-8', errors='ignore').encode('utf-8'))
                 if allowed > 0:
@@ -183,11 +235,12 @@ class ShellOutputArchive:
                         self._written += written
                         view = view[written:]
                 if allowed < len(data):
-                    self._reason = ('command_limit' if command_remaining <= workspace_remaining
-                                    else 'workspace_limit')
+                    self._reason = 'command_limit'
+                    self._blocking_reason = 'command_limit'
                     self._blocked = True
         except (OSError, ValueError, UnicodeError) as error:
             self._reason = ('directory_unavailable' if not self._paths else 'write_error')
+            self._blocking_reason = self._reason
             self._blocked = True
             logger.warning('shell_archive_failed error_type=%s', type(error).__name__)
 

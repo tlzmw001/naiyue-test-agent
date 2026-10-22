@@ -26,7 +26,7 @@ def test_pipe_child_approval_and_exit_never_join_an_unresolved_child(monkeypatch
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
     settings = AppSettings(subagents=(role(),))
     monkeypatch.setattr(cli, 'load_settings', lambda: settings)
-    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _, *, process_settings, output_settings, progress_settings, network_settings, retry_settings: [create_subagent_tool(), definition(calls=effects, approved=True)])
+    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _, *, process_settings, shell_task_settings, progress_settings, network_settings, retry_settings: [create_subagent_tool(), definition(calls=effects, approved=True)])
     build = cli.build_local_application
     def factory(*args, **kwargs):
         app = build(*args, **kwargs)
@@ -74,7 +74,7 @@ def test_pipe_approval_waits_for_preceding_queued_request(monkeypatch, capsys):
     child = ChildModel(replies=[call('probe', {'value': 'second'}, 'inner'), AIMessage(content='child report')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
     monkeypatch.setattr(cli, 'load_settings', lambda: AppSettings(subagents=(role(),)))
-    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _, *, process_settings, output_settings, progress_settings, network_settings, retry_settings: [create_subagent_tool(), definition(calls=effects, approved=True)])
+    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _, *, process_settings, shell_task_settings, progress_settings, network_settings, retry_settings: [create_subagent_tool(), definition(calls=effects, approved=True)])
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: False))
     lines = iter(['first', 'second', ':approve', ':quit'])
     def read(_prompt=''):
@@ -107,7 +107,7 @@ def test_pipe_does_not_reselect_submitted_root_batch_before_resume_starts(monkey
     child = ChildModel(replies=[call('probe', {'value': 'second'}, 'inner'), AIMessage(content='report')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
     monkeypatch.setattr(cli, 'load_settings', lambda: AppSettings(subagents=(role(),)))
-    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _, *, process_settings, output_settings, progress_settings, network_settings, retry_settings: [create_subagent_tool(), definition(calls=effects, approved=True)])
+    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _, *, process_settings, shell_task_settings, progress_settings, network_settings, retry_settings: [create_subagent_tool(), definition(calls=effects, approved=True)])
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: False))
     resume = cli._resume_and_print
     def delayed(*args, **kwargs):

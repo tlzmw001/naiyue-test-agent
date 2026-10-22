@@ -1,7 +1,8 @@
 # 当前可用的工具、权限、进程、进度、用量/诊断保存及角色定义样例（Spec085-14 / Spec087 / Spec091 / Spec090C / Spec086-S1—S6 / Spec108 / Spec109）。
 # 默认位置：~/.naiyue-test-agent/settings.toml，与 models.json 同目录。
 # 文件缺失使用默认；读取失败、TOML语法错误、权限/storage/角色定义非法会终止启动。
-# max_active_runs / web_event_cache_bytes / tools / process / tool_output / progress / usage_persistence / diagnostics额度非法时分别警告并回退该部分默认，保留合法权限规则。
+# shell_tasks非法会终止启动；旧tool_output.max_workspace_archive_bytes告警并忽略。
+# max_active_runs / web_event_cache_bytes / tools / process / progress / usage_persistence / diagnostics额度非法时分别警告并回退该部分默认，保留合法权限规则。
 # 权限规则启动时读取并校验，不随工具调用重新读文件；修改文件后重启服务。
 # 已接文件/Shell/subagent及aitest_kit/web_search/web_fetch；[[subagents]]配置角色。
 # 完整目标字段见 tool-runtime.example.toml，不能直接整份套用。
@@ -88,6 +89,9 @@ cleanup_batch_runs = 32
 # 保留开头完整行；首行过长时保留完整字符前缀。截断提示另计；完整历史留在子checkpoint。
 max_result_lines = 2000
 max_result_bytes = 65_536
+max_list_items = 20
+max_list_bytes = 8192
+task_preview_chars = 160
 
 # Web工具与远程HTTP MCP的网络设置，不改变模型供应商、Bash或待测项目自身的网络配置。
 # auto：读取系统/环境HTTP_PROXY、HTTPS_PROXY、ALL_PROXY及NO_PROXY；无代理时直连。
@@ -119,7 +123,7 @@ max_args = 128                 # 模型args数组最大元素数，不含可信p
 max_argument_chars = 8192      # 模型args所有元素的总字符预算。
 max_output_lines = 2000        # 合并stdout/stderr返回尾部的最大行数。
 max_output_bytes = 65536       # 返回尾部UTF-8字节预算。
-max_archive_bytes = 16777216   # 单次完整/原始输出归档预算，另受tool_output工作区总预算限制。
+max_archive_bytes = 16777216   # 单次完整/原始输出归档预算，raw与text合计；不设工作区累计额度。
 output_encoding = "utf-8"
 [tools.aitest_kit.environment]
 path_prepend = []              # 在继承的PATH前增加目录，可选择用户测试环境。
@@ -329,7 +333,7 @@ max_diagnostic_bytes = 8192
 max_command_chars = 8192
 # 装配时固定版本探测的秒数预算；超时只报告版本unknown，不执行用户脚本。
 probe_timeout_seconds = 5
-# 默认无执行期限；工具调用可传 timeout（秒），省略/null/0不限时，正整数指定本次期限。
+# 执行期限沿shell_tasks；模型timeout（秒）省略/null/0使用配置，正整数只能缩短。
 # stdout/stderr 合并后的末尾正文最多保留的行数。
 max_output_lines = 2000
 # 同一尾部正文的 UTF-8 字节上限：64 KiB，与行数限制同时生效。
@@ -360,7 +364,7 @@ path_prepend = []
 max_command_chars = 8192
 # 装配时固定版本探测的秒数预算；超时只报告版本unknown，不执行用户脚本。
 probe_timeout_seconds = 5
-# 默认无执行期限；工具调用可传 timeout（秒），省略/null/0不限时，正整数指定本次期限。
+# 执行期限沿shell_tasks；模型timeout（秒）省略/null/0使用配置，正整数只能缩短。
 # 合并后的末尾正文行数上限。
 max_output_lines = 2000
 # 同一尾部正文的 UTF-8 字节上限：64 KiB。
@@ -383,8 +387,16 @@ path_prepend = []
 [tools.powershell.environment.values]
 # 显式新增/覆盖的非敏感字符串值；空表表示不覆盖，规则与 Bash 相同。
 
-[tool_output]
-# 同一工作区全部受管 Shell 日志的实际落盘总量：128 MiB。
-# Bash/PowerShell、并发会话及已有受管归档共用此额度，不能各拿一份 128 MiB。
-# 单次额度与本额度都必须满足；达到任一额度后继续采集最新尾部，明确归档不完整。
-max_workspace_archive_bytes = 134_217_728
+[shell_tasks]
+# Spec125-01—04：只约束Bash/PowerShell；不改变Find/Grep、AITest及网络期限。
+# 严格非负整数秒；未配/0不设应用上限。非法配置终止启动，不回退成无限。
+# 模型timeout省略/null/0使用本配置；正整数与已配置正上限取较小值。
+max_execution_seconds = 0
+# 主Agent前台等待120秒后自动转后台；与执行期限共用计时原点，原期限不重置。
+foreground_wait_seconds = 120
+# 后台任务各自的raw/text归档合计上限；达到额度停止该任务，默认64 MiB。
+max_background_archive_bytes = 67108864
+# 下一次用户输入时的终态状态提示；严格正整数，未配使用20项/8 KiB。
+max_notice_items = 20
+# 包含标题及查询说明的完整提示段UTF-8字节数；放不下整条时保留待提示并诊断。
+max_notice_bytes = 8192

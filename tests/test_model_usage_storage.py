@@ -82,7 +82,7 @@ def test_schema_eight_migrates_without_changing_sessions_or_chat(tmp_path):
             DROP TABLE IF EXISTS naiyue_model_usage_runs;
             UPDATE naiyue_store_info SET version=8;''')
     with SessionStorage(path) as store:
-        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 13
+        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 14
         assert store.get('s')['thread_id'] == 'thread-s' and store.chat_heads('s') == []
         assert rows(store) == []
 
@@ -141,7 +141,7 @@ def test_usage_ddl_failure_rolls_back_without_damaging_existing_schema(monkeypat
         with pytest.raises(SessionPersistenceError, match='migration_failed') as caught:
             SessionStorage(path)
     from naiyue_test_agent.storage_backup import validate_backup
-    assert (caught.value.source_schema, caught.value.current_schema, caught.value.target_schema) == (8, 8, 13)
+    assert (caught.value.source_schema, caught.value.current_schema, caught.value.target_schema) == (8, 8, 14)
     assert validate_backup(path, caught.value.backup_id)['source_schema'] == 8
     with sqlite3.connect(path) as connection:
         assert connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 8

@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import type { ReactNode, RefObject } from 'react';
 import type { ContextEstimate, ContextGroup, ContextView } from '../contextTypes';
 import styles from './ContextPanel.module.css';
 
 const labels: Record<string, string> = { system: '系统说明', tool_definitions: '工具定义', user: '用户消息',
   assistant: '模型消息与工具调用参数', tool_results: '工具结果', summary: '历史压缩摘要', other: '其他消息',
-  base: '基础提示词', project: '项目说明', skills: 'Skill 索引', tool_guidance: '工具说明与指导', subagent_roles: '子智能体角色说明' };
+  base: '基础提示词', project: '项目说明', skills: 'Skill 索引', tool_guidance: '工具说明与指导', subagent_roles: '子智能体角色说明', background_tasks: '后台任务状态' };
 const colors: Record<string, string> = { system: 'var(--chart-system)', tool_definitions: 'var(--chart-tool_definitions)', user: 'var(--chart-user)',
   assistant: 'var(--chart-assistant)', tool_results: 'var(--chart-tool_results)', summary: 'var(--chart-summary)', other: 'var(--chart-other)' };
 const sourceLabel: Record<string, string> = { config: '配置', default: '默认值', unknown: '未提供' };
@@ -75,22 +75,16 @@ function Estimate({ estimate, basis }: { estimate?: ContextEstimate | null; basi
   </>;
 }
 
-export default function ContextPanel({ value, loading, error, retry, close, usageContent, diagnosticContent }: {
-  value?: ContextView; loading: boolean; error: string; retry: () => void; close: () => void;
+export default function ContextPanel({ value, loading, error, retry, usageContent, diagnosticContent }: {
+  value?: ContextView; loading: boolean; error: string; retry: () => void;
   usageContent: ReactNode;
   diagnosticContent?: ReactNode;
 }) {
   const tabs = ['current', 'request', 'usage', 'diagnostics'] as const;
   const [tab, setTab] = useState<(typeof tabs)[number]>('current');
-  const closeButton = useRef<HTMLButtonElement>(null);
-  useEffect(() => { closeButton.current?.focus(); }, []);
   const snapshot = value?.latest_request;
   const actual = snapshot?.usage;
-  return <aside className={styles.panel} aria-label="上下文" onKeyDown={event => {
-    if (event.key === 'Escape') { event.stopPropagation(); close(); }
-  }}>
-    <header className={styles.header}><strong>上下文</strong><button ref={closeButton} className={styles.close}
-      aria-label="关闭上下文" onClick={close}>×</button></header>
+  return <section className={styles.panel} aria-label="上下文">
     <div className={styles.scope}>{tab === 'usage' ? '会话累计' : tab === 'diagnostics' ? '运行诊断' : '主会话'}<span>只读查看</span></div>
     <div className={styles.tabs} role="tablist" aria-label="上下文统计口径">{tabs.map(name =>
       <button key={name} role="tab" aria-selected={tab === name} id={`context-tab-${name}`}
@@ -127,5 +121,5 @@ export default function ContextPanel({ value, loading, error, retry, close, usag
       </section>}</>}
     </div>
     {tab !== 'usage' && tab !== 'diagnostics' && <footer className={styles.footer}><span>本地查看，不调用模型</span><button onClick={retry} disabled={loading}>刷新</button></footer>}
-  </aside>;
+  </section>;
 }

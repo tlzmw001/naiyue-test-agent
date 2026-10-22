@@ -135,12 +135,13 @@ class RunObservation:
                 FailureDescription('application', 'unknown', 'unclassified', safe_error_type(error)))
 
     @contextmanager
-    def bind(self, *, ainvoke_subagent=None):
+    def bind(self, *, ainvoke_subagent=None, process_tasks=None, background_notices=None, alist_subagents=None):
         if self.mode == 'approval_resume':
             observe(self.controls, self.controls.submit_approval)
         services = RunServices(self.publisher, self.runtime_errors, self.stop_control,
                                self.turns, self.controls, self.context_operations, tool_progress=self.tool_progress,
-                               ainvoke_subagent=ainvoke_subagent)
+                               ainvoke_subagent=ainvoke_subagent, process_tasks=process_tasks,
+                               background_notices=background_notices, alist_subagents=alist_subagents)
         with bind_run_services(services), bind_http_run(self.report_http_gap):
             yield
 

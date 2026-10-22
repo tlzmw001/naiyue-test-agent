@@ -100,7 +100,7 @@ def graph_for(models, selected=None, project='PROJECT'):
         resolve_request_configuration=lambda sid, agent_path='root': (selected[sid], models[selected[sid]], _runtime_names_1),
         resolve_active_tool_names=lambda _sid, agent_path='root': _runtime_names_1,
         resolve_permission_context=fixed_permission_context,
-        resolve_prompt_parts=lambda _sid: [{'id': 'project', 'text': project}] if project else [],
+        resolve_prompt_parts=lambda _sid, agent_path='root': [{'id': 'project', 'text': project}] if project else [],
         get_registered_subagents=lambda: (),
         drain_steering=lambda _: [], is_stop_requested=lambda _: False,
         finish_run_boundary=lambda _: (False, []),

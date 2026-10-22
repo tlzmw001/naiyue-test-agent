@@ -33,7 +33,7 @@ def test_cli_lists_valid_backup_when_target_corrupt_and_configuration_unusable(t
     from naiyue_test_agent.storage_backup import create_backup
     from naiyue_test_agent import config_paths
     with closing(source_store(tmp_path)[0]) as source:
-        saved = create_backup(source.connection, source.path, target_schema=13)
+        saved = create_backup(source.connection, source.path, target_schema=14)
         database = source.path
     database.write_bytes(b'bad')
     home = tmp_path / 'agent'

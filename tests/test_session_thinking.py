@@ -85,7 +85,7 @@ def test_current_schema_four_is_upgraded_without_losing_sessions(tmp_path):
     with SessionStorage(path) as store:
         row = store.connection.execute('SELECT * FROM naiyue_sessions').fetchone()
         assert row['session_id'] == 'kept' and row['thinking_level'] == 'model_default'
-        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 13
+        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 14
 
 
 def test_web_selection_is_validated_authenticated_and_restored(monkeypatch, tmp_path):

@@ -77,7 +77,7 @@ async def test_sqlite_child_approval_resumes_original_thread_and_parent_saves_re
             assert not saved.interrupts and not saved.next and saved.values['thread_model_call_count'] == 2
             assert [m.content for m in saved.values['messages']] == ['check', '', 'once', 'child report']
             assert effects == [('probe', 'once')] and len(instances) == 1
-            assert next(m for m in result['messages'] if isinstance(m, ToolMessage)).content == 'child report'
+            assert json.loads(next(m for m in result['messages'] if isinstance(m, ToolMessage)).content)['report'] == 'child report'
             assert len(await app.alist_sessions()) == 1 and (await app.alist_sessions())[0]['state'] == 'ready'
         finally:
             await cancel_run(task)

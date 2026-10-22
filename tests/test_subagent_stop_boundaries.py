@@ -1,5 +1,6 @@
 """Accepted stop preserves completed IO and checkpoint finalization facts."""
 
+import json
 import asyncio
 from threading import Event
 
@@ -78,7 +79,7 @@ async def test_stop_during_final_checkpoint_confirmation_does_not_relabel_a_comp
         result = await asyncio.wait_for(task, 5)
         assert instances[0]['status'] == 'completed' and instances[0]['settled']
         message = next(m for m in result['messages'] if isinstance(m, ToolMessage))
-        assert message.status == 'success' and message.content == 'completed report'
+        assert message.status == 'success' and json.loads(message.content)['report'] == 'completed report'
     finally:
         release.set()
         await cancel_run(task)

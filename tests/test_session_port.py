@@ -72,7 +72,7 @@ async def test_interactive_graph_rejects_child_scope_without_consuming_root_cont
         resolve_request_configuration=lambda sid, path: ('A', model, ()),
         resolve_active_tool_names=lambda sid, path: (),
         resolve_permission_context=fixed_permission_context,
-        resolve_prompt_parts=lambda sid: [], get_registered_subagents=lambda: (),
+        resolve_prompt_parts=lambda sid, agent_path='root': [], get_registered_subagents=lambda: (),
         is_stop_requested=lambda sid: controls.append('stop') or False,
         drain_steering=lambda sid: controls.append('steering') or [],
         finish_run_boundary=lambda sid: controls.append('finish') or (False, []),

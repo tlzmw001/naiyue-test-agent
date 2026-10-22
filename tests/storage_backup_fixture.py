@@ -9,7 +9,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from naiyue_test_agent.application.session_storage import SessionStorage
 
 
-def source_store(tmp_path, *, version=13, bound=True, checkpoints=True):
+def source_store(tmp_path, *, version=14, bound=True, checkpoints=True):
     root = tmp_path / 'workspace'
     (root / '.naiyue').mkdir(parents=True)
     identity = str(uuid4())
@@ -29,6 +29,8 @@ def source_store(tmp_path, *, version=13, bound=True, checkpoints=True):
         connection.execute('INSERT INTO writes VALUES(?,?,?,?,?,?,?,?)',
                            ('T', '', 'C', 'task', 0, 'pending', 'json', b'opaque-value'))
         connection.execute("UPDATE naiyue_sessions SET checkpoint_id='C'")
+    if version < 14:
+        connection.execute('DROP TABLE naiyue_subagent_instances')
     if version < 13:
         connection.execute('ALTER TABLE naiyue_model_invocations DROP COLUMN duration_ms')
     if version < 12:
@@ -67,7 +69,7 @@ def artifact(database, backup_id):
     return Path(database).with_name(database.name + '.backups') / backup_id
 
 
-def closed_store(tmp_path, *, version=13):
+def closed_store(tmp_path, *, version=14):
     storage, root, identity = source_store(tmp_path, version=version)
     database = storage.path
     storage.close()

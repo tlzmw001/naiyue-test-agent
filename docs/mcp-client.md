@@ -168,7 +168,7 @@ connection_configuration_changed，需停用并收尾后重新启用，或重启
 
 支持text与structuredContent；isError=true返回配对错误结果，保留有界正文。正文按
 max_result_bytes截断，超长原JSON复用已有安全输出目录和配额归档，正文给出路径/状态。
-归档单次上限复用max_response_bytes，工作区总上限使用tool_output设置。无工作区、
+归档单次上限复用max_response_bytes；Spec125-01已移除tool_output工作区总上限，不自动删除归档。无工作区、
 配额满或路径不安全会明确标记归档不完整。模型及历史只存有界投影，完整归档按现有
 输出文件清理命令管理。媒体、resource URI、input_required及扩展结果明确拒绝，
 不自动取媒体、不发起交互后续请求。

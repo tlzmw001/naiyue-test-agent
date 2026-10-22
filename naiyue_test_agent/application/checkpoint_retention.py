@@ -21,7 +21,8 @@ class RetentionSkipped(Exception):
 def _ownership(storage):
     owners = {}
     for row in storage.connection.execute('''SELECT session_id,thread_id FROM naiyue_sessions
-            UNION ALL SELECT session_id,thread_id FROM naiyue_chat_sync'''):
+            UNION ALL SELECT session_id,thread_id FROM naiyue_chat_sync
+            UNION ALL SELECT session_id,child_thread_id FROM naiyue_subagent_instances'''):
         owners.setdefault(row['thread_id'], set()).add(row['session_id'])
     for row in storage.connection.execute('SELECT session_id,old_thread_id,new_thread_id,obsolete_children FROM naiyue_regenerations'):
         children = json.loads(row['obsolete_children'])
@@ -70,9 +71,10 @@ def _inventory(storage, session_id, run_id, settings):
                 scopes.append(thread)
         boundary = storage._read('''SELECT * FROM naiyue_reply_boundaries WHERE session_id=? AND thread_id=?
             ORDER BY input_sequence DESC LIMIT 1''', (session_id, row['thread_id'])) if scopes else []
+        registered = storage.get_subagent_references(session_id) if scopes else {}
         return dict(row=row, heads=heads, live=by_thread, retired=retired - set(by_thread),
                     owners=_ownership(storage) if scopes else {},
-                    scopes=scopes, boundary=boundary[0] if boundary else None)
+                    scopes=scopes, boundary=boundary[0] if boundary else None, registered=registered)
 
 
 def _weight(storage, key):
@@ -89,6 +91,8 @@ def _weight(storage, key):
 async def _protected(agent, storage, inventory, settings):
     row = inventory['row']
     protected = {(head['thread_id'], head['checkpoint_ns'], head['checkpoint_id']) for head in inventory['heads']}
+    protected.update((item['child_thread_id'], item['checkpoint_ns'], item['checkpoint_id'])
+        for item in inventory['registered'].values() if item['checkpoint_id'] is not None)
     protected.add((row['thread_id'], row['checkpoint_ns'], row['checkpoint_id']))
     boundary = inventory['boundary']
     if boundary and boundary['source_checkpoint_id']:
@@ -156,6 +160,8 @@ def _commit(storage, inventory, candidates, protected):
         heads = storage.chat_heads(row['session_id'])
         if heads != inventory['heads']:
             raise RetentionSkipped('archive_changed')
+        if storage.get_subagent_references(row['session_id']) != inventory['registered']:
+            raise RetentionSkipped('registry_changed')
         owners = _ownership(storage)
         checked = set()
         for key, _ in candidates:

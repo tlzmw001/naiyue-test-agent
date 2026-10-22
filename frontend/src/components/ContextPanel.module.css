@@ -1,8 +1,4 @@
-.panel { width: 440px; min-width: 0; flex-shrink: 0; border-left: 1px solid var(--line); display: flex; flex-direction: column; background: var(--surface); min-height: 0; }
-.header { padding: 18px 22px 10px; display: flex; justify-content: space-between; align-items: center; }
-.header strong { font-size: var(--fs-body); font-weight: var(--fw-semibold); }
-.close { border: 0; background: transparent; color: var(--muted); font-size: var(--fs-icon); width: 30px; height: 30px; border-radius: var(--r-sm); }
-.close:hover { background: var(--surface-hover); }
+.panel { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface); }
 .scope { display: flex; justify-content: space-between; padding: 0 22px 15px; font-size: var(--fs-caption); color: var(--text-secondary); }
 .scope span { background: var(--surface-hover); border-radius: var(--r-xs); padding: 3px 6px; font-size: var(--fs-caption); }
 .tabs { display: flex; justify-content: space-between; gap: 10px; padding: 0 22px; border-bottom: 1px solid var(--line); }
@@ -63,7 +59,7 @@
 .filled { stroke: var(--muted); transform: rotate(-90deg); transform-origin: center; }
 .trigger[data-threshold="reached"] { color: var(--warning); }
 .trigger[data-threshold="reached"] .filled { stroke: currentColor; }
-@media (max-width: 1100px) { .panel { position: fixed; right: 0; top: 0; bottom: 0; z-index: 6; width: min(100%, 440px); box-shadow: -12px 0 35px var(--shadow); } }
+
 @media (max-width: 480px) {
   .trigger { font-size: var(--fs-caption); gap: 4px; padding-inline: 3px; }
   .usage .metrics > div { flex-wrap: wrap; }

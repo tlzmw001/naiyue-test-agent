@@ -15,7 +15,7 @@ def error_result(content, *, runtime, server_id, tool, transport, outcome):
             'transport': transport, 'source': {'server_id': server_id, 'remote_tool': tool.remote_name}})
 
 
-def format_result(result, *, runtime, server, server_id, tool, output_settings):
+def format_result(result, *, runtime, server, server_id, tool):
     from mcp.types import CallToolResult
     def unsupported(content):
         return error_result(content, runtime=runtime, server_id=server_id, tool=tool,
@@ -39,7 +39,7 @@ def format_result(result, *, runtime, server, server_id, tool, output_settings):
     if truncated:
         root = (runtime.context or {}).get('workspace_root')
         if isinstance(root, Path) and root.is_absolute():
-            archive = ShellOutputArchive(root, SimpleNamespace(max_archive_bytes=server.max_response_bytes), output_settings)
+            archive = ShellOutputArchive(root, SimpleNamespace(max_archive_bytes=server.max_response_bytes))
             archive.record(raw, activate=True)
             saved = archive.finish()
             artifact.update(archive_complete=saved.complete, archive_paths=saved.paths, archive_reason=saved.reason)

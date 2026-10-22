@@ -19,7 +19,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent import application
 from naiyue_test_agent.application import cli
-from naiyue_test_agent.tools import create_session_read_tool, create_session_bash_tool, BashSettings, ToolOutputSettings
+from naiyue_test_agent.tools import create_session_read_tool, create_session_bash_tool, BashSettings
 from naiyue_test_agent.tools.permissions import OneUseApprovalGrants
 from naiyue_test_agent.model_access import ModelCatalog
 
@@ -28,7 +28,7 @@ class BashFake(FakeMessagesListChatModel):
     def bind_tools(self, tools, **kwargs):
         return self
 
-async def make_app(monkeypatch, command: str, *, timeout: int | None = None, settings=None, output_settings=None):
+async def make_app(monkeypatch, command: str, *, timeout: int | None = None, settings=None, shell_task_settings=None):
     # Simulate an activated test venv in the inherited parent environment.
     monkeypatch.setenv('PATH', str(Path(sys.executable).parent) + os.pathsep + os.environ['PATH'])
     args = {'command': command}
@@ -41,7 +41,7 @@ async def make_app(monkeypatch, command: str, *, timeout: int | None = None, set
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
     return await build_application(
-        Path('synthetic.json'), tools=[create_session_bash_tool(settings=settings, output_settings=output_settings)],
+        Path('synthetic.json'), tools=[create_session_bash_tool(settings=settings, shell_task_settings=shell_task_settings)],
         system_prompt='', response_format=None,
     )
 
@@ -64,7 +64,8 @@ async def test_host_bash_approval_then_runs_in_trusted_workspace(monkeypatch, tm
     assert bash_results(pending) == []
     assert pending['approval_requests'] == [{
         'tool_call_id': 'bash-1', 'tool_name': 'bash',
-        'target': command, 'workspace': str(root.resolve()),
+        'target': '[automatic background after 120s; original execution deadline applies] ' + command,
+        'workspace': str(root.resolve()),
     }]
     assert app.pending_tool_approvals(session) == pending['approval_requests']
 
@@ -284,8 +285,9 @@ async def test_timeout_partial_output_respects_merged_budget(monkeypatch, tmp_pa
 def test_bash_model_schema_explains_timeout_and_output_limit():
     schema = create_session_bash_tool().tool.tool_call_schema.model_json_schema()
     description = schema['description']
-    assert 'no default time limit' in description
-    assert '0 for unlimited' in description
+    assert 'Configured Shell execution limit: 0 seconds' in description
+    assert '0 means unlimited' in description
+    assert 'cannot extend' in description
     assert schema['properties']['timeout']['anyOf'][0] == {'minimum': 0, 'type': 'integer'}
     assert '65536' in description and '2000' in description
     assert 'workspace' in description
@@ -341,8 +343,7 @@ async def test_archive_preserves_both_streams_without_claiming_order(monkeypatch
 @async_test
 async def test_archive_quota_is_explicit_and_command_still_finishes(monkeypatch, tmp_path):
     app = await make_app(monkeypatch, "python -c \"print('Q'*100000)\"",
-        settings=BashSettings(max_archive_bytes=5000),
-        output_settings=ToolOutputSettings(max_workspace_archive_bytes=6000))
+        settings=BashSettings(max_archive_bytes=5000))
     session = await app.acreate_workspace_session('A', tmp_path)
     await app.arun(session, [('user', 'run')])
     result = await app.aresume_tool_approval(session, ['approve'])
@@ -383,19 +384,18 @@ async def test_timeout_keeps_archive_path_in_tool_feedback(monkeypatch, tmp_path
     assert result['messages'][-1].content == 'done'
 
 @async_test
-async def test_workspace_archive_limit_applies_across_commands(monkeypatch, tmp_path):
+async def test_archive_budgets_are_independent_across_commands(monkeypatch, tmp_path):
     paths = []
     for _ in range(2):
         app = await make_app(monkeypatch, "python -c \"print('W'*5000)\"",
-            settings=BashSettings(max_output_bytes=4096, max_archive_bytes=10000),
-            output_settings=ToolOutputSettings(max_workspace_archive_bytes=7000))
+            settings=BashSettings(max_output_bytes=4096, max_archive_bytes=10000))
         session = await app.acreate_workspace_session('A', tmp_path)
         await app.arun(session, [('user', 'run')])
         message = bash_results(await app.aresume_tool_approval(session, ['approve']))[0].content
         paths.append(tmp_path / _archive_path(message, 'raw'))
-    assert sum(path.stat().st_size for path in paths) == 7000
-    assert 'archive_complete=false' in message
-    assert 'archive_reason=workspace_limit' in message
+    assert sum(path.stat().st_size for path in paths) == 10002
+    assert 'archive_complete=true' in message
+    assert 'archive_reason=' not in message
 
 def test_cli_refuses_output_cleanup_during_active_run(monkeypatch, tmp_path, capsys):
     entered, release = Event(), Event()

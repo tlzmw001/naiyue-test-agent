@@ -2,6 +2,7 @@
 
 
 def remove_reply_schema(connection):
+    connection.execute('DROP TABLE IF EXISTS naiyue_subagent_instances')
     columns = {row[1] for row in connection.execute('PRAGMA table_info(naiyue_model_invocations)')}
     if 'duration_ms' in columns:
         connection.execute('ALTER TABLE naiyue_model_invocations DROP COLUMN duration_ms')

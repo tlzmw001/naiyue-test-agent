@@ -34,15 +34,17 @@
 
 
 
-顶部“子智能体”打开名称列表，同名实例按短标识和任务区分；选择后详情不重复显示名称，复用主会话的分割线、Markdown和可展开工具卡片。消息与进展同流，支持只停止选中的活跃子智能体。待审批只显示状态和“到主会话处理”，所有审批仍在主会话；出现审批不自动展开侧栏。375px侧栏覆盖聊天，返回审批时关闭侧栏。
+顶部侧栏图标打开“子智能体／后台任务／上下文”页签；子智能体按名称列表选择，同名实例按短标识和任务区分。选择后详情不重复显示名称，复用主会话的分割线、Markdown和可展开工具卡片。[Spec126-03](specs/126-03-subagent-discovery-delivery.md)按稳定ID保留多次委派历史，显示“可由主智能体继续委派”或仅历史/退役等原因；候选提示不代替实际续跑准入。新普通委派重置当前草稿/工具态，审批恢复保留；旧执行事件和旧详情不会覆盖新来源。消息与进展同流，停止绑定所观察到的子执行，审批停止额外核对批次；待审批只显示状态和“到主会话处理”，所有审批仍在主会话。出现审批不自动展开侧栏；375px侧栏覆盖聊天，返回审批时关闭侧栏。
 
-两个只读接口 `GET /api/sessions/{id}/subagents`、`GET /api/sessions/{id}/subagents/{agent_id}` 沿原认证和工作区归属检查，由真实父调用派生身份后读取官方子checkpoint，不接受任意thread_id、不执行恢复或模型调用。根快照只保留子摘要及有预算的当前草稿，完整记录独立读取，详情超限不阻断主审批。列表受当前父checkpoint可关联范围限制，压缩前被移除的委派未另建永久索引；瞬时进度不跨服务重启。
+两个只读接口 `GET /api/sessions/{id}/subagents`、`GET /api/sessions/{id}/subagents/{agent_id}` 沿原认证和工作区归属检查，以可信实例登记为先、真实历史引用补充legacy后读取官方子checkpoint，不接受任意thread_id、不执行恢复或模型调用。新格式实例可在父历史压缩和正常重开后找回；legacy仅历史可读。根快照只保留子摘要及有预算的当前草稿，完整记录独立读取，详情超限不阻断主审批；瞬时进度不跨服务重启。
+
+工具选择只显示一个`subagent`能力：启用后根模型请求配套包含`subagent`和只读`subagent_list`，已启用的旧会话无需改库，关闭后新请求同时移除两者。list不单列开关，也不自动执行；实际调用仍显示工具卡片。主Agent按需找回ID，结果只含实例元数据/最近任务预览。`[tools.subagent]`的`max_list_items=20`、`max_list_bytes=8192`、`task_preview_chars=160`均可配置为严格正整数；字节上限覆盖完整UTF-8 JSON和分页信息，固定项放不下则明确报错。列表不调用子模型；继续仍由主Agent显式传`agent_id`，没有用户直聊输入框。
 
 Windows文件工具的提交/归档与路径比较已按[Spec088](specs/088-windows-file-commit-and-archives.md)/[Spec089](specs/089-windows-path-permission-identity.md)接入：合法普通/扩展盘符和UNC目标用同一比较语义，Deny仍优先，递归批准不绕过子目标过滤。归档不要求私密模式位，但标记/类型/链接和显式清理快照仍检查；已有文件替换保留系统访问设置，不自动清只读/提权。当前为本机IO与平台分支证据，Windows原机验收另做，页面/审批API未新增字段。
 
 Bash/PowerShell可从输入框“工具”启用，后端仍复用`aset_active_tools(session_id, names)`。命令按显式规则/当前模式审批，默认策略Ask，仍是宿主机执行。双Shell环境/合流/归档见[085-14](specs/085-14-dual-shell.md)，共用进程runner/原生async及清理保护沿085-12；[085-13](specs/085-13-search-tools.md)已将Grep接原生rg分组搜索、Find接fd（Linux也识别fdfind），均有流式预算、权限过滤和不完整反馈；程序须在服务PATH中，不自动下载/安装。
 
-090C已统一Bash/PowerShell/Grep/Find的timeout参数：省略/null/0不设执行期限，正整数指定本次秒数，不设300秒上限；Grep发现和各分组共用一次期限。用户仍可通过现有停止按钮结束协作工具，必要进程清理和模型网络期限保留，输出/归档预算不变。
+Spec125-01在090C基础上为Bash/PowerShell接入`[shell_tasks].max_execution_seconds`：严格非负整数秒，未配/0不设应用上限；模型timeout省略/null/0使用配置，正整数与配置正上限取较小值。非法配置明确阻止启动。Find/Grep仍按原规则省略/null/0不限时，Grep发现和各分组共用一次期限；用户停止、进程收尾及模型网络期限保持原合同。Shell输出固定存放`<workspace_root>/naiyue-agent-output/`，raw/text共用单次`max_archive_bytes`，不设工作区累计额度，不自动删除。前台归档触限只停止归档，命令继续；125-02已接主Agent显式background=true与task_list/task_output/task_stop，跨轮运行、每任务默认64MiB日志，达到额度停止自身。应用关闭停止后台任务；删除有活动任务的会话会提示先停止，已结束任务不自动删除日志。进程内注册表不跨重启恢复，不自动唤醒模型。03已接120秒自动转换；04已接下一轮系统状态提示；05已接独立CLI/Web管理入口，合同和实际验收见[分片说明](specs/125-05-background-management.md)。
 
 页面默认折叠工具详情，显示工具名及处理中/成功/错误结果/未执行/待核对等状态。展开能看到模型实际提供的参数和对应 ToolMessage 正文；工具结果用转义文本显示，不当作助手回答或 HTML 执行。缺少历史执行来源时显示“已有结果”，不借用其他运行的状态。
 
@@ -134,3 +136,9 @@ web_tools_probe=PASS mode=offline tcp=True approval=correlated mixed_decisions=T
 浏览器用同一生产UI和离线fixture服务，真实审批第一条批准、第二条拒绝，显示成功/未执行及后续回答；工具正文来自实际文件读取/拒绝ToolMessage。1280px和375px无横向溢出、控制台未观察error/warn；窄屏可滚动审批区选择并提交，刷新后结果仍正确配对。截图在本机本次Web工具验证目录。没有新增收费模型调用，不能将这些称为真实供应商工具决策质量或生产业务效果。
 
 下一步先试用这一闭环，再沿入口→装配→消息/工具→审批→恢复→保存/显示进行系统学习。助手完成代码不等于用户已独立实现或能应对追问。
+
+
+Spec125-03：主Agent双Shell前台命令默认等待120秒（shell_tasks.foreground_wait_seconds，严格正整数秒），到期仍运行则将同一进程交到后台；总timeout原点不变，T<=F优先终止。审批目标展示自动转换规则，pending spawn可返回starting，正常短命令继续返回原前台格式。原run进度在交接后结束，下一用户轮可用task_list/task_output查询；自动状态提示和CLI/Web后台任务面板分别留到04/05。子Agent与AITest仍使用前台入口。
+
+
+Spec125-04：已结束后台任务在下一次用户输入的root运行中加入现有SystemMessage的background_tasks段，默认最多20项/完整UTF-8段8 KiB，分别由shell_tasks.max_notice_items/max_notice_bytes配置（严格正整数）。只含任务ID/状态/退出码/原因，不含命令输出；需要正文时调用task_output。响应通过原门禁后按精确版本确认，调用失败/停止保留；预览只读、子Agent/审批恢复/手动压缩不消费。上下文估算与最近请求快照显示“后台任务状态”及数量，不新增后台任务列表或完成自动推理。

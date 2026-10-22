@@ -23,19 +23,20 @@ def test_schema12_migration_preserves_old_usage_as_unknown(tmp_path):
         for event in facts():
             store.save_model_usage_event(event)
     with sqlite3.connect(path) as connection:
+        connection.execute('DROP TABLE naiyue_subagent_instances')
         columns = {row[1] for row in connection.execute('PRAGMA table_info(naiyue_model_invocations)')}
         if 'duration_ms' in columns:
             connection.execute('ALTER TABLE naiyue_model_invocations DROP COLUMN duration_ms')
         connection.execute('UPDATE naiyue_store_info SET version=12')
         before = connection.execute('SELECT invocation_id,started_at,finished_at,input_tokens FROM naiyue_model_invocations').fetchall()
     with SessionStorage(path) as store:
-        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 13
+        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 14
         assert store.connection.execute('SELECT duration_ms FROM naiyue_model_invocations').fetchone()[0] is None
         assert [tuple(r) for r in store.connection.execute('SELECT invocation_id,started_at,finished_at,input_tokens FROM naiyue_model_invocations')] == before
         assert store.read_model_usage('s', model_limit=20)['duration'] == {
             'known_sum_ms': None, 'reported_calls': 0, 'unknown_calls': 1}
     with SessionStorage(path) as store:
-        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 13
+        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 14
 
 
 def test_duration_is_part_of_idempotent_terminal_and_survives_reopen(tmp_path):

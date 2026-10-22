@@ -265,7 +265,6 @@ def test_remembered_tool_still_relists_live_catalog_before_each_execution(monkey
 @pytest.mark.parametrize('root_kind', ['none', 'quota', 'symlink'])
 def test_result_archive_degradation_is_explicit_and_budgeted(tmp_path, root_kind):
     from naiyue_test_agent.mcp_client.results import format_result
-    from naiyue_test_agent.tools.settings import ToolOutputSettings
     from mcp.types import CallToolResult, TextContent
     server = stdio_settings(tmp_path / 'unused', max_result_bytes=512, max_response_bytes=64)
     if root_kind == 'symlink':
@@ -274,7 +273,7 @@ def test_result_archive_degradation_is_explicit_and_budgeted(tmp_path, root_kind
     runtime = SimpleNamespace(tool_call_id='one', context={'workspace_root': None if root_kind == 'none' else tmp_path})
     tool = SimpleNamespace(remote_name='echo', registered_name=NAME)
     result = format_result(CallToolResult(content=[TextContent(type='text', text='大' * 5000)]), runtime=runtime,
-        server=server, server_id='local', tool=tool, output_settings=ToolOutputSettings())
+        server=server, server_id='local', tool=tool)
     assert result.artifact['truncated'] and not result.artifact['archive_complete']
     reason = {'none': 'workspace_unavailable', 'quota': 'command_limit', 'symlink': 'directory_unavailable'}[root_kind]
     assert result.artifact['archive_reason'] == reason and reason in result.content

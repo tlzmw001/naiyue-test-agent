@@ -1,5 +1,6 @@
 """A delegated task has its own graph history, model snapshot and tool scope."""
 
+import json
 import asyncio
 from typing import Any
 
@@ -77,7 +78,7 @@ async def test_parent_receives_only_report_and_artifact_child_uses_real_read(mon
     result = await app.arun(sid, [('user', 'ORIGINAL_HUMAN_REQUEST')])
     outer = [message for message in result['messages'] if isinstance(message, ToolMessage)]
     assert len(outer) == 1
-    assert (outer[0].tool_call_id, outer[0].status, outer[0].content) == ('delegate', 'success', 'verified report')
+    assert (outer[0].tool_call_id, outer[0].status, json.loads(outer[0].content)['report']) == ('delegate', 'success', 'verified report')
     artifact = outer[0].artifact
     assert artifact['model_id'] == 'B' and artifact['status'] == 'completed' and artifact['usage'] is None
     instance, = instances
@@ -200,7 +201,7 @@ async def test_leaf_tool_error_stays_in_child_history(monkeypatch, tmp_path):
     app, _ = await delegated_app(monkeypatch, child, spec=spec, tools=[create_session_read_tool()])
     result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'read')])
     assert next(message for message in child.seen[1] if isinstance(message, ToolMessage)).status == 'error'
-    assert next(message for message in result['messages'] if isinstance(message, ToolMessage)).content == 'file unavailable'
+    assert json.loads(next(message for message in result['messages'] if isinstance(message, ToolMessage)).content)['report'] == 'file unavailable'
 
 
 @async_test

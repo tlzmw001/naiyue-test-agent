@@ -20,12 +20,41 @@ const detail = { ...record, available: true, has_compaction: false, tool_states:
     provisional: false, state: 'complete' as const },
 ] };
 afterEach(cleanup);
+
+it('shows continuation availability and the retired reason from the saved instance', async () => {
+  const props = setup();
+  vi.mocked(props.api.subagents).mockResolvedValue([{ ...record, resume_available: false, resume_reason: 'retired' }]);
+  vi.mocked(props.api.subagent).mockResolvedValue({ ...detail, resume_available: false, resume_reason: 'retired' });
+  render(<TestSidebar {...props} sessionId="s" />);
+  fireEvent.click(await screen.findByRole('button', { name: '查看子智能体 tester · abcdef' }));
+  expect(await screen.findByText('已随重新生成退役，请新建实例')).toBeTruthy();
+  expect(screen.queryByRole('textbox')).toBeNull();
+});
+
+it('invalidates a detail request when the same instance starts another delegation with the same status', async () => {
+  const props = setup();
+  let oldResolve!: (value: typeof detail) => void;
+  vi.mocked(props.api.subagent).mockImplementationOnce(() => new Promise(resolve => { oldResolve = resolve; }))
+    .mockResolvedValue({ ...detail, messages: [{ id: 'new-answer', type: 'ai', content: 'new delegation answer', provisional: false, state: 'complete' }] });
+  const source = { agent_path: record.agent_path, agent_id: record.agent_id, agent_run_id: 'old', parent_run_id: 'r', parent_tool_call_id: 'same' };
+  const run = { session_id: 's', run_id: 'r', status: 'running', done: false, messages: [], last_sequence: 1,
+    incomplete: false, manual_review_required: false, agents: { [record.agent_path]: { source, status: 'running', messages: [], tool_states: {} } } } as any;
+  const view = render(<TestSidebar {...props} sessionId="s" run={run} />);
+  fireEvent.click(await screen.findByRole('button', { name: '查看子智能体 tester · abcdef' }));
+  await waitFor(() => expect(props.api.subagent).toHaveBeenCalledTimes(1));
+  view.rerender(<TestSidebar {...props} sessionId="s" run={{ ...run, agents: { [record.agent_path]: {
+    ...run.agents[record.agent_path], source: { ...source, agent_run_id: 'new' } } } }} />);
+  await screen.findByText('new delegation answer');
+  await act(async () => oldResolve(detail));
+  expect(screen.queryByText('child explanation')).toBeNull();
+  expect(screen.getByText('new delegation answer')).toBeTruthy();
+});
 function setup() {
   const api = new WebApi('test');
   vi.spyOn(api, 'subagents').mockResolvedValue([record]);
   vi.spyOn(api, 'subagent').mockResolvedValue(detail);
-  const close = vi.fn(), showApprovals = vi.fn(), stopAgent = vi.fn();
-  return { api, close, showApprovals, stopAgent };
+  const showApprovals = vi.fn(), stopAgent = vi.fn();
+  return { api, showApprovals, stopAgent };
 }
 it('loads a child preview using its own saved scope and conversation revision', async () => {
   const props = setup();
@@ -70,8 +99,8 @@ it('keeps live messages and progress isolated and sends approvals back to the ma
   fireEvent.click(screen.getByRole('button', { name: '到主会话处理' }));
   expect(props.showApprovals).toHaveBeenCalledOnce();
   fireEvent.click(screen.getByRole('button', { name: '停止该子智能体' }));
-  expect(props.stopAgent).toHaveBeenCalledWith(record.agent_path, 'root-run');
-  expect(within(screen.getByRole('complementary')).queryByRole('radio')).toBeNull();
+  expect(props.stopAgent).toHaveBeenCalledWith(record.agent_path, 'root-run', 'child');
+  expect(within(screen.getByRole('region')).queryByRole('radio')).toBeNull();
 });
 it('discards a late detail response after changing session and offers retry on read failure', async () => {
   const props = setup();

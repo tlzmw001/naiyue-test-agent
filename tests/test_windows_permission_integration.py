@@ -34,7 +34,7 @@ async def test_extended_windows_target_denied_before_all_file_tool_execution(mon
     settings = AppSettings.model_validate({'permissions': {
         'mode': 'BypassApprovals', 'deny': [{'tool': tool_name, 'path': 'C:/work/private.txt'}],
         'allow': [{'tool': tool_name, 'path': 'C:/work/**'}]}})
-    original = next(spec for spec in create_builtin_tools(settings.tools, process_settings=settings.process, output_settings=settings.tool_output, progress_settings=settings.progress) if spec.tool.name == tool_name)
+    original = next(spec for spec in create_builtin_tools(settings.tools, process_settings=settings.process, shell_task_settings=settings.shell_tasks, progress_settings=settings.progress) if spec.tool.name == tool_name)
     spec = replace(original, permissions=WindowsPermission('path', original.permissions.operation))
     def never(*args, **kwargs):
         pytest.fail('Denied file tool entered execution')

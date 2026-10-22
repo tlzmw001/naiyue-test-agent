@@ -20,15 +20,13 @@ logger = logging.getLogger(__name__)
 
 
 class MCPSessionResources:
-    def __init__(self, settings: MCPSettings, network: NetworkSettings, *, output_settings=None, retry_settings=None):
+    def __init__(self, settings: MCPSettings, network: NetworkSettings, *, retry_settings=None):
         self._loop = asyncio.get_running_loop()
         settings = MCPSettings.model_validate(settings.model_dump())
         # Public dumps omit proxy credentials; trusted internal copies must retain them.
         network = NetworkSettings.model_validate(dict(network))
-        from ..tools.settings import ToolOutputSettings
         self._salt = secrets.token_bytes(32)
         self._network = network
-        self._output_settings = output_settings or ToolOutputSettings()
         from ..tools.retry_settings import ToolRetrySettings
         self.retry_settings = retry_settings if retry_settings is not None else ToolRetrySettings()
         self._definitions = {name: server.model_copy(deep=True) for name, server in settings.servers.items()}

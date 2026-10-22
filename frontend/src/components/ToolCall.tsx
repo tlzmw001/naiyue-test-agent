@@ -27,7 +27,7 @@ export default function ToolCall({ call, result, phase, loadChange, contentContr
   contentControl?: ReactNode;
   call: ToolCallRow; result?: MessageRow; phase?: ToolState; stopping?: boolean; unconfirmed?: boolean;
   agents?: AgentView[]; initiallyOpen?: boolean;
-  stopAgent?: (agentPath: string, originRunId: string) => void;
+  stopAgent?: (agentPath: string, originRunId: string, agentRunId?: string) => void;
   openAgent?: (agentPath: string) => void;
 }) {
   const [expanded, setExpanded] = useState(initiallyOpen);
@@ -93,7 +93,7 @@ export default function ToolCall({ call, result, phase, loadChange, contentContr
         </div>
         {typeof call.args.task === 'string' && <p className={styles.delegatedTask}>{call.args.task}</p>}
         {stopAgent && ['running', 'awaiting_approval', 'stopping'].includes(agent.status) && <button className={styles.syncButton}
-          disabled={agent.status === 'stopping' || stopping} onClick={() => stopAgent(agent.source.agent_path, agent.source.parent_run_id)}>
+          disabled={agent.status === 'stopping' || stopping} onClick={() => stopAgent(agent.source.agent_path, agent.source.parent_run_id, agent.source.agent_run_id)}>
           {agent.status === 'stopping' ? '正在停止子任务…' : '停止该子任务'}</button>}
       </section>)}
   </>;

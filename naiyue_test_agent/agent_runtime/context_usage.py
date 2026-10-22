@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 SNAPSHOT_KEY = 'naiyue_context_snapshot'
 PARTS_KEY = 'naiyue_prompt_parts'
 GROUPS = ('system', 'tool_definitions', 'user', 'assistant', 'tool_results', 'summary', 'other')
-PARTS = ('base', 'project', 'skills', 'tool_guidance', 'subagent_roles')
+PARTS = ('base', 'project', 'skills', 'tool_guidance', 'subagent_roles', 'background_tasks')
 
 
 def compose_model_prompt(base, project_parts, specs, roles=()):

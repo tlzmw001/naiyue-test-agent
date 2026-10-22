@@ -16,6 +16,7 @@ function client() {
   const fetcher = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(info))));
   vi.stubGlobal('fetch', fetcher);
   const api = new WebApi('synthetic-workspace-access');
+  vi.spyOn(api, 'backgroundTasks').mockResolvedValue({ items: [], active_count: 0, terminal_revision: 0, revision: 'empty', next_before: null });
   vi.spyOn(api, 'models').mockResolvedValue({ default_model_id: 'A', model_ids: ['A'] });
   vi.spyOn(api, 'sessions').mockResolvedValue([]);
   vi.spyOn(api, 'subagents').mockResolvedValue([]);

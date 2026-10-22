@@ -5,7 +5,8 @@ from collections import deque
 
 
 class ProcessProtocol(asyncio.SubprocessProtocol):
-    def __init__(self, max_pending_bytes, *, merge_output=False):
+    def __init__(self, max_pending_bytes, *, merge_output=False, on_exited=None):
+        self.on_exited = on_exited
         self.transport = None
         self.changed = asyncio.Event()
         self.output_ready = asyncio.Event()
@@ -50,6 +51,8 @@ class ProcessProtocol(asyncio.SubprocessProtocol):
         self.changed.set()
 
     def process_exited(self):
+        if self.on_exited is not None:
+            self.on_exited()
         self.changed.set()
 
     def pipe_connection_lost(self, fd, exc):

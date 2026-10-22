@@ -32,8 +32,10 @@ export function useSubagentList(api: WebApi, sessionId?: string, run?: RunView |
         row.tool_calls?.some(call => call.id === source.parent_tool_call_id));
       const call = parent?.tool_calls?.find(item => item.id === source.parent_tool_call_id);
       const old = rows.get(source.agent_path);
-      rows.set(source.agent_path, { agent_id: source.agent_id, agent_path: source.agent_path,
-        agent: source.agent_path.split('/')[1], task: old?.task ?? String(call?.args.task ?? ''),
+      const active = ['running', 'stopping', 'awaiting_approval', 'interrupted'].includes(agent.status);
+      rows.set(source.agent_path, { ...old, agent_id: source.agent_id, agent_path: source.agent_path,
+        agent: source.agent_path.split('/')[1], task: String(call?.args.task ?? old?.task ?? ''),
+        ...(active ? { resume_available: false, resume_reason: agent.status } : {}),
         tool_call_id: source.parent_tool_call_id, parent_batch_id: agent.parent_batch_id, status: agent.status });
     }
     return [...rows.values()];

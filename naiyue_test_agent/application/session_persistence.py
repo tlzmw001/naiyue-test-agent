@@ -14,6 +14,7 @@ from .session_recovery import (
 )
 from .session_approval import is_pre_tool_approval
 from langchain_core.messages import BaseMessage
+from langchain_core.tools import ToolException
 from langgraph.graph import END
 from uuid import uuid4
 from naiyue_test_agent.model_access import ModelConfigError
@@ -113,8 +114,14 @@ class SessionPersistence:
     async def adelete(self, session_id, agent):
         if self._history_lock(session_id).locked():
             raise SessionPersistenceError('session_recovery_blocked')
-        async with self._history_lock(session_id):
-            return await self._delete(session_id, agent)
+        try:
+            with self.sessions.background_tasks.deletion_guard(session_id):
+                async with self._history_lock(session_id):
+                    result = await self._delete(session_id, agent)
+                    self.sessions.background_tasks.forget_session(session_id)
+                    return result
+        except ToolException as error:
+            raise SessionPersistenceError('session_background_tasks_active') from error
 
     async def _delete(self, session_id, agent):
         with self._lock, self.sessions.deletion_guard(session_id):
@@ -169,7 +176,8 @@ class SessionPersistence:
                             any(task.interrupts or task.error for task in snapshot.tasks)):
                         raise SessionPersistenceError('checkpoint_not_safely_finished')
                 updates = await await_settled(collect_chat_updates(agent, self.storage, session_id, snapshot=snapshot))
-                await run_blocking(self.storage.finish_run, session_id, state, checkpoint_id, namespace, status, updates)
+                await run_blocking(self.storage.finish_run, session_id, state, checkpoint_id, namespace, status, updates,
+                                  subagent_run_id=run_id)
                 self._prepared[session_id] = {}
                 await self._ensure_title(session_id)
             except Exception as error:
@@ -258,6 +266,8 @@ class SessionPersistence:
         saved = row['active_tool_names_json']
         try:
             names = json.loads(saved)
+            from naiyue_test_agent.tools.subagent import subagent_selection
+            names = subagent_selection(names)
             specs = self._tool_registry.select(names)
             names = tuple(spec.tool.name for spec in specs)
         except (ValueError, TypeError) as error:

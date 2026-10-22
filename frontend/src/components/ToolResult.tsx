@@ -8,6 +8,20 @@ const archiveReasons: Record<string, string> = { command_limit: '单次归档达
   directory_unavailable: '归档目录不可用', write_error: '归档写入失败', workspace_unavailable: '未绑定可用工作区' };
 
 export default function ToolResult({ name, result, anchor, loadChange }: { name: string; result: MessageRow; anchor?: string; loadChange?: ChangeLoader }) {
+  if (name === 'subagent' && result.status !== 'error') {
+    let envelope;
+    try { envelope = JSON.parse(result.content); } catch { envelope = null; }
+    if (envelope && typeof envelope.agent_id === 'string' && /^[0-9a-f]{64}$/.test(envelope.agent_id)
+      && typeof envelope.agent === 'string' && envelope.status === 'completed'
+      && typeof envelope.report === 'string' && typeof envelope.truncated === 'boolean') {
+      return <div data-message-id={anchor} className={styles.result}>
+        <p>子智能体：{envelope.agent} · <code>{envelope.agent_id}</code></p>
+        {envelope.truncated && <p className={styles.notice}>报告已截断，完整报告可在子智能体历史中查看。</p>}
+        <pre aria-label="子智能体报告">{envelope.report}</pre>
+        <details><summary>原始工具结果</summary><pre aria-label="原始工具结果">{result.content}</pre></details>
+      </div>;
+    }
+  }
   const mcp = result.mcp_result;
   if (mcp) return <div data-message-id={anchor} className={styles.result}>
     <p>MCP 来源：{mcp.source.server_id} / {mcp.source.remote_tool}{mcp.source.transport && ` · ${mcp.source.transport}`}</p>

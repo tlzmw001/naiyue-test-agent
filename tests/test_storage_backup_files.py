@@ -28,7 +28,7 @@ def test_destination_cleanup_keeps_original_backup_failure(tmp_path, monkeypatch
     with closing(source_store(tmp_path)[0]) as source:
         monkeypatch.setattr(sqlite3, 'connect', lambda *a, **kw: connect(*a, **kw, factory=FailedDestination))
         with pytest.raises(ValueError, match='backup_failed') as caught:
-            storage_backup.create_backup(source.connection, source.path, target_schema=13)
+            storage_backup.create_backup(source.connection, source.path, target_schema=14)
         assert caught.value.__cause__ is original
         assert 'backup_connection_cleanup_failed' in caplog.text
         assert 'PRIVATE-' not in caplog.text
@@ -47,7 +47,7 @@ def test_snapshot_flush_uses_writable_handle(tmp_path, monkeypatch):
         monkeypatch.setattr(storage_backup.os, 'fsync', flush)
         # Directory fds cannot be written; directory flushing has a separate contract.
         monkeypatch.setattr(storage_backup, 'sync_store_directory', lambda path: None)
-        storage_backup.create_backup(source.connection, source.path, target_schema=13)
+        storage_backup.create_backup(source.connection, source.path, target_schema=14)
         assert len(observed) == 2
 
 
@@ -98,7 +98,7 @@ def test_windows_readonly_open_uses_existing_and_read_access(monkeypatch, tmp_pa
 def test_unsafe_backup_entries_are_invalid_without_traversal(tmp_path, kind):
     from naiyue_test_agent.storage_backup import create_backup, validate_backup
     with closing(source_store(tmp_path)[0]) as source:
-        saved = create_backup(source.connection, source.path, target_schema=13)
+        saved = create_backup(source.connection, source.path, target_schema=14)
         directory = artifact(source.path, saved['backup_id'])
         if kind == 'manifest_link':
             info = directory / 'manifest.json'

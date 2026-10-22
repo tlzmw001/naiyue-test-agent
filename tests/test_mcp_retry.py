@@ -14,7 +14,6 @@ from naiyue_test_agent.mcp_client.discovery import DiscoveredCatalog, Discovered
 from naiyue_test_agent.mcp_client.settings import MCPServerSettings
 from naiyue_test_agent.mcp_client.tools import create_mcp_tool
 from naiyue_test_agent.tools.retry_settings import ToolRetrySettings
-from naiyue_test_agent.tools.settings import ToolOutputSettings
 from tool_feedback_helpers import invoke_tool_feedback
 
 
@@ -67,7 +66,7 @@ def test_mcp_retries_only_typed_failures_with_explicit_replay_safety(monkeypatch
         resources = SimpleNamespace(retry_settings=policy, tool_unavailable=lambda *_:
             'disabled' if case == 'safe_then_disabled' and counts['call'] else None)
         spec = create_mcp_tool(borrow, MCPServerSettings(transport='stdio', command='synthetic'),
-            'config', catalog, tool, ToolOutputSettings(), resources=resources)
+            'config', catalog, tool, resources=resources)
         result = await invoke_tool_feedback(spec, {'text': 'original'}, call_id='mcp-retry',
                                             permission_mode='BypassApprovals')
         assert result.status == status and result.artifact['outcome'] == outcome

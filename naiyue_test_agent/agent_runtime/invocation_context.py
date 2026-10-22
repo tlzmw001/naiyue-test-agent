@@ -15,6 +15,14 @@ def make_invocation_context(session_id, run_id, workspace_root, approval_grants,
                 context['_failure_policy'] = services.errors
             if services.ainvoke_subagent is not None:
                 context['ainvoke_subagent'] = services.ainvoke_subagent
+            if services.alist_subagents is not None and agent_path == 'root':
+                context['alist_subagents'] = services.alist_subagents
+            if services.process_tasks is not None:
+                context['_process_tasks'] = services.process_tasks
+            notices = services.background_notices
+            if (notices is not None and agent_path == 'root' and notices.session_id == session_id
+                    and notices.workspace_root == workspace_root and notices.run_id == run_id):
+                context['_background_notices'] = notices
             if publisher is not None:
                 context['_run_event_publisher'] = publisher
                 for name, observer in (('_turn_observer', services.turns),

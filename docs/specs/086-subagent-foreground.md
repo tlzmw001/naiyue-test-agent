@@ -1,5 +1,7 @@
 # Spec086：前台 SubAgent、内部批量审批与可恢复执行
 
+2026-10-22版本入口：本篇保留原前台一层/一次委派的历史合同；当前已由[Spec126](126-subagent-continuation.md)扩展为可按ID继续的稳定实例，max_model_calls按本次委派计数。用户只启用subagent，配套只读list；侧栏多次报告与当前执行/审批绑定见[03](126-03-subagent-discovery-delivery.md)，共享安装验收见[04](126-04-subagent-acceptance.md)。用户直聊仍不提供。
+
 日期：2026-10-16。状态：**S1—S6本机实现与组合验收已完成：角色/实例、执行/审批、来源交付、停止/保存/关闭及根恢复不重放；真实供应商与Windows原机仍待单独验证。** 基于[Spec085](085-tool-system-rebuild.md)的工具、权限与错误合同；本节涉及子任务时覆盖085的早期候选。准确文件/消费者/切片及验证命令见[文件地图](086-subagent-file-map.md)，前期框架实验见[探针记录](../research/subagent-framework-probes-2026-10-16.md)。
 
 2026-10-17实施对齐（S1—S5细案见文件地图G/H/I/J/K节）：基于已提交的093（944929d）及090A/B/C、091A/B、092A/B/C。应用与Runtime只使用异步执行面；共享建图、短同步状态算法、文件IO及同步SDK的线程回退继续保留。S2已接共享保存器、独立thread/干净Context、角色模型/工具快照、有界content/artifact及配置化max_model_calls；S3已接PendingToolApproval、唯一驱动者等待/恢复、精确授权和动态角色索引，通用工具已纳入builtin。正式CLI/Web已支持按实例分组审批、子工具进度及原root run回执；S5已接单独停子、根广播、批准/停止竞争、子checkpoint故障隔离与关闭收尾。子Ask保持父run活动，不自动批准。真实文件/类归属及六片边界见[文件地图](086-subagent-file-map.md)。

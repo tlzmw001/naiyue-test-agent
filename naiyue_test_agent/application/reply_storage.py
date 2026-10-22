@@ -3,6 +3,7 @@
 import json
 import sqlite3
 import logging
+from datetime import datetime, timezone
 from .errors import SessionPersistenceError
 
 logger = logging.getLogger(__name__)
@@ -94,7 +95,13 @@ def activate(storage, session_id, request_id, *, checkpoint, head_checkpoint, bo
                 (session_id, new, '', 'root', head_checkpoint, head['revision'] + 1, head['history_version'] + 1, False))
             retained = {r['agent_id'] for r in subagent_records(storage, session_id, new)}
             obsolete = ['subagent:' + identity for identity in children_before - retained]
+            storage.connection.execute('''UPDATE naiyue_subagent_instances
+                SET state='retired',version=version+1,updated_at=?
+                WHERE session_id=? AND last_parent_reply_id=? AND state!='retired' ''',
+                (datetime.now(timezone.utc).isoformat(), session_id, boundary['reply_id']))
             for thread in obsolete:
+                storage.connection.execute('''UPDATE naiyue_subagent_instances SET checkpoint_id=NULL
+                    WHERE session_id=? AND child_thread_id=? AND state='retired' ''', (session_id, thread))
                 for sql in ('DELETE FROM naiyue_chat_messages WHERE session_id=? AND thread_id=?',
                             'DELETE FROM naiyue_chat_sync WHERE session_id=? AND thread_id=?',
                             'DELETE FROM naiyue_reply_boundaries WHERE session_id=? AND thread_id=?'):

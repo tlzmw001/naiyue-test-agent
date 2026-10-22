@@ -61,7 +61,7 @@ async def refresh_mcp(resources, registry, settings, *, borrow_mcp, permission_s
                 catalog = await _catalog(resources, name, server, environment, identity)
                 resources._check_open()
                 authority = secrets.token_hex(32)
-                specs = [create_mcp_tool(borrow_mcp, server, authority, catalog, tool, resources._output_settings,
+                specs = [create_mcp_tool(borrow_mcp, server, authority, catalog, tool,
                          resources=resources) for tool in catalog.tools if tool.selected]
                 # No await between validation/publication and the effective resource snapshot.
                 registry.publish_mcp_tools(specs, permission_settings=permission_settings)

@@ -18,6 +18,15 @@ const view: ContextView = { session_id: 's', current: { basis: 'next_request', m
     status: 'returned', estimate: { ...structuredClone(estimate), estimated_input_tokens: 32800 },
     usage: { input_tokens: 33280, output_tokens: 1600, cache_read_tokens: 0, cache_write_tokens: 1200 } } };
 
+it('labels the background status prompt part without showing task content', () => {
+  const current = { ...structuredClone(estimate), groups: [{ id: 'system', tokens: 6000, count: 1,
+    children: [{ id: 'background_tasks', tokens: 120, count: 2 }] }] };
+  render(<ContextPanel usageContent={null} value={{ ...view, current: { ...view.current, estimate: current } }}
+    loading={false} error="" retry={vi.fn()} />);
+  expect(screen.getByText('后台任务状态 · 2 项')).toBeTruthy();
+  expect(screen.queryByText('background_tasks')).toBeNull();
+});
+
 it('warns at the configured compaction threshold using the current estimate', () => {
   const { rerender } = render(<ContextTrigger value={{ ...view, current: { ...view.current,
     estimate: { ...estimate, estimated_input_tokens: 110000 } } }} open={false} disabled={false} toggle={vi.fn()} triggerRef={{ current: null }} />);
@@ -30,7 +39,7 @@ it('warns at the configured compaction threshold using the current estimate', ()
 it('keeps a usable total and omits unavailable composition without an extra notice', () => {
   const partial: ContextView = { ...view, current: { ...view.current,
     estimate: { ...estimate, groups: [], groups_status: 'unavailable' } } };
-  render(<ContextPanel usageContent={null} value={partial} loading={false} error="" retry={vi.fn()} close={vi.fn()} />);
+  render(<ContextPanel usageContent={null} value={partial} loading={false} error="" retry={vi.fn()} />);
   expect(screen.getByText('输入预估 34,000')).toBeTruthy();
   expect(screen.queryByText('输入构成')).toBeNull();
   expect(screen.queryByText(/当前预估暂不可用/)).toBeNull();
@@ -38,7 +47,7 @@ it('keeps a usable total and omits unavailable composition without an extra noti
 });
 
 it('separates estimates and provider usage, preserving zero and missing values', () => {
-  const { rerender } = render(<ContextPanel usageContent={null} value={view} loading={false} error="" retry={vi.fn()} close={vi.fn()} />);
+  const { rerender } = render(<ContextPanel usageContent={null} value={view} loading={false} error="" retry={vi.fn()} />);
   expect(screen.getByText('输入预估 34,000')).toBeTruthy();
   fireEvent.keyDown(screen.getByRole('tab', { name: '当前预估' }), { key: 'ArrowRight' });
   expect(document.activeElement).toBe(screen.getByRole('tab', { name: '最近请求' }));
@@ -48,7 +57,7 @@ it('separates estimates and provider usage, preserving zero and missing values',
   expect(screen.getByText(/包含缓存读取与写入/)).toBeTruthy();
   expect(screen.getByText('↳ 其中缓存写入')).toBeTruthy();
   rerender(<ContextPanel usageContent={null} value={{ ...view, latest_request: { ...view.latest_request!, usage: null } }}
-    loading={false} error="" retry={vi.fn()} close={vi.fn()} />);
+    loading={false} error="" retry={vi.fn()} />);
   expect(screen.getAllByText('未提供')).toHaveLength(4);
   expect(screen.queryByText('33,280')).toBeNull();
 });
@@ -96,14 +105,14 @@ it('places the context entry in the send group and switches between sidebars wit
   expect(trigger.parentElement).toBe(send.parentElement);
   expect(trigger.closest('header')).toBeNull();
   fireEvent.click(trigger);
-  const panel = await screen.findByRole('complementary', { name: '上下文' });
+  const panel = await screen.findByRole('region', { name: '上下文' });
   expect(within(panel).getByRole('tab', { name: '当前预估' })).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: '打开子智能体侧栏' }));
-  expect(screen.queryByRole('complementary', { name: '上下文' })).toBeNull();
-  expect(await screen.findByRole('complementary', { name: '子智能体' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('tab', { name: '子智能体' }));
+  expect(screen.queryByRole('region', { name: '上下文' })).toBeNull();
+  expect(await screen.findByRole('region', { name: '子智能体' })).toBeTruthy();
   fireEvent.click(trigger);
-  expect(screen.queryByRole('complementary', { name: '子智能体' })).toBeNull();
-  fireEvent.keyDown(screen.getByRole('complementary', { name: '上下文' }), { key: 'Escape' });
+  expect(screen.queryByRole('region', { name: '子智能体' })).toBeNull();
+  fireEvent.keyDown(screen.getByRole('region', { name: '上下文' }), { key: 'Escape' });
   await waitFor(() => expect(document.activeElement).toBe(trigger));
   expect(start).not.toHaveBeenCalled();
 });

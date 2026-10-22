@@ -21,7 +21,7 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
 
     def __init__(self, session_id, state: SessionState, *, catalog, tool_registry,
                  permission_settings, persistence=None, invoke_subagent=None, registered_subagents=None,
-                 progress_settings=None, subagent_result_settings=None, mcp_resources=None):
+                 progress_settings=None, subagent_result_settings=None, mcp_resources=None, process_tasks=None):
         self.session_id = session_id
         self._state = state
         self._catalog = catalog
@@ -34,6 +34,8 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
         self._progress_settings = progress_settings
         self._subagent_result_settings = subagent_result_settings
         self._mcp_resources = mcp_resources
+        self._process_tasks = process_tasks
+        self._subagent_records = {}
         self._lock = Lock()
         self._model_selection_lock = Lock()
         self._tool_selection_lock = Lock()
@@ -124,6 +126,8 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
                 self._state.thinking_level = level
 
     def set_active_tools(self, names):
+        from naiyue_test_agent.tools.subagent import subagent_selection
+        names = subagent_selection(names)
         names = tuple(spec.tool.name for spec in self._tool_registry.select(names))
         with self._tool_selection_lock:
             if self._persistence is not None:
@@ -174,9 +178,10 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
                 'session_allow': deepcopy(self._state.session_allow),
                 'project_instructions': (self._run.project_instructions if self._run else None)}
 
-    def resolve_prompt_parts(self):
+    def resolve_prompt_parts(self, agent_path='root'):
         with self._lock:
-            return deepcopy((self._run.prompt_parts if self._run else []))
+            parts = self._run.prompt_parts if self._run else []
+            return deepcopy([part for part in parts if agent_path == 'root' or part.get('id') != 'background_tasks'])
 
     def admit_run(self, run_id, mode, observation, *, decisions=None, remember_approved=None, stop=False, capacity_available=True, expected_conversation_revision=None):
         resuming = mode == 'approval_resume'
@@ -220,10 +225,14 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
         if self._run is not run or run is None:
             raise SessionBusyError('State transition targets a different run')
 
-    def freeze_run_resources(self, run, prompt_parts, project_instructions):
+    def freeze_run_resources(self, run, prompt_parts, project_instructions, background_notices=None):
         with self._lock:
             self._require_run(run)
             run.prompt_parts = deepcopy(prompt_parts)
+            run.background_notices = background_notices
+            if background_notices is not None and background_notices.versions:
+                run.prompt_parts.append({'id': 'background_tasks', 'text': background_notices.text,
+                    'count': len(background_notices.versions)})
             run.project_instructions = project_instructions
 
     def replace_pending_approval(self, run, pending):
@@ -292,6 +301,7 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
             run.controls_open = run.steering_open = False
             run.stop_requested = False
             run.prompt_parts, run.project_instructions = [], None
+            run.background_notices = None
             return row.manual_review_required, discarded, follow_up
 
     def release_run(self, run):

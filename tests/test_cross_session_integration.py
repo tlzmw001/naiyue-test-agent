@@ -1,5 +1,6 @@
 """Combined root/child approvals, concurrent commits and archive reopening."""
 
+import json
 import asyncio
 from pathlib import Path
 from threading import Event
@@ -113,7 +114,7 @@ async def test_root_child_approvals_capacity_and_concurrent_save_reopen(monkeypa
                 events = runtime_events(await client.get(f'/api/runs/{rid}/events'))
                 assert {event['session_id'] for event in events} == {sid}
                 assert events[-1]['event_type'] == 'run_finished'
-            assert [m['content'] for m in (await client.get(f'/api/sessions/{a}')).json()['messages']
+            assert [json.loads(m['content'])['report'] if m.get('name') == 'subagent' else m['content'] for m in (await client.get(f'/api/sessions/{a}')).json()['messages']
                     if m['type'] == 'tool'] == ['write created 4 bytes', 'child report']
         finally:
             release_b.set()

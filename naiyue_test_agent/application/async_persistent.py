@@ -119,7 +119,11 @@ class AsyncPersistentApplication(AsyncApplication):
 
     async def aget_chat_subagents(self, session_id):
         with self._owned_operation():
-            return await run_blocking(self._storage.chat_subagents, session_id)
+            from .subagent_queries import annotate
+            records = await run_blocking(self._storage.chat_subagents, session_id)
+            owned = await run_blocking(self._storage.get_subagent_references, session_id)
+            active = self._sessions.require(session_id).describe_session()['run_id'] if self.has_session(session_id) else None
+            return annotate(records, owned, self.get_registered_subagents(), self._catalog, active)
 
     async def aget_approval_seed(self, session_id):
         with self._owned_operation():
@@ -168,6 +172,8 @@ async def open_async_persistent_application(config_path, *, database_path, tools
     settings = settings if settings is not None else application.load_settings()
     registry = application.prepare_tool_registry(tools)
     initial = registry.names() if initial_active_tools is None else initial_active_tools
+    from naiyue_test_agent.tools.subagent import subagent_selection
+    initial = subagent_selection(initial)
     if not any(server.enabled for server in settings.mcp.servers.values()):
         application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
         registry.select(initial)
@@ -180,12 +186,12 @@ async def open_async_persistent_application(config_path, *, database_path, tools
         catalog = await acquire_blocking(application.load_model_catalog, lambda item: item.aclose(), config_path)
         await run_blocking(catalog.prepare_async_clients)
         from naiyue_test_agent.mcp_client.resources import MCPSessionResources
-        resources = MCPSessionResources(settings.mcp, settings.network, output_settings=settings.tool_output, retry_settings=settings.tool_retry)
+        resources = MCPSessionResources(settings.mcp, settings.network, retry_settings=settings.tool_retry)
         from naiyue_test_agent.mcp_client.tools import register_mcp_tools
         # Definitions precede SessionService; execution starts only after assembly.
         def borrow_mcp(session_id, agent_path, server_id):
             return sessions.borrow_mcp(session_id, agent_path, server_id)
-        await register_mcp_tools(registry, resources, settings.tool_output, borrow_mcp=borrow_mcp)
+        await register_mcp_tools(registry, resources, borrow_mcp=borrow_mcp)
         application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
         registry.select(initial)
         async with AsyncSqliteSaver.from_conn_string(str(storage.path)) as saver:
@@ -194,7 +200,7 @@ async def open_async_persistent_application(config_path, *, database_path, tools
             await saver.setup()
             sessions = application.SessionService(catalog, registry, initial_active_tools=initial, permission_settings=settings.permissions, progress_settings=settings.progress,
                 max_active_runs=settings.max_active_runs, mcp_resources=resources,
-                http_attempt_limit=settings.diagnostics.max_pending_events)
+                http_attempt_limit=settings.diagnostics.max_pending_events, shell_task_settings=settings.shell_tasks)
             async with (ModelUsagePersistence(storage, sessions.subscribe_events, settings.usage_persistence) as usage,
                         DiagnosticPersistence(storage, sessions.subscribe_events, settings.diagnostics) as diagnostics):
                 persistence = SessionPersistence(storage, sessions, catalog=catalog, tool_registry=registry,

@@ -144,7 +144,8 @@ def matches_session_allow(rules, subject):
                 if rule.get('target') is not None and permission_path(rule['target'], windows=windows) == permission_path(subject['resolved'], windows=windows):
                     return True
             elif 'command' in subject['args']:
-                if rule.get('command') == subject['args']['command']:
+                if (rule.get('command') == subject['args']['command']
+                        and rule.get('background', False) == subject['args'].get('background', False)):
                     return True
             elif rule.get('args') == subject['args']:
                 return True
@@ -160,6 +161,8 @@ def remembered_rule(subject):
         rule['target'] = subject['resolved']
     elif 'command' in subject['args']:
         rule['command'] = subject['args']['command']
+        if subject['args'].get('background', False):
+            rule['background'] = True
     else:
         rule['args'] = subject['args']
     return rule

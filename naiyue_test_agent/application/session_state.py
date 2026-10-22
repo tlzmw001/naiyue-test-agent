@@ -3,6 +3,10 @@
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from naiyue_test_agent.tools.background_tasks import BackgroundNoticeSnapshot
 
 from .run_events import RunObservation
 from naiyue_test_agent.contracts.replies import QueuedInput
@@ -31,6 +35,7 @@ class ActiveRun:
     observation: RunObservation
     reply_id: str | None = None
     prompt_parts: list = field(default_factory=list)
+    background_notices: 'BackgroundNoticeSnapshot | None' = None
     project_instructions: str | None = None
     controls_open: bool = True
     steering_open: bool = False
@@ -38,3 +43,4 @@ class ActiveRun:
     steering_queue: deque[QueuedInput] = field(default_factory=deque)
     follow_up_queue: deque[QueuedInput] = field(default_factory=deque)
     subagent_instances: dict[str, dict] = field(default_factory=dict)
+    subagent_calls: set[str] = field(default_factory=set)

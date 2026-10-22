@@ -152,6 +152,10 @@ def main():
     from release_storage_smoke import storage_scenario
     nyt = Path(sys.executable).with_name('nyt.exe' if os.name == 'nt' else 'nyt')
     storage = asyncio.run(storage_scenario(root, type(model), [str(nyt)]))
+    from release_background_smoke import background_scenario
+    background = asyncio.run(background_scenario(root, type(model), executable=os.environ.get('NYT_SMOKE_SHELL')))
+    from release_subagent_smoke import subagent_scenario
+    subagents = asyncio.run(subagent_scenario(root, type(model)))
     from naiyue_test_agent.application import cli
     output = io.StringIO()
     with patch('builtins.input', return_value=':quit'), redirect_stdout(output):
@@ -160,7 +164,8 @@ def main():
     print(json.dumps({'target': native['target'], 'version': naiyue_test_agent.__version__,
         'installed_package': str(installed), 'native_tools': 'passed', 'frontend_api': 'passed',
         'find_grep': 'passed', 'approval_resume': 'passed', 'sqlite_reopen': 'passed', 'cli': 'passed',
-        'configuration': 'passed', **storage, 'mcp': mcp}))
+        'configuration': 'passed', **storage, 'mcp': mcp, 'background_tasks': background,
+        'subagent_continuation': subagents}))
 
 
 if __name__ == '__main__':

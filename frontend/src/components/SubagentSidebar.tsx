@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react';
 import type { RunView } from '../types';
 import { WebApi } from '../api';
 import { useSubagents } from '../useSubagents';
@@ -9,29 +8,31 @@ import styles from './SubagentSidebar.module.css';
 const labels: Record<string, string> = { running: '运行中', awaiting_approval: '等待审批', interrupted: '等待审批',
   stopping: '正在收尾', completed: '已完成', stopped: '已停止', failed: '失败', unconfirmed: '状态未确认' };
 
-export default function SubagentSidebar({ api, sessionId, conversationRevision = 0, run, list, initialAgentId, close, stopAgent, showApprovals }: {
+const resumeReasons: Record<string, string> = { legacy_instance: '旧实例仅支持查看历史', retired: '已随重新生成退役，请新建实例',
+  role_unavailable: '原角色当前不可用', role_changed: '角色配置已变化，请新建实例', model_unavailable: '原模型当前不可用',
+  pending_parent: '上次保存尚未确认', running: '当前委派尚未结束', stopping: '正在收尾', awaiting_approval: '等待审批',
+  interrupted: '等待审批', failed: '上次委派失败，请新建实例', stopped: '上次委派已停止，请新建实例' };
+
+export default function SubagentSidebar({ api, sessionId, conversationRevision = 0, run, list, initialAgentId, stopAgent, showApprovals }: {
   conversationRevision?: number; api: WebApi; sessionId: string; run?: RunView | null; list: SubagentList; initialAgentId?: string;
-  close: () => void; stopAgent: (path: string, originRunId: string) => void; showApprovals: () => void;
+  stopAgent: (path: string, originRunId: string, agentRunId?: string) => void; showApprovals: () => void;
 }) {
   const view = useSubagents(api, sessionId, list, run, initialAgentId);
-  const closeButton = useRef<HTMLButtonElement>(null);
-  useEffect(() => { closeButton.current?.focus(); }, []);
   const status = view.live?.status ?? view.record?.status;
   const live = view.live;
   const active = live && ['running', 'awaiting_approval', 'stopping', 'interrupted'].includes(live.status) &&
     run?.status === 'running' && live.source.parent_run_id === run.run_id && !run.done;
   const error = view.selected ? view.detailError : view.listError;
 
-  return <aside className={styles.panel} aria-label="子智能体" onKeyDown={event => {
-    if (event.key === 'Escape') { event.stopPropagation(); close(); }
-  }}>
-    <header className={styles.header}><strong>子智能体</strong><button ref={closeButton} className={styles.close}
-      aria-label="关闭子智能体侧栏" onClick={close}>×</button></header>
+  return <section className={styles.panel} aria-label="子智能体">
     {view.selected ? <>
       <div className={styles.selection}>
         <div className={styles.selectionTop}><button className={styles.back} onClick={() => view.select()}>返回名称列表</button>
           {status && <span className={styles.status}>{labels[status]}</span>}</div>
         {view.record?.task && <p className={styles.task}>{view.record.task}</p>}
+        {view.record?.resume_available === true && !active && <p className={styles.notice}>可由主智能体继续委派</p>}
+        {view.record?.resume_available === false && !active && view.record.resume_reason &&
+          <p className={styles.notice}>{resumeReasons[view.record.resume_reason] ?? '当前不可继续委派'}</p>}
       </div>
       {error && <div className={styles.notice} role="alert">{error}<button onClick={view.retry}>重试</button></div>}
       {live?.messages?.some(row => row.content_unavailable) && <p className={styles.notice} role="status">
@@ -49,11 +50,11 @@ export default function SubagentSidebar({ api, sessionId, conversationRevision =
           <span>等待主会话审批</span><button className={styles.textButton} onClick={showApprovals}>到主会话处理</button>
         </> : <span>{status ? labels[status] : ''}</span>}</div>
         {active && <button className={styles.stop} disabled={status === 'stopping' || run?.stop_requested}
-          onClick={() => stopAgent(live.source.agent_path, live.source.parent_run_id)}>
+          onClick={() => stopAgent(live.source.agent_path, live.source.parent_run_id, live.source.agent_run_id)}>
           {status === 'stopping' ? '正在停止…' : '停止该子智能体'}</button>}
       </footer>
     </> : <>
-      <div className={styles.intro}>选择要查看的子智能体<p>同名的独立调用，用标识和任务区分。</p></div>
+      <div className={styles.intro}>选择要查看的子智能体<p>同一标识保留多次委派的历史。</p></div>
       {error && <div className={styles.notice} role="alert">{error}<button onClick={view.retry}>重试</button></div>}
       {view.loading && !view.records.length && <p className={styles.notice} role="status">正在读取列表…</p>}
       {!view.loading && !view.records.length && !error && <p className={styles.notice}>当前会话暂无子智能体。</p>}
@@ -65,5 +66,5 @@ export default function SubagentSidebar({ api, sessionId, conversationRevision =
       </button>)}</div>
       <footer className={styles.footer}><span>在主会话统一处理审批</span></footer>
     </>}
-  </aside>;
+  </section>;
 }

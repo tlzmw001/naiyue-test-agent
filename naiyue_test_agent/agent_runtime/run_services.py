@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from .control_observation import ControlObserver
     from .context_operation_observation import ContextOperationObserver
     from .tool_execution.observation import ToolProgressObserver
+    from ..tools.background_tasks import ProcessTaskPort, BackgroundNoticeSnapshot
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,9 @@ class RunServices:
     context_operations: 'ContextOperationObserver | None' = None
     tool_progress: 'ToolProgressObserver | None' = None
     ainvoke_subagent: Callable | None = None
+    process_tasks: 'ProcessTaskPort | None' = None
+    background_notices: 'BackgroundNoticeSnapshot | None' = None
+    alist_subagents: Callable | None = None
 
 
 _RUN_SERVICES = ContextVar('naiyue_run_services', default=None)

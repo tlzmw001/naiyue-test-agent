@@ -316,7 +316,7 @@ def test_timeout_cli_resumes_model_and_archive_remains_in_tool_result(
         assert not app._app._sessions.require(session).describe_session()['manual_review_required']
 
 
-def make_cli_app(monkeypatch, command: str, *, timeout: int | None = None, settings=None, output_settings=None):
+def make_cli_app(monkeypatch, command: str, *, timeout: int | None = None, settings=None):
     # Simulate an activated test venv in the inherited parent environment.
     monkeypatch.setenv('PATH', str(Path(sys.executable).parent) + os.pathsep + os.environ['PATH'])
     args = {'command': command}
@@ -329,6 +329,6 @@ def make_cli_app(monkeypatch, command: str, *, timeout: int | None = None, setti
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
     return cli.build_local_application(
-        Path('synthetic.json'), tools=[create_session_bash_tool(settings=settings, output_settings=output_settings)],
+        Path('synthetic.json'), tools=[create_session_bash_tool(settings=settings)],
         system_prompt='', response_format=None,
     )

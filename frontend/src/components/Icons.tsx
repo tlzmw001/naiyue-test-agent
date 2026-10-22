@@ -1,4 +1,4 @@
-export function Icon({ name }: { name: 'plus' | 'send' | 'stop' | 'menu' | 'close' | 'chat' }) {
+export function Icon({ name }: { name: 'plus' | 'send' | 'stop' | 'menu' | 'close' | 'chat' | 'sidebar' }) {
   const paths = {
     plus: <path d="M12 5v14M5 12h14" />,
     send: <><path d="m6 11 6-6 6 6M12 5v14" /></>,
@@ -6,6 +6,7 @@ export function Icon({ name }: { name: 'plus' | 'send' | 'stop' | 'menu' | 'clos
     menu: <path d="M4 6h16M4 12h16M4 18h16" />,
     close: <path d="m6 6 12 12M18 6 6 18" />,
     chat: <path d="M5 5h14v11H9l-4 4V5Z" />,
+    sidebar: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M14 4v16" /></>,
   };
   return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
     strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;

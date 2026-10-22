@@ -1,5 +1,6 @@
 """MCP execution uses the real child graph, scoped approval and owned resources."""
 
+import json
 import asyncio
 from typing import Any
 
@@ -154,7 +155,7 @@ def test_child_tool_error_is_feedback_and_both_models_continue(monkeypatch, tmp_
             assert inner.status == 'error'
             assert len(calls(path)) == (0 if case == 'unselected' else 1)
             outer, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
-            assert outer.content == 'child handled error' and outer.status == 'success'
+            assert json.loads(outer.content)['report'] == 'child handled error' and outer.status == 'success'
             assert result['messages'][-1].content == 'root done' and len(root.seen) == 2
         finally:
             await app.aclose()
@@ -283,7 +284,7 @@ def test_stopping_one_child_does_not_stop_sibling_or_close_its_client(monkeypatc
             b_release.set()
             result = await asyncio.wait_for(task, 15)
             feedback = {m.tool_call_id: m for m in result['messages'] if isinstance(m, ToolMessage)}
-            assert feedback['A'].status == 'error' and feedback['B'].content == 'B report'
+            assert feedback['A'].status == 'error' and json.loads(feedback['B'].content)['report'] == 'B report'
             assert result['messages'][-1].content == 'root done' and len(calls(path)) == 2
             assert not process_alive(pids['B'])
         finally:

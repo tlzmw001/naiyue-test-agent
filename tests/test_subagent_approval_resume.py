@@ -1,5 +1,6 @@
 """Live child approval resumes one owned driver without restarting the parent."""
 
+import json
 import asyncio
 
 import pytest
@@ -91,7 +92,7 @@ async def test_a_approved_and_finished_while_b_still_runs_whole_child_batch_wait
         b_release.set()
         result = await asyncio.wait_for(task, 5)
         feedback = [m for m in result['messages'] if isinstance(m, ToolMessage)]
-        assert [(m.tool_call_id, m.content) for m in feedback] == [('outer-A', 'A report'), ('outer-B', 'B report')]
+        assert [(m.tool_call_id, json.loads(m.content)['report']) for m in feedback] == [('outer-A', 'A report'), ('outer-B', 'B report')]
         snapshot = await app._sessions._subagents['tester']['agent'].aget_state(
             {'configurable': {'thread_id': a['child_thread_id']}})
         assert sum(isinstance(m, HumanMessage) for m in snapshot.values['messages']) == 1
@@ -116,7 +117,7 @@ async def test_reject_is_official_tool_feedback_inside_child_and_root_continues(
         result = await asyncio.wait_for(task, 5)
         rejected = next(m for m in child.seen[-1] if isinstance(m, ToolMessage))
         assert rejected.tool_call_id == 'inner' and rejected.status == 'error' and effects == []
-        assert next(m for m in result['messages'] if isinstance(m, ToolMessage)).content == 'cannot run'
+        assert json.loads(next(m for m in result['messages'] if isinstance(m, ToolMessage)).content)['report'] == 'cannot run'
         assert len(root.seen) == 2 and app.pending_subagent_approvals(sid) == []
     finally:
         await cancel_run(task)

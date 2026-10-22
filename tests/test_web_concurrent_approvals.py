@@ -1,5 +1,6 @@
 """Root and child approvals stay with their own HTTP job under full capacity."""
 
+import json
 import asyncio
 from copy import deepcopy
 
@@ -125,7 +126,7 @@ async def test_child_approval_resumes_only_its_parent_or_all_jobs_close(monkeypa
                 assert not delivery.get(rb).task.done()
                 final = (await client.get(f'/api/sessions/{a}')).json()
                 assert final['messages'][-1]['content'] == 'root A done'
-                assert [m['content'] for m in final['messages'] if m['type'] == 'tool'] == ['child report']
+                assert [json.loads(m['content'])['report'] for m in final['messages'] if m['type'] == 'tool'] == ['child report']
                 assert 'child private result' not in str(final['messages'])
                 events = runtime_events(await client.get(f'/api/runs/{ra}/events'))
                 assert {e['session_id'] for e in events} == {a}

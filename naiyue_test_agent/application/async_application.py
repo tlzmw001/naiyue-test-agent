@@ -63,6 +63,28 @@ class AsyncApplication:
         self._check_open()
         return self._tool_registry.select(self._tool_registry.names())
 
+    async def alist_background_tasks(self, session_id=None, *, workspace_root=None, limit=20, before=None):
+        with self._owned_operation():
+            return await self._sessions.background_tasks.list(session_id=session_id, workspace_root=workspace_root, limit=limit, before=before)
+
+    async def aget_background_task_output(self, task_id, session_id=None, *, workspace_root=None):
+        with self._owned_operation():
+            return await self._sessions.background_tasks.output(task_id, session_id=session_id, workspace_root=workspace_root)
+
+    async def astop_background_task(self, task_id, session_id=None, *, workspace_root=None):
+        with self._owned_operation():
+            return await self._sessions.background_tasks.stop(task_id, session_id=session_id, workspace_root=workspace_root)
+
+    async def apreview_shell_outputs(self, root):
+        from ..tools.output import preview_shell_outputs
+        with self._owned_operation(), self._sessions.output_guard(root):
+            return await run_blocking(preview_shell_outputs, root)
+
+    async def aclear_shell_outputs(self, plan):
+        from ..tools.output import clear_shell_outputs
+        with self._owned_operation(), self._sessions.output_guard(plan.root):
+            return await run_blocking(clear_shell_outputs, plan)
+
     async def aget_skills(self, workspace_root):
         with self._owned_operation():
             from .skills import discover_project_skills
@@ -146,8 +168,8 @@ class AsyncApplication:
             raise ValueError('A non-empty follow-up message is required')
         self._sessions.require(session_id).follow_up(text)
 
-    def request_stop(self, session_id, *, run_id=None, agent_path='root'):
-        return self._sessions.require(session_id).request_scope_stop(run_id=run_id, agent_path=agent_path)
+    def request_stop(self, session_id, *, run_id=None, agent_path='root', agent_run_id=None, approval_batch_id=None):
+        return self._sessions.require(session_id).request_scope_stop(run_id=run_id, agent_path=agent_path, agent_run_id=agent_run_id, approval_batch_id=approval_batch_id)
 
     def pending_tool_approvals(self, session_id):
         return self._sessions.require(session_id).pending_tool_approvals()
@@ -184,17 +206,24 @@ class AsyncApplication:
 
     async def aget_subagents(self, session_id):
         with self._owned_operation():
+            owned = {}
             if self.has_session(session_id):
                 messages = await self.aget_messages(session_id)
+                owned = await self._sessions.require(session_id).asubagent_references()
             else:
                 messages = (await self.aget_session_history(session_id))['messages']
-            records = subagent_records(session_id, messages)
+                if getattr(self, '_storage', None) is not None:
+                    owned = await run_blocking(self._storage.get_subagent_references, session_id)
+            from .subagent_history import merge_registered_subagents
+            records = merge_registered_subagents(subagent_records(session_id, messages, owned_instances=owned), owned)
             for row in records:
                 if row['status'] == 'failed':
                     snapshot = await self._agent.aget_state({'configurable': {'thread_id': f'subagent:{row["agent_id"]}'}})
                     if snapshot.values.get('run_stopped'):
                         row['status'] = 'stopped'
-            return records
+            from .subagent_queries import annotate
+            active = self._sessions.require(session_id).describe_session()['run_id'] if self.has_session(session_id) else None
+            return annotate(records, owned, self.get_registered_subagents(), self._catalog, active)
 
     async def aget_subagent_history(self, session_id, agent_id):
         with self._owned_operation():
@@ -296,17 +325,28 @@ class AsyncApplication:
         primary = None
         try:
             self._sessions.stop_loaded_sessions()
+            background_error = None
+            try:
+                await self._sessions.background_tasks.aclose()
+            except BaseException as error:
+                background_error = error
             # Nested operations are covered by their outer operation. No new ingress
             # can start after closing; these signals settle only after required IO.
             try:
                 if self._sessions.mcp_resources is not None:
                     await self._sessions.mcp_resources.aclose()
+            except BaseException as error:
+                if background_error is None:
+                    raise
+                logger.error('mcp_cleanup_secondary_failed error_type=%s', safe_error_type(error))
             finally:
                 await asyncio.gather(*tuple(self._operations))
                 results = await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
                 for result in results:
                     if isinstance(result, BaseException):
                         logger.error('owned_run_failed error_type=%s', safe_error_type(result))
+            if background_error is not None:
+                raise background_error
         except BaseException as error:
             primary = error
             raise
@@ -338,6 +378,8 @@ async def build_async_local_application(config_path, *, tools, system_prompt, re
     settings = settings if settings is not None else application.load_settings()
     registry = application.prepare_tool_registry(tools)
     initial = registry.names() if initial_active_tools is None else initial_active_tools
+    from naiyue_test_agent.tools.subagent import subagent_selection
+    initial = subagent_selection(initial)
     if not any(server.enabled for server in settings.mcp.servers.values()):
         application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
         registry.select(initial)
@@ -346,17 +388,17 @@ async def build_async_local_application(config_path, *, tools, system_prompt, re
     try:
         await run_blocking(catalog.prepare_async_clients)
         from naiyue_test_agent.mcp_client.resources import MCPSessionResources
-        resources = MCPSessionResources(settings.mcp, settings.network, output_settings=settings.tool_output, retry_settings=settings.tool_retry)
+        resources = MCPSessionResources(settings.mcp, settings.network, retry_settings=settings.tool_retry)
         from naiyue_test_agent.mcp_client.tools import register_mcp_tools
         # Definitions precede SessionService; execution starts only after assembly.
         def borrow_mcp(session_id, agent_path, server_id):
             return sessions.borrow_mcp(session_id, agent_path, server_id)
-        await register_mcp_tools(registry, resources, settings.tool_output, borrow_mcp=borrow_mcp)
+        await register_mcp_tools(registry, resources, borrow_mcp=borrow_mcp)
         application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
         registry.select(initial)
         sessions = application.SessionService(catalog, registry, initial_active_tools=initial, permission_settings=settings.permissions, progress_settings=settings.progress,
             max_active_runs=settings.max_active_runs, mcp_resources=resources,
-            http_attempt_limit=settings.diagnostics.max_pending_events)
+            http_attempt_limit=settings.diagnostics.max_pending_events, shell_task_settings=settings.shell_tasks)
         agent = sessions.assemble_runtime(InMemorySaver(), system_prompt=system_prompt, response_format=response_format,
             subagents=settings.subagents, subagent_settings=settings.tools.subagent)
         return AsyncApplication(catalog, sessions, agent, registry, system_prompt=system_prompt)

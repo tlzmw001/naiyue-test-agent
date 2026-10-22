@@ -1,5 +1,6 @@
 """Approval scope, sequential ordering and per-thread counters survive resume."""
 
+import json
 import asyncio
 
 import pytest
@@ -49,7 +50,7 @@ async def test_same_role_same_inner_call_id_approve_b_reject_a_without_cross_con
         assert consumed == [('same-inner', b['agent_path'], True)] and len(root.seen) == 1
         await submit(app, sid, a, ['reject'])
         result = await asyncio.wait_for(task, 5)
-        assert [(m.tool_call_id, m.content) for m in result['messages'] if isinstance(m, ToolMessage)] == [
+        assert [(m.tool_call_id, json.loads(m.content)['report']) for m in result['messages'] if isinstance(m, ToolMessage)] == [
             ('outer-A', 'A rejected'), ('outer-B', 'B done')]
         assert len(instances) == 2 and consumed == [('same-inner', b['agent_path'], True)]
     finally:

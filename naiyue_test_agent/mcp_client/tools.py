@@ -47,7 +47,7 @@ class MCPPermission(ToolPermission):
                           + json.dumps(args, ensure_ascii=False, sort_keys=True)}
 
 
-def create_mcp_tool(borrow_mcp, server, identity, catalog, tool, output_settings, *, resources=None):
+def create_mcp_tool(borrow_mcp, server, identity, catalog, tool, *, resources=None):
     permission = MCPPermission(server_id=catalog.server_id, remote_tool=tool.remote_name,
         config_identity=identity, catalog_fingerprint=catalog.fingerprint, transport=server.transport, resources=resources)
 
@@ -125,7 +125,7 @@ def create_mcp_tool(borrow_mcp, server, identity, catalog, tool, output_settings
                 server_id=catalog.server_id, tool=tool, transport=server.transport,
                 outcome='outcome_unknown' if ever_submitted else 'not_executed')
         return await run_blocking(format_result, result, runtime=runtime, server=server,
-            server_id=catalog.server_id, tool=tool, output_settings=output_settings)
+            server_id=catalog.server_id, tool=tool)
 
     schema = tool.input_schema
     item = StructuredTool(name=tool.registered_name, args_schema=schema, coroutine=execute,
@@ -136,9 +136,9 @@ def create_mcp_tool(borrow_mcp, server, identity, catalog, tool, output_settings
                            'Do not assume a failed or stopped call had no side effects.',))
 
 
-async def register_mcp_tools(registry, resources, output_settings, *, borrow_mcp):
+async def register_mcp_tools(registry, resources, *, borrow_mcp):
     snapshots = await resources.discover()
     for server, identity, catalog in snapshots:
         for tool in catalog.tools:
             if tool.selected:
-                registry.register(create_mcp_tool(borrow_mcp, server, identity, catalog, tool, output_settings, resources=resources))
+                registry.register(create_mcp_tool(borrow_mcp, server, identity, catalog, tool, resources=resources))

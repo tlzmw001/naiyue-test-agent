@@ -73,7 +73,7 @@ async def test_child_checkpoint_and_parent_report_share_sqlite_without_sharing_t
         rows = await app.alist_sessions()
         assert len(rows) == 1 and rows[0]['session_id'] == sid and rows[0]['state'] == 'ready'
         parent = await app.aget_messages(sid)
-        assert [message.content for message in parent] == ['root task', '', 'child report', 'root done']
+        assert [json.loads(message.content)['report'] if isinstance(message, ToolMessage) and message.name == 'subagent' else message.content for message in parent] == ['root task', '', 'child report', 'root done']
         assert next(message for message in parent if isinstance(message, ToolMessage)).tool_call_id == 'delegate'
 
 

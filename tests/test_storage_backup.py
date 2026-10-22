@@ -11,7 +11,7 @@ import pytest
 from tests.storage_backup_fixture import artifact, source_store
 
 
-@pytest.mark.parametrize('version', range(4, 14))
+@pytest.mark.parametrize('version', range(4, 15))
 def test_snapshot_covers_wal_and_source_schema_without_migration(tmp_path, version):
     from naiyue_test_agent.storage_backup import create_backup, validate_backup
     with closing(source_store(tmp_path, version=version)[0]) as source:
@@ -22,10 +22,10 @@ def test_snapshot_covers_wal_and_source_schema_without_migration(tmp_path, versi
         connection.commit()
         assert database.with_name(database.name + '-wal').stat().st_size > 0
         before = connection.total_changes
-        manifest = create_backup(connection, database, target_schema=13)
+        manifest = create_backup(connection, database, target_schema=14)
         assert connection.total_changes == before
         assert connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == version
-        assert (manifest['source_schema'], manifest['target_schema']) == (version, 13)
+        assert (manifest['source_schema'], manifest['target_schema']) == (version, 14)
         directory = artifact(database, manifest['backup_id'])
         assert sorted(p.name for p in directory.iterdir()) == ['database.sqlite', 'manifest.json']
         assert validate_backup(database, manifest['backup_id'], workspace_id=manifest['workspace_id']) == manifest
@@ -40,7 +40,7 @@ def test_snapshot_covers_wal_and_source_schema_without_migration(tmp_path, versi
 def test_unbound_and_never_run_store_is_valid_without_fabricated_identity(tmp_path):
     from naiyue_test_agent.storage_backup import create_backup, validate_backup
     with closing(source_store(tmp_path, bound=False, checkpoints=False)[0]) as source:
-        saved = create_backup(source.connection, source.path, target_schema=13)
+        saved = create_backup(source.connection, source.path, target_schema=14)
         assert saved['workspace_id'] is None
         assert validate_backup(source.path, saved['backup_id']) == saved
         with pytest.raises(ValueError, match='backup_invalid'):
@@ -64,7 +64,7 @@ def test_generation_refuses_invalid_source_and_does_not_publish(tmp_path, fault)
             connection.execute(sql)
             connection.commit()
         with pytest.raises(ValueError, match='backup_failed'):
-            create_backup(connection, database, target_schema=13)
+            create_backup(connection, database, target_schema=14)
         assert all(row['status'] != 'valid' for row in list_backups(database))
 
 
@@ -82,12 +82,12 @@ def test_generation_io_failure_preserves_pending_and_primary_error(tmp_path, mon
         else:
             monkeypatch.setattr(module.os, 'rename', fail)
         with pytest.raises(KeyboardInterrupt if stage == 'cancel' else ValueError) as caught:
-            module.create_backup(source.connection, source.path, target_schema=13)
+            module.create_backup(source.connection, source.path, target_schema=14)
         if stage != 'cancel':
             assert caught.value.__cause__ is error
         rows = module.list_backups(source.path)
         assert len(rows) == 1 and rows[0]['status'] == 'incomplete'
-        assert source.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 13
+        assert source.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 14
         assert 'PRIVATE-token-body' not in caplog.text
 
 
@@ -98,7 +98,7 @@ def test_backup_root_symlink_is_refused_without_writing_other_directory(tmp_path
         other.mkdir()
         artifact(source.path, '').symlink_to(other, target_is_directory=True)
         with pytest.raises(ValueError, match='backup_failed'):
-            create_backup(source.connection, source.path, target_schema=13)
+            create_backup(source.connection, source.path, target_schema=14)
         with pytest.raises(ValueError, match='backup_invalid'):
             list_backups(source.path)
         assert list(other.iterdir()) == []

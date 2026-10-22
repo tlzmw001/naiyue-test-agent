@@ -1,6 +1,20 @@
 import { expect, it } from 'vitest';
 import { applyEvent } from './events';
+import { applyAgentEvent } from './agentEvents';
 import type { RuntimeEvent, RunView } from './types';
+
+it('resets current delegation and parent batch while ignoring late events from the previous child run', () => {
+  const source = { agent_path: 'root/tester/A', agent_id: 'A', agent_run_id: 'old', parent_run_id: 'r', parent_tool_call_id: 'same' };
+  const event = (run: string, event_type: string, data: Record<string, unknown>): RuntimeEvent => ({
+    version: 1, session_id: 's', run_id: 'r', sequence: 1, event_type, data, source: { ...source, agent_run_id: run } });
+  let view = applyAgentEvent(undefined, event('old', 'message_delta', { message_id: 'old-draft', text: 'old', index: 1 }), 'batch-one');
+  view = applyAgentEvent(view, event('new', 'run_started', { mode: 'message' }), 'batch-two');
+  expect(view.parent_batch_id).toBe('batch-two');
+  expect(view.messages).toEqual([]);
+  expect(view.tool_states).toEqual({});
+  const current = view;
+  expect(applyAgentEvent(view, event('old', 'run_finished', { status: 'failed' }), 'batch-one')).toEqual(current);
+});
 
 it('routes child lifecycle and same call ids without ending root or mixing messages', () => {
   let view: RunView = { session_id: 's', run_id: 'r', status: 'running', messages: [],

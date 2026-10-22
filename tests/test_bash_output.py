@@ -108,9 +108,9 @@ async def test_cli_clear_needs_confirmation(monkeypatch, tmp_path, capsys):
 
 def test_capture_error_cannot_mark_partial_artifact_complete(tmp_path):
     from naiyue_test_agent.tools.output import ShellOutputArchive
-    from naiyue_test_agent.tools import BashSettings, ToolOutputSettings
+    from naiyue_test_agent.tools import BashSettings
 
-    archive = ShellOutputArchive(tmp_path, BashSettings(), ToolOutputSettings())
+    archive = ShellOutputArchive(tmp_path, BashSettings())
     archive.record(b'A' * 70000, activate=True)
     archive.mark_incomplete('capture_incomplete')
     result = archive.finish()

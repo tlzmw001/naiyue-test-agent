@@ -89,6 +89,8 @@ class ControlInput(BaseModel):
     kind: Literal['steering', 'follow_up', 'stop']
     text: str | None = Field(default=None, min_length=1, max_length=32768)
     agent_path: str = Field(default='root', min_length=1, max_length=256)
+    agent_run_id: str | None = Field(default=None, min_length=1, max_length=256)
+    approval_batch_id: str | None = Field(default=None, min_length=1, max_length=256)
 
     @model_validator(mode='after')
     def match_control(self):

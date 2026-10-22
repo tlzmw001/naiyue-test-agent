@@ -59,7 +59,7 @@ def test_http_summary_reopens_is_read_only_and_independent_of_page(tmp_path, ver
         assert store.connection.total_changes == writes
     with SessionStorage(path) as store:
         assert store.read_diagnostic_runs('s')['runs'][0]['http_attempts'] == expected
-        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 13
+        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 14
 
 
 def test_diagnostic_loss_and_missing_terminal_cannot_report_complete(tmp_path):

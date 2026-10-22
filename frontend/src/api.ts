@@ -1,4 +1,5 @@
 import type { ContextView } from './contextTypes';
+import type { BackgroundTask, BackgroundTaskOutput, BackgroundTaskPage } from './backgroundTaskTypes';
 import type { McpRefreshResult } from './types';
 import type { SessionUsageView } from './usageTypes';
 import type { DiagnosticEvents, DiagnosticRuns } from './diagnosticTypes';
@@ -47,6 +48,16 @@ export class WebApi {
 
   models() { return this.json<{ default_model_id: string; model_ids: string[]; thinking_options?: Record<string, ThinkingOptions> }>('/models'); }
   serviceInfo(signal?: AbortSignal) { return this.json<ServiceInfo>('/service', 'GET', undefined, signal); }
+  backgroundTasks(before?: string, signal?: AbortSignal) {
+    const query = before ? '?' + new URLSearchParams({ before }) : '';
+    return this.json<BackgroundTaskPage>('/background-tasks' + query, 'GET', undefined, signal);
+  }
+  backgroundTaskOutput(id: string, signal?: AbortSignal) {
+    return this.json<BackgroundTaskOutput>(`/background-tasks/${encodeURIComponent(id)}/output`, 'GET', undefined, signal);
+  }
+  stopBackgroundTask(id: string, signal?: AbortSignal) {
+    return this.json<BackgroundTask>(`/background-tasks/${encodeURIComponent(id)}/stop`, 'POST', undefined, signal);
+  }
   selectThinking(id: string, model_id: string, thinking_level: string) {
     return this.json<{ model_id: string; thinking_level: string }>(`/sessions/${encodeURIComponent(id)}/thinking`, 'PATCH', { model_id, thinking_level });
   }
@@ -154,10 +165,10 @@ export class WebApi {
     return this.json<{ run_id: string; session_id: string }>(`/sessions/${encodeURIComponent(id)}/runs`,
       'POST', { text, request_id, expected_conversation_revision });
   }
-  control(id: string, kind: 'steering' | 'follow_up' | 'stop', text?: string, agent_path = 'root') {
+  control(id: string, kind: 'steering' | 'follow_up' | 'stop', text?: string, agent_path = 'root', agent_run_id?: string, approval_batch_id?: string) {
     return this.json<{ accepted: boolean; retained: string[] }>(`/runs/${encodeURIComponent(id)}/controls`,
       'POST', { kind, request_id: crypto.randomUUID(), ...(text === undefined ? {} : { text }),
-        ...(agent_path === 'root' ? {} : { agent_path }) });
+        ...(agent_path === 'root' ? {} : { agent_path }), ...(agent_run_id ? { agent_run_id } : {}), ...(approval_batch_id ? { approval_batch_id } : {}) });
   }
   run(id: string, signal?: AbortSignal) { return this.json<RunView>(`/runs/${encodeURIComponent(id)}`, 'GET', undefined, signal); }
 
@@ -192,6 +203,11 @@ export function errorText(error: unknown): string {
     checkpoint_mismatch: '已保存状态发生变化，请核对刷新后的历史再操作。',
     session_save_unconfirmed: '恢复保存未确认，请核对当前历史后再操作。',
     session_delete_unconfirmed: '删除未确认，会话内容已保留，请刷新核对后重试。',
+    session_background_tasks_active: '该会话仍有后台命令或未确认的清理，请先停止后台任务后再删除。',
+    task_not_found: '后台任务不存在或不在当前工作区，请刷新列表。',
+    task_cursor_invalid: '后台任务分页位置已失效，请刷新列表。',
+    task_cleanup_unconfirmed: '进程清理尚未确认，请核对任务状态；任务记录仍保留。',
+    background_tasks_unavailable: '后台任务状态读取或操作未确认，请刷新后核对。',
     stale_session_order: '会话列表已变化，请核对刷新后的列表再排序。',
     invalid_session_order: '请在同一组内调整会话顺序。',
     approval_restore_unavailable: '原审批的目标或权限条件已变化。可核对后重试，或结束旧批次后重新提出任务。',

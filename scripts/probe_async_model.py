@@ -64,7 +64,7 @@ async def _worker(args):
                 resolve_request_configuration=lambda sid, path: (*resolve_model(sid, path), ()),
                 resolve_active_tool_names=lambda _sid, agent_path='root': (),
                 resolve_permission_context=fixed_permission_context,
-                resolve_prompt_parts=lambda _: [{'id': 'project',
+                resolve_prompt_parts=lambda _, agent_path='root': [{'id': 'project',
                     'text': '\nUse the supplied synthetic history and summary.'}],
                 get_registered_subagents=lambda: (),
                 drain_steering=lambda _: [], is_stop_requested=lambda _: False,

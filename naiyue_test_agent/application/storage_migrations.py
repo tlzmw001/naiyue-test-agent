@@ -5,7 +5,7 @@ import logging
 from naiyue_test_agent.storage_backup import create_backup
 from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA, SUPPORTED_SCHEMAS, read_schema_version
 from .errors import StorageStartupError
-from . import chat_queries, model_usage_storage, diagnostic_storage, reply_storage
+from . import chat_queries, model_usage_storage, diagnostic_storage, reply_storage, subagent_storage
 
 
 logger = logging.getLogger(__name__)
@@ -104,7 +104,8 @@ def initialize_store(connection, database_path, *, existing):
     steps = ((6, _migrate_session_schema), (7, _migrate_chat_schema),
         (8, chat_queries.migrate_chat_queries), (9, model_usage_storage.initialize),
         (10, diagnostic_storage.initialize), (11, reply_storage.initialize),
-        (12, reply_storage.initialize_regeneration), (13, model_usage_storage.migrate_duration))
+        (12, reply_storage.initialize_regeneration), (13, model_usage_storage.migrate_duration),
+        (14, subagent_storage.initialize))
     for target, step in steps:
         current = None
         try:

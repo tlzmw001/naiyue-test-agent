@@ -60,6 +60,21 @@ class AsyncCliApplication:
     def get_registered_tools(self):
         return self._submit(self._app.get_registered_tools)
 
+    def preview_shell_outputs(self, root):
+        return self._submit(lambda: self._app.apreview_shell_outputs(root))
+
+    def list_background_tasks(self, *, limit=20, before=None):
+        return self._submit(lambda: self._app.alist_background_tasks(limit=limit, before=before))
+
+    def background_task_output(self, task_id):
+        return self._submit(lambda: self._app.aget_background_task_output(task_id))
+
+    def stop_background_task(self, task_id):
+        return self._submit(lambda: self._app.astop_background_task(task_id))
+
+    def clear_shell_outputs(self, plan):
+        return self._submit(lambda: self._app.aclear_shell_outputs(plan))
+
     def refresh_mcp(self):
         return self._submit(self._app.arefresh_mcp)
 
@@ -135,8 +150,8 @@ class AsyncCliApplication:
     def follow_up(self, session_id, text):
         return self._submit(lambda: self._app.follow_up(session_id, text))
 
-    def request_stop(self, session_id, *, run_id=None, agent_path='root'):
-        return self._submit(lambda: self._app.request_stop(session_id, run_id=run_id, agent_path=agent_path))
+    def request_stop(self, session_id, *, run_id=None, agent_path='root', agent_run_id=None, approval_batch_id=None):
+        return self._submit(lambda: self._app.request_stop(session_id, run_id=run_id, agent_path=agent_path, agent_run_id=agent_run_id, approval_batch_id=approval_batch_id))
 
     def run(self, session_id, messages):
         return self._submit(lambda: self._app.arun(session_id, messages))

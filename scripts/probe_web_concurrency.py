@@ -68,7 +68,7 @@ def _catalog(root):
                 assert results['read-child'].content == 'COMMITTED_ONCE'
                 text = 'CHILD_REPORT'
             else:
-                assert results['delegate-b'].content == 'CHILD_REPORT'
+                assert json.loads(results['delegate-b'].content)['report'] == 'CHILD_REPORT'
                 text = 'B_COMPLETE'
             yield ChatGenerationChunk(message=AIMessageChunk(content=text, id=identity))
             if tool_call:

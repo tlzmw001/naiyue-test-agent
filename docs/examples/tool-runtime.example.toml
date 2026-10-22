@@ -1,11 +1,11 @@
 # 工具运行设置草案，2026-10-16。对应 Spec085/086，完整目标仍用于审阅；085-14/087当前可用字段见 settings.example.toml，本文件不能整份套用。
 # 已确认采用这份按工具分组的 TOML 方案；Python 3.12 的 tomllib 可读取这种带注释格式。
 # 当前读取：文件缺失用默认；读取/语法/权限配置失败终止，只有工具额度非法诊断后回退工具部分。
-# 默认目录 ~/.naiyue-test-agent/：模型 models.json、工具/权限 settings.toml；八工具、process及tool_output已接。
-# 权限已与工具共用设置；整文件语法错/权限非法须失败，工具/进程/归档额度非法分别回退。
+# 默认目录 ~/.naiyue-test-agent/：模型 models.json、工具/权限 settings.toml；内建工具、process及shell_tasks已接。
+# 权限已与工具共用设置；整文件语法错/权限非法/执行上限非法须失败，工具/进程额度非法分别回退。
 # *_bytes 单位为字节；1 KiB = 1024 bytes，1 MiB = 1048576 bytes。
 # *_chars 为 Unicode 字符数，*_seconds 为秒；行、匹配、条目分别计数。
-# 下列额度均为正整数，default_* 不得高于对应 max_*；不以 0/-1 表示无限。
+# 容量额度为正整数，default_* 不得高于对应 max_*；执行期限的0另按shell_tasks说明。
 # Grep上下文行数与progress.min_interval_milliseconds可为0，均不得为负。
 # max_output_bytes 约束返回正文的 UTF-8 内容，不包含少量有界的状态/截断/路径提示。
 # 调高额度不绕过权限、模型能力或操作系统限制；这些项不是模型每次调用可修改的参数。
@@ -159,7 +159,7 @@ max_patch_bytes = 1_048_576
 max_command_chars = 8192
 # 装配时固定版本探测的秒数预算；超时只报告版本unknown，不执行用户脚本。
 probe_timeout_seconds = 5
-# 默认无执行期限；工具调用可传 timeout（秒），省略/null/0不限时，正整数指定本次期限。
+# 执行期限沿shell_tasks；模型timeout（秒）省略/null/0使用配置，正整数只能缩短。
 # stdout/stderr 合并后的末尾正文最多保留的行数。
 max_output_lines = 2000
 # 同一尾部正文的 UTF-8 字节上限：64 KiB，与行数限制同时生效。
@@ -190,7 +190,7 @@ path_prepend = []
 max_command_chars = 8192
 # 装配时固定版本探测的秒数预算；超时只报告版本unknown，不执行用户脚本。
 probe_timeout_seconds = 5
-# 默认无执行期限；工具调用可传 timeout（秒），省略/null/0不限时，正整数指定本次期限。
+# 执行期限沿shell_tasks；模型timeout（秒）省略/null/0使用配置，正整数只能缩短。
 # 合并后的末尾正文行数上限。
 max_output_lines = 2000
 # 同一尾部正文的 UTF-8 字节上限：64 KiB。
@@ -222,11 +222,19 @@ max_result_bytes = 65_536
 # 角色及可选max_model_calls由可信代码SubAgentSpec登记，不在这里加载角色代码。
 # max_model_calls未设置不额外限主循环响应次数；不限制SDK重试或全部费用。
 
-[tool_output]
-# 同一工作区全部受管 Shell 日志的实际落盘总量：128 MiB。
-# Bash/PowerShell、并发会话及已有受管归档共用此额度，不能各拿一份 128 MiB。
-# 单次额度与本额度都必须满足；达到任一额度后继续采集最新尾部，明确归档不完整。
-max_workspace_archive_bytes = 134_217_728
+[shell_tasks]
+# Spec125-01—04：只约束Bash/PowerShell；不改变Find/Grep、AITest及网络期限。
+# 严格非负整数秒；未配/0不设应用上限。非法配置终止启动，不回退成无限。
+# 模型timeout省略/null/0使用本配置；正整数与已配置正上限取较小值。
+max_execution_seconds = 0
+# 主Agent前台等待120秒后自动转后台；与执行期限共用计时原点，原期限不重置。
+foreground_wait_seconds = 120
+# 后台任务各自的raw/text归档合计上限；达到额度停止该任务，默认64 MiB。
+max_background_archive_bytes = 67108864
+# 下一次用户输入时的终态状态提示；严格正整数，未配使用20项/8 KiB。
+max_notice_items = 20
+# 包含标题及查询说明的完整提示段UTF-8字节数；放不下整条时保留待提示并诊断。
+max_notice_bytes = 8192
 
 [process]
 # 当前调用执行期限之外的一份总收尾预算；不是每个步骤重新给5秒。

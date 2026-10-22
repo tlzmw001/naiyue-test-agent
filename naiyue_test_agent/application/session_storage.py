@@ -22,7 +22,7 @@ from naiyue_test_agent.storage_files import (
     acquire_store_lock, check_store_file, open_store_file, release_store_lock,
 )
 from naiyue_test_agent.workspaces import check_workspace_relocation
-from . import chat_queries, model_usage_storage, diagnostic_storage, reply_storage
+from . import chat_queries, model_usage_storage, diagnostic_storage, reply_storage, subagent_storage
 
 
 class SessionStorage:
@@ -189,8 +189,25 @@ class SessionStorage:
             return chat_queries.approval_seed(self, session_id, thread_id, batch_id)
 
     def chat_subagents(self, session_id):
+        from .subagent_history import merge_registered_subagents
         with self._lock:
-            return chat_queries.subagent_records(self, session_id, self.get(session_id)['thread_id'])
+            records = chat_queries.subagent_records(self, session_id, self.get(session_id)['thread_id'])
+            return merge_registered_subagents(records, self.get_subagent_references(session_id))
+
+    def get_subagent(self, session_id, agent_id):
+        rows = self._read('SELECT * FROM naiyue_subagent_instances WHERE session_id=? AND agent_id=?', (session_id, agent_id))
+        return rows[0] if rows else None
+
+    def get_subagent_references(self, session_id):
+        rows = self._read('''SELECT *
+            FROM naiyue_subagent_instances WHERE session_id=?''', (session_id,))
+        return {row['agent_id']: row for row in rows}
+
+    def save_subagent(self, record, expected_version):
+        subagent_storage.save(self, record, expected_version)
+
+    def cancel_subagent_claim(self, record, previous):
+        subagent_storage.cancel_claim(self, record, previous)
 
     def get_workspace_binding(self):
         rows = self._read('SELECT workspace_id,root_path FROM naiyue_workspace')
@@ -320,7 +337,8 @@ class SessionStorage:
                 row = self.get(session_id)
                 operations = reply_storage.all_actions(self, session_id)
                 extra = {key for op in operations for key in (op['old_thread_id'], op['new_thread_id'], *json.loads(op['obsolete_children']))}
-                threads = [(key,) for key in {row['thread_id'], *child_threads, *extra}]
+                registered = self._read('SELECT child_thread_id FROM naiyue_subagent_instances WHERE session_id=?', (session_id,))
+                threads = [(key,) for key in {row['thread_id'], *child_threads, *extra, *(item['child_thread_id'] for item in registered)}]
                 # One transaction across the current official SQLite tables and our metadata.
                 self.connection.executemany('DELETE FROM writes WHERE thread_id=?', threads)
                 self.connection.executemany('DELETE FROM checkpoints WHERE thread_id=?', threads)
@@ -332,6 +350,7 @@ class SessionStorage:
                 self.connection.execute('DELETE FROM naiyue_diagnostic_events WHERE session_id=?', (session_id,))
                 self.connection.execute('DELETE FROM naiyue_diagnostic_runs WHERE session_id=?', (session_id,))
                 self.connection.execute('DELETE FROM naiyue_regenerations WHERE session_id=?', (session_id,))
+                self.connection.execute('DELETE FROM naiyue_subagent_instances WHERE session_id=?', (session_id,))
                 self.connection.execute('DELETE FROM naiyue_sessions WHERE session_id=?', (session_id,))
         except sqlite3.Error as error:
             logger.error('session_delete_failed error_type=%s', type(error).__name__)
@@ -357,7 +376,7 @@ class SessionStorage:
         self._write("UPDATE naiyue_sessions SET state='running',run_id=?,updated_at=? WHERE session_id=?",
                     (run_id, self._now(), session_id))
 
-    def finish_run(self, session_id, state, checkpoint_id, checkpoint_ns, last_run_status, chat_updates=()):
+    def finish_run(self, session_id, state, checkpoint_id, checkpoint_ns, last_run_status, chat_updates=(), *, subagent_run_id=None):
         if state not in STATES:
             raise SessionPersistenceError('invalid_session_state')
         try:
@@ -365,6 +384,10 @@ class SessionStorage:
                 self.connection.execute('BEGIN IMMEDIATE')
                 self.get(session_id)
                 self._write_chat_updates(session_id, chat_updates)
+                if subagent_run_id is not None:
+                    if self.get(session_id)['run_id'] != subagent_run_id:
+                        raise SessionPersistenceError('subagent_parent_run_changed')
+                    subagent_storage.finish_parent(self, session_id, subagent_run_id)
                 reply_storage.finish_actions(self.connection, session_id, self.get(session_id)['thread_id'], last_run_status)
                 self.connection.execute('''UPDATE naiyue_sessions SET state=?,checkpoint_id=?,checkpoint_ns=?,
                     last_run_status=?,updated_at=? WHERE session_id=?''',

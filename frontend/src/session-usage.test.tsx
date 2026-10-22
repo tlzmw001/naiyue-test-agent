@@ -18,7 +18,7 @@ function view(sid = 's', sum = '3500'): any {
 it('loads only when cumulative tab is opened and cycles all four tabs', async () => {
   const api = new WebApi('test');
   const usage = vi.spyOn(api, 'usage').mockResolvedValue(view());
-  render(<ContextPanel loading={false} error="" retry={vi.fn()} close={vi.fn()}
+  render(<ContextPanel loading={false} error="" retry={vi.fn()}
     usageContent={<SessionUsage api={api} sessionId="s" run={null} />} />);
   expect(usage).not.toHaveBeenCalled();
   fireEvent.keyDown(screen.getByRole('tab', { name: '当前预估' }), { key: 'End' });
@@ -40,7 +40,7 @@ it('loads only when cumulative tab is opened and cycles all four tabs', async ()
 it('keeps cumulative available when context reads fail and preserves large integers', async () => {
   const api = new WebApi('test');
   vi.spyOn(api, 'usage').mockResolvedValue(view('s', '9223372036854775808'));
-  render(<ContextPanel loading={false} error="context unavailable" retry={vi.fn()} close={vi.fn()}
+  render(<ContextPanel loading={false} error="context unavailable" retry={vi.fn()}
     usageContent={<SessionUsage api={api} sessionId="s" run={null} />} />);
   fireEvent.click(screen.getByRole('tab', { name: '会话累计' }));
   expect(await screen.findByText('9,223,372,036,854,775,808')).toBeTruthy();

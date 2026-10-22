@@ -1,5 +1,6 @@
 """Child instances, approvals and stopping belong to one AgentSession."""
 
+import json
 import asyncio
 
 import pytest
@@ -87,7 +88,7 @@ async def test_role_registered_after_session_creation_uses_shared_graph(monkeypa
     await app.aregister_subagent(role())
     result = await app.arun(sid, [('user', 'check')])
     feedback = next(message for message in result['messages'] if isinstance(message, ToolMessage))
-    assert feedback.content == 'child report' and feedback.status == 'success'
+    assert json.loads(feedback.content)['report'] == 'child report' and feedback.status == 'success'
     assert app._sessions._subagents['tester']['agent'].checkpointer.backend is app._agent.checkpointer
     assert (owner._run.subagent_instances if owner._run else {}) == {} and len(child.seen) == 1
     await app.aclose()

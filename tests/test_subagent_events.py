@@ -7,6 +7,25 @@ from naiyue_test_agent.contracts.session_events import RunStartedData, RunFinish
 from naiyue_test_agent.application.stream_projection import StreamingMessageProjection
 
 
+def test_live_projection_rebinds_repeated_call_id_and_ignores_previous_delegation_terminal():
+    from naiyue_test_agent.web.agent_projection import observe_agent
+    agents = {}
+    parents = [{'id': name, 'type': 'ai', 'tool_calls': [{'id': 'same'}]} for name in ('first', 'second')]
+    source = dict(agent_path='root/tester/A', agent_id='A', agent_run_id='old', parent_run_id='root', parent_tool_call_id='same')
+    def send(run, kind, data, parent_messages):
+        observe_agent(agents, dict(source={**source, 'agent_run_id': run}, event_type=kind, data=data, timestamp='now'), parent_messages)
+    send('old', 'run_started', {'mode': 'message'}, parents[:1])
+    send('old', 'message_delta', dict(message_id='old-draft', text='old', index=1), parents[:1])
+    send('new', 'run_started', {'mode': 'message'}, parents)
+    row = agents[source['agent_path']]
+    assert row['parent_batch_id'] == 'second' and row['messages'] == [] and row['tool_states'] == {}
+    send('new', 'message_delta', dict(message_id='new-draft', text='new', index=1), parents)
+    send('resume', 'run_started', {'mode': 'approval_resume'}, parents)
+    assert row['messages'][0]['content'] == 'new'
+    send('old', 'run_finished', {'status': 'failed'}, parents[:1])
+    assert row['source']['agent_run_id'] == 'resume' and row['status'] == 'running'
+
+
 def test_source_views_share_sequence_and_keep_child_run_identity():
     events = []
     root = RunEventPublisher('session', 'root-run', (events.append,))
