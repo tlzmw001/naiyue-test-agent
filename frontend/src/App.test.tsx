@@ -100,7 +100,9 @@ it('pauses selected task output on another tab and preserves its selection', asy
 it('collapses with Escape after the context shortcut jumps into an already open sidebar', async () => {
   const { api } = client();
   render(<App api={api} />);
-  fireEvent.click(await screen.findByRole('button', { name: '新建会话' }));
+  const create = await screen.findByRole('button', { name: '新建会话' });
+  await waitFor(() => expect(create.hasAttribute('disabled')).toBe(false));
+  fireEvent.click(create);
   await waitFor(() => expect(api.session).toHaveBeenCalled());
   fireEvent.click(screen.getByRole('button', { name: '打开辅助侧栏' }));
   const context = screen.getByRole('button', { name: '查看上下文构成' });
