@@ -16,6 +16,18 @@ def check_store_file(path):
         raise OSError(errno.EINVAL, 'unsafe_store_file')
 
 
+def changed_store_fields(before, named_before, after, named_after):
+    """Compare stable handle/path facts without equating Windows ctime meanings."""
+    fields = ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
+    differences = set()
+    for left, right, names in ((before, after, fields), (named_before, named_after, fields),
+            (before, named_before, fields[:3]), (after, named_after, fields[:3])):
+        for name in names:
+            if getattr(left, name) != getattr(right, name):
+                differences.add(name)
+    return tuple(sorted(differences))
+
+
 def _windows_open(path, exclusive_create, *, readonly=False):
     import ctypes
     from ctypes import wintypes

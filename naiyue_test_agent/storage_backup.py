@@ -15,6 +15,7 @@ from . import __version__
 from .storage_backup_schema import SUPPORTED_SCHEMAS, check_snapshot, read_schema_version
 from .storage_files import (
     check_store_directory, check_store_file, open_store_file, open_store_readonly, sync_store_directory,
+    changed_store_fields,
 )
 
 
@@ -101,32 +102,44 @@ def _standalone(path):
 
 def validate_backup(database_path, backup_id, *, workspace_id=None):
     """Return format1 facts only after checking their closed SQLite snapshot."""
+    stage, changed = 'location', ()
     try:
         database = Path(database_path).expanduser().absolute()
         if not isinstance(backup_id, str) or not _ID.fullmatch(backup_id):
             raise ValueError('backup_invalid')
         directory = _root(database) / backup_id
         check_store_directory(directory)
+        stage = 'manifest'
         manifest = _manifest(directory / 'manifest.json', backup_id, database.name)
+        stage = 'workspace'
         if workspace_id is not None and manifest['workspace_id'] != workspace_id:
             raise ValueError('backup_invalid')
         snapshot = directory / 'database.sqlite'
+        stage = 'sidecar'
         _standalone(snapshot)
+        stage = 'digest'
         with os.fdopen(open_store_readonly(snapshot), 'rb') as stream:
             before = os.fstat(stream.fileno())
+            named_before = snapshot.lstat()
             if _file_digest(stream) != (manifest['database_bytes'], manifest['sha256']):
                 raise ValueError('backup_invalid')
+            stage = 'snapshot'
             facts = check_snapshot(snapshot)
+            stage = 'facts'
             if any(facts[key] != manifest[key] for key in ('source_schema', 'workspace_id')):
                 raise ValueError('backup_invalid')
+            stage = 'identity'
+            descriptor_after = os.fstat(stream.fileno())
             after = snapshot.lstat()
-            if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
-                    after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            changed = changed_store_fields(before, named_before, descriptor_after, after)
+            if changed:
                 raise ValueError('backup_invalid')
+        stage = 'sidecar'
         _standalone(snapshot)
         return manifest
     except (OSError, ValueError, TypeError, OverflowError, RecursionError, sqlite3.Error) as error:
-        logger.warning('backup_validation_failed error_type=%s', type(error).__name__)
+        logger.warning('backup_validation_failed stage=%s changed_fields=%s error_type=%s',
+                       stage, ','.join(changed) or 'none', type(error).__name__)
         raise ValueError('backup_invalid') from error
 
 

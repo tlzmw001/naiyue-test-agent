@@ -12,6 +12,64 @@ import pytest
 from tests.storage_backup_fixture import artifact, source_store
 
 
+@pytest.mark.parametrize('operation', ['backup', 'file_facts', 'restore_snapshot'])
+def test_descriptor_change_time_can_differ_from_path_birth_time(tmp_path, monkeypatch, operation):
+    from types import SimpleNamespace
+    from naiyue_test_agent import storage_backup
+    source, root, _ = source_store(tmp_path)
+    with closing(source):
+        manifest = storage_backup.create_backup(source.connection, source.path, target_schema=14)
+        snapshot = artifact(source.path, manifest['backup_id']) / 'database.sqlite'
+        identity = snapshot.stat().st_ino
+        fstat = storage_backup.os.fstat
+        def descriptor_stat(fd):
+            info = fstat(fd)
+            if info.st_ino != identity:
+                return info
+            fields = {name: getattr(info, name) for name in dir(info) if name.startswith('st_')}
+            fields['st_ctime_ns'] += 1_000_000_000
+            return SimpleNamespace(**fields)
+        # CPython 3.12 Windows fstat reports change time, lstat preserves birth time.
+        monkeypatch.setattr(storage_backup.os, 'fstat', descriptor_stat)
+        if operation == 'backup':
+            assert storage_backup.validate_backup(source.path, manifest['backup_id']) == manifest
+        elif operation == 'file_facts':
+            from naiyue_test_agent.storage_restore_record import file_facts
+            assert file_facts(snapshot)['sha256'] == manifest['sha256']
+        else:
+            from naiyue_test_agent.storage_restore_record import verify_snapshot
+            from naiyue_test_agent.workspaces import locate_workspace
+            location = locate_workspace(root, data_dir=None, database_path=source.path)
+            verify_snapshot(snapshot, {'source_schema': manifest['source_schema'],
+                'candidate_bytes': manifest['database_bytes'], 'candidate_sha256': manifest['sha256']}, location)
+
+
+@pytest.mark.parametrize('fault', ['manifest', 'identity'])
+def test_invalid_backup_reports_only_safe_validation_stage(tmp_path, monkeypatch, caplog, fault):
+    from naiyue_test_agent import storage_backup
+    with closing(source_store(tmp_path)[0]) as source:
+        manifest = storage_backup.create_backup(source.connection, source.path, target_schema=14)
+        directory = artifact(source.path, manifest['backup_id'])
+        if fault == 'manifest':
+            (directory / 'manifest.json').write_text('{"PRIVATE-token":1}')
+        else:
+            check = storage_backup.check_snapshot
+            def changed(path):
+                facts = check(path)
+                info = path.stat()
+                os.utime(path, ns=(info.st_atime_ns, info.st_mtime_ns + 1_000_000_000))
+                return facts
+            monkeypatch.setattr(storage_backup, 'check_snapshot', changed)
+        caplog.clear()
+        with pytest.raises(ValueError, match='backup_invalid'):
+            storage_backup.validate_backup(source.path, manifest['backup_id'])
+        assert f'stage={fault}' in caplog.text
+        if fault == 'identity':
+            assert 'st_mtime_ns' in caplog.text
+        assert 'PRIVATE-token' not in caplog.text
+        assert str(directory) not in caplog.text
+
+
 @pytest.mark.parametrize('fault', ['duplicate', 'oversized', 'future_format', 'bool', 'extra',
     'id', 'date', 'naive_date', 'reason', 'filename', 'windows_filename', 'size', 'hash',
     'workspace', 'version', 'missing', 'symlink', 'hardlink', 'directory', 'sidecar',

@@ -2,6 +2,8 @@
 
 状态：2026-10-21，00—04的本机实现/组合验收与标准交付接线完成；备份、迁移前保护、显式还原、中断收尾及正式重开均有证据，04结果见第20节。四目标wheel构建通过，Mac ARM64源码外安装通过；Linux双架构/Windows原机与本轮远端CI仍待验，不声称四平台运行验收完成。
 
+2026-10-22发行补充：备份校验的文件身份仍以设备/文件ID、长度及两次同源元数据检查为准。CPython 3.12 Windows的句柄fstat使用ChangeTime，而路径lstat兼容返回CreationTime，不把二者的ctime直接相等当作稳定文件的必要条件；句柄前后和路径前后分别核对ctime/mtime，跨来源仍核对设备/文件ID/长度。摘要、结构、归属和修改/替换拒绝合同保持。失败日志只记录固定阶段与差异字段名，不输出路径或备份内容。原失败CI39631304294及本轮红绿和原机结果由本轮发行交接引用。来源：[CPython句柄字段](https://github.com/python/cpython/blob/v3.12.10/Python/fileutils.c#L1036)、[路径兼容字段](https://github.com/python/cpython/blob/v3.12.10/Modules/posixmodule.c#L2015)。
+
 ## 1. 需求来源与首期承诺
 
 2026-10-08最小持久会话之后已记录存储版本迁移、备份恢复、checkpoint增长与磁盘满等待办；后续曾把备份恢复排在checkpoint安全修剪之前。用户最新授权的Spec124已在另一会话完成小批checkpoint修剪，本Spec保留其结果；校验不得要求已允许修剪的历史父checkpoint或聊天归档来源仍存在。当前没有真实用户数据库损坏的复现证据，本项不是Windows10054或输出归档ValueError的修复。

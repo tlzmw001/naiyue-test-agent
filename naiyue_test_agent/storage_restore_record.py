@@ -9,7 +9,9 @@ from uuid import UUID, uuid4
 
 from .storage_backup import _ID, _DIGEST, _filename, _unique, _file_digest, _standalone
 from .storage_backup_schema import SUPPORTED_SCHEMAS, check_snapshot
-from .storage_files import check_store_directory, open_store_file, open_store_readonly, sync_store_directory
+from .storage_files import (
+    check_store_directory, open_store_file, open_store_readonly, sync_store_directory, changed_store_fields,
+)
 from .workspaces import check_workspace_relocation, locate_workspace
 
 
@@ -82,16 +84,13 @@ def write_record(path, value):
     sync_store_directory(path.parent)
 
 
-def _identity(info):
-    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
-
-
 def file_facts(path):
     check_store_directory(path.parent)
     with os.fdopen(open_store_readonly(path), 'rb') as stream:
         before = os.fstat(stream.fileno())
+        named_before = path.lstat()
         amount, digest = _file_digest(stream)
-        if _identity(before) != _identity(path.lstat()):
+        if changed_store_fields(before, named_before, os.fstat(stream.fileno()), path.lstat()):
             raise ValueError('restore_conflict')
     return {'filename': path.name, 'bytes': amount, 'sha256': digest}
 
@@ -115,6 +114,7 @@ def verify_snapshot(path, expected, location):
     _standalone(path)
     with os.fdopen(open_store_readonly(path), 'rb') as stream:
         before = os.fstat(stream.fileno())
+        named_before = path.lstat()
         if _file_digest(stream) != (expected['candidate_bytes'], expected['candidate_sha256']):
             raise ValueError('restore_conflict')
         if check_snapshot(path) != {'source_schema': expected['source_schema'], 'workspace_id': location.workspace_id}:
@@ -123,7 +123,7 @@ def verify_snapshot(path, expected, location):
             connection.execute('PRAGMA trusted_schema=OFF')
             old_root = connection.execute('SELECT root_path FROM naiyue_workspace').fetchone()[0]
         check_workspace_relocation(location.workspace_id, old_root, location.root)
-        if _identity(before) != _identity(path.lstat()):
+        if changed_store_fields(before, named_before, os.fstat(stream.fileno()), path.lstat()):
             raise ValueError('restore_conflict')
     _standalone(path)
 
