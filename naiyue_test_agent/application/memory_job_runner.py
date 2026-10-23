@@ -136,7 +136,7 @@ async def _related(service, job, batch):
         try:
             if not service.allowed(request):
                 raise MemoryReadError('memory_permission_denied')
-            result = await run_blocking(service.memory.query, job.target_session_id, job.root, request)
+            result = await run_blocking(service.memory.query, job.target_session_id, job.project_id, request)
         except MemoryReadError as error:
             logger.warning('memory_related_read_failed error_type=%s', safe_error_type(error))
             continue
@@ -147,7 +147,7 @@ async def _related(service, job, batch):
             try:
                 if not service.allowed(request):
                     raise MemoryReadError('memory_permission_denied')
-                latest = await run_blocking(service.memory.query, job.target_session_id, job.root, request)
+                latest = await run_blocking(service.memory.query, job.target_session_id, job.project_id, request)
                 seen = {(row['scope'], row['memory_id']) for row, _ in candidates}
                 for row in latest['items']:
                     identity = row['scope'], row['memory_id']
@@ -167,7 +167,7 @@ async def _related(service, job, batch):
                         memory_id=row['memory_id'], version=row['version'], offset=offset).model_dump(mode='json')
                     if not service.allowed(request):
                         raise MemoryReadError('memory_permission_denied')
-                    detail = (await run_blocking(service.memory.query, job.target_session_id, job.root, request))['items'][0]
+                    detail = (await run_blocking(service.memory.query, job.target_session_id, job.project_id, request))['items'][0]
                     if local_only and not _local_candidate(detail, job):
                         raise MemoryReadError('memory_candidate_source_unavailable')
                     parts.append(detail['body'])
@@ -329,7 +329,7 @@ async def _batch(service, job):
                     request = proposal_request(proposal, batch['sources'], related)
                     if not service.allowed(request):
                         raise MemoryReadError('memory_permission_denied')
-                    await _commit(job, 'saved', service.memory.query, job.target_session_id, job.root, request)
+                    await _commit(job, 'saved', service.memory.query, job.target_session_id, job.project_id, request)
                 except Exception as error:
                     _failure(job, 'memory_proposal_failed', error)
             job.start = tuple(batch['next_position'])

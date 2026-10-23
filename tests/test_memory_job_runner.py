@@ -47,7 +47,7 @@ def fixture(archive, tmp_path, model, **changes):
     service._terminal = terminal
     job = SimpleNamespace(task_id='a' * 32, session_id='session', target_session_id='session',
         root=tmp_path, origin_run_id='root-run', model_id='A', model=model, thread_id='root-thread',
-        conversation_revision=0, deadline=time.monotonic() + 30, start=(0, 0), upper=1,
+        conversation_revision=0, project_id=archive.get('session')['project_id'], deadline=time.monotonic() + 30, start=(0, 0), upper=1,
         batches=0, saved=0, failed=0, overview_saved=0, skipped=[], control=RunControl(),
         released=True, pending_runs=set(), changed=asyncio.Event(), status='starting',
         started_at=None, result_status=None, termination=None, cleanup_confirmed=False, error_type=None)
@@ -355,7 +355,7 @@ def test_related_active_and_candidate_records_enter_the_same_single_model_call(a
                 body='使用.venv ' + 'existing detail ' * 40,
                 gaps=['等待确认测试环境'] if intent == 'candidate' else [])
             request = MemoryInput(action='record', scope='workspace', proposal=value, sources=[ref]).model_dump(mode='json')
-            service.memory.query('session', tmp_path, request)
+            service.memory.query('session', service.storage.get('session')['project_id'], request)
         try:
             await drive(service, job)
             assert job.result_status == 'completed' and len(model.seen) == 1
@@ -382,7 +382,7 @@ def test_candidate_changed_after_search_is_skipped_with_diagnostic(archive, tmp_
             conversation_revision=0, quote='使用.venv', offset=0)
         value = dict(proposal(reason='用户明确约定'), intent='candidate', gaps=['等待确认'])
         record = MemoryInput(action='record', scope='workspace', proposal=value, sources=[ref]).model_dump(mode='json')
-        saved = service.memory.query('session', tmp_path, record)['item']
+        saved = service.memory.query('session', service.storage.get('session')['project_id'], record)['item']
         original = service.memory.query
         reads = []
         def changed(sid, root, request):

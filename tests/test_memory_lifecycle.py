@@ -20,7 +20,7 @@ def memory(storage_memory):
 
 
 def query(access, sid, root, **arguments):
-    return access.query(sid, root, MemoryInput(**arguments).model_dump(mode="json"), now=4000.)
+    return access.query(sid, access.storage.get(sid)['project_id'], MemoryInput(**arguments).model_dump(mode="json"), now=4000.)
 
 
 def source(access, sid, *, text='以后测试使用.venv', at=1000., role='human', thread=None):
@@ -49,7 +49,7 @@ def proposal(**changes):
 def write(fixture, action='record', *, now=1000., **args):
     access,sid,root,_ = fixture
     request = MemoryInput(action=action,scope='workspace',**args).model_dump(mode='json')
-    return access.query(sid,root,request,now=now)
+    return access.query(sid,access.storage.get(sid)['project_id'],request,now=now)
 
 
 def test_record_update_cas_and_history(memory):

@@ -1,7 +1,17 @@
 """Remove post-v10 structures when constructing a genuine older schema fixture."""
 
 
+def remove_execution_schema(connection):
+    for table, fields in (('naiyue_sessions', ('project_id', 'execution_root_kind')),
+            ('naiyue_subagent_instances', ('project_id', 'execution_root', 'execution_root_kind'))):
+        columns = {row[1] for row in connection.execute(f'PRAGMA table_info({table})')}
+        for field in fields:
+            if field in columns:
+                connection.execute(f'ALTER TABLE {table} DROP COLUMN {field}')
+
+
 def remove_memory_overviews(connection):
+    remove_execution_schema(connection)
     for table in ('naiyue_memory_overviews','naiyue_memory_progress'):
         connection.execute(f'DROP TABLE IF EXISTS {table}')
 

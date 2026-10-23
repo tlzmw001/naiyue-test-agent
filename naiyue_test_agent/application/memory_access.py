@@ -67,15 +67,15 @@ class MemoryAccess:
             store.connection.execute('BEGIN')
             return function(store.connection, *args)
 
-    def query(self, source_session_id, workspace_root, request, *, now=None):
+    def query(self, source_session_id, project_id, request, *, now=None):
         try:
             with self._lock:
                 if self._closed or not self.settings.enabled:
                     raise MemoryReadError('memory_unavailable')
                 binding = self.storage.get_workspace_binding()
                 source = self.storage.get(source_session_id)
-                if (not binding or not isinstance(workspace_root, Path) or not workspace_root.is_absolute()
-                        or source['workspace_root'] != str(workspace_root) or binding['root_path'] != str(workspace_root)):
+                if (not binding or project_id is None or source['project_id'] != project_id
+                        or binding['workspace_id'] != project_id):
                     raise MemoryReadError('memory_scope_mismatch')
                 if request['action'] in ('record','update','disable','forget'):
                     return self._mutate(binding['workspace_id'],source_session_id,request,time.time() if now is None else now)

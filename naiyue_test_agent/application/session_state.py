@@ -2,7 +2,7 @@
 
 from collections import deque
 from dataclasses import dataclass, field
-from pathlib import Path
+from naiyue_test_agent.execution_roots import ExecutionRoot
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -16,15 +16,20 @@ from naiyue_test_agent.contracts.replies import QueuedInput
 class SessionState:
     thread_id: str
     model_id: str
-    workspace_root: Path | None
+    execution_root: ExecutionRoot | None
     active_tool_names: tuple[str, ...]
     permission_mode: str
+    project_id: str | None = None
     thinking_level: str = 'model_default'
     conversation_revision: int = 0
     session_allow: list[dict] = field(default_factory=list)
     pending_tool_approval: dict | None = None
     pending_turn: dict | None = None
     manual_review_required: bool = False
+
+    @property
+    def execution_path(self):
+        return self.execution_root.path if self.execution_root is not None else None
 
 
 @dataclass(eq=False)
@@ -33,6 +38,8 @@ class ActiveRun:
 
     run_id: str
     observation: RunObservation
+    project_id: str | None = None
+    execution_root: ExecutionRoot | None = None
     reply_id: str | None = None
     prompt_parts: list = field(default_factory=list)
     background_notices: 'BackgroundNoticeSnapshot | None' = None

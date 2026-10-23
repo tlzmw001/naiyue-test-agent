@@ -163,7 +163,7 @@ def test_background_related_reads_honor_each_normalized_request_permission(archi
             body='使用.venv PRIVATE_CANDIDATE_BODY', intent='candidate', gaps=['需确认']),
             sources=[dict(session_id='session', thread_id='root-thread', message_id='human', revision=1,
                 conversation_revision=0, quote='使用.venv', offset=0)]).model_dump(mode='json')
-        service.memory.query('session', tmp_path, request)
+        service.memory.query('session', service.storage.get('session')['project_id'], request)
         original, calls = service.memory.query, []
         def observed(*args):
             calls.append(args[-1])

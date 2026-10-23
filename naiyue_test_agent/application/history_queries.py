@@ -50,7 +50,7 @@ def _fit_record(result, item, budget):
 
 
 def _directory(storage, source, request, settings, count):
-    expected = dict(v=1, action='list_sessions', source=source['session_id'])
+    expected = dict(v=1, action='list_sessions', source=source['session_id'], project_id=source['project_id'])
     cursor = _decode(request['cursor'], expected)
     before, identity = None, None
     if cursor:
@@ -59,10 +59,10 @@ def _directory(storage, source, request, settings, count):
             _fail('history_cursor_stale')
     rows = storage._read('''SELECT s.session_id,s.title,s.updated_at,s.state,s.thread_id,s.conversation_revision,
         (SELECT COUNT(*) FROM naiyue_chat_sync h WHERE h.session_id=s.session_id) AS archive_threads
-        FROM naiyue_sessions s WHERE s.workspace_root=? AND s.session_id!=?
+        FROM naiyue_sessions s WHERE s.project_id=? AND s.session_id!=?
         AND (? IS NULL OR s.updated_at<? OR (s.updated_at=? AND s.session_id>?))
         ORDER BY s.updated_at DESC,s.session_id ASC LIMIT ?''',
-        (source['workspace_root'], source['session_id'], before, before, before, identity, count + 1))
+        (source['project_id'], source['session_id'], before, before, before, identity, count + 1))
     result = dict(status='ok', items=[], has_more=False, next_cursor=None)
     for i, row in enumerate(rows[:count]):
         item = {k: row[k] for k in ('session_id', 'title', 'updated_at', 'state')}
@@ -80,7 +80,7 @@ def _directory(storage, source, request, settings, count):
 
 def _scope(storage, source, request):
     target = storage.get(request['session_id'])
-    if target['workspace_root'] != source['workspace_root']:
+    if target['project_id'] != source['project_id']:
         _fail('history_scope_mismatch')
     thread, saved_checkpoint = target['thread_id'], target['checkpoint_id']
     if request['agent_id'] is not None:
@@ -101,7 +101,7 @@ def _scope(storage, source, request):
 
 def _messages(storage, source, request, settings, count):
     target, thread, coverage = _scope(storage, source, request)
-    expected = dict(v=1, source=source['session_id'], action=request['action'],
+    expected = dict(v=1, source=source['session_id'], project_id=source['project_id'], action=request['action'],
         target=target['session_id'], agent=request['agent_id'], thread=thread,
         query_hash=sha256((request['query'] or '').encode()).hexdigest(),
         history_version=coverage['history_version'], conversation_revision=coverage['conversation_revision'])
@@ -158,11 +158,11 @@ def _messages(storage, source, request, settings, count):
     return result
 
 
-def query(storage, source_session_id, workspace_root, request, settings):
-    from pathlib import Path
+def query(storage, source_session_id, project_id, request, settings):
     source = storage.get(source_session_id)
-    if (not isinstance(workspace_root, Path) or not workspace_root.is_absolute()
-            or source['workspace_root'] != str(workspace_root)):
+    binding = storage.get_workspace_binding()
+    if (project_id is None or not binding or binding['workspace_id'] != project_id
+            or source['project_id'] != project_id):
         _fail('history_scope_mismatch')
     count = request['limit'] if request['limit'] is not None else settings.default_limit
     if count > settings.max_limit or request['query'] is not None and len(request['query']) > settings.max_query_chars:

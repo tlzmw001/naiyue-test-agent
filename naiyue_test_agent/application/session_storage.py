@@ -182,12 +182,12 @@ class SessionStorage:
         with self._lock:
             return chat_queries.read_page(self, session_id, thread_id, **query)
 
-    def read_history_tool(self, source_session_id, workspace_root, request, settings):
+    def read_history_tool(self, source_session_id, project_id, request, settings):
         from .history_queries import query
         try:
             with self._lock, self.connection:
                 self.connection.execute('BEGIN')
-                return query(self, source_session_id, workspace_root, request, settings)
+                return query(self, source_session_id, project_id, request, settings)
         except sqlite3.Error as error:
             logger.error('history_tool_read_failed error_type=%s', type(error).__name__)
             raise SessionPersistenceError('history_read_failed') from error
@@ -241,11 +241,10 @@ class SessionStorage:
                 if binding['workspace_id'] != workspace_id:
                     raise SessionPersistenceError('workspace_database_mismatch')
                 check_workspace_relocation(workspace_id, binding['root_path'], root)
-                if self.connection.execute('SELECT 1 FROM naiyue_sessions WHERE workspace_root IS NULL OR workspace_root != ? LIMIT 1',
-                                           (binding['root_path'],)).fetchone():
-                    raise SessionPersistenceError('workspace_database_mismatch')
                 self.connection.execute('UPDATE naiyue_workspace SET root_path=? WHERE singleton=1', (str(root),))
-                self.connection.execute('UPDATE naiyue_sessions SET workspace_root=?', (str(root),))
+                scope = (str(root), workspace_id, binding['root_path'])
+                self.connection.execute("UPDATE naiyue_sessions SET workspace_root=? WHERE project_id=? AND execution_root_kind='local' AND workspace_root=?", scope)
+                self.connection.execute("UPDATE naiyue_subagent_instances SET execution_root=? WHERE project_id=? AND execution_root_kind='local' AND execution_root=?", scope)
         except (sqlite3.Error, OSError, ValueError, SessionPersistenceError) as error:
             logger.error('workspace_binding_failed error_type=%s', type(error).__name__)
             if isinstance(error, SessionPersistenceError):
@@ -279,12 +278,18 @@ class SessionStorage:
         if binding and (session['workspace_root'] is None or
                         Path(session['workspace_root']).resolve(strict=True) != Path(binding['root_path'])):
             raise SessionPersistenceError('workspace_database_mismatch')
+        project_id = binding['workspace_id'] if binding else None
+        if session.get('project_id', project_id) != project_id:
+            raise SessionPersistenceError('workspace_database_mismatch')
+        kind = session.get('execution_root_kind', 'local' if session['workspace_root'] is not None else None)
+        if kind != ('local' if session['workspace_root'] is not None else None):
+            raise SessionPersistenceError('invalid_execution_identity')
         now = self._now()
         self._write('''INSERT INTO naiyue_sessions
-            (session_id,thread_id,model_id,workspace_root,state,created_at,updated_at,active_tool_names_json,permission_mode,sort_order)
-            VALUES(?,?,?,?,?,?,?,?,?,(SELECT COALESCE(MIN(sort_order),0)-1 FROM naiyue_sessions WHERE workspace_root IS ?))''', (session_id, session['thread_id'], session['model_id'],
+            (session_id,thread_id,model_id,workspace_root,state,created_at,updated_at,active_tool_names_json,permission_mode,project_id,execution_root_kind,sort_order)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,(SELECT COALESCE(MIN(sort_order),0)-1 FROM naiyue_sessions WHERE workspace_root IS ?))''', (session_id, session['thread_id'], session['model_id'],
             str(session['workspace_root']) if session['workspace_root'] is not None else None,
-            'ready', now, now, json.dumps(session['active_tool_names']), session['permission_mode'],
+            'ready', now, now, json.dumps(session['active_tool_names']), session['permission_mode'], project_id, kind,
             str(session['workspace_root']) if session['workspace_root'] is not None else None))
 
     def get(self, session_id):
@@ -301,6 +306,13 @@ class SessionStorage:
 
     def list_workspace_sessions(self, workspace_root):
         root = str(workspace_root) if workspace_root is not None else None
+        binding = self.get_workspace_binding()
+        if binding and root != binding['root_path']:
+            return []
+        if binding:
+            return self._read('''SELECT session_id,model_id,workspace_root,project_id,execution_root_kind,
+                state,updated_at,last_run_status,title,pinned FROM naiyue_sessions WHERE project_id=?
+                ORDER BY pinned DESC,sort_order ASC,created_at DESC,session_id ASC''', (binding['workspace_id'],))
         return self._read('''SELECT session_id,model_id,workspace_root,state,updated_at,last_run_status,title,pinned
             FROM naiyue_sessions WHERE workspace_root IS ?
             ORDER BY pinned DESC,sort_order ASC,created_at DESC,session_id ASC''', (root,))
@@ -331,7 +343,11 @@ class SessionStorage:
         try:
             with self._lock, self.connection:
                 self.connection.execute('BEGIN IMMEDIATE')
-                rows = self.connection.execute('SELECT session_id,pinned FROM naiyue_sessions WHERE workspace_root IS ?', (root,)).fetchall()
+                binding = self.get_workspace_binding()
+                if binding and root != binding['root_path']:
+                    raise ValueError('stale_session_order')
+                rows = (self.connection.execute('SELECT session_id,pinned FROM naiyue_sessions WHERE project_id=?', (binding['workspace_id'],)).fetchall()
+                    if binding else self.connection.execute('SELECT session_id,pinned FROM naiyue_sessions WHERE workspace_root IS ?', (root,)).fetchall())
                 pins = {row['session_id']: row['pinned'] for row in rows}
                 if len(identities) != len(pins) or set(identities) != set(pins):
                     raise ValueError('stale_session_order')

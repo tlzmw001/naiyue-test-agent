@@ -42,6 +42,7 @@ class MemoryJob:
     model:object
     thread_id:str
     conversation_revision:int
+    project_id:str|None=None
     created_at:str=field(default_factory=timestamp)
     deadline:float=0.
     status:str='starting'
@@ -87,7 +88,9 @@ class MemoryJobs:
 
     def _enabled_for_session(self,sid):
         row=self.storage.get(sid)
-        return 'memory' in json.loads(row['active_tool_names_json']) and self.allowed(dict(action='list'))
+        binding=self.storage.get_workspace_binding()
+        return bool(binding and row['project_id']==binding['workspace_id'] and
+            'memory' in json.loads(row['active_tool_names_json']) and self.allowed(dict(action='list')))
 
     def prepare(self,sid,root,messages,model,*,preview=False):
         if not self.settings.enabled or not self._enabled_for_session(sid):return []
@@ -101,7 +104,7 @@ class MemoryJobs:
             with self._context_lock:self._eligible.add(sid)
         with self._context_lock:seen|=sid in self._used
         directory=store.directory(self.storage,sid,self.settings.directory_limit) if not seen else ()
-        return prepare_memory_parts(self.memory,sid,root,messages,model,directory=directory,allowed=self.allowed)
+        return prepare_memory_parts(self.memory,sid,row['project_id'],messages,model,directory=directory,allowed=self.allowed)
 
     def directory_attempt(self,sid):
         with self._context_lock:
@@ -123,8 +126,8 @@ class MemoryJobs:
         if (self._closing or {source_session_id,target_session_id}&self._deleting
                 or any(self._deletion_generations.get(sid,0)!=value for sid,value in generations.items())):
             raise MemoryReadError('memory_admission_closed')
-        if (not binding or row['workspace_root']!=str(workspace_root) or caller['workspace_root']!=str(workspace_root)
-                or binding['root_path']!=str(workspace_root)):
+        if (not binding or row['project_id']!=binding['workspace_id'] or caller['project_id']!=binding['workspace_id']
+                or caller['workspace_root']!=str(workspace_root)):
             raise MemoryReadError('memory_scope_mismatch')
         old=self._entries.get(self._targets.get(target_session_id))
         if old and not old.cleanup_confirmed:
@@ -142,7 +145,7 @@ class MemoryJobs:
         selected,model=self._selected(model_id,model)
         job=MemoryJob(uuid4().hex,source_session_id,target_session_id,workspace_root,origin_run_id,
             tool_call_id or '',selected,model,row['thread_id'],row['conversation_revision'],
-            deadline=time.monotonic()+self.settings.task_timeout_seconds,
+            project_id=binding['workspace_id'],deadline=time.monotonic()+self.settings.task_timeout_seconds,
             requested_start=start_sequence,requested_end=end_sequence)
         job.pending_runs.add((source_session_id,origin_run_id))
         self._entries[job.task_id]=job;self._targets[target_session_id]=job.task_id

@@ -46,6 +46,9 @@ from naiyue_test_agent.agent_runtime.context_operation_observation import (
 )
 
 
+from naiyue_test_agent.execution_roots import ExecutionRoot
+
+
 class RunContext(TypedDict):
     session_id: str
     agent_path: NotRequired[str]
@@ -55,7 +58,9 @@ class RunContext(TypedDict):
     ainvoke_subagent: NotRequired[Callable]
     alist_subagents: NotRequired[Callable]
     run_id: NotRequired[str]
-    workspace_root: NotRequired[Path]
+    workspace_root: NotRequired[Path]  # Execution path projection; never a project selector.
+    project_id: NotRequired[str | None]
+    execution_root: NotRequired[ExecutionRoot]
     archive_root: NotRequired[Path]
     approval_grants: NotRequired[OneUseApprovalGrants]
     read_resource_roots: NotRequired[tuple[Path, ...]]

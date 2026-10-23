@@ -166,8 +166,8 @@ def test_empty_tail_still_obeys_json_envelope_budget(archive):
 def test_batch_rejects_foreign_workspace_even_when_thread_matches(archive):
     save(archive, [HumanMessage(id='first', content='visible')])
     with archive.connection:
-        archive.connection.execute('UPDATE naiyue_sessions SET workspace_root=? WHERE session_id=?',
-            ('/different-workspace', 'session'))
+        archive.connection.execute('UPDATE naiyue_sessions SET project_id=? WHERE session_id=?',
+            ('foreign-project', 'session'))
     with pytest.raises(MemoryReadError, match='memory_source_scope_mismatch'):
         batch(archive)
 

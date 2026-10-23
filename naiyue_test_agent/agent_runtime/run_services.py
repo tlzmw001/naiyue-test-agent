@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from collections.abc import Callable
 from pathlib import Path
+from naiyue_test_agent.execution_roots import ExecutionRoot
 
 if TYPE_CHECKING:
     from .events import RunEventPublisher, AgentEventPublisher
@@ -35,6 +36,8 @@ class RunServices:
     memory_query: Callable | None = None
     task_queries: object | None = None
     archive_root: Path | None = None
+    project_id: str | None = None
+    execution_root: ExecutionRoot | None = None
 
 
 _RUN_SERVICES = ContextVar('naiyue_run_services', default=None)

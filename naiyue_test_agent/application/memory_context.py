@@ -31,11 +31,11 @@ def _query_text(messages, chars):
     return ''
 
 
-def _read(memory, session_id, workspace_root, *, allowed=None, **arguments):
+def _read(memory, session_id, project_id, *, allowed=None, **arguments):
     try:
         request = MemoryInput(**arguments).model_dump(mode='json')
         if allowed is not None and not allowed(request):raise MemoryReadError('memory_permission_denied')
-        return memory.query(session_id, workspace_root, request)['items']
+        return memory.query(session_id, project_id, request)['items']
     except MemoryReadError as error:
         logger.warning('memory_context_read_failed error_type=%s', type(error).__name__)
         return []
@@ -89,7 +89,7 @@ def _render(preferences, related, directory):
     return parts
 
 
-def prepare_memory_parts(memory, session_id, workspace_root, messages, model, *, directory=(), allowed=None):
+def prepare_memory_parts(memory, session_id, project_id, messages, model, *, directory=(), allowed=None):
     """One sync assembler shared by request and preview; the caller freezes per turn."""
     if memory is None or not memory.settings.enabled:
         return []
@@ -117,7 +117,7 @@ def prepare_memory_parts(memory, session_id, workspace_root, messages, model, *,
 
     preference_limit = min(settings.preference_limit, settings.max_limit)
     if preference_limit:
-        for row in _read(memory, session_id, workspace_root, action='list', status='active',
+        for row in _read(memory, session_id, project_id, action='list', status='active',
                 kind='user', limit=preference_limit,allowed=allowed):
             if append(preferences, _memory_index(row)):
                 seen.add((row['scope'], row['memory_id']))
@@ -129,7 +129,7 @@ def prepare_memory_parts(memory, session_id, workspace_root, messages, model, *,
     query = _query_text(messages, settings.max_query_chars)
     related_limit = min(settings.related_limit, settings.max_limit)
     if query and related_limit:
-        for row in _read(memory, session_id, workspace_root, action='search', status='active',
+        for row in _read(memory, session_id, project_id, action='search', status='active',
                 query=query, limit=related_limit,allowed=allowed):
             if (row['scope'], row['memory_id']) not in seen and append(related, _memory_index(row)):
                 seen.add((row['scope'], row['memory_id']))

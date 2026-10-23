@@ -95,6 +95,8 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
 
     # This is fixture construction on a CLOSED disposable database, never a product downgrade command.
     with closing(sqlite3.connect(database)) as connection:
+        connection.execute('ALTER TABLE naiyue_sessions DROP COLUMN project_id')
+        connection.execute('ALTER TABLE naiyue_sessions DROP COLUMN execution_root_kind')
         connection.execute('ALTER TABLE naiyue_chat_messages DROP COLUMN occurred_at')
         for table in ('naiyue_memory_overviews','naiyue_memory_progress','naiyue_memory_versions','naiyue_memory_suppression','naiyue_memory_search', 'naiyue_memories', 'naiyue_memory_sources', 'naiyue_memory_info'):
             connection.execute(f'DROP TABLE {table}')
@@ -146,6 +148,9 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
                 expected = {key: value for key, value in before.items() if key != 'naiyue_store_info'}
                 assert all(row.pop('duration_ms') is None for row in current['naiyue_model_invocations'])
                 assert all(row.pop('occurred_at') is None for row in current['naiyue_chat_messages'])
+                for row in current['naiyue_sessions']:
+                    assert row.pop('project_id') == location.workspace_id
+                    assert row.pop('execution_root_kind') == 'local'
                 assert current == expected
                 assert len(list_backups(database)) == 2
                 events = []

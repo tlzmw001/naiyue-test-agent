@@ -25,7 +25,7 @@ class BackgroundNoticeSnapshot:
 
 class ProcessTaskPort(Protocol):
     async def submit(self, *, session_id, workspace_root, archive_root, run_id, tool_call_id, agent_path,
-                     command, name, request, settings, runner, control) -> dict: ...
+                     command, name, request, settings, runner, control, project_id=None, execution_root=None) -> dict: ...
     async def foreground(self, *, wait_seconds, background_limit, on_progress, **scope): ...
     def notice_snapshot(self, *, session_id, workspace_root, run_id=None) -> BackgroundNoticeSnapshot: ...
     def acknowledge_notices(self, snapshot, *, session_id, workspace_root, run_id): ...
@@ -47,6 +47,8 @@ def task_context(runtime, *, query=False):
     if not query:
         from .output import require_archive_root
         scope['archive_root'] = require_archive_root(context)
+        scope['project_id'] = context.get('project_id')
+        scope['execution_root'] = context.get('execution_root')
     return port, scope
 
 

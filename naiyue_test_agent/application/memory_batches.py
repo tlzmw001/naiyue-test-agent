@@ -36,12 +36,12 @@ def _tokens(value, model_view=False):
 
 
 def _batch(connection, *, session_id, thread_id, conversation_revision, start, upper, token_budget, source_chars, model_view):
-    saved = connection.execute('SELECT thread_id,conversation_revision,workspace_root FROM naiyue_sessions WHERE session_id=?',
+    saved = connection.execute('SELECT thread_id,conversation_revision,project_id FROM naiyue_sessions WHERE session_id=?',
         (session_id,)).fetchone()
-    binding = connection.execute('SELECT root_path FROM naiyue_workspace WHERE singleton=1').fetchone()
+    binding = connection.execute('SELECT workspace_id FROM naiyue_workspace WHERE singleton=1').fetchone()
     if saved is None or saved['thread_id'] != thread_id or saved['conversation_revision'] != conversation_revision:
         raise MemoryReadError('memory_source_changed')
-    if binding is None or saved['workspace_root'] != binding[0]:
+    if binding is None or saved['project_id'] is None or saved['project_id'] != binding[0]:
         raise MemoryReadError('memory_source_scope_mismatch')
     head = connection.execute("SELECT history_version FROM naiyue_chat_sync WHERE session_id=? AND thread_id=? AND checkpoint_ns=''",
         (session_id, thread_id)).fetchone()

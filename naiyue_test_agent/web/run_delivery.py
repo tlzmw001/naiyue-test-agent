@@ -61,19 +61,19 @@ class RunDelivery:
             raise WebError('request_window_full')
         return key, fingerprint, deepcopy(old[1]) if old else None
 
-    async def start(self, session_id, body, rows, *, can_run=True, conversation_revision=0):
-        return await self._launch(session_id, body, rows, can_run=can_run, conversation_revision=conversation_revision)
+    async def start(self, session_id, body, rows, *, can_run=True, conversation_revision=0, execution_root_error=None):
+        return await self._launch(session_id, body, rows, can_run=can_run, conversation_revision=conversation_revision, execution_root_error=execution_root_error)
 
-    async def regenerate(self, session_id, body, rows, *, can_run=True):
-        return await self._launch(session_id, body, rows, can_run=can_run, regenerate=True)
+    async def regenerate(self, session_id, body, rows, *, can_run=True, execution_root_error=None):
+        return await self._launch(session_id, body, rows, can_run=can_run, regenerate=True, execution_root_error=execution_root_error)
 
-    async def compact(self, session_id, body, rows, *, can_run=True, conversation_revision=0):
-        return await self._launch(session_id, body, rows, can_run=can_run, compact=True, conversation_revision=conversation_revision)
+    async def compact(self, session_id, body, rows, *, can_run=True, conversation_revision=0, execution_root_error=None):
+        return await self._launch(session_id, body, rows, can_run=can_run, compact=True, conversation_revision=conversation_revision, execution_root_error=execution_root_error)
 
     async def resume(self, session_id, body, check_current):
         return await self._launch(session_id, body, [], resume_check=check_current)
 
-    async def _launch(self, session_id, body, rows, *, can_run=True, resume_check=None, compact=False, regenerate=False, conversation_revision=0):
+    async def _launch(self, session_id, body, rows, *, can_run=True, resume_check=None, compact=False, regenerate=False, conversation_revision=0, execution_root_error=None):
         async with self.start_lock:
             if self._closing:
                 raise WebError('session_unavailable', 503)
@@ -104,6 +104,8 @@ class RunDelivery:
                 if active is not None and not active.task.done():
                     raise WebError('session_busy')
                 if not can_run:
+                    if execution_root_error is not None:
+                        raise WebError('execution_root_unavailable', reason=execution_root_error['reason'])
                     raise WebError('session_recovery_blocked')
                 def register(job):
                     self.runs[job.run_id] = job

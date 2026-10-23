@@ -9,6 +9,11 @@ def make_invocation_context(session_id, run_id, workspace_root, approval_grants,
     if services is not None:
         publisher = services.publisher
         if publisher is None or publisher.matches(session_id, run_id):
+            context['project_id'] = services.project_id
+            if services.execution_root is not None:
+                if services.execution_root.path != workspace_root:
+                    raise ValueError('Execution scope does not match invocation path')
+                context['execution_root'] = services.execution_root
             if services.archive_root is not None:
                 context['archive_root'] = services.archive_root
             if services.control is not None:

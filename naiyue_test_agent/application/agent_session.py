@@ -49,9 +49,10 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
         with self._lock:
             row = self._state
             return {'session_id': self.session_id, 'conversation_revision': row.conversation_revision, 'model_id': row.model_id,
-                'thinking_level': row.thinking_level,
+                'thinking_level': row.thinking_level, 'project_id': row.project_id,
+                'execution_root_kind': row.execution_root.kind if row.execution_root else None,
                 'active_tools': list(row.active_tool_names), 'permission_mode': row.permission_mode,
-                'workspace_root': str(row.workspace_root) if row.workspace_root else None,
+                'workspace_root': str(row.execution_path) if row.execution_path else None,
                 'busy': (self._run is not None), 'run_id': (self._run.run_id if self._run else None),
                 'manual_review_required': row.manual_review_required,
                 'pending_approval': row.pending_tool_approval is not None,
@@ -81,7 +82,8 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
         with self._lock:
             row = self._state
             return {'thread_id': row.thread_id, 'model_id': row.model_id,
-                'workspace_root': row.workspace_root, 'active_tool_names': row.active_tool_names,
+                'workspace_root': row.execution_path, 'project_id': row.project_id,
+                'execution_root': row.execution_root, 'active_tool_names': row.active_tool_names,
                 'busy': (self._run is not None), 'pending_approval': row.pending_tool_approval is not None,
                 'manual_review_required': row.manual_review_required}
 
@@ -101,7 +103,9 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
     def snapshot_for_run(self):
         with self._lock:
             row = self._state
-            return {'thread_id': row.thread_id, 'workspace_root': row.workspace_root,
+            root = self._run.execution_root if self._run else row.execution_root
+            return {'thread_id': row.thread_id, 'workspace_root': root.path if root else None,
+                'project_id': self._run.project_id if self._run else row.project_id, 'execution_root': root,
                 'model_id': row.model_id, 'busy': (self._run is not None), 'run_id': (self._run.run_id if self._run else None),
                 'stop_requested': (self._run.stop_requested if self._run else False), 'steering_open': (self._run.steering_open if self._run else False),
                 'pending': deepcopy(row.pending_tool_approval),
@@ -215,7 +219,7 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
                     observe(observation.controls, observation.controls.accept, 'approval',
                         tool_call_ids=tuple(item['tool_call_id'] for item in pending['items']),
                         decisions=tuple(decisions), origin_run_id=pending.get('requested_run_id'))
-            run = ActiveRun(run_id, observation, steering_open=mode != 'compact' and not stop,
+            run = ActiveRun(run_id, observation, project_id=row.project_id, execution_root=row.execution_root, steering_open=mode != 'compact' and not stop,
                             stop_requested=stop)
             self._run = run
             if self._mcp_resources is not None:

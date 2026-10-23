@@ -12,7 +12,7 @@ def runtime_for(root):
     return SimpleNamespace(tool_call_id='shell-call', context={
         'session_id': 's', 'workspace_root': root, 'archive_root': root.parent / (root.name + '-archive'),
         '_execution_permit': {'session_id': 's', 'agent_path': 'root', 'call_id': 'shell-call',
-            'subject': {'execution_environment': execution_environment()}},
+            'subject': {'workspace': str(root), 'execution_environment': execution_environment()}},
     })
 
 

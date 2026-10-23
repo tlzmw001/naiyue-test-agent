@@ -33,10 +33,10 @@ def resolve(connection, workspace_id, caller, references, now):
     result = []
     for ref in references:
         sid = caller if ref['current_user'] else ref['session_id']
-        parent = connection.execute('SELECT thread_id,conversation_revision,workspace_root FROM naiyue_sessions WHERE session_id=?',(sid,)).fetchone()
+        parent = connection.execute('SELECT thread_id,conversation_revision,project_id FROM naiyue_sessions WHERE session_id=?',(sid,)).fetchone()
         if parent is None:raise MemoryReadError('memory_source_unavailable')
-        binding=connection.execute('SELECT root_path FROM naiyue_workspace WHERE singleton=1').fetchone()
-        if not binding or parent['workspace_root']!=binding[0]:raise MemoryReadError('memory_source_scope_mismatch')
+        binding=connection.execute('SELECT workspace_id FROM naiyue_workspace WHERE singleton=1').fetchone()
+        if not binding or parent['project_id']!=workspace_id or binding[0]!=workspace_id:raise MemoryReadError('memory_source_scope_mismatch')
         thread = parent['thread_id'] if ref['current_user'] else ref['thread_id']
         if thread!=parent['thread_id']:
             child=connection.execute('SELECT agent_id,agent,agent_path FROM naiyue_subagent_instances WHERE session_id=? AND child_thread_id=?',(sid,thread)).fetchone()

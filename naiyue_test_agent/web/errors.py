@@ -5,17 +5,20 @@ from naiyue_test_agent.application import (
 )
 from naiyue_test_agent.application.session_storage import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelConfigError
+from naiyue_test_agent.execution_roots import ExecutionRootUnavailable
 
 
 class WebError(Exception):
-    def __init__(self, code, status=409):
-        self.code, self.status = code, status
+    def __init__(self, code, status=409, *, reason=None):
+        self.code, self.status, self.reason = code, status, reason
         super().__init__(code)
 
 
 def public_error(error):
     if isinstance(error, WebError):
         return error
+    if isinstance(error, ExecutionRootUnavailable):
+        return WebError(error.code, reason=error.reason)
     if isinstance(error, SessionBusyError):
         return WebError('session_busy')
     if isinstance(error, RunCapacityExceededError):

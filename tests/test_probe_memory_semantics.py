@@ -65,7 +65,7 @@ def test_candidate_setup_is_finite_explicit_and_keeps_real_id_version(tmp_path):
         access = MemoryAccess(store, MemorySettings(auto_enabled=False), tmp_path / 'data')
         try:
             cases, _ = load_cases()
-            setup = seed_candidate(access, 's', tmp_path, cases, at=1000.)
+            setup = seed_candidate(access, 's', cases, at=1000.)
             assert len(setup['actual_memory_id']) == 32 and setup['version'] == 2
             assert setup['fixture_alias'] == 'candidate-e11'
             row = store._read('SELECT * FROM naiyue_memories')[0]

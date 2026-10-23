@@ -6,7 +6,7 @@ import sqlite3
 from uuid import UUID
 
 
-CURRENT_SCHEMA = 17
+CURRENT_SCHEMA = 18
 SUPPORTED_SCHEMAS = frozenset(range(4, CURRENT_SCHEMA + 1))
 
 
@@ -61,8 +61,8 @@ def check_snapshot(path):
         if version >= 13:
             required['naiyue_model_invocations'] += ' duration_ms'
         if version >= 14:
-            from .application.subagent_storage import FIELDS
-            required['naiyue_subagent_instances'] = ' '.join(FIELDS)
+            from .application.subagent_storage import FIELDS, LEGACY_FIELDS
+            required['naiyue_subagent_instances'] = ' '.join(FIELDS if version >= 18 else LEGACY_FIELDS)
         if version >= 15:
             from .application.memory_schema import REQUIRED, check
             required.update(REQUIRED)
@@ -72,6 +72,8 @@ def check_snapshot(path):
         if version >= 17:
             from .application.memory_overview_store import REQUIRED as OVERVIEWS
             required.update(OVERVIEWS)
+        if version >= 18:
+            required['naiyue_sessions'] += ' project_id execution_root_kind'
         if 'checkpoints' in tables or 'writes' in tables:
             required['checkpoints'] = 'thread_id checkpoint_ns checkpoint_id parent_checkpoint_id type checkpoint metadata'
             required['writes'] = 'thread_id checkpoint_ns checkpoint_id task_id idx channel type value'
@@ -100,6 +102,20 @@ def check_snapshot(path):
             if (singleton != 1 or not isinstance(identity, str) or str(UUID(identity)) != identity
                     or not isinstance(root, str) or not root or '\0' in root):
                 raise ValueError('backup_invalid')
+        if version >= 18:
+            from .application.execution_storage import root_from_row
+            from .application.errors import SessionPersistenceError
+            for table, child in (('naiyue_sessions', False), ('naiyue_subagent_instances', True)):
+                cursor = connection.execute(f'SELECT * FROM {table}')
+                names = tuple(field[0] for field in cursor.description)
+                for values in cursor:
+                    record = dict(zip(names, values))
+                    try:
+                        execution = root_from_row(record, child=child)
+                    except SessionPersistenceError as error:
+                        raise ValueError('backup_invalid') from error
+                    if record['project_id'] != identity or identity is not None and execution is None:
+                        raise ValueError('backup_invalid')
         references = [('naiyue_sessions', 'thread_id,checkpoint_ns,checkpoint_id')]
         if version >= 7:
             references.append(('naiyue_chat_sync', 'thread_id,checkpoint_ns,checkpoint_id'))

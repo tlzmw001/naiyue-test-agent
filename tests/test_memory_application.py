@@ -73,8 +73,8 @@ def test_new_session_directory_is_first_request_only_and_history_reads_overview(
             assert 'Other session directory' not in system
             from naiyue_test_agent.tools.history import HistoryInput
             from naiyue_test_agent.tools.history_settings import HistorySettings
-            directory=app._storage.read_history_tool(second,tmp_path,HistoryInput(action='list_sessions').model_dump(),HistorySettings())
+            directory=app._storage.read_history_tool(second,app._storage.get(second)['project_id'],HistoryInput(action='list_sessions').model_dump(),HistorySettings())
             assert directory['items'][0]['overview_status']=='generated'
-            detail=app._storage.read_history_tool(second,tmp_path,HistoryInput(action='read',session_id=first).model_dump(),HistorySettings())
+            detail=app._storage.read_history_tool(second,app._storage.get(second)['project_id'],HistoryInput(action='read',session_id=first).model_dump(),HistorySettings())
             assert detail['overview']['next_step']=='继续验证'
     asyncio.run(scenario())

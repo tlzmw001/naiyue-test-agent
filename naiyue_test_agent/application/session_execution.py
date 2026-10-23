@@ -29,7 +29,7 @@ class SessionExecution:
     """Internal part of AgentSession; it borrows shared graphs and IO."""
 
     async def _prepare_resources(self, run, *, include_background=False, messages=()):
-        workspace_root = self.snapshot_for_context()['workspace_root']
+        workspace_root = run.execution_root.path if run.execution_root is not None else None
         notices = (self._process_tasks.notice_snapshot(session_id=self.session_id,
             workspace_root=workspace_root, run_id=run.run_id)
             if include_background and self._process_tasks is not None else None)
@@ -89,7 +89,7 @@ class SessionExecution:
                         run_id=run_id, model_id=model_id, model=model, system_message=system,
                         tools=[spec.tool for spec in specs])
             elif workspace_root is not None:
-                with observation.bind(archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
+                with observation.bind(project_id=run.project_id, execution_root=run.execution_root, archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
                                       background_notices=run.background_notices,
                                       history_query=getattr(self._persistence, 'aquery_history', None),
                                       memory_query=getattr(self._persistence, 'aquery_memory', None),
@@ -98,7 +98,7 @@ class SessionExecution:
                         session_id=session_id, thread_id=thread_id, run_id=run_id, workspace_root=workspace_root,
                         read_resource_roots=resources['read_resource_roots'], max_concurrency=max_concurrency, **options)
             else:
-                with observation.bind(archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
+                with observation.bind(project_id=run.project_id, execution_root=run.execution_root, archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
                                       background_notices=run.background_notices,
                                       history_query=getattr(self._persistence, 'aquery_history', None),
                                       memory_query=getattr(self._persistence, 'aquery_memory', None),
@@ -170,14 +170,15 @@ class SessionExecution:
                 await run_blocking(self._persistence.start, session_id, run_id)
             grants, remembered = (None, []) if stop else prepare_resume(session_id, pending, decisions, remember_approved)
             self.remember_approved_rules(run, remembered)
-            resources = await self._prepare_resources(run)
+            # Stopping pairs saved calls; it does not start filesystem or model work.
+            resources = {'read_resource_roots': ()} if stop else await self._prepare_resources(run)
             self._record_approval(
                 'approval_stop_submitted' if stop else 'approval_review_submitted', session_id, run_id,
                 approved_count=decisions.count('approve'),
                 rejected_count=decisions.count('reject'),
             )
             observation.stage = 'execute'
-            with observation.bind(archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
+            with observation.bind(project_id=run.project_id, execution_root=run.execution_root, archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
                                   history_query=getattr(self._persistence, 'aquery_history', None),
                                   memory_query=getattr(self._persistence, 'aquery_memory', None),
                                       task_queries=getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks):

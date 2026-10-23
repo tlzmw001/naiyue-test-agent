@@ -74,7 +74,7 @@ def test_bash_passes_the_original_context_control_to_the_runner(monkeypatch, tmp
     monkeypatch.setattr(HostProcessRunner, 'run', run)
     from naiyue_test_agent.tools.permissions import execution_environment
     permit = {'call_id': 'call', 'session_id': 's', 'agent_path': 'root',
-              'subject': {'execution_environment': execution_environment()}}
+              'subject': {'workspace': str(tmp_path), 'execution_environment': execution_environment()}}
     runtime = SimpleNamespace(tool_call_id='call', context={
         'workspace_root': tmp_path, 'session_id': 's', '_execution_permit': permit,
         'archive_root': tmp_path.parent / (tmp_path.name + '-archive'),

@@ -13,11 +13,11 @@ from test_memory_readonly import memory, seed
 
 def prepare(memory, messages=(), **kwargs):
     from naiyue_test_agent.application.memory_context import prepare_memory_parts
-    _, access, _, root = memory
+    _, access, project_id, _ = memory
     access.settings = access.settings.model_copy(update={
         'injection_tokens': 2000, 'preference_limit': 3, 'related_limit': 8, 'directory_limit': 8,
         **kwargs.pop('settings', {})})
-    return prepare_memory_parts(access, 'caller', root, messages, None, **kwargs)
+    return prepare_memory_parts(access, 'caller', project_id, messages, None, **kwargs)
 
 
 def payload(parts, identity='memory'):

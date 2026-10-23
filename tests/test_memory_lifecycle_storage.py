@@ -70,16 +70,16 @@ def test_personal_two_owners_cas_only_one_commit(memory):
     access,sid,root,_=memory
     ref=source(access,sid)
     request=MemoryInput(action='record',scope='personal',proposal=proposal(),sources=[ref]).model_dump(mode='json')
-    item=access.query(sid,root,request,now=1000)['item']
+    item=access.query(sid,access.storage.get(sid)['project_id'],request,now=1000)['item']
     other=MemoryAccess(access.storage,access.settings,root/'data')
     try:
-        other.query(sid,root,MemoryInput(action='list',scope='personal').model_dump(),now=1000)
+        other.query(sid,access.storage.get(sid)['project_id'],MemoryInput(action='list',scope='personal').model_dump(),now=1000)
         barrier=threading.Barrier(2)
         def update(owner):
             barrier.wait()
             req=MemoryInput(action='update',scope='personal',memory_id=item['memory_id'],expected_version=1,
                 proposal=proposal(),sources=[ref]).model_dump(mode='json')
-            try:return owner.query(sid,root,req,now=2000)['item']['version']
+            try:return owner.query(sid,access.storage.get(sid)['project_id'],req,now=2000)['item']['version']
             except MemoryReadError as error:return str(error)
         with ThreadPoolExecutor(2) as pool:results=list(pool.map(update,[access,other]))
         assert sorted(str(r) for r in results)==['2','memory_conflict']
@@ -152,7 +152,7 @@ def test_source_from_different_workspace_session_is_rejected(memory,tmp_path):
         active_tool_names=['memory'],permission_mode='Default'))
     # Imported/legacy rows are still checked at the source boundary.
     with access.storage.connection:
-        access.storage.connection.execute('UPDATE naiyue_sessions SET workspace_root=? WHERE session_id=?',(str(tmp_path/'other'),'foreign'))
+        access.storage.connection.execute('UPDATE naiyue_sessions SET project_id=? WHERE session_id=?',('foreign-project','foreign'))
     ref=source(access,'foreign')
     with pytest.raises(MemoryReadError,match='memory_source_scope_mismatch'):
         write(memory,proposal=proposal(),sources=[ref])

@@ -84,7 +84,7 @@ def seed_sources(storage, sid, sources, *, at):
     return dict(upper=upper, source_texts={s['id']: s['text'] for s in inputs}, setup=setup)
 
 
-def seed_candidate(memory, sid, root, cases, *, at):
+def seed_candidate(memory, sid, cases, *, at):
     """Fill e11's missing old-state precondition, without editing its labels."""
     from naiyue_test_agent.tools.memory import MemoryInput
     text = cases[4]['sources'][0]['text']
@@ -96,10 +96,10 @@ def seed_candidate(memory, sid, root, cases, *, at):
     proposal = dict(kind='procedure', title='自动化用例编排', body=text, subject='自动化用例编排',
         basis='inference', intent='candidate', gaps=['缺持久选择'], reason='旧助手提出编排，尚缺用户持久选择')
     first = MemoryInput(action='record', scope='workspace', proposal=proposal, sources=[reference])
-    saved = memory.query(sid, root, first.model_dump(mode='json'), now=at + 1)['item']
+    saved = memory.query(sid, memory.storage.get(sid)['project_id'], first.model_dump(mode='json'), now=at + 1)['item']
     update = MemoryInput(action='update', scope='workspace', memory_id=saved['memory_id'], expected_version=1,
         proposal=proposal, sources=[reference])
-    saved = memory.query(sid, root, update.model_dump(mode='json'), now=at + 2)['item']
+    saved = memory.query(sid, memory.storage.get(sid)['project_id'], update.model_dump(mode='json'), now=at + 2)['item']
     return dict(kind='supplemental_synthetic_precondition', fixture_alias='candidate-e11',
         actual_memory_id=saved['memory_id'], version=saved['version'], scope='workspace',
         body_from='e05.sources[0].text', source=source, source_texts=seeded['source_texts'],
@@ -211,7 +211,7 @@ async def run_case(case, repeat, catalog, model_id, callback, settings):
             at = time.time() - 3600
             try:
                 if case.get('candidate'):
-                    candidate = seed_candidate(memory, 'probe', root, load_cases()[0], at=at)
+                    candidate = seed_candidate(memory, 'probe', load_cases()[0], at=at)
                     setup.append(candidate)
                     texts.update(candidate['source_texts'])
                     candidate_id = candidate['actual_memory_id']

@@ -69,6 +69,14 @@ async def admit(owner, graph, instance, spec):
     if len(subagent_result_envelope(instance).encode('utf-8')) > owner._subagent_result_settings.max_result_bytes:
         raise ToolException('Subagent result budget cannot hold its instance metadata.')
     previous = await _get(owner, instance['agent_id'])
+    from naiyue_test_agent.tools.permissions import require_execution_directory
+    from .execution_storage import root_from_row
+    saved_root = root_from_row(previous, child=True) if previous is not None else instance['execution_root']
+    saved_project = previous['project_id'] if previous is not None else instance['project_id']
+    require_execution_directory({'workspace_root': saved_root.path if saved_root else None,
+        'execution_root': saved_root, 'project_id': saved_project})
+    if saved_root != instance['execution_root'] or saved_project != instance['project_id']:
+        raise ToolException('Subagent execution binding changed; the saved instance was not rebound.')
     if instance['continuing']:
         if previous is None:
             raise ToolException('Unknown or legacy subagent instance; create a new instance.')
@@ -104,6 +112,8 @@ async def admit(owner, graph, instance, spec):
     record = dict(session_id=owner.session_id, agent_id=instance['agent_id'], agent_path=instance['agent_path'],
         child_thread_id=instance['child_thread_id'], agent=spec.name, role_fingerprint=role_fingerprint(spec),
         model_id=instance['model_id'], last_task=instance['task'], state='running',
+        project_id=saved_project, execution_root=str(saved_root.path) if saved_root else None,
+        execution_root_kind=saved_root.kind if saved_root else None,
         version=previous['version'] + 1 if previous else 1,
         checkpoint_ns=previous['checkpoint_ns'] if previous else '', checkpoint_id=previous['checkpoint_id'] if previous else None,
         last_delegation_id=instance['delegation_id'], last_parent_run_id=instance['parent_run_id'],

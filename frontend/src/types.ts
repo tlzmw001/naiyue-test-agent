@@ -138,6 +138,8 @@ export interface SessionRow {
 }
 
 export interface SessionView extends SessionRow {
+  project_id?: string | null;
+  execution_root_error?: { code: 'execution_root_unavailable'; reason: 'missing' | 'not_directory' | 'not_registered' | 'wrong_project' } | null;
   conversation_revision?: number;
   last_reply_id?: string | null;
   history_ready?: boolean;

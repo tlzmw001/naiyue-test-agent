@@ -24,9 +24,14 @@ from test_memory_readonly import seed
 async def opened(monkeypatch, root, model, *, settings=None, tools=None, identity=None, models=None):
     settings = settings or AppSettings.model_validate({'storage':{'data_dir':str(root / 'data')}})
     monkeypatch.setattr(application, 'load_model_catalog', lambda _:ModelCatalog('A', models or {'A':model}))
+    from naiyue_test_agent.workspaces import prepare_workspace
+    if identity is not None and not (root / '.naiyue/workspace.json').exists():
+        (root / '.naiyue').mkdir(exist_ok=True)
+        (root / '.naiyue/workspace.json').write_text(json.dumps({'version': 1, 'workspace_id': identity}))
+    location = prepare_workspace(root, data_dir=root / 'data', database_path=root / 'sessions.sqlite')
     async with open_async_persistent_application('unused', database_path=root / 'sessions.sqlite',
             tools=tools or [create_memory_tool()], system_prompt='', response_format=None, settings=settings,
-            workspace_binding={'workspace_id':identity or str(uuid4()), 'root_path':root}) as app:
+            workspace_binding={'workspace_id':identity or location.workspace_id, 'root_path':root}) as app:
         yield app
 
 

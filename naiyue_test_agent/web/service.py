@@ -62,11 +62,11 @@ class WebService:
         elif (value.get('last_reply_id') != body.expected_reply_id
                 or value.get('conversation_revision') != body.expected_conversation_revision):
             raise WebError('regeneration_stale')
-        return await self.delivery.regenerate(session_id, body, [], can_run=value['can_run'])
+        return await self.delivery.regenerate(session_id, body, [], can_run=value['can_run'], execution_root_error=value.get('execution_root_error'))
 
     async def compact(self, session_id, body):
         value = await self._session_status(session_id)
-        return await self.delivery.compact(session_id, body, [], can_run=value['can_run'], conversation_revision=value['conversation_revision'])
+        return await self.delivery.compact(session_id, body, [], can_run=value['can_run'], conversation_revision=value['conversation_revision'], execution_root_error=value.get('execution_root_error'))
 
     def session_control_options(self):
         from naiyue_test_agent.mcp_client.presentation import permission_source
@@ -183,7 +183,8 @@ class WebService:
         except Exception as error:
             raise public_error(error) from None
         root = str(self.settings.workspace_root) if self.settings.workspace_root is not None else None
-        if value['workspace_root'] != root:
+        if (value.get('project_id') != self.settings.workspace_id if self.settings.workspace_id is not None
+                else value['workspace_root'] != root):
             raise WebError('session_not_found', 404)
         read_only = 'recovery' in value
         batches = [] if read_only else self.application.pending_approval_batches(session_id)
@@ -285,7 +286,7 @@ class WebService:
     async def start(self, session_id, body):
         value = await self._session_status(session_id)
         # RunDelivery handles the duplicate receipt before checking busy.
-        return await self.delivery.start(session_id, body, [], can_run=value['can_run'], conversation_revision=value['conversation_revision'])
+        return await self.delivery.start(session_id, body, [], can_run=value['can_run'], conversation_revision=value['conversation_revision'], execution_root_error=value.get('execution_root_error'))
 
     async def usage(self, session_id, *, after_model=None):
         await self._session_status(session_id)

@@ -74,7 +74,7 @@ def create_web_app(settings, *, application_factory=None):
 
     @app.exception_handler(WebError)
     async def web_error(request, error):
-        return JSONResponse({'error': {'code': error.code}}, status_code=error.status)
+        return JSONResponse({'error': {'code': error.code, **({'reason': error.reason} if error.reason else {})}}, status_code=error.status)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_input(request, error):

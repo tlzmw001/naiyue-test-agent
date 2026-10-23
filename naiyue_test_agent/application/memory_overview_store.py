@@ -53,7 +53,7 @@ def _transaction(storage, *, write=False):
 
 def _session(connection, session_id):
     row = connection.execute('''SELECT s.* FROM naiyue_sessions s JOIN naiyue_workspace w
-        ON w.singleton=1 AND s.workspace_root=w.root_path WHERE s.session_id=?''', (session_id,)).fetchone()
+        ON w.singleton=1 AND s.project_id=w.workspace_id WHERE s.session_id=?''', (session_id,)).fetchone()
     if row is None:raise MemoryReadError('memory_scope_mismatch')
     return dict(row)
 
@@ -213,8 +213,8 @@ def directory(storage, session_id, limit):
     if type(limit) is not int or not 0 <= limit <= 50:raise MemoryReadError('memory_overview_invalid_limit')
     with _transaction(storage) as connection:
         current = _session(connection,session_id)
-        rows = connection.execute('''SELECT * FROM naiyue_sessions WHERE workspace_root=? AND session_id!=?
-            ORDER BY updated_at DESC,session_id LIMIT ?''',(current['workspace_root'],session_id,limit)).fetchall()
+        rows = connection.execute('''SELECT * FROM naiyue_sessions WHERE project_id=? AND session_id!=?
+            ORDER BY updated_at DESC,session_id LIMIT ?''',(current['project_id'],session_id,limit)).fetchall()
         result = []
         for raw in rows:
             row = dict(raw)

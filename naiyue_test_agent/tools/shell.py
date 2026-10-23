@@ -13,7 +13,7 @@ from langchain.tools import ToolRuntime
 from langchain_core.tools import StructuredTool, ToolException
 from pydantic import BaseModel, ConfigDict, Field
 
-from .permissions import ToolPermission, execution_environment, require_tool_permit
+from .permissions import ToolPermission, execution_environment, require_tool_permit, require_execution_directory
 from .processes import HostProcessRunner, ProcessRequest, run_async_sync
 from .registry import ToolSpec
 from .schemas import build_tool_schemas
@@ -29,6 +29,7 @@ class ShellPermission(ToolPermission):
     foreground_wait_seconds: int = 120
 
     def prepare(self, args, context):
+        require_execution_directory(context)
         subject = super().prepare(args, context)
         if args.get('background', False):
             subject['target'] = '[background] ' + subject['target']
@@ -125,6 +126,7 @@ def build_shell_tool(adapter, settings, process_settings=None, shell_task_settin
     task_settings = shell_task_settings or ShellTaskSettings()
 
     async def execute(command: str, runtime: ToolRuntime[dict, dict], timeout: int | None = None, background: bool = False):
+        require_execution_directory(runtime.context)
         root = runtime.context.get('workspace_root')
         if not isinstance(root, Path) or not root.is_absolute() or not root.is_dir():
             raise ToolException(f'{adapter.label} has no valid session workspace.')

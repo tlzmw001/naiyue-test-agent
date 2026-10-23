@@ -1,7 +1,9 @@
 """The model history projection is read-only, bounded and scope/version checked."""
 
 from hashlib import sha256
+from pathlib import Path
 import json
+from uuid import uuid4
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage, message_to_dict
@@ -13,8 +15,14 @@ from naiyue_test_agent.tools.history_settings import HistorySettings
 
 
 def create(store, identity, root, thread=None):
-    store.create(identity, dict(thread_id=thread or identity, model_id='A', workspace_root=root,
+    binding = store.get_workspace_binding()
+    actual = Path(binding['root_path']) if binding else root
+    store.create(identity, dict(thread_id=thread or identity, model_id='A', workspace_root=actual,
                                active_tool_names=['history'], permission_mode='Default'))
+    if root != actual:
+        # Foreign-project record injection preserves the query boundary regression.
+        store._write('UPDATE naiyue_sessions SET project_id=?,workspace_root=? WHERE session_id=?',
+                     (str(uuid4()), str(root), identity))
 
 
 def save(store, sid, messages, *, thread=None):
@@ -32,7 +40,10 @@ def save(store, sid, messages, *, thread=None):
 
 @pytest.fixture
 def archive(tmp_path):
+    from naiyue_test_agent.workspaces import prepare_workspace
+    location = prepare_workspace(tmp_path, data_dir=tmp_path / 'data', database_path=tmp_path / 'sessions.sqlite')
     with SessionStorage(tmp_path / 'sessions.sqlite') as store:
+        store.bind_workspace(location.workspace_id, tmp_path)
         create(store, 'caller', tmp_path)
         create(store, 'target', tmp_path)
         yield store, tmp_path
@@ -40,7 +51,7 @@ def archive(tmp_path):
 
 def query(archive, settings=None, **args):
     store, root = archive
-    return store.read_history_tool('caller', root, HistoryInput(**args).model_dump(), settings or HistorySettings())
+    return store.read_history_tool('caller', json.loads((root / '.naiyue/workspace.json').read_text())['workspace_id'], HistoryInput(**args).model_dump(), settings or HistorySettings())
 
 
 def test_directory_contains_real_metadata_no_fake_overview_and_no_writes(archive):

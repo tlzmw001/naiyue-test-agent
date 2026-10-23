@@ -26,7 +26,7 @@ async def test_usage_http_is_authenticated_scoped_bounded_and_read_only(monkeypa
         assert (await client.get('/api/sessions/missing/usage')).status_code == 404
         assert model.seen == []
         seed(store, 'foreign')
-        store._write('UPDATE naiyue_sessions SET workspace_root=? WHERE session_id=?', ('PRIVATE_WORKSPACE', 'foreign'))
+        store._write("UPDATE naiyue_sessions SET workspace_root=?,execution_root_kind='local' WHERE session_id=?", (str(tmp_path / 'PRIVATE_WORKSPACE'), 'foreign'))
         denied = await client.get('/api/sessions/foreign/usage')
         assert denied.status_code == 404 and 'PRIVATE' not in denied.text
 

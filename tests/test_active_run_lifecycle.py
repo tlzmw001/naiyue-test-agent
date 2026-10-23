@@ -15,7 +15,7 @@ from test_application_run_events import make_app
 def test_state_contains_only_session_facts_and_run_has_independent_defaults():
     from naiyue_test_agent.application.session_state import ActiveRun
     assert {field.name for field in fields(SessionState)} == {
-        'thread_id', 'model_id', 'workspace_root', 'active_tool_names', 'permission_mode',
+        'thread_id', 'model_id', 'project_id', 'execution_root', 'active_tool_names', 'permission_mode',
         'thinking_level', 'session_allow', 'pending_tool_approval', 'pending_turn',
         'manual_review_required', 'conversation_revision'}
     a, b = ActiveRun('same', None), ActiveRun('same', None)

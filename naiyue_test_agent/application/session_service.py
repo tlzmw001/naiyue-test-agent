@@ -26,14 +26,14 @@ from naiyue_test_agent.tools.subagent import subagent_selection
 class SessionService(SessionControlMixin, SessionSubagentControls):
     """Locate sessions and coordinate admission; each session drives its run."""
 
-    def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None, max_active_runs=10, mcp_resources=None, http_attempt_limit=None, shell_task_settings=None, data_dir=None, project_id=None):
+    def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None, max_active_runs=10, mcp_resources=None, http_attempt_limit=None, shell_task_settings=None, data_dir=None, project=None):
         if type(max_active_runs) is not int or max_active_runs <= 0:
             raise ValueError('Root run capacity must be a positive integer')
         self._max_active_runs = max_active_runs
         self._progress_settings = progress_settings
         from naiyue_test_agent.config_paths import get_data_dir, StorageSettings
         self._data_dir = (data_dir if data_dir is not None else get_data_dir(StorageSettings())).resolve()
-        self._project_id = project_id
+        self._project = project
         self.mcp_resources = mcp_resources
         self._permission_settings = permission_settings if permission_settings is not None else PermissionSettings()
         install_model_usage_callback(catalog, http_attempt_limit=http_attempt_limit)
@@ -130,7 +130,7 @@ class SessionService(SessionControlMixin, SessionSubagentControls):
             session.request_scope_stop(reason='close')
 
     def session_archive_root(self, session_id):
-        return (self._data_dir / 'workspaces' / self._project_id / 'artifacts' if self._project_id else
+        return (self._data_dir / 'workspaces' / self._project.project_id / 'artifacts' if self._project else
                 self._data_dir / 'sessions' / session_id / 'artifacts')
 
     def workspace_archive_root(self, root):
@@ -181,6 +181,12 @@ class SessionService(SessionControlMixin, SessionSubagentControls):
 
 
     def _admit(self, session_id, run_id, mode, *, decisions=None, remember_approved=None, stop=False, expected_conversation_revision=None):
+        from naiyue_test_agent.execution_roots import validate_execution_root
+        with self._lock:
+            owner = self._sessions[session_id]
+        scope = owner.snapshot_for_context()
+        if not (mode == 'approval_resume' and stop):
+            validate_execution_root(scope['execution_root'], scope['project_id'])
         with self._lock:
             session = self._sessions[session_id]
             if self.background_tasks.is_cleaning(session._archive_root):

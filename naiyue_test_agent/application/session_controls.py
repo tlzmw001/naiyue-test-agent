@@ -15,6 +15,7 @@ from .errors import SessionBusyError, SessionPersistenceError
 from .session_state import SessionState
 from naiyue_test_agent.contracts.replies import reply_identity, QueuedInput
 from naiyue_test_agent.tools.read import resolve_workspace_root
+from naiyue_test_agent.execution_roots import ExecutionRoot
 
 
 logger = logging.getLogger('naiyue_test_agent.application')
@@ -237,7 +238,8 @@ class SessionControlMixin:
             while session_id in self._sessions:
                 session_id = uuid4().hex
             state = SessionState(thread_id=uuid4().hex, model_id=model_id,
-                workspace_root=workspace_root, active_tool_names=self._initial_active_tools,
+                execution_root=ExecutionRoot(workspace_root) if workspace_root is not None else None,
+                project_id=self._project.project_id if self._project else None, active_tool_names=self._initial_active_tools,
                 permission_mode=self._permission_settings.mode)
             session = AgentSession(session_id, state, catalog=self._catalog,
                 tool_registry=self._tool_registry, permission_settings=self._permission_settings,
@@ -251,7 +253,8 @@ class SessionControlMixin:
             if self._persistence is not None:
                 self._persistence.storage.create(session_id, {
                     'thread_id': session.get_thread_id(), 'model_id': model_id,
-                    'workspace_root': workspace_root, 'active_tool_names': session.get_active_tools(),
+                    'workspace_root': workspace_root, 'project_id': state.project_id,
+                    'execution_root_kind': state.execution_root.kind if state.execution_root else None, 'active_tool_names': session.get_active_tools(),
                     'permission_mode': session.get_permission_mode()})
         except BaseException:
             with self._lock:
@@ -276,13 +279,14 @@ class SessionControlMixin:
 
 
     def install_restored_session(self, session_id, *, thread_id, model_id, thinking_level,
-                                 workspace_root, active_tool_names, permission_mode, pending=None, conversation_revision=0):
+                                 workspace_root, active_tool_names, permission_mode, pending=None, conversation_revision=0, project_id=None, execution_root_kind=None):
         from .agent_session import AgentSession
         with self._lock:
             if session_id in self._sessions:
                 raise SessionPersistenceError('session_already_loaded')
             state = SessionState(thread_id=thread_id, model_id=model_id,
-                thinking_level=thinking_level, workspace_root=workspace_root,
+                thinking_level=thinking_level, project_id=project_id,
+                execution_root=ExecutionRoot(workspace_root, execution_root_kind) if workspace_root is not None else None,
                 active_tool_names=tuple(active_tool_names), permission_mode=permission_mode,
                 pending_tool_approval=deepcopy(pending), conversation_revision=conversation_revision)
             self._sessions[session_id] = AgentSession(session_id, state, catalog=self._catalog,

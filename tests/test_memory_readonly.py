@@ -42,7 +42,7 @@ def memory(tmp_path):
 
 def query(memory, **arguments):
     _, access, _, root = memory
-    return access.query('caller', root, MemoryInput(**arguments).model_dump(), now=2000000000.0)
+    return access.query('caller', access.storage.get('caller')['project_id'], MemoryInput(**arguments).model_dump(), now=2000000000.0)
 
 
 def test_empty_query_is_readonly_and_personal_is_lazy(memory):

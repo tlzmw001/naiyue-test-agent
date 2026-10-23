@@ -33,12 +33,12 @@ def inputs(tmp_path):
         coordinator = MemoryJobs(memory, ModelCatalog('offline', {'offline': model}))
         cases, _ = load_cases()
         at = time.time() - 3600
-        candidate = seed_candidate(memory, 'probe', tmp_path, cases, at=at)
+        candidate = seed_candidate(memory, 'probe', cases, at=at)
         coordinator.prepare('probe', tmp_path, [], model)
         facts = seed_sources(storage, 'probe', cases[10]['sources'], at=at + 10)
         progress = memory_overview_store.ensure(storage, 'probe')
         job = MemoryJob(uuid4().hex, 'probe', 'probe', tmp_path, 'root-run', '', 'offline', model,
-            'probe', 0, deadline=time.monotonic() + 300,
+            'probe', 0, project_id=storage.get('probe')['project_id'], deadline=time.monotonic() + 300,
             start=(progress['next_sequence'], progress['next_offset']), upper=facts['upper'])
         try:
             yield coordinator, job, candidate, cases, at
@@ -60,7 +60,7 @@ def test_e11_current_production_input_contains_old_id_complete_gap_and_keeps_ver
     batch, messages, payload = prepared(inputs)
     query = ' '.join(s['text'] for s in batch['sources'] if s['role'] == 'human')
     lexical = MemoryInput(action='search', status='candidate', query=query).model_dump(mode='json')
-    assert service.memory.query('probe', job.root, lexical)['items'] == []
+    assert service.memory.query('probe', job.project_id, lexical)['items'] == []
     row, = payload['related_memories']
     assert row['memory_id'] == candidate['actual_memory_id'] and 'version' not in row
     frozen = asyncio.run(_prepare(service, job, job.upper))[4]
@@ -76,7 +76,7 @@ def test_latest_page_does_not_add_another_session_candidate(inputs):
     service, job, own, cases, at = inputs
     service.storage.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
         active_tool_names=['memory'], permission_mode='Default'))
-    foreign = seed_candidate(service.memory, 'other', job.root, cases, at=at + 20)
+    foreign = seed_candidate(service.memory, 'other', cases, at=at + 20)
     _, _, payload = prepared(inputs)
     ids = {row['memory_id'] for row in payload['related_memories']}
     assert own['actual_memory_id'] in ids and foreign['actual_memory_id'] not in ids
@@ -107,12 +107,12 @@ def test_latest_candidate_requires_all_available_current_thread_sources(inputs, 
         request = MemoryInput(action='update', scope='workspace', memory_id=own['actual_memory_id'], expected_version=2,
             proposal=proposal, sources=[dict(session_id='probe', thread_id='probe', message_id='extra-source',
                 revision=1, conversation_revision=0, quote=text, offset=0)]).model_dump(mode='json')
-        service.memory.query('probe', job.root, request)
+        service.memory.query('probe', job.project_id, request)
     else:
         with storage.connection:
             storage.connection.execute('DELETE FROM naiyue_memory_sources WHERE memory_id=?', (own['actual_memory_id'],))
     latest = MemoryInput(action='list', status='candidate', limit=8).model_dump(mode='json')
-    listed, = service.memory.query('probe', job.root, latest)['items']
+    listed, = service.memory.query('probe', job.project_id, latest)['items']
     if failure == 'other_thread':
         assert all(source['available'] for source in listed['sources'])
         assert all(source['thread_id'] == 'other-thread' for source in listed['sources'])
@@ -208,7 +208,7 @@ def test_existing_cross_session_search_hit_is_not_filtered_by_latest_page_rules(
     service, job, own, cases, at = inputs
     service.storage.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
         active_tool_names=['memory'], permission_mode='Default'))
-    foreign = seed_candidate(service.memory, 'other', job.root, cases, at=at + 20)
+    foreign = seed_candidate(service.memory, 'other', cases, at=at + 20)
     service.allowed = lambda request: request['action'] != 'list'
     rows = asyncio.run(_related(service, job, dict(sources=[dict(role='human', text='自动化用例编排')])))
     assert {row['memory_id'] for row in rows} == {own['actual_memory_id'], foreign['actual_memory_id']}
@@ -219,7 +219,7 @@ def test_ineligible_latest_page_is_not_followed_to_find_an_older_local_candidate
     service.settings = service.memory.settings = MemorySettings(auto_enabled=False, related_limit=1)
     service.storage.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
         active_tool_names=['memory'], permission_mode='Default'))
-    seed_candidate(service.memory, 'other', job.root, cases, at=at + 20)
+    seed_candidate(service.memory, 'other', cases, at=at + 20)
     calls, original = [], service.memory.query
     def query(sid, root, request):
         calls.append(request)
@@ -256,7 +256,7 @@ def test_search_plus_latest_candidates_share_the_same_candidate_count_limit(inpu
         proposal = dict(kind='context', title=f'其他候选事项{index}', body='等待网络策略确认',
             subject=f'候选网络事项{index}', basis='inference', intent='candidate', gaps=['待确认'], reason='有限测试前置')
         request = MemoryInput(action='record', scope='workspace', proposal=proposal, sources=[reference]).model_dump(mode='json')
-        additional.append(service.memory.query('probe', job.root, request, now=at + 100 + index)['item']['memory_id'])
+        additional.append(service.memory.query('probe', job.project_id, request, now=at + 100 + index)['item']['memory_id'])
     calls, original = [], service.memory.query
     def query(sid, root, request):
         calls.append(request)

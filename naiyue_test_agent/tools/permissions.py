@@ -36,6 +36,23 @@ def execution_environment():
             else 'macos' if sys.platform == 'darwin' else 'linux'}
 
 
+def require_execution_directory(context):
+    """The legacy path projection is execution-only until typed-context migration."""
+    from naiyue_test_agent.execution_roots import ExecutionRoot, ExecutionRootUnavailable, validate_execution_root
+    from langchain_core.tools import ToolException
+    path = context.get('workspace_root')
+    if not isinstance(path, Path) or not path.is_absolute():
+        return None
+    root = context.get('execution_root') or ExecutionRoot(path)
+    try:
+        if root.path != path:
+            raise ExecutionRootUnavailable('wrong_project')
+        validate_execution_root(root, context.get('project_id'))
+    except ExecutionRootUnavailable as error:
+        raise ToolException(str(error)) from error
+    return path
+
+
 @dataclass(frozen=True)
 class ToolPermission:
     default: Literal['allow', 'ask'] = 'ask'
@@ -63,6 +80,7 @@ class FilePermission:
     def prepare(self, args, context):
         from .paths import prepare_file_subject
         from langchain_core.tools import ToolException
+        require_execution_directory(context)
         try:
             subject = prepare_file_subject(args[self.path_field], context.get('workspace_root'), self.operation)
         except ToolException as error:
@@ -115,11 +133,15 @@ def require_tool_permit(runtime):
     if permit['subject'].get('execution_environment') != execution_environment():
         from langchain_core.tools import ToolException
         raise ToolException('Execution environment changed. Reissue the tool call for review.')
+    root = context.get('workspace_root')
+    if root is not None and permit['subject'].get('workspace') != str(root):
+        raise PermissionMechanismError('Tool execution directory differs from its reviewed subject')
     return permit
 
 
 def require_file_target(runtime, path, *, operation):
     from .paths import verify_file_target
+    require_execution_directory(runtime.context)
     permit = require_tool_permit(runtime)
     subject = permit['subject']
     if subject.get('operation') != operation or path != subject['args'][subject['path_field']]:

@@ -42,7 +42,7 @@ def setting(request):
     )
     operation = AsyncMock()
     setattr(application, setter, operation)
-    service = WebService(application, SimpleNamespace(latest={}), SimpleNamespace(workspace_root=None))
+    service = WebService(application, SimpleNamespace(latest={}), SimpleNamespace(workspace_root=None, workspace_id=None))
     return SimpleNamespace(service=service, application=application, method=method, setter=setter,
         args=args, operation=operation, invalid_code=invalid_code, invalid_event=invalid_event,
         failure_event=failure_event, expected=expected)

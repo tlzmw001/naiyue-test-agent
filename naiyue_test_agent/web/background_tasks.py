@@ -44,7 +44,7 @@ async def _perform(request, action, *, session_id=None, task_id=None, limit=20, 
     if session_id is not None:
         await service._session_status(session_id)
     try:
-        scope = {'session_id': session_id, 'workspace_root': root}
+        scope = {'session_id': session_id, 'workspace_root': None if service.settings.workspace_id is not None else root}
         if action == 'list':
             value = await service.application.alist_background_tasks(**scope, limit=limit, before=before)
         elif action == 'output':

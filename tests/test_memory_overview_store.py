@@ -54,7 +54,8 @@ def overview_save(storage, **changes):
 
 def test_migration_is_complete_and_idempotent(store):
     from naiyue_test_agent.application.memory_overview_store import REQUIRED, initialize_project
-    assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 17
+    from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+    assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
     for name, fields in REQUIRED.items():
         assert set(fields.split()) <= {row[1] for row in store.connection.execute(f'PRAGMA table_info({name})')}
     before = store.connection.total_changes
@@ -227,6 +228,6 @@ def test_directory_has_only_real_same_workspace_other_sessions_and_purge_is_scop
     assert store.connection.execute('SELECT count(*) FROM naiyue_memory_overviews').fetchone()[0] == 0
     assert store.connection.execute('SELECT count(*) FROM naiyue_memory_progress').fetchone()[0] == 0
     assert len(store.chat_heads('s')) == 1
-    with store.connection:store.connection.execute('UPDATE naiyue_sessions SET workspace_root=? WHERE session_id=?', ('foreign','other'))
+    with store.connection:store.connection.execute('UPDATE naiyue_sessions SET project_id=? WHERE session_id=?', ('foreign','other'))
     assert directory(store,'s',8) == []
     with pytest.raises(MemoryReadError):ensure(store,'other')

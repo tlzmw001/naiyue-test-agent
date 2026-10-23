@@ -32,9 +32,11 @@ def test_new_and_restored_states_use_one_dataclass_and_isolate_mutable_defaults(
     sessions.install_restored_session('saved', **restored_config())
     first, second = sessions._sessions[fresh], sessions._sessions['saved']
     assert isinstance(first, AgentSession) and type(first) is type(second)
-    first_state, second_state = (SessionState(**restored_config()) for _ in range(2))
+    configuration = restored_config()
+    configuration.pop('workspace_root')
+    first_state, second_state = (SessionState(**configuration, execution_root=None) for _ in range(2))
     assert is_dataclass(first_state) and type(first_state) is type(second_state)
-    assert len(fields(first_state)) == 11
+    assert len(fields(first_state)) == 12
     assert not hasattr(first_state, '__getitem__')
     for name in ('session_allow',):
         left, right = getattr(first_state, name), getattr(second_state, name)
@@ -60,7 +62,7 @@ def test_purpose_snapshots_are_bounded_and_do_not_expose_live_state():
     assert sessions.require(sid).describe_session()['manual_review_required'] is False
     view = sessions.require(sid).snapshot_for_context()
     assert set(view) == {'thread_id', 'model_id', 'workspace_root', 'active_tool_names',
-                         'busy', 'pending_approval', 'manual_review_required'}
+                         'busy', 'pending_approval', 'manual_review_required', 'project_id', 'execution_root'}
     assert isinstance(view['active_tool_names'], tuple)
     assert sessions.context_snapshot_is_current(sid, view)
     view['model_id'] = 'outside-mutation'

@@ -1,5 +1,8 @@
 """Own official async checkpoints and the existing private metadata storage."""
 
+from pathlib import Path
+from naiyue_test_agent.execution_roots import Project
+
 import logging
 from contextlib import asynccontextmanager
 
@@ -207,7 +210,8 @@ async def open_async_persistent_application(config_path, *, database_path, tools
                 max_active_runs=settings.max_active_runs, mcp_resources=resources,
                 http_attempt_limit=settings.diagnostics.max_pending_events, shell_task_settings=settings.shell_tasks,
                 data_dir=get_data_dir(settings.storage),
-                project_id=project_binding['workspace_id'] if project_binding else None)
+                project=(Project(project_binding['workspace_id'], Path(project_binding['root_path']), storage.path)
+                         if project_binding else None))
             async with (ModelUsagePersistence(storage, sessions.subscribe_events, settings.usage_persistence) as usage,
                         DiagnosticPersistence(storage, sessions.subscribe_events, settings.diagnostics) as diagnostics):
                 jobs = None

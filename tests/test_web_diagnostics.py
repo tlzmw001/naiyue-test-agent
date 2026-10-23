@@ -36,7 +36,7 @@ async def test_http_queries_enforce_auth_scope_cursor_and_read_only_pagination(m
         assert (await client.get(base + '/one', params={'after': -1})).status_code == 422
         assert (await client.get(base + '/one', params={'after': 2**64})).status_code == 422
         seed(store, 'foreign')
-        store._write('UPDATE naiyue_sessions SET workspace_root=? WHERE session_id=?', ('PRIVATE_ROOT', 'foreign'))
+        store._write("UPDATE naiyue_sessions SET workspace_root=?,execution_root_kind='local' WHERE session_id=?", (str(tmp_path / 'PRIVATE_ROOT'), 'foreign'))
         response = await client.get('/api/sessions/foreign/diagnostics')
         assert response.status_code == 404 and 'PRIVATE_ROOT' not in response.text
         seed(store, 'cold')

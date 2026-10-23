@@ -9,6 +9,8 @@ from threading import Lock
 from contextlib import nullcontext
 
 from .session_storage import SessionPersistenceError
+from .execution_storage import root_from_row
+from naiyue_test_agent.execution_roots import execution_error
 from .session_recovery import (
     _classification, _identity_matches, _message_facts, classify_recovery,
     recovery_record, build_recovery_update, validate_saved_approval,
@@ -19,7 +21,6 @@ from langchain_core.tools import ToolException
 from langgraph.graph import END
 from uuid import uuid4
 from naiyue_test_agent.model_access import ModelConfigError
-from naiyue_test_agent.tools.read import resolve_workspace_root
 from naiyue_test_agent.agent_runtime.async_utils import await_settled, run_blocking
 from .subagent_history import subagent_records
 from .chat_history import collect_chat_updates
@@ -64,6 +65,11 @@ class SessionPersistence:
         value['history_ready'] = (session_id in self._prepared or loaded and row['run_id'] is None) and not blocked
         value['can_run'] = (loaded and not blocked and row['state'] != 'running' and not value['busy']
                             and not value['manual_review_required'] and not value['pending_approval'])
+        root = root_from_row(row)
+        value['project_id'] = row['project_id']
+        value['execution_root_kind'] = row['execution_root_kind']
+        value['execution_root_error'] = execution_error(root, row['project_id'])
+        value['can_run'] = value['can_run'] and value['execution_root_error'] is None
         value.pop('approval_run_id', None)
         from .reply_storage import latest
         boundary = await run_blocking(latest, self.storage, session_id)
@@ -76,8 +82,10 @@ class SessionPersistence:
         if (not current['busy'] or current['workspace_root'] != str(workspace_root)
                 or 'history' not in session.get_active_tools(agent_path)):
             raise ToolException('history_scope_mismatch: the calling session or role is unavailable.')
+        from naiyue_test_agent.tools.permissions import require_execution_directory
+        require_execution_directory({**session.snapshot_for_run()})
         try:
-            return await run_blocking(self.storage.read_history_tool, source_session_id, workspace_root, request, settings)
+            return await run_blocking(self.storage.read_history_tool, source_session_id, current['project_id'], request, settings)
         except SessionPersistenceError as error:
             logger.warning('history_query_failed error_type=%s', type(error).__name__)
             raise ToolException(f'History query failed ({error}). Query the directory again if the source changed.') from error
@@ -93,6 +101,8 @@ class SessionPersistence:
         if (not current['busy'] or current['workspace_root'] != str(workspace_root)
                 or 'memory' not in session.get_active_tools(agent_path)):
             raise ToolException('memory_scope_mismatch: the calling session or role is unavailable.')
+        from naiyue_test_agent.tools.permissions import require_execution_directory
+        require_execution_directory({**session.snapshot_for_run()})
         if self._memory is None:
             raise ToolException('memory_unavailable: persistent memory is unavailable.')
         try:
@@ -111,8 +121,8 @@ class SessionPersistence:
                     except Exception as error:
                         logger.error('memory_source_save_failed error_type=%s',type(error).__name__)
                         raise ToolException('memory_source_save_failed: memory was not written.') from error
-                    return await run_blocking(self._memory.query,source_session_id,workspace_root,request)
-            return await run_blocking(self._memory.query, source_session_id, workspace_root, request)
+                    return await run_blocking(self._memory.query,source_session_id,current['project_id'],request)
+            return await run_blocking(self._memory.query, source_session_id, current['project_id'], request)
         except MemoryReadError as error:
             logger.warning('memory_query_failed error_type=%s', type(error).__name__)
             raise ToolException(f'Memory query failed ({error}).') from error
@@ -340,8 +350,9 @@ class SessionPersistence:
         except (ValueError, TypeError) as error:
             raise SessionPersistenceError('invalid_active_tools') from error
         self._catalog.with_thinking(row['model_id'], row['thinking_level'])
-        root = (await run_blocking(resolve_workspace_root, row['workspace_root'])) if row['workspace_root'] else None
-        return root, names
+        # Saved identity can be installed for history even when execution is unavailable.
+        root = root_from_row(row)
+        return root.path if root is not None else None, names
 
     def _install_session(self, row, root, names, *, recovering=False, pending=None):
         session_id = row['session_id']
@@ -351,8 +362,8 @@ class SessionPersistence:
                 raise SessionPersistenceError('session_recovery_blocked')
             self.sessions.install_restored_session(session_id, thread_id=row['thread_id'],
                 model_id=row['model_id'], thinking_level=row['thinking_level'], workspace_root=root,
-                active_tool_names=names, permission_mode=row['permission_mode'], pending=pending, conversation_revision=row['conversation_revision'])
-
+                active_tool_names=names, permission_mode=row['permission_mode'], pending=pending, conversation_revision=row['conversation_revision'],
+                project_id=row['project_id'], execution_root_kind=row['execution_root_kind'])
 
     async def _read_history(self, session_id, agent, *, snapshot=None, include_messages=True):
         row = await run_blocking(self.storage.get, session_id)
@@ -377,6 +388,9 @@ class SessionPersistence:
         try:
             _, names = await self._aprepare_saved_configuration(row)
             value['active_tools'] = list(names)
+            value['execution_root_error'] = execution_error(root_from_row(row), row['project_id'])
+            if value['execution_root_error'] is not None:
+                unavailable = 'execution_root_unavailable'
         except (ValueError, TypeError, ModelConfigError, SessionPersistenceError) as error:
             unavailable = 'saved_configuration_unavailable'
             logger.warning('session_history_configuration_unavailable error_type=%s', type(error).__name__)

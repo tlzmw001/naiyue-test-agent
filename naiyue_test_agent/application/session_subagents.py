@@ -84,7 +84,7 @@ class AgentSessionSubagents:
             if (parent_context.get('agent_path', 'root') != 'root'
                     or parent_context.get('session_id') != self.session_id or self._run is None
                     or self._run.run_id != parent_context.get('run_id')
-                    or self._state.workspace_root != parent_context.get('workspace_root')):
+                    or self._state.execution_path != parent_context.get('workspace_root')):
                 raise PermissionMechanismError('Subagent list requires its current root run and workspace')
         with self._lock:
             require_current()
@@ -128,7 +128,7 @@ class AgentSessionSubagents:
             if role is None:
                 raise ToolException('Unknown subagent role. Choose a registered role.')
             spec = role['spec']
-            if parent_context.get('workspace_root') != session.workspace_root:
+            if parent_context.get('workspace_root') != session.execution_path:
                 raise PermissionMechanismError('Subagent workspace does not match its parent')
             path = f'root/{agent}/{identity}'
             key = path
@@ -145,7 +145,8 @@ class AgentSessionSubagents:
                 parent_tool_call_id=parent_tool_call_id, parent_run_id=run.run_id,
                 root_run_id=parent_context.get('root_run_id', run.run_id), run_id=uuid4().hex,
                 model_id=spec.model_id or session.model_id, tool_names=spec.tool_names,
-                status='running', phase='execute', settled=False, task=task, workspace_root=session.workspace_root,
+                status='running', phase='execute', settled=False, task=task, workspace_root=run.execution_root.path if run.execution_root else None,
+                project_id=run.project_id, execution_root=run.execution_root,
                 read_resource_roots=parent_context.get('read_resource_roots', ()),
                 max_concurrency=parent_context.get('_max_concurrency', 4), control=RunControl(),
                 publisher=parent_context.get('_run_event_publisher'), pending_turn=None,
@@ -223,7 +224,7 @@ class AgentSessionSubagents:
             try:
                 observation.start()
                 observation.stage = 'execute'
-                with observation.bind(archive_root=self._archive_root,
+                with observation.bind(project_id=instance['project_id'], execution_root=instance['execution_root'], archive_root=self._archive_root,
                                       history_query=getattr(self._persistence, 'aquery_history', None),
                                       memory_query=getattr(self._persistence, 'aquery_memory', None)):
                     result = await ainvoke_subagent_step(graph, instance, resume=resume,

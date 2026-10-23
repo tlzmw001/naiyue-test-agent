@@ -20,6 +20,7 @@ from ..tools.process_execution import ProcessCapture, ForegroundResult
 from ..tools.processes import ProcessCleanupError
 from ..tools.background_tasks import BackgroundNoticeSnapshot
 from ..shell_task_settings import ShellTaskSettings
+from ..execution_roots import ExecutionRoot
 
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,8 @@ class _Operation:
     settings: object = field(repr=False)
     capture: ProcessCapture = field(repr=False)
     background: bool = True
+    project_id: str | None = None
+    execution_root: ExecutionRoot | None = None
     execution_origin: float | None = None
     exited: bool = False
     outcome: object = field(default=None, repr=False)
@@ -101,14 +104,14 @@ class BackgroundProcessManager:
             'error_type': item.error_type}
 
     async def submit(self, *, session_id, workspace_root, archive_root, run_id, tool_call_id, agent_path,
-                     command, name, request, settings, runner, control):
+                     command, name, request, settings, runner, control, project_id=None, execution_root=None):
         item = self._register(session_id=session_id, workspace_root=workspace_root, archive_root=archive_root, run_id=run_id,
             tool_call_id=tool_call_id, agent_path=agent_path, command=command, name=name,
-            request=request, settings=settings, runner=runner, control=control, background=True)
+            request=request, settings=settings, runner=runner, control=control, background=True, project_id=project_id, execution_root=execution_root)
         return self._public(item)
 
     def _register(self, *, session_id, workspace_root, archive_root, run_id, tool_call_id, agent_path,
-                  command, name, request, settings, runner, control, background):
+                  command, name, request, settings, runner, control, background, project_id=None, execution_root=None):
         self._check_loop()
         if agent_path != 'root':
             raise ToolException('Only the root agent can start background commands.')
@@ -117,6 +120,8 @@ class BackgroundProcessManager:
                 or request.cwd != workspace_root):
             raise ToolException('Background task scope is unavailable.')
         from ..tools.output import require_archive_root
+        from ..tools.permissions import require_execution_directory
+        require_execution_directory({'workspace_root': workspace_root, 'project_id': project_id, 'execution_root': execution_root})
         archive_root = require_archive_root({'archive_root': archive_root, 'workspace_root': workspace_root})
         with self._lock:
             if self._closing or session_id in self._deleting or archive_root in self._cleaning:
@@ -127,13 +132,14 @@ class BackgroundProcessManager:
             existing = self._entries.get(self._calls.get(key))
             if existing is not None:
                 if (existing.session_id != session_id or existing.request != request or existing.archive_root != archive_root
-                        or existing.settings != settings or existing.name != name or existing.command != command):
+                        or existing.settings != settings or existing.name != name or existing.command != command
+                        or existing.project_id != project_id or existing.execution_root != execution_root):
                     raise ToolException('Background call identity conflicts with an existing operation.')
                 return existing
             frozen = deepcopy(request)
             frozen_settings = settings.model_copy(deep=True)
             item = _Operation(uuid4().hex, session_id, workspace_root, archive_root, run_id, tool_call_id,
-                name, command, frozen, frozen_settings, ProcessCapture(archive_root, frozen_settings, background=background), background=background)
+                name, command, frozen, frozen_settings, ProcessCapture(archive_root, frozen_settings, background=background), background=background, project_id=project_id, execution_root=execution_root)
             self._entries[item.task_id] = item
             self._calls[key] = item.task_id
             try:

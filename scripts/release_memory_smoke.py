@@ -89,7 +89,7 @@ async def memory_scenario(root, Model):
         saved = overview(app._storage, sid)
         assert saved['overview_status'] == 'generated' and saved['overview'] == generated['overview']
         request = MemoryInput(action='list', scope='workspace').model_dump(mode='json')
-        memories = app._persistence._memory.query(sid, workspace, request)['items']
+        memories = app._persistence._memory.query(sid, app._storage.get(sid)['project_id'], request)['items']
         assert len(memories) == 1 and memories[0]['kind'] == 'user' and memories[0]['body'] == PREFERENCE
         usage = await app.aget_model_usage(sid, model_limit=20)
         memory_usage, = [row for row in usage['activities'] if row['id'] == 'memory']

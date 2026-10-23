@@ -7,10 +7,11 @@ from .errors import SessionPersistenceError
 
 
 logger = logging.getLogger(__name__)
-FIELDS = ('session_id', 'agent_id', 'agent_path', 'child_thread_id', 'agent', 'role_fingerprint',
+LEGACY_FIELDS = ('session_id', 'agent_id', 'agent_path', 'child_thread_id', 'agent', 'role_fingerprint',
           'model_id', 'last_task', 'state', 'version', 'checkpoint_ns', 'checkpoint_id',
           'last_delegation_id', 'last_parent_run_id', 'last_parent_batch_id',
           'last_parent_tool_call_id', 'last_parent_reply_id', 'created_at', 'updated_at')
+FIELDS = (*LEGACY_FIELDS, 'project_id', 'execution_root', 'execution_root_kind')
 
 
 def initialize(connection):

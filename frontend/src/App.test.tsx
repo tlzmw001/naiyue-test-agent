@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import App from './App';
 import { WebApi } from './api';
 import type { SseFrame } from './sse';
+import type { SessionView } from './types';
 
 afterEach(cleanup);
 
@@ -32,6 +33,22 @@ function client() {
   });
   return { api, emit: (frame: SseFrame) => receive(frame) };
 }
+
+it('keeps saved conversation visible and explains the unavailable execution directory', async () => {
+  const { api } = client();
+  const original: SessionView = { ...await api.session('s'), title: '已保存会话', messages: [
+    { id: 'saved', type: 'ai', content: '历史回答', provisional: false, state: 'complete' }
+  ] };
+  vi.mocked(api.sessions).mockResolvedValue([original]);
+  vi.mocked(api.session).mockResolvedValue({ ...original, can_run: false,
+    execution_root_error: { code: 'execution_root_unavailable', reason: 'missing' } });
+  render(<App api={api} />);
+  fireEvent.click(await screen.findByRole('button', { name: '已保存会话 A' }));
+  expect(await screen.findByText('历史回答')).toBeTruthy();
+  expect(await screen.findByText(/执行目录不可用.*目录不存在/)).toBeTruthy();
+  expect((screen.getByRole('button', { name: '发送消息' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(api.start).not.toHaveBeenCalled();
+});
 
 it('opens the shared sidebar, selects tasks, and retains it when creating a chat', async () => {
   const { api } = client();

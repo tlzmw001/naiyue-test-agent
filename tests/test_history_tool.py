@@ -23,7 +23,10 @@ from test_async_application import StreamingToolModel, call, make_app
 async def build(monkeypatch, path, model, tools, *, settings=None, models=None):
     # Explicit defaults keep this feature's tests independent of personal settings/MCP servers.
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', models or {'A': model}))
+    from naiyue_test_agent.workspaces import prepare_workspace
+    location = prepare_workspace(path.parent, data_dir=path.parent / 'data', database_path=path)
     async with open_async_persistent_application('unused', database_path=path, tools=tools,
+            workspace_binding={'workspace_id': location.workspace_id, 'root_path': location.root},
             system_prompt='', response_format=None, settings=settings or AppSettings()) as app:
         yield app
 
