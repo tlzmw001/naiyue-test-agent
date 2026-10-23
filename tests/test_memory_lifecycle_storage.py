@@ -206,3 +206,114 @@ def test_format1_existing_current_version_becomes_history_baseline(tmp_path):
         row=store.connection.execute('SELECT snapshot_json FROM naiyue_memory_versions WHERE memory_id=? AND version=1',(mid,)).fetchone()
         assert row is not None
         assert json.loads(row[0])['body']=='OLD-ORIGINAL'
+
+
+def memory_rows(database):
+    """Compare every persisted projection before/after failure and after reopening."""
+    return {
+        'items': database.read_rows('SELECT * FROM naiyue_memories ORDER BY memory_id'),
+        'versions': database.read_rows('SELECT * FROM naiyue_memory_versions ORDER BY memory_id,version'),
+        'sources': database.read_rows('SELECT * FROM naiyue_memory_sources ORDER BY source_id'),
+        'search': database.read_rows('SELECT rowid,* FROM naiyue_memory_search ORDER BY rowid'),
+        'suppression': database.read_rows('SELECT * FROM naiyue_memory_suppression ORDER BY source_hash'),
+    }
+
+
+@pytest.mark.parametrize('action', ['record', 'update'])
+@pytest.mark.parametrize('changed', ['revision', 'conversation_revision'])
+def test_personal_stale_source_preserves_all_projections_and_can_retry(memory, action, changed):
+    access, sid, root, _ = memory
+    project = access.storage.database
+    project_id = access.storage.sessions.get(sid)['project_id']
+    ref = source(access, sid, text='以后测试使用.venv运行pytest')
+    initial = MemoryInput(action='record', scope='personal', proposal=proposal(), sources=[ref]).model_dump(mode='json')
+    saved = access.query(sid, project_id, initial, now=1000.)['item']
+    target = access._personal
+    assert target is not project and target.connection is not project.connection
+    assert target.path == root / 'data/personal/memory.sqlite' and target.path != project.path
+
+    # Model the archive advancing after the caller obtained its original reference.
+    with project.transaction(write=True) as connection:
+        if changed == 'revision':
+            connection.execute('UPDATE naiyue_chat_messages SET revision=revision+1 WHERE session_id=? AND thread_id=? AND message_id=?',
+                (sid, ref['thread_id'], ref['message_id']))
+        else:
+            connection.execute('UPDATE naiyue_sessions SET conversation_revision=conversation_revision+1 WHERE session_id=?', (sid,))
+    current_revision = project.read_rows('SELECT revision FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? AND message_id=?',
+        (sid, ref['thread_id'], ref['message_id']))[0]['revision']
+    current_conversation = access.storage.sessions.get(sid)['conversation_revision']
+    assert (current_revision, current_conversation) == ((2, 0) if changed == 'revision' else (1, 1))
+    before = memory_rows(target)
+    archive = project.read_rows('SELECT * FROM naiyue_chat_messages ORDER BY sequence')
+    source_changes = project.connection.total_changes
+    arguments = dict(action=action, scope='personal', proposal=proposal(subject='new environment', body='使用.venv运行pytest'), sources=[ref])
+    if action == 'update':
+        arguments.update(memory_id=saved['memory_id'], expected_version=1)
+    request = MemoryInput(**arguments).model_dump(mode='json')
+
+    with pytest.raises(MemoryReadError, match='^memory_source_changed$'):
+        access.query(sid, project_id, request, now=2000.)
+    assert memory_rows(target) == before
+    assert project.read_rows('SELECT * FROM naiyue_chat_messages ORDER BY sequence') == archive
+    assert project.connection.total_changes == source_changes
+    assert not target.connection.in_transaction and not target._active
+    assert not project.connection.in_transaction and not project._active
+    with Database.open_personal(target.path, access.settings) as reopened:
+        assert memory_rows(reopened) == before
+
+    request['sources'][0].update(revision=current_revision, conversation_revision=current_conversation)
+    result = access.query(sid, project_id, request, now=2000.)
+    assert result['status'] == 'saved' and result['item']['version'] == (1 if action == 'record' else 2)
+    assert result['item']['body'] == '使用.venv运行pytest'
+    assert project.connection.total_changes == source_changes
+
+
+@pytest.mark.parametrize('action', ['record', 'update'])
+def test_personal_mid_write_failure_rolls_back_every_projection_and_can_retry(memory, action, caplog):
+    access, sid, root, _ = memory
+    project = access.storage.database
+    project_id = access.storage.sessions.get(sid)['project_id']
+    ref = source(access, sid, text='以后测试使用.venv运行pytest')
+    initial = MemoryInput(action='record', scope='personal', proposal=proposal(), sources=[ref]).model_dump(mode='json')
+    saved = access.query(sid, project_id, initial, now=1000.)['item']
+    target = access._personal
+    assert target is not project and target.connection is not project.connection
+    assert target.path == root / 'data/personal/memory.sqlite' and target.path != project.path
+    before = memory_rows(target)
+    assert all(len(before[key]) == 1 for key in ('items', 'versions', 'sources', 'search'))
+    assert before['suppression'] == []
+    archive = project.read_rows('SELECT * FROM naiyue_chat_messages ORDER BY sequence')
+    source_changes = project.connection.total_changes
+    arguments = dict(action=action, scope='personal', proposal=proposal(subject='new environment', body='使用.venv运行pytest'), sources=[ref])
+    if action == 'update':
+        arguments.update(memory_id=saved['memory_id'], expected_version=1)
+    request = MemoryInput(**arguments).model_dump(mode='json')
+    with target.transaction(write=True) as connection:
+        connection.execute('''CREATE TRIGGER fail_personal_version BEFORE INSERT ON naiyue_memory_versions
+            BEGIN SELECT RAISE(ABORT,'PRIVATE_PERSONAL_VERSION_FAULT'); END''')
+    target_changes = target.connection.total_changes
+
+    with pytest.raises(MemoryReadError, match='^memory_write_failed$') as caught:
+        access.query(sid, project_id, request, now=2000.)
+    assert isinstance(caught.value.__cause__, sqlite3.IntegrityError)
+    assert target.connection.total_changes > target_changes  # Body/FTS ran before the version insert failed.
+    assert memory_rows(target) == before
+    assert project.read_rows('SELECT * FROM naiyue_chat_messages ORDER BY sequence') == archive
+    assert project.connection.total_changes == source_changes
+    assert not target.connection.in_transaction and not target._active
+    assert not project.connection.in_transaction and not project._active
+    assert 'memory_read_failed' in caplog.text and 'PRIVATE_PERSONAL_VERSION_FAULT' not in caplog.text
+    with Database.open_personal(target.path, access.settings) as reopened:
+        assert memory_rows(reopened) == before
+
+    with target.transaction(write=True) as connection:
+        connection.execute('DROP TRIGGER fail_personal_version')
+    result = access.query(sid, project_id, request, now=2000.)
+    assert result['status'] == 'saved' and result['item']['version'] == (1 if action == 'record' else 2)
+    assert result['item']['body'] == '使用.venv运行pytest'
+    after = memory_rows(target)
+    assert len(after['items']) == len(after['search']) == (2 if action == 'record' else 1)
+    assert len(after['versions']) == len(after['sources']) == 2
+    assert project.connection.total_changes == source_changes
+    with Database.open_personal(target.path, access.settings) as reopened:
+        assert memory_rows(reopened) == after

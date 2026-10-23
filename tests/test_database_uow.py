@@ -191,3 +191,41 @@ def test_close_waits_until_active_transaction_releases_connection(tmp_path):
             finally:
                 closing.result(timeout=5)
         assert store.database._closed
+
+
+@pytest.mark.parametrize('operation', ['save', 'cancel_new_claim', 'cancel_existing_claim'])
+def test_stale_subagent_sql_cas_preserves_current_owner_and_can_retry(tmp_path, operation):
+    with ProjectStore(tmp_path / 'sessions.sqlite') as store:
+        create(store)
+        claimed = dict(session_id='s', agent_id='child', agent_path='root/worker/child',
+            child_thread_id='subagent:child', agent='worker', role_fingerprint='role', model_id='m',
+            last_task='old task', state='running', version=1, checkpoint_ns='', checkpoint_id='old-cp',
+            last_delegation_id='old-delegation', last_parent_run_id='old-run', last_parent_batch_id='old-batch',
+            last_parent_tool_call_id='old-call', last_parent_reply_id='old-reply', created_at='created',
+            updated_at='old-update', project_id=None, execution_root=None, execution_root_kind=None)
+        previous = None
+        if operation == 'cancel_existing_claim':
+            previous = {**claimed, 'state': 'ready'}
+            store.subagents.save_subagent(previous, None)
+            claimed = {**claimed, 'version': 2}
+        store.subagents.save_subagent(claimed, previous['version'] if previous else None)
+        old = store.subagents.get_subagent('s', 'child')
+        current = {**old, 'version': old['version'] + 1, 'last_task': 'current task', 'checkpoint_id': 'current-cp',
+            'last_delegation_id': 'current-delegation', 'last_parent_run_id': 'current-run',
+            'last_parent_batch_id': 'current-batch', 'last_parent_tool_call_id': 'current-call',
+            'last_parent_reply_id': 'current-reply', 'updated_at': 'current-update'}
+        store.subagents.save_subagent(current, old['version'])
+
+        with pytest.raises(SessionPersistenceError, match='^subagent_record_changed$'):
+            if operation == 'save':
+                stale = {**old, 'version': old['version'] + 1, 'state': 'failed', 'checkpoint_id': 'stale-cp'}
+                store.subagents.save_subagent(stale, old['version'])
+            else:
+                store.subagents.cancel_subagent_claim(old, previous)
+
+        assert store.subagents.get_subagent('s', 'child') == current
+        assert not store.database.connection.in_transaction and not store.database._active
+        settled = {**current, 'version': current['version'] + 1, 'state': 'ready', 'updated_at': 'settled'}
+        store.subagents.save_subagent(settled, current['version'])
+        assert store.subagents.get_subagent('s', 'child') == settled
+        assert not store.database.connection.in_transaction and not store.database._active
