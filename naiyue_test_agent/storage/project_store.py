@@ -11,8 +11,8 @@ from .unit_of_work import RunUnitOfWork
 
 
 class ProjectStore:
-    def __init__(self, path):
-        self._assemble(Database(path))
+    def __init__(self, path, *, require_existing=False):
+        self._assemble(Database(path, require_existing=True) if require_existing else Database(path))
 
     @classmethod
     def in_memory(cls):

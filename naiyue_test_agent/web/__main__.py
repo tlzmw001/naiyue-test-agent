@@ -9,7 +9,7 @@ from naiyue_test_agent.config_paths import get_data_dir, get_models_path
 from naiyue_test_agent.settings import load_settings
 from naiyue_test_agent.resources import frontend_directory, PackageResourceError
 from naiyue_test_agent.model_access import ModelConfigError
-from naiyue_test_agent.workspaces import prepare_workspace
+from naiyue_test_agent.workspaces import prepare_workspace, locate_stored_project, WorkspaceLocation
 from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.cli.startup_display import startup_messages
 import socket
@@ -39,12 +39,23 @@ def main(argv=None):
     try:
         frontend_dist = args.frontend_dist if args.frontend_dist is not None else frontend_directory()
         tool_settings = load_settings()
-        location = prepare_workspace(args.workspace or Path.cwd(), data_dir=get_data_dir(tool_settings.storage),
-            database_path=args.session_db, new_workspace=args.new_workspace)
+        expected = locate_stored_project(args.session_db, root=args.workspace) if args.session_db is not None else None
+        if expected is not None:
+            location = WorkspaceLocation(expected.project_id, expected.canonical_root, expected.database_path)
+        else:
+            try:
+                location = prepare_workspace(args.workspace or Path.cwd(), data_dir=get_data_dir(tool_settings.storage),
+                    database_path=args.session_db, new_workspace=args.new_workspace)
+            except (FileNotFoundError, NotADirectoryError) as error:
+                raise ValueError('history_database_required') from error
+            except ValueError as error:
+                if str(error) != 'invalid_workspace_root':
+                    raise
+                raise ValueError('history_database_required') from error
         options = {'access_token': os.environ['NAIYUE_WEB_TOKEN']} if 'NAIYUE_WEB_TOKEN' in os.environ else {}
         settings = WebSettings(config_path=args.config, workspace_root=location.root, workspace_id=location.workspace_id,
             runtime_settings=tool_settings, database_path=location.database_path, frontend_dist=frontend_dist, host=args.host, port=args.port,
-            **options)
+            expected_project=expected, **options)
         if not (settings.frontend_dist / 'index.html').is_file():
             print('前端尚未构建，请先执行 npm --prefix frontend run build')
             return 1

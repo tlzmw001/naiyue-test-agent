@@ -11,6 +11,8 @@ import stat
 import tempfile
 from uuid import UUID, uuid4
 
+from .execution_roots import Project
+
 from .storage.files import acquire_store_lock, check_store_directory, check_store_file, open_store_file, open_store_readonly, release_store_lock
 
 
@@ -25,6 +27,32 @@ class WorkspaceLocation:
     workspace_id: str
     root: Path
     database_path: Path
+
+
+def locate_stored_project(database_path, *, root=None):
+    """Select existing project facts, or leave an explicit other root to normal preparation."""
+    database = Path(database_path).expanduser().absolute()
+    try:
+        check_store_file(database)
+    except FileNotFoundError as error:
+        if root is not None:
+            return None
+        raise ValueError('history_database_missing') from error
+    binding = _read_binding(database)
+    if binding is None:
+        if root is not None:
+            return None
+        raise ValueError('invalid_workspace_binding')
+    try:
+        identity, saved = binding['workspace_id'], Path(binding['root_path'])
+        if (str(UUID(identity)) != identity or not saved.is_absolute() or '..' in saved.parts
+                or '\0' in str(saved) or str(saved) != binding['root_path']):
+            raise ValueError('invalid_workspace_binding')
+    except (ValueError, TypeError, KeyError, AttributeError) as error:
+        raise ValueError('invalid_workspace_binding') from error
+    if root is not None and Path(os.path.abspath(Path(root).expanduser())) != saved:
+        return None
+    return Project(identity, saved, database)
 
 
 def locate_workspace(root, *, data_dir, database_path=None):

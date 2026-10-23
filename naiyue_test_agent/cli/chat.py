@@ -6,8 +6,7 @@ import logging
 import sys
 from pathlib import Path
 
-from naiyue_test_agent.config_paths import get_data_dir, get_models_path
-from naiyue_test_agent.workspaces import prepare_workspace
+from naiyue_test_agent.config_paths import get_models_path
 from threading import Thread, Lock
 from uuid import uuid4
 
@@ -20,12 +19,11 @@ from naiyue_test_agent.application.sessions.project_instructions import BASE_SYS
 from naiyue_test_agent.tools import create_builtin_tools
 from naiyue_test_agent.settings import load_settings
 from naiyue_test_agent.tools.processes import ProcessCleanupError
-from naiyue_test_agent.tools.read import resolve_workspace_root
 from naiyue_test_agent.model_access import ModelConfigError
 from .cli_display import CliEventDisplay
 from .cli_async import build_local_application, build_persistent_application
 from .cli_approval import handle_approval, handle_scope_stop, show_approval_batches, settle_cli_worker
-from naiyue_test_agent.storage.project_store import ProjectStore
+from .chat_startup import prepare_session
 from naiyue_test_agent.application.errors import SessionPersistenceError
 from .startup_display import startup_messages
 
@@ -116,34 +114,6 @@ def _resume_and_print(app, session_id: str, decisions: list[str], *, display=Non
         print('已停止')
 
 
-def _pick_session(storage, selected_id):
-    if selected_id:
-        return selected_id
-    rows = storage.sessions.list_sessions()
-    if not rows:
-        print('暂无历史会话')
-        return None
-    for index, row in enumerate(rows, 1):
-        print(f'{index}. {row["session_id"]} 更新时间={row["updated_at"]} '
-              f'模型={json.dumps(row["model_id"], ensure_ascii=False)} 状态={row["state"]} '
-              f'工作区={json.dumps(row["workspace_root"], ensure_ascii=False)}')
-    if not sys.stdin.isatty():
-        print('请使用 --resume <session_id> 恢复指定会话')
-        return None
-    while True:
-        try:
-            choice = input('输入编号或完整会话 ID，空行取消：').strip()
-        except EOFError:
-            return None
-        if not choice:
-            return None
-        if choice.isdigit() and 1 <= int(choice) <= len(rows):
-            return rows[int(choice) - 1]['session_id']
-        if any(row['session_id'] == choice for row in rows):
-            return choice
-        print('会话选择无效，请重新输入')
-
-
 def main(argv: list[str] | None = None) -> int:
     emit = print
     parser = argparse.ArgumentParser(description=__doc__)
@@ -166,31 +136,19 @@ def main(argv: list[str] | None = None) -> int:
     history = None
     try:
         tool_settings = load_settings()
-        args.workspace = resolve_workspace_root(args.workspace or Path.cwd())
-        if not args.no_session:
-            location = prepare_workspace(args.workspace, data_dir=get_data_dir(tool_settings.storage),
-                database_path=args.session_db, new_workspace=args.new_workspace, create=args.resume is None)
-            if args.resume is not None and (location is None or not location.database_path.exists()):
-                if args.resume == '':
-                    print('暂无历史会话')
-                    return 0
-                raise SessionPersistenceError('session_not_found')
-            storage = ProjectStore(location.database_path)
-            storage.sessions.bind_workspace(location.workspace_id, location.root)
-            if args.resume is not None:
-                selected = _pick_session(storage, args.resume)
-                if selected is None:
-                    storage.close()
-                    return 0
-                restored = storage.sessions.get(selected)
-                if str(args.workspace) != restored['workspace_root']:
-                    raise SessionPersistenceError('workspace_mismatch')
+        storage, restored, expected_project = prepare_session(args, tool_settings)
+        if args.resume is not None and restored is None:
+            if storage is not None:
+                storage.close()
+            return 0
         tools = create_builtin_tools(tool_settings.tools, process_settings=tool_settings.process, shell_task_settings=tool_settings.shell_tasks, progress_settings=tool_settings.progress, network_settings=tool_settings.network, retry_settings=tool_settings.tool_retry)
         initial_tools = tool_settings.default_active_tools
         if initial_tools is None:
             initial_tools = [spec.tool.name for spec in tools if spec.tool.name not in ('bash', 'powershell', 'subagent_list')]
         factory = build_local_application if storage is None else build_persistent_application
         options = {} if storage is None else {'storage': storage}
+        if expected_project is not None:
+            options['expected_project'] = expected_project
         app = factory(
             args.config, tools=tools, system_prompt=BASE_SYSTEM_PROMPT,
             response_format=None, initial_active_tools=initial_tools, settings=tool_settings, **options,
@@ -199,7 +157,10 @@ def main(argv: list[str] | None = None) -> int:
             session_id = app.call(lambda api: api.sessions.create_workspace(api.models.default_id, args.workspace))
         else:
             session_id = restored['session_id']
-            if restored['state'] == 'ready':
+            status = app.call(lambda api: api.sessions.status(session_id))
+            if status['execution_root_error'] is not None:
+                history = app.call(lambda api: api.history.session(session_id))
+            elif restored['state'] == 'ready':
                 try:
                     app.call(lambda api: api.sessions.restore(session_id))
                 except (SessionPersistenceError, ModelConfigError, ValueError):

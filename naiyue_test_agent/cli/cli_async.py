@@ -20,14 +20,14 @@ logger = logging.getLogger(__name__)
 
 
 class AsyncCliApplication:
-    def __init__(self, config_path, *, tools, system_prompt, response_format, database_path=None, initial_active_tools=None, settings=None, workspace_binding=None):
+    def __init__(self, config_path, *, tools, system_prompt, response_format, database_path=None, initial_active_tools=None, settings=None, workspace_binding=None, expected_project=None):
         self._ready = Event()
         self._closed = False
         self._thread = Thread(target=self._serve, name='naiyue-cli-async')
         self._thread.start()
         self._ready.wait()
         try:
-            self._submit(lambda: self._open(config_path, database_path, tools, system_prompt, response_format, initial_active_tools, settings, workspace_binding))
+            self._submit(lambda: self._open(config_path, database_path, tools, system_prompt, response_format, initial_active_tools, settings, workspace_binding, expected_project))
         except BaseException:
             self._loop.call_soon_threadsafe(self._loop.stop)
             self._thread.join()
@@ -39,11 +39,11 @@ class AsyncCliApplication:
             self._ready.set()
             self._loop.run_forever()
 
-    async def _open(self, config, database, tools, prompt, response_format, initial_active_tools, settings, workspace_binding):
+    async def _open(self, config, database, tools, prompt, response_format, initial_active_tools, settings, workspace_binding, expected_project):
         self._stack = AsyncExitStack()
         if database is not None:
             self._app = await self._stack.enter_async_context(open_async_persistent_application(
-                config, database_path=database, tools=tools, system_prompt=prompt, response_format=response_format, initial_active_tools=initial_active_tools, settings=settings, workspace_binding=workspace_binding))
+                config, database_path=database, tools=tools, system_prompt=prompt, response_format=response_format, initial_active_tools=initial_active_tools, settings=settings, workspace_binding=workspace_binding, expected_project=expected_project))
         else:
             self._app = await build_async_local_application(
                 config, tools=tools, system_prompt=prompt, response_format=response_format, initial_active_tools=initial_active_tools, settings=settings)
@@ -80,9 +80,9 @@ def build_local_application(config_path, *, tools, system_prompt, response_forma
                                response_format=response_format, initial_active_tools=initial_active_tools, settings=settings)
 
 
-def build_persistent_application(config_path, *, storage, tools, system_prompt, response_format, initial_active_tools=None, settings=None):
+def build_persistent_application(config_path, *, storage, tools, system_prompt, response_format, initial_active_tools=None, settings=None, expected_project=None):
     path = storage.path
-    binding = storage.sessions.get_workspace_binding()
+    binding = storage.sessions.get_workspace_binding() if expected_project is None else None
     storage.close()  # Release the preflight lock; async ownership rechecks restoration.
-    return AsyncCliApplication(config_path, database_path=path, workspace_binding=binding, tools=tools,
+    return AsyncCliApplication(config_path, database_path=path, workspace_binding=binding, expected_project=expected_project, tools=tools,
                                system_prompt=system_prompt, response_format=response_format, initial_active_tools=initial_active_tools, settings=settings)

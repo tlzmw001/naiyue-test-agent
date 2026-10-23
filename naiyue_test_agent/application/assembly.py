@@ -38,7 +38,9 @@ async def _enter_resource(stack, name, manager):
 
 
 async def build_application(config_path, *, database_path, tools, system_prompt, response_format,
-                            initial_active_tools=None, settings=None, workspace_binding=None):
+                            initial_active_tools=None, settings=None, workspace_binding=None, expected_project=None):
+    if expected_project is not None and workspace_binding is not None:
+        raise ValueError('Project verification and binding are mutually exclusive')
     settings = settings if settings is not None else application.load_settings()
     registry = application.prepare_tool_registry(tools)
     initial = registry.names() if initial_active_tools is None else initial_active_tools
@@ -50,7 +52,8 @@ async def build_application(config_path, *, database_path, tools, system_prompt,
     stack = AsyncExitStack()
     catalog, resources, jobs = None, None, None
     try:
-        owned = await _enter_resource(stack, 'storage', open_storage(database_path))
+        storage_options = {'expected_project': expected_project} if expected_project is not None else {}
+        owned = await _enter_resource(stack, 'storage', open_storage(database_path, **storage_options))
         storage = owned.store
         if workspace_binding is not None:
             if database_path is None:

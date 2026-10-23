@@ -61,6 +61,8 @@ class CliEventDisplay:
             self.write('只读历史：当前不恢复执行，也不会自动重跑旧调用。')
             recovery = history['recovery']
             self.write(f'状态：{recovery["kind"]}；原因：{recovery["reason"]}')
+            if history.get('execution_root_error'):
+                self.write(f'执行目录不可用：{history["execution_root_error"]["reason"]}；历史仍可查看。')
             for message in history['messages']:
                 self.write(f'[{message.type}]\n{content_text(message.content)}')
                 if message.type == 'tool':

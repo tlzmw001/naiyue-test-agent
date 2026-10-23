@@ -13,7 +13,7 @@ from naiyue_test_agent.application.errors import SessionPersistenceError, Storag
 from .migrations import initialize_store
 from .backup_schema import CURRENT_SCHEMA
 from .maintenance import check_restore_marker
-from .files import acquire_store_lock, check_store_file, open_store_file, release_store_lock
+from .files import acquire_store_lock, check_store_directory, check_store_file, open_store_file, release_store_lock
 from naiyue_test_agent.application.conversation import history_projection
 from naiyue_test_agent.application.memory import memory_lexical
 
@@ -22,10 +22,13 @@ logger = logging.getLogger(__name__)
 
 
 class Database:
-    def __init__(self, path):
+    def __init__(self, path, *, require_existing=False):
         self._initialize_owner(Path(path).expanduser().absolute())
         try:
-            self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if require_existing:
+                check_store_directory(self.path.parent)
+            else:
+                self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             lock_path = self.path.with_name(self.path.name + '.lock')
             fd = open_store_file(lock_path)
             self._stack.callback(os.close, fd)
@@ -39,6 +42,8 @@ class Database:
                 check_store_file(self.path)
                 existing = True
             except FileNotFoundError:
+                if require_existing:
+                    raise
                 existing = False
                 file_fd = open_store_file(self.path, exclusive_create=True)
                 os.close(file_fd)
@@ -48,7 +53,8 @@ class Database:
                     check_store_file(sidecar)
                 except FileNotFoundError:
                     pass
-            self.connection = sqlite3.connect(self.path, check_same_thread=False)
+            self.connection = (sqlite3.connect(self.path.as_uri() + '?mode=rw', uri=True, check_same_thread=False)
+                               if require_existing else sqlite3.connect(self.path, check_same_thread=False))
             self._stack.callback(self.connection.close)
             self.connection.row_factory = sqlite3.Row
             history_projection.configure_connection(self.connection)

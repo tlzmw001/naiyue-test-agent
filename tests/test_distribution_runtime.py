@@ -102,7 +102,8 @@ def test_missing_config_does_not_hide_a_storage_failure(monkeypatch, tmp_path, c
     from naiyue_test_agent.application.errors import SessionPersistenceError
     def busy(*args, **kwargs):
         raise SessionPersistenceError('storage_in_use')
-    monkeypatch.setattr(cli, 'prepare_workspace', busy)
+    from naiyue_test_agent.cli import chat_startup
+    monkeypatch.setattr(chat_startup, 'prepare_workspace', busy)
     assert cli.main(['--config', str(tmp_path / 'missing'), '--workspace', str(tmp_path)]) == 1
     output = capsys.readouterr().out
     assert '数据库已被其他服务占用' in output

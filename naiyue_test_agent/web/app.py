@@ -45,7 +45,8 @@ def create_web_app(settings, *, application_factory=None):
             settings.config_path, database_path=settings.database_path, tools=tools,
             system_prompt=BASE_SYSTEM_PROMPT, response_format=None, initial_active_tools=initial_tools, settings=tool_settings,
             workspace_binding={'workspace_id': settings.workspace_id, 'root_path': str(settings.workspace_root)}
-                if settings.workspace_id is not None else None))
+                if settings.workspace_id is not None and settings.expected_project is None else None,
+            expected_project=settings.expected_project))
         async with AsyncExitStack() as stack:
             stack.enter_context(windows_disconnect_handler())
             try:

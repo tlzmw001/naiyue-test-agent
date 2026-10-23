@@ -10,6 +10,10 @@ def startup_messages(error, config_path):
     if isinstance(error, ModelConfigError) and not config_path.expanduser().is_file():
         return [f'未找到模型配置：{config_path}；请创建该文件或使用 --config 指定配置。配置格式见 README。']
     code = str(error)
+    if code in ('history_database_required', 'history_database_missing'):
+        return ['无法定位现存历史库；请使用 --session-db 指定现存项目数据库后重试。']
+    if code == 'invalid_workspace_binding':
+        return ['指定数据库没有可确认的项目绑定，不能作为已有项目恢复；未创建项目身份或重新绑定。']
     if code == 'workspace_id_conflict':
         return ['检测到工作区副本；请使用 --new-workspace 为副本创建独立历史']
     if code == 'storage_in_use':

@@ -1,5 +1,7 @@
 # Spec128-01：Project、ExecutionRoot 与项目归档
 
+当前补齐状态（2026-10-23）：用户批准后，公开CLI/Web的失效Local执行目录历史恢复已补齐并完成本机验收。恢复现存库只核对保存的Project，不再绑定目录；历史可读，执行门禁保持。33项新增回归及最终4778后端/423前端、标准Mac ARM64构建与源码外安装通过，见第13—14节。先前审查发现与旧验收是历史时点；实际worktree管理仍未实施，未提交/push/发布。
+
 日期：2026-10-22。状态：2026-10-23，01身份/消费者拆分完成本机验收，尚未提交；从v0.4.0（0ba38f3）建立独立分支，归档外迁沿已发布基线。用户已确认本片范围、目录失效与归档迁出方向。总约束见[Spec128](128-project-execution-and-run-context.md)。
 
 路径版本边界（2026-10-23）：03已迁移应用、存储及CLI目录；本Spec中的实施时路径保留为历史，当前文件与入口见[03完整迁移表](128-03-domain-packages-and-cli.md#5-完整文件迁移表)，原行为合同保持。04随后替换了SessionStorage/PersonalMemory资源持有者，当前存储入口见[04对象与调用链](128-04-database-repositories-and-uow.md#6-当前对象调用链和删除项)。
@@ -234,3 +236,73 @@ Shell cwd/文件根/相对权限规则/AGENTS与Skills -> 用ExecutionRoot.path
 - 完整后端：`PATH="/Users/zmw/naiyue-test-agent/build/release-native-0ff7df8/bin:$PATH" .venv/bin/python -m pytest tests -q --tb=short --maxfail=10` → **4674 passed in 308.36s**，exit 0；见`backend-final.log`。初轮旧夹具/脚本消费者失败日志保留，完成字段/身份/许可及合法路径迁移后重新完整执行。
 
 真实模型质量、Windows/Linux原机及产品worktree登记/创建不属于本片已验证证据。当前没有提交、推送或发布；下一片仅讨论128-02，用户同意后才能实施。
+
+## 13. 公开恢复入口补齐（2026-10-23，用户批准实施）
+
+### 13.1 合同与真实问题
+
+CLI chat.main先resolve_workspace_root/prepare_workspace，Web main先prepare_workspace，WebSettings也strict解析根；即使绕过它们，CLI桥与Web lifespan传入的workspace_binding仍使assembly调用bind_workspace。CLI ready会话restore成功后也不会自动显示历史。当前库级恢复成功不能替代公开入口验收。
+
+目标：目录失效而现存库可用时，公开CLI/Web仍打开原项目历史，展示保存的执行目录和execution_root_unavailable；不创建身份、不改绑定、不回退目录，新的执行继续完整校验。本片不实现worktree管理、不补memory API或原5测试缺口、不改schema/依赖/实际配置。
+
+### 13.2 数据与接口
+
+- 扩展现有workspaces定位能力，`locate_stored_project(database_path, *, root=None)`返回已有`Project`或正常准备分支所需的None。显式现存库、未指定workspace或指定其保存的同一路径时走已绑定库定位；给定其他目录仍进入原有严格准备/合法搬迁流程。没有workspace而库缺失/无有效绑定则明确拒绝。
+- 已存项目UUID/规范根来自库；会话身份和执行根来自自身记录。提供的workspace不能用来覆盖它们。未提供workspace时，不把进程cwd当历史目标。库读取沿现有文件/附属文件/还原标记/锁保护。
+- 两种装配输入分离：原`workspace_binding`继续用于正常准备；新增可选冻结`expected_project: Project`仅用于核对已有库，两者互斥。预期值不是新绑定指令。
+- `open_storage(..., expected_project=...)`使用现存库打开并在取得所有权后核对UUID、规范根和数据库路径，再准备Saver/模型；不调用bind_workspace。同步连接与异步Saver均以现存库方式打开，失效/改变明确失败，不能创建空库。仍沿原Database/ProjectStore/资源清理链，不另建历史后端。
+- WebSettings可携带排除序列化的expected_project，已存根只作路径规范校验、不要求存在；普通启动仍严格检查。workspace_id必须保留，项目归属与认证照旧。
+
+### 13.3 正常和失败路径
+
+正常：有效目录 → 原prepare/bind/合法搬迁 → 原应用和会话执行。公开恢复：明确session-db → 读已绑定Project → 现存库打开/重核身份 → 同一Application → 保存会话范围/历史。CLI按execution_root_error进入show_history并正常结束，不能把所有can_run=false都视为目录失效；Web列表/prepare/正文继续可读，现有can_run/error提示限制新执行。
+
+失败：库不存在/无绑定/目标不符/被占用/还原未完成，停止启动并保留原因。预检后库消失或绑定变化，正式取得所有权后拒绝；目录missing/not_directory/wrong_project只降低该会话的执行可用性，不改变历史身份。无明确库且目录不可定位时提示使用--session-db。待审批/中断历史不自动执行恢复或批准。
+
+### 13.4 改动与验证
+
+改动workspaces、Database/ProjectStore/resources、assembly/持久工厂、CLI chat/bridge/display、Web main/settings/app以及真实消费者测试；复用现有对象，无新配置/后端/通用注册器。
+
+先用临时库真实保存→关闭→移走执行根：正式CLI输出旧消息及具体原因/退出0、正式Web参数→lifespan→HTTP读取成功，新执行返回409原错误、没有新模型/工具调用或目录回退。覆盖普通文件/UUID变化、库缺失/无绑定/外来项目/会话、预检后的库删除/绑定变化、正常续聊与合法搬迁、中断/审批不自动恢复。失败先红后绿，测试基础设施只在复用入口确有需要时调整并说明。
+
+完成后跑定向和全量后端、前端/构建、标准Mac ARM64 wheel/Twine/源码外安装、源码字节/冻结/AST/500行/compile/pip/diff检查。0供应商/用户库操作，未提交/push/发布；补齐原1后再讲原7，不自动实施下一片。
+
+## 14. 公开恢复实际主链与验收（2026-10-23）
+
+### 14.1 当前接线
+
+`workspaces.locate_stored_project`从明确选择的现存库，在既有安全文件/锁/还原标记协议下读取绑定，校验UUID及保存根的路径形状，返回冻结Project。未指定workspace时不使用进程cwd；显式选择其他目录则交还原严格prepare/合法搬迁路径。没有可确认绑定不生成项目身份。
+
+CLI：`chat.main → chat_startup.prepare_session → locate_stored_project → ProjectStore(require_existing)`完成预检与会话project_id核对；`cli_async.build_persistent_application`释放预检所有权后，仅向异步工厂传expected_project。`assembly → open_storage`正式取得库所有权后再次核对路径/UUID/保存根，再准备官方Saver及模型。预期项目与新绑定输入互斥，恢复不调用bind_workspace。同步连接和Saver都用SQLite mode=rw，目标消失不创建空库；必要清理保留首异常。
+
+CLI所选会话有execution_root_error时，直接`app.history.session → CliEventDisplay.show_history`显示旧消息和具体原因，退出0；不先restore、不进入输入或恢复审批对话。正常ready会话继续原restore/续聊。空`--resume`且库不存在仍显示“暂无历史会话”并退出0，不加载模型、不建库；指定SID缺库仍明确失败。
+
+Web：`web.main → locate_stored_project → WebSettings(expected_project)`保留项目UUID和保存根，只有已核对项目的根不要求存活；`web.app.lifespan`传核验意图而非绑定指令。同一个Application/HTTP服务按project_id读取列表和历史；状态与新run继续检查会话自己的ExecutionRoot。失效目录得到can_run=false与原错误原因，POST新run返回409，token/Host/Origin与归属校验保持；没有全库永久只读标志或替代目录。
+
+正常场景：原目录有效→显式数据库恢复→读取同一个项目/会话→按原入口继续新消息；原目录合法移动仍走原UUID/搬迁协议。失败场景：已保存一轮并关闭后移走原目录→公开入口仍显示消息和missing原因→任何新执行被拒绝，没有新模型/工具调用或记录重绑。not_directory/wrong_project同样覆盖；待审批/失败运行打开历史不自动续跑。
+
+### 14.2 移动、清理与测试合同
+
+chat.py原497行，原`_pick_session`及目录/会话预检移到`cli/chat_startup.py`，当前主文件458行；只保留一个实现。原函数AST与基线一致，真实消费者是chat.main。无旧别名转发或新增配置/库表/依赖/版本。
+
+新增33项位于test_public_history_recovery、test_existing_project_open、test_history_recovery_boundaries：真实保存/关闭/失效根后走正式CLI，及正式Web参数→原lifespan→真实HTTP客户端读取；检查历史、原因、项目身份、零新run/模型调用、鉴权和记录不变。另覆盖无DB提示、缺失/无绑定/无效UUID/外来目录与会话、预检后库删除/绑定变化、第二连接失败首异常/锁释放、正常续聊以及审批/中断不自动恢复。两连接只打开既存库的语义分别检查。
+
+未改conftest或通用测试helper；test_distribution_runtime原故障注入从chat.prepare_workspace改到移动后的chat_startup.prepare_workspace，原输出/先于模型失败等断言不变。既有test_persistent_cli空恢复在首轮全量复现回归，修源代码恢复原分支，没有改其测试。
+
+TDD证据：最初新增入口/存储21项为20 failed/1 passed，再转绿；后补边界发现invalid UUID错误未映射（1 failed/8 passed），修源后转绿；无DB普通文件提示先1 failed/3 passed，再最小修正。首轮全量1 failed/4774 passed，空恢复修复后最终重新完整执行。日志均在build/spec128-01-recovery保留，不将实现后追加的通过用例冒称独立红灯。
+
+### 14.3 实际验证
+
+| 验证 | 命令/结果 |
+| --- | --- |
+| 最终专项 | 新三文件＋persistent_cli/工作区entries/storage startup：61 passed in5.95s；另112既有消费者通过 |
+| 全后端 | `PATH="/Users/zmw/naiyue-test-agent/build/release-native-0ff7df8/bin:$PATH" .venv/bin/python -m pytest tests -q --tb=short` → **4778 passed in346.45s**，exit0 |
+| 前端 | `npm test -- --run` → 50文件423 passed；`npm run build` → TS/Vite exit0，既有chunk提示保留 |
+| 标准wheel/Twine | `scripts.build_release --target macos-arm64 --output build/spec128-01-recovery/verified-final-dist`及Twine通过；371文件，版本仍沿基线0.4.0，仅本机候选 |
+| 源码外全新安装 | `scripts.verify_wheel_install --wheel-dir build/spec128-01-recovery/verified-final-dist --output build/spec128-01-recovery/install-final.json` exit0；原生工具/CLI/Web/审批/SQLite/存储维护/子实例/memory等现有固定场景通过，0供应商 |
+| 字节与结构 | 包内241 Python、4前端、README与当前源一致；846冻结源无漂移；AST/500行、compileall、pip check、diff及10模块正逆冷导入通过 |
+| 独立复核 | 安全59专项、架构46专项（含提示与空恢复增量）通过，当前14生产源哈希核对，无遗留发现；专项与全量重叠，不相加 |
+
+最终wheel SHA256：`76c745c1c209c12d46645874cf28dd5812e24e2dd674b1d311d9c9f3afcc4cd6`。详见verification.json、artifact-verified.json、install-final.json及两份review证据。首轮候选/安装与失败日志保留，最终结果明确指向verified-final-dist/backend-final。
+
+本轮修复和新测试只针对公开恢复。原7的app.memory接口和原5持久回归缺口未顺带实现；个人记忆跨项目、临时边界、运行中后台任务及worktree排除范围保持。上述是本机离线工程验证，不是用户掌握、真实模型质量或其他平台原机证据。未提交/push/发布；唯一下一步讲解原7方案，获用户确认后才实施。

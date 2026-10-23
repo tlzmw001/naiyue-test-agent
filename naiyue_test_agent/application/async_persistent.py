@@ -6,11 +6,11 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def open_async_persistent_application(config_path, *, database_path, tools, system_prompt, response_format, initial_active_tools=None, settings=None, workspace_binding=None):
+async def open_async_persistent_application(config_path, *, database_path, tools, system_prompt, response_format, initial_active_tools=None, settings=None, workspace_binding=None, expected_project=None):
     from .assembly import build_application
     app = await build_application(config_path, database_path=database_path, tools=tools,
         system_prompt=system_prompt, response_format=response_format, initial_active_tools=initial_active_tools,
-        settings=settings, workspace_binding=workspace_binding)
+        settings=settings, workspace_binding=workspace_binding, expected_project=expected_project)
     primary = None
     try:
         yield app
