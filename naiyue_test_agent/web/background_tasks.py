@@ -46,11 +46,11 @@ async def _perform(request, action, *, session_id=None, task_id=None, limit=20, 
     try:
         scope = {'session_id': session_id, 'workspace_root': None if service.settings.workspace_id is not None else root}
         if action == 'list':
-            value = await service.application.alist_background_tasks(**scope, limit=limit, before=before)
+            value = await service.application.tasks.list(**scope, limit=limit, before=before)
         elif action == 'output':
-            value = await service.application.aget_background_task_output(task_id, **scope)
+            value = await service.application.tasks.output(task_id, **scope)
         else:
-            value = await service.application.astop_background_task(task_id, **scope)
+            value = await service.application.tasks.stop(task_id, **scope)
             if not value['cleanup_confirmed']:
                 raise WebError('task_cleanup_unconfirmed')
         return _bounded(value, service.settings.max_frame_bytes)

@@ -89,22 +89,22 @@ async def test_required_save_keeps_busy_after_control_window_is_closed(monkeypat
     loop = asyncio.get_running_loop()
     async with factory(monkeypatch, tmp_path / 'sessions.sqlite',
                        StreamingToolModel(replies=[AIMessage(content='answer')])) as app:
-        sid = await app.acreate_session('A')
-        owner, events = app._sessions._sessions[sid], []
-        app.subscribe_events(events.append)
-        original = app._storage.runs.finish_run
+        sid = await app.sessions.create('A')
+        owner, events = app.sessions._sessions._sessions[sid], []
+        app.observability.subscribe(events.append)
+        original = app.sessions._persistence.storage.runs.finish_run
         def save(*args, **kwargs):
             loop.call_soon_threadsafe(entered.set)
             assert release.wait(5)
             return original(*args, **kwargs)
-        monkeypatch.setattr(app._storage.runs, 'finish_run', save)
-        task = asyncio.create_task(app.arun(sid, [('user', 'question')]))
+        monkeypatch.setattr(app.sessions._persistence.storage.runs, 'finish_run', save)
+        task = asyncio.create_task(app.runs.start(sid, [('user', 'question')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
             assert owner._run is not None and not owner._run.controls_open and owner.is_busy() and not task.done()
             assert not any(event.event_type == 'run_finished' for event in events)
             with pytest.raises(SessionBusyError):
-                app._sessions._admit(sid, 'duplicate', 'message')
+                app.sessions._sessions._admit(sid, 'duplicate', 'message')
         finally:
             release.set()
             await task
@@ -117,8 +117,8 @@ async def test_required_save_keeps_busy_after_control_window_is_closed(monkeypat
 async def test_execution_uses_owned_child_lifecycle(monkeypatch, fails):
     from naiyue_test_agent.application.sessions import session_execution
     app = await make_app(monkeypatch)
-    sid = await app.acreate_session('A')
-    service, calls = app._sessions, []
+    sid = await app.sessions.create('A')
+    service, calls = app.sessions._sessions, []
     owner, observation_run = service._admit(sid, 'owned-run', 'message')
     rid, observation = observation_run.run_id, observation_run.observation
     failure = RuntimeError('synthetic execution failure')
@@ -140,10 +140,10 @@ async def test_execution_uses_owned_child_lifecycle(monkeypatch, fails):
             raise failure
         monkeypatch.setattr(session_execution, 'ainvoke_agent_run', execute)
         with pytest.raises(RuntimeError) as caught:
-            await owner.arun(app._agent, [('user', 'question')], run=observation_run)
+            await owner.arun(app.runs._agent, [('user', 'question')], run=observation_run)
         assert caught.value is failure
     else:
-        result = await owner.arun(app._agent, [('user', 'question')], run=observation_run)
+        result = await owner.arun(app.runs._agent, [('user', 'question')], run=observation_run)
         assert result['messages'][-1].content == 'PRIVATE_REPLY'
     expected = [('stop', sid, rid)] if fails else []
     assert calls == expected + [('settle', sid, rid), ('assert', sid, rid)]

@@ -91,14 +91,14 @@ async def subagent_scenario(root, Model):
         parent.replies.extend([call('subagent', args, f'delegate-{index}'), AIMessage(content=f'parent-{index}')])
         child.replies.extend([call('write', dict(path=filename, content=content), f'write-{index}'), AIMessage(content=report)])
         before = len(child.seen)
-        result = await app.arun(sid, [('user', args['task'])])
+        result = await app.runs.start(sid, [('user', args['task'])])
         feedback = tool_result(result, 'subagent')
         assert feedback.status == 'success', feedback.content
         envelope = json.loads(feedback.content)
         assert envelope['report'] == report and envelope['status'] == 'completed' and not envelope['truncated']
         identity = envelope['agent_id']
-        record = app._storage.subagents.get_subagent(sid, identity)
-        graph = app._sessions._subagents['worker']['agent']
+        record = app.sessions._persistence.storage.subagents.get_subagent(sid, identity)
+        graph = app.sessions._sessions._subagents['worker']['agent']
         state = await graph.aget_state({'configurable': {'thread_id': record['child_thread_id']}})
         assert record['state'] == 'ready' and state.config['configurable']['checkpoint_id'] == record['checkpoint_id']
         assert tool_result(state.values, 'write').status == 'success'
@@ -111,7 +111,7 @@ async def subagent_scenario(root, Model):
     async def query(app, sid, identity):
         before = len(child.seen)
         parent.replies.extend([call('subagent_list', {}, 'list-' + str(len(parent.seen))), AIMessage(content='found')])
-        result = await app.arun(sid, [('user', 'Find the existing worker.')])
+        result = await app.runs.start(sid, [('user', 'Find the existing worker.')])
         feedback = tool_result(result, 'subagent_list')
         assert feedback.status == 'success', feedback.content
         item, = json.loads(feedback.content)['items']
@@ -123,32 +123,32 @@ async def subagent_scenario(root, Model):
     with patch.object(write_module, '_write', wraps=write_module._write) as written:
         with patch.object(AutoPermissionReviewer, 'areview', side_effect=AssertionError('Unexpected Auto call')) as auto:
             async with opened() as app:
-                sid = await app.acreate_workspace_session('root', workspace)
+                sid = await app.sessions.create_workspace('root', workspace)
                 first = await delegate(app, sid, 1)
                 identity = first['agent_id']
                 second = await delegate(app, sid, 2, identity)
                 lists = [await query(app, sid, identity)]
-                saved = await app.aget_subagent_history(sid, identity)
+                saved = await app.history.subagent(sid, identity)
                 ids = [message.id for message in saved['messages']]
             before = len(parent.seen) + len(child.seen), written.call_count, auto.call_count
             async with opened() as app:
-                await app.arestore_session(sid)
-                history = await app.aget_subagent_history(sid, identity)
-                owner = app._sessions.require(sid)
+                await app.sessions.restore(sid)
+                history = await app.history.subagent(sid, identity)
+                owner = app.sessions._sessions.require(sid)
                 reopen = dict(model_calls=len(parent.seen) + len(child.seen) - before[0],
                     write_calls=written.call_count - before[1], auto_calls=auto.call_count - before[2],
                     drivers=len(owner._run.subagent_instances) if owner._run else 0,
-                    approvals=len(app.pending_approval_batches(sid)),
+                    approvals=len(app.runs.pending_approvals(sid)),
                     history_ids_equal=[message.id for message in history['messages']] == ids)
                 lists.append(await query(app, sid, identity))
                 third = await delegate(app, sid, 3, identity)
                 fresh = await delegate(app, sid, 'fresh')
-                final = await app.aget_subagent_history(sid, identity)
+                final = await app.history.subagent(sid, identity)
                 assert [m.id for m in final['messages']][:len(ids)] == ids
                 assert [m.content for m in final['messages'] if isinstance(m, AIMessage) and m.content.startswith('report-')] == [
                     'report-1', 'report-2', 'report-3']
                 assert all((workspace / f'effect-{i}.txt').read_text(encoding='utf-8') == f'effect-{i}' for i in (1, 2, 3))
-                assert app.get_active_tools(sid) == ('subagent',)
+                assert app.sessions.active_tools(sid) == ('subagent',)
             report = dict(continuations=[first, second, third], fresh=fresh, lists=lists, reopen=reopen,
                 root_model_calls=len(parent.seen), child_model_calls=len(child.seen), write_calls=written.call_count,
                 provider_requests=0)

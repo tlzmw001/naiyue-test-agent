@@ -113,13 +113,13 @@ def test_active_stop_keeps_partial_result_and_ends_without_next_model(monkeypatc
         model = StreamingToolModel(replies=[call('grep', {'pattern': 'HIT', 'glob': '*.txt'}),
                                             AIMessage(content='must not run')])
         app = await make_app(monkeypatch, model, [module.create_session_grep_tool()])
-        sid = await app.acreate_workspace_session('A', tmp_path)
+        sid = await app.sessions.create_workspace('A', tmp_path)
         pid = None
-        task = asyncio.create_task(app.arun(sid, [('user', 'search')]))
+        task = asyncio.create_task(app.runs.start(sid, [('user', 'search')]))
         try:
             pid = await started_pid(marker)
             await asyncio.wait_for(received.wait(), 5)
-            app.request_stop(sid)
+            app.runs.stop(sid)
             result = await asyncio.wait_for(task, 8)
             message = next(m for m in result['messages'] if isinstance(m, ToolMessage))
             assert message.tool_call_id == 't' and 'note.txt:1: HIT' in message.content
@@ -128,8 +128,8 @@ def test_active_stop_keeps_partial_result_and_ends_without_next_model(monkeypatc
             with pytest.raises(ProcessLookupError):
                 os.kill(pid, 0)
         finally:
-            if app._sessions.require(sid).describe_session()['busy']:
-                app.request_stop(sid)
+            if app.sessions._sessions.require(sid).describe_session()['busy']:
+                app.runs.stop(sid)
             if pid is not None:
                 try:
                     os.kill(pid, 9)

@@ -48,17 +48,17 @@ async def _worker(args):
         elif event.event_type == 'message_delta':
             delta.set()
 
-    app.subscribe_events(observe)
-    session = await app.acreate_session(app.default_model_id)
-    task = asyncio.create_task(app.arun(session, [('user',
+    app.observability.subscribe(observe)
+    session = await app.sessions.create(app.models.default_id)
+    task = asyncio.create_task(app.runs.start(session, [('user',
         'Produce the integers from 1 to 10000, one per line. Begin immediately and do not explain.')]))
     try:
         async with asyncio.timeout(args.timeout_seconds):
             await delta.wait()
-            app.request_stop(session)
+            app.runs.stop(session)
             result = await task
-            snapshot = await app._agent.aget_state({'configurable': {
-                'thread_id': app._sessions.require(session).get_thread_id()}})
+            snapshot = await app.runs._agent.aget_state({'configurable': {
+                'thread_id': app.sessions._sessions.require(session).get_thread_id()}})
             assert len(calls) == 1 and result['run_stopped']
             assert not any(m.type == 'ai' for m in result['messages'])
             assert not snapshot.next and not any(t.error or t.interrupts for t in snapshot.tasks)

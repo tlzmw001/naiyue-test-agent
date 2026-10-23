@@ -17,7 +17,7 @@ def test_failed_cold_prepare_does_not_report_history_ready(monkeypatch, tmp_path
             rid = (await client.post(f'/api/sessions/{sid}/runs', json=request('human'))).json()['run_id']
             await web.state.delivery.wait(rid)
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[])) as (client, web):
-            storage = web.state.service.application._storage
+            storage = web.state.service.application.sessions._persistence.storage
             before = storage.conversation.chat_heads(sid)
             def fail(*args):
                 raise OSError('PRIVATE_ARCHIVE_IO')
@@ -40,7 +40,7 @@ def test_prepare_fixed_coverage_does_not_pause_model_and_finish_advances_after_i
         model = StreamingToolModel(replies=[AIMessage(id='answer', content='completed')], entered=entered, release=release)
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
             app = web.state.service.application
-            p = app._persistence
+            p = app.sessions._persistence
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             rid = (await client.post(f'/api/sessions/{sid}/runs', json=request('human'))).json()['run_id']
             await asyncio.wait_for(entered.wait(), 5)
@@ -84,7 +84,7 @@ def test_cancelled_prepare_waits_for_its_owned_commit(monkeypatch, tmp_path):
     async def scenario():
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[])) as (client, web):
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            storage = web.state.service.application._storage
+            storage = web.state.service.application.sessions._persistence.storage
             entered, release = asyncio.Event(), Event()
             loop = asyncio.get_running_loop()
             original = storage.conversation.save_chat_updates

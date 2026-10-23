@@ -78,9 +78,9 @@ async def _async__worker(args) -> int:
             system_prompt=BASE_SYSTEM_PROMPT, response_format=None,
         )
         resources.push_async_callback(app.aclose)
-        session = await app.acreate_workspace_session(args.model_id or app.default_model_id, root)
+        session = await app.sessions.create_workspace(args.model_id or app.models.default_id, root)
         print('phase=default_started', flush=True)
-        first = await app.arun(session, [('user', 'Use the source-check Skill for a controlled '
+        first = await app.runs.start(session, [('user', 'Use the source-check Skill for a controlled '
                                   'verification task. Follow the default source in the '
                                   'available Skill index and report the required marker.')])
         if first.get('approval_requests'):
@@ -88,7 +88,7 @@ async def _async__worker(args) -> int:
         first_count = check_skill_trace(first['messages'], root, 'agents')
         print(f'phase=default_verified source=agents read_calls={first_count}', flush=True)
         print('phase=explicit_started', flush=True)
-        second = await app.arun(session, [('user', 'Now explicitly use the source-check Skill from '
+        second = await app.runs.start(session, [('user', 'Now explicitly use the source-check Skill from '
                                    '.claude/skills. Read that source and its required '
                                    'reference, then report only its exact marker.')])
         if second.get('approval_requests'):

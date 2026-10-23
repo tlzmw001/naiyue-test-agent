@@ -25,9 +25,9 @@ async def test_child_save_failure_or_success_does_not_change_root_save_contract(
     events = []
     async with open_async_persistent_application('unused', **options) as app:
         instances = record_instances(monkeypatch, app)
-        app.subscribe_events(events.append)
-        sid = await app.acreate_workspace_session('A', tmp_path)
-        backend = app._agent.checkpointer
+        app.observability.subscribe(events.append)
+        sid = await app.sessions.create_workspace('A', tmp_path)
+        backend = app.runs._agent.checkpointer
         save = backend.aput
         error = OSError('PRIVATE_PERSISTENCE_BODY')
         async def fail(config, *args, **kwargs):
@@ -35,25 +35,25 @@ async def test_child_save_failure_or_success_does_not_change_root_save_contract(
             return await save(config, *args, **kwargs)
         if fail_child:
             monkeypatch.setattr(backend, 'aput', fail)
-            result = await app.arun(sid, [('user', 'run')])
+            result = await app.runs.start(sid, [('user', 'run')])
             assert result['messages'][-1].content == 'root done'
-            assert (await app.alist_sessions())[0]['state'] == 'ready'
+            assert (await app.sessions.list())[0]['state'] == 'ready'
             feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
             assert feedback.status == 'error' and 'checkpoint' in feedback.content.lower()
             assert instances[0]['status'] == 'failed' and instances[0]['settled']
         else:
             async def fail_root_save(*args): raise error
-            monkeypatch.setattr(app._persistence, 'afinish', fail_root_save)
-            with pytest.raises(OSError) as caught: await app.arun(sid, [('user', 'run')])
+            monkeypatch.setattr(app.sessions._persistence, 'afinish', fail_root_save)
+            with pytest.raises(OSError) as caught: await app.runs.start(sid, [('user', 'run')])
             assert caught.value is error
             assert instances[0]['status'] == 'completed' and instances[0]['settled']
             assert [(e.source is None, e.data.status) for e in events if e.event_type == 'run_finished'] == [
                 (False, 'completed'), (True, 'failed')]
-            assert not app._sessions.require(sid).describe_session()['busy'] and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
+            assert not app.sessions._sessions.require(sid).describe_session()['busy'] and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app.sessions._sessions._sessions.values())
     if fail_child:
         async with open_async_persistent_application('unused', **options) as restored:
-            await restored.arestore_session(sid)
-            messages = await restored.aget_messages(sid)
+            await restored.sessions.restore(sid)
+            messages = await restored.history.messages(sid)
             assert messages[-1].content == 'root done'
             feedback = next(m for m in messages if isinstance(m, ToolMessage))
             assert feedback.status == 'error' and 'checkpoint' in feedback.content.lower()

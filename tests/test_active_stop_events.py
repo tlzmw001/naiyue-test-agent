@@ -16,22 +16,22 @@ async def test_stop_boundary_validates_ids_and_redacts_tool_label(monkeypatch, d
 
     class StopsOnReply(ToolCapableFake):
         def _generate(self, *args, **kwargs):
-            holder['app'].request_stop(holder['session'])
+            holder['app'].runs.stop(holder['session'])
             return super()._generate(*args, **kwargs)
 
     calls = [{'name': '未知工具', 'args': {}, 'id': 'call'}]
     if duplicate:
         calls.append({'name': 'unknown', 'args': {}, 'id': 'call'})
     app = await build_app(monkeypatch, StopsOnReply(responses=[AIMessage(content='', tool_calls=calls)]))
-    holder.update(app=app, session=await app.acreate_session('A'))
+    holder.update(app=app, session=await app.sessions.create('A'))
     events = []
-    app.subscribe_events(events.append)
+    app.observability.subscribe(events.append)
     if duplicate:
         with pytest.raises(ModelResponseRejected, match='duplicate_tool_call_ids'):
-            await app.arun(holder['session'], [('user', 'start')])
+            await app.runs.start(holder['session'], [('user', 'start')])
         assert events[-1].data.status == 'failed'
     else:
-        result = await app.arun(holder['session'], [('user', 'start')])
+        result = await app.runs.start(holder['session'], [('user', 'start')])
         assert result['run_stopped']
         message = result['messages'][-1]
         assert isinstance(message, ToolMessage) and message.name == '未知工具'

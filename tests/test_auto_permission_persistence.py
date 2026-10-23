@@ -41,17 +41,17 @@ async def test_auto_mode_restores_with_models_and_rejects_restore_without_them(m
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: catalog)
         args = dict(tools=[definition(approved=True)], settings=settings(), system_prompt='', response_format=None)
         async with open_async_persistent_application('synthetic', database_path=path, **args) as app:
-            sid = await app.acreate_session('main')
-            await app.arun(sid, [('user', 'run')])
-            assert app._storage.sessions.get(sid)['permission_mode'] == 'Auto'
+            sid = await app.sessions.create('main')
+            await app.runs.start(sid, [('user', 'run')])
+            assert app.sessions._persistence.storage.sessions.get(sid)['permission_mode'] == 'Auto'
         async with open_async_persistent_application('synthetic', database_path=path, **args) as restored:
-            await restored.arestore_session(sid)
-            assert restored.get_permission_mode(sid) == 'Auto'
-            assert restored._sessions.resolve_permission_context(sid)['session_allow'] == []
-            assert restored._sessions.resolve_permission_context(sid)['project_instructions'] is None
+            await restored.sessions.restore(sid)
+            assert restored.sessions.permission_mode(sid) == 'Auto'
+            assert restored.sessions._sessions.resolve_permission_context(sid)['session_allow'] == []
+            assert restored.sessions._sessions.resolve_permission_context(sid)['project_instructions'] is None
         args['settings'] = AppSettings()
         async with open_async_persistent_application('synthetic', database_path=path, **args) as unavailable:
             with pytest.raises(SessionPersistenceError, match='invalid_permission_mode'):
-                await unavailable.arestore_session(sid)
-            assert not unavailable._sessions.has_session(sid)
+                await unavailable.sessions.restore(sid)
+            assert not unavailable.sessions._sessions.has_session(sid)
     await scenario()

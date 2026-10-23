@@ -138,7 +138,7 @@ async def test_invalid_configured_arguments_stop_before_io(monkeypatch, tmp_path
     app = await make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': name, 'args': invalid, 'id': str(index)}
         for index, invalid in enumerate(invalid_args)]), AIMessage(content='done')]), [tool])
-    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'run')])
+    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'run')])
     feedback = [message for message in result['messages'] if isinstance(message, ToolMessage)]
     assert len(feedback) == 3
     assert all(message.status == 'error' for message in feedback)

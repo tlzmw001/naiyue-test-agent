@@ -159,9 +159,9 @@ def test_observation_fault_preserves_original_model_failure(monkeypatch, tmp_pat
         monkeypatch.setattr(context_observation, 'estimate_context', broken)
         app = await make_app(monkeypatch, model)
         try:
-            sid = await app.acreate_session('A')
+            sid = await app.sessions.create('A')
             try:
-                await app.arun(sid, [('user', 'task')])
+                await app.runs.start(sid, [('user', 'task')])
             except RuntimeError as caught:
                 assert caught is failure
             else:

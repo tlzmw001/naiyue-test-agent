@@ -3,6 +3,7 @@
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
+from cli_portal_helpers import portal
 import sys
 
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -90,7 +91,11 @@ def test_cli_defaults_to_current_workspace_and_selects_default_tools(monkeypatch
     def build(_config, *, tools, system_prompt, response_format, initial_active_tools, settings):
         tools_seen.extend(tools)
         choices.append(initial_active_tools)
-        return MinimalApp()
+        fake = MinimalApp()
+        return portal(models=SimpleNamespace(default_id='A'),
+            sessions=SimpleNamespace(create_workspace=fake.create_workspace_session),
+            runs=SimpleNamespace(start=fake.run, pending_approvals=fake.pending_approval_batches),
+            observability=SimpleNamespace(subscribe=lambda handler: lambda: None))
 
     monkeypatch.setattr(cli, 'build_local_application', build)
     feed(monkeypatch, 'question', ':quit')
@@ -215,7 +220,7 @@ def test_tty_queues_steering_and_follow_up_during_model_call(monkeypatch, capsys
     build = cli.build_local_application
     def factory(*args, **kwargs):
         app = build(*args, **kwargs)
-        app.subscribe_events(lambda event: finished.set() if event.event_type == 'run_finished' else None)
+        app.call(lambda api: api.observability.subscribe(lambda event: finished.set() if event.event_type == 'run_finished' else None))
         return app
     monkeypatch.setattr(cli, 'build_local_application', factory)
     entries = iter(['initial', 'private steering', ':follow private follow-up', ':quit'])
@@ -358,8 +363,12 @@ def test_tty_stop_rejection_is_not_reported_as_accepted(monkeypatch, capsys):
         def request_stop(self, _session_id):
             raise application.SessionBusyError('Window closed')
 
-    monkeypatch.setattr(cli, 'build_local_application',
-                        lambda *_args, **_kwargs: ClosingApp())
+    fake = ClosingApp()
+    bridge = portal(models=SimpleNamespace(default_id='A'),
+        sessions=SimpleNamespace(create_workspace=fake.create_workspace_session),
+        runs=SimpleNamespace(start=fake.run, pending_approvals=fake.pending_approval_batches, stop=fake.request_stop),
+        observability=SimpleNamespace(subscribe=lambda handler: lambda: None))
+    monkeypatch.setattr(cli, 'build_local_application', lambda *_args, **_kwargs: bridge)
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
     entries = iter(['initial', ':stop', ':quit'])
 
@@ -428,7 +437,11 @@ def test_tty_input_after_acceptance_window_closes_starts_next_run(monkeypatch, c
             raise application.SessionBusyError('Window already closed')
 
     app = ClosingApp()
-    monkeypatch.setattr(cli, 'build_local_application', lambda *_args, **_kwargs: app)
+    bridge = portal(models=SimpleNamespace(default_id='A'),
+        sessions=SimpleNamespace(create_workspace=app.create_workspace_session),
+        runs=SimpleNamespace(start=app.run, pending_approvals=app.pending_approval_batches, stop=app.request_stop, steer=app.steer),
+        observability=SimpleNamespace(subscribe=lambda handler: lambda: None))
+    monkeypatch.setattr(cli, 'build_local_application', lambda *_args, **_kwargs: bridge)
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
     entries = iter(['first', 'second', ':quit'])
 

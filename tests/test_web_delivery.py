@@ -22,7 +22,7 @@ def test_cancelled_start_waiter_still_has_queryable_run(monkeypatch, tmp_path):
                     holder['run_id'] = event.run_id
                     holder['task'].cancel()
 
-            unsubscribe = service.application.subscribe_events(abort_request)
+            unsubscribe = service.application.observability.subscribe(abort_request)
             body = request('start')
             from naiyue_test_agent.web.schemas import MessageInput, ControlInput
             task = asyncio.create_task(service.start(session, MessageInput(**body)))

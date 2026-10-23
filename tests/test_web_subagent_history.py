@@ -43,7 +43,7 @@ def test_saved_child_history_after_web_restart_and_safe_read_failure(monkeypatch
             assert detail['messages'][-1]['content'] == 'child report'
             assert 'child file content' in str(detail['messages'])
             assert detail['tool_states'] == {} and detail['available']
-            backend = web.state.service.application._storage
+            backend = web.state.service.application.sessions._persistence.storage
             original = backend.conversation.read_chat_page
             def fail(session_id, thread_id, **query):
                 if thread_id.startswith('subagent:'):

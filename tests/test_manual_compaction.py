@@ -54,7 +54,7 @@ def test_manual_compaction_summarizes_once_saves_and_is_idempotent(monkeypatch, 
             assert after['has_compaction'] and after['can_run'] and not after['busy']
             # Live presentation keeps the readable transcript; model history is compacted.
             assert after['messages'] == before
-            saved = await web.state.service.application.aget_messages(sid)
+            saved = await web.state.service.application.history.messages(sid)
             assert saved[0].additional_kwargs['naiyue_compaction_summary']
             assert [message.id for message in saved[1:]] == [message['id'] for message in before[-2:]]
             assert len(model.seen) == 3
@@ -66,7 +66,7 @@ def test_manual_compaction_summarizes_once_saves_and_is_idempotent(monkeypatch, 
             reopened = (await client.get(endpoint)).json()
             assert [message['id'] for message in reopened['messages']] == [message['id'] for message in before]
             assert all(not message['is_context_summary'] for message in reopened['messages'])
-            assert [message.id for message in await web.state.service.application.aget_messages(sid)] == [message.id for message in saved]
+            assert [message.id for message in await web.state.service.application.history.messages(sid)] == [message.id for message in saved]
             assert reopened['has_compaction'] and reopened['can_run']
             assert len(model.seen) == 3
     asyncio.run(scenario())
@@ -123,7 +123,7 @@ def test_busy_compaction_rejects_new_work_and_stop_keeps_checkpoint(monkeypatch,
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
             sid = await history(client)
             endpoint = f'/api/sessions/{sid}'
-            before = await web.state.service.application.aget_messages(sid)
+            before = await web.state.service.application.history.messages(sid)
             started = await client.post(endpoint + '/compact', json={'request_id': str(uuid4())})
             rid = started.json()['run_id']
             await asyncio.wait_for(model.summary_entered.wait(), 5)
@@ -136,7 +136,7 @@ def test_busy_compaction_rejects_new_work_and_stop_keeps_checkpoint(monkeypatch,
                 await web.state.delivery.wait(rid)
             finally:
                 model.summary_release.set()
-            after = await web.state.service.application.aget_messages(sid)
+            after = await web.state.service.application.history.messages(sid)
             assert after == before and len(model.seen) == 2
             result = (await client.get(f'/api/runs/{rid}')).json()
             assert result['mode'] == 'compact' and result['status'] == 'stopped' and not result['manual_review_required']
@@ -151,7 +151,7 @@ def test_replacement_failure_is_not_reported_as_summary_failure(monkeypatch, tmp
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
             sid = await history(client)
             app = web.state.service.application
-            original = type(app._agent).aupdate_state
+            original = type(app.runs._agent).aupdate_state
             writes = 0
 
             async def fail_write(self, *args, **kwargs):
@@ -162,11 +162,11 @@ def test_replacement_failure_is_not_reported_as_summary_failure(monkeypatch, tmp
                 return await original(self, *args, **kwargs)
 
             with monkeypatch.context() as patch:
-                patch.setattr(type(app._agent), 'aupdate_state', fail_write)
+                patch.setattr(type(app.runs._agent), 'aupdate_state', fail_write)
                 response = await client.post(f'/api/sessions/{sid}/compact', json={'request_id': str(uuid4())})
                 rid = response.json()['run_id']
                 stream = await client.get(f'/api/runs/{rid}/events')
-            assert type(app._agent).aupdate_state is original
+            assert type(app.runs._agent).aupdate_state is original
             events = stream_data(stream)
             assert not any(e['event_type'] == 'compaction_finished' and e['data']['status'] == 'applied' for e in events)
             view = (await client.get(f'/api/sessions/{sid}')).json()
@@ -208,8 +208,8 @@ def test_stop_accepted_before_empty_session_compaction_still_finishes_safely(mon
             app = web.state.service.application
             def stop_at_start(event):
                 if event.event_type == 'run_started' and event.data.mode == 'compact':
-                    app.request_stop(sid, run_id=event.run_id)
-            unsubscribe = app.subscribe_events(stop_at_start)
+                    app.runs.stop(sid, run_id=event.run_id)
+            unsubscribe = app.observability.subscribe(stop_at_start)
             try:
                 response = await client.post(f'/api/sessions/{sid}/compact', json={'request_id': str(uuid4())})
                 rid = response.json()['run_id']
@@ -269,7 +269,7 @@ def test_multi_page_compaction_keeps_original_chat_after_reopen(monkeypatch, tmp
             assert response.status_code == 202
             await web.state.delivery.wait(response.json()['run_id'])
             app = web.state.service.application
-            saved = await app.aget_messages(sid)
+            saved = await app.history.messages(sid)
             assert saved[0].additional_kwargs['naiyue_compaction_summary']
             assert not any('USER_0' in str(message.content) for message in saved)
             if not automatic:
@@ -283,12 +283,12 @@ def test_multi_page_compaction_keeps_original_chat_after_reopen(monkeypatch, tmp
             assert older.status_code == 200 and older.json()['coverage']['upper'] == first['coverage']['upper']
             before_close = await read_pages(client, sid)
             assert before_close[:len(original)] == original
-            saved_ids = [m.id for m in await app.aget_messages(sid)]
+            saved_ids = [m.id for m in await app.history.messages(sid)]
         async with web_client(monkeypatch, tmp_path, model, history_page_messages=2) as (client, web):
             assert (await client.post(endpoint + '/prepare')).status_code == 200
-            writes = web.state.service.application._storage.database.connection.total_changes
+            writes = web.state.service.application.sessions._persistence.storage.database.connection.total_changes
             assert await read_pages(client, sid) == before_close
-            assert [m.id for m in await web.state.service.application.aget_messages(sid)] == saved_ids
-            assert web.state.service.application._storage.database.connection.total_changes == writes
+            assert [m.id for m in await web.state.service.application.history.messages(sid)] == saved_ids
+            assert web.state.service.application.sessions._persistence.storage.database.connection.total_changes == writes
             assert len(model.seen) == 6
     asyncio.run(scenario())

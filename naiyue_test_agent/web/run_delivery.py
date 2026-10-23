@@ -93,7 +93,7 @@ class RunDelivery:
                     if (active is None or active.task.done() or active.run_id != body.origin_run_id):
                         raise WebError('stale_approval')
                     try:
-                        receipt = await self.application.asubmit_subagent_approval(session_id,
+                        receipt = await self.application.runs.submit_subagent_approval(session_id,
                             approval_batch_id=body.approval_batch_id, origin_run_id=body.origin_run_id,
                             decisions=[item.model_dump() for item in body.decisions], remember_approved=body.remember_approved)
                     except ValueError:
@@ -125,7 +125,7 @@ class RunDelivery:
                 job.conversation_revision = (body.expected_conversation_revision + 1 if regenerate else
                     (prepared or {}).get('conversation_revision', conversation_revision))
                 job.tool_states = states
-                job.unsubscribe = self.application.subscribe_events(job.observe, session_id=session_id)
+                job.unsubscribe = self.application.observability.subscribe(job.observe, session_id=session_id)
                 self.pending_receipts[key] = (fingerprint, job)
                 self.active_by_session[session_id] = job
                 job.task = asyncio.create_task(self._produce(job, body, receipt_key=key, prepared=prepared, compact=compact, regenerate=regenerate))
@@ -147,21 +147,21 @@ class RunDelivery:
     async def _produce(self, job, body, *, receipt_key, prepared=None, compact=False, regenerate=False):
         try:
             if regenerate:
-                result = await self.application.aregenerate_last_reply(job.session_id, **body.model_dump())
+                result = await self.application.runs.regenerate(job.session_id, **body.model_dump())
             elif compact:
-                result = await self.application.acompact_context(job.session_id)
+                result = await self.application.runs.compact(job.session_id)
                 if job.compaction_result is None and result.get('compaction_status') is not None:
                     with job.lock:
                         job.compaction_result = {'status': result['compaction_status'], 'reason': None}
             elif prepared is not None:
                 if prepared.get('stop'):
-                    result = await self.application.astop_tool_approval(job.session_id,
+                    result = await self.application.runs.stop_approval(job.session_id,
                         approval_batch_id=body.approval_batch_id, origin_run_id=body.origin_run_id)
                 else:
-                    result = await self.application.aresume_tool_approval(job.session_id, prepared['decisions'],
+                    result = await self.application.runs.resume_approval(job.session_id, prepared['decisions'],
                         remember_approved=prepared['remember_approved'])
             else:
-                result = await self.application.arun(job.session_id,
+                result = await self.application.runs.start(job.session_id,
                     [HumanMessage(content=body.text, id=body.request_id)],
                     **({'expected_conversation_revision': body.expected_conversation_revision}
                        if body.expected_conversation_revision is not None else {}))
@@ -219,14 +219,14 @@ class RunDelivery:
                 if body.kind == 'stop':
                     options = {key: value for key, value in (('agent_run_id', body.agent_run_id),
                         ('approval_batch_id', body.approval_batch_id)) if value is not None}
-                    retained = self.application.request_stop(job.session_id, run_id=run_id, agent_path=body.agent_path, **options)
+                    retained = self.application.runs.stop(job.session_id, run_id=run_id, agent_path=body.agent_path, **options)
                     if body.agent_path == 'root':
                         with job.lock:
                             job.retained = list(retained)
                             if job.status == 'running':
                                 job.stop_requested = True
                 else:
-                    method = self.application.steer if body.kind == 'steering' else self.application.follow_up
+                    method = self.application.runs.steer if body.kind == 'steering' else self.application.runs.follow_up
                     method(job.session_id, body.text)
                     retained = []
             except Exception as error:

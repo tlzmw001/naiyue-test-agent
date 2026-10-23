@@ -39,7 +39,7 @@ def handle_background_command(app, line, emit):
         return
     try:
         if listing:
-            result = app.list_background_tasks(before=parts[1] if len(parts) == 2 else None)
+            result = app.call(lambda api: api.tasks.list(before=parts[1] if len(parts) == 2 else None))
             emit(f'后台活动任务：{result["active_count"]}')
             if not result['items']:
                 emit('没有后台任务')
@@ -49,13 +49,13 @@ def handle_background_command(app, line, emit):
                 emit(f'下一页：:tasks {result["next_before"]}')
             return
         if parts[1] == 'stop':
-            result = app.stop_background_task(parts[2])
+            result = app.call(lambda api: api.tasks.stop(parts[2]))
             _status(result, emit)
             if not result['cleanup_confirmed']:
                 emit('记忆整理收尾尚未确认，请人工核对；任务记录仍保留。' if result.get('kind') == 'memory'
                     else '进程清理尚未确认，请人工核对；任务记录仍保留。')
         else:
-            result = app.background_task_output(parts[2])
+            result = app.call(lambda api: api.tasks.output(parts[2]))
             _status(result, emit)
             emit(_text(result['output']))
             if result['truncated']:

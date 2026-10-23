@@ -121,7 +121,7 @@ def _worker(args):
                 def event(value):
                     if value.event_type == 'tool_call_finished':
                         _record(root, {'kind': 'tool', 'name': value.data.tool_name, 'outcome': value.data.outcome})
-                unsubscribe = server.state.service.application.subscribe_events(event)
+                unsubscribe = server.state.service.application.observability.subscribe(event)
                 try:
                     yield
                 finally:

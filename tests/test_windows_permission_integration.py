@@ -50,14 +50,14 @@ async def test_extended_windows_target_denied_before_all_file_tool_execution(mon
     options = dict(tools=[spec], settings=settings, system_prompt='', response_format=None)
     async def scenario():
         app = await build_async_local_application('synthetic', **options)
-        sid = await app.acreate_workspace_session('A', tmp_path)
+        sid = await app.sessions.create_workspace('A', tmp_path)
         events = []
-        app.subscribe_events(events.append)
+        app.observability.subscribe(events.append)
         try:
-            result = await app.arun(sid, [('user', 'operate')])
+            result = await app.runs.start(sid, [('user', 'operate')])
             assert len(prepared) == 1
-            config = {'configurable': {'thread_id': app._sessions.require(sid).get_thread_id()}}
-            snapshots = ([item async for item in app._agent.aget_state_history(config)])
+            config = {'configurable': {'thread_id': app.sessions._sessions.require(sid).get_thread_id()}}
+            snapshots = ([item async for item in app.runs._agent.aget_state_history(config)])
             batches = [item.values['tool_execution']['calls'] for item in snapshots
                        if item.values.get('tool_execution', {}).get('calls')]
             assert batches, 'prepared permission facts must be checkpointed'

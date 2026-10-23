@@ -24,15 +24,15 @@ def test_close_reopen_preserves_session_thread_and_history(monkeypatch, tmp_path
     async def scenario():
         path = tmp_path / 'sessions.sqlite'
         async with factory(monkeypatch, path, StreamingToolModel(replies=[AIMessage(content='first')])) as app:
-            session = await app.acreate_session('A')
-            await app.arun(session, [('user', 'one')])
-            first = (await app.alist_sessions())[0]
+            session = await app.sessions.create('A')
+            await app.runs.start(session, [('user', 'one')])
+            first = (await app.sessions.list())[0]
             assert first['state'] == 'ready'
         async with factory(monkeypatch, path, StreamingToolModel(replies=[AIMessage(content='second')])) as app:
-            assert await app.arestore_session(session) == session
-            assert [m.content for m in await app.aget_messages(session)] == ['one', 'first']
-            result = await app.arun(session, [('user', 'two')])
-            second = (await app.alist_sessions())[0]
+            assert await app.sessions.restore(session) == session
+            assert [m.content for m in await app.history.messages(session)] == ['one', 'first']
+            result = await app.runs.start(session, [('user', 'two')])
+            second = (await app.sessions.list())[0]
             assert [m.content for m in result['messages']] == ['one', 'first', 'two', 'second']
             assert first['thread_id'] == second['thread_id']
             assert first['run_id'] != second['run_id']
@@ -49,18 +49,18 @@ def test_failed_run_keeps_confirmed_checkpoint_and_blocks_restart(monkeypatch, t
         error = RuntimeError('PRIVATE')
         chosen = StreamingToolModel(replies=[AIMessage(content='first'), error])
         async with factory(monkeypatch, path, chosen) as app:
-            session = await app.acreate_session('A')
-            await app.arun(session, [('user', 'one')])
-            first = (await app.alist_sessions())[0]
+            session = await app.sessions.create('A')
+            await app.runs.start(session, [('user', 'one')])
+            first = (await app.sessions.list())[0]
             with pytest.raises(RuntimeError) as caught:
-                await app.arun(session, [('user', 'two')])
+                await app.runs.start(session, [('user', 'two')])
             assert caught.value is error
-            failed = (await app.alist_sessions())[0]
+            failed = (await app.sessions.list())[0]
             assert failed['state'] == 'failed' and failed['checkpoint_id'] == first['checkpoint_id']
-            assert not app._sessions.require(session).describe_session()['busy']
+            assert not app.sessions._sessions.require(session).describe_session()['busy']
         async with factory(monkeypatch, path, StreamingToolModel(replies=[])) as app:
             with pytest.raises(SessionPersistenceError, match='session_recovery_blocked'):
-                await app.arestore_session(session)
+                await app.sessions.restore(session)
     asyncio.run(scenario())
 
 
@@ -68,20 +68,20 @@ def test_save_failure_never_publishes_completed(monkeypatch, tmp_path):
     async def scenario():
         async with factory(monkeypatch, tmp_path / 'sessions.sqlite',
                            StreamingToolModel(replies=[AIMessage(content='answer')])) as app:
-            session = await app.acreate_session('A')
+            session = await app.sessions.create('A')
             events = []
-            app.subscribe_events(events.append)
+            app.observability.subscribe(events.append)
 
             def fail(*args, **kwargs):
                 raise SessionPersistenceError('synthetic_save_failure')
 
-            monkeypatch.setattr(app._storage.runs, 'finish_run', fail)
+            monkeypatch.setattr(app.sessions._persistence.storage.runs, 'finish_run', fail)
             with pytest.raises(SessionPersistenceError, match='session_save_unconfirmed'):
-                await app.arun(session, [('user', 'one')])
+                await app.runs.start(session, [('user', 'one')])
             assert events[-1].event_type == 'run_finished' and events[-1].data.status == 'failed'
             assert not any(e.event_type == 'run_finished' and e.data.status == 'completed' for e in events)
-            assert not app._sessions.require(session).describe_session()['busy']
-            assert (await app.alist_sessions())[0]['state'] == 'running'
+            assert not app.sessions._sessions.require(session).describe_session()['busy']
+            assert (await app.sessions.list())[0]['state'] == 'running'
     asyncio.run(scenario())
 
 
@@ -91,10 +91,10 @@ def test_metadata_commit_wait_keeps_loop_responsive_and_busy(monkeypatch, tmp_pa
         loop = asyncio.get_running_loop()
         async with factory(monkeypatch, tmp_path / 'sessions.sqlite',
                            StreamingToolModel(replies=[AIMessage(content='answer')])) as app:
-            session = await app.acreate_session('A')
+            session = await app.sessions.create('A')
             events = []
-            app.subscribe_events(events.append)
-            storage = app._storage
+            app.observability.subscribe(events.append)
+            storage = app.sessions._persistence.storage
             original = storage.runs.finish_run
 
             def commit(*args, **kwargs):
@@ -103,10 +103,10 @@ def test_metadata_commit_wait_keeps_loop_responsive_and_busy(monkeypatch, tmp_pa
                 return original(*args, **kwargs)
 
             monkeypatch.setattr(storage.runs, 'finish_run', commit)
-            task = asyncio.create_task(app.arun(session, [('user', 'one')]))
+            task = asyncio.create_task(app.runs.start(session, [('user', 'one')]))
             try:
                 await asyncio.wait_for(entered.wait(), 5)
-                assert not task.done() and app._sessions.require(session).describe_session()['busy']
+                assert not task.done() and app.sessions._sessions.require(session).describe_session()['busy']
                 assert not any(e.event_type == 'run_finished' for e in events)
                 release.set()
                 await task
@@ -124,7 +124,7 @@ def test_close_failure_does_not_replace_body_exception(monkeypatch, tmp_path, ca
             async with factory(monkeypatch, tmp_path / 'sessions.sqlite', StreamingToolModel(replies=[])) as app:
                 async def close_models():
                     raise closing
-                monkeypatch.setattr(app._catalog, 'aclose', close_models)
+                monkeypatch.setattr(app.models._catalog, 'aclose', close_models)
                 raise original
         assert caught.value is original
         assert 'PRIVATE' not in caplog.text

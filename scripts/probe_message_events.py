@@ -49,9 +49,12 @@ async def _async_worker(args):
                 assert any(line.strip() == 'CLI_BEFORE_TOOL' for line in displayed)
             executions.append(True)
             if with_control:
-                holder['app'].steer(holder['session'],
-                    'The requested tool has returned. Do not call more tools. '
+                text = ('The requested tool has returned. Do not call more tools. '
                     'Reply with only the exact value returned by read_probe_value.')
+                if with_cli:
+                    holder['app'].call(lambda api: api.runs.steer(holder['session'], text))
+                else:
+                    holder['app'].runs.steer(holder['session'], text)
             return expected
 
         async with guard_application_catalog(budget):
@@ -62,27 +65,32 @@ async def _async_worker(args):
                 # The CLI bridge owns another loop; this caller never runs on it.
                 app = AsyncCliApplication(args.config, **options)
                 resources.callback(app.close)
-                session = app.create_session(args.model_id or app.default_model_id)
+                session = app.call(lambda api: api.sessions.create(args.model_id or api.models.default_id))
             else:
                 app = await build_async_local_application(args.config, **options)
                 resources.push_async_callback(app.aclose)
-                session = await app.acreate_session(args.model_id or app.default_model_id)
-            app.subscribe_events(events.append)
+                session = await app.sessions.create(args.model_id or app.models.default_id)
+            if with_cli:
+                app.call(lambda api: api.observability.subscribe(events.append))
+            else:
+                app.observability.subscribe(events.append)
             holder.update(app=app, session=session)
             prompt = 'Call read_probe_value exactly once. Reply only with the exact value returned by it.'
             if with_cli:
                 from naiyue_test_agent.cli.chat import _run_and_print
                 from naiyue_test_agent.cli.cli_display import CliEventDisplay
                 view = CliEventDisplay(session, writer=displayed.append)
-                unsubscribe = app.subscribe_events(view)
-                original_run = app.run
+                unsubscribe = app.call(lambda api: api.observability.subscribe(view))
+                original_call = app.call
 
-                def capture_result(*args, **kwargs):
-                    holder['result'] = original_run(*args, **kwargs)
-                    return holder['result']
+                def capture_result(action):
+                    value = original_call(action)
+                    if isinstance(value, dict) and 'messages' in value:
+                        holder['result'] = value
+                    return value
 
                 try:
-                    with patch.object(app, 'run', capture_result):
+                    with patch.object(app, 'call', capture_result):
                         _run_and_print(app, session,
                             'In the assistant message containing the tool call, write exactly CLI_BEFORE_TOOL as text. '
                             + prompt, display=view)
@@ -94,7 +102,7 @@ async def _async_worker(args):
                 assert displayed.count('本次运行完成') == 1
                 assert '工具 read_probe_value：处理完成' in displayed
             else:
-                result = await app.arun(session, [('user', prompt)])
+                result = await app.runs.start(session, [('user', prompt)])
         messages = result['messages']
         snapshots = [e.data for e in events if e.event_type == 'message_completed']
         rows = [json.loads(data.snapshot_json) for data in snapshots]

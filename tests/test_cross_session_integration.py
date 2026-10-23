@@ -48,7 +48,7 @@ async def test_root_child_approvals_capacity_and_concurrent_save_reopen(monkeypa
         def observe(event):
             if event.session_id == a and event.source and event.event_type == 'approval_requested':
                 child_approval.set()
-        unsubscribe = backend.subscribe_events(observe)
+        unsubscribe = backend.observability.subscribe(observe)
         try:
             rb = (await client.post(f'/api/sessions/{b}/runs', json=request(b))).json()['run_id']
             await asyncio.wait_for(entered_b.wait(), 5)
@@ -81,33 +81,33 @@ async def test_root_child_approvals_capacity_and_concurrent_save_reopen(monkeypa
             assert set(delivery.active_by_session) == {a, b}
             # No room for D, including no persistence/model/tool effects.
             assert (await client.post(f'/api/sessions/{d}/runs', json=request(d))).status_code == 409
-            assert d not in model.requests and backend._storage.sessions.get(d)['run_id'] is None
-            checkpoint = await backend._agent.aget_state({'configurable': {
-                'thread_id': backend._sessions.require(d).get_thread_id()}})
+            assert d not in model.requests and backend.sessions._persistence.storage.sessions.get(d)['run_id'] is None
+            checkpoint = await backend.runs._agent.aget_state({'configurable': {
+                'thread_id': backend.sessions._sessions.require(d).get_thread_id()}})
             assert not checkpoint.values
-            finish = backend._storage.runs.finish_run
+            finish = backend.sessions._persistence.storage.runs.finish_run
             def hold(sid, *args, **kwargs):
                 if sid == a:
                     loop.call_soon_threadsafe(saved.set)
                     assert release_save.wait(10)
                 return finish(sid, *args, **kwargs)
-            monkeypatch.setattr(backend._storage.runs, 'finish_run', hold)
+            monkeypatch.setattr(backend.sessions._persistence.storage.runs, 'finish_run', hold)
             child_body = approval_request(child_batch, ['approve'])
             approved = await client.post(f'/api/sessions/{a}/approvals', json=child_body)
             assert approved.status_code == 202 and approved.json()['run_id'] == resumed_id
             await asyncio.wait_for(saved.wait(), 5)
-            assert backend._sessions.require(a).describe_session()['busy']
-            assert not backend._sessions._sessions[a]._run.controls_open
+            assert backend.sessions._sessions.require(a).describe_session()['busy']
+            assert not backend.sessions._sessions._sessions[a]._run.controls_open
             release_b.set()
             await delivery.wait(rb)
-            assert backend._storage.sessions.get(b)['state'] == 'ready'
-            assert set(backend._persistence._active) == {a}
+            assert backend.sessions._persistence.storage.sessions.get(b)['state'] == 'ready'
+            assert set(backend.sessions._persistence._active) == {a}
             assert not delivery.get(resumed_id).task.done()
             release_save.set()
             await delivery.wait(resumed_id)
             assert (await client.post(f'/api/sessions/{a}/approvals', json=child_body)).json() == approved.json()
             assert (await client.post(f'/api/sessions/{a}/approvals', json=approval)).json() == resumed.json()
-            assert delivery.active_by_session == {} and backend._operations == {}
+            assert delivery.active_by_session == {} and backend._lifetime._operations == {}
             assert len(model.requests[a]) == 3 and len(model.requests['child-A']) == 2
             assert len(model.requests[b]) == len(model.requests[c]) == 1
             for sid, rid in ((a, resumed_id), (b, rb), (c, rc)):

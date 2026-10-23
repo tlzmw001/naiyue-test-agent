@@ -37,7 +37,7 @@ async def build_application(*args, **kwargs):
 
 async def await_diagnostics_idle(app):
     """Quiesce optional IO before attributing a database snapshot to a read."""
-    sink = app._diagnostics
+    sink = app.observability._diagnostics
     async def idle():
         while True:
             with sink._lock:

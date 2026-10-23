@@ -49,7 +49,7 @@ def test_other_workspace_and_stale_order_cannot_change_sessions(monkeypatch, tmp
         root, other = tmp_path / 'one', tmp_path / 'two'
         root.mkdir(); other.mkdir()
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]), workspace_root=root) as (client, web):
-            foreign = await web.state.service.application.acreate_workspace_session('A', other)
+            foreign = await web.state.service.application.sessions.create_workspace('A', other)
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             assert (await client.patch(f'/api/sessions/{foreign}/presentation', json={'title': 'hidden'})).status_code == 404
             assert (await client.delete(f'/api/sessions/{foreign}')).status_code == 404
@@ -69,7 +69,7 @@ def test_delete_removes_all_checkpoints_and_delivery_without_touching_other_sess
             sid, kept = [(await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id'] for _ in range(2)]
             run = (await client.post(f'/api/sessions/{sid}/runs', json=request('hello'))).json()['run_id']
             await web.state.delivery.wait(run)
-            store = web.state.service.application._storage
+            store = web.state.service.application.sessions._persistence.storage
             thread = store.sessions.get(sid)['thread_id']
             assert store.database.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (thread,)).fetchone()[0] > 0
             response = await client.delete(f'/api/sessions/{sid}')
@@ -77,7 +77,7 @@ def test_delete_removes_all_checkpoints_and_delivery_without_touching_other_sess
             assert [row['session_id'] for row in (await client.get('/api/sessions')).json()] == [kept]
             assert (await client.get(f'/api/sessions/{sid}')).status_code == 404
             assert (await client.get(f'/api/runs/{run}')).status_code == 404
-            assert not web.state.service.application.has_session(sid)
+            assert not web.state.service.application.sessions.is_loaded(sid)
             assert store.database.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (thread,)).fetchone()[0] == 0
             assert store.database.connection.execute('SELECT count(*) FROM writes WHERE thread_id=?', (thread,)).fetchone()[0] == 0
             assert not any(key[0] == sid for key in web.state.delivery.receipts)
@@ -119,22 +119,22 @@ def test_delete_includes_child_history_removed_from_latest_parent_checkpoint(mon
             AIMessage(content='child report'), AIMessage(content='root done')])
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
             app = web.state.service.application
-            await app.aregister_subagent(SubAgentSpec(name='tester', description='Inspect a task.', system_prompt='Inspect.', tool_names=()))
+            await app.subagents.register(SubAgentSpec(name='tester', description='Inspect a task.', system_prompt='Inspect.', tool_names=()))
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             await client.patch(f'/api/sessions/{sid}/tools', json={'active_tools': ['subagent']})
             run = (await client.post(f'/api/sessions/{sid}/runs', json=request('delegate'))).json()['run_id']
             await web.state.delivery.wait(run)
-            child, = await app.aget_subagents(sid)
+            child, = await app.history.subagents(sid)
             child_thread = f'subagent:{child["agent_id"]}'
-            store = app._storage
+            store = app.sessions._persistence.storage
             assert store.database.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (child_thread,)).fetchone()[0] > 0
             thread = store.sessions.get(sid)['thread_id']
-            await app._agent.aupdate_state({'configurable': {'thread_id': thread}}, {'messages': [
+            await app.runs._agent.aupdate_state({'configurable': {'thread_id': thread}}, {'messages': [
                 RemoveMessage(id=REMOVE_ALL_MESSAGES), HumanMessage(content='summary'), AIMessage(content='compacted')]}, as_node='model')
-            assert not any(getattr(message, 'tool_calls', []) for message in await app.aget_messages(sid))
-            assert await app.aget_subagents(sid) == [child]
+            assert not any(getattr(message, 'tool_calls', []) for message in await app.history.messages(sid))
+            assert await app.history.subagents(sid) == [child]
             # The prompt no longer references the child; the persisted registry still owns it.
-            for owner in app._sessions._sessions.values():
+            for owner in app.sessions._sessions._sessions.values():
                 assert owner._run is None
             assert (await client.delete(f'/api/sessions/{sid}')).status_code == 200
             assert store.database.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (child_thread,)).fetchone()[0] == 0
@@ -179,7 +179,7 @@ def test_restore_holds_ownership_until_session_install_before_deletion(monkeypat
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
             app = web.state.service.application
             entered, release = asyncio.Event(), asyncio.Event()
-            original = app._agent.aget_state
+            original = app.runs._agent.aget_state
 
             async def pause(*args, **kwargs):
                 snapshot = await original(*args, **kwargs)
@@ -187,7 +187,7 @@ def test_restore_holds_ownership_until_session_install_before_deletion(monkeypat
                 await release.wait()
                 return snapshot
 
-            monkeypatch.setattr(app._agent, 'aget_state', pause)
+            monkeypatch.setattr(app.runs._agent, 'aget_state', pause)
             reading = asyncio.create_task(client.post(f'/api/sessions/{sid}/prepare'))
             try:
                 await asyncio.wait_for(entered.wait(), 5)
@@ -198,7 +198,7 @@ def test_restore_holds_ownership_until_session_install_before_deletion(monkeypat
                 release.set()
                 await reading
             assert (await client.delete(f'/api/sessions/{sid}')).status_code == 200
-            assert not app.has_session(sid)
+            assert not app.sessions.is_loaded(sid)
     asyncio.run(scenario())
 
 
@@ -208,7 +208,7 @@ def test_cancelled_delete_still_revokes_completed_run_cache(monkeypatch, tmp_pat
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             run = (await client.post(f'/api/sessions/{sid}/runs', json=request('hello'))).json()['run_id']
             await web.state.delivery.wait(run)
-            store = web.state.service.application._storage
+            store = web.state.service.application.sessions._persistence.storage
             loop, committed, release = asyncio.get_running_loop(), asyncio.Event(), Event()
             original = store.runs.delete
 
@@ -276,7 +276,7 @@ def test_delete_failure_rolls_back_metadata_and_history(monkeypatch, tmp_path, c
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             run = (await client.post(f'/api/sessions/{sid}/runs', json=request('hello'))).json()['run_id']
             await web.state.delivery.wait(run)
-            store = web.state.service.application._storage
+            store = web.state.service.application.sessions._persistence.storage
             store.database.connection.execute("CREATE TRIGGER fail_delete BEFORE DELETE ON naiyue_sessions BEGIN SELECT RAISE(ABORT,'PRIVATE_DETAIL'); END")
             response = await client.delete(f'/api/sessions/{sid}')
             assert response.status_code == 409 and response.json()['error']['code'] == 'session_delete_unconfirmed'

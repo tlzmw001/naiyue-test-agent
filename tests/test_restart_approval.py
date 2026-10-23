@@ -46,30 +46,30 @@ async def test_reopened_mixed_sequential_batch_waits_then_runs_once(monkeypatch,
 
     async def scenario():
         async with opened([first]) as (app, _):
-            sid = await app.acreate_workspace_session('A', root)
-            await app.arun(sid, [('user', 'read note and write the external result')])
-            row = app._storage.sessions.get(sid)
+            sid = await app.sessions.create_workspace('A', root)
+            await app.runs.start(sid, [('user', 'read note and write the external result')])
+            row = app.sessions._persistence.storage.sessions.get(sid)
             config = {'configurable': {'thread_id': row['thread_id']}}
-            original = await app._agent.aget_state(config)
+            original = await app.runs._agent.aget_state(config)
         assert not target.exists()
         async with opened([AIMessage(content='done')]) as (app, model):
             events = []
-            app.subscribe_events(events.append)
-            raw_before = (await app._agent.checkpointer.aget_tuple(original.config))
-            history = await app.aget_session_history(sid)
+            app.observability.subscribe(events.append)
+            raw_before = (await app.runs._agent.checkpointer.aget_tuple(original.config))
+            history = await app.history.session(sid)
             assert history['recovery']['actions'] == ['restore_approval', 'continue']
             kwargs = dict(checkpoint_id=history['checkpoint_id'], action='restore_approval')
-            recovered = await app.arecover_session(sid, **kwargs)
+            recovered = await app.sessions.recover(sid, **kwargs)
             assert recovered['state'] == 'interrupted' and recovered['checkpoint_id'] == history['checkpoint_id']
-            memory = app._sessions._sessions[sid]
+            memory = app.sessions._sessions._sessions[sid]
             assert memory.resolve_permission_context()['session_allow'] == [] and memory.snapshot_for_run()['pending_turn'] is None and not memory.is_busy()
             assert memory.snapshot_for_run()['pending']['requested_run_id'] == row['run_id']
-            assert app.pending_tool_approvals(sid)[0]['tool_call_id'] == 'write-call'
+            assert app.runs.pending_tools(sid)[0]['tool_call_id'] == 'write-call'
             assert not target.exists() and events == []
             assert (model.seen == []) if streaming_model else model.i == 0
-            raw_after = (await app._agent.checkpointer.aget_tuple(original.config))
+            raw_after = (await app.runs._agent.checkpointer.aget_tuple(original.config))
             assert raw_before == raw_after
-            result = (await app.aresume_tool_approval(sid, [decision]))
+            result = (await app.runs.resume_approval(sid, [decision]))
             results = [m for m in result['messages'] if isinstance(m, ToolMessage)]
             # Official HITL writes rejected results before dispatching allowed calls.
             assert [m.tool_call_id for m in results] == (['read-call', 'write-call'] if decision == 'approve'
@@ -84,8 +84,8 @@ async def test_reopened_mixed_sequential_batch_waits_then_runs_once(monkeypatch,
             assert [e.data.kind for e in turns] == ['approval_retry', 'model']
             starts = [e.data.tool_call_id for e in events if e.event_type == 'tool_call_started']
             assert starts.count('read-call') == 1 and starts.count('write-call') == 1
-            assert not app.pending_tool_approvals(sid)
-            assert app._storage.sessions.get(sid)['state'] == 'ready'
+            assert not app.runs.pending_tools(sid)
+            assert app.sessions._persistence.storage.sessions.get(sid)['state'] == 'ready'
     await scenario()
 
 
@@ -96,7 +96,7 @@ async def test_revalidation_failure_has_no_writes_or_installed_session(monkeypat
     settings = AppSettings.model_validate({'permissions': {'deny': [{'tool': 'read'}]}}) if change == 'deny' else AppSettings()
     async with open_async_persistent_application('unused', database_path=tmp_path / 'approval.sqlite', tools=[create_session_read_tool()],
             system_prompt='', response_format=None, settings=settings) as app:
-        storage = app._storage
+        storage = app.sessions._persistence.storage
         if change == 'run':
             storage.database.connection.execute('UPDATE naiyue_sessions SET run_id=NULL WHERE session_id=?', (row['session_id'],))
             storage.database.connection.commit()
@@ -114,28 +114,28 @@ async def test_revalidation_failure_has_no_writes_or_installed_session(monkeypat
                 snapshot.values['tool_execution']['session_allow'] = [{'previous': 'temporary scope'}]
             async def snapshot_read(*_a):
                 return snapshot
-            monkeypatch.setattr(app._agent, 'aget_state', snapshot_read)
+            monkeypatch.setattr(app.runs._agent, 'aget_state', snapshot_read)
         if change == 'target':
             (tmp_path / 'outside').symlink_to(tmp_path / 'different')
         before = database_facts(storage)
         with pytest.raises(SessionPersistenceError, match='approval_restore_unavailable|session_recovery_blocked'):
-            await app.arecover_session(row['session_id'], checkpoint_id=original.config['configurable']['checkpoint_id'], action='restore_approval')
-        assert database_facts(storage) == before and not app._sessions.has_session(row['session_id'])
+            await app.sessions.recover(row['session_id'], checkpoint_id=original.config['configurable']['checkpoint_id'], action='restore_approval')
+        assert database_facts(storage) == before and not app.sessions._sessions.has_session(row['session_id'])
 
 
 @async_test
 async def test_failed_approval_metadata_save_can_be_retried_without_modifying_graph(monkeypatch, tmp_path):
     row, original = await approval_snapshot(monkeypatch, tmp_path)
     async with build(monkeypatch, tmp_path / 'approval.sqlite', tools=[create_session_read_tool()]) as app:
-        storage = app._storage
-        raw = await app._agent.checkpointer.aget_tuple(original.config)
+        storage = app.sessions._persistence.storage
+        raw = await app.runs._agent.checkpointer.aget_tuple(original.config)
         with monkeypatch.context() as patch:
             patch.setattr(storage.runs, 'finish_run', lambda *_a: (_ for _ in ()).throw(OSError('PRIVATE_SQL')))
             with pytest.raises(SessionPersistenceError, match='session_save_unconfirmed'):
-                await app.arecover_session(row['session_id'], checkpoint_id=original.config['configurable']['checkpoint_id'], action='restore_approval')
-        assert not app._sessions.has_session(row['session_id']) and await app._agent.checkpointer.aget_tuple(original.config) == raw
-        await app.arecover_session(row['session_id'], checkpoint_id=original.config['configurable']['checkpoint_id'], action='restore_approval')
-        assert app.pending_tool_approvals(row['session_id'])
+                await app.sessions.recover(row['session_id'], checkpoint_id=original.config['configurable']['checkpoint_id'], action='restore_approval')
+        assert not app.sessions._sessions.has_session(row['session_id']) and await app.runs._agent.checkpointer.aget_tuple(original.config) == raw
+        await app.sessions.recover(row['session_id'], checkpoint_id=original.config['configurable']['checkpoint_id'], action='restore_approval')
+        assert app.runs.pending_tools(row['session_id'])
 
 
 @pytest.mark.parametrize('source', ['config_allow', 'session_allow', 'auto'])
@@ -158,12 +158,12 @@ async def test_old_allow_must_be_proven_by_current_local_policy_without_auto(mon
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     async with open_async_persistent_application('unused', database_path=path, tools=tools, settings=settings,
             system_prompt='', response_format=None) as app:
-        storage = app._storage
-        sid = await app.acreate_workspace_session('A', root)
+        storage = app.sessions._persistence.storage
+        sid = await app.sessions.create_workspace('A', root)
         if source == 'session_allow':
-            call = prepare_permission_call(request.tool_calls[0], app._tool_registry.get('read'),
+            call = prepare_permission_call(request.tool_calls[0], app.tools._tool_registry.get('read'),
                 typed_context(identity=RunIdentity(session_id=sid, execution_root=ExecutionRoot(root) if root is not None else None)), settings.permissions, [])
-            owner, observation_run = app._sessions._admit(sid, 'allow-setup', 'message')
+            owner, observation_run = app.sessions._sessions._admit(sid, 'allow-setup', 'message')
             run_id, observation = observation_run.run_id, observation_run.observation
             owner.remember_approved_rules(observation_run, [remembered_rule(call['subject'])])
             owner._cleanup_run(observation_run)
@@ -172,13 +172,13 @@ async def test_old_allow_must_be_proven_by_current_local_policy_without_auto(mon
             async def review(_self, data, _context):
                 return {'decision': 'allow' if data['current_call']['id'] == 'one' else 'ask', 'source': 'auto_fast'}
             patch.setattr(AutoPermissionReviewer, 'areview', review)
-            await app.arun(sid, [('user', 'inspect both files')])
+            await app.runs.start(sid, [('user', 'inspect both files')])
         row = storage.sessions.get(sid)
-        original = await app._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
+        original = await app.runs._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
         assert [c['decision'] for c in original.values['tool_execution']['calls']] == ['allow', 'ask']
     async with open_async_persistent_application('unused', database_path=path, tools=tools,
             settings=settings if source == 'auto' else AppSettings(), system_prompt='', response_format=None) as app:
-        storage = app._storage
+        storage = app.sessions._persistence.storage
         reached = []
         def forbidden(*_a, **_k):
             reached.append(True)
@@ -187,8 +187,8 @@ async def test_old_allow_must_be_proven_by_current_local_policy_without_auto(mon
         monkeypatch.setattr(AutoPermissionReviewer, 'areview', forbidden)
         before = database_facts(storage)
         with pytest.raises(SessionPersistenceError, match='approval_restore_unavailable'):
-            await app.arecover_session(sid, checkpoint_id=original.config['configurable']['checkpoint_id'], action='restore_approval')
-        assert reached == [] and database_facts(storage) == before and not app._sessions.has_session(sid)
+            await app.sessions.recover(sid, checkpoint_id=original.config['configurable']['checkpoint_id'], action='restore_approval')
+        assert reached == [] and database_facts(storage) == before and not app.sessions._sessions.has_session(sid)
 
 
 @pytest.mark.parametrize('phase', ['before_terminal_metadata', 'after_restore_metadata'])
@@ -220,19 +220,19 @@ async def test_real_process_exit_keeps_pre_tool_approval_recoverable(monkeypatch
                 tools=[create_session_read_tool()], system_prompt='', response_format=None)
         async def scenario():
             async with opened() as app:
-                sid = await app.acreate_workspace_session('A', path.parent / 'work')
+                sid = await app.sessions.create_workspace('A', path.parent / 'work')
                 if phase == 'before_terminal_metadata':
-                    app._storage.runs.finish_run = lambda *_a, **_k: os._exit(91)
-                await app.arun(sid, [('user', 'read external file')])
+                    app.sessions._persistence.storage.runs.finish_run = lambda *_a, **_k: os._exit(91)
+                await app.runs.start(sid, [('user', 'read external file')])
             async with opened() as app:
-                storage = app._storage
+                storage = app.sessions._persistence.storage
                 original = storage.runs.finish_run
                 def saved_then_exit(*args):
                     original(*args)
                     os._exit(91)
                 storage.runs.finish_run = saved_then_exit
-                history = await app.aget_session_history(sid)
-                await app.arecover_session(sid, checkpoint_id=history['checkpoint_id'], action='restore_approval')
+                history = await app.history.session(sid)
+                await app.sessions.recover(sid, checkpoint_id=history['checkpoint_id'], action='restore_approval')
         asyncio.run(scenario())
     ''')
     from pathlib import Path
@@ -240,14 +240,14 @@ async def test_real_process_exit_keeps_pre_tool_approval_recoverable(monkeypatch
                            capture_output=True, timeout=20)
     assert child.returncode == 91, child.stderr.decode()
     async with build(monkeypatch, path, tools=[create_session_read_tool()]) as app:
-        storage = app._storage
+        storage = app.sessions._persistence.storage
         row = storage.sessions.list_sessions()[0]
         assert row['state'] == ('running' if phase == 'before_terminal_metadata' else 'interrupted')
-        history = await app.aget_session_history(row['session_id'])
+        history = await app.history.session(row['session_id'])
         assert history['recovery']['kind'] == 'pending_approval'
-        await app.arecover_session(row['session_id'], checkpoint_id=history['checkpoint_id'], action='restore_approval')
-        snapshot = await app._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
+        await app.sessions.recover(row['session_id'], checkpoint_id=history['checkpoint_id'], action='restore_approval')
+        snapshot = await app.runs._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
         assert not any(isinstance(m, ToolMessage) for m in snapshot.values['messages'])
-        result = await app.aresume_tool_approval(row['session_id'], ['approve'])
+        result = await app.runs.resume_approval(row['session_id'], ['approve'])
         results = [m for m in result['messages'] if isinstance(m, ToolMessage)]
         assert len(results) == 1 and results[0].content == 'approved after restart'

@@ -60,14 +60,14 @@ def test_real_file_stop_pairs_error_and_saves_ready_checkpoint(monkeypatch, tmp_
         database = tmp_path / 'sessions.sqlite'
         async with open_async_persistent_application('unused', database_path=database,
                 tools=tools, system_prompt='', response_format=None) as app:
-            sid = await app.acreate_workspace_session('A', root)
+            sid = await app.sessions.create_workspace('A', root)
             events = []
-            app.subscribe_events(events.append)
-            task = asyncio.create_task(app.arun(sid, [('user', 'operate on the file')]))
+            app.observability.subscribe(events.append)
+            task = asyncio.create_task(app.runs.start(sid, [('user', 'operate on the file')]))
             try:
                 assert await asyncio.to_thread(entered.wait, 5)
-                app.request_stop(sid)
-                assert app._sessions.require(sid).describe_session()['busy'] and not task.done()
+                app.runs.stop(sid)
+                assert app.sessions._sessions.require(sid).describe_session()['busy'] and not task.done()
                 release.set()
                 result = await asyncio.wait_for(task, 5)
                 outputs = {m.tool_call_id: m for m in result['messages'] if isinstance(m, ToolMessage)}
@@ -78,10 +78,10 @@ def test_real_file_stop_pairs_error_and_saves_ready_checkpoint(monkeypatch, tmp_
                 assert result['run_stopped'] and len(chosen.seen) == 1
                 assert target.read_bytes() == b'PRIVATE_original' and not (root / 'later.txt').exists()
                 assert not list(root.glob('.naiyue-write-*'))
-                assert not app._sessions.require(sid).describe_session()['busy']
-                row = (await app.alist_sessions())[0]
+                assert not app.sessions._sessions.require(sid).describe_session()['busy']
+                row = (await app.sessions.list())[0]
                 assert row['state'] == 'ready' and row['last_run_status'] == 'stopped'
-                snapshot = await app._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
+                snapshot = await app.runs._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
                 assert not snapshot.next and not any(t.error for t in snapshot.tasks)
                 assert any(isinstance(m, ToolMessage) and m.tool_call_id == 'file'
                            and m.status == 'error' for m in snapshot.values['messages'])
@@ -94,8 +94,8 @@ def test_real_file_stop_pairs_error_and_saves_ready_checkpoint(monkeypatch, tmp_
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': fresh}))
         async with open_async_persistent_application('unused', database_path=database,
                 tools=tools, system_prompt='', response_format=None) as app:
-            await app.arestore_session(sid)
-            result = await app.arun(sid, [('user', 'continue')])
+            await app.sessions.restore(sid)
+            result = await app.runs.start(sid, [('user', 'continue')])
             assert result['messages'][-1].content == 'continued'
             assert len(fresh.seen) == 1 and any(isinstance(m, ToolMessage)
                 and m.tool_call_id == 'file' and m.status == 'error' for m in fresh.seen[0])

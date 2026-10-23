@@ -45,21 +45,21 @@ def test_reopened_parent_does_not_replay_or_revive_child(monkeypatch, tmp_path, 
         child = MCPChildModel(replies=[])
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
         async with open_async_persistent_application('unused', **options(tmp_path, point)) as app:
-            history = await app.aget_session_history(sid)
+            history = await app.history.session(sid)
             assert history['recovery']['kind'] == 'interrupted_execution'
             assert history['recovery']['actions'] == ['continue']
-            await app.arecover_session(sid, checkpoint_id=history['checkpoint_id'], action='continue')
-            assert app.pending_subagent_approvals(sid) == []
+            await app.sessions.recover(sid, checkpoint_id=history['checkpoint_id'], action='continue')
+            assert app.runs.pending_subagents(sid) == []
             assert root.seen == child.seen == [] and len(calls(path)) == expected
-            messages = await app.aget_messages(sid)
+            messages = await app.history.messages(sid)
             outer, = [m for m in messages if isinstance(m, ToolMessage)]
             assert outer.tool_call_id == 'outer' and outer.status == 'error'
             assert outer.additional_kwargs['naiyue_recovery']['reason'] == 'result_unconfirmed'
             assert 'may already have taken effect' in outer.content
-            result = await app.arun(sid, [('user', 'new communication')])
+            result = await app.runs.start(sid, [('user', 'new communication')])
             assert result['messages'][-1].content == 'new communication only'
             assert child.seen == [] and len(calls(path)) == expected
-            assert app._sessions.child_thread_ids(sid) == ()
+            assert app.sessions._sessions.child_thread_ids(sid) == ()
     asyncio.run(scenario())
 
 
@@ -74,10 +74,10 @@ async def crash(folder, point):
                            on_request=hold_after_effect if point == 'committed' else None)
     application.load_model_catalog = lambda _: ModelCatalog('A', {'A': root, 'B': child})
     async with open_async_persistent_application('unused', **options(folder, point)) as app:
-        sid = await app.acreate_session('A')
-        task = asyncio.create_task(app.arun(sid, [('user', 'child call')]))
+        sid = await app.sessions.create('A')
+        task = asyncio.create_task(app.runs.start(sid, [('user', 'child call')]))
         if point == 'approval':
-            await until(lambda: bool(app.pending_subagent_approvals(sid)) or task.done())
+            await until(lambda: bool(app.runs.pending_subagents(sid)) or task.done())
             assert not task.done() and not calls(folder / 'calls.jsonl')
         else:
             await asyncio.wait_for(entered.wait(), 15)

@@ -30,17 +30,17 @@ async def test_persistent_root_passes_public_sync_to_graph(monkeypatch, tmp_path
     async with factory(monkeypatch, tmp_path / 'state.sqlite',
                        StreamingToolModel(replies=[AIMessage(content='saved')])) as app:
         if workspace:
-            sid = await app.acreate_workspace_session('A', tmp_path)
+            sid = await app.sessions.create_workspace('A', tmp_path)
         else:
-            sid = await app.acreate_session('A')
+            sid = await app.sessions.create('A')
         if path == 'unsupported':
-            original_invoke = app._agent.ainvoke
+            original_invoke = app.runs._agent.ainvoke
             async def invoke(*args, **kwargs):
                 assert kwargs.get('durability') == 'sync'
                 return await original_invoke(*args, **kwargs)
-            monkeypatch.setattr(app._agent, 'ainvoke', invoke)
+            monkeypatch.setattr(app.runs._agent, 'ainvoke', invoke)
         elif path == 'baseline_failure':
-            original_get = app._agent.aget_state
+            original_get = app.runs._agent.aget_state
             reads = 0
             async def get(*args, **kwargs):
                 nonlocal reads
@@ -48,11 +48,11 @@ async def test_persistent_root_passes_public_sync_to_graph(monkeypatch, tmp_path
                 if reads == 1:
                     raise OSError('synthetic baseline failure')
                 return await original_get(*args, **kwargs)
-            monkeypatch.setattr(app._agent, 'aget_state', get)
-        result = await app.arun(sid, [('user', 'run')])
+            monkeypatch.setattr(app.runs._agent, 'aget_state', get)
+        result = await app.runs.start(sid, [('user', 'run')])
         assert result['messages'][-1].content == 'saved'
         assert modes and all(mode == 'sync' for mode in modes)
-        assert (await app.aget_session_status(sid))['state'] == 'ready'
+        assert (await app.sessions.status(sid))['state'] == 'ready'
 
 
 @async_test
@@ -74,10 +74,10 @@ async def test_persistent_approval_resume_passes_public_sync(monkeypatch, tmp_pa
     monkeypatch.setattr(Pregel, 'astream', stream)
     async with open_async_persistent_application('unused', database_path=tmp_path / 'state.sqlite',
             tools=[create_session_read_tool()], system_prompt='', response_format=None) as app:
-        sid = await app.acreate_workspace_session('A', root)
-        pending = await app.arun(sid, [('user', 'read')])
+        sid = await app.sessions.create_workspace('A', root)
+        pending = await app.runs.start(sid, [('user', 'read')])
         assert len(pending['approval_requests']) == 1
-        result = await app.aresume_tool_approval(sid, ['approve'])
+        result = await app.runs.resume_approval(sid, ['approve'])
         assert next(m.content for m in result['messages'] if isinstance(m, ToolMessage)) == 'approved value'
         assert result['messages'][-1].content == 'done'
         assert len(modes) == 2 and modes == ['sync', 'sync']

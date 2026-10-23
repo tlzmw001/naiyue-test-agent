@@ -201,12 +201,12 @@ async def test_registered_artifact_uses_original_tool_and_survives_checkpoint(mo
     async def scenario():
         async with open_async_persistent_application('synthetic.json', database_path=tmp_path / 'async.sqlite',
             tools=[spec], system_prompt='', response_format=None) as app:
-            assert app.get_registered_tools() == (spec,)
-            assert app.get_registered_tools()[0] is spec
-            assert app.get_registered_tools()[0].tool is probe
-            sid = await app.acreate_session('A')
-            await app.arun(sid, [('user', 'run')])
-            return await app.aget_messages(sid)
+            assert app.tools.list() == (spec,)
+            assert app.tools.list()[0] is spec
+            assert app.tools.list()[0].tool is probe
+            sid = await app.sessions.create('A')
+            await app.runs.start(sid, [('user', 'run')])
+            return await app.history.messages(sid)
     messages = await scenario()
     feedback = next(message for message in messages if isinstance(message, ToolMessage))
     assert (feedback.tool_call_id, feedback.content, feedback.artifact) == (

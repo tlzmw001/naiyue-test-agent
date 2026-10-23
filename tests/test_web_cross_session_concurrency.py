@@ -89,8 +89,8 @@ async def test_capacity_rejection_removes_only_its_pending_receipt_and_is_retrya
             delivery, backend = web.state.delivery, web.state.service.application
             assert b not in delivery.active_by_session and (b, body['request_id']) not in delivery.pending_receipts
             assert (b, body['request_id']) not in delivery.receipts and b not in delivery.latest
-            assert b not in model.requests and not backend._sessions.require(b).describe_session()['busy']
-            assert backend._storage.sessions.get(b)['run_id'] is None
+            assert b not in model.requests and not backend.sessions._sessions.require(b).describe_session()['busy']
+            assert backend.sessions._persistence.storage.sessions.get(b)['run_id'] is None
             release.set()
             await delivery.wait(first.json()['run_id'])
             accepted = await client.post(f'/api/sessions/{b}/runs', json=body)
@@ -110,7 +110,7 @@ async def test_start_wait_outside_registration_lock_does_not_block_other_session
     async with web_client(monkeypatch, tmp_path, model) as (client, web):
         a, b = await sessions(client, 2)
         entered, release = gated(model, a)
-        subscriptions = web.state.service.application._sessions._events
+        subscriptions = web.state.service.application.sessions._sessions._events
         original = subscriptions.publisher
         def publisher(sid, rid):
             result = original(sid, rid)
@@ -131,7 +131,7 @@ async def test_start_wait_outside_registration_lock_does_not_block_other_session
             assert not waiting.done() and not duplicate.done() and len(model.requests[a]) == 1
             if observation == 'delayed':
                 job = web.state.delivery.active_by_session[a]
-                state = web.state.service.application._sessions.require(a).describe_session()
+                state = web.state.service.application.sessions._sessions.require(a).describe_session()
                 job.run_id = state['run_id']
                 job._ready(job.run_id)
                 assert (await waiting).json() == (await duplicate).json()

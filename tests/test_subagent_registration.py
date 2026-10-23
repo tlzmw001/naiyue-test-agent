@@ -52,23 +52,23 @@ async def test_registration_preserves_identity_and_app_scope_without_activating_
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     app = await build_application('unused', tools=[definition()], initial_active_tools=[],
                                   system_prompt='', response_format=None, settings=AppSettings())
-    graph = app._agent
-    first, second = await app.acreate_session('A'), await app.acreate_session('A')
+    graph = app.runs._agent
+    first, second = await app.sessions.create('A'), await app.sessions.create('A')
     spec, other = role(), role(name='researcher', tool_names=())
-    assert app.get_registered_subagents() == ()
-    assert await app.aregister_subagent(spec) is None
-    await app.aregister_subagent(other)
-    registered = app.get_registered_subagents()
+    assert app.subagents.list() == ()
+    assert await app.subagents.register(spec) is None
+    await app.subagents.register(other)
+    registered = app.subagents.list()
     assert isinstance(registered, tuple) and registered == (spec, other)
     assert registered[0] is spec
-    assert app.get_active_tools(first) == app.get_active_tools(second) == ()
-    assert await app.aget_messages(first) == await app.aget_messages(second) == []
-    assert app.pending_tool_approvals(first) == app.pending_tool_approvals(second) == []
-    assert app.get_registered_subagents() == registered and app._agent is graph
-    assert model.seen == [] and not app._tasks
+    assert app.sessions.active_tools(first) == app.sessions.active_tools(second) == ()
+    assert await app.history.messages(first) == await app.history.messages(second) == []
+    assert app.runs.pending_tools(first) == app.runs.pending_tools(second) == []
+    assert app.subagents.list() == registered and app.runs._agent is graph
+    assert model.seen == [] and not app._lifetime._tasks
     isolated = await build_application('unused', tools=[], system_prompt='', response_format=None,
                                        settings=AppSettings())
-    assert isolated.get_registered_subagents() == ()
+    assert isolated.subagents.list() == ()
 
 
 @pytest.mark.parametrize('bad, error_type', [
@@ -82,7 +82,7 @@ async def test_failed_registration_keeps_existing_definitions_and_safe_diagnosti
     app = await build_application('unused', tools=[definition()], system_prompt='', response_format=None,
                                   settings=AppSettings())
     original = role()
-    await app.aregister_subagent(original)
+    await app.subagents.register(original)
     invalid = {
         'wrong_type': {'system_prompt': 'PRIVATE_ROLE_PROMPT'},
         'unknown_tool': role(name='bad_tool', tool_names=('missing',)),
@@ -90,14 +90,14 @@ async def test_failed_registration_keeps_existing_definitions_and_safe_diagnosti
         'duplicate': replace(original, description='Changed description'),
     }[bad]
     with pytest.raises(error_type):
-        await app.aregister_subagent(invalid)
-    assert app.get_registered_subagents() == (original,)
-    assert app.get_registered_subagents()[0] is original
+        await app.subagents.register(invalid)
+    assert app.subagents.list() == (original,)
+    assert app.subagents.list()[0] is original
     assert model.seen == []
     assert sum('subagent_registration_failed' in record.getMessage() for record in caplog.records) == 1
     assert 'PRIVATE_ROLE_PROMPT' not in caplog.text
-    await app.aregister_subagent(role(name='corrected', model_id='A', max_model_calls=2))
-    assert [item.name for item in app.get_registered_subagents()] == ['tester', 'corrected']
+    await app.subagents.register(role(name='corrected', model_id='A', max_model_calls=2))
+    assert [item.name for item in app.subagents.list()] == ['tester', 'corrected']
 
 
 @async_test
@@ -107,21 +107,21 @@ async def test_failed_registration_does_not_cancel_active_root_run(monkeypatch, 
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     app = await build_application('unused', tools=[], system_prompt='', response_format=None,
                                   settings=AppSettings())
-    sid = await app.acreate_session('A')
+    sid = await app.sessions.create('A')
     events = []
-    app.subscribe_events(events.append)
-    task = asyncio.create_task(app.arun(sid, [('user', 'root task')]))
+    app.observability.subscribe(events.append)
+    task = asyncio.create_task(app.runs.start(sid, [('user', 'root task')]))
     try:
         await asyncio.wait_for(entered.wait(), 5)
         with pytest.raises(ValueError):
-            await app.aregister_subagent(role(tool_names=('missing',)))
-        assert not task.done() and app._sessions.require(sid).describe_session()['busy']
-        assert app.get_registered_subagents() == ()
-        await app.aregister_subagent(role(tool_names=()))
+            await app.subagents.register(role(tool_names=('missing',)))
+        assert not task.done() and app.sessions._sessions.require(sid).describe_session()['busy']
+        assert app.subagents.list() == ()
+        await app.subagents.register(role(tool_names=()))
         release.set()
         result = await task
         assert [message.content for message in result['messages']] == ['root task', 'done']
-        assert len(model.seen) == 1 and not app.pending_tool_approvals(sid)
+        assert len(model.seen) == 1 and not app.runs.pending_tools(sid)
         assert events[-1].event_type == 'run_finished' and events[-1].data.status == 'completed'
         assert not any(event.event_type == 'tool_call_started' for event in events)
         assert 'PRIVATE_ROLE_PROMPT' not in caplog.text
@@ -140,17 +140,17 @@ async def test_registration_uses_owner_loop_and_rejects_closed_application(monke
 
     async def foreign_loop():
         with pytest.raises(RuntimeError, match='owning event loop'):
-            await app.aregister_subagent(spec)
+            await app.subagents.register(spec)
         with pytest.raises(RuntimeError, match='owning event loop'):
-            app.get_registered_subagents()
+            app.subagents.list()
 
     await asyncio.to_thread(lambda: asyncio.run(foreign_loop()))
-    assert app.get_registered_subagents() == ()
+    assert app.subagents.list() == ()
     await app.aclose()
     with pytest.raises(RuntimeError, match='open'):
-        await app.aregister_subagent(spec)
+        await app.subagents.register(spec)
     with pytest.raises(RuntimeError, match='open'):
-        app.get_registered_subagents()
+        app.subagents.list()
 
 
 def test_cli_registration_and_query_use_existing_event_loop_bridge(monkeypatch):
@@ -160,12 +160,12 @@ def test_cli_registration_and_query_use_existing_event_loop_bridge(monkeypatch):
                                   system_prompt='', response_format=None, settings=AppSettings())
     spec = role()
     try:
-        assert app.register_subagent(spec) is None
-        assert app.get_registered_subagents() == (spec,)
-        assert app.get_registered_subagents()[0] is spec
+        assert app.call(lambda api: api.subagents.register(spec)) is None
+        assert app.call(lambda api: api.subagents.list()) == (spec,)
+        assert app.call(lambda api: api.subagents.list())[0] is spec
         with pytest.raises(ValueError):
-            app.register_subagent(role(tool_names=('missing',)))
-        assert app.get_registered_subagents() == (spec,) and model.seen == []
+            app.call(lambda api: api.subagents.register(role(tool_names=('missing',))))
+        assert app.call(lambda api: api.subagents.list()) == (spec,) and model.seen == []
     finally:
         app.close()
     assert not app._thread.is_alive()

@@ -28,10 +28,10 @@ def test_summary_delta_is_hidden_and_state_operations_confirm(monkeypatch, overf
         chosen = ContextStreamModel(replies=([overflow_error()] if overflow else []) + [AIMessage(content='answer')],
             metadata=model(window=2000 if overflow else 500, reserve=20 if overflow else 450).metadata)
         app = await make_app(monkeypatch, chosen)
-        session = await app.acreate_session('A')
+        session = await app.sessions.create('A')
         events, projection = [], StreamingMessageProjection()
         try:
-            async for event in app.astream_run(session, history()):
+            async for event in app.runs.stream(session, history()):
                 events.append(event)
                 projection(event)
             assert len(chosen.summary_seen) == 1
@@ -42,7 +42,7 @@ def test_summary_delta_is_hidden_and_state_operations_confirm(monkeypatch, overf
             if overflow:
                 recovery = next(e for e in events if e.event_type == 'context_recovery_finished')
                 assert recovery.data.status == 'recovered'
-            snapshots = await app.aget_messages(session)
+            snapshots = await app.history.messages(session)
             assert snapshots[0].additional_kwargs[SUMMARY_MARKER] is True
             assert not any(m.id == 'old-user' for m in snapshots)
             assert any(row['id'] == 'old-user' for row in projection.messages)

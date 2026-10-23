@@ -46,25 +46,25 @@ async def test_root_then_child_approval_keeps_owner_until_required_save(
     entered, release, close_entered = asyncio.Event(), Event(), asyncio.Event()
     loop = asyncio.get_running_loop()
     async with persistent_delegation(monkeypatch, tmp_path / 'state.sqlite', root, child, effects) as app:
-        sid = await app.acreate_workspace_session('A', tmp_path)
-        owner = app._sessions._sessions[sid]
+        sid = await app.sessions.create_workspace('A', tmp_path)
+        owner = app.sessions._sessions._sessions[sid]
         instances = record_instances(monkeypatch, app)
         queue = approval_notifications(monkeypatch, app)
         def observe(event):
             events.append(event)
             if event.event_type == 'run_started' and event.source is None:
                 runs.append(owner._run)
-        app.subscribe_events(observe)
-        pending = await app.arun(sid, [('user', 'check with approval')])
+        app.observability.subscribe(observe)
+        pending = await app.runs.start(sid, [('user', 'check with approval')])
         first, = runs
         assert len(pending['approval_requests']) == 1 and effects == []
         assert owner._run is None and not owner.is_busy()
         assert owner.snapshot_for_run()['pending']['requested_run_id'] == first.run_id
-        assert app._storage.sessions.get(sid)['state'] == 'interrupted'
+        assert app.sessions._persistence.storage.sessions.get(sid)['state'] == 'interrupted'
         assert [e.data.status for e in events if e.event_type == 'run_finished'] == ['interrupted']
 
-        finish = app._storage.runs.finish_run
-        close_catalog, stop_all = app._catalog.aclose, app._sessions.stop_loaded_sessions
+        finish = app.sessions._persistence.storage.runs.finish_run
+        close_catalog, stop_all = app.models._catalog.aclose, app.sessions._sessions.stop_loaded_sessions
         def blocked_finish(*args, **kwargs):
             loop.call_soon_threadsafe(entered.set)
             assert release.wait(5)
@@ -73,16 +73,16 @@ async def test_root_then_child_approval_keeps_owner_until_required_save(
             return finish(*args, **kwargs)
         closed_states = []
         async def close():
-            closed_states.append(app._storage.sessions.get(sid)['state'])
+            closed_states.append(app.sessions._persistence.storage.sessions.get(sid)['state'])
             closed.append(owner.is_busy())
             await close_catalog()
         def closing():
             stop_all()
             close_entered.set()
-        monkeypatch.setattr(app._storage.runs, 'finish_run', blocked_finish)
-        monkeypatch.setattr(app._catalog, 'aclose', close)
-        monkeypatch.setattr(app._sessions, 'stop_loaded_sessions', closing)
-        task = asyncio.create_task(app.aresume_tool_approval(sid, ['approve']))
+        monkeypatch.setattr(app.sessions._persistence.storage.runs, 'finish_run', blocked_finish)
+        monkeypatch.setattr(app.models._catalog, 'aclose', close)
+        monkeypatch.setattr(app.sessions._sessions, 'stop_loaded_sessions', closing)
+        task = asyncio.create_task(app.runs.resume_approval(sid, ['approve']))
         closing_task = None
         try:
             batch = await next_approval(app, sid, queue)
@@ -94,9 +94,9 @@ async def test_root_then_child_approval_keeps_owner_until_required_save(
             assert effects == [('probe', 'parent')] and len(root.seen) == 2 and len(child.seen) == 1
             assert owner.is_busy() and not task.done() and not future.done()
             with pytest.raises(SessionPendingApprovalError):
-                app._sessions._admit(sid, 'duplicate', 'message')
+                app.sessions._sessions._admit(sid, 'duplicate', 'message')
             with pytest.raises(SessionBusyError):
-                app._sessions._admit(sid, 'duplicate', 'approval_resume', decisions=['approve'])
+                app.sessions._sessions._admit(sid, 'duplicate', 'approval_resume', decisions=['approve'])
             assert owner._run is second
             await submit(app, sid, batch)
             await asyncio.wait_for(entered.wait(), 5)
@@ -108,7 +108,7 @@ async def test_root_then_child_approval_keeps_owner_until_required_save(
             assert len(runs) == 2 and len(root.seen) == 3 and len(child.seen) == 2
             assert [(e.source is None, e.data.status) for e in events if e.event_type == 'run_finished'] == [
                 (True, 'interrupted'), (False, 'interrupted'), (False, 'completed')]
-            assert app._storage.sessions.get(sid)['state'] == 'running' and closed == []
+            assert app.sessions._persistence.storage.sessions.get(sid)['state'] == 'running' and closed == []
             if outcome == 'cancel':
                 task.cancel('cancel during required save')
                 barrier = loop.create_future()
@@ -140,14 +140,14 @@ async def test_root_then_child_approval_keeps_owner_until_required_save(
                 assert json.loads(feedback.content)['report'] == 'child report' and feedback.artifact['agent_path'] == instance['agent_path']
             if closing_task:
                 await closing_task
-            assert owner._run is None and not owner.is_busy() and app._operations == {}
+            assert owner._run is None and not owner.is_busy() and app._lifetime._operations == {}
             assert events[-1].event_type == 'run_finished' and events[-1].source is None
             failed = outcome in ('save_failure', 'primary_error')
             assert events[-1].data.status == ('failed' if failed else 'completed')
-            state = closed_states[-1] if closing_task else app._storage.sessions.get(sid)['state']
+            state = closed_states[-1] if closing_task else app.sessions._persistence.storage.sessions.get(sid)['state']
             assert state == ('running' if failed else 'ready')
             if failed:
-                assert not (await app.aget_session_status(sid))['can_run']
+                assert not (await app.sessions.status(sid))['can_run']
             assert closed == ([False] if outcome == 'close' else [])
         finally:
             release.set()
@@ -165,25 +165,25 @@ async def test_root_approval_reopens_as_facts_until_explicit_decision(monkeypatc
     root = StreamingToolModel(replies=[call('probe', {'value': 'once'}, 'parent-call'), AIMessage(content='done')])
     child = ChildModel(replies=[])
     async with persistent_delegation(monkeypatch, path, root, child, effects) as app:
-        sid = await app.acreate_workspace_session('A', tmp_path)
-        await app.arun(sid, [('user', 'await permission')])
-        origin = app.pending_approval_batches(sid)[0]['origin_run_id']
-        assert app._sessions._sessions[sid]._run is None and effects == []
+        sid = await app.sessions.create_workspace('A', tmp_path)
+        await app.runs.start(sid, [('user', 'await permission')])
+        origin = app.runs.pending_approvals(sid)[0]['origin_run_id']
+        assert app.sessions._sessions._sessions[sid]._run is None and effects == []
     async with persistent_delegation(monkeypatch, path, root, child, effects) as app:
-        history = await app.aget_session_history(sid)
+        history = await app.history.session(sid)
         assert history['recovery']['kind'] == 'pending_approval'
-        await app.arecover_session(sid, checkpoint_id=history['checkpoint_id'], action='restore_approval')
-        owner = app._sessions._sessions[sid]
+        await app.sessions.recover(sid, checkpoint_id=history['checkpoint_id'], action='restore_approval')
+        owner = app.sessions._sessions._sessions[sid]
         assert owner._run is None and not owner.is_busy() and owner.child_thread_ids() == ()
         assert owner.resolve_permission_context()['session_allow'] == []
         assert owner.snapshot_for_run()['pending_turn'] is None and owner.resolve_prompt_parts() == []
-        batch, = app.pending_approval_batches(sid)
+        batch, = app.runs.pending_approvals(sid)
         assert batch['kind'] == 'paused_root' and batch['origin_run_id'] == origin
         assert effects == [] and len(root.seen) == 1 and child.seen == []
-        result = await app.aresume_tool_approval(sid, ['approve'])
+        result = await app.runs.resume_approval(sid, ['approve'])
         assert result['messages'][-1].content == 'done' and effects == [('probe', 'once')]
-        assert owner._run is None and app.pending_approval_batches(sid) == []
-        assert app._storage.sessions.get(sid)['state'] == 'ready' and len(root.seen) == 2
+        assert owner._run is None and app.runs.pending_approvals(sid) == []
+        assert app.sessions._persistence.storage.sessions.get(sid)['state'] == 'ready' and len(root.seen) == 2
 
 
 @async_test
@@ -204,19 +204,19 @@ async def test_close_during_child_approval_settles_before_reopen(monkeypatch, tm
     root = StreamingToolModel(replies=[call('subagent', {'agent': 'tester', 'task': 'check'}, 'delegate')])
     child = ChildModel(replies=[call('probe', {'value': 'never'}, 'child-call')])
     async with persistent_delegation(monkeypatch, path, root, child, effects) as app:
-        sid = await app.acreate_workspace_session('A', tmp_path)
-        owner = app._sessions._sessions[sid]
+        sid = await app.sessions.create_workspace('A', tmp_path)
+        owner = app.sessions._sessions._sessions[sid]
         instances = record_instances(monkeypatch, app)
         queue = approval_notifications(monkeypatch, app)
-        app.subscribe_events(events.append)
-        close_catalog = app._catalog.aclose
+        app.observability.subscribe(events.append)
+        close_catalog = app.models._catalog.aclose
         async def close():
             closed.append((owner.is_busy(), [(i['settled'], 'driver' in i, 'approval' in i) for i in instances],
-                           app._storage.sessions.get(sid)['state']))
+                           app.sessions._persistence.storage.sessions.get(sid)['state']))
             await close_catalog()
             order.append('catalog')
-        monkeypatch.setattr(app._catalog, 'aclose', close)
-        task = asyncio.create_task(app.arun(sid, [('user', 'stop awaiting child')]))
+        monkeypatch.setattr(app.models._catalog, 'aclose', close)
+        task = asyncio.create_task(app.runs.start(sid, [('user', 'stop awaiting child')]))
         try:
             batch = await next_approval(app, sid, queue)
             instance, = instances
@@ -228,7 +228,7 @@ async def test_close_during_child_approval_settles_before_reopen(monkeypatch, tm
             assert result['run_stopped'] and effects == []
             assert future.done() and driver.done() and instance['status'] == 'stopped'
             assert owner._run is None and closed == [(False, [(True, False, False)], 'ready')]
-            assert app._operations == {} and app._storage.database._closed
+            assert app._lifetime._operations == {} and app.sessions._persistence.storage.database._closed
             assert [(e.source is None, e.data.status) for e in events if e.event_type == 'run_finished'] == [
                 (False, 'interrupted'), (False, 'stopped'), (True, 'stopped')]
         finally:
@@ -237,13 +237,13 @@ async def test_close_during_child_approval_settles_before_reopen(monkeypatch, tm
             await asyncio.gather(task, return_exceptions=True)
     assert order == ['catalog', 'saver', 'storage']
     async with persistent_delegation(monkeypatch, path, root, child, effects) as app:
-        await app.arestore_session(sid)
-        owner = app._sessions._sessions[sid]
+        await app.sessions.restore(sid)
+        owner = app.sessions._sessions._sessions[sid]
         assert owner._run is None and owner.child_thread_ids() == ()
-        assert app.pending_approval_batches(sid) == [] and effects == []
-        saved_child, = await app.aget_subagents(sid)
+        assert app.runs.pending_approvals(sid) == [] and effects == []
+        saved_child, = await app.history.subagents(sid)
         assert saved_child['status'] == 'stopped'
-        history = await app.aget_subagent_history(sid, saved_child['agent_id'])
+        history = await app.history.subagent(sid, saved_child['agent_id'])
         assert history['status'] == 'stopped' and history['available']
         assert len(root.seen) == 1 and len(child.seen) == 1
     assert not any(marker in caplog.text for marker in ('observation_failed', 'run_event_publish_failed'))
@@ -255,30 +255,30 @@ async def test_compaction_reopens_configuration_and_archive_without_run_resource
     path, effects = tmp_path / 'state.sqlite', []
     root, child = compact_model(), ChildModel(replies=[])
     async with persistent_delegation(monkeypatch, path, root, child, effects) as app:
-        sid = await app.acreate_workspace_session('A', tmp_path)
-        await app.arun(sid, [('user', 'old task')])
-        await app.arun(sid, [('user', 'recent task')])
-        original = await app.aget_messages(sid)
-        await app.aset_permission_mode(sid, 'NoAsk')
-        await app.aset_active_tools(sid, ['probe'])
-        result = await app.acompact_context(sid)
+        sid = await app.sessions.create_workspace('A', tmp_path)
+        await app.runs.start(sid, [('user', 'old task')])
+        await app.runs.start(sid, [('user', 'recent task')])
+        original = await app.history.messages(sid)
+        await app.sessions.select_permission_mode(sid, 'NoAsk')
+        await app.sessions.select_tools(sid, ['probe'])
+        result = await app.runs.compact(sid)
         assert result['compaction_status'] == 'applied'
-        compacted = await app.aget_messages(sid)
+        compacted = await app.history.messages(sid)
         assert compacted[0].additional_kwargs['naiyue_compaction_summary']
         assert [m.id for m in compacted[1:]] == [m.id for m in original[-2:]]
-        assert app._sessions._sessions[sid]._run is None and len(root.seen) == 3
-        page = await app.aget_chat_page(sid, limit=50, body_bytes=128000, preview_chars=100)
+        assert app.sessions._sessions._sessions[sid]._run is None and len(root.seen) == 3
+        page = await app.history.page(sid, limit=50, body_bytes=128000, preview_chars=100)
         assert page['has_compaction'] and not page['has_more']
         assert {r['message_id'] for r in page['records']} == {m.id for m in original}
-        thread = app._sessions.require(sid).get_thread_id()
+        thread = app.sessions._sessions.require(sid).get_thread_id()
     async with persistent_delegation(monkeypatch, path, root, child, effects) as app:
-        await app.aprepare_session(sid)
-        owner = app._sessions._sessions[sid]
+        await app.sessions.prepare(sid)
+        owner = app.sessions._sessions._sessions[sid]
         assert owner._run is None and owner.child_thread_ids() == () and not owner.is_busy()
         assert owner.get_thread_id() == thread and owner.get_permission_mode() == 'NoAsk'
         assert owner.get_active_tools() == ('probe',) and owner.resolve_prompt_parts() == []
         assert owner.resolve_permission_context()['session_allow'] == []
-        assert [m.id for m in await app.aget_messages(sid)] == [m.id for m in compacted]
-        reopened = await app.aget_chat_page(sid, limit=50, body_bytes=128000, preview_chars=100)
+        assert [m.id for m in await app.history.messages(sid)] == [m.id for m in compacted]
+        reopened = await app.history.page(sid, limit=50, body_bytes=128000, preview_chars=100)
         assert reopened['records'] == page['records'] and reopened['has_compaction']
         assert len(root.seen) == 3 and child.seen == [] and effects == []

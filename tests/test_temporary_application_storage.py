@@ -25,26 +25,26 @@ def test_temporary_chat_regeneration_and_isolation(monkeypatch, tmp_path):
     async def scenario():
         app, model = await build(monkeypatch, tmp_path, [AIMessage(content=s) for s in ('first', 'old', 'new')])
         try:
-            sid = await app.acreate_workspace_session('A', tmp_path)
-            await app.arun(sid, [('user', 'one')])
-            await app.arun(sid, [('user', 'two')])
-            last = app._storage.replies.latest(sid)
+            sid = await app.sessions.create_workspace('A', tmp_path)
+            await app.runs.start(sid, [('user', 'one')])
+            await app.runs.start(sid, [('user', 'two')])
+            last = app.sessions._persistence.storage.replies.latest(sid)
             args = dict(request_id=str(uuid4()), expected_reply_id=last['reply_id'], expected_conversation_revision=0)
-            result = await app.aregenerate_last_reply(sid, **args)
+            result = await app.runs.regenerate(sid, **args)
             assert [m.content for m in result['messages']] == ['one', 'first', 'two', 'new']
-            assert (await app.aregenerate_last_reply(sid, **args))['replayed'] and len(model.seen) == 3
-            page = await app.aget_chat_page(sid, limit=20, body_bytes=20000, preview_chars=100)
+            assert (await app.runs.regenerate(sid, **args))['replayed'] and len(model.seen) == 3
+            page = await app.history.page(sid, limit=20, body_bytes=20000, preview_chars=100)
             assert len(page['records']) == 4
-            assert (await app.aget_session_status(sid))['conversation_revision'] == 1
-            assert app._storage.path is None and app._sessions._project is None
-            assert app._persistence._memory is None and app._sessions.memory_jobs is None
+            assert (await app.sessions.status(sid))['conversation_revision'] == 1
+            assert app.sessions._persistence.storage.path is None and app.sessions._sessions._project is None
+            assert app.sessions._persistence._memory is None and app.sessions._sessions.memory_jobs is None
         finally:
             await app.aclose()
         next_app, _ = await build(monkeypatch, tmp_path, [])
         try:
-            assert await next_app.alist_sessions() == []
+            assert await next_app.sessions.list() == []
             with pytest.raises(SessionPersistenceError, match='session_not_found'):
-                await next_app.arestore_session(sid)
+                await next_app.sessions.restore(sid)
         finally:
             await next_app.aclose()
         assert not (tmp_path / '.naiyue').exists()
@@ -66,13 +66,13 @@ def test_temporary_project_tools_remain_unavailable(monkeypatch, tmp_path, exist
         replies = [call('history', {'action': 'list_sessions'}, 'h'), call('memory', {'action': 'list'}, 'm'), AIMessage(content='done')]
         app, _ = await build(monkeypatch, tmp_path, replies, tools=[create_history_tool(), create_memory_tool()])
         try:
-            sid = await app.acreate_workspace_session('A', tmp_path)
-            result = await app.arun(sid, [('user', 'query')])
+            sid = await app.sessions.create_workspace('A', tmp_path)
+            result = await app.runs.start(sid, [('user', 'query')])
             errors = [m.content for m in result['messages'] if m.type == 'tool']
             assert len(errors) == 2
             assert 'history_unavailable' in errors[0] and 'memory_unavailable' in errors[1]
-            assert app._persistence._memory is None and app._sessions.memory_jobs is None
-            assert app._storage.sessions.get_workspace_binding() is None
+            assert app.sessions._persistence._memory is None and app.sessions._sessions.memory_jobs is None
+            assert app.sessions._persistence.storage.sessions.get_workspace_binding() is None
         finally:
             await app.aclose()
         if existing_project:
@@ -100,10 +100,10 @@ def test_two_runs_interleave_with_both_writers_and_required_saves(monkeypatch, t
         app = await build_async_local_application('unused', tools=[], system_prompt='', response_format=None, settings=settings)
         tasks = []
         try:
-            sessions = [await app.acreate_session('A'), await app.acreate_session('A')]
-            tasks = [asyncio.create_task(app.arun(sid, [('user', text)])) for sid, text in zip(sessions, ('one', 'two'))]
+            sessions = [await app.sessions.create('A'), await app.sessions.create('A')]
+            tasks = [asyncio.create_task(app.runs.start(sid, [('user', text)])) for sid, text in zip(sessions, ('one', 'two'))]
             await asyncio.wait_for(arrived.wait(), 5)
-            assert all(app._sessions.require(sid).is_busy() for sid in sessions)
+            assert all(app.sessions._sessions.require(sid).is_busy() for sid in sessions)
             release.set()
             results = await asyncio.gather(*tasks)
             from native_application_helpers import await_diagnostics_idle
@@ -111,12 +111,12 @@ def test_two_runs_interleave_with_both_writers_and_required_saves(monkeypatch, t
             for sid, result, prompt in zip(sessions, results, ('one', 'two')):
                 assert result['messages'][0].content == prompt
                 assert len(result['messages']) == 2
-                assert app._storage.sessions.get(sid)['state'] == 'ready'
-                usage = await app.aget_model_usage(sid, model_limit=20)
+                assert app.sessions._persistence.storage.sessions.get(sid)['state'] == 'ready'
+                usage = await app.observability.usage(sid, model_limit=20)
                 assert usage['recorded_calls'] == 1
                 assert usage['capture']['incomplete_runs'] == 0
-                run, = (await app.alist_diagnostic_runs(sid))['runs']
-                page = await app.aget_diagnostic_events(sid, run['run_id'], limit=100)
+                run, = (await app.observability.runs(sid))['runs']
+                page = await app.observability.events(sid, run['run_id'], limit=100)
                 assert run['status'] == 'completed' and not page['summary']['capture_incomplete']
                 assert [event['event_type'] for event in page['events'] if event['event_type'] in ('run_started', 'run_finished')] == ['run_started', 'run_finished']
         finally:
@@ -131,19 +131,19 @@ def test_temporary_required_save_failure_is_not_a_success(monkeypatch, tmp_path)
     async def scenario():
         app, _ = await build(monkeypatch, tmp_path, [AIMessage(content='answer')])
         events = []
-        app.subscribe_events(events.append)
+        app.observability.subscribe(events.append)
         try:
-            sid = await app.acreate_session('A')
+            sid = await app.sessions.create('A')
             failure = OSError('PRIVATE_WRITE')
             def fail(*args, **kwargs):
                 raise failure
-            monkeypatch.setattr(app._storage.runs, 'finish_run', fail)
+            monkeypatch.setattr(app.sessions._persistence.storage.runs, 'finish_run', fail)
             with pytest.raises(SessionPersistenceError, match='session_save_unconfirmed') as caught:
-                await app.arun(sid, [('user', 'task')])
+                await app.runs.start(sid, [('user', 'task')])
             assert caught.value.__cause__ is failure
             assert events[-1].event_type == 'run_finished' and events[-1].data.status == 'failed'
-            assert not app._sessions.require(sid).is_busy()
-            assert not (await app.aget_session_status(sid))['can_run']
+            assert not app.sessions._sessions.require(sid).is_busy()
+            assert not (await app.sessions.status(sid))['can_run']
             assert not any(e.event_type == 'run_finished' and e.data.status == 'completed' for e in events)
         finally:
             await app.aclose()
@@ -155,10 +155,10 @@ def test_temporary_close_waits_for_required_save_then_closes_connections(monkeyp
         import threading
         import sqlite3
         app, _ = await build(monkeypatch, tmp_path, [AIMessage(content='answer')])
-        sid = await app.acreate_session('A')
+        sid = await app.sessions.create('A')
         entered, release, closing = asyncio.Event(), threading.Event(), asyncio.Event()
         loop = asyncio.get_running_loop()
-        save, stop = app._storage.runs.finish_run, app._sessions.stop_loaded_sessions
+        save, stop = app.sessions._persistence.storage.runs.finish_run, app.sessions._sessions.stop_loaded_sessions
         def blocked(*args, **kwargs):
             loop.call_soon_threadsafe(entered.set)
             assert release.wait(5)
@@ -166,24 +166,24 @@ def test_temporary_close_waits_for_required_save_then_closes_connections(monkeyp
         def start_close():
             stop()
             closing.set()
-        monkeypatch.setattr(app._storage.runs, 'finish_run', blocked)
-        monkeypatch.setattr(app._sessions, 'stop_loaded_sessions', start_close)
-        task = asyncio.create_task(app.arun(sid, [('user', 'task')]))
+        monkeypatch.setattr(app.sessions._persistence.storage.runs, 'finish_run', blocked)
+        monkeypatch.setattr(app.sessions._sessions, 'stop_loaded_sessions', start_close)
+        task = asyncio.create_task(app.runs.start(sid, [('user', 'task')]))
         close_task = None
         try:
             await asyncio.wait_for(entered.wait(), 5)
             close_task = asyncio.create_task(app.aclose())
             await asyncio.wait_for(closing.wait(), 5)
-            assert not close_task.done() and not app._storage.database._closed
-            assert app._sessions.require(sid).is_busy()
+            assert not close_task.done() and not app.sessions._persistence.storage.database._closed
+            assert app.sessions._sessions.require(sid).is_busy()
             release.set()
             assert (await task)['messages'][-1].content == 'answer'
             await close_task
-            assert app._storage.database._closed and app._usage._task.done() and app._diagnostics._task.done()
+            assert app.sessions._persistence.storage.database._closed and app.observability._usage._task.done() and app.observability._diagnostics._task.done()
             with pytest.raises(sqlite3.ProgrammingError):
-                app._storage.database.connection.execute('SELECT 1')
+                app.sessions._persistence.storage.database.connection.execute('SELECT 1')
             with pytest.raises(ValueError, match='no active connection'):
-                await app._agent.checkpointer.conn.execute('SELECT 1')
+                await app.runs._agent.checkpointer.conn.execute('SELECT 1')
             await app.aclose()
         finally:
             release.set()
@@ -213,22 +213,22 @@ def test_temporary_required_state_failure_cannot_be_observation_degradation(monk
     async def scenario():
         app, _ = await build(monkeypatch, tmp_path, [AIMessage(content='answer')])
         events, calls = [], []
-        app.subscribe_events(events.append)
+        app.observability.subscribe(events.append)
         async def custom(*args, **kwargs):
             calls.append(True)
             return {'messages': [], 'custom': 'unconfirmed'}
         async def unreadable(*args, **kwargs):
             calls.append(True)
             raise OSError('PRIVATE_REQUIRED_STATE')
-        monkeypatch.setattr(app._agent, 'ainvoke' if fault == 'custom_without_checkpoint' else 'aget_state',
+        monkeypatch.setattr(app.runs._agent, 'ainvoke' if fault == 'custom_without_checkpoint' else 'aget_state',
                             custom if fault == 'custom_without_checkpoint' else unreadable)
         try:
-            sid = await app.acreate_session('A')
+            sid = await app.sessions.create('A')
             with pytest.raises(SessionPersistenceError, match='session_save_unconfirmed'):
-                await app.arun(sid, [('user', 'task')])
-            assert calls and sid in app._persistence._blocked
+                await app.runs.start(sid, [('user', 'task')])
+            assert calls and sid in app.sessions._persistence._blocked
             assert events[-1].event_type == 'run_finished' and events[-1].data.status == 'failed'
-            assert not (await app.aget_session_status(sid))['can_run']
+            assert not (await app.sessions.status(sid))['can_run']
             assert 'PRIVATE_REQUIRED_STATE' not in caplog.text
         finally:
             await app.aclose()

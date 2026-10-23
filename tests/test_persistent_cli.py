@@ -213,7 +213,8 @@ async def test_interactive_auto_recovery_waits_for_new_input_before_running(monk
     build_cli = cli.build_persistent_application
     def factory(*args, **kwargs):
         app = build_cli(*args, **kwargs)
-        app.subscribe_events(lambda event: finished.set() if event.event_type == 'run_finished' else None)
+        app.call(lambda api: api.observability.subscribe(
+            lambda event: finished.set() if event.event_type == 'run_finished' else None))
         return app
     monkeypatch.setattr(cli, 'build_persistent_application', factory)
     lines = iter(['new request', ':quit'])
@@ -227,8 +228,8 @@ async def test_interactive_auto_recovery_waits_for_new_input_before_running(monk
     assert '只读历史' in output and '下一条新消息才会启动运行' in output
     assert output.count('本次运行完成') == 1
     async with build(monkeypatch, db) as app:
-        storage = app._storage
-        history = await app.aget_session_history(row['session_id'])
+        storage = app.sessions._persistence.storage
+        history = await app.history.session(row['session_id'])
         assert [m.content for m in history['messages']] == ['saved request', 'answer', 'new request', 'answer']
 
 

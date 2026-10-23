@@ -74,11 +74,11 @@ async def test_application_forwards_session_scope_without_changing_global_consum
     app = await make_app(monkeypatch, StreamingToolModel(replies=[]))
     a, b, global_events = [], [], []
     try:
-        app.subscribe_events(a.append, session_id='A')
-        app.subscribe_events(b.append, session_id='B')
-        app.subscribe_events(global_events.append)
+        app.observability.subscribe(a.append, session_id='A')
+        app.observability.subscribe(b.append, session_id='B')
+        app.observability.subscribe(global_events.append)
         for sid in ('A', 'B'):
-            app._sessions._events.publisher(sid, sid).publish('run_started', RunStartedData('message'))
+            app.sessions._sessions._events.publisher(sid, sid).publish('run_started', RunStartedData('message'))
         assert [e.session_id for e in a] == ['A']
         assert [e.session_id for e in b] == ['B']
         assert [e.session_id for e in global_events] == ['A', 'B']

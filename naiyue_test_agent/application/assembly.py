@@ -8,7 +8,7 @@ from naiyue_test_agent.agent_runtime.async_utils import acquire_blocking, await_
 from naiyue_test_agent.config_paths import get_data_dir
 from naiyue_test_agent.execution_roots import Project
 from naiyue_test_agent.storage.resources import open_storage
-from .async_persistent import AsyncPersistentApplication
+from .core import Application
 from .memory.memory_access import MemoryAccess
 from .observability.diagnostic_persistence import DiagnosticPersistence
 from .observability.model_usage_persistence import ModelUsagePersistence
@@ -106,7 +106,7 @@ async def build_application(config_path, *, database_path, tools, system_prompt,
         agent = sessions.assemble_runtime(owned.checkpointer, system_prompt=system_prompt, response_format=response_format,
             subagents=settings.subagents, subagent_settings=settings.tools.subagent)
         persistence.bind_memory_agent(agent)
-        app = AsyncPersistentApplication(catalog, sessions, agent, registry, system_prompt=system_prompt,
+        app = Application(catalog, sessions, agent, registry, system_prompt=system_prompt,
             persistence=persistence, storage=storage, usage=usage, diagnostics=diagnostics, resources=stack)
         return app
     except BaseException as primary:

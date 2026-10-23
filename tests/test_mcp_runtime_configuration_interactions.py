@@ -24,13 +24,13 @@ def test_pending_child_disable_returns_feedback_and_parent_finishes(monkeypatch,
         child = MCPChildModel(replies=[call(NAME, {}), AIMessage(content='child handled')])
         app, _ = await make_child_app(monkeypatch, path, child)
         try:
-            sid = await app.acreate_session('A')
-            task = asyncio.create_task(app.arun(sid, [('user', 'child')]))
-            await until(lambda: bool(app.pending_subagent_approvals(sid)))
-            pending = app.pending_subagent_approvals(sid)[0]
+            sid = await app.sessions.create('A')
+            task = asyncio.create_task(app.runs.start(sid, [('user', 'child')]))
+            await until(lambda: bool(app.runs.pending_subagents(sid)))
+            pending = app.runs.pending_subagents(sid)[0]
             write_config(config, {})
-            await app.arefresh_mcp(config)
-            await app.asubmit_subagent_approval(sid, approval_batch_id=pending['approval_batch_id'],
+            await app.mcp.refresh(config)
+            await app.runs.submit_subagent_approval(sid, approval_batch_id=pending['approval_batch_id'],
                 origin_run_id=pending['origin_run_id'], decisions=[{'approval_id': pending['items'][0]['approval_id'],
                 'decision': 'approve'}])
             result = await task
@@ -55,11 +55,11 @@ def test_disable_during_catalog_preflight_never_sends_business_rpc(monkeypatch, 
             return result
         monkeypatch.setattr(tools, 'read_catalog', held)
         try:
-            sid = await app.acreate_session('A')
-            task = asyncio.create_task(app.arun(sid, [('user', 'preflight')]))
+            sid = await app.sessions.create('A')
+            task = asyncio.create_task(app.runs.start(sid, [('user', 'preflight')]))
             await entered.wait()
             write_config(config, {})
-            await app.arefresh_mcp(config)
+            await app.mcp.refresh(config)
             release.set()
             result = await task
             feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
@@ -76,11 +76,11 @@ def test_external_refresh_cancellation_closes_candidate_and_publishes_nothing(mo
         app, _ = await empty_app(monkeypatch, [])
         try:
             write_config(config, {'local': stdio_settings(path, 'wait', allowed_tools=['echo'])})
-            task = asyncio.create_task(app.arefresh_mcp(config))
+            task = asyncio.create_task(app.mcp.refresh(config))
             await until(lambda: any(r['event'] == 'list' for r in facts(path)))
             task.cancel()
             with pytest.raises(asyncio.CancelledError): await task
-            assert not app._sessions.mcp_resources._candidates and not app.get_registered_tools()
+            assert not app.sessions._sessions.mcp_resources._candidates and not app.tools.list()
             assert all(not process_alive(r['pid']) for r in facts(path) if r['event'] == 'start')
         finally:
             await app.aclose()
@@ -97,11 +97,11 @@ def test_candidate_cleanup_failure_prevents_publication_and_remains_required(mon
             raise MCPResourceError('synthetic_cleanup_failure')
         monkeypatch.setattr(ConnectionOwner, 'close', fail_after_close)
         write_config(config, {'local': stdio_settings(path, 'stateful', allowed_tools=['echo'])})
-        result = await app.arefresh_mcp(config)
-        assert result['servers'][0]['status'] == 'error' and not app.get_registered_tools()
+        result = await app.mcp.refresh(config)
+        assert result['servers'][0]['status'] == 'error' and not app.tools.list()
         assert all(not process_alive(r['pid']) for r in facts(path) if r['event'] == 'start')
         with pytest.raises(ExceptionGroup): await app.aclose()
-        assert app._closed
+        assert app._lifetime._closed
     asyncio.run(scenario())
 
 
@@ -111,17 +111,17 @@ def test_connection_changes_are_explicit_and_non_mcp_settings_are_not_applied(mo
         server = stdio_settings(path, 'stateful', allowed_tools=['echo'])
         app, _ = await make_mcp_app(monkeypatch, path, [], server=server)
         try:
-            original = app.get_registered_tools()[0]
+            original = app.tools.list()[0]
             changed = server.model_copy(update={'args': [*server.args, '--PRIVATE']})
             write_config(config, {'local': changed})
-            result = await app.arefresh_mcp(config)
+            result = await app.mcp.refresh(config)
             assert result['servers'][0]['error'] == 'connection_configuration_changed'
-            assert result['servers'][0]['enabled'] and app.get_registered_tools()[0] is original
+            assert result['servers'][0]['enabled'] and app.tools.list()[0] is original
             write_config(config, {'local': server})
             with config.open('a') as stream: stream.write('\n[permissions]\nmode="NoAsk"\n[network]\nmode="direct"\n')
-            await app.arefresh_mcp(config)
-            sid = await app.acreate_session('A')
-            assert app.get_permission_mode(sid) == 'Default'
+            await app.mcp.refresh(config)
+            sid = await app.sessions.create('A')
+            assert app.sessions.permission_mode(sid) == 'Default'
         finally:
             await app.aclose()
     asyncio.run(scenario())
@@ -136,11 +136,11 @@ def test_terminal_bridge_adds_and_uses_tool_in_its_existing_loop(monkeypatch, tm
         settings=AppSettings.model_validate({'permissions': {'mode': 'BypassApprovals'}}))
     lines = []
     try:
-        sid = app.create_session('A')
+        sid = app.call(lambda api: api.sessions.create('A'))
         write_config(config, {'local': stdio_settings(path, 'stateful', allowed_tools=['echo'])})
         handle_mcp_command(app, sid, ':mcp-refresh', lines.append)
         handle_mcp_command(app, sid, ':tools +' + NAME, lines.append)
-        result = app.run(sid, [('user', 'new tool')])
+        result = app.call(lambda api: api.runs.start(sid, [('user', 'new tool')]))
         assert result['messages'][-1].content == 'CLI done' and len(calls(path)) == 1
     finally:
         app.close()

@@ -215,7 +215,7 @@ async def test_uncertain_commit_is_not_replayed_or_quarantined(
         assert target.read_text(encoding='utf-8') == ('new' if after_replace else 'old')
         assert [p.name for p in tmp_path.iterdir()] == ['case.md']
         assert attempts == [True]
-        assert not app._sessions.require(session).describe_session()['manual_review_required']
+        assert not app.sessions._sessions.require(session).describe_session()['manual_review_required']
         conversions = [r.tool_error for r in caplog.records if hasattr(r, 'tool_error')]
         assert len(conversions) == 1 and conversions[0]['cause_type'] == 'OSError'
         assert 'PRIVATE_' not in caplog.text + feedback.content
@@ -224,9 +224,9 @@ async def test_uncertain_commit_is_not_replayed_or_quarantined(
         async def scenario():
             app = await make_app(monkeypatch, StreamingToolModel(replies=replies), tools)
             try:
-                session = await app.acreate_workspace_session('A', tmp_path)
-                result = await app.arun(session, [('user', 'modify')])
-                continued = await app.arun(session, [('user', 'continue')])
+                session = await app.sessions.create_workspace('A', tmp_path)
+                result = await app.runs.start(session, [('user', 'modify')])
+                continued = await app.runs.start(session, [('user', 'continue')])
                 assert_result(result, continued, app, session)
             finally:
                 await app.aclose()
@@ -235,9 +235,9 @@ async def test_uncertain_commit_is_not_replayed_or_quarantined(
         model = ToolCapableFake(responses=replies)
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
         app = await build_application('synthetic', tools=tools, system_prompt='', response_format=None)
-        session = await app.acreate_workspace_session('A', tmp_path)
-        result = await app.arun(session, [('user', 'modify')])
-        continued = await app.arun(session, [('user', 'continue')])
+        session = await app.sessions.create_workspace('A', tmp_path)
+        result = await app.runs.start(session, [('user', 'modify')])
+        continued = await app.runs.start(session, [('user', 'continue')])
         assert_result(result, continued, app, session)
 
 

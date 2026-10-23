@@ -2,6 +2,8 @@
 
 状态：05A完成本机验收（2026-10-23），未提交。05B应用组合/子API、06会话mixin和实际worktree生命周期不在本片。基于01—04的当前隔离工作区，不修改原主目录并行成果、配置、依赖、版本或真实用户库，不提交/发布。
 
+版本边界：本文的 AsyncPersistentApplication、平铺应用方法和私有观察点记录05A时点；05B已将其迁到唯一Application与领域子API，当前入口见[05B](128-05b-composed-application-and-domain-apis.md)。本片存储、资源与行为合同继续适用。
+
 ## 1. 问题、合同和当前链路
 
 当前磁盘入口 `open_async_persistent_application` 打开ProjectStore和官方AsyncSqliteSaver，接入SessionPersistence、用量/诊断writer；临时入口 `build_async_local_application` 重复模型/MCP/会话装配，使用InMemorySaver，跳过仓储。因此临时会话缺少本实例档案分页、回复边界、重新生成和观测查询。05A复用04的仓储和业务算法，仅改变存储打开方式，暂时仍使用AsyncPersistentApplication承载共同能力；类的继承/名称和CLI/Web门面留给05B。

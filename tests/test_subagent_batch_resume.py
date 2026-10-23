@@ -32,13 +32,13 @@ async def test_same_role_same_inner_call_id_approve_b_reject_a_without_cross_con
         consumed.append((call_id, binding['agent_path'], outcome))
         return outcome
     monkeypatch.setattr(OneUseApprovalGrants, 'consume', record)
-    sid = await app.acreate_session('A')
-    task = asyncio.create_task(app.arun(sid, [('user', 'two')]))
+    sid = await app.sessions.create('A')
+    task = asyncio.create_task(app.runs.start(sid, [('user', 'two')]))
     try:
         await next_approval(app, sid, queue)
         await next_approval(app, sid, queue)
         batches = {next(instance['task'] for instance in instances if instance['agent_path'] == batch['agent_path']): batch
-                   for batch in app.pending_subagent_approvals(sid)}
+                   for batch in app.runs.pending_subagents(sid)}
         a, b = batches['A'], batches['B']
         assert a['items'][0]['tool_call_id'] == b['items'][0]['tool_call_id'] == 'same-inner'
         assert a['approval_batch_id'] != b['approval_batch_id']
@@ -46,7 +46,7 @@ async def test_same_role_same_inner_call_id_approve_b_reject_a_without_cross_con
         driver_b = next(instance['driver'] for instance in instances if instance['task'] == 'B')
         await submit(app, sid, b)
         await asyncio.wait_for(asyncio.shield(driver_b), 5)
-        assert effects == [('probe', 'B')] and app.pending_subagent_approvals(sid) == [a]
+        assert effects == [('probe', 'B')] and app.runs.pending_subagents(sid) == [a]
         assert consumed == [('same-inner', b['agent_path'], True)] and len(root.seen) == 1
         await submit(app, sid, a, ['reject'])
         result = await asyncio.wait_for(task, 5)
@@ -67,8 +67,8 @@ async def test_new_approval_batch_each_turn_keeps_thread_call_limit_and_original
                                   tools=[definition(calls=effects, approved=True)])
     instances = record_instances(monkeypatch, app)
     queue = approval_notifications(monkeypatch, app)
-    sid = await app.acreate_session('A')
-    task = asyncio.create_task(app.arun(sid, [('user', 'start')]))
+    sid = await app.sessions.create('A')
+    task = asyncio.create_task(app.runs.start(sid, [('user', 'start')]))
     try:
         first = await next_approval(app, sid, queue)
         await submit(app, sid, first)
@@ -81,7 +81,7 @@ async def test_new_approval_batch_each_turn_keeps_thread_call_limit_and_original
         feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
         assert feedback.status == status and len(child.seen) == limit and len(root.seen) == 2
         assert effects == [('probe', 'first'), ('probe', 'second')] and len(instances) == 1
-        snapshot = await app._sessions._subagents['tester']['agent'].aget_state(
+        snapshot = await app.sessions._sessions._subagents['tester']['agent'].aget_state(
             {'configurable': {'thread_id': instances[0]['child_thread_id']}})
         assert snapshot.values['thread_model_call_count'] == limit
         assert sum(isinstance(m, HumanMessage) for m in snapshot.values['messages']) == 1
@@ -102,9 +102,9 @@ async def test_prefix_child_wait_tail_stays_ordered_and_parent_call_starts_once(
     app, _ = await delegated_app(monkeypatch, child, root=root, tools=tools)
     queue = approval_notifications(monkeypatch, app)
     instances = record_instances(monkeypatch, app)
-    sid = await app.acreate_session('A')
-    await app.aset_active_tools(sid, ['ordered', 'subagent'])
-    task = asyncio.create_task(app.arun(sid, [('user', 'ordered task')]))
+    sid = await app.sessions.create('A')
+    await app.sessions.select_tools(sid, ['ordered', 'subagent'])
+    task = asyncio.create_task(app.runs.start(sid, [('user', 'ordered task')]))
     try:
         batch = await next_approval(app, sid, queue)
         assert effects == [('ordered', 'prefix')] and len(root.seen) == 1
@@ -126,22 +126,22 @@ async def test_remember_approved_child_target_applies_to_parent_only_in_same_ses
         call('probe', {'value': 'same'}, 'other'), AIMessage(content='other done')])
     app, _ = await delegated_app(monkeypatch, child, root=root, tools=[definition(calls=effects, approved=True)])
     queue = approval_notifications(monkeypatch, app)
-    sid, other = await app.acreate_session('A'), await app.acreate_session('A')
-    await app.aset_active_tools(sid, ['subagent', 'probe'])
-    await app.aset_active_tools(other, ['probe'])
-    task = asyncio.create_task(app.arun(sid, [('user', 'start')]))
+    sid, other = await app.sessions.create('A'), await app.sessions.create('A')
+    await app.sessions.select_tools(sid, ['subagent', 'probe'])
+    await app.sessions.select_tools(other, ['probe'])
+    task = asyncio.create_task(app.runs.start(sid, [('user', 'start')]))
     try:
         batch = await next_approval(app, sid, queue)
         await submit(app, sid, batch, remember=[batch['items'][0]['approval_id']])
         result = await asyncio.wait_for(task, 5)
         assert result['messages'][-1].content == 'done' and effects == [('probe', 'same'), ('probe', 'same')]
-        assert len(app._sessions.resolve_permission_context(sid)['session_allow']) == 1
-        assert app._sessions.resolve_permission_context(other)['session_allow'] == []
-        result = await app.arun(other, [('user', 'same target')])
+        assert len(app.sessions._sessions.resolve_permission_context(sid)['session_allow']) == 1
+        assert app.sessions._sessions.resolve_permission_context(other)['session_allow'] == []
+        result = await app.runs.start(other, [('user', 'same target')])
         assert result['__interrupt__'] and effects == [('probe', 'same'), ('probe', 'same')]
-        await app.aresume_tool_approval(other, ['reject'])
+        await app.runs.resume_approval(other, ['reject'])
         assert effects == [('probe', 'same'), ('probe', 'same')]
-        assert app._sessions._permission_settings.allow == ()
+        assert app.sessions._sessions._permission_settings.allow == ()
     finally:
         await cancel_run(task)
 
@@ -171,10 +171,10 @@ async def test_root_start_approval_consumed_once_child_approval_does_not_reenter
         consumed.append((binding['agent_path'], call_id, success))
         return success
     monkeypatch.setattr(OneUseApprovalGrants, 'consume', record)
-    sid = await app.acreate_session('A')
-    result = await app.arun(sid, [('user', 'start')])
+    sid = await app.sessions.create('A')
+    result = await app.runs.start(sid, [('user', 'start')])
     assert result['__interrupt__'] and instances == [] and consumed == []
-    task = asyncio.create_task(app.aresume_tool_approval(sid, ['approve']))
+    task = asyncio.create_task(app.runs.resume_approval(sid, ['approve']))
     try:
         batch = await next_approval(app, sid, queue)
         assert consumed == [('root', 'delegate', True)] and effects == [] and len(instances) == 1
@@ -196,8 +196,8 @@ async def test_two_asks_require_complete_batch_and_apply_reversed_rows_by_saved_
     ]), AIMessage(content='partial approval report')])
     app, _ = await delegated_app(monkeypatch, child, tools=[definition(calls=effects, approved=True)])
     queue = approval_notifications(monkeypatch, app)
-    sid = await app.acreate_session('A')
-    task = asyncio.create_task(app.arun(sid, [('user', 'two actions')]))
+    sid = await app.sessions.create('A')
+    task = asyncio.create_task(app.runs.start(sid, [('user', 'two actions')]))
     try:
         batch = await next_approval(app, sid, queue)
         first, second = batch['items']
@@ -205,15 +205,15 @@ async def test_two_asks_require_complete_batch_and_apply_reversed_rows_by_saved_
         decisions = [{'approval_id': second['approval_id'], 'decision': 'approve'},
                      {'approval_id': first['approval_id'], 'decision': 'reject'}]
         with pytest.raises(ValueError):
-            await app.asubmit_subagent_approval(sid, approval_batch_id=batch['approval_batch_id'],
+            await app.runs.submit_subagent_approval(sid, approval_batch_id=batch['approval_batch_id'],
                 origin_run_id=batch['origin_run_id'], decisions=decisions[:1])
-        assert app.pending_subagent_approvals(sid) == [batch] and effects == []
-        await app.asubmit_subagent_approval(sid, approval_batch_id=batch['approval_batch_id'],
+        assert app.runs.pending_subagents(sid) == [batch] and effects == []
+        await app.runs.submit_subagent_approval(sid, approval_batch_id=batch['approval_batch_id'],
             origin_run_id=batch['origin_run_id'], decisions=decisions, remember_approved=[second['approval_id']])
         await asyncio.wait_for(task, 5)
         assert effects == [('probe', 'second')]
         messages = {m.tool_call_id: m for m in child.seen[-1] if isinstance(m, ToolMessage)}
         assert messages['first'].status == 'error' and messages['second'].status == 'success'
-        assert app._sessions.resolve_permission_context(sid)['session_allow'][0]['args'] == {'value': 'second'}
+        assert app.sessions._sessions.resolve_permission_context(sid)['session_allow'][0]['args'] == {'value': 'second'}
     finally:
         await cancel_run(task)

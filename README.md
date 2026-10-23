@@ -155,6 +155,8 @@ python -m pip install --upgrade naiyue-test-agent
 
 从源码开发时安装 `requirements.txt` 和 `requirements-web.txt`，并在 PATH 中提供 `rg` / `fd`。前端开发使用仓库 `frontend/` 下的 npm 配置。源码入口支持 `python -m naiyue_test_agent.web`、`python -m naiyue_test_agent.cli` 和 `python -m naiyue_test_agent.cli chat`；旧命令 `python -m naiyue_test_agent.application.cli` 保留为兼容启动入口。应用按会话、对话、子 Agent、观测、记忆分包，CLI 与 Web 是并列适配器，数据库维护集中在顶层 storage 包，详见[当前目录与入口对应表](docs/specs/128-03-domain-packages-and-cli.md)。存储由 `Database` 管理连接与事务，`ProjectStore` 组合领域仓储，run 必要保存由单个工作单元提交；项目库与个人记忆库共用 `MemoryRepo`，详见[存储职责与事务边界](docs/specs/128-04-database-repositories-and-uow.md)。
 
+当前开发分支以一个 `Application` 组合 `sessions`、`runs`、`history`、`tasks` 等领域 API，磁盘和临时存储共用这些接口。终端通过 `bridge.call(lambda app: app.runs.start(...))` 派发到拥有者事件循环；Web 保留认证、归属、幂等和错误映射，详见[应用组合与调用边界](docs/specs/128-05b-composed-application-and-domain-apis.md)。这些内部入口替换原平铺方法，CLI 命令和 HTTP 协议保持。
+
 发布维护、四平台构建和 PyPI 首次授权步骤见 [发行指南](https://github.com/tlzmw001/naiyue-test-agent/blob/main/docs/releasing.md)。项目设计与开发记录保留在 GitHub 仓库，不进入 wheel。
 
 ## 许可证

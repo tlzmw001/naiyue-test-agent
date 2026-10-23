@@ -14,48 +14,48 @@ async def test_replace_only_last_task_preserve_prefix_reopen_and_deduplicate(mon
     path = tmp_path / 'state.sqlite'
     model = ToolModel(responses=[AIMessage(content='first'), AIMessage(content='old'), AIMessage(content='new')])
     async with build(monkeypatch, path, model) as app:
-        sid = await app.acreate_session('A')
-        await app.arun(sid, [('user', 'one')])
-        await app.arun(sid, [('user', 'two')])
-        old = app._storage.replies.latest(sid)
+        sid = await app.sessions.create('A')
+        await app.runs.start(sid, [('user', 'one')])
+        await app.runs.start(sid, [('user', 'two')])
+        old = app.sessions._persistence.storage.replies.latest(sid)
         args = dict(request_id=str(uuid4()), expected_reply_id=old['reply_id'], expected_conversation_revision=0)
-        result = await app.aregenerate_last_reply(sid, **args)
+        result = await app.runs.regenerate(sid, **args)
         assert [m.content for m in result['messages']] == ['one', 'first', 'two', 'new']
         assert all(m.content != 'old' for m in model.seen[-1])
-        again = await app.aregenerate_last_reply(sid, **args)
+        again = await app.runs.regenerate(sid, **args)
         assert again['replayed'] and len(model.seen) == 3
-        row = app._storage.sessions.get(sid)
+        row = app.sessions._persistence.storage.sessions.get(sid)
         assert row['conversation_revision'] == 1 and row['state'] == 'ready'
-        page = await app.aget_chat_page(sid, limit=20, body_bytes=20000, preview_chars=100)
+        page = await app.history.page(sid, limit=20, body_bytes=20000, preview_chars=100)
         assert len(page['records']) == 4
-        assert len(app._storage.conversation.chat_heads(sid)) == 1
+        assert len(app.sessions._persistence.storage.conversation.chat_heads(sid)) == 1
     async with build(monkeypatch, path) as app:
-        await app.arestore_session(sid)
-        assert [m.content for m in await app.aget_messages(sid)] == ['one', 'first', 'two', 'new']
-        assert (await app.aget_session_status(sid))['conversation_revision'] == 1
+        await app.sessions.restore(sid)
+        assert [m.content for m in await app.history.messages(sid)] == ['one', 'first', 'two', 'new']
+        assert (await app.sessions.status(sid))['conversation_revision'] == 1
 
 
 @async_test
 async def test_stale_task_or_preparation_failure_preserves_original(monkeypatch, tmp_path):
     model = ToolModel(responses=[AIMessage(content='one'), AIMessage(content='two')])
     async with build(monkeypatch, tmp_path / 'state.sqlite', model) as app:
-        sid = await app.acreate_session('A')
-        await app.arun(sid, [('user', 'one')])
-        first = app._storage.replies.latest(sid)
-        await app.arun(sid, [('user', 'two')])
+        sid = await app.sessions.create('A')
+        await app.runs.start(sid, [('user', 'one')])
+        first = app.sessions._persistence.storage.replies.latest(sid)
+        await app.runs.start(sid, [('user', 'two')])
         with pytest.raises(ValueError):
-            await app.aregenerate_last_reply(sid, request_id=str(uuid4()), expected_reply_id=first['reply_id'], expected_conversation_revision=0)
-        last = app._storage.replies.latest(sid)
-        row = app._storage.sessions.get(sid)
+            await app.runs.regenerate(sid, request_id=str(uuid4()), expected_reply_id=first['reply_id'], expected_conversation_revision=0)
+        last = app.sessions._persistence.storage.replies.latest(sid)
+        row = app.sessions._persistence.storage.sessions.get(sid)
         async def fail(*args, **kwargs):
             raise OSError('synthetic seed failure')
         with monkeypatch.context() as patch:
-            patch.setattr(app._agent, 'aupdate_state', fail)
+            patch.setattr(app.runs._agent, 'aupdate_state', fail)
             with pytest.raises(OSError):
-                await app.aregenerate_last_reply(sid, request_id=str(uuid4()), expected_reply_id=last['reply_id'], expected_conversation_revision=0)
-        assert app._storage.sessions.get(sid)['thread_id'] == row['thread_id']
-        assert app._storage.sessions.get(sid)['state'] == 'ready'
-        assert not app._sessions.require(sid).is_busy()
+                await app.runs.regenerate(sid, request_id=str(uuid4()), expected_reply_id=last['reply_id'], expected_conversation_revision=0)
+        assert app.sessions._persistence.storage.sessions.get(sid)['thread_id'] == row['thread_id']
+        assert app.sessions._persistence.storage.sessions.get(sid)['state'] == 'ready'
+        assert not app.sessions._sessions.require(sid).is_busy()
         assert len(model.seen) == 2
 
 
@@ -63,21 +63,21 @@ async def test_stale_task_or_preparation_failure_preserves_original(monkeypatch,
 async def test_activation_sql_failure_rolls_back_visible_tail_and_root(monkeypatch, tmp_path):
     model = ToolModel(responses=[AIMessage(content='old'), AIMessage(content='new')])
     async with build(monkeypatch, tmp_path / 'state.sqlite', model) as app:
-        sid = await app.acreate_session('A')
-        await app.arun(sid, [('user', 'task')])
-        saved = app._storage.sessions.get(sid)
-        before = app._storage.database.read_rows('SELECT * FROM naiyue_chat_messages WHERE session_id=?', (sid,))
+        sid = await app.sessions.create('A')
+        await app.runs.start(sid, [('user', 'task')])
+        saved = app.sessions._persistence.storage.sessions.get(sid)
+        before = app.sessions._persistence.storage.database.read_rows('SELECT * FROM naiyue_chat_messages WHERE session_id=?', (sid,))
         request_id = str(uuid4())
-        boundary = app._storage.replies.latest(sid)
-        app._storage.database.connection.executescript('''CREATE TRIGGER stop_regeneration BEFORE DELETE ON naiyue_chat_messages
+        boundary = app.sessions._persistence.storage.replies.latest(sid)
+        app.sessions._persistence.storage.database.connection.executescript('''CREATE TRIGGER stop_regeneration BEFORE DELETE ON naiyue_chat_messages
             BEGIN SELECT RAISE(ABORT, 'PRIVATE_ACTIVATION'); END;''')
         with pytest.raises(Exception, match='session_save_unconfirmed'):
-            await app.aregenerate_last_reply(sid, request_id=request_id, expected_reply_id=boundary['reply_id'], expected_conversation_revision=0)
-        assert app._storage.sessions.get(sid)['thread_id'] == saved['thread_id']
-        assert app._storage.database.read_rows('SELECT * FROM naiyue_chat_messages WHERE session_id=?', (sid,)) == before
-        assert not app._sessions.require(sid).is_busy() and len(model.seen) == 1
+            await app.runs.regenerate(sid, request_id=request_id, expected_reply_id=boundary['reply_id'], expected_conversation_revision=0)
+        assert app.sessions._persistence.storage.sessions.get(sid)['thread_id'] == saved['thread_id']
+        assert app.sessions._persistence.storage.database.read_rows('SELECT * FROM naiyue_chat_messages WHERE session_id=?', (sid,)) == before
+        assert not app.sessions._sessions.require(sid).is_busy() and len(model.seen) == 1
         from naiyue_test_agent.application.conversation.reply_storage import action
-        assert app._storage.replies.action(sid, request_id)['status'] == 'prepare_failed'
+        assert app.sessions._persistence.storage.replies.action(sid, request_id)['status'] == 'prepare_failed'
 
 
 @async_test
@@ -95,28 +95,28 @@ async def test_cancel_during_activation_settles_root_and_preserves_replay_input(
     path = tmp_path / 'state.sqlite'
     model = ToolModel(responses=[AIMessage(content='old')])
     async with build(monkeypatch, path, model) as app:
-        sid = await app.acreate_session('A')
-        await app.arun(sid, [('user', 'original task')])
-        old = app._storage.sessions.get(sid)['thread_id']
-        boundary = app._storage.replies.latest(sid)
+        sid = await app.sessions.create('A')
+        await app.runs.start(sid, [('user', 'original task')])
+        old = app.sessions._persistence.storage.sessions.get(sid)['thread_id']
+        boundary = app.sessions._persistence.storage.replies.latest(sid)
         with monkeypatch.context() as patch:
             patch.setattr(module, '_commit_replacement', blocked)
-            task = asyncio.create_task(app.aregenerate_last_reply(sid, request_id=str(uuid4()),
+            task = asyncio.create_task(app.runs.regenerate(sid, request_id=str(uuid4()),
                 expected_reply_id=boundary['reply_id'], expected_conversation_revision=0))
             assert await asyncio.to_thread(entered.wait, 5)
             task.cancel()
-            assert app._sessions.require(sid).is_busy()
+            assert app.sessions._sessions.require(sid).is_busy()
             release.set()
             with pytest.raises(asyncio.CancelledError):
                 await task
-        row = app._storage.sessions.get(sid)
-        owner = app._sessions.require(sid)
+        row = app.sessions._persistence.storage.sessions.get(sid)
+        owner = app.sessions._sessions.require(sid)
         assert row['thread_id'] != old and owner.get_thread_id() == row['thread_id']
         assert row['conversation_revision'] == 1 and row['state'] == 'running'
         assert not owner.is_busy() and len(model.seen) == 1
     async with build(monkeypatch, path) as app:
-        history = await app.aget_session_history(sid)
+        history = await app.history.session(sid)
         assert history['recovery']['kind'] == 'interrupted_execution'
-        await app.arecover_session(sid, checkpoint_id=history['checkpoint_id'], action='continue')
-        assert [m.content for m in await app.aget_messages(sid)] == ['original task']
-        assert (await app.aget_session_status(sid))['conversation_revision'] == 1
+        await app.sessions.recover(sid, checkpoint_id=history['checkpoint_id'], action='continue')
+        assert [m.content for m in await app.history.messages(sid)] == ['original task']
+        assert (await app.sessions.status(sid))['conversation_revision'] == 1

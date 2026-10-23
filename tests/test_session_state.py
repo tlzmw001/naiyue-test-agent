@@ -135,19 +135,19 @@ async def test_real_persistent_restore_preserves_configuration_but_resets_transi
 
     database = tmp_path / 'sessions.sqlite'
     async with build(monkeypatch, database) as app:
-        sid = await app.acreate_session('A')
-        await app.arun(sid, [('user', 'save')])
-        await app.aset_permission_mode(sid, 'NoAsk')
-        thread = app._sessions.require(sid).get_thread_id()
+        sid = await app.sessions.create('A')
+        await app.runs.start(sid, [('user', 'save')])
+        await app.sessions.select_permission_mode(sid, 'NoAsk')
+        thread = app.sessions._sessions.require(sid).get_thread_id()
     async with build(monkeypatch, database) as app:
-        await app.arestore_session(sid)
-        state = app._sessions._sessions[sid]
+        await app.sessions.restore(sid)
+        state = app.sessions._sessions._sessions[sid]
         assert isinstance(state, AgentSession)
         assert state.get_thread_id() == thread and state.get_permission_mode() == 'NoAsk'
         assert state.snapshot_for_run()['run_id'] is None and not state.is_busy()
         assert state.resolve_permission_context()['session_allow'] == [] and state.resolve_prompt_parts() == []
-        assert app._sessions.drain_steering(sid) == [] and app._sessions.finish_run_boundary(sid) == (False, [])
-        assert [m.content for m in await app.aget_messages(sid)] == ['save', 'answer']
+        assert app.sessions._sessions.drain_steering(sid) == [] and app.sessions._sessions.finish_run_boundary(sid) == (False, [])
+        assert [m.content for m in await app.history.messages(sid)] == ['save', 'answer']
 
 
 @pytest.mark.parametrize('filename', [

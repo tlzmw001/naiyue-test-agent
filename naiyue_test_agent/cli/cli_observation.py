@@ -138,11 +138,11 @@ def handle_observation_command(app, session_id, line, write):
         return
     try:
         if command == ':usage':
-            value = app.get_model_usage(session_id, after_model=cursor)
+            value = app.call(lambda api: api.observability.usage(session_id, after_model=cursor))
         elif run_id is None:
-            value = app.list_diagnostic_runs(session_id, before=cursor)
+            value = app.call(lambda api: api.observability.runs(session_id, before=cursor))
         else:
-            value = app.get_diagnostic_events(session_id, run_id, after=cursor or 0)
+            value = app.call(lambda api: api.observability.events(session_id, run_id, after=cursor or 0))
         if value['session_id'] != session_id:
             raise ValueError('observation_session_mismatch')
         if command == ':usage':

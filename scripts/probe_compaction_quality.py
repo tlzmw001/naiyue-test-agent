@@ -166,9 +166,9 @@ async def _async__run_case(args) -> int:
                                       'status': getattr(event.data, 'status', None),
                                       'visibility': getattr(event.data, 'visibility', None)}, sort_keys=True), flush=True)
 
-            app.subscribe_events(observe_context)
-            model_id = args.model_id or app.default_model_id
-            model = app._sessions._catalog.get(model_id)
+            app.observability.subscribe(observe_context)
+            model_id = args.model_id or app.models.default_id
+            model = app.sessions._sessions._catalog.get(model_id)
             metadata = dict(model.metadata or {})
             limits = dict(metadata[MODEL_LIMITS_METADATA_KEY])
             output_cap = limits['max_output_tokens']
@@ -200,9 +200,9 @@ async def _async__run_case(args) -> int:
             }
             model.metadata = metadata
 
-            session = await app.acreate_session(model_id)
+            session = await app.sessions.create(model_id)
             started = time.monotonic()
-            result = await app.arun(session, messages)
+            result = await app.runs.start(session, messages)
             elapsed_ms = round((time.monotonic() - started) * 1000)
             answers = [message for message in result['messages']
                        if isinstance(message, AIMessage)]

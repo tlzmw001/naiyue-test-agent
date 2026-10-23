@@ -180,7 +180,7 @@ def test_cli_loads_shell_policy_into_registered_tools(monkeypatch, tmp_path):
     original, descriptions = cli.build_local_application, []
     def build(*args, **kwargs):
         app = original(*args, **kwargs)
-        descriptions.extend(spec.tool.description for spec in app.get_registered_tools()
+        descriptions.extend(spec.tool.description for spec in app.call(lambda api: api.tools.list())
                             if spec.tool.name in ('bash', 'powershell'))
         return app
     monkeypatch.setattr(cli, 'build_local_application', build)
@@ -202,7 +202,7 @@ def test_web_loads_shell_policy_into_registered_tools(monkeypatch, tmp_path, pre
     async def scenario():
         options = {'runtime_settings': load_settings(path)} if preloaded else {}
         async with web_client(monkeypatch, tmp_path, model, **options) as (_client, web):
-            specs = web.state.service.application.get_registered_tools()
+            specs = web.state.service.application.tools.list()
             descriptions = [spec.tool.description for spec in specs if spec.tool.name in ('bash', 'powershell')]
             assert len(descriptions) == 2
             assert all('limit: 831 seconds' in description for description in descriptions)

@@ -27,7 +27,7 @@ async def make_reader(monkeypatch, root, path, decide, **rules):
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     app = await build_application('synthetic', tools=[reader], system_prompt='', response_format=None,
         settings=AppSettings.model_validate({'permissions': rules}))
-    return app, await app.acreate_workspace_session('A', root), reader
+    return app, await app.sessions.create_workspace('A', root), reader
 
 
 def tool_results(result):
@@ -39,7 +39,7 @@ async def test_deny_inside_file_returns_actionable_error_and_loop_continues(monk
     path = tmp_path / 'note.txt'
     path.write_text('PRIVATE_CONTENT')
     app, session, _ = await make_reader(monkeypatch, tmp_path, path, lambda _req: 'allow', deny=[{'tool': 'read', 'path': str(path)}])
-    result = await app.arun(session, [('user', 'read')])
+    result = await app.runs.start(session, [('user', 'read')])
     assert not result.get('approval_requests')
     assert tool_results(result)[0].status == 'error'
     assert 'permission policy' in tool_results(result)[0].content
@@ -58,7 +58,7 @@ async def test_allow_outside_file_uses_tool_without_interrupt(monkeypatch, tmp_p
         received.append(request)
         return 'allow'
     app, session, _ = await make_reader(monkeypatch, root, path, allow)
-    result = await app.arun(session, [('user', 'read')])
+    result = await app.runs.start(session, [('user', 'read')])
     assert not result.get('approval_requests')
     assert tool_results(result)[0].content == 'SYNTHETIC_OUTSIDE'
     assert all(r['session_id'] == session and Path(r['resolved']) == path.resolve() for r in received)
@@ -74,9 +74,9 @@ async def test_ask_inside_file_reviews_same_session_and_can_be_approved(monkeypa
         assert request['session_id'] is not None
         return 'ask'
     app, session, _ = await make_reader(monkeypatch, tmp_path, path, ask)
-    paused = await app.arun(session, [('user', 'read')])
+    paused = await app.runs.start(session, [('user', 'read')])
     assert paused['approval_requests'][0]['target'] == str(path)
-    result = await app.aresume_tool_approval(session, ['approve'])
+    result = await app.runs.resume_approval(session, ['approve'])
     assert tool_results(result)[0].content == 'SYNTHETIC_APPROVED'
     assert all(r['session_id'] == session for r in requests)
 
@@ -88,9 +88,9 @@ async def test_policy_error_returns_safe_tool_feedback(monkeypatch, tmp_path, ca
     def fail(_request):
         raise RuntimeError('PRIVATE_POLICY_DETAIL')
     app, session, _ = await make_reader(monkeypatch, tmp_path, path, fail)
-    paused = await app.arun(session, [('user', 'read')])
+    paused = await app.runs.start(session, [('user', 'read')])
     assert paused['approval_requests'] and not tool_results(paused)
-    result = await app.aresume_tool_approval(session, ['reject'])
+    result = await app.runs.resume_approval(session, ['reject'])
     assert tool_results(result)[0].status == 'error'
     assert 'PRIVATE_' not in tool_results(result)[0].content + caplog.text
 
@@ -100,9 +100,9 @@ async def test_sensitive_path_requires_review_without_explicit_allow(monkeypatch
     path = tmp_path / '.env'
     path.write_text('PRIVATE_CREDENTIAL')
     app, session, _ = await make_reader(monkeypatch, tmp_path, path, lambda _: 'ask')
-    paused = await app.arun(session, [('user', 'read')])
+    paused = await app.runs.start(session, [('user', 'read')])
     assert paused['approval_requests'] and not tool_results(paused)
-    result = await app.aresume_tool_approval(session, ['reject'])
+    result = await app.runs.resume_approval(session, ['reject'])
     assert tool_results(result)[0].status == 'error' and 'PRIVATE_CREDENTIAL' not in str(tool_results(result))
 
 
@@ -111,7 +111,7 @@ async def test_sensitive_file_can_be_explicitly_allowed(monkeypatch, tmp_path):
     path = tmp_path / '.env'
     path.write_text('synthetic explicitly allowed')
     app, session, _ = await make_reader(monkeypatch, tmp_path, path, lambda _: 'ask', allow=[{'tool': 'read', 'path': str(path)}])
-    result = await app.arun(session, [('user', 'read')])
+    result = await app.runs.start(session, [('user', 'read')])
     assert tool_results(result)[0].content == 'synthetic explicitly allowed'
 
 
@@ -124,10 +124,10 @@ async def test_sessions_sharing_one_tool_do_not_share_permission_decision(monkey
         return 'allow' if subject['session_id'] in allowed else 'ask'
     app, first, reader = await make_reader(monkeypatch, tmp_path, path, decide, mode='NoAsk')
     allowed.add(first)
-    assert tool_results(await app.arun(first, [('user', 'read')]))[0].content == 'SYNTHETIC_ALLOWED'
+    assert tool_results(await app.runs.start(first, [('user', 'read')]))[0].content == 'SYNTHETIC_ALLOWED'
     # A second application run uses the same original tool but a different session.
-    second = await app.acreate_workspace_session('A', tmp_path)
-    assert tool_results(await app.arun(second, [('user', 'read')]))[0].status == 'error'
+    second = await app.sessions.create_workspace('A', tmp_path)
+    assert tool_results(await app.runs.start(second, [('user', 'read')]))[0].status == 'error'
 
 
 @async_test
@@ -140,9 +140,9 @@ async def test_skill_resource_approval_uses_same_context_as_execution(monkeypatc
         assert request['session_id'] is not None
         return 'ask'
     app, session, _ = await make_reader(monkeypatch, tmp_path, path, ask)
-    paused = await app.arun(session, [('user', 'read skill')])
+    paused = await app.runs.start(session, [('user', 'read skill')])
     assert paused['approval_requests'][0]['target'] == str(path.resolve())
-    result = await app.aresume_tool_approval(session, ['approve'])
+    result = await app.runs.resume_approval(session, ['approve'])
     assert 'SYNTHETIC_SKILL_BODY' in tool_results(result)[0].content
     assert all(Path(r['resolved']) == path.resolve() and r['session_id'] == session for r in calls)
 
@@ -153,9 +153,9 @@ async def test_default_callback_change_does_not_recheck_a_saved_approval(monkeyp
     path.write_text('approved content')
     decisions = ['ask']
     app, session, _ = await make_reader(monkeypatch, tmp_path, path, lambda _: decisions[0])
-    await app.arun(session, [('user', 'read')])
+    await app.runs.start(session, [('user', 'read')])
     decisions[0] = 'allow'
-    result = await app.aresume_tool_approval(session, ['approve'])
+    result = await app.runs.resume_approval(session, ['approve'])
     assert tool_results(result)[0].content == 'approved content'
 
 
@@ -164,7 +164,7 @@ async def test_invalid_policy_result_is_not_treated_as_allow(monkeypatch, tmp_pa
     path = tmp_path / 'note.txt'
     path.write_text('PRIVATE_CONTENT')
     app, session, _ = await make_reader(monkeypatch, tmp_path, path, lambda _: {'decision': 'allow'})
-    result = await app.arun(session, [('user', 'read')])
+    result = await app.runs.start(session, [('user', 'read')])
     assert result['approval_requests'] and not tool_results(result)
 
 
@@ -179,7 +179,7 @@ async def test_accidental_coroutine_result_is_closed_and_requires_review(monkeyp
     app, session, _ = await make_reader(monkeypatch, tmp_path, path, asynchronous)
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter('always')
-        result = await app.arun(session, [('user', 'read')])
+        result = await app.runs.start(session, [('user', 'read')])
         gc.collect()
     assert result['approval_requests'] and not tool_results(result)
     assert not any('never awaited' in str(item.message) for item in captured)
@@ -206,8 +206,8 @@ async def test_rejecting_inside_approval_does_not_read_file(monkeypatch, tmp_pat
     path = tmp_path / 'note.txt'
     path.write_text('PRIVATE_REJECTED')
     app, session, _ = await make_reader(monkeypatch, tmp_path, path, lambda _r: 'ask')
-    await app.arun(session, [('user', 'read')])
-    result = await app.aresume_tool_approval(session, ['reject'])
+    await app.runs.start(session, [('user', 'read')])
+    result = await app.runs.resume_approval(session, ['reject'])
     assert tool_results(result)[0].status == 'error'
     assert 'PRIVATE_REJECTED' not in tool_results(result)[0].content
     assert result['messages'][-1].content == 'next turn'
@@ -222,7 +222,7 @@ async def test_control_exception_is_not_converted_to_permission_denial(monkeypat
         raise GraphBubbleUp('synthetic control')
     app, session, _ = await make_reader(monkeypatch, tmp_path, path, signal)
     with pytest.raises(GraphBubbleUp):
-        await app.arun(session, [('user', 'read')])
+        await app.runs.start(session, [('user', 'read')])
 
 
 def test_permission_callback_is_not_in_model_schema():

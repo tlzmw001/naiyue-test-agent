@@ -15,7 +15,7 @@ async def test_saved_change_and_patch_are_scope_checked(monkeypatch, tmp_path):
         created = await client.post('/api/sessions', json={'model_id': 'A'})
         sid = created.json()['session_id']
         app = web.state.service.application
-        await app.aset_active_tools(sid, ['write'])
+        await app.sessions.select_tools(sid, ['write'])
         sent = await client.post(f'/api/sessions/{sid}/runs', json={'request_id': str(uuid4()), 'text': 'write'})
         await web.state.delivery.wait(sent.json()['run_id'])
         rows = (await client.get(f'/api/sessions/{sid}/messages')).json()['messages']

@@ -27,11 +27,11 @@ def show_approval_batches(batches, write):
 def handle_approval(app, session_id, line, *, worker, interactive, write, start_root):
     parts = line.split()
     command, tokens = parts[0], parts[1:]
-    batches = app.pending_approval_batches(session_id)
+    batches = app.call(lambda api: api.runs.pending_approvals(session_id))
     # A pipe can provide its approval command before the model reaches HITL.
     while command != ':approvals' and not interactive and not batches and worker is not None and worker.is_alive():
         worker.join(0.05)
-        batches = app.pending_approval_batches(session_id)
+        batches = app.call(lambda api: api.runs.pending_approvals(session_id))
     if command == ':approvals':
         show_approval_batches(batches, write)
         if not batches: write('当前没有待审批的工具调用')
@@ -68,12 +68,12 @@ def handle_approval(app, session_id, line, *, worker, interactive, write, start_
                        for row, choice in zip(batch['items'], choices, strict=True)],
             remember_approved=[batch['items'][index - 1]['approval_id'] for index in remember])
         if batch['kind'] == 'live_child':
-            app.submit_subagent_approval(session_id, **submission)
+            app.call(lambda api: api.runs.submit_subagent_approval(session_id, **submission))
             write(f"子 Agent 审批已提交：{batch['approval_batch_id']}")
         else:
             if worker is not None:
                 worker.join()
-            decisions, remembered = app.prepare_root_approval_submission(session_id, **submission)
+            decisions, remembered = app.call(lambda api: api.runs.prepare_approval(session_id, **submission))
             start_root(decisions, remembered)
             return batch['approval_batch_id']
     except ValueError:
@@ -84,12 +84,12 @@ def settle_cli_worker(app, session_id, worker, write, *, stop_waits=True, stop_a
     """EOF has no approval input left; wake child waits before joining the root."""
     stopped = False
     while worker is not None and worker.is_alive():
-        batches = app.pending_approval_batches(session_id)
+        batches = app.call(lambda api: api.runs.pending_approvals(session_id))
         if batches and not stop_waits:
             return False
         if not stopped and (stop_active or any(batch['kind'] == 'live_child' for batch in batches)):
             try:
-                app.request_stop(session_id)
+                app.call(lambda api: api.runs.stop(session_id))
             except SessionBusyError as error:
                 logger.info('cli_exit_stop_not_accepted error_type=%s', type(error).__name__)
             else:
@@ -102,13 +102,13 @@ def settle_cli_worker(app, session_id, worker, write, *, stop_waits=True, stop_a
 def handle_scope_stop(app, session_id, target, *, worker, write, start_root):
     if target != 'root':
         try:
-            app.request_stop(session_id, agent_path=target)
+            app.call(lambda api: api.runs.stop(session_id, agent_path=target))
         except SessionBusyError:
             write('该子任务不存在、已结束或正在收尾，停止未被接受')
         else:
             write(f'已请求停止子任务：{target}；其他子任务继续')
         return True
-    pending = next((batch for batch in app.pending_approval_batches(session_id) if batch['kind'] == 'paused_root'), None)
+    pending = next((batch for batch in app.call(lambda api: api.runs.pending_approvals(session_id)) if batch['kind'] == 'paused_root'), None)
     if pending is not None:
         if worker is not None:
             worker.join()

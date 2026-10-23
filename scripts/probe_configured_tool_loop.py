@@ -51,8 +51,8 @@ async def main() -> int:
                                 permissions=ToolPermission(default='allow'))],
                 system_prompt='Call the requested tool, then return exactly its result.', response_format=None)
             try:
-                session = await app.acreate_session(args.model_id)
-                result = await app.arun(session, [('user',
+                session = await app.sessions.create(args.model_id)
+                result = await app.runs.start(session, [('user',
                     'Call read_probe_value exactly once, then reply only with the exact value it returns.')])
             finally:
                 await app.aclose()

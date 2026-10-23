@@ -44,7 +44,7 @@ async def test_configured_agent_uses_file_and_switches_after_tool_result(tmp_pat
     @tool
     async def switch_to_second() -> str:
         """Select the second configured model for this test session."""
-        await holder['app'].aselect_model(holder['session'], 'second')
+        await holder['app'].sessions.select_model(holder['session'], 'second')
         return 'selected second'
 
     app = await build_async_local_application(
@@ -53,11 +53,11 @@ async def test_configured_agent_uses_file_and_switches_after_tool_result(tmp_pat
                         permissions=ToolPermission(default='allow'))],
         system_prompt='Test model selection.', response_format=None, settings=AppSettings())
     try:
-        session = await app.acreate_session('first')
+        session = await app.sessions.create('first')
         holder.update(app=app, session=session)
-        app.subscribe_events(lambda event: selections.append((event.session_id, event.data.model_id))
+        app.observability.subscribe(lambda event: selections.append((event.session_id, event.data.model_id))
                              if event.event_type == 'model_call_started' else None)
-        result = await app.arun(session, [('user', 'switch, then answer')])
+        result = await app.runs.start(session, [('user', 'switch, then answer')])
     finally:
         await app.aclose()
 
@@ -88,11 +88,11 @@ async def test_configured_agent_forwards_checkpointer_for_continuous_messages(tm
     app = await build_async_local_application(config_path, tools=[], system_prompt='',
                                               response_format=None, settings=AppSettings())
     try:
-        session = await app.acreate_session('first')
-        thread = app._sessions.require(session).get_thread_id()
-        await app.arun(session, [('user', 'first question')])
-        result = await app.arun(session, [('user', 'second question')])
-        assert app._sessions.require(session).get_thread_id() == thread
+        session = await app.sessions.create('first')
+        thread = app.sessions._sessions.require(session).get_thread_id()
+        await app.runs.start(session, [('user', 'first question')])
+        result = await app.runs.start(session, [('user', 'second question')])
+        assert app.sessions._sessions.require(session).get_thread_id() == thread
     finally:
         await app.aclose()
 

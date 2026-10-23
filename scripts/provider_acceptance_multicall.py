@@ -10,8 +10,8 @@ from .provider_acceptance_cases import require
 
 async def multicall_diagnostic(env):
     async with env.open_app(['subagent']) as app:
-        model = app._catalog.get(env.model_id)
-        tool = app.get_registered_tools()[0].tool
+        model = app.models._catalog.get(env.model_id)
+        tool = app.tools.list()[0].tool
         bound = model.bind_tools([tool])
         payload = model._get_request_payload([HumanMessage(content='Propose exactly two calls to subagent in '
             'one response: first agent="tester", task="LEFT"; second agent="tester", task="RIGHT". '
@@ -75,8 +75,8 @@ async def multicall_diagnostic(env):
 
 async def nonstream_tool_diagnostic(env):
     async with env.open_app(['subagent']) as app:
-        model = app._catalog.get(env.model_id).model_copy(update={'disable_streaming': 'tool_calling'})
-        tool = app.get_registered_tools()[0].tool
+        model = app.models._catalog.get(env.model_id).model_copy(update={'disable_streaming': 'tool_calling'})
+        tool = app.tools.list()[0].tool
         bound = model.bind_tools([tool])
         messages = [part async for part in bound.astream([HumanMessage(content='Propose exactly two calls '
             'to subagent in one response: first agent="tester", task="LEFT"; second agent="tester", '

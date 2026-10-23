@@ -55,13 +55,13 @@ async def test_a_save_failure_keeps_b_active_and_its_save_healthy(monkeypatch, t
     async with web_client(monkeypatch, tmp_path, model) as (client, web):
         a, b = await sessions(client, 2)
         delivery, backend = web.state.delivery, web.state.service.application
-        finish = backend._storage.runs.finish_run
+        finish = backend.sessions._persistence.storage.runs.finish_run
         primary = OSError('PRIVATE_SAVE')
         def fail(sid, *args, **kwargs):
             if sid == a:
                 raise primary
             return finish(sid, *args, **kwargs)
-        monkeypatch.setattr(backend._storage.runs, 'finish_run', fail)
+        monkeypatch.setattr(backend.sessions._persistence.storage.runs, 'finish_run', fail)
         entered, release = gated(model, b)
         rb = (await client.post(f'/api/sessions/{b}/runs', json=request(b))).json()['run_id']
         try:
@@ -69,12 +69,12 @@ async def test_a_save_failure_keeps_b_active_and_its_save_healthy(monkeypatch, t
             ra = (await client.post(f'/api/sessions/{a}/runs', json=request(a))).json()['run_id']
             await delivery.wait(ra)
             assert delivery.get(ra).status == 'failed' and set(delivery.active_by_session) == {b}
-            assert not delivery.get(rb).task.done() and set(backend._persistence._active) == {b}
-            assert backend._persistence._blocked == {a}
+            assert not delivery.get(rb).task.done() and set(backend.sessions._persistence._active) == {b}
+            assert backend.sessions._persistence._blocked == {a}
             release.set()
             await delivery.wait(rb)
-            assert delivery.get(rb).status == 'completed' and backend._storage.sessions.get(b)['state'] == 'ready'
-            assert delivery.active_by_session == {} and backend._persistence._active == {}
+            assert delivery.get(rb).status == 'completed' and backend.sessions._persistence.storage.sessions.get(b)['state'] == 'ready'
+            assert delivery.active_by_session == {} and backend.sessions._persistence._active == {}
         finally:
             release.set()
     assert 'PRIVATE_SAVE' not in caplog.text
@@ -90,7 +90,7 @@ async def test_cancelled_http_start_keeps_a_owned_and_does_not_block_b(monkeypat
         def cancel(event):
             if event.session_id == a and event.event_type == 'run_started':
                 request_task.cancel('cancel A HTTP waiter')
-        unsubscribe = web.state.service.application.subscribe_events(cancel)
+        unsubscribe = web.state.service.application.observability.subscribe(cancel)
         body = request(a)
         request_task = asyncio.create_task(client.post(f'/api/sessions/{a}/runs', json=body))
         try:
@@ -125,7 +125,7 @@ async def test_close_error_still_drains_all_producers_and_preserves_primary():
         entered.set()
         raise primary
     settings = WebSettings(database_path='unused', frontend_dist='unused')
-    delivery = RunDelivery(SimpleNamespace(arun=run, aclose=close, subscribe_events=subscriptions.subscribe), settings)
+    delivery = RunDelivery(SimpleNamespace(runs=SimpleNamespace(start=run), aclose=close, observability=SimpleNamespace(subscribe=subscriptions.subscribe)), settings)
     for sid in ('A', 'B'):
         await delivery.start(sid, MessageInput(request_id=str(uuid4()), text=sid), [])
     jobs = tuple(delivery.active_by_session.values())
@@ -152,10 +152,10 @@ async def test_unsubscribe_failure_is_observable_and_does_not_retain_an_active_j
     model = SessionModel(replies=[])
     async with web_client(monkeypatch, tmp_path, model) as (client, web):
         sid, = await sessions(client, 1)
-        subscriptions = web.state.service.application._sessions._events
+        subscriptions = web.state.service.application.sessions._sessions._events
         application_handlers = dict(subscriptions._handlers)
-        assert list(application_handlers.values()) == [(None, web.state.service.application._usage.accept),
-                                                      (None, web.state.service.application._diagnostics.accept)]
+        assert list(application_handlers.values()) == [(None, web.state.service.application.observability._usage.accept),
+                                                      (None, web.state.service.application.observability._diagnostics.accept)]
         subscribe = subscriptions.subscribe
         def failing_subscription(handler, **kwargs):
             unsubscribe = subscribe(handler, **kwargs)
@@ -168,7 +168,7 @@ async def test_unsubscribe_failure_is_observable_and_does_not_retain_an_active_j
         await web.state.delivery.wait(rid)
         assert web.state.delivery.get(rid).status == 'completed'
         assert web.state.delivery.active_by_session == {} and subscriptions._handlers == application_handlers
-        assert web.state.service.application._storage.sessions.get(sid)['state'] == 'ready'
+        assert web.state.service.application.sessions._persistence.storage.sessions.get(sid)['state'] == 'ready'
     assert subscriptions._handlers == {}
     assert 'web_event_unsubscribe_failed error_type=ValueError' in caplog.text
     assert 'PRIVATE_UNSUBSCRIBE' not in caplog.text

@@ -33,8 +33,8 @@ def test_results_use_bounded_feedback_artifact_and_owned_archive(monkeypatch, tm
             'text': 'large' if action == 'inside_archive' else action}), AIMessage(content='done')],
                                     mode='BypassApprovals', server=server)
         try:
-            sid = await app.acreate_workspace_session('A', tmp_path)
-            result = await app.arun(sid, [('user', action)])
+            sid = await app.sessions.create_workspace('A', tmp_path)
+            result = await app.runs.start(sid, [('user', action)])
             output, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
             assert output.status == ('success' if action in ('normal', 'large', 'inside_archive') else 'error')
             assert len(output.content.encode('utf-8')) <= 512 and len(calls(path)) == 1
@@ -67,13 +67,13 @@ def test_catalog_drift_rejects_without_submitting_call(monkeypatch, tmp_path, wh
         path = tmp_path / 'drift.jsonl'
         app, _ = await make_mcp_app(monkeypatch, path, [call(NAME, {}), AIMessage(content='done')])
         try:
-            sid = await app.acreate_session('A')
+            sid = await app.sessions.create('A')
             if when == 'before-first-connection':
                 path.with_suffix('.drift').touch()
-            result = await app.arun(sid, [('user', 'request')])
+            result = await app.runs.start(sid, [('user', 'request')])
             assert result['approval_requests']
             path.with_suffix('.drift').touch()
-            result = await app.aresume_tool_approval(sid, ['approve'])
+            result = await app.runs.resume_approval(sid, ['approve'])
             output, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
             assert output.status == 'error' and 'catalog changed' in output.content
             assert calls(path) == []
@@ -89,8 +89,8 @@ def test_call_deadline_invalidates_connection_without_replay(monkeypatch, tmp_pa
         app, _ = await make_mcp_app(monkeypatch, path, [call(NAME, {'text': 'wait'}), AIMessage(content='done')],
                                     mode='BypassApprovals', server=server)
         try:
-            sid = await app.acreate_session('A')
-            result = await app.arun(sid, [('user', 'wait')])
+            sid = await app.sessions.create('A')
+            result = await app.runs.start(sid, [('user', 'wait')])
             output, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
             assert output.status == 'error' and 'timed out' in output.content
             assert len(calls(path)) == 1
@@ -109,8 +109,8 @@ def test_http_agent_roundtrip_calls_once(monkeypatch, tmp_path, json_response):
             app, _ = await make_mcp_app(monkeypatch, path, [call(NAME, {}), AIMessage(content='done')],
                                         mode='BypassApprovals', server=server)
             try:
-                sid = await app.acreate_session('A')
-                result = await app.arun(sid, [('user', 'HTTP')])
+                sid = await app.sessions.create('A')
+                result = await app.runs.start(sid, [('user', 'HTTP')])
                 output, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
                 assert output.status == 'success' and output.artifact['structured_content']['count'] == 1
                 assert len(calls(path)) == 1
@@ -123,11 +123,11 @@ def test_mcp_is_registered_but_default_activity_stays_unchanged(monkeypatch, tmp
     async def scenario():
         app, _ = await make_mcp_app(monkeypatch, tmp_path / 'select.jsonl', [], initial=None)
         try:
-            sid = await app.acreate_session('A')
-            assert app._sessions.mcp_resources._owners == {}
-            assert app._sessions.resolve_active_tool_names(sid) == ()
-            await app.aset_active_tools(sid, [NAME])
-            assert app._sessions.resolve_active_tool_names(sid) == (NAME,)
+            sid = await app.sessions.create('A')
+            assert app.sessions._sessions.mcp_resources._owners == {}
+            assert app.sessions._sessions.resolve_active_tool_names(sid) == ()
+            await app.sessions.select_tools(sid, [NAME])
+            assert app.sessions._sessions.resolve_active_tool_names(sid) == (NAME,)
         finally:
             await app.aclose()
     asyncio.run(scenario())
@@ -138,8 +138,8 @@ def test_mcp_command_argument_is_not_presented_as_a_local_shell_command(monkeypa
         path = tmp_path / 'command.jsonl'
         app, _ = await make_mcp_app(monkeypatch, path, [call(NAME, {'command': 'business value'})])
         try:
-            sid = await app.acreate_workspace_session('A', tmp_path)
-            result = await app.arun(sid, [('user', 'external tool')])
+            sid = await app.sessions.create_workspace('A', tmp_path)
+            result = await app.runs.start(sid, [('user', 'external tool')])
             row, = result['approval_requests']
             assert 'workspace' not in row and row['remember_scope'] == 'tool'
             assert 'MCP local/echo' in row['target']
@@ -158,8 +158,8 @@ def test_persistent_factory_registers_before_selection_and_rules(monkeypatch, tm
             path, 'stateful', allowed_tools=['echo']).model_dump()}}, 'permissions': {'allow': [{'tool': NAME}]}})
         async with open_async_persistent_application('unused', tools=[], system_prompt='', response_format=None,
             initial_active_tools=[NAME], settings=settings, database_path=tmp_path / 'db.sqlite') as app:
-            sid = await app.acreate_session('A')
-            result = await app.arun(sid, [('user', 'MCP')])
+            sid = await app.sessions.create('A')
+            result = await app.runs.start(sid, [('user', 'MCP')])
             assert not result.get('approval_requests') and len(calls(path)) == 1
             assert next(m for m in result['messages'] if isinstance(m, ToolMessage)).status == 'success'
         assert all(not process_alive(r['pid']) for r in facts(path) if r['event'] == 'start')
@@ -172,8 +172,8 @@ def test_executor_checks_permit_before_any_resource_borrow(monkeypatch, tmp_path
         path = tmp_path / 'permit.jsonl'
         app, _ = await make_mcp_app(monkeypatch, path, [])
         try:
-            spec, = app.get_registered_tools()
-            context = typed_context(identity=RunIdentity(session_id=await app.acreate_session('A'), agent_path='root'))
+            spec, = app.tools.list()
+            context = typed_context(identity=RunIdentity(session_id=await app.sessions.create('A'), agent_path='root'))
             subject = spec.permissions.prepare({}, context)
             subject.update(args={}, execution_environment=execution_environment())
             permit = {'call_id': 'one', 'tool_name': NAME, 'args': {}, 'subject': subject, 'session_id': context.scope.identity.session_id, 'agent_path': context.scope.identity.agent_path}
@@ -216,8 +216,8 @@ def test_auto_reviews_mcp_subject_and_falls_back_to_human(monkeypatch, tmp_path,
         app = await build_async_local_application('unused', tools=[], system_prompt='', response_format=None,
             initial_active_tools=[NAME], settings=settings)
         try:
-            sid = await app.acreate_session('A')
-            result = await app.arun(sid, [('user', 'call configured MCP tool')])
+            sid = await app.sessions.create('A')
+            result = await app.runs.start(sid, [('user', 'call configured MCP tool')])
             data = json.loads(fast.seen[0][-1].content)
             assert data['subject']['mcp']['server_id'] == 'local'
             assert data['subject']['side_effects'] == 'unknown'
@@ -225,7 +225,7 @@ def test_auto_reviews_mcp_subject_and_falls_back_to_human(monkeypatch, tmp_path,
                 assert not result.get('approval_requests') and len(calls(path)) == 1
             else:
                 assert result['approval_requests'] and not calls(path)
-                await app.aresume_tool_approval(sid, ['reject'])
+                await app.runs.resume_approval(sid, ['reject'])
         finally:
             await app.aclose()
     asyncio.run(scenario())
@@ -240,14 +240,14 @@ def test_explicit_deny_overrides_bypass_allow_and_remembered_mcp_tool(monkeypatc
         app, _ = await make_mcp_app(monkeypatch, path, [call(NAME, {}), AIMessage(content='done')], mode='BypassApprovals',
             rules={'deny': [{'tool': NAME}], 'allow': [{'tool': NAME}]})
         try:
-            sid = await app.acreate_session('A')
-            spec, = app.get_registered_tools()
+            sid = await app.sessions.create('A')
+            spec, = app.tools.list()
             context = typed_context(identity=RunIdentity(session_id=sid, agent_path='root'))
             prepared = prepare_permission_call({'id': 'first', 'name': NAME, 'args': {}}, spec, context, PermissionSettings(), [])
             remembered = remembered_rule(prepared['subject'])
-            session = app._sessions.require(sid)
+            session = app.sessions._sessions.require(sid)
             session._state.session_allow.append(remembered)
-            result = await app.arun(sid, [('user', 'denied')])
+            result = await app.runs.start(sid, [('user', 'denied')])
             assert next(m for m in result['messages'] if isinstance(m, ToolMessage)).status == 'error'
             assert not result.get('approval_requests') and not calls(path)
         finally:
@@ -261,12 +261,12 @@ def test_remembered_tool_still_relists_live_catalog_before_each_execution(monkey
         app, _ = await make_mcp_app(monkeypatch, path, [call(NAME, {}, 'a'), AIMessage(content='first'),
             call(NAME, {'text': 'second'}, 'b'), AIMessage(content='blocked')])
         try:
-            sid = await app.acreate_session('A')
-            await app.arun(sid, [('user', 'first')])
-            await app.aresume_tool_approval(sid, ['approve'], remember_approved=['a'])
+            sid = await app.sessions.create('A')
+            await app.runs.start(sid, [('user', 'first')])
+            await app.runs.resume_approval(sid, ['approve'], remember_approved=['a'])
             assert len(calls(path)) == 1
             path.with_suffix('.drift').touch()
-            result = await app.arun(sid, [('user', 'second')])
+            result = await app.runs.start(sid, [('user', 'second')])
             assert not result.get('approval_requests')
             assert [m for m in result['messages'] if isinstance(m, ToolMessage)][-1].status == 'error'
             assert len(calls(path)) == 1

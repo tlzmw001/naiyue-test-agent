@@ -34,8 +34,8 @@ async def test_soft_trigger_without_cut_is_skipped_and_original_request_runs(mon
     model = _model([AIMessage(content='done')], window=1000, output=20, reserve=950, keep=100)
     app = await _app(monkeypatch, {'A': model})
     events = []
-    app.subscribe_events(events.append)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'x' * 300)])
+    app.observability.subscribe(events.append)
+    result = await app.runs.start(await app.sessions.create('A'), [('user', 'x' * 300)])
     operations = operation_events(events)
     assert [e.event_type for e in operations] == ['compaction_started', 'compaction_finished']
     assert operations[-1].data.status == 'skipped'
@@ -50,9 +50,9 @@ async def test_forced_summary_failure_does_not_fall_back_or_retry_normal_request
                               summaries=[TimeoutError('PRIVATE_SUMMARY')])
     app = await _app(monkeypatch, {'A': model})
     events = []
-    app.subscribe_events(events.append)
+    app.observability.subscribe(events.append)
     with pytest.raises(ContextCompactionError) as caught:
-        await app.arun(await app.acreate_session('A'), _history())
+        await app.runs.start(await app.sessions.create('A'), _history())
     assert str(caught.value) == 'summary_failed'
     compaction = next(e.data for e in events if e.event_type == 'compaction_finished')
     recovery = next(e.data for e in events if e.event_type == 'context_recovery_finished')
@@ -68,9 +68,9 @@ async def test_retry_exception_keeps_identity_and_summary_is_not_applied(monkeyp
     model = _configured_model([_status(), failure])
     app = await _app(monkeypatch, {'A': model})
     events = []
-    app.subscribe_events(events.append)
+    app.observability.subscribe(events.append)
     with pytest.raises(TimeoutError) as caught:
-        await app.arun(await app.acreate_session('A'), _history())
+        await app.runs.start(await app.sessions.create('A'), _history())
     assert caught.value is failure
     compaction = next(e.data for e in events if e.event_type == 'compaction_finished')
     recovery = next(e.data for e in events if e.event_type == 'context_recovery_finished')
@@ -83,7 +83,7 @@ async def test_retry_exception_keeps_identity_and_summary_is_not_applied(monkeyp
 async def test_post_summary_budget_failure_has_no_applied_event_or_normal_request(monkeypatch):
     app, session, model, events = await prepared_app(monkeypatch, AIMessage(content='x' * 5000))
     with pytest.raises(ContextCompactionError) as caught:
-        await app.arun(session, [('user', 'third')])
+        await app.runs.start(session, [('user', 'third')])
     assert str(caught.value) == 'compacted_request_over_budget'
     assert operation_events(events)[-1].data.status == 'failed'
     assert operation_events(events)[-1].data.reason == 'compacted_request_over_budget'
@@ -93,13 +93,13 @@ async def test_post_summary_budget_failure_has_no_applied_event_or_normal_reques
 @async_test
 async def test_custom_invoke_result_is_preserved_but_replacement_is_unconfirmed(monkeypatch):
     app, session, model, events = await prepared_app(monkeypatch)
-    original = app._agent.ainvoke
+    original = app.runs._agent.ainvoke
 
     async def custom(input, **kwargs):
         return await original(input, **kwargs)
 
-    monkeypatch.setattr(app._agent, 'ainvoke', custom)
-    result = await app.arun(session, [('user', 'third')])
+    monkeypatch.setattr(app.runs._agent, 'ainvoke', custom)
+    result = await app.runs.start(session, [('user', 'third')])
     assert result['messages'][0].additional_kwargs['naiyue_compaction_summary'] is True
     end = operation_events(events)[-1].data
     assert end.status == 'unconfirmed' and end.reason == 'state_replacement_unconfirmed'
@@ -117,8 +117,8 @@ async def test_context_consumer_failure_is_isolated_and_real_replacement_still_o
             calls.append(event.event_type)
             raise RuntimeError('PRIVATE_CONSUMER')
 
-    app.subscribe_events(broken)
-    result = await app.arun(session, [('user', 'third')])
+    app.observability.subscribe(broken)
+    result = await app.runs.start(session, [('user', 'third')])
     assert calls == ['compaction_started']
     assert result['messages'][-1].content == 'final'
     assert operation_events(events)[-1].data.status == 'applied'
@@ -138,7 +138,7 @@ async def test_context_publish_fault_does_not_change_compaction_or_model_result(
         return original(self, event_type, data)
 
     monkeypatch.setattr(RunEventPublisher, 'publish', fail_context)
-    result = await app.arun(session, [('user', 'third')])
+    result = await app.runs.start(session, [('user', 'third')])
     assert result['messages'][0].additional_kwargs['naiyue_compaction_summary'] is True
     assert result['messages'][-1].content == 'final'
     assert events[-1].data.status == 'completed'
@@ -161,7 +161,7 @@ async def test_context_failure_reporting_error_never_masks_original_exception(mo
 
     monkeypatch.setattr(ContextOperationObserver, 'finalize', fail_report)
     with pytest.raises(TimeoutError) as caught:
-        await app.arun(await app.acreate_session('A'), _history())
+        await app.runs.start(await app.sessions.create('A'), _history())
     assert caught.value is failure
     assert 'context_failure_publish_failed' in caplog.text and 'PRIVATE_' not in caplog.text
 
@@ -188,13 +188,13 @@ async def test_recovery_operations_are_isolated_between_sessions(monkeypatch):
                        metadata=_configured_model([]).metadata)
     monkeypatch.setattr(application, 'load_model_catalog', lambda _p: ModelCatalog('A', {'A': model}))
     app = await build_application('synthetic.json', tools=[], system_prompt='BASE', response_format=None)
-    sessions = [await app.acreate_session('A') for _ in range(2)]
+    sessions = [await app.sessions.create('A') for _ in range(2)]
     events, outcomes = [], []
-    app.subscribe_events(events.append)
+    app.observability.subscribe(events.append)
 
     async def run(session):
         try:
-            outcomes.append(await app.arun(session, _history()))
+            outcomes.append(await app.runs.start(session, _history()))
         except BaseException as error:
             outcomes.append(error)
 
@@ -231,8 +231,8 @@ async def test_structured_retry_response_keeps_object_and_confirms_context_state
     app = await build_application('synthetic.json', tools=[], system_prompt='BASE',
                                                response_format=ToolStrategy(Answer))
     events = []
-    app.subscribe_events(events.append)
-    result = await app.arun(await app.acreate_session('A'), _history())
+    app.observability.subscribe(events.append)
+    result = await app.runs.start(await app.sessions.create('A'), _history())
     assert isinstance(result['structured_response'], Answer) and result['structured_response'].value == 'structured'
     assert operation_events(events)[-1].data.status == 'recovered'
     assert result['messages'][-1].type == 'tool' and result['messages'][-1].tool_call_id == 'schema'

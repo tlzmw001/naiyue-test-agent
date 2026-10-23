@@ -40,7 +40,7 @@ def test_skills_catalog_is_authenticated_metadata_only_and_refreshes(monkeypatch
             other = tmp_path / 'other'
             write_skill(other, name='foreign-skill', body='FOREIGN_BODY')
             assert 'foreign-skill' not in (await client.get(endpoint, params={'workspace_root': str(other)})).text
-            monkeypatch.setattr(app.state.service.application, 'get_registered_tools', lambda: ())
+            monkeypatch.setattr(app.state.service.application.tools, 'list', lambda: ())
             unavailable = (await client.get(endpoint)).json()
             assert unavailable['read_registered'] is False
             assert {row['command'] for row in unavailable['entries']} == {
@@ -57,7 +57,7 @@ def test_empty_catalog_and_discovery_failure_are_safe(monkeypatch, tmp_path, cap
             async def fail(_root):
                 raise OSError('PRIVATE_PATH_AND_BODY')
 
-            monkeypatch.setattr(app.state.service.application, 'aget_skills', fail)
+            monkeypatch.setattr(app.state.service.application.sessions, 'skills', fail)
             with caplog.at_level(logging.ERROR):
                 response = await client.get('/api/skills')
             assert response.status_code == 503

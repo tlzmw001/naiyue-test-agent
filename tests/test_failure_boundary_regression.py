@@ -60,7 +60,7 @@ async def test_summary_diagnostic_failure_keeps_original_cause(monkeypatch):
     if hasattr(context_compaction, 'classify_model_failure'):
         monkeypatch.setattr(context_compaction, 'classify_model_failure', broken)
     with pytest.raises(context_compaction.ContextCompactionError) as caught:
-        await app.arun(session, messages)
+        await app.runs.start(session, messages)
     assert caught.value.__cause__ is primary
     assert calls == [True]
 
@@ -72,9 +72,9 @@ async def test_runtime_compaction_error_is_not_reclassified_as_model_unknown(mon
 
     app, session, _model, messages, *_rest = await _case(monkeypatch, RuntimeError('PRIVATE'), send_margin=-1)
     events = []
-    app.subscribe_events(events.append)
+    app.observability.subscribe(events.append)
     with pytest.raises(ContextCompactionError):
-        await app.arun(session, messages)
+        await app.runs.start(session, messages)
     assert events[-1].data.failure.category == 'context_error'
     assert events[-1].data.failure.reason == 'compaction_failed'
 
@@ -94,8 +94,8 @@ async def test_summary_uses_configured_model_failure_mapping(monkeypatch):
             calls.append(error)
         return quota(error, source)
 
-    app.configure_error_classifiers(model_id='A', model=[describe])
+    app.observability.configure_errors(model_id='A', model=[describe])
     with pytest.raises(ContextCompactionError) as caught:
-        await app.arun(session, messages)
+        await app.runs.start(session, messages)
     assert caught.value.__cause__ is primary
     assert calls == [primary]

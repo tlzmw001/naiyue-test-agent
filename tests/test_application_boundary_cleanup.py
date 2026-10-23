@@ -47,9 +47,9 @@ def test_control_text_validation_precedes_unknown_session_lookup(monkeypatch, me
         app = await make_app(monkeypatch, StreamingToolModel(replies=[]))
         try:
             with pytest.raises(ValueError, match='non-empty'):
-                getattr(app, method)('missing', value)
+                getattr(app.runs, method)('missing', value)
             with pytest.raises(KeyError):
-                getattr(app, method)('missing', 'valid')
+                getattr(app.runs, method)('missing', 'valid')
         finally:
             await app.aclose()
     asyncio.run(scenario())
@@ -144,18 +144,18 @@ def test_compact_requires_successful_assembly_before_admission(monkeypatch, fail
 def test_application_owns_usage_close_without_reading_persistence_internals(monkeypatch, tmp_path):
     async def scenario():
         async with factory(monkeypatch, tmp_path / 'sessions.sqlite', StreamingToolModel(replies=[])) as app:
-            usage = app._usage
+            usage = app.observability._usage
             calls = []
             original = usage._close
             async def close():
                 calls.append('usage')
                 await original()
             monkeypatch.setattr(usage, '_close', close)
-            app._persistence._usage = None
+            app.sessions._persistence._usage = None
             await app.aclose()
             await app.aclose()
             assert calls == ['usage']
-            assert app._sessions._events._handlers == {}
+            assert app.sessions._sessions._events._handlers == {}
         assert calls == ['usage']
     asyncio.run(scenario())
 

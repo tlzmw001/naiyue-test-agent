@@ -40,19 +40,19 @@ def test_async_bash_timeout_is_tool_error_and_next_model_runs(monkeypatch, tmp_p
         model = StreamingToolModel(replies=[call('bash', {'command': 'printf EARLY; sleep 60', 'timeout': 1}, 'call-1'),
                                             AIMessage(content='inspect before retry')])
         app = await make_app(monkeypatch, model, [create_session_bash_tool()])
-        sid = await app.acreate_workspace_session('A', tmp_path)
+        sid = await app.sessions.create_workspace('A', tmp_path)
         events = []
-        app.subscribe_events(events.append)
+        app.observability.subscribe(events.append)
         try:
-            pending = await app.arun(sid, [('user', 'run')])
+            pending = await app.runs.start(sid, [('user', 'run')])
             assert pending['approval_requests']
-            result = await app.aresume_tool_approval(sid, ['approve'])
+            result = await app.runs.resume_approval(sid, ['approve'])
             message = next(m for m in result['messages'] if isinstance(m, ToolMessage))
             assert message.tool_call_id == 'call-1' and message.status == 'error'
             assert 'timed out' in message.content and 'EARLY' in message.content
             assert 'output_complete=' in message.content
             assert result['messages'][-1].content == 'inspect before retry'
-            assert not app._sessions.require(sid).describe_session()['manual_review_required']
+            assert not app.sessions._sessions.require(sid).describe_session()['manual_review_required']
             finished = [e for e in events if e.event_type == 'tool_call_finished']
             assert finished[-1].data.outcome == 'error_result'
             assert events[-1].data.status == 'completed'
@@ -93,14 +93,14 @@ def test_user_stop_skips_later_serial_command_after_whole_batch_approval(monkeyp
             {'name': 'bash', 'id': 'second', 'args': {'command': 'printf wrong > forbidden'}},
         ]), AIMessage(content='must not run')])
         app = await make_app(monkeypatch, model, [create_session_bash_tool()])
-        sid = await app.acreate_workspace_session('A', tmp_path)
+        sid = await app.sessions.create_workspace('A', tmp_path)
         task = None
         try:
-            paused = await app.arun(sid, [('user', 'two commands')])
+            paused = await app.runs.start(sid, [('user', 'two commands')])
             assert len(paused['approval_requests']) == 2 and commands == []
-            task = asyncio.create_task(app.aresume_tool_approval(sid, ['approve', 'approve']))
+            task = asyncio.create_task(app.runs.resume_approval(sid, ['approve', 'approve']))
             await asyncio.wait_for(started.wait(), 5)
-            app.request_stop(sid)
+            app.runs.stop(sid)
             result = await asyncio.wait_for(task, 5)
             messages = [m for m in result['messages'] if isinstance(m, ToolMessage)]
             assert [m.tool_call_id for m in messages] == ['first', 'second']
@@ -110,8 +110,8 @@ def test_user_stop_skips_later_serial_command_after_whole_batch_approval(monkeyp
             assert commands == ['printf started; sleep 60'] and not (tmp_path / 'forbidden').exists()
             assert result['run_stopped'] and len(model.seen) == 1
         finally:
-            if app._sessions.require(sid).describe_session()['busy']:
-                app.request_stop(sid)
+            if app.sessions._sessions.require(sid).describe_session()['busy']:
+                app.runs.stop(sid)
             if task is not None:
                 await asyncio.gather(task, return_exceptions=True)
             await app.aclose()

@@ -36,13 +36,13 @@ async def test_approval_pause_and_resolution_have_accurate_boundaries(monkeypatc
     ]), AIMessage(content='done')])
     app = await make_app(monkeypatch, model, [create_session_read_tool()])
     events = []
-    app.subscribe_events(events.append)
-    session = await app.acreate_workspace_session('A', root)
-    await app.arun(session, [('user', 'read')])
+    app.observability.subscribe(events.append)
+    session = await app.sessions.create_workspace('A', root)
+    await app.runs.start(session, [('user', 'read')])
     assert events[-1].data.status == 'interrupted'
     assert events_of(events, 'tool_call_started') == []
     initial_run = events[0].run_id
-    result = await app.aresume_tool_approval(session, [decision])
+    result = await app.runs.resume_approval(session, [decision])
     start, end = events_of(events, 'tool_call_started')[0], events_of(events, 'tool_call_finished')[0]
     assert start.run_id == end.run_id != initial_run
     assert start.data.tool_call_id == end.data.tool_call_id == 'approval-1'
@@ -71,8 +71,8 @@ async def test_truncated_response_returns_original_error_result_without_tool_io(
     ], response_metadata={'finish_reason': 'length'}), AIMessage(content='handled')])
     app = await make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
-    app.subscribe_events(events.append)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'run')])
+    app.observability.subscribe(events.append)
+    result = await app.runs.start(await app.sessions.create('A'), [('user', 'run')])
     end = events_of(events, 'tool_call_finished')[0].data
     assert end.outcome == 'not_executed' and end.reason == 'model_response_truncated'
     assert called == []
@@ -97,8 +97,8 @@ async def test_parameter_validation_is_error_result_not_executor_success(monkeyp
     ]), AIMessage(content='handled')])
     app = await make_app(monkeypatch, model, [ToolSpec(needs_value, needs_value.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
-    app.subscribe_events(events.append)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'run')])
+    app.observability.subscribe(events.append)
+    result = await app.runs.start(await app.sessions.create('A'), [('user', 'run')])
     assert called == []
     assert events_of(events, 'tool_call_finished')[0].data.outcome == 'error_result'
     assert next(m for m in result['messages'] if isinstance(m, ToolMessage)).status == 'error'
@@ -128,9 +128,9 @@ async def test_fatal_sequential_tool_reports_later_batch_skip(monkeypatch):
     fail_tool_dispatch(monkeypatch, 'first', failure)
     app = await make_app(monkeypatch, model, [ToolSpec(first, first.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow')), ToolSpec(later, later.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
-    app.subscribe_events(events.append)
+    app.observability.subscribe(events.append)
     with pytest.raises(RuntimeError) as caught:
-        await app.arun(await app.acreate_session('A'), [('user', 'run')])
+        await app.runs.start(await app.sessions.create('A'), [('user', 'run')])
     assert caught.value is failure and called == []
     ends = {e.data.tool_call_id: e.data for e in events_of(events, 'tool_call_finished')}
     assert ends['first-1'].outcome == 'exception'
@@ -154,8 +154,8 @@ async def test_parallel_tools_overlap_and_each_pair_has_order(monkeypatch):
     ]), AIMessage(content='done')])
     app = await make_app(monkeypatch, model, [ToolSpec(parallel, parallel.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
-    app.subscribe_events(events.append)
-    await app.arun(await app.acreate_session('A'), [('user', 'run')])
+    app.observability.subscribe(events.append)
+    await app.runs.start(await app.sessions.create('A'), [('user', 'run')])
     assert [e.sequence for e in events] == list(range(1, len(events) + 1))
     for call_id in ('parallel-1', 'parallel-2'):
         pair = [e for e in events if e.event_type.startswith('tool_call_')
@@ -213,9 +213,9 @@ async def test_unconfirmed_process_cleanup_is_event_and_original_exception(monke
     ])])
     app = await make_app(monkeypatch, model, [ToolSpec(uncertain, uncertain.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
-    app.subscribe_events(events.append)
+    app.observability.subscribe(events.append)
     with pytest.raises(ProcessCleanupError) as caught:
-        await app.arun(await app.acreate_session('A'), [('user', 'run')])
+        await app.runs.start(await app.sessions.create('A'), [('user', 'run')])
     assert caught.value is failure
     assert events_of(events, 'tool_call_finished')[0].data.outcome == 'outcome_unknown'
     assert events[-1].data.manual_review_required is True
@@ -233,10 +233,10 @@ async def test_mixed_approval_decisions_report_each_call_once(monkeypatch, tmp_p
     ]), AIMessage(content='done')])
     app = await make_app(monkeypatch, model, [create_session_read_tool()])
     events = []
-    app.subscribe_events(events.append)
-    session = await app.acreate_workspace_session('A', root)
-    await app.arun(session, [('user', 'read')])
-    await app.aresume_tool_approval(session, ['approve', 'reject'])
+    app.observability.subscribe(events.append)
+    session = await app.sessions.create_workspace('A', root)
+    await app.runs.start(session, [('user', 'read')])
+    await app.runs.resume_approval(session, ['approve', 'reject'])
     ends = {e.data.tool_call_id: e.data for e in events_of(events, 'tool_call_finished')}
     assert len(events_of(events, 'tool_call_finished')) == 2
     assert ends['approve-1'].outcome == 'success' and ends['approve-1'].boundary == 'dispatch'
@@ -254,8 +254,8 @@ async def test_real_read_write_read_batch_keeps_execution_order(monkeypatch, tmp
     ]), AIMessage(content='done')])
     app = await make_app(monkeypatch, model, [create_session_read_tool(), create_session_write_tool()])
     events = []
-    app.subscribe_events(events.append)
-    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'run batch')])
+    app.observability.subscribe(events.append)
+    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'run batch')])
     outputs = {m.tool_call_id: m for m in result['messages'] if isinstance(m, ToolMessage)}
     assert outputs['read-before'].content == 'before' and outputs['read-after'].content == 'after'
     assert path.read_text() == 'after'

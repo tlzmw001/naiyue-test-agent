@@ -54,9 +54,9 @@ async def test_wrong_classifier_arity_leaves_all_mappings_unchanged(monkeypatch)
         return None
 
     with pytest.raises(ValueError, match='error and source'):
-        app.configure_error_classifiers(model_id='A', model=[model], runtime=[wrong])
+        app.observability.configure_errors(model_id='A', model=[model], runtime=[wrong])
     assert catalog.describe_failure('A', VendorQuotaError()).reason == 'unclassified'
-    assert app._sessions._runtime_classifiers == ()
+    assert app.sessions._sessions._runtime_classifiers == ()
 
 
 @pytest.mark.parametrize('error,source,category,reason', [

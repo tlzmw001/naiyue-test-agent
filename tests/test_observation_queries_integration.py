@@ -30,14 +30,14 @@ async def test_native_sdk_retries_survive_web_pagination_and_cold_read(monkeypat
             app = web.state.service.application
             # web_client creates its own catalog and therefore its own clients.
             # Stub only those actual owned transports, keeping their hooks/options.
-            for owned, _ in app._catalog._owned_http_clients:
+            for owned, _ in app.models._catalog._owned_http_clients:
                 owned._transport = httpx.MockTransport(serve)
                 owned._mounts = {}
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             rid = (await client.post(f'/api/sessions/{sid}/runs', json=request('offline observation'))).json()['run_id']
             await web.state.delivery.wait(rid)
             assert web.state.delivery.get(rid).status == 'completed'
-            await app._diagnostics.aclose()
+            await app.observability._diagnostics.aclose()
             usage = (await client.get(f'/api/sessions/{sid}/usage')).json()
             assert usage['recorded_calls'] == 1 and usage['duration']['reported_calls'] == 1
             rows = (await client.get(f'/api/sessions/{sid}/diagnostics')).json()['runs']
@@ -58,9 +58,9 @@ async def test_native_sdk_retries_survive_web_pagination_and_cold_read(monkeypat
             assert len(models) == 1
             assert {e['data']['invocation_id'] for e in events if e['event_type'].startswith('model_http')} == {
                 models[0]['data']['invocation_id']}
-            before = app._storage.database.connection.total_changes
+            before = app.sessions._persistence.storage.database.connection.total_changes
             assert (await client.get(f'/api/sessions/{sid}/usage')).status_code == 200
-            assert app._storage.database.connection.total_changes == before and len(sent) == 3
+            assert app.sessions._persistence.storage.database.connection.total_changes == before and len(sent) == 3
             assert 'PRIVATE_NETWORK' not in json.dumps([usage, rows, events])
 
 
@@ -76,13 +76,13 @@ async def test_terminal_bridge_queries_native_saved_facts_without_additional_pro
         bridge = AsyncCliApplication('unused', tools=[], system_prompt='offline', response_format=None,
                                      database_path=tmp_path / 'state.sqlite' if disk else None)
         try:
-            sid = bridge.create_session('A')
-            assert bridge.run(sid, [('user', 'offline task')])['messages'][-1].content == 'done'
-            bridge._submit(bridge._app._diagnostics.aclose)
-            runs = bridge.list_diagnostic_runs(sid)
+            sid = bridge.call(lambda api: api.sessions.create('A'))
+            assert bridge.call(lambda api: api.runs.start(sid, [('user', 'offline task')]))['messages'][-1].content == 'done'
+            bridge._submit(bridge._app.observability._diagnostics.aclose)
+            runs = bridge.call(lambda api: api.observability.runs(sid))
             rid = runs['runs'][0]['run_id']
             statements = []
-            bridge._app._storage.database.connection.set_trace_callback(statements.append)
+            bridge._app.sessions._persistence.storage.database.connection.set_trace_callback(statements.append)
             lines = []
             for command in (':usage', ':diagnostics', ':diagnostics ' + rid):
                 handle_observation_command(bridge, sid, command, lines.append)

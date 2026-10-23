@@ -93,7 +93,7 @@ class CaseEnvironment:
                     system_prompt='Follow the synthetic acceptance task exactly. Use only requested tools. '
                                   'After all requested results, reply with only the requested answer. '
                                   'A refused or failed call must not be retried.', response_format=None) as app:
-                app.subscribe_events(self.events.append)
+                app.observability.subscribe(self.events.append)
                 yield app
         finally:
             application.load_model_catalog = previous
@@ -103,7 +103,7 @@ class CaseEnvironment:
     async def session(self, app):
         workspace = self.root / 'work'
         workspace.mkdir(exist_ok=True)
-        return await app.acreate_workspace_session(self.model_id, workspace)
+        return await app.sessions.create_workspace(self.model_id, workspace)
 
     def evidence(self):
         # Usage is vendor reported, deliberately separate from local context estimates.
@@ -133,11 +133,11 @@ class CaseEnvironment:
 
 
 async def run_turn(app, sid, prompt):
-    result = await app.arun(sid, [('user', prompt)])
+    result = await app.runs.start(sid, [('user', prompt)])
     require(not result.get('approval_requests'), 'unexpected_approval')
     require(not result.get('run_stopped'), 'unexpected_stop')
-    rows = await app.alist_sessions()
+    rows = await app.sessions.list()
     row = next(row for row in rows if row['session_id'] == sid)
     require(row['state'] == 'ready' and row['last_run_status'] == 'completed', 'saved_completed')
-    require(await app.aget_messages(sid) == result['messages'], 'saved_messages')
+    require(await app.history.messages(sid) == result['messages'], 'saved_messages')
     return result['messages']

@@ -67,7 +67,7 @@ def test_application_domains_do_not_depend_on_cli_or_web_adapters():
     expected = {'sessions', 'conversation', 'subagents', 'observability', 'memory'}
     assert expected.issubset({path.name for path in root.iterdir() if path.is_dir()})
     assert {path.name for path in root.glob('*.py')} == {
-        '__init__.py', 'async_application.py', 'async_persistent.py', 'assembly.py', 'errors.py', 'cli.py'}
+        '__init__.py', 'async_application.py', 'async_persistent.py', 'assembly.py', 'core.py', 'lifetime.py', 'catalogs.py', 'errors.py', 'cli.py'}
     for folder in expected:
         for path in (root / folder).glob('*.py'):
             for node in ast.walk(ast.parse(path.read_text())):

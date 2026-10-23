@@ -54,16 +54,16 @@ async def test_local_application_wires_one_catalog_one_checkpoint_and_session_ev
         config_path, tools=[ToolSpec(read_probe, read_probe.args_schema, permissions=ToolPermission(default='allow'))], system_prompt='', response_format=None,
     )
     assert loaded_paths == [config_path]
-    assert app.default_model_id == 'A'
+    assert app.models.default_id == 'A'
     assert not hasattr(app, 'thread_id')
 
-    first_session = await app.acreate_session('A')
-    other_session = await app.acreate_session('A')
+    first_session = await app.sessions.create('A')
+    other_session = await app.sessions.create('A')
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        first = await app.arun(first_session, [('user', 'private-first')])
-        await app.aselect_model(first_session, 'B')
-        second = await app.arun(first_session, [('user', 'private-second')])
-        other = await app.arun(other_session, [('user', 'private-other')])
+        first = await app.runs.start(first_session, [('user', 'private-first')])
+        await app.sessions.select_model(first_session, 'B')
+        second = await app.runs.start(first_session, [('user', 'private-second')])
+        other = await app.runs.start(other_session, [('user', 'private-other')])
 
     assert [m.type for m in first['messages']] == ['human', 'ai', 'tool', 'ai']
     assert [m.content for m in second['messages']] == [

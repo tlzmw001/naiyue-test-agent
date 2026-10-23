@@ -47,7 +47,7 @@ def test_model_failure_is_safe_and_restart_does_not_replay(monkeypatch, tmp_path
             assert history['live'] is None and history['recovery']['actions'] == ['continue']
             assert 'PRIVATE_GATEWAY_BODY' not in response.text
             assert (await client.post(f'/api/sessions/{session}/runs', json=request('no replay'))).status_code == 409
-            assert next_model.seen == [] and not app.state.service.application.has_session(session)
+            assert next_model.seen == [] and not app.state.service.application.sessions.is_loaded(session)
     asyncio.run(scenario())
     assert 'PRIVATE_GATEWAY_BODY' not in caplog.text
 
@@ -90,7 +90,7 @@ def test_save_failure_cannot_be_presented_as_web_completion(monkeypatch, tmp_pat
             session = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             def fail(*args):
                 raise SessionPersistenceError('PRIVATE_SAVE_BODY')
-            monkeypatch.setattr(app.state.service.application._storage.runs, 'finish_run', fail)
+            monkeypatch.setattr(app.state.service.application.sessions._persistence.storage.runs, 'finish_run', fail)
             run = (await client.post(f'/api/sessions/{session}/runs', json=request('one'))).json()['run_id']
             stream = await client.get(f'/api/runs/{run}/events')
             view = (await client.get(f'/api/runs/{run}')).json()

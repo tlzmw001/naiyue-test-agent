@@ -42,11 +42,11 @@ async def test_paused_root_at_capacity_preserves_decisions_or_can_be_stopped(mon
             endpoint = f'/api/sessions/{a}/approvals'
             body = approval_request(batch, ['approve'])
             body['remember_approved'] = [batch['items'][0]['approval_id']]
-            original = deepcopy(backend._sessions._sessions[a].snapshot_for_run()['pending'])
+            original = deepcopy(backend.sessions._sessions._sessions[a].snapshot_for_run()['pending'])
             refused = await client.post(endpoint, json=body)
             assert refused.status_code == 409 and refused.json()['error']['code'] == 'run_capacity_exceeded'
-            assert backend._sessions._sessions[a].snapshot_for_run()['pending'] == original
-            assert backend._sessions.resolve_permission_context(a)['session_allow'] == []
+            assert backend.sessions._sessions._sessions[a].snapshot_for_run()['pending'] == original
+            assert backend.sessions._sessions.resolve_permission_context(a)['session_allow'] == []
             assert len(model.requests[a]) == 1 and delivery.latest[a] == origin
             assert (a, body['request_id']) not in delivery.pending_receipts
             again = (await client.get(f'/api/sessions/{a}')).json()
@@ -68,7 +68,7 @@ async def test_paused_root_at_capacity_preserves_decisions_or_can_be_stopped(mon
                 assert accepted.status_code == 202
                 await delivery.wait(accepted.json()['run_id'])
                 assert (await client.post(endpoint, json=body)).json() == accepted.json()
-                assert len(model.requests[a]) == 2 and len(backend._sessions.resolve_permission_context(a)['session_allow']) == 1
+                assert len(model.requests[a]) == 2 and len(backend.sessions._sessions.resolve_permission_context(a)['session_allow']) == 1
                 final = (await client.get(f'/api/sessions/{a}')).json()
                 assert final['live']['status'] == 'completed' and final['approval_batches'] == []
                 assert next(m for m in final['messages'] if m['type'] == 'tool')['content'] == 'approved content'
@@ -95,7 +95,7 @@ async def test_child_approval_resumes_only_its_parent_or_all_jobs_close(monkeypa
         def notify(event):
             if event.session_id == a and event.source and event.event_type == 'approval_requested':
                 pending.set()
-        unsubscribe = backend.subscribe_events(notify)
+        unsubscribe = backend.observability.subscribe(notify)
         entered, release = gated(model, b)
         rb = (await client.post(f'/api/sessions/{b}/runs', json=request(b))).json()['run_id']
         try:
@@ -108,19 +108,19 @@ async def test_child_approval_resumes_only_its_parent_or_all_jobs_close(monkeypa
             original = delivery.get(ra)
             if close:
                 closed_states = []
-                close_catalog = backend._catalog.aclose
+                close_catalog = backend.models._catalog.aclose
                 async def close_models():
-                    closed_states.extend(backend._storage.sessions.list_sessions())
+                    closed_states.extend(backend.sessions._persistence.storage.sessions.list_sessions())
                     await close_catalog()
-                monkeypatch.setattr(backend._catalog, 'aclose', close_models)
+                monkeypatch.setattr(backend.models._catalog, 'aclose', close_models)
                 await asyncio.wait_for(delivery.close(), 5)
-                assert delivery.active_by_session == {} and backend._operations == {}
+                assert delivery.active_by_session == {} and backend._lifetime._operations == {}
                 assert delivery.get(ra).done and delivery.get(rb).done
                 assert delivery.get(ra).status == delivery.get(rb).status == 'stopped'
                 assert len(model.requests[a]) == len(model.requests['child-A']) == len(model.requests[b]) == 1
                 assert len(closed_states) == 3 and all(row['state'] == 'ready' for row in closed_states)
-                assert backend._storage.database._closed
-                assert tuple(backend._sessions._events._handlers.values()) == ((None, notify),)
+                assert backend.sessions._persistence.storage.database._closed
+                assert tuple(backend.sessions._sessions._events._handlers.values()) == ((None, notify),)
             else:
                 body = approval_request(batch, ['approve'])
                 assert (await client.post(f'/api/sessions/{b}/approvals', json=body)).status_code == 409

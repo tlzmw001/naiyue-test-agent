@@ -16,10 +16,10 @@ def handle_mcp_command(app, session_id, line, write):
             if len(parts) != 1:
                 write('用法：:mcp-refresh；只读取用户级 settings.toml 的 MCP 配置')
                 return
-            write(json.dumps(app.refresh_mcp(), ensure_ascii=False))
+            write(json.dumps(app.call(lambda api: api.mcp.refresh()), ensure_ascii=False))
             return
-        specs = {spec.tool.name: spec for spec in app.get_registered_tools() if spec.tool.name != 'subagent_list'}
-        selected = list(app.get_active_tools(session_id))
+        specs = {spec.tool.name: spec for spec in app.call(lambda api: api.tools.list()) if spec.tool.name != 'subagent_list'}
+        selected = list(app.call(lambda api: api.sessions.active_tools(session_id)))
         if len(parts) == 1:
             for name, spec in specs.items():
                 reason = spec.permissions.unavailable_reason() if isinstance(spec.permissions, MCPPermission) else None
@@ -40,7 +40,7 @@ def handle_mcp_command(app, session_id, line, write):
                 selected.append(name)
             elif token[0] == '-' and name in selected:
                 selected.remove(name)
-        app.set_active_tools(session_id, selected)
+        app.call(lambda api: api.sessions.select_tools(session_id, selected))
         write('工具选择已保存，下一次模型请求生效。')
     except Exception as error:
         logger.warning('cli_mcp_command_failed error_type=%s', type(error).__name__)

@@ -23,21 +23,21 @@ def test_stream_disconnect_keeps_owned_run_and_persistence(monkeypatch, tmp_path
         entered, release = asyncio.Event(), asyncio.Event()
         chosen = StreamingToolModel(replies=[AIMessage(content='saved')], entered=entered, release=release)
         async with factory(monkeypatch, tmp_path / 'sessions.sqlite', chosen) as app:
-            subscriptions = app._sessions._events
+            subscriptions = app.sessions._sessions._events
             application_handlers = dict(subscriptions._handlers)
-            assert list(application_handlers.values()) == [(None, app._usage.accept), (None, app._diagnostics.accept)]
-            session = await app.acreate_session('A')
-            iterator = app.astream_run(session, [('user', 'start')])
+            assert list(application_handlers.values()) == [(None, app.observability._usage.accept), (None, app.observability._diagnostics.accept)]
+            session = await app.sessions.create('A')
+            iterator = app.runs.stream(session, [('user', 'start')])
             first = await iterator.__anext__()
             assert first.event_type == 'run_started'
             await asyncio.wait_for(entered.wait(), 5)
-            producer = next(iter(app._tasks))
+            producer = next(iter(app._lifetime._tasks))
             await iterator.aclose()
-            assert not producer.done() and app._sessions.require(session).describe_session()['busy']
+            assert not producer.done() and app.sessions._sessions.require(session).describe_session()['busy']
             release.set()
             result = await producer
             assert result['messages'][-1].content == 'saved'
-            assert (await app.alist_sessions())[0]['state'] == 'ready'
+            assert (await app.sessions.list())[0]['state'] == 'ready'
             assert subscriptions._handlers == application_handlers
         assert subscriptions._handlers == {}
     asyncio.run(scenario())
@@ -48,26 +48,26 @@ def test_overflow_is_explicit_and_does_not_cancel_run(monkeypatch):
         entered, release = asyncio.Event(), asyncio.Event()
         app = await make_app(monkeypatch, StreamingToolModel(replies=[AIMessage(content='answer')],
                                                           entered=entered, release=release))
-        session = await app.acreate_session('A')
-        application_handlers = dict(app._sessions._events._handlers)
-        assert list(application_handlers.values()) == [(None, app._usage.accept), (None, app._diagnostics.accept)]
-        iterator = app.astream_run(session, [('user', 'start')], capacity=1)
+        session = await app.sessions.create('A')
+        application_handlers = dict(app.sessions._sessions._events._handlers)
+        assert list(application_handlers.values()) == [(None, app.observability._usage.accept), (None, app.observability._diagnostics.accept)]
+        iterator = app.runs.stream(session, [('user', 'start')], capacity=1)
         try:
             assert (await iterator.__anext__()).event_type == 'run_started'
             await asyncio.wait_for(entered.wait(), 5)
-            producer = next(iter(app._tasks))
+            producer = next(iter(app._lifetime._tasks))
             with pytest.raises(EventStreamOverflow):
                 await iterator.__anext__()
             assert not producer.done()
             release.set()
             await producer
-            assert (await app.aget_messages(session))[-1].content == 'answer'
-            assert app._sessions._events._handlers == application_handlers
+            assert (await app.history.messages(session))[-1].content == 'answer'
+            assert app.sessions._sessions._events._handlers == application_handlers
         finally:
             release.set()
             await iterator.aclose()
             await app.aclose()
-        assert app._sessions._events._handlers == {}
+        assert app.sessions._sessions._events._handlers == {}
     asyncio.run(scenario())
 
 
@@ -76,13 +76,13 @@ def test_busy_stream_rejects_without_hanging_or_observing_other_run(monkeypatch)
         entered, release = asyncio.Event(), asyncio.Event()
         app = await make_app(monkeypatch, StreamingToolModel(replies=[AIMessage(content='answer')],
                                                           entered=entered, release=release))
-        session = await app.acreate_session('A')
-        running = asyncio.create_task(app.arun(session, [('user', 'first')]))
+        session = await app.sessions.create('A')
+        running = asyncio.create_task(app.runs.start(session, [('user', 'first')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
             delivered = []
             with pytest.raises(SessionBusyError):
-                async for event in app.astream_run(session, [('user', 'second')]):
+                async for event in app.runs.stream(session, [('user', 'second')]):
                     delivered.append(event)
             assert delivered == []
         finally:
@@ -102,11 +102,11 @@ def test_failed_partial_output_remains_unconfirmed(monkeypatch, caplog):
                 raise original
 
         app = await make_app(monkeypatch, BrokenStream(replies=[]))
-        session = await app.acreate_session('A')
+        session = await app.sessions.create('A')
         projection, events = StreamingMessageProjection(), []
         try:
             with pytest.raises(RuntimeError) as caught:
-                async for event in app.astream_run(session, [('user', 'start')]):
+                async for event in app.runs.stream(session, [('user', 'start')]):
                     events.append(event)
                     projection(event)
             assert caught.value is original
@@ -146,17 +146,17 @@ def test_two_sessions_switch_models_and_busy_is_per_session(monkeypatch):
         b = StreamingToolModel(replies=[AIMessage(content='B-one'), AIMessage(content='B-two')])
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': a, 'B': b}))
         app = await build_async_local_application('unused', tools=[], system_prompt='', response_format=None)
-        first, second = await app.acreate_session('A'), await app.acreate_session('B')
-        running = asyncio.create_task(app.arun(first, [('user', 'first')]))
+        first, second = await app.sessions.create('A'), await app.sessions.create('B')
+        running = asyncio.create_task(app.runs.start(first, [('user', 'first')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
             with pytest.raises(SessionBusyError):
-                await app.arun(first, [('user', 'busy')])
-            assert (await app.arun(second, [('user', 'isolated')]))['messages'][-1].content == 'B-one'
-            await app.aselect_model(first, 'B')
+                await app.runs.start(first, [('user', 'busy')])
+            assert (await app.runs.start(second, [('user', 'isolated')]))['messages'][-1].content == 'B-one'
+            await app.sessions.select_model(first, 'B')
             release.set()
             assert (await running)['messages'][-1].content == 'A'
-            result = await app.arun(first, [('user', 'switched')])
+            result = await app.runs.start(first, [('user', 'switched')])
             assert [m.content for m in result['messages']] == ['first', 'A', 'switched', 'B-two']
         finally:
             release.set()
@@ -180,12 +180,12 @@ def test_recovery_view_cannot_confirm_new_partial_with_reused_message_id(monkeyp
                     raise error
 
         app = await make_app(monkeypatch, ReusedIdModel(replies=[]))
-        session = await app.acreate_session('A')
+        session = await app.sessions.create('A')
         projection = StreamingMessageProjection()
         try:
-            await app.arun(session, [('user', 'first')])
+            await app.runs.start(session, [('user', 'first')])
             with pytest.raises(RuntimeError) as caught:
-                async for event in app.astream_run(session, [('user', 'second')]):
+                async for event in app.runs.stream(session, [('user', 'second')]):
                     projection(event)
             assert caught.value is error
             draft = next(row for row in projection.messages if row['id'] == 'reused')

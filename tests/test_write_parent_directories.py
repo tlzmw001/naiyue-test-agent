@@ -26,11 +26,11 @@ async def test_write_creates_nested_parents_only_after_approval(monkeypatch, tmp
     target = tmp_path / 'reports' / '2026' / 'result.md'
     app, model = await make_app(monkeypatch, [AIMessage(content='', tool_calls=[
         call('write', {'path': str(target), 'content': 'ok'}, 'write')]), AIMessage(content='done')])
-    sid = await app.acreate_workspace_session('A', root)
-    paused = await app.arun(sid, [('user', 'write the report')])
+    sid = await app.sessions.create_workspace('A', root)
+    paused = await app.runs.start(sid, [('user', 'write the report')])
     assert paused['approval_requests'][0]['target'] == str(target)
     assert not target.parent.parent.exists() and results(paused) == []
-    done = await app.aresume_tool_approval(sid, ['approve'])
+    done = await app.runs.resume_approval(sid, ['approve'])
     assert target.read_bytes() == b'ok'
     assert [(m.tool_call_id, m.status, m.content) for m in results(done)] == [('write', 'success', 'write created 2 bytes')]
     assert done['messages'][-1].content == 'done' and len(model.seen) == 2
@@ -45,11 +45,11 @@ async def test_rejected_or_denied_write_creates_no_parent(monkeypatch, tmp_path,
     options = {'deny': [{'tool': 'write', 'path': str(target)}]} if decision == 'deny' else {}
     app, _ = await make_app(monkeypatch, [AIMessage(content='', tool_calls=[
         call('write', {'path': str(target), 'content': 'PRIVATE_CONTENT'}, 'write')]), AIMessage(content='done')], permissions=options)
-    sid = await app.acreate_workspace_session('A', root)
-    result = await app.arun(sid, [('user', 'write')])
+    sid = await app.sessions.create_workspace('A', root)
+    result = await app.runs.start(sid, [('user', 'write')])
     if decision == 'reject':
         assert result['approval_requests'] and not target.parent.parent.exists()
-        result = await app.aresume_tool_approval(sid, ['reject'])
+        result = await app.runs.resume_approval(sid, ['reject'])
     assert results(result)[0].status == 'error' and not target.parent.parent.exists()
     assert 'PRIVATE_CONTENT' not in results(result)[0].content
 
@@ -60,7 +60,7 @@ async def test_invalid_input_never_creates_parent(monkeypatch, tmp_path, content
     app, _ = await make_app(monkeypatch, [AIMessage(content='', tool_calls=[
         call('write', {'path': 'new/leaf/file.txt', 'content': content}, 'write')]), AIMessage(content='done')],
         tools=[create_session_write_tool(settings=WriteSettings(max_input_bytes=budget))])
-    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'write')])
+    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'write')])
     assert results(result)[0].status == 'error' and words in results(result)[0].content
     assert not (tmp_path / 'new').exists()
 
@@ -78,7 +78,7 @@ async def test_partial_mkdir_failure_keeps_created_parent_and_reports_side_effec
         return original(path, *args, **kwargs)
     monkeypatch.setattr(Path, 'mkdir', mkdir)
     with caplog.at_level(logging.WARNING):
-        result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'write')])
+        result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'write')])
     assert (tmp_path / 'new').is_dir() and not target.parent.exists()
     feedback = results(result)[0]
     assert feedback.status == 'error' and 'parent directories may already have been created' in feedback.content
@@ -98,8 +98,8 @@ async def test_changed_link_never_receives_write_and_keeps_the_link(monkeypatch,
     target = first / 'new' / 'leaf' / 'file.txt'
     app, _ = await make_app(monkeypatch, [AIMessage(content='', tool_calls=[
         call('write', {'path': str(link / 'new' / 'leaf' / 'file.txt'), 'content': 'PRIVATE_CONTENT'}, 'write')]), AIMessage(content='done')])
-    sid = await app.acreate_workspace_session('A', root)
-    paused = await app.arun(sid, [('user', 'write')])
+    sid = await app.sessions.create_workspace('A', root)
+    paused = await app.runs.start(sid, [('user', 'write')])
     assert paused['approval_requests'] and not (first / 'new').exists()
     def redirect():
         link.unlink()
@@ -121,7 +121,7 @@ async def test_changed_link_never_receives_write_and_keeps_the_link(monkeypatch,
             redirect()
             return result
         monkeypatch.setattr(write_module.os, 'fsync', fsync)
-    result = await app.aresume_tool_approval(sid, ['approve'])
+    result = await app.runs.resume_approval(sid, ['approve'])
     feedback = results(result)[0]
     assert feedback.status == 'error' and ('changed' in feedback.content or 'parent' in feedback.content)
     assert not target.exists() and list(second.iterdir()) == [] and link.is_symlink()
@@ -139,9 +139,9 @@ async def test_parent_link_to_authorized_real_target_is_preserved(monkeypatch, t
     link.symlink_to(outside, target_is_directory=True)
     app, _ = await make_app(monkeypatch, [AIMessage(content='', tool_calls=[
         call('write', {'path': str(link / 'new' / 'file.txt'), 'content': 'ok'}, 'write')]), AIMessage(content='done')])
-    sid = await app.acreate_workspace_session('A', root)
-    await app.arun(sid, [('user', 'write')])
-    result = await app.aresume_tool_approval(sid, ['approve'])
+    sid = await app.sessions.create_workspace('A', root)
+    await app.runs.start(sid, [('user', 'write')])
+    result = await app.runs.resume_approval(sid, ['approve'])
     assert results(result)[0].status == 'success' and link.is_symlink()
     assert (outside / 'new' / 'file.txt').read_bytes() == b'ok'
 
@@ -151,7 +151,7 @@ async def test_edit_still_requires_existing_parent_and_never_creates_one(monkeyp
     app, _ = await make_app(monkeypatch, [AIMessage(content='', tool_calls=[
         call('edit', {'path': 'new/leaf/file.txt', 'edits': [{'oldText': 'old', 'newText': 'new'}]}, 'edit')]), AIMessage(content='done')],
         tools=[create_session_edit_tool()])
-    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'edit')])
+    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
     assert results(result)[0].status == 'error' and not (tmp_path / 'new').exists()
     with pytest.raises(ValueError):
         write_module._resolve_write_target(tmp_path, 'new/file.txt')
@@ -164,7 +164,7 @@ async def test_two_sessions_conflict_before_either_can_create_the_same_parent(mo
         call('write', {'path': 'new/file.txt', 'content': 'FIRST'}, 'first')]),
         AIMessage(content='', tool_calls=[call('write', {'path': 'new/file.txt', 'content': 'SECOND'}, 'second')]),
         AIMessage(content='second done'), AIMessage(content='first done')])
-    first_sid, second_sid = [await app.acreate_workspace_session('A', tmp_path) for _ in range(2)]
+    first_sid, second_sid = [await app.sessions.create_workspace('A', tmp_path) for _ in range(2)]
     original, created = Path.mkdir, []
     def mkdir(path, *args, **kwargs):
         if path == tmp_path / 'new':
@@ -173,10 +173,10 @@ async def test_two_sessions_conflict_before_either_can_create_the_same_parent(mo
             assert release.wait(5)
         return original(path, *args, **kwargs)
     monkeypatch.setattr(Path, 'mkdir', mkdir)
-    future = asyncio.create_task(app.arun(first_sid, [('user', 'first')]))
+    future = asyncio.create_task(app.runs.start(first_sid, [('user', 'first')]))
     try:
         assert await asyncio.to_thread(entered.wait, 5)
-        second = await app.arun(second_sid, [('user', 'second')])
+        second = await app.runs.start(second_sid, [('user', 'second')])
         assert results(second)[0].status == 'error' and 'busy' in results(second)[0].content
         assert created == [tmp_path / 'new'] and not (tmp_path / 'new').exists()
     finally:
@@ -191,7 +191,7 @@ async def test_write_and_read_same_batch_work_with_a_prepared_missing_parent(mon
         call('write', {'path': 'new/file.txt', 'content': 'written'}, 'write'),
         call('read', {'path': 'new/file.txt'}, 'read')]), AIMessage(content='done')],
         tools=[create_session_write_tool(), create_session_read_tool()])
-    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'write then read')])
+    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'write then read')])
     assert [(m.tool_call_id, m.status, m.content) for m in results(result)] == [
         ('write', 'success', 'write created 7 bytes'), ('read', 'success', 'written')]
 
@@ -202,7 +202,7 @@ async def test_replacing_anchor_during_mkdir_invalidates_the_saved_identity(monk
     root.mkdir()
     app, _ = await make_app(monkeypatch, [AIMessage(content='', tool_calls=[
         call('write', {'path': 'new/leaf/file.txt', 'content': 'PRIVATE_CONTENT'}, 'write')]), AIMessage(content='done')])
-    sid = await app.acreate_workspace_session('A', root)
+    sid = await app.sessions.create_workspace('A', root)
     original = Path.mkdir
     def mkdir(path, *args, **kwargs):
         result = original(path, *args, **kwargs)
@@ -211,7 +211,7 @@ async def test_replacing_anchor_during_mkdir_invalidates_the_saved_identity(monk
             original(root)
         return result
     monkeypatch.setattr(Path, 'mkdir', mkdir)
-    result = await app.arun(sid, [('user', 'write')])
+    result = await app.runs.start(sid, [('user', 'write')])
     assert results(result)[0].status == 'error' and 'changed' in results(result)[0].content
     assert list(root.iterdir()) == [] and (previous / 'new').is_dir()
     assert not (previous / 'new' / 'leaf').exists()
@@ -246,7 +246,7 @@ async def test_auto_allow_creates_parents_without_repeating_permission_or_review
     primary = DynamicModel(responses=[AIMessage(content='', tool_calls=[
         call('write', {'path': str(target), 'content': 'allowed'}, 'write')]), AIMessage(content='done')])
     app = await auto_app(monkeypatch, primary, fast, detailed, specs=[spec])
-    result = await app.arun(await app.acreate_workspace_session('main', root), [('user', 'write')])
+    result = await app.runs.start(await app.sessions.create_workspace('main', root), [('user', 'write')])
     assert results(result)[0].status == 'success' and target.read_text() == 'allowed'
     assert not result.get('approval_requests') and prepares == [True]
     assert len(fast.seen) == 1 and detailed.seen == [] and len(primary.seen) == 2

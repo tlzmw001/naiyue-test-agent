@@ -155,13 +155,13 @@ def test_http_receives_progress_before_tool_returns_and_restores_latest_after_re
             progress=ToolProgressSettings(max_text_bytes=9)))
         async with web_client(monkeypatch, tmp_path, model, event_capacity=2) as (client, app):
             backend = app.state.service.application
-            await backend.aregister_tool(spec)
+            await backend.tools.register(spec)
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            await backend.aset_active_tools(sid, ['probe'])
+            await backend.sessions.select_tools(sid, ['probe'])
             def observe(event):
                 if event.event_type == 'tool_progress' and event.data.phase == 'working':
                     received.set()
-            unsubscribe = backend.subscribe_events(observe)
+            unsubscribe = backend.observability.subscribe(observe)
             run = (await client.post(f'/api/sessions/{sid}/runs', json=request('run'))).json()['run_id']
             try:
                 assert app.state.delivery.get(run).progress_max_text_bytes == 9
@@ -196,7 +196,7 @@ def test_failed_producer_without_run_terminal_does_not_leave_tools_running():
         progress(publisher)
         async def fail(*args):
             raise OSError('synthetic producer fault')
-        delivery = RunDelivery(SimpleNamespace(arun=fail), job.settings)
+        delivery = RunDelivery(SimpleNamespace(runs=SimpleNamespace(start=fail)), job.settings)
         job.unsubscribe = lambda: None
         await delivery._produce(job, SimpleNamespace(text='run', request_id='request'),
                                 receipt_key=(job.session_id, 'request'))

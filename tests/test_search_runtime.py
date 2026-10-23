@@ -45,13 +45,13 @@ async def test_external_batch_starts_nothing_before_approval_and_filters_before_
             {'tool': '*', 'path': str(outside / 'denied.txt')}]}})
         app = await build_async_local_application('unused', tools=[create_session_grep_tool(),
             create_session_find_tool()], settings=settings, system_prompt='', response_format=None)
-        sid = await app.acreate_workspace_session('A', root)
+        sid = await app.sessions.create_workspace('A', root)
         events = []
-        app.subscribe_events(events.append)
+        app.observability.subscribe(events.append)
         try:
-            paused = await app.arun(sid, [('user', 'search outside')])
+            paused = await app.runs.start(sid, [('user', 'search outside')])
             assert len(paused['approval_requests']) == 2 and calls == []
-            result = await app.aresume_tool_approval(sid, ['approve', 'approve'])
+            result = await app.runs.resume_approval(sid, ['approve', 'approve'])
             messages = {m.tool_call_id: m for m in result['messages'] if isinstance(m, ToolMessage)}
             assert set(messages) == {'g', 'f'} and all(m.status == 'success' for m in messages.values())
             assert 'NEEDLE_ordinary.txt' in messages['g'].content
@@ -154,8 +154,8 @@ async def test_approved_search_file_cannot_become_a_directory_before_execution(m
     model = DynamicModel(responses=[call('grep', {'pattern': 'SECRET', 'path': str(target)}),
                                    AIMessage(content='target changed')])
     app = await build(monkeypatch, model, [create_session_grep_tool()])
-    sid = await app.acreate_workspace_session('A', root)
-    paused = await app.arun(sid, [('user', 'search this file')])
+    sid = await app.sessions.create_workspace('A', root)
+    paused = await app.runs.start(sid, [('user', 'search this file')])
     assert paused['approval_requests']
     target.unlink()
     target.mkdir()
@@ -166,7 +166,7 @@ async def test_approved_search_file_cannot_become_a_directory_before_execution(m
         calls.append(request.argv)
         return await run(self, request, *args, **kwargs)
     monkeypatch.setattr(HostProcessRunner, 'run', record)
-    result = await app.aresume_tool_approval(sid, ['approve'])
+    result = await app.runs.resume_approval(sid, ['approve'])
     message = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert message.tool_call_id == 't' and message.status == 'error'
     assert 'changed' in message.content.lower()
@@ -185,7 +185,7 @@ async def test_earlier_serial_write_can_create_directory_for_later_ls_and_search
     ]), AIMessage(content='done')])
     app = await build(monkeypatch, model, [create_session_write_tool(), create_session_ls_tool(),
                                     create_session_grep_tool()])
-    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'create and inspect')])
+    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'create and inspect')])
     messages = {m.tool_call_id: m for m in result['messages'] if isinstance(m, ToolMessage)}
     assert all(m.status == 'success' for m in messages.values())
     assert messages['l'].content == 'note.txt'
@@ -204,12 +204,12 @@ async def test_unconfirmed_cleanup_is_never_converted_to_search_feedback(monkeyp
         model = StreamingToolModel(replies=[call(name, {'pattern': 'HIT' if name == 'grep' else '*'}),
                                              AIMessage(content='must not run')])
         app = await make_app(monkeypatch, model, [spec])
-        sid = await app.acreate_workspace_session('A', tmp_path)
+        sid = await app.sessions.create_workspace('A', tmp_path)
         try:
             with pytest.raises(ProcessCleanupError) as caught:
-                await app.arun(sid, [('user', 'search')])
+                await app.runs.start(sid, [('user', 'search')])
             assert caught.value is failure
-            assert app._sessions.require(sid).describe_session()['manual_review_required']
+            assert app.sessions._sessions.require(sid).describe_session()['manual_review_required']
             assert len(model.seen) == 1
         finally:
             await app.aclose()

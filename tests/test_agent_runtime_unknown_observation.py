@@ -60,11 +60,11 @@ async def test_unknown_exception_has_safe_diagnostic_and_still_fails_run(
             raise failure
 
     app = await build_app(monkeypatch, FailingFake(responses=[]))
-    session_id = await app.acreate_session('A')
+    session_id = await app.sessions.create('A')
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(type(failure)) as caught:
-            await app.arun(session_id, [('user', 'private-prompt')])
+            await app.runs.start(session_id, [('user', 'private-prompt')])
 
     assert caught.value is failure
     events = [record.model_failure for record in caplog.records
@@ -101,10 +101,10 @@ async def test_unknown_stop_reason_records_safe_source_without_changing_result(
         AIMessage(content='private-model-text', response_metadata=metadata),
     ])
     app = await build_app(monkeypatch, model)
-    session_id = await app.acreate_session('A')
+    session_id = await app.sessions.create('A')
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        result = await app.arun(session_id, [('user', 'private-prompt')])
+        result = await app.runs.start(session_id, [('user', 'private-prompt')])
 
     assert result['messages'][-1].content == 'private-model-text'
     observed = [record.model_response for record in caplog.records
@@ -151,7 +151,7 @@ async def test_unknown_stop_reason_with_valid_tool_still_routes_tool(
     app = await build_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        result = await app.arun(await app.acreate_session('A'), [('user', 'probe')])
+        result = await app.runs.start(await app.sessions.create('A'), [('user', 'probe')])
 
     assert result['messages'][-1].content == 'done'
     assert calls == ['private-arg']
@@ -186,7 +186,7 @@ async def test_unknown_stop_reason_is_observed_before_invalid_call_rejection(mon
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(RuntimeError) as caught:
-            await app.arun(await app.acreate_session('A'), [('user', 'probe')])
+            await app.runs.start(await app.sessions.create('A'), [('user', 'probe')])
 
     assert caught.value.reason == 'invalid_tool_calls'
     assert calls == []

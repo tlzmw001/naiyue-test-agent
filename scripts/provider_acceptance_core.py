@@ -19,10 +19,10 @@ async def text_stream(env):
     async with env.open_app() as app:
         sid = await env.session(app)
         projection, events = StreamingMessageProjection(), []
-        async for event in app.astream_run(sid, [('user', f'Reply with exactly {expected}.')]):
+        async for event in app.runs.stream(sid, [('user', f'Reply with exactly {expected}.')]):
             events.append(event)
             projection(event)
-        messages = await app.aget_messages(sid)
+        messages = await app.history.messages(sid)
         require(final_text(messages) == expected, 'exact_stream_answer')
         deltas = [event for event in events if event.event_type == 'message_delta'
                   and event.data.message_id == messages[-1].id]
@@ -34,7 +34,7 @@ async def text_stream(env):
         require(events[-1].event_type == 'run_finished' and events[-1].data.status == 'completed', 'stream_terminal')
         visible = [row for row in projection.messages if row['id'] == messages[-1].id]
         require(len(visible) == 1 and not visible[0]['provisional'], 'stream_projection')
-        view = await app.aget_context_view(sid)
+        view = await app.history.context(sid)
         require(isinstance(view, dict), 'context_view_available')
     return {'exact_answer': True, 'stream_deltas': len(deltas), 'projection': True}
 
@@ -101,21 +101,21 @@ async def approve(env):
     settings = AppSettings(permissions=PermissionSettings(allow=(PermissionRule(tool='read', path=str(permitted)),)))
     async with env.open_app(['read'], settings=settings) as app:
         sid = await env.session(app)
-        first = await app.arun(sid, [('user', f'In a SINGLE tool batch call read twice: first {permitted}, '
+        first = await app.runs.start(sid, [('user', f'In a SINGLE tool batch call read twice: first {permitted}, '
             f'then {outside}. After both results reply exactly APPROVED_VALUE. Do not repeat calls.')])
         require(bool(first.get('approval_requests')), 'root_approval_requested')
         expected_calls(first['messages'], [('read', {'path': str(permitted)}), ('read', {'path': str(outside)})], env.root / 'work')
         from langchain_core.messages import ToolMessage
         require(not any(isinstance(m, ToolMessage) for m in first['messages']), 'whole_batch_paused')
-        pending = app.pending_tool_approvals(sid)
+        pending = app.runs.pending_tools(sid)
         require(len(pending) == 1, 'only_unallowed_target_asks')
         require(pending[0]['tool_name'] == 'read' and pending[0]['target'] == str(outside), 'expected_approval_target')
-        result = await app.aresume_tool_approval(sid, ['approve'])
+        result = await app.runs.resume_approval(sid, ['approve'])
         approved = paired_tools(result['messages'], ['read', 'read'])
         single_line_read(approved[0].content, 'ALLOW_VALUE')
         single_line_read(approved[1].content, 'APPROVED_VALUE')
         require(final_text(result['messages']) == 'APPROVED_VALUE', 'approved_answer')
-        require(not app.pending_tool_approvals(sid), 'approval_cleared')
+        require(not app.runs.pending_tools(sid), 'approval_cleared')
     return {'allow_rule': True, 'batch_pause': True, 'resume': True}
 
 
@@ -124,10 +124,10 @@ async def reject(env):
     outside.write_text(nonce())
     async with env.open_app(['read']) as app:
         sid = await env.session(app)
-        first = await app.arun(sid, [('user', f'Call read once on {outside}. If denied, do not retry. Reply DENIED.')])
+        first = await app.runs.start(sid, [('user', f'Call read once on {outside}. If denied, do not retry. Reply DENIED.')])
         require(bool(first.get('approval_requests')), 'rejectable_approval')
         expected_calls(first['messages'], [('read', {'path': str(outside)})], env.root / 'work')
-        result = await app.aresume_tool_approval(sid, ['reject'])
+        result = await app.runs.resume_approval(sid, ['reject'])
         paired_tools(result['messages'], ['read'], statuses=['error'])
         require(final_text(result['messages']) == 'DENIED', 'rejected_answer')
     return {'rejected_result': True, 'no_retry': True}
@@ -138,14 +138,14 @@ async def no_ask(env):
     outside.write_text(nonce())
     async with env.open_app(['read']) as app:
         sid = await env.session(app)
-        await app.aset_permission_mode(sid, 'NoAsk')
+        await app.sessions.select_permission_mode(sid, 'NoAsk')
         messages = await run_turn(app, sid, f'Call read exactly once on {outside}. '
             'It may be refused. Do not retry. Reply exactly NOASK_DONE.')
         expected_calls(messages, [('read', {'path': str(outside)})], env.root / 'work')
         result, = paired_tools(messages, ['read'], statuses=['error'])
         require(result.additional_kwargs.get('naiyue_not_executed') == 'permission_denied'
                 and '(NoAsk)' in result.content, 'noask_permission_source')
-        require(not app.pending_tool_approvals(sid), 'noask_no_prompt')
+        require(not app.runs.pending_tools(sid), 'noask_no_prompt')
         require(final_text(messages) == 'NOASK_DONE', 'noask_feedback')
     return {'mode_switch': True, 'ask_becomes_error': True}
 

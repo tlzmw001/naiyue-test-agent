@@ -83,7 +83,7 @@ def test_real_http_image_run_has_bounded_text_events_and_canonical_checkpoint(mo
             assert len(view['messages']) == 4
             restored = (await client.get(f'/api/sessions/{sid}')).json()['messages']
             assert next(m for m in restored if m['type'] == 'tool')['content_projection'] == 'text'
-            canonical = await app.state.delivery.application.aget_messages(sid)
+            canonical = await app.state.delivery.application.history.messages(sid)
             tool = next(m for m in canonical if isinstance(m, ToolMessage))
             pixels = tool.content[-1]['base64']
             assert len(pixels) > 8192 and pixels not in events.text

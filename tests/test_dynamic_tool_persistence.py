@@ -25,28 +25,28 @@ def build(monkeypatch, storage, names=None, specs=None):
 async def test_empty_selection_survives_reopen(monkeypatch, tmp_path):
     path = tmp_path / 'sessions.sqlite'
     async with build(monkeypatch, path) as app:
-        storage = app._storage
-        sid = await app.acreate_session('A')
-        await app.aset_active_tools(sid, [])
+        storage = app.sessions._persistence.storage
+        sid = await app.sessions.create('A')
+        await app.sessions.select_tools(sid, [])
         assert json.loads(storage.sessions.get(sid)['active_tool_names_json']) == []
     async with build(monkeypatch, path) as app:
-        storage = app._storage
-        await app.arestore_session(sid)
-        assert app.get_active_tools(sid) == ()
-        assert app._sessions.require(sid).describe_session()['active_tools'] == []
+        storage = app.sessions._persistence.storage
+        await app.sessions.restore(sid)
+        assert app.sessions.active_tools(sid) == ()
+        assert app.sessions._sessions.require(sid).describe_session()['active_tools'] == []
 
 
 @async_test
 async def test_save_failure_keeps_old_selection(monkeypatch, tmp_path):
     async with build(monkeypatch, tmp_path / 'sessions.sqlite') as app:
-        storage = app._storage
-        sid = await app.acreate_session('A')
+        storage = app.sessions._persistence.storage
+        sid = await app.sessions.create('A')
         def fail(*args):
             raise SessionPersistenceError('synthetic_save_failed')
         monkeypatch.setattr(storage.sessions, 'select_active_tools', fail)
         with pytest.raises(SessionPersistenceError):
-            await app.aset_active_tools(sid, [])
-        assert app.get_active_tools(sid) == ('probe',)
+            await app.sessions.select_tools(sid, [])
+        assert app.sessions.active_tools(sid) == ('probe',)
         assert json.loads(storage.sessions.get(sid)['active_tool_names_json']) == ['probe']
 
 
@@ -55,15 +55,15 @@ async def test_save_failure_keeps_old_selection(monkeypatch, tmp_path):
 async def test_invalid_saved_selection_fails_without_publishing(monkeypatch, tmp_path, saved):
     path = tmp_path / 'sessions.sqlite'
     async with build(monkeypatch, path) as app:
-        storage = app._storage
-        sid = await app.acreate_session('A')
+        storage = app.sessions._persistence.storage
+        sid = await app.sessions.create('A')
         storage.database.connection.execute('UPDATE naiyue_sessions SET active_tool_names_json=? WHERE session_id=?', (saved, sid))
         storage.database.connection.commit()
     async with build(monkeypatch, path) as app:
-        storage = app._storage
+        storage = app.sessions._persistence.storage
         with pytest.raises(SessionPersistenceError, match='invalid_active_tools'):
-            await app.arestore_session(sid)
-        assert not app._sessions.has_session(sid)
+            await app.sessions.restore(sid)
+        assert not app.sessions._sessions.has_session(sid)
 
 
 def test_v1_database_is_rejected_without_migration(monkeypatch, tmp_path):

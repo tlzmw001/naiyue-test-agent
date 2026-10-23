@@ -1,3 +1,4 @@
+from cli_portal_helpers import portal
 """The terminal uses the application's owning loop, including while it is busy."""
 
 import asyncio
@@ -22,11 +23,11 @@ def test_cli_background_bridge_during_root_run(monkeypatch, tmp_path):
     output, results = [], []
     worker = None
     try:
-        sid = app.create_workspace_session('A', tmp_path)
-        manager = app._app._sessions.background_tasks
+        sid = app.call(lambda api: api.sessions.create_workspace('A', tmp_path))
+        manager = app._app.sessions._sessions.background_tasks
         row = app._submit(lambda: submit(manager, tmp_path, "import time;print('CLI_TAIL',flush=True);time.sleep(60)", sid=sid))
         app._submit(lambda: wait_status(manager, row['task_id'], lambda value: bool(value['output'])))
-        worker = Thread(target=lambda: results.append(app.run(sid, [HumanMessage(content='work')])))
+        worker = Thread(target=lambda: results.append(app.call(lambda api: api.runs.start(sid, [HumanMessage(content='work')]))))
         worker.start()
         app._submit(lambda: asyncio.wait_for(model.entered.wait(), 5))
         handle_background_command(app, ':tasks', output.append)
@@ -34,8 +35,8 @@ def test_cli_background_bridge_during_root_run(monkeypatch, tmp_path):
         handle_background_command(app, f':task stop {row["task_id"]}', output.append)
         assert worker.is_alive() and results == []
         assert sid in '\n'.join(output) and 'CLI_TAIL' in '\n'.join(output)
-        assert app.background_task_output(row['task_id'])['cleanup_confirmed']
-        assert app.list_background_tasks()['active_count'] == 0
+        assert app.call(lambda api: api.tasks.output(row['task_id']))['cleanup_confirmed']
+        assert app.call(lambda api: api.tasks.list())['active_count'] == 0
         assert len(model.seen) == 1
         app._submit(model.release.set)
         worker.join(5)
@@ -82,8 +83,7 @@ def test_cli_pagination_and_unconfirmed_stop_preserve_terminal_safety():
     identity = 'a' * 32
     row = dict(task_id=identity, session_id='s', status='lost', shell='bash', command_preview='bad\x1b[2J',
         exit_code=None, termination='cleanup_unconfirmed', cleanup_confirmed=False)
-    app = SimpleNamespace(list_background_tasks=lambda **kw: dict(items=[row], active_count=0, next_before=identity),
-        stop_background_task=lambda _: row)
+    app = portal(tasks=SimpleNamespace(list=lambda **kw: dict(items=[row], active_count=0, next_before=identity), stop=lambda _: row))
     messages = []
     handle_background_command(app, ':tasks', messages.append)
     handle_background_command(app, ':task stop ' + identity, messages.append)
@@ -99,7 +99,7 @@ def test_cli_memory_output_reports_result_without_process_or_archive_details():
         command_preview='更新概览', result_status='partial', termination='completed', cleanup_confirmed=True,
         output='<script>summary</script>\x1b[2J', truncated=False, output_available=True,
         archive_paths={}, exit_code=None)
-    app = SimpleNamespace(background_task_output=lambda _: row)
+    app = portal(tasks=SimpleNamespace(output=lambda _: row))
     messages = []
     handle_background_command(app, ':task output ' + identity, messages.append)
     text = '\n'.join(messages)
@@ -114,5 +114,5 @@ def test_cli_memory_unconfirmed_stop_does_not_call_it_process_cleanup():
     row = dict(task_id=identity, session_id='s', kind='memory', status='lost', shell='memory',
         command_preview='更新概览', result_status='stopped', termination='user_stop', cleanup_confirmed=False)
     messages = []
-    handle_background_command(SimpleNamespace(stop_background_task=lambda _: row), ':task stop ' + identity, messages.append)
+    handle_background_command(portal(tasks=SimpleNamespace(stop=lambda _: row)), ':task stop ' + identity, messages.append)
     assert '记忆整理收尾尚未确认' in '\n'.join(messages) and '进程' not in '\n'.join(messages)

@@ -43,16 +43,16 @@ def test_private_http_approval_and_deny_on_redirect(monkeypatch, tmp_path):
             tools=[create_web_fetch_tool(network_settings=NetworkSettings(mode='direct'))],
             settings=settings, system_prompt='', response_format=None)
         try:
-            sid = await app.acreate_workspace_session('A', tmp_path)
-            pending = await app.arun(sid, [('user', 'read local documentation')])
+            sid = await app.sessions.create_workspace('A', tmp_path)
+            pending = await app.runs.start(sid, [('user', 'read local documentation')])
             assert pending['approval_requests'] and requests == []
-            result = await app.aresume_tool_approval(sid, ['approve'])
+            result = await app.runs.resume_approval(sid, ['approve'])
             feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
             assert feedback.status == 'success' and 'actual local response' in feedback.content
             assert len(requests) == 1
-            pending = await app.arun(sid, [('user', 'read redirect')])
+            pending = await app.runs.start(sid, [('user', 'read redirect')])
             assert pending['approval_requests'] and len(requests) == 1
-            result = await app.aresume_tool_approval(sid, ['approve'])
+            result = await app.runs.resume_approval(sid, ['approve'])
             feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage) and m.tool_call_id == 'second')
             assert feedback.status == 'error' and 'denied or needs separate approval' in feedback.content
             assert len(requests) == 2 and all(b'/denied ' not in line for line in requests)

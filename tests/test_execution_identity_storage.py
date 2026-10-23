@@ -89,9 +89,9 @@ def test_schema17_child_identity_is_backfilled_without_reopening_its_directory(m
         model = StreamingToolModel(replies=[call('subagent', {'agent': 'worker', 'task': 'inspect'}), AIMessage(content='saved')])
         child = ChildModel(replies=[AIMessage(content='child saved')])
         async with opened(monkeypatch, tmp_path, model, location=location, child=child) as app:
-            sid = await app.acreate_workspace_session('A', root)
-            await app.arun(sid, [('user', 'delegate')])
-            before, = app._storage.subagents.get_subagent_references(sid).values()
+            sid = await app.sessions.create_workspace('A', root)
+            await app.runs.start(sid, [('user', 'delegate')])
+            before, = app.sessions._persistence.storage.subagents.get_subagent_references(sid).values()
         schema17(location.database_path)
         assert check_snapshot(location.database_path)['source_schema'] == 17
         root.rename(tmp_path / 'removed')

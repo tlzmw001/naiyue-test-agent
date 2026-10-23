@@ -29,19 +29,19 @@ def test_stop_during_approval_hook_finishes_without_executing_tool(monkeypatch, 
                 return 'ask'
 
         app = await make_app(monkeypatch, StreamingToolModel(replies=[call('gated', {})]), [ToolSpec(gated, gated.args_schema, permissions=WaitingPermission())])
-        session = await app.acreate_workspace_session('A', tmp_path)
-        task = asyncio.create_task(app.arun(session, [('user', 'start')]))
+        session = await app.sessions.create_workspace('A', tmp_path)
+        task = asyncio.create_task(app.runs.start(session, [('user', 'start')]))
         try:
             assert await asyncio.to_thread(entered.wait, 5)
-            app.request_stop(session)
+            app.runs.stop(session)
             release.set()
             result = await asyncio.wait_for(task, 5)
             assert result['run_stopped'] and '__interrupt__' not in result
-            assert app.pending_tool_approvals(session) == [] and not executed.is_set()
+            assert app.runs.pending_tools(session) == [] and not executed.is_set()
             result_message = next(m for m in result['messages'] if isinstance(m, ToolMessage))
             assert result_message.status == 'error' and 'user stopped' in result_message.content
-            snapshot = await app._agent.aget_state({'configurable': {
-                'thread_id': app._sessions.require(session).get_thread_id()}})
+            snapshot = await app.runs._agent.aget_state({'configurable': {
+                'thread_id': app.sessions._sessions.require(session).get_thread_id()}})
             assert not snapshot.next and not any(t.interrupts for t in snapshot.tasks)
         finally:
             release.set()

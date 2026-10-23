@@ -1,6 +1,9 @@
 """Run-time steering crosses the application queue and LangChain hooks."""
 
-from naiyue_test_agent.application.async_application import AsyncApplication
+from naiyue_test_agent.application.lifetime import ApplicationLifetime
+from naiyue_test_agent.application.sessions.run_api import RunAPI
+from contextlib import AsyncExitStack
+from types import SimpleNamespace
 import asyncio
 
 from native_application_helpers import async_test, build_application
@@ -40,7 +43,7 @@ def run_in_worker(app, session_id):
 
     async def run():
         try:
-            outcomes.append(('result', await app.arun(session_id, [('user', 'first-task')])))
+            outcomes.append(('result', await app.runs.start(session_id, [('user', 'first-task')])))
         except Exception as error:
             outcomes.append(('error', error))
 
@@ -65,13 +68,13 @@ async def test_steering_after_tool_result_is_fifo_and_stays_in_one_run(monkeypat
         AIMessage(content='answer-after-steering'),
     ])
     app = await build_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
-    session_id = await app.acreate_session('A')
+    session_id = await app.sessions.create('A')
     with caplog.at_level(logging.INFO):
         worker, outcomes = run_in_worker(app, session_id)
         try:
             assert await asyncio.to_thread(tool_started.wait, timeout=3)
-            app.steer(session_id, 'private-steer-one')
-            app.steer(session_id, 'private-steer-two')
+            app.runs.steer(session_id, 'private-steer-one')
+            app.runs.steer(session_id, 'private-steer-two')
         finally:
             release_tool.set()
             await asyncio.wait_for(asyncio.shield(worker), 3)
@@ -112,11 +115,11 @@ async def test_steering_during_final_model_response_continues_before_completion(
     model = BlockingModel(responses=[AIMessage(content='first-answer'),
                                      AIMessage(content='second-answer')])
     app = await build_app(monkeypatch, model)
-    session_id = await app.acreate_session('A')
+    session_id = await app.sessions.create('A')
     worker, outcomes = run_in_worker(app, session_id)
     try:
         assert await asyncio.to_thread(entered.wait, timeout=3)
-        app.steer(session_id, 'private-steer')
+        app.runs.steer(session_id, 'private-steer')
     finally:
         release.set()
         await asyncio.wait_for(asyncio.shield(worker), 3)
@@ -129,11 +132,11 @@ async def test_steering_during_final_model_response_continues_before_completion(
     assert 'private-steer' not in calls[0]
     assert calls[1][-1] == 'private-steer'
     with pytest.raises(application.SessionBusyError):
-        app.steer(session_id, 'late-message')
+        app.runs.steer(session_id, 'late-message')
     with pytest.raises(ValueError):
-        app.steer(session_id, '')
+        app.runs.steer(session_id, '')
     with pytest.raises(KeyError):
-        app.steer('unknown-session', 'message')
+        app.runs.steer('unknown-session', 'message')
 
 
 @async_test
@@ -148,12 +151,12 @@ async def test_failure_discards_pending_steering_and_releases_session(monkeypatc
             raise error
 
     app = await build_app(monkeypatch, FailingModel(responses=[]))
-    session_id = await app.acreate_session('A')
+    session_id = await app.sessions.create('A')
     with caplog.at_level(logging.INFO):
         worker, outcomes = run_in_worker(app, session_id)
         try:
             assert await asyncio.to_thread(entered.wait, timeout=3)
-            app.steer(session_id, 'private-pending')
+            app.runs.steer(session_id, 'private-pending')
         finally:
             release.set()
             await asyncio.wait_for(asyncio.shield(worker), 3)
@@ -166,7 +169,7 @@ async def test_failure_discards_pending_steering_and_releases_session(monkeypatc
     assert 'private-pending' not in caplog.text
     assert 'private-provider-failure' not in caplog.text
     with pytest.raises(application.SessionBusyError):
-        app.steer(session_id, 'not-running')
+        app.runs.steer(session_id, 'not-running')
 
 
 @async_test
@@ -184,14 +187,16 @@ async def test_natural_end_closes_steering_before_busy_gate_is_released():
             assert await asyncio.to_thread(release.wait, timeout=3)
             return {'messages': []}
 
-    app = AsyncApplication(service._catalog, service, PausedAtEndAgent(), prepare_tool_registry([]), system_prompt='')
+    lifetime = ApplicationLifetime(service._catalog, service, AsyncExitStack())
+    app = SimpleNamespace(runs=RunAPI(lifetime, service, PausedAtEndAgent(), None, None, None, None),
+                          aclose=lifetime.aclose)
     worker, outcomes = run_in_worker(app, session_id)
     try:
         assert await asyncio.to_thread(closed.wait, timeout=3)
         with pytest.raises(application.SessionBusyError):
-            app.steer(session_id, 'arrived-after-close')
+            app.runs.steer(session_id, 'arrived-after-close')
         with pytest.raises(application.SessionBusyError):
-            await app.arun(session_id, [('user', 'second-task')])
+            await app.runs.start(session_id, [('user', 'second-task')])
     finally:
         release.set()
         try:

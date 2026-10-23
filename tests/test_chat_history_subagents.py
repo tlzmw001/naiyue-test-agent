@@ -22,10 +22,10 @@ async def test_root_child_archives_stay_separate_and_delete_together(monkeypatch
     child = ChildModel(replies=[AIMessage(content='first child'), AIMessage(content='second child')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
     async with open_async_persistent_application('unused', **options(tmp_path)) as app:
-        sid, other = await app.acreate_workspace_session('A', tmp_path), await app.acreate_workspace_session('A', tmp_path)
-        await app.arun(sid, [('user', 'delegate one')])
-        await app.arun(other, [('user', 'delegate two')])
-        storage = app._storage
+        sid, other = await app.sessions.create_workspace('A', tmp_path), await app.sessions.create_workspace('A', tmp_path)
+        await app.runs.start(sid, [('user', 'delegate one')])
+        await app.runs.start(other, [('user', 'delegate two')])
+        storage = app.sessions._persistence.storage
         head = next(r for r in storage.conversation.chat_heads(sid) if r['agent_path'] != 'root')
         own = rows(storage, sid)
         root_rows = [r for r in own if r['thread_id'] == storage.sessions.get(sid)['thread_id']]
@@ -37,7 +37,7 @@ async def test_root_child_archives_stay_separate_and_delete_together(monkeypatch
         assert head['thread_id'].startswith('subagent:') and head['agent_path'].startswith('root/worker/')
         assert head['thread_id'] not in {r['thread_id'] for r in rows(storage, other)}
         untouched = rows(storage, other)
-        await app.adelete_session(sid)
+        await app.sessions.delete(sid)
         assert rows(storage, sid) == [] and storage.conversation.chat_heads(sid) == []
         assert rows(storage, other) == untouched
         assert storage.database.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (head['thread_id'],)).fetchone()[0] == 0

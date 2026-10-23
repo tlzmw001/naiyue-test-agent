@@ -34,24 +34,24 @@ async def test_cleanup_failure_uses_session_diagnostic_and_preserves_control(
         if streaming_model:
             from test_async_application import StreamingToolModel, make_app
             app = await make_app(monkeypatch, StreamingToolModel(replies=[reply]), [spec])
-            session = await app.acreate_session('A')
+            session = await app.sessions.create('A')
         else:
             from test_application_run_events import ToolModel, make_app
             app = await make_app(monkeypatch, ToolModel(responses=[reply]), [spec])
-            session = await app.acreate_session('A')
+            session = await app.sessions.create('A')
         events = []
-        app.subscribe_events(events.append)
+        app.observability.subscribe(events.append)
         try:
             if approval:
-                pending = (await app.arun(session, [('user', 'run')]))
+                pending = (await app.runs.start(session, [('user', 'run')]))
                 assert [item['tool_call_id'] for item in pending['approval_requests']] == ['custom-1']
             with pytest.raises(ProcessCleanupError) as caught:
                 if approval:
-                    await app.aresume_tool_approval(session, ['approve'])
+                    await app.runs.resume_approval(session, ['approve'])
                 else:
-                    await app.arun(session, [('user', 'run')])
+                    await app.runs.start(session, [('user', 'run')])
             assert caught.value is failure
-            state = app._sessions._sessions[session]
+            state = app.sessions._sessions._sessions[session]
             assert state.describe_session()['manual_review_required'] and not state.is_busy()
             assert state.snapshot_for_run()['pending'] is None
             end = [event for event in events if event.event_type == 'run_finished'][-1]

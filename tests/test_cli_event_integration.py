@@ -1,3 +1,5 @@
+from cli_portal_helpers import portal
+from types import SimpleNamespace
 """Native graph/CLI integration keeps early replies and original error behavior."""
 
 import os
@@ -73,7 +75,12 @@ def test_cli_unsubscribes_after_quit_even_when_no_run(monkeypatch, capsys):
         def subscribe_events(self, handler):
             lifecycle.append('subscribe')
             return lambda: lifecycle.append('unsubscribe')
-    monkeypatch.setattr(cli, 'build_local_application', lambda *_a, **_k: App())
+    fake = App()
+    bridge = portal(models=SimpleNamespace(default_id='A'),
+        sessions=SimpleNamespace(create_workspace=fake.create_workspace_session),
+        runs=SimpleNamespace(pending_approvals=fake.pending_approval_batches),
+        observability=SimpleNamespace(subscribe=fake.subscribe_events))
+    monkeypatch.setattr(cli, 'build_local_application', lambda *_a, **_k: bridge)
     monkeypatch.setattr('builtins.input', lambda _p='': ':quit')
     assert cli.main(['--no-session', '--config', 'unused']) == 0
     assert lifecycle == ['subscribe', 'unsubscribe']
@@ -92,7 +99,12 @@ def test_startup_output_error_still_unsubscribes(monkeypatch):
             return lambda: lifecycle.append('unsubscribe')
     def broken_output(self, text):
         raise BrokenPipeError('PRIVATE_OUTPUT_DETAILS')
-    monkeypatch.setattr(cli, 'build_local_application', lambda *_a, **_k: App())
+    fake = App()
+    bridge = portal(models=SimpleNamespace(default_id='A'),
+        sessions=SimpleNamespace(create_workspace=fake.create_workspace_session),
+        runs=SimpleNamespace(pending_approvals=fake.pending_approval_batches),
+        observability=SimpleNamespace(subscribe=fake.subscribe_events))
+    monkeypatch.setattr(cli, 'build_local_application', lambda *_a, **_k: bridge)
     monkeypatch.setattr(cli.CliEventDisplay, 'write', broken_output)
     with pytest.raises(BrokenPipeError):
         cli.main(['--no-session', '--config', 'unused'])
@@ -101,7 +113,7 @@ def test_startup_output_error_still_unsubscribes(monkeypatch):
 
 def test_observer_output_failure_does_not_change_run_and_result_can_fill_gap(monkeypatch, cli_app, caplog):
     app = cli_app( ToolModel(responses=[AIMessage(content='visible answer', id='a')]))
-    session = app.create_session('A')
+    session = app.call(lambda api: api.sessions.create('A'))
     lines, failures = [], []
     def writer(text):
         if text == 'visible answer' and not failures:
@@ -109,8 +121,8 @@ def test_observer_output_failure_does_not_change_run_and_result_can_fill_gap(mon
             raise OSError('PRIVATE_OUTPUT_ERROR')
         lines.append(text)
     view = CliEventDisplay(session, writer=writer)
-    app.subscribe_events(view)
-    result = app.run(session, [HumanMessage(content='q', id='h')])
+    app.call(lambda api: api.observability.subscribe(view))
+    result = app.call(lambda api: api.runs.start(session, [HumanMessage(content='q', id='h')]))
     assert result['messages'][-1].content == 'visible answer'
     view.finish_result(result, input_message_id='h')
     assert lines.count('visible answer') == 1
@@ -127,10 +139,10 @@ def test_recoverable_tool_error_displays_reason_and_agent_continues(monkeypatch,
         AIMessage(content='first reply', tool_calls=[{'name': 'retryable', 'args': {}, 'id': 't'}]),
         AIMessage(content='recovered reply'),
     ]), [ToolSpec(retryable, retryable.args_schema, permissions=ToolPermission(default='allow'))])
-    session = app.create_session('A')
+    session = app.call(lambda api: api.sessions.create('A'))
     lines = []
     view = CliEventDisplay(session, writer=lines.append)
-    app.subscribe_events(view)
+    app.call(lambda api: api.observability.subscribe(view))
     cli._run_and_print(app, session, 'q', display=view)
     out = '\n'.join(lines)
     assert lines.count('first reply') == lines.count('recovered reply') == 1
@@ -152,10 +164,10 @@ def test_approval_resume_then_new_approval_and_reject_do_not_replay_old_messages
         ]), AIMessage(content='final reply', id='c'),
     ])
     app = cli_app( model, [create_session_read_tool()])
-    session = app.create_workspace_session('A', workspace)
+    session = app.call(lambda api: api.sessions.create_workspace('A', workspace))
     lines = []
     view = CliEventDisplay(session, writer=lines.append)
-    app.subscribe_events(view)
+    app.call(lambda api: api.observability.subscribe(view))
     cli._run_and_print(app, session, 'q', display=view)
     cli._resume_and_print(app, session, ['approve'], display=view)
     cli._resume_and_print(app, session, ['reject'], display=view)
@@ -165,7 +177,7 @@ def test_approval_resume_then_new_approval_and_reject_do_not_replay_old_messages
     assert out.count('本次运行完成') == 1
     assert out.count(str(first)) == out.count(str(second)) == 1
     assert 'FIRST_PRIVATE_BODY' not in out and 'SECOND_PRIVATE_BODY' not in out
-    assert app.pending_tool_approvals(session) == []
+    assert app.call(lambda api: api.runs.pending_tools(session)) == []
 
 
 def test_cleanup_failure_keeps_manual_review_once(monkeypatch, cli_app):
@@ -176,10 +188,10 @@ def test_cleanup_failure_keeps_manual_review_once(monkeypatch, cli_app):
     app = cli_app( ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'uncertain', 'args': {}, 'id': 'u'},
     ])]), [ToolSpec(uncertain, uncertain.args_schema, permissions=ToolPermission(default='allow'))])
-    session = app.create_session('A')
+    session = app.call(lambda api: api.sessions.create('A'))
     lines = []
     view = CliEventDisplay(session, writer=lines.append)
-    app.subscribe_events(view)
+    app.call(lambda api: api.observability.subscribe(view))
     cli._run_and_print(app, session, 'q', display=view)
     out = '\n'.join(lines)
     assert out.count('请先检查执行结果，勿直接重试') == 1
@@ -190,10 +202,10 @@ def test_cleanup_failure_keeps_manual_review_once(monkeypatch, cli_app):
 
 def test_returned_answer_can_fill_missing_message_events(monkeypatch, cli_app):
     app = cli_app( ToolModel(responses=[AIMessage(content='fallback answer')]))
-    session = app.create_session('A')
+    session = app.call(lambda api: api.sessions.create('A'))
     lines = []
     view = CliEventDisplay(session, writer=lines.append)
-    app.subscribe_events(lambda e: view(e) if e.event_type not in ('message_delta', 'message_completed', 'message_revised') else None)
+    app.call(lambda api: api.observability.subscribe(lambda e: view(e) if e.event_type not in ('message_delta', 'message_completed', 'message_revised') else None))
     cli._run_and_print(app, session, 'q', display=view)
     assert lines.count('fallback answer') == 1
     assert lines.count('本次运行完成') == 1
@@ -213,7 +225,12 @@ def test_cli_unsubscribes_on_input_termination(monkeypatch, termination):
             return lambda: lifecycle.append('unsubscribe')
     def end_input(_p=''):
         raise EOFError if termination == 'eof' else RuntimeError('PRIVATE_INPUT')
-    monkeypatch.setattr(cli, 'build_local_application', lambda *_a, **_k: App())
+    fake = App()
+    bridge = portal(models=SimpleNamespace(default_id='A'),
+        sessions=SimpleNamespace(create_workspace=fake.create_workspace_session),
+        runs=SimpleNamespace(pending_approvals=fake.pending_approval_batches),
+        observability=SimpleNamespace(subscribe=fake.subscribe_events))
+    monkeypatch.setattr(cli, 'build_local_application', lambda *_a, **_k: bridge)
     monkeypatch.setattr('builtins.input', end_input)
     if termination == 'eof':
         assert cli.main(['--no-session', '--config', 'unused']) == 0
@@ -256,12 +273,14 @@ def test_cli_backend_tool_selection_and_approval_displays_full_command(
     original_build = cli.build_persistent_application
     def build_selected(*args, **kwargs):
         app = original_build(*args, **kwargs)
-        create = app.create_workspace_session
-        def create_selected(model_id, root):
-            sid = create(model_id, root)
-            app.set_active_tools(sid, [*app.get_active_tools(sid), 'bash'])
-            return sid
-        app.create_workspace_session = create_selected
+        def install(api):
+            create = api.sessions.create_workspace
+            async def create_selected(model_id, root):
+                sid = await create(model_id, root)
+                await api.sessions.select_tools(sid, [*api.sessions.active_tools(sid), 'bash'])
+                return sid
+            api.sessions.create_workspace = create_selected
+        app.call(install)
         return app
     monkeypatch.setattr(cli, 'build_persistent_application', build_selected)
     inputs = iter(('run shell', ':approve', ':quit'))
@@ -283,16 +302,18 @@ def test_cli_backend_tool_selection_and_approval_displays_full_command(
 
 def test_timeout_returns_raw_output_to_model_without_cli_control_sequences(monkeypatch, tmp_path, capsys):
     with closing(make_cli_app(monkeypatch, 'printf "EARLY\\033[2J\\n"; sleep 3', timeout=1)) as app:
-        session = app.create_workspace_session('A', tmp_path)
-        app.run(session, [('user', 'run')])
+        session = app.call(lambda api: api.sessions.create_workspace('A', tmp_path))
+        app.call(lambda api: api.runs.start(session, [('user', 'run')]))
 
         results = []
-        resume = app.resume_tool_approval
-        def capture(*args, **kwargs):
-            result = resume(*args, **kwargs)
-            results.append(result)
-            return result
-        monkeypatch.setattr(app, 'resume_tool_approval', capture)
+        def install(api):
+            resume = api.runs.resume_approval
+            async def capture(*args, **kwargs):
+                result = await resume(*args, **kwargs)
+                results.append(result)
+                return result
+            monkeypatch.setattr(api.runs, 'resume_approval', capture)
+        app.call(install)
         cli._resume_and_print(app, session, ['approve'])
         output = capsys.readouterr().out
         assert 'done' in output
@@ -300,7 +321,7 @@ def test_timeout_returns_raw_output_to_model_without_cli_control_sequences(monke
         assert '\x1b' not in output
         assert 'output:\nEARLY\n' in bash_results(results[0])[0].content
         assert '\x1b' not in bash_results(results[0])[0].content
-        assert not app._app._sessions.require(session).describe_session()['manual_review_required']
+        assert not app._app.sessions._sessions.require(session).describe_session()['manual_review_required']
 
 
 def test_timeout_cli_resumes_model_and_archive_remains_in_tool_result(
@@ -308,12 +329,12 @@ def test_timeout_cli_resumes_model_and_archive_remains_in_tool_result(
 ):
     with closing(make_cli_app(monkeypatch, "python -c \"print('T'*70000, flush=True)\"; sleep 3",
                    timeout=1)) as app:
-        session = app.create_workspace_session('A', tmp_path)
-        app.run(session, [('user', 'run')])
+        session = app.call(lambda api: api.sessions.create_workspace('A', tmp_path))
+        app.call(lambda api: api.runs.start(session, [('user', 'run')]))
         cli._resume_and_print(app, session, ['approve'])
         output = capsys.readouterr().out
         assert 'done' in output and '工具副作用无法确认' not in output
-        assert not app._app._sessions.require(session).describe_session()['manual_review_required']
+        assert not app._app.sessions._sessions.require(session).describe_session()['manual_review_required']
 
 
 def make_cli_app(monkeypatch, command: str, *, timeout: int | None = None, settings=None):

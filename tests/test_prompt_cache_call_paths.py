@@ -101,16 +101,16 @@ async def test_root_child_summary_and_auto_use_own_model_defaults(monkeypatch, t
     async with cached_application(monkeypatch, tmp_path, serve, settings=options,
                                   tools=[definition(calls=effects, approved=True), create_subagent_tool()]) as (app, catalog):
         defaults = {name: deepcopy(catalog.get(name).model_kwargs) for name in catalog.model_ids}
-        sid = await app.acreate_session('root')
-        await app.aselect_thinking(sid, 'root', 'low')
-        result = await app.arun(sid, [('user', 'old task')])
+        sid = await app.sessions.create('root')
+        await app.sessions.select_thinking(sid, 'root', 'low')
+        result = await app.runs.start(sid, [('user', 'old task')])
         assert result['messages'][-1].content == 'older details ' * 500
         assert effects == [('probe', 'parent'), ('probe', 'child')]
         assert [(m.tool_call_id, m.status) for m in result['messages'] if isinstance(m, ToolMessage)] == [
             ('parent-probe', 'success'), ('delegate', 'success')]
-        await app.arun(sid, [('user', 'recent task')])
+        await app.runs.start(sid, [('user', 'recent task')])
         before = len(sent)
-        compacted = await app.acompact_context(sid)
+        compacted = await app.runs.compact(sid)
         assert compacted['compaction_status'] == 'applied' and len(sent) == before + 1
         assert sent[-1]['max_completion_tokens'] == 256
         assert sent[-1]['messages'][0]['content'].startswith('Summarize completed conversation history')
@@ -144,15 +144,15 @@ async def test_shared_model_defaults_survive_concurrent_calls_and_endpoint_failu
                                                       'code': 'unsupported_parameter', 'type': 'invalid_request_error'}})
         return completion_response(body, text='done ' + human)
     async with cached_application(monkeypatch, tmp_path, serve) as (app, catalog):
-        a, b, c = [await app.acreate_session('root') for _ in range(3)]
+        a, b, c = [await app.sessions.create('root') for _ in range(3)]
         before = deepcopy(catalog.get('root').model_kwargs)
-        task = asyncio.create_task(app.arun(a, [('user', 'hold')]))
+        task = asyncio.create_task(app.runs.start(a, [('user', 'hold')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            assert (await app.arun(b, [('user', 'healthy')]))['messages'][-1].content == 'done healthy'
+            assert (await app.runs.start(b, [('user', 'healthy')]))['messages'][-1].content == 'done healthy'
             import openai
             with pytest.raises(openai.BadRequestError):
-                await app.arun(c, [('user', 'fail')])
+                await app.runs.start(c, [('user', 'fail')])
             assert not task.done() and len(sent) == 3
             release.set()
             assert (await task)['messages'][-1].content == 'done hold'

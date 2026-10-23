@@ -48,8 +48,8 @@ async def test_sdk_tool_parameter_keeps_its_existing_precedence(monkeypatch, tmp
     app = await build_async_local_application('unused', tools=[create_session_read_tool()], system_prompt='',
         response_format=None, settings=AppSettings(default_active_tools=['powershell']), initial_active_tools=initial)
     try:
-        sid = await app.acreate_workspace_session('A', tmp_path)
-        assert app.get_active_tools(sid) == expected
+        sid = await app.sessions.create_workspace('A', tmp_path)
+        assert app.sessions.active_tools(sid) == expected
         assert model.seen == []
     finally:
         await app.aclose()
@@ -192,8 +192,8 @@ async def test_two_applications_keep_their_own_read_budget(monkeypatch, tmp_path
     second = await make_app(monkeypatch,
         ToolModel(responses=[call('read', {'path': 'doc.md'}), AIMessage(content='done')]),
         [create_session_read_tool(settings=ReadSettings(default_limit=3))])
-    first_result = await first.arun(await first.acreate_workspace_session('A', tmp_path), [('user', 'read')])
-    second_result = await second.arun(await second.acreate_workspace_session('A', tmp_path), [('user', 'read')])
+    first_result = await first.runs.start(await first.sessions.create_workspace('A', tmp_path), [('user', 'read')])
+    second_result = await second.runs.start(await second.sessions.create_workspace('A', tmp_path), [('user', 'read')])
     assert next(m for m in first_result['messages'] if isinstance(m, ToolMessage)).content == 'a\n[read: lines 1-1; next_offset=2]\n[read: stopped by 1 line page limit; continue with the same path, offset=2, limit=1]'
     assert next(m for m in second_result['messages'] if isinstance(m, ToolMessage)).content == 'a\nb\nc\n'
 
@@ -214,12 +214,12 @@ async def test_approval_resume_keeps_the_original_startup_settings(monkeypatch, 
     app = await make_app(monkeypatch,
         ToolModel(responses=[call('read', {'path': str(document)}), AIMessage(content='done')]),
         [reader])
-    session = await app.acreate_workspace_session('A', workspace)
-    pending = await app.arun(session, [('user', 'read')])
+    session = await app.sessions.create_workspace('A', workspace)
+    pending = await app.runs.start(session, [('user', 'read')])
     assert len(pending['approval_requests']) == 1
     assert not any(isinstance(m, ToolMessage) for m in pending['messages'])
     path.write_text('[tools.read]\ndefault_limit=3\n')
-    result = await app.aresume_tool_approval(session, ['approve'])
+    result = await app.runs.resume_approval(session, ['approve'])
     assert next(m for m in result['messages'] if isinstance(m, ToolMessage)).content == 'a\n[read: lines 1-1; next_offset=2]\n[read: stopped by 1 line page limit; continue with the same path, offset=2, limit=1]'
 
 
@@ -300,6 +300,6 @@ async def test_two_applications_keep_their_own_ls_defaults(monkeypatch, tmp_path
         [create_session_ls_tool(settings=LsSettings(default_limit=limit))]) for limit in (1, 2)]
     outputs = []
     for app in applications:
-        result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'ls')])
+        result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'ls')])
         outputs.append(next(m.content for m in result['messages'] if isinstance(m, ToolMessage)))
     assert outputs == ['a\n[ls: truncated at 1 entries; narrow the directory or limit]', 'a\nb']

@@ -44,9 +44,9 @@ def test_large_history_is_bounded_and_does_not_gate_a_new_run(monkeypatch, tmp_p
             assert view.status_code == 200 and len(view.content) <= web.state.delivery.settings.max_frame_bytes
             assert not any(row.get('arguments_truncated') for row in view.json()['messages'] if row['type'] == 'ai')
             app = web.state.service.application
-            original = await app.aget_messages(sid)
+            original = await app.history.messages(sid)
             assert sum(len(message.content) for message in original) > 1024 * 1024
-            store = app._storage
+            store = app.sessions._persistence.storage
             await await_diagnostics_idle(app)
             writes = store.database.connection.total_changes
             rows = await read_pages(client, sid)
@@ -69,17 +69,17 @@ def test_prepare_loads_old_session_while_get_is_read_only(monkeypatch, tmp_path)
         model = StreamingToolModel(replies=[])
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
             app = web.state.service.application
-            before = web.state.service.application._storage.database.connection.total_changes
+            before = web.state.service.application.sessions._persistence.storage.database.connection.total_changes
             view = await client.get(f'/api/sessions/{sid}')
-            assert view.status_code == 200 and not app.has_session(sid)
+            assert view.status_code == 200 and not app.sessions.is_loaded(sid)
             assert view.json()['history_ready'] is False
-            assert app._storage.database.connection.total_changes == before
+            assert app.sessions._persistence.storage.database.connection.total_changes == before
             prepared = await client.post(f'/api/sessions/{sid}/prepare')
-            assert prepared.status_code == 200 and app.has_session(sid)
+            assert prepared.status_code == 200 and app.sessions.is_loaded(sid)
             assert prepared.json()['history_ready']
             async def forbidden(*args, **kwargs):
                 raise AssertionError('GET must not read execution checkpoints')
-            monkeypatch.setattr(app._agent, 'aget_state', forbidden)
+            monkeypatch.setattr(app.runs._agent, 'aget_state', forbidden)
             ready = await client.get(f'/api/sessions/{sid}')
             assert ready.json()['can_run'] and ready.json()['messages'][-1]['content'] == 'saved'
             assert model.seen == []
@@ -141,7 +141,7 @@ def test_compact_and_approve_do_not_require_a_complete_display_view(monkeypatch,
         model = StreamingToolModel(replies=[call('read', {'path': str(outside)}), AIMessage(content='done')])
         async with web_client(monkeypatch, tmp_path / 'approval', model, workspace_root=root) as (client, web):
             sid, _ = await start(client)
-            batch, = web.state.service.application.pending_approval_batches(sid)
+            batch, = web.state.service.application.runs.pending_approvals(sid)
             monkeypatch.setattr(web.state.service, 'session', forbidden)
             monkeypatch.setattr(web.state.delivery.get(web.state.delivery.latest[sid]), 'view', forbidden)
             response = await client.post(f'/api/sessions/{sid}/approvals', json=approval_request(batch, ['approve']))

@@ -111,17 +111,17 @@ async def test_configured_roles_are_a_startup_snapshot_and_custom_tools_are_refe
     tools = [definition(), definition('extra')]
     first = await build_application('unused', tools=tools, initial_active_tools=[],
                                     system_prompt='', response_format=None)
-    original = first.get_registered_subagents()[0]
+    original = first.subagents.list()[0]
     path.write_text(CONFIG.replace('["probe"]', '["probe", "extra"]')
                     .replace('PRIVATE_CONFIG_PROMPT', 'UPDATED_CONFIG_PROMPT'))
     second = await build_application('unused', tools=tools, initial_active_tools=[],
                                      system_prompt='', response_format=None)
-    assert first.get_registered_subagents() == (original,)
+    assert first.subagents.list() == (original,)
     assert original.tool_names == ('probe',) and original.system_prompt == 'PRIVATE_CONFIG_PROMPT'
-    updated = second.get_registered_subagents()[0]
+    updated = second.subagents.list()[0]
     assert updated.tool_names == ('probe', 'extra') and updated.system_prompt == 'UPDATED_CONFIG_PROMPT'
-    sid = await second.acreate_session('A')
-    assert second.get_active_tools(sid) == () and await second.aget_messages(sid) == []
+    sid = await second.sessions.create('A')
+    assert second.sessions.active_tools(sid) == () and await second.history.messages(sid) == []
     assert all(model.seen == [] for model in models)
 
 
@@ -168,11 +168,11 @@ async def test_persistent_app_reregisters_current_config_without_persisting_defi
     path.write_text(CONFIG)
     options = dict(database_path=tmp_path / 'roles.sqlite', tools=[definition()], system_prompt='', response_format=None)
     async with open_async_persistent_application('unused', settings=load_settings(path), **options) as app:
-        assert [spec.name for spec in app.get_registered_subagents()] == ['tester']
-        await app.aregister_subagent(SubAgentSpec('temporary', 'Temporary', 'Prompt', ()))
+        assert [spec.name for spec in app.subagents.list()] == ['tester']
+        await app.subagents.register(SubAgentSpec('temporary', 'Temporary', 'Prompt', ()))
     path.write_text(CONFIG.replace('name = "tester"', 'name = "updated"'))
     async with open_async_persistent_application('unused', settings=load_settings(path), **options) as app:
-        assert [spec.name for spec in app.get_registered_subagents()] == ['updated']
+        assert [spec.name for spec in app.subagents.list()] == ['updated']
 
 
 @pytest.mark.parametrize('invalid', [False, True])
@@ -193,7 +193,7 @@ def test_cli_main_consumes_configured_roles_and_reports_registration_failures(mo
     original = cli.build_local_application
     def build(*args, **kwargs):
         app = original(*args, **kwargs)
-        seen.extend(app.get_registered_subagents())
+        seen.extend(app.call(lambda api: api.subagents.list()))
         return app
     monkeypatch.setattr(cli, 'build_local_application', build)
     assert cli.main(['--no-session', '--workspace', str(tmp_path)]) == (1 if invalid else 0)
@@ -216,7 +216,7 @@ async def test_web_lifespan_consumes_the_same_role_configuration(monkeypatch, tm
     async def scenario():
         async with web_client(monkeypatch, tmp_path, model, workspace_root=tmp_path) as (client, web):
             app = web.state.service.application
-            assert [spec.name for spec in app.get_registered_subagents()] == ['tester']
+            assert [spec.name for spec in app.subagents.list()] == ['tester']
             assert (await client.get('/api/models')).status_code == 200
             assert model.seen == []
     if invalid:

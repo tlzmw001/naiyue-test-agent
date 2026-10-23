@@ -39,9 +39,9 @@ def test_cursor_is_scope_bound_append_stable_and_revision_sensitive(monkeypatch,
                 assert response.status_code == 422 and response.json()['error']['code'] == 'invalid_history_cursor'
             assert (await client.get(f'/api/sessions/{sid}/messages', params={'agent_id': 'unknown'})).status_code == 404
             app = web.state.service.application
-            store = app._storage
+            store = app.sessions._persistence.storage
             config = {'configurable': {'thread_id': store.sessions.get(sid)['thread_id']}}
-            await app._agent.aupdate_state(config, {'messages': [AIMessage(id='a0', content='corrected')]})
+            await app.runs._agent.aupdate_state(config, {'messages': [AIMessage(id='a0', content='corrected')]})
             assert (await client.post(f'/api/sessions/{sid}/prepare')).status_code == 200
             stale = await client.get(f'/api/sessions/{sid}/messages', params={'before': token})
             assert stale.status_code == 409 and stale.json()['error']['code'] == 'history_cursor_stale'
@@ -87,13 +87,13 @@ def test_gets_use_archive_sql_without_graph_or_complete_large_bodies(monkeypatch
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             await run(client, web, sid)
             app = web.state.service.application
-            store = app._storage
+            store = app.sessions._persistence.storage
             await await_diagnostics_idle(app)
             before = store.database.connection.total_changes
             async def forbidden(*args, **kwargs):
                 raise AssertionError('Display must not fetch execution state')
-            monkeypatch.setattr(app._agent, 'aget_state', forbidden)
-            monkeypatch.setattr(app, 'aget_messages', forbidden)
+            monkeypatch.setattr(app.runs._agent, 'aget_state', forbidden)
+            monkeypatch.setattr(app.history, 'messages', forbidden)
             queries = []
             store.database.connection.set_trace_callback(queries.append)
             try:
@@ -134,7 +134,7 @@ def test_schema_seven_migration_recovers_types_and_tool_parent_ids(monkeypatch, 
             page = (await client.get(f'/api/sessions/{sid}/messages')).json()
             result, = [r for r in page['messages'] if r['type'] == 'tool']
             assert result['parent_message_id'] == 'owner' and result['content'] == 'saved'
-            assert model.seen == [] and not web.state.service.application.has_session(sid)
+            assert model.seen == [] and not web.state.service.application.sessions.is_loaded(sid)
     asyncio.run(scenario())
 
 
@@ -146,10 +146,10 @@ def test_workspace_listing_and_admission_do_not_load_all_session_metadata(monkey
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]), workspace_root=root) as (client, web):
             app = web.state.service.application
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            foreign = await app.acreate_workspace_session('A', other)
+            foreign = await app.sessions.create_workspace('A', other)
             def forbidden(*args, **kwargs):
                 raise AssertionError('Web must not list every workspace for one session')
-            monkeypatch.setattr(app._storage.sessions, 'list_sessions', forbidden)
+            monkeypatch.setattr(app.sessions._persistence.storage.sessions, 'list_sessions', forbidden)
             response = await client.get('/api/sessions')
             assert response.status_code == 200 and [r['session_id'] for r in response.json()] == [sid]
             assert (await client.get(f'/api/sessions/{sid}')).status_code == 200

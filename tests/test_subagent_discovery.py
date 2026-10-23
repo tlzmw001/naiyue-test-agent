@@ -35,28 +35,28 @@ async def test_selected_subagent_exposes_list_executes_it_and_reopen_needs_no_se
     config = options(tmp_path)
     config['tools'].append(subagent.create_subagent_list_tool())
     async with open_async_persistent_application('unused', **config) as app:
-        sid = await app.acreate_session('A')
+        sid = await app.sessions.create('A')
         identity = json.loads((await delegate(app, sid, root)).content)['agent_id']
-        assert app.get_active_tools(sid) == ('subagent',)
-        saved_selection = app._storage.sessions.get(sid)['active_tool_names_json']
+        assert app.sessions.active_tools(sid) == ('subagent',)
+        saved_selection = app.sessions._persistence.storage.sessions.get(sid)['active_tool_names_json']
     async with open_async_persistent_application('unused', **config) as app:
-        await app.arestore_session(sid)
+        await app.sessions.restore(sid)
         root.replies.extend([call('subagent_list', {}, 'list'), AIMessage(content='found')])
-        result = await app.arun(sid, [('user', 'find earlier worker')])
+        result = await app.runs.start(sid, [('user', 'find earlier worker')])
         feedback = next(m for m in reversed(result['messages']) if isinstance(m, ToolMessage))
         assert feedback.status == 'success'
         row, = json.loads(feedback.content)['items']
         assert row['agent_id'] == identity and row['resume_available'] is True and row['resume_reason'] is None
         assert set(root.bound[-1]) == {'subagent', 'subagent_list'}
-        assert app._storage.sessions.get(sid)['active_tool_names_json'] == saved_selection and len(child.seen) == 1
-        await app.aset_active_tools(sid, [])
+        assert app.sessions._persistence.storage.sessions.get(sid)['active_tool_names_json'] == saved_selection and len(child.seen) == 1
+        await app.sessions.select_tools(sid, [])
         root.replies.extend([call('subagent_list', {}, 'denied'), AIMessage(content='disabled')])
-        result = await app.arun(sid, [('user', 'disabled')])
+        result = await app.runs.start(sid, [('user', 'disabled')])
         denied = next(m for m in reversed(result['messages']) if isinstance(m, ToolMessage))
         assert denied.status == 'error' and denied.additional_kwargs['naiyue_not_executed'] == 'tool_not_active'
         assert result['tool_execution']['tool_names'] == [] and len(child.seen) == 1
         with pytest.raises(ValueError, match='subagent'):
-            await app.aset_active_tools(sid, ['subagent_list'])
+            await app.sessions.select_tools(sid, ['subagent_list'])
 
 
 @async_test
@@ -68,12 +68,12 @@ async def test_list_configuration_paging_foreign_cursor_and_complete_json_budget
     config['settings'] = config['settings'].model_copy(update={'tools': config['settings'].tools.model_copy(update={
         'subagent': SubAgentOutputSettings(max_list_items=1, max_list_bytes=500, task_preview_chars=3)})})
     async with open_async_persistent_application('unused', **config) as app:
-        sid = await app.acreate_session('A')
+        sid = await app.sessions.create('A')
         first = json.loads((await delegate(app, sid, root, task='第一份任务')).content)['agent_id']
         second = json.loads((await delegate(app, sid, root, task='第二份任务')).content)['agent_id']
         async def query(args):
             root.replies.extend([call('subagent_list', args, 'list'), AIMessage(content='listed')])
-            result = await app.arun(sid, [('user', 'list')])
+            result = await app.runs.start(sid, [('user', 'list')])
             return next(m for m in reversed(result['messages']) if isinstance(m, ToolMessage))
         page = await query({})
         assert len(page.content.encode()) <= 500
@@ -83,9 +83,9 @@ async def test_list_configuration_paging_foreign_cursor_and_complete_json_budget
         assert last['items'][0]['agent_id'] == first and last['next_before'] is None and not last['truncated']
         for args in ({'limit': 2}, {'before': 'f' * 64}):
             assert (await query(args)).status == 'error'
-        other = await app.acreate_session('A')
+        other = await app.sessions.create('A')
         root.replies.extend([call('subagent_list', {'before': first}, 'foreign'), AIMessage(content='denied')])
-        denied = await app.arun(other, [('user', 'foreign cursor')])
+        denied = await app.runs.start(other, [('user', 'foreign cursor')])
         assert next(m for m in reversed(denied['messages']) if isinstance(m, ToolMessage)).status == 'error'
         assert len(child.seen) == 2
 
@@ -161,10 +161,10 @@ async def test_context_preview_counts_the_same_companion_definition_as_the_actua
     config = options(tmp_path)
     config['tools'].append(subagent.create_subagent_list_tool())
     async with open_async_persistent_application('unused', **config) as app:
-        sid = await app.acreate_session('A')
-        preview = await app.aget_context_view(sid)
+        sid = await app.sessions.create('A')
+        preview = await app.history.context(sid)
         assert next(row['count'] for row in preview['current']['estimate']['groups'] if row['id'] == 'tool_definitions') == 2
-        await app.arun(sid, [('user', 'hello')])
+        await app.runs.start(sid, [('user', 'hello')])
         assert set(root.bound[-1]) == {'subagent', 'subagent_list'}
 
 
@@ -187,14 +187,14 @@ async def test_stale_child_execution_stop_cannot_stop_the_next_delegation_in_the
     root.on_request, child.on_request = next_delegation, hold_second
     app, _ = await delegated_app(monkeypatch, child, root=root)
     instances = record_instances(monkeypatch, app)
-    sid = await app.acreate_session('A')
-    task = asyncio.create_task(app.arun(sid, [('user', 'two steps')]))
+    sid = await app.sessions.create('A')
+    task = asyncio.create_task(app.runs.start(sid, [('user', 'two steps')]))
     try:
         await asyncio.wait_for(entered.wait(), 5)
         old, current = instances
         for binding in ({'agent_run_id': old['run_id']}, {'approval_batch_id': 'old-approval'}):
             with pytest.raises(SessionBusyError, match='different child'):
-                app.request_stop(sid, run_id=current['parent_run_id'], agent_path=current['agent_path'], **binding)
+                app.runs.stop(sid, run_id=current['parent_run_id'], agent_path=current['agent_path'], **binding)
         assert not current['control'].requested
         root.on_request = None
         release.set()

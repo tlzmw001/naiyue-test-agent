@@ -22,20 +22,20 @@ def test_root_graph_returns_one_receipt_and_next_round_sees_same_process(monkeyp
         script = "import os,time;open('starts','a').write(str(os.getpid())+'\\n');print(os.getpid(),flush=True);time.sleep(60)"
         model = StreamingToolModel(replies=[call('bash', {'command': command(script)}), AIMessage(content='started')])
         async with background_app(monkeypatch, tmp_path, model, persistent=persistent, wait_seconds=1) as app:
-            sid = await app.acreate_workspace_session('A', tmp_path)
-            result = await app.arun(sid, [('user', 'start service')])
+            sid = await app.sessions.create_workspace('A', tmp_path)
+            result = await app.runs.start(sid, [('user', 'start service')])
             receipt = json.loads(tool_result(result, 'bash').content)
             identity = receipt['task_id']
-            ready = await wait_status(app._sessions.background_tasks, identity, lambda r: bool(r['output']))
+            ready = await wait_status(app.sessions._sessions.background_tasks, identity, lambda r: bool(r['output']))
             assert (tmp_path / 'starts').read_text() == ready['output']
-            assert not app._sessions.require(sid).is_busy()
+            assert not app.sessions._sessions.require(sid).is_busy()
             model.replies.extend([call('task_output', {'task_id': identity}, 'query'), AIMessage(content='alive')])
-            second = await app.arun(sid, [('user', 'query')])
+            second = await app.runs.start(sid, [('user', 'query')])
             assert json.loads(tool_result(second, 'task_output').content)['output'] == ready['output']
             assert len([m for m in second['messages'] if isinstance(m, ToolMessage) and m.tool_call_id == 't']) == 1
             assert (tmp_path / 'starts').read_text() == ready['output']
             count = len(model.seen)
-            stopped = await app.astop_background_task(identity, sid)
+            stopped = await app.tasks.stop(identity, sid)
             assert stopped['cleanup_confirmed'] and stopped['termination'] == 'user_stop'
             assert len(model.seen) == count
     asyncio.run(scenario())
@@ -45,13 +45,13 @@ def test_approval_explains_configured_promotion_before_execution(monkeypatch, tm
     async def scenario():
         model = StreamingToolModel(replies=[call('bash', {'command': 'printf approved'}), AIMessage(content='done')])
         async with background_app(monkeypatch, tmp_path, model, mode='Default', wait_seconds=7) as app:
-            sid = await app.acreate_workspace_session('A', tmp_path)
-            pending = await app.arun(sid, [('user', 'run')])
+            sid = await app.sessions.create_workspace('A', tmp_path)
+            pending = await app.runs.start(sid, [('user', 'run')])
             assert pending['approval_requests'][0]['target'] == '[automatic background after 7s; original execution deadline applies] printf approved'
-            assert (await app.alist_background_tasks())['items'] == []
-            result = await app.aresume_tool_approval(sid, ['approve'])
+            assert (await app.tasks.list())['items'] == []
+            result = await app.runs.resume_approval(sid, ['approve'])
             assert 'exit_code=0' in tool_result(result, 'bash').content
-            assert (await app.alist_background_tasks())['items'] == []
+            assert (await app.tasks.list())['items'] == []
     asyncio.run(scenario())
 
 

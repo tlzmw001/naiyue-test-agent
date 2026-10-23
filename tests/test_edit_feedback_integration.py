@@ -42,13 +42,13 @@ async def test_edit_json_artifact_survives_sqlite_reopen_but_is_not_model_payloa
     database = tmp_path / 'sessions.sqlite'
     async def scenario():
         async with open_async_persistent_application('synthetic', database_path=database, **options) as app:
-            app.subscribe_events(events.append)
-            sid = await app.acreate_workspace_session('A', tmp_path)
-            await app.arun(sid, [('user', 'edit')])
-            before = await app.aget_messages(sid)
+            app.observability.subscribe(events.append)
+            sid = await app.sessions.create_workspace('A', tmp_path)
+            await app.runs.start(sid, [('user', 'edit')])
+            before = await app.history.messages(sid)
         async with open_async_persistent_application('synthetic', database_path=database, **options) as app:
-            await app.arestore_session(sid)
-            return before, await app.aget_messages(sid)
+            await app.sessions.restore(sid)
+            return before, await app.history.messages(sid)
     before, after = await scenario()
     first = next(m for m in before if isinstance(m, ToolMessage))
     restored = next(m for m in after if isinstance(m, ToolMessage))
@@ -133,16 +133,16 @@ async def test_approval_does_not_read_original_for_preview(monkeypatch, tmp_path
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     app = await build_application('synthetic', tools=[create_session_edit_tool()],
         settings=AppSettings(), system_prompt='', response_format=None)
-    sid = await app.acreate_workspace_session('A', root)
+    sid = await app.sessions.create_workspace('A', root)
     calls, real_scan = [], module._scan_target
     def scan(*args, **kwargs):
         calls.append(True)
         return real_scan(*args, **kwargs)
     monkeypatch.setattr(module, '_scan_target', scan)
-    await app.arun(sid, [('user', 'edit outside')])
+    await app.runs.start(sid, [('user', 'edit outside')])
     assert calls == [] and outside.read_text() == '“old”\n'
-    assert app.pending_tool_approvals(sid)
-    result = await app.aresume_tool_approval(sid, ['approve'])
+    assert app.runs.pending_tools(sid)
+    result = await app.runs.resume_approval(sid, ['approve'])
     feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert calls == [True] and feedback.status == 'success'
     assert outside.read_bytes() == b'"NEW"\n'

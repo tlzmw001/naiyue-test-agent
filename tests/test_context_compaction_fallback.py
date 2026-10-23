@@ -88,7 +88,7 @@ async def _case(monkeypatch, summary_result, *, send_margin=None, normal_failure
     app = await build_application(
         'synthetic.json', tools=[], system_prompt='BASE', response_format=None,
     )
-    return app, await app.acreate_session('A'), model, messages, estimate, 400 - output
+    return app, await app.sessions.create('A'), model, messages, estimate, 400 - output
 
 
 def _events(caplog, attribute):
@@ -119,7 +119,7 @@ async def test_recoverable_summary_failure_preserves_history_and_completes_run(
     app, session, model, messages, estimate, budget = await _case(monkeypatch, summary_result)
     assert 50 < estimate < budget
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        result = await app.arun(session, messages)
+        result = await app.runs.start(session, messages)
 
     assert len(model.summary_inputs) == 1
     assert len(model.normal_inputs) == 1
@@ -128,9 +128,9 @@ async def test_recoverable_summary_failure_preserves_history_and_completes_run(
     assert result['messages'][-1].content == 'continued'
     assert not any(message.additional_kwargs.get(SUMMARY_MARKER)
                    for message in result['messages'])
-    assert app._sessions.require(session).describe_session()['busy'] is False
-    thread = app._sessions.require(session).get_thread_id()
-    latest = await app._agent.aget_state({'configurable': {'thread_id': thread}})
+    assert app.sessions._sessions.require(session).describe_session()['busy'] is False
+    thread = app.sessions._sessions.require(session).get_thread_id()
+    latest = await app.runs._agent.aget_state({'configurable': {'thread_id': thread}})
     assert latest.values['messages'] == result['messages']
     events = _events(caplog, 'context_compaction')
     names = [event['event'] for event in events]
@@ -164,10 +164,10 @@ async def test_original_send_budget_boundary_controls_fallback(
     assert budget == estimate + send_margin
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         if send_margin == 0:
-            assert (await app.arun(session, messages))['messages'][-1].content == 'continued'
+            assert (await app.runs.start(session, messages))['messages'][-1].content == 'continued'
         else:
             with pytest.raises(ContextCompactionError, match=reason):
-                await app.arun(session, messages)
+                await app.runs.start(session, messages)
     assert len(model.summary_inputs) == 1
     assert len(model.normal_inputs) == (1 if send_margin == 0 else 0)
     events = _events(caplog, 'context_compaction')
@@ -175,7 +175,7 @@ async def test_original_send_budget_boundary_controls_fallback(
     assert _events(caplog, 'run_event')[-1]['event'] == (
         'run_completed' if send_margin == 0 else 'run_failed'
     )
-    assert app._sessions.require(session).describe_session()['busy'] is False
+    assert app.sessions._sessions.require(session).describe_session()['busy'] is False
 
 
 @pytest.mark.parametrize('summary_result', [
@@ -201,10 +201,10 @@ async def test_nonrecoverable_summary_failure_never_falls_back(
     assert estimate < budget
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(ContextCompactionError):
-            await app.arun(session, messages)
+            await app.runs.start(session, messages)
     assert len(model.summary_inputs) == 1
     assert model.normal_inputs == []
-    assert app._sessions.require(session).describe_session()['busy'] is False
+    assert app.sessions._sessions.require(session).describe_session()['busy'] is False
     assert not any(event['event'] == 'context_compaction_fallback'
                    for event in _events(caplog, 'context_compaction'))
     assert _events(caplog, 'run_event')[-1]['event'] == 'run_failed'
@@ -219,14 +219,14 @@ async def test_normal_model_failure_after_fallback_is_still_a_failed_run(monkeyp
     )
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(TimeoutError) as caught:
-            await app.arun(session, messages)
+            await app.runs.start(session, messages)
     assert caught.value is normal_failure
     assert len(model.summary_inputs) == len(model.normal_inputs) == 1
     assert model.normal_inputs[0][1:] == messages
     assert [event['event'] for event in _events(caplog, 'run_event')] == [
         'run_started', 'run_failed',
     ]
-    assert app._sessions.require(session).describe_session()['busy'] is False
+    assert app.sessions._sessions.require(session).describe_session()['busy'] is False
     assert 'PRIVATE_' not in caplog.text
 
 
@@ -238,7 +238,7 @@ async def test_incomplete_original_tool_pair_prevents_fallback(monkeypatch, capl
     ])
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(ContextCompactionError, match='summary_failed'):
-            await app.arun(session, messages)
+            await app.runs.start(session, messages)
     assert len(model.summary_inputs) == 1
     assert model.normal_inputs == []
     assert not any(event['event'] == 'context_compaction_fallback'

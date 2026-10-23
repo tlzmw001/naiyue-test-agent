@@ -148,12 +148,12 @@ async def test_application_query_is_read_only_cold_and_survives_reopen(monkeypat
         'input_tokens': 100, 'output_tokens': 5, 'total_tokens': 105})])
     path = tmp_path / 'state.sqlite'
     async with build(monkeypatch, path, model) as app:
-        sid = await app.acreate_session('A')
-        await app.arun(sid, [('user', 'task')])
-        expected = await app.aget_model_usage(sid, model_limit=20)
+        sid = await app.sessions.create('A')
+        await app.runs.start(sid, [('user', 'task')])
+        expected = await app.observability.usage(sid, model_limit=20)
         assert expected['metrics']['input_tokens']['known_sum'] == '100'
     async with build(monkeypatch, path) as app:
-        assert not app.has_session(sid)
-        value = await app.aget_model_usage(sid, model_limit=20)
+        assert not app.sessions.is_loaded(sid)
+        value = await app.observability.usage(sid, model_limit=20)
         assert value['metrics'] == expected['metrics'] and value['recorded_calls'] == 1
-        assert not app.has_session(sid)
+        assert not app.sessions.is_loaded(sid)

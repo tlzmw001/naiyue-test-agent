@@ -151,11 +151,11 @@ def test_web_bash_opt_in_approval_and_safe_command(monkeypatch, tmp_path):
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             backend = app.state.service.application
-            assert 'bash' in [spec.tool.name for spec in backend.get_registered_tools()]
-            assert 'bash' not in backend.get_active_tools(sid)
-            assert 'powershell' in [spec.tool.name for spec in backend.get_registered_tools()]
-            assert set(backend.get_active_tools(sid)) == {'read', 'ls', 'find', 'grep', 'write', 'edit', 'subagent', 'aitest_kit', 'web_search', 'web_fetch', 'task_list', 'task_output', 'task_stop', 'history', 'memory'}
-            await backend.aset_active_tools(sid, ['bash'])
+            assert 'bash' in [spec.tool.name for spec in backend.tools.list()]
+            assert 'bash' not in backend.sessions.active_tools(sid)
+            assert 'powershell' in [spec.tool.name for spec in backend.tools.list()]
+            assert set(backend.sessions.active_tools(sid)) == {'read', 'ls', 'find', 'grep', 'write', 'edit', 'subagent', 'aitest_kit', 'web_search', 'web_fetch', 'task_list', 'task_output', 'task_stop', 'history', 'memory'}
+            await backend.sessions.select_tools(sid, ['bash'])
             assert (await client.get(f'/api/sessions/{sid}')).json()['active_tools'] == ['bash']
             origin = (await client.post(f'/api/sessions/{sid}/runs', json=request('use shell'))).json()['run_id']
             await client.get(f'/api/runs/{origin}/events')

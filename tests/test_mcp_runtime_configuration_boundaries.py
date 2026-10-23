@@ -26,16 +26,16 @@ def test_queued_borrow_after_disable_does_not_start_a_new_process(monkeypatch, t
         app, _ = await make_mcp_app(monkeypatch, path, [call(NAME, {'text': 'wait'}), AIMessage(content='done')],
                                     server=server, mode='BypassApprovals')
         try:
-            first, second = await app.acreate_session('A'), await app.acreate_session('A')
-            run = asyncio.create_task(app.arun(first, [('user', 'hold slot')]))
+            first, second = await app.sessions.create('A'), await app.sessions.create('A')
+            run = asyncio.create_task(app.runs.start(first, [('user', 'hold slot')]))
             await until(lambda: bool(calls(path)))
             async def queued():
-                async with app._sessions.borrow_mcp(second, 'root', 'local'):
+                async with app.sessions._sessions.borrow_mcp(second, 'root', 'local'):
                     raise AssertionError('Disabled queued borrower must not receive a client')
             waiter = asyncio.create_task(queued())
-            await until(lambda: waiter in app._sessions.mcp_resources._requests)
+            await until(lambda: waiter in app.sessions._sessions.mcp_resources._requests)
             write_config(config, {'local': server.model_copy(update={'enabled': False})})
-            await app.arefresh_mcp(config)
+            await app.mcp.refresh(config)
             starts = len([r for r in facts(path) if r['event'] == 'start'])
             path.with_suffix('.release').touch()
             await run
@@ -70,17 +70,17 @@ def test_reenable_rotates_remembered_authority_and_preserves_selection(monkeypat
                 finally: await app.aclose()
             context = opened()
         async with context as app:
-            sid = await app.acreate_session('A')
-            await app.arun(sid, [('user', 'one')])
-            await app.aresume_tool_approval(sid, ['approve'], remember_approved=['first'])
+            sid = await app.sessions.create('A')
+            await app.runs.start(sid, [('user', 'one')])
+            await app.runs.resume_approval(sid, ['approve'], remember_approved=['first'])
             write_config(config, {})
-            await app.arefresh_mcp(config)
-            assert app.get_active_tools(sid) == (NAME,)
+            await app.mcp.refresh(config)
+            assert app.sessions.active_tools(sid) == (NAME,)
             write_config(config, {'local': server})
-            await app.arefresh_mcp(config)
-            pending = await app.arun(sid, [('user', 'two')])
+            await app.mcp.refresh(config)
+            pending = await app.runs.start(sid, [('user', 'two')])
             assert pending['approval_requests'] and len(calls(path)) == 1
-            await app.aresume_tool_approval(sid, ['approve'])
+            await app.runs.resume_approval(sid, ['approve'])
             assert len(calls(path)) == 2
     asyncio.run(scenario())
 
@@ -90,12 +90,12 @@ def test_duplicate_name_rejects_whole_server_publication(monkeypatch, tmp_path):
         config = tmp_path / 'settings.toml'
         app, _ = await empty_app(monkeypatch, [])
         try:
-            await app.aregister_tool(definition('mcp__local__other'))
+            await app.tools.register(definition('mcp__local__other'))
             write_config(config, {'local': stdio_settings(tmp_path / 'collision.jsonl', 'stateful', allowed_tools=['echo', 'other'])})
-            result = await app.arefresh_mcp(config)
+            result = await app.mcp.refresh(config)
             assert result['servers'][0]['status'] == 'error'
-            assert [s.tool.name for s in app.get_registered_tools()] == ['mcp__local__other']
-            assert 'local' not in app._sessions.mcp_resources._configs
+            assert [s.tool.name for s in app.tools.list()] == ['mcp__local__other']
+            assert 'local' not in app.sessions._sessions.mcp_resources._configs
         finally:
             await app.aclose()
     asyncio.run(scenario())
@@ -108,7 +108,7 @@ def test_bad_configuration_never_replaces_effective_state(monkeypatch, tmp_path,
         path = tmp_path / 'state.jsonl'
         app, _ = await make_mcp_app(monkeypatch, path, [])
         try:
-            original = app.get_registered_tools()[0]
+            original = app.tools.list()[0]
             if invalid == 'toml': config.write_text('PRIVATE-NOT-TOML')
             elif invalid == 'schema': config.write_text('[mcp.servers.bad]\ntransport="stdio"\n')
             elif invalid == 'negative_ttl':
@@ -116,8 +116,8 @@ def test_bad_configuration_never_replaces_effective_state(monkeypatch, tmp_path,
                 server['idle_timeout_seconds'] = -3
                 write_config(config, {'local': server})
             with pytest.raises(ValueError, match='MCP settings'):
-                await app.arefresh_mcp(config)
-            assert app.get_registered_tools()[0] is original and original.permissions.unavailable_reason() is None
+                await app.mcp.refresh(config)
+            assert app.tools.list()[0] is original and original.permissions.unavailable_reason() is None
         finally:
             await app.aclose()
     asyncio.run(scenario())
@@ -128,14 +128,14 @@ def test_candidate_is_cancelled_and_cleaned_when_application_closes(monkeypatch,
         path, config = tmp_path / 'closing.jsonl', tmp_path / 'settings.toml'
         app, _ = await empty_app(monkeypatch, [])
         write_config(config, {'local': stdio_settings(path, 'wait', allowed_tools=['echo'])})
-        task = asyncio.create_task(app.arefresh_mcp(config))
+        task = asyncio.create_task(app.mcp.refresh(config))
         await until(lambda: any(r['event'] == 'list' for r in facts(path)))
         await asyncio.wait_for(app.aclose(), 15)
         with pytest.raises(MCPResourceError, match='closed'):
             await task
-        assert not app._sessions.mcp_resources._candidates
+        assert not app.sessions._sessions.mcp_resources._candidates
         assert all(not process_alive(r['pid']) for r in facts(path) if r['event'] == 'start')
-        assert app._tool_registry.names() == ()
+        assert app.tools._tool_registry.names() == ()
     asyncio.run(scenario())
 
 
@@ -145,8 +145,8 @@ def test_two_concurrent_refreshes_publish_once_and_leave_no_discovery_clients(mo
         app, model = await empty_app(monkeypatch, [])
         try:
             write_config(config, {'local': stdio_settings(path, 'stateful', allowed_tools=['echo'])})
-            first, second = await asyncio.gather(app.arefresh_mcp(config), app.arefresh_mcp(config))
-            assert first == second and len(app.get_registered_tools()) == 1
+            first, second = await asyncio.gather(app.mcp.refresh(config), app.mcp.refresh(config))
+            assert first == second and len(app.tools.list()) == 1
             assert len([r for r in facts(path) if r['event'] == 'start']) == 1
             assert not calls(path) and model.seen == []
             assert all(not process_alive(r['pid']) for r in facts(path) if r['event'] == 'start')
@@ -165,13 +165,13 @@ def test_runtime_add_http_and_disable_closes_local_clients(monkeypatch, tmp_path
                 settings=AppSettings.model_validate({'permissions': {'mode': 'BypassApprovals'}}))
             try:
                 write_config(config, {'local': server})
-                assert (await app.arefresh_mcp(config))['servers'][0]['status'] == 'enabled'
-                sid = await app.acreate_session('A')
-                await app.aset_active_tools(sid, [NAME])
-                await app.arun(sid, [('user', 'HTTP')])
+                assert (await app.mcp.refresh(config))['servers'][0]['status'] == 'enabled'
+                sid = await app.sessions.create('A')
+                await app.sessions.select_tools(sid, [NAME])
+                await app.runs.start(sid, [('user', 'HTTP')])
                 write_config(config, {})
-                await app.arefresh_mcp(config)
-                assert not app._sessions.mcp_resources._owners and len(calls(path)) == 1
+                await app.mcp.refresh(config)
+                assert not app.sessions._sessions.mcp_resources._owners and len(calls(path)) == 1
             finally:
                 await app.aclose()
     asyncio.run(scenario())

@@ -42,9 +42,9 @@ async def test_both_indexes_are_visible_and_body_enters_next_model_call(monkeypa
     model.metadata = _model([], window=10000).metadata
     read = create_session_read_tool()
     app = await build_app(monkeypatch, model, tools=[read])
-    session = await app.acreate_workspace_session('A', tmp_path)
+    session = await app.sessions.create_workspace('A', tmp_path)
     with caplog.at_level(logging.INFO):
-        result = await app.arun(session, [('user', f'use the {source} skill')])
+        result = await app.runs.start(session, [('user', f'use the {source} skill')])
     prompt = system_text(model.inputs[0])
     assert '<available_skills' in prompt and 'default_source="agents"' in prompt
     assert str(paths['agents']) in prompt and str(paths['claude']) in prompt
@@ -91,9 +91,9 @@ async def test_resource_scope_never_bypasses_sensitive_or_external_paths(monkeyp
         _read_call(target), AIMessage(content='handled'),
     ])
     app = await build_app(monkeypatch, model, tools=[create_session_read_tool(), ToolSpec(alter_source, alter_source.args_schema, permissions=ToolPermission(default='allow'))])
-    session = await app.acreate_workspace_session('A', root)
-    await app.aset_permission_mode(session, 'NoAsk')
-    result = await app.arun(session, [('user', 'test read boundary')])
+    session = await app.sessions.create_workspace('A', root)
+    await app.sessions.select_permission_mode(session, 'NoAsk')
+    result = await app.runs.start(session, [('user', 'test read boundary')])
     outcome = next(msg for msg in result['messages'] if isinstance(msg, ToolMessage)
                    and msg.tool_call_id == 'read-1')
     assert outcome.status == 'error' and 'PRIVATE_' not in outcome.content
@@ -115,12 +115,12 @@ async def test_index_is_frozen_but_body_is_read_live_then_index_refreshes(monkey
         _read_call(path), AIMessage(content='first done'), AIMessage(content='next done'),
     ])
     app = await build_app(monkeypatch, model, tools=[create_session_read_tool(), ToolSpec(modify_skill, modify_skill.args_schema, permissions=ToolPermission(default='allow'))])
-    session = await app.acreate_workspace_session('A', tmp_path)
-    first = await app.arun(session, [('user', 'modify and read')])
+    session = await app.sessions.create_workspace('A', tmp_path)
+    first = await app.runs.start(session, [('user', 'modify and read')])
     assert all('DESC_ONE' in system_text(items) and 'DESC_TWO' not in system_text(items)
                for items in model.inputs[:3])
     assert any(isinstance(msg, ToolMessage) and 'BODY_TWO' in msg.content for msg in first['messages'])
-    await app.arun(session, [('user', 'next')])
+    await app.runs.start(session, [('user', 'next')])
     assert 'DESC_TWO' in system_text(model.inputs[-1])
 
 
@@ -133,10 +133,10 @@ async def test_workspaces_do_not_share_indexes_or_resource_permissions(monkeypat
     model = RecordingModel(responses=[_read_call(second), AIMessage(content='denied'),
                                      _read_call(second), AIMessage(content='allowed')])
     app = await build_app(monkeypatch, model, tools=[create_session_read_tool()])
-    session_a = await app.acreate_workspace_session('A', a)
-    await app.aset_permission_mode(session_a, 'NoAsk')
-    result_a = await app.arun(session_a, [('user', 'read')])
-    result_b = await app.arun(await app.acreate_workspace_session('A', b), [('user', 'read')])
+    session_a = await app.sessions.create_workspace('A', a)
+    await app.sessions.select_permission_mode(session_a, 'NoAsk')
+    result_a = await app.runs.start(session_a, [('user', 'read')])
+    result_b = await app.runs.start(await app.sessions.create_workspace('A', b), [('user', 'read')])
     assert 'WORKSPACE_A' in system_text(model.inputs[0]) and str(second) not in system_text(model.inputs[0])
     assert 'WORKSPACE_B' in system_text(model.inputs[2]) and str(first) not in system_text(model.inputs[2])
     assert next(msg for msg in result_a['messages'] if isinstance(msg, ToolMessage)).status == 'error'
@@ -153,10 +153,10 @@ async def test_approval_resume_reinstalls_resource_scope_and_refreshes_index(mon
     model = RecordingModel(responses=[_read_call(outside, 'outside'), _read_call(skill),
                                      AIMessage(content='done')])
     app = await build_app(monkeypatch, model, tools=[create_session_read_tool()])
-    session = await app.acreate_workspace_session('A', root)
-    assert (await app.arun(session, [('user', 'read')]))['approval_requests']
+    session = await app.sessions.create_workspace('A', root)
+    assert (await app.runs.start(session, [('user', 'read')]))['approval_requests']
     write_skill(root, description='AFTER_PAUSE')
-    result = await app.aresume_tool_approval(session, ['approve'])
+    result = await app.runs.resume_approval(session, ['approve'])
     assert 'AFTER_PAUSE' in system_text(model.inputs[1])
     assert next(msg for msg in result['messages'] if isinstance(msg, ToolMessage)
                 and msg.tool_call_id == 'read-1').status == 'success'
@@ -167,7 +167,7 @@ async def test_no_read_tool_means_no_unloadable_skill_advertisement(monkeypatch,
     write_skill(tmp_path)
     model = RecordingModel(responses=[AIMessage(content='done')])
     app = await build_app(monkeypatch, model)
-    await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'hello')])
+    await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'hello')])
     assert 'available_skills' not in system_text(model.inputs[0])
 
 
@@ -181,7 +181,7 @@ async def test_reference_pagination_and_encoding_failure_remain_tool_results(mon
     model = RecordingModel(responses=[_read_call(reference, offset=2001, limit=3),
                                      _read_call(binary, 'bad'), AIMessage(content='handled')])
     app = await build_app(monkeypatch, model, tools=[create_session_read_tool()])
-    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'read references')])
+    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'read references')])
     outputs = [msg for msg in result['messages'] if isinstance(msg, ToolMessage)]
     assert outputs[0].status == 'success'
     assert outputs[0].content == 'line 2001\nline 2002\nline 2003\n[read: lines 2001-2003; next_offset=2004]\n[read: stopped by 3 line page limit; continue with the same path, offset=2004, limit=3]'
@@ -197,7 +197,7 @@ async def test_model_cannot_supply_resource_permissions_as_tool_arguments(monkey
     read = create_session_read_tool()
     assert 'read_resource_roots' not in read.tool.tool_call_schema.model_json_schema()['properties']
     app = await build_app(monkeypatch, model, tools=[read])
-    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'read')])
+    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'read')])
     output = next(msg for msg in result['messages'] if isinstance(msg, ToolMessage))
     assert output.status == 'error' and 'Invalid read arguments' in output.content
 
@@ -214,7 +214,7 @@ async def test_disappearing_optional_resource_after_discovery_is_a_tool_error(mo
         return await original(*args, **kwargs)
 
     monkeypatch.setattr(session_execution, 'ainvoke_agent_run_with_resources', invoke_after_move)
-    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'read')])
+    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'read')])
     output = next(msg for msg in result['messages'] if isinstance(msg, ToolMessage))
     assert output.status == 'error' and output in model.inputs[-1]
     assert result['messages'][-1].content == 'handled'
@@ -229,7 +229,7 @@ async def test_overlapping_registered_roots_do_not_shadow_specific_skill_permiss
     narrow = write_skill(tmp_path, name='demo', directory='z')
     model = RecordingModel(responses=[_read_call(narrow), AIMessage(content='done')])
     app = await build_app(monkeypatch, model, tools=[create_session_read_tool()])
-    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'read demo')])
+    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'read demo')])
     output = next(msg for msg in result['messages'] if isinstance(msg, ToolMessage))
     assert output.status == 'success' and 'BODY_MARKER' in output.content
 
@@ -248,13 +248,13 @@ async def test_skill_index_is_in_compaction_and_overflow_request_budget(monkeypa
     models = {'A': first_model, 'B': compact_model, 'C': recovery_model}
     monkeypatch.setattr(application, 'load_model_catalog', lambda _path: ModelCatalog('A', models))
     app = await build_application('synthetic.json', tools=[read], system_prompt='BASE', response_format=None)
-    session = await app.acreate_workspace_session('A', tmp_path)
-    old = await app.arun(session, [('user', 'OLD_FACT_' + 'x' * 200)])
-    await app.aselect_model(session, 'B')
+    session = await app.sessions.create_workspace('A', tmp_path)
+    old = await app.runs.start(session, [('user', 'OLD_FACT_' + 'x' * 200)])
+    await app.sessions.select_model(session, 'B')
     with caplog.at_level(logging.INFO):
-        await app.arun(session, [('user', 'new')])
-        other = await app.acreate_workspace_session('C', tmp_path)
-        await app.arun(other, _history())
+        await app.runs.start(session, [('user', 'new')])
+        other = await app.sessions.create_workspace('C', tmp_path)
+        await app.runs.start(other, _history())
     assert len(compact_model.summary_inputs) == len(recovery_model.summary_inputs) == 1
     assert 'available_skills' in system_text(compact_model.normal_inputs[0])
     assert system_text(recovery_model.normal_inputs[0]) == system_text(recovery_model.normal_inputs[1])

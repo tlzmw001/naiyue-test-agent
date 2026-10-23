@@ -49,20 +49,20 @@ def test_missing_execution_root_keeps_history_but_blocks_new_run(monkeypatch, tm
         root, location = project(tmp_path)
         model = StreamingToolModel(replies=[AIMessage(content='saved'), AIMessage(content='must not run')])
         async with opened(monkeypatch, tmp_path, model, location=location) as app:
-            sid = await app.acreate_workspace_session('A', root)
-            await app.arun(sid, [('user', 'original')])
+            sid = await app.sessions.create_workspace('A', root)
+            await app.runs.start(sid, [('user', 'original')])
         root.rename(tmp_path / 'removed')
         async with opened(monkeypatch, tmp_path, model) as app:
-            history = await app.aget_session_history(sid)
+            history = await app.history.session(sid)
             assert any(m.content == 'saved' for m in history['messages'])
-            await app.arestore_session(sid)
-            status = await app.aget_session_status(sid)
+            await app.sessions.restore(sid)
+            status = await app.sessions.status(sid)
             assert not status['can_run']
             assert status['execution_root_error'] == {'code': 'execution_root_unavailable', 'reason': 'missing'}
             with pytest.raises(RuntimeError, match='execution_root_unavailable.*missing'):
-                await app.arun(sid, [('user', 'new execution')])
+                await app.runs.start(sid, [('user', 'new execution')])
             assert len(model.seen) == 1
-            assert not app._sessions.require(sid).is_busy()
+            assert not app.sessions._sessions.require(sid).is_busy()
     asyncio.run(scenario())
 
 
@@ -73,11 +73,11 @@ def test_missing_child_execution_root_rejects_continuation_without_rebinding(mon
         model = StreamingToolModel(replies=[call('subagent', {'agent': 'worker', 'task': 'first'}), AIMessage(content='done')])
         child = ChildModel(replies=[AIMessage(content='child saved'), AIMessage(content='must not run')])
         async with opened(monkeypatch, tmp_path, model, location=location, child=child) as app:
-            sid = await app.acreate_workspace_session('A', root)
-            result = await app.arun(sid, [('user', 'delegate')])
+            sid = await app.sessions.create_workspace('A', root)
+            result = await app.runs.start(sid, [('user', 'delegate')])
             report = next(m for m in result['messages'] if isinstance(m, ToolMessage))
             identity = json.loads(report.content)['agent_id']
-            before = app._storage.subagents.get_subagent(sid, identity)
+            before = app.sessions._persistence.storage.subagents.get_subagent(sid, identity)
             original = subagent_records.admit
             async def disappear(owner, graph, instance, spec):
                 root.rename(tmp_path / 'removed')
@@ -85,11 +85,11 @@ def test_missing_child_execution_root_rejects_continuation_without_rebinding(mon
             monkeypatch.setattr(subagent_records, 'admit', disappear)
             model.replies.extend([call('subagent', {'agent': 'worker', 'task': 'continue', 'agent_id': identity}, 'again'),
                                   AIMessage(content='continuation rejected')])
-            result = await app.arun(sid, [('user', 'continue')])
+            result = await app.runs.start(sid, [('user', 'continue')])
             errors = [m for m in result['messages'] if isinstance(m, ToolMessage) and m.tool_call_id == 'again']
             assert errors and 'execution_root_unavailable' in str(errors[0].content) and 'missing' in str(errors[0].content)
             assert len(child.seen) == 1
-            assert app._storage.subagents.get_subagent(sid, identity) == before
+            assert app.sessions._persistence.storage.subagents.get_subagent(sid, identity) == before
     asyncio.run(scenario())
 
 
@@ -104,16 +104,16 @@ def test_missing_execution_root_rejects_background_submit_without_spawn(monkeypa
                 raise AssertionError('An unavailable cwd must not create a process')
         runner = Runner()
         async with opened(monkeypatch, tmp_path, model, location=location) as app:
-            sid = await app.acreate_workspace_session('A', root)
+            sid = await app.sessions.create_workspace('A', root)
             request = ProcessRequest(['unused'], root, {})
             root.rename(tmp_path / 'removed')
             with pytest.raises(ToolException, match='execution_root_unavailable.*missing'):
-                await app._sessions.background_tasks.submit(session_id=sid, workspace_root=root,
-                    archive_root=app._sessions.require(sid)._archive_root, run_id='R', tool_call_id='C',
+                await app.sessions._sessions.background_tasks.submit(session_id=sid, workspace_root=root,
+                    archive_root=app.sessions._sessions.require(sid)._archive_root, run_id='R', tool_call_id='C',
                     agent_path='root', command='unused', name='bash', request=request,
                     settings=BashSettings(), runner=runner, control=None)
             assert runner.calls == 0
-            assert (await app.alist_background_tasks(sid))['items'] == []
+            assert (await app.tasks.list(sid))['items'] == []
     asyncio.run(scenario())
 
 
@@ -135,14 +135,14 @@ def test_background_submit_checks_project_identity_before_spawn(monkeypatch, tmp
         from naiyue_test_agent.execution_roots import ExecutionRoot
         root, location = project(tmp_path)
         async with opened(monkeypatch, tmp_path, StreamingToolModel(replies=[]), location=location) as app:
-            sid = await app.acreate_workspace_session('A', root)
+            sid = await app.sessions.create_workspace('A', root)
             with pytest.raises(ToolException, match='execution_root_unavailable.*wrong_project'):
-                await app._sessions.background_tasks.submit(session_id=sid, workspace_root=root,
+                await app.sessions._sessions.background_tasks.submit(session_id=sid, workspace_root=root,
                     execution_root=ExecutionRoot(root), project_id=str(uuid4()),
-                    archive_root=app._sessions.require(sid)._archive_root, run_id='R', tool_call_id='C',
+                    archive_root=app.sessions._sessions.require(sid)._archive_root, run_id='R', tool_call_id='C',
                     agent_path='root', command='unused', name='bash', request=ProcessRequest(['unused'], root, {}),
                     settings=BashSettings(), runner=None, control=None)
-            assert (await app.alist_background_tasks(sid))['items'] == []
+            assert (await app.tasks.list(sid))['items'] == []
     asyncio.run(scenario())
 
 
@@ -160,17 +160,17 @@ def test_missing_execution_root_still_allows_stopping_pending_approval(monkeypat
             system_prompt='', response_format=None)
         try:
             events = []
-            app.subscribe_events(events.append)
-            sid = await app.acreate_workspace_session('A', root)
-            await app.arun(sid, [('user', 'request external file')])
-            batch, = app.pending_approval_batches(sid)
+            app.observability.subscribe(events.append)
+            sid = await app.sessions.create_workspace('A', root)
+            await app.runs.start(sid, [('user', 'request external file')])
+            batch, = app.runs.pending_approvals(sid)
             root.rename(tmp_path / 'removed')
-            stopped = await app.astop_tool_approval(sid, approval_batch_id=batch['approval_batch_id'],
+            stopped = await app.runs.stop_approval(sid, approval_batch_id=batch['approval_batch_id'],
                 origin_run_id=batch['origin_run_id'])
             assert stopped['run_stopped'] is True
             feedback, = [m for m in stopped['messages'] if isinstance(m, ToolMessage)]
             assert feedback.additional_kwargs['naiyue_not_executed'] == 'user_stop'
-            assert app.pending_approval_batches(sid) == [] and len(model.seen) == 1
+            assert app.runs.pending_approvals(sid) == [] and len(model.seen) == 1
             assert [e.data.status for e in events if e.event_type == 'run_finished'] == ['interrupted', 'stopped']
         finally:
             await app.aclose()
@@ -183,11 +183,11 @@ def test_restored_execution_identity_reports_reason_without_new_model_call(monke
         root, location = project(tmp_path)
         model = StreamingToolModel(replies=[AIMessage(content='saved')])
         async with opened(monkeypatch, tmp_path, model, location=location) as app:
-            sid = await app.acreate_workspace_session('A', root)
-            await app.arun(sid, [('user', 'save')])
+            sid = await app.sessions.create_workspace('A', root)
+            await app.runs.start(sid, [('user', 'save')])
             if reason == 'not_registered':
-                with app._storage.database.connection:
-                    app._storage.database.connection.execute(
+                with app.sessions._persistence.storage.database.connection:
+                    app.sessions._persistence.storage.database.connection.execute(
                         "UPDATE naiyue_sessions SET execution_root_kind='worktree' WHERE session_id=?", (sid,))
         if reason != 'not_registered':
             root.rename(tmp_path / 'original-directory')
@@ -198,13 +198,13 @@ def test_restored_execution_identity_reports_reason_without_new_model_call(monke
                 replacement = prepare_workspace(root, data_dir=tmp_path / 'data')
                 assert replacement.workspace_id != location.workspace_id
         async with opened(monkeypatch, tmp_path, model) as app:
-            await app.arestore_session(sid)
-            status = await app.aget_session_status(sid)
+            await app.sessions.restore(sid)
+            status = await app.sessions.status(sid)
             assert status['execution_root_error'] == {'code': 'execution_root_unavailable', 'reason': reason}
             assert not status['can_run']
             with pytest.raises(RuntimeError, match=f'execution_root_unavailable.*{reason}'):
-                await app.arun(sid, [('user', 'must not execute')])
-            assert len(model.seen) == 1 and not app._sessions.require(sid).is_busy()
+                await app.runs.start(sid, [('user', 'must not execute')])
+            assert len(model.seen) == 1 and not app.sessions._sessions.require(sid).is_busy()
     asyncio.run(scenario())
 
 

@@ -46,7 +46,7 @@ async def test_read_then_edit_accepts_stable_windows_handle_and_path_times(monke
         ]),
         AIMessage(content='done'),
     ], [create_session_read_tool(), create_session_edit_tool()])
-    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'edit')])
+    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
     expected = 'print("new")\r\n' if fuzzy else 'after\n'
     assert tool_result(result, 'before').status == 'success'
     if fuzzy:

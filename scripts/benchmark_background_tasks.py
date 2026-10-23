@@ -63,8 +63,8 @@ def process_request(root, script):
 
 
 async def load(app, root, sid, script, *, call='load', limit=67108864, runner=None):
-    return await app._sessions.background_tasks.submit(session_id=sid, workspace_root=root,
-        archive_root=app._sessions.session_archive_root(sid),
+    return await app.sessions._sessions.background_tasks.submit(session_id=sid, workspace_root=root,
+        archive_root=app.sessions._sessions.session_archive_root(sid),
         run_id='benchmark', tool_call_id=call, agent_path='root', command='benchmark disposable load', name='bash',
         request=process_request(root, script), settings=BashSettings(max_archive_bytes=limit),
         runner=runner or HostProcessRunner(), control=None)
@@ -98,7 +98,7 @@ async def sample(root, case, options):
     pid, identity, cleanup, saved_bytes, observed, close_ms = None, None, True, 0, 0, 0
     interval = options.poll_seconds if case == 'management_stress' else 3
     async with environment(root) as (app, client, model):
-        sid = await app.acreate_workspace_session('offline', root)
+        sid = await app.sessions.create_workspace('offline', root)
         if case != 'baseline':
             script = "import os,threading,time;print(os.getpid(),flush=True)\n"
             if case in ('output', 'output_open', 'management_stress'):
@@ -111,7 +111,7 @@ async def sample(root, case, options):
             pid = int(ready['output'].splitlines()[0])
             (root / 'write-ready').touch()
         for _ in range(options.warmup):
-            await app.arun(sid, [('user', 'warmup')])
+            await app.runs.start(sid, [('user', 'warmup')])
         async def monitor():
             while not stop.is_set():
                 start = perf_counter()
@@ -131,17 +131,17 @@ async def sample(root, case, options):
         try:
             for _ in range(options.turns):
                 start = perf_counter()
-                result = await app.arun(sid, [('user', 'fixed task')])
+                result = await app.runs.start(sid, [('user', 'fixed task')])
                 assert result['messages'][-1].content == 'fixed reply'
                 turns.append((perf_counter() - start) * 1000)
                 await asyncio.sleep(options.turn_gap_seconds)
             if identity:
-                before = await app.aget_background_task_output(identity)
+                before = await app.tasks.output(identity)
                 assert before['status'] == 'running', 'Output load ended before the measurement completed'
                 start = perf_counter()
-                ended = await app.astop_background_task(identity)
+                ended = await app.tasks.stop(identity)
                 stop_times.append((perf_counter() - start) * 1000)
-                view = await app.aget_background_task_output(identity)
+                view = await app.tasks.output(identity)
                 cleanup, saved_bytes, observed = ended['cleanup_confirmed'], view['archive_saved_bytes'], view['observed_raw_bytes']
                 assert cleanup and saved_bytes <= options.archive_bytes
             start = perf_counter()
@@ -163,12 +163,12 @@ async def history_and_flood(root, counts, repeats, archive_bytes):
             request.on_started()
             return ProcessOutcome(0, 'exited', True, True, True, True, 0)
     async with environment(root) as (app, client, _model):
-        sid = await app.acreate_workspace_session('offline', root)
+        sid = await app.sessions.create_workspace('offline', root)
         current = 0
         for count in sorted(counts):
             for i in range(current, count):
                 row = await load(app, root, sid, '', call=str(i), runner=FinishedRunner())
-                await app._sessions.background_tasks._entries[row['task_id']].worker
+                await app.sessions._sessions.background_tasks._entries[row['task_id']].worker
             current = count
             values = []
             for _ in range(repeats):
@@ -189,14 +189,14 @@ async def history_and_flood(root, counts, repeats, archive_bytes):
 async def active_close(root):
     root = root.resolve()
     async with environment(root) as (app, _client, _model):
-        sid = await app.acreate_workspace_session('offline', root)
+        sid = await app.sessions.create_workspace('offline', root)
         row = await load(app, root, sid, 'import os,threading;print(os.getpid(),flush=True);threading.Event().wait()')
         ready = await wait_task(app, row['task_id'], lambda value: bool(value['output']))
         pid = int(ready['output'])
         start = perf_counter()
     elapsed = (perf_counter() - start) * 1000
     assert not process_alive(pid), 'Benchmark active process survived application close'
-    settled = await app._sessions.background_tasks.output(row['task_id'])
+    settled = await app.sessions._sessions.background_tasks.output(row['task_id'])
     assert settled['termination'] == 'app_close' and settled['cleanup_confirmed']
     return dict(close_ms=elapsed, cleanup_confirmed=True, termination=settled['termination'])
 

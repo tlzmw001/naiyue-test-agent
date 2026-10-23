@@ -15,9 +15,9 @@ def test_web_background_scope_paging_auth_and_stop(monkeypatch, tmp_path):
         model = StreamingToolModel(replies=[])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=tmp_path) as (client, web):
             app = web.state.service.application
-            manager = app._sessions.background_tasks
-            first = await app.acreate_workspace_session('A', tmp_path)
-            second = await app.acreate_workspace_session('A', tmp_path)
+            manager = app.sessions._sessions.background_tasks
+            first = await app.sessions.create_workspace('A', tmp_path)
+            second = await app.sessions.create_workspace('A', tmp_path)
             foreign = tmp_path / 'foreign'
             foreign.mkdir()
             rows = []
@@ -70,7 +70,7 @@ def test_web_background_invalid_query(monkeypatch, tmp_path, query):
 def test_web_background_unbound_and_unknown_cursor(monkeypatch, tmp_path):
     async def scenario():
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[])) as (client, web):
-            row = await submit(web.state.service.application._sessions.background_tasks, tmp_path, "print('done')")
+            row = await submit(web.state.service.application.sessions._sessions.background_tasks, tmp_path, "print('done')")
             assert (await client.get('/api/background-tasks')).json()['items'] == []
             assert (await client.get(f'/api/background-tasks/{row["task_id"]}/output')).status_code == 404
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]), workspace_root=tmp_path) as (client, _):
@@ -83,7 +83,7 @@ def test_web_background_missing_output_and_failure_projection(monkeypatch, tmp_p
     async def scenario():
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]), workspace_root=tmp_path) as (client, web):
             app = web.state.service.application
-            manager = app._sessions.background_tasks
+            manager = app.sessions._sessions.background_tasks
             row = await submit(manager, tmp_path, "print('TAIL')")
             detail = await wait_status(manager, row['task_id'], lambda value: value['status'] == 'finished')
             for path in detail['archive_paths'].values():
@@ -93,13 +93,13 @@ def test_web_background_missing_output_and_failure_projection(monkeypatch, tmp_p
             assert result['output_available'] is False and 'TAIL' in result['output']
             async def broken(*args, **kwargs):
                 raise OSError('PRIVATE_PATH_OR_TOKEN')
-            monkeypatch.setattr(app, 'aget_background_task_output', broken)
+            monkeypatch.setattr(app.tasks, 'output', broken)
             failure = await client.get(endpoint + '/output')
             assert failure.status_code == 503 and failure.json()['error']['code'] == 'background_tasks_unavailable'
             assert 'PRIVATE_PATH_OR_TOKEN' not in failure.text + caplog.text
             async def uncertain(*args, **kwargs):
                 return {**detail, 'status': 'lost', 'cleanup_confirmed': False}
-            monkeypatch.setattr(app, 'astop_background_task', uncertain)
+            monkeypatch.setattr(app.tasks, 'stop', uncertain)
             failure = await client.post(endpoint + '/stop')
             assert failure.status_code == 409 and failure.json()['error']['code'] == 'task_cleanup_unconfirmed'
     asyncio.run(scenario())
@@ -112,14 +112,14 @@ def test_web_background_management_during_root_run(monkeypatch, tmp_path):
         async with web_client(monkeypatch, tmp_path, model, workspace_root=tmp_path) as (client, web):
             app = web.state.service.application
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            row = await submit(app._sessions.background_tasks, tmp_path, 'import time;time.sleep(60)', sid=sid)
+            row = await submit(app.sessions._sessions.background_tasks, tmp_path, 'import time;time.sleep(60)', sid=sid)
             run = (await client.post(f'/api/sessions/{sid}/runs', json=request('work'))).json()['run_id']
             await asyncio.wait_for(entered.wait(), 5)
             assert (await client.get('/api/background-tasks')).json()['active_count'] == 1
             stopped = await client.post(f'/api/background-tasks/{row["task_id"]}/stop')
             assert stopped.json()['cleanup_confirmed']
             assert (await client.get(f'/api/runs/{run}')).json()['status'] == 'running'
-            assert 'bash' not in app.get_active_tools(sid)
+            assert 'bash' not in app.sessions.active_tools(sid)
             release.set()
             await client.get(f'/api/runs/{run}/events')
             assert len(model.seen) == 1
@@ -131,7 +131,7 @@ def test_web_background_frame_budget_preserves_utf8_tail_and_registry(monkeypatc
     async def scenario():
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]), workspace_root=tmp_path,
                               max_frame_bytes=2048) as (client, web):
-            manager = web.state.service.application._sessions.background_tasks
+            manager = web.state.service.application.sessions._sessions.background_tasks
             row = await submit(manager, tmp_path, "print('中\\n'*800)")
             original = await wait_status(manager, row['task_id'], lambda value: value['status'] == 'finished')
             response = await client.get(f'/api/background-tasks/{row["task_id"]}/output')

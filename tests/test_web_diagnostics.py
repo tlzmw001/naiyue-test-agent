@@ -19,7 +19,7 @@ async def test_http_queries_enforce_auth_scope_cursor_and_read_only_pagination(m
     async with web_client(monkeypatch, tmp_path, model, diagnostic_page_size=1) as (client, web):
         app = web.state.service.application
         sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-        store, cfg = app._storage, limits()
+        store, cfg = app.sessions._persistence.storage, limits()
         for rid in ('one', 'two'):
             store.diagnostics.save_diagnostic_event(fact(sid=sid, rid=rid), cfg)
             store.diagnostics.finish_diagnostic_run(end(sid=sid, rid=rid), cfg)
@@ -45,10 +45,10 @@ async def test_http_queries_enforce_auth_scope_cursor_and_read_only_pagination(m
         seed(store, 'cold')
         def forbidden(*args, **kwargs):
             raise AssertionError('Diagnostic query loaded the graph')
-        monkeypatch.setattr(app._agent, 'aget_state', forbidden)
+        monkeypatch.setattr(app.runs._agent, 'aget_state', forbidden)
         store.database.connection.execute('PRAGMA query_only=ON')
         assert (await client.get('/api/sessions/cold/diagnostics')).json()['runs'] == []
-        assert not app.has_session('cold') and model.seen == []
+        assert not app.sessions.is_loaded('cold') and model.seen == []
         store.database.connection.execute('PRAGMA query_only=OFF')
         web.state.service.settings = web.state.service.settings.model_copy(update={'max_frame_bytes': 100})
         assert (await client.get(base)).json()['error']['code'] == 'view_too_large'
@@ -64,7 +64,7 @@ async def test_read_failure_does_not_stop_active_run_and_hides_sql_error(monkeyp
         try:
             def fail(*args, **kwargs):
                 raise OSError('PRIVATE_SQL_BODY')
-            monkeypatch.setattr(web.state.service.application._storage.diagnostics, 'read_diagnostic_runs', fail)
+            monkeypatch.setattr(web.state.service.application.sessions._persistence.storage.diagnostics, 'read_diagnostic_runs', fail)
             response = await client.get(f'/api/sessions/{sid}/diagnostics')
             assert response.status_code == 503 and response.json()['error']['code'] == 'diagnostic_view_unavailable'
             assert not web.state.delivery.get(rid).task.done()

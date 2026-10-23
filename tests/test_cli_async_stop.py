@@ -85,7 +85,7 @@ def test_explicit_resubmit_clears_only_admitted_pending_input(monkeypatch, capsy
             if blocked:
                 bridge = apps[0]
                 def require_review():
-                    sessions = bridge._app._sessions
+                    sessions = bridge._app.sessions._sessions
                     sid = sessions.loaded_session_ids()[0]
                     owner, observation_run = sessions._admit(sid, 'review-fault', 'message')
                     run_id, observation = observation_run.run_id, observation_run.observation

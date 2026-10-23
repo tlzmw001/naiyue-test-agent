@@ -61,14 +61,14 @@ def test_new_session_lists_searches_reads_and_model_receives_original_text(monke
     async def scenario():
         model = StreamingToolModel(replies=[AIMessage(content='test environment uses venv')])
         async with build(monkeypatch, tmp_path / 'sessions.sqlite', model, [create_history_tool()]) as app:
-            old = await app.acreate_workspace_session('A', tmp_path)
-            await app.arun(old, [('user', '记住测试环境')])
-            new = await app.acreate_workspace_session('A', tmp_path)
+            old = await app.sessions.create_workspace('A', tmp_path)
+            await app.runs.start(old, [('user', '记住测试环境')])
+            new = await app.sessions.create_workspace('A', tmp_path)
             model.replies.extend([call('history', {'action': 'list_sessions'}, 'list'),
                 call('history', {'action': 'search', 'session_id': old, 'query': 'venv'}, 'search'),
                 call('history', {'action': 'read', 'session_id': old}, 'read'), AIMessage(content='found prior environment')])
-            events=[];app.subscribe_events(events.append, session_id=new)
-            result = await app.arun(new, [('user', '查之前的测试环境')])
+            events=[];app.observability.subscribe(events.append, session_id=new)
+            result = await app.runs.start(new, [('user', '查之前的测试环境')])
             tools = [m for m in result['messages'] if isinstance(m, ToolMessage)]
             assert [m.tool_call_id for m in tools] == ['list', 'search', 'read']
             assert all(m.status == 'success' for m in tools)
@@ -77,7 +77,7 @@ def test_new_session_lists_searches_reads_and_model_receives_original_text(monke
             assert any(isinstance(m, ToolMessage) and m.tool_call_id == 'read' for m in model.seen[-1])
             assert len(model.seen) == 5
             assert [e.event_type for e in events].count('tool_call_finished') == 3
-            assert not app._sessions.require(new).is_busy()
+            assert not app.sessions._sessions.require(new).is_busy()
     asyncio.run(scenario())
 
 
@@ -85,10 +85,10 @@ def test_history_io_failure_returns_paired_error_then_agent_continues(monkeypatc
     async def scenario():
         model=StreamingToolModel(replies=[call('history', {'action':'list_sessions'}, 'bad'), AIMessage(content='history unavailable')])
         async with build(monkeypatch, tmp_path/'sessions.sqlite', model,[create_history_tool()]) as app:
-            sid=await app.acreate_workspace_session('A',tmp_path)
+            sid=await app.sessions.create_workspace('A',tmp_path)
             def fail(*args,**kwargs):raise SessionPersistenceError('history_read_failed')
-            monkeypatch.setattr(app._storage.conversation, 'read_history_tool',fail)
-            result=await app.arun(sid,[('user','query')])
+            monkeypatch.setattr(app.sessions._persistence.storage.conversation, 'read_history_tool',fail)
+            result=await app.runs.start(sid,[('user','query')])
             msg=feedback(result)
             assert msg.status=='error' and msg.tool_call_id=='bad'
             assert 'history_read_failed' in msg.content
@@ -101,8 +101,8 @@ def test_in_memory_application_returns_explicit_unavailable(monkeypatch, tmp_pat
         model=StreamingToolModel(replies=[call('history',{'action':'list_sessions'}),AIMessage(content='unavailable')])
         app=await make_app(monkeypatch,model,[create_history_tool()])
         try:
-            sid=await app.acreate_workspace_session('A',tmp_path)
-            result=await app.arun(sid,[('user','query')])
+            sid=await app.sessions.create_workspace('A',tmp_path)
+            result=await app.runs.start(sid,[('user','query')])
             assert feedback(result).status=='error' and 'history_unavailable' in feedback(result).content
             assert len(model.seen)==2
         finally:await app.aclose()
@@ -115,14 +115,14 @@ def test_tool_selection_and_deny_prevent_archive_access(monkeypatch, tmp_path, b
         model=StreamingToolModel(replies=[call('history',{'action':'list_sessions'}),AIMessage(content='blocked')])
         settings=AppSettings.model_validate({'permissions':{'deny':[{'tool':'history'}]}} if blocked=='deny' else {})
         async with build(monkeypatch,tmp_path/'sessions.sqlite',model,[create_history_tool()],settings=settings) as app:
-            sid=await app.acreate_workspace_session('A',tmp_path)
-            if blocked=='inactive':await app.aset_active_tools(sid,[])
+            sid=await app.sessions.create_workspace('A',tmp_path)
+            if blocked=='inactive':await app.sessions.select_tools(sid,[])
             accesses=[]
             def forbidden(*args,**kwargs):
                 accesses.append(True)
                 raise AssertionError('Blocked tool must not access the archive')
-            monkeypatch.setattr(app._storage.conversation, 'read_history_tool',forbidden)
-            result=await app.arun(sid,[('user','query')])
+            monkeypatch.setattr(app.sessions._persistence.storage.conversation, 'read_history_tool',forbidden)
+            result=await app.runs.start(sid,[('user','query')])
             assert feedback(result).status=='error'
             assert accesses==[] and len(model.seen)==2
     asyncio.run(scenario())
@@ -136,21 +136,21 @@ def test_selected_child_can_query_history_and_root_can_read_its_saved_thread(mon
         settings=AppSettings(subagents=(SubAgentSpec('tester','Read history','Query saved history',('history',),model_id='B'),))
         async with build(monkeypatch,tmp_path/'sessions.sqlite',root,[create_history_tool(),create_subagent_tool()],
                          settings=settings,models={'A':root,'B':child}) as app:
-            old=await app.acreate_workspace_session('A',tmp_path)
-            await app.arun(old,[('user','old environment')])
+            old=await app.sessions.create_workspace('A',tmp_path)
+            await app.runs.start(old,[('user','old environment')])
             child.replies.extend([call('history',{'action':'search','session_id':old,'query':'venv'},'inner'),AIMessage(content='child found environment')])
             root.replies.extend([call('subagent',{'agent':'tester','task':'find old environment'},'delegate'),AIMessage(content='root done')])
-            owner=await app.acreate_workspace_session('A',tmp_path)
-            await app.arun(owner,[('user','delegate')])
+            owner=await app.sessions.create_workspace('A',tmp_path)
+            await app.runs.start(owner,[('user','delegate')])
             tool=next(m for m in child.seen[-1] if isinstance(m,ToolMessage) and m.tool_call_id=='inner')
             assert tool.status=='success' and 'saved environment venv' in tool.content
-            instance,=await app.aget_subagents(owner)
+            instance,=await app.history.subagents(owner)
             root.replies.extend([call('history',{'action':'read','session_id':owner,'agent_id':instance['agent_id']},'read-child'),AIMessage(content='read saved child')])
-            viewer=await app.acreate_workspace_session('A',tmp_path)
-            result=await app.arun(viewer,[('user','read prior child')])
+            viewer=await app.sessions.create_workspace('A',tmp_path)
+            result=await app.runs.start(viewer,[('user','read prior child')])
             assert feedback(result).status=='success' and 'child found environment' in feedback(result).content
             root.replies.extend([call('history',{'action':'read','session_id':old,'agent_id':instance['agent_id']},'wrong'),AIMessage(content='not owned')])
-            result=await app.arun(viewer,[('user','wrong owner')])
+            result=await app.runs.start(viewer,[('user','wrong owner')])
             assert feedback(result).status=='error' and 'history_child_not_found' in feedback(result).content
             assert len(child.seen)==2
     asyncio.run(scenario())
@@ -160,19 +160,19 @@ def test_cold_target_is_read_without_restore_prepare_or_model_execution(monkeypa
     async def scenario():
         model=StreamingToolModel(replies=[AIMessage(content='cold environment venv')])
         async with build(monkeypatch,tmp_path/'sessions.sqlite',model,[create_history_tool()]) as app:
-            old=await app.acreate_workspace_session('A',tmp_path)
-            await app.arun(old,[('user','save environment')])
+            old=await app.sessions.create_workspace('A',tmp_path)
+            await app.runs.start(old,[('user','save environment')])
         model=StreamingToolModel(replies=[call('history',{'action':'search','session_id':old,'query':'venv'}),AIMessage(content='found cold history')])
         async with build(monkeypatch,tmp_path/'sessions.sqlite',model,[create_history_tool()]) as app:
-            assert not app._sessions.has_session(old)
-            before=app._storage.sessions.get(old)
+            assert not app.sessions._sessions.has_session(old)
+            before=app.sessions._persistence.storage.sessions.get(old)
             async def forbidden(*args,**kwargs):raise AssertionError('History reads must not prepare target sessions')
-            monkeypatch.setattr(app._persistence,'aprepare',forbidden)
-            sid=await app.acreate_workspace_session('A',tmp_path)
-            result=await app.arun(sid,[('user','find old environment')])
+            monkeypatch.setattr(app.sessions._persistence,'aprepare',forbidden)
+            sid=await app.sessions.create_workspace('A',tmp_path)
+            result=await app.runs.start(sid,[('user','find old environment')])
             assert feedback(result).status=='success' and 'cold environment venv' in feedback(result).content
-            assert app._storage.sessions.get(old)==before
-            assert not app._sessions.has_session(old) and len(model.seen)==2
+            assert app.sessions._persistence.storage.sessions.get(old)==before
+            assert not app.sessions._sessions.has_session(old) and len(model.seen)==2
     asyncio.run(scenario())
 
 

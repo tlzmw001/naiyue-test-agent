@@ -133,7 +133,7 @@ async def history_page(application, settings, session_id, *, agent_id=None, befo
     if before:
         _, _, _, position, upper, version = read_cursor(settings, before, session_id, agent_id)
         query = dict(before=position, upper=upper, version=version)
-    page = await application.aget_chat_page(session_id, agent_id=agent_id, limit=count,
+    page = await application.history.page(session_id, agent_id=agent_id, limit=count,
         body_bytes=min(settings.history_message_bytes, max(1, budget // 2)),
         preview_chars=min(settings.history_preview_chars, max(1, budget // 8)), **query)
     selected, used = [], 2

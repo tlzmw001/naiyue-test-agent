@@ -26,7 +26,7 @@ def test_http_stop_only_a_while_b_waits_in_model_and_reject_stale_child_approval
         runtime = AppSettings(subagents=(role(model_id=None, tool_names=('read',)),))
         async with web_client(monkeypatch, tmp_path, model, workspace_root=workspace, runtime_settings=runtime) as (client, web):
             app = web.state.service.application
-            app.subscribe_events(lambda event: notified.set() if event.source and event.event_type == 'approval_requested' else None)
+            app.observability.subscribe(lambda event: notified.set() if event.source and event.event_type == 'approval_requested' else None)
             sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
             run = (await client.post(f'/api/sessions/{sid}/runs', json=request('two'))).json()['run_id']
             try:

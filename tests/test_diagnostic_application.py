@@ -18,12 +18,12 @@ async def test_real_tool_error_is_recorded_without_failing_root_or_copying_bodie
     path = tmp_path / 'state.sqlite'
     model = StreamingToolModel(replies=[call('read', {'path': 'missing.txt'}), AIMessage(content='PRIVATE_ANSWER')])
     async with build(monkeypatch, path, model, [create_session_read_tool()]) as app:
-        sid = await app.acreate_workspace_session('A', tmp_path)
-        result = await app.arun(sid, [('user', 'PRIVATE_PROMPT')])
+        sid = await app.sessions.create_workspace('A', tmp_path)
+        result = await app.runs.start(sid, [('user', 'PRIVATE_PROMPT')])
         assert result['messages'][-1].content == 'PRIVATE_ANSWER'
-        assert app._diagnostics is not None
-        assert hasattr(app, 'alist_diagnostic_runs') and hasattr(app, 'aget_diagnostic_events')
-    assert app._diagnostics._task.done() and not app._diagnostics._runs
+        assert app.observability._diagnostics is not None
+        assert hasattr(app.observability, 'runs') and hasattr(app.observability, 'events')
+    assert app.observability._diagnostics._task.done() and not app.observability._diagnostics._runs
     with ProjectStore(path) as store:
         runs = store.diagnostics.read_diagnostic_runs(sid)['runs']
         assert len(runs) == 1 and runs[0]['status'] == 'completed'
@@ -51,17 +51,17 @@ async def test_diagnostic_io_failure_preserves_result_or_original_exception(monk
     model = StreamingToolModel(replies=[original if model_error else AIMessage(content='done')])
     path = tmp_path / 'state.sqlite'
     async with build(monkeypatch, path, model) as app:
-        sid = await app.acreate_session('A')
+        sid = await app.sessions.create('A')
         def fail(*args):
             raise OSError('PRIVATE_DIAGNOSTIC_FAILURE')
-        monkeypatch.setattr(app._storage.diagnostics, 'save_diagnostic_event', fail)
+        monkeypatch.setattr(app.sessions._persistence.storage.diagnostics, 'save_diagnostic_event', fail)
         if model_error:
             with pytest.raises(TimeoutError) as caught:
-                await app.arun(sid, [('user', 'task')])
+                await app.runs.start(sid, [('user', 'task')])
             assert caught.value is original
         else:
-            assert (await app.arun(sid, [('user', 'task')]))['messages'][-1].content == 'done'
-        assert sid not in app._persistence._blocked
+            assert (await app.runs.start(sid, [('user', 'task')]))['messages'][-1].content == 'done'
+        assert sid not in app.sessions._persistence._blocked
     with ProjectStore(path) as store:
         run, = store.diagnostics.read_diagnostic_runs(sid)['runs']
         assert run['status'] == ('failed' if model_error else 'completed')
@@ -74,18 +74,18 @@ async def test_stop_terminal_is_saved_and_deleted_session_cannot_be_recreated_by
     from test_diagnostic_storage import fact, limits
     model = StreamingToolModel(replies=[], entered=asyncio.Event(), release=asyncio.Event())
     async with build(monkeypatch, tmp_path / 'state.sqlite', model) as app:
-        sid = await app.acreate_session('A')
-        task = asyncio.create_task(app.arun(sid, [('user', 'task')]))
+        sid = await app.sessions.create('A')
+        task = asyncio.create_task(app.runs.start(sid, [('user', 'task')]))
         await asyncio.wait_for(model.entered.wait(), 5)
-        app.request_stop(sid)
+        app.runs.stop(sid)
         result = await asyncio.wait_for(task, 5)
         assert result['run_stopped']
-        await app._diagnostics.aclose()
-        run, = (await app.alist_diagnostic_runs(sid))['runs']
+        await app.observability._diagnostics.aclose()
+        run, = (await app.observability.runs(sid))['runs']
         assert run['status'] == 'stopped'
-        await app.adelete_session(sid)
-        assert app._storage.database.read_rows('SELECT * FROM naiyue_diagnostic_runs') == []
-        assert app._storage.diagnostics.save_diagnostic_event(fact(sid=sid), limits()) is False
+        await app.sessions.delete(sid)
+        assert app.sessions._persistence.storage.database.read_rows('SELECT * FROM naiyue_diagnostic_runs') == []
+        assert app.sessions._persistence.storage.diagnostics.save_diagnostic_event(fact(sid=sid), limits()) is False
 
 
 @async_test
@@ -93,11 +93,11 @@ async def test_terminal_write_failure_keeps_success_and_reopen_marks_capture_onl
     path = tmp_path / 'state.sqlite'
     model = StreamingToolModel(replies=[AIMessage(content='done')])
     async with build(monkeypatch, path, model) as app:
-        sid = await app.acreate_session('A')
+        sid = await app.sessions.create('A')
         def fail(*args, **kwargs):
             raise OSError('PRIVATE_TERMINAL_IO')
-        monkeypatch.setattr(app._storage.diagnostics, 'finish_diagnostic_run', fail)
-        assert (await app.arun(sid, [('user', 'task')]))['messages'][-1].content == 'done'
+        monkeypatch.setattr(app.sessions._persistence.storage.diagnostics, 'finish_diagnostic_run', fail)
+        assert (await app.runs.start(sid, [('user', 'task')]))['messages'][-1].content == 'done'
     with ProjectStore(path) as store:
         from test_diagnostic_storage import limits
         metadata = store.sessions.get(sid)

@@ -129,11 +129,11 @@ def test_async_approval_resume_preserves_explicit_timeout_and_does_not_run_befor
         model = StreamingToolModel(replies=[call('bash', {'command': 'test-command', 'timeout': 600}),
                                             AIMessage(content='done')])
         app = await make_app(monkeypatch, model, [create_session_bash_tool()])
-        sid = await app.acreate_workspace_session('A', tmp_path)
+        sid = await app.sessions.create_workspace('A', tmp_path)
         try:
-            pending = await app.arun(sid, [('user', 'run')])
+            pending = await app.runs.start(sid, [('user', 'run')])
             assert pending['approval_requests'] and seen == []
-            result = await app.aresume_tool_approval(sid, ['approve'])
+            result = await app.runs.resume_approval(sid, ['approve'])
             assert seen == [600]
             feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
             assert feedback.status == 'success' and 'approved' in feedback.content
@@ -162,10 +162,10 @@ def test_native_async_graph_runs_each_tool_with_the_new_timeout_contract(spec, m
         model = StreamingToolModel(replies=[call(spec.tool.name, {**args_for(spec), 'timeout': timeout}),
                                             AIMessage(content='done')])
         app = await make_app(monkeypatch, model, [spec])
-        sid = await app.acreate_workspace_session('A', tmp_path)
-        await app.aset_permission_mode(sid, 'BypassApprovals')
+        sid = await app.sessions.create_workspace('A', tmp_path)
+        await app.sessions.select_permission_mode(sid, 'BypassApprovals')
         try:
-            result = await app.arun(sid, [('user', 'run')])
+            result = await app.runs.start(sid, [('user', 'run')])
             feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
             assert feedback.status == 'success' and 'HIT' in feedback.content
             assert result['messages'][-1].content == 'done' and len(model.seen) == 2

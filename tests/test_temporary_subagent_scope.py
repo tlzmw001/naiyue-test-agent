@@ -33,10 +33,10 @@ def test_temporary_root_child_and_approval_resume_have_no_project_ports(monkeypa
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
         app = await build_async_local_application('unused', tools=[create_subagent_tool(), history, create_memory_tool()],
             initial_active_tools=['subagent'], system_prompt='', response_format=None, settings=settings)
-        sid = (await app.acreate_workspace_session('A', tmp_path) if with_directory
-               else await app.acreate_session('A'))
+        sid = (await app.sessions.create_workspace('A', tmp_path) if with_directory
+               else await app.sessions.create('A'))
         notifications = approval_notifications(monkeypatch, app)
-        task = asyncio.create_task(app.arun(sid, [('user', 'delegate')]))
+        task = asyncio.create_task(app.runs.start(sid, [('user', 'delegate')]))
         try:
             if approval:
                 pending = await next_approval(app, sid, notifications)
@@ -50,7 +50,7 @@ def test_temporary_root_child_and_approval_resume_have_no_project_ports(monkeypa
             child_messages = child.seen[-1]
             errors = [m.content for m in child_messages if m.type == 'tool']
             assert len(errors) == 2 and 'history_unavailable' in errors[0] and 'memory_unavailable' in errors[1]
-            assert app._storage.subagents.get_subagent_references(sid)
+            assert app.sessions._persistence.storage.subagents.get_subagent_references(sid)
         finally:
             if not task.done():
                 task.cancel()

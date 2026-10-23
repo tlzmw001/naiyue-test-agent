@@ -12,8 +12,8 @@ async def test_write_captures_real_diff_without_adding_it_to_model_text(monkeypa
     app, model = await make_app(monkeypatch, [AIMessage(content='', tool_calls=[
         call('write', {'path': 'a', 'content': 'after\n'}, 'w')]), AIMessage(content='done')])
     try:
-        sid = await app.acreate_workspace_session('A', tmp_path)
-        result = results(await app.arun(sid, [('user', 'write')]))[0]
+        sid = await app.sessions.create_workspace('A', tmp_path)
+        result = results(await app.runs.start(sid, [('user', 'write')]))[0]
         assert result.artifact['type'] == 'file_change'
         assert '-before\n' in result.artifact['diff'] and '+after\n' in result.artifact['patch']
         assert result.artifact['operation'] == 'write' and result.artifact['firstChangedLine'] == 1
@@ -30,8 +30,8 @@ async def test_write_allow_does_not_override_read_deny(monkeypatch, tmp_path):
         call('write', {'path': 'a', 'content': 'after'}, 'w')]), AIMessage(content='done')],
         tools=[create_session_read_tool(), create_session_write_tool()], permissions={'deny': [{'tool': 'read', 'path': '${workspace}/a'}]})
     try:
-        sid = await app.acreate_workspace_session('A', tmp_path)
-        result = results(await app.arun(sid, [('user', 'write')]))[0]
+        sid = await app.sessions.create_workspace('A', tmp_path)
+        result = results(await app.runs.start(sid, [('user', 'write')]))[0]
         assert result.status == 'success' and result.artifact['unavailable_reason'] == 'read_not_allowed'
         assert result.artifact['patch'] is None and 'private' not in str(result.artifact)
     finally:
@@ -47,8 +47,8 @@ async def test_write_alias_never_exposes_read_denied_old_content(monkeypatch, tm
         tools=[create_session_read_tool(), create_session_write_tool()],
         permissions={'deny': [{'tool': 'read', 'path': '${workspace}/link'}]})
     try:
-        sid = await app.acreate_workspace_session('A', tmp_path)
-        result = results(await app.arun(sid, [('user', 'write')]))[0]
+        sid = await app.sessions.create_workspace('A', tmp_path)
+        result = results(await app.runs.start(sid, [('user', 'write')]))[0]
         assert result.status == 'success'
         assert result.artifact['unavailable_reason'] == 'read_not_allowed'
         assert 'private old body' not in str(result.artifact)

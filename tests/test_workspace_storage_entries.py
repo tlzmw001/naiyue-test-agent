@@ -107,7 +107,7 @@ def test_web_entry_passes_one_settings_snapshot_and_workspace_identity(tmp_path,
     app = create_web_app(configured)
     async def scenario():
         async with app.router.lifespan_context(app):
-            sid = await app.state.service.application.acreate_workspace_session('A', configured.workspace_root)
+            sid = await app.state.service.application.sessions.create_workspace('A', configured.workspace_root)
             rows = await app.state.service.sessions()
             assert [row['session_id'] for row in rows] == [sid]
     asyncio.run(scenario())

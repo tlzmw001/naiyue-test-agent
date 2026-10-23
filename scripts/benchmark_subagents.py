@@ -67,7 +67,7 @@ async def environment(root):
     with patch.object(application, 'load_model_catalog', lambda _: ModelCatalog('root', {'root': parent, 'child': child})):
         async with open_async_persistent_application('unused', database_path=root / 'state.sqlite',
                 tools=tools, initial_active_tools=['subagent'], system_prompt='', response_format=None, settings=settings) as app:
-            sid = await app.acreate_workspace_session('root', root)
+            sid = await app.sessions.create_workspace('root', root)
             yield app, sid, parent, child, role
 
 
@@ -81,7 +81,7 @@ async def graph_samples(root, case, turns, warmup):
             parent.replies.extend([call('subagent', args, f'delegate-{index}'), AIMessage(content='done')])
             child.replies.append(AIMessage(content=f'result-{index}'))
             start = perf_counter()
-            result = await app.arun(sid, [('user', args['task'])])
+            result = await app.runs.start(sid, [('user', args['task'])])
             elapsed = (perf_counter() - start) * 1000
             feedback = tool_result(result, 'subagent')
             assert feedback.status == 'success', feedback.content
@@ -104,17 +104,17 @@ async def metadata_samples(root, counts, repeats):
         entered, release = asyncio.Event(), asyncio.Event()
         parent.gate = entered, release
         parent.replies.append(AIMessage(content='finished after metadata measurement'))
-        task = asyncio.create_task(app.arun(sid, [('user', 'Hold while metadata is measured.')]))
+        task = asyncio.create_task(app.runs.start(sid, [('user', 'Hold while metadata is measured.')]))
         try:
             await asyncio.wait_for(entered.wait(), 10)
-            owner = app._sessions.require(sid)
+            owner = app.sessions._sessions.require(sid)
             context = RuntimeContext(scope=RunScope(identity=RunIdentity(session_id=sid, run_id=owner._run.run_id, agent_path='root', execution_root=ExecutionRoot(root) if root is not None else None)))
             current = 0
             for count in sorted(set(counts)):
                 for index in range(current, count):
                     identity = sha256(f'metadata-fixture-{index}'.encode()).hexdigest()
                     stamp = f'2026-01-01T00:00:00.{index:06d}+00:00'
-                    app._storage.subagents.save_subagent(dict(session_id=sid, agent_id=identity,
+                    app.sessions._persistence.storage.subagents.save_subagent(dict(session_id=sid, agent_id=identity,
                         project_id=owner._run.project_id, execution_root=str(root), execution_root_kind='local',
                         agent_path='root/worker/' + identity, child_thread_id='subagent:' + identity,
                         agent='worker', role_fingerprint=role_fingerprint(role), model_id='child',

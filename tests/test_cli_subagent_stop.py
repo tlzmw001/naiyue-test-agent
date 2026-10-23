@@ -35,7 +35,7 @@ def test_interactive_quit_stops_running_child_before_joining_worker(monkeypatch,
     def factory(*args, **kwargs):
         app = build(*args, **kwargs)
         apps.append(app)
-        app.subscribe_events(events.append)
+        app.call(lambda api: api.observability.subscribe(events.append))
         return app
     monkeypatch.setattr(cli, 'build_local_application', factory)
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))

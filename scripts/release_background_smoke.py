@@ -22,7 +22,7 @@ def shell_command(script):
 async def wait_task(app, identity, predicate):
     async def poll():
         while True:
-            row = await app.aget_background_task_output(identity)
+            row = await app.tasks.output(identity)
             if predicate(row):
                 return row
             await asyncio.sleep(.01)
@@ -67,37 +67,37 @@ async def background_scenario(root, model_type, *, automatic=False, executable=N
                    response_format=None, settings=settings)
     with patch.object(application, 'load_model_catalog', lambda _: ModelCatalog('offline', {'offline': model})):
         async with open_async_persistent_application('unused', **options) as app:
-            sid = await app.acreate_workspace_session('offline', directory)
+            sid = await app.sessions.create_workspace('offline', directory)
             events = []
-            unsubscribe = app.subscribe_events(events.append)
+            unsubscribe = app.observability.subscribe(events.append)
             try:
-                result = await app.arun(sid, [('user', 'start service')])
+                result = await app.runs.start(sid, [('user', 'start service')])
                 receipt = json.loads(tool_result(result, shell).content)
                 identity = receipt['task_id']
                 ready = await wait_task(app, identity, lambda row: bool(row['output']))
                 address = json.loads(ready['output'].splitlines()[0])
-                assert not app._sessions.require(sid).is_busy()
+                assert not app.sessions._sessions.require(sid).is_busy()
                 health = ('import urllib.request;print(urllib.request.urlopen('
                     + repr('http://127.0.0.1:' + str(address['port'])) + ',timeout=5).read().decode())')
                 model.replies.extend([call(shell, {'command': shell_command(health)}, 'health'), AIMessage(content='healthy')])
-                result = await app.arun(sid, [('user', 'use service in another turn')])
+                result = await app.runs.start(sid, [('user', 'use service in another turn')])
                 assert 'healthy' in tool_result(result, shell).content
-                assert (await app.aget_background_task_output(identity))['status'] == 'running'
+                assert (await app.tasks.output(identity))['status'] == 'running'
                 model.replies.extend([call('task_stop', {'task_id': identity}, 'stop'), AIMessage(content='service stopped')])
-                result = await app.arun(sid, [('user', 'stop service')])
+                result = await app.runs.start(sid, [('user', 'stop service')])
                 stopped = json.loads(tool_result(result, 'task_stop').content)
                 assert stopped['termination'] == 'user_stop' and stopped['cleanup_confirmed']
                 assert not process_alive(address['pid']), 'background service process survived stop'
                 model.replies.extend([call(shell, {'command': shell_command("print('RESULT-background')"), 'background': True}, 'result'),
                                       AIMessage(content='result submitted')])
-                result = await app.arun(sid, [('user', 'start result job')])
+                result = await app.runs.start(sid, [('user', 'start result job')])
                 job = json.loads(tool_result(result, shell).content)['task_id']
                 completed = await wait_task(app, job, lambda row: row['status'] == 'finished')
                 calls = len(model.seen)
                 await asyncio.sleep(0)
                 assert len(model.seen) == calls
                 model.replies.extend([call('task_output', {'task_id': job}, 'output'), AIMessage(content='result checked')])
-                result = await app.arun(sid, [('user', 'read result next turn')])
+                result = await app.runs.start(sid, [('user', 'read result next turn')])
                 system = '\n'.join(m.content for m in model.seen[calls] if isinstance(m, SystemMessage))
                 assert job in system and 'RESULT-background' not in system
                 assert 'RESULT-background' in json.loads(tool_result(result, 'task_output').content)['output']
@@ -113,9 +113,9 @@ async def background_scenario(root, model_type, *, automatic=False, executable=N
                 unsubscribe()
         calls = len(model.seen)
         async with open_async_persistent_application('unused', **options) as reopened:
-            assert (await reopened.alist_background_tasks())['items'] == []
-            await reopened.arestore_session(sid)
-            history = await reopened.aget_messages(sid)
+            assert (await reopened.tasks.list())['items'] == []
+            await reopened.sessions.restore(sid)
+            history = await reopened.history.messages(sid)
             assert any('result checked' == m.content for m in history)
             assert len(model.seen) == calls
             assert paths and [path.read_bytes() for path in paths] == before

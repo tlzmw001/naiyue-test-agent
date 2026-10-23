@@ -183,14 +183,14 @@ def test_tool_body_interrupt_is_not_mistaken_for_pre_tool_approval(monkeypatch):
         app = await build_async_local_application('synthetic', tools=[ToolSpec(custom_pause,
             custom_pause.args_schema, permissions=ToolPermission(default='allow'))], system_prompt='', response_format=None)
         try:
-            sid = await app.acreate_session('A')
+            sid = await app.sessions.create('A')
             with pytest.raises(AttributeError):
-                await app.arun(sid, [('user', 'run')])
+                await app.runs.start(sid, [('user', 'run')])
             assert effects == ['effect']
-            assert app._sessions.require(sid).describe_session()['manual_review_required']
-            assert not app._sessions.require(sid).describe_session()['busy']
+            assert app.sessions._sessions.require(sid).describe_session()['manual_review_required']
+            assert not app.sessions._sessions.require(sid).describe_session()['busy']
             with pytest.raises(application.SessionManualReviewRequiredError):
-                await app.arun(sid, [('user', 'retry')])
+                await app.runs.start(sid, [('user', 'retry')])
             assert effects == ['effect']
         finally:
             await app.aclose()

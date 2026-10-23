@@ -60,14 +60,14 @@ async def test_registered_approval_tool_pauses_and_resumes_without_runtime_tool_
         Path('synthetic.json'), tools=[ToolSpec(approval_probe, ApprovalInput, permissions=ToolPermission())],
         system_prompt='', response_format=None,
     )
-    session = await app.acreate_workspace_session('A', tmp_path)
+    session = await app.sessions.create_workspace('A', tmp_path)
 
-    pending = await app.arun(session, [('user', 'use probe')])
+    pending = await app.runs.start(session, [('user', 'use probe')])
     assert calls == []
     assert pending['approval_requests'] == [{
         'tool_call_id': 'probe-1', 'tool_name': 'approval_probe', 'target': '{"value": "approved"}',
     }]
-    result = await app.aresume_tool_approval(session, ['approve'])
+    result = await app.runs.resume_approval(session, ['approve'])
     assert calls == ['approved']
     assert [(message.tool_call_id, message.content) for message in result['messages']
             if isinstance(message, ToolMessage)] == [('probe-1', 'approved')]

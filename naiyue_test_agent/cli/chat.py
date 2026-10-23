@@ -39,7 +39,7 @@ def _run_and_print(app, session_id: str, text: str, *, display=None) -> bool:
         display.begin_call()
     request = HumanMessage(content=text, id=uuid4().hex)
     try:
-        result = app.run(session_id, [request])
+        result = app.call(lambda api: api.runs.start(session_id, [request]))
         if display is not None:
             display.finish_result(result, input_message_id=request.id)
             return True
@@ -72,7 +72,7 @@ def _run_and_print(app, session_id: str, text: str, *, display=None) -> bool:
             print(reply)
     elif not result.get('approval_requests'):
         print('本轮没有可展示的回答')
-    show_approval_batches(app.pending_approval_batches(session_id), print)
+    show_approval_batches(app.call(lambda api: api.runs.pending_approvals(session_id)), print)
     if result.get('run_stopped'):
         print('已停止')
 
@@ -83,9 +83,8 @@ def _resume_and_print(app, session_id: str, decisions: list[str], *, display=Non
     if display is not None:
         display.begin_call()
     try:
-        result = (app.stop_tool_approval(session_id, approval_batch_id=stop_batch['approval_batch_id'],
-                   origin_run_id=stop_batch['origin_run_id']) if stop_batch is not None else
-                  app.resume_tool_approval(session_id, decisions, remember_approved=remember_approved))
+        result = (app.call(lambda api: api.runs.stop_approval(session_id, approval_batch_id=stop_batch['approval_batch_id'], origin_run_id=stop_batch['origin_run_id'])) if stop_batch is not None else
+                  app.call(lambda api: api.runs.resume_approval(session_id, decisions, remember_approved=remember_approved)))
         if display is not None:
             display.finish_result(result, resume_start_index=result.get('resume_start_index'))
             return
@@ -112,7 +111,7 @@ def _resume_and_print(app, session_id: str, decisions: list[str], *, display=Non
             print(reply)
     elif not result.get('approval_requests'):
         print('本轮没有可展示的回答')
-    show_approval_batches(app.pending_approval_batches(session_id), print)
+    show_approval_batches(app.call(lambda api: api.runs.pending_approvals(session_id)), print)
     if result.get('run_stopped'):
         print('已停止')
 
@@ -197,19 +196,18 @@ def main(argv: list[str] | None = None) -> int:
             response_format=None, initial_active_tools=initial_tools, settings=tool_settings, **options,
         )
         if restored is None:
-            session_id = app.create_workspace_session(app.default_model_id, args.workspace)
+            session_id = app.call(lambda api: api.sessions.create_workspace(api.models.default_id, args.workspace))
         else:
             session_id = restored['session_id']
             if restored['state'] == 'ready':
                 try:
-                    app.restore_session(session_id)
+                    app.call(lambda api: api.sessions.restore(session_id))
                 except (SessionPersistenceError, ModelConfigError, ValueError):
-                    history = app.get_session_history(session_id)
+                    history = app.call(lambda api: api.history.session(session_id))
             else:
-                history = app.get_session_history(session_id)
-        display = (CliEventDisplay(session_id, progress_settings=tool_settings.progress)
-                   if callable(getattr(app, 'subscribe_events', None)) else None)
-        unsubscribe = app.subscribe_events(display) if display is not None and history is None else None
+                history = app.call(lambda api: api.history.session(session_id))
+        display = CliEventDisplay(session_id, progress_settings=tool_settings.progress)
+        unsubscribe = app.call(lambda api: api.observability.subscribe(display)) if display is not None and history is None else None
         emit = display.write if display is not None else print
     except Exception as error:
         logger.error('cli_initialization_failed error_type=%s', type(error).__name__)
@@ -227,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
 
     worker: Thread | None = None
     try:
-        emit(f'当前模型：{restored["model_id"] if restored else app.default_model_id}')
+        emit(f'当前模型：{restored["model_id"] if restored else app.call(lambda api: api.models.default_id)}')
         emit(f'{"持久会话" if storage is not None else "临时会话"}：{session_id}\n查询：:usage；:diagnostics [run_id]；:tasks；后台管理：:task output/stop ID')
         interactive = sys.stdin.isatty()
         if history is not None:
@@ -238,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
             if action is None:
                 return 0
             try:
-                app.recover_session(session_id, checkpoint_id=history['checkpoint_id'], action=action)
+                app.call(lambda api: api.sessions.recover(session_id, checkpoint_id=history['checkpoint_id'], action=action))
             except Exception as error:
                 logger.error('cli_session_recovery_failed error_type=%s', type(error).__name__)
                 if action != 'restore_approval' or str(error) != 'approval_restore_unavailable' or not interactive:
@@ -248,8 +246,8 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     if input('恢复操作：').strip() != 'continue':
                         return 0
-                    current = app.get_session_history(session_id)
-                    app.recover_session(session_id, checkpoint_id=current['checkpoint_id'], action='continue')
+                    current = app.call(lambda api: api.history.session(session_id))
+                    app.call(lambda api: api.sessions.recover(session_id, checkpoint_id=current['checkpoint_id'], action='continue'))
                     action = 'continue'
                 except EOFError:
                     return 0
@@ -257,10 +255,10 @@ def main(argv: list[str] | None = None) -> int:
                     logger.error('cli_session_recovery_failed error_type=%s', type(fault).__name__)
                     emit('会话恢复未确认；已保留历史，请重新打开会话核对当前状态。')
                     return 1
-            unsubscribe = app.subscribe_events(display)
+            unsubscribe = app.call(lambda api: api.observability.subscribe(display))
             if action == 'restore_approval':
                 emit('已恢复待审批批次，工具尚未执行。用 :review 为每项提供 approve/reject。')
-                show_approval_batches(app.pending_approval_batches(session_id), emit)
+                show_approval_batches(app.call(lambda api: api.runs.pending_approvals(session_id)), emit)
             else:
                 emit('旧运行已结束；下一条新消息才会启动运行。')
         output_clear_plan = None
@@ -297,14 +295,14 @@ def main(argv: list[str] | None = None) -> int:
 
         def drain_pipe(*, allow_approval=False):
             while piped_input:
-                if allow_approval and app.pending_approval_batches(session_id):
+                if allow_approval and app.call(lambda api: api.runs.pending_approvals(session_id)):
                     return
                 if not settle_cli_worker(app, session_id, worker, emit, stop_waits=not allow_approval):
                     return
-                if allow_approval and app.pending_approval_batches(session_id):
+                if allow_approval and app.call(lambda api: api.runs.pending_approvals(session_id)):
                     return
                 kind, text = piped_input.pop(0)
-                if kind == 'model': app.select_model(session_id, text)
+                if kind == 'model': app.call(lambda api: api.sessions.select_model(session_id, text))
                 else: start_run(text)
 
         while True:
@@ -335,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
             if command == ':quit':
                 drain_pipe()
                 settle_cli_worker(app, session_id, worker, emit, stop_active=interactive)
-                if app.pending_approval_batches(session_id):
+                if app.call(lambda api: api.runs.pending_approvals(session_id)):
                     emit('待审批未处理；下次打开会话时将重新核对恢复条件')
                 return 0
             if command in (':pending', ':send'):
@@ -363,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 try:
                     if action == 'clear':
-                        output_clear_plan = app.preview_shell_outputs(output_workspace)
+                        output_clear_plan = app.call(lambda api: api.tasks.preview_outputs(output_workspace))
                         if output_clear_plan.file_count:
                             emit(f'将清理 {output_clear_plan.file_count} 个文件，'
                                   f'{output_clear_plan.total_bytes} 字节；'
@@ -374,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
                     elif output_clear_plan is None:
                         emit('请先输入 :outputs clear 查看待清理文件')
                     else:
-                        count, size = app.clear_shell_outputs(output_clear_plan)
+                        count, size = app.call(lambda api: api.tasks.clear_outputs(output_clear_plan))
                         output_clear_plan = None
                         emit(f'已清理 {count} 个文件，{size} 字节')
                 except (OSError, ValueError, UnicodeError) as error:
@@ -384,7 +382,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             if command in (':approve', ':deny', ':review', ':approvals'):
                 while (submitted_root is not None and worker is not None and worker.is_alive() and
-                       any(batch['approval_batch_id'] == submitted_root for batch in app.pending_approval_batches(session_id))):
+                       any(batch['approval_batch_id'] == submitted_root for batch in app.call(lambda api: api.runs.pending_approvals(session_id)))):
                     worker.join(0.05)
                 if not interactive and command != ':approvals':
                     drain_pipe(allow_approval=True)
@@ -401,7 +399,7 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 try:
                     receipt_before = display.control_receipt_count('stop') if display is not None else 0
-                    retained = app.request_stop(session_id)
+                    retained = app.call(lambda api: api.runs.stop(session_id))
                     pending_input.extend(retained or [])
                     stopped_input = True
                     emit('停止后的输入将保留待发送；用 :pending 查看，:send 显式提交')
@@ -422,7 +420,7 @@ def main(argv: list[str] | None = None) -> int:
                     piped_input.append(('model', model_id))
                     continue
                 try:
-                    app.select_model(session_id, model_id)
+                    app.call(lambda api: api.sessions.select_model(session_id, model_id))
                 except ModelConfigError:
                     emit('模型 ID 不可用')
                 except SessionPersistenceError as error:
@@ -440,13 +438,13 @@ def main(argv: list[str] | None = None) -> int:
                     emit('请输入 Follow-up 内容')
                     continue
                 text = rest[0].strip()
-                if app.pending_approval_batches(session_id):
+                if app.call(lambda api: api.runs.pending_approvals(session_id)):
                     emit('当前有待审批工具调用，请先处理审批')
                     continue
                 if worker is not None and worker.is_alive():
                     try:
                         receipt_before = display.control_receipt_count('follow_up') if display is not None else 0
-                        app.follow_up(session_id, text)
+                        app.call(lambda api: api.runs.follow_up(session_id, text))
                     except SessionBusyError:
                         worker.join()
                     else:
@@ -466,13 +464,13 @@ def main(argv: list[str] | None = None) -> int:
             if not interactive and ((worker is not None and worker.is_alive()) or piped_input):
                 piped_input.append(('run', line))
                 continue
-            if app.pending_approval_batches(session_id):
+            if app.call(lambda api: api.runs.pending_approvals(session_id)):
                 emit('当前有待审批工具调用，请先处理审批')
                 continue
             if worker is not None and worker.is_alive():
                 try:
                     receipt_before = display.control_receipt_count('steering') if display is not None else 0
-                    app.steer(session_id, line)
+                    app.call(lambda api: api.runs.steer(session_id, line))
                 except (SessionBusyError, SessionPendingApprovalError):
                     worker.join()
                 else:

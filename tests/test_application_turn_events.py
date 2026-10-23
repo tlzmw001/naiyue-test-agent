@@ -28,9 +28,9 @@ def turns(events, kind=None):
 async def test_text_response_is_one_turn_inside_run_and_finishes_after_message(monkeypatch, caplog):
     app = await make_app(monkeypatch)
     events = []
-    app.subscribe_events(events.append)
+    app.observability.subscribe(events.append)
     with caplog.at_level(logging.INFO):
-        result = await app.arun(await app.acreate_session('A'), [('user', 'PRIVATE_INPUT')])
+        result = await app.runs.start(await app.sessions.create('A'), [('user', 'PRIVATE_INPUT')])
     assert [e.event_type for e in turns(events)] == ['turn_started', 'turn_finished']
     start, end = turns(events)
     assert start.data.turn_id == end.data.turn_id
@@ -63,8 +63,8 @@ async def test_one_tool_batch_and_final_answer_are_two_turns(monkeypatch, mode):
     ]), AIMessage(content='done')])
     app = await make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, execution_mode=mode, permissions=ToolPermission(default='allow'))])
     events = []
-    app.subscribe_events(events.append)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'run')])
+    app.observability.subscribe(events.append)
+    result = await app.runs.start(await app.sessions.create('A'), [('user', 'run')])
     assert [e.event_type for e in turns(events)] == ['turn_started', 'turn_finished'] * 2
     first, second = turns(events, 'turn_finished')
     assert first.data.tool_call_ids == ('one', 'two')
@@ -85,17 +85,17 @@ async def test_approval_pauses_and_resumes_same_turn_then_starts_next(monkeypatc
         {'name': 'read', 'args': {'path': str(outside)}, 'id': 'read'},
     ]), AIMessage(content='done')]), [create_session_read_tool()])
     events = []
-    app.subscribe_events(events.append)
-    session = await app.acreate_workspace_session('A', root)
-    paused = await app.arun(session, [('user', 'read')])
+    app.observability.subscribe(events.append)
+    session = await app.sessions.create_workspace('A', root)
+    paused = await app.runs.start(session, [('user', 'read')])
     assert paused['approval_requests']
     assert [e.event_type for e in turns(events)] == ['turn_started', 'turn_suspended']
     first = turns(events)[0]
-    state = app._sessions._sessions[session]
+    state = app.sessions._sessions._sessions[session]
     saved = json.loads(json.dumps(state.snapshot_for_run()['pending_turn']))
     assert saved['turn_id'] == first.data.turn_id and saved['status'] == 'suspended'
     assert 'PRIVATE_' not in repr(saved)
-    result = await app.aresume_tool_approval(session, [decision])
+    result = await app.runs.resume_approval(session, [decision])
     resumed = turns(events, 'turn_resumed')[0]
     assert resumed.run_id != first.run_id
     assert resumed.data.turn_id == first.data.turn_id and resumed.data.origin_run_id == first.run_id
@@ -118,8 +118,8 @@ async def test_recoverable_tool_error_completes_turn_with_error_result_count(mon
         {'name': 'probe', 'args': {}, 'id': 'probe'},
     ]), AIMessage(content='handled')]), [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
-    app.subscribe_events(events.append)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'run')])
+    app.observability.subscribe(events.append)
+    result = await app.runs.start(await app.sessions.create('A'), [('user', 'run')])
     end = turns(events, 'turn_finished')[0].data
     assert end.status == 'completed' and end.error_result_count == 1 and end.failure is None
     assert result['messages'][-1].content == 'handled'
@@ -132,8 +132,8 @@ async def test_limited_input_recovery_is_one_logical_turn(monkeypatch):
     model = _configured_model([_status(), AIMessage(content='recovered')])
     app = await _app(monkeypatch, {'A': model})
     events = []
-    app.subscribe_events(events.append)
-    result = await app.arun(await app.acreate_session('A'), _history())
+    app.observability.subscribe(events.append)
+    result = await app.runs.start(await app.sessions.create('A'), _history())
     assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == 1
     assert [e.event_type for e in turns(events)] == ['turn_started', 'turn_finished']
     assert turns(events)[-1].data.assistant_message_id == result['messages'][-1].id
@@ -146,19 +146,19 @@ async def test_steering_and_follow_up_create_turns_when_delivered_not_when_queue
     @tool
     def probe() -> str:
         """Queue control while a tool is executing."""
-        holder['app'].steer(holder['session'], 'steer')
-        holder['app'].follow_up(holder['session'], 'follow')
+        holder['app'].runs.steer(holder['session'], 'steer')
+        holder['app'].runs.follow_up(holder['session'], 'follow')
         assert len(turns(holder['events'], 'turn_started')) == 1
         return 'tool body'
 
     app = await make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'probe', 'args': {}, 'id': 'probe'},
     ]), AIMessage(content='second'), AIMessage(content='third')]), [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
-    session = await app.acreate_session('A')
+    session = await app.sessions.create('A')
     events = []
-    app.subscribe_events(events.append)
+    app.observability.subscribe(events.append)
     holder.update(app=app, session=session, events=events)
-    result = await app.arun(session, [('user', 'initial')])
+    result = await app.runs.start(session, [('user', 'initial')])
     assert [m.content for m in result['messages'] if m.type == 'human'] == ['initial', 'steer', 'follow']
     ends = turns(events, 'turn_finished')
     assert len(ends) == 3 and all(e.data.status == 'completed' for e in ends)
@@ -173,17 +173,17 @@ async def test_sync_tool_settles_before_unified_stop_finishes_run(monkeypatch):
     @tool
     def stop_probe() -> str:
         """Request stop at the current turn boundary."""
-        holder['app'].request_stop(holder['session'])
+        holder['app'].runs.stop(holder['session'])
         return 'done'
 
     app = await make_app(monkeypatch, ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'stop_probe', 'args': {}, 'id': 'stop'},
     ]), AIMessage(content='must not generate')]), [ToolSpec(stop_probe, stop_probe.args_schema, permissions=ToolPermission(default='allow'))])
-    session = await app.acreate_session('A')
+    session = await app.sessions.create('A')
     events = []
-    app.subscribe_events(events.append)
+    app.observability.subscribe(events.append)
     holder.update(app=app, session=session)
-    result = await app.arun(session, [('user', 'run')])
+    result = await app.runs.start(session, [('user', 'run')])
     assert [m.type for m in result['messages']] == ['human', 'ai', 'tool']
     assert result['run_stopped'] is True
     assert [e.event_type for e in turns(events)] == ['turn_started', 'turn_finished']
@@ -208,8 +208,8 @@ async def test_structured_artificial_tool_result_completes_without_executor_even
     app = await build_application('synthetic.json', tools=[], system_prompt='',
                                                response_format=ToolStrategy(Answer))
     events = []
-    app.subscribe_events(events.append)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'run')])
+    app.observability.subscribe(events.append)
+    result = await app.runs.start(await app.sessions.create('A'), [('user', 'run')])
     assert isinstance(result['structured_response'], Answer) and result['structured_response'].value == 'structured'
     assert [e.event_type for e in turns(events)] == ['turn_started', 'turn_finished']
     end = turns(events)[-1].data
@@ -232,8 +232,8 @@ async def test_truncated_tool_response_finishes_with_error_result_without_execut
         {'name': 'probe', 'args': {}, 'id': 'probe'},
     ], response_metadata={'finish_reason': 'length'}), AIMessage(content='handled')]), [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
-    app.subscribe_events(events.append)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'run')])
+    app.observability.subscribe(events.append)
+    result = await app.runs.start(await app.sessions.create('A'), [('user', 'run')])
     assert called == [] and result['messages'][-1].content == 'handled'
     first = turns(events, 'turn_finished')[0].data
     assert first.status == 'completed' and first.error_result_count == 1
@@ -243,12 +243,12 @@ async def test_truncated_tool_response_finishes_with_error_result_without_execut
 async def test_turns_do_not_replay_historical_assistant_messages_on_next_run(monkeypatch):
     app = await make_app(monkeypatch, ToolModel(responses=[AIMessage(content='first'), AIMessage(content='second')]))
     events = []
-    app.subscribe_events(events.append)
-    session = await app.acreate_session('A')
-    first = await app.arun(session, [('user', 'first')])
+    app.observability.subscribe(events.append)
+    session = await app.sessions.create('A')
+    first = await app.runs.start(session, [('user', 'first')])
     first_end = turns(events, 'turn_finished')[0]
     events.clear()
-    second = await app.arun(session, [('user', 'second')])
+    second = await app.runs.start(session, [('user', 'second')])
     assert len(turns(events, 'turn_started')) == len(turns(events, 'turn_finished')) == 1
     end = turns(events, 'turn_finished')[0]
     assert end.data.turn_id != first_end.data.turn_id

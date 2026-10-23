@@ -61,20 +61,20 @@ def run_events_only(handler):
 @async_test
 async def test_success_events_follow_cleanup_without_changing_result(monkeypatch, caplog):
     app = await make_app(monkeypatch)
-    session = await app.acreate_session('A')
+    session = await app.sessions.create('A')
     received, states = [], []
 
     def observe(event):
         received.append(event)
-        owner = app._sessions._sessions[session]
-        states.append({**app._sessions.require(session).describe_session(),
+        owner = app.sessions._sessions._sessions[session]
+        states.append({**app.sessions._sessions.require(session).describe_session(),
             'run_prompt_parts': owner.resolve_prompt_parts(),
             'steering_open': owner.snapshot_for_run()['steering_open'],
             'stop_requested': owner.is_stop_requested()})
 
-    app.subscribe_events(run_events_only(observe))
+    app.observability.subscribe(run_events_only(observe))
     with caplog.at_level(logging.INFO):
-        result = await app.arun(session, [('user', 'PRIVATE_PROMPT')])
+        result = await app.runs.start(session, [('user', 'PRIVATE_PROMPT')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
     assert [(e.event_type, e.sequence) for e in received] == [
         ('run_started', 1), ('run_finished', 11),
@@ -106,8 +106,8 @@ async def test_explicit_and_unexpected_tool_errors_allow_run_completion(monkeypa
     ]), AIMessage(content='recovered')])
     app = await make_app(monkeypatch, model, [ToolSpec(handled, handled.args_schema, permissions=ToolPermission(default='allow'))])
     received = []
-    app.subscribe_events(run_events_only(received.append))
-    result = await app.arun(await app.acreate_session('A'), [('user', 'run')])
+    app.observability.subscribe(run_events_only(received.append))
+    result = await app.runs.start(await app.sessions.create('A'), [('user', 'run')])
     assert any(isinstance(m, ToolMessage) and m.status == 'error' for m in result['messages'])
     assert received[-1].data.status == 'completed'
 
@@ -123,8 +123,8 @@ async def test_explicit_and_unexpected_tool_errors_allow_run_completion(monkeypa
     ]), AIMessage(content='handled unexpected failure')])
     app = await make_app(monkeypatch, model, [ToolSpec(unhandled, unhandled.args_schema, permissions=ToolPermission(default='allow'))])
     received = []
-    app.subscribe_events(run_events_only(received.append))
-    result = await app.arun(await app.acreate_session('A'), [('user', 'run')])
+    app.observability.subscribe(run_events_only(received.append))
+    result = await app.runs.start(await app.sessions.create('A'), [('user', 'run')])
     feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert feedback.status == 'error' and feedback.tool_call_id == 'call-2'
     assert 'RuntimeError' in feedback.content and 'PRIVATE_TOOL_ERROR' not in feedback.content
@@ -144,24 +144,24 @@ async def test_approval_terminal_is_installed_before_notification_and_resume_is_
         {'name': 'read', 'args': {'path': str(outside)}, 'id': 'read-1'},
     ]), AIMessage(content='done')])
     app = await make_app(monkeypatch, model, [create_session_read_tool()])
-    session = await app.acreate_workspace_session('A', root)
+    session = await app.sessions.create_workspace('A', root)
     received, pending_at_end = [], []
 
     def observe(event):
         received.append(event)
         if event.event_type == 'run_finished':
-            pending_at_end.append(app.pending_tool_approvals(session))
+            pending_at_end.append(app.runs.pending_tools(session))
 
-    app.subscribe_events(run_events_only(observe))
-    paused = await app.arun(session, [('user', 'read outside')])
+    app.observability.subscribe(run_events_only(observe))
+    paused = await app.runs.start(session, [('user', 'read outside')])
     assert received[-1].data.status == 'interrupted'
     assert pending_at_end[-1] == paused['approval_requests']
     with pytest.raises(application.SessionPendingApprovalError):
-        await app.arun(session, [('user', 'ignore')])
+        await app.runs.start(session, [('user', 'ignore')])
     with pytest.raises(ValueError):
-        await app.aresume_tool_approval(session, [])
+        await app.runs.resume_approval(session, [])
     assert len(received) == 2
-    result = await app.aresume_tool_approval(session, ['approve'])
+    result = await app.runs.resume_approval(session, ['approve'])
     assert result['messages'][-1].content == 'done'
     assert received[2].data.mode == 'approval_resume'
     assert received[0].run_id != received[2].run_id
@@ -184,17 +184,17 @@ async def test_unknown_outcome_preserves_block_and_original_exception(monkeypatc
         {'name': 'uncertain', 'args': {}, 'id': 'write-1'},
     ])])
     app = await make_app(monkeypatch, model, [ToolSpec(uncertain, uncertain.args_schema, permissions=ToolPermission(default='allow'))])
-    session = await app.acreate_session('A')
+    session = await app.sessions.create('A')
     received = []
-    app.subscribe_events(run_events_only(received.append))
+    app.observability.subscribe(run_events_only(received.append))
     with pytest.raises(ProcessCleanupError) as caught:
-        await app.arun(session, [('user', 'run')])
+        await app.runs.start(session, [('user', 'run')])
     assert caught.value is failure
     assert received[-1].data.status == 'failed'
     assert received[-1].data.manual_review_required is True
     assert received[-1].data.failure.reason == 'tool_outcome_unknown'
     with pytest.raises(application.SessionManualReviewRequiredError):
-        await app.arun(session, [('user', 'retry')])
+        await app.runs.start(session, [('user', 'retry')])
     assert len(received) == 2
 
 
@@ -209,13 +209,13 @@ async def test_stop_busy_gate_and_active_subscription_snapshot(monkeypatch):
             return super()._generate(*args, **kwargs)
 
     app = await make_app(monkeypatch, BlockingModel(responses=[AIMessage(content='answer')]))
-    session = await app.acreate_session('A')
+    session = await app.sessions.create('A')
     first, second, outcomes = [], [], []
-    unsubscribe = app.subscribe_events(run_events_only(first.append))
+    unsubscribe = app.observability.subscribe(run_events_only(first.append))
 
     async def run():
         try:
-            outcomes.append(await app.arun(session, [('user', 'run')]))
+            outcomes.append(await app.runs.start(session, [('user', 'run')]))
         except BaseException as error:
             outcomes.append(error)
 
@@ -224,10 +224,10 @@ async def test_stop_busy_gate_and_active_subscription_snapshot(monkeypatch):
     try:
         assert await asyncio.to_thread(entered.wait, timeout=3)
         with pytest.raises(application.SessionBusyError):
-            await app.arun(session, [('user', 'busy')])
-        app.subscribe_events(run_events_only(second.append))
+            await app.runs.start(session, [('user', 'busy')])
+        app.observability.subscribe(run_events_only(second.append))
         unsubscribe()
-        app.request_stop(session)
+        app.runs.stop(session)
     finally:
         release.set()
         await asyncio.wait_for(asyncio.shield(worker), 3)
@@ -235,7 +235,7 @@ async def test_stop_busy_gate_and_active_subscription_snapshot(monkeypatch):
     assert first[-1].data.status == 'stopped'
     assert first[-1].data.stop_mode == 'active'
     assert second == [] and len(first) == 2
-    await app.arun(session, [('user', 'next')])
+    await app.runs.start(session, [('user', 'next')])
     assert len(first) == 2 and len(second) == 2
 
 
@@ -247,10 +247,10 @@ async def test_observer_failures_do_not_change_success_or_primary_error(monkeypa
     def faulty(_event):
         raise ValueError('PRIVATE_OBSERVER_FAILURE')
 
-    app.subscribe_events(run_events_only(faulty))
-    app.subscribe_events(run_events_only(received.append))
-    session = await app.acreate_session('A')
-    assert (await app.arun(session, [('user', 'run')]))['messages'][-1].content == 'PRIVATE_REPLY'
+    app.observability.subscribe(run_events_only(faulty))
+    app.observability.subscribe(run_events_only(received.append))
+    session = await app.sessions.create('A')
+    assert (await app.runs.start(session, [('user', 'run')]))['messages'][-1].content == 'PRIVATE_REPLY'
     assert received[-1].data.status == 'completed'
     module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['SessionExecution'])
     failure = RuntimeError('PRIVATE_MODEL_FAILURE')
@@ -260,7 +260,7 @@ async def test_observer_failures_do_not_change_success_or_primary_error(monkeypa
 
     monkeypatch.setattr(module, 'ainvoke_agent_run', fail)
     with pytest.raises(RuntimeError) as caught:
-        await app.arun(session, [('user', 'fail')])
+        await app.runs.start(session, [('user', 'fail')])
     assert caught.value is failure and received[-1].data.status == 'failed'
     assert 'PRIVATE_' not in caplog.text
 
@@ -276,18 +276,18 @@ async def test_two_sessions_have_independent_sequences_and_no_fake_start(monkeyp
 
     app = await make_app(monkeypatch, ConcurrentModel(responses=[AIMessage(content='done')]))
     received, outcomes = [], []
-    app.subscribe_events(run_events_only(received.append))
+    app.observability.subscribe(run_events_only(received.append))
     with pytest.raises(KeyError):
-        await app.arun('missing', [('user', 'no session')])
+        await app.runs.start('missing', [('user', 'no session')])
     assert received == []
 
     async def run(session):
         try:
-            outcomes.append(await app.arun(session, [('user', 'run')]))
+            outcomes.append(await app.runs.start(session, [('user', 'run')]))
         except BaseException as error:
             outcomes.append(error)
 
-    sessions = [await app.acreate_session('A') for _ in range(2)]
+    sessions = [await app.sessions.create('A') for _ in range(2)]
     workers = [asyncio.create_task(run(session)) for session in sessions]
     for worker in workers:
         await asyncio.wait_for(asyncio.shield(worker), 4)
@@ -315,14 +315,14 @@ async def test_resume_can_interrupt_again_before_final_completion(monkeypatch, t
         AIMessage(content='done'),
     ])
     app = await make_app(monkeypatch, model, [create_session_read_tool()])
-    session = await app.acreate_workspace_session('A', root)
+    session = await app.sessions.create_workspace('A', root)
     received = []
-    app.subscribe_events(run_events_only(received.append))
-    await app.arun(session, [('user', 'read twice')])
-    again = await app.aresume_tool_approval(session, ['approve'])
+    app.observability.subscribe(run_events_only(received.append))
+    await app.runs.start(session, [('user', 'read twice')])
+    again = await app.runs.resume_approval(session, ['approve'])
     assert again['approval_requests'][0]['tool_call_id'] == 'second'
     assert received[-1].data.status == 'interrupted'
-    await app.aresume_tool_approval(session, ['reject'])
+    await app.runs.resume_approval(session, ['reject'])
     assert [e.data.status for e in received if e.event_type == 'run_finished'] == [
         'interrupted', 'interrupted', 'completed',
     ]
@@ -334,10 +334,10 @@ async def test_terminal_uses_cleanup_snapshot_after_session_state_changes(monkey
     # _cleanup_run is synchronous on the owner loop. Test its snapshot directly:
     # a later state change cannot retroactively alter the old terminal payload.
     app = await make_app(monkeypatch)
-    sid = await app.acreate_session('A')
+    sid = await app.sessions.create('A')
     received = []
-    app.subscribe_events(run_events_only(received.append))
-    session, observation_run = app._sessions._admit(sid, 'old-run', 'message')
+    app.observability.subscribe(run_events_only(received.append))
+    session, observation_run = app.sessions._sessions._admit(sid, 'old-run', 'message')
     run_id, observation = observation_run.run_id, observation_run.observation
     observation.start()
     observation.result({'messages': []}, None)
@@ -345,7 +345,7 @@ async def test_terminal_uses_cleanup_snapshot_after_session_state_changes(monkey
     review = session._cleanup_run(observation_run)
     session.release_run(observation_run)
     assert review is False and not session.is_busy() and session.snapshot_for_run()['run_id'] is None
-    _, later = app._sessions._admit(sid, 'later-run', 'message')
+    _, later = app.sessions._sessions._admit(sid, 'later-run', 'message')
     session.mark_manual_review(later)
     observation.finish(review)
     assert received[-1].run_id == 'old-run'

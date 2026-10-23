@@ -21,7 +21,7 @@ def test_recover_then_wait_for_new_input_and_reject_duplicate_checkpoint(monkeyp
         async with web_client(monkeypatch, tmp_path, model) as (client, app):
             backend = app.state.service.application
             events = []
-            backend.subscribe_events(events.append)
+            backend.observability.subscribe(events.append)
             endpoint = f'/api/sessions/{sid}/recover'
             assert (await client.post(f'/api/sessions/{sid}/prepare')).status_code == 200
             view = (await client.get(f'/api/sessions/{sid}')).json()
@@ -34,9 +34,9 @@ def test_recover_then_wait_for_new_input_and_reject_duplicate_checkpoint(monkeyp
             for invalid in ({**body, 'action': 'invalid'}, {**body, 'run_id': 'invented'}):
                 assert (await client.post(endpoint, json=invalid)).status_code == 422
             assert (await client.post(endpoint, json={**body, 'action': 'restore_approval'})).status_code == 409
-            before = database_facts(backend._storage)
+            before = database_facts(backend.sessions._persistence.storage)
             assert (await client.post(endpoint, json={**body, 'checkpoint_id': 'old'})).status_code == 409
-            assert database_facts(backend._storage) == before
+            assert database_facts(backend.sessions._persistence.storage) == before
             response = await client.post(endpoint, json=body)
             assert response.status_code == 200
             ready = response.json()
@@ -61,13 +61,13 @@ def test_recovery_and_start_share_admission_lock_and_preserve_draft_on_failure(m
             assert (await client.post(f'/api/sessions/{sid}/prepare')).status_code == 200
             history = (await client.get(f'/api/sessions/{sid}')).json()
             entered, release = asyncio.Event(), asyncio.Event()
-            original = app.state.service.application.arecover_session
+            original = app.state.service.application.sessions.recover
             async def pause(*args, **kwargs):
                 assert app.state.delivery.start_lock.locked()
                 entered.set()
                 await release.wait()
                 return await original(*args, **kwargs)
-            monkeypatch.setattr(app.state.service.application, 'arecover_session', pause)
+            monkeypatch.setattr(app.state.service.application.sessions, 'recover', pause)
             task = asyncio.create_task(client.post(endpoint, json={'checkpoint_id': history['checkpoint_id'], 'action': 'continue'}))
             try:
                 await asyncio.wait_for(entered.wait(), 5)
@@ -115,12 +115,12 @@ def test_cold_approval_restores_cards_and_requires_a_fresh_user_decision(monkeyp
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
             backend = app.state.service.application
             events = []
-            backend.subscribe_events(events.append)
+            backend.observability.subscribe(events.append)
             assert (await client.post(f'/api/sessions/{sid}/prepare')).status_code == 200
-            before = database_facts(backend._storage)
+            before = database_facts(backend.sessions._persistence.storage)
             history = (await client.get(f'/api/sessions/{sid}')).json()
             assert history['recovery']['actions'] == ['restore_approval', 'continue']
-            assert database_facts(backend._storage) == before
+            assert database_facts(backend.sessions._persistence.storage) == before
             body = {'checkpoint_id': history['checkpoint_id'], 'action': 'restore_approval'}
             endpoint = f'/api/sessions/{sid}/recover'
             assert (await client.post(endpoint, json=body, headers={'Authorization': ''})).status_code == 401
@@ -183,7 +183,7 @@ def test_multi_page_history_and_cold_approval_never_execute_before_decision(monk
                 'checkpoint_id': prepared['checkpoint_id'], 'action': 'restore_approval'})
             assert restored.status_code == 200
             batch, = restored.json()['approval_batches']
-            store = web.state.service.application._storage
+            store = web.state.service.application.sessions._persistence.storage
             writes = store.database.connection.total_changes
             assert await read_pages(client, sid) == original
             assert store.database.connection.total_changes == writes and reached == [] and model.seen == []

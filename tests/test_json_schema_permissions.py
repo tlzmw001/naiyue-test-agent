@@ -34,14 +34,14 @@ async def test_current_application_json_permission_and_runtime(case, monkeypatch
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[call]), AIMessage(content='done')])
     rules = {case: [{'tool': 'schema_probe'}]} if case in ('allow', 'deny') else {}
     app = await build(monkeypatch, model, [spec], **rules)
-    sid = await app.acreate_session('A')
+    sid = await app.sessions.create('A')
     events = []
-    app.subscribe_events(events.append)
-    result = await app.arun(sid, [('user', 'exercise JSON contract')])
+    app.observability.subscribe(events.append)
+    result = await app.runs.start(sid, [('user', 'exercise JSON contract')])
     if case in ('approve', 'reject', 'artifact'):
         assert len(result['approval_requests']) == 1 and seen == []
         assert result['tool_execution']['calls'][0]['subject']['args'] == VALID
-        result = await app.aresume_tool_approval(sid, ['reject' if case == 'reject' else 'approve'])
+        result = await app.runs.resume_approval(sid, ['reject' if case == 'reject' else 'approve'])
     else:
         assert not result.get('approval_requests')
     output = next(m for m in result['messages'] if isinstance(m, ToolMessage))
@@ -88,7 +88,7 @@ async def test_wildcard_file_rules_keep_their_existing_scope(monkeypatch):
     from naiyue_test_agent.tools import create_session_read_tool
     app = await build(monkeypatch, DynamicModel(responses=[]), [create_session_read_tool(), definition()],
                       deny=[{'tool': '*', 'path': '${workspace}/private/**'}])
-    assert len(app.get_registered_tools()) == 2
+    assert len(app.tools.list()) == 2
 
 
 @async_test
@@ -99,12 +99,12 @@ async def test_invalid_json_waits_for_existing_batch_approval_and_does_not_leak_
         {'name': 'schema_probe', 'id': 'invalid', 'args': bad},
         {'name': 'schema_probe', 'id': 'valid', 'args': VALID}]), AIMessage(content='done')])
     app = await build(monkeypatch, model, [definition(seen=seen)])
-    sid = await app.acreate_session('A')
-    events = []; app.subscribe_events(events.append)
-    paused = await app.arun(sid, [('user', 'mixed batch')])
+    sid = await app.sessions.create('A')
+    events = []; app.observability.subscribe(events.append)
+    paused = await app.runs.start(sid, [('user', 'mixed batch')])
     assert [r['tool_call_id'] for r in paused['approval_requests']] == ['valid']
     assert not any(isinstance(m, ToolMessage) for m in paused['messages']) and seen == []
-    result = await app.aresume_tool_approval(sid, ['approve'])
+    result = await app.runs.resume_approval(sid, ['approve'])
     outputs = [m for m in result['messages'] if isinstance(m, ToolMessage)]
     assert [(m.tool_call_id, m.status) for m in outputs] == [('invalid', 'error'), ('valid', 'success')]
     assert 'PRIVATE_SECRET_VALUE' not in outputs[0].content + caplog.text
@@ -134,10 +134,10 @@ async def test_approval_binding_is_exact_and_consumed_once(monkeypatch):
             failures.append('changed-and-replayed-rejected')
         return authorized
     monkeypatch.setattr(ExecutionAuthorizationMiddleware, '_authorize', checked)
-    sid = await app.acreate_session('A')
-    paused = await app.arun(sid, [('user', 'approve')])
+    sid = await app.sessions.create('A')
+    paused = await app.runs.start(sid, [('user', 'approve')])
     assert paused['approval_requests'] and not seen
-    await app.aresume_tool_approval(sid, ['approve'])
+    await app.runs.resume_approval(sid, ['approve'])
     assert len(seen) == 1 and failures == ['changed-and-replayed-rejected']
 
 
@@ -152,13 +152,13 @@ async def test_errors_keep_existing_conversion_and_propagation(failure_kind, mon
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'schema_probe', 'id': 'failure', 'args': VALID}]), AIMessage(content='done')])
     app = await build(monkeypatch, model, [definition(seen=seen, permission=ToolPermission(default='allow'), failure=failure)])
-    sid = await app.acreate_session('A')
+    sid = await app.sessions.create('A')
     if failure_kind == 'mechanism':
         with pytest.raises(PermissionMechanismError) as raised:
-            await app.arun(sid, [('user', 'fail')])
+            await app.runs.start(sid, [('user', 'fail')])
         assert raised.value is failure
     else:
-        result = await app.arun(sid, [('user', 'fail')])
+        result = await app.runs.start(sid, [('user', 'fail')])
         message = next(m for m in result['messages'] if isinstance(m, ToolMessage))
         assert message.status == 'error' and message.tool_call_id == 'failure'
         assert 'PRIVATE_DETAIL' not in str(result) + caplog.text
@@ -187,26 +187,26 @@ async def test_json_checkpoint_reopen_obeys_existing_approval_recovery_contract(
         return open_async_persistent_application('synthetic', database_path=tmp_path / 'sessions.sqlite',
             tools=[spec], settings=AppSettings(), system_prompt='', response_format=None)
     async with persistent() as app:
-        sid = await app.acreate_session('A')
-        paused = await app.arun(sid, [('user', 'pending batch')])
+        sid = await app.sessions.create('A')
+        paused = await app.runs.start(sid, [('user', 'pending batch')])
         assert paused['approval_requests'] and not seen
         saved_calls = paused['tool_execution']['calls']
     async with persistent() as app:
-        history = await app.aget_session_history(sid)
+        history = await app.history.session(sid)
         assert history['recovery']['kind'] == 'pending_approval'
-        thread = app._storage.sessions.get(sid)['thread_id']
-        snapshot = await app._agent.aget_state({'configurable': {'thread_id': thread}})
+        thread = app.sessions._persistence.storage.sessions.get(sid)['thread_id']
+        snapshot = await app.runs._agent.aget_state({'configurable': {'thread_id': thread}})
         assert snapshot.values['tool_execution']['calls'] == saved_calls
         if invalid_in_batch:
             # Existing recovery only restores batches whose EVERY input remains
             # valid. Preserve this boundary; do not widen recovery in MCP-01.
             assert 'validation_feedback' in saved_calls[0]
             with pytest.raises(SessionPersistenceError, match='approval_restore_unavailable'):
-                await app.arecover_session(sid, checkpoint_id=history['checkpoint_id'], action='restore_approval')
+                await app.sessions.recover(sid, checkpoint_id=history['checkpoint_id'], action='restore_approval')
             assert not seen
         else:
-            await app.arecover_session(sid, checkpoint_id=history['checkpoint_id'], action='restore_approval')
-            result = await app.aresume_tool_approval(sid, ['approve'])
+            await app.sessions.recover(sid, checkpoint_id=history['checkpoint_id'], action='restore_approval')
+            result = await app.runs.resume_approval(sid, ['approve'])
             outputs = [m for m in result['messages'] if isinstance(m, ToolMessage)]
             assert [(m.tool_call_id, m.status) for m in outputs] == [('approved', 'success')]
             assert outputs[0].artifact == {'args': VALID} and len(seen) == 1
@@ -246,8 +246,8 @@ async def test_actual_model_binding_preserves_json_schema_without_framework_rewr
     model = ConvertingModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'schema_probe', 'id': 'bound', 'args': args}]), AIMessage(content='done')])
     app = await build(monkeypatch, model, [definition(schema, seen=seen, permission=ToolPermission(default='allow'))])
-    sid = await app.acreate_session('A')
-    result = await app.arun(sid, [('user', 'bind generic schema')])
+    sid = await app.sessions.create('A')
+    result = await app.runs.start(sid, [('user', 'bind generic schema')])
     for definitions in model.bound:
         assert definitions == [{'type': 'function', 'function': {'name': 'schema_probe',
             'description': 'Deterministic JSON tool', 'parameters': original}}]
@@ -264,10 +264,10 @@ async def test_schema_mutation_while_approval_is_pending_cannot_execute_old_perm
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'schema_probe', 'id': 'pending', 'args': VALID}]), AIMessage(content='done')])
     app = await build(monkeypatch, model, [spec])
-    sid = await app.acreate_session('A')
-    paused = await app.arun(sid, [('user', 'pending')])
+    sid = await app.sessions.create('A')
+    paused = await app.runs.start(sid, [('user', 'pending')])
     assert paused['approval_requests'] and not seen
     spec.tool.args_schema['required'] = []
     with pytest.raises(ValueError, match='schema.*changed|changed.*schema'):
-        await app.aresume_tool_approval(sid, ['approve'])
+        await app.runs.resume_approval(sid, ['approve'])
     assert not seen

@@ -114,18 +114,18 @@ async def test_crashed_child_survives_restore_without_replaying_uncertain_side_e
     with patch.object(write_module, '_write', wraps=write_module._write) as written:
         async with open_async_persistent_application('unused', **fixture.options(tmp_path)) as app:
             events = []
-            app.subscribe_events(events.append)
-            history = await app.aget_session_history(info['session_id'])
+            app.observability.subscribe(events.append)
+            history = await app.history.session(info['session_id'])
             assert history['recovery']['kind'] == 'interrupted_execution'
             with pytest.raises(SessionPersistenceError, match='session_recovery_blocked'):
-                await app.arecover_session(info['session_id'], checkpoint_id=history['checkpoint_id'], action='restore_approval')
-            await app.arecover_session(info['session_id'], checkpoint_id=history['checkpoint_id'], action='continue')
-            restored = await app.aget_messages(info['session_id'])
+                await app.sessions.recover(info['session_id'], checkpoint_id=history['checkpoint_id'], action='restore_approval')
+            await app.sessions.recover(info['session_id'], checkpoint_id=history['checkpoint_id'], action='continue')
+            restored = await app.history.messages(info['session_id'])
             feedback = restored[-1]
             assert isinstance(feedback, ToolMessage) and feedback.tool_call_id == 'outer' and feedback.status == 'error'
             assert feedback.additional_kwargs['naiyue_recovery']['reason'] == 'result_unconfirmed'
-            assert not app.pending_approval_batches(info['session_id'])
-            children = await app.aget_chat_subagents(info['session_id'])
+            assert not app.runs.pending_approvals(info['session_id'])
+            children = await app.history.chat_subagents(info['session_id'])
             assert any(row['agent_id'] == info['child_thread_id'].removeprefix('subagent:') for row in children)
             assert not parent.seen and not child.seen and not events and written.call_count == 0
     assert (effects.read_text() if effects.exists() else None) == before

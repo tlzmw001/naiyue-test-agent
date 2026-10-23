@@ -17,31 +17,31 @@ async def test_stop_saved_root_batch_pairs_unexecuted_calls_without_model_or_gra
     model = StreamingToolModel(replies=[call('probe', {'value': 'never'}, 'one')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     app = await build_application('unused', tools=[definition(calls=effects, approved=True)], system_prompt='', response_format=None)
-    app.subscribe_events(events.append)
-    sid = await app.acreate_session('A')
-    await app.arun(sid, [('user', 'ask')])
-    batch, = app.pending_approval_batches(sid)
+    app.observability.subscribe(events.append)
+    sid = await app.sessions.create('A')
+    await app.runs.start(sid, [('user', 'ask')])
+    batch, = app.runs.pending_approvals(sid)
     kwargs = dict(approval_batch_id=batch['approval_batch_id'], origin_run_id=batch['origin_run_id'])
     with pytest.raises(ValueError):
-        await app.astop_tool_approval(sid, **{**kwargs, 'approval_batch_id': 'stale'})
-    assert app.pending_approval_batches(sid) == [batch]
+        await app.runs.stop_approval(sid, **{**kwargs, 'approval_batch_id': 'stale'})
+    assert app.runs.pending_approvals(sid) == [batch]
     if streaming:
-        received = [event async for event in app.astream_stop_tool_approval(sid, **kwargs)]
+        received = [event async for event in app.runs.stream_stop_approval(sid, **kwargs)]
         assert received[-1].event_type == 'run_finished' and received[-1].data.status == 'stopped'
     else:
-        result = await app.astop_tool_approval(sid, **kwargs)
+        result = await app.runs.stop_approval(sid, **kwargs)
         assert result['run_stopped'] is True
-    messages = await app.aget_messages(sid)
+    messages = await app.history.messages(sid)
     feedback, = [message for message in messages if isinstance(message, ToolMessage)]
     assert feedback.tool_call_id == 'one' and feedback.status == 'error'
     assert feedback.additional_kwargs['naiyue_not_executed'] == 'user_stop'
     assert 'stopped' in feedback.content and 'reject' not in feedback.content.lower()
-    assert len(model.seen) == 1 and effects == [] and app.pending_approval_batches(sid) == []
+    assert len(model.seen) == 1 and effects == [] and app.runs.pending_approvals(sid) == []
     terminal = [event for event in events if event.event_type == 'run_finished']
     assert [event.data.status for event in terminal] == ['interrupted', 'stopped']
     assert terminal[0].run_id != terminal[1].run_id
     assert not any(event.event_type == 'control_applied' and event.data.kind == 'approval' for event in events)
-    with pytest.raises(ValueError): await app.astop_tool_approval(sid, **kwargs)
+    with pytest.raises(ValueError): await app.runs.stop_approval(sid, **kwargs)
 
 
 @pytest.mark.parametrize('reason, expected', [('user', 'user stopped'), ('failure', 'owning run failed'), ('close', 'application is closing')])

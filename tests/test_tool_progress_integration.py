@@ -47,14 +47,14 @@ def test_progress_arrives_during_unfinished_async_application_tool(monkeypatch, 
         spec = ToolSpec(probe, public, permissions=ToolPermission(default='allow'))
         chosen = StreamingToolModel(replies=[call('probe', {}, 'progress'), AIMessage(content='done')])
         app = await make_app(monkeypatch, chosen, [spec])
-        sid = await app.acreate_session('A')
+        sid = await app.sessions.create('A')
         events = []
         def collect(event):
             events.append(event)
             if event.event_type == 'tool_progress' and event.data.phase == 'working':
                 arrived.set()
-        app.subscribe_events(collect)
-        task = asyncio.create_task(app.arun(sid, [('user', 'run')]))
+        app.observability.subscribe(collect)
+        task = asyncio.create_task(app.runs.start(sid, [('user', 'run')]))
         try:
             assert await asyncio.to_thread(entered.wait, 5)
             assert await asyncio.to_thread(arrived.wait, 5)
@@ -65,8 +65,8 @@ def test_progress_arrives_during_unfinished_async_application_tool(monkeypatch, 
             assert message.content == 'final result' and message.tool_call_id == 'progress'
             assert all('PROGRESS_ONLY' not in str(m.content) for m in result['messages'])
             assert all('PROGRESS_ONLY' not in str(m.content) for m in chosen.seen[1])
-            snapshot = await app._agent.aget_state({'configurable': {
-                'thread_id': app._sessions.require(sid).get_thread_id()}})
+            snapshot = await app.runs._agent.aget_state({'configurable': {
+                'thread_id': app.sessions._sessions.require(sid).get_thread_id()}})
             assert 'PROGRESS_ONLY' not in str(snapshot.values)
             EventSequenceChecker.assert_healthy(events, caplog.records)
         finally:
@@ -97,15 +97,15 @@ async def test_async_application_receives_sync_tool_progress_before_return(monke
     spec = ToolSpec(probe, public, permissions=ToolPermission(default='allow'))
     model = ToolModel(responses=[call('probe', {}, 'sync'), AIMessage(content='done')])
     app = await make_test_app(monkeypatch, model, [spec])
-    app._agent = app._agent.with_config({'max_concurrency': concurrency})
-    sid, events = await app.acreate_session('A'), []
+    app.runs._agent = app.runs._agent.with_config({'max_concurrency': concurrency})
+    sid, events = await app.sessions.create('A'), []
     def collect(event):
         events.append(event)
         if event.event_type == 'tool_progress' and event.data.phase == 'working':
             arrived.set()
-    app.subscribe_events(collect)
+    app.observability.subscribe(collect)
     try:
-        task = asyncio.create_task(app.arun(sid, [('user', 'work')], max_concurrency=concurrency))
+        task = asyncio.create_task(app.runs.start(sid, [('user', 'work')], max_concurrency=concurrency))
         try:
             assert await asyncio.to_thread(entered.wait, 5) and await asyncio.to_thread(arrived.wait, 5)
             assert not task.done()
@@ -146,13 +146,13 @@ def test_queued_progress_does_not_claim_waiting_tool_has_started_io(monkeypatch,
         model = StreamingToolModel(replies=[AIMessage(content='', tool_calls=[
             {'name': item.name, 'args': {}, 'id': item.name} for item in (first, second)]), AIMessage(content='done')])
         app = await make_app(monkeypatch, model, specs)
-        sid, events = await app.acreate_session('A'), []
+        sid, events = await app.sessions.create('A'), []
         def collect(event):
             events.append(event)
             if event.event_type == 'tool_progress' and event.data.tool_call_id == 'second' and event.data.activity == 'queued':
                 queued.set()
-        app.subscribe_events(collect)
-        task = asyncio.create_task(app.arun(sid, [('user', 'two calls')], max_concurrency=2))
+        app.observability.subscribe(collect)
+        task = asyncio.create_task(app.runs.start(sid, [('user', 'two calls')], max_concurrency=2))
         try:
             assert await asyncio.to_thread(entered.wait, 5) and await asyncio.to_thread(queued.wait, 5)
             assert not calls and not any(e.event_type == 'tool_progress' and e.data.phase == 'second_io' for e in events)
@@ -179,22 +179,22 @@ def test_broken_progress_receiver_keeps_real_write_and_original_io_failure(monke
             AIMessage(content='done'), call('write', {'path': 'file.txt', 'content': 'unwritten'}, 'two'),
             AIMessage(content='handled')])
         app = await make_app(monkeypatch, model, [create_session_write_tool()])
-        sid, events = await app.acreate_workspace_session('A', tmp_path), []
-        app.subscribe_events(events.append)
+        sid, events = await app.sessions.create_workspace('A', tmp_path), []
+        app.observability.subscribe(events.append)
         try:
-            result = await app.arun(sid, [('user', 'write')])
+            result = await app.runs.start(sid, [('user', 'write')])
             assert next(m for m in result['messages'] if isinstance(m, ToolMessage)).status == 'success'
             assert (tmp_path / 'file.txt').read_bytes() == b'written'
             failure = OSError('PRIVATE_IO_DETAIL')
             def fsync(_):
                 raise failure
             monkeypatch.setattr(write_module.os, 'fsync', fsync)
-            result = await app.arun(sid, [('user', 'write again')])
+            result = await app.runs.start(sid, [('user', 'write again')])
             message = next(m for m in result['messages'] if isinstance(m, ToolMessage) and m.tool_call_id == 'two')
             assert message.status == 'error' and 'I/O' in message.content
             assert (tmp_path / 'file.txt').read_bytes() == b'written'
             assert not list(tmp_path.glob('.naiyue-write-*'))
-            assert events[-1].data.status == 'completed' and not app._sessions.require(sid).describe_session()['busy']
+            assert events[-1].data.status == 'completed' and not app.sessions._sessions.require(sid).describe_session()['busy']
             assert 'tool_progress_unavailable' in caplog.text and 'PRIVATE_' not in caplog.text
         finally:
             await app.aclose()
@@ -221,10 +221,10 @@ def test_application_variants_use_startup_progress_settings(monkeypatch, tmp_pat
         app = await owner.__aenter__() if owner else await build_async_local_application('unused', **options)
         try:
             events = []
-            app.subscribe_events(events.append)
-            sid = await app.acreate_workspace_session('A', tmp_path)
-            result = await app.arun(sid, [('user', 'read')])
-            assert app._sessions._progress_settings is settings.progress
+            app.observability.subscribe(events.append)
+            sid = await app.sessions.create_workspace('A', tmp_path)
+            result = await app.runs.start(sid, [('user', 'read')])
+            assert app.sessions._sessions._progress_settings is settings.progress
             assert not any(e.event_type == 'tool_progress' for e in events)
             assert next(m for m in result['messages'] if isinstance(m, ToolMessage)).content == 'real content'
             assert events[-1].data.status == 'completed'

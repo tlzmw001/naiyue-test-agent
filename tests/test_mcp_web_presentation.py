@@ -60,10 +60,10 @@ def test_child_stream_snapshot_has_source_result_without_root_inference(monkeypa
         path = tmp_path / 'child.jsonl'
         child = MCPChildModel(replies=[call(NAME, {}), AIMessage(content='child done')])
         app, _ = await make_child_app(monkeypatch, path, child, mode='BypassApprovals')
-        events = []; app.subscribe_events(events.append)
+        events = []; app.observability.subscribe(events.append)
         try:
-            sid = await app.acreate_session('A')
-            await app.arun(sid, [('user', 'child')])
+            sid = await app.sessions.create('A')
+            await app.runs.start(sid, [('user', 'child')])
             rows = [json.loads(e.data.snapshot_json) for e in events
                     if e.event_type == 'message_completed' and e.source is not None]
             message = next(row for row in rows if row.get('mcp_result'))

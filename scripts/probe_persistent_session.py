@@ -52,14 +52,14 @@ async def _async__worker(args):
                 lambda _p: ModelCatalog('offline', {'offline': HistoryModel(responses=[])})))
         async with open_async_persistent_application(args.config, database_path=args.database, tools=[],
                 system_prompt='Keep the synthetic test fact. Answer only the requested exact value.', response_format=None) as app:
-            storage = app._storage
+            storage = app.sessions._persistence.storage
             if args.worker == 'save':
-                session = await app.acreate_session(app.default_model_id)
+                session = await app.sessions.create(app.models.default_id)
                 prompt = f'The synthetic test fact is {args.value}. Remember it and reply only SAVED.'
             else:
-                session = await app.arestore_session(args.session)
+                session = await app.sessions.restore(args.session)
                 prompt = 'What is the synthetic test fact from the earlier conversation? Reply with only its exact value.'
-            result = await app.arun(session, [('user', prompt)])
+            result = await app.runs.start(session, [('user', prompt)])
             row = storage.sessions.get(session)
             assert budget.snapshot()['used'] == 1 and row['state'] == 'ready'
             history_used = result['messages'][-1].text.strip() == args.value if args.worker == 'resume' else None

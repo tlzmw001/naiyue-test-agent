@@ -51,11 +51,11 @@ def test_recovery_keeps_completed_pending_writes_and_original_task_records(monke
             return open_async_persistent_application('unused', database_path=tmp_path / 'state.sqlite',
                 tools=specs, system_prompt='', response_format=None)
         async with opened() as app:
-            sid = await app.acreate_session('A')
+            sid = await app.sessions.create('A')
             with pytest.raises(PermissionMechanismError):
-                await app.arun(sid, [('user', 'fixture')])
-            row = app._storage.sessions.get(sid)
-            storage = app._storage
+                await app.runs.start(sid, [('user', 'fixture')])
+            row = app.sessions._persistence.storage.sessions.get(sid)
+            storage = app.sessions._persistence.storage
             archived = [json.loads(r[0])['data'] for r in storage.database.connection.execute(
                 'SELECT body_json FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (sid,))]
             actual = [r for r in archived if r.get('tool_call_id') == 'a']
@@ -63,14 +63,14 @@ def test_recovery_keeps_completed_pending_writes_and_original_task_records(monke
         model.seen.clear()
         async with opened() as app:
             config = {'configurable': {'thread_id': row['thread_id']}}
-            snapshot = await app._agent.aget_state(config)
-            before = await app._agent.checkpointer.aget_tuple(snapshot.config)
+            snapshot = await app.runs._agent.aget_state(config)
+            before = await app.runs._agent.checkpointer.aget_tuple(snapshot.config)
             assert any(isinstance(m, ToolMessage) and m.tool_call_id == 'a' for m in snapshot.values['messages'])
             events = []
-            app.subscribe_events(events.append)
-            await app.arecover_session(sid, checkpoint_id=snapshot.config['configurable']['checkpoint_id'], action='continue')
-            final = await app._agent.aget_state(config)
-            after = await app._agent.checkpointer.aget_tuple(snapshot.config)
+            app.observability.subscribe(events.append)
+            await app.sessions.recover(sid, checkpoint_id=snapshot.config['configurable']['checkpoint_id'], action='continue')
+            final = await app.runs._agent.aget_state(config)
+            after = await app.runs._agent.checkpointer.aget_tuple(snapshot.config)
             assert before.checkpoint == after.checkpoint and before.pending_writes == after.pending_writes
             results = [m for m in final.values['messages'] if isinstance(m, ToolMessage)]
             assert [m.tool_call_id for m in results] == ['a', 'b']
@@ -78,7 +78,7 @@ def test_recovery_keeps_completed_pending_writes_and_original_task_records(monke
             assert results[0].id == next(m.id for m in snapshot.values['messages'] if isinstance(m, ToolMessage))
             assert results[1].status == 'error' and calls == ['a', 'b']
             assert model.seen == [] and events == [] and final.next == () and final.tasks == ()
-            storage = app._storage
+            storage = app.sessions._persistence.storage
             archived = [json.loads(r[0])['data'] for r in storage.database.connection.execute(
                 'SELECT body_json FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (sid,))]
             assert [r['id'] for r in archived] == [m.id for m in final.values['messages']]

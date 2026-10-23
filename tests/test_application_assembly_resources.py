@@ -49,8 +49,8 @@ def test_close_releases_every_resource_and_keeps_first_exception(monkeypatch, tm
         app, _ = await build(monkeypatch, tmp_path, [])
         expected = RuntimeError('PRIVATE_MODEL' if model_close_fails else 'PRIVATE_DIAGNOSTIC')
         order = []
-        close_model, close_usage = app._catalog.aclose, app._usage.aclose
-        close_diagnostics, close_store = app._diagnostics.aclose, app._storage.close
+        close_model, close_usage = app.models._catalog.aclose, app.observability._usage.aclose
+        close_diagnostics, close_store = app.observability._diagnostics.aclose, app.sessions._persistence.storage.close
         async def model():
             await close_model()
             order.append('model')
@@ -68,18 +68,18 @@ def test_close_releases_every_resource_and_keeps_first_exception(monkeypatch, tm
             close_store()
             order.append('store')
             raise OSError('PRIVATE_STORE')
-        monkeypatch.setattr(app._catalog, 'aclose', model)
-        monkeypatch.setattr(app._diagnostics, 'aclose', diagnostic)
-        monkeypatch.setattr(app._usage, 'aclose', usage)
-        monkeypatch.setattr(app._storage, 'close', store)
+        monkeypatch.setattr(app.models._catalog, 'aclose', model)
+        monkeypatch.setattr(app.observability._diagnostics, 'aclose', diagnostic)
+        monkeypatch.setattr(app.observability._usage, 'aclose', usage)
+        monkeypatch.setattr(app.sessions._persistence.storage, 'close', store)
         with pytest.raises(RuntimeError) as caught:
             await app.aclose()
         assert caught.value is expected
         assert order == ['model', 'diagnostic', 'usage', 'store']
-        assert app._storage.database._closed
-        assert app._usage._task.done() and app._diagnostics._task.done()
+        assert app.sessions._persistence.storage.database._closed
+        assert app.observability._usage._task.done() and app.observability._diagnostics._task.done()
         with pytest.raises(ValueError, match='no active connection'):
-            await app._agent.checkpointer.conn.execute('SELECT 1')
+            await app.runs._agent.checkpointer.conn.execute('SELECT 1')
         assert 'PRIVATE' not in caplog.text
         assert 'cleanup_secondary_failed' in caplog.text
     asyncio.run(scenario())

@@ -29,7 +29,7 @@ async def test_child_batch_receives_parent_selected_concurrency(monkeypatch):
         limits.append(ensure_config()['max_concurrency'])
     child.on_request = inspect_config
     app, _ = await delegated_app(monkeypatch, child)
-    await app.arun(await app.acreate_session('A'), [('user', 'start')], max_concurrency=1)
+    await app.runs.start(await app.sessions.create('A'), [('user', 'start')], max_concurrency=1)
     assert limits == [1]
 
 
@@ -46,7 +46,7 @@ async def test_auto_reviews_original_human_request_not_delegated_task(monkeypatc
     effects = []
     app = await build_application('unused', tools=[create_subagent_tool(), definition(calls=effects, approved=True)],
                                   initial_active_tools=['subagent'], system_prompt='', response_format=None, settings=settings)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'ORIGINAL_HUMAN_REQUEST')])
+    result = await app.runs.start(await app.sessions.create('A'), [('user', 'ORIGINAL_HUMAN_REQUEST')])
     assert result['messages'][-1].content == 'done' and effects == [('probe', 'actual')]
     assert len(fast.seen) == 1 and detail.seen == []
     data = json.loads(fast.seen[0][-1].content)
@@ -64,17 +64,17 @@ async def test_child_checkpoint_and_parent_report_share_sqlite_without_sharing_t
             tools=[create_subagent_tool(), definition()], initial_active_tools=['subagent'],
             system_prompt='', response_format=None, settings=AppSettings(subagents=(role(),))) as app:
         instances = record_instances(monkeypatch, app)
-        sid = await app.acreate_session('A')
-        await app.arun(sid, [('user', 'root task')])
+        sid = await app.sessions.create('A')
+        await app.runs.start(sid, [('user', 'root task')])
         instance, = instances
-        child_graph = app._sessions._subagents['tester']['agent']
-        assert child_graph.checkpointer.backend is app._agent.checkpointer
+        child_graph = app.sessions._sessions._subagents['tester']['agent']
+        assert child_graph.checkpointer.backend is app.runs._agent.checkpointer
         snapshot = await child_graph.aget_state({'configurable': {'thread_id': instance['child_thread_id']}})
         assert [message.content for message in snapshot.values['messages']] == ['child task', 'child report']
         assert not snapshot.next and not snapshot.interrupts
-        rows = await app.alist_sessions()
+        rows = await app.sessions.list()
         assert len(rows) == 1 and rows[0]['session_id'] == sid and rows[0]['state'] == 'ready'
-        parent = await app.aget_messages(sid)
+        parent = await app.history.messages(sid)
         assert [json.loads(message.content)['report'] if isinstance(message, ToolMessage) and message.name == 'subagent' else message.content for message in parent] == ['root task', '', 'child report', 'root done']
         assert next(message for message in parent if isinstance(message, ToolMessage)).tool_call_id == 'delegate'
 
@@ -90,7 +90,7 @@ async def test_subagent_scope_is_used_by_model_selection_and_compaction(monkeypa
         seen.append((kwargs['context'].scope.identity.agent_path, kwargs['model_id'], model))
         return await compact(messages, model, **kwargs)
     monkeypatch.setattr(request_preparation, '_acompact_messages', record)
-    await app.arun(await app.acreate_session('A'), [('user', 'start')])
+    await app.runs.start(await app.sessions.create('A'), [('user', 'start')])
     child_scopes = [item for item in seen if item[0] != 'root']
     assert len(child_scopes) == 1 and child_scopes[0][1:] == ('B', child)
     assert len([item for item in seen if item[0] == 'root']) == 2
@@ -101,7 +101,7 @@ async def test_max_calls_omitted_does_not_install_an_implicit_small_limit(monkey
     child = ChildModel(replies=[call('probe', {'value': str(index)}, f'inner-{index}') for index in range(3)]
                                + [AIMessage(content='done')])
     app, _ = await delegated_app(monkeypatch, child)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'start')])
+    result = await app.runs.start(await app.sessions.create('A'), [('user', 'start')])
     assert len(child.seen) == 4
     assert next(message for message in result['messages'] if isinstance(message, ToolMessage)).status == 'success'
 
@@ -118,5 +118,5 @@ async def test_mismatched_parent_permit_cannot_start_child(monkeypatch):
         return original(self, *args, **kwargs)
     monkeypatch.setattr(AgentSession, 'prepare_subagent_instance', mismatch)
     with pytest.raises(PermissionMechanismError, match='permit'):
-        await app.arun(await app.acreate_session('A'), [('user', 'start')])
-    assert child.seen == [] and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
+        await app.runs.start(await app.sessions.create('A'), [('user', 'start')])
+    assert child.seen == [] and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app.sessions._sessions._sessions.values())

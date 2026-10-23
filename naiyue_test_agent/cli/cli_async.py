@@ -4,7 +4,13 @@ import asyncio
 import inspect
 import logging
 from contextlib import AsyncExitStack
-from threading import Event, Thread
+from threading import Event, Thread, current_thread
+from typing import Awaitable, Callable, TYPE_CHECKING, TypeVar
+
+if TYPE_CHECKING:
+    from naiyue_test_agent.application.core import Application
+
+T = TypeVar('T')
 
 from naiyue_test_agent.application.async_application import build_async_local_application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
@@ -26,7 +32,6 @@ class AsyncCliApplication:
             self._loop.call_soon_threadsafe(self._loop.stop)
             self._thread.join()
             raise
-        self.default_model_id = self._app.default_model_id
 
     def _serve(self):
         with asyncio.Runner() as runner:
@@ -44,7 +49,12 @@ class AsyncCliApplication:
                 config, tools=tools, system_prompt=prompt, response_format=response_format, initial_active_tools=initial_active_tools, settings=settings)
             self._stack.push_async_callback(self._app.aclose)
 
+    def call(self, operation: Callable[["Application"], T | Awaitable[T]]) -> T:
+        return self._submit(lambda: operation(self._app))
+
     def _submit(self, call):
+        if current_thread() is self._thread:
+            raise RuntimeError('CLI dispatch cannot wait on its owning event loop')
         if self._closed:
             raise RuntimeError('CLI application is closed')
 
@@ -53,115 +63,6 @@ class AsyncCliApplication:
             return await result if inspect.isawaitable(result) else result
 
         return asyncio.run_coroutine_threadsafe(execute(), self._loop).result()
-
-    def register_tool(self, spec):
-        return self._submit(lambda: self._app.aregister_tool(spec))
-
-    def get_registered_tools(self):
-        return self._submit(self._app.get_registered_tools)
-
-    def preview_shell_outputs(self, root):
-        return self._submit(lambda: self._app.apreview_shell_outputs(root))
-
-    def list_background_tasks(self, *, limit=20, before=None):
-        return self._submit(lambda: self._app.alist_background_tasks(limit=limit, before=before))
-
-    def background_task_output(self, task_id):
-        return self._submit(lambda: self._app.aget_background_task_output(task_id))
-
-    def stop_background_task(self, task_id):
-        return self._submit(lambda: self._app.astop_background_task(task_id))
-
-    def clear_shell_outputs(self, plan):
-        return self._submit(lambda: self._app.aclear_shell_outputs(plan))
-
-    def refresh_mcp(self):
-        return self._submit(self._app.arefresh_mcp)
-
-    def register_subagent(self, spec):
-        return self._submit(lambda: self._app.aregister_subagent(spec))
-
-    def get_registered_subagents(self):
-        return self._submit(self._app.get_registered_subagents)
-
-    def get_active_tools(self, session_id):
-        return self._submit(lambda: self._app.get_active_tools(session_id))
-
-    def set_active_tools(self, session_id, names):
-        return self._submit(lambda: self._app.aset_active_tools(session_id, names))
-
-    def create_session(self, model_id):
-        return self._submit(lambda: self._app.acreate_session(model_id))
-
-    def create_workspace_session(self, model_id, root):
-        return self._submit(lambda: self._app.acreate_workspace_session(model_id, root))
-
-    def restore_session(self, session_id):
-        return self._submit(lambda: self._app.arestore_session(session_id))
-
-    def get_session_history(self, session_id):
-        return self._submit(lambda: self._app.aget_session_history(session_id))
-
-    def recover_session(self, session_id, *, checkpoint_id, action):
-        return self._submit(lambda: self._app.arecover_session(session_id, checkpoint_id=checkpoint_id, action=action))
-
-    def select_model(self, session_id, model_id):
-        return self._submit(lambda: self._app.aselect_model(session_id, model_id))
-
-    def get_model_usage(self, session_id, *, model_limit=20, after_model=None):
-        return self._submit(lambda: self._app.aget_model_usage(session_id,
-            model_limit=model_limit, after_model=after_model))
-
-    def list_diagnostic_runs(self, session_id, *, limit=50, before=None):
-        return self._submit(lambda: self._app.alist_diagnostic_runs(session_id, limit=limit, before=before))
-
-    def get_diagnostic_events(self, session_id, run_id, *, limit=50, after=0):
-        return self._submit(lambda: self._app.aget_diagnostic_events(session_id, run_id, limit=limit, after=after))
-
-    def get_permission_mode(self, session_id):
-        return self._submit(lambda: self._app.get_permission_mode(session_id))
-
-    def set_permission_mode(self, session_id, mode):
-        return self._submit(lambda: self._app.aset_permission_mode(session_id, mode))
-
-    def subscribe_events(self, handler):
-        return self._submit(lambda: self._app.subscribe_events(handler))
-
-    def pending_tool_approvals(self, session_id):
-        return self._submit(lambda: self._app.pending_tool_approvals(session_id))
-
-    def pending_subagent_approvals(self, session_id):
-        return self._submit(lambda: self._app.pending_subagent_approvals(session_id))
-
-    def pending_approval_batches(self, session_id):
-        return self._submit(lambda: self._app.pending_approval_batches(session_id))
-
-    def prepare_root_approval_submission(self, session_id, **submission):
-        return self._submit(lambda: self._app.prepare_root_approval_submission(session_id, **submission))
-
-    def submit_subagent_approval(self, session_id, *, approval_batch_id, decisions, origin_run_id, remember_approved=()):
-        return self._submit(lambda: self._app.asubmit_subagent_approval(session_id,
-            approval_batch_id=approval_batch_id, decisions=decisions,
-            origin_run_id=origin_run_id, remember_approved=remember_approved))
-
-    def steer(self, session_id, text):
-        return self._submit(lambda: self._app.steer(session_id, text))
-
-    def follow_up(self, session_id, text):
-        return self._submit(lambda: self._app.follow_up(session_id, text))
-
-    def request_stop(self, session_id, *, run_id=None, agent_path='root', agent_run_id=None, approval_batch_id=None):
-        return self._submit(lambda: self._app.request_stop(session_id, run_id=run_id, agent_path=agent_path, agent_run_id=agent_run_id, approval_batch_id=approval_batch_id))
-
-    def run(self, session_id, messages):
-        return self._submit(lambda: self._app.arun(session_id, messages))
-
-    def resume_tool_approval(self, session_id, decisions, *, remember_approved=None):
-        return self._submit(lambda: self._app.aresume_tool_approval(session_id, decisions, remember_approved=remember_approved))
-
-    def stop_tool_approval(self, session_id, *, approval_batch_id, origin_run_id):
-        return self._submit(lambda: self._app.astop_tool_approval(session_id,
-            approval_batch_id=approval_batch_id, origin_run_id=origin_run_id))
 
     def close(self):
         if self._closed:

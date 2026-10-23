@@ -103,14 +103,14 @@ async def test_alias_permissions_use_selected_real_target_and_resume_never_resel
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[call('@note.txt')]), AIMessage(content='done')])
     rules = {'deny': [{'tool': 'read', 'path': str(first)}], 'allow': [{'tool': 'read', 'path': str(tmp_path) + '/**'}]} if decision == 'deny' else {}
     app = await build(monkeypatch, model, **rules)
-    sid = await app.acreate_workspace_session('A', root)
+    sid = await app.sessions.create_workspace('A', root)
     opened, original = [], Path.open
     def record(path, *args, **kwargs):
         if path in (first, second):
             opened.append(path)
         return original(path, *args, **kwargs)
     monkeypatch.setattr(Path, 'open', record)
-    paused = await app.arun(sid, [('user', 'read the file')])
+    paused = await app.runs.start(sid, [('user', 'read the file')])
     assert opened == []
     if decision == 'deny':
         result = paused
@@ -120,7 +120,7 @@ async def test_alias_permissions_use_selected_real_target_and_resume_never_resel
         if decision == 'changed':
             link.unlink()
             link.symlink_to(second)
-        result = await app.aresume_tool_approval(sid, ['reject' if decision == 'reject' else 'approve'])
+        result = await app.runs.resume_approval(sid, ['reject' if decision == 'reject' else 'approve'])
     output = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert output.tool_call_id == 'c1' and output.status == ('success' if decision == 'approve' else 'error')
     assert 'PRIVATE_OTHER' not in output.content
@@ -132,6 +132,6 @@ async def test_alias_permissions_use_selected_real_target_and_resume_never_resel
 async def test_hidden_compatibility_target_still_requires_approval(monkeypatch, tmp_path):
     (tmp_path / '.private').write_text('PRIVATE_BODY')
     app = await build(monkeypatch, DynamicModel(responses=[AIMessage(content='', tool_calls=[call('@.private')])]))
-    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'read')])
+    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'read')])
     assert result['approval_requests'][0]['target'] == str(tmp_path / '.private')
     assert not any(isinstance(m, ToolMessage) for m in result['messages'])

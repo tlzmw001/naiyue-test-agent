@@ -15,14 +15,14 @@ async def test_clear_only_after_preview_and_preserves_other_files(monkeypatch, t
     from tests.test_host_bash import make_app, bash_results, _archive_path
 
     app = await make_app(monkeypatch, "python -c \"print('A'*70000)\"")
-    session = await app.acreate_workspace_session('A', tmp_path)
-    await app.arun(session, [('user', 'run')])
-    result = await app.aresume_tool_approval(session, ['approve'])
+    session = await app.sessions.create_workspace('A', tmp_path)
+    await app.runs.start(session, [('user', 'run')])
+    result = await app.runs.resume_approval(session, ['approve'])
     path = tmp_path / _archive_path(bash_results(result)[0].content, 'raw')
     outside = tmp_path / 'user-file.txt'
     outside.write_text('keep')
 
-    plan = await app.apreview_shell_outputs(tmp_path)
+    plan = await app.tasks.preview_outputs(tmp_path)
     assert plan.file_count == 1
     assert plan.total_bytes == 70001
     assert path.exists()
@@ -40,11 +40,11 @@ async def test_clear_refuses_changed_plan_and_unexpected_file(monkeypatch, tmp_p
     from tests.test_host_bash import make_app, bash_results, _archive_path
 
     app = await make_app(monkeypatch, "python -c \"print('A'*70000)\"")
-    session = await app.acreate_workspace_session('A', tmp_path)
-    await app.arun(session, [('user', 'run')])
-    result = await app.aresume_tool_approval(session, ['approve'])
+    session = await app.sessions.create_workspace('A', tmp_path)
+    await app.runs.start(session, [('user', 'run')])
+    result = await app.runs.resume_approval(session, ['approve'])
     path = tmp_path / _archive_path(bash_results(result)[0].content, 'raw')
-    plan = await app.apreview_shell_outputs(tmp_path)
+    plan = await app.tasks.preview_outputs(tmp_path)
     path.write_bytes(b'changed')
     with pytest.raises(ValueError, match='changed'):
         clear_shell_outputs(plan)
@@ -53,7 +53,7 @@ async def test_clear_refuses_changed_plan_and_unexpected_file(monkeypatch, tmp_p
     unknown = path.parent / 'important.txt'
     unknown.write_text('keep')
     with pytest.raises(ValueError, match='unexpected'):
-        await app.apreview_shell_outputs(tmp_path)
+        await app.tasks.preview_outputs(tmp_path)
     assert unknown.read_text() == 'keep'
 
 
@@ -63,15 +63,15 @@ async def test_clear_rejects_symlink_in_output_directory(monkeypatch, tmp_path):
     from tests.test_host_bash import make_app
 
     app = await make_app(monkeypatch, "python -c \"print('A'*70000)\"")
-    session = await app.acreate_workspace_session('A', tmp_path)
-    await app.arun(session, [('user', 'run')])
-    await app.aresume_tool_approval(session, ['approve'])
+    session = await app.sessions.create_workspace('A', tmp_path)
+    await app.runs.start(session, [('user', 'run')])
+    await app.runs.resume_approval(session, ['approve'])
     outside = tmp_path / 'outside.txt'
     outside.write_text('keep')
-    archive = app._sessions.workspace_archive_root(tmp_path) / 'naiyue-agent-output'
+    archive = app.sessions._sessions.workspace_archive_root(tmp_path) / 'naiyue-agent-output'
     (archive / ('f' * 32 + '-stderr.log')).symlink_to(outside)
     with pytest.raises(ValueError, match='symlink'):
-        await app.apreview_shell_outputs(tmp_path)
+        await app.tasks.preview_outputs(tmp_path)
     assert outside.read_text() == 'keep'
 
 
@@ -132,9 +132,9 @@ async def test_nonzero_bash_still_returns_saved_output_path(monkeypatch, tmp_pat
     from tests.test_host_bash import make_app, bash_results, _archive_path
 
     app = await make_app(monkeypatch, "python -c \"print('F'*70000); raise SystemExit(7)\"")
-    session = await app.acreate_workspace_session('A', tmp_path)
-    await app.arun(session, [('user', 'run')])
-    result = await app.aresume_tool_approval(session, ['approve'])
+    session = await app.sessions.create_workspace('A', tmp_path)
+    await app.runs.start(session, [('user', 'run')])
+    result = await app.runs.resume_approval(session, ['approve'])
     message = bash_results(result)[0]
     assert message.status == 'error'
     assert 'exit_code=7' in message.content

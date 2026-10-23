@@ -34,7 +34,7 @@ def test_pipe_child_approval_and_exit_never_join_an_unresolved_child(monkeypatch
         def receive(event):
             events.append(event)
             if event.source and event.event_type == 'approval_requested': requested.set()
-        app.subscribe_events(receive)
+        app.call(lambda api: api.observability.subscribe(receive))
         return app
     monkeypatch.setattr(cli, 'build_local_application', factory)
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: False))
@@ -56,7 +56,7 @@ def test_pipe_child_approval_and_exit_never_join_an_unresolved_child(monkeypatch
     else:
         assert effects == [] and len(child.seen) == len(root.seen) == 1
         assert '已停止' in output
-    assert all(app._closed for app in apps)
+    assert all(app._closed and app._app._lifetime._closed for app in apps)
 
 
 def test_pipe_approval_waits_for_preceding_queued_request(monkeypatch, capsys):

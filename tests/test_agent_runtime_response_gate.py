@@ -66,11 +66,11 @@ async def test_rejected_model_message_fails_run_without_executing_any_tool(
     app = await build_application(
         Path('synthetic.json'), tools=[ToolSpec(write_probe, write_probe.args_schema, permissions=ToolPermission(default='allow'))], system_prompt='', response_format=None,
     )
-    session_id = await app.acreate_session('A')
+    session_id = await app.sessions.create('A')
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(RuntimeError) as caught:
-            await app.arun(session_id, [('user', 'private-question')])
+            await app.runs.start(session_id, [('user', 'private-question')])
 
     assert type(caught.value).__name__ == 'ModelResponseRejected'
     assert caught.value.reason == reason
@@ -134,11 +134,11 @@ async def test_session_can_continue_after_rejected_response(monkeypatch):
     app = await build_application(
         Path('synthetic.json'), tools=[], system_prompt='', response_format=None,
     )
-    session_id = await app.acreate_session('A')
+    session_id = await app.sessions.create('A')
 
     with pytest.raises(RuntimeError):
-        await app.arun(session_id, [('user', 'first')])
-    result = await app.arun(session_id, [('user', 'second')])
+        await app.runs.start(session_id, [('user', 'first')])
+    result = await app.runs.start(session_id, [('user', 'second')])
 
     assert [(type(message).__name__, message.content) for message in result['messages']] == [
         ('HumanMessage', 'first'), ('HumanMessage', 'second'),

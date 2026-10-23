@@ -27,14 +27,14 @@ def test_both_shells_wait_for_whole_batch_and_keep_original_names(monkeypatch, t
             {'name': 'powershell', 'id': 'ps-call', 'args': {'command': 'Write-Output ok'}},
         ]), AIMessage(content='done')])
         app = await make_app(monkeypatch, model, specs)
-        sid = await app.acreate_workspace_session('A', tmp_path)
+        sid = await app.sessions.create_workspace('A', tmp_path)
         events = []
-        app.subscribe_events(events.append)
+        app.observability.subscribe(events.append)
         try:
-            pending = await app.arun(sid, [('user', 'run both')])
+            pending = await app.runs.start(sid, [('user', 'run both')])
             assert [r['tool_name'] for r in pending['approval_requests']] == ['bash', 'powershell']
             assert seen == []
-            result = await app.aresume_tool_approval(sid, ['approve', 'approve'])
+            result = await app.runs.resume_approval(sid, ['approve', 'approve'])
             messages = [m for m in result['messages'] if isinstance(m, ToolMessage)]
             assert [(m.name, m.tool_call_id, m.status) for m in messages] == [
                 ('bash', 'bash-call', 'success'), ('powershell', 'ps-call', 'success')]
