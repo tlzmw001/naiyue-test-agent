@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.storage.session_storage import SessionPersistenceError
+from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.settings import AppSettings
 from test_async_application import StreamingToolModel, call
@@ -119,7 +119,7 @@ def test_root_necessary_save_failure_is_not_hidden_by_mcp_success(monkeypatch, t
             sid = await app.acreate_session('A')
             events = []; app.subscribe_events(events.append)
             def fail(*args, **kwargs): raise OSError('PRIVATE-SAVE-BODY')
-            monkeypatch.setattr(app._storage, 'finish_run', fail)
+            monkeypatch.setattr(app._storage.runs, 'finish_run', fail)
             with pytest.raises(SessionPersistenceError, match='session_save_unconfirmed'):
                 await app.arun(sid, [('user', 'call')])
             assert len(calls(path)) == 1

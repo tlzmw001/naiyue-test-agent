@@ -38,14 +38,14 @@ async def test_usage_save_failure_preserves_result_or_original_error(monkeypatch
         sid = await app.acreate_session('A')
         def broken(_):
             raise OSError('PRIVATE_STORE_ERROR')
-        monkeypatch.setattr(app._storage, 'save_model_usage_event', broken)
+        monkeypatch.setattr(app._storage.usage, 'save_model_usage_event', broken)
         if model_error:
             with pytest.raises(TimeoutError) as caught:
                 await app.arun(sid, [('user', 'task')])
             assert caught.value is failure
         else:
             assert (await app.arun(sid, [('user', 'task')]))['messages'][-1].content == 'done'
-        row, = app._storage._read('SELECT * FROM naiyue_model_usage_runs')
+        row, = app._storage.database.read_rows('SELECT * FROM naiyue_model_usage_runs')
         assert row['capture_incomplete'] == 1 and row['reason'] == 'storage_error'
         assert sid not in app._persistence._blocked
     assert 'model_usage_save_failed' in caplog.text and 'PRIVATE_STORE_ERROR' not in caplog.text
@@ -103,7 +103,7 @@ async def test_native_root_child_summary_and_same_model_auto_are_saved_once(monk
             assert child['parent_run_id'] == child['run_id'] and child['parent_tool_call_id'] == 'delegate'
             assert all(r['status'] == 'returned' and r['input_tokens'] == 100 for r in saved)
             assert all(type(r['duration_ms']) is int and r['duration_ms'] >= 0 for r in saved)
-            assert all(r['capture_incomplete'] == 0 for r in app._storage._read('SELECT * FROM naiyue_model_usage_runs'))
+            assert all(r['capture_incomplete'] == 0 for r in app._storage.database.read_rows('SELECT * FROM naiyue_model_usage_runs'))
             summary = await app.aget_model_usage(sid, model_limit=1)
             assert summary['recorded_calls'] == len(sent) == 8
             assert summary['metrics']['input_tokens']['known_sum'] == '800'
@@ -137,8 +137,8 @@ async def test_native_root_child_summary_and_same_model_auto_are_saved_once(monk
                         ('model_call_finished', 'tool_call_finished', 'run_finished')]
             assert all(type(e['data']['duration_ms']) is int and e['data']['duration_ms'] >= 0 for e in finishes)
             await app.adelete_session(sid)
-            assert rows(app._storage) == [] and app._storage._read('SELECT * FROM naiyue_model_usage_runs') == []
-            assert app._storage._read('SELECT * FROM naiyue_diagnostic_runs') == []
+            assert rows(app._storage) == [] and app._storage.database.read_rows('SELECT * FROM naiyue_model_usage_runs') == []
+            assert app._storage.database.read_rows('SELECT * FROM naiyue_diagnostic_runs') == []
 
 
 @async_test

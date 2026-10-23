@@ -15,14 +15,14 @@ async def test_first_task_title_is_saved_and_manual_name_wins(monkeypatch, tmp_p
     model = ToolModel(responses=[AIMessage(content='one'), AIMessage(content='two')])
     async with build(monkeypatch, path, model) as app:
         sid = await app.acreate_session('A')
-        assert app._storage.get(sid)['title'] is None
+        assert app._storage.sessions.get(sid)['title'] is None
         await app.arun(sid, [('user', '  检查\n登录\t接口\x00  ')])
-        assert app._storage.get(sid)['title'] == '检查 登录 接口'
+        assert app._storage.sessions.get(sid)['title'] == '检查 登录 接口'
         await app.aupdate_session_presentation(sid, title='我的名称')
         await app.arun(sid, [('user', 'second')])
-        assert app._storage.get(sid)['title'] == '我的名称'
+        assert app._storage.sessions.get(sid)['title'] == '我的名称'
     async with build(monkeypatch, path) as app:
-        assert app._storage.get(sid)['title'] == '我的名称'
+        assert app._storage.sessions.get(sid)['title'] == '我的名称'
 
 
 @async_test
@@ -31,10 +31,10 @@ async def test_title_failure_does_not_change_run_or_leak_body(monkeypatch, tmp_p
         sid = await app.acreate_session('A')
         def fail(*args):
             raise OSError('PRIVATE_TITLE')
-        monkeypatch.setattr(app._storage, 'ensure_title', fail)
+        monkeypatch.setattr(app._storage.sessions, 'ensure_title', fail)
         result = await app.arun(sid, [('user', 'task')])
         assert result['messages'][-1].content == 'answer'
-        assert app._storage.get(sid)['state'] == 'ready'
+        assert app._storage.sessions.get(sid)['state'] == 'ready'
         assert 'session_title_save_failed' in caplog.text
         assert 'PRIVATE_TITLE' not in caplog.text
 

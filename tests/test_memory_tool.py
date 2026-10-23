@@ -67,7 +67,7 @@ def test_formal_list_search_read_then_reopen_without_internal_model_call(monkeyp
         model = StreamingToolModel(replies=[])
         identity = str(uuid4())
         async with opened(monkeypatch, tmp_path, model, identity=identity) as app:
-            item = seed(app._storage.connection, 1, workspace_id=identity, body='使用.venv运行pytest')
+            item = seed(app._storage.database.connection, 1, workspace_id=identity, body='使用.venv运行pytest')
             model.replies.extend([call('memory', {'action':'list','scope':'workspace'}, 'list'),
                 call('memory', {'action':'search','query':'.venv','scope':'workspace'}, 'search'),
                 call('memory', {'action':'read','scope':'workspace','memory_id':item,'version':1}, 'read'),
@@ -131,8 +131,8 @@ def test_selected_child_gets_its_own_memory_permit(monkeypatch, tmp_path):
             'subagents':(SubAgentSpec('tester','Read memory','Read saved environment.',('memory',),model_id='B'),)})
         async with opened(monkeypatch, tmp_path, root, settings=settings,
                 tools=[create_memory_tool(),create_subagent_tool()],models={'A':root,'B':child}) as app:
-            identity = app._storage.get_workspace_binding()['workspace_id']
-            seed(app._storage.connection, 1, workspace_id=identity)
+            identity = app._storage.sessions.get_workspace_binding()['workspace_id']
+            seed(app._storage.database.connection, 1, workspace_id=identity)
             sid = await app.acreate_workspace_session('A', tmp_path)
             await app.arun(sid, [('user','delegate')])
             message = next(m for m in child.seen[-1] if isinstance(m,ToolMessage) and m.tool_call_id == 'inner')

@@ -40,7 +40,7 @@ def test_cursor_is_scope_bound_append_stable_and_revision_sensitive(monkeypatch,
             assert (await client.get(f'/api/sessions/{sid}/messages', params={'agent_id': 'unknown'})).status_code == 404
             app = web.state.service.application
             store = app._storage
-            config = {'configurable': {'thread_id': store.get(sid)['thread_id']}}
+            config = {'configurable': {'thread_id': store.sessions.get(sid)['thread_id']}}
             await app._agent.aupdate_state(config, {'messages': [AIMessage(id='a0', content='corrected')]})
             assert (await client.post(f'/api/sessions/{sid}/prepare')).status_code == 200
             stale = await client.get(f'/api/sessions/{sid}/messages', params={'before': token})
@@ -89,25 +89,25 @@ def test_gets_use_archive_sql_without_graph_or_complete_large_bodies(monkeypatch
             app = web.state.service.application
             store = app._storage
             await await_diagnostics_idle(app)
-            before = store.connection.total_changes
+            before = store.database.connection.total_changes
             async def forbidden(*args, **kwargs):
                 raise AssertionError('Display must not fetch execution state')
             monkeypatch.setattr(app._agent, 'aget_state', forbidden)
             monkeypatch.setattr(app, 'aget_messages', forbidden)
             queries = []
-            store.connection.set_trace_callback(queries.append)
+            store.database.connection.set_trace_callback(queries.append)
             try:
                 assert (await client.get(f'/api/sessions/{sid}')).status_code == 200
                 page = (await client.get(f'/api/sessions/{sid}/messages')).json()
-                raw = store.read_chat_page(sid, store.get(sid)['thread_id'], limit=1, body_bytes=16,
+                raw = store.conversation.read_chat_page(sid, store.sessions.get(sid)['thread_id'], limit=1, body_bytes=16,
                                           preview_chars=32)['records'][0]
                 assert raw['body_json'] is None and len(raw['preview']) == 32
                 assert page['messages'][-1]['content_truncated']
-                assert store.connection.total_changes == before
+                assert store.database.connection.total_changes == before
                 assert not any('FROM checkpoints' in q or 'FROM writes' in q for q in queries)
                 assert any('LIMIT' in q and 'CASE WHEN length' in q for q in queries)
             finally:
-                store.connection.set_trace_callback(None)
+                store.database.connection.set_trace_callback(None)
     asyncio.run(scenario())
 
 
@@ -149,7 +149,7 @@ def test_workspace_listing_and_admission_do_not_load_all_session_metadata(monkey
             foreign = await app.acreate_workspace_session('A', other)
             def forbidden(*args, **kwargs):
                 raise AssertionError('Web must not list every workspace for one session')
-            monkeypatch.setattr(app._storage, 'list_sessions', forbidden)
+            monkeypatch.setattr(app._storage.sessions, 'list_sessions', forbidden)
             response = await client.get('/api/sessions')
             assert response.status_code == 200 and [r['session_id'] for r in response.json()] == [sid]
             assert (await client.get(f'/api/sessions/{sid}')).status_code == 200

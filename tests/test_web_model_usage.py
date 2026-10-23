@@ -1,5 +1,7 @@
 """Usage HTTP reads preserve authentication, workspace boundaries and live work."""
 
+from naiyue_test_agent.storage.queries import write_one
+
 from native_application_helpers import async_test
 from test_web_api import web_client, request
 from test_async_application import StreamingToolModel
@@ -26,7 +28,8 @@ async def test_usage_http_is_authenticated_scoped_bounded_and_read_only(monkeypa
         assert (await client.get('/api/sessions/missing/usage')).status_code == 404
         assert model.seen == []
         seed(store, 'foreign')
-        store._write("UPDATE naiyue_sessions SET workspace_root=?,execution_root_kind='local' WHERE session_id=?", (str(tmp_path / 'PRIVATE_WORKSPACE'), 'foreign'))
+        with store.database.transaction(write=True) as connection:
+            write_one(connection, "UPDATE naiyue_sessions SET workspace_root=?,execution_root_kind='local' WHERE session_id=?", (str(tmp_path / 'PRIVATE_WORKSPACE'), 'foreign'))
         denied = await client.get('/api/sessions/foreign/usage')
         assert denied.status_code == 404 and 'PRIVATE' not in denied.text
 
@@ -44,7 +47,7 @@ async def test_usage_failure_does_not_stop_the_owned_run(monkeypatch, tmp_path, 
             await asyncio.wait_for(entered.wait(), 5)
             def fail(*args, **kwargs):
                 raise OSError('PRIVATE_SQL_ERROR')
-            monkeypatch.setattr(web.state.service.application._storage, 'read_model_usage', fail)
+            monkeypatch.setattr(web.state.service.application._storage.usage, 'read_model_usage', fail)
             response = await client.get(f'/api/sessions/{sid}/usage')
             assert response.status_code == 503 and response.json()['error']['code'] == 'usage_view_unavailable'
             assert not web.state.delivery.get(rid).task.done()

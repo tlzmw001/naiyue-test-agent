@@ -10,7 +10,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 from pydantic import ValidationError
 
-from naiyue_test_agent.storage.session_storage import SessionPersistenceError
+from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.model_access import ModelCatalog
@@ -87,7 +87,7 @@ def test_history_io_failure_returns_paired_error_then_agent_continues(monkeypatc
         async with build(monkeypatch, tmp_path/'sessions.sqlite', model,[create_history_tool()]) as app:
             sid=await app.acreate_workspace_session('A',tmp_path)
             def fail(*args,**kwargs):raise SessionPersistenceError('history_read_failed')
-            monkeypatch.setattr(app._storage,'read_history_tool',fail)
+            monkeypatch.setattr(app._storage.conversation, 'read_history_tool',fail)
             result=await app.arun(sid,[('user','query')])
             msg=feedback(result)
             assert msg.status=='error' and msg.tool_call_id=='bad'
@@ -121,7 +121,7 @@ def test_tool_selection_and_deny_prevent_archive_access(monkeypatch, tmp_path, b
             def forbidden(*args,**kwargs):
                 accesses.append(True)
                 raise AssertionError('Blocked tool must not access the archive')
-            monkeypatch.setattr(app._storage,'read_history_tool',forbidden)
+            monkeypatch.setattr(app._storage.conversation, 'read_history_tool',forbidden)
             result=await app.arun(sid,[('user','query')])
             assert feedback(result).status=='error'
             assert accesses==[] and len(model.seen)==2
@@ -165,13 +165,13 @@ def test_cold_target_is_read_without_restore_prepare_or_model_execution(monkeypa
         model=StreamingToolModel(replies=[call('history',{'action':'search','session_id':old,'query':'venv'}),AIMessage(content='found cold history')])
         async with build(monkeypatch,tmp_path/'sessions.sqlite',model,[create_history_tool()]) as app:
             assert not app._sessions.has_session(old)
-            before=app._storage.get(old)
+            before=app._storage.sessions.get(old)
             async def forbidden(*args,**kwargs):raise AssertionError('History reads must not prepare target sessions')
             monkeypatch.setattr(app._persistence,'aprepare',forbidden)
             sid=await app.acreate_workspace_session('A',tmp_path)
             result=await app.arun(sid,[('user','find old environment')])
             assert feedback(result).status=='success' and 'cold environment venv' in feedback(result).content
-            assert app._storage.get(old)==before
+            assert app._storage.sessions.get(old)==before
             assert not app._sessions.has_session(old) and len(model.seen)==2
     asyncio.run(scenario())
 

@@ -71,8 +71,7 @@ def test_configuration_failure_does_not_commit_memory(operation):
     def save(*args):
         writes.append(args)
         raise failure
-    storage = SimpleNamespace(create=lambda *args: None, select_model=save,
-        select_thinking=save, select_active_tools=save, select_permission_mode=save)
+    storage = SimpleNamespace(sessions=SimpleNamespace(create=lambda *args: None, select_model=save, select_thinking=save, select_active_tools=save, select_permission_mode=save))
     service.bind_persistence(SimpleNamespace(storage=storage))
     sid, other = service.create_session('A'), service.create_session('A')
     assert isinstance(service._sessions[sid], AgentSession)
@@ -95,7 +94,7 @@ def test_configuration_io_leaves_state_lock_available_until_commit():
     def save(*args):
         entered.set()
         assert release.wait(5)
-    service.bind_persistence(SimpleNamespace(storage=SimpleNamespace(create=lambda *args: None, select_model=save)))
+    service.bind_persistence(SimpleNamespace(storage=SimpleNamespace(sessions=SimpleNamespace(create=lambda *args: None, select_model=save))))
     sid = service.create_session('A')
     assert isinstance(service._sessions[sid], AgentSession)
     with ThreadPoolExecutor(max_workers=2) as workers:
@@ -140,7 +139,7 @@ def test_duplicate_admission_is_atomic_and_stale_transitions_are_rejected():
 def test_closing_controls_keeps_busy_until_persistent_finish_releases_it():
     from naiyue_test_agent.application.sessions.agent_session import AgentSession
     service = make_service()
-    service.bind_persistence(SimpleNamespace(storage=SimpleNamespace(create=lambda *args: None)))
+    service.bind_persistence(SimpleNamespace(storage=SimpleNamespace(sessions=SimpleNamespace(create=lambda *args: None))))
     sid = service.create_session('A')
     a, observation_run = service._admit(sid, 'run-a', 'message')
     rid, observation = observation_run.run_id, observation_run.observation

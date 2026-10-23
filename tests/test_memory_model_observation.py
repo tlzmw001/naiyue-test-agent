@@ -10,7 +10,7 @@ from naiyue_test_agent.agent_runtime.events import RunEventPublisher
 from naiyue_test_agent.agent_runtime.model_usage_observation import ModelUsageCallback
 from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
 from naiyue_test_agent.application.observability.run_events import RunObservation
-from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.storage.project_store import ProjectStore
 from native_application_helpers import async_test
 from test_model_invocation_observation import metadata, output
 from test_model_usage_storage import seed
@@ -49,23 +49,23 @@ async def test_memory_invocation_keeps_existing_pair_and_independent_run(tmp_pat
     from naiyue_test_agent.application.observability.diagnostic_persistence import project_diagnostic_event
     from naiyue_test_agent.settings import DiagnosticSettings
     path, settings = tmp_path / 'state.sqlite', DiagnosticSettings()
-    with SessionStorage(path) as store:
+    with ProjectStore(path) as store:
         seed(store)
-        before = store.get('s')
+        before = store.sessions.get('s')
         for event in events:
             if event.event_type.startswith('model_call_'):
-                store.save_model_usage_event(event)
-            store.save_diagnostic_event(project_diagnostic_event(event), settings)
-        store.finish_model_usage_run('s', 'memory-run')
-        store.finish_diagnostic_run(project_diagnostic_event(events[-1]), settings)
-        assert store.get('s') == before
-    with SessionStorage(path) as store:
-        usage = store.read_model_usage('s', model_limit=20)
+                store.usage.save_model_usage_event(event)
+            store.diagnostics.save_diagnostic_event(project_diagnostic_event(event), settings)
+        store.usage.finish_model_usage_run('s', 'memory-run')
+        store.diagnostics.finish_diagnostic_run(project_diagnostic_event(events[-1]), settings)
+        assert store.sessions.get('s') == before
+    with ProjectStore(path) as store:
+        usage = store.usage.read_model_usage('s', model_limit=20)
         assert usage['recorded_calls'] == 1
         activity, = usage['activities']
         assert activity['id'] == 'memory'
         assert activity['metrics']['input_tokens']['known_sum'] is None
-        detail = store.read_diagnostic_events('s', 'memory-run')
+        detail = store.diagnostics.read_diagnostic_events('s', 'memory-run')
         assert detail['summary']['mode'] == 'memory'
         assert detail['events'][1]['data']['purpose'] == 'memory'
 
@@ -135,24 +135,24 @@ def test_memory_origin_is_persisted_without_requiring_it_on_older_summaries(tmp_
     import json
 
     path, settings = tmp_path / 'state.sqlite', DiagnosticSettings()
-    with SessionStorage(path) as store:
+    with ProjectStore(path) as store:
         seed(store)
         events = []
         publisher = RunEventPublisher('s', 'memory-run', (events.append,))
         publisher.publish('run_started', RunStartedData('memory', origin_run_id='root-run'))
         publisher.publish('run_finished', RunFinishedData('completed'))
         for event in events:
-            store.save_diagnostic_event(project_diagnostic_event(event), settings)
-        store.finish_diagnostic_run(project_diagnostic_event(events[-1]), settings)
-        value = store.read_diagnostic_events('s', 'memory-run')
+            store.diagnostics.save_diagnostic_event(project_diagnostic_event(event), settings)
+        store.diagnostics.finish_diagnostic_run(project_diagnostic_event(events[-1]), settings)
+        value = store.diagnostics.read_diagnostic_events('s', 'memory-run')
         assert value['summary']['origin_run_id'] == 'root-run'
         assert value['events'][0]['data']['origin_run_id'] == 'root-run'
-        with store.connection:
-            row = store.connection.execute('SELECT * FROM naiyue_diagnostic_runs').fetchone()
+        with store.database.connection:
+            row = store.database.connection.execute('SELECT * FROM naiyue_diagnostic_runs').fetchone()
             old = json.loads(row['summary_json'])
             old.pop('origin_run_id')
-            diagnostic_storage._update(store.connection, row, old, closed_at=row['closed_at'])
-    with SessionStorage(path) as store:
-        summary = store.read_diagnostic_events('s', 'memory-run')['summary']
+            diagnostic_storage._update(store.database.connection, row, old, closed_at=row['closed_at'])
+    with ProjectStore(path) as store:
+        summary = store.diagnostics.read_diagnostic_events('s', 'memory-run')['summary']
         assert summary['mode'] == 'memory' and 'origin_run_id' not in summary
     assert RunStartedData('message').origin_run_id is None

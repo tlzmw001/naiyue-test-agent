@@ -20,13 +20,13 @@ async def test_oversized_old_prefix_does_not_block_later_small_checkpoints(monke
     async with build(monkeypatch, tmp_path / 'state.sqlite', model) as app:
         sid = await app.acreate_session('A')
         await app.arun(sid, [('user', 'x' * 20000)])
-        row = app._storage.get(sid)
+        row = app._storage.sessions.get(sid)
         config = {'configurable': {'thread_id': row['thread_id']}}
         await app._agent.aupdate_state(config, {'messages': [RemoveMessage(id=REMOVE_ALL_MESSAGES),
             HumanMessage(content='compacted context')]}, as_node='model')
         await app.arun(sid, [('user', 'new')])
         await app.arun(sid, [('user', 'latest')])
-        row = app._storage.get(sid)
+        row = app._storage.sessions.get(sid)
         saved = await app._agent.aget_state(config)
         results = [await retention.prune_after_finish(app._agent, app._storage, sid, row['run_id'],
             CheckpointRetentionSettings(trigger_checkpoints=2, max_delete_checkpoints=2, max_delete_bytes=16000),
@@ -45,10 +45,10 @@ async def test_historical_provenance_does_not_override_canonical_thread_ownershi
         await app.arun(a, [('user', 'A')])
         await app.arun(b, [('user', 'B old')])
         await app.arun(b, [('user', 'B latest')])
-        row = app._storage.get(a)
+        row = app._storage.sessions.get(a)
         # Historical provenance is not an executable boundary for B's latest task.
-        with app._storage.connection:
-            app._storage.connection.execute('''UPDATE naiyue_reply_boundaries SET source_thread_id=?
+        with app._storage.database.connection:
+            app._storage.database.connection.execute('''UPDATE naiyue_reply_boundaries SET source_thread_id=?
                 WHERE session_id=? AND input_sequence=(SELECT MIN(input_sequence)
                     FROM naiyue_reply_boundaries WHERE session_id=?)''', (row['thread_id'], b, b))
         saved = await app._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
@@ -63,18 +63,18 @@ async def test_shared_canonical_owner_prevents_deleting_either_sessions_data(mon
     async with build(monkeypatch, tmp_path / 'state.sqlite') as app:
         a, b = await app.acreate_session('A'), await app.acreate_session('A')
         await app.arun(a, [('user', 'A')])
-        row = app._storage.get(a)
-        head = dict(app._storage.chat_heads(a)[0])
-        with app._storage.connection:
-            app._storage.connection.execute('INSERT INTO naiyue_chat_sync VALUES(?,?,?,?,?,?,?,?)',
+        row = app._storage.sessions.get(a)
+        head = dict(app._storage.conversation.chat_heads(a)[0])
+        with app._storage.database.connection:
+            app._storage.database.connection.execute('INSERT INTO naiyue_chat_sync VALUES(?,?,?,?,?,?,?,?)',
                 (b, head['thread_id'], head['checkpoint_ns'], head['agent_path'], head['checkpoint_id'],
                  head['revision'], head['history_version'], head['stopped']))
-        before = app._storage._read('SELECT * FROM checkpoints')
+        before = app._storage.database.read_rows('SELECT * FROM checkpoints')
         saved = await app._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
         result = await retention.prune_after_finish(app._agent, app._storage, a, row['run_id'],
             CheckpointRetentionSettings(trigger_checkpoints=2), snapshot=saved)
         assert result['deleted_checkpoints'] == 0
-        assert app._storage._read('SELECT * FROM checkpoints') == before
+        assert app._storage.database.read_rows('SELECT * FROM checkpoints') == before
 
 
 @async_test
@@ -83,12 +83,12 @@ async def test_lost_archive_after_pruning_fails_instead_of_inventing_full_histor
     async with build(monkeypatch, tmp_path / 'state.sqlite') as app:
         sid = await app.acreate_session('A')
         await app.arun(sid, [('user', 'one')])
-        with app._storage.connection:
-            app._storage.connection.execute('DELETE FROM naiyue_chat_messages WHERE session_id=?', (sid,))
-            app._storage.connection.execute('DELETE FROM naiyue_chat_sync WHERE session_id=?', (sid,))
+        with app._storage.database.connection:
+            app._storage.database.connection.execute('DELETE FROM naiyue_chat_messages WHERE session_id=?', (sid,))
+            app._storage.database.connection.execute('DELETE FROM naiyue_chat_sync WHERE session_id=?', (sid,))
         with pytest.raises(SessionPersistenceError, match='chat_history_source_missing'):
             await app.aprepare_session(sid)
-        assert app._storage.chat_heads(sid) == []
+        assert app._storage.conversation.chat_heads(sid) == []
 
 
 @async_test
@@ -98,14 +98,14 @@ async def test_delta_channel_graph_is_never_pruned(monkeypatch, tmp_path):
     async with build(monkeypatch, tmp_path / 'state.sqlite') as app:
         sid = await app.acreate_session('A')
         await app.arun(sid, [('user', 'one')])
-        row = app._storage.get(sid)
+        row = app._storage.sessions.get(sid)
         saved = await app._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
-        before = app._storage._read('SELECT * FROM checkpoints')
+        before = app._storage.database.read_rows('SELECT * FROM checkpoints')
         app._agent.channels['synthetic_delta'] = DeltaChannel(lambda seed, writes: writes)
         result = await retention.prune_after_finish(app._agent, app._storage, sid, row['run_id'],
             CheckpointRetentionSettings(trigger_checkpoints=2), snapshot=saved)
         assert result['reason'] == 'backend_or_channel_unsupported'
-        assert app._storage._read('SELECT * FROM checkpoints') == before
+        assert app._storage.database.read_rows('SELECT * FROM checkpoints') == before
 
 
 @async_test
@@ -117,18 +117,18 @@ async def test_ownership_is_rechecked_after_planning(monkeypatch, tmp_path, capl
         a, b = await app.acreate_session('A'), await app.acreate_session('A')
         def changed(storage, inventory, candidates, protected):
             head = inventory['heads'][0]
-            with storage.connection:
-                storage.connection.execute('INSERT INTO naiyue_chat_sync VALUES(?,?,?,?,?,?,?,?)',
+            with storage.database.connection:
+                storage.database.connection.execute('INSERT INTO naiyue_chat_sync VALUES(?,?,?,?,?,?,?,?)',
                     (b, head['thread_id'], head['checkpoint_ns'], head['agent_path'], head['checkpoint_id'],
                      head['revision'], head['history_version'], head['stopped']))
-            before = storage._read('SELECT * FROM checkpoints')
+            before = storage.database.read_rows('SELECT * FROM checkpoints')
             try:
                 return original(storage, inventory, candidates, protected)
             finally:
-                observed.append((before, storage._read('SELECT * FROM checkpoints')))
+                observed.append((before, storage.database.read_rows('SELECT * FROM checkpoints')))
         monkeypatch.setattr(retention, '_commit', changed)
         await app.arun(a, [('user', 'A')])
-        assert app._storage.get(a)['state'] == 'ready'
+        assert app._storage.sessions.get(a)['state'] == 'ready'
     assert observed and all(before == after for before, after in observed)
     assert 'ownership_changed' in caplog.text
 
@@ -144,7 +144,7 @@ async def test_required_save_failure_never_calls_optional_maintenance(monkeypatc
         sid = await app.acreate_session('A')
         def failed(*args, **kwargs):
             raise OSError('synthetic required save failure')
-        monkeypatch.setattr(app._storage, 'finish_run', failed)
+        monkeypatch.setattr(app._storage.runs, 'finish_run', failed)
         with pytest.raises(SessionPersistenceError, match='session_save_unconfirmed'):
             await app.arun(sid, [('user', 'A')])
         assert calls == [] and sid in app._persistence._blocked

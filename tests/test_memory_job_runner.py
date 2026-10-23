@@ -47,7 +47,7 @@ def fixture(archive, tmp_path, model, **changes):
     service._terminal = terminal
     job = SimpleNamespace(task_id='a' * 32, session_id='session', target_session_id='session',
         root=tmp_path, origin_run_id='root-run', model_id='A', model=model, thread_id='root-thread',
-        conversation_revision=0, project_id=archive.get('session')['project_id'], deadline=time.monotonic() + 30, start=(0, 0), upper=1,
+        conversation_revision=0, project_id=archive.sessions.get('session')['project_id'], deadline=time.monotonic() + 30, start=(0, 0), upper=1,
         batches=0, saved=0, failed=0, overview_saved=0, skipped=[], control=RunControl(),
         released=True, pending_runs=set(), changed=asyncio.Event(), status='starting',
         started_at=None, result_status=None, termination=None, cleanup_confirmed=False, error_type=None)
@@ -69,8 +69,8 @@ def test_normal_worker_saves_overview_and_memory_with_independent_event_identity
             await drive(service, job)
             assert job.result_status == 'completed' and job.cleanup_confirmed
             assert job.saved == 1 and job.overview_saved == 1 and job.batches == 1 and job.failed == 0
-            assert store.overview(archive, 'session')['overview'] == result()['overview']
-            assert archive.connection.execute('SELECT count(*) FROM naiyue_memories').fetchone()[0] == 1
+            assert archive.memory.overview('session')['overview'] == result()['overview']
+            assert archive.database.connection.execute('SELECT count(*) FROM naiyue_memories').fetchone()[0] == 1
             starts = [e for e in events if e.event_type == 'run_started']
             ends = [e for e in events if e.event_type == 'run_finished']
             calls = [e for e in events if e.event_type == 'model_call_started']
@@ -110,7 +110,7 @@ def test_json_failure_has_no_false_save_and_no_model_repair_loop(archive, tmp_pa
             await drive(service, job)
             assert job.result_status == 'failed' and job.failed == 1 and job.cleanup_confirmed
             assert job.overview_saved == job.saved == 0 and len(model.seen) == 1
-            assert store.overview(archive, 'session')['overview'] is None
+            assert archive.memory.overview('session')['overview'] is None
             assert 'SYNTHETIC_PRIVATE' not in caplog.text
             assert [e for e in events if e.event_type == 'run_finished'][0].data.status == 'failed'
         finally:
@@ -198,7 +198,7 @@ def test_merging_root_wait_does_not_hold_slot_and_processes_new_saved_upper(arch
             await asyncio.wait_for(worker, 5)
             assert job.result_status == 'completed' and job.batches == 2 and job.overview_saved == 2
             assert len(model.seen) == 2
-            assert store.overview(archive, 'session')['coverage']['upper'] == 2
+            assert archive.memory.overview('session')['coverage']['upper'] == 2
         finally:
             service.memory.close()
     asyncio.run(scenario())
@@ -293,13 +293,13 @@ def test_stop_during_necessary_commit_drains_and_counts_the_real_save(archive, t
     async def scenario():
         save(archive, [HumanMessage(id='human', content='visible')])
         entered, release = threading.Event(), threading.Event()
-        original = store.save_overview
+        original = archive.memory.save_overview
         def gated(*args, **kwargs):
             entered.set()
             if not release.wait(5):
                 raise RuntimeError('Test commit was not released')
             return original(*args, **kwargs)
-        monkeypatch.setattr(memory_job_runner.store, 'save_overview', gated)
+        monkeypatch.setattr(archive.memory, 'save_overview', gated)
         service, job, events = fixture(archive, tmp_path, StreamingToolModel(replies=[response()]))
         worker = asyncio.create_task(memory_job_runner.drive(service, job))
         try:
@@ -311,7 +311,7 @@ def test_stop_during_necessary_commit_drains_and_counts_the_real_save(archive, t
             release.set()
             await asyncio.wait_for(worker, 5)
             assert job.result_status == 'stopped' and job.overview_saved == 1 and job.cleanup_confirmed
-            assert store.overview(archive, 'session')['overview'] == result()['overview']
+            assert archive.memory.overview('session')['overview'] == result()['overview']
         finally:
             release.set()
             await worker
@@ -332,7 +332,7 @@ def test_source_rewritten_during_model_call_cannot_save_stale_overview_or_memory
             model.release.set()
             await asyncio.wait_for(worker, 5)
             assert job.overview_saved == job.saved == 0 and job.failed == 2 and job.result_status == 'failed'
-            assert store.overview(archive, 'session')['overview'] is None
+            assert archive.memory.overview('session')['overview'] is None
         finally:
             model.release.set()
             await worker
@@ -355,7 +355,7 @@ def test_related_active_and_candidate_records_enter_the_same_single_model_call(a
                 body='使用.venv ' + 'existing detail ' * 40,
                 gaps=['等待确认测试环境'] if intent == 'candidate' else [])
             request = MemoryInput(action='record', scope='workspace', proposal=value, sources=[ref]).model_dump(mode='json')
-            service.memory.query('session', service.storage.get('session')['project_id'], request)
+            service.memory.query('session', service.storage.sessions.get('session')['project_id'], request)
         try:
             await drive(service, job)
             assert job.result_status == 'completed' and len(model.seen) == 1
@@ -382,7 +382,7 @@ def test_candidate_changed_after_search_is_skipped_with_diagnostic(archive, tmp_
             conversation_revision=0, quote='使用.venv', offset=0)
         value = dict(proposal(reason='用户明确约定'), intent='candidate', gaps=['等待确认'])
         record = MemoryInput(action='record', scope='workspace', proposal=value, sources=[ref]).model_dump(mode='json')
-        saved = service.memory.query('session', service.storage.get('session')['project_id'], record)['item']
+        saved = service.memory.query('session', service.storage.sessions.get('session')['project_id'], record)['item']
         original = service.memory.query
         reads = []
         def changed(sid, root, request):
@@ -410,7 +410,7 @@ def test_optional_related_budget_pressure_does_not_discard_valid_primary_sources
     async def scenario():
         save(archive, [HumanMessage(id='human', content='visible')])
         service, job, events = fixture(archive, tmp_path, StreamingToolModel(replies=[response()]))
-        original, calls = memory_job_runner.build_batch, []
+        original, calls = archive.memory.build_batch, []
         def constrained(*args, **kwargs):
             calls.append(kwargs['token_budget'])
             if len(calls) == 2:
@@ -418,7 +418,7 @@ def test_optional_related_budget_pressure_does_not_discard_valid_primary_sources
             return original(*args, **kwargs)
         async def related(*args):
             return [dict(memory_id='b' * 32, body='bounded optional context')]
-        monkeypatch.setattr(memory_job_runner, 'build_batch', constrained)
+        monkeypatch.setattr(archive.memory, 'build_batch', constrained)
         monkeypatch.setattr(memory_job_runner, '_related', related)
         try:
             await memory_job_runner.drive(service, job)

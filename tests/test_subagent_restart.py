@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from native_application_helpers import async_test
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.storage.session_storage import SessionPersistenceError
+from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import SubAgentSpec, create_subagent_tool, create_session_read_tool, create_session_write_tool
 from naiyue_test_agent.settings import AppSettings
@@ -64,7 +64,7 @@ async def test_restart_pairs_root_delegation_without_replaying_child_or_reviving
         assert history['state'] == 'running'
         assert history['recovery']['kind'] == 'interrupted_execution'
         assert history['recovery']['unconfirmed_tool_call_ids'] == ['outer']
-        row = app._storage.get(sid)
+        row = app._storage.sessions.get(sid)
         config = {'configurable': {'thread_id': row['thread_id']}}
         source = await app._agent.aget_state(config)
         child_graph = app._sessions._subagents['worker']['agent']
@@ -77,9 +77,9 @@ async def test_restart_pairs_root_delegation_without_replaying_child_or_reviving
         assert recovered['state'] == 'ready'
         assert not reached and not root.seen and not child.seen and not events
         storage = app._storage
-        child_head, = [r for r in storage.chat_heads(sid) if r['agent_path'] != 'root']
+        child_head, = [r for r in storage.conversation.chat_heads(sid) if r['agent_path'] != 'root']
         assert child_head['thread_id'] == info['child_thread_id']
-        archived_child = [json.loads(r[0])['data'] for r in storage.connection.execute(
+        archived_child = [json.loads(r[0])['data'] for r in storage.database.connection.execute(
             'SELECT body_json FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? ORDER BY sequence',
             (sid, info['child_thread_id']))]
         assert [r['id'] for r in archived_child] == [m.id for m in original_child.values['messages']]
@@ -93,7 +93,7 @@ async def test_restart_pairs_root_delegation_without_replaying_child_or_reviving
         assert feedback.tool_call_id == 'outer' and feedback.status == 'error'
         assert feedback.additional_kwargs['naiyue_recovery']['reason'] == 'result_unconfirmed'
         assert 'not automatically replayed' in feedback.content
-        writes = storage.connection.total_changes
+        writes = storage.database.connection.total_changes
         root_page = await app.aget_chat_page(sid, limit=1, body_bytes=16384, preview_chars=2048)
         assert root_page['records'][0]['message_id'] == feedback.id
         records = await app.aget_chat_subagents(sid)
@@ -102,7 +102,7 @@ async def test_restart_pairs_root_delegation_without_replaying_child_or_reviving
         child_page = await app.aget_chat_page(sid, agent_id=child_id, limit=1, body_bytes=16384, preview_chars=2048)
         assert child_page['has_more']
         assert child_page['records'][0]['message_id'] == original_child.values['messages'][-1].id
-        assert storage.connection.total_changes == writes and not root.seen and not child.seen and not reached
+        assert storage.database.connection.total_changes == writes and not root.seen and not child.seen and not reached
         unchanged = await child_graph.aget_state(child_config)
         assert unchanged.config == original_child.config and unchanged.values == original_child.values
         assert (await app.alist_sessions())[0]['state'] == 'ready'

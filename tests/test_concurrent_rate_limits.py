@@ -75,11 +75,11 @@ async def test_rate_limit_root_or_child_has_no_cross_session_cascade(monkeypatch
             assert failed.data.failure.reason == 'limit_unspecified'
             assert failed.data.failure.error_type == ('ToolException' if child else type(failure).__name__)
             assert not tasks[0].done() and set(app._persistence._active) == {b}
-            assert app._storage.get(b)['state'] == 'running'
+            assert app._storage.sessions.get(b)['state'] == 'running'
             assert (await app.arun(c, [('user', c)]))['messages'][-1].content == 'done:' + c
             model.gates[b][1].set()
             assert (await tasks[0])['messages'][-1].content == 'done:' + b
-            assert app._storage.get(b)['state'] == app._storage.get(c)['state'] == 'ready'
+            assert app._storage.sessions.get(b)['state'] == app._storage.sessions.get(c)['state'] == 'ready'
             assert app._persistence._active == {} and app._operations == {}
         finally:
             await drain(tasks, model)
@@ -116,7 +116,7 @@ async def test_auto_rate_limit_requires_human_while_other_root_runs(monkeypatch,
             assert effects == [('probe', 'approved')] and len(failing.seen) == 1
             primary.gates[b][1].set()
             assert (await task)['messages'][-1].content == 'done:' + b
-            assert app._storage.get(a)['state'] == app._storage.get(b)['state'] == 'ready'
+            assert app._storage.sessions.get(a)['state'] == app._storage.sessions.get(b)['state'] == 'ready'
         finally:
             await drain([task], primary)
     assert 'PRIVATE' not in caplog.text

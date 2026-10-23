@@ -8,7 +8,7 @@ import json
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from naiyue_test_agent.storage.session_storage import SessionPersistenceError
+from naiyue_test_agent.application.errors import SessionPersistenceError
 from test_persistent_sessions import build
 from test_async_persistent import factory
 from test_async_application import StreamingToolModel
@@ -19,7 +19,7 @@ async def unfinished(monkeypatch, path):
     async with build(monkeypatch, path) as app:
         storage = app._storage
         sid = await app.acreate_session('A')
-        row = storage.get(sid)
+        row = storage.sessions.get(sid)
         messages = [HumanMessage(content='saved request', id='h'),
             AIMessage(content='', id='ai', tool_calls=[
                 {'id': 'a', 'name': 'read', 'args': {'path': 'a'}},
@@ -28,7 +28,7 @@ async def unfinished(monkeypatch, path):
                 name='read', tool_call_id='a', artifact={'saved': [1]})]
         await app._agent.aupdate_state({'configurable': {'thread_id': row['thread_id']}}, {'messages': messages}, as_node='model')
         snapshot = await app._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
-        storage.finish_run(sid, 'failed', None, '', 'failed')
+        storage.runs.finish_run(sid, 'failed', None, '', 'failed')
         return sid, snapshot, messages
 
 
@@ -65,7 +65,7 @@ async def test_three_updates_preserve_results_then_only_new_input_calls_model(mo
         assert raw_before.checkpoint == raw_after.checkpoint and raw_before.pending_writes == raw_after.pending_writes
         marker = json.loads(snapshot.metadata['naiyue_recovery'])
         assert marker['phase'] == 'finished' and marker['source_checkpoint_id'] == original.config['configurable']['checkpoint_id']
-        row = app._storage.get(sid)
+        row = app._storage.sessions.get(sid)
         assert row['state'] == 'ready' and row['last_run_status'] == 'recovered'
         assert row['checkpoint_id'] == result['checkpoint_id'] == snapshot.config['configurable']['checkpoint_id']
         memory = app._sessions._sessions[sid]
@@ -120,10 +120,10 @@ async def test_saved_phase_can_be_retried_after_failure_without_duplicate_result
         with monkeypatch.context() as patch:
             patch.setattr(app._agent, 'aupdate_state', failed_after_save)
             if phase == 'metadata':
-                patch.setattr(storage, 'finish_run', lambda *_a: (_ for _ in ()).throw(OSError('PRIVATE_SQL')))
+                patch.setattr(storage.runs, 'finish_run', lambda *_a: (_ for _ in ()).throw(OSError('PRIVATE_SQL')))
             with pytest.raises(SessionPersistenceError, match='session_save_unconfirmed'):
                 await app.arecover_session(sid, checkpoint_id=original.config['configurable']['checkpoint_id'], action='continue')
-        assert not app._sessions.has_session(sid) and storage.get(sid)['state'] == 'failed'
+        assert not app._sessions.has_session(sid) and storage.sessions.get(sid)['state'] == 'failed'
         current = await app.aget_session_history(sid)
         assert current['recovery']['actions'] == ['continue']
         result = await app.arecover_session(sid, checkpoint_id=current['checkpoint_id'], action='continue')
@@ -185,7 +185,7 @@ async def test_invalid_recovery_record_never_mutates_checkpoint(monkeypatch, tmp
     sid, original, _ = await unfinished(monkeypatch, path)
     async with build(monkeypatch, path) as app:
         storage = app._storage
-        row = storage.get(sid)
+        row = storage.sessions.get(sid)
         record = {'version': 1, 'recovery_id': 'a' * 32, 'session_id': sid, 'thread_id': row['thread_id'],
             'source_checkpoint_id': original.config['configurable']['checkpoint_id'], 'source_namespace': '',
             'original_state': 'failed', 'pre_tool_approval': False, 'phase': 'cleared'}
@@ -212,7 +212,7 @@ async def test_current_process_state_cannot_be_bypassed(monkeypatch, tmp_path, g
         elif gate == 'active':
             app._persistence._active[sid] = 'active-run'
         else:
-            row = storage.get(sid)
+            row = storage.sessions.get(sid)
             app._sessions.install_restored_session(sid, thread_id=row['thread_id'],
                 model_id=row['model_id'], thinking_level=row['thinking_level'], workspace_root=None,
                 active_tool_names=(), permission_mode=row['permission_mode'])

@@ -44,10 +44,10 @@ async def test_crash_at_recovery_boundary_can_reopen_and_finish(monkeypatch, tmp
         latest = history['checkpoint_id']
         assert [m for m in history['messages'] if isinstance(m, ToolMessage) and m.tool_call_id == 'a'] == [messages[-1]]
         if point == 'after_metadata':
-            assert storage.get(sid)['state'] == 'ready' and history['recovery']['kind'] == 'ready'
+            assert storage.sessions.get(sid)['state'] == 'ready' and history['recovery']['kind'] == 'ready'
             assert await app.arestore_session(sid) == sid
         else:
-            assert storage.get(sid)['state'] == 'failed' and history['recovery']['actions'] == ['continue']
+            assert storage.sessions.get(sid)['state'] == 'failed' and history['recovery']['actions'] == ['continue']
             if point == 'before_cleared':
                 assert latest == checkpoint
             await app.arecover_session(sid, checkpoint_id=latest, action='continue')
@@ -56,17 +56,17 @@ async def test_crash_at_recovery_boundary_can_reopen_and_finish(monkeypatch, tmp
         assert snapshot.values['messages'][:3] == messages
         assert [m.tool_call_id for m in snapshot.values['messages'] if isinstance(m, ToolMessage)] == ['a', 'b']
         assert json.loads(snapshot.metadata['naiyue_recovery'])['phase'] == 'finished'
-        archived = [json.loads(r[0])['data'] for r in storage.connection.execute(
+        archived = [json.loads(r[0])['data'] for r in storage.database.connection.execute(
             'SELECT body_json FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (sid,))]
         assert [m['id'] for m in archived] == [m.id for m in snapshot.values['messages']]
         assert archived[-1]['additional_kwargs']['naiyue_recovery']['reason'] == 'result_unconfirmed'
-        writes = storage.connection.total_changes
+        writes = storage.database.connection.total_changes
         page = await app.aget_chat_page(sid, limit=1, body_bytes=16384, preview_chars=2048)
         latest, = page['records']
         assert page['has_more'] and latest['message_id'] == snapshot.values['messages'][-1].id
         assert latest['parent_message_id'] == messages[1].id
         assert json.loads(latest['body_json'])['data'] == archived[-1]
-        assert storage.connection.total_changes == writes
+        assert storage.database.connection.total_changes == writes
 
 
 @async_test
@@ -95,15 +95,15 @@ async def test_file_commit_without_tool_result_is_retained_and_never_replayed(mo
         await app.arecover_session(sid, checkpoint_id=history['checkpoint_id'], action='continue')
         assert events == [] and reached == []
         assert (root / 'b.txt').read_text() == 'committed effect'
-        snapshot = await app._agent.aget_state({'configurable': {'thread_id': storage.get(sid)['thread_id']}})
+        snapshot = await app._agent.aget_state({'configurable': {'thread_id': storage.sessions.get(sid)['thread_id']}})
         result = next(m for m in snapshot.values['messages'] if isinstance(m, ToolMessage) and m.tool_call_id == 'b')
         assert result.status == 'error' and 'may already have taken effect' in result.content
-        writes = storage.connection.total_changes
+        writes = storage.database.connection.total_changes
         page = await app.aget_chat_page(sid, limit=1, body_bytes=16384, preview_chars=2048)
         latest, = page['records']
         assert latest['message_id'] == result.id and latest['parent_message_id'] == 'ai'
         assert json.loads(latest['body_json'])['data']['additional_kwargs']['naiyue_recovery']['reason'] == 'result_unconfirmed'
-        assert storage.connection.total_changes == writes and reached == []
+        assert storage.database.connection.total_changes == writes and reached == []
         assert (await app.arun(sid, [('user', 'new input')]))['messages'][-1].content == 'answer'
         assert reached == [] and (tmp_path / 'executions').read_text() == 'write\n'
 
@@ -131,13 +131,13 @@ def install_exit_points(patch, app, point, native):
         return await put(config, *args, **kwargs)
     patch.setattr(saver, 'aput', save)
     storage = app._storage
-    finish = storage.finish_run
+    finish = storage.runs.finish_run
     def metadata(*args):
         crash('before_metadata', point)
         result = finish(*args)
         crash('after_metadata', point)
         return result
-    patch.setattr(storage, 'finish_run', metadata)
+    patch.setattr(storage.runs, 'finish_run', metadata)
 
 
 async def child():

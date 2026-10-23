@@ -53,7 +53,7 @@ def crash_restore(location, backup_id, point):
 @pytest.mark.parametrize('point', ['candidate', 'prepared', 'move:custom.sqlite', 'move:custom.sqlite-wal',
     'move:custom.sqlite-shm', 'move:custom.sqlite-journal', 'install', 'installed', 'completed', 'cleared'])
 def test_process_crash_never_empties_store_and_explicit_retry_finishes(tmp_path, monkeypatch, capsys, point):
-    from naiyue_test_agent.storage.session_storage import SessionStorage
+    from naiyue_test_agent.storage.project_store import ProjectStore
     from naiyue_test_agent.application.errors import SessionPersistenceError
     location, saved = saved_store(tmp_path)
     database, backup_id = location.database_path, saved['backup_id']
@@ -65,7 +65,7 @@ def test_process_crash_never_empties_store_and_explicit_retry_finishes(tmp_path,
     record = json.loads(marker.read_text()) if marker.exists() else None
     if record:
         with pytest.raises(SessionPersistenceError, match='restore_incomplete'):
-            SessionStorage(database)
+            ProjectStore(database)
     if point in ('install', 'installed', 'completed'):
         # Closing the already prepared operation does not depend on the source backup.
         database.with_name(database.name + '.backups').rename(tmp_path / 'offline-backups')

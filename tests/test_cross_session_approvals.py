@@ -35,7 +35,7 @@ async def test_paused_root_reapplies_capacity_without_consuming_approval(monkeyp
         task = asyncio.create_task(app.arun(b, [('user', b)]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            saved_events, before = len(events), app._storage.get(a)
+            saved_events, before = len(events), app._storage.sessions.get(a)
             with pytest.raises(SessionPendingApprovalError):
                 await app.arun(a, [('user', 'must decide first')])
             with pytest.raises(ValueError):
@@ -46,14 +46,14 @@ async def test_paused_root_reapplies_capacity_without_consuming_approval(monkeyp
                 await app.aresume_tool_approval(a, ['approve'], remember_approved=['one'])
             assert owner.snapshot_for_run()['pending'] == pending
             assert owner.resolve_permission_context()['session_allow'] == []
-            assert not owner.is_busy() and len(events) == saved_events and app._storage.get(a) == before
+            assert not owner.is_busy() and len(events) == saved_events and app._storage.sessions.get(a) == before
             assert effects == [] and len(model.requests[a]) == 1
             if stop:
                 batch, = app.pending_approval_batches(a)
                 result = await app.astop_tool_approval(a, approval_batch_id=batch['approval_batch_id'],
                                                        origin_run_id=batch['origin_run_id'])
                 assert result['run_stopped'] and effects == [] and len(model.requests[a]) == 1
-                assert not app.pending_approval_batches(a) and app._storage.get(a)['state'] == 'ready'
+                assert not app.pending_approval_batches(a) and app._storage.sessions.get(a)['state'] == 'ready'
                 assert set(app._persistence._active) == {b} and not task.done()
             else:
                 model.gates[b][1].set()
@@ -63,7 +63,7 @@ async def test_paused_root_reapplies_capacity_without_consuming_approval(monkeyp
                 assert effects == [('probe', 'approved-value')] and len(model.requests[a]) == 2
                 assert len(owner.resolve_permission_context()['session_allow']) == 1
                 assert next(m for m in result['messages'] if isinstance(m, ToolMessage)).tool_call_id == 'one'
-                assert app._storage.get(a)['state'] == 'ready'
+                assert app._storage.sessions.get(a)['state'] == 'ready'
             assert not owner.is_busy()
         finally:
             await drain([task], model)

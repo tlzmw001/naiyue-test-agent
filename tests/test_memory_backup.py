@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.storage.project_store import ProjectStore
 from naiyue_test_agent.storage.backup import create_backup, validate_backup, list_backups
 from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA, check_snapshot
 from tests.storage_backup_fixture import closed_store
@@ -14,12 +14,12 @@ from test_memory_readonly import seed
 
 def test_schema14_upgrade_takes_prechange_backup_and_creates_transactional_index(tmp_path):
     database,_,identity=closed_store(tmp_path,version=14)
-    with SessionStorage(database) as storage:
+    with ProjectStore(database) as storage:
         backup,=list_backups(database)
         assert backup['manifest']['source_schema']==14 and backup['manifest']['target_schema']==CURRENT_SCHEMA
         assert validate_backup(database,backup['backup_id'])['source_schema']==14
-        item=seed(storage.connection,1,workspace_id=identity)
-        saved=create_backup(storage.connection,database,target_schema=CURRENT_SCHEMA)
+        item=seed(storage.database.connection,1,workspace_id=identity)
+        saved=create_backup(storage.database.connection,database,target_schema=CURRENT_SCHEMA)
     artifact=database.with_name(database.name+'.backups')/saved['backup_id']/'database.sqlite'
     assert check_snapshot(artifact)['source_schema']==CURRENT_SCHEMA
     with closing(sqlite3.connect(artifact)) as connection:
@@ -36,7 +36,7 @@ def test_memory_migration_failure_keeps_schema14_and_usable_backup(tmp_path,monk
         connection.execute('CREATE TABLE partial_memory(value TEXT)')
         raise error
     monkeypatch.setattr(memory_schema,'create',fail)
-    with pytest.raises(StorageStartupError) as caught:SessionStorage(database)
+    with pytest.raises(StorageStartupError) as caught:ProjectStore(database)
     assert caught.value.__cause__ is error
     assert caught.value.current_schema==14 and caught.value.phase=='schema_15'
     assert validate_backup(database,caught.value.backup_id)['source_schema']==14

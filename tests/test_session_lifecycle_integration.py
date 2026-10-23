@@ -60,10 +60,10 @@ async def test_root_then_child_approval_keeps_owner_until_required_save(
         assert len(pending['approval_requests']) == 1 and effects == []
         assert owner._run is None and not owner.is_busy()
         assert owner.snapshot_for_run()['pending']['requested_run_id'] == first.run_id
-        assert app._storage.get(sid)['state'] == 'interrupted'
+        assert app._storage.sessions.get(sid)['state'] == 'interrupted'
         assert [e.data.status for e in events if e.event_type == 'run_finished'] == ['interrupted']
 
-        finish = app._storage.finish_run
+        finish = app._storage.runs.finish_run
         close_catalog, stop_all = app._catalog.aclose, app._sessions.stop_loaded_sessions
         def blocked_finish(*args, **kwargs):
             loop.call_soon_threadsafe(entered.set)
@@ -77,7 +77,7 @@ async def test_root_then_child_approval_keeps_owner_until_required_save(
         def closing():
             stop_all()
             close_entered.set()
-        monkeypatch.setattr(app._storage, 'finish_run', blocked_finish)
+        monkeypatch.setattr(app._storage.runs, 'finish_run', blocked_finish)
         monkeypatch.setattr(app._catalog, 'aclose', close)
         monkeypatch.setattr(app._sessions, 'stop_loaded_sessions', closing)
         task = asyncio.create_task(app.aresume_tool_approval(sid, ['approve']))
@@ -106,7 +106,7 @@ async def test_root_then_child_approval_keeps_owner_until_required_save(
             assert len(runs) == 2 and len(root.seen) == 3 and len(child.seen) == 2
             assert [(e.source is None, e.data.status) for e in events if e.event_type == 'run_finished'] == [
                 (True, 'interrupted'), (False, 'interrupted'), (False, 'completed')]
-            assert app._storage.get(sid)['state'] == 'running' and closed == []
+            assert app._storage.sessions.get(sid)['state'] == 'running' and closed == []
             if outcome == 'cancel':
                 task.cancel('cancel during required save')
                 barrier = loop.create_future()
@@ -142,7 +142,7 @@ async def test_root_then_child_approval_keeps_owner_until_required_save(
             assert events[-1].event_type == 'run_finished' and events[-1].source is None
             failed = outcome in ('save_failure', 'primary_error')
             assert events[-1].data.status == ('failed' if failed else 'completed')
-            assert app._storage.get(sid)['state'] == ('running' if failed else 'ready')
+            assert app._storage.sessions.get(sid)['state'] == ('running' if failed else 'ready')
             if failed:
                 assert not (await app.aget_session_status(sid))['can_run']
             assert closed == ([False] if outcome == 'close' else [])
@@ -180,7 +180,7 @@ async def test_root_approval_reopens_as_facts_until_explicit_decision(monkeypatc
         result = await app.aresume_tool_approval(sid, ['approve'])
         assert result['messages'][-1].content == 'done' and effects == [('probe', 'once')]
         assert owner._run is None and app.pending_approval_batches(sid) == []
-        assert app._storage.get(sid)['state'] == 'ready' and len(root.seen) == 2
+        assert app._storage.sessions.get(sid)['state'] == 'ready' and len(root.seen) == 2
 
 
 @async_test
@@ -189,7 +189,7 @@ async def test_close_during_child_approval_settles_before_reopen(monkeypatch, tm
     from naiyue_test_agent.application import async_persistent
     order = []
     saver_factory = async_persistent.AsyncSqliteSaver.from_conn_string
-    storage_close = async_persistent.SessionStorage.close
+    storage_close = async_persistent.ProjectStore.close
     @asynccontextmanager
     async def saved(*args, **kwargs):
         async with saver_factory(*args, **kwargs) as saver:
@@ -199,7 +199,7 @@ async def test_close_during_child_approval_settles_before_reopen(monkeypatch, tm
         storage_close(storage)
         order.append('storage')
     monkeypatch.setattr(async_persistent.AsyncSqliteSaver, 'from_conn_string', saved)
-    monkeypatch.setattr(async_persistent.SessionStorage, 'close', close_storage)
+    monkeypatch.setattr(async_persistent.ProjectStore, 'close', close_storage)
     path, effects, events, closed = tmp_path / 'state.sqlite', [], [], []
     root = StreamingToolModel(replies=[call('subagent', {'agent': 'tester', 'task': 'check'}, 'delegate')])
     child = ChildModel(replies=[call('probe', {'value': 'never'}, 'child-call')])
@@ -227,7 +227,7 @@ async def test_close_during_child_approval_settles_before_reopen(monkeypatch, tm
             assert result['run_stopped'] and effects == []
             assert future.done() and driver.done() and instance['status'] == 'stopped'
             assert owner._run is None and closed == [(False, [(True, False, False)])]
-            assert app._operations == {} and app._storage.get(sid)['state'] == 'ready'
+            assert app._operations == {} and app._storage.sessions.get(sid)['state'] == 'ready'
             assert [(e.source is None, e.data.status) for e in events if e.event_type == 'run_finished'] == [
                 (False, 'interrupted'), (False, 'stopped'), (True, 'stopped')]
         finally:

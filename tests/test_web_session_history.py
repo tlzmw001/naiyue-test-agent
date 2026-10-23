@@ -17,8 +17,8 @@ def test_restricted_history_is_readable_without_live_run_or_execution(monkeypatc
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[AIMessage(content='saved answer')])) as (client, app):
             sid, _ = await start(client, 'saved human')
             storage = app.state.service.application._storage
-            row = storage.get(sid)
-            storage.finish_run(sid, state, row['checkpoint_id'], '', state)
+            row = storage.sessions.get(sid)
+            storage.runs.finish_run(sid, state, row['checkpoint_id'], '', state)
         model = StreamingToolModel(replies=[])
         async with web_client(monkeypatch, tmp_path, model) as (client, app):
             backend = app.state.service.application
@@ -47,7 +47,7 @@ def test_ready_checkpoint_mismatch_is_readable_but_not_executable(monkeypatch, t
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[AIMessage(content='saved')])) as (client, app):
             sid, _ = await start(client)
             storage = app.state.service.application._storage
-            storage.finish_run(sid, 'ready', 'wrong', '', 'completed')
+            storage.runs.finish_run(sid, 'ready', 'wrong', '', 'completed')
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[])) as (client, app):
             assert (await client.post(f'/api/sessions/{sid}/prepare')).status_code == 200
             view = (await client.get(f'/api/sessions/{sid}')).json()
@@ -64,8 +64,8 @@ def test_history_stays_workspace_scoped_and_frame_bounded(monkeypatch, tmp_path)
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[AIMessage(content='x' * 3000)]), workspace_root=root) as (client, app):
             sid, _ = await start(client)
             storage = app.state.service.application._storage
-            row = storage.get(sid)
-            storage.finish_run(sid, 'failed', row['checkpoint_id'], '', 'failed')
+            row = storage.sessions.get(sid)
+            storage.runs.finish_run(sid, 'failed', row['checkpoint_id'], '', 'failed')
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]), workspace_root=root, max_frame_bytes=2048) as (client, app):
             response = await client.get(f'/api/sessions/{sid}')
             assert response.status_code == 200 and len(response.content) <= 2048

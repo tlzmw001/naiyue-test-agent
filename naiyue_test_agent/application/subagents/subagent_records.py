@@ -24,14 +24,14 @@ def _now():
 
 async def _get(owner, identity):
     if owner._persistence is not None:
-        return await run_blocking(owner._persistence.storage.get_subagent, owner.session_id, identity)
+        return await run_blocking(owner._persistence.storage.subagents.get_subagent, owner.session_id, identity)
     with owner._lock:
         return owner._subagent_records.get(identity, {}).copy() or None
 
 
 async def _save(owner, record, expected_version):
     if owner._persistence is not None:
-        await run_blocking(owner._persistence.storage.save_subagent, record, expected_version)
+        await run_blocking(owner._persistence.storage.subagents.save_subagent, record, expected_version)
     else:
         with owner._lock:
             current = owner._subagent_records.get(record['agent_id'])
@@ -99,7 +99,7 @@ async def admit(owner, graph, instance, spec):
         raise ToolException('Subagent call has already been admitted; replay is not allowed.')
     owner._catalog.get(instance['model_id'])
     if owner._persistence is not None:
-        row = await run_blocking(owner._persistence.storage.get, owner.session_id)
+        row = await run_blocking(owner._persistence.storage.sessions.get, owner.session_id)
         actual_root = str(instance['workspace_root']) if instance['workspace_root'] is not None else None
         if row['workspace_root'] != actual_root:
             raise ToolException('Subagent workspace binding changed.')
@@ -135,7 +135,7 @@ async def settle(owner, instance):
     if not instance.get('input_started'):
         previous = instance['previous_record']
         if owner._persistence is not None:
-            await run_blocking(owner._persistence.storage.cancel_subagent_claim, record, previous)
+            await run_blocking(owner._persistence.storage.subagents.cancel_subagent_claim, record, previous)
         else:
             with owner._lock:
                 if previous is None:

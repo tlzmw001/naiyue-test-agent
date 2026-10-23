@@ -112,7 +112,7 @@ async def test_child_approval_resumes_only_its_parent_or_all_jobs_close(monkeypa
                 assert delivery.get(ra).done and delivery.get(rb).done
                 assert delivery.get(ra).status == delivery.get(rb).status == 'stopped'
                 assert len(model.requests[a]) == len(model.requests['child-A']) == len(model.requests[b]) == 1
-                assert all(row['state'] == 'ready' for row in backend._storage.list_sessions())
+                assert all(row['state'] == 'ready' for row in backend._storage.sessions.list_sessions())
                 assert tuple(backend._sessions._events._handlers.values()) == ((None, notify),)
             else:
                 body = approval_request(batch, ['approve'])

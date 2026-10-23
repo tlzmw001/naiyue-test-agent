@@ -60,7 +60,7 @@ async def test_compacted_archive_child_approval_regeneration_and_two_reopens(mon
         await web.state.delivery.wait(response.json()['run_id'])
         assert len(model.seen) == 3
         assert (await web.state.service.application.aget_messages(sid))[0].additional_kwargs['naiyue_compaction_summary']
-        saved_prefix = [(r['message_id'], r['body_json']) for r in web.state.service.application._storage._read(
+        saved_prefix = [(r['message_id'], r['body_json']) for r in web.state.service.application._storage.database.read_rows(
             "SELECT message_id,body_json FROM naiyue_chat_messages WHERE session_id=? AND kind='message' ORDER BY sequence", (sid,))]
     async with web_client(monkeypatch, tmp_path, model, **options) as (client, web):
         assert (await client.post(f'/api/sessions/{sid}/prepare')).status_code == 200
@@ -75,8 +75,8 @@ async def test_compacted_archive_child_approval_regeneration_and_two_reopens(mon
         await approve_child(client, web, sid, regen.json()['run_id'])
         assert len(model.seen) == 11
         app = web.state.service.application
-        root = app._storage.get(sid)['thread_id']
-        archived = app._storage._read("SELECT message_id,body_json FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? AND kind='message' ORDER BY sequence", (sid, root))
+        root = app._storage.sessions.get(sid)['thread_id']
+        archived = app._storage.database.read_rows("SELECT message_id,body_json FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? AND kind='message' ORDER BY sequence", (sid, root))
         assert [(r['message_id'], r['body_json']) for r in archived[:4]] == saved_prefix
         assert (await client.get(f'/api/sessions/{sid}/subagents/{old_child}')).status_code == 404
         assert any(m.additional_kwargs.get('naiyue_compaction_summary') for m in await app.aget_messages(sid))

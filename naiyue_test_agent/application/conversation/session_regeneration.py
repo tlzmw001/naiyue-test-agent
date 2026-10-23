@@ -8,20 +8,19 @@ from langgraph.graph import START, END
 from naiyue_test_agent.agent_runtime.async_utils import await_settled, run_blocking
 from naiyue_test_agent.application.sessions.session_recovery import _message_facts
 from naiyue_test_agent.application.sessions.session_controls import mark_human_messages
-from . import reply_storage
 
 logger = logging.getLogger(__name__)
 
 
 def _commit_replacement(storage, session, run, request_id, *, config, head, boundary, revision):
-    reply_storage.activate(storage, session.session_id, request_id,
+    storage.replies.activate(session.session_id, request_id,
         checkpoint=config['configurable']['checkpoint_id'], head_checkpoint=head, boundary=boundary)
     session.activate_regenerated_thread(run, config['configurable']['thread_id'], revision)
 
 
 async def regenerate(application, session_id, *, request_id, expected_reply_id, expected_conversation_revision):
     storage = application._storage
-    existing = await run_blocking(reply_storage.action, storage, session_id, request_id)
+    existing = await run_blocking(storage.replies.action, session_id, request_id)
     if existing:
         if (existing['reply_id'], existing['revision']) != (expected_reply_id, expected_conversation_revision):
             raise ValueError('request_id_conflict')
@@ -30,8 +29,8 @@ async def regenerate(application, session_id, *, request_id, expected_reply_id, 
     activated = False
     original_thread = session.get_thread_id()
     try:
-        row = await run_blocking(storage.get, session_id)
-        boundary = await run_blocking(reply_storage.latest, storage, session_id)
+        row = await run_blocking(storage.sessions.get, session_id)
+        boundary = await run_blocking(storage.replies.latest, session_id)
         if (row['state'] != 'ready' or row['conversation_revision'] != expected_conversation_revision
                 or not boundary or boundary['reply_id'] != expected_reply_id):
             raise ValueError('regeneration_stale')
@@ -50,9 +49,7 @@ async def regenerate(application, session_id, *, request_id, expected_reply_id, 
         if (any(m.additional_kwargs.get('naiyue_reply_id') == expected_reply_id for m in prefix)
                 or any(_message_facts(prefix))):
             raise ValueError('regeneration_source_unavailable')
-        records = await run_blocking(storage._read, '''SELECT body_json FROM naiyue_chat_messages
-            WHERE session_id=? AND thread_id=? AND reply_id=? AND message_type='human' ORDER BY sequence''',
-            (session_id, row['thread_id'], expected_reply_id))
+        records = await run_blocking(storage.conversation.reply_inputs, session_id, row['thread_id'], expected_reply_id)
         inputs = [m for m in messages_from_dict([json.loads(r['body_json']) for r in records]) if isinstance(m, HumanMessage)]
         if not inputs:
             raise ValueError('regeneration_source_unavailable')
@@ -60,7 +57,7 @@ async def regenerate(application, session_id, *, request_id, expected_reply_id, 
             **{k: v for k, v in m.additional_kwargs.items() if k not in ('naiyue_reply_id', 'naiyue_input_kind')},
             'naiyue_input_source': 'regenerated_task'}}) for m in inputs])
         new_thread = uuid4().hex
-        await run_blocking(reply_storage.record_action, storage, session_id, request_id, boundary,
+        await run_blocking(storage.replies.record_action, session_id, request_id, boundary,
                           expected_conversation_revision, new_thread, run.run_id)
         config = {'configurable': {'thread_id': new_thread}}
         values = {'messages': prefix, 'tool_execution': {}, 'run_stopped': False, 'active_reply_id': None}
@@ -83,7 +80,7 @@ async def regenerate(application, session_id, *, request_id, expected_reply_id, 
             session.mark_manual_review(run)
         else:
             try:
-                await await_settled(run_blocking(reply_storage.fail_preparation, storage, session_id, request_id))
+                await await_settled(run_blocking(storage.replies.fail_preparation, session_id, request_id))
             except BaseException as secondary:
                 logger.error('regeneration_failure_save_failed error_type=%s', type(secondary).__name__)
         session.close_control_window(run)

@@ -18,7 +18,6 @@ from naiyue_test_agent.agent_runtime.run_control import RunControl
 from naiyue_test_agent.tools.permission_rules import match_rules
 from naiyue_test_agent.application.sessions.background_tasks import TaskQueryError
 from .memory_queries import MemoryReadError
-from . import memory_overview_store as store
 from .memory_context import prepare_memory_parts
 from naiyue_test_agent.application.observability.run_events import _log_event
 
@@ -87,23 +86,23 @@ class MemoryJobs:
         return not self._permissions or match_rules(self._permissions.deny,dict(tool_name='memory',args=request),deny=True) is None
 
     def _enabled_for_session(self,sid):
-        row=self.storage.get(sid)
-        binding=self.storage.get_workspace_binding()
+        row=self.storage.sessions.get(sid)
+        binding=self.storage.sessions.get_workspace_binding()
         return bool(binding and row['project_id']==binding['workspace_id'] and
             'memory' in json.loads(row['active_tool_names_json']) and self.allowed(dict(action='list')))
 
     def prepare(self,sid,root,messages,model,*,preview=False):
         if not self.settings.enabled or not self._enabled_for_session(sid):return []
-        row=self.storage.get(sid)
+        row=self.storage.sessions.get(sid)
         if str(root)!=row['workspace_root']:raise MemoryReadError('memory_scope_mismatch')
         if preview:
-            progress=self.storage._read('SELECT * FROM naiyue_memory_progress WHERE session_id=?',(sid,))
+            progress=self.storage.memory.progress(sid)
             seen=bool(progress and progress[0]['directory_seen'])
         else:
-            progress=store.ensure(self.storage,sid);seen=bool(progress['directory_seen'])
+            progress=self.storage.memory.ensure(sid);seen=bool(progress['directory_seen'])
             with self._context_lock:self._eligible.add(sid)
         with self._context_lock:seen|=sid in self._used
-        directory=store.directory(self.storage,sid,self.settings.directory_limit) if not seen else ()
+        directory=self.storage.memory.directory(sid,self.settings.directory_limit) if not seen else ()
         return prepare_memory_parts(self.memory,sid,row['project_id'],messages,model,directory=directory,allowed=self.allowed)
 
     def directory_attempt(self,sid):
@@ -120,9 +119,9 @@ class MemoryJobs:
             raise MemoryReadError('memory_admission_closed')
         generations={sid:self._deletion_generations.get(sid,0) for sid in (source_session_id,target_session_id)}
         if not self.allowed(dict(action='refresh_overview')):raise MemoryReadError('memory_permission_denied')
-        row=await run_blocking(self.storage.get,target_session_id)
-        caller=await run_blocking(self.storage.get,source_session_id)
-        binding=await run_blocking(self.storage.get_workspace_binding)
+        row=await run_blocking(self.storage.sessions.get,target_session_id)
+        caller=await run_blocking(self.storage.sessions.get,source_session_id)
+        binding=await run_blocking(self.storage.sessions.get_workspace_binding)
         if (self._closing or {source_session_id,target_session_id}&self._deleting
                 or any(self._deletion_generations.get(sid,0)!=value for sid,value in generations.items())):
             raise MemoryReadError('memory_admission_closed')
@@ -155,7 +154,7 @@ class MemoryJobs:
     async def after_finish(self,sid,run_id,status,*,model_id,model=None):
         with self._context_lock:used=sid in self._used
         if used:
-            try:await run_blocking(store.mark_directory,self.storage,sid)
+            try:await run_blocking(self.storage.memory.mark_directory, sid)
             except Exception as error:logger.warning('memory_directory_marker_failed error_type=%s',type(error).__name__)
         # Approval resumes have a new run ID but still complete this caller's same logical turn.
         pending=[j for j in self._entries.values() if any(owner==sid for owner,_ in j.pending_runs) and not j.cleanup_confirmed]
@@ -167,10 +166,10 @@ class MemoryJobs:
                     job.termination='root_not_completed';job.control.request('failure')
             return
         if not pending and not self._enabled_for_session(sid):return
-        progress=await run_blocking(store.tick,self.storage,sid)
+        progress=await run_blocking(self.storage.memory.tick, sid)
         if self.settings.auto_enabled and self._enabled_for_session(sid) and (progress['completed_turns']-progress['accepted_turns']>=self.settings.trigger_turns
                 or progress['completed_chars']-progress['accepted_chars']>=self.settings.trigger_chars):
-            row=await run_blocking(self.storage.get,sid)
+            row=await run_blocking(self.storage.sessions.get,sid)
             try:
                 from pathlib import Path
                 result=await self.request(source_session_id=sid,target_session_id=sid,workspace_root=Path(row['workspace_root']),
@@ -190,16 +189,16 @@ class MemoryJobs:
 
     async def _release(self,job):
         if job.cleanup_confirmed:return
-        progress=await run_blocking(store.ensure,self.storage,job.target_session_id)
-        row=await run_blocking(self.storage.get,job.target_session_id)
-        upper_rows=await run_blocking(self.storage._read,"SELECT COALESCE(MAX(sequence),0) AS n FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? AND checkpoint_ns=''",(job.target_session_id,job.thread_id))
-        upper=upper_rows[0]['n']
+        progress=await run_blocking(self.storage.memory.ensure, job.target_session_id)
+        row=await run_blocking(self.storage.sessions.get,job.target_session_id)
+        upper_rows=await run_blocking(self.storage.conversation.upper_sequence, job.target_session_id, job.thread_id)
+        upper=upper_rows
         if (row['thread_id']!=job.thread_id or row['conversation_revision']!=job.conversation_revision
                 or job.requested_end is not None and job.requested_end>upper):
             job.termination='source_changed';job.control.request('failure');return
         upper=min(upper,job.requested_end) if job.requested_end is not None else upper
         start=(job.requested_start if job.requested_start is not None else progress['next_sequence'],progress['next_offset'])
-        await run_blocking(store.accept,self.storage,job.target_session_id,thread_id=job.thread_id,
+        await run_blocking(self.storage.memory.accept, job.target_session_id,thread_id=job.thread_id,
             conversation_revision=job.conversation_revision,upper=upper)
         if not job.released:job.start=start
         job.upper=max(job.upper,upper);job.released=True

@@ -54,9 +54,9 @@ def test_recovery_keeps_completed_pending_writes_and_original_task_records(monke
             sid = await app.acreate_session('A')
             with pytest.raises(PermissionMechanismError):
                 await app.arun(sid, [('user', 'fixture')])
-            row = app._storage.get(sid)
+            row = app._storage.sessions.get(sid)
             storage = app._storage
-            archived = [json.loads(r[0])['data'] for r in storage.connection.execute(
+            archived = [json.loads(r[0])['data'] for r in storage.database.connection.execute(
                 'SELECT body_json FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (sid,))]
             actual = [r for r in archived if r.get('tool_call_id') == 'a']
             assert len(actual) == 1 and actual[0]['content'] == 'actual A' and actual[0]['artifact'] == {'record': [1]}
@@ -79,7 +79,7 @@ def test_recovery_keeps_completed_pending_writes_and_original_task_records(monke
             assert results[1].status == 'error' and calls == ['a', 'b']
             assert model.seen == [] and events == [] and final.next == () and final.tasks == ()
             storage = app._storage
-            archived = [json.loads(r[0])['data'] for r in storage.connection.execute(
+            archived = [json.loads(r[0])['data'] for r in storage.database.connection.execute(
                 'SELECT body_json FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (sid,))]
             assert [r['id'] for r in archived] == [m.id for m in final.values['messages']]
             assert archived[-1]['additional_kwargs']['naiyue_recovery']['reason'] == 'result_unconfirmed'

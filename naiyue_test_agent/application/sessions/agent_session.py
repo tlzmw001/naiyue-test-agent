@@ -111,7 +111,7 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
         self._catalog.get(model_id)
         with self._model_selection_lock:
             if self._persistence is not None:
-                self._persistence.storage.select_model(self.session_id, model_id)
+                self._persistence.storage.sessions.select_model(self.session_id, model_id)
             with self._lock:
                 self._state.model_id = model_id
                 self._state.thinking_level = 'model_default'
@@ -123,7 +123,7 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
                 if self._state.model_id != model_id:
                     raise ValueError('Model selection changed')
             if self._persistence is not None:
-                self._persistence.storage.select_thinking(self.session_id, level)
+                self._persistence.storage.sessions.select_thinking(self.session_id, level)
             with self._lock:
                 self._state.thinking_level = level
 
@@ -133,7 +133,7 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
         names = tuple(spec.tool.name for spec in self._tool_registry.select(names))
         with self._tool_selection_lock:
             if self._persistence is not None:
-                self._persistence.storage.select_active_tools(self.session_id, names)
+                self._persistence.storage.sessions.select_active_tools(self.session_id, names)
             with self._lock:
                 self._state.active_tool_names = names
 
@@ -141,7 +141,7 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
         self._permission_settings.validate_mode(mode)
         with self._permission_selection_lock:
             if self._persistence is not None:
-                self._persistence.storage.select_permission_mode(self.session_id, mode)
+                self._persistence.storage.sessions.select_permission_mode(self.session_id, mode)
             with self._lock:
                 self._state.permission_mode = mode
 

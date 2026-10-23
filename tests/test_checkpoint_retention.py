@@ -23,7 +23,7 @@ def configure(monkeypatch, **values):
 
 
 def checkpoints(app, thread):
-    return app._storage._read('SELECT checkpoint_id FROM checkpoints WHERE thread_id=? ORDER BY checkpoint_id', (thread,))
+    return app._storage.database.read_rows('SELECT checkpoint_id FROM checkpoints WHERE thread_id=? ORDER BY checkpoint_id', (thread,))
 
 
 def test_settings_default_override_and_invalid_disable(tmp_path, caplog):
@@ -47,14 +47,14 @@ async def test_completed_runs_prune_keep_chat_usage_and_reopen(monkeypatch, tmp_
         sid = await app.acreate_session('A')
         for n in range(9):
             result = await app.arun(sid, [('user', f'question {n}')])
-        row = app._storage.get(sid)
+        row = app._storage.sessions.get(sid)
         assert len(checkpoints(app, row['thread_id'])) < 16
         expected = [m.content for m in result['messages']]
         page = await app.aget_chat_page(sid, limit=64, body_bytes=200000, preview_chars=100)
         assert len(page['records']) == 18
         before = await app.aget_model_usage(sid, model_limit=20)
-        usage_rows = app._storage._read('SELECT * FROM naiyue_model_invocations WHERE session_id=?', (sid,))
-        usage_runs = app._storage._read('SELECT * FROM naiyue_model_usage_runs WHERE session_id=?', (sid,))
+        usage_rows = app._storage.database.read_rows('SELECT * FROM naiyue_model_invocations WHERE session_id=?', (sid,))
+        usage_runs = app._storage.database.read_rows('SELECT * FROM naiyue_model_usage_runs WHERE session_id=?', (sid,))
         assert len(usage_rows) == 9 and sum(row['input_tokens'] for row in usage_rows) == 900
         assert row['checkpoint_id'] == checkpoints(app, row['thread_id'])[-1]['checkpoint_id']
     async with build(monkeypatch, path, model) as app:
@@ -63,8 +63,8 @@ async def test_completed_runs_prune_keep_chat_usage_and_reopen(monkeypatch, tmp_
         after = await app.aget_model_usage(sid, model_limit=20)
         # as_of is the time of this query, not a persisted usage fact.
         assert {k: v for k, v in after.items() if k != 'as_of'} == {k: v for k, v in before.items() if k != 'as_of'}
-        assert app._storage._read('SELECT * FROM naiyue_model_invocations WHERE session_id=?', (sid,)) == usage_rows
-        assert app._storage._read('SELECT * FROM naiyue_model_usage_runs WHERE session_id=?', (sid,)) == usage_runs
+        assert app._storage.database.read_rows('SELECT * FROM naiyue_model_invocations WHERE session_id=?', (sid,)) == usage_rows
+        assert app._storage.database.read_rows('SELECT * FROM naiyue_model_usage_runs WHERE session_id=?', (sid,)) == usage_runs
         continued = await app.arun(sid, [('user', 'continue')])
         assert [m.content for m in continued['messages'][:-2]] == expected
         assert continued['messages'][-1].content == 'answer 9'
@@ -78,7 +78,7 @@ async def test_disabled_or_below_threshold_retains_all_checkpoints(monkeypatch, 
     async with build(monkeypatch, tmp_path / 'state.sqlite', model) as app:
         sid = await app.acreate_session('A')
         await app.arun(sid, [('user', 'one')])
-        thread = app._storage.get(sid)['thread_id']
+        thread = app._storage.sessions.get(sid)['thread_id']
         first = {r['checkpoint_id'] for r in checkpoints(app, thread)}
         await app.arun(sid, [('user', 'two')])
         second = {r['checkpoint_id'] for r in checkpoints(app, thread)}
@@ -95,7 +95,7 @@ async def test_last_task_source_survives_repeated_regeneration_and_reopen(monkey
         await app.arun(sid, [('user', 'one')])
         await app.arun(sid, [('user', 'two')])
         for revision, answer in enumerate(('new', 'newest')):
-            boundary = latest(app._storage, sid)
+            boundary = app._storage.replies.latest(sid)
             source = boundary['source_thread_id'] or boundary['thread_id']
             assert boundary['source_checkpoint_id'] in {r['checkpoint_id'] for r in checkpoints(app, source)}
             result = await app.aregenerate_last_reply(sid, request_id=str(uuid4()),
@@ -115,26 +115,26 @@ async def test_delete_failure_rolls_back_maintenance_preserves_success(monkeypat
     write_snapshots = []
     original = checkpoint_retention._commit
     def observed(storage, *args):
-        before = storage._read('SELECT * FROM writes')
+        before = storage.database.read_rows('SELECT * FROM writes')
         try:
             return original(storage, *args)
         finally:
-            write_snapshots.append((before, storage._read('SELECT * FROM writes')))
+            write_snapshots.append((before, storage.database.read_rows('SELECT * FROM writes')))
     monkeypatch.setattr(checkpoint_retention, '_commit', observed)
     model = ToolModel(responses=[AIMessage(content='one'), AIMessage(content='two')])
     async with build(monkeypatch, tmp_path / 'state.sqlite', model) as app:
         sid = await app.acreate_session('A')
         await app.arun(sid, [('user', 'one')])
         write_snapshots.clear()
-        thread = app._storage.get(sid)['thread_id']
+        thread = app._storage.sessions.get(sid)['thread_id']
         before = {r['checkpoint_id'] for r in checkpoints(app, thread)}
-        app._storage.connection.executescript('''CREATE TRIGGER reject_retention BEFORE DELETE ON checkpoints
+        app._storage.database.connection.executescript('''CREATE TRIGGER reject_retention BEFORE DELETE ON checkpoints
             BEGIN SELECT RAISE(ABORT, 'PRIVATE_RETENTION_FAILURE'); END;''')
         events = []
         app.subscribe_events(events.append)
         result = await app.arun(sid, [('user', 'two')])
         assert result['messages'][-1].content == 'two'
-        assert app._storage.get(sid)['state'] == 'ready'
+        assert app._storage.sessions.get(sid)['state'] == 'ready'
         assert before <= {r['checkpoint_id'] for r in checkpoints(app, thread)}
         assert events[-1].event_type == 'run_finished' and events[-1].data.status == 'completed'
         assert not app._sessions.require(sid).is_busy()
@@ -150,13 +150,13 @@ async def test_other_session_checkpoints_untouched(monkeypatch, tmp_path):
     async with build(monkeypatch, tmp_path / 'state.sqlite', model) as app:
         a, b = await app.acreate_session('A'), await app.acreate_session('A')
         await app.arun(b, [('user', 'B')])
-        thread = app._storage.get(b)['thread_id']
-        before = app._storage._read('SELECT * FROM checkpoints WHERE thread_id=?', (thread,))
-        writes = app._storage._read('SELECT * FROM writes WHERE thread_id=?', (thread,))
+        thread = app._storage.sessions.get(b)['thread_id']
+        before = app._storage.database.read_rows('SELECT * FROM checkpoints WHERE thread_id=?', (thread,))
+        writes = app._storage.database.read_rows('SELECT * FROM writes WHERE thread_id=?', (thread,))
         for n in range(3):
             await app.arun(a, [('user', str(n))])
-        assert app._storage._read('SELECT * FROM checkpoints WHERE thread_id=?', (thread,)) == before
-        assert app._storage._read('SELECT * FROM writes WHERE thread_id=?', (thread,)) == writes
+        assert app._storage.database.read_rows('SELECT * FROM checkpoints WHERE thread_id=?', (thread,)) == before
+        assert app._storage.database.read_rows('SELECT * FROM writes WHERE thread_id=?', (thread,)) == writes
 
 
 @async_test
@@ -175,7 +175,7 @@ async def test_optional_prune_finishes_before_release_and_next_run_works(monkeyp
         sid = await app.acreate_session('A')
         task = asyncio.create_task(app.arun(sid, [('user', 'one')]))
         await asyncio.wait_for(entered.wait(), 5)
-        assert app._storage.get(sid)['state'] == 'ready'
+        assert app._storage.sessions.get(sid)['state'] == 'ready'
         assert app._sessions.require(sid).is_busy()
         release.set()
         await task
@@ -192,8 +192,8 @@ async def test_default_budget_keeps_up_with_120_turn_accumulating_context(monkey
         sid = await app.acreate_session('A')
         for _ in range(120):
             await app.arun(sid, [('user', 'q' * 4096)])
-            thread = app._storage.get(sid)['thread_id']
+            thread = app._storage.sessions.get(sid)['thread_id']
             counts.append(len(checkpoints(app, thread)))
-        archived = app._storage.connection.execute('SELECT COUNT(*) FROM naiyue_chat_messages WHERE session_id=?', (sid,)).fetchone()[0]
+        archived = app._storage.database.connection.execute('SELECT COUNT(*) FROM naiyue_chat_messages WHERE session_id=?', (sid,)).fetchone()[0]
     assert archived == 240
     assert max(counts) < settings.checkpoint_retention.trigger_checkpoints, counts[-20:]

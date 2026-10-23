@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.storage.project_store import ProjectStore
 
 
 @pytest.mark.parametrize('point', ['start', 'end'])
@@ -42,7 +42,7 @@ async def main():
             print(json.dumps({'sid':sid}),flush=True)
             os._exit(31)
         if sys.argv[2]=='end':
-            app._storage.finish_model_usage_run=crash
+            app._storage.usage.finish_model_usage_run=crash
             await app.arun(sid,[('user','second')])
         else:
             model.entered,model.release=asyncio.Event(),asyncio.Event()
@@ -50,7 +50,7 @@ async def main():
             await model.entered.wait()
             async def committed():
                 while True:
-                    records=await run_blocking(app._storage._read,
+                    records=await run_blocking(app._storage.database.read_rows,
                         "SELECT invocation_id FROM naiyue_model_invocations WHERE status='started'")
                     if records:return
                     await asyncio.sleep(0)
@@ -63,13 +63,13 @@ asyncio.run(main())
         cwd=Path(__file__).resolve().parents[1], text=True, capture_output=True, timeout=20)
     assert completed.returncode == 31, completed.stderr
     sid = json.loads(completed.stdout)['sid']
-    with SessionStorage(path) as store:
-        saved = store._read('SELECT * FROM naiyue_model_invocations WHERE session_id=? ORDER BY started_at', (sid,))
+    with ProjectStore(path) as store:
+        saved = store.database.read_rows('SELECT * FROM naiyue_model_invocations WHERE session_id=? ORDER BY started_at', (sid,))
         assert len(saved) == 2 and saved[0]['status'] == 'returned' and saved[0]['input_tokens'] == 100
         assert saved[1]['status'] == ('unconfirmed' if point == 'start' else 'returned')
         assert saved[1]['input_tokens'] is None
-        assert store.get(sid)['state'] == 'running'
-        runs = store._read('SELECT * FROM naiyue_model_usage_runs WHERE session_id=?', (sid,))
+        assert store.sessions.get(sid)['state'] == 'running'
+        runs = store.database.read_rows('SELECT * FROM naiyue_model_usage_runs WHERE session_id=?', (sid,))
         assert len(runs) == 2 and sum(r['capture_incomplete'] for r in runs) == 1
         assert any(r['reason'] == 'interrupted_execution' for r in runs)
-        assert store.connection.execute('SELECT COUNT(*) FROM checkpoints').fetchone()[0] > 0
+        assert store.database.connection.execute('SELECT COUNT(*) FROM checkpoints').fetchone()[0] > 0

@@ -9,7 +9,8 @@ from langchain_core.messages import AIMessage
 
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
+from naiyue_test_agent.storage.project_store import ProjectStore
+from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.settings import AppSettings
@@ -36,7 +37,7 @@ async def test_mode_persists_but_remembered_target_does_not(monkeypatch, tmp_pat
         await app.aresume_tool_approval(sid, ['approve'], remember_approved=['c1'])
         assert app._sessions.resolve_permission_context(sid)['session_allow']
         await app.aset_permission_mode(sid, 'NoAsk')
-        assert storage.get(sid)['permission_mode'] == 'NoAsk'
+        assert storage.sessions.get(sid)['permission_mode'] == 'NoAsk'
     async with persistent(monkeypatch, database, []) as app:
         storage = app._storage
         await app.arestore_session(sid)
@@ -52,10 +53,10 @@ async def test_mode_save_failure_does_not_change_published_mode(monkeypatch, tmp
         sid = await app.acreate_session('A')
         def fail(*args):
             raise SessionPersistenceError('synthetic_save_failed')
-        monkeypatch.setattr(storage, 'select_permission_mode', fail)
+        monkeypatch.setattr(storage.sessions, 'select_permission_mode', fail)
         with pytest.raises(SessionPersistenceError):
             await app.aset_permission_mode(sid, 'NoAsk')
-        assert app.get_permission_mode(sid) == storage.get(sid)['permission_mode'] == 'Default'
+        assert app.get_permission_mode(sid) == storage.sessions.get(sid)['permission_mode'] == 'Default'
         with pytest.raises(ValueError):
             await app.aset_permission_mode(sid, 'Auto')
 
@@ -77,7 +78,7 @@ def test_v2_database_is_rejected_without_migration(tmp_path):
     before = path.read_bytes()
     for _ in range(2):
         with pytest.raises(SessionPersistenceError, match='unsupported_store_schema'):
-            SessionStorage(path)
+            ProjectStore(path)
         assert path.read_bytes() == before
 
 

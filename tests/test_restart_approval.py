@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.storage.session_storage import SessionPersistenceError
+from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import create_session_read_tool, create_session_write_tool
 from naiyue_test_agent.settings import AppSettings
@@ -48,7 +48,7 @@ async def test_reopened_mixed_sequential_batch_waits_then_runs_once(monkeypatch,
         async with opened([first]) as (app, _):
             sid = await app.acreate_workspace_session('A', root)
             await app.arun(sid, [('user', 'read note and write the external result')])
-            row = app._storage.get(sid)
+            row = app._storage.sessions.get(sid)
             config = {'configurable': {'thread_id': row['thread_id']}}
             original = await app._agent.aget_state(config)
         assert not target.exists()
@@ -85,7 +85,7 @@ async def test_reopened_mixed_sequential_batch_waits_then_runs_once(monkeypatch,
             starts = [e.data.tool_call_id for e in events if e.event_type == 'tool_call_started']
             assert starts.count('read-call') == 1 and starts.count('write-call') == 1
             assert not app.pending_tool_approvals(sid)
-            assert app._storage.get(sid)['state'] == 'ready'
+            assert app._storage.sessions.get(sid)['state'] == 'ready'
     await scenario()
 
 
@@ -98,11 +98,11 @@ async def test_revalidation_failure_has_no_writes_or_installed_session(monkeypat
             system_prompt='', response_format=None, settings=settings) as app:
         storage = app._storage
         if change == 'run':
-            storage.connection.execute('UPDATE naiyue_sessions SET run_id=NULL WHERE session_id=?', (row['session_id'],))
-            storage.connection.commit()
+            storage.database.connection.execute('UPDATE naiyue_sessions SET run_id=NULL WHERE session_id=?', (row['session_id'],))
+            storage.database.connection.commit()
         elif change == 'execution_kind':
-            storage.connection.execute("UPDATE naiyue_sessions SET execution_root_kind='worktree' WHERE session_id=?", (row['session_id'],))
-            storage.connection.commit()
+            storage.database.connection.execute("UPDATE naiyue_sessions SET execution_root_kind='worktree' WHERE session_id=?", (row['session_id'],))
+            storage.database.connection.commit()
         elif change not in ('deny', 'target'):
             snapshot = original._replace(values=deepcopy(original.values))
             call = snapshot.values['tool_execution']['calls'][0]
@@ -130,7 +130,7 @@ async def test_failed_approval_metadata_save_can_be_retried_without_modifying_gr
         storage = app._storage
         raw = await app._agent.checkpointer.aget_tuple(original.config)
         with monkeypatch.context() as patch:
-            patch.setattr(storage, 'finish_run', lambda *_a: (_ for _ in ()).throw(OSError('PRIVATE_SQL')))
+            patch.setattr(storage.runs, 'finish_run', lambda *_a: (_ for _ in ()).throw(OSError('PRIVATE_SQL')))
             with pytest.raises(SessionPersistenceError, match='session_save_unconfirmed'):
                 await app.arecover_session(row['session_id'], checkpoint_id=original.config['configurable']['checkpoint_id'], action='restore_approval')
         assert not app._sessions.has_session(row['session_id']) and await app._agent.checkpointer.aget_tuple(original.config) == raw
@@ -173,7 +173,7 @@ async def test_old_allow_must_be_proven_by_current_local_policy_without_auto(mon
                 return {'decision': 'allow' if data['current_call']['id'] == 'one' else 'ask', 'source': 'auto_fast'}
             patch.setattr(AutoPermissionReviewer, 'areview', review)
             await app.arun(sid, [('user', 'inspect both files')])
-        row = storage.get(sid)
+        row = storage.sessions.get(sid)
         original = await app._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
         assert [c['decision'] for c in original.values['tool_execution']['calls']] == ['allow', 'ask']
     async with open_async_persistent_application('unused', database_path=path, tools=tools,
@@ -222,15 +222,15 @@ async def test_real_process_exit_keeps_pre_tool_approval_recoverable(monkeypatch
             async with opened() as app:
                 sid = await app.acreate_workspace_session('A', path.parent / 'work')
                 if phase == 'before_terminal_metadata':
-                    app._storage.finish_run = lambda *_a, **_k: os._exit(91)
+                    app._storage.runs.finish_run = lambda *_a, **_k: os._exit(91)
                 await app.arun(sid, [('user', 'read external file')])
             async with opened() as app:
                 storage = app._storage
-                original = storage.finish_run
+                original = storage.runs.finish_run
                 def saved_then_exit(*args):
                     original(*args)
                     os._exit(91)
-                storage.finish_run = saved_then_exit
+                storage.runs.finish_run = saved_then_exit
                 history = await app.aget_session_history(sid)
                 await app.arecover_session(sid, checkpoint_id=history['checkpoint_id'], action='restore_approval')
         asyncio.run(scenario())
@@ -241,7 +241,7 @@ async def test_real_process_exit_keeps_pre_tool_approval_recoverable(monkeypatch
     assert child.returncode == 91, child.stderr.decode()
     async with build(monkeypatch, path, tools=[create_session_read_tool()]) as app:
         storage = app._storage
-        row = storage.list_sessions()[0]
+        row = storage.sessions.list_sessions()[0]
         assert row['state'] == ('running' if phase == 'before_terminal_metadata' else 'interrupted')
         history = await app.aget_session_history(row['session_id'])
         assert history['recovery']['kind'] == 'pending_approval'

@@ -11,13 +11,14 @@ from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 from langchain_core.messages import AIMessage, HumanMessage
 
 from native_application_helpers import async_test
-from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
+from naiyue_test_agent.storage.project_store import ProjectStore
+from naiyue_test_agent.application.errors import SessionPersistenceError
 from test_chat_history import rows
 from test_persistent_sessions import build
 
 
 def create_row(storage, sid='s'):
-    storage.create(sid, {'thread_id': sid, 'model_id': 'A', 'workspace_root': None,
+    storage.sessions.create(sid, {'thread_id': sid, 'model_id': 'A', 'workspace_root': None,
                         'active_tool_names': (), 'permission_mode': 'Default'})
 
 
@@ -50,17 +51,17 @@ async def test_paged_collection_uses_only_current_ancestry_and_stops_at_cursor(t
     chain = [snapshot(str(i), str(i-1) if i else None, [HumanMessage(id=f'h{i}', content=f'v{i}')]) for i in range(131)]
     sibling = snapshot('unrelated', '99', [AIMessage(id='other-branch', content='must not archive')])
     graph = SavedGraph(chain[-1], [*reversed(chain[111:]), sibling, *reversed(chain[:111])])
-    with SessionStorage(tmp_path / 'state.sqlite') as storage:
+    with ProjectStore(tmp_path / 'state.sqlite') as storage:
         create_row(storage)
         updates = await collect_chat_updates(graph, storage, 's')
-        storage.finish_run('s', 'ready', '130', '', 'completed', updates)
+        storage.runs.finish_run('s', 'ready', '130', '', 'completed', updates)
         assert [row['message_id'] for row in rows(storage, 's')] == [f'h{i}' for i in range(131)]
         assert len(graph.reads) == 3 and all(limit == 64 for _, limit in graph.reads)
         later = snapshot('131', '130', [HumanMessage(id='new', content='later')])
         graph = SavedGraph(later, [later, *reversed(chain)])
         updates = await collect_chat_updates(graph, storage, 's')
         assert len(graph.reads) == 1 and [m['message_id'] for m in updates[0].messages] == ['new']
-        storage.finish_run('s', 'ready', '131', '', 'completed', updates)
+        storage.runs.finish_run('s', 'ready', '131', '', 'completed', updates)
         assert len(rows(storage, 's')) == 132
 
 
@@ -69,12 +70,12 @@ async def test_same_checkpoint_collects_new_pending_result_without_history_read(
     from naiyue_test_agent.application.conversation.chat_history import collect_chat_updates
     original = snapshot('cp', None, [HumanMessage(id='h', content='request')])
     graph = SavedGraph(original, [original])
-    with SessionStorage(tmp_path / 'state.sqlite') as storage:
+    with ProjectStore(tmp_path / 'state.sqlite') as storage:
         create_row(storage)
-        storage.finish_run('s', 'failed', None, '', 'failed', await collect_chat_updates(graph, storage, 's'))
+        storage.runs.finish_run('s', 'failed', None, '', 'failed', await collect_chat_updates(graph, storage, 's'))
         graph.reads.clear()
         graph.latest = snapshot('cp', None, [*original.values['messages'], AIMessage(id='pending', content='saved')])
-        storage.finish_run('s', 'failed', None, '', 'failed', await collect_chat_updates(graph, storage, 's'))
+        storage.runs.finish_run('s', 'failed', None, '', 'failed', await collect_chat_updates(graph, storage, 's'))
         assert [r['message_id'] for r in rows(storage, 's')] == ['h', 'pending'] and graph.reads == []
 
 
@@ -89,32 +90,32 @@ async def test_unreadable_or_ambiguous_source_never_advances_archive(tmp_path, f
     if fault == 'duplicate_id': messages.append(AIMessage(id='h', content='ambiguous'))
     latest = snapshot('cp', parent, messages, 'other' if fault == 'wrong_thread' else 's')
     graph = SavedGraph(latest, [latest])
-    with SessionStorage(tmp_path / 'state.sqlite') as storage:
+    with ProjectStore(tmp_path / 'state.sqlite') as storage:
         create_row(storage)
         with pytest.raises(SessionPersistenceError, match='chat_history_'):
             await collect_chat_updates(graph, storage, 's')
-        assert storage.chat_heads('s') == [] and rows(storage, 's') == []
-        assert storage.get('s')['state'] == 'ready'
+        assert storage.conversation.chat_heads('s') == [] and rows(storage, 's') == []
+        assert storage.sessions.get('s')['state'] == 'ready'
 
 
 def test_schema_six_migration_preserves_rows_and_does_not_backfill(tmp_path):
     path = tmp_path / 'six.sqlite'
-    with SessionStorage(path) as storage:
+    with ProjectStore(path) as storage:
         create_row(storage)
     with sqlite3.connect(path) as connection:
         remove_reply_schema(connection)
         connection.executescript('''DROP TABLE naiyue_model_invocations; DROP TABLE naiyue_model_usage_runs;
             DROP TABLE naiyue_chat_messages; DROP TABLE naiyue_chat_sync;
             UPDATE naiyue_store_info SET version=6;''')
-    with SessionStorage(path) as storage:
-        assert storage.get('s')['thread_id'] == 's'
-        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
-        assert storage.chat_heads('s') == [] and rows(storage, 's') == []
+    with ProjectStore(path) as storage:
+        assert storage.sessions.get('s')['thread_id'] == 's'
+        assert storage.database.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
+        assert storage.conversation.chat_heads('s') == [] and rows(storage, 's') == []
 
 
 def test_chat_migration_is_atomic_on_ddl_failure(monkeypatch, tmp_path):
     path = tmp_path / 'six.sqlite'
-    with SessionStorage(path): pass
+    with ProjectStore(path): pass
     with sqlite3.connect(path) as connection:
         remove_reply_schema(connection)
         connection.executescript('''DROP TABLE naiyue_model_invocations; DROP TABLE naiyue_model_usage_runs;
@@ -129,7 +130,7 @@ def test_chat_migration_is_atomic_on_ddl_failure(monkeypatch, tmp_path):
     with monkeypatch.context() as patch:
         patch.setattr(sqlite3, 'connect', denied)
         with pytest.raises(SessionPersistenceError, match='migration_failed') as caught:
-            SessionStorage(path)
+            ProjectStore(path)
     from naiyue_test_agent.storage.backup import validate_backup
     assert (caught.value.source_schema, caught.value.current_schema, caught.value.target_schema) == (6, 6, CURRENT_SCHEMA)
     assert validate_backup(path, caught.value.backup_id)['source_schema'] == 6
@@ -147,8 +148,8 @@ async def test_delete_clears_archive_and_progress_only_for_selected_session(monk
         storage = app._storage
         saved = rows(storage, second)
         await app.adelete_session(first)
-        assert rows(storage, first) == [] and storage.chat_heads(first) == []
-        assert rows(storage, second) == saved and storage.chat_heads(second)
+        assert rows(storage, first) == [] and storage.conversation.chat_heads(first) == []
+        assert rows(storage, second) == saved and storage.conversation.chat_heads(second)
 
 
 @async_test
@@ -169,9 +170,9 @@ async def test_actual_saver_backfill_pages_after_saved_archive_is_absent(monkeyp
         storage = app._storage
         original = rows(storage, sid)
         # A schema6 session starts with saved checkpoints but no archive/head.
-        with storage.connection:
-            storage.connection.execute('DELETE FROM naiyue_chat_messages WHERE session_id=?', (sid,))
-            storage.connection.execute('DELETE FROM naiyue_chat_sync WHERE session_id=?', (sid,))
+        with storage.database.connection:
+            storage.database.connection.execute('DELETE FROM naiyue_chat_messages WHERE session_id=?', (sid,))
+            storage.database.connection.execute('DELETE FROM naiyue_chat_sync WHERE session_id=?', (sid,))
         history = app._agent.aget_state_history
         reads = []
         async def counted(config, **kwargs):
@@ -181,7 +182,7 @@ async def test_actual_saver_backfill_pages_after_saved_archive_is_absent(monkeyp
         with monkeypatch.context() as patch:
             patch.setattr(app._agent, 'aget_state_history', counted)
             updates = await collect_chat_updates(app._agent, storage, sid)
-        storage.finish_run(sid, 'ready', storage.get(sid)['checkpoint_id'], '', 'completed', updates)
+        storage.runs.finish_run(sid, 'ready', storage.sessions.get(sid)['checkpoint_id'], '', 'completed', updates)
         assert len(reads) >= 2 and all(r['limit'] == 64 for r in reads)
         assert reads[0]['before'] is None and all(r['before'] is not None for r in reads[1:])
         actual = rows(storage, sid)

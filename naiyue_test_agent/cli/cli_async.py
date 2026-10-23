@@ -181,7 +181,7 @@ def build_local_application(config_path, *, tools, system_prompt, response_forma
 
 def build_persistent_application(config_path, *, storage, tools, system_prompt, response_format, initial_active_tools=None, settings=None):
     path = storage.path
-    binding = storage.get_workspace_binding()
+    binding = storage.sessions.get_workspace_binding()
     storage.close()  # Release the preflight lock; async ownership rechecks restoration.
     return AsyncCliApplication(config_path, database_path=path, workspace_binding=binding, tools=tools,
                                system_prompt=system_prompt, response_format=response_format, initial_active_tools=initial_active_tools, settings=settings)

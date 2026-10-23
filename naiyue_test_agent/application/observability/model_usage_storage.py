@@ -1,4 +1,4 @@
-"""Finite invocation facts on the SessionStorage-owned SQLite connection."""
+"""Finite invocation facts on the ProjectStore-owned SQLite connection."""
 
 import logging
 from datetime import datetime, timezone

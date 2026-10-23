@@ -18,8 +18,7 @@ from naiyue_test_agent.contracts.failures import safe_error_type
 from naiyue_test_agent.model_access import MODEL_LIMITS_METADATA_KEY, MODEL_ID_METADATA_KEY
 from naiyue_test_agent.model_access.memory_output import prepare_memory_output
 from naiyue_test_agent.tools.memory import MemoryInput
-from . import memory_overview_store as store
-from .memory_batches import build_batch, model_batch, parse_model_result, proposal_request, response_schema
+from .memory_batches import model_batch, parse_model_result, proposal_request, response_schema
 from .memory_queries import MemoryReadError
 from .memory_sources import sensitive
 from naiyue_test_agent.application.observability.run_events import RunObservation
@@ -196,7 +195,7 @@ async def _prepare(service, job, upper):
     cap -= overhead
     system = SystemMessage(content=PROMPT.format(overview_chars=service.settings.overview_chars,
         max_proposals=service.settings.max_proposals))
-    saved = await run_blocking(store.overview, service.storage, job.target_session_id)
+    saved = await run_blocking(service.storage.memory.overview, job.target_session_id)
     previous = saved['overview'] if saved['overview_status'] == 'generated' else None
     coverage = dict(saved['coverage'], skipped=_bounded_notes(saved['coverage']['skipped'])) if previous is not None else None
     try:
@@ -208,7 +207,7 @@ async def _prepare(service, job, upper):
     budget = cap - count_tokens_approximately(_messages(system, previous, [], {}, coverage))
     if budget <= 0:
         raise MemoryReadError('memory_batch_budget')
-    batch = await run_blocking(build_batch, service.storage, session_id=job.target_session_id,
+    batch = await run_blocking(service.storage.memory.build_batch, session_id=job.target_session_id,
         thread_id=job.thread_id, conversation_revision=job.conversation_revision,
         start=job.start, upper=upper, token_budget=budget, source_chars=service.settings.read_chunk_chars, model_view=True)
     related = await _related(service, job, batch) if batch['sources'] else []
@@ -219,7 +218,7 @@ async def _prepare(service, job, upper):
             related_budget = cap - count_tokens_approximately(_messages(system, previous, related, {}, coverage))
         if related:
             try:
-                revised = await run_blocking(build_batch, service.storage, session_id=job.target_session_id,
+                revised = await run_blocking(service.storage.memory.build_batch, session_id=job.target_session_id,
                     thread_id=job.thread_id, conversation_revision=job.conversation_revision,
                     start=job.start, upper=upper, token_budget=related_budget, source_chars=service.settings.read_chunk_chars,
                     model_view=True)
@@ -317,8 +316,7 @@ async def _batch(service, job):
             skipped = _bounded_notes(skipped)
             try:
                 sensitive(parsed['overview'])
-                await _commit(job, 'overview_saved', store.save_overview, service.storage,
-                    session_id=job.target_session_id, thread_id=job.thread_id,
+                await _commit(job, 'overview_saved', service.storage.memory.save_overview, session_id=job.target_session_id, thread_id=job.thread_id,
                     conversation_revision=job.conversation_revision, overview=parsed['overview'],
                     lower=coverage_lower, upper=consumed_upper, task_id=job.task_id,
                     origin_run_id=job.origin_run_id, batch=job.batches, skipped=skipped,

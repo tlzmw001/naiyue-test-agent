@@ -10,7 +10,8 @@ from naiyue_test_agent.tools.permissions import PermissionMechanismError
 from .session_approval import pending_tool_approval, is_pre_tool_approval
 from naiyue_test_agent.contracts.run_context import RunIdentity, RunScope, RuntimeContext
 from naiyue_test_agent.storage.execution_storage import root_from_row
-from naiyue_test_agent.storage.session_storage import SessionPersistenceError, STATES
+from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.storage.queries import STATES
 
 
 logger = logging.getLogger(__name__)

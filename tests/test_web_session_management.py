@@ -70,16 +70,16 @@ def test_delete_removes_all_checkpoints_and_delivery_without_touching_other_sess
             run = (await client.post(f'/api/sessions/{sid}/runs', json=request('hello'))).json()['run_id']
             await web.state.delivery.wait(run)
             store = web.state.service.application._storage
-            thread = store.get(sid)['thread_id']
-            assert store.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (thread,)).fetchone()[0] > 0
+            thread = store.sessions.get(sid)['thread_id']
+            assert store.database.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (thread,)).fetchone()[0] > 0
             response = await client.delete(f'/api/sessions/{sid}')
             assert response.status_code == 200 and response.json() == {'session_id': sid}
             assert [row['session_id'] for row in (await client.get('/api/sessions')).json()] == [kept]
             assert (await client.get(f'/api/sessions/{sid}')).status_code == 404
             assert (await client.get(f'/api/runs/{run}')).status_code == 404
             assert not web.state.service.application.has_session(sid)
-            assert store.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (thread,)).fetchone()[0] == 0
-            assert store.connection.execute('SELECT count(*) FROM writes WHERE thread_id=?', (thread,)).fetchone()[0] == 0
+            assert store.database.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (thread,)).fetchone()[0] == 0
+            assert store.database.connection.execute('SELECT count(*) FROM writes WHERE thread_id=?', (thread,)).fetchone()[0] == 0
             assert not any(key[0] == sid for key in web.state.delivery.receipts)
             assert len(model.seen) == 1
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
@@ -127,8 +127,8 @@ def test_delete_includes_child_history_removed_from_latest_parent_checkpoint(mon
             child, = await app.aget_subagents(sid)
             child_thread = f'subagent:{child["agent_id"]}'
             store = app._storage
-            assert store.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (child_thread,)).fetchone()[0] > 0
-            thread = store.get(sid)['thread_id']
+            assert store.database.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (child_thread,)).fetchone()[0] > 0
+            thread = store.sessions.get(sid)['thread_id']
             await app._agent.aupdate_state({'configurable': {'thread_id': thread}}, {'messages': [
                 RemoveMessage(id=REMOVE_ALL_MESSAGES), HumanMessage(content='summary'), AIMessage(content='compacted')]}, as_node='model')
             assert not any(getattr(message, 'tool_calls', []) for message in await app.aget_messages(sid))
@@ -137,22 +137,22 @@ def test_delete_includes_child_history_removed_from_latest_parent_checkpoint(mon
             for owner in app._sessions._sessions.values():
                 assert owner._run is None
             assert (await client.delete(f'/api/sessions/{sid}')).status_code == 200
-            assert store.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (child_thread,)).fetchone()[0] == 0
-            assert store.connection.execute('SELECT count(*) FROM writes WHERE thread_id=?', (child_thread,)).fetchone()[0] == 0
-            assert store.get_subagent_references(sid) == {}
+            assert store.database.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (child_thread,)).fetchone()[0] == 0
+            assert store.database.connection.execute('SELECT count(*) FROM writes WHERE thread_id=?', (child_thread,)).fetchone()[0] == 0
+            assert store.subagents.get_subagent_references(sid) == {}
             assert len(model.seen) == 3
     asyncio.run(scenario())
 
 
 def test_schema_five_migration_keeps_recency_then_persists_manual_order(tmp_path):
-    from naiyue_test_agent.storage.session_storage import SessionStorage
+    from naiyue_test_agent.storage.project_store import ProjectStore
 
     path = tmp_path / 'five.sqlite'
-    with SessionStorage(path) as store:
+    with ProjectStore(path) as store:
         for sid in ('old', 'recent'):
-            store.create(sid, {'thread_id': sid, 'model_id': 'A', 'workspace_root': None,
+            store.sessions.create(sid, {'thread_id': sid, 'model_id': 'A', 'workspace_root': None,
                                'active_tool_names': (), 'permission_mode': 'Default'})
-        store.select_thinking('recent', 'high')
+        store.sessions.select_thinking('recent', 'high')
     with sqlite3.connect(path) as connection:
         remove_reply_schema(connection)
         connection.executescript('''DROP TABLE naiyue_model_invocations; DROP TABLE naiyue_model_usage_runs;
@@ -161,12 +161,12 @@ def test_schema_five_migration_keeps_recency_then_persists_manual_order(tmp_path
             ALTER TABLE naiyue_sessions DROP COLUMN pinned;
             ALTER TABLE naiyue_sessions DROP COLUMN sort_order;
             UPDATE naiyue_store_info SET version=5;''')
-    with SessionStorage(path) as store:
-        assert [row['session_id'] for row in store.list_sessions()] == ['recent', 'old']
-        assert store.get('recent')['thinking_level'] == 'high'
-        store.reorder(None, ['old', 'recent'])
-        store.select_model('recent', 'B')
-        assert [row['session_id'] for row in store.list_sessions()] == ['old', 'recent']
+    with ProjectStore(path) as store:
+        assert [row['session_id'] for row in store.sessions.list_sessions()] == ['recent', 'old']
+        assert store.sessions.get('recent')['thinking_level'] == 'high'
+        store.sessions.reorder(None, ['old', 'recent'])
+        store.sessions.select_model('recent', 'B')
+        assert [row['session_id'] for row in store.sessions.list_sessions()] == ['old', 'recent']
 
 
 def test_restore_holds_ownership_until_session_install_before_deletion(monkeypatch, tmp_path):
@@ -210,14 +210,14 @@ def test_cancelled_delete_still_revokes_completed_run_cache(monkeypatch, tmp_pat
             await web.state.delivery.wait(run)
             store = web.state.service.application._storage
             loop, committed, release = asyncio.get_running_loop(), asyncio.Event(), Event()
-            original = store.delete
+            original = store.runs.delete
 
             def paused(*args):
                 original(*args)
                 loop.call_soon_threadsafe(committed.set)
                 assert release.wait(5)
 
-            monkeypatch.setattr(store, 'delete', paused)
+            monkeypatch.setattr(store.runs, 'delete', paused)
             deleting = asyncio.create_task(client.delete(f'/api/sessions/{sid}'))
             try:
                 await asyncio.wait_for(committed.wait(), 5)
@@ -277,11 +277,11 @@ def test_delete_failure_rolls_back_metadata_and_history(monkeypatch, tmp_path, c
             run = (await client.post(f'/api/sessions/{sid}/runs', json=request('hello'))).json()['run_id']
             await web.state.delivery.wait(run)
             store = web.state.service.application._storage
-            store.connection.execute("CREATE TRIGGER fail_delete BEFORE DELETE ON naiyue_sessions BEGIN SELECT RAISE(ABORT,'PRIVATE_DETAIL'); END")
+            store.database.connection.execute("CREATE TRIGGER fail_delete BEFORE DELETE ON naiyue_sessions BEGIN SELECT RAISE(ABORT,'PRIVATE_DETAIL'); END")
             response = await client.delete(f'/api/sessions/{sid}')
             assert response.status_code == 409 and response.json()['error']['code'] == 'session_delete_unconfirmed'
             assert (await client.get(f'/api/sessions/{sid}')).json()['messages'][-1]['content'] == 'kept'
-            assert store.connection.execute('SELECT count(*) FROM checkpoints').fetchone()[0] > 0
+            assert store.database.connection.execute('SELECT count(*) FROM checkpoints').fetchone()[0] > 0
             assert 'PRIVATE_DETAIL' not in response.text + caplog.text
             assert 'session_delete_failed' in caplog.text
     asyncio.run(scenario())

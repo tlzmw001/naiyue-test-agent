@@ -88,12 +88,11 @@ async def collect_chat_updates(agent, storage, session_id, *, snapshot=None, pre
     its boundary avoids recollecting those checkpoints before the final commit.
     """
     try:
-        row = await run_blocking(storage.get, session_id)
-        heads = {item['thread_id']: item for item in await run_blocking(storage.chat_heads, session_id)}
+        row = await run_blocking(storage.sessions.get, session_id)
+        heads = {item['thread_id']: item for item in await run_blocking(storage.conversation.chat_heads, session_id)}
         prior = {item.thread_id: item for item in previous}
         scopes = {row['thread_id']: 'root'}
-        registered = await run_blocking(storage._read, '''SELECT session_id,agent_id,agent,child_thread_id,agent_path FROM naiyue_subagent_instances
-            WHERE session_id=? AND last_parent_run_id=?''', (session_id, row['run_id']))
+        registered = await run_blocking(storage.subagents.for_parent_run, session_id, row['run_id'])
         scopes.update({item['child_thread_id']: item['agent_path'] for item in registered})
         updates = []
         queue = list(scopes.items())

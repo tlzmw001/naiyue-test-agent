@@ -25,7 +25,8 @@ from naiyue_test_agent import application
 from naiyue_test_agent.storage import checkpoint_retention
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.application.sessions.session_persistence import SessionPersistence
-from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.storage.project_store import ProjectStore
+from naiyue_test_agent.storage.unit_of_work import RunUnitOfWork
 from naiyue_test_agent.checkpoint_settings import CheckpointRetentionSettings
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.settings import AppSettings
@@ -63,7 +64,7 @@ async def sample(directory, case, enabled, repetition):
         enabled=enabled, trigger_checkpoints=case['threshold'], **limits))
     samples, active = {}, {}
     finish = SessionPersistence.afinish
-    save = SessionStorage.finish_run
+    save = RunUnitOfWork.finish_run
     prune = checkpoint_retention.prune_after_finish
 
     async def observe_finish(self, sid, rid, *args):
@@ -92,7 +93,7 @@ async def sample(directory, case, enabled, repetition):
 
     with (patch.object(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model})),
           patch.object(SessionPersistence, 'afinish', observe_finish),
-          patch.object(SessionStorage, 'finish_run', observe_save),
+          patch.object(RunUnitOfWork, 'finish_run', observe_save),
           patch.object(checkpoint_retention, 'prune_after_finish', observe_prune)):
         async with open_async_persistent_application('unused', database_path=directory / 'state.sqlite',
                 tools=[], system_prompt='', response_format=None, settings=settings) as app:
@@ -101,7 +102,7 @@ async def sample(directory, case, enabled, repetition):
             if seeded:
                 sid = sessions[0]
                 await app.arun(sid, [('user', 'synthetic seed')])
-                config = {'configurable': {'thread_id': app._storage.get(sid)['thread_id']}}
+                config = {'configurable': {'thread_id': app._storage.sessions.get(sid)['thread_id']}}
                 for _ in range(case.get('backlog', 0)):
                     await app._agent.aupdate_state(config, None, as_node=END)
                 if case.get('backlog'):
@@ -116,13 +117,13 @@ async def sample(directory, case, enabled, repetition):
                                     id=identity, content='x' * 20000)]}}
                             kind, blob = app._agent.checkpointer.serde.dumps_typed(checkpoint)
                             yield config['configurable']['thread_id'], '', identity, None, kind, blob, b'{}'
-                    with app._storage.connection:
-                        app._storage.connection.executemany('INSERT INTO checkpoints VALUES(?,?,?,?,?,?,?)', fixtures())
+                    with app._storage.database.connection:
+                        app._storage.database.connection.executemany('INSERT INTO checkpoints VALUES(?,?,?,?,?,?,?)', fixtures())
             if case.get('historical_boundaries'):
                 historical = await app.acreate_session('A')
-                thread = app._storage.get(historical)['thread_id']
-                with app._storage.connection:
-                    app._storage.connection.executemany('''INSERT INTO naiyue_reply_boundaries
+                thread = app._storage.sessions.get(historical)['thread_id']
+                with app._storage.database.connection:
+                    app._storage.database.connection.executemany('''INSERT INTO naiyue_reply_boundaries
                         (session_id,thread_id,reply_id,input_message_id,source_checkpoint_id,input_sequence,source_thread_id)
                         VALUES(?,?,?,?,?,?,?)''', ((historical, thread, f'reply-{i}', f'input-{i}', None, i, thread)
                         for i in range(case['historical_boundaries'])))
@@ -132,15 +133,15 @@ async def sample(directory, case, enabled, repetition):
                     start = perf_counter()
                     await app.arun(sid, [('user', 'q' * case['payload_chars'])])
                     elapsed = (perf_counter() - start) * 1000
-                    rid = app._storage.get(sid)['run_id']
+                    rid = app._storage.sessions.get(sid)['run_id']
                     samples[rid]['task_ms'] = elapsed
-                    thread = app._storage.get(sid)['thread_id']
-                    samples[rid]['retained_checkpoints'] = app._storage.connection.execute(
+                    thread = app._storage.sessions.get(sid)['thread_id']
+                    samples[rid]['retained_checkpoints'] = app._storage.database.connection.execute(
                         'SELECT COUNT(*) FROM checkpoints WHERE thread_id=?', (thread,)).fetchone()[0]
             await asyncio.gather(*(conversation(sid) for sid in sessions))
-            counts = app._storage._read('''SELECT COUNT(*) AS checkpoints,
+            counts = app._storage.database.read_rows('''SELECT COUNT(*) AS checkpoints,
                 COALESCE(SUM(length(checkpoint)+length(metadata)),0) AS checkpoint_bytes FROM checkpoints''')[0]
-            archive = app._storage._read('SELECT COUNT(*) AS messages FROM naiyue_chat_messages')[0]['messages']
+            archive = app._storage.database.read_rows('SELECT COUNT(*) AS messages FROM naiyue_chat_messages')[0]['messages']
             expected = 2 * (case['turns'] * case['sessions'] + seeded)
             if archive != expected:
                 raise AssertionError(f'Archive count {archive} != {expected}')

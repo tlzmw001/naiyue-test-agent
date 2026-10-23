@@ -11,7 +11,7 @@ import pytest
 from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 
 from naiyue_test_agent.agent_runtime.events import RuntimeEvent, RunStartedData, RunFinishedData, ToolCallStartedData
-from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.storage.project_store import ProjectStore
 from test_model_usage_storage import seed
 
 
@@ -33,53 +33,53 @@ def end(*, sid='s', rid='r', sequence=100):
 
 def test_schema_nine_migrates_and_reopen_preserves_facts(tmp_path):
     path = tmp_path / 'state.sqlite'
-    with SessionStorage(path) as store:
+    with ProjectStore(path) as store:
         seed(store)
     with sqlite3.connect(path) as connection:
         remove_reply_schema(connection)
         connection.executescript('DROP TABLE IF EXISTS naiyue_diagnostic_events; '
                                 'DROP TABLE IF EXISTS naiyue_diagnostic_runs; '
                                 'UPDATE naiyue_store_info SET version=9;')
-    with SessionStorage(path) as store:
-        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
+    with ProjectStore(path) as store:
+        assert store.database.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
         cfg = limits()
-        store.save_diagnostic_event(fact(), cfg)
-        store.save_diagnostic_event(fact('tool_call_started', ToolCallStartedData('t', 'read'), sequence=3), cfg)
-        store.finish_diagnostic_run(end(), cfg)
-        page = store.read_diagnostic_events('s', 'r', limit=2)
+        store.diagnostics.save_diagnostic_event(fact(), cfg)
+        store.diagnostics.save_diagnostic_event(fact('tool_call_started', ToolCallStartedData('t', 'read'), sequence=3), cfg)
+        store.diagnostics.finish_diagnostic_run(end(), cfg)
+        page = store.diagnostics.read_diagnostic_events('s', 'r', limit=2)
         assert page['summary']['status'] == 'completed' and not page['summary']['capture_incomplete']
         assert [e['sequence'] for e in page['events']] == [1, 3]
         assert page['next_after'] == 3
-        assert store.read_diagnostic_events('s', 'r', after=3)['events'][0]['sequence'] == 100
-        before = store.get('s')
-    with SessionStorage(path) as store:
-        assert store.get('s') == before
-        assert store.read_diagnostic_events('s', 'r')['summary']['status'] == 'completed'
+        assert store.diagnostics.read_diagnostic_events('s', 'r', after=3)['events'][0]['sequence'] == 100
+        before = store.sessions.get('s')
+    with ProjectStore(path) as store:
+        assert store.sessions.get('s') == before
+        assert store.diagnostics.read_diagnostic_events('s', 'r')['summary']['status'] == 'completed'
 
 
 def test_duplicate_and_filtered_sequence_gaps_are_not_capture_loss(tmp_path):
-    with SessionStorage(tmp_path / 'state.sqlite') as store:
+    with ProjectStore(tmp_path / 'state.sqlite') as store:
         seed(store)
         cfg, record = limits(), fact()
-        store.save_diagnostic_event(record, cfg)
-        store.save_diagnostic_event(record, cfg)
-        store.finish_diagnostic_run(end(sequence=30), cfg)
-        store.finish_diagnostic_run(end(sequence=30), cfg)
-        page = store.read_diagnostic_events('s', 'r')
+        store.diagnostics.save_diagnostic_event(record, cfg)
+        store.diagnostics.save_diagnostic_event(record, cfg)
+        store.diagnostics.finish_diagnostic_run(end(sequence=30), cfg)
+        store.diagnostics.finish_diagnostic_run(end(sequence=30), cfg)
+        page = store.diagnostics.read_diagnostic_events('s', 'r')
         assert [r['sequence'] for r in page['events']] == [1, 30]
         assert page['summary']['event_count'] == 2
         assert page['summary']['capture_incomplete'] is False
 
 
 def test_per_run_budget_stops_details_but_retains_terminal_summary(tmp_path):
-    with SessionStorage(tmp_path / 'state.sqlite') as store:
+    with ProjectStore(tmp_path / 'state.sqlite') as store:
         seed(store)
         cfg = limits(max_run_bytes=8192)
-        store.save_diagnostic_event(fact(), cfg)
+        store.diagnostics.save_diagnostic_event(fact(), cfg)
         for i in range(2, 62):
-            store.save_diagnostic_event(fact('tool_call_started', ToolCallStartedData('t' * 100 + str(i), 'read'), sequence=i), cfg)
-        store.finish_diagnostic_run(end(), cfg)
-        page = store.read_diagnostic_events('s', 'r', limit=100)
+            store.diagnostics.save_diagnostic_event(fact('tool_call_started', ToolCallStartedData('t' * 100 + str(i), 'read'), sequence=i), cfg)
+        store.diagnostics.finish_diagnostic_run(end(), cfg)
+        page = store.diagnostics.read_diagnostic_events('s', 'r', limit=100)
         assert 1 < len(page['events']) < 62
         summary = page['summary']
         assert summary['payload_bytes'] <= 8192 and summary['status'] == 'completed'
@@ -88,83 +88,83 @@ def test_per_run_budget_stops_details_but_retains_terminal_summary(tmp_path):
 
 
 def test_workspace_eviction_removes_whole_closed_groups_and_protects_open_root(tmp_path):
-    with SessionStorage(tmp_path / 'state.sqlite') as store:
+    with ProjectStore(tmp_path / 'state.sqlite') as store:
         seed(store)
         cfg = limits(max_run_bytes=8192, max_workspace_bytes=10000)
-        store.save_diagnostic_event(fact(rid='active'), cfg)
+        store.diagnostics.save_diagnostic_event(fact(rid='active'), cfg)
         for i in range(20):
             rid = 'closed-' + str(i)
-            store.save_diagnostic_event(fact(rid=rid), cfg)
-            store.finish_diagnostic_run(end(rid=rid), cfg)
-        page = store.read_diagnostic_runs('s', limit=100)
+            store.diagnostics.save_diagnostic_event(fact(rid=rid), cfg)
+            store.diagnostics.finish_diagnostic_run(end(rid=rid), cfg)
+        page = store.diagnostics.read_diagnostic_runs('s', limit=100)
         ids = {r['run_id'] for r in page['runs']}
         assert 'active' in ids and 'closed-0' not in ids
-        assert store.read_diagnostic_events('s', 'active')['summary']['capture_state'] == 'open'
-        assert store.connection.execute('SELECT COUNT(*) FROM naiyue_diagnostic_events WHERE run_id=?', ('closed-0',)).fetchone()[0] == 0
+        assert store.diagnostics.read_diagnostic_events('s', 'active')['summary']['capture_state'] == 'open'
+        assert store.database.connection.execute('SELECT COUNT(*) FROM naiyue_diagnostic_events WHERE run_id=?', ('closed-0',)).fetchone()[0] == 0
 
 
 def test_ttl_and_startup_unclosed_marker_do_not_change_session_or_chat(tmp_path):
-    with SessionStorage(tmp_path / 'state.sqlite') as store:
+    with ProjectStore(tmp_path / 'state.sqlite') as store:
         seed(store)
         cfg = limits()
-        store.save_diagnostic_event(fact(rid='open'), cfg)
-        store.save_diagnostic_event(fact(rid='closed'), cfg)
-        store.finish_diagnostic_run(end(rid='closed'), cfg)
-        before = store.get('s')
-        store.prepare_diagnostics(cfg)
-        summary = store.read_diagnostic_events('s', 'open')['summary']
+        store.diagnostics.save_diagnostic_event(fact(rid='open'), cfg)
+        store.diagnostics.save_diagnostic_event(fact(rid='closed'), cfg)
+        store.diagnostics.finish_diagnostic_run(end(rid='closed'), cfg)
+        before = store.sessions.get('s')
+        store.diagnostics.prepare_diagnostics(cfg)
+        summary = store.diagnostics.read_diagnostic_events('s', 'open')['summary']
         assert summary['capture_state'] == 'interrupted' and summary['status'] is None
         assert summary['capture_incomplete'] and summary['reason'] == 'missing_terminal'
-        assert store.get('s') == before and store.chat_heads('s') == []
-        store.prune_diagnostics(cfg, now=datetime.now(timezone.utc) + timedelta(days=31))
-        assert store.read_diagnostic_runs('s')['runs'] == []
+        assert store.sessions.get('s') == before and store.conversation.chat_heads('s') == []
+        store.diagnostics.prune_diagnostics(cfg, now=datetime.now(timezone.utc) + timedelta(days=31))
+        assert store.diagnostics.read_diagnostic_runs('s')['runs'] == []
 
 
 def test_root_listing_and_event_queries_are_scoped_and_read_only(tmp_path):
-    with SessionStorage(tmp_path / 'state.sqlite') as store:
+    with ProjectStore(tmp_path / 'state.sqlite') as store:
         seed(store); seed(store, 'other')
         cfg = limits()
         for rid in ('one', 'two'):
-            store.save_diagnostic_event(fact(rid=rid), cfg)
-            store.finish_diagnostic_run(end(rid=rid), cfg)
-        store.save_diagnostic_event(fact(sid='other', rid='foreign'), cfg)
-        store.connection.execute('PRAGMA query_only=ON')
-        first = store.read_diagnostic_runs('s', limit=1)
+            store.diagnostics.save_diagnostic_event(fact(rid=rid), cfg)
+            store.diagnostics.finish_diagnostic_run(end(rid=rid), cfg)
+        store.diagnostics.save_diagnostic_event(fact(sid='other', rid='foreign'), cfg)
+        store.database.connection.execute('PRAGMA query_only=ON')
+        first = store.diagnostics.read_diagnostic_runs('s', limit=1)
         assert [r['run_id'] for r in first['runs']] == ['two']
-        second = store.read_diagnostic_runs('s', limit=1, before=first['next_before'])
+        second = store.diagnostics.read_diagnostic_runs('s', limit=1, before=first['next_before'])
         assert [r['run_id'] for r in second['runs']] == ['one'] and second['next_before'] is None
-        assert store.read_diagnostic_events('s', 'one')['summary']['status'] == 'completed'
+        assert store.diagnostics.read_diagnostic_events('s', 'one')['summary']['status'] == 'completed'
         with pytest.raises(Exception, match='diagnostic_run_not_found'):
-            store.read_diagnostic_events('s', 'foreign')
+            store.diagnostics.read_diagnostic_events('s', 'foreign')
 
 
 def test_full_workspace_refuses_new_group_without_evicting_active_run(tmp_path):
-    with SessionStorage(tmp_path / 'state.sqlite') as store:
+    with ProjectStore(tmp_path / 'state.sqlite') as store:
         seed(store)
         cfg = limits(max_run_bytes=8192, max_workspace_bytes=8192)
-        assert store.save_diagnostic_event(fact(rid='active'), cfg)
-        assert store.save_diagnostic_event(fact(rid='other'), cfg) is False
-        runs = store.read_diagnostic_runs('s')['runs']
+        assert store.diagnostics.save_diagnostic_event(fact(rid='active'), cfg)
+        assert store.diagnostics.save_diagnostic_event(fact(rid='other'), cfg) is False
+        runs = store.diagnostics.read_diagnostic_runs('s')['runs']
         assert [r['run_id'] for r in runs] == ['active']
-        assert store.prune_diagnostics(cfg)['allocated_bytes'] <= cfg.max_workspace_bytes
-        store.finish_diagnostic_run(end(rid='active'), cfg)
-        assert store.save_diagnostic_event(fact(rid='other'), cfg)
+        assert store.diagnostics.prune_diagnostics(cfg)['allocated_bytes'] <= cfg.max_workspace_bytes
+        store.diagnostics.finish_diagnostic_run(end(rid='active'), cfg)
+        assert store.diagnostics.save_diagnostic_event(fact(rid='other'), cfg)
 
 
 def test_cleanup_batch_limit_and_missing_run_after_whole_group_eviction(tmp_path):
-    with SessionStorage(tmp_path / 'state.sqlite') as store:
+    with ProjectStore(tmp_path / 'state.sqlite') as store:
         seed(store)
         cfg = limits(cleanup_batch_runs=2)
         for i in range(5):
-            store.save_diagnostic_event(fact(rid=str(i)), cfg)
-            store.finish_diagnostic_run(end(rid=str(i)), cfg)
+            store.diagnostics.save_diagnostic_event(fact(rid=str(i)), cfg)
+            store.diagnostics.finish_diagnostic_run(end(rid=str(i)), cfg)
         future = datetime.now(timezone.utc) + timedelta(days=31)
-        assert store.prune_diagnostics(cfg, now=future)['removed_runs'] == 2
-        assert len(store.read_diagnostic_runs('s')['runs']) == 3
+        assert store.diagnostics.prune_diagnostics(cfg, now=future)['removed_runs'] == 2
+        assert len(store.diagnostics.read_diagnostic_runs('s')['runs']) == 3
         with pytest.raises(Exception, match='diagnostic_run_not_found'):
-            store.read_diagnostic_events('s', '0')
-        assert store.prune_diagnostics(cfg, now=future)['removed_runs'] == 2
-        assert store.prune_diagnostics(cfg, now=future)['removed_runs'] == 1
+            store.diagnostics.read_diagnostic_events('s', '0')
+        assert store.diagnostics.prune_diagnostics(cfg, now=future)['removed_runs'] == 2
+        assert store.diagnostics.prune_diagnostics(cfg, now=future)['removed_runs'] == 1
 
 
 def test_projected_record_excludes_raw_targets_bodies_and_high_frequency_payloads():

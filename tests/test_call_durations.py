@@ -197,7 +197,7 @@ async def test_tool_clock_failure_preserves_original_business_error(monkeypatch,
 @async_test
 async def test_root_duration_waits_for_required_save_and_preserves_failures(monkeypatch, tmp_path, model_error, save_error):
     from naiyue_test_agent.contracts import timing
-    from naiyue_test_agent.storage.session_storage import SessionPersistenceError
+    from naiyue_test_agent.application.errors import SessionPersistenceError
     from test_persistent_sessions import build
     from test_async_application import StreamingToolModel
     tick, events = [0], []
@@ -220,7 +220,7 @@ async def test_root_duration_waits_for_required_save_and_preserves_failures(monk
         if save_error:
             def fail_save(*args, **kwargs):
                 raise secondary
-            monkeypatch.setattr(app._storage, 'finish_run', fail_save)
+            monkeypatch.setattr(app._storage.runs, 'finish_run', fail_save)
         task = asyncio.create_task(app.arun(sid, [('user', 'task')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)

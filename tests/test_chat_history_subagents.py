@@ -26,9 +26,9 @@ async def test_root_child_archives_stay_separate_and_delete_together(monkeypatch
         await app.arun(sid, [('user', 'delegate one')])
         await app.arun(other, [('user', 'delegate two')])
         storage = app._storage
-        head = next(r for r in storage.chat_heads(sid) if r['agent_path'] != 'root')
+        head = next(r for r in storage.conversation.chat_heads(sid) if r['agent_path'] != 'root')
         own = rows(storage, sid)
-        root_rows = [r for r in own if r['thread_id'] == storage.get(sid)['thread_id']]
+        root_rows = [r for r in own if r['thread_id'] == storage.sessions.get(sid)['thread_id']]
         child_rows = [r for r in own if r['thread_id'] == head['thread_id']]
         assert [json.loads(r['body_json'])['data']['content'] for r in child_rows] == ['one', 'first child']
         parent_tool = json.loads(root_rows[2]['body_json'])['data']
@@ -38,6 +38,6 @@ async def test_root_child_archives_stay_separate_and_delete_together(monkeypatch
         assert head['thread_id'] not in {r['thread_id'] for r in rows(storage, other)}
         untouched = rows(storage, other)
         await app.adelete_session(sid)
-        assert rows(storage, sid) == [] and storage.chat_heads(sid) == []
+        assert rows(storage, sid) == [] and storage.conversation.chat_heads(sid) == []
         assert rows(storage, other) == untouched
-        assert storage.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (head['thread_id'],)).fetchone()[0] == 0
+        assert storage.database.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (head['thread_id'],)).fetchone()[0] == 0

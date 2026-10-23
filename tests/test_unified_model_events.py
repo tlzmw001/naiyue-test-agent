@@ -67,7 +67,7 @@ def test_old_model_event_names_are_not_registered_aliases(caplog):
 
 
 def test_historical_diagnostic_names_and_payload_semantics_survive_reopen(tmp_path):
-    from naiyue_test_agent.storage.session_storage import SessionStorage
+    from naiyue_test_agent.storage.project_store import ProjectStore
     from test_diagnostic_storage import fact, end, limits
     from test_model_usage_storage import seed
     path = tmp_path / 'history.sqlite'
@@ -79,12 +79,12 @@ def test_historical_diagnostic_names_and_payload_semantics_survive_reopen(tmp_pa
         row = fact(sequence=sequence)
         row.update(event_type=kind, data=data)
         rows.append(row)
-    with SessionStorage(path) as store:
+    with ProjectStore(path) as store:
         seed(store)
         for row in rows:
-            assert store.save_diagnostic_event(row, limits())
-        store.finish_diagnostic_run(end(), limits())
-    with SessionStorage(path) as store:
-        events = store.read_diagnostic_events('s', 'r')['events']
+            assert store.diagnostics.save_diagnostic_event(row, limits())
+        store.diagnostics.finish_diagnostic_run(end(), limits())
+    with ProjectStore(path) as store:
+        events = store.diagnostics.read_diagnostic_events('s', 'r')['events']
         assert [(row['event_type'], row['data']) for row in events[:2]] == [
             (row['event_type'], row['data']) for row in rows]

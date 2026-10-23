@@ -78,18 +78,18 @@ async def memory_scenario(root, Model):
             if isinstance(message, ToolMessage) and message.tool_call_id == 'installed-refresh']
         assert receipt['status'] == 'accepted'
         task_id = receipt['task_id']
-        origin = app._storage.get(sid)['run_id']
-        assert app._storage.get(sid)['state'] == 'ready'
+        origin = app._storage.sessions.get(sid)['run_id']
+        assert app._storage.sessions.get(sid)['state'] == 'ready'
         await app._sessions.memory_jobs.wait_idle()
         task = await app.aget_background_task_output(task_id, session_id=sid, workspace_root=workspace)
         assert task['result_status'] == 'completed' and task['cleanup_confirmed'] and task['kind'] == 'memory'
         assert json.loads(task['output'])['memory_saved'] == 1
         listing = await app.alist_background_tasks(session_id=sid, workspace_root=workspace)
         assert listing['active_count'] == 0 and listing['items'][0]['task_id'] == task_id
-        saved = overview(app._storage, sid)
+        saved = app._storage.memory.overview(sid)
         assert saved['overview_status'] == 'generated' and saved['overview'] == generated['overview']
         request = MemoryInput(action='list', scope='workspace').model_dump(mode='json')
-        memories = app._persistence._memory.query(sid, app._storage.get(sid)['project_id'], request)['items']
+        memories = app._persistence._memory.query(sid, app._storage.sessions.get(sid)['project_id'], request)['items']
         assert len(memories) == 1 and memories[0]['kind'] == 'user' and memories[0]['body'] == PREFERENCE
         usage = await app.aget_model_usage(sid, model_limit=20)
         memory_usage, = [row for row in usage['activities'] if row['id'] == 'memory']
@@ -113,7 +113,7 @@ async def memory_scenario(root, Model):
     async with opened() as app:
         history = await app.aget_session_history(sid)
         assert [message.content for message in history['messages']] == contents
-        assert overview(app._storage, sid)['overview_version'] == overview_version
+        assert app._storage.memory.overview(sid)['overview_version'] == overview_version
         diagnostics = await app.aget_diagnostic_events(sid, task_id)
         assert diagnostics['summary']['mode'] == 'memory' and diagnostics['summary']['origin_run_id'] == origin
         kinds = [event['event_type'] for event in diagnostics['events']]

@@ -286,9 +286,9 @@ def test_multi_page_compaction_keeps_original_chat_after_reopen(monkeypatch, tmp
             saved_ids = [m.id for m in await app.aget_messages(sid)]
         async with web_client(monkeypatch, tmp_path, model, history_page_messages=2) as (client, web):
             assert (await client.post(endpoint + '/prepare')).status_code == 200
-            writes = web.state.service.application._storage.connection.total_changes
+            writes = web.state.service.application._storage.database.connection.total_changes
             assert await read_pages(client, sid) == before_close
             assert [m.id for m in await web.state.service.application.aget_messages(sid)] == saved_ids
-            assert web.state.service.application._storage.connection.total_changes == writes
+            assert web.state.service.application._storage.database.connection.total_changes == writes
             assert len(model.seen) == 6
     asyncio.run(scenario())

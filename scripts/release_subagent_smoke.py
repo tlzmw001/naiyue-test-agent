@@ -97,7 +97,7 @@ async def subagent_scenario(root, Model):
         envelope = json.loads(feedback.content)
         assert envelope['report'] == report and envelope['status'] == 'completed' and not envelope['truncated']
         identity = envelope['agent_id']
-        record = app._storage.get_subagent(sid, identity)
+        record = app._storage.subagents.get_subagent(sid, identity)
         graph = app._sessions._subagents['worker']['agent']
         state = await graph.aget_state({'configurable': {'thread_id': record['child_thread_id']}})
         assert record['state'] == 'ready' and state.config['configurable']['checkpoint_id'] == record['checkpoint_id']

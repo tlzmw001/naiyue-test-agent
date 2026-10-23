@@ -20,8 +20,7 @@ def writer(storage, subscriptions, **limits):
 @async_test
 async def test_writer_flushes_a_without_waiting_for_b_model_to_finish():
     saved, finished = [], []
-    storage = SimpleNamespace(save_model_usage_event=saved.append,
-        finish_model_usage_run=lambda *args, **kwargs: finished.append((args, kwargs)))
+    storage = SimpleNamespace(usage=SimpleNamespace(save_model_usage_event=saved.append, finish_model_usage_run=lambda *args, **kwargs: finished.append((args, kwargs))))
     subscriptions = ApplicationEventSubscriptions()
     async with writer(storage, subscriptions) as sink:
         for event in facts(rid='a') + facts(rid='b', identity='b')[:1]:
@@ -37,8 +36,7 @@ async def test_capacity_includes_started_io_and_overflow_preserves_accepted_fact
     entered, release, saved, finished = Event(), Event(), [], []
     def save(event):
         entered.set(); release.wait(); saved.append(event)
-    storage = SimpleNamespace(save_model_usage_event=save,
-        finish_model_usage_run=lambda *args, **kwargs: finished.append(kwargs))
+    storage = SimpleNamespace(usage=SimpleNamespace(save_model_usage_event=save, finish_model_usage_run=lambda *args, **kwargs: finished.append(kwargs)))
     subscriptions = ApplicationEventSubscriptions()
     async with writer(storage, subscriptions, max_pending_events=1) as sink:
         sink.accept(facts()[0])
@@ -61,8 +59,7 @@ async def test_storage_fault_disables_only_affected_run_and_keeps_exception_body
         if event.run_id == 'bad':
             raise OSError('PRIVATE_DATABASE_PATH')
         saved.append(event)
-    storage = SimpleNamespace(save_model_usage_event=save,
-        finish_model_usage_run=lambda *args, **kwargs: finished.append((args, kwargs)))
+    storage = SimpleNamespace(usage=SimpleNamespace(save_model_usage_event=save, finish_model_usage_run=lambda *args, **kwargs: finished.append((args, kwargs))))
     async with writer(storage, ApplicationEventSubscriptions()) as sink:
         for event in facts(rid='bad') + facts(rid='good', identity='good'):
             sink.accept(event)
@@ -78,7 +75,7 @@ async def test_cancelled_writer_settles_started_io_and_wakes_flush_as_incomplete
     entered, release, stored = Event(), Event(), Event()
     def save(_):
         entered.set(); release.wait(); stored.set()
-    storage = SimpleNamespace(save_model_usage_event=save, finish_model_usage_run=lambda *args, **kwargs: None)
+    storage = SimpleNamespace(usage=SimpleNamespace(save_model_usage_event=save, finish_model_usage_run=lambda *args, **kwargs: None))
     sink = writer(storage, ApplicationEventSubscriptions())
     sink.accept(facts()[0])
     try:
@@ -98,7 +95,7 @@ async def test_cancelled_writer_settles_started_io_and_wakes_flush_as_incomplete
 @async_test
 async def test_byte_overflow_does_not_enqueue_a_record_or_hide_its_gap():
     saved = []
-    storage = SimpleNamespace(save_model_usage_event=saved.append, finish_model_usage_run=lambda *args, **kwargs: None)
+    storage = SimpleNamespace(usage=SimpleNamespace(save_model_usage_event=saved.append, finish_model_usage_run=lambda *args, **kwargs: None))
     subscriptions = ApplicationEventSubscriptions()
     async with writer(storage, subscriptions, max_pending_bytes=1) as sink:
         for event in facts():

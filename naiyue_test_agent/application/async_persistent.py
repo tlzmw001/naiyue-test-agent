@@ -12,7 +12,7 @@ from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking, await_settled, acquire_blocking
 from .async_application import AsyncApplication
 from .sessions.session_persistence import SessionPersistence
-from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.storage.project_store import ProjectStore
 from .observability.model_usage_persistence import ModelUsagePersistence
 from .observability.diagnostic_persistence import DiagnosticPersistence
 from .memory.memory_access import MemoryAccess
@@ -50,7 +50,7 @@ class AsyncPersistentApplication(AsyncApplication):
     async def aget_regeneration_action(self, session_id, request_id):
         with self._owned_operation():
             from .conversation.reply_storage import action
-            return await run_blocking(action, self._storage, session_id, request_id)
+            return await run_blocking(self._storage.replies.action, session_id, request_id)
 
     async def aregenerate_last_reply(self, session_id, *, request_id, expected_reply_id, expected_conversation_revision):
         with self._owned_operation():
@@ -60,29 +60,29 @@ class AsyncPersistentApplication(AsyncApplication):
 
     async def aget_model_usage(self, session_id, *, model_limit, after_model=None):
         with self._owned_operation():
-            return await run_blocking(self._storage.read_model_usage, session_id,
+            return await run_blocking(self._storage.usage.read_model_usage, session_id,
                 model_limit=model_limit, after_model=after_model)
 
     async def alist_diagnostic_runs(self, session_id, *, limit=50, before=None):
         with self._owned_operation():
-            return await run_blocking(self._storage.read_diagnostic_runs, session_id, limit=limit, before=before)
+            return await run_blocking(self._storage.diagnostics.read_diagnostic_runs, session_id, limit=limit, before=before)
 
     async def aget_diagnostic_events(self, session_id, run_id, *, limit=50, after=0):
         with self._owned_operation():
-            return await run_blocking(self._storage.read_diagnostic_events, session_id, run_id, limit=limit, after=after)
+            return await run_blocking(self._storage.diagnostics.read_diagnostic_events, session_id, run_id, limit=limit, after=after)
 
     async def aget_chat_page(self, session_id, *, agent_id=None, **query):
         with self._owned_operation():
             storage = self._storage
-            row = await run_blocking(storage.get, session_id)
-            return await run_blocking(storage.read_chat_page, session_id,
+            row = await run_blocking(storage.sessions.get, session_id)
+            return await run_blocking(storage.conversation.read_chat_page, session_id,
                                       'subagent:' + agent_id if agent_id else row['thread_id'], **query)
 
     async def aget_chat_message(self, session_id, sequence, *, agent_id=None, **query):
         with self._owned_operation():
             storage = self._storage
-            row = await run_blocking(storage.get, session_id)
-            return await run_blocking(storage.read_chat_message, session_id,
+            row = await run_blocking(storage.sessions.get, session_id)
+            return await run_blocking(storage.conversation.read_chat_message, session_id,
                                       'subagent:' + agent_id if agent_id else row['thread_id'], sequence, **query)
 
     async def aget_message_reasoning(self, session_id, sequence, *, revision, agent_id, conversation_revision, offset, chars, max_bytes):
@@ -91,13 +91,9 @@ class AsyncPersistentApplication(AsyncApplication):
             from langchain_core.messages import messages_from_dict
             from naiyue_test_agent.model_access.reasoning import visible_reasoning
             from .errors import SessionPersistenceError
-            row = await run_blocking(self._storage.get, session_id)
+            row = await run_blocking(self._storage.sessions.get, session_id)
             thread = 'subagent:' + agent_id if agent_id else row['thread_id']
-            records = await run_blocking(self._storage._read, """SELECT revision,
-                CASE WHEN length(CAST(body_json AS BLOB))<=? THEN body_json END AS body
-                FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? AND sequence=? AND message_type='ai'
-                AND (SELECT conversation_revision FROM naiyue_sessions WHERE session_id=?)=?""",
-                (max_bytes, session_id, thread, sequence, session_id, conversation_revision))
+            records = await run_blocking(self._storage.conversation.reasoning_body, session_id, thread, sequence, conversation_revision, max_bytes)
             if not records or records[0]['revision'] != revision or records[0]['body'] is None:
                 raise SessionPersistenceError('history_cursor_stale')
             text = visible_reasoning(messages_from_dict([json.loads(records[0]['body'])])[0])
@@ -108,14 +104,9 @@ class AsyncPersistentApplication(AsyncApplication):
 
     async def aget_file_change(self, session_id, sequence, *, revision, agent_id=None, conversation_revision=0, max_bytes):
         with self._owned_operation():
-            row = await run_blocking(self._storage.get, session_id)
+            row = await run_blocking(self._storage.sessions.get, session_id)
             thread = 'subagent:' + agent_id if agent_id else row['thread_id']
-            records = await run_blocking(self._storage._read, """SELECT revision,
-                CASE WHEN length(CAST(json_extract(body_json,'$.data.artifact') AS BLOB))<=?
-                THEN json_extract(body_json,'$.data.artifact') END AS artifact
-                FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? AND sequence=? AND message_type='tool'
-                AND (SELECT conversation_revision FROM naiyue_sessions WHERE session_id=?)=?""",
-                (max_bytes, session_id, thread, sequence, session_id, conversation_revision))
+            records = await run_blocking(self._storage.conversation.file_change_body, session_id, thread, sequence, conversation_revision, max_bytes)
             if not records or records[0]['revision'] != revision or records[0]['artifact'] is None:
                 from .errors import SessionPersistenceError
                 raise SessionPersistenceError('history_cursor_stale')
@@ -125,8 +116,8 @@ class AsyncPersistentApplication(AsyncApplication):
     async def aget_chat_subagents(self, session_id):
         with self._owned_operation():
             from .subagents.subagent_queries import annotate
-            records = await run_blocking(self._storage.chat_subagents, session_id)
-            owned = await run_blocking(self._storage.get_subagent_references, session_id)
+            records = await run_blocking(self._storage.conversation.chat_subagents, session_id)
+            owned = await run_blocking(self._storage.subagents.get_subagent_references, session_id)
             active = self._sessions.require(session_id).describe_session()['run_id'] if self.has_session(session_id) else None
             return annotate(records, owned, self.get_registered_subagents(), self._catalog, active)
 
@@ -136,16 +127,16 @@ class AsyncPersistentApplication(AsyncApplication):
             if identity is None:
                 return []
             thread_id, batch_id = identity
-            return await run_blocking(self._storage.read_approval_seed,
+            return await run_blocking(self._storage.conversation.read_approval_seed,
                                       session_id, thread_id, batch_id)
 
     async def aupdate_session_presentation(self, session_id, **changes):
         with self._owned_operation():
-            await run_blocking(self._storage.update_presentation, session_id, **changes)
+            await run_blocking(self._storage.sessions.update_presentation, session_id, **changes)
 
     async def areorder_sessions(self, workspace_root, identities):
         with self._owned_operation():
-            await run_blocking(self._storage.reorder, workspace_root, identities)
+            await run_blocking(self._storage.sessions.reorder, workspace_root, identities)
 
     async def adelete_session(self, session_id):
         with self._owned_operation():
@@ -165,11 +156,11 @@ class AsyncPersistentApplication(AsyncApplication):
 
     async def alist_sessions(self):
         with self._owned_operation():
-            return await run_blocking(self._storage.list_sessions)
+            return await run_blocking(self._storage.sessions.list_sessions)
 
     async def alist_workspace_sessions(self, workspace_root):
         with self._owned_operation():
-            return await run_blocking(self._storage.list_workspace_sessions, workspace_root)
+            return await run_blocking(self._storage.sessions.list_workspace_sessions, workspace_root)
 
 
 @asynccontextmanager
@@ -185,10 +176,10 @@ async def open_async_persistent_application(config_path, *, database_path, tools
     storage, catalog, app, resources, memory = None, None, None, None, None
     primary = None
     try:
-        storage = await acquire_blocking(SessionStorage, lambda item: run_blocking(item.close), database_path)
+        storage = await acquire_blocking(ProjectStore, lambda item: run_blocking(item.close), database_path)
         if workspace_binding is not None:
-            await run_blocking(storage.bind_workspace, workspace_binding['workspace_id'], workspace_binding['root_path'])
-        project_binding = await run_blocking(storage.get_workspace_binding)
+            await run_blocking(storage.sessions.bind_workspace, workspace_binding['workspace_id'], workspace_binding['root_path'])
+        project_binding = await run_blocking(storage.sessions.get_workspace_binding)
         if 'memory' in registry.names() and settings.memory.enabled:
             memory = MemoryAccess(storage, settings.memory, get_data_dir(settings.storage))
         catalog = await acquire_blocking(application.load_model_catalog, lambda item: item.aclose(), config_path)

@@ -5,7 +5,9 @@ import sqlite3
 
 import pytest
 
-from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
+from naiyue_test_agent.storage.project_store import ProjectStore
+
+from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.workspaces import prepare_workspace
 from tests.storage_backup_fixture import closed_store
 
@@ -32,7 +34,7 @@ def test_sdk_and_workspace_guard_block_before_sqlite_or_file_creation(tmp_path, 
         pytest.fail('restore evidence must be checked before SQLite is opened')
     monkeypatch.setattr(sqlite3, 'connect', forbidden)
     with pytest.raises(SessionPersistenceError, match='restore_incomplete'):
-        SessionStorage(database)
+        ProjectStore(database)
     with pytest.raises(ValueError, match='restore_incomplete'):
         prepare_workspace(root, data_dir=tmp_path / 'data', database_path=database)
     assert (database.read_bytes() if database.exists() else None) == before
@@ -47,7 +49,7 @@ def test_second_guard_covers_marker_created_after_workspace_check(tmp_path):
     (maintenance / 'restore.json').write_text('{}')
     database.unlink()
     with pytest.raises(SessionPersistenceError, match='restore_incomplete'):
-        SessionStorage(location.database_path)
+        ProjectStore(location.database_path)
     assert not database.exists()
 
 
@@ -57,7 +59,7 @@ def test_short_binding_read_holds_the_same_database_lock(tmp_path, monkeypatch):
     connect, checked = sqlite3.connect, []
     def observe(*args, **kwargs):
         with pytest.raises(SessionPersistenceError, match='storage_in_use'):
-            SessionStorage(database)
+            ProjectStore(database)
         checked.append(True)
         return connect(*args, **kwargs)
     monkeypatch.setattr(workspaces.sqlite3, 'connect', observe)
@@ -96,7 +98,7 @@ def test_untrusted_maintenance_directory_blocks_with_restore_reason(tmp_path, mo
         monkeypatch.setattr(Path, 'lstat', denied)
     before = database.read_bytes()
     with pytest.raises(SessionPersistenceError, match='restore_incomplete'):
-        SessionStorage(database)
+        ProjectStore(database)
     with pytest.raises(ValueError, match='restore_incomplete'):
         prepare_workspace(root, data_dir=tmp_path / 'data', database_path=database)
     assert database.read_bytes() == before

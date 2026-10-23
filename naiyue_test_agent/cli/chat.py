@@ -25,7 +25,8 @@ from naiyue_test_agent.model_access import ModelConfigError
 from .cli_display import CliEventDisplay
 from .cli_async import build_local_application, build_persistent_application
 from .cli_approval import handle_approval, handle_scope_stop, show_approval_batches, settle_cli_worker
-from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
+from naiyue_test_agent.storage.project_store import ProjectStore
+from naiyue_test_agent.application.errors import SessionPersistenceError
 from .startup_display import startup_messages
 
 
@@ -119,7 +120,7 @@ def _resume_and_print(app, session_id: str, decisions: list[str], *, display=Non
 def _pick_session(storage, selected_id):
     if selected_id:
         return selected_id
-    rows = storage.list_sessions()
+    rows = storage.sessions.list_sessions()
     if not rows:
         print('暂无历史会话')
         return None
@@ -175,14 +176,14 @@ def main(argv: list[str] | None = None) -> int:
                     print('暂无历史会话')
                     return 0
                 raise SessionPersistenceError('session_not_found')
-            storage = SessionStorage(location.database_path)
-            storage.bind_workspace(location.workspace_id, location.root)
+            storage = ProjectStore(location.database_path)
+            storage.sessions.bind_workspace(location.workspace_id, location.root)
             if args.resume is not None:
                 selected = _pick_session(storage, args.resume)
                 if selected is None:
                     storage.close()
                     return 0
-                restored = storage.get(selected)
+                restored = storage.sessions.get(selected)
                 if str(args.workspace) != restored['workspace_root']:
                     raise SessionPersistenceError('workspace_mismatch')
         tools = create_builtin_tools(tool_settings.tools, process_settings=tool_settings.process, shell_task_settings=tool_settings.shell_tasks, progress_settings=tool_settings.progress, network_settings=tool_settings.network, retry_settings=tool_settings.tool_retry)

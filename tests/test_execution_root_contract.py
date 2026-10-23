@@ -77,7 +77,7 @@ def test_missing_child_execution_root_rejects_continuation_without_rebinding(mon
             result = await app.arun(sid, [('user', 'delegate')])
             report = next(m for m in result['messages'] if isinstance(m, ToolMessage))
             identity = json.loads(report.content)['agent_id']
-            before = app._storage.get_subagent(sid, identity)
+            before = app._storage.subagents.get_subagent(sid, identity)
             original = subagent_records.admit
             async def disappear(owner, graph, instance, spec):
                 root.rename(tmp_path / 'removed')
@@ -89,7 +89,7 @@ def test_missing_child_execution_root_rejects_continuation_without_rebinding(mon
             errors = [m for m in result['messages'] if isinstance(m, ToolMessage) and m.tool_call_id == 'again']
             assert errors and 'execution_root_unavailable' in str(errors[0].content) and 'missing' in str(errors[0].content)
             assert len(child.seen) == 1
-            assert app._storage.get_subagent(sid, identity) == before
+            assert app._storage.subagents.get_subagent(sid, identity) == before
     asyncio.run(scenario())
 
 
@@ -186,8 +186,8 @@ def test_restored_execution_identity_reports_reason_without_new_model_call(monke
             sid = await app.acreate_workspace_session('A', root)
             await app.arun(sid, [('user', 'save')])
             if reason == 'not_registered':
-                with app._storage.connection:
-                    app._storage.connection.execute(
+                with app._storage.database.connection:
+                    app._storage.database.connection.execute(
                         "UPDATE naiyue_sessions SET execution_root_kind='worktree' WHERE session_id=?", (sid,))
         if reason != 'not_registered':
             root.rename(tmp_path / 'original-directory')

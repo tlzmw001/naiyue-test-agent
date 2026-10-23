@@ -194,7 +194,7 @@ async def test_json_checkpoint_reopen_obeys_existing_approval_recovery_contract(
     async with persistent() as app:
         history = await app.aget_session_history(sid)
         assert history['recovery']['kind'] == 'pending_approval'
-        thread = app._storage.get(sid)['thread_id']
+        thread = app._storage.sessions.get(sid)['thread_id']
         snapshot = await app._agent.aget_state({'configurable': {'thread_id': thread}})
         assert snapshot.values['tool_execution']['calls'] == saved_calls
         if invalid_in_batch:

@@ -184,9 +184,9 @@ def test_multi_page_history_and_cold_approval_never_execute_before_decision(monk
             assert restored.status_code == 200
             batch, = restored.json()['approval_batches']
             store = web.state.service.application._storage
-            writes = store.connection.total_changes
+            writes = store.database.connection.total_changes
             assert await read_pages(client, sid) == original
-            assert store.connection.total_changes == writes and reached == [] and model.seen == []
+            assert store.database.connection.total_changes == writes and reached == [] and model.seen == []
             decision = approval_request(batch, [choice])
             response = await client.post(endpoint + '/approvals', json=decision)
             assert response.status_code == 202

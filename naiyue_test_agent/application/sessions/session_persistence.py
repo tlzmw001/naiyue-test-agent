@@ -8,7 +8,7 @@ from copy import deepcopy
 from threading import Lock
 from contextlib import nullcontext
 
-from naiyue_test_agent.storage.session_storage import SessionPersistenceError
+from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.storage.execution_storage import root_from_row
 from naiyue_test_agent.execution_roots import execution_error
 from .session_recovery import _classification, _identity_matches, _message_facts, classify_recovery, recovery_record, build_recovery_update, validate_saved_approval
@@ -46,7 +46,7 @@ class SessionPersistence:
         self._memory_agent = None
 
     async def astatus(self, session_id):
-        row = await run_blocking(self.storage.get, session_id)
+        row = await run_blocking(self.storage.sessions.get, session_id)
         value = {key: row[key] for key in ('session_id', 'model_id', 'thinking_level', 'workspace_root',
             'state', 'updated_at', 'last_run_status', 'title', 'permission_mode', 'checkpoint_id', 'conversation_revision')}
         value.update(pinned=bool(row['pinned']), active_tools=json.loads(row['active_tool_names_json']),
@@ -69,7 +69,7 @@ class SessionPersistence:
         value['can_run'] = value['can_run'] and value['execution_root_error'] is None
         value.pop('approval_run_id', None)
         from naiyue_test_agent.application.conversation.reply_storage import latest
-        boundary = await run_blocking(latest, self.storage, session_id)
+        boundary = await run_blocking(self.storage.replies.latest, session_id)
         value['last_reply_id'] = boundary['reply_id'] if boundary else None
         return value
 
@@ -83,7 +83,7 @@ class SessionPersistence:
         facts = session.snapshot_for_run()
         require_execution_directory(facts['execution_root'], facts['project_id'])
         try:
-            return await run_blocking(self.storage.read_history_tool, source_session_id, current['project_id'], request, settings)
+            return await run_blocking(self.storage.conversation.read_history_tool, source_session_id, current['project_id'], request, settings)
         except SessionPersistenceError as error:
             logger.warning('history_query_failed error_type=%s', type(error).__name__)
             raise ToolException(f'History query failed ({error}). Query the directory again if the source changed.') from error
@@ -116,7 +116,7 @@ class SessionPersistence:
                 async with self._history_lock(source_session_id):
                     try:
                         updates = await collect_chat_updates(self._memory_agent,self.storage,source_session_id)
-                        await run_blocking(self.storage.save_chat_updates,source_session_id,updates)
+                        await run_blocking(self.storage.conversation.save_chat_updates,source_session_id,updates)
                     except Exception as error:
                         logger.error('memory_source_save_failed error_type=%s',type(error).__name__)
                         raise ToolException('memory_source_save_failed: memory was not written.') from error
@@ -139,7 +139,7 @@ class SessionPersistence:
     async def aprepare(self, session_id, agent):
         async with self._history_lock(session_id):
             try:
-                row = await run_blocking(self.storage.get, session_id)
+                row = await run_blocking(self.storage.sessions.get, session_id)
                 if not self.sessions.has_session(session_id) and row['state'] == 'ready':
                     try:
                         await self.arestore(session_id, agent)
@@ -152,7 +152,7 @@ class SessionPersistence:
                 else:
                     saved = {}
                 updates = await collect_chat_updates(agent, self.storage, session_id, snapshot=snapshot)
-                await run_blocking(self.storage.save_chat_updates, session_id, updates)
+                await run_blocking(self.storage.conversation.save_chat_updates, session_id, updates)
                 self._prepared[session_id] = saved
                 await self._ensure_title(session_id)
             except Exception as error:
@@ -170,7 +170,7 @@ class SessionPersistence:
         # Reserve this owner before IO, without blocking event-loop readers of
         # the coordination lock while SQLite waits for another writer.
         try:
-            self.storage.mark_running(session_id, run_id)
+            self.storage.sessions.mark_running(session_id, run_id)
         except BaseException:
             with self._lock:
                 if self._active.get(session_id) == run_id:
@@ -197,16 +197,16 @@ class SessionPersistence:
                 raise SessionPersistenceError('session_recovery_blocked')
             self._recovering.add(session_id)
         try:
-            row = await run_blocking(self.storage.get, session_id)
+            row = await run_blocking(self.storage.sessions.get, session_id)
             children = set()
             async for snapshot in agent.aget_state_history({'configurable': {'thread_id': row['thread_id']}}):
                 children.update(f'subagent:{item["agent_id"]}' for item in subagent_records(session_id, snapshot.values.get('messages', [])))
             children.update(self.sessions.child_thread_ids(session_id))
-            children.update(item['thread_id'] for item in await run_blocking(self.storage.chat_heads, session_id)
+            children.update(item['thread_id'] for item in await run_blocking(self.storage.conversation.chat_heads, session_id)
                             if item['thread_id'] != row['thread_id'])
             if self.sessions.mcp_resources is not None:
                 await self.sessions.mcp_resources.release_session(session_id)
-            await run_blocking(self.storage.delete, session_id, children)
+            await run_blocking(self.storage.runs.delete, session_id, children)
             with self._lock:
                 self.sessions.remove_session(session_id)
                 self._blocked.discard(session_id)
@@ -233,7 +233,7 @@ class SessionPersistence:
                 status = observation.status
                 state = ('review_required' if session['manual_review_required'] else
                          'interrupted' if status == 'interrupted' else 'failed' if status == 'failed' else 'ready')
-                previous = await run_blocking(self.storage.get, session_id)
+                previous = await run_blocking(self.storage.sessions.get, session_id)
                 checkpoint_id, namespace = previous['checkpoint_id'], previous['checkpoint_ns']
                 snapshot = None
                 if state == 'ready':
@@ -244,7 +244,7 @@ class SessionPersistence:
                             any(task.interrupts or task.error for task in snapshot.tasks)):
                         raise SessionPersistenceError('checkpoint_not_safely_finished')
                 updates = await await_settled(collect_chat_updates(agent, self.storage, session_id, snapshot=snapshot))
-                await run_blocking(self.storage.finish_run, session_id, state, checkpoint_id, namespace, status, updates,
+                await run_blocking(self.storage.runs.finish_run, session_id, state, checkpoint_id, namespace, status, updates,
                                   subagent_run_id=run_id)
                 self._prepared[session_id] = {}
                 await self._ensure_title(session_id)
@@ -276,19 +276,17 @@ class SessionPersistence:
 
     async def _ensure_title(self, session_id):
         try:
-            row = await run_blocking(self.storage.get, session_id)
+            row = await run_blocking(self.storage.sessions.get, session_id)
             if row['title'] is not None:
                 return
-            records = await run_blocking(self.storage._read, """SELECT body_json FROM naiyue_chat_messages
-                WHERE session_id=? AND thread_id=? AND message_type='human' AND kind='message'
-                ORDER BY sequence LIMIT 1""", (session_id, row['thread_id']))
+            records = await run_blocking(self.storage.conversation.first_human, session_id, row['thread_id'])
             if records:
                 from naiyue_test_agent.model_access.messages import content_text
                 content = content_text(json.loads(records[0]['body_json'])['data']['content'])
                 content = ''.join(' ' if unicodedata.category(c).startswith('C') else c for c in content)
                 title = ' '.join(content.split())[:self._title_max_chars].strip()
                 if title:
-                    await run_blocking(self.storage.ensure_title, session_id, title)
+                    await run_blocking(self.storage.sessions.ensure_title, session_id, title)
         except Exception as error:
             logger.warning('session_title_save_failed error_type=%s', type(error).__name__)
 
@@ -317,7 +315,7 @@ class SessionPersistence:
                 raise SessionPersistenceError('session_recovery_blocked')
             self._recovering.add(session_id)
         try:
-            row = await run_blocking(self.storage.get, session_id)
+            row = await run_blocking(self.storage.sessions.get, session_id)
             if row['state'] != 'ready':
                 raise SessionPersistenceError('session_recovery_blocked')
             root, names = await self._aprepare_saved_configuration(row)
@@ -365,7 +363,7 @@ class SessionPersistence:
                 project_id=row['project_id'], execution_root_kind=row['execution_root_kind'])
 
     async def _read_history(self, session_id, agent, *, snapshot=None, include_messages=True):
-        row = await run_blocking(self.storage.get, session_id)
+        row = await run_blocking(self.storage.sessions.get, session_id)
         value = {key: row[key] for key in ('session_id', 'state', 'model_id', 'thinking_level', 'workspace_root', 'permission_mode')}
         value.update(messages=[], active_tools=[], checkpoint_id=None, checkpoint_ns='',
                      confirmed_checkpoint_id=row['checkpoint_id'], confirmed_checkpoint_ns=row['checkpoint_ns'])
@@ -417,9 +415,9 @@ class SessionPersistence:
     async def _recover_checkpoint(self, session_id, agent, checkpoint_id, action):
         if action not in ('continue', 'restore_approval'):
             raise SessionPersistenceError('invalid_recovery_action')
-        row = await run_blocking(self.storage.get, session_id)
+        row = await run_blocking(self.storage.sessions.get, session_id)
         root, names = await self._aprepare_saved_configuration(row)
-        binding = await run_blocking(self.storage.get_workspace_binding)
+        binding = await run_blocking(self.storage.sessions.get_workspace_binding)
         if binding and str(root) != binding['root_path']:
             raise SessionPersistenceError('workspace_mismatch')
         config = {'configurable': {'thread_id': row['thread_id']}}
@@ -442,7 +440,7 @@ class SessionPersistence:
             pending = await run_blocking(validate_saved_approval, self._permission_settings, self._tool_registry, row, snapshot, names)
             try:
                 updates = await await_settled(collect_chat_updates(agent, self.storage, session_id, snapshot=snapshot))
-                await run_blocking(self.storage.finish_run, session_id, 'interrupted', actual, '', 'interrupted', updates)
+                await run_blocking(self.storage.runs.finish_run, session_id, 'interrupted', actual, '', 'interrupted', updates)
                 self._install_session(row, root, names, recovering=True, pending=pending)
             except Exception as error:
                 logger.error('session_approval_restore_save_failed error_type=%s', type(error).__name__)
@@ -487,7 +485,7 @@ class SessionPersistence:
                 raise SessionPersistenceError('session_save_unconfirmed')
             actual = snapshot.config['configurable']['checkpoint_id']
             updates = await await_settled(collect_chat_updates(agent, self.storage, session_id, snapshot=snapshot, previous=updates))
-            await run_blocking(self.storage.finish_run, session_id, 'ready', actual, '', 'recovered', updates)
+            await run_blocking(self.storage.runs.finish_run, session_id, 'ready', actual, '', 'recovered', updates)
             self._install_session(row, root, names, recovering=True)
         except Exception as error:
             logger.error('session_recovery_save_failed error_type=%s', type(error).__name__)

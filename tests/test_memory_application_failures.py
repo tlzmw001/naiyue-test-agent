@@ -19,7 +19,7 @@ def test_required_root_save_failure_never_releases_memory_worker(monkeypatch,tmp
         async with opened(monkeypatch,tmp_path,model,settings=config(tmp_path)) as app:
             sid=await app.acreate_workspace_session('A',tmp_path)
             def fail(*args,**kwargs):raise OSError('PRIVATE_SAVE_DETAIL')
-            monkeypatch.setattr(app._storage,'finish_run',fail)
+            monkeypatch.setattr(app._storage.runs, 'finish_run',fail)
             with pytest.raises(SessionPersistenceError,match='session_save_unconfirmed'):
                 await app.arun(sid,[('user','登记整理')])
             await app._sessions.memory_jobs.wait_idle()

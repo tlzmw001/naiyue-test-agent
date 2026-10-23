@@ -16,7 +16,7 @@ from test_async_persistent import factory
 
 
 def database_facts(storage):
-    return tuple(storage.connection.iterdump())
+    return tuple(storage.database.connection.iterdump())
 
 
 @pytest.mark.parametrize('state', ['running', 'failed', 'interrupted', 'review_required', 'ready'])
@@ -27,8 +27,8 @@ async def test_reopened_history_is_read_only_and_preserves_saved_messages(monkey
         storage = app._storage
         sid = await app.acreate_session('A')
         original = (await app.arun(sid, [HumanMessage(content='saved question', id='human')]))['messages']
-        row = storage.get(sid)
-        storage.finish_run(sid, state, row['checkpoint_id'], '', state)
+        row = storage.sessions.get(sid)
+        storage.runs.finish_run(sid, state, row['checkpoint_id'], '', state)
     model = ToolModel(responses=[])
     async with build(monkeypatch, path, model) as app:
         storage = app._storage
@@ -52,11 +52,11 @@ async def test_history_uses_latest_checkpoint_instead_of_confirmed_pointer(monke
         storage = app._storage
         sid = await app.acreate_session('A')
         await app.arun(sid, [('user', 'old')])
-        row = storage.get(sid)
+        row = storage.sessions.get(sid)
         config = {'configurable': {'thread_id': row['thread_id']}}
         await app._agent.aupdate_state(config, {'messages': [AIMessage(content='new request', id='ai-new', tool_calls=[
             {'id': 'unconfirmed', 'name': 'read', 'args': {'path': 'x'}}])]}, as_node='model')
-        storage.finish_run(sid, 'running', row['checkpoint_id'], '', None)
+        storage.runs.finish_run(sid, 'running', row['checkpoint_id'], '', None)
     async with build(monkeypatch, path) as app:
         storage = app._storage
         before = database_facts(storage)
@@ -76,7 +76,7 @@ async def approval_snapshot(monkeypatch, tmp_path):
         storage = app._storage
         sid = await app.acreate_workspace_session('A', root)
         await app.arun(sid, [('user', 'read outside')])
-        row = storage.get(sid)
+        row = storage.sessions.get(sid)
         snapshot = await app._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
         return row, snapshot
 
@@ -124,7 +124,7 @@ async def test_no_checkpoint_distinguishes_never_run_from_missing(monkeypatch, t
     async with build(monkeypatch, path) as app:
         storage = app._storage
         sid = await app.acreate_session('A')
-        storage.finish_run(sid, state, None, '', None)
+        storage.runs.finish_run(sid, state, None, '', None)
     async with build(monkeypatch, path) as app:
         view = await app.aget_session_history(sid)
         assert view['messages'] == [] and view['checkpoint_id'] is None
@@ -143,7 +143,7 @@ async def test_unavailable_history_retains_only_safe_readable_facts(monkeypatch,
                 raise ValueError('PRIVATE_CHECKPOINT')
             monkeypatch.setattr(app._agent, 'aget_state', broken)
         elif failure == 'identity':
-            snapshot = await app._agent.aget_state({'configurable': {'thread_id': storage.get(sid)['thread_id']}})
+            snapshot = await app._agent.aget_state({'configurable': {'thread_id': storage.sessions.get(sid)['thread_id']}})
             snapshot.config['configurable']['thread_id'] = 'different'
             async def snapshot_read(*_a):
                 return snapshot
@@ -155,8 +155,8 @@ async def test_unavailable_history_retains_only_safe_readable_facts(monkeypatch,
                 'mode': ('UPDATE naiyue_sessions SET permission_mode=? WHERE session_id=?', 'removed'),
                 'workspace': ('UPDATE naiyue_sessions SET workspace_root=? WHERE session_id=?', str(tmp_path / 'missing')),
             }[failure]
-            storage.connection.execute(query, (value, sid))
-            storage.connection.commit()
+            storage.database.connection.execute(query, (value, sid))
+            storage.database.connection.commit()
         before = database_facts(storage)
         view = await app.aget_session_history(sid)
         assert view['recovery']['kind'] == 'unavailable' and view['recovery']['actions'] == []
@@ -181,8 +181,8 @@ async def test_native_history_matches_reopened_and_does_not_install_or_call_mode
             sid = await app.acreate_session('A')
             await app.arun(sid, [('user', 'question')])
             storage = app._storage
-            row = storage.get(sid)
-            storage.finish_run(sid, 'failed', row['checkpoint_id'], '', 'failed')
+            row = storage.sessions.get(sid)
+            storage.runs.finish_run(sid, 'failed', row['checkpoint_id'], '', 'failed')
         model = StreamingToolModel(replies=[])
         async with factory(monkeypatch, path, model) as app:
             before = database_facts(app._storage)
@@ -258,9 +258,9 @@ async def test_history_preserves_artifacts_and_pairs_reused_call_ids_by_batch(mo
     async with build(monkeypatch, path) as app:
         storage = app._storage
         sid = await app.acreate_session('A')
-        row = storage.get(sid)
+        row = storage.sessions.get(sid)
         await app._agent.aupdate_state({'configurable': {'thread_id': row['thread_id']}}, {'messages': messages}, as_node='tools')
-        storage.finish_run(sid, 'failed', None, '', 'failed')
+        storage.runs.finish_run(sid, 'failed', None, '', 'failed')
     async with build(monkeypatch, path) as app:
         view = await app.aget_session_history(sid)
         assert view['messages'] == messages
@@ -294,7 +294,7 @@ async def test_latest_history_projects_completed_pending_writes_without_replay(m
         async with build(monkeypatch, path) as app:
             storage = app._storage
             sid = await app.acreate_session('A')
-            row = storage.get(sid)
+            row = storage.sessions.get(sid)
             config = {'configurable': {'thread_id': row['thread_id']}}
             builder = StateGraph(State)
             for name, function in (('fast', fast), ('fail', fail)):
@@ -306,7 +306,7 @@ async def test_latest_history_projects_completed_pending_writes_without_replay(m
                 with pytest.raises(RuntimeError, match='PRIVATE_EXECUTION'):
                     await graph.ainvoke({'messages': [AIMessage(content='', id='ai', tool_calls=[
                         {'name': 'fast', 'args': {}, 'id': 'fast'}, {'name': 'fail', 'args': {}, 'id': 'fail'}])]}, config)
-            storage.finish_run(sid, 'failed', None, '', 'failed')
+            storage.runs.finish_run(sid, 'failed', None, '', 'failed')
         async with build(monkeypatch, path) as app:
             storage = app._storage
             async with AsyncSqliteSaver.from_conn_string(str(path)) as saver:

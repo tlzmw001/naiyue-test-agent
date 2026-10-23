@@ -48,7 +48,7 @@ async def test_crash_boundary_never_replays_and_only_parent_confirmed_can_contin
         sid, identity = info['session_id'], info['agent_id']
         events = []
         app.subscribe_events(events.append)
-        row = app._storage.get_subagent(sid, identity)
+        row = app._storage.subagents.get_subagent(sid, identity)
         assert row['state'] == {'claim': 'running', 'child_saved': 'pending_parent', 'parent_saved': 'ready'}[point]
         history = await app.aget_session_history(sid)
         if point == 'parent_saved':
@@ -57,14 +57,14 @@ async def test_crash_boundary_never_replays_and_only_parent_confirmed_can_contin
             assert history['state'] == 'running'
             await app.arecover_session(sid, checkpoint_id=history['checkpoint_id'], action='continue')
         assert not root.seen and not child.seen and not events and not calls
-        assert app._storage.get_subagent(sid, identity) == row
+        assert app._storage.subagents.get_subagent(sid, identity) == row
         assert not app.pending_approval_batches(sid) and app._sessions.require(sid)._run is None
         reply = await delegate(app, sid, root, task='explicit new delegation', identity=identity)
         if point == 'parent_saved':
             assert json.loads(reply.content)['report'] == 'explicit new work' and len(child.seen) == 1
         else:
             assert reply.status == 'error' and 'current state' in reply.content and not child.seen
-            assert app._storage.get_subagent(sid, identity) == row
+            assert app._storage.subagents.get_subagent(sid, identity) == row
         assert not calls
     assert effect.exists() is (point != 'claim')
     if effect.exists():
@@ -89,14 +89,14 @@ async def test_restore_approval_cannot_confirm_uncommitted_child(monkeypatch, tm
     config['initial_active_tools'] = ['subagent', 'read']
     async with open_async_persistent_application('unused', **config) as app:
         sid, identity = info['session_id'], info['agent_id']
-        record = app._storage.get_subagent(sid, identity)
+        record = app._storage.subagents.get_subagent(sid, identity)
         assert record['state'] == 'pending_parent'
         history = await app.aget_session_history(sid)
         assert history['recovery']['kind'] == 'pending_approval'
         events = []
         app.subscribe_events(events.append)
         await app.arecover_session(sid, checkpoint_id=history['checkpoint_id'], action='restore_approval')
-        assert app._storage.get_subagent(sid, identity) == record
+        assert app._storage.subagents.get_subagent(sid, identity) == record
         assert app.pending_approval_batches(sid) and not root.seen and not child.seen and not events
 
 
@@ -116,20 +116,20 @@ async def crash():
             def exit_now(record):
                 (folder / 'crash.json').write_text(json.dumps({'session_id': sid, 'agent_id': record['agent_id']}))
                 os._exit(91)
-            save = app._storage.save_subagent
+            save = app._storage.subagents.save_subagent
             def saved(record, expected):
                 save(record, expected)
                 if record['state'] == {'claim': 'running', 'child_saved': 'pending_parent'}.get(point):
                     exit_now(record)
-            patch.setattr(app._storage, 'save_subagent', saved)
-            finish = app._storage.finish_run
+            patch.setattr(app._storage.subagents, 'save_subagent', saved)
+            finish = app._storage.runs.finish_run
             def finished(*args, **kwargs):
                 if point == 'root_approval':
-                    exit_now(next(iter(app._storage.get_subagent_references(sid).values())))
+                    exit_now(next(iter(app._storage.subagents.get_subagent_references(sid).values())))
                 finish(*args, **kwargs)
                 if point == 'parent_saved':
-                    exit_now(next(iter(app._storage.get_subagent_references(sid).values())))
-            patch.setattr(app._storage, 'finish_run', finished)
+                    exit_now(next(iter(app._storage.subagents.get_subagent_references(sid).values())))
+            patch.setattr(app._storage.runs, 'finish_run', finished)
             module = importlib.import_module('naiyue_test_agent.tools.write')
             write = module._write
             def counted(*args, **kwargs):

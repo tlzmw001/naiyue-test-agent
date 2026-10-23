@@ -11,7 +11,7 @@ from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 
 from naiyue_test_agent.model_access import load_model_catalog
 from naiyue_test_agent.application.sessions.session_service import SessionService
-from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.storage.project_store import ProjectStore
 from test_model_access import config_for_all_kinds, write_config
 from test_async_application import StreamingToolModel
 from test_web_api import web_client
@@ -72,8 +72,8 @@ def test_session_selection_is_local_and_model_change_resets_override(tmp_path):
 def test_current_schema_four_is_upgraded_without_losing_sessions(tmp_path):
     path = tmp_path / 'current.sqlite'
     # Build a complete real metadata row; migration now also preserves its display order.
-    with SessionStorage(path) as store:
-        store.create('kept', {'thread_id': 'kept-thread', 'model_id': 'official', 'workspace_root': None,
+    with ProjectStore(path) as store:
+        store.sessions.create('kept', {'thread_id': 'kept-thread', 'model_id': 'official', 'workspace_root': None,
                              'active_tool_names': (), 'permission_mode': 'Default'})
     with sqlite3.connect(path) as connection:
         remove_reply_schema(connection)
@@ -84,10 +84,10 @@ def test_current_schema_four_is_upgraded_without_losing_sessions(tmp_path):
             ALTER TABLE naiyue_sessions DROP COLUMN pinned;
             ALTER TABLE naiyue_sessions DROP COLUMN sort_order;
             UPDATE naiyue_store_info SET version=4;''')
-    with SessionStorage(path) as store:
-        row = store.connection.execute('SELECT * FROM naiyue_sessions').fetchone()
+    with ProjectStore(path) as store:
+        row = store.database.connection.execute('SELECT * FROM naiyue_sessions').fetchone()
         assert row['session_id'] == 'kept' and row['thinking_level'] == 'model_default'
-        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
+        assert store.database.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
 
 
 def test_web_selection_is_validated_authenticated_and_restored(monkeypatch, tmp_path):

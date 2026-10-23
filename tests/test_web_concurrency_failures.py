@@ -55,13 +55,13 @@ async def test_a_save_failure_keeps_b_active_and_its_save_healthy(monkeypatch, t
     async with web_client(monkeypatch, tmp_path, model) as (client, web):
         a, b = await sessions(client, 2)
         delivery, backend = web.state.delivery, web.state.service.application
-        finish = backend._storage.finish_run
+        finish = backend._storage.runs.finish_run
         primary = OSError('PRIVATE_SAVE')
         def fail(sid, *args, **kwargs):
             if sid == a:
                 raise primary
             return finish(sid, *args, **kwargs)
-        monkeypatch.setattr(backend._storage, 'finish_run', fail)
+        monkeypatch.setattr(backend._storage.runs, 'finish_run', fail)
         entered, release = gated(model, b)
         rb = (await client.post(f'/api/sessions/{b}/runs', json=request(b))).json()['run_id']
         try:
@@ -73,7 +73,7 @@ async def test_a_save_failure_keeps_b_active_and_its_save_healthy(monkeypatch, t
             assert backend._persistence._blocked == {a}
             release.set()
             await delivery.wait(rb)
-            assert delivery.get(rb).status == 'completed' and backend._storage.get(b)['state'] == 'ready'
+            assert delivery.get(rb).status == 'completed' and backend._storage.sessions.get(b)['state'] == 'ready'
             assert delivery.active_by_session == {} and backend._persistence._active == {}
         finally:
             release.set()
@@ -168,7 +168,7 @@ async def test_unsubscribe_failure_is_observable_and_does_not_retain_an_active_j
         await web.state.delivery.wait(rid)
         assert web.state.delivery.get(rid).status == 'completed'
         assert web.state.delivery.active_by_session == {} and subscriptions._handlers == application_handlers
-        assert web.state.service.application._storage.get(sid)['state'] == 'ready'
+        assert web.state.service.application._storage.sessions.get(sid)['state'] == 'ready'
     assert subscriptions._handlers == {}
     assert 'web_event_unsubscribe_failed error_type=ValueError' in caplog.text
     assert 'PRIVATE_UNSUBSCRIBE' not in caplog.text

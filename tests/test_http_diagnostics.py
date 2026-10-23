@@ -7,7 +7,7 @@ from dataclasses import replace
 
 from naiyue_test_agent.agent_runtime import events as facts
 from naiyue_test_agent.application.observability.diagnostic_persistence import project_diagnostic_event
-from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.storage.project_store import ProjectStore
 from test_model_usage_storage import seed
 from test_diagnostic_storage import limits
 
@@ -47,31 +47,31 @@ def recorded_events(*, version=1, model=True, status='complete'):
 def test_http_summary_reopens_is_read_only_and_independent_of_page(tmp_path, version, model, status, expected):
     events = recorded_events(version=version, model=model, status=status)
     path = tmp_path / 'state.sqlite'
-    with SessionStorage(path) as store:
+    with ProjectStore(path) as store:
         seed(store)
         for event in events[:-1]:
             record = project_diagnostic_event(event)
             assert record is not None
-            assert store.save_diagnostic_event(record, limits())
-            assert store.save_diagnostic_event(record, limits())  # Same sequence never counts twice.
-        store.finish_diagnostic_run(project_diagnostic_event(events[-1]), limits())
-        assert store.read_diagnostic_runs('s')['runs'][0]['http_attempts'] == expected
-        writes = store.connection.total_changes
-        assert store.read_diagnostic_events('s', 'r', limit=1)['summary']['http_attempts'] == expected
-        assert store.connection.total_changes == writes
-    with SessionStorage(path) as store:
-        assert store.read_diagnostic_runs('s')['runs'][0]['http_attempts'] == expected
-        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
+            assert store.diagnostics.save_diagnostic_event(record, limits())
+            assert store.diagnostics.save_diagnostic_event(record, limits())  # Same sequence never counts twice.
+        store.diagnostics.finish_diagnostic_run(project_diagnostic_event(events[-1]), limits())
+        assert store.diagnostics.read_diagnostic_runs('s')['runs'][0]['http_attempts'] == expected
+        writes = store.database.connection.total_changes
+        assert store.diagnostics.read_diagnostic_events('s', 'r', limit=1)['summary']['http_attempts'] == expected
+        assert store.database.connection.total_changes == writes
+    with ProjectStore(path) as store:
+        assert store.diagnostics.read_diagnostic_runs('s')['runs'][0]['http_attempts'] == expected
+        assert store.database.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
 
 
 def test_diagnostic_loss_and_missing_terminal_cannot_report_complete(tmp_path):
     events = recorded_events()
-    with SessionStorage(tmp_path / 'state.sqlite') as store:
+    with ProjectStore(tmp_path / 'state.sqlite') as store:
         seed(store)
         for event in events[:-1]:
-            store.save_diagnostic_event(project_diagnostic_event(event), limits())
-        store.finish_diagnostic_run(project_diagnostic_event(events[-1]), limits(), reason='buffer_overflow', dropped_events=1)
-        summary = store.read_diagnostic_runs('s')['runs'][0]
+            store.diagnostics.save_diagnostic_event(project_diagnostic_event(event), limits())
+        store.diagnostics.finish_diagnostic_run(project_diagnostic_event(events[-1]), limits(), reason='buffer_overflow', dropped_events=1)
+        summary = store.diagnostics.read_diagnostic_runs('s')['runs'][0]
         assert summary['capture_incomplete'] and summary['http_attempts']['status'] == 'partial'
 
 
@@ -89,11 +89,11 @@ def test_projector_keeps_only_safe_http_fact_fields():
 def test_orphan_request_gap_is_exposed_even_with_no_attempt_events(tmp_path):
     events = recorded_events(model=False)
     events[-1] = replace(events[-1], data=facts.RunFinishedData('completed', http_capture_status='incomplete'))
-    with SessionStorage(tmp_path / 'state.sqlite') as store:
+    with ProjectStore(tmp_path / 'state.sqlite') as store:
         seed(store)
-        store.save_diagnostic_event(project_diagnostic_event(events[0]), limits())
-        store.finish_diagnostic_run(project_diagnostic_event(events[-1]), limits())
-        assert store.read_diagnostic_runs('s')['runs'][0]['http_attempts'] == {
+        store.diagnostics.save_diagnostic_event(project_diagnostic_event(events[0]), limits())
+        store.diagnostics.finish_diagnostic_run(project_diagnostic_event(events[-1]), limits())
+        assert store.diagnostics.read_diagnostic_runs('s')['runs'][0]['http_attempts'] == {
             'status': 'partial', 'observed_attempts': 0, 'response_headers': 0, 'unconfirmed': 0}
 
 

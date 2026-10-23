@@ -116,8 +116,8 @@ def test_invalid_selection_or_occupied_store_refused_before_confirmation(tmp_pat
     def forbidden(prompt):
         raise AssertionError('invalid selection must not ask for confirmation')
     monkeypatch.setattr('builtins.input', forbidden)
-    from naiyue_test_agent.storage.session_storage import SessionStorage
-    with closing(SessionStorage(database)) if kind == 'busy' else nullcontext():
+    from naiyue_test_agent.storage.project_store import ProjectStore
+    with closing(ProjectStore(database)) if kind == 'busy' else nullcontext():
         before = database.read_bytes()
         assert invoke(location, backup_id) == 1
         assert final_result(capsys)['error'] == reason

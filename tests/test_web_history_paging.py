@@ -48,11 +48,11 @@ def test_large_history_is_bounded_and_does_not_gate_a_new_run(monkeypatch, tmp_p
             assert sum(len(message.content) for message in original) > 1024 * 1024
             store = app._storage
             await await_diagnostics_idle(app)
-            writes = store.connection.total_changes
+            writes = store.database.connection.total_changes
             rows = await read_pages(client, sid)
             assert [row['id'] for row in rows] == [message.id for message in original]
             assert len(rows) == 36 and all(row['content_truncated'] and row['detail'] for row in rows)
-            assert len(model.seen) == 18 and store.connection.total_changes == writes
+            assert len(model.seen) == 18 and store.database.connection.total_changes == writes
             started = await client.post(f'/api/sessions/{sid}/runs', json=request('continue'))
             assert started.status_code == 202
             await web.state.delivery.wait(started.json()['run_id'])
@@ -69,11 +69,11 @@ def test_prepare_loads_old_session_while_get_is_read_only(monkeypatch, tmp_path)
         model = StreamingToolModel(replies=[])
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
             app = web.state.service.application
-            before = web.state.service.application._storage.connection.total_changes
+            before = web.state.service.application._storage.database.connection.total_changes
             view = await client.get(f'/api/sessions/{sid}')
             assert view.status_code == 200 and not app.has_session(sid)
             assert view.json()['history_ready'] is False
-            assert app._storage.connection.total_changes == before
+            assert app._storage.database.connection.total_changes == before
             prepared = await client.post(f'/api/sessions/{sid}/prepare')
             assert prepared.status_code == 200 and app.has_session(sid)
             assert prepared.json()['history_ready']

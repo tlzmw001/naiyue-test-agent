@@ -119,7 +119,7 @@ def test_application_final_save_settles_before_repeated_cancellation_escapes(mon
         from types import SimpleNamespace
         persistence = Persistence()
         persistence.sessions = sessions
-        persistence.storage = SimpleNamespace(create=lambda *args: None)
+        persistence.storage = SimpleNamespace(sessions=SimpleNamespace(create=lambda *args: None))
         sessions.bind_persistence(persistence)
         sid = sessions.create_session('A')
         async def execute(*_args, **_kwargs):

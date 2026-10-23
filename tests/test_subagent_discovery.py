@@ -38,7 +38,7 @@ async def test_selected_subagent_exposes_list_executes_it_and_reopen_needs_no_se
         sid = await app.acreate_session('A')
         identity = json.loads((await delegate(app, sid, root)).content)['agent_id']
         assert app.get_active_tools(sid) == ('subagent',)
-        saved_selection = app._storage.get(sid)['active_tool_names_json']
+        saved_selection = app._storage.sessions.get(sid)['active_tool_names_json']
     async with open_async_persistent_application('unused', **config) as app:
         await app.arestore_session(sid)
         root.replies.extend([call('subagent_list', {}, 'list'), AIMessage(content='found')])
@@ -48,7 +48,7 @@ async def test_selected_subagent_exposes_list_executes_it_and_reopen_needs_no_se
         row, = json.loads(feedback.content)['items']
         assert row['agent_id'] == identity and row['resume_available'] is True and row['resume_reason'] is None
         assert set(root.bound[-1]) == {'subagent', 'subagent_list'}
-        assert app._storage.get(sid)['active_tool_names_json'] == saved_selection and len(child.seen) == 1
+        assert app._storage.sessions.get(sid)['active_tool_names_json'] == saved_selection and len(child.seen) == 1
         await app.aset_active_tools(sid, [])
         root.replies.extend([call('subagent_list', {}, 'denied'), AIMessage(content='disabled')])
         result = await app.arun(sid, [('user', 'disabled')])

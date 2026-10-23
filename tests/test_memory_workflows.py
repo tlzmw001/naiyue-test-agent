@@ -69,8 +69,8 @@ async def record(app, model, sid, text, proposals):
 
 
 def source_ref(app, sid, message, quote):
-    parent = app._storage.get(sid)
-    saved, = app._storage._read('''SELECT revision FROM naiyue_chat_messages
+    parent = app._storage.sessions.get(sid)
+    saved, = app._storage.database.read_rows('''SELECT revision FROM naiyue_chat_messages
         WHERE session_id=? AND thread_id=? AND message_id=?''', (sid, parent['thread_id'], message.id))
     return dict(session_id=sid, thread_id=parent['thread_id'], message_id=message.id,
         revision=saved['revision'], conversation_revision=parent['conversation_revision'],
@@ -89,7 +89,7 @@ def test_w01_first_directory_formal_history_and_no_other_session_execution(monke
             await app._sessions.memory_jobs.wait_idle()
             cold = await app.acreate_workspace_session('A', tmp_path)
             current = await app.acreate_workspace_session('A', tmp_path)
-            before = {sid: app._storage.get(sid) for sid in (old, cold)}
+            before = {sid: app._storage.sessions.get(sid) for sid in (old, cold)}
             count = len(root.seen)
             result = await turn(app, root, current, WORKFLOWS['w01']['name'],
                 call('history', dict(action='list_sessions'), 'directory'),
@@ -106,7 +106,7 @@ def test_w01_first_directory_formal_history_and_no_other_session_execution(monke
             assert cold_view['overview'] is None and cold_view['overview_status'] == 'not_generated'
             assert cold_view['items'] == [] and len(worker.seen) == 1
             for sid in (old, cold):
-                after = app._storage.get(sid)
+                after = app._storage.sessions.get(sid)
                 assert (after['run_id'], after['checkpoint_id'], after['state']) == (
                     before[sid]['run_id'], before[sid]['checkpoint_id'], before[sid]['state'])
             assert len(root.seen) == count + 4
@@ -290,9 +290,9 @@ def test_w04_other_session_rejects_inflight_old_update_or_suppressed_record(monk
             else:
                 assert rows == []
                 for table in ('naiyue_memory_sources', 'naiyue_memory_versions', 'naiyue_memory_search'):
-                    assert app._storage.connection.execute(f'SELECT count(*) FROM {table} WHERE memory_id=?',
+                    assert app._storage.database.connection.execute(f'SELECT count(*) FROM {table} WHERE memory_id=?',
                         (original['memory_id'],)).fetchone()[0] == 0
-                tombstone = app._storage.connection.execute('SELECT body,status FROM naiyue_memories WHERE memory_id=?',
+                tombstone = app._storage.database.connection.execute('SELECT body,status FROM naiyue_memories WHERE memory_id=?',
                     (original['memory_id'],)).fetchone()
                 assert tuple(tombstone) == ('', 'forgotten')
             assert len(worker.seen) == 1

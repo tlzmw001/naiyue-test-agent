@@ -150,7 +150,8 @@ async def test_close_drains_actual_shared_io(monkeypatch, tmp_path, operation, f
             app._sessions.remove_session(sid)
         name = {'create': 'create', 'configure': 'select_permission_mode',
                 'restore': 'get', 'prepare': 'get', 'delete': 'delete'}[operation]
-        original, close_catalog = getattr(app._storage, name), app._catalog.aclose
+        repository = app._storage.runs if operation == 'delete' else app._storage.sessions
+        original, close_catalog = getattr(repository, name), app._catalog.aclose
         def blocked(*args, **kwargs):
             loop.call_soon_threadsafe(entered.set)
             assert release.wait(5)
@@ -161,7 +162,7 @@ async def test_close_drains_actual_shared_io(monkeypatch, tmp_path, operation, f
         async def close():
             order.append('catalog')
             await close_catalog()
-        monkeypatch.setattr(app._storage, name, blocked)
+        monkeypatch.setattr(repository, name, blocked)
         monkeypatch.setattr(app._catalog, 'aclose', close)
         calls = {'create': lambda: app.acreate_session('A'),
                  'configure': lambda: app.aset_permission_mode(sid, 'NoAsk'),
@@ -224,7 +225,7 @@ async def test_close_survives_create_rollback_after_stop_snapshot(monkeypatch, t
         async def close():
             closes.append(True)
             await close_catalog()
-        monkeypatch.setattr(app._storage, 'create', fail_create)
+        monkeypatch.setattr(app._storage.sessions, 'create', fail_create)
         monkeypatch.setattr(service, 'create_session', creating)
         monkeypatch.setattr(stable, 'request_scope_stop', stop_after_rollback)
         monkeypatch.setattr(app._catalog, 'aclose', close)

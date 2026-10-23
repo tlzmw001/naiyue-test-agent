@@ -58,9 +58,9 @@ async def test_native_sdk_retries_survive_web_pagination_and_cold_read(monkeypat
             assert len(models) == 1
             assert {e['data']['invocation_id'] for e in events if e['event_type'].startswith('model_http')} == {
                 models[0]['data']['invocation_id']}
-            before = app._storage.connection.total_changes
+            before = app._storage.database.connection.total_changes
             assert (await client.get(f'/api/sessions/{sid}/usage')).status_code == 200
-            assert app._storage.connection.total_changes == before and len(sent) == 3
+            assert app._storage.database.connection.total_changes == before and len(sent) == 3
             assert 'PRIVATE_NETWORK' not in json.dumps([usage, rows, events])
 
 
@@ -81,7 +81,7 @@ async def test_terminal_bridge_queries_native_saved_facts_without_additional_pro
             runs = bridge.list_diagnostic_runs(sid)
             rid = runs['runs'][0]['run_id']
             statements = []
-            bridge._app._storage.connection.set_trace_callback(statements.append)
+            bridge._app._storage.database.connection.set_trace_callback(statements.append)
             lines = []
             for command in (':usage', ':diagnostics', ':diagnostics ' + rid):
                 handle_observation_command(bridge, sid, command, lines.append, persistent=True)

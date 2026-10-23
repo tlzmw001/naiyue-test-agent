@@ -29,7 +29,8 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
     from langchain_core.messages import AIMessage, ToolMessage
     from naiyue_test_agent import application
     from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-    from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
+    from naiyue_test_agent.storage.project_store import ProjectStore
+    from naiyue_test_agent.application.errors import SessionPersistenceError
     from naiyue_test_agent.agent_runtime.tool_execution.permissions import AutoPermissionReviewer
     from naiyue_test_agent.model_access import ModelCatalog
     from naiyue_test_agent.settings import AppSettings
@@ -87,7 +88,7 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
         pending = await app.acreate_workspace_session('root', workspace)
         await app.arun(pending, [('user', 'write outside after approval')])
         assert len(app.pending_tool_approvals(pending)) == 1 and not outside.exists()
-        pending_row = app._storage.get(pending)
+        pending_row = app._storage.sessions.get(pending)
         pending_state = await app._agent.aget_state({'configurable': {'thread_id': pending_row['thread_id']}})
         pending_checkpoint = await app._agent.checkpointer.aget_tuple(pending_state.config)
         assert not any(isinstance(message, ToolMessage) for message in pending_state.values['messages'])
@@ -105,10 +106,10 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
         connection.execute('UPDATE naiyue_store_info SET version=12')
         connection.commit()
     before = _facts(database)
-    with SessionStorage(database) as storage:
+    with ProjectStore(database) as storage:
         backup, = list_backups(database, workspace_id=location.workspace_id)
         assert backup['manifest']['source_schema'] == 12
-        storage.update_presentation(normal, title='After backup')
+        storage.sessions.update_presentation(normal, title='After backup')
     library_side_effect = root / 'outside-after-backup.txt'
     library_side_effect.write_text('not rolled back', encoding='utf-8')
     database.write_bytes(b'corrupt target retained as original')
@@ -144,7 +145,7 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
                 current = _facts(database)
                 from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
                 assert current.pop('naiyue_store_info') == [{'version': CURRENT_SCHEMA}]
-                assert app._storage.connection.execute('SELECT COUNT(*) FROM naiyue_subagent_instances').fetchone()[0] == 0
+                assert app._storage.database.connection.execute('SELECT COUNT(*) FROM naiyue_subagent_instances').fetchone()[0] == 0
                 expected = {key: value for key, value in before.items() if key != 'naiyue_store_info'}
                 assert all(row.pop('duration_ms') is None for row in current['naiyue_model_invocations'])
                 assert all(row.pop('occurred_at') is None for row in current['naiyue_chat_messages'])
@@ -157,7 +158,7 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
                 app.subscribe_events(events.append)
                 await app.arestore_session(normal)
                 assert await app.aget_messages(normal) == messages
-                row = app._storage.get(normal)
+                row = app._storage.sessions.get(normal)
                 assert row['title'] == 'Saved title' and row['pinned']
                 summary = await app.aget_model_usage(normal, model_limit=20)
                 assert summary['metrics'] == usage['metrics']
@@ -194,7 +195,7 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
                 assert outside.exists() is (decision == 'approve')
                 if outside.exists():
                     assert outside.read_text(encoding='utf-8') == 'approved once'
-                assert app._storage.get(pending)['state'] == 'ready' and not app.pending_tool_approvals(pending)
+                assert app._storage.sessions.get(pending)['state'] == 'ready' and not app.pending_tool_approvals(pending)
                 parent.replies.append(AIMessage(content='continued after restore'))
                 continued = await app.arun(normal, [('user', 'after restore')])
                 assert continued['messages'][:-2] == messages
@@ -202,7 +203,7 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
                 assert [message.content for message in parent.seen[-1][-5:]] == [message.content for message in messages] + ['after restore']
                 assert len(parent.seen) == 2 and not child.seen and written.call_count == int(decision == 'approve')
                 assert await app.aget_messages(normal) == continued['messages']
-                saved = app._storage.get(normal)
+                saved = app._storage.sessions.get(normal)
                 assert saved['state'] == 'ready' and saved['checkpoint_id']
     return {'storage_backups': 'passed', 'migration_backup': 'passed', 'storage_restore': 'passed',
         'storage_roundtrip': 'passed', 'history_reopen': 'passed', 'usage_reopen': 'passed',

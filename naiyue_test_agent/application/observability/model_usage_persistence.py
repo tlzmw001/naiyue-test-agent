@@ -88,7 +88,7 @@ class ModelUsagePersistence:
             key = (event.session_id, event.run_id)
             failure_reason = None
             try:
-                await run_blocking(self._storage.save_model_usage_event, event)
+                await run_blocking(self._storage.usage.save_model_usage_event, event)
             except Exception as error:
                 failure_reason = 'storage_error'
                 logger.error('model_usage_save_failed error_type=%s', safe_error_type(error))
@@ -144,7 +144,7 @@ class ModelUsagePersistence:
                 self._changed.clear()
             await self._changed.wait()
         try:
-            saved = await run_blocking(self._storage.finish_model_usage_run, session_id, run_id,
+            saved = await run_blocking(self._storage.usage.finish_model_usage_run, session_id, run_id,
                 reason=report['reason'], dropped_events=report['dropped_events'])
             if saved is not None:
                 report = saved

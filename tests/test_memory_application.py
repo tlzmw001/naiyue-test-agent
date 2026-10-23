@@ -34,7 +34,7 @@ def test_refresh_finishes_root_before_independent_model_and_persists_overview(mo
             # Worker publishes only to its own usage/diagnostic consumers.
             assert len({e.run_id for e in events})==1 and all(getattr(e.data,'mode',None)!='memory' for e in events)
             from naiyue_test_agent.application.memory.memory_overview_store import overview
-            assert overview(app._storage,sid)['overview_status']=='generated'
+            assert app._storage.memory.overview(sid)['overview_status']=='generated'
             page=await app.alist_background_tasks(session_id=sid,workspace_root=tmp_path)
             assert page['items'][0]['task_id']==receipt['task_id'] and page['active_count']==0
     asyncio.run(scenario())
@@ -73,8 +73,8 @@ def test_new_session_directory_is_first_request_only_and_history_reads_overview(
             assert 'Other session directory' not in system
             from naiyue_test_agent.tools.history import HistoryInput
             from naiyue_test_agent.tools.history_settings import HistorySettings
-            directory=app._storage.read_history_tool(second,app._storage.get(second)['project_id'],HistoryInput(action='list_sessions').model_dump(),HistorySettings())
+            directory=app._storage.conversation.read_history_tool(second,app._storage.sessions.get(second)['project_id'],HistoryInput(action='list_sessions').model_dump(),HistorySettings())
             assert directory['items'][0]['overview_status']=='generated'
-            detail=app._storage.read_history_tool(second,app._storage.get(second)['project_id'],HistoryInput(action='read',session_id=first).model_dump(),HistorySettings())
+            detail=app._storage.conversation.read_history_tool(second,app._storage.sessions.get(second)['project_id'],HistoryInput(action='read',session_id=first).model_dump(),HistorySettings())
             assert detail['overview']['next_step']=='继续验证'
     asyncio.run(scenario())

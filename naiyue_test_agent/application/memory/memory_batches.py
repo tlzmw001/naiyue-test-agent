@@ -111,7 +111,7 @@ def _batch(connection, *, session_id, thread_id, conversation_revision, start, u
     return result
 
 
-def build_batch(storage, *, session_id, thread_id, conversation_revision, start, upper, token_budget, source_chars,
+def build_batch(connection, *, session_id, thread_id, conversation_revision, start, upper, token_budget, source_chars,
         model_view=False):
     numbers = [conversation_revision, upper, token_budget, source_chars]
     if (not isinstance(start, (tuple, list)) or len(start) != 2
@@ -119,15 +119,13 @@ def build_batch(storage, *, session_id, thread_id, conversation_revision, start,
             or token_budget == 0 or source_chars == 0 or start[0] == 0 and start[1] != 0):
         raise MemoryReadError('memory_batch_position_invalid')
     try:
-        with storage._lock, storage.connection:
-            # Check the complete visible source before slicing: a secret may be in a later chunk.
-            # The callback returns only a boolean; raw message JSON/hidden fields never leave SQL.
-            storage.connection.create_function('naiyue_memory_sensitive', 1,
-                lambda text: bool(SECRET.search(text)), deterministic=True)
-            storage.connection.execute('BEGIN')
-            return _batch(storage.connection, session_id=session_id, thread_id=thread_id,
-                conversation_revision=conversation_revision, start=start, upper=upper,
-                token_budget=token_budget, source_chars=source_chars, model_view=model_view)
+        # Check the complete visible source before slicing: a secret may be in a later chunk.
+        # The callback returns only a boolean; raw message JSON/hidden fields never leave SQL.
+        connection.create_function('naiyue_memory_sensitive', 1,
+            lambda text: bool(SECRET.search(text)), deterministic=True)
+        return _batch(connection, session_id=session_id, thread_id=thread_id,
+            conversation_revision=conversation_revision, start=start, upper=upper,
+            token_budget=token_budget, source_chars=source_chars, model_view=model_view)
     except sqlite3.Error as error:
         logger.error('memory_batch_read_failed error_type=%s', type(error).__name__)
         raise MemoryReadError('memory_batch_read_failed') from error

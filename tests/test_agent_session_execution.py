@@ -92,12 +92,12 @@ async def test_required_save_keeps_busy_after_control_window_is_closed(monkeypat
         sid = await app.acreate_session('A')
         owner, events = app._sessions._sessions[sid], []
         app.subscribe_events(events.append)
-        original = app._storage.finish_run
+        original = app._storage.runs.finish_run
         def save(*args, **kwargs):
             loop.call_soon_threadsafe(entered.set)
             assert release.wait(5)
             return original(*args, **kwargs)
-        monkeypatch.setattr(app._storage, 'finish_run', save)
+        monkeypatch.setattr(app._storage.runs, 'finish_run', save)
         task = asyncio.create_task(app.arun(sid, [('user', 'question')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)

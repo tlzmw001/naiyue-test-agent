@@ -74,7 +74,7 @@ class AgentSessionSubagents:
 
     async def asubagent_references(self):
         if self._persistence is not None:
-            return await run_blocking(self._persistence.storage.get_subagent_references, self.session_id)
+            return await run_blocking(self._persistence.storage.subagents.get_subagent_references, self.session_id)
         with self._lock:
             return {key: value.copy() for key, value in self._subagent_records.items()}
 
@@ -92,7 +92,7 @@ class AgentSessionSubagents:
             run_id = self._run.run_id
         owned = await self.asubagent_references()
         if self._persistence is not None:
-            rows = await run_blocking(self._persistence.storage.chat_subagents, self.session_id)
+            rows = await run_blocking(self._persistence.storage.conversation.chat_subagents, self.session_id)
         else:
             rows = merge_registered_subagents(references(self.session_id, parent_state.get('messages', []),
                 owned_instances=owned), owned)

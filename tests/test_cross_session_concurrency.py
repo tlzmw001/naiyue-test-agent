@@ -121,7 +121,7 @@ async def test_capacity_is_atomic_and_rejection_has_no_run_effects(monkeypatch, 
             snapshot = await app._agent.aget_state({'configurable': {'thread_id': app._sessions.require(ids[-1]).get_thread_id()}})
             assert not snapshot.values and not snapshot.config['configurable'].get('checkpoint_id')
             if persistent:
-                assert app._storage.get(ids[-1])['run_id'] is None
+                assert app._storage.sessions.get(ids[-1])['run_id'] is None
             model.gates[ids[0]][1].set()
             await tasks[0]
             result = await app.arun(ids[-1], [('user', ids[-1])])
@@ -136,7 +136,7 @@ async def test_capacity_is_atomic_and_rejection_has_no_run_effects(monkeypatch, 
             assert own_events[0].event_type == 'run_started'
             assert own_events[-1].event_type == 'run_finished' and own_events[-1].data.status == 'completed'
             if persistent:
-                assert app._storage.get(sid)['state'] == 'ready'
+                assert app._storage.sessions.get(sid)['state'] == 'ready'
                 page = await app.aget_chat_page(sid, limit=50, body_bytes=128000, preview_chars=100)
                 assert {r['message_id'] for r in page['records']} == {m.id for m in messages}
         if persistent:

@@ -90,7 +90,7 @@ async def test_capacity_rejection_removes_only_its_pending_receipt_and_is_retrya
             assert b not in delivery.active_by_session and (b, body['request_id']) not in delivery.pending_receipts
             assert (b, body['request_id']) not in delivery.receipts and b not in delivery.latest
             assert b not in model.requests and not backend._sessions.require(b).describe_session()['busy']
-            assert backend._storage.get(b)['run_id'] is None
+            assert backend._storage.sessions.get(b)['run_id'] is None
             release.set()
             await delivery.wait(first.json()['run_id'])
             accepted = await client.post(f'/api/sessions/{b}/runs', json=body)

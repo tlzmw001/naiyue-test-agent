@@ -81,17 +81,17 @@ async def test_root_child_approvals_capacity_and_concurrent_save_reopen(monkeypa
             assert set(delivery.active_by_session) == {a, b}
             # No room for D, including no persistence/model/tool effects.
             assert (await client.post(f'/api/sessions/{d}/runs', json=request(d))).status_code == 409
-            assert d not in model.requests and backend._storage.get(d)['run_id'] is None
+            assert d not in model.requests and backend._storage.sessions.get(d)['run_id'] is None
             checkpoint = await backend._agent.aget_state({'configurable': {
                 'thread_id': backend._sessions.require(d).get_thread_id()}})
             assert not checkpoint.values
-            finish = backend._storage.finish_run
+            finish = backend._storage.runs.finish_run
             def hold(sid, *args, **kwargs):
                 if sid == a:
                     loop.call_soon_threadsafe(saved.set)
                     assert release_save.wait(10)
                 return finish(sid, *args, **kwargs)
-            monkeypatch.setattr(backend._storage, 'finish_run', hold)
+            monkeypatch.setattr(backend._storage.runs, 'finish_run', hold)
             child_body = approval_request(child_batch, ['approve'])
             approved = await client.post(f'/api/sessions/{a}/approvals', json=child_body)
             assert approved.status_code == 202 and approved.json()['run_id'] == resumed_id
@@ -100,7 +100,7 @@ async def test_root_child_approvals_capacity_and_concurrent_save_reopen(monkeypa
             assert not backend._sessions._sessions[a]._run.controls_open
             release_b.set()
             await delivery.wait(rb)
-            assert backend._storage.get(b)['state'] == 'ready'
+            assert backend._storage.sessions.get(b)['state'] == 'ready'
             assert set(backend._persistence._active) == {a}
             assert not delivery.get(resumed_id).task.done()
             release_save.set()

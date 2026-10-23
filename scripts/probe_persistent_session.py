@@ -60,7 +60,7 @@ async def _async__worker(args):
                 session = await app.arestore_session(args.session)
                 prompt = 'What is the synthetic test fact from the earlier conversation? Reply with only its exact value.'
             result = await app.arun(session, [('user', prompt)])
-            row = storage.get(session)
+            row = storage.sessions.get(session)
             assert budget.snapshot()['used'] == 1 and row['state'] == 'ready'
             history_used = result['messages'][-1].text.strip() == args.value if args.worker == 'resume' else None
             if args.worker == 'resume':

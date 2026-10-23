@@ -10,7 +10,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 from naiyue_test_agent import application
 from naiyue_test_agent.cli import chat as cli
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
+from naiyue_test_agent.storage.project_store import ProjectStore
+from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.workspaces import prepare_workspace
@@ -32,8 +33,8 @@ def test_cli_directory_move_restores_same_session_history_and_new_working_root(t
     monkeypatch.setattr('builtins.input', lambda *_: next(lines))
     assert cli.main(['--config', 'unused']) == 0
     loc = prepare_workspace(a, data_dir=data)
-    with SessionStorage(loc.database_path) as storage:
-        row = storage.list_sessions()[0]
+    with ProjectStore(loc.database_path) as storage:
+        row = storage.sessions.list_sessions()[0]
     sid, thread, checkpoint = row['session_id'], row['thread_id'], row['checkpoint_id']
     monkeypatch.chdir(elsewhere)
     shutil.move(str(a), str(b))
@@ -43,12 +44,15 @@ def test_cli_directory_move_restores_same_session_history_and_new_working_root(t
     assert not (elsewhere / '.naiyue').exists()
     assert 'second answer' in capsys.readouterr().out
     assert prepare_workspace(b, data_dir=data).database_path == loc.database_path
-    with SessionStorage(loc.database_path) as storage:
-        saved = storage.get(sid)
+    with ProjectStore(loc.database_path) as storage:
+        saved = storage.sessions.get(sid)
         assert saved['thread_id'] == thread and saved['workspace_root'] == str(b.resolve())
         assert saved['checkpoint_id'] != checkpoint and saved['state'] == 'ready'
-        from langgraph.checkpoint.sqlite import SqliteSaver
-        state = SqliteSaver(storage.checkpoint_connection).get_tuple({'configurable': {'thread_id': thread}})
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+        async def read_checkpoint():
+            async with AsyncSqliteSaver.from_conn_string(str(storage.path)) as saver:
+                return await saver.aget_tuple({'configurable': {'thread_id': thread}})
+        state = asyncio.run(read_checkpoint())
         messages = state.checkpoint['channel_values']['messages']
         assert [m.content for m in messages if isinstance(m, HumanMessage)] == ['first user request', 'second user request']
         assert [m.content for m in messages if isinstance(m, AIMessage)] == ['first answer', 'second answer']
@@ -63,8 +67,8 @@ def test_binding_mismatch_and_lock_fail_before_model_loading(tmp_path, monkeypat
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: called.append(True))
     async def scenario():
         args = dict(database_path=loc.database_path, tools=[], system_prompt='', response_format=None)
-        with SessionStorage(loc.database_path) as storage:
-            storage.bind_workspace(loc.workspace_id, loc.root)
+        with ProjectStore(loc.database_path) as storage:
+            storage.sessions.bind_workspace(loc.workspace_id, loc.root)
             with pytest.raises(SessionPersistenceError, match='storage_in_use'):
                 async with open_async_persistent_application('unused', **args):
                     pytest.fail('occupied storage must not open')
@@ -74,8 +78,8 @@ def test_binding_mismatch_and_lock_fail_before_model_loading(tmp_path, monkeypat
                 pytest.fail('another workspace must not enter')
     asyncio.run(scenario())
     assert called == []
-    with SessionStorage(loc.database_path) as reopened:
-        assert reopened.get_workspace_binding()['workspace_id'] == loc.workspace_id
+    with ProjectStore(loc.database_path) as reopened:
+        assert reopened.sessions.get_workspace_binding()['workspace_id'] == loc.workspace_id
 
 
 def test_web_entry_passes_one_settings_snapshot_and_workspace_identity(tmp_path, monkeypatch):
@@ -107,8 +111,8 @@ def test_web_entry_passes_one_settings_snapshot_and_workspace_identity(tmp_path,
             rows = await app.state.service.sessions()
             assert [row['session_id'] for row in rows] == [sid]
     asyncio.run(scenario())
-    with SessionStorage(configured.database_path) as storage:
-        assert storage.get_workspace_binding()['workspace_id'] == configured.workspace_id
+    with ProjectStore(configured.database_path) as storage:
+        assert storage.sessions.get_workspace_binding()['workspace_id'] == configured.workspace_id
 
 
 def test_new_workspace_flags_reject_incompatible_options(tmp_path, monkeypatch):

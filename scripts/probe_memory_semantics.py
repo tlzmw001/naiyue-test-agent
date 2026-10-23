@@ -45,7 +45,7 @@ def seed_sources(storage, sid, sources, *, at):
     from naiyue_test_agent.application.conversation.chat_history import ChatUpdate
     from naiyue_test_agent.application.sessions.session_controls import mark_human_messages
 
-    row, messages, facts, boundaries = storage.get(sid), [], [], []
+    row, messages, facts, boundaries = storage.sessions.get(sid), [], [], []
     inputs = list(sources)
     setup = []
     if not inputs or inputs[0]['role'] != 'user':
@@ -77,10 +77,10 @@ def seed_sources(storage, sid, sources, *, at):
             kind='message', source_checkpoint_id='probe-checkpoint', message_type=message.type,
             parent_message_id=message.id + '-owner' if message.type == 'tool' else None,
             reply_id=message_reply, occurred_at=at + index / 100))
-    head = next((r for r in storage.chat_heads(sid) if r['thread_id'] == row['thread_id']), {})
-    storage.save_chat_updates(sid, [ChatUpdate(row['thread_id'], '', 'root', head.get('revision', 0),
+    head = next((r for r in storage.conversation.chat_heads(sid) if r['thread_id'] == row['thread_id']), {})
+    storage.conversation.save_chat_updates(sid, [ChatUpdate(row['thread_id'], '', 'root', head.get('revision', 0),
         uuid4().hex, tuple(facts), boundaries=tuple(boundaries))])
-    upper = storage._read('SELECT MAX(sequence) AS n FROM naiyue_chat_messages WHERE session_id=?', (sid,))[0]['n']
+    upper = storage.database.read_rows('SELECT MAX(sequence) AS n FROM naiyue_chat_messages WHERE session_id=?', (sid,))[0]['n']
     return dict(upper=upper, source_texts={s['id']: s['text'] for s in inputs}, setup=setup)
 
 
@@ -90,16 +90,16 @@ def seed_candidate(memory, sid, cases, *, at):
     text = cases[4]['sources'][0]['text']
     source = dict(id='probe-e11-prior-assistant', role='assistant', text=text)
     seeded = seed_sources(memory.storage, sid, [source], at=at)
-    parent = memory.storage.get(sid)
+    parent = memory.storage.sessions.get(sid)
     reference = dict(session_id=sid, thread_id=parent['thread_id'], message_id=source['id'],
         revision=1, conversation_revision=parent['conversation_revision'], quote=text, offset=0)
     proposal = dict(kind='procedure', title='自动化用例编排', body=text, subject='自动化用例编排',
         basis='inference', intent='candidate', gaps=['缺持久选择'], reason='旧助手提出编排，尚缺用户持久选择')
     first = MemoryInput(action='record', scope='workspace', proposal=proposal, sources=[reference])
-    saved = memory.query(sid, memory.storage.get(sid)['project_id'], first.model_dump(mode='json'), now=at + 1)['item']
+    saved = memory.query(sid, memory.storage.sessions.get(sid)['project_id'], first.model_dump(mode='json'), now=at + 1)['item']
     update = MemoryInput(action='update', scope='workspace', memory_id=saved['memory_id'], expected_version=1,
         proposal=proposal, sources=[reference])
-    saved = memory.query(sid, memory.storage.get(sid)['project_id'], update.model_dump(mode='json'), now=at + 2)['item']
+    saved = memory.query(sid, memory.storage.sessions.get(sid)['project_id'], update.model_dump(mode='json'), now=at + 2)['item']
     return dict(kind='supplemental_synthetic_precondition', fixture_alias='candidate-e11',
         actual_memory_id=saved['memory_id'], version=saved['version'], scope='workspace',
         body_from='e05.sources[0].text', source=source, source_texts=seeded['source_texts'],
@@ -179,10 +179,10 @@ def probe_callback(budget, settings, *, output_mode='text'):
 def saved_rows(memory):
     result = []
     for _, owner in memory._stores('both'):
-        with owner._lock:
-            for raw in owner.connection.execute('SELECT * FROM naiyue_memories ORDER BY memory_id LIMIT 50'):
+        with owner.database.transaction() as connection:
+            for raw in connection.execute('SELECT * FROM naiyue_memories ORDER BY memory_id LIMIT 50'):
                 row = dict(raw)
-                row['sources'] = [dict(s) for s in owner.connection.execute('''SELECT * FROM naiyue_memory_sources
+                row['sources'] = [dict(s) for s in connection.execute('''SELECT * FROM naiyue_memory_sources
                     WHERE memory_id=? AND memory_version=? ORDER BY source_id''', (row['memory_id'], row['version']))]
                 result.append(row)
     return result
@@ -193,16 +193,16 @@ async def run_case(case, repeat, catalog, model_id, callback, settings):
     from naiyue_test_agent.application.memory.memory_access import MemoryAccess
     from naiyue_test_agent.application.memory.memory_jobs import MemoryJobs
     from naiyue_test_agent.application.memory.memory_overview_store import overview
-    from naiyue_test_agent.storage.session_storage import SessionStorage
+    from naiyue_test_agent.storage.project_store import ProjectStore
 
     events, started = [], time.monotonic()
     callback.outputs = []
     callback.inputs = []
     with tempfile.TemporaryDirectory(prefix='nyt-memory-semantic-') as temporary:
         root = Path(temporary).resolve()
-        with SessionStorage(root / 'sessions.sqlite') as storage:
-            storage.bind_workspace(str(uuid4()), root)
-            storage.create('probe', dict(thread_id='probe', model_id=model_id, workspace_root=root,
+        with ProjectStore(root / 'sessions.sqlite') as storage:
+            storage.sessions.bind_workspace(str(uuid4()), root)
+            storage.sessions.create('probe', dict(thread_id='probe', model_id=model_id, workspace_root=root,
                 active_tool_names=['memory'], permission_mode='Default'))
             memory = MemoryAccess(storage, settings, root / 'data')
             coordinator = MemoryJobs(memory, catalog, publisher_factory=lambda sid, rid:
@@ -232,19 +232,19 @@ async def run_case(case, repeat, catalog, model_id, callback, settings):
                 diagnostics = DiagnosticSettings()
                 for event in events:
                     if event.event_type.startswith('model_call_'):
-                        storage.save_model_usage_event(event)
+                        storage.usage.save_model_usage_event(event)
                     fact = project_diagnostic_event(event)
                     if fact is not None:
-                        storage.save_diagnostic_event(fact, diagnostics)
+                        storage.diagnostics.save_diagnostic_event(fact, diagnostics)
                     if event.event_type == 'run_finished':
-                        storage.finish_model_usage_run(event.session_id, event.run_id)
-                        storage.finish_diagnostic_run(fact, diagnostics)
+                        storage.usage.finish_model_usage_run(event.session_id, event.run_id)
+                        storage.diagnostics.finish_diagnostic_run(fact, diagnostics)
                 starts = [e.data.invocation_id for e in events if e.event_type == 'model_call_started']
                 finishes = [e.data.invocation_id for e in events if e.event_type == 'model_call_finished']
                 return dict(case_id=case['id'], repeat=repeat, source_time=at + 10, setup=setup,
-                    source_texts=texts, task=task, overview=overview(storage, 'probe'), memories=rows,
+                    source_texts=texts, task=task, overview=storage.memory.overview('probe'), memories=rows,
                     model_outputs=callback.outputs, model_inputs=callback.inputs, invocation_pairing=starts == finishes,
-                    usage=storage.read_model_usage('probe', model_limit=20),
+                    usage=storage.usage.read_model_usage('probe', model_limit=20),
                     events=[dict(event_type=e.event_type, run_id=e.run_id, data=asdict(e.data)) for e in events
                         if e.event_type in ('run_started', 'run_finished', 'model_call_started', 'model_call_finished',
                             'model_http_attempt_started', 'model_http_attempt_finished')],

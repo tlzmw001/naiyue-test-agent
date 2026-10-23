@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.storage.project_store import ProjectStore
 
 
 def test_real_process_death_preserves_boundaries_and_marks_only_capture_interrupted(tmp_path):
@@ -29,7 +29,7 @@ async def main():
         await model.entered.wait()
         async def committed():
             while True:
-                records=await run_blocking(app._storage.read_diagnostic_runs,sid)
+                records=await run_blocking(app._storage.diagnostics.read_diagnostic_runs,sid)
                 if records['runs']:
                     print(json.dumps({'sid':sid,'rid':records['runs'][0]['run_id']}),flush=True)
                     return
@@ -43,13 +43,13 @@ asyncio.run(main())
                             cwd=Path(__file__).resolve().parents[1], timeout=20)
     assert result.returncode == 37, result.stderr
     identity = json.loads(result.stdout)
-    with SessionStorage(path) as store:
+    with ProjectStore(path) as store:
         from test_diagnostic_storage import limits
-        before = store.get(identity['sid'])
+        before = store.sessions.get(identity['sid'])
         assert before['state'] == 'running'
-        store.prepare_diagnostics(limits())
-        page = store.read_diagnostic_events(identity['sid'], identity['rid'])
+        store.diagnostics.prepare_diagnostics(limits())
+        page = store.diagnostics.read_diagnostic_events(identity['sid'], identity['rid'])
         assert page['events'][0]['event_type'] == 'run_started'
         assert page['summary']['capture_state'] == 'interrupted' and page['summary']['status'] is None
-        assert page['summary']['capture_incomplete'] and store.get(identity['sid']) == before
+        assert page['summary']['capture_incomplete'] and store.sessions.get(identity['sid']) == before
         assert 'PRIVATE_PROMPT' not in json.dumps(page)

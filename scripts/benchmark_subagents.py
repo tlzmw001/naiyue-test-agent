@@ -114,7 +114,7 @@ async def metadata_samples(root, counts, repeats):
                 for index in range(current, count):
                     identity = sha256(f'metadata-fixture-{index}'.encode()).hexdigest()
                     stamp = f'2026-01-01T00:00:00.{index:06d}+00:00'
-                    app._storage.save_subagent(dict(session_id=sid, agent_id=identity,
+                    app._storage.subagents.save_subagent(dict(session_id=sid, agent_id=identity,
                         project_id=owner._run.project_id, execution_root=str(root), execution_root_kind='local',
                         agent_path='root/worker/' + identity, child_thread_id='subagent:' + identity,
                         agent='worker', role_fingerprint=role_fingerprint(role), model_id='child',

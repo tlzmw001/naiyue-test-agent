@@ -7,7 +7,8 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
+from naiyue_test_agent.storage.project_store import ProjectStore
+from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
 from test_async_application import StreamingToolModel
 
@@ -37,7 +38,7 @@ def test_close_reopen_preserves_session_thread_and_history(monkeypatch, tmp_path
             assert first['run_id'] != second['run_id']
             assert first['checkpoint_id'] != second['checkpoint_id']
         assert path.stat().st_mode & 0o777 == 0o600
-        with SessionStorage(path):
+        with ProjectStore(path):
             pass
     asyncio.run(scenario())
 
@@ -74,7 +75,7 @@ def test_save_failure_never_publishes_completed(monkeypatch, tmp_path):
             def fail(*args, **kwargs):
                 raise SessionPersistenceError('synthetic_save_failure')
 
-            monkeypatch.setattr(app._storage, 'finish_run', fail)
+            monkeypatch.setattr(app._storage.runs, 'finish_run', fail)
             with pytest.raises(SessionPersistenceError, match='session_save_unconfirmed'):
                 await app.arun(session, [('user', 'one')])
             assert events[-1].event_type == 'run_finished' and events[-1].data.status == 'failed'
@@ -94,14 +95,14 @@ def test_metadata_commit_wait_keeps_loop_responsive_and_busy(monkeypatch, tmp_pa
             events = []
             app.subscribe_events(events.append)
             storage = app._storage
-            original = storage.finish_run
+            original = storage.runs.finish_run
 
             def commit(*args, **kwargs):
                 loop.call_soon_threadsafe(entered.set)
                 assert release.wait(5)
                 return original(*args, **kwargs)
 
-            monkeypatch.setattr(storage, 'finish_run', commit)
+            monkeypatch.setattr(storage.runs, 'finish_run', commit)
             task = asyncio.create_task(app.arun(session, [('user', 'one')]))
             try:
                 await asyncio.wait_for(entered.wait(), 5)
@@ -127,7 +128,7 @@ def test_close_failure_does_not_replace_body_exception(monkeypatch, tmp_path, ca
                 raise original
         assert caught.value is original
         assert 'PRIVATE' not in caplog.text
-        with SessionStorage(tmp_path / 'sessions.sqlite'):
+        with ProjectStore(tmp_path / 'sessions.sqlite'):
             pass
     asyncio.run(scenario())
 
@@ -139,7 +140,7 @@ def test_cancel_during_storage_acquisition_releases_instance_lock(monkeypatch, t
         entered, release = asyncio.Event(), threading.Event()
         loop = asyncio.get_running_loop()
         instances = []
-        original = async_persistent.SessionStorage
+        original = async_persistent.ProjectStore
 
         def open_storage(*args):
             storage = original(*args)
@@ -148,7 +149,7 @@ def test_cancel_during_storage_acquisition_releases_instance_lock(monkeypatch, t
             assert release.wait(5)
             return storage
 
-        monkeypatch.setattr(async_persistent, 'SessionStorage', open_storage)
+        monkeypatch.setattr(async_persistent, 'ProjectStore', open_storage)
 
         async def open_application():
             async with factory(monkeypatch, path, StreamingToolModel(replies=[])):
@@ -161,7 +162,7 @@ def test_cancel_during_storage_acquisition_releases_instance_lock(monkeypatch, t
             release.set()
             with pytest.raises(asyncio.CancelledError):
                 await task
-            assert instances[0]._closed
+            assert instances[0].database._closed
             with original(path):
                 pass
         finally:

@@ -14,7 +14,7 @@ from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 from naiyue_test_agent import application
 from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.storage.project_store import ProjectStore
 from naiyue_test_agent.model_access import ModelConfigError
 from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.storage.backup import list_backups
@@ -60,8 +60,8 @@ def test_model_failure_after_migration_stays_model_failure_and_does_not_restore(
                 pytest.fail('must not enter the application')
         assert caught.value is original
     asyncio.run(run())
-    with SessionStorage(database) as storage:
-        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
+    with ProjectStore(database) as storage:
+        assert storage.database.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
     assert [row['manifest']['source_schema'] for row in list_backups(database)] == [12]
 
 

@@ -251,7 +251,7 @@ class SessionControlMixin:
             self._sessions[session_id] = session
         try:
             if self._persistence is not None:
-                self._persistence.storage.create(session_id, {
+                self._persistence.storage.sessions.create(session_id, {
                     'thread_id': session.get_thread_id(), 'model_id': model_id,
                     'workspace_root': workspace_root, 'project_id': state.project_id,
                     'execution_root_kind': state.execution_root.kind if state.execution_root else None, 'active_tool_names': session.get_active_tools(),

@@ -17,8 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
     ('application.conversation.history_queries', 'query'),
     ('application.subagents.subagent_records', 'role_fingerprint'),
     ('application.observability.run_events', 'RunObservation'),
-    ('application.memory.memory_personal', 'PersonalMemory'),
-    ('storage.session_storage', 'SessionStorage'),
+    ('storage.memory', 'MemoryRepo'),
+    ('storage.project_store', 'ProjectStore'),
     ('cli.cli_async', 'AsyncCliApplication'),
 ])
 def test_domain_implementation_has_one_current_import_path(module, symbol):
@@ -27,12 +27,12 @@ def test_domain_implementation_has_one_current_import_path(module, symbol):
 
 
 def test_storage_first_import_keeps_application_exports_and_identity():
-    code = '''from naiyue_test_agent.storage.session_storage import SessionStorage
+    code = '''from naiyue_test_agent.storage.project_store import ProjectStore
 from naiyue_test_agent.application import SessionService, SessionBusyError
 from naiyue_test_agent.application.sessions.session_service import SessionService as Actual
 from naiyue_test_agent.application.errors import SessionBusyError as ActualError
 assert SessionService is Actual and SessionBusyError is ActualError
-assert SessionStorage.__module__ == 'naiyue_test_agent.storage.session_storage'
+assert ProjectStore.__module__ == 'naiyue_test_agent.storage.project_store'
 '''
     result = subprocess.run([sys.executable, '-c', code], cwd=ROOT, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

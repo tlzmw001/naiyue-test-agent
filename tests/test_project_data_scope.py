@@ -1,8 +1,10 @@
 """Project data survives execution locations; personal memory crosses projects."""
 
+from naiyue_test_agent.storage.queries import write_one
+
 from contextlib import contextmanager
 
-from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.storage.project_store import ProjectStore
 from naiyue_test_agent.application.memory.memory_access import MemoryAccess
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.tools.history import HistoryInput
@@ -19,10 +21,10 @@ def project(folder, name):
     root = folder / name
     root.mkdir()
     location = prepare_workspace(root, data_dir=folder / 'data')
-    with SessionStorage(location.database_path) as store:
-        store.bind_workspace(location.workspace_id, root)
+    with ProjectStore(location.database_path) as store:
+        store.sessions.bind_workspace(location.workspace_id, root)
         for sid in ('caller', 'target'):
-            store.create(sid, dict(thread_id=sid, model_id='A', workspace_root=root,
+            store.sessions.create(sid, dict(thread_id=sid, model_id='A', workspace_root=root,
                 active_tool_names=['memory', 'history'], permission_mode='Default'))
         access = MemoryAccess(store, MemorySettings(), folder / 'data')
         try:
@@ -35,13 +37,14 @@ def test_history_uses_project_for_targets_with_other_or_missing_execution_paths(
     with project(tmp_path, 'project') as (root, identity, store, _):
         save(store, 'target', [HumanMessage(id='h', content='saved in another execution root')])
         # Persisted data fixture for the future worktree producer; it does not enable execution.
-        store._write('UPDATE naiyue_sessions SET workspace_root=?,execution_root_kind=? WHERE session_id=?',
-                     (str(tmp_path / 'gone-worktree'), 'worktree', 'target'))
-        assert {row['session_id'] for row in store.list_workspace_sessions(root)} == {'caller', 'target'}
-        directory = store.read_history_tool('caller', identity,
+        with store.database.transaction(write=True) as connection:
+            write_one(connection, 'UPDATE naiyue_sessions SET workspace_root=?,execution_root_kind=? WHERE session_id=?',
+                         (str(tmp_path / 'gone-worktree'), 'worktree', 'target'))
+        assert {row['session_id'] for row in store.sessions.list_workspace_sessions(root)} == {'caller', 'target'}
+        directory = store.conversation.read_history_tool('caller', identity,
             HistoryInput(action='list_sessions').model_dump(), HistorySettings())
         assert [row['session_id'] for row in directory['items']] == ['target']
-        detail = store.read_history_tool('caller', identity,
+        detail = store.conversation.read_history_tool('caller', identity,
             HistoryInput(action='read', session_id='target').model_dump(), HistorySettings())
         assert detail['items'][0]['content'] == 'saved in another execution root'
 

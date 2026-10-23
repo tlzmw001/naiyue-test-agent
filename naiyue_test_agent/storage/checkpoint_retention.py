@@ -8,6 +8,7 @@ from langgraph.channels.delta import DeltaChannel
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking
+from .queries import read_rows, session_row, subagent_references, chat_heads
 from naiyue_test_agent.application.sessions.session_recovery import recovery_record
 
 
@@ -18,13 +19,13 @@ class RetentionSkipped(Exception):
     """A known safety boundary; its reason is an application-owned constant."""
 
 
-def _ownership(storage):
+def _ownership(connection):
     owners = {}
-    for row in storage.connection.execute('''SELECT session_id,thread_id FROM naiyue_sessions
+    for row in connection.execute('''SELECT session_id,thread_id FROM naiyue_sessions
             UNION ALL SELECT session_id,thread_id FROM naiyue_chat_sync
             UNION ALL SELECT session_id,child_thread_id FROM naiyue_subagent_instances'''):
         owners.setdefault(row['thread_id'], set()).add(row['session_id'])
-    for row in storage.connection.execute('SELECT session_id,old_thread_id,new_thread_id,obsolete_children FROM naiyue_regenerations'):
+    for row in connection.execute('SELECT session_id,old_thread_id,new_thread_id,obsolete_children FROM naiyue_regenerations'):
         children = json.loads(row['obsolete_children'])
         if not isinstance(children, list) or any(not isinstance(item, str) or not item for item in children):
             raise RetentionSkipped('ownership_invalid')
@@ -34,18 +35,18 @@ def _ownership(storage):
 
 
 def _inventory(storage, session_id, run_id, settings):
-    with storage._lock:
-        row = storage.get(session_id)
+    with storage.database.transaction() as connection:
+        row = session_row(connection, session_id)
         if row['state'] != 'ready' or row['run_id'] != run_id or not row['checkpoint_id']:
             raise RetentionSkipped('session_not_confirmed')
-        heads = storage.chat_heads(session_id)
+        heads = chat_heads(connection, session_id)
         by_thread = {head['thread_id']: head for head in heads}
         root = by_thread.get(row['thread_id'])
         if not root or root['checkpoint_id'] != row['checkpoint_id']:
             raise RetentionSkipped('archive_not_current')
         if any(head['checkpoint_ns'] != '' for head in heads):
             raise RetentionSkipped('namespace_unsupported')
-        actions = storage._read('SELECT * FROM naiyue_regenerations WHERE session_id=?', (session_id,))
+        actions = read_rows(connection, 'SELECT * FROM naiyue_regenerations WHERE session_id=?', (session_id,))
         retired = set()
         for action in actions:
             if action['status'] in ('preparing', 'activated'):
@@ -64,22 +65,22 @@ def _inventory(storage, session_id, run_id, settings):
         ordered = [row['thread_id'], *sorted(set(by_thread) - {row['thread_id']}), *sorted(retired - set(by_thread))]
         for thread in ordered:
             threshold = settings.trigger_checkpoints if thread in by_thread else 1
-            count = storage.connection.execute('''SELECT COUNT(*) FROM
+            count = connection.execute('''SELECT COUNT(*) FROM
                 (SELECT 1 FROM checkpoints WHERE thread_id=? AND checkpoint_ns='' LIMIT ?)''',
                 (thread, threshold)).fetchone()[0]
             if count >= threshold:
                 scopes.append(thread)
-        boundary = storage._read('''SELECT * FROM naiyue_reply_boundaries WHERE session_id=? AND thread_id=?
+        boundary = read_rows(connection, '''SELECT * FROM naiyue_reply_boundaries WHERE session_id=? AND thread_id=?
             ORDER BY input_sequence DESC LIMIT 1''', (session_id, row['thread_id'])) if scopes else []
-        registered = storage.get_subagent_references(session_id) if scopes else {}
+        registered = subagent_references(connection, session_id) if scopes else {}
         return dict(row=row, heads=heads, live=by_thread, retired=retired - set(by_thread),
-                    owners=_ownership(storage) if scopes else {},
+                    owners=_ownership(connection) if scopes else {},
                     scopes=scopes, boundary=boundary[0] if boundary else None, registered=registered)
 
 
 def _weight(storage, key):
-    with storage._lock:
-        record = storage.connection.execute('''SELECT length(checkpoint)+COALESCE(length(metadata),0)+
+    with storage.database.transaction() as connection:
+        record = connection.execute('''SELECT length(checkpoint)+COALESCE(length(metadata),0)+
             COALESCE((SELECT SUM(length(value)) FROM writes w WHERE w.thread_id=c.thread_id
                 AND w.checkpoint_ns=c.checkpoint_ns AND w.checkpoint_id=c.checkpoint_id),0)
             FROM checkpoints c WHERE thread_id=? AND checkpoint_ns=? AND checkpoint_id=?''', key).fetchone()
@@ -124,13 +125,13 @@ async def _protected(agent, storage, inventory, settings):
 
 def _candidates(storage, inventory, eligible, protected, settings):
     selected, payload = [], 0
-    with storage._lock:
+    with storage.database.transaction() as connection:
         for thread in eligible:
             if inventory['owners'].get(thread) != {inventory['row']['session_id']}:
                 logger.warning('checkpoint_retention_skipped reason=foreign_owner')
                 continue
             kept_count = sum(key[0] == thread for key in protected)
-            records = storage.connection.execute('''SELECT checkpoint_id,bytes FROM
+            records = connection.execute('''SELECT checkpoint_id,bytes FROM
                 (SELECT checkpoint_id,length(checkpoint)+COALESCE(length(metadata),0)+
                 COALESCE((SELECT SUM(length(value)) FROM writes w WHERE w.thread_id=c.thread_id
                     AND w.checkpoint_ns=c.checkpoint_ns AND w.checkpoint_id=c.checkpoint_id),0) AS bytes
@@ -152,17 +153,16 @@ def _candidates(storage, inventory, eligible, protected, settings):
 
 def _commit(storage, inventory, candidates, protected):
     row = inventory['row']
-    with storage._lock, storage.connection:
-        storage.connection.execute('BEGIN IMMEDIATE')
-        current = storage.get(row['session_id'])
+    with storage.database.transaction(write=True) as connection:
+        current = session_row(connection, row['session_id'])
         if any(current[key] != row[key] for key in ('state', 'run_id', 'thread_id', 'checkpoint_id', 'conversation_revision')):
             raise RetentionSkipped('session_changed')
-        heads = storage.chat_heads(row['session_id'])
+        heads = chat_heads(connection, row['session_id'])
         if heads != inventory['heads']:
             raise RetentionSkipped('archive_changed')
-        if storage.get_subagent_references(row['session_id']) != inventory['registered']:
+        if subagent_references(connection, row['session_id']) != inventory['registered']:
             raise RetentionSkipped('registry_changed')
-        owners = _ownership(storage)
+        owners = _ownership(connection)
         checked = set()
         for key, _ in candidates:
             thread, _, _ = key
@@ -172,8 +172,8 @@ def _commit(storage, inventory, candidates, protected):
                 checked.add(thread)
             if key in protected:
                 raise RetentionSkipped('protected_candidate')
-            storage.connection.execute('DELETE FROM writes WHERE thread_id=? AND checkpoint_ns=? AND checkpoint_id=?', key)
-            if storage.connection.execute('DELETE FROM checkpoints WHERE thread_id=? AND checkpoint_ns=? AND checkpoint_id=?', key).rowcount != 1:
+            connection.execute('DELETE FROM writes WHERE thread_id=? AND checkpoint_ns=? AND checkpoint_id=?', key)
+            if connection.execute('DELETE FROM checkpoints WHERE thread_id=? AND checkpoint_ns=? AND checkpoint_id=?', key).rowcount != 1:
                 raise RetentionSkipped('candidate_changed')
     return dict(deleted_checkpoints=len(candidates), deleted_bytes=sum(size for _, size in candidates), reason='pruned')
 

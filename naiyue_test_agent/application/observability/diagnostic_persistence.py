@@ -151,7 +151,7 @@ class DiagnosticPersistence:
 
     async def _finish(self, key, state):
         try:
-            saved = await run_blocking(self._storage.finish_diagnostic_run,
+            saved = await run_blocking(self._storage.diagnostics.finish_diagnostic_run,
                 state['terminal'] or state['first'], self._settings,
                 reason=state['reason'], dropped_events=state['dropped'])
             if not saved:
@@ -187,7 +187,7 @@ class DiagnosticPersistence:
             try:
                 with self._lock:
                     disabled = self._runs[key]['disabled']
-                saved = False if disabled else await run_blocking(self._storage.save_diagnostic_event, record, self._settings)
+                saved = False if disabled else await run_blocking(self._storage.diagnostics.save_diagnostic_event, record, self._settings)
                 if not saved:
                     with self._lock:
                         state = self._runs[key]
@@ -239,7 +239,7 @@ class DiagnosticPersistence:
 
     async def __aenter__(self):
         try:
-            await run_blocking(self._storage.prepare_diagnostics, self._settings)
+            await run_blocking(self._storage.diagnostics.prepare_diagnostics, self._settings)
         except Exception as error:
             logger.error('diagnostic_prepare_failed error_type=%s', safe_error_type(error))
         self._unsubscribe = self._subscribe(self.accept)

@@ -40,4 +40,4 @@ def test_write_rejects_unreadable_metadata_before_committing(memory):
     with pytest.raises(MemoryReadError,match='memory_metadata_budget'):
         write(memory,proposal=p,sources=[ref])
     for table in ('naiyue_memories','naiyue_memory_versions','naiyue_memory_sources','naiyue_memory_search'):
-        assert access.storage.connection.execute(f'SELECT count(*) FROM {table}').fetchone()[0]==0
+        assert access.storage.database.connection.execute(f'SELECT count(*) FROM {table}').fetchone()[0]==0

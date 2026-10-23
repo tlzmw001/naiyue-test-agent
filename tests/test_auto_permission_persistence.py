@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage
 
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.storage.session_storage import SessionPersistenceError
+from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.settings import AppSettings
 from test_auto_permission_review import model, settings, verdict
@@ -43,7 +43,7 @@ async def test_auto_mode_restores_with_models_and_rejects_restore_without_them(m
         async with open_async_persistent_application('synthetic', database_path=path, **args) as app:
             sid = await app.acreate_session('main')
             await app.arun(sid, [('user', 'run')])
-            assert app._storage.get(sid)['permission_mode'] == 'Auto'
+            assert app._storage.sessions.get(sid)['permission_mode'] == 'Auto'
         async with open_async_persistent_application('synthetic', database_path=path, **args) as restored:
             await restored.arestore_session(sid)
             assert restored.get_permission_mode(sid) == 'Auto'

@@ -215,7 +215,7 @@ class AsyncApplication:
             else:
                 messages = (await self.aget_session_history(session_id))['messages']
                 if getattr(self, '_storage', None) is not None:
-                    owned = await run_blocking(self._storage.get_subagent_references, session_id)
+                    owned = await run_blocking(self._storage.subagents.get_subagent_references, session_id)
             from .subagents.subagent_history import merge_registered_subagents
             records = merge_registered_subagents(subagent_records(session_id, messages, owned_instances=owned), owned)
             for row in records:

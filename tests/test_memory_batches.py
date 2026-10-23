@@ -10,20 +10,20 @@ from langchain_core.messages.utils import count_tokens_approximately
 
 from naiyue_test_agent.application.conversation.chat_history import ChatUpdate
 from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
-from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.storage.project_store import ProjectStore
 
 
 @pytest.fixture
 def archive(tmp_path):
-    with SessionStorage(tmp_path / 'sessions.sqlite') as store:
-        store.bind_workspace('11111111111111111111111111111111', tmp_path)
-        store.create('session', dict(thread_id='root-thread', model_id='A', workspace_root=tmp_path,
+    with ProjectStore(tmp_path / 'sessions.sqlite') as store:
+        store.sessions.bind_workspace('11111111111111111111111111111111', tmp_path)
+        store.sessions.create('session', dict(thread_id='root-thread', model_id='A', workspace_root=tmp_path,
             active_tool_names=['memory'], permission_mode='Default'))
         yield store
 
 
 def save(store, messages, *, thread='root-thread', occurred_at=1000.):
-    head = next((h for h in store.chat_heads('session') if h['thread_id'] == thread), None)
+    head = next((h for h in store.conversation.chat_heads('session') if h['thread_id'] == thread), None)
     records = []
     for message in messages:
         body = json.dumps(message_to_dict(message), ensure_ascii=False)
@@ -31,13 +31,13 @@ def save(store, messages, *, thread='root-thread', occurred_at=1000.):
             kind='context_summary' if message.additional_kwargs.get('naiyue_compaction_summary') else 'message',
             source_checkpoint_id='checkpoint', message_type=message.type, parent_message_id=None,
             reply_id='reply', occurred_at=occurred_at))
-    store.save_chat_updates('session', [ChatUpdate(thread, '', 'root', head['revision'] if head else 0,
+    store.conversation.save_chat_updates('session', [ChatUpdate(thread, '', 'root', head['revision'] if head else 0,
         'checkpoint', tuple(records))])
 
 
 def batch(store, **changes):
     from naiyue_test_agent.application.memory.memory_batches import build_batch
-    return build_batch(store, **(dict(session_id='session', thread_id='root-thread', conversation_revision=0,
+    return store.memory.build_batch(**(dict(session_id='session', thread_id='root-thread', conversation_revision=0,
         start=[0, 0], upper=100, token_budget=16000, source_chars=4096) | changes))
 
 
@@ -165,15 +165,15 @@ def test_empty_tail_still_obeys_json_envelope_budget(archive):
 
 def test_batch_rejects_foreign_workspace_even_when_thread_matches(archive):
     save(archive, [HumanMessage(id='first', content='visible')])
-    with archive.connection:
-        archive.connection.execute('UPDATE naiyue_sessions SET project_id=? WHERE session_id=?',
+    with archive.database.connection:
+        archive.database.connection.execute('UPDATE naiyue_sessions SET project_id=? WHERE session_id=?',
             ('foreign-project', 'session'))
     with pytest.raises(MemoryReadError, match='memory_source_scope_mismatch'):
         batch(archive)
 
 
 def test_batch_sqlite_failure_is_diagnostic_and_not_empty(archive, caplog):
-    archive.connection.close()
+    archive.database.connection.close()
     with pytest.raises(MemoryReadError, match='memory_batch_read_failed'):
         batch(archive)
     assert 'memory_batch_read_failed' in caplog.text

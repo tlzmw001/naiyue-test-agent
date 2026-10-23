@@ -2,6 +2,8 @@
 
 日期：2026-10-23。03已完成本机验收，未提交/push/发布；本片只迁移目录、导入和入口接线，不重写业务行为。基于v0.4.0标签的codex/project-execution-root工作区，01/02成果仍未提交；02已通过4686后端/423前端、标准构建和源码外安装。memory/history已随v0.4.0提交发布，满足搬迁前置条件。
 
+版本边界：本表和验收描述03完成时的模块。04随后删除SessionStorage/PersonalMemory两个旧资源所有者并拆分仓储，当前存储入口见[04对象与调用链](128-04-database-repositories-and-uow.md#6-当前对象调用链和删除项)；03的纯搬迁证据保持。
+
 ## 1. 当前结构与目标
 
 application目前平铺63份Python文件、10971行；根目录另有7份storage_*，终端CLI实现的7份文件位于application。入口与业务、存储交错，后续新增能力难以定位。

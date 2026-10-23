@@ -41,17 +41,17 @@ def test_queue_full_does_not_advance_baseline_or_call_model(jobs):
     async def scenario():
         storage,access,model,root=jobs
         access.settings=MemorySettings(auto_enabled=False,max_pending_tasks=1)
-        storage.create('other',dict(thread_id='other',model_id='A',workspace_root=root,
+        storage.sessions.create('other',dict(thread_id='other',model_id='A',workspace_root=root,
             active_tool_names=['memory'],permission_mode='Default'))
         service=MemoryJobs(access,ModelCatalog('A',{'A':model}))
         try:
             service.prepare('s',root,[],model);service.prepare('other',root,[],model)
-            before=store.ensure(storage,'other')
+            before=storage.memory.ensure('other')
             await register(service,root)
             source(access,'other',text='队列满时保留的新增材料')
             with pytest.raises(MemoryReadError,match='memory_queue_full'):
                 await register(service,root,'other')
-            assert store.ensure(storage,'other')==before and not model.seen
+            assert storage.memory.ensure('other')==before and not model.seen
             await service.stop(next(iter(service._entries)))
             accepted=await register(service,root,'other')
             await service.after_finish('other','R','completed',model_id='A')
@@ -77,7 +77,7 @@ def test_failed_admission_save_never_releases_worker(jobs,monkeypatch):
             job=service._entries[accepted['task_id']]
             assert not job.released and not model.seen
             assert job.result_status=='failed' and job.termination=='admission_save_failed'
-            assert store.ensure(storage,'s')['next_sequence']==0
+            assert storage.memory.ensure('s')['next_sequence']==0
         finally:await service.aclose()
     asyncio.run(scenario())
 
@@ -85,7 +85,7 @@ def test_failed_admission_save_never_releases_worker(jobs,monkeypatch):
 def test_terminal_revision_changes_only_for_scoped_real_completion(jobs):
     async def scenario():
         storage,access,model,root=jobs
-        storage.create('other',dict(thread_id='other',model_id='A',workspace_root=root,
+        storage.sessions.create('other',dict(thread_id='other',model_id='A',workspace_root=root,
             active_tool_names=['memory'],permission_mode='Default'))
         service=MemoryJobs(access,ModelCatalog('A',{'A':model}))
         try:
@@ -151,7 +151,7 @@ def test_deletion_guard_reserves_admission_across_async_metadata_reads(jobs,monk
         entered,release=asyncio.Event(),asyncio.Event()
         original=module.run_blocking
         async def paused(call,*args,**kwargs):
-            if paused_read and call==storage.get and not entered.is_set():
+            if paused_read and call==storage.sessions.get and not entered.is_set():
                 entered.set();await release.wait()
             return await original(call,*args,**kwargs)
         monkeypatch.setattr(module,'run_blocking',paused)
@@ -178,14 +178,14 @@ def test_completed_delete_invalidates_an_already_read_request_before_registratio
         from langgraph.checkpoint.sqlite import SqliteSaver
         from naiyue_test_agent.application.memory import memory_jobs as module
         storage,access,model,root=jobs
-        SqliteSaver(storage.connection).setup()
-        storage.create('target',dict(thread_id='target',model_id='A',workspace_root=root,
+        SqliteSaver(storage.database.connection).setup()
+        storage.sessions.create('target',dict(thread_id='target',model_id='A',workspace_root=root,
             active_tool_names=['memory'],permission_mode='Default'))
         service=MemoryJobs(access,ModelCatalog('A',{'A':model}))
         original=module.run_blocking;entered,release=asyncio.Event(),asyncio.Event()
         async def paused(call,*args,**kwargs):
             result=await original(call,*args,**kwargs)
-            if call==storage.get_workspace_binding:
+            if call==storage.sessions.get_workspace_binding:
                 entered.set();await release.wait()
             return result
         monkeypatch.setattr(module,'run_blocking',paused)
@@ -194,7 +194,7 @@ def test_completed_delete_invalidates_an_already_read_request_before_registratio
         try:
             await asyncio.wait_for(entered.wait(),5)
             with service.deletion_guard(deleted):
-                storage.delete(deleted,[]);service.forget_session(deleted)
+                storage.runs.delete(deleted,[]);service.forget_session(deleted)
             release.set()
             with pytest.raises(MemoryReadError,match='memory_admission_closed'):await pending
             assert not service._entries and not model.seen

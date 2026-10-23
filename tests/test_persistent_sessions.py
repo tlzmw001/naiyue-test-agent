@@ -9,7 +9,8 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
+from naiyue_test_agent.storage.project_store import ProjectStore
+from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.model_access import ModelCatalog
 from test_application_run_events import ToolModel
@@ -33,7 +34,7 @@ async def test_close_reopen_preserves_ids_tool_history_and_has_no_old_tool_execu
         storage = first._storage
         session = await first.acreate_workspace_session('A', tmp_path)
         result = await first.arun(session, [HumanMessage(content='original request', id='h')])
-        row = storage.get(session)
+        row = storage.sessions.get(session)
         assert row['state'] == 'ready' and row['checkpoint_id']
         first_ids = [m.id for m in result['messages']]
         thread = row['thread_id']
@@ -57,7 +58,7 @@ async def test_start_write_failure_calls_no_model_and_still_cleans_up(monkeypatc
         app.subscribe_events(events.append)
         def fail(*_args):
             raise SessionPersistenceError('safe')
-        monkeypatch.setattr(storage, 'mark_running', fail)
+        monkeypatch.setattr(storage.sessions, 'mark_running', fail)
         with pytest.raises(SessionPersistenceError):
             await app.arun(session, [('user', 'q')])
         assert not any(e.event_type == 'model_call_started' for e in events)
@@ -74,10 +75,10 @@ async def test_final_save_failure_has_no_completed_and_blocks_uncertain_state(mo
         app.subscribe_events(events.append)
         def fail(*_args, **_kwargs):
             raise SessionPersistenceError('safe')
-        monkeypatch.setattr(storage, 'finish_run', fail)
+        monkeypatch.setattr(storage.runs, 'finish_run', fail)
         with pytest.raises(SessionPersistenceError):
             await app.arun(session, [('user', 'q')])
-        assert storage.get(session)['state'] == 'running'
+        assert storage.sessions.get(session)['state'] == 'running'
         assert events[-1].data.status == 'failed'
         assert not app._sessions.require(session).describe_session()['busy']
         with pytest.raises(SessionPersistenceError):
@@ -91,7 +92,7 @@ async def test_restart_rejects_restricted_state(monkeypatch, tmp_path, state):
     async with build(monkeypatch, db) as app:
         storage = app._storage
         session = await app.acreate_session('A')
-        storage.finish_run(session, state, None, '', state)
+        storage.runs.finish_run(session, state, None, '', state)
     async with build(monkeypatch, db) as app:
         storage = app._storage
         with pytest.raises(SessionPersistenceError):
@@ -106,7 +107,7 @@ async def test_mismatching_checkpoint_is_not_silently_ignored(monkeypatch, tmp_p
         storage = app._storage
         session = await app.acreate_session('A')
         await app.arun(session, [('user', 'q')])
-        storage.finish_run(session, 'ready', 'wrong-checkpoint', '', 'completed')
+        storage.runs.finish_run(session, 'ready', 'wrong-checkpoint', '', 'completed')
     async with build(monkeypatch, db) as app:
         storage = app._storage
         with pytest.raises(SessionPersistenceError):
@@ -115,25 +116,25 @@ async def test_mismatching_checkpoint_is_not_silently_ignored(monkeypatch, tmp_p
 
 def test_storage_instance_lock_and_close(tmp_path):
     db = tmp_path / 'sessions.sqlite'
-    with SessionStorage(db):
+    with ProjectStore(db):
         assert db.stat().st_mode & 0o777 == 0o600
         with pytest.raises(SessionPersistenceError):
-            SessionStorage(db)
-    with SessionStorage(db) as storage:
-        assert storage.list_sessions() == []
+            ProjectStore(db)
+    with ProjectStore(db) as storage:
+        assert storage.sessions.list_sessions() == []
 
 
 @pytest.mark.parametrize('mode', [0o644, 0o666])
 def test_existing_database_and_lock_load_without_private_mode_requirement(tmp_path, mode):
     db = tmp_path / 'sessions.sqlite'
-    with SessionStorage(db):
+    with ProjectStore(db):
         pass
     lock = db.with_name(db.name + '.lock')
     db.chmod(mode)
     lock.chmod(mode)
     before = db.read_bytes()
-    with SessionStorage(db) as storage:
-        assert storage.list_sessions() == []
+    with ProjectStore(db) as storage:
+        assert storage.sessions.list_sessions() == []
     assert db.read_bytes() == before
     assert db.stat().st_mode & 0o777 == mode
     assert lock.stat().st_mode & 0o777 == mode
@@ -150,7 +151,7 @@ async def test_cleanup_failure_never_leaves_session_ready(monkeypatch, tmp_path)
         monkeypatch.setattr(AgentSession, '_cleanup_run', broken_cleanup)
         with pytest.raises(ValueError):
             await app.arun(session, [('user', 'q')])
-        assert storage.get(session)['state'] != 'ready'
+        assert storage.sessions.get(session)['state'] != 'ready'
         assert not app._sessions.require(session).describe_session()['busy']
 
 
@@ -167,11 +168,11 @@ async def test_failed_run_keeps_last_confirmed_checkpoint(monkeypatch, tmp_path)
         storage = app._storage
         session = await app.acreate_session('A')
         await app.arun(session, [('user', 'one')])
-        checkpoint = storage.get(session)['checkpoint_id']
+        checkpoint = storage.sessions.get(session)['checkpoint_id']
         with pytest.raises(RuntimeError):
             await app.arun(session, [('user', 'two')])
-        assert storage.get(session)['state'] == 'failed'
-        assert storage.get(session)['checkpoint_id'] == checkpoint
+        assert storage.sessions.get(session)['state'] == 'failed'
+        assert storage.sessions.get(session)['checkpoint_id'] == checkpoint
 
 
 @async_test
@@ -185,11 +186,11 @@ async def test_primary_model_failure_survives_secondary_store_failure(monkeypatc
         session = await app.acreate_session('A')
         def fail(*_a, **_k):
             raise OSError('PRIVATE_SECONDARY')
-        monkeypatch.setattr(storage, 'finish_run', fail)
+        monkeypatch.setattr(storage.runs, 'finish_run', fail)
         with pytest.raises(TimeoutError) as caught:
             await app.arun(session, [('user', 'q')])
         assert caught.value is primary
-        assert storage.get(session)['state'] == 'running'
+        assert storage.sessions.get(session)['state'] == 'running'
         assert 'session_persistence_secondary_failed' in caplog.text
         assert 'PRIVATE_' not in caplog.text
 
@@ -198,10 +199,10 @@ async def test_primary_model_failure_survives_secondary_store_failure(monkeypatc
 async def test_create_failure_does_not_install_memory_session(monkeypatch, tmp_path):
     async with build(monkeypatch, tmp_path / 'sessions.sqlite') as app:
         storage = app._storage
-        storage.connection.execute('PRAGMA query_only=1')
+        storage.database.connection.execute('PRAGMA query_only=1')
         with pytest.raises(SessionPersistenceError):
             await app.acreate_session('A')
-        assert app._sessions._sessions == {} and storage.list_sessions() == []
+        assert app._sessions._sessions == {} and storage.sessions.list_sessions() == []
 
 
 @async_test
@@ -218,9 +219,9 @@ async def test_approval_can_resume_in_process_but_is_blocked_after_restart(monke
         storage = app._storage
         session = await app.acreate_workspace_session('A', root)
         paused = await app.arun(session, [('user', 'read outside')])
-        assert paused['approval_requests'] and storage.get(session)['state'] == 'interrupted'
+        assert paused['approval_requests'] and storage.sessions.get(session)['state'] == 'interrupted'
         done = await app.aresume_tool_approval(session, ['approve'])
-        assert done['messages'][-1].content == 'approved' and storage.get(session)['state'] == 'ready'
+        assert done['messages'][-1].content == 'approved' and storage.sessions.get(session)['state'] == 'ready'
     async with build(monkeypatch, db, tools=[create_session_read_tool()]) as app:
         storage = app._storage
         assert await app.arestore_session(session) == session
@@ -244,17 +245,17 @@ async def test_compacted_summary_remains_actual_context_after_reopen(monkeypatch
         compressed = await app.arun(session, [('user', 'third')])
         first = compressed['messages'][0]
         assert first.additional_kwargs.get('naiyue_compaction_summary') is True
-        archived_ids = [r[0] for r in storage.connection.execute(
+        archived_ids = [r[0] for r in storage.database.connection.execute(
             'SELECT message_id FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (session,))]
         assert archived_ids[:4] == original_ids and first.id in archived_ids
     async with open_async_persistent_application('unused', database_path=db, tools=[], system_prompt='', response_format=None) as app:
         storage = app._storage
         await app.arestore_session(session)
-        snapshot = await app._agent.aget_state({'configurable': {'thread_id': storage.get(session)['thread_id']}})
+        snapshot = await app._agent.aget_state({'configurable': {'thread_id': storage.sessions.get(session)['thread_id']}})
         assert snapshot.values['messages'][0].id == first.id
         assert snapshot.values['messages'][0].content == first.content
-        assert storage.get(session)['model_id'] == 'B'
-        assert [r[0] for r in storage.connection.execute(
+        assert storage.sessions.get(session)['model_id'] == 'B'
+        assert [r[0] for r in storage.database.connection.execute(
             'SELECT message_id FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (session,))] == archived_ids
 
 
@@ -264,19 +265,19 @@ def test_symlink_and_unknown_schema_are_rejected(tmp_path):
     alias = tmp_path / 'linked.sqlite'
     alias.symlink_to(target)
     with pytest.raises(SessionPersistenceError):
-        SessionStorage(alias)
+        ProjectStore(alias)
     assert target.read_text() == 'UNRELATED_CONTENT'
     db = tmp_path / 'sessions.sqlite'
-    with SessionStorage(db) as storage:
-        storage.connection.execute('UPDATE naiyue_store_info SET version=99')
-        storage.connection.commit()
+    with ProjectStore(db) as storage:
+        storage.database.connection.execute('UPDATE naiyue_store_info SET version=99')
+        storage.database.connection.commit()
     with pytest.raises(SessionPersistenceError):
-        SessionStorage(db)
+        ProjectStore(db)
 
 
 def test_nonregular_wal_is_rejected_before_database_open(tmp_path):
     db = tmp_path / 'sessions.sqlite'
-    with SessionStorage(db):
+    with ProjectStore(db):
         pass
     before = db.read_bytes()
     wal = tmp_path / 'sessions.sqlite-wal'
@@ -284,13 +285,13 @@ def test_nonregular_wal_is_rejected_before_database_open(tmp_path):
     unrelated = wal / 'unrelated.txt'
     unrelated.write_bytes(b'UNRELATED')
     with pytest.raises(SessionPersistenceError):
-        SessionStorage(db)
+        ProjectStore(db)
     assert unrelated.read_bytes() == b'UNRELATED' and db.read_bytes() == before
 
 
 def test_existing_valid_wal_and_shm_load_without_private_mode_requirement(tmp_path):
     db = tmp_path / 'sessions.sqlite'
-    with SessionStorage(db):
+    with ProjectStore(db):
         pass
     keeper = sqlite3.connect(db)
     try:
@@ -300,9 +301,9 @@ def test_existing_valid_wal_and_shm_load_without_private_mode_requirement(tmp_pa
         keeper.commit()
         for suffix in ('-wal', '-shm'):
             db.with_name(db.name + suffix).chmod(0o644)
-        with SessionStorage(db) as storage:
-            assert storage.list_sessions() == []
-            row = storage.connection.execute('SELECT value FROM permission_probe').fetchone()
+        with ProjectStore(db) as storage:
+            assert storage.sessions.list_sessions() == []
+            row = storage.database.connection.execute('SELECT value FROM permission_probe').fetchone()
             assert row['value'] == 'saved'
         for suffix in ('-wal', '-shm'):
             assert db.with_name(db.name + suffix).stat().st_mode & 0o777 == 0o644

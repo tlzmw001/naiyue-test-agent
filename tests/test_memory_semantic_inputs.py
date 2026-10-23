@@ -13,7 +13,7 @@ from naiyue_test_agent.application.memory import memory_overview_store
 from naiyue_test_agent.application.memory.memory_access import MemoryAccess
 from naiyue_test_agent.application.memory.memory_jobs import MemoryJob, MemoryJobs
 from naiyue_test_agent.application.memory.memory_job_runner import _prepare, _related
-from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.storage.project_store import ProjectStore
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools.memory import MemoryInput
@@ -22,9 +22,9 @@ from scripts.probe_memory_semantics import load_cases, seed_candidate, seed_sour
 
 @pytest.fixture
 def inputs(tmp_path):
-    with SessionStorage(tmp_path / 'sessions.sqlite') as storage:
-        storage.bind_workspace(str(uuid4()), tmp_path)
-        storage.create('probe', dict(thread_id='probe', model_id='offline', workspace_root=tmp_path,
+    with ProjectStore(tmp_path / 'sessions.sqlite') as storage:
+        storage.sessions.bind_workspace(str(uuid4()), tmp_path)
+        storage.sessions.create('probe', dict(thread_id='probe', model_id='offline', workspace_root=tmp_path,
             active_tool_names=['memory'], permission_mode='Default'))
         settings = MemorySettings(auto_enabled=False)
         memory = MemoryAccess(storage, settings, tmp_path / 'data')
@@ -36,9 +36,9 @@ def inputs(tmp_path):
         candidate = seed_candidate(memory, 'probe', cases, at=at)
         coordinator.prepare('probe', tmp_path, [], model)
         facts = seed_sources(storage, 'probe', cases[10]['sources'], at=at + 10)
-        progress = memory_overview_store.ensure(storage, 'probe')
+        progress = storage.memory.ensure('probe')
         job = MemoryJob(uuid4().hex, 'probe', 'probe', tmp_path, 'root-run', '', 'offline', model,
-            'probe', 0, project_id=storage.get('probe')['project_id'], deadline=time.monotonic() + 300,
+            'probe', 0, project_id=storage.sessions.get('probe')['project_id'], deadline=time.monotonic() + 300,
             start=(progress['next_sequence'], progress['next_offset']), upper=facts['upper'])
         try:
             yield coordinator, job, candidate, cases, at
@@ -74,7 +74,7 @@ def test_e11_current_production_input_contains_old_id_complete_gap_and_keeps_ver
 
 def test_latest_page_does_not_add_another_session_candidate(inputs):
     service, job, own, cases, at = inputs
-    service.storage.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
+    service.storage.sessions.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
         active_tool_names=['memory'], permission_mode='Default'))
     foreign = seed_candidate(service.memory, 'other', cases, at=at + 20)
     _, _, payload = prepared(inputs)
@@ -91,12 +91,12 @@ def test_latest_candidate_requires_all_available_current_thread_sources(inputs, 
         seed_sources(storage, 'probe', [dict(id=old_id, role='assistant', text='此旧来源已经更正。')], at=at + 20)
     elif failure == 'other_thread':
         from naiyue_test_agent.application.conversation.chat_history import ChatUpdate
-        saved = storage._read('SELECT * FROM naiyue_chat_messages WHERE message_id=?', (old_id,))[0]
+        saved = storage.database.read_rows('SELECT * FROM naiyue_chat_messages WHERE message_id=?', (old_id,))[0]
         message = {key: saved[key] for key in ('message_id', 'body_json', 'body_hash', 'kind',
             'source_checkpoint_id', 'message_type', 'parent_message_id', 'reply_id', 'occurred_at')}
-        storage.save_chat_updates('probe', [ChatUpdate('other-thread', '', 'root', 0, 'other', (message,))])
-        with storage.connection:
-            storage.connection.execute('UPDATE naiyue_memory_sources SET thread_id=? WHERE memory_id=?',
+        storage.conversation.save_chat_updates('probe', [ChatUpdate('other-thread', '', 'root', 0, 'other', (message,))])
+        with storage.database.connection:
+            storage.database.connection.execute('UPDATE naiyue_memory_sources SET thread_id=? WHERE memory_id=?',
                 ('other-thread', own['actual_memory_id']))
     elif failure == 'truncated':
         service.settings = service.memory.settings = MemorySettings(auto_enabled=False, source_limit=1)
@@ -109,8 +109,8 @@ def test_latest_candidate_requires_all_available_current_thread_sources(inputs, 
                 revision=1, conversation_revision=0, quote=text, offset=0)]).model_dump(mode='json')
         service.memory.query('probe', job.project_id, request)
     else:
-        with storage.connection:
-            storage.connection.execute('DELETE FROM naiyue_memory_sources WHERE memory_id=?', (own['actual_memory_id'],))
+        with storage.database.connection:
+            storage.database.connection.execute('DELETE FROM naiyue_memory_sources WHERE memory_id=?', (own['actual_memory_id'],))
     latest = MemoryInput(action='list', status='candidate', limit=8).model_dump(mode='json')
     listed, = service.memory.query('probe', job.project_id, latest)['items']
     if failure == 'other_thread':
@@ -181,8 +181,8 @@ def test_stale_full_read_is_not_retried_at_a_new_version(inputs, monkeypatch):
     def query(sid, root, request):
         if request['action'] == 'read' and not changed:
             changed.append(True)
-            with service.storage.connection:
-                service.storage.connection.execute('UPDATE naiyue_memories SET version=version+1 WHERE memory_id=?',
+            with service.storage.database.connection:
+                service.storage.database.connection.execute('UPDATE naiyue_memories SET version=version+1 WHERE memory_id=?',
                     (own['actual_memory_id'],))
         return original(sid, root, request)
     monkeypatch.setattr(service.memory, 'query', query)
@@ -194,8 +194,8 @@ def test_input_budget_can_drop_optional_candidate_but_keeps_valid_primary_source
     service.settings = service.memory.settings = MemorySettings(auto_enabled=False, related_limit=0)
     original_sources, messages, _ = prepared(inputs)
     cap = count_tokens_approximately(messages) + 32
-    with service.storage.connection:
-        service.storage.connection.execute('UPDATE naiyue_memories SET body=? WHERE memory_id=?',
+    with service.storage.database.connection:
+        service.storage.database.connection.execute('UPDATE naiyue_memories SET body=? WHERE memory_id=?',
             ('bounded optional context ' * 100, own['actual_memory_id']))
     service.settings = service.memory.settings = MemorySettings(auto_enabled=False, related_limit=8, max_input_tokens=cap)
     batch, messages, payload = prepared(inputs)
@@ -206,7 +206,7 @@ def test_input_budget_can_drop_optional_candidate_but_keeps_valid_primary_source
 
 def test_existing_cross_session_search_hit_is_not_filtered_by_latest_page_rules(inputs):
     service, job, own, cases, at = inputs
-    service.storage.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
+    service.storage.sessions.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
         active_tool_names=['memory'], permission_mode='Default'))
     foreign = seed_candidate(service.memory, 'other', cases, at=at + 20)
     service.allowed = lambda request: request['action'] != 'list'
@@ -217,7 +217,7 @@ def test_existing_cross_session_search_hit_is_not_filtered_by_latest_page_rules(
 def test_ineligible_latest_page_is_not_followed_to_find_an_older_local_candidate(inputs, monkeypatch):
     service, job, _, cases, at = inputs
     service.settings = service.memory.settings = MemorySettings(auto_enabled=False, related_limit=1)
-    service.storage.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
+    service.storage.sessions.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
         active_tool_names=['memory'], permission_mode='Default'))
     seed_candidate(service.memory, 'other', cases, at=at + 20)
     calls, original = [], service.memory.query

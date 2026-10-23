@@ -11,7 +11,7 @@ import pytest
 from langchain.tools import tool
 from langchain_core.messages import AIMessage, ToolMessage
 
-from naiyue_test_agent.storage.session_storage import SessionPersistenceError
+from naiyue_test_agent.application.errors import SessionPersistenceError
 from test_async_application import make_app, StreamingToolModel, call
 from test_async_persistent import factory
 
@@ -65,7 +65,7 @@ def test_stop_save_failure_does_not_publish_stopped(monkeypatch, tmp_path):
             def fail(*args):
                 raise SessionPersistenceError('synthetic_save_failure')
 
-            monkeypatch.setattr(app._storage, 'finish_run', fail)
+            monkeypatch.setattr(app._storage.runs, 'finish_run', fail)
             task = asyncio.create_task(app.arun(session, [('user', 'start')]))
             await asyncio.wait_for(entered.wait(), 5)
             app.request_stop(session)
