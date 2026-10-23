@@ -91,8 +91,8 @@ class SessionExecution:
             elif workspace_root is not None:
                 with observation.bind(identity=RunIdentity(session_id, run_id, project_id=run.project_id, execution_root=run.execution_root), archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
                                       background_notices=run.background_notices,
-                                      history_query=getattr(self._persistence, 'aquery_history', None),
-                                      memory_query=getattr(self._persistence, 'aquery_memory', None),
+                                      history_query=getattr(self._persistence, 'aquery_history', None) if run.project_id is not None else None,
+                                      memory_query=getattr(self._persistence, 'aquery_memory', None) if run.project_id is not None else None,
                                       task_queries=getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks):
                     result = await ainvoke_agent_run_with_resources(agent, messages,
                         session_id=session_id, thread_id=thread_id, run_id=run_id, workspace_root=workspace_root,
@@ -100,8 +100,8 @@ class SessionExecution:
             else:
                 with observation.bind(identity=RunIdentity(session_id, run_id, project_id=run.project_id, execution_root=run.execution_root), archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
                                       background_notices=run.background_notices,
-                                      history_query=getattr(self._persistence, 'aquery_history', None),
-                                      memory_query=getattr(self._persistence, 'aquery_memory', None),
+                                      history_query=getattr(self._persistence, 'aquery_history', None) if run.project_id is not None else None,
+                                      memory_query=getattr(self._persistence, 'aquery_memory', None) if run.project_id is not None else None,
                                       task_queries=getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks):
                     result = await ainvoke_agent_run(agent, messages, session_id=session_id,
                         thread_id=thread_id, run_id=run_id, max_concurrency=max_concurrency, **options)
@@ -179,8 +179,8 @@ class SessionExecution:
             )
             observation.stage = 'execute'
             with observation.bind(identity=RunIdentity(session_id, run_id, project_id=run.project_id, execution_root=run.execution_root), archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
-                                  history_query=getattr(self._persistence, 'aquery_history', None),
-                                  memory_query=getattr(self._persistence, 'aquery_memory', None),
+                                  history_query=getattr(self._persistence, 'aquery_history', None) if run.project_id is not None else None,
+                                  memory_query=getattr(self._persistence, 'aquery_memory', None) if run.project_id is not None else None,
                                       task_queries=getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks):
                 result = await aresume_agent_run_with_resources(agent, session_id=session_id,
                     thread_id=thread_id, run_id=run_id, workspace_root=workspace_root, decisions=decisions,
@@ -234,9 +234,6 @@ class SessionExecution:
         try:
             if self._persistence is not None:
                 await self._persistence.afinish(session_id, run_id, agent, observation, self.snapshot_for_finish())
-            elif secondary is None:
-                from naiyue_test_agent.application.subagents.subagent_records import finish_memory
-                finish_memory(self, run)
         except Exception as error:
             if primary_error is None and secondary is None:
                 secondary = error

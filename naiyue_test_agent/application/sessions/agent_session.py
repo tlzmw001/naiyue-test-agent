@@ -33,7 +33,6 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
         self._process_tasks = process_tasks
         self._archive_root = archive_root
         self._memory_prompt_parts = []
-        self._subagent_records = {}
         self._lock = Lock()
         self._model_selection_lock = Lock()
         self._tool_selection_lock = Lock()

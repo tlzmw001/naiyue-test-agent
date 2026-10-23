@@ -12,8 +12,17 @@ from .unit_of_work import RunUnitOfWork
 
 class ProjectStore:
     def __init__(self, path):
-        self.database = Database(path)
-        self.path = self.database.path
+        self._assemble(Database(path))
+
+    @classmethod
+    def in_memory(cls):
+        store = cls.__new__(cls)
+        store._assemble(Database.open_memory())
+        return store
+
+    def _assemble(self, database):
+        self.database = database
+        self.path = database.path
         self.sessions = SessionRepo(self.database)
         self.conversation = ConversationRepo(self.database)
         self.replies = ReplyRepo(self.database)

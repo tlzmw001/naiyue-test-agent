@@ -28,7 +28,20 @@ async def test_child_checkpoint_io_failure_is_tool_feedback_without_secret_or_re
             raise error
         return await original(config, *args, **kwargs)
     monkeypatch.setattr(backend, operation, fail)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'start')])
+    sid = await app.acreate_session('A')
+    if operation == 'aget_tuple':
+        from naiyue_test_agent.application.errors import SessionPersistenceError
+        # Permanent child read failure also blocks the required archive, in both profiles.
+        with pytest.raises(SessionPersistenceError, match='session_save_unconfirmed'):
+            await app.arun(sid, [('user', 'start')])
+        snapshot = await app._agent.aget_state({'configurable': {'thread_id': app._sessions.require(sid).get_thread_id()}})
+        result = snapshot.values
+        assert app._storage.sessions.get(sid)['state'] == 'running'
+        assert sid in app._persistence._blocked
+        assert events[-1].event_type == 'run_finished' and events[-1].data.status == 'failed'
+    else:
+        result = await app.arun(sid, [('user', 'start')])
+        assert events[-1].data.status == 'completed'
     feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert feedback.status == 'error' and 'checkpoint' in feedback.content.lower()
     assert result['messages'][-1].content == 'root done' and len(root.seen) == 2
@@ -37,7 +50,7 @@ async def test_child_checkpoint_io_failure_is_tool_feedback_without_secret_or_re
     assert [e.data.status for e in events if e.source and e.event_type == 'run_finished'] == ['failed']
     terminal, = [e for e in events if e.source and e.event_type == 'run_finished']
     assert terminal.data.failure.reason == 'subagent_checkpoint_failed'
-    if operation == 'aget_tuple': assert attempts == [operation]
+    if operation == 'aget_tuple': assert attempts == [operation, operation]  # execution and required archive read
 
 
 @async_test

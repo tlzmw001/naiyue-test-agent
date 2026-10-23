@@ -309,9 +309,12 @@ async def test_recursion_limit_is_a_failed_run_not_a_completed_answer(monkeypatc
     agent = app._agent
 
     class LimitedAgent:
-        async def ainvoke(self, input, *, context, config):
+        def __getattr__(self, name):
+            return getattr(agent, name)
+        async def ainvoke(self, input, *, context, config, **options):
+            assert options == {'durability': 'sync'}
             return await agent.ainvoke(input, context=context,
-                                config={**config, 'recursion_limit': 5})
+                                config={**config, 'recursion_limit': 5}, **options)
 
     app._agent = LimitedAgent()
     with caplog.at_level(logging.INFO), pytest.raises(GraphRecursionError):

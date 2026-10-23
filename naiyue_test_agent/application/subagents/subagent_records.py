@@ -10,7 +10,6 @@ from langchain_core.tools import ToolException
 
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking, await_settled
 from naiyue_test_agent.agent_runtime.subagents import subagent_result_envelope
-from naiyue_test_agent.application.errors import SessionPersistenceError
 
 
 def role_fingerprint(spec):
@@ -23,21 +22,11 @@ def _now():
 
 
 async def _get(owner, identity):
-    if owner._persistence is not None:
-        return await run_blocking(owner._persistence.storage.subagents.get_subagent, owner.session_id, identity)
-    with owner._lock:
-        return owner._subagent_records.get(identity, {}).copy() or None
+    return await run_blocking(owner._persistence.storage.subagents.get_subagent, owner.session_id, identity)
 
 
 async def _save(owner, record, expected_version):
-    if owner._persistence is not None:
-        await run_blocking(owner._persistence.storage.subagents.save_subagent, record, expected_version)
-    else:
-        with owner._lock:
-            current = owner._subagent_records.get(record['agent_id'])
-            if (current['version'] if current else None) != expected_version:
-                raise SessionPersistenceError('subagent_record_changed')
-            owner._subagent_records[record['agent_id']] = record.copy()
+    await run_blocking(owner._persistence.storage.subagents.save_subagent, record, expected_version)
 
 
 def _clean(snapshot, thread_id):
@@ -98,11 +87,10 @@ async def admit(owner, graph, instance, spec):
     elif previous is not None:
         raise ToolException('Subagent call has already been admitted; replay is not allowed.')
     owner._catalog.get(instance['model_id'])
-    if owner._persistence is not None:
-        row = await run_blocking(owner._persistence.storage.sessions.get, owner.session_id)
-        actual_root = str(instance['workspace_root']) if instance['workspace_root'] is not None else None
-        if row['workspace_root'] != actual_root:
-            raise ToolException('Subagent workspace binding changed.')
+    row = await run_blocking(owner._persistence.storage.sessions.get, owner.session_id)
+    actual_root = str(instance['workspace_root']) if instance['workspace_root'] is not None else None
+    if row['workspace_root'] != actual_root:
+        raise ToolException('Subagent workspace binding changed.')
     with owner._lock:
         owner._require_subagent(instance)
         if owner._run.stop_requested:
@@ -134,14 +122,7 @@ async def settle(owner, instance):
         return
     if not instance.get('input_started'):
         previous = instance['previous_record']
-        if owner._persistence is not None:
-            await run_blocking(owner._persistence.storage.subagents.cancel_subagent_claim, record, previous)
-        else:
-            with owner._lock:
-                if previous is None:
-                    owner._subagent_records.pop(instance['agent_id'], None)
-                else:
-                    owner._subagent_records[instance['agent_id']] = {**previous, 'version': record['version'] + 1}
+        await run_blocking(owner._persistence.storage.subagents.cancel_subagent_claim, record, previous)
         return
     updated = {**record, 'version': record['version'] + 1, 'updated_at': _now(),
                'state': 'stopped' if instance['status'] == 'stopped' else 'failed'}
@@ -151,9 +132,3 @@ async def settle(owner, instance):
     await _save(owner, updated, record['version'])
     instance['record'] = updated
 
-
-def finish_memory(owner, run):
-    with owner._lock:
-        for identity, record in owner._subagent_records.items():
-            if record['state'] == 'pending_parent' and record['last_parent_run_id'] == run.run_id:
-                owner._subagent_records[identity] = {**record, 'state': 'ready', 'version': record['version'] + 1}

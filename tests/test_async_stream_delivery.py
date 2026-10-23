@@ -49,6 +49,8 @@ def test_overflow_is_explicit_and_does_not_cancel_run(monkeypatch):
         app = await make_app(monkeypatch, StreamingToolModel(replies=[AIMessage(content='answer')],
                                                           entered=entered, release=release))
         session = await app.acreate_session('A')
+        application_handlers = dict(app._sessions._events._handlers)
+        assert list(application_handlers.values()) == [(None, app._usage.accept), (None, app._diagnostics.accept)]
         iterator = app.astream_run(session, [('user', 'start')], capacity=1)
         try:
             assert (await iterator.__anext__()).event_type == 'run_started'
@@ -60,11 +62,12 @@ def test_overflow_is_explicit_and_does_not_cancel_run(monkeypatch):
             release.set()
             await producer
             assert (await app.aget_messages(session))[-1].content == 'answer'
-            assert app._sessions._events._handlers == {}
+            assert app._sessions._events._handlers == application_handlers
         finally:
             release.set()
             await iterator.aclose()
             await app.aclose()
+        assert app._sessions._events._handlers == {}
     asyncio.run(scenario())
 
 

@@ -16,7 +16,6 @@ import pytest
 from langchain.agents.structured_output import ToolStrategy
 from langchain.tools import tool
 from langchain_core.messages import AIMessage, HumanMessage
-from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import BaseModel
 
 from naiyue_test_agent import application
@@ -263,47 +262,42 @@ async def test_input_overflow_only_publishes_committed_summary_and_not_summary_a
 
 
 @async_test
-async def test_complete_message_visibility_is_not_saver_confirmation(monkeypatch):
+async def test_complete_message_visibility_is_not_required_save_confirmation(monkeypatch):
     save_entered, release_save, ai_seen = Event(), Event(), Event()
-
-    class LaggingSaver(InMemorySaver):
-        async def aput(self, config, checkpoint, metadata, new_versions):
-            if any(isinstance(m, AIMessage) for m in checkpoint['channel_values'].get('messages', [])):
-                save_entered.set()
-                assert await asyncio.to_thread(release_save.wait, timeout=5)
-            return await super().aput(config, checkpoint, metadata, new_versions)
-
-    saver = LaggingSaver()
     app = await make_app(monkeypatch, ToolModel(responses=[AIMessage(content='answer')]))
-    app._agent.checkpointer = saver
+    save = app._storage.runs.finish_run
+    def blocked_save(*args, **kwargs):
+        save_entered.set()
+        assert release_save.wait(5)
+        return save(*args, **kwargs)
+    monkeypatch.setattr(app._storage.runs, 'finish_run', blocked_save)
     session = await app.acreate_session('A')
     events, outcomes = [], []
-
     def observe(event):
         events.append(event)
         if event.event_type == 'message_completed' and event.data.message_type == 'ai':
             ai_seen.set()
-
     app.subscribe_events(observe)
-
     async def run():
         try:
             outcomes.append(await app.arun(session, [('user', 'run')]))
         except BaseException as error:
             outcomes.append(error)
-
     worker = asyncio.create_task(run())
-
     config = {'configurable': {'thread_id': app._sessions.require(session).get_thread_id()}}
     try:
         assert await asyncio.to_thread(ai_seen.wait, timeout=5) and await asyncio.to_thread(save_entered.wait, timeout=5)
-        saved = saver.get_tuple(config)
+        saved = await app._agent.checkpointer.aget_tuple(config)
         assert saved is not None
-        assert not any(isinstance(m, AIMessage) for m in saved.checkpoint['channel_values']['messages'])
+        # Graph durability is sync in both profiles; the application UOW is later.
+        assert any(isinstance(m, AIMessage) for m in saved.checkpoint['channel_values']['messages'])
+        assert app._storage.sessions.get(session)['state'] == 'running'
+        assert app._storage.conversation.chat_heads(session) == []
         assert not any(e.event_type == 'run_finished' for e in events)
     finally:
         release_save.set()
         await asyncio.wait_for(asyncio.shield(worker), 5)
     assert worker.done() and len(outcomes) == 1 and isinstance(outcomes[0], dict), outcomes
     assert events[-1].data.status == 'completed'
-    assert any(isinstance(m, AIMessage) for m in saver.get_tuple(config).checkpoint['channel_values']['messages'])
+    assert app._storage.sessions.get(session)['state'] == 'ready'
+    assert app._storage.conversation.chat_heads(session)[0]['checkpoint_id'] == saved.config['configurable']['checkpoint_id']

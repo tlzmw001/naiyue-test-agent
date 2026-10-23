@@ -23,7 +23,7 @@ from tests.storage_backup_fixture import closed_store
 
 def test_async_backup_failure_never_reaches_catalog_mcp_or_saver(tmp_path, monkeypatch):
     from naiyue_test_agent.storage import migrations as storage_migrations
-    from naiyue_test_agent.application import async_persistent
+    from naiyue_test_agent.storage import resources as storage_resources
     from naiyue_test_agent.mcp_client import resources
     database, _, _ = closed_store(tmp_path, version=12)
     called = []
@@ -36,7 +36,7 @@ def test_async_backup_failure_never_reaches_catalog_mcp_or_saver(tmp_path, monke
     monkeypatch.setattr(storage_migrations, 'create_backup', failure)
     monkeypatch.setattr(application, 'load_model_catalog', forbidden)
     monkeypatch.setattr(resources, 'MCPSessionResources', forbidden)
-    monkeypatch.setattr(async_persistent.AsyncSqliteSaver, 'from_conn_string', forbidden)
+    monkeypatch.setattr(storage_resources, 'AsyncSqliteSaver', forbidden)
     async def run():
         with pytest.raises(SessionPersistenceError, match='backup_failed') as caught:
             async with open_async_persistent_application('unused', database_path=database, tools=[],

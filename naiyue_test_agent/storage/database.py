@@ -6,6 +6,7 @@ import sqlite3
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from threading import RLock
+from uuid import uuid4
 
 
 from naiyue_test_agent.application.errors import SessionPersistenceError, StorageStartupError
@@ -22,11 +23,7 @@ logger = logging.getLogger(__name__)
 
 class Database:
     def __init__(self, path):
-        self.path = Path(path).expanduser().absolute()
-        self._stack = ExitStack()
-        self.lock = RLock()
-        self._closed = False
-        self._active = False
+        self._initialize_owner(Path(path).expanduser().absolute())
         try:
             self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             lock_path = self.path.with_name(self.path.name + '.lock')
@@ -73,14 +70,40 @@ class Database:
             raise
 
 
+    def _initialize_owner(self, path):
+        self.path, self.uri = path, None
+        self._stack = ExitStack()
+        self.lock = RLock()
+        self._closed = self._active = False
+
+    @classmethod
+    def open_memory(cls):
+        database = cls.__new__(cls)
+        database._initialize_owner(None)
+        database.uri = f'file:/naiyue-{uuid4().hex}?vfs=memdb'
+        try:
+            database.connection = sqlite3.connect(database.uri, uri=True, check_same_thread=False)
+            database._stack.callback(database.connection.close)
+            database.connection.row_factory = sqlite3.Row
+            history_projection.configure_connection(database.connection)
+            memory_lexical.configure(database.connection)
+            initialize_store(database.connection, None, existing=False)
+        except BaseException as error:
+            logger.error('memory_storage_open_failed error_type=%s', type(error).__name__)
+            try:
+                database.close()
+            except BaseException as closing_error:
+                logger.error('memory_storage_cleanup_secondary_failed error_type=%s', type(closing_error).__name__)
+            if isinstance(error, (OSError, sqlite3.Error)):
+                raise SessionPersistenceError('storage_unavailable') from error
+            raise
+        return database
+
     @classmethod
     def open_personal(cls, path, settings):
         from .personal_database import initialize_personal
         database = cls.__new__(cls)
-        database.path = Path(path).absolute()
-        database._stack = ExitStack()
-        database.lock = RLock()
-        database._closed = database._active = False
+        database._initialize_owner(Path(path).absolute())
         try:
             initialize_personal(database, settings)
         except BaseException as error:

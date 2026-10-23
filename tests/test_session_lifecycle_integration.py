@@ -71,7 +71,9 @@ async def test_root_then_child_approval_keeps_owner_until_required_save(
             if outcome in ('save_failure', 'primary_error'):
                 raise write_failure
             return finish(*args, **kwargs)
+        closed_states = []
         async def close():
+            closed_states.append(app._storage.sessions.get(sid)['state'])
             closed.append(owner.is_busy())
             await close_catalog()
         def closing():
@@ -142,7 +144,8 @@ async def test_root_then_child_approval_keeps_owner_until_required_save(
             assert events[-1].event_type == 'run_finished' and events[-1].source is None
             failed = outcome in ('save_failure', 'primary_error')
             assert events[-1].data.status == ('failed' if failed else 'completed')
-            assert app._storage.sessions.get(sid)['state'] == ('running' if failed else 'ready')
+            state = closed_states[-1] if closing_task else app._storage.sessions.get(sid)['state']
+            assert state == ('running' if failed else 'ready')
             if failed:
                 assert not (await app.aget_session_status(sid))['can_run']
             assert closed == ([False] if outcome == 'close' else [])
@@ -185,21 +188,18 @@ async def test_root_approval_reopens_as_facts_until_explicit_decision(monkeypatc
 
 @async_test
 async def test_close_during_child_approval_settles_before_reopen(monkeypatch, tmp_path, caplog):
-    from contextlib import asynccontextmanager
-    from naiyue_test_agent.application import async_persistent
+    from naiyue_test_agent.storage import resources as storage_resources
     order = []
-    saver_factory = async_persistent.AsyncSqliteSaver.from_conn_string
-    storage_close = async_persistent.ProjectStore.close
-    @asynccontextmanager
-    async def saved(*args, **kwargs):
-        async with saver_factory(*args, **kwargs) as saver:
-            yield saver
+    connection_close = storage_resources.aiosqlite.Connection.close
+    storage_close = storage_resources.ProjectStore.close
+    async def close_connection(connection):
+        await connection_close(connection)
         order.append('saver')
     def close_storage(storage):
         storage_close(storage)
         order.append('storage')
-    monkeypatch.setattr(async_persistent.AsyncSqliteSaver, 'from_conn_string', saved)
-    monkeypatch.setattr(async_persistent.ProjectStore, 'close', close_storage)
+    monkeypatch.setattr(storage_resources.aiosqlite.Connection, 'close', close_connection)
+    monkeypatch.setattr(storage_resources.ProjectStore, 'close', close_storage)
     path, effects, events, closed = tmp_path / 'state.sqlite', [], [], []
     root = StreamingToolModel(replies=[call('subagent', {'agent': 'tester', 'task': 'check'}, 'delegate')])
     child = ChildModel(replies=[call('probe', {'value': 'never'}, 'child-call')])
@@ -211,7 +211,8 @@ async def test_close_during_child_approval_settles_before_reopen(monkeypatch, tm
         app.subscribe_events(events.append)
         close_catalog = app._catalog.aclose
         async def close():
-            closed.append((owner.is_busy(), [(i['settled'], 'driver' in i, 'approval' in i) for i in instances]))
+            closed.append((owner.is_busy(), [(i['settled'], 'driver' in i, 'approval' in i) for i in instances],
+                           app._storage.sessions.get(sid)['state']))
             await close_catalog()
             order.append('catalog')
         monkeypatch.setattr(app._catalog, 'aclose', close)
@@ -226,8 +227,8 @@ async def test_close_during_child_approval_settles_before_reopen(monkeypatch, tm
             result = await task
             assert result['run_stopped'] and effects == []
             assert future.done() and driver.done() and instance['status'] == 'stopped'
-            assert owner._run is None and closed == [(False, [(True, False, False)])]
-            assert app._operations == {} and app._storage.sessions.get(sid)['state'] == 'ready'
+            assert owner._run is None and closed == [(False, [(True, False, False)], 'ready')]
+            assert app._operations == {} and app._storage.database._closed
             assert [(e.source is None, e.data.status) for e in events if e.event_type == 'run_finished'] == [
                 (False, 'interrupted'), (False, 'stopped'), (True, 'stopped')]
         finally:

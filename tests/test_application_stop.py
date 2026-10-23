@@ -259,10 +259,13 @@ async def test_stop_before_first_model_does_not_inject_queued_steering(monkeypat
     agent = app._agent
 
     class QueueBeforeInvoke:
-        async def ainvoke(self, input, *, context, config):
+        def __getattr__(self, name):
+            return getattr(agent, name)
+        async def ainvoke(self, input, *, context, config, **options):
+            assert options == {'durability': 'sync'}
             app.steer(session_id, 'not-for-first-model')
             app.request_stop(session_id)
-            return await agent.ainvoke(input, context=context, config=config)
+            return await agent.ainvoke(input, context=context, config=config, **options)
 
     app._agent = QueueBeforeInvoke()
     result = await app.arun(session_id, [('user', 'initial')])

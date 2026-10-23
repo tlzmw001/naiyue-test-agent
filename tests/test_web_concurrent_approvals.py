@@ -107,12 +107,19 @@ async def test_child_approval_resumes_only_its_parent_or_all_jobs_close(monkeypa
             assert (await client.post(f'/api/sessions/{c}/runs', json=request(c))).json()['error']['code'] == 'run_capacity_exceeded'
             original = delivery.get(ra)
             if close:
+                closed_states = []
+                close_catalog = backend._catalog.aclose
+                async def close_models():
+                    closed_states.extend(backend._storage.sessions.list_sessions())
+                    await close_catalog()
+                monkeypatch.setattr(backend._catalog, 'aclose', close_models)
                 await asyncio.wait_for(delivery.close(), 5)
                 assert delivery.active_by_session == {} and backend._operations == {}
                 assert delivery.get(ra).done and delivery.get(rb).done
                 assert delivery.get(ra).status == delivery.get(rb).status == 'stopped'
                 assert len(model.requests[a]) == len(model.requests['child-A']) == len(model.requests[b]) == 1
-                assert all(row['state'] == 'ready' for row in backend._storage.sessions.list_sessions())
+                assert len(closed_states) == 3 and all(row['state'] == 'ready' for row in closed_states)
+                assert backend._storage.database._closed
                 assert tuple(backend._sessions._events._handlers.values()) == ((None, notify),)
             else:
                 body = approval_request(batch, ['approve'])

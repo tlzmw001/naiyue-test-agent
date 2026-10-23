@@ -190,7 +190,8 @@ async def test_failed_approval_tool_stage_requires_review_before_another_attempt
 async def test_framework_and_process_control_do_not_fabricate_failed_or_cancelled(monkeypatch, failure):
     app = await make_app(monkeypatch)
     from naiyue_test_agent.agent_runtime import async_invocation
-    async def control(_agent, _input, *, context, config, publisher):
+    async def control(_agent, _input, *, context, config, publisher, **options):
+        assert options == {'durability': 'sync'}
         from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
         current_run_scope().observation.turns.begin('control-call')
         raise failure
@@ -335,9 +336,17 @@ async def test_unsupported_state_observation_is_explicit_and_original_custom_res
     async def custom(*_a, **_kw):
         return original_result
     monkeypatch.setattr(app._agent, 'ainvoke', custom)
+    from naiyue_test_agent.application.observability.run_events import RunObservation
+    from naiyue_test_agent.agent_runtime.async_invocation import ainvoke_agent_run
+    from naiyue_test_agent.agent_runtime.events import RunEventPublisher
     events = []
-    app.subscribe_events(events.append)
-    assert await app.arun(await app.acreate_session('A'), [('user', 'run')]) is original_result
+    observation = RunObservation(RunEventPublisher('session', 'run', (events.append,)), 'message')
+    observation.start()
+    with observation.bind(identity=RunIdentity(session_id='session', run_id='run')):
+        assert await ainvoke_agent_run(app._agent, [('user', 'run')], session_id='session',
+            thread_id='custom', run_id='run') is original_result
+    observation.result(original_result, None)
+    observation.finish(False)
     assert [e.event_type for e in turns(events)] == ['turn_observation_unavailable']
     assert turns(events)[0].data.reason == 'state_observation_unavailable'
     assert events[-1].data.status == 'completed'

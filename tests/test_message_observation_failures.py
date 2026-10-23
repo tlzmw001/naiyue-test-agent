@@ -61,8 +61,13 @@ async def test_baseline_read_failure_falls_back_once_without_inventing_history(m
         streams.append(kwargs.get('version', 'v1'))
         return original_stream(*args, **kwargs)
 
+    get_state = graph.aget_state
+    reads = []
     async def bad_state(*args, **kwargs):
-        raise OSError('PRIVATE_BASELINE')
+        reads.append(True)
+        if len(reads) == 1:
+            raise OSError('PRIVATE_BASELINE')
+        return await get_state(*args, **kwargs)
 
     monkeypatch.setattr(graph, 'astream', stream)
     monkeypatch.setattr(graph, 'aget_state', bad_state)
@@ -70,6 +75,7 @@ async def test_baseline_read_failure_falls_back_once_without_inventing_history(m
     app.subscribe_events(events.append)
     assert (await app.arun(await app.acreate_session('A'), [('user', 'run')]))['messages'][-1].content == 'done'
     assert streams == ['v1'] and messages(events) == []
+    assert len(reads) > 1  # Necessary archive reads still use the actual graph.
     unavailable = next(e for e in events if e.event_type == 'message_snapshot_unavailable')
     assert unavailable.data.reason == 'baseline_read_failed' and unavailable.data.error_type == 'OSError'
     assert 'PRIVATE_BASELINE' not in repr(unavailable)
@@ -242,9 +248,10 @@ async def test_custom_invoke_on_compiled_graph_is_not_bypassed(monkeypatch):
         return original_result
 
     monkeypatch.setattr(app._agent, 'ainvoke', custom)
-    events = []
-    app.subscribe_events(events.append)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'run')])
+    pub, events = publisher()
+    # Arbitrary custom results are a runtime contract; they cannot confirm a saved application run.
+    result = await ainvoke_with_message_observation(app._agent, {'messages': [('user', 'run')]},
+        context=typed_context(), config={'configurable': {'thread_id': 'custom'}}, publisher=pub)
     assert result is original_result and len(invoked) == 1
     assert messages(events) == []
     assert next(e.data.reason for e in events if e.event_type == 'message_snapshot_unavailable') == (

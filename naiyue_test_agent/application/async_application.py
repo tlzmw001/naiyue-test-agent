@@ -5,10 +5,8 @@ import logging
 from contextlib import contextmanager
 from uuid import uuid4
 
-from langgraph.checkpoint.memory import InMemorySaver
-
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime.async_utils import await_settled, run_blocking, acquire_blocking
+from naiyue_test_agent.agent_runtime.async_utils import await_settled, run_blocking
 from naiyue_test_agent.contracts.failures import safe_error_type
 from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
 from .observability.async_event_stream import AsyncEventStream
@@ -382,43 +380,6 @@ class AsyncApplication:
 
 
 async def build_async_local_application(config_path, *, tools, system_prompt, response_format, initial_active_tools=None, settings=None):
-    settings = settings if settings is not None else application.load_settings()
-    registry = application.prepare_tool_registry(tools)
-    initial = registry.names() if initial_active_tools is None else initial_active_tools
-    from naiyue_test_agent.tools.subagent import subagent_selection
-    initial = subagent_selection(initial)
-    if not any(server.enabled for server in settings.mcp.servers.values()):
-        application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
-        registry.select(initial)
-    catalog = await acquire_blocking(application.load_model_catalog, lambda item: item.aclose(), config_path)
-    resources = None
-    try:
-        await run_blocking(catalog.prepare_async_clients)
-        from naiyue_test_agent.mcp_client.resources import MCPSessionResources
-        resources = MCPSessionResources(settings.mcp, settings.network, retry_settings=settings.tool_retry)
-        from naiyue_test_agent.mcp_client.tools import register_mcp_tools
-        # Definitions precede SessionService; execution starts only after assembly.
-        def borrow_mcp(session_id, agent_path, server_id):
-            return sessions.borrow_mcp(session_id, agent_path, server_id)
-        await register_mcp_tools(registry, resources, borrow_mcp=borrow_mcp)
-        application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
-        registry.select(initial)
-        from naiyue_test_agent.config_paths import get_data_dir
-        sessions = application.SessionService(catalog, registry, initial_active_tools=initial, permission_settings=settings.permissions, progress_settings=settings.progress,
-            max_active_runs=settings.max_active_runs, mcp_resources=resources,
-            http_attempt_limit=settings.diagnostics.max_pending_events, shell_task_settings=settings.shell_tasks,
-            data_dir=get_data_dir(settings.storage))
-        agent = sessions.assemble_runtime(InMemorySaver(), system_prompt=system_prompt, response_format=response_format,
-            subagents=settings.subagents, subagent_settings=settings.tools.subagent)
-        return AsyncApplication(catalog, sessions, agent, registry, system_prompt=system_prompt)
-    except BaseException:
-        if resources is not None:
-            try:
-                await await_settled(resources.aclose())
-            except BaseException as error:
-                logger.error('mcp_cleanup_secondary_failed error_type=%s', safe_error_type(error))
-        try:
-            await await_settled(catalog.aclose())
-        except BaseException as error:
-            logger.error('model_cleanup_secondary_failed error_type=%s', safe_error_type(error))
-        raise
+    from .assembly import build_application
+    return await build_application(config_path, database_path=None, tools=tools, system_prompt=system_prompt,
+        response_format=response_format, initial_active_tools=initial_active_tools, settings=settings)

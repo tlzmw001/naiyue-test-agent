@@ -236,7 +236,9 @@ async def test_close_waits_for_every_root_before_catalog_close(monkeypatch, tmp_
         ids = [await app.acreate_session('A') for _ in range(2)]
         tasks, closed = [], []
         close = app._catalog.aclose
+        closed_states = []
         async def closing():
+            closed_states.append([app._storage.sessions.get(sid)['state'] for sid in ids])
             closed.append([app._sessions.require(sid).describe_session()['busy'] for sid in ids])
             assert app._persistence._active == {}
             await close()
@@ -249,6 +251,6 @@ async def test_close_waits_for_every_root_before_catalog_close(monkeypatch, tmp_
             await asyncio.wait_for(app.aclose(), 5)
             assert all(result['run_stopped'] for result in await asyncio.gather(*tasks))
             assert closed == [[False, False]] and app._operations == {}
-            assert all(app._storage.sessions.get(sid)['state'] == 'ready' for sid in ids)
+            assert closed_states == [['ready', 'ready']] and app._storage.database._closed
         finally:
             await drain(tasks, model)

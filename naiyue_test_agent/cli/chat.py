@@ -324,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             if command in (':usage', ':diagnostics'):
                 from .cli_observation import handle_observation_command
-                handle_observation_command(app, session_id, line, emit, persistent=storage is not None)
+                handle_observation_command(app, session_id, line, emit)
                 continue
             if command in (':mcp-refresh', ':tools'):
                 from .cli_mcp import handle_mcp_command

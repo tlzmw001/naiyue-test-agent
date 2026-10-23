@@ -130,14 +130,11 @@ def _event_line(event):
     return ' · '.join(parts)
 
 
-def handle_observation_command(app, session_id, line, write, *, persistent):
+def handle_observation_command(app, session_id, line, write):
     try:
         command, run_id, cursor = _parse(line)
     except ValueError:
         write('用法：' + _HELP)
-        return
-    if not persistent:
-        write('当前为临时会话，持久化用量与运行诊断查询不可用。')
         return
     try:
         if command == ':usage':

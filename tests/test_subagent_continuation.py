@@ -187,7 +187,7 @@ async def test_small_result_budget_rejects_before_child_model(monkeypatch):
     sid = await app.acreate_session('A')
     response = feedback(await app.arun(sid, [('user', 'work')]))
     assert response.status == 'error' and 'metadata' in response.content
-    assert child.seen == [] and app._sessions.require(sid)._subagent_records == {}
+    assert child.seen == [] and app._storage.subagents.get_subagent_references(sid) == {}
 
 
 @async_test
@@ -201,7 +201,7 @@ async def test_changed_role_rejects_without_consuming_old_ready_instance(monkeyp
     registered['spec'] = replace(registered['spec'], system_prompt='Changed execution definition')
     response = feedback(await again(app, sid, root, identity))
     assert response.status == 'error' and 'configuration changed' in response.content
-    assert len(child.seen) == 1 and app._sessions.require(sid)._subagent_records[identity]['state'] == 'ready'
+    assert len(child.seen) == 1 and app._storage.subagents.get_subagent(sid, identity)['state'] == 'ready'
 
 
 @pytest.mark.parametrize('scope', ['root', 'child'])
@@ -212,13 +212,13 @@ async def test_stop_after_claim_before_input_restores_previous_ready_record(monk
     app, root = await delegated_app(monkeypatch, child)
     sid = await app.acreate_session('A')
     identity = json.loads(feedback(await app.arun(sid, [('user', 'first')])).content)['agent_id']
-    previous = app._sessions.require(sid)._subagent_records[identity].copy()
+    previous = app._storage.subagents.get_subagent(sid, identity).copy()
     admit = subagent_records.admit
     async def stop_before_input(owner, graph, instance, spec):
         await admit(owner, graph, instance, spec)
         owner.request_scope_stop(run_id=instance['parent_run_id'], agent_path=instance['agent_path'] if scope == 'child' else 'root')
     monkeypatch.setattr(subagent_records, 'admit', stop_before_input)
     await again(app, sid, root, identity)
-    saved = app._sessions.require(sid)._subagent_records[identity]
+    saved = app._storage.subagents.get_subagent(sid, identity)
     assert saved['state'] == 'ready' and saved['checkpoint_id'] == previous['checkpoint_id']
     assert saved['last_delegation_id'] == previous['last_delegation_id'] and len(child.seen) == 1

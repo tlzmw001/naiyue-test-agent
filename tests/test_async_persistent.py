@@ -135,12 +135,12 @@ def test_close_failure_does_not_replace_body_exception(monkeypatch, tmp_path, ca
 
 def test_cancel_during_storage_acquisition_releases_instance_lock(monkeypatch, tmp_path):
     async def scenario():
-        from naiyue_test_agent.application import async_persistent
+        from naiyue_test_agent.storage import resources as storage_resources
         path = tmp_path / 'sessions.sqlite'
         entered, release = asyncio.Event(), threading.Event()
         loop = asyncio.get_running_loop()
         instances = []
-        original = async_persistent.ProjectStore
+        original = storage_resources.ProjectStore
 
         def open_storage(*args):
             storage = original(*args)
@@ -149,7 +149,7 @@ def test_cancel_during_storage_acquisition_releases_instance_lock(monkeypatch, t
             assert release.wait(5)
             return storage
 
-        monkeypatch.setattr(async_persistent, 'ProjectStore', open_storage)
+        monkeypatch.setattr(storage_resources, 'ProjectStore', open_storage)
 
         async def open_application():
             async with factory(monkeypatch, path, StreamingToolModel(replies=[])):

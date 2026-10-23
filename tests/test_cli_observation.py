@@ -33,7 +33,7 @@ def test_usage_command_preserves_big_duration_unknown_counts_groups_and_cursor()
     from naiyue_test_agent.cli.cli_observation import handle_observation_command
     lines, calls = [], []
     app = SimpleNamespace(get_model_usage=lambda sid, **q: calls.append((sid, q)) or usage())
-    handle_observation_command(app, 's', ':usage --after-model A', lines.append, persistent=True)
+    handle_observation_command(app, 's', ':usage --after-model A', lines.append)
     out = '\n'.join(lines)
     assert calls == [('s', {'after_model': 'A'})]
     assert '9007199254740993.001 秒' in out and '另有 1 次未提供' in out
@@ -49,7 +49,7 @@ def test_diagnostic_list_retains_status_zero_and_unknown_http(capture):
     item = summary(capture=capture)
     app = SimpleNamespace(list_diagnostic_runs=lambda sid, **q: calls.append((sid, q)) or
                           {'session_id': sid, 'runs': [item], 'next_before': 7})
-    handle_observation_command(app, 's', ':diagnostics --before 9', lines.append, persistent=True)
+    handle_observation_command(app, 's', ':diagnostics --before 9', lines.append)
     out = '\n'.join(lines)
     assert calls == [('s', {'before': 9})]
     assert 'r' in out and '失败' in out and '0 毫秒' in out and ':diagnostics --before 7' in out
@@ -74,7 +74,7 @@ def test_detail_shows_headers_and_model_failure_independently_with_child_identit
     app = SimpleNamespace(get_diagnostic_events=lambda sid, rid, **q: calls.append((sid, rid, q)) or
                           {'session_id': sid, 'run_id': rid, 'summary': summary(),
                            'events': events, 'next_after': 3})
-    handle_observation_command(app, 's', ':diagnostics r --after 1', lines.append, persistent=True)
+    handle_observation_command(app, 's', ':diagnostics r --after 1', lines.append)
     out = '\n'.join(lines)
     assert calls == [('s', 'r', {'after': 1})]
     assert '200' in out and '失败' in out and '0 毫秒' in out and '未提供' in out
@@ -90,16 +90,30 @@ def test_detail_shows_headers_and_model_failure_independently_with_child_identit
 def test_invalid_command_does_not_query_or_exit(line):
     from naiyue_test_agent.cli.cli_observation import handle_observation_command
     lines = []
-    handle_observation_command(SimpleNamespace(), 's', line, lines.append, persistent=True)
+    handle_observation_command(SimpleNamespace(), 's', line, lines.append)
     assert '用法' in '\n'.join(lines)
 
 
 @pytest.mark.parametrize('line', [':usage', ':diagnostics', ':diagnostics r'])
-def test_no_session_reports_unavailable_without_creating_memory_statistics(line):
+def test_empty_records_are_reported_without_inventing_statistics(line):
     from naiyue_test_agent.cli.cli_observation import handle_observation_command
-    lines = []
-    handle_observation_command(SimpleNamespace(), 's', line, lines.append, persistent=False)
-    assert '持久化' in '\n'.join(lines)
+    lines, calls = [], []
+    empty_usage = {**usage(), 'recorded_calls': 0}
+    def read(value):
+        def query(*args, **kwargs):
+            calls.append((args, kwargs))
+            return value
+        return query
+    app = SimpleNamespace(get_model_usage=read(empty_usage),
+        list_diagnostic_runs=read({'session_id': 's', 'runs': [], 'next_before': None}),
+        get_diagnostic_events=read({'session_id': 's', 'run_id': 'r', 'summary': summary(),
+                                  'events': [], 'next_after': None}))
+    handle_observation_command(app, 's', line, lines.append)
+    assert len(calls) == 1
+    expected = {':usage': '暂无已保存的调用用量记录', ':diagnostics': '暂无已保留的运行诊断',
+                ':diagnostics r': '暂无本页事件'}
+    assert expected[line] in '\n'.join(lines)
+    assert '查询不可用' not in '\n'.join(lines)
 
 
 @pytest.mark.parametrize('foreign', ['session', 'run', 'event'])
@@ -113,7 +127,7 @@ def test_foreign_result_is_not_displayed(foreign):
         value['session_id' if foreign == 'session' else 'run_id'] = 'PRIVATE_FOREIGN'
     lines = []
     app = SimpleNamespace(get_diagnostic_events=lambda *a, **q: value)
-    handle_observation_command(app, 's', ':diagnostics r', lines.append, persistent=True)
+    handle_observation_command(app, 's', ':diagnostics r', lines.append)
     assert '读取失败' in '\n'.join(lines) and 'PRIVATE_FOREIGN' not in '\n'.join(lines)
 
 
@@ -121,7 +135,7 @@ def test_query_failure_is_safe_and_original_exception_is_not_printed(caplog):
     from naiyue_test_agent.cli.cli_observation import handle_observation_command
     def fail(*a, **q): raise OSError('PRIVATE_SQL_BODY')
     lines = []
-    handle_observation_command(SimpleNamespace(get_model_usage=fail), 's', ':usage', lines.append, persistent=True)
+    handle_observation_command(SimpleNamespace(get_model_usage=fail), 's', ':usage', lines.append)
     assert '读取失败' in '\n'.join(lines)
     assert 'PRIVATE_SQL_BODY' not in '\n'.join(lines) + caplog.text
     assert 'cli_observation_read_failed' in caplog.text
@@ -165,5 +179,5 @@ def test_event_identity_is_not_translated_as_a_status():
         'events': [{'session_id': 's', 'run_id': 'r', 'sequence': 1, 'source': None,
             'event_type': 'model_call_started', 'data': {'model_id': 'failed', 'invocation_id': 'summary'}}]}
     handle_observation_command(SimpleNamespace(get_diagnostic_events=lambda *a, **q: value), 's',
-                               ':diagnostics r', lines.append, persistent=True)
+                               ':diagnostics r', lines.append)
     assert '模型 failed' in '\n'.join(lines) and '模型执行 summary' in '\n'.join(lines)

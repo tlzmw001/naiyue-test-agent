@@ -145,13 +145,13 @@ async def test_invalid_initial_registry_precedes_model_and_storage_acquisition(m
     from naiyue_test_agent import application
     from naiyue_test_agent.application.async_application import build_async_local_application
     from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-    from naiyue_test_agent.application import async_persistent
+    from naiyue_test_agent.storage import resources as storage_resources
     entered = []
     def unexpected(*args, **kwargs):
         entered.append(True)
         raise AssertionError('invalid registration must fail before resource acquisition')
     monkeypatch.setattr(application, 'load_model_catalog', unexpected)
-    monkeypatch.setattr(async_persistent, 'ProjectStore', unexpected)
+    monkeypatch.setattr(storage_resources, 'ProjectStore', unexpected)
     options = dict(tools=[probe_tool()], system_prompt='', response_format=None)
     with pytest.raises(ValueError, match='ToolSpec'):
         if entry == 'local':

@@ -64,8 +64,9 @@ async def test_native_sdk_retries_survive_web_pagination_and_cold_read(monkeypat
             assert 'PRIVATE_NETWORK' not in json.dumps([usage, rows, events])
 
 
+@pytest.mark.parametrize('disk', [False, True])
 @async_test
-async def test_terminal_bridge_queries_native_saved_facts_without_additional_provider_calls(monkeypatch, tmp_path):
+async def test_terminal_bridge_queries_native_saved_facts_without_additional_provider_calls(monkeypatch, tmp_path, disk):
     sent = []
     def serve(req):
         sent.append(True)
@@ -73,7 +74,7 @@ async def test_terminal_bridge_queries_native_saved_facts_without_additional_pro
     async with sdk_catalog(serve=serve) as catalog:
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: catalog)
         bridge = AsyncCliApplication('unused', tools=[], system_prompt='offline', response_format=None,
-                                     database_path=tmp_path / 'state.sqlite')
+                                     database_path=tmp_path / 'state.sqlite' if disk else None)
         try:
             sid = bridge.create_session('A')
             assert bridge.run(sid, [('user', 'offline task')])['messages'][-1].content == 'done'
@@ -84,7 +85,7 @@ async def test_terminal_bridge_queries_native_saved_facts_without_additional_pro
             bridge._app._storage.database.connection.set_trace_callback(statements.append)
             lines = []
             for command in (':usage', ':diagnostics', ':diagnostics ' + rid):
-                handle_observation_command(bridge, sid, command, lines.append, persistent=True)
+                handle_observation_command(bridge, sid, command, lines.append)
             assert len(sent) == 1 and '已记录 HTTP 尝试 1' in '\n'.join(lines)
             assert '已记录模型调用耗时' in '\n'.join(lines) and 'HTTP 200' in '\n'.join(lines)
             assert not any(s.lstrip().upper().startswith(('INSERT', 'UPDATE', 'DELETE', 'CREATE')) for s in statements)

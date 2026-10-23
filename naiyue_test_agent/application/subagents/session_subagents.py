@@ -73,13 +73,9 @@ class AgentSessionSubagents:
     """One session owns its child instances, drivers and cancellation."""
 
     async def asubagent_references(self):
-        if self._persistence is not None:
-            return await run_blocking(self._persistence.storage.subagents.get_subagent_references, self.session_id)
-        with self._lock:
-            return {key: value.copy() for key, value in self._subagent_records.items()}
+        return await run_blocking(self._persistence.storage.subagents.get_subagent_references, self.session_id)
 
     async def alist_subagents(self, *, parent_context, parent_state, limit=None, before=None):
-        from .subagent_history import subagent_records as references, merge_registered_subagents
         from .subagent_queries import annotate, bounded_list
         def require_current():
             if (parent_context.scope.identity.agent_path != 'root'
@@ -91,11 +87,7 @@ class AgentSessionSubagents:
             require_current()
             run_id = self._run.run_id
         owned = await self.asubagent_references()
-        if self._persistence is not None:
-            rows = await run_blocking(self._persistence.storage.conversation.chat_subagents, self.session_id)
-        else:
-            rows = merge_registered_subagents(references(self.session_id, parent_state.get('messages', []),
-                owned_instances=owned), owned)
+        rows = await run_blocking(self._persistence.storage.conversation.chat_subagents, self.session_id)
         rows = annotate(rows, owned, self._registered_subagents(), self._catalog, run_id)
         with self._lock:
             require_current()
@@ -228,8 +220,8 @@ class AgentSessionSubagents:
                 with observation.bind(identity=RunIdentity(self.session_id, instance['run_id'], instance['agent_path'],
                         project_id=instance['project_id'], execution_root=instance['execution_root'],
                         parent_tool_call_id=instance['parent_tool_call_id'], parent_run_id=instance['parent_run_id'], root_run_id=instance['root_run_id']), archive_root=self._archive_root,
-                                      history_query=getattr(self._persistence, 'aquery_history', None),
-                                      memory_query=getattr(self._persistence, 'aquery_memory', None)):
+                                      history_query=getattr(self._persistence, 'aquery_history', None) if instance['project_id'] is not None else None,
+                                      memory_query=getattr(self._persistence, 'aquery_memory', None) if instance['project_id'] is not None else None):
                     result = await ainvoke_subagent_step(graph, instance, resume=resume,
                         approval_grants=grants, scope=current_run_scope())
                     snapshot = await graph.aget_state({'configurable': {'thread_id': instance['child_thread_id']}})
