@@ -21,7 +21,7 @@ def make_service():
 
 
 def test_new_and_restored_sessions_share_methods_but_not_configuration():
-    from naiyue_test_agent.application.agent_session import AgentSession
+    from naiyue_test_agent.application.sessions.agent_session import AgentSession
     service = make_service()
     first = service.create_session('A')
     service.install_restored_session('saved', **restored_config())
@@ -35,7 +35,7 @@ def test_new_and_restored_sessions_share_methods_but_not_configuration():
 
 
 def test_run_snapshots_and_allow_rules_do_not_leak_nested_mutation():
-    from naiyue_test_agent.application.agent_session import AgentSession
+    from naiyue_test_agent.application.sessions.agent_session import AgentSession
     service = make_service()
     sid, other = service.create_session('A'), service.create_session('A')
     a, observation_run = service._admit(sid, 'run-a', 'message')
@@ -63,7 +63,7 @@ def test_run_snapshots_and_allow_rules_do_not_leak_nested_mutation():
 
 @pytest.mark.parametrize('operation', ['model', 'thinking', 'tools', 'mode'])
 def test_configuration_failure_does_not_commit_memory(operation):
-    from naiyue_test_agent.application.agent_session import AgentSession
+    from naiyue_test_agent.application.sessions.agent_session import AgentSession
     service = make_service()
     service.register_tool(definition())
     writes = []
@@ -89,7 +89,7 @@ def test_configuration_failure_does_not_commit_memory(operation):
 
 
 def test_configuration_io_leaves_state_lock_available_until_commit():
-    from naiyue_test_agent.application.agent_session import AgentSession
+    from naiyue_test_agent.application.sessions.agent_session import AgentSession
     service = make_service()
     entered, release = Event(), Event()
     def save(*args):
@@ -111,7 +111,7 @@ def test_configuration_io_leaves_state_lock_available_until_commit():
 
 
 def test_duplicate_admission_is_atomic_and_stale_transitions_are_rejected():
-    from naiyue_test_agent.application.agent_session import AgentSession
+    from naiyue_test_agent.application.sessions.agent_session import AgentSession
     service = make_service()
     sid = service.create_session('A')
     barrier = Barrier(2)
@@ -138,7 +138,7 @@ def test_duplicate_admission_is_atomic_and_stale_transitions_are_rejected():
 
 
 def test_closing_controls_keeps_busy_until_persistent_finish_releases_it():
-    from naiyue_test_agent.application.agent_session import AgentSession
+    from naiyue_test_agent.application.sessions.agent_session import AgentSession
     service = make_service()
     service.bind_persistence(SimpleNamespace(storage=SimpleNamespace(create=lambda *args: None)))
     sid = service.create_session('A')
@@ -155,7 +155,7 @@ def test_closing_controls_keeps_busy_until_persistent_finish_releases_it():
 
 
 def test_invalid_resume_does_not_start_a_run_or_remember_allow():
-    from naiyue_test_agent.application.agent_session import AgentSession
+    from naiyue_test_agent.application.sessions.agent_session import AgentSession
     service = make_service()
     pending = {'batch_id': 'batch', 'requested_run_id': 'old',
                'items': [{'tool_call_id': 'call', 'tool_name': 'read', 'target': 'file', 'workspace': None}]}

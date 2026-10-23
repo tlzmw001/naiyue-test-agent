@@ -31,7 +31,7 @@ async def _async_worker(args):
         from langchain.tools import tool
         from langchain_core.messages import AIMessage, ToolMessage
         from naiyue_test_agent.application.async_application import build_async_local_application
-        from naiyue_test_agent.application.cli_async import AsyncCliApplication
+        from naiyue_test_agent.cli.cli_async import AsyncCliApplication
 
         expected = secrets.token_hex(6)
         executions, events = [], []
@@ -71,8 +71,8 @@ async def _async_worker(args):
             holder.update(app=app, session=session)
             prompt = 'Call read_probe_value exactly once. Reply only with the exact value returned by it.'
             if with_cli:
-                from naiyue_test_agent.application.cli import _run_and_print
-                from naiyue_test_agent.application.cli_display import CliEventDisplay
+                from naiyue_test_agent.cli.chat import _run_and_print
+                from naiyue_test_agent.cli.cli_display import CliEventDisplay
                 view = CliEventDisplay(session, writer=displayed.append)
                 unsubscribe = app.subscribe_events(view)
                 original_run = app.run

@@ -9,8 +9,8 @@ import pytest
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher
 from naiyue_test_agent.agent_runtime.model_usage_observation import ModelUsageCallback
 from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
-from naiyue_test_agent.application.run_events import RunObservation
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.application.observability.run_events import RunObservation
+from naiyue_test_agent.storage.session_storage import SessionStorage
 from native_application_helpers import async_test
 from test_model_invocation_observation import metadata, output
 from test_model_usage_storage import seed
@@ -46,7 +46,7 @@ async def test_memory_invocation_keeps_existing_pair_and_independent_run(tmp_pat
     assert handler._active == {}
     assert 'PRIVATE' not in repr(events) + caplog.text
 
-    from naiyue_test_agent.application.diagnostic_persistence import project_diagnostic_event
+    from naiyue_test_agent.application.observability.diagnostic_persistence import project_diagnostic_event
     from naiyue_test_agent.settings import DiagnosticSettings
     path, settings = tmp_path / 'state.sqlite', DiagnosticSettings()
     with SessionStorage(path) as store:
@@ -84,7 +84,7 @@ async def test_conflicting_memory_tag_does_not_fabricate_a_purpose(caplog):
 
 
 def test_cli_memory_purpose_and_execution_mode_are_named():
-    from naiyue_test_agent.application.cli_observation import _event_line, _run_lines, _usage_lines
+    from naiyue_test_agent.cli.cli_observation import _event_line, _run_lines, _usage_lines
     from test_cli_observation import usage, summary
     value = usage()
     value['activities'][0]['id'] = 'memory'
@@ -129,9 +129,9 @@ def test_memory_run_origin_rejects_invalid_correlation_identifiers(origin):
 
 def test_memory_origin_is_persisted_without_requiring_it_on_older_summaries(tmp_path):
     from naiyue_test_agent.contracts.session_events import RunStartedData, RunFinishedData
-    from naiyue_test_agent.application.diagnostic_persistence import project_diagnostic_event
+    from naiyue_test_agent.application.observability.diagnostic_persistence import project_diagnostic_event
     from naiyue_test_agent.settings import DiagnosticSettings
-    from naiyue_test_agent.application import diagnostic_storage
+    from naiyue_test_agent.application.observability import diagnostic_storage
     import json
 
     path, settings = tmp_path / 'state.sqlite', DiagnosticSettings()

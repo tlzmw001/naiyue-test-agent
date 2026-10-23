@@ -37,7 +37,7 @@ def test_missing_resume_does_not_initialize_workspace(tmp_path):
 
 
 def test_workspace_move_updates_binding_and_sessions_without_resetting_state(tmp_path):
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.session_storage import SessionStorage
     root, data = tmp_path / 'A', tmp_path / 'data'
     root.mkdir()
     before = prepare(root, data)
@@ -61,7 +61,7 @@ def test_workspace_move_updates_binding_and_sessions_without_resetting_state(tmp
 
 
 def test_copy_requires_explicit_new_identity_and_preserves_original(tmp_path):
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.session_storage import SessionStorage
     original, copied, data = tmp_path / 'A', tmp_path / 'B', tmp_path / 'data'
     original.mkdir()
     first = prepare(original, data)
@@ -91,7 +91,7 @@ def test_invalid_manifest_is_not_overwritten(tmp_path):
 
 
 def test_binding_failure_rolls_back_all_roots(tmp_path):
-    from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+    from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
     root = tmp_path / 'A'
     root.mkdir()
     loc = prepare(root, tmp_path / 'data')
@@ -122,7 +122,7 @@ def test_storage_root_setting_is_absolute_and_does_not_silently_fallback(tmp_pat
 
 
 def test_unavailable_data_root_does_not_fallback(tmp_path):
-    from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+    from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
     root, data = tmp_path / 'A', tmp_path / 'blocked'
     root.mkdir()
     data.write_text('not a directory')
@@ -162,7 +162,7 @@ def test_existing_marker_empty_resume_performs_no_write(tmp_path, monkeypatch):
 
 def test_schema_three_is_rejected_without_changes(tmp_path):
     import sqlite3
-    from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+    from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
     db = tmp_path / 'old.sqlite'
     with sqlite3.connect(db) as connection:
         connection.executescript('CREATE TABLE naiyue_store_info(version INTEGER); INSERT INTO naiyue_store_info VALUES(3);')

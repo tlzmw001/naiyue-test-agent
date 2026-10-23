@@ -193,7 +193,7 @@ def test_external_cancel_remains_failed_and_is_not_user_stop(monkeypatch):
 
 
 def test_stop_during_text_stream_keeps_draft_unconfirmed(monkeypatch):
-    from naiyue_test_agent.application.stream_projection import StreamingMessageProjection
+    from naiyue_test_agent.application.conversation.stream_projection import StreamingMessageProjection
 
     async def scenario():
         entered, release = asyncio.Event(), asyncio.Event()

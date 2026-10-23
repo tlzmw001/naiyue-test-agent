@@ -12,7 +12,7 @@ import pytest
 from naiyue_test_agent.agent_runtime.events import (
     RunEventPublisher, RunFailureData, RunFinishedData, RunStartedData,
 )
-from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions
+from naiyue_test_agent.application.observability.run_events import ApplicationEventSubscriptions
 
 
 def test_publisher_reports_immutable_ordered_metadata():

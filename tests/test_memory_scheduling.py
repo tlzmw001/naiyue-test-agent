@@ -4,9 +4,9 @@ import asyncio
 
 import pytest
 
-from naiyue_test_agent.application.memory_jobs import MemoryJobs
-from naiyue_test_agent.application import memory_overview_store as store
-from naiyue_test_agent.application.memory_queries import MemoryReadError
+from naiyue_test_agent.application.memory.memory_jobs import MemoryJobs
+from naiyue_test_agent.application.memory import memory_overview_store as store
+from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.model_access import ModelCatalog
 from test_memory_jobs import jobs
@@ -145,7 +145,7 @@ def test_directory_marker_failure_cannot_leave_failed_root_request_alive(jobs,mo
 @pytest.mark.parametrize('paused_read',[False,True])
 def test_deletion_guard_reserves_admission_across_async_metadata_reads(jobs,monkeypatch,paused_read):
     async def scenario():
-        from naiyue_test_agent.application import memory_jobs as module
+        from naiyue_test_agent.application.memory import memory_jobs as module
         storage,access,model,root=jobs
         service=MemoryJobs(access,ModelCatalog('A',{'A':model}))
         entered,release=asyncio.Event(),asyncio.Event()
@@ -176,7 +176,7 @@ def test_deletion_guard_reserves_admission_across_async_metadata_reads(jobs,monk
 def test_completed_delete_invalidates_an_already_read_request_before_registration(jobs,monkeypatch,deleted):
     async def scenario():
         from langgraph.checkpoint.sqlite import SqliteSaver
-        from naiyue_test_agent.application import memory_jobs as module
+        from naiyue_test_agent.application.memory import memory_jobs as module
         storage,access,model,root=jobs
         SqliteSaver(storage.connection).setup()
         storage.create('target',dict(thread_id='target',model_id='A',workspace_root=root,

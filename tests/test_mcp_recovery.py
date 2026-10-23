@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.application.session_storage import SessionPersistenceError
+from naiyue_test_agent.storage.session_storage import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.settings import AppSettings
 from test_async_application import StreamingToolModel, call

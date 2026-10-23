@@ -74,7 +74,7 @@ async def _worker(args):
     from langchain_core.messages import AIMessage
     from naiyue_test_agent import application
     from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-    from naiyue_test_agent.application.stream_projection import StreamingMessageProjection
+    from naiyue_test_agent.application.conversation.stream_projection import StreamingMessageProjection
 
     if args.offline:
         application.load_model_catalog = lambda _: _offline_catalog()

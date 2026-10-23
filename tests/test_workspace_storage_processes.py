@@ -9,7 +9,7 @@ from threading import Thread
 
 import pytest
 
-from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
 from naiyue_test_agent.workspaces import prepare_workspace
 
 
@@ -18,7 +18,7 @@ OWNER = '''
 import json, os, sys
 from pathlib import Path
 from naiyue_test_agent.workspaces import prepare_workspace
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.storage.session_storage import SessionStorage
 loc = prepare_workspace(Path(sys.argv[1]), data_dir=Path(sys.argv[2]))
 with SessionStorage(loc.database_path) as storage:
     storage.bind_workspace(loc.workspace_id, loc.root)

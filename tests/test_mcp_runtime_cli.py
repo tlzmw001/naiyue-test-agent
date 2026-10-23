@@ -6,7 +6,7 @@ from naiyue_test_agent.mcp_client.tools import MCPPermission
 
 
 def test_runtime_cli_refresh_and_incremental_selection():
-    from naiyue_test_agent.application.cli_mcp import handle_mcp_command
+    from naiyue_test_agent.cli.cli_mcp import handle_mcp_command
     selected = ['read']; lines = []; refreshed = []
     specs = [SimpleNamespace(tool=SimpleNamespace(name=name), permissions=MCPPermission() if name.startswith('mcp') else None)
              for name in ('read', 'mcp__local__echo')]
@@ -22,7 +22,7 @@ def test_runtime_cli_refresh_and_incremental_selection():
 
 
 def test_cli_disabled_tool_cannot_be_newly_enabled():
-    from naiyue_test_agent.application.cli_mcp import handle_mcp_command
+    from naiyue_test_agent.cli.cli_mcp import handle_mcp_command
     class Disabled(MCPPermission):
         def unavailable_reason(self): return 'server_disabled'
     lines = []; selected = []

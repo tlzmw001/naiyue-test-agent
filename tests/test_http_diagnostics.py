@@ -2,12 +2,12 @@
 
 import pytest
 
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 from dataclasses import replace
 
 from naiyue_test_agent.agent_runtime import events as facts
-from naiyue_test_agent.application.diagnostic_persistence import project_diagnostic_event
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.application.observability.diagnostic_persistence import project_diagnostic_event
+from naiyue_test_agent.storage.session_storage import SessionStorage
 from test_model_usage_storage import seed
 from test_diagnostic_storage import limits
 

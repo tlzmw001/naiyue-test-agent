@@ -67,7 +67,7 @@ async def test_root_stop_between_saved_interrupt_and_registration_cannot_leave_a
     effects = []
     app, root = await delegated_app(monkeypatch, child, tools=[definition(calls=effects, approved=True)])
     instances = record_instances(monkeypatch, app)
-    from naiyue_test_agent.application.agent_session import AgentSession
+    from naiyue_test_agent.application.sessions.agent_session import AgentSession
     register = AgentSession.register_live_approval
     def stop_then_register(self, instance, *args):
         app.request_stop(instance['session_id'], run_id=instance['root_run_id'])
@@ -106,7 +106,7 @@ async def test_cross_thread_stop_is_visible_before_approval_registration_and_not
     effects, errors, stoppers = [], [], []
     app, root = await delegated_app(monkeypatch, child, tools=[definition(calls=effects, approved=True)])
     instances = record_instances(monkeypatch, app)
-    from naiyue_test_agent.application.agent_session import AgentSession
+    from naiyue_test_agent.application.sessions.agent_session import AgentSession
     register = AgentSession.register_live_approval
     notified, release = Event(), Event()
     def stop_then_register(self, instance, *args):

@@ -174,7 +174,7 @@ def test_async_approval_resume_preserves_tool_result(monkeypatch, tmp_path, deci
 
 def test_delta_is_available_before_response_and_final_snapshot_calibrates(monkeypatch):
     async def scenario():
-        from naiyue_test_agent.application.stream_projection import StreamingMessageProjection
+        from naiyue_test_agent.application.conversation.stream_projection import StreamingMessageProjection
         entered, release = asyncio.Event(), asyncio.Event()
         model = StreamingToolModel(replies=[AIMessage(content='hello')], token_entered=entered, token_release=release)
         app = await make_app(monkeypatch, model)

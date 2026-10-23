@@ -79,7 +79,7 @@ def test_skill_catalog_delivery_limit_is_enforced(monkeypatch, tmp_path):
 
 
 def test_skill_commands_keep_source_identity_when_default_source_disappears(tmp_path):
-    from naiyue_test_agent.application.skills import discover_project_skills
+    from naiyue_test_agent.application.sessions.skills import discover_project_skills
 
     primary = write_skill(tmp_path, name='case-review')
     write_skill(tmp_path, source='claude', name='case-review')

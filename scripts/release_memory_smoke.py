@@ -34,7 +34,7 @@ async def memory_scenario(root, Model):
     from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
     from naiyue_test_agent import application
     from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-    from naiyue_test_agent.application.memory_overview_store import overview
+    from naiyue_test_agent.application.memory.memory_overview_store import overview
     from naiyue_test_agent.model_access import ModelCatalog
     from naiyue_test_agent.settings import AppSettings
     from naiyue_test_agent.tools.memory import create_memory_tool, MemoryInput

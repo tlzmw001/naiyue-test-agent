@@ -110,7 +110,7 @@ async def test_max_calls_omitted_does_not_install_an_implicit_small_limit(monkey
 async def test_mismatched_parent_permit_cannot_start_child(monkeypatch):
     child = ChildModel(replies=[])
     app, _ = await delegated_app(monkeypatch, child)
-    from naiyue_test_agent.application.agent_session import AgentSession
+    from naiyue_test_agent.application.sessions.agent_session import AgentSession
     original = AgentSession.prepare_subagent_instance
     def mismatch(self, *args, **kwargs):
         context = kwargs['parent_context']

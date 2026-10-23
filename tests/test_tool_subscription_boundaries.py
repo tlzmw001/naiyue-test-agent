@@ -19,7 +19,7 @@ from naiyue_test_agent.agent_runtime import _record_tool_call
 from naiyue_test_agent.agent_runtime.events import RunStartedData, RunFinishedData
 from naiyue_test_agent.tools import create_session_read_tool, create_session_write_tool
 from naiyue_test_agent.tools.processes import ProcessCleanupError
-from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions
+from naiyue_test_agent.application.observability.run_events import ApplicationEventSubscriptions
 from test_application_run_events import ToolModel, make_app
 from test_model_tool_subscriptions import events_of, CALL_METADATA_EVENTS
 

@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter, Path, Query, Request
 
-from ..application.background_tasks import TaskQueryError
+from naiyue_test_agent.application.sessions.background_tasks import TaskQueryError
 from .errors import WebError
 from .serialization import encoded_size
 

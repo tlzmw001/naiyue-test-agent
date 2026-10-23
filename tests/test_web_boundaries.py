@@ -83,7 +83,7 @@ def test_request_window_is_bounded_without_eviction_replays(monkeypatch, tmp_pat
 
 
 def test_save_failure_cannot_be_presented_as_web_completion(monkeypatch, tmp_path):
-    from naiyue_test_agent.application.session_storage import SessionPersistenceError
+    from naiyue_test_agent.storage.session_storage import SessionPersistenceError
 
     async def scenario():
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[AIMessage(content='answer')])) as (client, app):

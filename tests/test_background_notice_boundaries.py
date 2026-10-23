@@ -61,7 +61,7 @@ def test_manual_compaction_does_not_collect_or_acknowledge_status(monkeypatch, t
 
 
 def test_snapshot_without_actual_system_part_is_not_acknowledged(monkeypatch, tmp_path):
-    from naiyue_test_agent.application.agent_session import AgentSession
+    from naiyue_test_agent.application.sessions.agent_session import AgentSession
     original = AgentSession.resolve_prompt_parts
     def without_status(self, agent_path='root'):
         return [part for part in original(self, agent_path) if part['id'] != 'background_tasks']
@@ -80,7 +80,7 @@ def test_snapshot_without_actual_system_part_is_not_acknowledged(monkeypatch, tm
 
 
 def test_preview_rejects_changed_notice_version_without_sending_model(monkeypatch, tmp_path):
-    from naiyue_test_agent.application import session_context
+    from naiyue_test_agent.application.sessions import session_context
     original = session_context.estimate_context
     async def scenario():
         model = StreamingToolModel(replies=[])
@@ -121,7 +121,7 @@ def test_automatic_compaction_budget_uses_the_same_status_segment(monkeypatch, t
 
 def test_snapshot_freezes_before_project_resource_io(monkeypatch, tmp_path):
     from threading import Event
-    from naiyue_test_agent.application import session_execution
+    from naiyue_test_agent.application.sessions import session_execution
     async def scenario():
         entered, release = asyncio.Event(), Event()
         original = session_execution.prepare_run_resources

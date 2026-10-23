@@ -6,8 +6,8 @@ from uuid import uuid4
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-from naiyue_test_agent.application.session_storage import SessionStorage
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 from tests.legacy_store_schema import remove_memory_schema, remove_memory_lifecycle, remove_memory_overviews, remove_execution_schema
 
 

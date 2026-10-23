@@ -14,9 +14,9 @@ from tests.test_storage_restore import saved_store, maintenance, invoke, final_r
 CHILD = r'''
 import json, os, sys
 from pathlib import Path
-from naiyue_test_agent.storage_restore import restore_backup
+from naiyue_test_agent.storage.restore import restore_backup
 from naiyue_test_agent.workspaces import locate_workspace
-import naiyue_test_agent.storage_restore_record as records
+import naiyue_test_agent.storage.restore_record as records
 root, database, backup_id, point = sys.argv[1:]
 location = locate_workspace(root, data_dir=None, database_path=database)
 rename, replace, unlink, verify = os.rename, os.replace, os.unlink, records.verify_snapshot
@@ -53,7 +53,7 @@ def crash_restore(location, backup_id, point):
 @pytest.mark.parametrize('point', ['candidate', 'prepared', 'move:custom.sqlite', 'move:custom.sqlite-wal',
     'move:custom.sqlite-shm', 'move:custom.sqlite-journal', 'install', 'installed', 'completed', 'cleared'])
 def test_process_crash_never_empties_store_and_explicit_retry_finishes(tmp_path, monkeypatch, capsys, point):
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.session_storage import SessionStorage
     from naiyue_test_agent.application.errors import SessionPersistenceError
     location, saved = saved_store(tmp_path)
     database, backup_id = location.database_path, saved['backup_id']

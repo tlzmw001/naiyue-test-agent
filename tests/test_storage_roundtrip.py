@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 
 from native_application_helpers import async_test
 from tests.storage_backup_fixture import artifact, closed_store
@@ -15,9 +15,9 @@ from tests.legacy_store_schema import remove_memory_schema
 
 @pytest.mark.parametrize('source_schema', range(4, CURRENT_SCHEMA))
 def test_all_supported_legacy_stores_roundtrip_without_deserializing_opaque_payload(tmp_path, source_schema):
-    from naiyue_test_agent.application.session_storage import SessionStorage
-    from naiyue_test_agent.storage_backup import list_backups
-    from naiyue_test_agent.storage_restore import restore_backup
+    from naiyue_test_agent.storage.session_storage import SessionStorage
+    from naiyue_test_agent.storage.backup import list_backups
+    from naiyue_test_agent.storage.restore import restore_backup
     from naiyue_test_agent.workspaces import locate_workspace
     database, root, identity = closed_store(tmp_path, version=source_schema)
     with SessionStorage(database) as storage:
@@ -72,10 +72,10 @@ async def test_crashed_child_survives_restore_without_replaying_uncertain_side_e
     from langchain_core.messages import ToolMessage
     from naiyue_test_agent import application
     from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-    from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+    from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
     from naiyue_test_agent.model_access import ModelCatalog
-    from naiyue_test_agent.storage_backup import list_backups
-    from naiyue_test_agent.storage_restore import restore_backup
+    from naiyue_test_agent.storage.backup import list_backups
+    from naiyue_test_agent.storage.restore import restore_backup
     from naiyue_test_agent.workspaces import prepare_workspace
     from test_async_application import StreamingToolModel
     from test_subagent_execution import ChildModel

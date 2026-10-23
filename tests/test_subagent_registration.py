@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage
 
 from native_application_helpers import async_test, build_application
 from naiyue_test_agent import application
-from naiyue_test_agent.application.cli_async import build_local_application
+from naiyue_test_agent.cli.cli_async import build_local_application
 from naiyue_test_agent.model_access import ModelCatalog, ModelConfigError
 from naiyue_test_agent.tools import SubAgentSpec
 from naiyue_test_agent.settings import AppSettings

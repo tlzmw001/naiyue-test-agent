@@ -5,9 +5,9 @@ import asyncio
 
 import pytest
 
-from naiyue_test_agent.application import run_events
-from naiyue_test_agent.application.failure_policy import ApplicationErrorPolicy
-from naiyue_test_agent.application.session_service import SessionService
+from naiyue_test_agent.application.observability import run_events
+from naiyue_test_agent.application.observability.failure_policy import ApplicationErrorPolicy
+from naiyue_test_agent.application.sessions.session_service import SessionService
 from naiyue_test_agent.agent_runtime.errors import RuntimeErrorPolicy
 from naiyue_test_agent.model_access import ModelCatalog
 from test_async_application import StreamingToolModel, make_app
@@ -72,7 +72,7 @@ def test_observation_accepts_complete_policies_without_constructing_defaults(mon
 
 
 def test_root_admission_supplies_policies_at_construction(monkeypatch):
-    from naiyue_test_agent.application import session_service
+    from naiyue_test_agent.application.sessions import session_service
     seen = []
     original = run_events.RunObservation
     def construct(*args, **kwargs):
@@ -112,7 +112,7 @@ def test_shared_tool_concurrency_rule_rejects_bool_and_keeps_valid_values():
 
 
 def test_session_execution_is_an_explicit_internal_collaboration():
-    from naiyue_test_agent.application.agent_session import AgentSession
+    from naiyue_test_agent.application.sessions.agent_session import AgentSession
     assert callable(AgentSession.arun)
     assert not hasattr(AgentSession, '_arun')
 

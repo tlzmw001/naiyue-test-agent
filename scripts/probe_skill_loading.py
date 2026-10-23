@@ -15,7 +15,7 @@ from tempfile import TemporaryDirectory
 from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent.application.async_application import build_async_local_application
-from naiyue_test_agent.application.project_instructions import BASE_SYSTEM_PROMPT
+from naiyue_test_agent.application.sessions.project_instructions import BASE_SYSTEM_PROMPT
 from naiyue_test_agent.tools import create_session_read_tool
 
 

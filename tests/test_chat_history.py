@@ -7,7 +7,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from native_application_helpers import async_test
-from naiyue_test_agent.application.session_storage import SessionPersistenceError
+from naiyue_test_agent.storage.session_storage import SessionPersistenceError
 from test_persistent_sessions import build
 from test_application_run_events import ToolModel
 
@@ -42,7 +42,7 @@ async def test_finish_archives_full_messages_and_same_content_distinct_ids(monke
 
 @async_test
 async def test_repeated_sync_revises_in_place_and_reads_no_history_at_same_boundary(monkeypatch, tmp_path):
-    from naiyue_test_agent.application.chat_history import collect_chat_updates
+    from naiyue_test_agent.application.conversation.chat_history import collect_chat_updates
     async with build(monkeypatch, tmp_path / 'state.sqlite', ToolModel(responses=[AIMessage(id='ai', content='first')])) as app:
         sid = await app.acreate_session('A')
         await app.arun(sid, [HumanMessage(id='h', content='question')])

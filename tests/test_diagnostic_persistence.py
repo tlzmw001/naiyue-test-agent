@@ -4,8 +4,8 @@ import asyncio
 from threading import Event
 
 from native_application_helpers import async_test
-from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.application.observability.run_events import ApplicationEventSubscriptions
+from naiyue_test_agent.storage.session_storage import SessionStorage
 from naiyue_test_agent.agent_runtime.events import RuntimeEvent, RunStartedData, RunFinishedData
 from test_diagnostic_storage import limits
 from test_model_usage_storage import seed
@@ -19,7 +19,7 @@ def publisher_event(kind='run_started', *, rid='r', sequence=1):
 
 @async_test
 async def test_writer_overflow_counts_inflight_but_retains_finite_terminal_summary(tmp_path, monkeypatch, caplog):
-    from naiyue_test_agent.application.diagnostic_persistence import DiagnosticPersistence
+    from naiyue_test_agent.application.observability.diagnostic_persistence import DiagnosticPersistence
     entered, release = Event(), Event()
     with SessionStorage(tmp_path / 'state.sqlite') as store:
         seed(store)
@@ -47,7 +47,7 @@ async def test_writer_overflow_counts_inflight_but_retains_finite_terminal_summa
 
 @async_test
 async def test_storage_error_affects_only_its_root_and_never_logs_error_body(tmp_path, monkeypatch, caplog):
-    from naiyue_test_agent.application.diagnostic_persistence import DiagnosticPersistence
+    from naiyue_test_agent.application.observability.diagnostic_persistence import DiagnosticPersistence
     with SessionStorage(tmp_path / 'state.sqlite') as store:
         seed(store)
         original = store.save_diagnostic_event
@@ -69,7 +69,7 @@ async def test_storage_error_affects_only_its_root_and_never_logs_error_body(tmp
 
 @async_test
 async def test_missing_terminal_and_startup_cleanup_failure_are_observable_only(tmp_path, monkeypatch, caplog):
-    from naiyue_test_agent.application.diagnostic_persistence import DiagnosticPersistence
+    from naiyue_test_agent.application.observability.diagnostic_persistence import DiagnosticPersistence
     with SessionStorage(tmp_path / 'state.sqlite') as store:
         seed(store)
         def fail(*args):
@@ -86,7 +86,7 @@ async def test_missing_terminal_and_startup_cleanup_failure_are_observable_only(
 @async_test
 async def test_projection_failure_marks_existing_root_capture_gap(tmp_path, caplog):
     from dataclasses import replace
-    from naiyue_test_agent.application.diagnostic_persistence import DiagnosticPersistence
+    from naiyue_test_agent.application.observability.diagnostic_persistence import DiagnosticPersistence
     with SessionStorage(tmp_path / 'state.sqlite') as store:
         seed(store)
         async with DiagnosticPersistence(store, ApplicationEventSubscriptions().subscribe, limits()) as sink:
@@ -102,7 +102,7 @@ async def test_projection_failure_marks_existing_root_capture_gap(tmp_path, capl
 
 @async_test
 async def test_byte_overflow_and_root_state_capacity_are_independently_bounded(tmp_path, caplog):
-    from naiyue_test_agent.application.diagnostic_persistence import DiagnosticPersistence
+    from naiyue_test_agent.application.observability.diagnostic_persistence import DiagnosticPersistence
     with SessionStorage(tmp_path / 'state.sqlite') as store:
         seed(store)
         async with DiagnosticPersistence(store, ApplicationEventSubscriptions().subscribe,
@@ -120,7 +120,7 @@ async def test_byte_overflow_and_root_state_capacity_are_independently_bounded(t
 
 @async_test
 async def test_worker_cancellation_settles_inflight_io_and_reports_incomplete(tmp_path, monkeypatch, caplog):
-    from naiyue_test_agent.application.diagnostic_persistence import DiagnosticPersistence
+    from naiyue_test_agent.application.observability.diagnostic_persistence import DiagnosticPersistence
     entered, release, settled = Event(), Event(), Event()
     with SessionStorage(tmp_path / 'state.sqlite') as store:
         seed(store)
@@ -148,7 +148,7 @@ async def test_worker_cancellation_settles_inflight_io_and_reports_incomplete(tm
 
 @async_test
 async def test_root_capacity_includes_summary_currently_being_written(tmp_path, monkeypatch, caplog):
-    from naiyue_test_agent.application.diagnostic_persistence import DiagnosticPersistence
+    from naiyue_test_agent.application.observability.diagnostic_persistence import DiagnosticPersistence
     entered, release = Event(), Event()
     with SessionStorage(tmp_path / 'state.sqlite') as store:
         seed(store)

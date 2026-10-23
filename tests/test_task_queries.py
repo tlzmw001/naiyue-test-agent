@@ -8,7 +8,7 @@ import json
 import pytest
 from langchain_core.tools import ToolException
 
-from naiyue_test_agent.application.background_tasks import TaskQueryError
+from naiyue_test_agent.application.sessions.background_tasks import TaskQueryError
 
 
 def row(number, *, kind=None, session='s', root='/workspace', status='running'):
@@ -55,7 +55,7 @@ class Owner:
 
 
 def test_shell_only_delegates_exact_arguments_and_result():
-    from naiyue_test_agent.application.task_queries import TaskQueries
+    from naiyue_test_agent.application.sessions.task_queries import TaskQueries
     async def scenario():
         shell = Owner([row(2), row(1)], terminal=3)
         queries = TaskQueries(shell)
@@ -69,7 +69,7 @@ def test_shell_only_delegates_exact_arguments_and_result():
 
 
 def test_combined_list_paginates_before_ids_and_scopes_before_merging(tmp_path):
-    from naiyue_test_agent.application.task_queries import TaskQueries
+    from naiyue_test_agent.application.sessions.task_queries import TaskQueries
     async def scenario():
         root = str(tmp_path)
         shell = Owner([row(7, session='other', root=root), row(5, root=root), row(1, root=root)], terminal=2)
@@ -94,7 +94,7 @@ def test_combined_list_paginates_before_ids_and_scopes_before_merging(tmp_path):
 
 
 def test_combined_list_includes_older_backend_pages_and_revisions():
-    from naiyue_test_agent.application.task_queries import TaskQueries
+    from naiyue_test_agent.application.sessions.task_queries import TaskQueries
     async def scenario():
         shell = Owner([row(i) for i in range(150, 0, -1)])
         memory = Owner([row(151, kind='memory')])
@@ -113,7 +113,7 @@ def test_combined_list_includes_older_backend_pages_and_revisions():
 
 
 def test_combined_list_rejects_owner_revision_changing_between_pages():
-    from naiyue_test_agent.application.task_queries import TaskQueries
+    from naiyue_test_agent.application.sessions.task_queries import TaskQueries
     async def scenario():
         shell = Owner([row(i) for i in range(150, 0, -1)])
         original = shell.list
@@ -132,7 +132,7 @@ def test_combined_list_rejects_owner_revision_changing_between_pages():
 @pytest.mark.parametrize('action', ['output', 'stop'])
 @pytest.mark.parametrize('failure', [OSError('private IO failure'), TaskQueryError('cleanup_unconfirmed', 'still active')])
 def test_owner_failures_never_turn_into_missing_task(action, failure):
-    from naiyue_test_agent.application.task_queries import TaskQueries
+    from naiyue_test_agent.application.sessions.task_queries import TaskQueries
     async def scenario():
         shell, memory = Owner([]), Owner([row(1, kind='memory')])
         async def broken(*args, **kwargs):

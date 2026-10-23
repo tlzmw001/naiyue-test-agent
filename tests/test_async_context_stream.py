@@ -6,7 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage
 from pydantic import Field
 
-from naiyue_test_agent.application.stream_projection import StreamingMessageProjection
+from naiyue_test_agent.application.conversation.stream_projection import StreamingMessageProjection
 from naiyue_test_agent.agent_runtime.context_compaction import SUMMARY_MARKER
 from test_async_application import StreamingToolModel, make_app
 from test_async_context_chain import model, history, overflow_error

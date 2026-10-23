@@ -7,15 +7,15 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application import cli
-from naiyue_test_agent.application.cli_async import build_local_application
+from naiyue_test_agent.cli import chat as cli
+from naiyue_test_agent.cli.cli_async import build_local_application
 from naiyue_test_agent.model_access import ModelCatalog
 from test_async_application import StreamingToolModel
 from test_background_tasks import submit, wait_status
 
 
 def test_cli_background_bridge_during_root_run(monkeypatch, tmp_path):
-    from naiyue_test_agent.application.cli_background import handle_background_command
+    from naiyue_test_agent.cli.cli_background import handle_background_command
     model = StreamingToolModel(replies=[AIMessage(content='done')], entered=asyncio.Event(), release=asyncio.Event())
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     app = build_local_application('unused', tools=[], system_prompt='', response_format=None)
@@ -49,14 +49,14 @@ def test_cli_background_bridge_during_root_run(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize('line', [':task', ':task stop bad', ':task output ../private', ':tasks a b', ':task invalid ' + 'a' * 32])
 def test_cli_background_invalid_never_calls_application(line):
-    from naiyue_test_agent.application.cli_background import handle_background_command
+    from naiyue_test_agent.cli.cli_background import handle_background_command
     messages = []
     handle_background_command(object(), line, messages.append)
     assert '用法' in '\n'.join(messages)
 
 
 def test_cli_background_failure_is_observable_and_private(caplog):
-    from naiyue_test_agent.application.cli_background import handle_background_command
+    from naiyue_test_agent.cli.cli_background import handle_background_command
     class Broken:
         def list_background_tasks(self, **kwargs):
             raise OSError('PRIVATE_CREDENTIAL')
@@ -77,7 +77,7 @@ def test_cli_main_dispatches_commands_without_model(monkeypatch, tmp_path, capsy
 
 
 def test_cli_pagination_and_unconfirmed_stop_preserve_terminal_safety():
-    from naiyue_test_agent.application.cli_background import handle_background_command
+    from naiyue_test_agent.cli.cli_background import handle_background_command
     from types import SimpleNamespace
     identity = 'a' * 32
     row = dict(task_id=identity, session_id='s', status='lost', shell='bash', command_preview='bad\x1b[2J',
@@ -92,7 +92,7 @@ def test_cli_pagination_and_unconfirmed_stop_preserve_terminal_safety():
 
 
 def test_cli_memory_output_reports_result_without_process_or_archive_details():
-    from naiyue_test_agent.application.cli_background import handle_background_command
+    from naiyue_test_agent.cli.cli_background import handle_background_command
     from types import SimpleNamespace
     identity = 'c' * 32
     row = dict(task_id=identity, session_id='s', kind='memory', status='finished', shell='memory',
@@ -108,7 +108,7 @@ def test_cli_memory_output_reports_result_without_process_or_archive_details():
 
 
 def test_cli_memory_unconfirmed_stop_does_not_call_it_process_cleanup():
-    from naiyue_test_agent.application.cli_background import handle_background_command
+    from naiyue_test_agent.cli.cli_background import handle_background_command
     from types import SimpleNamespace
     identity = 'd' * 32
     row = dict(task_id=identity, session_id='s', kind='memory', status='lost', shell='memory',

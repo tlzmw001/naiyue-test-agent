@@ -3,8 +3,8 @@
 import sqlite3
 from contextlib import closing
 
-from naiyue_test_agent.application.session_storage import SessionStorage
-from naiyue_test_agent.storage_backup_schema import check_snapshot
+from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.storage.backup_schema import check_snapshot
 from naiyue_test_agent.workspaces import prepare_workspace
 
 
@@ -105,7 +105,7 @@ def test_schema17_child_identity_is_backfilled_without_reopening_its_directory(m
 
 def test_execution_schema_failure_rolls_back_columns_and_version(tmp_path):
     import pytest
-    from naiyue_test_agent.application.execution_storage import initialize
+    from naiyue_test_agent.storage.execution_storage import initialize
     root = tmp_path / 'main'
     root.mkdir()
     location = prepare_workspace(root, data_dir=tmp_path / 'data')

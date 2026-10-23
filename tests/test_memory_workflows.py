@@ -15,7 +15,7 @@ import sys
 import pytest
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
-from naiyue_test_agent.application.memory_queries import MemoryReadError
+from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
 from naiyue_test_agent.tools import (create_session_read_tool, create_session_write_tool,
     create_session_bash_tool, create_session_powershell_tool)
 from naiyue_test_agent.tools.history import create_history_tool

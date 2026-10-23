@@ -8,14 +8,14 @@ import sqlite3
 
 import pytest
 
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 
 from tests.storage_backup_fixture import artifact, source_store
 
 
 @pytest.mark.parametrize('version', range(4, CURRENT_SCHEMA + 1))
 def test_snapshot_covers_wal_and_source_schema_without_migration(tmp_path, version):
-    from naiyue_test_agent.storage_backup import create_backup, validate_backup
+    from naiyue_test_agent.storage.backup import create_backup, validate_backup
     with closing(source_store(tmp_path, version=version)[0]) as source:
         connection, database = source.connection, source.path
         connection.execute('PRAGMA journal_mode=WAL')
@@ -40,7 +40,7 @@ def test_snapshot_covers_wal_and_source_schema_without_migration(tmp_path, versi
 
 
 def test_unbound_and_never_run_store_is_valid_without_fabricated_identity(tmp_path):
-    from naiyue_test_agent.storage_backup import create_backup, validate_backup
+    from naiyue_test_agent.storage.backup import create_backup, validate_backup
     with closing(source_store(tmp_path, bound=False, checkpoints=False)[0]) as source:
         saved = create_backup(source.connection, source.path, target_schema=CURRENT_SCHEMA)
         assert saved['workspace_id'] is None
@@ -51,7 +51,7 @@ def test_unbound_and_never_run_store_is_valid_without_fabricated_identity(tmp_pa
 
 @pytest.mark.parametrize('fault', ['transaction', 'wrong_source', 'schema', 'binding', 'missing_table', 'checkpoint'])
 def test_generation_refuses_invalid_source_and_does_not_publish(tmp_path, fault):
-    from naiyue_test_agent.storage_backup import create_backup, list_backups
+    from naiyue_test_agent.storage.backup import create_backup, list_backups
     with closing(source_store(tmp_path)[0]) as source:
         connection, database = source.connection, source.path
         if fault == 'transaction':
@@ -72,7 +72,7 @@ def test_generation_refuses_invalid_source_and_does_not_publish(tmp_path, fault)
 
 @pytest.mark.parametrize('stage', ['backup', 'manifest', 'publish', 'cancel'])
 def test_generation_io_failure_preserves_pending_and_primary_error(tmp_path, monkeypatch, caplog, stage):
-    from naiyue_test_agent import storage_backup as module
+    from naiyue_test_agent.storage import backup as module
     with closing(source_store(tmp_path)[0]) as source:
         error = KeyboardInterrupt() if stage == 'cancel' else OSError('PRIVATE-token-body')
         def fail(*args, **kwargs):
@@ -94,7 +94,7 @@ def test_generation_io_failure_preserves_pending_and_primary_error(tmp_path, mon
 
 
 def test_backup_root_symlink_is_refused_without_writing_other_directory(tmp_path):
-    from naiyue_test_agent.storage_backup import create_backup, list_backups
+    from naiyue_test_agent.storage.backup import create_backup, list_backups
     with closing(source_store(tmp_path)[0]) as source:
         other = tmp_path / 'outside'
         other.mkdir()

@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage
 
 from naiyue_test_agent import application
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.application.project_instructions import BASE_SYSTEM_PROMPT
+from naiyue_test_agent.application.sessions.project_instructions import BASE_SYSTEM_PROMPT
 from naiyue_test_agent.web.app import create_web_app
 from naiyue_test_agent.web.settings import WebSettings
 from test_async_application import StreamingToolModel

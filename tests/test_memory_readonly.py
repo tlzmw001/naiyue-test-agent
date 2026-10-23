@@ -5,9 +5,9 @@ from uuid import uuid4
 
 import pytest
 
-from naiyue_test_agent.application.session_storage import SessionStorage
-from naiyue_test_agent.application.memory_access import MemoryAccess, MemoryReadError
-from naiyue_test_agent.application.memory_personal import PersonalMemory
+from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.application.memory.memory_access import MemoryAccess, MemoryReadError
+from naiyue_test_agent.application.memory.memory_personal import PersonalMemory
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.tools.memory import MemoryInput
 

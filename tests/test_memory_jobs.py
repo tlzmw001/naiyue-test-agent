@@ -8,9 +8,9 @@ from uuid import uuid4
 import pytest
 from langchain_core.messages import AIMessage
 
-from naiyue_test_agent.application.memory_jobs import MemoryJobs
-from naiyue_test_agent.application.memory_access import MemoryAccess
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.application.memory.memory_jobs import MemoryJobs
+from naiyue_test_agent.application.memory.memory_access import MemoryAccess
+from naiyue_test_agent.storage.session_storage import SessionStorage
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.model_access import ModelCatalog
 from test_memory_lifecycle import source
@@ -49,7 +49,7 @@ def test_explicit_waits_for_normal_saved_finish_then_overview_is_visible(jobs):
             row=await service.output(accepted['task_id'],session_id='s',workspace_root=root)
             assert row['result_status']=='completed' and row['cleanup_confirmed']
             assert len(model.seen)==1 and '完成测试' in str(model.seen[0])
-            from naiyue_test_agent.application.memory_overview_store import overview
+            from naiyue_test_agent.application.memory.memory_overview_store import overview
             saved=overview(storage,'s')
             assert saved['overview_status']=='generated' and saved['overview']['next_step']=='继续验证'
         finally:await service.aclose()

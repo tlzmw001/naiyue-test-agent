@@ -27,8 +27,8 @@ def test_modified_fixture_is_rejected_before_any_model_request(tmp_path):
 
 def test_saved_sources_have_real_human_tool_reply_and_controlled_time(tmp_path):
     from scripts.probe_memory_semantics import load_cases, seed_sources
-    from naiyue_test_agent.application.session_storage import SessionStorage
-    from naiyue_test_agent.application.memory_batches import build_batch
+    from naiyue_test_agent.storage.session_storage import SessionStorage
+    from naiyue_test_agent.application.memory.memory_batches import build_batch
     with SessionStorage(tmp_path / 'sessions.sqlite') as store:
         store.bind_workspace(str(uuid4()), tmp_path)
         store.create('s', dict(thread_id='s', model_id='A', workspace_root=tmp_path,
@@ -55,8 +55,8 @@ def test_saved_sources_have_real_human_tool_reply_and_controlled_time(tmp_path):
 
 def test_candidate_setup_is_finite_explicit_and_keeps_real_id_version(tmp_path):
     from scripts.probe_memory_semantics import seed_candidate, load_cases
-    from naiyue_test_agent.application.session_storage import SessionStorage
-    from naiyue_test_agent.application.memory_access import MemoryAccess
+    from naiyue_test_agent.storage.session_storage import SessionStorage
+    from naiyue_test_agent.application.memory.memory_access import MemoryAccess
     from naiyue_test_agent.memory_settings import MemorySettings
     with SessionStorage(tmp_path / 'sessions.sqlite') as store:
         store.bind_workspace(str(uuid4()), tmp_path)

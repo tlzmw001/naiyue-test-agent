@@ -6,7 +6,7 @@ from langchain_core.messages import AIMessage
 from native_application_helpers import async_test
 from test_persistent_sessions import build
 from test_write_tool import RecordingFake as ToolModel
-from naiyue_test_agent.application.reply_storage import latest
+from naiyue_test_agent.application.conversation.reply_storage import latest
 
 
 @async_test
@@ -76,7 +76,7 @@ async def test_activation_sql_failure_rolls_back_visible_tail_and_root(monkeypat
         assert app._storage.get(sid)['thread_id'] == saved['thread_id']
         assert app._storage._read('SELECT * FROM naiyue_chat_messages WHERE session_id=?', (sid,)) == before
         assert not app._sessions.require(sid).is_busy() and len(model.seen) == 1
-        from naiyue_test_agent.application.reply_storage import action
+        from naiyue_test_agent.application.conversation.reply_storage import action
         assert action(app._storage, sid, request_id)['status'] == 'prepare_failed'
 
 
@@ -85,7 +85,7 @@ async def test_cancel_during_activation_settles_root_and_preserves_replay_input(
     import asyncio
     import importlib
     from threading import Event
-    module = importlib.import_module('naiyue_test_agent.application.session_regeneration')
+    module = importlib.import_module('naiyue_test_agent.application.conversation.session_regeneration')
     entered, release = Event(), Event()
     original = module._commit_replacement
     def blocked(*args, **kwargs):

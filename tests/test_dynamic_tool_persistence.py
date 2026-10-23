@@ -9,7 +9,7 @@ import pytest
 
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
 from test_dynamic_tools import DynamicModel, definition
 

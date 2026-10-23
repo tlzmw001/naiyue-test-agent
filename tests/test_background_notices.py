@@ -5,7 +5,7 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
-from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
+from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
 from naiyue_test_agent.shell_task_settings import ShellTaskSettings
 from naiyue_test_agent.tools.processes import ProcessOutcome
 from test_background_tasks import submit

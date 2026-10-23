@@ -54,7 +54,7 @@ async def delegated_app(monkeypatch, child, *, root=None, spec=None, tools=None,
 
 def record_instances(monkeypatch, app):
     instances = []
-    from naiyue_test_agent.application.agent_session import AgentSession
+    from naiyue_test_agent.application.sessions.agent_session import AgentSession
     prepare = AgentSession.prepare_subagent_instance
     def record(self, *args, **kwargs):
         graph, instance = prepare(self, *args, **kwargs)

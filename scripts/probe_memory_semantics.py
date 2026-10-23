@@ -42,8 +42,8 @@ def load_cases(path=FIXTURES):
 def seed_sources(storage, sid, sources, *, at):
     """Save synthetic visible facts using the existing admission/archive formats."""
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, message_to_dict
-    from naiyue_test_agent.application.chat_history import ChatUpdate
-    from naiyue_test_agent.application.session_controls import mark_human_messages
+    from naiyue_test_agent.application.conversation.chat_history import ChatUpdate
+    from naiyue_test_agent.application.sessions.session_controls import mark_human_messages
 
     row, messages, facts, boundaries = storage.get(sid), [], [], []
     inputs = list(sources)
@@ -107,7 +107,7 @@ def seed_candidate(memory, sid, cases, *, at):
 
 
 def safe_report(value):
-    from naiyue_test_agent.application.memory_sources import SECRET
+    from naiyue_test_agent.application.memory.memory_sources import SECRET
     if isinstance(value, str):
         return '[redacted_sensitive_text]' if SECRET.search(value) else value
     if isinstance(value, dict):
@@ -149,7 +149,7 @@ def probe_callback(budget, settings, *, output_mode='text'):
     from langchain_core.callbacks import AsyncCallbackHandler
     from langchain_core.messages import AIMessage
     from naiyue_test_agent.model_access import MODEL_ID_METADATA_KEY
-    from naiyue_test_agent.application.memory_batches import parse_model_result
+    from naiyue_test_agent.application.memory.memory_batches import parse_model_result
 
     class ProbeCallback(AsyncCallbackHandler):
         raise_error = True
@@ -190,10 +190,10 @@ def saved_rows(memory):
 
 async def run_case(case, repeat, catalog, model_id, callback, settings):
     from naiyue_test_agent.agent_runtime.events import RunEventPublisher
-    from naiyue_test_agent.application.memory_access import MemoryAccess
-    from naiyue_test_agent.application.memory_jobs import MemoryJobs
-    from naiyue_test_agent.application.memory_overview_store import overview
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.application.memory.memory_access import MemoryAccess
+    from naiyue_test_agent.application.memory.memory_jobs import MemoryJobs
+    from naiyue_test_agent.application.memory.memory_overview_store import overview
+    from naiyue_test_agent.storage.session_storage import SessionStorage
 
     events, started = [], time.monotonic()
     callback.outputs = []
@@ -227,7 +227,7 @@ async def run_case(case, repeat, catalog, model_id, callback, settings):
                 await coordinator.wait_idle()
                 task = await coordinator.output(accepted['task_id'], session_id='probe', workspace_root=root)
                 rows = saved_rows(memory)
-                from naiyue_test_agent.application.diagnostic_persistence import project_diagnostic_event
+                from naiyue_test_agent.application.observability.diagnostic_persistence import project_diagnostic_event
                 from naiyue_test_agent.settings import DiagnosticSettings
                 diagnostics = DiagnosticSettings()
                 for event in events:

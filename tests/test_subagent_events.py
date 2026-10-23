@@ -4,7 +4,7 @@ from dataclasses import asdict
 
 from naiyue_test_agent.agent_runtime.events import AgentEventSource, RunEventPublisher
 from naiyue_test_agent.contracts.session_events import RunStartedData, RunFinishedData
-from naiyue_test_agent.application.stream_projection import StreamingMessageProjection
+from naiyue_test_agent.application.conversation.stream_projection import StreamingMessageProjection
 
 
 def test_live_projection_rebinds_repeated_call_id_and_ignores_previous_delegation_terminal():

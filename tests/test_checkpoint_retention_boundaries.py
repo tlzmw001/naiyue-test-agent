@@ -9,7 +9,7 @@ from native_application_helpers import async_test
 from test_application_run_events import ToolModel
 from test_persistent_sessions import build
 from test_checkpoint_retention import configure, checkpoints
-from naiyue_test_agent.application import checkpoint_retention as retention
+from naiyue_test_agent.storage import checkpoint_retention as retention
 from naiyue_test_agent.checkpoint_settings import CheckpointRetentionSettings
 from naiyue_test_agent.tools import create_session_read_tool
 

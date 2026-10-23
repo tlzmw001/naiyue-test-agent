@@ -8,7 +8,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent.agent_runtime.message_observation import _snapshot
-from naiyue_test_agent.application.cli_display import CliEventDisplay
+from naiyue_test_agent.cli.cli_display import CliEventDisplay
 from naiyue_test_agent.web.chat_history import record_view
 from naiyue_test_agent.web.serialization import message_view
 from naiyue_test_agent.settings import AppSettings

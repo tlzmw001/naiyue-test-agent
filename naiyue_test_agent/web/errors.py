@@ -3,7 +3,7 @@
 from naiyue_test_agent.application import (
     RunCapacityExceededError, SessionBusyError, SessionManualReviewRequiredError, SessionPendingApprovalError,
 )
-from naiyue_test_agent.application.session_storage import SessionPersistenceError
+from naiyue_test_agent.storage.session_storage import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelConfigError
 from naiyue_test_agent.execution_roots import ExecutionRootUnavailable
 

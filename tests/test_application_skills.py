@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.utils import count_tokens_approximately
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application import session_execution
+from naiyue_test_agent.application.sessions import session_execution
 from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.model_access import ModelCatalog
 from skill_helpers import write_skill

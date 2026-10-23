@@ -179,8 +179,8 @@ async def test_healthy_session_finishes_while_other_model_waits_and_stop_persist
 
 @async_test
 async def test_direct_close_drains_writer_and_initialization_failure_leaves_no_task(monkeypatch, tmp_path):
-    from naiyue_test_agent.application.model_usage_persistence import ModelUsagePersistence
-    from naiyue_test_agent.application.session_service import SessionService
+    from naiyue_test_agent.application.observability.model_usage_persistence import ModelUsagePersistence
+    from naiyue_test_agent.application.sessions.session_service import SessionService
     captured = []
     original = ModelUsagePersistence.__init__
     def record(self, *args):

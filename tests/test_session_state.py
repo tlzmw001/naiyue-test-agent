@@ -9,8 +9,8 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 
 from native_application_helpers import async_test
 from naiyue_test_agent.application import SessionService
-from naiyue_test_agent.application.agent_session import AgentSession
-from naiyue_test_agent.application.session_state import ActiveRun, SessionState
+from naiyue_test_agent.application.sessions.agent_session import AgentSession
+from naiyue_test_agent.application.sessions.session_state import ActiveRun, SessionState
 from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
 
@@ -151,8 +151,8 @@ async def test_real_persistent_restore_preserves_configuration_but_resets_transi
 
 
 @pytest.mark.parametrize('filename', [
-    'async_application.py', 'async_persistent.py', 'session_context.py',
-    'session_persistence.py', 'session_recovery.py',
+    'async_application.py', 'async_persistent.py', 'sessions/session_context.py',
+    'sessions/session_persistence.py', 'sessions/session_recovery.py',
 ])
 def test_state_consumers_do_not_pierce_service_state_or_lock(filename):
     path = Path(__file__).parents[1] / 'naiyue_test_agent' / 'application' / filename

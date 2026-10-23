@@ -8,7 +8,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from native_application_helpers import async_test
-from naiyue_test_agent.application.agent_session import AgentSession
+from naiyue_test_agent.application.sessions.agent_session import AgentSession
 from naiyue_test_agent.application.errors import SessionBusyError
 from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.permissions import PermissionMechanismError

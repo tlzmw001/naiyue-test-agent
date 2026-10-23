@@ -8,7 +8,7 @@ import json
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from naiyue_test_agent.application.session_storage import SessionPersistenceError
+from naiyue_test_agent.storage.session_storage import SessionPersistenceError
 from test_persistent_sessions import build
 from test_async_persistent import factory
 from test_async_application import StreamingToolModel

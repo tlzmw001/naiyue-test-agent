@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from native_application_helpers import async_test
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.application.session_storage import SessionPersistenceError
+from naiyue_test_agent.storage.session_storage import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import SubAgentSpec, create_subagent_tool, create_session_read_tool, create_session_write_tool
 from naiyue_test_agent.settings import AppSettings
@@ -132,7 +132,7 @@ async def crash_child():
                     'child_thread_id': instances[0]['child_thread_id']}), encoding='utf-8')
                 os._exit(91)
             if point == 'approval':
-                from naiyue_test_agent.application import session_subagents
+                from naiyue_test_agent.application.subagents import session_subagents
                 announce = session_subagents.announce_approval
                 def saved(observation, batch):
                     announce(observation, batch)

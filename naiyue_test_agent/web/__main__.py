@@ -11,7 +11,7 @@ from naiyue_test_agent.resources import frontend_directory, PackageResourceError
 from naiyue_test_agent.model_access import ModelConfigError
 from naiyue_test_agent.workspaces import prepare_workspace
 from naiyue_test_agent.application.errors import SessionPersistenceError
-from naiyue_test_agent.application.startup_display import startup_messages
+from naiyue_test_agent.cli.startup_display import startup_messages
 import socket
 
 import uvicorn

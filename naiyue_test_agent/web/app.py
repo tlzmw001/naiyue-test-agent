@@ -10,7 +10,7 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from starlette.staticfiles import StaticFiles
 
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.application.project_instructions import BASE_SYSTEM_PROMPT
+from naiyue_test_agent.application.sessions.project_instructions import BASE_SYSTEM_PROMPT
 from naiyue_test_agent.tools import create_builtin_tools
 from naiyue_test_agent.settings import load_settings
 from naiyue_test_agent.model_access import ModelConfigError

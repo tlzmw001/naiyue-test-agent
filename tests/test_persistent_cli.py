@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.messages import AIMessage
 from naiyue_test_agent import application
-from naiyue_test_agent.application import cli
+from naiyue_test_agent.cli import chat as cli
 from naiyue_test_agent.model_access import ModelCatalog
 from test_application_run_events import ToolModel
 
@@ -63,7 +63,7 @@ def test_temporary_conflicts_are_rejected_before_storage(extra, tmp_path, monkey
 
 
 def test_resume_non_tty_lists_all_without_loading_model(monkeypatch, tmp_path, capsys):
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.session_storage import SessionStorage
     db = tmp_path / 'sessions.sqlite'
     from naiyue_test_agent.workspaces import prepare_workspace
     location = prepare_workspace(tmp_path, data_dir=tmp_path / 'data', database_path=db)
@@ -84,7 +84,7 @@ def test_resume_non_tty_lists_all_without_loading_model(monkeypatch, tmp_path, c
 
 
 def test_picker_selects_without_creating_new_session(monkeypatch, tmp_path, capsys):
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.session_storage import SessionStorage
     db = tmp_path / 'sessions.sqlite'
     from naiyue_test_agent.workspaces import prepare_workspace
     location = prepare_workspace(tmp_path, data_dir=tmp_path / 'data', database_path=db)
@@ -103,7 +103,7 @@ def test_picker_selects_without_creating_new_session(monkeypatch, tmp_path, caps
 
 
 def test_direct_resume_continues_same_session(monkeypatch, tmp_path, capsys):
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.session_storage import SessionStorage
     db = tmp_path / 'sessions.sqlite'
     configure(monkeypatch)
     lines = iter(['first', ':quit'])
@@ -121,7 +121,7 @@ def test_direct_resume_continues_same_session(monkeypatch, tmp_path, capsys):
 
 
 def test_picker_cancel_does_not_load_model_or_add_record(monkeypatch, tmp_path, capsys):
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.session_storage import SessionStorage
     db = tmp_path / 'sessions.sqlite'
     from naiyue_test_agent.workspaces import prepare_workspace
     location = prepare_workspace(tmp_path, data_dir=tmp_path / 'data', database_path=db)
@@ -137,7 +137,7 @@ def test_picker_cancel_does_not_load_model_or_add_record(monkeypatch, tmp_path, 
 
 
 def test_model_save_failure_is_safe_and_keeps_previous_choice(monkeypatch, tmp_path, capsys):
-    from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+    from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
     monkeypatch.setattr(application, 'load_model_catalog', lambda _p: ModelCatalog('A', {
         'A': ToolModel(responses=[AIMessage(content='A answer')]),
         'B': ToolModel(responses=[AIMessage(content='B must not run')]),
@@ -166,7 +166,7 @@ def test_broken_database_symlink_is_not_reported_as_empty_history(monkeypatch, t
 
 
 def test_restricted_resume_prints_history_without_reading_input_or_running_model(monkeypatch, tmp_path, capsys):
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.session_storage import SessionStorage
     configure(monkeypatch)
     db = tmp_path / 'sessions.sqlite'
     lines = iter(['saved request', ':quit'])
@@ -195,7 +195,7 @@ def test_restricted_resume_prints_history_without_reading_input_or_running_model
 @async_test
 async def test_interactive_auto_recovery_waits_for_new_input_before_running(monkeypatch, tmp_path, capsys):
     from threading import Event
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.session_storage import SessionStorage
     from test_persistent_sessions import build
     configure(monkeypatch)
     db = tmp_path / 'sessions.sqlite'
@@ -231,7 +231,7 @@ async def test_interactive_auto_recovery_waits_for_new_input_before_running(monk
 
 
 def test_open_then_quit_recovers_without_model_or_new_user_message(monkeypatch, tmp_path, capsys):
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.session_storage import SessionStorage
     configure(monkeypatch)
     db = tmp_path / 'sessions.sqlite'
     lines = iter(['saved', ':quit'])
@@ -254,7 +254,7 @@ def test_open_then_quit_recovers_without_model_or_new_user_message(monkeypatch, 
 
 @pytest.mark.parametrize('decision', ['approve', 'reject'])
 def test_cli_cold_approval_has_no_extra_restore_prompt(monkeypatch, tmp_path, capsys, decision):
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.session_storage import SessionStorage
     root = tmp_path / 'workspace'
     root.mkdir()
     outside = tmp_path / 'external'
@@ -282,7 +282,7 @@ def test_cli_cold_approval_has_no_extra_restore_prompt(monkeypatch, tmp_path, ca
 
 @pytest.mark.parametrize('choice', ['continue', ''])
 def test_cli_changed_approval_requires_explicit_choice_to_abandon(monkeypatch, tmp_path, capsys, choice):
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.session_storage import SessionStorage
     root = tmp_path / 'workspace'
     root.mkdir()
     outside = tmp_path / 'external'

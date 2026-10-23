@@ -30,7 +30,7 @@ def summary(rid='r', *, capture='partial'):
 
 
 def test_usage_command_preserves_big_duration_unknown_counts_groups_and_cursor():
-    from naiyue_test_agent.application.cli_observation import handle_observation_command
+    from naiyue_test_agent.cli.cli_observation import handle_observation_command
     lines, calls = [], []
     app = SimpleNamespace(get_model_usage=lambda sid, **q: calls.append((sid, q)) or usage())
     handle_observation_command(app, 's', ':usage --after-model A', lines.append, persistent=True)
@@ -44,7 +44,7 @@ def test_usage_command_preserves_big_duration_unknown_counts_groups_and_cursor()
 
 @pytest.mark.parametrize('capture', ['complete', 'partial', 'unavailable'])
 def test_diagnostic_list_retains_status_zero_and_unknown_http(capture):
-    from naiyue_test_agent.application.cli_observation import handle_observation_command
+    from naiyue_test_agent.cli.cli_observation import handle_observation_command
     lines, calls = [], []
     item = summary(capture=capture)
     app = SimpleNamespace(list_diagnostic_runs=lambda sid, **q: calls.append((sid, q)) or
@@ -62,7 +62,7 @@ def test_diagnostic_list_retains_status_zero_and_unknown_http(capture):
 
 
 def test_detail_shows_headers_and_model_failure_independently_with_child_identity():
-    from naiyue_test_agent.application.cli_observation import handle_observation_command
+    from naiyue_test_agent.cli.cli_observation import handle_observation_command
     lines, calls = [], []
     child = {'agent_path': 'root/tester/id', 'agent_id': 'id', 'agent_run_id': 'child-run'}
     events = [{'session_id': 's', 'run_id': 'r', 'sequence': 2, 'event_type': 'model_http_attempt_finished', 'source': child,
@@ -88,7 +88,7 @@ def test_detail_shows_headers_and_model_failure_independently_with_child_identit
     ':diagnostics --after 1', ':diagnostics r --after -1', ':diagnostics r --after 1 --after 2',
     ':diagnostics a b', ':diagnostics "unterminated'])
 def test_invalid_command_does_not_query_or_exit(line):
-    from naiyue_test_agent.application.cli_observation import handle_observation_command
+    from naiyue_test_agent.cli.cli_observation import handle_observation_command
     lines = []
     handle_observation_command(SimpleNamespace(), 's', line, lines.append, persistent=True)
     assert '用法' in '\n'.join(lines)
@@ -96,7 +96,7 @@ def test_invalid_command_does_not_query_or_exit(line):
 
 @pytest.mark.parametrize('line', [':usage', ':diagnostics', ':diagnostics r'])
 def test_no_session_reports_unavailable_without_creating_memory_statistics(line):
-    from naiyue_test_agent.application.cli_observation import handle_observation_command
+    from naiyue_test_agent.cli.cli_observation import handle_observation_command
     lines = []
     handle_observation_command(SimpleNamespace(), 's', line, lines.append, persistent=False)
     assert '持久化' in '\n'.join(lines)
@@ -104,7 +104,7 @@ def test_no_session_reports_unavailable_without_creating_memory_statistics(line)
 
 @pytest.mark.parametrize('foreign', ['session', 'run', 'event'])
 def test_foreign_result_is_not_displayed(foreign):
-    from naiyue_test_agent.application.cli_observation import handle_observation_command
+    from naiyue_test_agent.cli.cli_observation import handle_observation_command
     value = {'session_id': 's', 'run_id': 'r', 'summary': summary(), 'events': [], 'next_after': None}
     if foreign == 'event':
         value['events'] = [{'session_id': 'other', 'run_id': 'r', 'sequence': 1,
@@ -118,7 +118,7 @@ def test_foreign_result_is_not_displayed(foreign):
 
 
 def test_query_failure_is_safe_and_original_exception_is_not_printed(caplog):
-    from naiyue_test_agent.application.cli_observation import handle_observation_command
+    from naiyue_test_agent.cli.cli_observation import handle_observation_command
     def fail(*a, **q): raise OSError('PRIVATE_SQL_BODY')
     lines = []
     handle_observation_command(SimpleNamespace(get_model_usage=fail), 's', ':usage', lines.append, persistent=True)
@@ -128,7 +128,7 @@ def test_query_failure_is_safe_and_original_exception_is_not_printed(caplog):
 
 
 def test_async_bridge_delegates_reads_on_its_existing_loop(monkeypatch):
-    from naiyue_test_agent.application.cli_async import AsyncCliApplication
+    from naiyue_test_agent.cli.cli_async import AsyncCliApplication
     bridge = object.__new__(AsyncCliApplication)
     calls = []
     async def read(*args, **kwargs):
@@ -144,7 +144,7 @@ def test_async_bridge_delegates_reads_on_its_existing_loop(monkeypatch):
 
 def test_chat_dispatches_queries_without_model_calls(monkeypatch, tmp_path, capsys):
     from naiyue_test_agent import application
-    from naiyue_test_agent.application import cli
+    from naiyue_test_agent.cli import chat as cli
     from naiyue_test_agent.model_access import ModelCatalog
     from test_application_cli import RecordingFake, feed
     from langchain_core.messages import AIMessage
@@ -159,7 +159,7 @@ def test_chat_dispatches_queries_without_model_calls(monkeypatch, tmp_path, caps
 
 
 def test_event_identity_is_not_translated_as_a_status():
-    from naiyue_test_agent.application.cli_observation import handle_observation_command
+    from naiyue_test_agent.cli.cli_observation import handle_observation_command
     lines = []
     value = {'session_id': 's', 'run_id': 'r', 'summary': summary(), 'next_after': None,
         'events': [{'session_id': 's', 'run_id': 'r', 'sequence': 1, 'source': None,

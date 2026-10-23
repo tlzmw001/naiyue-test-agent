@@ -7,7 +7,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from native_application_helpers import async_test
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.storage.session_storage import SessionStorage
 from test_async_application import StreamingToolModel, call
 from test_persistent_sessions import build
 
@@ -111,7 +111,7 @@ async def test_terminal_write_failure_keeps_success_and_reopen_marks_capture_onl
 
 @async_test
 async def test_checkpoint_schema_is_ready_before_diagnostic_subscription(monkeypatch, tmp_path):
-    from naiyue_test_agent.application.diagnostic_persistence import DiagnosticPersistence
+    from naiyue_test_agent.application.observability.diagnostic_persistence import DiagnosticPersistence
     original = DiagnosticPersistence.__aenter__
     checked = []
     async def check(self):

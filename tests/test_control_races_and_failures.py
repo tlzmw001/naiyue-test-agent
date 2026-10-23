@@ -10,7 +10,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.run_events import RunObservation
+from naiyue_test_agent.application.observability.run_events import RunObservation
 from test_application_control_events import blocked_app, controls, finish
 from test_application_run_events import ToolModel, make_app
 from test_turn_failure_boundaries import make_approval
@@ -146,7 +146,7 @@ async def test_failure_discards_unprocessed_request_and_preserves_primary(monkey
 
 @async_test
 async def test_approval_preparation_failure_is_discarded_not_submitted_or_applied(monkeypatch, tmp_path):
-    from naiyue_test_agent.application import session_execution
+    from naiyue_test_agent.application.sessions import session_execution
 
     app, session, events = await make_approval(monkeypatch, tmp_path)
     count = len(events)

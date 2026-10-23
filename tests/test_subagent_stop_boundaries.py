@@ -87,7 +87,7 @@ async def test_stop_during_final_checkpoint_confirmation_does_not_relabel_a_comp
 
 @async_test
 async def test_finalize_rejects_late_stop_instead_of_changing_completed_report(monkeypatch):
-    from naiyue_test_agent.application import session_subagents
+    from naiyue_test_agent.application.subagents import session_subagents
     app, _ = await delegated_app(monkeypatch, ChildModel(replies=[AIMessage(content='report')]))
     finish = session_subagents._finish_subagent_result
     checked = []

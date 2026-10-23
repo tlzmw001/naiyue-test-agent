@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
 from naiyue_test_agent.workspaces import prepare_workspace
 from tests.storage_backup_fixture import closed_store
 

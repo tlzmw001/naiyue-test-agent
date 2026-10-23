@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
 from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.model_access import ModelCatalog
 from test_application_run_events import ToolModel
@@ -141,7 +141,7 @@ def test_existing_database_and_lock_load_without_private_mode_requirement(tmp_pa
 
 @async_test
 async def test_cleanup_failure_never_leaves_session_ready(monkeypatch, tmp_path):
-    from naiyue_test_agent.application.agent_session import AgentSession
+    from naiyue_test_agent.application.sessions.agent_session import AgentSession
     async with build(monkeypatch, tmp_path / 'sessions.sqlite') as app:
         storage = app._storage
         session = await app.acreate_session('A')

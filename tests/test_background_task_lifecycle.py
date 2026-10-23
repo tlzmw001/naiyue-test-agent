@@ -8,7 +8,7 @@ import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.tools import ToolException
 
-from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
+from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
 from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.tools.processes import HostProcessRunner, ProcessCleanupError
 from naiyue_test_agent.tools.settings import BashSettings

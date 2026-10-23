@@ -10,8 +10,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 from native_application_helpers import async_test
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.application.reply_storage import latest
-from naiyue_test_agent.application.session_storage import SessionPersistenceError
+from naiyue_test_agent.application.conversation.reply_storage import latest
+from naiyue_test_agent.storage.session_storage import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import SubAgentSpec
 from naiyue_test_agent.tools.permission_rules import PermissionRule, PermissionSettings

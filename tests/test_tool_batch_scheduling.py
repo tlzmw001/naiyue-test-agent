@@ -279,7 +279,7 @@ async def test_approved_first_tool_completes_before_later_sequential_tool(tmp_pa
     ))
     assert len(pending['__interrupt__']) == 1
     assert executed == []
-    from naiyue_test_agent.application.session_approval import pending_tool_approval, prepare_resume
+    from naiyue_test_agent.application.sessions.session_approval import pending_tool_approval, prepare_resume
     grants, _ = prepare_resume('approve', pending_tool_approval(pending), ['approve'], None)
     result = (await aresume_agent_run_with_resources(
         agent, session_id='approve', thread_id='approve-thread',

@@ -1,5 +1,7 @@
 """Layer-owned descriptions and trusted, isolated extension entry points."""
 
+from naiyue_test_agent.application.sessions import session_execution
+
 from test_application_run_events import ToolModel
 
 from native_application_helpers import async_test, build_application
@@ -204,7 +206,7 @@ async def test_application_extension_is_local_and_has_correct_stage(monkeypatch)
     def fail(*_args, **_kwargs):
         raise error
 
-    monkeypatch.setattr(application.session_execution, 'prepare_run_resources', fail)
+    monkeypatch.setattr(session_execution, 'prepare_run_resources', fail)
     for item in (app, other):
         with pytest.raises(ReportStorageError) as caught:
             await item.arun(await item.acreate_session('A'), [('user', 'probe')])

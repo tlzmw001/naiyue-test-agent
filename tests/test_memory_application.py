@@ -33,7 +33,7 @@ def test_refresh_finishes_root_before_independent_model_and_persists_overview(mo
             assert len(model.seen)==3
             # Worker publishes only to its own usage/diagnostic consumers.
             assert len({e.run_id for e in events})==1 and all(getattr(e.data,'mode',None)!='memory' for e in events)
-            from naiyue_test_agent.application.memory_overview_store import overview
+            from naiyue_test_agent.application.memory.memory_overview_store import overview
             assert overview(app._storage,sid)['overview_status']=='generated'
             page=await app.alist_background_tasks(session_id=sid,workspace_root=tmp_path)
             assert page['items'][0]['task_id']==receipt['task_id'] and page['active_count']==0

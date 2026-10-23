@@ -9,7 +9,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application import cli
+from naiyue_test_agent.cli import chat as cli
 from naiyue_test_agent.model_access import ModelCatalog
 from test_async_application import StreamingToolModel
 

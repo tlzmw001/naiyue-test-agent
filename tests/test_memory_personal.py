@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from naiyue_test_agent.application.memory_personal import PersonalMemory
+from naiyue_test_agent.application.memory.memory_personal import PersonalMemory
 from naiyue_test_agent.memory_settings import MemorySettings
 from test_memory_readonly import seed, query, memory
 
@@ -54,7 +54,7 @@ def test_personal_busy_is_diagnostic_and_later_query_can_retry(memory):
     path=root/'data/personal/memory.sqlite'
     with PersonalMemory(path,MemorySettings()) as owner:
         owner.connection.execute('BEGIN IMMEDIATE')
-        from naiyue_test_agent.application.memory_access import MemoryReadError
+        from naiyue_test_agent.application.memory.memory_access import MemoryReadError
         with pytest.raises(MemoryReadError,match='memory_busy'):query(memory,action='list',scope='personal')
         owner.connection.rollback()
         assert query(memory,action='list',scope='personal')['items']==[]
@@ -75,7 +75,7 @@ def test_nonempty_or_marked_unknown_database_is_never_initialized(tmp_path,state
 @pytest.mark.parametrize('problem,code',[('format','memory_invalid_format'),('wal','memory_personal_mode_unavailable')])
 def test_personal_guard_returns_actionable_safe_query_error(memory,problem,code):
     from contextlib import closing
-    from naiyue_test_agent.application.memory_access import MemoryReadError
+    from naiyue_test_agent.application.memory.memory_access import MemoryReadError
     _,_,_,root=memory
     path=root/'data/personal/memory.sqlite';path.parent.mkdir(parents=True)
     if problem=='wal':

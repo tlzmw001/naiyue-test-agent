@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
+from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
 from naiyue_test_agent.tools.processes import HostProcessRunner, ProcessOutcome
 from naiyue_test_agent.tools.settings import BashSettings
 from test_process_lifecycle import request

@@ -93,7 +93,7 @@ async def test_list_configuration_paging_foreign_cursor_and_complete_json_budget
 @pytest.mark.parametrize('budget', [1, 80, 260, 360, 500])
 def test_complete_json_budget_never_produces_an_empty_page_loop(budget):
     from langchain_core.tools import ToolException
-    from naiyue_test_agent.application.subagent_queries import bounded_list
+    from naiyue_test_agent.application.subagents.subagent_queries import bounded_list
     records = [dict(agent_id=char * 64, agent='worker', task='中文😀' * 100, status='completed',
         resume_available=True, resume_reason=None) for char in ('a', 'b')]
     owned = {r['agent_id']: {'created_at': str(i)} for i, r in enumerate(records)}
@@ -115,8 +115,8 @@ def test_complete_json_budget_never_produces_an_empty_page_loop(budget):
 @pytest.mark.parametrize('state,reason', [('ready', None), ('pending_parent', 'pending_parent'), ('running', 'running'),
     ('retired', 'retired'), ('failed', 'failed'), ('stopped', 'stopped')])
 def test_candidate_status_is_metadata_only_and_does_not_claim_execution_admission(state, reason):
-    from naiyue_test_agent.application.subagent_queries import annotate
-    from naiyue_test_agent.application.subagent_records import role_fingerprint
+    from naiyue_test_agent.application.subagents.subagent_queries import annotate
+    from naiyue_test_agent.application.subagents.subagent_records import role_fingerprint
     from test_subagent_execution import role
     spec = role()
     row = dict(agent_id='a' * 64, agent='tester', task='work', status='completed')

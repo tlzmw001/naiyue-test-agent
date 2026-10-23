@@ -3,8 +3,8 @@
 import pytest
 
 from native_application_helpers import async_test
-from naiyue_test_agent.application import run_events
-from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions
+from naiyue_test_agent.application.observability import run_events
+from naiyue_test_agent.application.observability.run_events import ApplicationEventSubscriptions
 from naiyue_test_agent.agent_runtime.events import AgentEventSource
 from naiyue_test_agent.contracts.session_events import RunStartedData
 from test_async_application import make_app, StreamingToolModel

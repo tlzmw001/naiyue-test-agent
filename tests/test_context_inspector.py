@@ -105,7 +105,7 @@ def test_live_snapshot_is_frozen_and_usage_is_not_guessed(monkeypatch, tmp_path)
 
 
 def test_preview_fault_does_not_change_checkpoint_or_start_model(monkeypatch, tmp_path, caplog):
-    from naiyue_test_agent.application import session_context
+    from naiyue_test_agent.application.sessions import session_context
     async def scenario():
         model = model_with_limits([])
         async with web_client(monkeypatch, tmp_path, model) as (client, web):

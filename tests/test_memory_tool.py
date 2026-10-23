@@ -91,7 +91,7 @@ def test_formal_list_search_read_then_reopen_without_internal_model_call(monkeyp
 
 
 def test_real_sqlite_query_failure_is_paired_and_agent_continues(monkeypatch, tmp_path, caplog):
-    from naiyue_test_agent.application import memory_queries
+    from naiyue_test_agent.application.memory import memory_queries
     async def scenario():
         model = StreamingToolModel(replies=[call('memory', {'action':'search','query':'venv'}, 'bad'),AIMessage(content='try current files')])
         async with opened(monkeypatch, tmp_path, model) as app:

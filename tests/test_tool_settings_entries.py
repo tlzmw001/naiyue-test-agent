@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 @pytest.mark.parametrize('names', [[], ['powershell', 'read']])
 def test_cli_wires_configured_default_tools_without_model_requests(monkeypatch, tmp_path, names):
     from naiyue_test_agent import application
-    from naiyue_test_agent.application import cli
+    from naiyue_test_agent.cli import chat as cli
     from naiyue_test_agent.model_access import ModelCatalog
     from test_application_workspace import ToolCapableFake
     root = tmp_path / 'settings'
@@ -94,7 +94,7 @@ async def test_model_catalog_reads_the_default_user_file(monkeypatch, tmp_path):
 ])
 def test_cli_loads_read_settings_and_default_model_path(monkeypatch, tmp_path, content, expected):
     from naiyue_test_agent import application
-    from naiyue_test_agent.application import cli
+    from naiyue_test_agent.cli import chat as cli
     from naiyue_test_agent.tools import settings as module
     from naiyue_test_agent.model_access import ModelCatalog
     from test_application_workspace import ToolCapableFake
@@ -224,7 +224,7 @@ async def test_approval_resume_keeps_the_original_startup_settings(monkeypatch, 
 
 
 def test_small_read_page_does_not_remove_skills_from_discovery(tmp_path):
-    from naiyue_test_agent.application.skills import discover_project_skills
+    from naiyue_test_agent.application.sessions.skills import discover_project_skills
     from naiyue_test_agent.tools import ReadSettings, create_session_read_tool
     from skill_helpers import write_skill
     path = write_skill(tmp_path, body='body\n' * 100)
@@ -262,7 +262,7 @@ async def test_entries_wire_ls_write_and_edit_settings(monkeypatch, tmp_path, en
     ]), AIMessage(content='done')]
     if entry == 'cli':
         from naiyue_test_agent import application
-        from naiyue_test_agent.application import cli
+        from naiyue_test_agent.cli import chat as cli
         from naiyue_test_agent.model_access import ModelCatalog
         model = RecordingFake(responses=replies)
         monkeypatch.setattr(application, 'load_model_catalog',

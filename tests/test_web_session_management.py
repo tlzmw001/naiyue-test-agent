@@ -145,7 +145,7 @@ def test_delete_includes_child_history_removed_from_latest_parent_checkpoint(mon
 
 
 def test_schema_five_migration_keeps_recency_then_persists_manual_order(tmp_path):
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.session_storage import SessionStorage
 
     path = tmp_path / 'five.sqlite'
     with SessionStorage(path) as store:

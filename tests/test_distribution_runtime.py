@@ -24,7 +24,7 @@ def test_nyt_help_and_version_need_no_models_or_business_imports(capsys):
 @pytest.mark.parametrize(('argv', 'module', 'forwarded'), [
     ([], 'naiyue_test_agent.web.__main__', []),
     (['--workspace', 'work'], 'naiyue_test_agent.web.__main__', ['--workspace', 'work']),
-    (['chat', '--resume', 'sid'], 'naiyue_test_agent.application.cli', ['--resume', 'sid']),
+    (['chat', '--resume', 'sid'], 'naiyue_test_agent.cli.chat', ['--resume', 'sid']),
 ])
 def test_nyt_routes_to_the_existing_entry(monkeypatch, argv, module, forwarded):
     from naiyue_test_agent import cli
@@ -90,7 +90,7 @@ def test_resource_names_are_not_arbitrary_paths():
 
 
 def test_terminal_missing_model_config_has_setup_guidance(monkeypatch, tmp_path, capsys):
-    from naiyue_test_agent.application import cli
+    from naiyue_test_agent.cli import chat as cli
     missing = tmp_path / 'missing-models.json'
     assert cli.main(['--config', str(missing), '--workspace', str(tmp_path), '--no-session']) == 1
     output = capsys.readouterr().out
@@ -98,7 +98,7 @@ def test_terminal_missing_model_config_has_setup_guidance(monkeypatch, tmp_path,
 
 
 def test_missing_config_does_not_hide_a_storage_failure(monkeypatch, tmp_path, capsys):
-    from naiyue_test_agent.application import cli
+    from naiyue_test_agent.cli import chat as cli
     from naiyue_test_agent.application.errors import SessionPersistenceError
     def busy(*args, **kwargs):
         raise SessionPersistenceError('storage_in_use')

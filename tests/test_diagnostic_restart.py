@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.storage.session_storage import SessionStorage
 
 
 def test_real_process_death_preserves_boundaries_and_marks_only_capture_interrupted(tmp_path):

@@ -141,7 +141,7 @@ def test_approval_retry_can_suspend_and_resume_without_inventing_model_call():
 
 
 def test_run_observation_scope_binds_both_contexts_and_resets_after_error():
-    from naiyue_test_agent.application.run_events import RunObservation
+    from naiyue_test_agent.application.observability.run_events import RunObservation
     from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
 
     observer, events = make_observer()

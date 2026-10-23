@@ -2,8 +2,8 @@
 
 from contextlib import contextmanager
 
-from naiyue_test_agent.application.session_storage import SessionStorage
-from naiyue_test_agent.application.memory_access import MemoryAccess
+from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.application.memory.memory_access import MemoryAccess
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.tools.history import HistoryInput
 from naiyue_test_agent.tools.history_settings import HistorySettings

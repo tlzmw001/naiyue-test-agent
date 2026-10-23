@@ -67,7 +67,7 @@ def test_old_model_event_names_are_not_registered_aliases(caplog):
 
 
 def test_historical_diagnostic_names_and_payload_semantics_survive_reopen(tmp_path):
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.session_storage import SessionStorage
     from test_diagnostic_storage import fact, end, limits
     from test_model_usage_storage import seed
     path = tmp_path / 'history.sqlite'

@@ -7,12 +7,12 @@ from types import SimpleNamespace
 import pytest
 
 from native_application_helpers import async_test
-from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions
+from naiyue_test_agent.application.observability.run_events import ApplicationEventSubscriptions
 from test_model_usage_storage import facts
 
 
 def writer(storage, subscriptions, **limits):
-    from naiyue_test_agent.application.model_usage_persistence import ModelUsagePersistence
+    from naiyue_test_agent.application.observability.model_usage_persistence import ModelUsagePersistence
     from naiyue_test_agent.settings import UsagePersistenceSettings
     return ModelUsagePersistence(storage, subscriptions.subscribe, UsagePersistenceSettings(**limits))
 

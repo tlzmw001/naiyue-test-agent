@@ -11,8 +11,8 @@ from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime.async_utils import await_settled, run_blocking, acquire_blocking
 from naiyue_test_agent.contracts.failures import safe_error_type
 from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
-from .async_event_stream import AsyncEventStream
-from .subagent_history import subagent_records
+from .observability.async_event_stream import AsyncEventStream
+from .subagents.subagent_history import subagent_records
 
 
 logger = logging.getLogger(__name__)
@@ -89,7 +89,7 @@ class AsyncApplication:
 
     async def aget_skills(self, workspace_root):
         with self._owned_operation():
-            from .skills import discover_project_skills
+            from .sessions.skills import discover_project_skills
             return await run_blocking(discover_project_skills, workspace_root)
 
     def get_session_control_options(self):
@@ -200,7 +200,7 @@ class AsyncApplication:
 
     async def aget_context_view(self, session_id):
         with self._owned_operation():
-            from .session_context import context_view
+            from .sessions.session_context import context_view
             history = None if self.has_session(session_id) else await self.aget_session_history(session_id)
             return await context_view(session_id, sessions=self._sessions, agent=self._agent,
                 catalog=self._catalog, tool_registry=self._tool_registry,
@@ -216,14 +216,14 @@ class AsyncApplication:
                 messages = (await self.aget_session_history(session_id))['messages']
                 if getattr(self, '_storage', None) is not None:
                     owned = await run_blocking(self._storage.get_subagent_references, session_id)
-            from .subagent_history import merge_registered_subagents
+            from .subagents.subagent_history import merge_registered_subagents
             records = merge_registered_subagents(subagent_records(session_id, messages, owned_instances=owned), owned)
             for row in records:
                 if row['status'] == 'failed':
                     snapshot = await self._agent.aget_state({'configurable': {'thread_id': f'subagent:{row["agent_id"]}'}})
                     if snapshot.values.get('run_stopped'):
                         row['status'] = 'stopped'
-            from .subagent_queries import annotate
+            from .subagents.subagent_queries import annotate
             active = self._sessions.require(session_id).describe_session()['run_id'] if self.has_session(session_id) else None
             return annotate(records, owned, self.get_registered_subagents(), self._catalog, active)
 

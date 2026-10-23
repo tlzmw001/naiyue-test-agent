@@ -58,7 +58,7 @@ def test_bash_exact_allow_does_not_authorize_powershell_or_suffix(monkeypatch, t
 
 
 def test_cli_powershell_approval_displays_workspace_and_escaped_command():
-    from naiyue_test_agent.application.cli_approval import show_approval_batches
+    from naiyue_test_agent.cli.cli_approval import show_approval_batches
     lines = []
     show_approval_batches([{'approval_batch_id': 'batch', 'agent_path': 'root', 'items': [{
         'tool_name': 'powershell', 'target': 'Write-Output "中"\n\x1b[31m',

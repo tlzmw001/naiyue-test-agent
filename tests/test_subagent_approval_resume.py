@@ -15,7 +15,7 @@ from test_subagent_execution import ChildModel, delegated_app, record_instances,
 
 def approval_notifications(monkeypatch, app):
     queue = asyncio.Queue()
-    from naiyue_test_agent.application.agent_session import AgentSession
+    from naiyue_test_agent.application.sessions.agent_session import AgentSession
     register = AgentSession.register_live_approval
     def notify(self, *args, **kwargs):
         pending = register(self, *args, **kwargs)

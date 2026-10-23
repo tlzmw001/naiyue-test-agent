@@ -1,8 +1,8 @@
 # Spec128-01：Project、ExecutionRoot 与项目归档
 
-交付编排说明：本节点从已保存合同和验收文档整理，移除了后续目录迁移注记；不是原始完整文档历史的精确快照。
-
 日期：2026-10-22。状态：2026-10-23，01身份/消费者拆分完成本机验收，尚未提交；从v0.4.0（0ba38f3）建立独立分支，归档外迁沿已发布基线。用户已确认本片范围、目录失效与归档迁出方向。总约束见[Spec128](128-project-execution-and-run-context.md)。
+
+路径版本边界（2026-10-23）：03已迁移应用、存储及CLI目录；本Spec中的实施时路径保留为历史，当前文件与入口见[03完整迁移表](128-03-domain-packages-and-cli.md#5-完整文件迁移表)，原行为合同保持。
 
 ## 1. 目标与本片边界
 
@@ -131,6 +131,8 @@ Shell cwd、文件工具根与archive_root分开。后台任务交接时冻结ar
 完整身份迁移完成后运行受影响专项、全后端、前端测试/构建及标准wheel/源外安装。以下记录归档子步骤的独立证据，不能替代整片验收。
 
 ## 10. 归档子步骤实际接线与边界（历史验收）
+
+版本边界：下列为2026-10-22归档子步骤记录，之后已随v0.4.0发布；01身份迁移的最终结果以第12节为准。
 
 当时主链：持久工厂读取库绑定→SessionService从配置data_dir和项目UUID派生归档根；临时应用按session_id派生→AgentSession保留归档根→根执行、审批恢复、子执行的RunObservation.bind→RunServices与invocation context→Shell/后台/MCP归档器。后台任务单独保存archive_root与ProcessRequest.cwd；list/output/stop使用原任务记录，清理门禁比较归档根。AITest消费共用execute_process_request。这里的RunServices.archive_root是01的接线；02实施时随其余运行依赖一起迁移，不保留第二条注入路径。
 

@@ -11,13 +11,10 @@ import stat
 import tempfile
 from uuid import UUID, uuid4
 
-from .storage_files import (
-    acquire_store_lock, check_store_directory, check_store_file, open_store_file,
-    open_store_readonly, release_store_lock,
-)
+from .storage.files import acquire_store_lock, check_store_directory, check_store_file, open_store_file, open_store_readonly, release_store_lock
 
 
-from .storage_maintenance import check_restore_marker
+from .storage.maintenance import check_restore_marker
 
 
 logger = logging.getLogger(__name__)

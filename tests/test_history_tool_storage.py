@@ -8,8 +8,8 @@ from uuid import uuid4
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage, message_to_dict
 
-from naiyue_test_agent.application.chat_history import ChatUpdate
-from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+from naiyue_test_agent.application.conversation.chat_history import ChatUpdate
+from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
 from naiyue_test_agent.tools.history import HistoryInput
 from naiyue_test_agent.tools.history_settings import HistorySettings
 

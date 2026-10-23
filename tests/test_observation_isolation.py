@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage
 from langgraph.errors import GraphInterrupt
 
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher
-from naiyue_test_agent.application.run_events import RunObservation
+from naiyue_test_agent.application.observability.run_events import RunObservation
 from naiyue_test_agent.agent_runtime.turn_observation import TurnObserver
 from naiyue_test_agent.agent_runtime.context_operation_observation import ContextOperationObserver
 from naiyue_test_agent.agent_runtime.message_observation import MessageStateObserver
@@ -190,7 +190,7 @@ async def test_fast_web_completion_does_not_race_queued_start_callback(failure):
 
     class ImmediateApplication:
         def __init__(self):
-            from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions
+            from naiyue_test_agent.application.observability.run_events import ApplicationEventSubscriptions
             self.events = ApplicationEventSubscriptions()
 
         def subscribe_events(self, handler, *, session_id=None):

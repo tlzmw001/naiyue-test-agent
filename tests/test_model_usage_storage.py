@@ -5,12 +5,12 @@ from legacy_store_schema import remove_reply_schema
 import sqlite3
 import pytest
 
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 
 from naiyue_test_agent.agent_runtime.events import (
     RunEventPublisher, ModelInvocationStartedData, ModelInvocationFinishedData,
 )
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.storage.session_storage import SessionStorage
 
 
 def seed(store, sid='s'):
@@ -142,7 +142,7 @@ def test_usage_ddl_failure_rolls_back_without_damaging_existing_schema(monkeypat
         patch.setattr(sqlite3, 'connect', denied)
         with pytest.raises(SessionPersistenceError, match='migration_failed') as caught:
             SessionStorage(path)
-    from naiyue_test_agent.storage_backup import validate_backup
+    from naiyue_test_agent.storage.backup import validate_backup
     assert (caught.value.source_schema, caught.value.current_schema, caught.value.target_schema) == (8, 8, CURRENT_SCHEMA)
     assert validate_backup(path, caught.value.backup_id)['source_schema'] == 8
     with sqlite3.connect(path) as connection:

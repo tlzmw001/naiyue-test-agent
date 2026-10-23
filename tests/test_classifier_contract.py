@@ -13,7 +13,7 @@ from naiyue_test_agent.agent_runtime.run_control import UserStop
 from naiyue_test_agent.tools.processes import ProcessCleanupError
 from test_layered_failure_contract import VendorQuotaError, build
 from naiyue_test_agent.model_access import errors as model_errors
-from naiyue_test_agent.application.failure_policy import ApplicationErrorPolicy
+from naiyue_test_agent.application.observability.failure_policy import ApplicationErrorPolicy
 
 
 def test_single_argument_classifier_is_rejected_without_invoking():

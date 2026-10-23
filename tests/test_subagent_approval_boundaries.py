@@ -111,8 +111,8 @@ async def test_external_cancel_invalidates_pending_and_releases_all_owned_waiter
 def test_cli_bridge_submits_live_child_without_joining_root_worker(monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
-    from naiyue_test_agent.application.cli_async import build_local_application
-    from naiyue_test_agent.application.session_approval import AgentSessionApproval
+    from naiyue_test_agent.cli.cli_async import build_local_application
+    from naiyue_test_agent.application.sessions.session_approval import AgentSessionApproval
     registered = Event()
     child = ChildModel(replies=[call('probe', {'value': 'once'}, 'inner'), AIMessage(content='report')])
     root = ChildModel(replies=[call('subagent', {'agent': 'tester', 'task': 'check'}, 'delegate'),

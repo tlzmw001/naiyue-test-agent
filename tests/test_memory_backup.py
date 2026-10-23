@@ -5,9 +5,9 @@ import sqlite3
 
 import pytest
 
-from naiyue_test_agent.application.session_storage import SessionStorage
-from naiyue_test_agent.storage_backup import create_backup, validate_backup, list_backups
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA, check_snapshot
+from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.storage.backup import create_backup, validate_backup, list_backups
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA, check_snapshot
 from tests.storage_backup_fixture import closed_store
 from test_memory_readonly import seed
 
@@ -28,7 +28,7 @@ def test_schema14_upgrade_takes_prechange_backup_and_creates_transactional_index
 
 
 def test_memory_migration_failure_keeps_schema14_and_usable_backup(tmp_path,monkeypatch):
-    from naiyue_test_agent.application import memory_schema
+    from naiyue_test_agent.application.memory import memory_schema
     from naiyue_test_agent.application.errors import StorageStartupError
     database,_,_=closed_store(tmp_path,version=14)
     error=RuntimeError('private-failure')

@@ -78,7 +78,7 @@ async def test_clear_rejects_symlink_in_output_directory(monkeypatch, tmp_path):
 @async_test
 async def test_cli_clear_needs_confirmation(monkeypatch, tmp_path, capsys):
     from naiyue_test_agent import application
-    from naiyue_test_agent.application import cli
+    from naiyue_test_agent.cli import chat as cli
     from naiyue_test_agent.model_access import ModelCatalog
     from tests.test_host_bash import BashFake, make_app, bash_results, _archive_path
     from langchain_core.messages import AIMessage

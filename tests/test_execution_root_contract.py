@@ -68,7 +68,7 @@ def test_missing_execution_root_keeps_history_but_blocks_new_run(monkeypatch, tm
 
 def test_missing_child_execution_root_rejects_continuation_without_rebinding(monkeypatch, tmp_path):
     async def scenario():
-        from naiyue_test_agent.application import subagent_records
+        from naiyue_test_agent.application.subagents import subagent_records
         root, location = project(tmp_path)
         model = StreamingToolModel(replies=[call('subagent', {'agent': 'worker', 'task': 'first'}), AIMessage(content='done')])
         child = ChildModel(replies=[AIMessage(content='child saved'), AIMessage(content='must not run')])

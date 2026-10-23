@@ -68,7 +68,7 @@ async def _case(monkeypatch, summary_result, *, send_margin=None, normal_failure
         message.id = f'history-{index}'
         if isinstance(message, HumanMessage):
             message.additional_kwargs['naiyue_human_input'] = True
-    from naiyue_test_agent.application.session_controls import mark_human_messages
+    from naiyue_test_agent.application.sessions.session_controls import mark_human_messages
     messages = mark_human_messages(messages)
     estimate = count_tokens_approximately([SystemMessage(content='BASE'), *messages])
     output = 20 if send_margin is None else 400 - (estimate + send_margin)

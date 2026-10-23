@@ -185,7 +185,7 @@ async def test_registered_artifact_uses_original_tool_and_survives_checkpoint(mo
     from naiyue_test_agent import application
     from naiyue_test_agent.application.async_persistent import open_async_persistent_application
     from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.session_storage import SessionStorage
     from naiyue_test_agent.model_access import ModelCatalog
     from test_write_tool import RecordingFake
     from test_async_application import StreamingToolModel

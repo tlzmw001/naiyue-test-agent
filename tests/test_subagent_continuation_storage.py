@@ -7,16 +7,16 @@ from contextlib import closing
 
 import pytest
 
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 from langchain_core.messages import AIMessage
 
 from native_application_helpers import async_test
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.storage.session_storage import SessionStorage
 from naiyue_test_agent.checkpoint_settings import CheckpointRetentionSettings
-from naiyue_test_agent.storage_backup import create_backup, validate_backup
-from naiyue_test_agent.storage_backup_schema import check_snapshot
-from naiyue_test_agent.storage_restore import restore_backup
+from naiyue_test_agent.storage.backup import create_backup, validate_backup
+from naiyue_test_agent.storage.backup_schema import check_snapshot
+from naiyue_test_agent.storage.restore import restore_backup
 from naiyue_test_agent.workspaces import prepare_workspace
 from test_async_application import StreamingToolModel
 from test_subagent_execution import ChildModel
@@ -90,7 +90,7 @@ async def test_backup_rejects_invalid_registry_without_loading_payload(monkeypat
 
 @async_test
 async def test_retention_rechecks_registry_pointer_before_delete(monkeypatch, tmp_path):
-    from naiyue_test_agent.application import checkpoint_retention as retention
+    from naiyue_test_agent.storage import checkpoint_retention as retention
     root, child = StreamingToolModel(replies=[]), ChildModel(replies=[AIMessage(content='one'), AIMessage(content='two')])
     models(monkeypatch, root, child)
     config = options(tmp_path)

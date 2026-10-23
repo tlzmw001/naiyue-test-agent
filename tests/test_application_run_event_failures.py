@@ -20,7 +20,7 @@ async def test_stage_failure_keeps_original_exception_and_cleans(monkeypatch, st
     received = []
     app.subscribe_events(run_events_only(received.append))
     # Inject at the session execution owner, where the graph call is made.
-    module = __import__('naiyue_test_agent.application.session_execution', fromlist=['SessionExecution'])
+    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['SessionExecution'])
     function = {'prepare': 'prepare_run_resources', 'execute': 'ainvoke_agent_run',
                 'finalize': 'pending_tool_approval'}[stage]
     failure = RuntimeError('PRIVATE_ORIGINAL_ERROR')
@@ -50,7 +50,7 @@ async def test_cleanup_failure_is_reported_without_masking_primary(monkeypatch, 
     session = await app.acreate_session('A')
     received = []
     app.subscribe_events(run_events_only(received.append))
-    module = __import__('naiyue_test_agent.application.session_execution', fromlist=['SessionExecution'])
+    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['SessionExecution'])
     primary = RuntimeError('PRIVATE_PRIMARY_ERROR')
     secondary = ValueError('PRIVATE_CLEANUP_ERROR')
 
@@ -97,10 +97,10 @@ async def test_accepted_approval_failure_is_cleaned_and_keeps_pending(monkeypatc
         raise failure
 
     if failure_stage == 'grant':
-        from naiyue_test_agent.application import session_approval
+        from naiyue_test_agent.application.sessions import session_approval
         monkeypatch.setattr(session_approval, 'OneUseApprovalGrants', fail)
     else:
-        module = __import__('naiyue_test_agent.application.session_execution', fromlist=['SessionExecution'])
+        module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['SessionExecution'])
         async def fail_async(*args, **kwargs):
             return fail(*args, **kwargs)
         monkeypatch.setattr(module, 'aresume_agent_run_with_resources', fail_async)
@@ -121,7 +121,7 @@ async def test_process_control_is_not_converted_to_completed_or_failed(monkeypat
     session = await app.acreate_session('A')
     received = []
     app.subscribe_events(run_events_only(received.append))
-    module = __import__('naiyue_test_agent.application.session_execution', fromlist=['SessionExecution'])
+    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['SessionExecution'])
 
     async def stop(*_args, **_kwargs):
         raise control
@@ -137,13 +137,13 @@ async def test_process_control_is_not_converted_to_completed_or_failed(monkeypat
 @pytest.mark.parametrize('diagnostic_failure', ['raises', 'invalid_codes'])
 @async_test
 async def test_failure_diagnostic_fault_does_not_replace_primary(monkeypatch, diagnostic_failure, caplog):
-    from naiyue_test_agent.application import run_events
+    from naiyue_test_agent.application.observability import run_events
 
     app = await make_app(monkeypatch)
     session = await app.acreate_session('A')
     received = []
     app.subscribe_events(run_events_only(received.append))
-    module = __import__('naiyue_test_agent.application.session_execution', fromlist=['SessionExecution'])
+    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['SessionExecution'])
     failure = RuntimeError('PRIVATE_ORIGINAL')
 
     def fail(*_args, **_kwargs):
@@ -175,7 +175,7 @@ async def test_terminal_publish_fault_does_not_replace_primary(monkeypatch, capl
 
     app = await make_app(monkeypatch)
     session = await app.acreate_session('A')
-    module = __import__('naiyue_test_agent.application.session_execution', fromlist=['SessionExecution'])
+    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['SessionExecution'])
     failure = RuntimeError('PRIVATE_ORIGINAL')
 
     def fail(*_args, **_kwargs):

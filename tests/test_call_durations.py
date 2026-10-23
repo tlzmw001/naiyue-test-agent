@@ -18,8 +18,8 @@ from naiyue_test_agent.agent_runtime.events import (
 )
 from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
 from naiyue_test_agent.agent_runtime.tool_execution.observation import aobserve_tool_dispatch
-from naiyue_test_agent.application.run_events import RunObservation, ApplicationEventSubscriptions
-from naiyue_test_agent.application.diagnostic_persistence import project_diagnostic_event
+from naiyue_test_agent.application.observability.run_events import RunObservation, ApplicationEventSubscriptions
+from naiyue_test_agent.application.observability.diagnostic_persistence import project_diagnostic_event
 from naiyue_test_agent.web.serialization import wire_event
 from test_model_invocation_observation import callback, metadata, output
 
@@ -197,7 +197,7 @@ async def test_tool_clock_failure_preserves_original_business_error(monkeypatch,
 @async_test
 async def test_root_duration_waits_for_required_save_and_preserves_failures(monkeypatch, tmp_path, model_error, save_error):
     from naiyue_test_agent.contracts import timing
-    from naiyue_test_agent.application.session_storage import SessionPersistenceError
+    from naiyue_test_agent.storage.session_storage import SessionPersistenceError
     from test_persistent_sessions import build
     from test_async_application import StreamingToolModel
     tick, events = [0], []

@@ -8,7 +8,7 @@ from threading import Event
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
-from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
+from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
 from naiyue_test_agent.tools.processes import ProcessOutcome, ProcessCleanupError
 from test_async_application import StreamingToolModel, call
 from test_background_tools import background_app, command, tool_result

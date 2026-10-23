@@ -14,12 +14,12 @@ def test_two_processes_use_saved_context_and_new_run_ids(tmp_path):
 
 
 def test_another_process_is_rejected_while_database_is_owned(tmp_path):
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.session_storage import SessionStorage
     db = tmp_path / 'sessions.sqlite'
     with SessionStorage(db):
         code = '''
 import sys
-from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
 try:
     SessionStorage(sys.argv[1])
 except SessionPersistenceError:

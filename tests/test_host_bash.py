@@ -19,7 +19,7 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application import cli
+from naiyue_test_agent.cli import chat as cli
 from naiyue_test_agent.tools import create_session_read_tool, create_session_bash_tool, BashSettings
 from naiyue_test_agent.tools.permissions import OneUseApprovalGrants
 from naiyue_test_agent.model_access import ModelCatalog

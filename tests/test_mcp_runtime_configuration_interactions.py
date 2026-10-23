@@ -6,8 +6,8 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent import application, config_paths
-from naiyue_test_agent.application.cli_async import AsyncCliApplication
-from naiyue_test_agent.application.cli_mcp import handle_mcp_command
+from naiyue_test_agent.cli.cli_async import AsyncCliApplication
+from naiyue_test_agent.cli.cli_mcp import handle_mcp_command
 from naiyue_test_agent.mcp_client.owner import ConnectionOwner, MCPResourceError
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.settings import AppSettings

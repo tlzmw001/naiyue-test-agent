@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 
 from tests.storage_backup_fixture import artifact, source_store
 
@@ -32,7 +32,7 @@ def test_locator_never_opens_or_creates_target_and_missing_marker_is_empty(tmp_p
 
 def test_cli_lists_valid_backup_when_target_corrupt_and_configuration_unusable(tmp_path, monkeypatch, capsys):
     from naiyue_test_agent.cli import main
-    from naiyue_test_agent.storage_backup import create_backup
+    from naiyue_test_agent.storage.backup import create_backup
     from naiyue_test_agent import config_paths
     with closing(source_store(tmp_path)[0]) as source:
         saved = create_backup(source.connection, source.path, target_schema=CURRENT_SCHEMA)
@@ -89,7 +89,7 @@ def test_cli_empty_workspace_help_and_cancel(tmp_path, monkeypatch, capsys):
     assert caught.value.code == 0
     help_text = capsys.readouterr().out
     assert 'backups' in help_text and 'restore' in help_text
-    from naiyue_test_agent import storage_cli
+    from naiyue_test_agent.cli import storage as storage_cli
     def cancel(*args, **kwargs):
         raise KeyboardInterrupt
     monkeypatch.setattr(storage_cli, 'locate_workspace', cancel)

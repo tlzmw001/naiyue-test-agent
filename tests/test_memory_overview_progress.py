@@ -8,14 +8,14 @@ import pytest
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from naiyue_test_agent.application import memory_overview_store as store
+from naiyue_test_agent.application.memory import memory_overview_store as store
 from test_async_application import StreamingToolModel
 from test_memory_batches import archive, save
 from test_memory_job_runner import fixture, response, until
 
 
 def test_many_batches_and_two_tasks_inherit_used_overview_range_and_omissions(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='secret', content='password = SYNTHETIC_NOT_A_CREDENTIAL'),
             HumanMessage(id='long', content='visible source ' * 20)])
@@ -51,7 +51,7 @@ def test_many_batches_and_two_tasks_inherit_used_overview_range_and_omissions(ar
 
 
 def test_failed_accepted_range_is_a_hole_in_the_next_successful_overview(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='secret', content='password = SYNTHETIC_NOT_A_CREDENTIAL'),
             *[HumanMessage(id=f'm{i}', content=f'work {i}') for i in range(2, 7)]])
@@ -78,7 +78,7 @@ def test_failed_accepted_range_is_a_hole_in_the_next_successful_overview(archive
 
 
 def test_abandoned_partial_source_becomes_real_gap_instead_of_stale_partial(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='long', content='visible source ' * 100)])
         service1, first, _ = fixture(archive, tmp_path, StreamingToolModel(replies=[response()]),
@@ -101,7 +101,7 @@ def test_abandoned_partial_source_becomes_real_gap_instead_of_stale_partial(arch
 
 
 def test_many_omission_notes_remain_bounded_with_explicit_truncation(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [*[HumanMessage(id=f's{i}', content='password = SYNTHETIC_NOT_A_CREDENTIAL')
             for i in range(700)], HumanMessage(id='safe', content='safe final source')])
@@ -119,7 +119,7 @@ def test_many_omission_notes_remain_bounded_with_explicit_truncation(archive, tm
 
 
 def test_only_slot_owner_is_running_and_pending_root_wait_is_starting(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='human', content='visible')])
         model = StreamingToolModel(replies=[response()], entered=asyncio.Event(), release=asyncio.Event())
@@ -151,7 +151,7 @@ def test_only_slot_owner_is_running_and_pending_root_wait_is_starting(archive, t
 
 @pytest.mark.parametrize('denied', ['search', 'read'])
 def test_background_related_reads_honor_each_normalized_request_permission(archive, tmp_path, monkeypatch, denied):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     from naiyue_test_agent.tools.memory import MemoryInput
     from test_memory_lifecycle import proposal
     async def scenario():
@@ -181,7 +181,7 @@ def test_background_related_reads_honor_each_normalized_request_permission(archi
 
 
 def test_rewrite_after_previous_overview_read_cannot_revalidate_old_summary(archive, tmp_path, monkeypatch):
-    from naiyue_test_agent.application import memory_job_runner
+    from naiyue_test_agent.application.memory import memory_job_runner
     async def scenario():
         save(archive, [HumanMessage(id='old', content='old saved work')])
         first_service, first, _ = fixture(archive, tmp_path, StreamingToolModel(replies=[response()]))

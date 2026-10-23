@@ -127,7 +127,7 @@ async def make_approval(monkeypatch, tmp_path):
 
 @async_test
 async def test_prepare_failure_preserves_waiting_turn_for_later_resume(monkeypatch, tmp_path):
-    from naiyue_test_agent.application import session_execution
+    from naiyue_test_agent.application.sessions import session_execution
 
     app, session, events = await make_approval(monkeypatch, tmp_path)
     saved = app._sessions._sessions[session].snapshot_for_run()['pending_turn']

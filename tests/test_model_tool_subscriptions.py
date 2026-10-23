@@ -19,7 +19,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime import build_runtime_agent
 from naiyue_test_agent.agent_runtime.events import RunStartedData, RunFinishedData
-from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions
+from naiyue_test_agent.application.observability.run_events import ApplicationEventSubscriptions
 from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
 from test_application_run_events import ToolModel, make_app
 

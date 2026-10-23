@@ -98,7 +98,7 @@ async def test_switching_to_auto_requires_configuration_but_default_can_use_conf
 @pytest.mark.parametrize('agents', [True, False])
 @async_test
 async def test_project_selection_frozen_within_run_and_refreshed_next_run(monkeypatch, tmp_path, agents):
-    from naiyue_test_agent.application import skills
+    from naiyue_test_agent.application.sessions import skills
     target = tmp_path / ('AGENTS.md' if agents else 'CLAUDE.md')
     (tmp_path / 'CLAUDE.md').write_text('CLAUDE_FALLBACK')
     target.write_text('PROJECT_OLD')

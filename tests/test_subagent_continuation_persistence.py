@@ -5,16 +5,16 @@ import sqlite3
 
 import pytest
 
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 from langchain_core.messages import AIMessage
 
 from native_application_helpers import async_test
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.storage.session_storage import SessionStorage
 from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.storage_backup import list_backups, validate_backup
+from naiyue_test_agent.storage.backup import list_backups, validate_backup
 from tests.storage_backup_fixture import closed_store
 from test_async_application import StreamingToolModel, call
 from test_subagent_continuation import feedback
@@ -80,7 +80,7 @@ def test_schema13_migration_backs_up_once_and_leaves_legacy_instances_unregister
 
 
 def test_schema14_migration_failure_rolls_back_and_retains_usable_backup(monkeypatch, tmp_path):
-    from naiyue_test_agent.application import subagent_storage
+    from naiyue_test_agent.application.subagents import subagent_storage
     database, _, _ = closed_store(tmp_path, version=13)
     error = RuntimeError('PRIVATE_SCHEMA_FAILURE')
     def fail(connection):

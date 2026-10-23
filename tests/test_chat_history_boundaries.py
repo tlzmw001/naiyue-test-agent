@@ -7,11 +7,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 from langchain_core.messages import AIMessage, HumanMessage
 
 from native_application_helpers import async_test
-from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
 from test_chat_history import rows
 from test_persistent_sessions import build
 
@@ -46,7 +46,7 @@ class SavedGraph:
 
 @async_test
 async def test_paged_collection_uses_only_current_ancestry_and_stops_at_cursor(tmp_path):
-    from naiyue_test_agent.application.chat_history import collect_chat_updates
+    from naiyue_test_agent.application.conversation.chat_history import collect_chat_updates
     chain = [snapshot(str(i), str(i-1) if i else None, [HumanMessage(id=f'h{i}', content=f'v{i}')]) for i in range(131)]
     sibling = snapshot('unrelated', '99', [AIMessage(id='other-branch', content='must not archive')])
     graph = SavedGraph(chain[-1], [*reversed(chain[111:]), sibling, *reversed(chain[:111])])
@@ -66,7 +66,7 @@ async def test_paged_collection_uses_only_current_ancestry_and_stops_at_cursor(t
 
 @async_test
 async def test_same_checkpoint_collects_new_pending_result_without_history_read(tmp_path):
-    from naiyue_test_agent.application.chat_history import collect_chat_updates
+    from naiyue_test_agent.application.conversation.chat_history import collect_chat_updates
     original = snapshot('cp', None, [HumanMessage(id='h', content='request')])
     graph = SavedGraph(original, [original])
     with SessionStorage(tmp_path / 'state.sqlite') as storage:
@@ -81,7 +81,7 @@ async def test_same_checkpoint_collects_new_pending_result_without_history_read(
 @pytest.mark.parametrize('fault', ['missing_parent', 'missing_id', 'bad_body', 'duplicate_id', 'wrong_thread'])
 @async_test
 async def test_unreadable_or_ambiguous_source_never_advances_archive(tmp_path, fault):
-    from naiyue_test_agent.application.chat_history import collect_chat_updates
+    from naiyue_test_agent.application.conversation.chat_history import collect_chat_updates
     messages = [HumanMessage(id='h', content='request')]
     parent = 'absent' if fault == 'missing_parent' else None
     if fault == 'missing_id': messages[0].id = None
@@ -130,7 +130,7 @@ def test_chat_migration_is_atomic_on_ddl_failure(monkeypatch, tmp_path):
         patch.setattr(sqlite3, 'connect', denied)
         with pytest.raises(SessionPersistenceError, match='migration_failed') as caught:
             SessionStorage(path)
-    from naiyue_test_agent.storage_backup import validate_backup
+    from naiyue_test_agent.storage.backup import validate_backup
     assert (caught.value.source_schema, caught.value.current_schema, caught.value.target_schema) == (6, 6, CURRENT_SCHEMA)
     assert validate_backup(path, caught.value.backup_id)['source_schema'] == 6
     with sqlite3.connect(path) as connection:
@@ -153,7 +153,7 @@ async def test_delete_clears_archive_and_progress_only_for_selected_session(monk
 
 @async_test
 async def test_actual_saver_backfill_pages_after_saved_archive_is_absent(monkeypatch, tmp_path):
-    from naiyue_test_agent.application.chat_history import collect_chat_updates
+    from naiyue_test_agent.application.conversation.chat_history import collect_chat_updates
     from test_application_run_events import ToolModel
     from naiyue_test_agent import application
     from naiyue_test_agent.settings import AppSettings

@@ -285,7 +285,7 @@ async def test_ambiguous_overlapping_contexts_do_not_guess_an_identity():
 
 @async_test
 async def test_missing_model_callback_marks_run_capture_gap_instead_of_zero():
-    from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions, RunObservation
+    from naiyue_test_agent.application.observability.run_events import ApplicationEventSubscriptions, RunObservation
     subscriptions, events = ApplicationEventSubscriptions(), []
     subscriptions.subscribe(events.append)
     observation = RunObservation(subscriptions.publisher('s', 'r'), 'message')

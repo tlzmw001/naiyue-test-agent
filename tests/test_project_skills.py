@@ -5,9 +5,7 @@ from xml.etree import ElementTree
 
 import pytest
 
-from naiyue_test_agent.application.skills import (
-    discover_project_skills, format_skill_catalog, prepare_run_resources,
-)
+from naiyue_test_agent.application.sessions.skills import discover_project_skills, format_skill_catalog, prepare_run_resources
 from skill_helpers import write_skill
 
 

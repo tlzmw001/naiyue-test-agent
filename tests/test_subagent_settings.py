@@ -130,7 +130,7 @@ async def test_configured_roles_are_a_startup_snapshot_and_custom_tools_are_refe
 @async_test
 async def test_invalid_startup_dependencies_raise_and_release_owned_resources(monkeypatch, tmp_path, persistent, failure):
     from naiyue_test_agent.application.async_application import build_async_local_application
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.session_storage import SessionStorage
     closed, catalogs = [], []
     def catalog(_):
         instance = ModelCatalog('A', {'A': StreamingToolModel(replies=[])})
@@ -177,7 +177,7 @@ async def test_persistent_app_reregisters_current_config_without_persisting_defi
 
 @pytest.mark.parametrize('invalid', [False, True])
 def test_cli_main_consumes_configured_roles_and_reports_registration_failures(monkeypatch, tmp_path, capsys, invalid):
-    from naiyue_test_agent.application import cli
+    from naiyue_test_agent.cli import chat as cli
     from naiyue_test_agent.tools import settings as module
     root = tmp_path / 'settings'
     root.mkdir()

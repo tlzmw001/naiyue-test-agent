@@ -35,7 +35,7 @@ async def wait_status(manager, identity, predicate):
 
 
 def test_registered_process_keeps_running_and_stop_confirms_cleanup(tmp_path):
-    from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
+    from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
     async def scenario():
         manager = BackgroundProcessManager()
         try:
@@ -58,7 +58,7 @@ def test_registered_process_keeps_running_and_stop_confirms_cleanup(tmp_path):
 
 
 def test_quota_stops_only_its_task_and_keeps_bounded_tail(tmp_path):
-    from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
+    from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
     async def scenario():
         manager = BackgroundProcessManager()
         try:
@@ -79,7 +79,7 @@ def test_quota_stops_only_its_task_and_keeps_bounded_tail(tmp_path):
 
 def test_scope_dedup_and_changed_identity_never_spawn_twice(tmp_path):
     from langchain_core.tools import ToolException
-    from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
+    from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
     async def scenario():
         manager = BackgroundProcessManager()
         try:
@@ -103,7 +103,7 @@ def test_scope_dedup_and_changed_identity_never_spawn_twice(tmp_path):
 
 
 def test_frozen_request_and_empty_worker_context(monkeypatch, tmp_path):
-    from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
+    from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
     from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope, current_run_scope
     from naiyue_test_agent.tools.processes import ProcessOutcome
     async def scenario():
@@ -138,7 +138,7 @@ def test_frozen_request_and_empty_worker_context(monkeypatch, tmp_path):
 
 
 def test_configured_deadline_and_missing_executable_have_distinct_results(tmp_path):
-    from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
+    from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
     async def scenario():
         manager = BackgroundProcessManager()
         try:
@@ -179,7 +179,7 @@ def test_background_defaults_and_strict_model_flag():
 
 def test_list_pagination_and_pre_handoff_stop_are_bounded(tmp_path):
     from langchain_core.tools import ToolException
-    from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
+    from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
     from naiyue_test_agent.tools.processes import ProcessOutcome
     async def scenario():
         manager = BackgroundProcessManager()

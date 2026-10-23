@@ -7,11 +7,11 @@ import sqlite3
 
 import pytest
 
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 
 from naiyue_test_agent.model_access import load_model_catalog
-from naiyue_test_agent.application.session_service import SessionService
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.application.sessions.session_service import SessionService
+from naiyue_test_agent.storage.session_storage import SessionStorage
 from test_model_access import config_for_all_kinds, write_config
 from test_async_application import StreamingToolModel
 from test_web_api import web_client

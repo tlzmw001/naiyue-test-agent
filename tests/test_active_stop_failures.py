@@ -11,7 +11,7 @@ import pytest
 from langchain.tools import tool
 from langchain_core.messages import AIMessage, ToolMessage
 
-from naiyue_test_agent.application.session_storage import SessionPersistenceError
+from naiyue_test_agent.storage.session_storage import SessionPersistenceError
 from test_async_application import make_app, StreamingToolModel, call
 from test_async_persistent import factory
 

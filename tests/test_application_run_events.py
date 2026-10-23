@@ -252,7 +252,7 @@ async def test_observer_failures_do_not_change_success_or_primary_error(monkeypa
     session = await app.acreate_session('A')
     assert (await app.arun(session, [('user', 'run')]))['messages'][-1].content == 'PRIVATE_REPLY'
     assert received[-1].data.status == 'completed'
-    module = __import__('naiyue_test_agent.application.session_execution', fromlist=['SessionExecution'])
+    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['SessionExecution'])
     failure = RuntimeError('PRIVATE_MODEL_FAILURE')
 
     async def fail(*_args, **_kwargs):

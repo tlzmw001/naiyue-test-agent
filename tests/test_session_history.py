@@ -83,7 +83,7 @@ async def approval_snapshot(monkeypatch, tmp_path):
 
 @async_test
 async def test_real_approval_is_candidate_only_and_no_tool_was_run(monkeypatch, tmp_path):
-    from naiyue_test_agent.application.session_recovery import classify_recovery
+    from naiyue_test_agent.application.sessions.session_recovery import classify_recovery
     row, snapshot = await approval_snapshot(monkeypatch, tmp_path)
     result = classify_recovery(row, snapshot)
     assert result == {'kind': 'pending_approval', 'reason': 'saved_pre_tool_approval',
@@ -94,7 +94,7 @@ async def test_real_approval_is_candidate_only_and_no_tool_was_run(monkeypatch, 
 @pytest.mark.parametrize('change', ['node', 'namespace', 'batch', 'args', 'result', 'error', 'marker', 'tool_result', 'extra_task'])
 @async_test
 async def test_approval_classification_requires_exact_saved_shape(monkeypatch, tmp_path, change):
-    from naiyue_test_agent.application.session_recovery import classify_recovery
+    from naiyue_test_agent.application.sessions.session_recovery import classify_recovery
     row, original = await approval_snapshot(monkeypatch, tmp_path)
     snapshot = original._replace(values=deepcopy(original.values), config=deepcopy(original.config))
     task = snapshot.tasks[0]
@@ -199,7 +199,7 @@ async def test_native_history_matches_reopened_and_does_not_install_or_call_mode
 @pytest.mark.parametrize('corruption', ['values', 'messages', 'message_id', 'call_id', 'orphan', 'duplicate_result'])
 @async_test
 async def test_malformed_history_has_explicit_unavailable_reason(monkeypatch, tmp_path, corruption):
-    from naiyue_test_agent.application.session_recovery import classify_recovery
+    from naiyue_test_agent.application.sessions.session_recovery import classify_recovery
     row, original = await approval_snapshot(monkeypatch, tmp_path)
     snapshot = original._replace(values=deepcopy(original.values))
     messages = snapshot.values['messages']

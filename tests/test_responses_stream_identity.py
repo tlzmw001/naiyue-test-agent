@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.stream_projection import StreamingMessageProjection
+from naiyue_test_agent.application.conversation.stream_projection import StreamingMessageProjection
 from test_async_application import StreamingToolModel
 from native_application_helpers import async_test
 

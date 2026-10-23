@@ -115,7 +115,7 @@ async def test_required_save_keeps_busy_after_control_window_is_closed(monkeypat
 @pytest.mark.parametrize('fails', [False, True])
 @async_test
 async def test_execution_uses_owned_child_lifecycle(monkeypatch, fails):
-    from naiyue_test_agent.application import session_execution
+    from naiyue_test_agent.application.sessions import session_execution
     app = await make_app(monkeypatch)
     sid = await app.acreate_session('A')
     service, calls = app._sessions, []

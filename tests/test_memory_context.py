@@ -7,12 +7,12 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.messages.utils import count_tokens_approximately
 import pytest
 
-from naiyue_test_agent.application.memory_queries import MemoryReadError
+from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
 from test_memory_readonly import memory, seed
 
 
 def prepare(memory, messages=(), **kwargs):
-    from naiyue_test_agent.application.memory_context import prepare_memory_parts
+    from naiyue_test_agent.application.memory.memory_context import prepare_memory_parts
     _, access, project_id, _ = memory
     access.settings = access.settings.model_copy(update={
         'injection_tokens': 2000, 'preference_limit': 3, 'related_limit': 8, 'directory_limit': 8,

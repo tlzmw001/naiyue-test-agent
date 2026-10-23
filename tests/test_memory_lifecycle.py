@@ -7,8 +7,8 @@ from uuid import uuid4
 import pytest
 from langchain_core.messages import HumanMessage, ToolMessage, message_to_dict
 
-from naiyue_test_agent.application.chat_history import ChatUpdate
-from naiyue_test_agent.application.memory_queries import MemoryReadError
+from naiyue_test_agent.application.conversation.chat_history import ChatUpdate
+from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
 from naiyue_test_agent.tools.memory import MemoryInput
 from test_memory_readonly import memory as storage_memory
 

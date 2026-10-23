@@ -8,7 +8,7 @@ import pytest
 from naiyue_test_agent.agent_runtime.events import (
     AgentEventSource, ModelInvocationStartedData, ModelInvocationFinishedData, RunEventPublisher,
 )
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.storage.session_storage import SessionStorage
 from naiyue_test_agent.application.errors import SessionPersistenceError
 from native_application_helpers import async_test
 from test_model_usage_storage import seed
@@ -93,7 +93,7 @@ def test_empty_missing_and_reopened_unconfirmed_are_distinct(tmp_path):
 
 def test_one_read_snapshot_survives_a_concurrent_commit(monkeypatch, tmp_path):
     import sqlite3
-    from naiyue_test_agent.application import model_usage_storage
+    from naiyue_test_agent.application.observability import model_usage_storage
     path = tmp_path / 'state.sqlite'
     with SessionStorage(path) as store:
         store.connection.execute('PRAGMA journal_mode=WAL')

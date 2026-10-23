@@ -22,10 +22,10 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.graph import END
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application import checkpoint_retention
+from naiyue_test_agent.storage import checkpoint_retention
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.application.session_persistence import SessionPersistence
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.application.sessions.session_persistence import SessionPersistence
+from naiyue_test_agent.storage.session_storage import SessionStorage
 from naiyue_test_agent.checkpoint_settings import CheckpointRetentionSettings
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.settings import AppSettings

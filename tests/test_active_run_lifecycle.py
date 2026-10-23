@@ -7,13 +7,13 @@ import pytest
 
 from native_application_helpers import async_test
 from naiyue_test_agent.application.errors import SessionBusyError
-from naiyue_test_agent.application.session_state import SessionState
+from naiyue_test_agent.application.sessions.session_state import SessionState
 from test_agent_session import make_service
 from test_application_run_events import make_app
 
 
 def test_state_contains_only_session_facts_and_run_has_independent_defaults():
-    from naiyue_test_agent.application.session_state import ActiveRun
+    from naiyue_test_agent.application.sessions.session_state import ActiveRun
     assert {field.name for field in fields(SessionState)} == {
         'thread_id', 'model_id', 'project_id', 'execution_root', 'active_tool_names', 'permission_mode',
         'thinking_level', 'session_allow', 'pending_tool_approval', 'pending_turn',

@@ -8,10 +8,10 @@ from langchain_core.outputs import ChatGenerationChunk
 
 from naiyue_test_agent import application
 from naiyue_test_agent.application.async_application import build_async_local_application
-from naiyue_test_agent.application.async_event_stream import AsyncEventStream, EventStreamOverflow
-from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions
-from naiyue_test_agent.application.stream_projection import StreamingMessageProjection
-from naiyue_test_agent.application.session_service import SessionBusyError
+from naiyue_test_agent.application.observability.async_event_stream import AsyncEventStream, EventStreamOverflow
+from naiyue_test_agent.application.observability.run_events import ApplicationEventSubscriptions
+from naiyue_test_agent.application.conversation.stream_projection import StreamingMessageProjection
+from naiyue_test_agent.application.sessions.session_service import SessionBusyError
 from naiyue_test_agent.agent_runtime.events import RunStartedData, RunFinishedData
 from naiyue_test_agent.model_access import ModelCatalog
 from test_async_application import StreamingToolModel, make_app

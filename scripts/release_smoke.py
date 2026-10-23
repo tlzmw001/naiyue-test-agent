@@ -172,7 +172,7 @@ def main():
     subagents = asyncio.run(subagent_scenario(root, type(model)))
     from release_memory_smoke import memory_scenario
     memory = asyncio.run(memory_scenario(root, type(model)))
-    from naiyue_test_agent.application import cli
+    from naiyue_test_agent.cli import chat as cli
     output = io.StringIO()
     with patch('builtins.input', return_value=':quit'), redirect_stdout(output):
         assert cli.main(['--workspace', str(workspace), '--no-session', '--config', 'unused']) == 0

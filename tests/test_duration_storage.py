@@ -6,14 +6,14 @@ from dataclasses import replace
 
 import pytest
 
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 
 from naiyue_test_agent.agent_runtime.events import (
     AgentEventSource, RunEventPublisher, ModelInvocationStartedData, ModelInvocationFinishedData,
     RunStartedData, RunFinishedData,
 )
-from naiyue_test_agent.application.session_storage import SessionStorage
-from naiyue_test_agent.application.diagnostic_persistence import project_diagnostic_event
+from naiyue_test_agent.storage.session_storage import SessionStorage
+from naiyue_test_agent.application.observability.diagnostic_persistence import project_diagnostic_event
 from test_model_usage_storage import seed, facts
 from test_diagnostic_storage import limits
 from tests.legacy_store_schema import remove_memory_schema

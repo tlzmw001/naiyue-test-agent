@@ -9,10 +9,10 @@ import threading
 import pytest
 from pydantic import ValidationError
 
-from naiyue_test_agent.application import memory_lexical, memory_schema, memory_lifecycle_schema
-from naiyue_test_agent.application.memory_access import MemoryAccess
-from naiyue_test_agent.application.memory_personal import PersonalMemory, APPLICATION_ID
-from naiyue_test_agent.application.memory_queries import MemoryReadError
+from naiyue_test_agent.application.memory import memory_lexical, memory_schema, memory_lifecycle_schema
+from naiyue_test_agent.application.memory.memory_access import MemoryAccess
+from naiyue_test_agent.application.memory.memory_personal import PersonalMemory, APPLICATION_ID
+from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.tools.memory import MemoryInput
 from test_memory_lifecycle import memory, storage_memory, source, proposal, write
@@ -58,7 +58,7 @@ def test_upgrade_failure_rolls_back_original_and_preserves_backup(tmp_path,monke
 
 
 def test_backup_failure_prevents_upgrade(tmp_path,monkeypatch):
-    from naiyue_test_agent.application import memory_personal_upgrade
+    from naiyue_test_agent.application.memory import memory_personal_upgrade
     path=tmp_path/'memory.sqlite';format1(path)
     def fail(*args):raise OSError('private snapshot error')
     monkeypatch.setattr(memory_personal_upgrade,'backup_format1',fail)

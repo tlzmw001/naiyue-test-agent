@@ -9,20 +9,20 @@ from types import SimpleNamespace
 
 import pytest
 
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 
 from naiyue_test_agent import application
 from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.storage.session_storage import SessionStorage
 from naiyue_test_agent.model_access import ModelConfigError
 from naiyue_test_agent.settings import AppSettings
-from naiyue_test_agent.storage_backup import list_backups
+from naiyue_test_agent.storage.backup import list_backups
 from tests.storage_backup_fixture import closed_store
 
 
 def test_async_backup_failure_never_reaches_catalog_mcp_or_saver(tmp_path, monkeypatch):
-    from naiyue_test_agent.application import storage_migrations
+    from naiyue_test_agent.storage import migrations as storage_migrations
     from naiyue_test_agent.application import async_persistent
     from naiyue_test_agent.mcp_client import resources
     database, _, _ = closed_store(tmp_path, version=12)
@@ -66,7 +66,8 @@ def test_model_failure_after_migration_stays_model_failure_and_does_not_restore(
 
 
 def test_chat_reports_structured_migration_failure_without_private_body(tmp_path, monkeypatch, capsys, caplog):
-    from naiyue_test_agent.application import cli, chat_queries
+    from naiyue_test_agent.cli import chat as cli
+    from naiyue_test_agent.application.conversation import chat_queries
     database, root, _ = closed_store(tmp_path, version=6)
     monkeypatch.setattr(cli, 'load_settings', lambda: AppSettings())
     def failure(*args, **kwargs):

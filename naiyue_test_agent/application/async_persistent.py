@@ -11,11 +11,11 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking, await_settled, acquire_blocking
 from .async_application import AsyncApplication
-from .session_persistence import SessionPersistence
-from .session_storage import SessionStorage
-from .model_usage_persistence import ModelUsagePersistence
-from .diagnostic_persistence import DiagnosticPersistence
-from .memory_access import MemoryAccess
+from .sessions.session_persistence import SessionPersistence
+from naiyue_test_agent.storage.session_storage import SessionStorage
+from .observability.model_usage_persistence import ModelUsagePersistence
+from .observability.diagnostic_persistence import DiagnosticPersistence
+from .memory.memory_access import MemoryAccess
 from naiyue_test_agent.config_paths import get_data_dir
 
 
@@ -49,12 +49,12 @@ class AsyncPersistentApplication(AsyncApplication):
 
     async def aget_regeneration_action(self, session_id, request_id):
         with self._owned_operation():
-            from .reply_storage import action
+            from .conversation.reply_storage import action
             return await run_blocking(action, self._storage, session_id, request_id)
 
     async def aregenerate_last_reply(self, session_id, *, request_id, expected_reply_id, expected_conversation_revision):
         with self._owned_operation():
-            from .session_regeneration import regenerate
+            from .conversation.session_regeneration import regenerate
             return await regenerate(self, session_id, request_id=request_id, expected_reply_id=expected_reply_id,
                                     expected_conversation_revision=expected_conversation_revision)
 
@@ -124,7 +124,7 @@ class AsyncPersistentApplication(AsyncApplication):
 
     async def aget_chat_subagents(self, session_id):
         with self._owned_operation():
-            from .subagent_queries import annotate
+            from .subagents.subagent_queries import annotate
             records = await run_blocking(self._storage.chat_subagents, session_id)
             owned = await run_blocking(self._storage.get_subagent_references, session_id)
             active = self._sessions.require(session_id).describe_session()['run_id'] if self.has_session(session_id) else None
@@ -216,8 +216,8 @@ async def open_async_persistent_application(config_path, *, database_path, tools
                         DiagnosticPersistence(storage, sessions.subscribe_events, settings.diagnostics) as diagnostics):
                 jobs = None
                 if memory is not None:
-                    from .memory_jobs import MemoryJobs
-                    from .run_events import _log_event
+                    from .memory.memory_jobs import MemoryJobs
+                    from .observability.run_events import _log_event
                     from ..agent_runtime.events import RunEventPublisher
                     try:
                         jobs=MemoryJobs(memory,catalog,permission_settings=settings.permissions,flush_usage=usage.aflush_run,

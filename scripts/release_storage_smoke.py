@@ -29,11 +29,11 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
     from langchain_core.messages import AIMessage, ToolMessage
     from naiyue_test_agent import application
     from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-    from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+    from naiyue_test_agent.storage.session_storage import SessionStorage, SessionPersistenceError
     from naiyue_test_agent.agent_runtime.tool_execution.permissions import AutoPermissionReviewer
     from naiyue_test_agent.model_access import ModelCatalog
     from naiyue_test_agent.settings import AppSettings
-    from naiyue_test_agent.storage_backup import list_backups
+    from naiyue_test_agent.storage.backup import list_backups
     from naiyue_test_agent.tools import (SubAgentSpec, create_subagent_tool,
         create_session_read_tool, create_session_write_tool)
     from naiyue_test_agent.workspaces import prepare_workspace
@@ -142,7 +142,7 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
         with patch.object(AutoPermissionReviewer, 'areview', side_effect=AssertionError('Unexpected Auto call')) as auto:
             async with opened(parent, child) as app:
                 current = _facts(database)
-                from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+                from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
                 assert current.pop('naiyue_store_info') == [{'version': CURRENT_SCHEMA}]
                 assert app._storage.connection.execute('SELECT COUNT(*) FROM naiyue_subagent_instances').fetchone()[0] == 0
                 expected = {key: value for key, value in before.items() if key != 'naiyue_store_info'}

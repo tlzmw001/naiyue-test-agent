@@ -19,9 +19,9 @@ from langchain_core.tools import ToolException
 import pytest
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application import cli
+from naiyue_test_agent.cli import chat as cli
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.application.cli_display import CliEventDisplay
+from naiyue_test_agent.cli.cli_display import CliEventDisplay
 from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.tools.processes import ProcessCleanupError
 from test_application_run_events import ToolModel

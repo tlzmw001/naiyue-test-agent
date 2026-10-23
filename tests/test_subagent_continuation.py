@@ -207,7 +207,7 @@ async def test_changed_role_rejects_without_consuming_old_ready_instance(monkeyp
 @pytest.mark.parametrize('scope', ['root', 'child'])
 @async_test
 async def test_stop_after_claim_before_input_restores_previous_ready_record(monkeypatch, scope):
-    from naiyue_test_agent.application import subagent_records
+    from naiyue_test_agent.application.subagents import subagent_records
     child = ChildModel(replies=[AIMessage(content='first')])
     app, root = await delegated_app(monkeypatch, child)
     sid = await app.acreate_session('A')

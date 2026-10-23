@@ -2,7 +2,7 @@
 
 from uuid import uuid4
 
-from naiyue_test_agent.application.stream_projection import StreamingMessageProjection
+from naiyue_test_agent.application.conversation.stream_projection import StreamingMessageProjection
 from naiyue_test_agent.model_access.messages import is_image_block
 from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.permission_rules import PermissionRule, PermissionSettings

@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.storage.session_storage import SessionStorage
 
 
 @pytest.mark.parametrize('point', ['start', 'end'])

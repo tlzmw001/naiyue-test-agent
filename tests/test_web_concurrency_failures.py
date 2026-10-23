@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 from native_application_helpers import async_test
-from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions
+from naiyue_test_agent.application.observability.run_events import ApplicationEventSubscriptions
 from naiyue_test_agent.contracts.session_events import RunStartedData, RunFinishedData
 from naiyue_test_agent.web.errors import WebError
 from naiyue_test_agent.web.run_delivery import RunDelivery

@@ -9,8 +9,8 @@ import pytest
 from native_application_helpers import async_test
 from http_observation_helpers import sdk_catalog, sdk_response
 from naiyue_test_agent import application
-from naiyue_test_agent.application.cli_async import AsyncCliApplication
-from naiyue_test_agent.application.cli_observation import handle_observation_command
+from naiyue_test_agent.cli.cli_async import AsyncCliApplication
+from naiyue_test_agent.cli.cli_observation import handle_observation_command
 from test_web_api import web_client, request
 
 

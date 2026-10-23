@@ -13,7 +13,7 @@ from test_persistent_sessions import build
 from naiyue_test_agent import application
 from naiyue_test_agent.checkpoint_settings import CheckpointRetentionSettings
 from naiyue_test_agent.settings import AppSettings, load_settings
-from naiyue_test_agent.application.reply_storage import latest
+from naiyue_test_agent.application.conversation.reply_storage import latest
 
 
 def configure(monkeypatch, **values):
@@ -110,7 +110,7 @@ async def test_last_task_source_survives_repeated_regeneration_and_reopen(monkey
 
 @async_test
 async def test_delete_failure_rolls_back_maintenance_preserves_success(monkeypatch, tmp_path, caplog):
-    from naiyue_test_agent.application import checkpoint_retention
+    from naiyue_test_agent.storage import checkpoint_retention
     configure(monkeypatch, trigger_checkpoints=2)
     write_snapshots = []
     original = checkpoint_retention._commit
@@ -161,7 +161,7 @@ async def test_other_session_checkpoints_untouched(monkeypatch, tmp_path):
 
 @async_test
 async def test_optional_prune_finishes_before_release_and_next_run_works(monkeypatch, tmp_path):
-    from naiyue_test_agent.application import checkpoint_retention
+    from naiyue_test_agent.storage import checkpoint_retention
     configure(monkeypatch, trigger_checkpoints=2)
     entered, release = asyncio.Event(), asyncio.Event()
     original = checkpoint_retention.prune_after_finish

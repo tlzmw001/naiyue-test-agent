@@ -168,7 +168,7 @@ def test_configured_cap_terminates_real_shell_and_settles_output(tmp_path, timeo
 
 def test_cli_loads_shell_policy_into_registered_tools(monkeypatch, tmp_path):
     from naiyue_test_agent import application
-    from naiyue_test_agent.application import cli
+    from naiyue_test_agent.cli import chat as cli
     from naiyue_test_agent import settings as module
     from naiyue_test_agent.model_access import ModelCatalog
     from test_async_application import StreamingToolModel

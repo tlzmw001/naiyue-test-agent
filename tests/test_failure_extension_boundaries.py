@@ -1,5 +1,7 @@
 """Matched unknown descriptions and legacy entry points must stay meaningful."""
 
+from naiyue_test_agent.application.sessions import session_execution
+
 from runtime_context_helpers import typed_scope
 from native_application_helpers import async_test
 
@@ -34,7 +36,7 @@ async def test_application_unknown_match_is_not_treated_as_no_match(monkeypatch)
         raise error
 
     app.configure_error_classifiers(application=[describe])
-    monkeypatch.setattr(application.session_execution, 'ainvoke_agent_run', fail)
+    monkeypatch.setattr(session_execution, 'ainvoke_agent_run', fail)
     with pytest.raises(ReportStorageError) as caught:
         await app.arun(await app.acreate_session('A'), [('user', 'probe')])
     assert caught.value is error
@@ -203,7 +205,7 @@ def test_contextual_classifier_receives_actual_boundary():
 
 
 def test_contextual_model_and_application_classifiers(monkeypatch):
-    from naiyue_test_agent.application.failure_policy import ApplicationErrorPolicy
+    from naiyue_test_agent.application.observability.failure_policy import ApplicationErrorPolicy
     calls = []
 
     def describe(error, source):
@@ -220,7 +222,7 @@ def test_contextual_model_and_application_classifiers(monkeypatch):
 
 
 def test_explicit_source_classifier_keeps_extra_captured_default():
-    from naiyue_test_agent.application.failure_policy import ApplicationErrorPolicy
+    from naiyue_test_agent.application.observability.failure_policy import ApplicationErrorPolicy
 
     def describe(error, source, reason='captured_reason'):
         return FailureDescription('application', 'custom_error', reason, type(error).__name__)

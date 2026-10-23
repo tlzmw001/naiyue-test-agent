@@ -9,11 +9,11 @@ import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages.utils import count_tokens_approximately
 
-from naiyue_test_agent.application import memory_overview_store
-from naiyue_test_agent.application.memory_access import MemoryAccess
-from naiyue_test_agent.application.memory_jobs import MemoryJob, MemoryJobs
-from naiyue_test_agent.application.memory_job_runner import _prepare, _related
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.application.memory import memory_overview_store
+from naiyue_test_agent.application.memory.memory_access import MemoryAccess
+from naiyue_test_agent.application.memory.memory_jobs import MemoryJob, MemoryJobs
+from naiyue_test_agent.application.memory.memory_job_runner import _prepare, _related
+from naiyue_test_agent.storage.session_storage import SessionStorage
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools.memory import MemoryInput
@@ -90,7 +90,7 @@ def test_latest_candidate_requires_all_available_current_thread_sources(inputs, 
     if failure == 'changed':
         seed_sources(storage, 'probe', [dict(id=old_id, role='assistant', text='此旧来源已经更正。')], at=at + 20)
     elif failure == 'other_thread':
-        from naiyue_test_agent.application.chat_history import ChatUpdate
+        from naiyue_test_agent.application.conversation.chat_history import ChatUpdate
         saved = storage._read('SELECT * FROM naiyue_chat_messages WHERE message_id=?', (old_id,))[0]
         message = {key: saved[key] for key in ('message_id', 'body_json', 'body_hash', 'kind',
             'source_checkpoint_id', 'message_type', 'parent_message_id', 'reply_id', 'occurred_at')}

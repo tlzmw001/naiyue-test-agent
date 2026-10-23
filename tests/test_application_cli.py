@@ -10,8 +10,8 @@ from langchain_core.messages import AIMessage
 from pydantic import Field
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application import cli
-from naiyue_test_agent.application.project_instructions import BASE_SYSTEM_PROMPT
+from naiyue_test_agent.cli import chat as cli
+from naiyue_test_agent.application.sessions.project_instructions import BASE_SYSTEM_PROMPT
 from naiyue_test_agent.model_access import ModelCatalog, ModelConfigError
 
 
