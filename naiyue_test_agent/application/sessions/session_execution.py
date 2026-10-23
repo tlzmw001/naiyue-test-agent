@@ -39,13 +39,14 @@ class RunLifecycle:
 
     def __init__(self, runtime: SessionRuntime, *, controls: ControlQueue, approvals: ApprovalBook,
                  subagents: SubagentRegistry, tool_registry, persistence, registered_subagents,
-                 invoke_subagent, process_tasks, archive_root, mcp_resources, resolve_model, active_tools):
+                 invoke_subagent, process_tasks, archive_root, mcp_resources, resolve_model, active_tools, memory=None):
         self._runtime, self.session_id = runtime, runtime.session_id
         self._controls, self._approvals, self._subagents = controls, approvals, subagents
         self._tool_registry, self._persistence = tool_registry, persistence
         self._registered_subagents, self._invoke_subagent = registered_subagents, invoke_subagent
         self._process_tasks, self._archive_root, self._mcp_resources = process_tasks, archive_root, mcp_resources
         self._resolve_model, self._active_tools = resolve_model, active_tools
+        self._memory = memory
         self._memory_prompt_parts = []
 
     async def _prepare_resources(self, run, *, include_background=False, messages=()):
@@ -112,7 +113,7 @@ class RunLifecycle:
                 with observation.bind(identity=RunIdentity(session_id, run_id, project_id=run.project_id, execution_root=run.execution_root), archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self._subagents.alist_subagents, process_tasks=self._process_tasks,
                                       background_notices=run.background_notices,
                                       history_query=getattr(self._persistence, 'aquery_history', None) if run.project_id is not None else None,
-                                      memory_query=getattr(self._persistence, 'aquery_memory', None) if run.project_id is not None else None,
+                                      memory_query=self._memory.query if self._memory is not None and run.project_id is not None else None,
                                       task_queries=getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks):
                     result = await ainvoke_agent_run_with_resources(agent, messages,
                         session_id=session_id, thread_id=thread_id, run_id=run_id, workspace_root=workspace_root,
@@ -121,7 +122,7 @@ class RunLifecycle:
                 with observation.bind(identity=RunIdentity(session_id, run_id, project_id=run.project_id, execution_root=run.execution_root), archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self._subagents.alist_subagents, process_tasks=self._process_tasks,
                                       background_notices=run.background_notices,
                                       history_query=getattr(self._persistence, 'aquery_history', None) if run.project_id is not None else None,
-                                      memory_query=getattr(self._persistence, 'aquery_memory', None) if run.project_id is not None else None,
+                                      memory_query=self._memory.query if self._memory is not None and run.project_id is not None else None,
                                       task_queries=getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks):
                     result = await ainvoke_agent_run(agent, messages, session_id=session_id,
                         thread_id=thread_id, run_id=run_id, max_concurrency=max_concurrency, **options)
@@ -201,7 +202,7 @@ class RunLifecycle:
             observation.stage = 'execute'
             with observation.bind(identity=RunIdentity(session_id, run_id, project_id=run.project_id, execution_root=run.execution_root), archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self._subagents.alist_subagents, process_tasks=self._process_tasks,
                                   history_query=getattr(self._persistence, 'aquery_history', None) if run.project_id is not None else None,
-                                  memory_query=getattr(self._persistence, 'aquery_memory', None) if run.project_id is not None else None,
+                                  memory_query=self._memory.query if self._memory is not None and run.project_id is not None else None,
                                       task_queries=getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks):
                 result = await aresume_agent_run_with_resources(agent, session_id=session_id,
                     thread_id=thread_id, run_id=run_id, workspace_root=workspace_root, decisions=decisions,

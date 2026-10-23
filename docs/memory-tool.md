@@ -6,6 +6,8 @@
 
 memory已加入CLI/Web共享内置工具，当前是parallel/may_mutate/default allow，仍遵守会话/角色工具集合和现有权限、审批及调用许可。需要持久化应用，调用会话project_id等于库绑定UUID，且当前执行目录确属该项目；纯内存、`--no-session`或关闭memory时返回明确不可用，`--no-session`不创建项目身份文件。已有会话保持其保存的工具选择，可从原入口启用。
 
+Spec128分支的程序入口为`app.memory.query(scope=当前RunScope, request=现有MemoryInput参数)`。根运行、子Agent及审批恢复的`scope.capabilities.memory`都绑定到同一个MemoryAPI；工具先校验该次调用许可，API再核对当前run/role、publisher、project_id和执行目录。它不提供闲置会话管理或任意项目查询入口。写操作由API持有原持久化服务提供的会话history锁，依次等待来源保存和记忆写入完成后释放；整理仍只登记任务，根回复必要保存成功后释放，任务查询/停止继续走app.tasks。临时形态具有同名API但不分配项目记忆资源。详细调用链见[原第7片](specs/128-07-memory-api.md)。0.4.0发布版仍是此前内部编排入口，尚未发布此分支。
+
 默认scope=both，查询当前workspace与personal；可指定其中之一，不能提交任意工作区、数据库路径或SQL。项目数据在当前sessions.sqlite的独立表中；个人库位于配置data_dir/personal/memory.sqlite，相同data_dir的所有项目共享；个人记录不受来源项目目录是否存在影响，但跨项目不开放来源会话原文。项目UUID与执行目录的拆分见[Spec128-01](specs/128-01-project-execution-root.md)。首次需要个人读写时才打开，关闭总开关不删除数据。
 
 ```json

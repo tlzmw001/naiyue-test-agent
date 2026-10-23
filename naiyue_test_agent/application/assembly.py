@@ -104,13 +104,13 @@ async def build_application(config_path, *, database_path, tools, system_prompt,
         persistence = SessionPersistence(storage, sessions, catalog=catalog, tool_registry=registry,
             permission_settings=settings.permissions, usage_persistence=usage,
             title_max_chars=settings.session_title_max_chars, checkpoint_settings=settings.checkpoint_retention,
-            memory=memory, memory_jobs=jobs)
+            memory_jobs=jobs)
         sessions.bind_persistence(persistence)
         agent = sessions.assemble_runtime(owned.checkpointer, system_prompt=system_prompt, response_format=response_format,
             subagents=settings.subagents, subagent_settings=settings.tools.subagent)
-        persistence.bind_memory_agent(agent)
         app = Application(catalog, sessions, agent, registry, system_prompt=system_prompt,
-            persistence=persistence, storage=storage, usage=usage, diagnostics=diagnostics, resources=stack)
+            persistence=persistence, storage=storage, usage=usage, diagnostics=diagnostics, resources=stack,
+            memory=memory, memory_jobs=jobs)
         return app
     except BaseException as primary:
         if jobs is not None:

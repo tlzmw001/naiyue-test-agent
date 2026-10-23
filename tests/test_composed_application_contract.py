@@ -26,7 +26,7 @@ def test_one_application_type_exposes_domains_and_no_legacy_facade(monkeypatch, 
         try:
             assert type(app) is Application and Application.__bases__ == (object,)
             assert not any(hasattr(app, old) for old in ('arun', 'aget_chat_page', 'acreate_session', 'alist_sessions'))
-            assert all(getattr(app, name) is not None for name in ('sessions','runs','history','tasks','models','tools','subagents','mcp','observability'))
+            assert all(getattr(app, name) is not None for name in ('sessions','runs','history','tasks','memory','models','tools','subagents','mcp','observability'))
             sid = await app.sessions.create('A')
             await app.runs.start(sid, [('user', 'task')])
             saved = await app.sessions.status(sid)
@@ -91,7 +91,7 @@ def test_domains_share_owner_and_close_drains_nested_cross_domain_operation(monk
         pending = closing = None
         try:
             owner = app._lifetime
-            for name in ('sessions', 'runs', 'history', 'tasks', 'models', 'tools', 'subagents', 'mcp', 'observability'):
+            for name in ('sessions', 'runs', 'history', 'tasks', 'memory', 'models', 'tools', 'subagents', 'mcp', 'observability'):
                 api = getattr(app, name)
                 assert api._owner is owner
                 assert all(value is not app for value in vars(api).values())

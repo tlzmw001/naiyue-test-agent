@@ -165,6 +165,6 @@ def test_memory_cleanup_failure_still_releases_project_store(monkeypatch, tmp_pa
                     original()
                 def fail():raise expected
                 monkeypatch.setattr(app.sessions._persistence.storage, 'close', close_store)
-                monkeypatch.setattr(app.sessions._persistence._memory, 'close', fail)
+                monkeypatch.setattr(app.memory._access, 'close', fail)
         assert caught.value is expected and closed == [True]
     asyncio.run(scenario())

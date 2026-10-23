@@ -97,8 +97,7 @@ def create_memory_tool():
         port = runtime.context.scope.capabilities.memory
         if not callable(port):
             raise ToolException('memory_unavailable: persistent memory is unavailable.')
-        result = await port(source_session_id=runtime.context.scope.identity.session_id,
-            workspace_root=runtime.context.scope.identity.execution_path, agent_path=runtime.context.scope.identity.agent_path,
+        result = await port(scope=runtime.context.scope,
             request=request, **({'tool_call_id':runtime.tool_call_id} if request['action']=='refresh_overview' else {}))
         return json.dumps(result, ensure_ascii=False)
 

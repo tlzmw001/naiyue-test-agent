@@ -38,10 +38,11 @@ class SubagentRegistry:
 
     def __init__(self, runtime: SessionRuntime, *, controls: ControlQueue, approvals: ApprovalBook,
                  catalog, persistence, registered_subagents, progress_settings, result_settings,
-                 mcp_resources, archive_root):
+                 mcp_resources, archive_root, memory=None):
         self._runtime, self.session_id = runtime, runtime.session_id
         self._controls, self._approvals = controls, approvals
         self._catalog, self._persistence = catalog, persistence
+        self._memory = memory
         self._registered_subagents = registered_subagents
         self._progress_settings, self._subagent_result_settings = progress_settings, result_settings
         self._mcp_resources, self._archive_root = mcp_resources, archive_root
@@ -197,7 +198,7 @@ class SubagentRegistry:
                         project_id=instance['project_id'], execution_root=instance['execution_root'],
                         parent_tool_call_id=instance['parent_tool_call_id'], parent_run_id=instance['parent_run_id'], root_run_id=instance['root_run_id']), archive_root=self._archive_root,
                                       history_query=getattr(self._persistence, 'aquery_history', None) if instance['project_id'] is not None else None,
-                                      memory_query=getattr(self._persistence, 'aquery_memory', None) if instance['project_id'] is not None else None):
+                                      memory_query=self._memory.query if self._memory is not None and instance['project_id'] is not None else None):
                     result = await ainvoke_subagent_step(graph, instance, resume=resume,
                         approval_grants=grants, scope=current_run_scope())
                     snapshot = await graph.aget_state({'configurable': {'thread_id': instance['child_thread_id']}})

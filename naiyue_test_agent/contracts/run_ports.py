@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Protocol, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .run_context import RuntimeContext
+    from .run_context import RuntimeContext, RunScope
     from ..tools.settings import HistorySettings
 
 
@@ -14,8 +14,8 @@ class HistoryQuery(Protocol):
 
 
 class MemoryQuery(Protocol):
-    async def __call__(self, *, source_session_id: str, workspace_root: Path | None,
-                       agent_path: str, request: dict, tool_call_id: str | None = None) -> dict: ...
+    async def __call__(self, *, scope: 'RunScope', request: dict,
+                       tool_call_id: str | None = None) -> dict: ...
 
 
 class InvokeSubagent(Protocol):

@@ -4,13 +4,16 @@ from .sessions.api import SessionAPI
 from .sessions.run_api import RunAPI
 from .sessions.task_api import TaskAPI
 from .conversation.api import HistoryAPI
+from .memory.api import MemoryAPI
 from .observability.api import ObservationAPI
 from .catalogs import ModelAPI, ToolAPI, SubagentAPI, McpAPI
 
 
 class Application:
-    def __init__(self, catalog, sessions, agent, registry, *, system_prompt, persistence, storage, usage, diagnostics, resources):
+    def __init__(self, catalog, sessions, agent, registry, *, system_prompt, persistence, storage, usage, diagnostics, resources, memory, memory_jobs):
         owner = self._lifetime = ApplicationLifetime(catalog, sessions, resources)
+        self.memory = MemoryAPI(owner, sessions, persistence, agent, memory, memory_jobs)
+        sessions.memory = self.memory
         self.sessions = SessionAPI(owner, sessions, persistence, agent, storage.sessions)
         self.runs = RunAPI(owner, sessions, agent, persistence, storage.sessions, storage.conversation, storage.replies)
         self.history = HistoryAPI(owner, sessions, persistence, agent, catalog, registry, system_prompt,

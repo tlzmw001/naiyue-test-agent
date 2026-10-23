@@ -1,6 +1,10 @@
 # Spec128-05B：组合应用与领域子API
 
+版本更正（2026-10-23）：原十片审查发现本片遗漏原承诺的app.memory；下文“不制造空memory API”不能代替范围取消。用户随后批准补齐，当前合同和主链转到[原第7片补齐Spec](128-07-memory-api.md)。下文九个API、测试数和范围处理保留为05B历史时点；原MemoryQuery/SessionPersistence记忆编排已由新MemoryAPI替代，不作为当前入口指引。
+
 状态：用户在05A收尾和05B说明后批准“继续”，已完成本机验收（2026-10-23）。仅本片；06会话mixin和实际worktree管理独立，不提交/push/发布。基线是当前未提交的01—05A，保存于build/spec128-05b/baseline，不覆盖主目录并行成果。
+
+版本边界：本文记录05B时点；领域API和适配器合同继续适用，06进一步把内部AgentSession行为迁到显式协作对象，当前会话调用入口见[06](128-06-session-collaborators.md)。
 
 ## 1. 当前问题与外部合同
 
@@ -29,7 +33,7 @@
 | tools/subagents | 当前定义list/register |
 | mcp | status/refresh |
 
-记忆继续通过RuntimeContext.scope.memory和现有memory jobs/tasks接入；本片没有已存在的独立管理API可迁移，不制造空memory子API或新增CRUD。个人memory跨项目与临时无项目memory规则不变。
+记忆继续通过RuntimeContext.scope.capabilities.memory和现有memory jobs/tasks接入；本片没有已存在的独立管理API可迁移，不制造空memory子API或新增CRUD。个人memory跨项目与临时无项目memory规则不变。
 
 重新生成放runs，因为它取得admission并开始真实执行；regenerate函数由接收整个application改为显式接收它实际需要的服务/graph/仓储，保持准备/激活/失败保存/幂等顺序。
 

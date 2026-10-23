@@ -270,12 +270,12 @@ def test_w04_other_session_rejects_inflight_old_update_or_suppressed_record(monk
                 change['proposal'] = proposal(kind='rule', title='并发规则', subject='concurrent rule', body='并发规则新选择')
             else:change['reason'] = '用户显式遗忘'
             await turn(app, root, second, change['sources'][0]['quote'], call('memory', change, 'change'), AIMessage(content='已处理'))
-            rejected, query = [], app.sessions._persistence._memory.query
+            rejected, query = [], app.memory._access.query
             def observed(*args, **kwargs):
                 try:return query(*args, **kwargs)
                 except MemoryReadError as error:
                     rejected.append(str(error)); raise
-            monkeypatch.setattr(app.sessions._persistence._memory, 'query', observed)
+            monkeypatch.setattr(app.memory._access, 'query', observed)
             worker.release.set(); await app.sessions._sessions.memory_jobs.wait_idle()
             status = await app.tasks.output(receipt['task_id'], session_id=first, workspace_root=tmp_path)
             counts = json.loads(status['output'])

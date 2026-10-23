@@ -37,7 +37,7 @@ def test_temporary_chat_regeneration_and_isolation(monkeypatch, tmp_path):
             assert len(page['records']) == 4
             assert (await app.sessions.status(sid))['conversation_revision'] == 1
             assert app.sessions._persistence.storage.path is None and app.sessions._sessions._project is None
-            assert app.sessions._persistence._memory is None and app.sessions._sessions.memory_jobs is None
+            assert app.memory._access is None and app.sessions._sessions.memory_jobs is None
         finally:
             await app.aclose()
         next_app, _ = await build(monkeypatch, tmp_path, [])
@@ -71,7 +71,7 @@ def test_temporary_project_tools_remain_unavailable(monkeypatch, tmp_path, exist
             errors = [m.content for m in result['messages'] if m.type == 'tool']
             assert len(errors) == 2
             assert 'history_unavailable' in errors[0] and 'memory_unavailable' in errors[1]
-            assert app.sessions._persistence._memory is None and app.sessions._sessions.memory_jobs is None
+            assert app.memory._access is None and app.sessions._sessions.memory_jobs is None
             assert app.sessions._persistence.storage.sessions.get_workspace_binding() is None
         finally:
             await app.aclose()

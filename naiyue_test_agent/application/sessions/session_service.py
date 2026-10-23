@@ -54,6 +54,7 @@ class SessionService:
         self._catalog = catalog
         self.background_tasks = BackgroundProcessManager(shell_task_settings)
         self.task_queries = TaskQueries(self.background_tasks)
+        self.memory = None
         self.memory_jobs = None
         self._tool_registry = tool_registry if tool_registry is not None else ToolRegistry()
         initial = self._tool_registry.names() if initial_active_tools is None else initial_active_tools
@@ -256,7 +257,7 @@ class SessionService:
                 permission_mode=self._permission_settings.mode)
             session = AgentSession(session_id, state, catalog=self._catalog,
                 tool_registry=self._tool_registry, permission_settings=self._permission_settings,
-                persistence=self._persistence, invoke_subagent=self.ainvoke_subagent,
+                persistence=self._persistence, invoke_subagent=self.ainvoke_subagent, memory=self.memory,
                 registered_subagents=self.get_registered_subagents, progress_settings=self._progress_settings,
                 subagent_result_settings=getattr(self, '_subagent_result_settings', None),
                 mcp_resources=self.mcp_resources, process_tasks=self.background_tasks,
@@ -300,7 +301,7 @@ class SessionService:
                 pending_tool_approval=deepcopy(pending), conversation_revision=conversation_revision)
             self._sessions[session_id] = AgentSession(session_id, state, catalog=self._catalog,
                 tool_registry=self._tool_registry, permission_settings=self._permission_settings,
-                persistence=self._persistence, invoke_subagent=self.ainvoke_subagent,
+                persistence=self._persistence, invoke_subagent=self.ainvoke_subagent, memory=self.memory,
                 registered_subagents=self.get_registered_subagents, progress_settings=self._progress_settings,
                 subagent_result_settings=getattr(self, '_subagent_result_settings', None),
                 mcp_resources=self.mcp_resources, process_tasks=self.background_tasks,

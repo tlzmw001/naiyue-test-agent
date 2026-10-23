@@ -1,6 +1,8 @@
 """One session owns its state and composes explicit execution collaborators."""
 from copy import deepcopy
 from threading import Lock
+from langchain_core.tools import ToolException
+from naiyue_test_agent.contracts.run_context import RunIdentity
 
 from .session_state import SessionState, SessionRuntime
 from .session_controls import ControlQueue
@@ -12,7 +14,7 @@ from naiyue_test_agent.application.subagents.session_subagents import SubagentRe
 class AgentSession:
     def __init__(self, session_id, state: SessionState, *, catalog, tool_registry,
                  permission_settings, persistence=None, invoke_subagent=None, registered_subagents=None,
-                 progress_settings=None, subagent_result_settings=None, mcp_resources=None, process_tasks=None, archive_root=None):
+                 progress_settings=None, subagent_result_settings=None, mcp_resources=None, process_tasks=None, archive_root=None, memory=None):
         self.session_id = session_id
         self._runtime = SessionRuntime(session_id, state)
         self._catalog, self._tool_registry = catalog, tool_registry
@@ -26,12 +28,12 @@ class AgentSession:
         self.subagents = SubagentRegistry(self._runtime, controls=self.controls, approvals=self.approvals,
             catalog=catalog, persistence=persistence, registered_subagents=registered_subagents,
             progress_settings=progress_settings, result_settings=subagent_result_settings,
-            mcp_resources=mcp_resources, archive_root=archive_root)
+            mcp_resources=mcp_resources, archive_root=archive_root, memory=memory)
         self.lifecycle = RunLifecycle(self._runtime, controls=self.controls, approvals=self.approvals,
             subagents=self.subagents, tool_registry=tool_registry, persistence=persistence,
             registered_subagents=registered_subagents, invoke_subagent=invoke_subagent,
             process_tasks=process_tasks, archive_root=archive_root, mcp_resources=mcp_resources,
-            resolve_model=self.resolve_model, active_tools=self.get_active_tools)
+            resolve_model=self.resolve_model, active_tools=self.get_active_tools, memory=memory)
         if mcp_resources is not None:
             mcp_resources.set_session_occupied(session_id, state.pending_tool_approval is not None)
 
@@ -48,6 +50,31 @@ class AgentSession:
                 'pending_approval': row.pending_tool_approval is not None,
                 'approval_run_id': (row.pending_tool_approval.get('requested_run_id')
                     if row.pending_tool_approval is not None else None)}
+
+    def validate_memory_scope(self, scope):
+        """Validate one live root/child identity under the shared state lock."""
+        with self._runtime.lock:
+            run = self._runtime.run
+            if run is not None and run.observation.stage == 'execute':
+                identity = scope.identity
+                if identity.agent_path == 'root':
+                    expected = RunIdentity(self.session_id, run.run_id, project_id=run.project_id,
+                                           execution_root=run.execution_root)
+                    publisher, names = run.observation.publisher, self._runtime.state.active_tool_names
+                    live = True
+                else:
+                    child = run.subagent_instances.get(identity.agent_path)
+                    if child is None:
+                        raise ToolException('memory_scope_mismatch: the calling session or role is unavailable.')
+                    expected = RunIdentity(self.session_id, child['run_id'], child['agent_path'],
+                        child['project_id'], child['execution_root'], child['parent_tool_call_id'],
+                        child['parent_run_id'], child['root_run_id'])
+                    publisher, names = child.get('publisher_view'), child['tool_names']
+                    live = child['phase'] == 'execute' and not child['settled']
+                if (live and identity == expected and identity.project_id is not None
+                        and publisher is not None and scope.observation.publisher is publisher and 'memory' in names):
+                    return run.run_id
+        raise ToolException('memory_scope_mismatch: the calling session or role is unavailable.')
 
     def get_thread_id(self):
         with self._runtime.lock:
