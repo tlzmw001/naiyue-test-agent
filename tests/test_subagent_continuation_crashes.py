@@ -58,7 +58,7 @@ async def test_crash_boundary_never_replays_and_only_parent_confirmed_can_contin
             await app.sessions.recover(sid, checkpoint_id=history['checkpoint_id'], action='continue')
         assert not root.seen and not child.seen and not events and not calls
         assert app.sessions._persistence.storage.subagents.get_subagent(sid, identity) == row
-        assert not app.runs.pending_approvals(sid) and app.sessions._sessions.require(sid)._run is None
+        assert not app.runs.pending_approvals(sid) and app.sessions._sessions.require(sid)._runtime.run is None
         reply = await delegate(app, sid, root, task='explicit new delegation', identity=identity)
         if point == 'parent_saved':
             assert json.loads(reply.content)['report'] == 'explicit new work' and len(child.seen) == 1

@@ -80,7 +80,7 @@ class SessionPersistence:
                 or 'history' not in session.get_active_tools(agent_path)):
             raise ToolException('history_scope_mismatch: the calling session or role is unavailable.')
         from naiyue_test_agent.tools.permissions import require_execution_directory
-        facts = session.snapshot_for_run()
+        facts = session.lifecycle.snapshot_for_run()
         require_execution_directory(facts['execution_root'], facts['project_id'])
         try:
             return await run_blocking(self.storage.conversation.read_history_tool, source_session_id, current['project_id'], request, settings)
@@ -100,7 +100,7 @@ class SessionPersistence:
                 or 'memory' not in session.get_active_tools(agent_path)):
             raise ToolException('memory_scope_mismatch: the calling session or role is unavailable.')
         from naiyue_test_agent.tools.permissions import require_execution_directory
-        facts = session.snapshot_for_run()
+        facts = session.lifecycle.snapshot_for_run()
         require_execution_directory(facts['execution_root'], facts['project_id'])
         if self._memory is None:
             raise ToolException('memory_unavailable: persistent memory is unavailable.')

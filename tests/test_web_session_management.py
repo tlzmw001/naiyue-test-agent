@@ -135,7 +135,7 @@ def test_delete_includes_child_history_removed_from_latest_parent_checkpoint(mon
             assert await app.history.subagents(sid) == [child]
             # The prompt no longer references the child; the persisted registry still owns it.
             for owner in app.sessions._sessions._sessions.values():
-                assert owner._run is None
+                assert owner._runtime.run is None
             assert (await client.delete(f'/api/sessions/{sid}')).status_code == 200
             assert store.database.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (child_thread,)).fetchone()[0] == 0
             assert store.database.connection.execute('SELECT count(*) FROM writes WHERE thread_id=?', (child_thread,)).fetchone()[0] == 0

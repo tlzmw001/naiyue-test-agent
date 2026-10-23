@@ -121,7 +121,7 @@ async def test_external_cancel_settles_child_and_restores_parent_services(monkey
         task = asyncio.create_task(app.runs.start(sid, [('user', 'start')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            instance, = app.sessions._sessions._sessions[sid]._run.subagent_instances.values()
+            instance, = app.sessions._sessions._sessions[sid]._runtime.run.subagent_instances.values()
             driver = instance['driver']
             task.cancel()
             done, _ = await asyncio.wait((task,), timeout=5)
@@ -130,7 +130,7 @@ async def test_external_cancel_settles_child_and_restores_parent_services(monkey
                 await task
             assert instance['status'] == 'stopped' and driver.done() and instance['settled']
             assert instance['control'].reason == 'failure'
-            assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app.sessions._sessions._sessions.values()) and 'driver' not in instance
+            assert all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.sessions._sessions._sessions.values()) and 'driver' not in instance
             assert not app.sessions._sessions.require(sid).describe_session()['busy']
             assert current_run_scope() is previous
         finally:
@@ -154,7 +154,7 @@ async def test_finished_roots_release_instances_and_drivers_but_keep_checkpoints
     sid = await app.sessions.create('A')
     for index in range(2):
         await app.runs.start(sid, [('user', f'run {index}')])
-        assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app.sessions._sessions._sessions.values())
+        assert all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.sessions._sessions._sessions.values())
         assert all('driver' not in instance and instance['status'] == 'completed' for instance in instances)
         snapshot = await app.sessions._sessions._subagents['tester']['agent'].aget_state(
             {'configurable': {'thread_id': instances[-1]['child_thread_id']}})

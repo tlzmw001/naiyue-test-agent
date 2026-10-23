@@ -79,9 +79,9 @@ def test_missing_child_execution_root_rejects_continuation_without_rebinding(mon
             identity = json.loads(report.content)['agent_id']
             before = app.sessions._persistence.storage.subagents.get_subagent(sid, identity)
             original = subagent_records.admit
-            async def disappear(owner, graph, instance, spec):
+            async def disappear(graph, instance, spec, **dependencies):
                 root.rename(tmp_path / 'removed')
-                return await original(owner, graph, instance, spec)
+                return await original(graph, instance, spec, **dependencies)
             monkeypatch.setattr(subagent_records, 'admit', disappear)
             model.replies.extend([call('subagent', {'agent': 'worker', 'task': 'continue', 'agent_id': identity}, 'again'),
                                   AIMessage(content='continuation rejected')])

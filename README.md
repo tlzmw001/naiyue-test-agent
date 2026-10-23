@@ -157,6 +157,8 @@ python -m pip install --upgrade naiyue-test-agent
 
 当前开发分支以一个 `Application` 组合 `sessions`、`runs`、`history`、`tasks` 等领域 API，磁盘和临时存储共用这些接口。终端通过 `bridge.call(lambda app: app.runs.start(...))` 派发到拥有者事件循环；Web 保留认证、归属、幂等和错误映射，详见[应用组合与调用边界](docs/specs/128-05b-composed-application-and-domain-apis.md)。这些内部入口替换原平铺方法，CLI 命令和 HTTP 协议保持。
 
+会话执行由 `RunLifecycle`、`ControlQueue`、`ApprovalBook`、`SubagentRegistry` 组合，借用同一份 `SessionRuntime` 状态、当前 run 和短锁；具体行为与失败边界见[会话协作对象](docs/specs/128-06-session-collaborators.md)。
+
 发布维护、四平台构建和 PyPI 首次授权步骤见 [发行指南](https://github.com/tlzmw001/naiyue-test-agent/blob/main/docs/releasing.md)。项目设计与开发记录保留在 GitHub 仓库，不进入 wheel。
 
 ## 许可证

@@ -170,7 +170,7 @@ async def test_required_save_holds_capacity_while_another_session_runs(monkeypat
             tasks.append(asyncio.create_task(app.runs.start(a, [('user', a)])))
             await asyncio.wait_for(entered.wait(), 5)
             owner = app.sessions._sessions._sessions[a]
-            assert owner.is_busy() and not owner._run.controls_open
+            assert owner.is_busy() and not owner._runtime.run.controls_open
             with pytest.raises(RunCapacityExceededError):
                 await app.runs.start(c, [('user', c)])
             release.set()

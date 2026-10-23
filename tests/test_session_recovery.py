@@ -69,8 +69,8 @@ async def test_three_updates_preserve_results_then_only_new_input_calls_model(mo
         assert row['state'] == 'ready' and row['last_run_status'] == 'recovered'
         assert row['checkpoint_id'] == result['checkpoint_id'] == snapshot.config['configurable']['checkpoint_id']
         memory = app.sessions._sessions._sessions[sid]
-        assert memory.snapshot_for_run()['run_id'] is None and memory.resolve_permission_context()['session_allow'] == [] and memory.snapshot_for_run()['pending'] is None
-        assert not memory.is_busy() and memory.snapshot_for_run()['pending_turn'] is None
+        assert memory.lifecycle.snapshot_for_run()['run_id'] is None and memory.resolve_permission_context()['session_allow'] == [] and memory.lifecycle.snapshot_for_run()['pending'] is None
+        assert not memory.is_busy() and memory.lifecycle.snapshot_for_run()['pending_turn'] is None
         answer = await app.runs.start(sid, [('user', 'new input')])
         assert answer['messages'][-1].content == ('new answer' if native else 'answer')
         assert answer['messages'][:4] == snapshot.values['messages']
@@ -218,9 +218,9 @@ async def test_current_process_state_cannot_be_bypassed(monkeypatch, tmp_path, g
                 active_tool_names=(), permission_mode=row['permission_mode'])
             owner, observation_run = app.sessions._sessions._admit(sid, 'review-fault', 'message')
             run_id, observation = observation_run.run_id, observation_run.observation
-            owner.mark_manual_review(observation_run)
-            owner._cleanup_run(observation_run)
-            owner.release_run(observation_run)
+            owner.approvals.mark_manual_review(observation_run)
+            owner.lifecycle._cleanup_run(observation_run)
+            owner.lifecycle.release_run(observation_run)
         before = database_facts(storage)
         with pytest.raises(SessionPersistenceError, match='session_recovery_blocked'):
             await app.sessions.recover(sid, checkpoint_id=original.config['configurable']['checkpoint_id'], action='continue')

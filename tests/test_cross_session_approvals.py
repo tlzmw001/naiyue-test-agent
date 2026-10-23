@@ -29,7 +29,7 @@ async def test_paused_root_reapplies_capacity_without_consuming_approval(monkeyp
         result = await app.runs.start(a, [('user', a)])
         assert result['approval_requests'] and effects == []
         owner = app.sessions._sessions._sessions[a]
-        pending = deepcopy(owner.snapshot_for_run()['pending'])
+        pending = deepcopy(owner.lifecycle.snapshot_for_run()['pending'])
         assert not owner.is_busy() and app.sessions._persistence._active == {}
         entered, _ = gated(model, b)
         task = asyncio.create_task(app.runs.start(b, [('user', b)]))
@@ -44,7 +44,7 @@ async def test_paused_root_reapplies_capacity_without_consuming_approval(monkeyp
                 await app.runs.resume_approval(a, ['reject'], remember_approved=['one'])
             with pytest.raises(RunCapacityExceededError):
                 await app.runs.resume_approval(a, ['approve'], remember_approved=['one'])
-            assert owner.snapshot_for_run()['pending'] == pending
+            assert owner.lifecycle.snapshot_for_run()['pending'] == pending
             assert owner.resolve_permission_context()['session_allow'] == []
             assert not owner.is_busy() and len(events) == saved_events and app.sessions._persistence.storage.sessions.get(a) == before
             assert effects == [] and len(model.requests[a]) == 1
@@ -107,7 +107,7 @@ async def test_child_approval_keeps_parent_slot_and_needs_no_extra_slot(monkeypa
                 await app.runs.start(c, [('user', c)])
                 assert set(app.sessions._persistence._active) == {b}
             owner = app.sessions._sessions._sessions[a]
-            assert not owner.is_busy() and not owner.pending_approval_batches()
+            assert not owner.is_busy() and not owner.approvals.pending_approval_batches()
         finally:
             await drain(tasks, model)
         assert {e.session_id for e in events if e.source} == {a}

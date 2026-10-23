@@ -1,4 +1,5 @@
 """Explicit application ownership without duplicate session routes or hidden setup."""
+from naiyue_test_agent.application.sessions.session_execution import RunLifecycle
 
 from runtime_context_helpers import identity_for
 import asyncio
@@ -113,7 +114,7 @@ def test_shared_tool_concurrency_rule_rejects_bool_and_keeps_valid_values():
 
 def test_session_execution_is_an_explicit_internal_collaboration():
     from naiyue_test_agent.application.sessions.agent_session import AgentSession
-    assert callable(AgentSession.arun)
+    assert callable(RunLifecycle.arun) and not hasattr(AgentSession, 'arun')
     assert not hasattr(AgentSession, '_arun')
 
 

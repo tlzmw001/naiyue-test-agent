@@ -19,13 +19,27 @@ def test_lifecycle_is_direct_async_with_no_generator_transport(module_name, name
     from importlib import import_module
     module = import_module('naiyue_test_agent.application.' + module_name)
     owner = getattr(module, {'sessions.session_service': 'SessionService',
-                            'sessions.session_execution': 'SessionExecution',
-                            'subagents.session_subagents': 'AgentSessionSubagents',
+                            'sessions.session_execution': 'RunLifecycle',
+                            'subagents.session_subagents': 'SubagentRegistry',
                             'sessions.session_persistence': 'SessionPersistence'}.get(module_name, ''), module)
     for name in names:
         assert inspect.iscoroutinefunction(getattr(owner, name))
     tree = ast.parse(Path(module.__file__).read_text())
-    assert not any(isinstance(node, (ast.Yield, ast.YieldFrom)) for node in ast.walk(tree))
+    # The service now also owns its synchronous deletion_guard context manager.
+    # Every async lifecycle body must still be direct, never a generator transport.
+    for function in ast.walk(tree):
+        if isinstance(function, ast.AsyncFunctionDef):
+            assert not any(isinstance(node, (ast.Yield, ast.YieldFrom)) for node in ast.walk(function))
+    guards = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+              and node.name == 'deletion_guard']
+    expected_yields = set()
+    if module_name == 'sessions.session_service':
+        assert len(guards) == 1
+        assert any(isinstance(item, ast.Name) and item.id == 'contextmanager'
+                   for item in guards[0].decorator_list)
+        assert sum(isinstance(node, ast.Yield) for node in ast.walk(guards[0])) == 1
+        expected_yields = {node for node in ast.walk(guards[0]) if isinstance(node, ast.Yield)}
+    assert {node for node in ast.walk(tree) if isinstance(node, (ast.Yield, ast.YieldFrom))} == expected_yields
     assert not any(isinstance(node, ast.Name) and node.id in ('IOCall', 'arun_steps') for node in ast.walk(tree))
 
 

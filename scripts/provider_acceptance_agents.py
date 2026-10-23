@@ -147,10 +147,10 @@ async def siblings(env):
                 await asyncio.sleep(0.05)
             second = remaining[0]
             require(first['agent_path'] != second['agent_path'], 'sibling_distinct_paths')
-            instance = app.sessions._sessions.require(sid).subagent_status(first['agent_path'])
+            instance = app.sessions._sessions.require(sid).subagents.subagent_status(first['agent_path'])
             while not instance['settled']:
                 await asyncio.sleep(0.05)
-                instance = app.sessions._sessions.require(sid).subagent_status(first['agent_path'])
+                instance = app.sessions._sessions.require(sid).subagents.subagent_status(first['agent_path'])
             require(instance['status'] == 'completed' and not task.done(), 'first_finishes_while_second_waits')
             require(any(batch['approval_batch_id'] == second['approval_batch_id']
                         for batch in app.runs.pending_subagents(sid)), 'second_remains_pending')

@@ -1,4 +1,5 @@
 """Persistent sessions keep framework state and application recovery boundaries."""
+from naiyue_test_agent.application.sessions.session_execution import RunLifecycle
 
 from native_application_helpers import async_test
 
@@ -148,7 +149,7 @@ async def test_cleanup_failure_never_leaves_session_ready(monkeypatch, tmp_path)
         session = await app.sessions.create('A')
         def broken_cleanup(*_a, **_k):
             raise ValueError('PRIVATE_CLEANUP')
-        monkeypatch.setattr(AgentSession, '_cleanup_run', broken_cleanup)
+        monkeypatch.setattr(RunLifecycle, '_cleanup_run', broken_cleanup)
         with pytest.raises(ValueError):
             await app.runs.start(session, [('user', 'q')])
         assert storage.sessions.get(session)['state'] != 'ready'

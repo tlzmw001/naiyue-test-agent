@@ -163,5 +163,5 @@ async def test_failed_tool_stage_blocks_replay_without_fake_approval_events(monk
     assert events[count:] == [] and attempts == [True]
     state = app.sessions._sessions._sessions[session]
     assert state.describe_session()['manual_review_required'] and not state.is_busy()
-    assert state.snapshot_for_run()['pending'] is None
+    assert state.lifecycle.snapshot_for_run()['pending'] is None
     assert len(controls(events, 'control_applied')) == 1

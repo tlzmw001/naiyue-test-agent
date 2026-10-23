@@ -20,7 +20,7 @@ async def test_stage_failure_keeps_original_exception_and_cleans(monkeypatch, st
     received = []
     app.observability.subscribe(run_events_only(received.append))
     # Inject at the session execution owner, where the graph call is made.
-    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['SessionExecution'])
+    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['RunLifecycle'])
     function = {'prepare': 'prepare_run_resources', 'execute': 'ainvoke_agent_run',
                 'finalize': 'pending_tool_approval'}[stage]
     failure = RuntimeError('PRIVATE_ORIGINAL_ERROR')
@@ -50,11 +50,11 @@ async def test_cleanup_failure_is_reported_without_masking_primary(monkeypatch, 
     session = await app.sessions.create('A')
     received = []
     app.observability.subscribe(run_events_only(received.append))
-    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['SessionExecution'])
+    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['RunLifecycle'])
     primary = RuntimeError('PRIVATE_PRIMARY_ERROR')
     secondary = ValueError('PRIVATE_CLEANUP_ERROR')
 
-    original = app.sessions._sessions._sessions[session]._cleanup_run
+    original = app.sessions._sessions._sessions[session].lifecycle._cleanup_run
 
     def fail_cleanup(*args, **kwargs):
         # Fail after real cleanup, rather than mutating a closed control queue.
@@ -64,7 +64,7 @@ async def test_cleanup_failure_is_reported_without_masking_primary(monkeypatch, 
     def fail_prepare(*_args, **_kwargs):
         raise primary
 
-    monkeypatch.setattr(app.sessions._sessions._sessions[session], '_cleanup_run', fail_cleanup)
+    monkeypatch.setattr(app.sessions._sessions._sessions[session].lifecycle, '_cleanup_run', fail_cleanup)
     if has_primary:
         monkeypatch.setattr(module, 'prepare_run_resources', fail_prepare)
     with pytest.raises(Exception) as caught:
@@ -100,7 +100,7 @@ async def test_accepted_approval_failure_is_cleaned_and_keeps_pending(monkeypatc
         from naiyue_test_agent.application.sessions import session_approval
         monkeypatch.setattr(session_approval, 'OneUseApprovalGrants', fail)
     else:
-        module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['SessionExecution'])
+        module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['RunLifecycle'])
         async def fail_async(*args, **kwargs):
             return fail(*args, **kwargs)
         monkeypatch.setattr(module, 'aresume_agent_run_with_resources', fail_async)
@@ -121,7 +121,7 @@ async def test_process_control_is_not_converted_to_completed_or_failed(monkeypat
     session = await app.sessions.create('A')
     received = []
     app.observability.subscribe(run_events_only(received.append))
-    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['SessionExecution'])
+    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['RunLifecycle'])
 
     async def stop(*_args, **_kwargs):
         raise control
@@ -143,7 +143,7 @@ async def test_failure_diagnostic_fault_does_not_replace_primary(monkeypatch, di
     session = await app.sessions.create('A')
     received = []
     app.observability.subscribe(run_events_only(received.append))
-    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['SessionExecution'])
+    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['RunLifecycle'])
     failure = RuntimeError('PRIVATE_ORIGINAL')
 
     def fail(*_args, **_kwargs):
@@ -175,7 +175,7 @@ async def test_terminal_publish_fault_does_not_replace_primary(monkeypatch, capl
 
     app = await make_app(monkeypatch)
     session = await app.sessions.create('A')
-    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['SessionExecution'])
+    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['RunLifecycle'])
     failure = RuntimeError('PRIVATE_ORIGINAL')
 
     def fail(*_args, **_kwargs):

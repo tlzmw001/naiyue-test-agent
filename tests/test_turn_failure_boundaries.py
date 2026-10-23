@@ -130,7 +130,7 @@ async def test_prepare_failure_preserves_waiting_turn_for_later_resume(monkeypat
     from naiyue_test_agent.application.sessions import session_execution
 
     app, session, events = await make_approval(monkeypatch, tmp_path)
-    saved = app.sessions._sessions._sessions[session].snapshot_for_run()['pending_turn']
+    saved = app.sessions._sessions._sessions[session].lifecycle.snapshot_for_run()['pending_turn']
     original = session_execution.prepare_run_resources
     failure = OSError('PRIVATE_PREPARE')
 
@@ -142,7 +142,7 @@ async def test_prepare_failure_preserves_waiting_turn_for_later_resume(monkeypat
     with pytest.raises(OSError) as caught:
         await app.runs.resume_approval(session, ['approve'])
     assert caught.value is failure and turns(events[old_count:]) == []
-    assert app.sessions._sessions._sessions[session].snapshot_for_run()['pending_turn'] == saved
+    assert app.sessions._sessions._sessions[session].lifecycle.snapshot_for_run()['pending_turn'] == saved
     assert events[-1].data.failure.stage == 'prepare'
     monkeypatch.setattr(session_execution, 'prepare_run_resources', original)
     await app.runs.resume_approval(session, ['reject'])
@@ -172,8 +172,8 @@ async def test_failed_approval_tool_stage_requires_review_before_another_attempt
     assert caught.value is failure
     assert turns(events, 'turn_finished')[-1].data.status == 'failed'
     state = app.sessions._sessions._sessions[session]
-    assert state.describe_session()['manual_review_required'] and state.snapshot_for_run()['pending_turn'] is None
-    assert state.snapshot_for_run()['pending'] is None and not state.is_busy()
+    assert state.describe_session()['manual_review_required'] and state.lifecycle.snapshot_for_run()['pending_turn'] is None
+    assert state.lifecycle.snapshot_for_run()['pending'] is None and not state.is_busy()
     thread_id = state.get_thread_id()
     assert (await app.runs._agent.aget_state({'configurable': {'thread_id': thread_id}})).next == ('tools',)
     count = len(events)

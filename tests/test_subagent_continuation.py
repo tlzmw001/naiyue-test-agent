@@ -147,7 +147,7 @@ async def test_approval_resume_shares_cap_but_next_delegation_resets_it(monkeypa
             task = asyncio.create_task(app.runs.start(sid, [('user', 'first')]))
         try:
             batch = await next_approval(app, sid, queue)
-            instance = next(iter(app.sessions._sessions.require(sid)._run.subagent_instances.values()))
+            instance = next(iter(app.sessions._sessions.require(sid)._runtime.run.subagent_instances.values()))
             graph = app.sessions._sessions._subagents['tester']['agent']
             config = {'configurable': {'thread_id': instance['child_thread_id']}}
             assert (await graph.aget_state(config)).values['thread_model_call_count'] == 1
@@ -214,9 +214,10 @@ async def test_stop_after_claim_before_input_restores_previous_ready_record(monk
     identity = json.loads(feedback(await app.runs.start(sid, [('user', 'first')])).content)['agent_id']
     previous = app.sessions._persistence.storage.subagents.get_subagent(sid, identity).copy()
     admit = subagent_records.admit
-    async def stop_before_input(owner, graph, instance, spec):
-        await admit(owner, graph, instance, spec)
-        owner.request_scope_stop(run_id=instance['parent_run_id'], agent_path=instance['agent_path'] if scope == 'child' else 'root')
+    async def stop_before_input(graph, instance, spec, **dependencies):
+        await admit(graph, instance, spec, **dependencies)
+        app.sessions._sessions.require(sid).controls.request_scope_stop(
+            run_id=instance['parent_run_id'], agent_path=instance['agent_path'] if scope == 'child' else 'root')
     monkeypatch.setattr(subagent_records, 'admit', stop_before_input)
     await again(app, sid, root, identity)
     saved = app.sessions._persistence.storage.subagents.get_subagent(sid, identity)

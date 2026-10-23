@@ -42,10 +42,10 @@ async def test_paused_root_at_capacity_preserves_decisions_or_can_be_stopped(mon
             endpoint = f'/api/sessions/{a}/approvals'
             body = approval_request(batch, ['approve'])
             body['remember_approved'] = [batch['items'][0]['approval_id']]
-            original = deepcopy(backend.sessions._sessions._sessions[a].snapshot_for_run()['pending'])
+            original = deepcopy(backend.sessions._sessions._sessions[a].lifecycle.snapshot_for_run()['pending'])
             refused = await client.post(endpoint, json=body)
             assert refused.status_code == 409 and refused.json()['error']['code'] == 'run_capacity_exceeded'
-            assert backend.sessions._sessions._sessions[a].snapshot_for_run()['pending'] == original
+            assert backend.sessions._sessions._sessions[a].lifecycle.snapshot_for_run()['pending'] == original
             assert backend.sessions._sessions.resolve_permission_context(a)['session_allow'] == []
             assert len(model.requests[a]) == 1 and delivery.latest[a] == origin
             assert (a, body['request_id']) not in delivery.pending_receipts

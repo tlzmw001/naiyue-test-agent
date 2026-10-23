@@ -10,7 +10,7 @@ from uuid import uuid4
 from langchain_core.tools import ToolException
 
 from naiyue_test_agent.contracts.failures import safe_error_type
-from naiyue_test_agent.tools.subagent import SubAgentSpec, SubAgentInput
+from naiyue_test_agent.tools.subagent import SubAgentInput
 from naiyue_test_agent.tools.permissions import PermissionMechanismError, permission_binding
 from naiyue_test_agent.agent_runtime.run_control import RunControl
 from naiyue_test_agent.agent_runtime.events import AgentEventSource
@@ -25,52 +25,26 @@ from .subagent_history import subagent_identity
 from . import subagent_records
 
 
+from naiyue_test_agent.application.sessions.session_state import SessionRuntime
+from naiyue_test_agent.application.sessions.session_controls import ControlQueue
+from naiyue_test_agent.application.sessions.session_approval import ApprovalBook
+
+
 logger = logging.getLogger('naiyue_test_agent.application')
 
 
-class SessionSubagentControls:
-    """Shared role registration and dispatch to the owning session."""
+class SubagentRegistry:
+    """Borrow one runtime to own its child instances, drivers and cleanup."""
 
-    def configure_subagent_runtime(self, checkpointer, result_settings):
-        self._subagent_checkpointer = checkpointer
-        self._subagent_result_settings = result_settings
-
-    def register_subagent(self, spec):
-        try:
-            if not isinstance(spec, SubAgentSpec):
-                raise ValueError('Subagent registration requires SubAgentSpec')
-            self._tool_registry.select(spec.tool_names)
-            if spec.model_id is not None:
-                self._catalog.get(spec.model_id)
-            with self._lock:
-                if spec.name in self._subagents:
-                    raise ValueError('Duplicate subagent name in registration')
-            from naiyue_test_agent.agent_runtime.subagents import build_subagent_runtime
-            agent = build_subagent_runtime(spec, catalog=self._catalog, tool_registry=self._tool_registry,
-                checkpointer=self._subagent_checkpointer, session_port=self,
-                permission_settings=self._permission_settings, permission_reviewer=self._permission_reviewer)
-            with self._lock:
-                if spec.name in self._subagents:
-                    raise ValueError('Duplicate subagent name in registration')
-                self._subagents[spec.name] = {'spec': spec, 'agent': agent}
-        except Exception as error:
-            logger.error('subagent_registration_failed error_type=%s', safe_error_type(error))
-            raise
-
-    def get_registered_subagents(self):
-        with self._lock:
-            return tuple(item['spec'] for item in self._subagents.values())
-
-    async def ainvoke_subagent(self, agent, task, *, agent_id=None, parent_context, parent_state, parent_tool_call_id):
-        with self._lock:
-            session = self._sessions[parent_context.scope.identity.session_id]
-            role = self._subagents.get(agent)
-        return await session.ainvoke_subagent(agent, task, role=role, agent_id=agent_id, parent_context=parent_context,
-            parent_state=parent_state, parent_tool_call_id=parent_tool_call_id)
-
-
-class AgentSessionSubagents:
-    """One session owns its child instances, drivers and cancellation."""
+    def __init__(self, runtime: SessionRuntime, *, controls: ControlQueue, approvals: ApprovalBook,
+                 catalog, persistence, registered_subagents, progress_settings, result_settings,
+                 mcp_resources, archive_root):
+        self._runtime, self.session_id = runtime, runtime.session_id
+        self._controls, self._approvals = controls, approvals
+        self._catalog, self._persistence = catalog, persistence
+        self._registered_subagents = registered_subagents
+        self._progress_settings, self._subagent_result_settings = progress_settings, result_settings
+        self._mcp_resources, self._archive_root = mcp_resources, archive_root
 
     async def asubagent_references(self):
         return await run_blocking(self._persistence.storage.subagents.get_subagent_references, self.session_id)
@@ -79,17 +53,17 @@ class AgentSessionSubagents:
         from .subagent_queries import annotate, bounded_list
         def require_current():
             if (parent_context.scope.identity.agent_path != 'root'
-                    or parent_context.scope.identity.session_id != self.session_id or self._run is None
-                    or self._run.run_id != parent_context.scope.identity.run_id
-                    or self._state.execution_path != parent_context.scope.identity.execution_path):
+                    or parent_context.scope.identity.session_id != self.session_id or self._runtime.run is None
+                    or self._runtime.run.run_id != parent_context.scope.identity.run_id
+                    or self._runtime.state.execution_path != parent_context.scope.identity.execution_path):
                 raise PermissionMechanismError('Subagent list requires its current root run and workspace')
-        with self._lock:
+        with self._runtime.lock:
             require_current()
-            run_id = self._run.run_id
+            run_id = self._runtime.run.run_id
         owned = await self.asubagent_references()
         rows = await run_blocking(self._persistence.storage.conversation.chat_subagents, self.session_id)
         rows = annotate(rows, owned, self._registered_subagents(), self._catalog, run_id)
-        with self._lock:
+        with self._runtime.lock:
             require_current()
         return bounded_list(rows, owned, self._subagent_result_settings, limit=limit, before=before)
 
@@ -112,8 +86,8 @@ class AgentSessionSubagents:
             raise PermissionMechanismError('Subagent parent call does not match its execution permit')
         delegation = subagent_identity(session_id, batch['batch_id'], parent_tool_call_id)
         identity = agent_id or delegation
-        with self._lock:
-            session, run = self._state, self._run
+        with self._runtime.lock:
+            session, run = self._runtime.state, self._runtime.run
             if run is None or run.run_id != parent_context.scope.identity.run_id:
                 raise PermissionMechanismError('Subagent requires the current active parent run')
             if run.stop_requested:
@@ -144,7 +118,7 @@ class AgentSessionSubagents:
                 max_concurrency=(parent_context.inputs.max_concurrency if parent_context.inputs.max_concurrency is not None else 4), control=RunControl(),
                 publisher=parent_context.scope.observation.publisher, pending_turn=None,
                 errors=parent_context.scope.errors, human_messages=collect_human_messages(parent_state['messages']))
-            self._run.subagent_instances[key] = instance
+            self._runtime.run.subagent_instances[key] = instance
             return role['agent'], instance
 
     async def ainvoke_subagent(self, agent, task, *, role, parent_context, parent_state, parent_tool_call_id, agent_id=None):
@@ -152,16 +126,18 @@ class AgentSessionSubagents:
             parent_state=parent_state, parent_tool_call_id=parent_tool_call_id, agent_id=agent_id)
         driver = None
         try:
-            await subagent_records.admit(self, graph, instance, role['spec'])
-            with self._lock:
-                self._require_subagent(instance)
-                if self._run.stop_requested or instance['control'].requested:
+            await subagent_records.admit(graph, instance, role['spec'], runtime=self._runtime,
+                catalog=self._catalog, sessions=self._persistence.storage.sessions,
+                subagents=self._persistence.storage.subagents, result_settings=self._subagent_result_settings)
+            with self._runtime.lock:
+                self._runtime.require_subagent(instance)
+                if self._runtime.run.stop_requested or instance['control'].requested:
                     raise ToolException('Subagent was not started because its owning run is stopping.')
                 driver = asyncio.create_task(self._subagent_steps(graph, instance), context=Context())
                 instance['driver'] = driver
             return await asyncio.shield(driver)
         except asyncio.CancelledError:
-            self.request_scope_stop(run_id=instance['root_run_id'],
+            self._controls.request_scope_stop(run_id=instance['root_run_id'],
                                      agent_path=instance['agent_path'], reason='failure')
             try:
                 if driver is not None:
@@ -177,7 +153,7 @@ class AgentSessionSubagents:
             raise
         finally:
             primary = sys.exception()
-            with self._lock:
+            with self._runtime.lock:
                 instance['phase'] = 'finalize'
             cleanup_error = None
             try:
@@ -189,10 +165,10 @@ class AgentSessionSubagents:
                     instance['status'] = 'failed'
                     cleanup_error = error
             finally:
-                self.release_live_approval(instance)
+                self._approvals.release_live_approval(instance)
                 instance.pop('driver', None)
                 try:
-                    await await_settled(subagent_records.settle(self, instance))
+                    await await_settled(subagent_records.settle(instance, subagents=self._persistence.storage.subagents))
                 except BaseException as error:
                     instance['status'] = 'failed'
                     if primary is None and cleanup_error is None:
@@ -228,11 +204,11 @@ class AgentSessionSubagents:
                 observation.stage = 'finalize'
                 interrupted = bool(result.get('__interrupt__'))
                 if interrupted:
-                    pending = self.register_live_approval(instance, result, snapshot)
+                    pending = self._approvals.register_live_approval(instance, result, snapshot)
                     if pending is not None:
                         announce_approval(observation, pending.public())
                 else:
-                    with self._lock:
+                    with self._runtime.lock:
                         instance['phase'] = 'finalize'
                     if snapshot.next or snapshot.interrupts:
                         raise PermissionMechanismError('Subagent final checkpoint still has pending work')
@@ -255,7 +231,7 @@ class AgentSessionSubagents:
                 try:
                     decisions, grants = await pending.future
                 finally:
-                    self.release_live_approval(instance)
+                    self._approvals.release_live_approval(instance)
                 identity = pending.interrupt_id
             else:
                 identity, decisions, grants = result['__interrupt__'][0].id, [], None
@@ -266,41 +242,35 @@ class AgentSessionSubagents:
                 instance['status'] = 'running'
 
     async def settle_subagent_drivers(self, run_id):
-        with self._lock:
-            owned = [(key, instance) for key, instance in self._run.subagent_instances.items()
+        with self._runtime.lock:
+            owned = [(key, instance) for key, instance in self._runtime.run.subagent_instances.items()
                      if instance['parent_run_id'] == run_id]
             active = [(instance, instance['driver']) for _, instance in owned if 'driver' in instance]
         if active:
-            self.request_scope_stop(run_id=run_id, reason='failure')
+            self._controls.request_scope_stop(run_id=run_id, reason='failure')
         outcomes = await asyncio.gather(*(driver for _, driver in active), return_exceptions=True)
         for (instance, driver), outcome in zip(active, outcomes):
-            self.release_live_approval(instance)
+            self._approvals.release_live_approval(instance)
             instance.pop('driver', None)
             instance['settled'] = driver.done()
             if isinstance(outcome, Exception):
                 logger.error('subagent_cleanup_failed error_type=%s', safe_error_type(outcome))
 
     def assert_subagents_settled(self, run_id):
-        with self._lock:
-            owned = [(key, instance) for key, instance in self._run.subagent_instances.items()
+        with self._runtime.lock:
+            owned = [(key, instance) for key, instance in self._runtime.run.subagent_instances.items()
                      if instance['root_run_id'] == run_id]
             if any(not instance['settled'] or 'driver' in instance or 'approval' in instance
                    or instance['status'] not in ('completed', 'stopped', 'failed') for _, instance in owned):
                 raise PermissionMechanismError('Owned subagent work has not settled')
             for key, _ in owned:
-                self._run.subagent_instances.pop(key, None)
+                self._runtime.run.subagent_instances.pop(key, None)
 
     def subagent_status(self, agent_path):
-        with self._lock:
-            instance = self._run.subagent_instances[agent_path]
+        with self._runtime.lock:
+            instance = self._runtime.run.subagent_instances[agent_path]
             return {'status': instance['status'], 'settled': instance['settled']}
 
     def child_thread_ids(self):
-        with self._lock:
-            return tuple(instance['child_thread_id'] for instance in self._run.subagent_instances.values()) if self._run else ()
-
-    def _require_subagent(self, instance):
-        # Caller holds this session's state lock.
-        if (self._run is None or instance['session_id'] != self.session_id
-                or self._run.subagent_instances.get(instance['agent_path']) is not instance):
-            raise PermissionMechanismError('Subagent instance belongs to a different session or run')
+        with self._runtime.lock:
+            return tuple(instance['child_thread_id'] for instance in self._runtime.run.subagent_instances.values()) if self._runtime.run else ()

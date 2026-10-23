@@ -246,7 +246,7 @@ def test_explicit_deny_overrides_bypass_allow_and_remembered_mcp_tool(monkeypatc
             prepared = prepare_permission_call({'id': 'first', 'name': NAME, 'args': {}}, spec, context, PermissionSettings(), [])
             remembered = remembered_rule(prepared['subject'])
             session = app.sessions._sessions.require(sid)
-            session._state.session_allow.append(remembered)
+            session._runtime.state.session_allow.append(remembered)
             result = await app.runs.start(sid, [('user', 'denied')])
             assert next(m for m in result['messages'] if isinstance(m, ToolMessage)).status == 'error'
             assert not result.get('approval_requests') and not calls(path)

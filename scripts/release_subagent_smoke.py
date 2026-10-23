@@ -137,7 +137,7 @@ async def subagent_scenario(root, Model):
                 owner = app.sessions._sessions.require(sid)
                 reopen = dict(model_calls=len(parent.seen) + len(child.seen) - before[0],
                     write_calls=written.call_count - before[1], auto_calls=auto.call_count - before[2],
-                    drivers=len(owner._run.subagent_instances) if owner._run else 0,
+                    drivers=len(owner._runtime.run.subagent_instances) if owner._runtime.run else 0,
                     approvals=len(app.runs.pending_approvals(sid)),
                     history_ids_equal=[message.id for message in history['messages']] == ids)
                 lists.append(await query(app, sid, identity))

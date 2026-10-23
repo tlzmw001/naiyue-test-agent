@@ -108,27 +108,27 @@ async def metadata_samples(root, counts, repeats):
         try:
             await asyncio.wait_for(entered.wait(), 10)
             owner = app.sessions._sessions.require(sid)
-            context = RuntimeContext(scope=RunScope(identity=RunIdentity(session_id=sid, run_id=owner._run.run_id, agent_path='root', execution_root=ExecutionRoot(root) if root is not None else None)))
+            context = RuntimeContext(scope=RunScope(identity=RunIdentity(session_id=sid, run_id=owner._runtime.run.run_id, agent_path='root', execution_root=ExecutionRoot(root) if root is not None else None)))
             current = 0
             for count in sorted(set(counts)):
                 for index in range(current, count):
                     identity = sha256(f'metadata-fixture-{index}'.encode()).hexdigest()
                     stamp = f'2026-01-01T00:00:00.{index:06d}+00:00'
                     app.sessions._persistence.storage.subagents.save_subagent(dict(session_id=sid, agent_id=identity,
-                        project_id=owner._run.project_id, execution_root=str(root), execution_root_kind='local',
+                        project_id=owner._runtime.run.project_id, execution_root=str(root), execution_root_kind='local',
                         agent_path='root/worker/' + identity, child_thread_id='subagent:' + identity,
                         agent='worker', role_fingerprint=role_fingerprint(role), model_id='child',
                         last_task='Synthetic failed-instance metadata; no executable checkpoint.', state='failed',
                         version=1, checkpoint_ns='', checkpoint_id=None, last_delegation_id=identity,
-                        last_parent_run_id=owner._run.run_id, last_parent_batch_id='metadata-fixture',
-                        last_parent_tool_call_id=identity, last_parent_reply_id=owner._run.reply_id,
+                        last_parent_run_id=owner._runtime.run.run_id, last_parent_batch_id='metadata-fixture',
+                        last_parent_tool_call_id=identity, last_parent_reply_id=owner._runtime.run.reply_id,
                         created_at=stamp, updated_at=stamp), None)
                 current = count
                 calls = parent.calls + child.calls
                 samples = []
                 for _ in range(repeats):
                     start = perf_counter()
-                    result = await owner.alist_subagents(parent_context=context, parent_state={})
+                    result = await owner.subagents.alist_subagents(parent_context=context, parent_state={})
                     samples.append((perf_counter() - start) * 1000)
                     page = json.loads(result)
                     assert len(page['items']) == min(20, count) and len(result.encode()) <= 8192

@@ -42,23 +42,23 @@ def test_run_snapshots_and_allow_rules_do_not_leak_nested_mutation():
     rid, observation = observation_run.run_id, observation_run.observation
     assert isinstance(a, AgentSession)
     pending = {'batch_id': 'batch', 'items': [{'args': {'path': 'original'}}]}
-    a.replace_pending_approval(observation_run, pending)
+    a.approvals.replace_pending_approval(observation_run, pending)
     rule = {'tool': 'read', 'target': {'path': 'original'}}
-    a.remember_approved_rules(observation_run, [rule, rule])
+    a.approvals.remember_approved_rules(observation_run, [rule, rule])
     pending['items'][0]['args']['path'] = 'caller-change'
     rule['target']['path'] = 'caller-change'
-    snapshot = a.snapshot_for_run()
+    snapshot = a.lifecycle.snapshot_for_run()
     snapshot['pending']['items'][0]['args']['path'] = 'snapshot-change'
     permission = a.resolve_permission_context()
     permission['session_allow'][0]['target']['path'] = 'snapshot-change'
-    assert a.snapshot_for_run()['pending']['items'][0]['args']['path'] == 'original'
+    assert a.lifecycle.snapshot_for_run()['pending']['items'][0]['args']['path'] == 'original'
     assert a.resolve_permission_context()['session_allow'] == [{'tool': 'read', 'target': {'path': 'original'}}]
     assert service.resolve_permission_context(other)['session_allow'] == []
-    assert service._sessions[other].snapshot_for_run()['pending'] is None
-    a.freeze_run_resources(observation_run, [{'text': 'original'}], 'project rules')
-    parts = a.resolve_prompt_parts()
+    assert service._sessions[other].lifecycle.snapshot_for_run()['pending'] is None
+    a.lifecycle.freeze_run_resources(observation_run, [{'text': 'original'}], 'project rules')
+    parts = a.lifecycle.resolve_prompt_parts()
     parts[0]['text'] = 'outside-change'
-    assert a.resolve_prompt_parts() == [{'text': 'original'}]
+    assert a.lifecycle.resolve_prompt_parts() == [{'text': 'original'}]
 
 
 @pytest.mark.parametrize('operation', ['model', 'thinking', 'tools', 'mode'])
@@ -128,9 +128,9 @@ def test_duplicate_admission_is_atomic_and_stale_transitions_are_rejected():
     a, run = successful[0]
     rid, observation = run.run_id, run.observation
     assert isinstance(a, AgentSession)
-    for transition in (lambda: a.release_run('stale'),
-                       lambda: a.replace_pending_approval('stale', None),
-                       lambda: a.freeze_run_resources('stale', [], None)):
+    for transition in (lambda: a.lifecycle.release_run('stale'),
+                       lambda: a.approvals.replace_pending_approval('stale', None),
+                       lambda: a.lifecycle.freeze_run_resources('stale', [], None)):
         with pytest.raises(SessionBusyError):
             transition()
     assert service.require(sid).describe_session()['run_id'] == rid
@@ -144,12 +144,12 @@ def test_closing_controls_keeps_busy_until_persistent_finish_releases_it():
     a, observation_run = service._admit(sid, 'run-a', 'message')
     rid, observation = observation_run.run_id, observation_run.observation
     assert isinstance(a, AgentSession)
-    service.require(sid).steer('steering')
-    service.require(sid).follow_up('follow-up')
-    assert a._cleanup_run(observation_run) is False
-    assert a.is_busy() and a._run is observation_run and not observation_run.controls_open
+    service.require(sid).controls.steer('steering')
+    service.require(sid).controls.follow_up('follow-up')
+    assert a.lifecycle._cleanup_run(observation_run) is False
+    assert a.is_busy() and a._runtime.run is observation_run and not observation_run.controls_open
     assert service.drain_steering(sid) == []
-    a.release_run(observation_run)
+    a.lifecycle.release_run(observation_run)
     assert not a.is_busy() and service.require(sid).describe_session()['run_id'] is None
 
 
@@ -165,6 +165,6 @@ def test_invalid_resume_does_not_start_a_run_or_remember_allow():
     service.subscribe_events(events.append)
     with pytest.raises(ValueError, match='One approve/reject'):
         service._admit('saved', 'invalid', 'approval_resume', decisions=[])
-    assert not a.is_busy() and a._run is None and events == []
+    assert not a.is_busy() and a._runtime.run is None and events == []
     assert a.resolve_permission_context()['session_allow'] == []
-    assert a.snapshot_for_run()['pending'] == pending
+    assert a.lifecycle.snapshot_for_run()['pending'] == pending

@@ -15,34 +15,34 @@ class RunAPI:
     def steer(self, session_id, text):
         if not isinstance(text, str) or not text.strip():
             raise ValueError('A non-empty steering message is required')
-        self._sessions.require(session_id).steer(text)
+        self._sessions.require(session_id).controls.steer(text)
 
     def follow_up(self, session_id, text):
         if not isinstance(text, str) or not text.strip():
             raise ValueError('A non-empty follow-up message is required')
-        self._sessions.require(session_id).follow_up(text)
+        self._sessions.require(session_id).controls.follow_up(text)
 
     def stop(self, session_id, *, run_id=None, agent_path='root', agent_run_id=None, approval_batch_id=None):
-        return self._sessions.require(session_id).request_scope_stop(run_id=run_id, agent_path=agent_path, agent_run_id=agent_run_id, approval_batch_id=approval_batch_id)
+        return self._sessions.require(session_id).controls.request_scope_stop(run_id=run_id, agent_path=agent_path, agent_run_id=agent_run_id, approval_batch_id=approval_batch_id)
 
     def pending_tools(self, session_id):
-        return self._sessions.require(session_id).pending_tool_approvals()
+        return self._sessions.require(session_id).approvals.pending_tool_approvals()
 
     def pending_subagents(self, session_id):
         self._owner.check_open()
-        return self._sessions.require(session_id).pending_subagent_approvals()
+        return self._sessions.require(session_id).approvals.pending_subagent_approvals()
 
     def pending_approvals(self, session_id):
         self._owner.check_open()
-        return self._sessions.require(session_id).pending_approval_batches()
+        return self._sessions.require(session_id).approvals.pending_approval_batches()
 
     def prepare_approval(self, session_id, **submission):
         self._owner.check_open()
-        return self._sessions.require(session_id).prepare_root_approval_submission(**submission)
+        return self._sessions.require(session_id).approvals.prepare_root_approval_submission(**submission)
 
     async def submit_subagent_approval(self, session_id, *, approval_batch_id, decisions, origin_run_id, remember_approved=()):
         with self._owner.operation():
-            return self._sessions.require(session_id).submit_subagent_approval(approval_batch_id=approval_batch_id, decisions=decisions, origin_run_id=origin_run_id, remember_approved=remember_approved)
+            return self._sessions.require(session_id).approvals.submit_subagent_approval(approval_batch_id=approval_batch_id, decisions=decisions, origin_run_id=origin_run_id, remember_approved=remember_approved)
 
     async def _execute(self, session_id, value, resume, run_id, max_concurrency, *, remember_approved=None, stop=False, compact=False, expected_conversation_revision=None):
         with self._owner.operation():
@@ -67,7 +67,7 @@ class RunAPI:
 
     async def stop_approval(self, session_id, *, approval_batch_id, origin_run_id, max_concurrency=4):
         with self._owner.operation():
-            self._sessions.require(session_id).validate_root_approval_stop(approval_batch_id=approval_batch_id, origin_run_id=origin_run_id)
+            self._sessions.require(session_id).approvals.validate_root_approval_stop(approval_batch_id=approval_batch_id, origin_run_id=origin_run_id)
             return await self._execute(session_id, [], True, None, max_concurrency, stop=True)
 
     async def _stream(self, session_id, value, resume, max_concurrency, capacity, *, stop=False):
@@ -109,7 +109,7 @@ class RunAPI:
 
     async def stream_stop_approval(self, session_id, *, approval_batch_id, origin_run_id, max_concurrency=4, capacity=256):
         self._owner.check_open()
-        self._sessions.require(session_id).validate_root_approval_stop(approval_batch_id=approval_batch_id, origin_run_id=origin_run_id)
+        self._sessions.require(session_id).approvals.validate_root_approval_stop(approval_batch_id=approval_batch_id, origin_run_id=origin_run_id)
         iterator = self._stream(session_id, [], True, max_concurrency, capacity, stop=True)
         try:
             async for event in iterator:

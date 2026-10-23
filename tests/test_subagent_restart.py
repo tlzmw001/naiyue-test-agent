@@ -84,7 +84,7 @@ async def test_restart_pairs_root_delegation_without_replaying_child_or_reviving
             (sid, info['child_thread_id']))]
         assert [r['id'] for r in archived_child] == [m.id for m in original_child.values['messages']]
         assert any(r['tool_calls'] for r in archived_child if r['type'] == 'ai')
-        assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app.sessions._sessions._sessions.values()) and app.runs.pending_approvals(sid) == []
+        assert all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.sessions._sessions._sessions.values()) and app.runs.pending_approvals(sid) == []
         saved = await app.runs._agent.aget_state(config)
         assert not saved.next and not saved.tasks and saved.values['tool_execution'] == {}
         assert saved.values['messages'][:-1] == source.values['messages']

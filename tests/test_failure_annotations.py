@@ -63,7 +63,7 @@ async def test_application_reads_annotation_and_classifies_model_once(monkeypatc
     assert caught.value is error and calls == [error]
     assert read_failure_description(error, run_id=events[-1].run_id).reason == 'vendor_quota'
     assert events[-1].data.failure.reason == 'vendor_quota'
-    assert all(owner._run is None for owner in app.sessions._sessions._sessions.values())
+    assert all(owner._runtime.run is None for owner in app.sessions._sessions._sessions.values())
 
 
 def test_broken_annotation_getter_is_safe_and_does_not_search_cause(caplog):

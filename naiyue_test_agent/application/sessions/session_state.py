@@ -2,6 +2,8 @@
 
 from collections import deque
 from dataclasses import dataclass, field
+from threading import Lock
+from _thread import LockType
 from naiyue_test_agent.execution_roots import ExecutionRoot
 from typing import TYPE_CHECKING
 
@@ -51,3 +53,28 @@ class ActiveRun:
     follow_up_queue: deque[QueuedInput] = field(default_factory=deque)
     subagent_instances: dict[str, dict] = field(default_factory=dict)
     subagent_calls: set[str] = field(default_factory=set)
+
+
+@dataclass
+class SessionRuntime:
+    """One live ownership slot shared by the session's explicit collaborators.
+
+    This handle is not persisted. Callers hold lock for paired state transitions
+    and for both identity guards; no guard acquires a second lock or performs IO.
+    """
+
+    session_id: str
+    state: SessionState
+    run: ActiveRun | None = None
+    lock: LockType = field(default_factory=Lock)
+
+    def require_run(self, run: ActiveRun):
+        from naiyue_test_agent.application.errors import SessionBusyError
+        if self.run is not run or run is None:
+            raise SessionBusyError('State transition targets a different run')
+
+    def require_subagent(self, instance):
+        from naiyue_test_agent.tools.permissions import PermissionMechanismError
+        if (self.run is None or instance['session_id'] != self.session_id
+                or self.run.subagent_instances.get(instance['agent_path']) is not instance):
+            raise PermissionMechanismError('Subagent instance belongs to a different session or run')

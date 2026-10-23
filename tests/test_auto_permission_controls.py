@@ -71,7 +71,7 @@ def test_external_cancellation_during_review_preserves_cancellation_and_cleanup(
                 await asyncio.wait_for(task, 5)
             assert executed == [] and app.runs.pending_tools(sid) == []
             row = app.sessions._sessions._sessions[sid]
-            assert not row.is_busy() and row.snapshot_for_run()['run_id'] is None and row.resolve_permission_context()['project_instructions'] is None
+            assert not row.is_busy() and row.lifecycle.snapshot_for_run()['run_id'] is None and row.resolve_permission_context()['project_instructions'] is None
             assert row.describe_session()['manual_review_required'] is True
             assert events[-1].event_type == 'run_finished' and events[-1].data.status == 'failed'
             assert events[-1].data.failure.category == 'cancelled' and events[-1].data.failure.reason == 'task_cancelled'

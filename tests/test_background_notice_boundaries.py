@@ -1,4 +1,5 @@
 """Root status cannot leak to child prompts, manual summaries or unsent inputs."""
+from naiyue_test_agent.application.sessions.session_execution import RunLifecycle
 
 import asyncio
 
@@ -62,10 +63,10 @@ def test_manual_compaction_does_not_collect_or_acknowledge_status(monkeypatch, t
 
 def test_snapshot_without_actual_system_part_is_not_acknowledged(monkeypatch, tmp_path):
     from naiyue_test_agent.application.sessions.agent_session import AgentSession
-    original = AgentSession.resolve_prompt_parts
+    original = RunLifecycle.resolve_prompt_parts
     def without_status(self, agent_path='root'):
         return [part for part in original(self, agent_path) if part['id'] != 'background_tasks']
-    monkeypatch.setattr(AgentSession, 'resolve_prompt_parts', without_status)
+    monkeypatch.setattr(RunLifecycle, 'resolve_prompt_parts', without_status)
     async def scenario():
         model = StreamingToolModel(replies=[AIMessage(content='success')])
         async with background_app(monkeypatch, tmp_path, model) as app:

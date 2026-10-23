@@ -49,7 +49,7 @@ async def test_child_save_failure_or_success_does_not_change_root_save_contract(
             assert instances[0]['status'] == 'completed' and instances[0]['settled']
             assert [(e.source is None, e.data.status) for e in events if e.event_type == 'run_finished'] == [
                 (False, 'completed'), (True, 'failed')]
-            assert not app.sessions._sessions.require(sid).describe_session()['busy'] and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app.sessions._sessions._sessions.values())
+            assert not app.sessions._sessions.require(sid).describe_session()['busy'] and all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.sessions._sessions._sessions.values())
     if fail_child:
         async with open_async_persistent_application('unused', **options) as restored:
             await restored.sessions.restore(sid)

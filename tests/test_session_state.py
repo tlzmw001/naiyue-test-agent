@@ -56,7 +56,7 @@ def test_new_and_restored_states_use_one_dataclass_and_isolate_mutable_defaults(
 def test_purpose_snapshots_are_bounded_and_do_not_expose_live_state():
     sessions = service()
     sid = sessions.create_session('A')
-    finish = sessions._sessions[sid].snapshot_for_finish()
+    finish = sessions._sessions[sid].lifecycle.snapshot_for_finish()
     assert finish == {'thread_id': sessions.require(sid).get_thread_id(), 'manual_review_required': False}
     finish['manual_review_required'] = True
     assert sessions.require(sid).describe_session()['manual_review_required'] is False
@@ -83,8 +83,8 @@ def test_context_snapshot_is_invalidated_by_selection_busy_pending_and_removal()
     owner, observation_run = sessions._admit(sid, 'context-run', 'message')
     run_id, observation = observation_run.run_id, observation_run.observation
     assert not sessions.context_snapshot_is_current(sid, current)
-    owner.replace_pending_approval(observation_run, {'batch_id': 'batch'})
-    owner._cleanup_run(observation_run)
+    owner.approvals.replace_pending_approval(observation_run, {'batch_id': 'batch'})
+    owner.lifecycle._cleanup_run(observation_run)
     assert not sessions.context_snapshot_is_current(sid, current)
     sessions.remove_session(sid)
     assert not sessions.context_snapshot_is_current(sid, current)
@@ -96,7 +96,7 @@ def test_restored_pending_is_detached_and_duplicate_install_does_not_replace_sta
     sessions.install_restored_session('saved', **restored_config(), pending=pending)
     assert sessions.require('saved').approval_seed_identity() == ('saved-thread', 'b1')
     pending['items'][0]['args']['path'] = 'outside-mutation'
-    assert sessions._sessions['saved'].snapshot_for_run()['pending']['items'][0]['args']['path'] == 'original'
+    assert sessions._sessions['saved'].lifecycle.snapshot_for_run()['pending']['items'][0]['args']['path'] == 'original'
     existing = sessions._sessions['saved']
     with pytest.raises(SessionPersistenceError, match='session_already_loaded'):
         sessions.install_restored_session('saved', **restored_config())
@@ -118,11 +118,11 @@ def test_delete_guard_holds_only_the_admission_boundary_and_rejects_busy():
     with pytest.raises(SessionPersistenceError, match='session_recovery_blocked'):
         with sessions.deletion_guard(sid):
             pytest.fail('Busy session must not reserve deletion')
-    owner._cleanup_run(observation_run)
+    owner.lifecycle._cleanup_run(observation_run)
     other = sessions.create_session('A')
-    sessions._sessions[sid]._run.subagent_instances['root/child'] = {'child_thread_id': 'child-thread'}
+    sessions._sessions[sid]._runtime.run.subagent_instances['root/child'] = {'child_thread_id': 'child-thread'}
     sessions._admit(other, 'other-run', 'message')
-    sessions._sessions[other]._run.subagent_instances['root/child'] = {'child_thread_id': 'other-thread'}
+    sessions._sessions[other]._runtime.run.subagent_instances['root/child'] = {'child_thread_id': 'other-thread'}
     assert sessions.child_thread_ids(sid) == ('child-thread',)
     sessions.remove_session(sid)
     assert not sessions.has_session(sid)
@@ -144,8 +144,8 @@ async def test_real_persistent_restore_preserves_configuration_but_resets_transi
         state = app.sessions._sessions._sessions[sid]
         assert isinstance(state, AgentSession)
         assert state.get_thread_id() == thread and state.get_permission_mode() == 'NoAsk'
-        assert state.snapshot_for_run()['run_id'] is None and not state.is_busy()
-        assert state.resolve_permission_context()['session_allow'] == [] and state.resolve_prompt_parts() == []
+        assert state.lifecycle.snapshot_for_run()['run_id'] is None and not state.is_busy()
+        assert state.resolve_permission_context()['session_allow'] == [] and state.lifecycle.resolve_prompt_parts() == []
         assert app.sessions._sessions.drain_steering(sid) == [] and app.sessions._sessions.finish_run_boundary(sid) == (False, [])
         assert [m.content for m in await app.history.messages(sid)] == ['save', 'answer']
 

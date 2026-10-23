@@ -30,7 +30,7 @@ class HistoryAPI:
             owned = {}
             if self._sessions.has_session(session_id):
                 messages = await self.messages(session_id)
-                owned = await self._sessions.require(session_id).asubagent_references()
+                owned = await self._sessions.require(session_id).subagents.asubagent_references()
             else:
                 messages = (await self.session(session_id))['messages']
                 owned = await run_blocking(self._subagents.get_subagent_references, session_id)

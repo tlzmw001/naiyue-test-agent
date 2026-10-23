@@ -54,7 +54,7 @@ async def test_normal_reopen_is_passive_and_explicit_continuation_keeps_child_hi
         await app.sessions.restore(sid)
         assert (len(root.seen), len(child.seen)) == before and not events
         owner = app.sessions._sessions.require(sid)
-        assert owner._run is None and (await owner.asubagent_references())[identity] == saved
+        assert owner._runtime.run is None and (await owner.subagents.asubagent_references())[identity] == saved
         reply = await delegate(app, sid, root, task='second', identity=identity)
         assert json.loads(reply.content)['report'] == 'second report'
         current = app.sessions._persistence.storage.subagents.get_subagent(sid, identity)

@@ -184,7 +184,7 @@ def test_stop_inflight_child_call_settles_resources_without_replay(monkeypatch, 
             assert len(calls(path)) == 1 and not process_alive(calls(path)[0]['pid'])
             assert instance['settled'] and instance['status'] == 'stopped'
             # The owner can be inspected after close; the public app API is closed.
-            assert app.sessions._sessions.require(sid).pending_subagent_approvals() == []
+            assert app.sessions._sessions.require(sid).approvals.pending_subagent_approvals() == []
             if scope == 'child':
                 assert result['messages'][-1].content == 'root done' and not result.get('run_stopped')
             else:

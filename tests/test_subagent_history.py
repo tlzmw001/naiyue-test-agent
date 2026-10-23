@@ -17,7 +17,7 @@ async def test_child_history_outlives_live_instance_and_cannot_cross_sessions(mo
     sid = await app.sessions.create('A')
     await app.runs.start(sid, [('user', 'start')])
     before = (len(root.seen), len(child.seen))
-    assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app.sessions._sessions._sessions.values())
+    assert all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.sessions._sessions._sessions.values())
     records = await app.history.subagents(sid)
     record, = records
     assert record['agent_path'] == instances[0]['agent_path']

@@ -89,8 +89,8 @@ def test_explicit_resubmit_clears_only_admitted_pending_input(monkeypatch, capsy
                     sid = sessions.loaded_session_ids()[0]
                     owner, observation_run = sessions._admit(sid, 'review-fault', 'message')
                     run_id, observation = observation_run.run_id, observation_run.observation
-                    owner.mark_manual_review(observation_run)
-                    owner._cleanup_run(observation_run)
+                    owner.approvals.mark_manual_review(observation_run)
+                    owner.lifecycle._cleanup_run(observation_run)
                 bridge._submit(require_review)
         if line == ':pending':
             workers[-1].join(5)

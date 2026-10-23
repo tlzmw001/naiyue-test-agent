@@ -65,7 +65,7 @@ async def test_delayed_accept_notification_cannot_be_overtaken_by_delivery(monke
         AIMessage(id='first', content='done'), AIMessage(id='second', content='done'),
     ])
     entered, release_accept = Event(), Event()
-    original = app.sessions._sessions._sessions[session]._record_steering
+    original = app.sessions._sessions._sessions[session].controls._record_steering
     accepted_errors = []
 
     def pause_accept(event, *args):
@@ -74,7 +74,7 @@ async def test_delayed_accept_notification_cannot_be_overtaken_by_delivery(monke
             assert release_accept.wait(timeout=5)
         original(event, *args)
 
-    monkeypatch.setattr(app.sessions._sessions._sessions[session], '_record_steering', pause_accept)
+    monkeypatch.setattr(app.sessions._sessions._sessions[session].controls, '_record_steering', pause_accept)
 
     def accept():
         try:
@@ -141,7 +141,7 @@ async def test_failure_discards_unprocessed_request_and_preserves_primary(monkey
     assert observed[-1].data.reason == 'run_failed' and observed[-1].data.kind == kind
     assert observed[0].data.control_id == observed[1].data.control_id
     assert observed[-1].sequence < events[-1].sequence and events[-1].data.status == 'failed'
-    assert app.sessions._sessions._sessions[session]._run is None
+    assert app.sessions._sessions._sessions[session]._runtime.run is None
 
 
 @async_test
@@ -288,7 +288,7 @@ async def test_old_cleanup_control_notifications_keep_their_run_before_next_run(
     assert discarded[0].sequence < next(e.sequence for e in events
         if e.run_id == old_run and e.event_type == 'run_finished')
     assert not controls([e for e in events if e.run_id == new_start.run_id])
-    assert app.sessions._sessions._sessions[session]._run is None
+    assert app.sessions._sessions._sessions[session]._runtime.run is None
 
 
 @async_test
@@ -364,7 +364,7 @@ async def test_control_publish_failure_does_not_undo_accepted_input_or_fail_run(
     app, session, events, outcomes, worker, release, _calls = await blocked_app(monkeypatch, [
         AIMessage(id='one', content='one'), AIMessage(id='two', content='two'),
     ])
-    publisher = app.sessions._sessions._sessions[session]._run.observation.publisher
+    publisher = app.sessions._sessions._sessions[session]._runtime.run.observation.publisher
     original = publisher.publish
 
     def fail_control(event_type, data):
@@ -380,7 +380,7 @@ async def test_control_publish_failure_does_not_undo_accepted_input_or_fail_run(
         release.set()
         await asyncio.wait_for(asyncio.shield(worker), 6)
     assert [m.content for m in result['messages'] if m.type == 'human'] == ['initial', 'still delivered']
-    assert events[-1].data.status == 'completed' and app.sessions._sessions._sessions[session]._run is None
+    assert events[-1].data.status == 'completed' and app.sessions._sessions._sessions[session]._runtime.run is None
     assert 'control_event_publish_failed' in caplog.text and 'PRIVATE_' not in caplog.text
 
 

@@ -55,7 +55,7 @@ async def test_real_read_write_report_ready_reopen_and_new_delegation(monkeypatc
             else:
                 assert await app.sessions.restore(sid) == sid
                 assert await app.history.messages(sid) == saved_root
-                assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app.sessions._sessions._sessions.values())
+                assert all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.sessions._sessions._sessions.values())
             result = await app.runs.start(sid, [('user', f'check round {round_number}')])
             saved_root = await app.history.messages(sid)
             assert saved_root == result['messages']
@@ -63,7 +63,7 @@ async def test_real_read_write_report_ready_reopen_and_new_delegation(monkeypatc
             instance, = instances
             identities.append(instance['agent_path'])
             assert instance['status'] == 'completed' and instance['settled']
-            assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app.sessions._sessions._sessions.values()) and app.runs.pending_approvals(sid) == []
+            assert all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.sessions._sessions._sessions.values()) and app.runs.pending_approvals(sid) == []
             graph = app.sessions._sessions._subagents['writer']['agent']
             snapshot = await graph.aget_state({'configurable': {'thread_id': instance['child_thread_id']}})
             assert not snapshot.next and not snapshot.interrupts
@@ -153,7 +153,7 @@ async def test_sync_sdk_fallback_waits_for_real_worker_before_releasing_owner(mo
         if closing is not None: await asyncio.wait_for(closing, 5)
         assert [item[0] for item in child.trace] == ['sdk_started', 'sdk_finished']
         assert instance['settled'] and instance['status'] == 'stopped' and 'driver' not in instance
-        assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app.sessions._sessions._sessions.values()) and not app.sessions._sessions.require(sid).describe_session()['busy']
+        assert all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.sessions._sessions._sessions.values()) and not app.sessions._sessions.require(sid).describe_session()['busy']
         assert current_run_scope() is None
         assert not any(e.source and e.event_type == 'run_finished' and e.data.status == 'completed' for e in events)
         assert closed == (['closed'] if action == 'close' else [])

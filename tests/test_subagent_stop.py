@@ -1,4 +1,5 @@
 """Scope stops settle one child without changing its sibling's authority."""
+from naiyue_test_agent.application.sessions.session_approval import ApprovalBook
 
 import json
 import asyncio
@@ -68,16 +69,16 @@ async def test_root_stop_between_saved_interrupt_and_registration_cannot_leave_a
     app, root = await delegated_app(monkeypatch, child, tools=[definition(calls=effects, approved=True)])
     instances = record_instances(monkeypatch, app)
     from naiyue_test_agent.application.sessions.agent_session import AgentSession
-    register = AgentSession.register_live_approval
+    register = ApprovalBook.register_live_approval
     def stop_then_register(self, instance, *args):
         app.runs.stop(instance['session_id'], run_id=instance['root_run_id'])
         return register(self, instance, *args)
-    monkeypatch.setattr(AgentSession, 'register_live_approval', stop_then_register)
+    monkeypatch.setattr(ApprovalBook, 'register_live_approval', stop_then_register)
     sid = await app.sessions.create('A')
     result = await asyncio.wait_for(app.runs.start(sid, [('user', 'start')]), 5)
     assert result['run_stopped'] and effects == [] and len(root.seen) == 1
     assert instances[0]['status'] == 'stopped' and instances[0]['settled']
-    assert app.runs.pending_approvals(sid) == [] and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app.sessions._sessions._sessions.values())
+    assert app.runs.pending_approvals(sid) == [] and all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.sessions._sessions._sessions.values())
 
 
 @async_test
@@ -107,7 +108,7 @@ async def test_cross_thread_stop_is_visible_before_approval_registration_and_not
     app, root = await delegated_app(monkeypatch, child, tools=[definition(calls=effects, approved=True)])
     instances = record_instances(monkeypatch, app)
     from naiyue_test_agent.application.sessions.agent_session import AgentSession
-    register = AgentSession.register_live_approval
+    register = ApprovalBook.register_live_approval
     notified, release = Event(), Event()
     def stop_then_register(self, instance, *args):
         request = instance['control'].request
@@ -124,7 +125,7 @@ async def test_cross_thread_stop_is_visible_before_approval_registration_and_not
         stopper.start()
         assert notified.wait(5)
         return register(self, instance, *args)
-    monkeypatch.setattr(AgentSession, 'register_live_approval', stop_then_register)
+    monkeypatch.setattr(ApprovalBook, 'register_live_approval', stop_then_register)
     try:
         result = await asyncio.wait_for(app.runs.start(await app.sessions.create('A'), [('user', 'start')]), 5)
         assert result['messages'][-1].content == 'root done' and len(root.seen) == 2

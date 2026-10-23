@@ -1,4 +1,5 @@
 """A delegated task has its own graph history, model snapshot and tool scope."""
+from naiyue_test_agent.application.subagents.session_subagents import SubagentRegistry
 
 import json
 import asyncio
@@ -55,13 +56,14 @@ async def delegated_app(monkeypatch, child, *, root=None, spec=None, tools=None,
 def record_instances(monkeypatch, app):
     instances = []
     from naiyue_test_agent.application.sessions.agent_session import AgentSession
-    prepare = AgentSession.prepare_subagent_instance
+    prepare = SubagentRegistry.prepare_subagent_instance
     def record(self, *args, **kwargs):
         graph, instance = prepare(self, *args, **kwargs)
-        if app.sessions._sessions._sessions.get(self.session_id) is self:
+        owner = app.sessions._sessions._sessions.get(self.session_id)
+        if owner is not None and owner.subagents is self:
             instances.append(instance)
         return graph, instance
-    monkeypatch.setattr(AgentSession, 'prepare_subagent_instance', record)
+    monkeypatch.setattr(SubagentRegistry, 'prepare_subagent_instance', record)
     return instances
 
 
@@ -191,7 +193,7 @@ async def test_unknown_role_is_tool_error_and_does_not_start_child(monkeypatch):
     feedback = next(message for message in result['messages'] if isinstance(message, ToolMessage))
     assert feedback.status == 'error' and 'Unknown subagent' in feedback.content
     assert result['messages'][-1].content == 'continue' and child.seen == []
-    assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app.sessions._sessions._sessions.values())
+    assert all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.sessions._sessions._sessions.values())
 
 
 @async_test

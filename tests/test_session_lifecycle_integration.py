@@ -53,13 +53,13 @@ async def test_root_then_child_approval_keeps_owner_until_required_save(
         def observe(event):
             events.append(event)
             if event.event_type == 'run_started' and event.source is None:
-                runs.append(owner._run)
+                runs.append(owner._runtime.run)
         app.observability.subscribe(observe)
         pending = await app.runs.start(sid, [('user', 'check with approval')])
         first, = runs
         assert len(pending['approval_requests']) == 1 and effects == []
-        assert owner._run is None and not owner.is_busy()
-        assert owner.snapshot_for_run()['pending']['requested_run_id'] == first.run_id
+        assert owner._runtime.run is None and not owner.is_busy()
+        assert owner.lifecycle.snapshot_for_run()['pending']['requested_run_id'] == first.run_id
         assert app.sessions._persistence.storage.sessions.get(sid)['state'] == 'interrupted'
         assert [e.data.status for e in events if e.event_type == 'run_finished'] == ['interrupted']
 
@@ -86,7 +86,7 @@ async def test_root_then_child_approval_keeps_owner_until_required_save(
         closing_task = None
         try:
             batch = await next_approval(app, sid, queue)
-            second = owner._run
+            second = owner._runtime.run
             instance, = instances
             driver, future = instance['driver'], instance['approval'].future
             assert second is runs[1] and second is not first and second.run_id != first.run_id
@@ -97,13 +97,13 @@ async def test_root_then_child_approval_keeps_owner_until_required_save(
                 app.sessions._sessions._admit(sid, 'duplicate', 'message')
             with pytest.raises(SessionBusyError):
                 app.sessions._sessions._admit(sid, 'duplicate', 'approval_resume', decisions=['approve'])
-            assert owner._run is second
+            assert owner._runtime.run is second
             await submit(app, sid, batch)
             await asyncio.wait_for(entered.wait(), 5)
             assert driver.done() and future.done() and instance['settled']
             assert 'driver' not in instance and 'approval' not in instance
-            assert owner._run is second and owner.is_busy() and not second.controls_open
-            assert second.subagent_instances == {} and owner.pending_approval_batches() == []
+            assert owner._runtime.run is second and owner.is_busy() and not second.controls_open
+            assert second.subagent_instances == {} and owner.approvals.pending_approval_batches() == []
             assert effects == [('probe', 'parent'), ('probe', 'child')]
             assert len(runs) == 2 and len(root.seen) == 3 and len(child.seen) == 2
             assert [(e.source is None, e.data.status) for e in events if e.event_type == 'run_finished'] == [
@@ -140,7 +140,7 @@ async def test_root_then_child_approval_keeps_owner_until_required_save(
                 assert json.loads(feedback.content)['report'] == 'child report' and feedback.artifact['agent_path'] == instance['agent_path']
             if closing_task:
                 await closing_task
-            assert owner._run is None and not owner.is_busy() and app._lifetime._operations == {}
+            assert owner._runtime.run is None and not owner.is_busy() and app._lifetime._operations == {}
             assert events[-1].event_type == 'run_finished' and events[-1].source is None
             failed = outcome in ('save_failure', 'primary_error')
             assert events[-1].data.status == ('failed' if failed else 'completed')
@@ -168,21 +168,21 @@ async def test_root_approval_reopens_as_facts_until_explicit_decision(monkeypatc
         sid = await app.sessions.create_workspace('A', tmp_path)
         await app.runs.start(sid, [('user', 'await permission')])
         origin = app.runs.pending_approvals(sid)[0]['origin_run_id']
-        assert app.sessions._sessions._sessions[sid]._run is None and effects == []
+        assert app.sessions._sessions._sessions[sid]._runtime.run is None and effects == []
     async with persistent_delegation(monkeypatch, path, root, child, effects) as app:
         history = await app.history.session(sid)
         assert history['recovery']['kind'] == 'pending_approval'
         await app.sessions.recover(sid, checkpoint_id=history['checkpoint_id'], action='restore_approval')
         owner = app.sessions._sessions._sessions[sid]
-        assert owner._run is None and not owner.is_busy() and owner.child_thread_ids() == ()
+        assert owner._runtime.run is None and not owner.is_busy() and owner.subagents.child_thread_ids() == ()
         assert owner.resolve_permission_context()['session_allow'] == []
-        assert owner.snapshot_for_run()['pending_turn'] is None and owner.resolve_prompt_parts() == []
+        assert owner.lifecycle.snapshot_for_run()['pending_turn'] is None and owner.lifecycle.resolve_prompt_parts() == []
         batch, = app.runs.pending_approvals(sid)
         assert batch['kind'] == 'paused_root' and batch['origin_run_id'] == origin
         assert effects == [] and len(root.seen) == 1 and child.seen == []
         result = await app.runs.resume_approval(sid, ['approve'])
         assert result['messages'][-1].content == 'done' and effects == [('probe', 'once')]
-        assert owner._run is None and app.runs.pending_approvals(sid) == []
+        assert owner._runtime.run is None and app.runs.pending_approvals(sid) == []
         assert app.sessions._persistence.storage.sessions.get(sid)['state'] == 'ready' and len(root.seen) == 2
 
 
@@ -221,13 +221,13 @@ async def test_close_during_child_approval_settles_before_reopen(monkeypatch, tm
             batch = await next_approval(app, sid, queue)
             instance, = instances
             future, driver = instance['approval'].future, instance['driver']
-            parent = owner._run
+            parent = owner._runtime.run
             assert owner.is_busy() and batch['origin_run_id'] == parent.run_id
             await asyncio.wait_for(app.aclose(), 5)
             result = await task
             assert result['run_stopped'] and effects == []
             assert future.done() and driver.done() and instance['status'] == 'stopped'
-            assert owner._run is None and closed == [(False, [(True, False, False)], 'ready')]
+            assert owner._runtime.run is None and closed == [(False, [(True, False, False)], 'ready')]
             assert app._lifetime._operations == {} and app.sessions._persistence.storage.database._closed
             assert [(e.source is None, e.data.status) for e in events if e.event_type == 'run_finished'] == [
                 (False, 'interrupted'), (False, 'stopped'), (True, 'stopped')]
@@ -239,7 +239,7 @@ async def test_close_during_child_approval_settles_before_reopen(monkeypatch, tm
     async with persistent_delegation(monkeypatch, path, root, child, effects) as app:
         await app.sessions.restore(sid)
         owner = app.sessions._sessions._sessions[sid]
-        assert owner._run is None and owner.child_thread_ids() == ()
+        assert owner._runtime.run is None and owner.subagents.child_thread_ids() == ()
         assert app.runs.pending_approvals(sid) == [] and effects == []
         saved_child, = await app.history.subagents(sid)
         assert saved_child['status'] == 'stopped'
@@ -266,7 +266,7 @@ async def test_compaction_reopens_configuration_and_archive_without_run_resource
         compacted = await app.history.messages(sid)
         assert compacted[0].additional_kwargs['naiyue_compaction_summary']
         assert [m.id for m in compacted[1:]] == [m.id for m in original[-2:]]
-        assert app.sessions._sessions._sessions[sid]._run is None and len(root.seen) == 3
+        assert app.sessions._sessions._sessions[sid]._runtime.run is None and len(root.seen) == 3
         page = await app.history.page(sid, limit=50, body_bytes=128000, preview_chars=100)
         assert page['has_compaction'] and not page['has_more']
         assert {r['message_id'] for r in page['records']} == {m.id for m in original}
@@ -274,9 +274,9 @@ async def test_compaction_reopens_configuration_and_archive_without_run_resource
     async with persistent_delegation(monkeypatch, path, root, child, effects) as app:
         await app.sessions.prepare(sid)
         owner = app.sessions._sessions._sessions[sid]
-        assert owner._run is None and owner.child_thread_ids() == () and not owner.is_busy()
+        assert owner._runtime.run is None and owner.subagents.child_thread_ids() == () and not owner.is_busy()
         assert owner.get_thread_id() == thread and owner.get_permission_mode() == 'NoAsk'
-        assert owner.get_active_tools() == ('probe',) and owner.resolve_prompt_parts() == []
+        assert owner.get_active_tools() == ('probe',) and owner.lifecycle.resolve_prompt_parts() == []
         assert owner.resolve_permission_context()['session_allow'] == []
         assert [m.id for m in await app.history.messages(sid)] == [m.id for m in compacted]
         reopened = await app.history.page(sid, limit=50, body_bytes=128000, preview_chars=100)

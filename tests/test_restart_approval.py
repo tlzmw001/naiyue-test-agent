@@ -62,8 +62,8 @@ async def test_reopened_mixed_sequential_batch_waits_then_runs_once(monkeypatch,
             recovered = await app.sessions.recover(sid, **kwargs)
             assert recovered['state'] == 'interrupted' and recovered['checkpoint_id'] == history['checkpoint_id']
             memory = app.sessions._sessions._sessions[sid]
-            assert memory.resolve_permission_context()['session_allow'] == [] and memory.snapshot_for_run()['pending_turn'] is None and not memory.is_busy()
-            assert memory.snapshot_for_run()['pending']['requested_run_id'] == row['run_id']
+            assert memory.resolve_permission_context()['session_allow'] == [] and memory.lifecycle.snapshot_for_run()['pending_turn'] is None and not memory.is_busy()
+            assert memory.lifecycle.snapshot_for_run()['pending']['requested_run_id'] == row['run_id']
             assert app.runs.pending_tools(sid)[0]['tool_call_id'] == 'write-call'
             assert not target.exists() and events == []
             assert (model.seen == []) if streaming_model else model.i == 0
@@ -165,9 +165,9 @@ async def test_old_allow_must_be_proven_by_current_local_policy_without_auto(mon
                 typed_context(identity=RunIdentity(session_id=sid, execution_root=ExecutionRoot(root) if root is not None else None)), settings.permissions, [])
             owner, observation_run = app.sessions._sessions._admit(sid, 'allow-setup', 'message')
             run_id, observation = observation_run.run_id, observation_run.observation
-            owner.remember_approved_rules(observation_run, [remembered_rule(call['subject'])])
-            owner._cleanup_run(observation_run)
-            owner.release_run(observation_run)
+            owner.approvals.remember_approved_rules(observation_run, [remembered_rule(call['subject'])])
+            owner.lifecycle._cleanup_run(observation_run)
+            owner.lifecycle.release_run(observation_run)
         with monkeypatch.context() as patch:
             async def review(_self, data, _context):
                 return {'decision': 'allow' if data['current_call']['id'] == 'one' else 'ask', 'source': 'auto_fast'}

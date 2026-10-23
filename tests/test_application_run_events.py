@@ -68,9 +68,9 @@ async def test_success_events_follow_cleanup_without_changing_result(monkeypatch
         received.append(event)
         owner = app.sessions._sessions._sessions[session]
         states.append({**app.sessions._sessions.require(session).describe_session(),
-            'run_prompt_parts': owner.resolve_prompt_parts(),
-            'steering_open': owner.snapshot_for_run()['steering_open'],
-            'stop_requested': owner.is_stop_requested()})
+            'run_prompt_parts': owner.lifecycle.resolve_prompt_parts(),
+            'steering_open': owner.lifecycle.snapshot_for_run()['steering_open'],
+            'stop_requested': owner.controls.is_stop_requested()})
 
     app.observability.subscribe(run_events_only(observe))
     with caplog.at_level(logging.INFO):
@@ -252,7 +252,7 @@ async def test_observer_failures_do_not_change_success_or_primary_error(monkeypa
     session = await app.sessions.create('A')
     assert (await app.runs.start(session, [('user', 'run')]))['messages'][-1].content == 'PRIVATE_REPLY'
     assert received[-1].data.status == 'completed'
-    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['SessionExecution'])
+    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['RunLifecycle'])
     failure = RuntimeError('PRIVATE_MODEL_FAILURE')
 
     async def fail(*_args, **_kwargs):
@@ -341,14 +341,14 @@ async def test_terminal_uses_cleanup_snapshot_after_session_state_changes(monkey
     run_id, observation = observation_run.run_id, observation_run.observation
     observation.start()
     observation.result({'messages': []}, None)
-    session.steer('discarded')
-    review = session._cleanup_run(observation_run)
-    session.release_run(observation_run)
-    assert review is False and not session.is_busy() and session.snapshot_for_run()['run_id'] is None
+    session.controls.steer('discarded')
+    review = session.lifecycle._cleanup_run(observation_run)
+    session.lifecycle.release_run(observation_run)
+    assert review is False and not session.is_busy() and session.lifecycle.snapshot_for_run()['run_id'] is None
     _, later = app.sessions._sessions._admit(sid, 'later-run', 'message')
-    session.mark_manual_review(later)
+    session.approvals.mark_manual_review(later)
     observation.finish(review)
     assert received[-1].run_id == 'old-run'
     assert received[-1].data.status == 'completed'
     assert received[-1].data.manual_review_required is False
-    assert session.describe_session()['manual_review_required'] is True and session.snapshot_for_run()['run_id'] == 'later-run'
+    assert session.describe_session()['manual_review_required'] is True and session.lifecycle.snapshot_for_run()['run_id'] == 'later-run'

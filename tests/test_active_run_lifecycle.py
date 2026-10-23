@@ -29,19 +29,19 @@ def test_close_retains_occupancy_and_stale_same_id_cannot_release_new_run():
     service = make_service()
     sid = service.create_session('A')
     owner, old = service._admit(sid, 'same', 'message')
-    owner.close_control_window(old)
-    assert owner.is_busy() and owner._run is old and not old.controls_open
+    owner.controls.close_control_window(old)
+    assert owner.is_busy() and owner._runtime.run is old and not old.controls_open
     with pytest.raises(SessionBusyError):
         service._admit(sid, 'other', 'message')
-    owner.release_run(old)
+    owner.lifecycle.release_run(old)
     _, current = service._admit(sid, 'same', 'message')
     with pytest.raises(SessionBusyError):
-        owner.release_run(old)
+        owner.lifecycle.release_run(old)
     with pytest.raises(SessionBusyError):
-        owner.close_control_window(old)
-    assert owner._run is current
-    owner.close_control_window(current)
-    owner.release_run(current)
+        owner.controls.close_control_window(old)
+    assert owner._runtime.run is current
+    owner.controls.close_control_window(current)
+    owner.lifecycle.release_run(current)
 
 
 def test_release_keeps_unsettled_child_handles():
@@ -50,10 +50,10 @@ def test_release_keeps_unsettled_child_handles():
     owner, run = service._admit(sid, 'parent', 'message')
     child = {'driver': object(), 'settled': False}
     run.subagent_instances['root/tester/child'] = child
-    owner.close_control_window(run)
+    owner.controls.close_control_window(run)
     with pytest.raises(SessionBusyError, match='not settled'):
-        owner.release_run(run)
-    assert owner._run is run and owner.is_busy()
+        owner.lifecycle.release_run(run)
+    assert owner._runtime.run is run and owner.is_busy()
     assert run.subagent_instances['root/tester/child'] is child
 
 
@@ -208,7 +208,7 @@ async def test_close_survives_create_rollback_after_stop_snapshot(monkeypatch, t
     async with factory(monkeypatch, tmp_path / 'sessions.sqlite', StreamingToolModel(replies=[])) as app:
         sid = await app.sessions.create('A')
         service, stable = app.sessions._sessions, app.sessions._sessions._sessions[sid]
-        create, stop, close_catalog = service.create_session, stable.request_scope_stop, app.models._catalog.aclose
+        create, stop, close_catalog = service.create_session, stable.controls.request_scope_stop, app.models._catalog.aclose
         def fail_create(*args):
             loop.call_soon_threadsafe(entered.set)
             assert release.wait(5)
@@ -227,7 +227,7 @@ async def test_close_survives_create_rollback_after_stop_snapshot(monkeypatch, t
             await close_catalog()
         monkeypatch.setattr(app.sessions._persistence.storage.sessions, 'create', fail_create)
         monkeypatch.setattr(service, 'create_session', creating)
-        monkeypatch.setattr(stable, 'request_scope_stop', stop_after_rollback)
+        monkeypatch.setattr(stable.controls, 'request_scope_stop', stop_after_rollback)
         monkeypatch.setattr(app.models._catalog, 'aclose', close)
         task = asyncio.create_task(app.sessions.create('A'))
         try:

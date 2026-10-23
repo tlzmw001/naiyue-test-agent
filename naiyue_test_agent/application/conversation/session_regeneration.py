@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 def _commit_replacement(replies, session, run, request_id, *, config, head, boundary, revision):
     replies.activate(session.session_id, request_id,
         checkpoint=config['configurable']['checkpoint_id'], head_checkpoint=head, boundary=boundary)
-    session.activate_regenerated_thread(run, config['configurable']['thread_id'], revision)
+    session.lifecycle.activate_regenerated_thread(run, config['configurable']['thread_id'], revision)
 
 
 async def regenerate(session_id, *, sessions, agent, persistence, metadata, conversation, replies, request_id, expected_reply_id, expected_conversation_revision):
@@ -76,13 +76,13 @@ async def regenerate(session_id, *, sessions, agent, persistence, metadata, conv
         logger.warning('regeneration_prepare_failed')
         # No model/tool was called during preparation. Settle before releasing the quota.
         if activated or session.get_thread_id() != original_thread:
-            session.mark_manual_review(run)
+            session.approvals.mark_manual_review(run)
         else:
             try:
                 await await_settled(run_blocking(replies.fail_preparation, session_id, request_id))
             except BaseException as secondary:
                 logger.error('regeneration_failure_save_failed error_type=%s', type(secondary).__name__)
-        session.close_control_window(run)
-        session.release_run(run)
+        session.controls.close_control_window(run)
+        session.lifecycle.release_run(run)
         raise
-    return await session.arun(agent, inputs, run=run)
+    return await session.lifecycle.arun(agent, inputs, run=run)

@@ -97,7 +97,7 @@ async def test_root_child_approvals_capacity_and_concurrent_save_reopen(monkeypa
             assert approved.status_code == 202 and approved.json()['run_id'] == resumed_id
             await asyncio.wait_for(saved.wait(), 5)
             assert backend.sessions._sessions.require(a).describe_session()['busy']
-            assert not backend.sessions._sessions._sessions[a]._run.controls_open
+            assert not backend.sessions._sessions._sessions[a]._runtime.run.controls_open
             release_b.set()
             await delivery.wait(rb)
             assert backend.sessions._persistence.storage.sessions.get(b)['state'] == 'ready'
