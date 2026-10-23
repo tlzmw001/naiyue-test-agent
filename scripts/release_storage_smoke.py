@@ -95,6 +95,9 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
 
     # This is fixture construction on a CLOSED disposable database, never a product downgrade command.
     with closing(sqlite3.connect(database)) as connection:
+        connection.execute('ALTER TABLE naiyue_chat_messages DROP COLUMN occurred_at')
+        for table in ('naiyue_memory_overviews','naiyue_memory_progress','naiyue_memory_versions','naiyue_memory_suppression','naiyue_memory_search', 'naiyue_memories', 'naiyue_memory_sources', 'naiyue_memory_info'):
+            connection.execute(f'DROP TABLE {table}')
         connection.execute('DROP TABLE naiyue_subagent_instances')
         connection.execute('ALTER TABLE naiyue_model_invocations DROP COLUMN duration_ms')
         connection.execute('UPDATE naiyue_store_info SET version=12')
@@ -137,10 +140,12 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
         with patch.object(AutoPermissionReviewer, 'areview', side_effect=AssertionError('Unexpected Auto call')) as auto:
             async with opened(parent, child) as app:
                 current = _facts(database)
-                assert current.pop('naiyue_store_info') == [{'version': 14}]
+                from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+                assert current.pop('naiyue_store_info') == [{'version': CURRENT_SCHEMA}]
                 assert app._storage.connection.execute('SELECT COUNT(*) FROM naiyue_subagent_instances').fetchone()[0] == 0
                 expected = {key: value for key, value in before.items() if key != 'naiyue_store_info'}
                 assert all(row.pop('duration_ms') is None for row in current['naiyue_model_invocations'])
+                assert all(row.pop('occurred_at') is None for row in current['naiyue_chat_messages'])
                 assert current == expected
                 assert len(list_backups(database)) == 2
                 events = []

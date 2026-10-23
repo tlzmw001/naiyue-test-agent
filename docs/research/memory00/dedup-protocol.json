@@ -1,0 +1,19 @@
+{
+  "schema_version": 4,
+  "experiment": "dedup",
+  "fixture_name": "robustness-fixtures.json",
+  "fixtures_sha256": "09ac791cd0b858e91f8fa0923e55f9aa9abd393883bed76e037e5b80c2afdb17",
+  "old_fixtures_sha256": "0c46d61aa5bcd6ae03ca00df8377cacff69fd830d037f1b217240286004a31ec",
+  "observed_datasets": {
+    "fixtures.json": "0c46d61aa5bcd6ae03ca00df8377cacff69fd830d037f1b217240286004a31ec",
+    "tuning-fixtures.json": "e994e24eb9017476a6ef65a02f1c7b518cf421aa3869cbd0cbd8345e0454fae7",
+    "robustness-fixtures.json": "09ac791cd0b858e91f8fa0923e55f9aa9abd393883bed76e037e5b80c2afdb17"
+  },
+  "routes": ["cascade_base", "cascade_exact"],
+  "config": {"weights": [1, 1, 1], "coverage": [1, 2]},
+  "candidate_limit": 50,
+  "result_limit": 8,
+  "rrf_k": 60,
+  "selection": "none; fixed single-variable comparison on observed data",
+  "provider_calls": 0
+}

@@ -6,7 +6,7 @@ import sqlite3
 from uuid import UUID
 
 
-CURRENT_SCHEMA = 14
+CURRENT_SCHEMA = 17
 SUPPORTED_SCHEMAS = frozenset(range(4, CURRENT_SCHEMA + 1))
 
 
@@ -63,6 +63,15 @@ def check_snapshot(path):
         if version >= 14:
             from .application.subagent_storage import FIELDS
             required['naiyue_subagent_instances'] = ' '.join(FIELDS)
+        if version >= 15:
+            from .application.memory_schema import REQUIRED, check
+            required.update(REQUIRED)
+            check(connection, version=2 if version >= 16 else 1)
+        if version >= 16:
+            required['naiyue_chat_messages'] += ' occurred_at'
+        if version >= 17:
+            from .application.memory_overview_store import REQUIRED as OVERVIEWS
+            required.update(OVERVIEWS)
         if 'checkpoints' in tables or 'writes' in tables:
             required['checkpoints'] = 'thread_id checkpoint_ns checkpoint_id parent_checkpoint_id type checkpoint metadata'
             required['writes'] = 'thread_id checkpoint_ns checkpoint_id task_id idx channel type value'

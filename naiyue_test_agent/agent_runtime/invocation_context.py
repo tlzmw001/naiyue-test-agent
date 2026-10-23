@@ -9,6 +9,8 @@ def make_invocation_context(session_id, run_id, workspace_root, approval_grants,
     if services is not None:
         publisher = services.publisher
         if publisher is None or publisher.matches(session_id, run_id):
+            if services.archive_root is not None:
+                context['archive_root'] = services.archive_root
             if services.control is not None:
                 context['_run_control'] = services.control
             if services.errors is not None:
@@ -19,6 +21,12 @@ def make_invocation_context(session_id, run_id, workspace_root, approval_grants,
                 context['alist_subagents'] = services.alist_subagents
             if services.process_tasks is not None:
                 context['_process_tasks'] = services.process_tasks
+            if services.task_queries is not None:
+                context['_task_queries'] = services.task_queries
+            if services.history_query is not None:
+                context['aquery_history'] = services.history_query
+            if services.memory_query is not None:
+                context['aquery_memory'] = services.memory_query
             notices = services.background_notices
             if (notices is not None and agent_path == 'root' and notices.session_id == session_id
                     and notices.workspace_root == workspace_root and notices.run_id == run_id):

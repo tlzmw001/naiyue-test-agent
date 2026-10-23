@@ -5,7 +5,8 @@ import styles from './ContextPanel.module.css';
 
 const labels: Record<string, string> = { system: '系统说明', tool_definitions: '工具定义', user: '用户消息',
   assistant: '模型消息与工具调用参数', tool_results: '工具结果', summary: '历史压缩摘要', other: '其他消息',
-  base: '基础提示词', project: '项目说明', skills: 'Skill 索引', tool_guidance: '工具说明与指导', subagent_roles: '子智能体角色说明', background_tasks: '后台任务状态' };
+  base: '基础提示词', project: '项目说明', skills: 'Skill 索引', tool_guidance: '工具说明与指导', subagent_roles: '子智能体角色说明', background_tasks: '后台任务状态',
+  memory: '长期记忆索引', session_directory: '其他会话索引' };
 const colors: Record<string, string> = { system: 'var(--chart-system)', tool_definitions: 'var(--chart-tool_definitions)', user: 'var(--chart-user)',
   assistant: 'var(--chart-assistant)', tool_results: 'var(--chart-tool_results)', summary: 'var(--chart-summary)', other: 'var(--chart-other)' };
 const sourceLabel: Record<string, string> = { config: '配置', default: '默认值', unknown: '未提供' };

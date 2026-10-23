@@ -18,7 +18,7 @@ async def web_scenario(root):
     import httpx
     from langchain_core.language_models import BaseChatModel
     from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
-    from langchain_core.outputs import ChatGenerationChunk
+    from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
     from pydantic import Field
     from naiyue_test_agent import application
     from naiyue_test_agent.model_access import ModelCatalog
@@ -41,6 +41,10 @@ async def web_scenario(root):
 
         def _generate(self, *args, **kwargs):
             raise AssertionError('Unexpected synchronous model request')
+
+        async def _agenerate(self, messages, **kwargs):
+            self.seen.append(list(messages))
+            return ChatResult(generations=[ChatGeneration(message=self.replies.pop(0))])
 
         async def _astream(self, messages, **kwargs):
             self.seen.append(list(messages))
@@ -166,6 +170,8 @@ def main():
     background = asyncio.run(background_scenario(root, type(model), executable=os.environ.get('NYT_SMOKE_SHELL')))
     from release_subagent_smoke import subagent_scenario
     subagents = asyncio.run(subagent_scenario(root, type(model)))
+    from release_memory_smoke import memory_scenario
+    memory = asyncio.run(memory_scenario(root, type(model)))
     from naiyue_test_agent.application import cli
     output = io.StringIO()
     with patch('builtins.input', return_value=':quit'), redirect_stdout(output):
@@ -176,7 +182,7 @@ def main():
         'find_grep': 'passed', 'read_edit_read': 'passed',
         'approval_resume': 'passed', 'sqlite_reopen': 'passed', 'cli': 'passed',
         'configuration': 'passed', **storage, 'mcp': mcp, 'background_tasks': background,
-        'subagent_continuation': subagents}))
+        'subagent_continuation': subagents, 'memory': memory}))
 
 
 if __name__ == '__main__':

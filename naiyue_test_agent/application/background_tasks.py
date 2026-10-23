@@ -40,6 +40,7 @@ class _Operation:
     task_id: str
     session_id: str
     root: Path
+    archive_root: Path
     run_id: str
     call_id: str
     name: str
@@ -99,14 +100,14 @@ class BackgroundProcessManager:
             'output_complete': item.output_complete, 'cleanup_confirmed': item.cleanup_confirmed,
             'error_type': item.error_type}
 
-    async def submit(self, *, session_id, workspace_root, run_id, tool_call_id, agent_path,
+    async def submit(self, *, session_id, workspace_root, archive_root, run_id, tool_call_id, agent_path,
                      command, name, request, settings, runner, control):
-        item = self._register(session_id=session_id, workspace_root=workspace_root, run_id=run_id,
+        item = self._register(session_id=session_id, workspace_root=workspace_root, archive_root=archive_root, run_id=run_id,
             tool_call_id=tool_call_id, agent_path=agent_path, command=command, name=name,
             request=request, settings=settings, runner=runner, control=control, background=True)
         return self._public(item)
 
-    def _register(self, *, session_id, workspace_root, run_id, tool_call_id, agent_path,
+    def _register(self, *, session_id, workspace_root, archive_root, run_id, tool_call_id, agent_path,
                   command, name, request, settings, runner, control, background):
         self._check_loop()
         if agent_path != 'root':
@@ -115,22 +116,24 @@ class BackgroundProcessManager:
                 or not isinstance(workspace_root, Path) or not workspace_root.is_absolute()
                 or request.cwd != workspace_root):
             raise ToolException('Background task scope is unavailable.')
+        from ..tools.output import require_archive_root
+        archive_root = require_archive_root({'archive_root': archive_root, 'workspace_root': workspace_root})
         with self._lock:
-            if self._closing or session_id in self._deleting or workspace_root in self._cleaning:
+            if self._closing or session_id in self._deleting or archive_root in self._cleaning:
                 raise ToolException('Background task admission is closed.')
             if control is not None and control.requested:
                 raise ToolException('Background command was stopped before handoff; not executed.')
             key = (run_id, tool_call_id)
             existing = self._entries.get(self._calls.get(key))
             if existing is not None:
-                if (existing.session_id != session_id or existing.request != request
+                if (existing.session_id != session_id or existing.request != request or existing.archive_root != archive_root
                         or existing.settings != settings or existing.name != name or existing.command != command):
                     raise ToolException('Background call identity conflicts with an existing operation.')
                 return existing
             frozen = deepcopy(request)
             frozen_settings = settings.model_copy(deep=True)
-            item = _Operation(uuid4().hex, session_id, workspace_root, run_id, tool_call_id,
-                name, command, frozen, frozen_settings, ProcessCapture(workspace_root, frozen_settings, background=background), background=background)
+            item = _Operation(uuid4().hex, session_id, workspace_root, archive_root, run_id, tool_call_id,
+                name, command, frozen, frozen_settings, ProcessCapture(archive_root, frozen_settings, background=background), background=background)
             self._entries[item.task_id] = item
             self._calls[key] = item.task_id
             try:
@@ -386,7 +389,7 @@ class BackgroundProcessManager:
     @contextmanager
     def output_guard(self, root):
         with self._lock:
-            if root in self._cleaning or any(item.root == root and self._unsettled(item)
+            if root in self._cleaning or any(item.archive_root == root and self._unsettled(item)
                     for item in self._entries.values()):
                 raise ValueError('Workspace has active background tasks or unconfirmed cleanup')
             self._cleaning.add(root)

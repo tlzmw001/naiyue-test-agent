@@ -3,6 +3,7 @@
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from hashlib import sha256
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage, message_to_dict
@@ -137,6 +138,7 @@ async def collect_chat_updates(agent, storage, session_id, *, snapshot=None, pre
                         'body_hash': digest,
                         'kind': 'context_summary' if message.additional_kwargs.get('naiyue_compaction_summary') is True else 'message',
                         'source_checkpoint_id': source,
+                        'occurred_at': datetime.fromisoformat(saved.created_at).timestamp() if getattr(saved,'created_at',None) else None,
                         'message_type': message.type, 'parent_message_id': parent,
                     }
                 if agent_path == 'root':

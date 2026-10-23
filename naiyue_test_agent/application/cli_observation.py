@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 _HELP = (':usage [--after-model <model_id>]；:diagnostics [--before <cursor>]；'
          ':diagnostics <run_id> [--after <sequence>]')
 _LABELS = {'root_agent': '主智能体', 'child_agent': '子智能体', 'summary': '压缩摘要',
-    'auto_fast': 'Auto 快审', 'auto_detailed': 'Auto 详审', 'unattributed': '用途未归属',
+    'auto_fast': 'Auto 快审', 'auto_detailed': 'Auto 详审', 'memory': '记忆整理', 'unattributed': '用途未归属',
     'root': '根运行', 'child': '子运行', 'started': '进行中', 'returned': '返回',
     'failed': '失败', 'cancelled': '取消', 'unconfirmed': '未确认', 'completed': '已完成',
     'stopped': '已停止', 'running': '运行中', 'interrupted': '已中断',
@@ -98,6 +98,8 @@ def _usage_lines(value):
 
 def _run_lines(row):
     yield f"运行 {_text(row['run_id'])} · {_text(_LABELS.get(row['status'], row['status']))} · 耗时{_duration(row.get('duration_ms'))}"
+    if row.get('mode') == 'memory':
+        yield '用途：记忆整理'
     yield '开始：' + _text(row.get('started_at'))
     http = row.get('http_attempts') or {}
     if http.get('status', 'unavailable') == 'unavailable':

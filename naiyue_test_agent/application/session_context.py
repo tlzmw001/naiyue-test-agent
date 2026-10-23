@@ -50,6 +50,9 @@ async def context_view(session_id, *, sessions, agent, catalog, tool_registry, s
             if notices.versions:
                 resources['prompt_parts'].append({'id': 'background_tasks', 'text': notices.text,
                     'count': len(notices.versions)})
+            persistence=getattr(sessions,'_persistence',None)
+            if persistence is not None:
+                resources['prompt_parts'].extend(await persistence.prepare_memory(session_id,root,messages,model,preview=True))
             system = compose_model_prompt(system_prompt, resources['prompt_parts'], specs, roles)
             estimate = estimate_context(model, system, prepare_model_messages(messages, model), [s.tool for s in specs])
             current = {'basis': 'next_request', 'model_id': row['model_id'], 'estimate': estimate}

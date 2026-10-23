@@ -22,7 +22,7 @@ from .events import (ModelInvocationStartedData, ModelInvocationFinishedData,
 from .observation import emit_event
 from .run_control import UserStop
 from .run_services import current_run_services
-from .stream_events import SUMMARY_TAG, PERMISSION_REVIEW_TAG
+from .stream_events import SUMMARY_TAG, PERMISSION_REVIEW_TAG, MEMORY_TAG
 
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 def _purpose(tags):
     known = {SUMMARY_TAG: 'summary', PERMISSION_REVIEW_TAG + '_fast': 'auto_fast',
-             PERMISSION_REVIEW_TAG + '_detailed': 'auto_detailed'}
+             PERMISSION_REVIEW_TAG + '_detailed': 'auto_detailed', MEMORY_TAG: 'memory'}
     selected = {known[tag] for tag in tags or [] if tag in known}
     if len(selected) == 1:
         return selected.pop()

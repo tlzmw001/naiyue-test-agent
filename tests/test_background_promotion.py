@@ -10,11 +10,11 @@ from naiyue_test_agent.application.background_tasks import BackgroundProcessMana
 from naiyue_test_agent.tools.processes import HostProcessRunner, ProcessOutcome
 from naiyue_test_agent.tools.settings import BashSettings
 from test_process_lifecycle import request
-from test_background_tasks import wait_status
+from test_background_tasks import wait_status, archive_root
 
 
 async def foreground(manager, root, runner, *, timeout=None, control=None, progress=None, settings=None, cap=1000):
-    return await manager.foreground(session_id='s', workspace_root=root, run_id='r',
+    return await manager.foreground(session_id='s', workspace_root=root, archive_root=archive_root(root), run_id='r',
         tool_call_id='c', agent_path='root', command='test', name='bash',
         request=replace(request(root, ''), timeout_seconds=timeout),
         settings=settings or BashSettings(), runner=runner, control=control,
@@ -137,7 +137,7 @@ def test_actual_process_promotes_once_and_keeps_original_timeout(tmp_path):
         script = "import os,time;print(os.getpid(),flush=True);time.sleep(60)"
         req = replace(request(tmp_path, script), timeout_seconds=3, merge_output=True)
         try:
-            receipt = await manager.foreground(session_id='s', workspace_root=tmp_path,
+            receipt = await manager.foreground(session_id='s', workspace_root=tmp_path, archive_root=archive_root(tmp_path),
                 run_id='r', tool_call_id='c', agent_path='root', command=script, name='bash',
                 request=req, settings=BashSettings(), runner=runner, control=None,
                 wait_seconds=1, background_limit=1000, on_progress=lambda *_: None)

@@ -6,7 +6,7 @@ import { formatDuration } from '../observationFormat';
 import styles from './ContextPanel.module.css';
 
 const activityLabels: Record<string, string> = { root_agent: '主智能体', child_agent: '子智能体',
-  summary: '压缩摘要', auto_fast: 'Auto 快审', auto_detailed: 'Auto 详审', unattributed: '用途未归属' };
+  summary: '压缩摘要', auto_fast: 'Auto 快审', auto_detailed: 'Auto 详审', memory: '记忆整理', unattributed: '用途未归属' };
 const statusLabels: Record<string, string> = { started: '进行中', returned: '返回', failed: '失败', cancelled: '取消', unconfirmed: '未确认' };
 const format = (value: string | null) => value === null ? '未提供' : BigInt(value).toLocaleString('en-US');
 
@@ -64,7 +64,7 @@ export default function SessionUsage({ api, sessionId, run }: { api: WebApi; ses
     {!state && <p className={styles.notice} role="status">正在读取累计用量…</p>}
     {state?.error && <p className={styles.notice} role="alert">{state.error}</p>}
     {value && <>
-      <p className={styles.meta}>本会话 · 包含子智能体、摘要及 Auto<br />
+      <p className={styles.meta}>本会话 · 包含子智能体、摘要、Auto 及记忆整理<br />
         截至 {new Date(value.as_of).toLocaleTimeString()} 的已提交记录</p>
       {value.recorded_calls === 0 ? <p className={styles.notice}>暂无已保存的调用用量记录。</p> : <>
         <div className={styles.metrics}>

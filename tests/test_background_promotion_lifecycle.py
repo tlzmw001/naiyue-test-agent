@@ -11,7 +11,7 @@ from naiyue_test_agent.application.background_tasks import BackgroundProcessMana
 from naiyue_test_agent.tools.processes import ProcessOutcome, ProcessCleanupError
 from test_async_application import StreamingToolModel, call
 from test_background_tools import background_app, command, tool_result
-from test_background_tasks import wait_status
+from test_background_tasks import archive_root, wait_status
 from test_background_promotion import foreground
 
 
@@ -70,7 +70,7 @@ def test_pending_spawn_counts_towards_wait_but_does_not_fake_running(monkeypatch
             return await original(*args, **kwargs)
         monkeypatch.setattr(loop, 'subprocess_exec', delayed)
         manager = BackgroundProcessManager()
-        pending = asyncio.create_task(manager.foreground(session_id='s', workspace_root=tmp_path,
+        pending = asyncio.create_task(manager.foreground(session_id='s', workspace_root=tmp_path, archive_root=archive_root(tmp_path),
             run_id='r', tool_call_id='c', agent_path='root', command='test', name='bash',
             request=request(tmp_path, 'import time;time.sleep(60)'), settings=BashSettings(),
             runner=HostProcessRunner(), control=None, wait_seconds=1, background_limit=1000,

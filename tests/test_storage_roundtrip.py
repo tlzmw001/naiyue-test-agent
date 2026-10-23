@@ -6,11 +6,14 @@ import sys
 
 import pytest
 
+from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+
 from native_application_helpers import async_test
 from tests.storage_backup_fixture import artifact, closed_store
+from tests.legacy_store_schema import remove_memory_schema
 
 
-@pytest.mark.parametrize('source_schema', range(4, 14))
+@pytest.mark.parametrize('source_schema', range(4, CURRENT_SCHEMA))
 def test_all_supported_legacy_stores_roundtrip_without_deserializing_opaque_payload(tmp_path, source_schema):
     from naiyue_test_agent.application.session_storage import SessionStorage
     from naiyue_test_agent.storage_backup import list_backups
@@ -18,7 +21,7 @@ def test_all_supported_legacy_stores_roundtrip_without_deserializing_opaque_payl
     from naiyue_test_agent.workspaces import locate_workspace
     database, root, identity = closed_store(tmp_path, version=source_schema)
     with SessionStorage(database) as storage:
-        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 14
+        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
         backup, = list_backups(database, workspace_id=identity)
         assert backup['manifest']['source_schema'] == source_schema
         storage.connection.execute("UPDATE naiyue_sessions SET model_id='later-model'")
@@ -30,7 +33,7 @@ def test_all_supported_legacy_stores_roundtrip_without_deserializing_opaque_payl
     result = restore_backup(location, backup_id, confirm=lambda _: backup_id)
     assert result['status'] == 'completed' and database.read_bytes() == original_backup
     with SessionStorage(database) as reopened:
-        assert reopened.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 14
+        assert reopened.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
         assert reopened.get('S')['model_id'] == 'M' and reopened.get('S')['state'] == 'running'
         assert reopened.connection.execute('SELECT checkpoint FROM checkpoints').fetchone()[0] == b'opaque-checkpoint'
         assert reopened.connection.execute('SELECT value FROM writes').fetchone()[0] == b'opaque-value'
@@ -94,6 +97,7 @@ async def test_crashed_child_survives_restore_without_replaying_uncertain_side_e
     with SessionStorage(database) as storage:
         assert storage.get(info['session_id'])['state'] == 'running'
     with closing(sqlite3.connect(database)) as connection:
+        remove_memory_schema(connection)
         connection.execute('DROP TABLE naiyue_subagent_instances')
         connection.execute('ALTER TABLE naiyue_model_invocations DROP COLUMN duration_ms')
         connection.execute('UPDATE naiyue_store_info SET version=12')

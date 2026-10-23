@@ -7,6 +7,8 @@ import sqlite3
 
 import pytest
 
+from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+
 from naiyue_test_agent.model_access import load_model_catalog
 from naiyue_test_agent.application.session_service import SessionService
 from naiyue_test_agent.application.session_storage import SessionStorage
@@ -85,7 +87,7 @@ def test_current_schema_four_is_upgraded_without_losing_sessions(tmp_path):
     with SessionStorage(path) as store:
         row = store.connection.execute('SELECT * FROM naiyue_sessions').fetchone()
         assert row['session_id'] == 'kept' and row['thinking_level'] == 'model_default'
-        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 14
+        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
 
 
 def test_web_selection_is_validated_authenticated_and_restored(monkeypatch, tmp_path):

@@ -5,6 +5,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from collections.abc import Callable
+from pathlib import Path
 
 if TYPE_CHECKING:
     from .events import RunEventPublisher, AgentEventPublisher
@@ -30,6 +31,10 @@ class RunServices:
     process_tasks: 'ProcessTaskPort | None' = None
     background_notices: 'BackgroundNoticeSnapshot | None' = None
     alist_subagents: Callable | None = None
+    history_query: Callable | None = None
+    memory_query: Callable | None = None
+    task_queries: object | None = None
+    archive_root: Path | None = None
 
 
 _RUN_SERVICES = ContextVar('naiyue_run_services', default=None)

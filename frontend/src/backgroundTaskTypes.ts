@@ -1,4 +1,5 @@
 export interface BackgroundTask {
+  kind?: 'shell' | 'memory'; result_status?: 'completed' | 'partial' | 'failed' | 'stopped';
   task_id: string; session_id: string; workspace_root: string; origin_run_id: string;
   tool_call_id: string; shell: string; command_preview: string;
   status: 'starting' | 'running' | 'stopping' | 'finished' | 'lost';

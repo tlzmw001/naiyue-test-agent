@@ -18,18 +18,22 @@ from test_mcp_agent_tools import NAME, calls, make_mcp_app
 from test_mcp_connections import facts, http_server, process_alive, stdio_settings
 
 
-@pytest.mark.parametrize('action', ['normal', 'error', 'media', 'interaction', 'large'])
+@pytest.mark.parametrize('action', ['normal', 'error', 'media', 'interaction', 'large', 'inside_archive'])
 def test_results_use_bounded_feedback_artifact_and_owned_archive(monkeypatch, tmp_path, action, caplog):
+    if action == 'inside_archive':
+        from pathlib import Path
+        monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path))
     async def scenario():
         path = tmp_path / 'output.jsonl'
         server = stdio_settings(path, 'tools', allowed_tools=['echo'], max_result_bytes=512)
-        app, _ = await make_mcp_app(monkeypatch, path, [call(NAME, {'text': action}), AIMessage(content='done')],
+        app, _ = await make_mcp_app(monkeypatch, path, [call(NAME, {
+            'text': 'large' if action == 'inside_archive' else action}), AIMessage(content='done')],
                                     mode='BypassApprovals', server=server)
         try:
             sid = await app.acreate_workspace_session('A', tmp_path)
             result = await app.arun(sid, [('user', action)])
             output, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
-            assert output.status == ('success' if action in ('normal', 'large') else 'error')
+            assert output.status == ('success' if action in ('normal', 'large', 'inside_archive') else 'error')
             assert len(output.content.encode('utf-8')) <= 512 and len(calls(path)) == 1
             if action == 'large':
                 assert output.artifact['truncated'] and output.artifact['archive_complete']
@@ -40,6 +44,11 @@ def test_results_use_bounded_feedback_artifact_and_owned_archive(monkeypatch, tm
             elif action == 'error':
                 assert 'Fixture execution error' in output.content
                 assert output.artifact['is_error']
+            elif action == 'inside_archive':
+                assert output.artifact['outcome'] == 'success' and output.artifact['truncated']
+                assert not output.artifact['archive_complete'] and not output.artifact['archive_paths']
+                assert output.artifact['archive_reason'] == 'archive_root_unavailable'
+                assert not list(tmp_path.rglob('*-raw.log'))
             elif action in ('media', 'interaction'):
                 assert 'unsupported' in output.content
                 assert 'PRIVATE' not in output.content
@@ -262,7 +271,7 @@ def test_remembered_tool_still_relists_live_catalog_before_each_execution(monkey
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize('root_kind', ['none', 'quota', 'symlink'])
+@pytest.mark.parametrize('root_kind', ['none', 'quota', 'symlink', 'inside_execution'])
 def test_result_archive_degradation_is_explicit_and_budgeted(tmp_path, root_kind):
     from naiyue_test_agent.mcp_client.results import format_result
     from mcp.types import CallToolResult, TextContent
@@ -270,12 +279,17 @@ def test_result_archive_degradation_is_explicit_and_budgeted(tmp_path, root_kind
     if root_kind == 'symlink':
         outside = tmp_path / 'outside'; outside.mkdir()
         (tmp_path / 'naiyue-agent-output').symlink_to(outside, target_is_directory=True)
-    runtime = SimpleNamespace(tool_call_id='one', context={'workspace_root': None if root_kind == 'none' else tmp_path})
+    runtime = SimpleNamespace(tool_call_id='one', context={'archive_root': None if root_kind == 'none' else tmp_path})
+    if root_kind == 'inside_execution':
+        runtime.context['workspace_root'] = tmp_path
     tool = SimpleNamespace(remote_name='echo', registered_name=NAME)
     result = format_result(CallToolResult(content=[TextContent(type='text', text='大' * 5000)]), runtime=runtime,
         server=server, server_id='local', tool=tool)
     assert result.artifact['truncated'] and not result.artifact['archive_complete']
-    reason = {'none': 'workspace_unavailable', 'quota': 'command_limit', 'symlink': 'directory_unavailable'}[root_kind]
+    reason = {'none': 'archive_root_unavailable', 'quota': 'command_limit', 'symlink': 'directory_unavailable',
+              'inside_execution': 'archive_root_unavailable'}[root_kind]
     assert result.artifact['archive_reason'] == reason and reason in result.content
     assert len(result.content.encode('utf-8')) <= 512
+    assert result.status == 'success' and result.artifact['outcome'] == 'success'
+    assert result.tool_call_id == 'one' and result.artifact['source']['remote_tool'] == 'echo'
     if root_kind == 'symlink': assert list(outside.iterdir()) == []

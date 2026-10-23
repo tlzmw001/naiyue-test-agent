@@ -12,6 +12,8 @@ from .session_persistence import SessionPersistence
 from .session_storage import SessionStorage
 from .model_usage_persistence import ModelUsagePersistence
 from .diagnostic_persistence import DiagnosticPersistence
+from .memory_access import MemoryAccess
+from naiyue_test_agent.config_paths import get_data_dir
 
 
 logger = logging.getLogger(__name__)
@@ -177,12 +179,15 @@ async def open_async_persistent_application(config_path, *, database_path, tools
     if not any(server.enabled for server in settings.mcp.servers.values()):
         application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
         registry.select(initial)
-    storage, catalog, app, resources = None, None, None, None
+    storage, catalog, app, resources, memory = None, None, None, None, None
     primary = None
     try:
         storage = await acquire_blocking(SessionStorage, lambda item: run_blocking(item.close), database_path)
         if workspace_binding is not None:
             await run_blocking(storage.bind_workspace, workspace_binding['workspace_id'], workspace_binding['root_path'])
+        project_binding = await run_blocking(storage.get_workspace_binding)
+        if 'memory' in registry.names() and settings.memory.enabled:
+            memory = MemoryAccess(storage, settings.memory, get_data_dir(settings.storage))
         catalog = await acquire_blocking(application.load_model_catalog, lambda item: item.aclose(), config_path)
         await run_blocking(catalog.prepare_async_clients)
         from naiyue_test_agent.mcp_client.resources import MCPSessionResources
@@ -200,16 +205,33 @@ async def open_async_persistent_application(config_path, *, database_path, tools
             await saver.setup()
             sessions = application.SessionService(catalog, registry, initial_active_tools=initial, permission_settings=settings.permissions, progress_settings=settings.progress,
                 max_active_runs=settings.max_active_runs, mcp_resources=resources,
-                http_attempt_limit=settings.diagnostics.max_pending_events, shell_task_settings=settings.shell_tasks)
+                http_attempt_limit=settings.diagnostics.max_pending_events, shell_task_settings=settings.shell_tasks,
+                data_dir=get_data_dir(settings.storage),
+                project_id=project_binding['workspace_id'] if project_binding else None)
             async with (ModelUsagePersistence(storage, sessions.subscribe_events, settings.usage_persistence) as usage,
                         DiagnosticPersistence(storage, sessions.subscribe_events, settings.diagnostics) as diagnostics):
+                jobs = None
+                if memory is not None:
+                    from .memory_jobs import MemoryJobs
+                    from .run_events import _log_event
+                    from ..agent_runtime.events import RunEventPublisher
+                    try:
+                        jobs=MemoryJobs(memory,catalog,permission_settings=settings.permissions,flush_usage=usage.aflush_run,
+                            publisher_factory=lambda sid,rid:RunEventPublisher(sid,rid,(_log_event,usage.accept,diagnostics.accept)))
+                    except ValueError:
+                        logger.warning('memory_model_unavailable')
+                        await run_blocking(memory.close)
+                        memory=None
+                sessions.memory_jobs=jobs
+                sessions.task_queries.memory=jobs
                 persistence = SessionPersistence(storage, sessions, catalog=catalog, tool_registry=registry,
                     permission_settings=settings.permissions, usage_persistence=usage,
                     title_max_chars=settings.session_title_max_chars,
-                    checkpoint_settings=settings.checkpoint_retention)
+                    checkpoint_settings=settings.checkpoint_retention, memory=memory,memory_jobs=jobs)
                 sessions.bind_persistence(persistence)
                 agent = sessions.assemble_runtime(saver, system_prompt=system_prompt, response_format=response_format,
                     subagents=settings.subagents, subagent_settings=settings.tools.subagent)
+                persistence.bind_memory_agent(agent)
                 app = AsyncPersistentApplication(catalog, sessions, agent, registry, system_prompt=system_prompt,
                     persistence=persistence, storage=storage, usage=usage, diagnostics=diagnostics)
                 try:
@@ -245,10 +267,19 @@ async def open_async_persistent_application(config_path, *, database_path, tools
                 if primary is None:
                     raise
                 logger.error('model_cleanup_secondary_failed error_type=%s', type(error).__name__)
-        if storage is not None:
-            try:
-                await run_blocking(storage.close)
-            except Exception as error:
-                if primary is None:
-                    raise
-                logger.error('storage_cleanup_secondary_failed error_type=%s', type(error).__name__)
+        try:
+            if memory is not None:
+                await run_blocking(memory.close)
+        except BaseException as error:
+            if primary is None:
+                primary = error
+                raise
+            logger.error('memory_cleanup_secondary_failed error_type=%s', type(error).__name__)
+        finally:
+            if storage is not None:
+                try:
+                    await run_blocking(storage.close)
+                except Exception as error:
+                    if primary is None:
+                        raise
+                    logger.error('storage_cleanup_secondary_failed error_type=%s', type(error).__name__)

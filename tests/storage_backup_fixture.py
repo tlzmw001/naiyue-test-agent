@@ -7,9 +7,11 @@ from uuid import uuid4
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from tests.legacy_store_schema import remove_memory_schema, remove_memory_lifecycle, remove_memory_overviews
 
 
-def source_store(tmp_path, *, version=14, bound=True, checkpoints=True):
+def source_store(tmp_path, *, version=CURRENT_SCHEMA, bound=True, checkpoints=True):
     root = tmp_path / 'workspace'
     (root / '.naiyue').mkdir(parents=True)
     identity = str(uuid4())
@@ -29,6 +31,12 @@ def source_store(tmp_path, *, version=14, bound=True, checkpoints=True):
         connection.execute('INSERT INTO writes VALUES(?,?,?,?,?,?,?,?)',
                            ('T', '', 'C', 'task', 0, 'pending', 'json', b'opaque-value'))
         connection.execute("UPDATE naiyue_sessions SET checkpoint_id='C'")
+    if version < 17:
+        remove_memory_overviews(connection)
+    if version < 16:
+        remove_memory_lifecycle(connection)
+    if version < 15:
+        remove_memory_schema(connection)
     if version < 14:
         connection.execute('DROP TABLE naiyue_subagent_instances')
     if version < 13:
@@ -69,7 +77,7 @@ def artifact(database, backup_id):
     return Path(database).with_name(database.name + '.backups') / backup_id
 
 
-def closed_store(tmp_path, *, version=14):
+def closed_store(tmp_path, *, version=CURRENT_SCHEMA):
     storage, root, identity = source_store(tmp_path, version=version)
     database = storage.path
     storage.close()

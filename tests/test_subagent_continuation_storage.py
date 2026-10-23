@@ -6,6 +6,8 @@ import sqlite3
 from contextlib import closing
 
 import pytest
+
+from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
 from langchain_core.messages import AIMessage
 
 from native_application_helpers import async_test
@@ -44,8 +46,8 @@ async def test_prune_backup_restore_reopen_then_continue_same_instance(monkeypat
         confirmed = app._storage.get_subagent(sid, identity)
         assert app._storage._read('SELECT checkpoint_id FROM checkpoints WHERE thread_id=?', (thread,)) == [
             {'checkpoint_id': confirmed['checkpoint_id']}]
-        saved = await asyncio.to_thread(create_backup, app._storage.connection, database, target_schema=14)
-        assert validate_backup(database, saved['backup_id'])['source_schema'] == 14
+        saved = await asyncio.to_thread(create_backup, app._storage.connection, database, target_schema=CURRENT_SCHEMA)
+        assert validate_backup(database, saved['backup_id'])['source_schema'] == CURRENT_SCHEMA
         await delegate(app, sid, root, task='discard by restore', identity=identity)
     before = (len(root.seen), len(child.seen))
     result = restore_backup(location, saved['backup_id'], confirm=lambda _: saved['backup_id'])

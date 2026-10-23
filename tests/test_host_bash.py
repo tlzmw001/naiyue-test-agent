@@ -293,13 +293,13 @@ def test_bash_model_schema_explains_timeout_and_output_limit():
     assert 'workspace' in description
 
 def _archive_path(message: str, stream: str) -> str:
-    match = re.search(rf'{stream}_path=(naiyue-agent-output/[0-9a-f]{{32}}-{stream}\.log)',
+    match = re.search(rf'{stream}_path=([^;\n]*naiyue-agent-output[/\\][0-9a-f]{{32}}-{stream}\.log)',
                       message)
     assert match is not None, message
     return match.group(1)
 
 @async_test
-async def test_long_bash_output_is_saved_and_readable_inside_workspace(monkeypatch, tmp_path):
+async def test_long_bash_output_is_saved_outside_workspace_and_requires_read_permission(monkeypatch, tmp_path):
     subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
     app = await make_app(monkeypatch, "python -c \"print('A'*70000); print('END')\"")
     session = await app.acreate_workspace_session('A', tmp_path)
@@ -310,13 +310,18 @@ async def test_long_bash_output_is_saved_and_readable_inside_workspace(monkeypat
     assert 'archive_complete=true' in message
     assert 'truncated=true' in message
     assert (tmp_path / path).read_text().endswith('END\n')
+    denied = await invoke_tool_feedback(create_session_read_tool(), {'path': path},
+        call_id='archive-denied', context={'workspace_root': tmp_path})
+    assert denied.status == 'error' and 'access denied' in denied.content
     assert 'A' * 5000 in (await invoke_tool_feedback(create_session_read_tool(), {'path': path},
-        call_id='archive-read', context={'workspace_root': tmp_path})).content
-    output_dir = tmp_path / 'naiyue-agent-output'
+        call_id='archive-read', context={'workspace_root': tmp_path}, permission_mode='BypassApprovals')).content
+    output_dir = Path(path).parent
+    assert not output_dir.is_relative_to(tmp_path)
     assert output_dir.stat().st_mode & 0o777 == 0o700
     assert (tmp_path / path).stat().st_mode & 0o777 == 0o600
-    assert subprocess.run(['git', '-C', str(tmp_path), 'check-ignore', '-q', path],
+    assert subprocess.run(['git', '-C', str(tmp_path), 'status', '--porcelain'], capture_output=True,
                           check=False).returncode == 0
+    assert not (tmp_path / 'naiyue-agent-output').exists()
 
 @async_test
 async def test_short_bash_output_creates_no_artifacts(monkeypatch, tmp_path):
@@ -356,12 +361,12 @@ async def test_archive_quota_is_explicit_and_command_still_finishes(monkeypatch,
 
 @async_test
 async def test_existing_unowned_output_directory_is_not_modified(monkeypatch, tmp_path):
-    output_dir = tmp_path / 'naiyue-agent-output'
-    output_dir.mkdir()
-    marker = output_dir / 'user-file.txt'
-    marker.write_text('keep')
     app = await make_app(monkeypatch, "python -c \"print('A'*70000)\"")
     session = await app.acreate_workspace_session('A', tmp_path)
+    output_dir = app._sessions.workspace_archive_root(tmp_path) / 'naiyue-agent-output'
+    output_dir.mkdir(parents=True)
+    marker = output_dir / 'user-file.txt'
+    marker.write_text('keep')
     await app.arun(session, [('user', 'run')])
     result = await app.aresume_tool_approval(session, ['approve'])
     message = bash_results(result)[0].content

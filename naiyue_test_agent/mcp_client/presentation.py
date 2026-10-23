@@ -1,13 +1,25 @@
 """Safe MCP display facts shared by live snapshots, history and tool selection."""
 
 import re
+from pathlib import PurePosixPath, PureWindowsPath
 
 from langchain_core.messages import ToolMessage
 
 
 OUTCOMES = ('success', 'tool_error', 'not_executed', 'outcome_unknown', 'unsupported_result')
 ARCHIVE_REASONS = ('command_limit', 'workspace_limit', 'directory_unavailable', 'write_error',
-                   'workspace_unavailable')
+                   'workspace_unavailable', 'archive_root_unavailable')
+
+
+def _archive_reference(value, kind):
+    """Display a recorded reference; this does not authorize opening the file."""
+    if not isinstance(value, str) or len(value) > 4096 or any(ord(char) < 32 for char in value):
+        return False
+    if re.fullmatch(r'naiyue-agent-output/[0-9a-f]{32}-' + kind + r'\.log', value):
+        return True  # Saved results from the workspace-local archive format.
+    path = PureWindowsPath(value) if PureWindowsPath(value).is_absolute() else PurePosixPath(value)
+    return (path.is_absolute() and '..' not in path.parts and path.parent.name == 'naiyue-agent-output'
+            and re.fullmatch(r'[0-9a-f]{32}-' + kind + r'\.log', path.name) is not None)
 
 
 def source_projection(value):
@@ -78,6 +90,5 @@ def result_projection(artifact, *, name):
         result['archive_reason'] = artifact['archive_reason']
     paths = artifact.get('archive_paths')
     if isinstance(paths, dict):
-        result['archive_paths'] = {key: paths[key] for key in ('raw', 'text') if isinstance(paths.get(key), str)
-            and re.fullmatch(r'naiyue-agent-output/[0-9a-f]{32}-' + key + r'\.log', paths[key])}
+        result['archive_paths'] = {key: paths[key] for key in ('raw', 'text') if _archive_reference(paths.get(key), key)}
     return result

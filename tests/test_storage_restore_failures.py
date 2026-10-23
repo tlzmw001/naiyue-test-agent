@@ -8,12 +8,14 @@ from uuid import uuid4
 
 import pytest
 
+from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+
 from tests.storage_backup_fixture import artifact
 from tests.test_storage_restore import saved_store, maintenance, invoke, final_result
 from tests.test_storage_restore_processes import crash_restore
 
 
-@pytest.mark.parametrize('version', range(4, 14))
+@pytest.mark.parametrize('version', range(4, CURRENT_SCHEMA))
 def test_each_supported_source_restores_without_running_its_migrations(tmp_path, monkeypatch, capsys, version):
     location, saved = saved_store(tmp_path, version=version)
     monkeypatch.setattr('builtins.input', lambda prompt: saved['backup_id'])

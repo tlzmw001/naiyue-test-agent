@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .web_settings import WebSearchSettings, WebFetchSettings
+from .history_settings import HistorySettings
 
 
 class ReadImageSettings(BaseModel):
@@ -218,6 +219,7 @@ class BuiltinToolSettings(BaseModel):
     web_search: WebSearchSettings = Field(default_factory=WebSearchSettings)
     web_fetch: WebFetchSettings = Field(default_factory=WebFetchSettings)
     subagent: SubAgentOutputSettings = Field(default_factory=SubAgentOutputSettings)
+    history: HistorySettings = Field(default_factory=HistorySettings)
 
 
 class ProcessSettings(BaseModel):

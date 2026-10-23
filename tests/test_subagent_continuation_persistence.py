@@ -4,6 +4,8 @@ import json
 import sqlite3
 
 import pytest
+
+from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
 from langchain_core.messages import AIMessage
 
 from native_application_helpers import async_test
@@ -66,12 +68,12 @@ async def test_parent_archive_failure_cannot_mark_child_ready(monkeypatch, tmp_p
 def test_schema13_migration_backs_up_once_and_leaves_legacy_instances_unregistered(tmp_path):
     database, _, _ = closed_store(tmp_path, version=13)
     with SessionStorage(database) as storage:
-        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 14
+        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
         assert storage.connection.execute('SELECT COUNT(*) FROM naiyue_subagent_instances').fetchone()[0] == 0
     backups = list_backups(database)
     assert len(backups) == 1
     manifest = validate_backup(database, backups[0]['manifest']['backup_id'])
-    assert (manifest['source_schema'], manifest['target_schema']) == (13, 14)
+    assert (manifest['source_schema'], manifest['target_schema']) == (13, CURRENT_SCHEMA)
     with SessionStorage(database):
         pass
     assert len(list_backups(database)) == 1
@@ -90,7 +92,7 @@ def test_schema14_migration_failure_rolls_back_and_retains_usable_backup(monkeyp
     with pytest.raises(SessionPersistenceError, match='migration_failed') as caught:
         SessionStorage(database)
     assert caught.value.__cause__ is error
-    assert (caught.value.source_schema, caught.value.current_schema, caught.value.target_schema, caught.value.phase) == (13, 13, 14, 'schema_14')
+    assert (caught.value.source_schema, caught.value.current_schema, caught.value.target_schema, caught.value.phase) == (13, 13, CURRENT_SCHEMA, 'schema_14')
     assert validate_backup(database, caught.value.backup_id)['source_schema'] == 13
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT 1 FROM sqlite_master WHERE name='must_rollback'").fetchone() is None

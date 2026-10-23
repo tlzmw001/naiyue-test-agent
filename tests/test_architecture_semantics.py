@@ -104,6 +104,8 @@ def test_application_final_save_settles_before_repeated_cancellation_escapes(mon
         order, terminal = [], []
         failure = OSError('synthetic save failure')
         class Persistence:
+            async def prepare_memory(self, *_args):
+                return []
             def start(self, *_args):
                 order.append('start')
             async def afinish(self, *_args):
@@ -116,6 +118,7 @@ def test_application_final_save_settles_before_repeated_cancellation_escapes(mon
             'A': FakeMessagesListChatModel(responses=[])}))
         from types import SimpleNamespace
         persistence = Persistence()
+        persistence.sessions = sessions
         persistence.storage = SimpleNamespace(create=lambda *args: None)
         sessions.bind_persistence(persistence)
         sid = sessions.create_session('A')

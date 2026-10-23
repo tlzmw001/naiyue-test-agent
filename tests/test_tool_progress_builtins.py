@@ -36,6 +36,7 @@ def test_each_builtin_reports_actual_work_with_one_configured_budget(monkeypatch
     validated = spec.validate_input(args)
     kwargs = {key: getattr(validated, key) for key in spec.input_schema.model_fields}
     context = {'session_id': 's', 'workspace_root': tmp_path,
+               'archive_root': tmp_path.parent / (tmp_path.name + '-archive'),
                '_permission_rules': settings.permissions, '_session_allow': []}
     subject = spec.permissions.prepare(kwargs, context)
     subject.update(args=kwargs, tool_name=name, path_field='path', execution_environment=execution_environment())

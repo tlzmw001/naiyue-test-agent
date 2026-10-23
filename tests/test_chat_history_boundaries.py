@@ -6,6 +6,8 @@ import sqlite3
 from types import SimpleNamespace
 
 import pytest
+
+from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
 from langchain_core.messages import AIMessage, HumanMessage
 
 from native_application_helpers import async_test
@@ -106,7 +108,7 @@ def test_schema_six_migration_preserves_rows_and_does_not_backfill(tmp_path):
             UPDATE naiyue_store_info SET version=6;''')
     with SessionStorage(path) as storage:
         assert storage.get('s')['thread_id'] == 's'
-        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 14
+        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
         assert storage.chat_heads('s') == [] and rows(storage, 's') == []
 
 
@@ -129,7 +131,7 @@ def test_chat_migration_is_atomic_on_ddl_failure(monkeypatch, tmp_path):
         with pytest.raises(SessionPersistenceError, match='migration_failed') as caught:
             SessionStorage(path)
     from naiyue_test_agent.storage_backup import validate_backup
-    assert (caught.value.source_schema, caught.value.current_schema, caught.value.target_schema) == (6, 6, 14)
+    assert (caught.value.source_schema, caught.value.current_schema, caught.value.target_schema) == (6, 6, CURRENT_SCHEMA)
     assert validate_backup(path, caught.value.backup_id)['source_schema'] == 6
     with sqlite3.connect(path) as connection:
         assert connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 6

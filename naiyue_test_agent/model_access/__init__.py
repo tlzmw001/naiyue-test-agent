@@ -52,8 +52,10 @@ def bind_model_output_limit(model: BaseChatModel, output_tokens: int):
     """Apply a one-request output cap using the configured adapter's native name."""
     if type(output_tokens) is not int or output_tokens <= 0:
         raise ValueError('output_tokens must be a positive integer')
-    return (model.bind(num_predict=output_tokens) if isinstance(model, ChatOllama)
-            else model.bind(max_tokens=output_tokens))
+    if isinstance(model, ChatOllama):
+        return model.model_copy(update={'num_predict': output_tokens}).bind()
+    parameter = 'max_completion_tokens' if isinstance(model, ChatOpenAI) else 'max_tokens'
+    return model.bind(**{parameter: output_tokens})
 
 
 class ModelCatalog:
@@ -295,7 +297,9 @@ def load_model_catalog(path: str | Path | None = None) -> ModelCatalog:
         elif 'api' in entry:
             raise ModelConfigError(f'models.{model_id}.api only applies to OpenAI adapters')
         profile = _object(entry.get('profile', {}), f'models.{model_id}.profile', set(),
-                          {'image_inputs', 'prompt_cache', 'reasoning_output'})
+                          {'image_inputs', 'prompt_cache', 'reasoning_output', 'memory_output'})
+        if 'memory_output' in profile and profile['memory_output'] not in ('text', 'json_schema', 'function_calling'):
+            raise ModelConfigError(f'models.{model_id}.profile.memory_output must be text, json_schema or function_calling')
         if 'image_inputs' in profile and type(profile['image_inputs']) is not bool:
             raise ModelConfigError(f'models.{model_id}.profile.image_inputs must be a boolean')
         if 'reasoning_output' in profile and (profile['reasoning_output'] != 'reasoning_content' or api != 'chat_completions'):

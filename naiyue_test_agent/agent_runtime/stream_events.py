@@ -6,6 +6,7 @@ from typing import Literal
 
 SUMMARY_TAG = 'naiyue_summary'
 PERMISSION_REVIEW_TAG = 'naiyue_permission_review'
+MEMORY_TAG = 'naiyue_memory'
 
 
 @dataclass(frozen=True)

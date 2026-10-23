@@ -7,6 +7,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from naiyue_test_agent.agent_runtime import build_runtime_agent
 from test_agent_runtime import ToolCapableFake
+from pathlib import Path
 
 
 EXPECTED_NOASK = 'Tool was not executed: access denied by the permission policy (NoAsk).'
@@ -28,6 +29,9 @@ async def invoke_tool_feedback(spec, args, *, call_id, context=None, permission_
     )
     config = {'configurable': {'thread_id': 'feedback'}}
     context = {'session_id': 'feedback', **(context or {})}
+    root = context.get('workspace_root')
+    if isinstance(root, Path):
+        context.setdefault('archive_root', root.parent / (root.name + '-archive'))
     result = (await agent.ainvoke({'messages': [('user', 'run tool')]},
                           context=context, config=config))
     feedback = next(m for m in result['messages']

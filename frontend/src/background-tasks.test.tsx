@@ -133,3 +133,39 @@ it('keeps a delayed stop failure attached to its task after selection changes', 
   act(() => result.current.select(task.task_id));
   expect(result.current.stopError).toMatch(/进程清理尚未确认/);
 });
+
+it('shows memory completion and literal summary without process or archive fields', async () => {
+  const api = client();
+  const memory = { ...task, kind: 'memory' as const, shell: 'memory', command_preview: '更新概览',
+    status: 'finished' as const, result_status: 'partial' as const, cleanup_confirmed: true };
+  vi.mocked(api.backgroundTasks).mockResolvedValue(page([memory]));
+  vi.mocked(api.backgroundTaskOutput).mockResolvedValue({ ...detail, ...memory,
+    archive_paths: {}, archive_complete: false, archive_saved_bytes: 0, archive_reason: 'not_applicable',
+    truncated: true });
+  function Panel() { const state = useBackgroundTasks(api, true); return <BackgroundTasks state={state} />; }
+  const view = render(<Panel />);
+  fireEvent.click(await screen.findByRole('button', { name: /更新概览/ }));
+  await screen.findByText(detail.output);
+  expect(screen.getAllByText('记忆整理').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('部分完成').length).toBeGreaterThan(0);
+  expect(screen.queryByText('退出码')).toBeNull();
+  expect(screen.queryByText(/归档/)).toBeNull();
+  expect(screen.queryByText(/命令退出/)).toBeNull();
+  expect(view.container.querySelector('script')).toBeNull();
+});
+
+it('labels an unconfirmed memory task as memory cleanup and keeps stop available while active', async () => {
+  const api = client();
+  const memory = { ...task, kind: 'memory' as const, shell: 'memory', command_preview: '整理记忆' };
+  vi.mocked(api.backgroundTasks).mockResolvedValue(page([memory]));
+  vi.mocked(api.backgroundTaskOutput).mockResolvedValue({ ...detail, ...memory });
+  function Panel() { const state = useBackgroundTasks(api, true); return <BackgroundTasks state={state} />; }
+  render(<Panel />);
+  fireEvent.click(await screen.findByRole('button', { name: /整理记忆/ }));
+  await screen.findByText(detail.output);
+  expect(screen.getByRole('button', { name: '停止此后台任务' })).toBeTruthy();
+  vi.mocked(api.backgroundTaskOutput).mockResolvedValue({ ...detail, ...memory, status: 'lost' });
+  fireEvent.click(screen.getByRole('button', { name: '刷新' }));
+  await screen.findByText('记忆整理收尾未确认，请人工核对。');
+  expect(screen.queryByText('进程或输出收尾未确认，请人工核对。')).toBeNull();
+});

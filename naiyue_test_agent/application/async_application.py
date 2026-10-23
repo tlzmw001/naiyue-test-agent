@@ -65,20 +65,22 @@ class AsyncApplication:
 
     async def alist_background_tasks(self, session_id=None, *, workspace_root=None, limit=20, before=None):
         with self._owned_operation():
-            return await self._sessions.background_tasks.list(session_id=session_id, workspace_root=workspace_root, limit=limit, before=before)
+            return await self._sessions.task_queries.list(session_id=session_id, workspace_root=workspace_root, limit=limit, before=before)
 
     async def aget_background_task_output(self, task_id, session_id=None, *, workspace_root=None):
         with self._owned_operation():
-            return await self._sessions.background_tasks.output(task_id, session_id=session_id, workspace_root=workspace_root)
+            return await self._sessions.task_queries.output(task_id, session_id=session_id, workspace_root=workspace_root)
 
     async def astop_background_task(self, task_id, session_id=None, *, workspace_root=None):
         with self._owned_operation():
-            return await self._sessions.background_tasks.stop(task_id, session_id=session_id, workspace_root=workspace_root)
+            return await self._sessions.task_queries.stop(task_id, session_id=session_id, workspace_root=workspace_root)
 
     async def apreview_shell_outputs(self, root):
         from ..tools.output import preview_shell_outputs
-        with self._owned_operation(), self._sessions.output_guard(root):
-            return await run_blocking(preview_shell_outputs, root)
+        with self._owned_operation():
+            archive = self._sessions.workspace_archive_root(root)
+            with self._sessions.output_guard(archive):
+                return await run_blocking(preview_shell_outputs, archive)
 
     async def aclear_shell_outputs(self, plan):
         from ..tools.output import clear_shell_outputs
@@ -327,9 +329,14 @@ class AsyncApplication:
             self._sessions.stop_loaded_sessions()
             background_error = None
             try:
-                await self._sessions.background_tasks.aclose()
+                if self._sessions.memory_jobs is not None:await self._sessions.memory_jobs.aclose()
             except BaseException as error:
                 background_error = error
+            try:
+                await self._sessions.background_tasks.aclose()
+            except BaseException as error:
+                if background_error is None:background_error = error
+                else:logger.error('process_cleanup_secondary_failed error_type=%s',safe_error_type(error))
             # Nested operations are covered by their outer operation. No new ingress
             # can start after closing; these signals settle only after required IO.
             try:
@@ -396,9 +403,11 @@ async def build_async_local_application(config_path, *, tools, system_prompt, re
         await register_mcp_tools(registry, resources, borrow_mcp=borrow_mcp)
         application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
         registry.select(initial)
+        from naiyue_test_agent.config_paths import get_data_dir
         sessions = application.SessionService(catalog, registry, initial_active_tools=initial, permission_settings=settings.permissions, progress_settings=settings.progress,
             max_active_runs=settings.max_active_runs, mcp_resources=resources,
-            http_attempt_limit=settings.diagnostics.max_pending_events, shell_task_settings=settings.shell_tasks)
+            http_attempt_limit=settings.diagnostics.max_pending_events, shell_task_settings=settings.shell_tasks,
+            data_dir=get_data_dir(settings.storage))
         agent = sessions.assemble_runtime(InMemorySaver(), system_prompt=system_prompt, response_format=response_format,
             subagents=settings.subagents, subagent_settings=settings.tools.subagent)
         return AsyncApplication(catalog, sessions, agent, registry, system_prompt=system_prompt)

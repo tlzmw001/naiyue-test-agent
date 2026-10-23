@@ -6,6 +6,22 @@ import SessionDiagnostics from './components/SessionDiagnostics';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+it('distinguishes an independent memory execution and its model purpose', async () => {
+  const api = new WebApi('test');
+  const item = { ...summary('memory-run'), mode: 'memory', origin_run_id: 'source-root-run' };
+  vi.spyOn(api, 'diagnosticRuns').mockResolvedValue({ session_id: 's', runs: [item], next_before: null });
+  const value = detail('memory-run');
+  value.summary = item;
+  value.events = [{ session_id: 's', run_id: 'memory-run', sequence: 2, event_type: 'model_call_started',
+    source: null, data: { invocation_id: 'i', model_id: 'A', purpose: 'memory' } }];
+  vi.spyOn(api, 'diagnosticEvents').mockResolvedValue(value);
+  render(<SessionDiagnostics api={api} sessionId="s" run={null} />);
+  fireEvent.click(await screen.findByRole('button', { name: '查看运行 memory-run' }));
+  expect((await screen.findAllByText('记忆整理')).length).toBe(2);
+  expect(screen.getByText('用途')).toBeTruthy();
+  expect(screen.getByText('来源运行 source-root-run')).toBeTruthy();
+});
+
 function summary(rid = 'r', sid = 's'): any {
   return { session_id: sid, run_id: rid, status: 'failed', started_at: '2026-10-20T00:00:00Z',
     duration_ms: 0, capture_state: 'closed', capture_incomplete: false, dropped_events: 0,

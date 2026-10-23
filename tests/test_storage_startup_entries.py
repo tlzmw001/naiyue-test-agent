@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+
 from naiyue_test_agent import application
 from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
@@ -59,7 +61,7 @@ def test_model_failure_after_migration_stays_model_failure_and_does_not_restore(
         assert caught.value is original
     asyncio.run(run())
     with SessionStorage(database) as storage:
-        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 14
+        assert storage.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
     assert [row['manifest']['source_schema'] for row in list_backups(database)] == [12]
 
 
@@ -72,7 +74,7 @@ def test_chat_reports_structured_migration_failure_without_private_body(tmp_path
     monkeypatch.setattr(chat_queries, 'migrate_chat_queries', failure)
     assert cli.main(['--workspace', str(root), '--session-db', str(database), '--config', 'unused']) == 1
     output = capsys.readouterr().out
-    assert all(value in output for value in ('migration_failed', 'schema_8', '源版本=6', '当前版本=7', '目标版本=14', 'nyt storage backups'))
+    assert all(value in output for value in ('migration_failed', 'schema_8', '源版本=6', '当前版本=7', f'目标版本={CURRENT_SCHEMA}', 'nyt storage backups'))
     assert list_backups(database)[0]['backup_id'] in output
     assert 'PRIVATE-SQL-parameters' not in output + caplog.text
 
@@ -84,7 +86,7 @@ def test_web_terminal_forwards_lifespan_failure_for_both_server_exit_paths(tmp_p
     from naiyue_test_agent.web.settings import WebSettings
     from naiyue_test_agent.application.errors import StorageStartupError
     original = StorageStartupError('migration_failed', database_path=tmp_path / 'db', phase='schema_8',
-        source_schema=6, current_schema=7, target_schema=14, backup_id='a' * 32)
+        source_schema=6, current_schema=7, target_schema=CURRENT_SCHEMA, backup_id='a' * 32)
     original.__cause__ = OSError('PRIVATE-provider-response')
     cause = original.__cause__
     @asynccontextmanager

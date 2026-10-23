@@ -8,6 +8,8 @@ import sqlite3
 
 import pytest
 
+from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+
 from naiyue_test_agent.agent_runtime.events import RuntimeEvent, RunStartedData, RunFinishedData, ToolCallStartedData
 from naiyue_test_agent.application.session_storage import SessionStorage
 from test_model_usage_storage import seed
@@ -39,7 +41,7 @@ def test_schema_nine_migrates_and_reopen_preserves_facts(tmp_path):
                                 'DROP TABLE IF EXISTS naiyue_diagnostic_runs; '
                                 'UPDATE naiyue_store_info SET version=9;')
     with SessionStorage(path) as store:
-        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == 14
+        assert store.connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0] == CURRENT_SCHEMA
         cfg = limits()
         store.save_diagnostic_event(fact(), cfg)
         store.save_diagnostic_event(fact('tool_call_started', ToolCallStartedData('t', 'read'), sequence=3), cfg)

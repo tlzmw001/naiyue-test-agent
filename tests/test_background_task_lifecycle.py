@@ -13,7 +13,7 @@ from naiyue_test_agent.application.errors import SessionPersistenceError
 from naiyue_test_agent.tools.processes import HostProcessRunner, ProcessCleanupError
 from naiyue_test_agent.tools.settings import BashSettings
 from test_async_application import StreamingToolModel, call
-from test_background_tasks import submit, wait_status
+from test_background_tasks import submit, wait_status, archive_root
 from test_background_tools import background_app, command, tool_result
 
 
@@ -109,7 +109,7 @@ def test_unconfirmed_cleanup_retains_writer_and_blocks_maintenance(tmp_path):
         result = await wait_status(manager, row['task_id'], lambda r: r['status'] == 'lost')
         assert not result['cleanup_confirmed'] and not manager._entries[row['task_id']].capture.closed
         with pytest.raises(ValueError, match='unconfirmed'):
-            with manager.output_guard(tmp_path):
+            with manager.output_guard(archive_root(tmp_path)):
                 pytest.fail('Unsettled writer must reserve its output')
         with pytest.raises(ToolException, match='unconfirmed'):
             with manager.deletion_guard('s'):
@@ -174,7 +174,7 @@ def test_save_failure_does_not_cancel_or_replay_handed_off_process(monkeypatch, 
 def test_maintenance_reservation_closes_background_admission(tmp_path):
     async def scenario():
         manager = BackgroundProcessManager()
-        for guard in (manager.output_guard(tmp_path), manager.deletion_guard('s')):
+        for guard in (manager.output_guard(archive_root(tmp_path)), manager.deletion_guard('s')):
             with guard, pytest.raises(ToolException, match='admission'):
                 await submit(manager, tmp_path, "print('must not run')")
         assert (await manager.list())['items'] == []
@@ -211,12 +211,12 @@ def test_cleanup_guard_releases_reservation_on_failure_and_blocks_new_runs(monke
         async with background_app(monkeypatch, tmp_path, model) as app:
             sid = await app.acreate_workspace_session('A', tmp_path)
             with pytest.raises(RuntimeError, match='maintenance failed'):
-                with app._sessions.output_guard(tmp_path):
+                with app._sessions.output_guard(app._sessions.workspace_archive_root(tmp_path)):
                     with pytest.raises(SessionBusyError):
                         await app.arun(sid, [('user', 'cannot race cleanup')])
                     assert model.seen == []
                     raise RuntimeError('maintenance failed')
-            assert not app._sessions.background_tasks.is_cleaning(tmp_path)
+            assert not app._sessions.background_tasks.is_cleaning(app._sessions.workspace_archive_root(tmp_path))
             result = await app.arun(sid, [('user', 'after cleanup')])
             assert result['messages'][-1].content == 'next run works'
     asyncio.run(scenario())

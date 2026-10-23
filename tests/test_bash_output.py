@@ -4,6 +4,7 @@ from native_application_helpers import async_test
 
 
 import pytest
+from pathlib import Path
 
 
 @async_test
@@ -21,14 +22,14 @@ async def test_clear_only_after_preview_and_preserves_other_files(monkeypatch, t
     outside = tmp_path / 'user-file.txt'
     outside.write_text('keep')
 
-    plan = preview_shell_outputs(tmp_path)
+    plan = await app.apreview_shell_outputs(tmp_path)
     assert plan.file_count == 1
     assert plan.total_bytes == 70001
     assert path.exists()
     assert clear_shell_outputs(plan) == (1, 70001)
     assert not path.exists()
     assert outside.read_text() == 'keep'
-    assert (tmp_path / 'naiyue-agent-output' / '.gitignore').exists()
+    assert (path.parent / '.gitignore').exists()
 
 
 @async_test
@@ -43,16 +44,16 @@ async def test_clear_refuses_changed_plan_and_unexpected_file(monkeypatch, tmp_p
     await app.arun(session, [('user', 'run')])
     result = await app.aresume_tool_approval(session, ['approve'])
     path = tmp_path / _archive_path(bash_results(result)[0].content, 'raw')
-    plan = preview_shell_outputs(tmp_path)
+    plan = await app.apreview_shell_outputs(tmp_path)
     path.write_bytes(b'changed')
     with pytest.raises(ValueError, match='changed'):
         clear_shell_outputs(plan)
     assert path.read_bytes() == b'changed'
 
-    unknown = tmp_path / 'naiyue-agent-output' / 'important.txt'
+    unknown = path.parent / 'important.txt'
     unknown.write_text('keep')
     with pytest.raises(ValueError, match='unexpected'):
-        preview_shell_outputs(tmp_path)
+        await app.apreview_shell_outputs(tmp_path)
     assert unknown.read_text() == 'keep'
 
 
@@ -67,9 +68,10 @@ async def test_clear_rejects_symlink_in_output_directory(monkeypatch, tmp_path):
     await app.aresume_tool_approval(session, ['approve'])
     outside = tmp_path / 'outside.txt'
     outside.write_text('keep')
-    (tmp_path / 'naiyue-agent-output' / ('f' * 32 + '-stderr.log')).symlink_to(outside)
+    archive = app._sessions.workspace_archive_root(tmp_path) / 'naiyue-agent-output'
+    (archive / ('f' * 32 + '-stderr.log')).symlink_to(outside)
     with pytest.raises(ValueError, match='symlink'):
-        preview_shell_outputs(tmp_path)
+        await app.apreview_shell_outputs(tmp_path)
     assert outside.read_text() == 'keep'
 
 
@@ -81,11 +83,17 @@ async def test_cli_clear_needs_confirmation(monkeypatch, tmp_path, capsys):
     from tests.test_host_bash import BashFake, make_app, bash_results, _archive_path
     from langchain_core.messages import AIMessage
 
-    app = await make_app(monkeypatch, "python -c \"print('A'*70000)\"")
-    session = await app.acreate_workspace_session('A', tmp_path)
-    await app.arun(session, [('user', 'run')])
-    result = await app.aresume_tool_approval(session, ['approve'])
-    path = tmp_path / _archive_path(bash_results(result)[0].content, 'raw')
+    from naiyue_test_agent.config_paths import get_data_dir, StorageSettings
+    from naiyue_test_agent.workspaces import prepare_workspace
+    from naiyue_test_agent.tools.output import ShellOutputArchive
+    from naiyue_test_agent.tools import BashSettings
+    data = get_data_dir(StorageSettings())
+    location = prepare_workspace(tmp_path, data_dir=data)
+    archive_root = data / 'workspaces' / location.workspace_id / 'artifacts'
+    archive_root.mkdir(parents=True)
+    archive = ShellOutputArchive(archive_root, BashSettings())
+    archive.record(b'A' * 70000, activate=True)
+    path = Path(archive.finish().paths['raw'])
     model = BashFake(responses=[AIMessage(content='unused')])
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
@@ -114,7 +122,7 @@ def test_capture_error_cannot_mark_partial_artifact_complete(tmp_path):
     archive.record(b'A' * 70000, activate=True)
     archive.mark_incomplete('capture_incomplete')
     result = archive.finish()
-    assert result.paths['raw'].startswith('naiyue-agent-output/')
+    assert Path(result.paths['raw']).parent == tmp_path / 'naiyue-agent-output'
     assert result.complete is False
     assert result.reason == 'capture_incomplete'
 

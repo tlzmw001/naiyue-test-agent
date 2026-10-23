@@ -56,6 +56,7 @@ def _directory(root: Path, *, create: bool) -> Path | None:
     except FileNotFoundError:
         if not create:
             return None
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
         directory.mkdir(mode=0o700)
         _write_owned_file(directory / '.gitignore', _IGNORE_TEXT)
         _write_owned_file(directory / _OWNER_FILE, _OWNER_TEXT)
@@ -96,6 +97,18 @@ def preview_shell_outputs(root: Path) -> ClearPlan:
     with _GLOBAL_LOCK:
         directory = _directory(root, create=False)
         return ClearPlan(root, _snapshot(directory) if directory is not None else ())
+
+
+def require_archive_root(context):
+    """Archive custody is supplied by the application, independently of cwd."""
+    from langchain_core.tools import ToolException
+    root, execution = context.get('archive_root'), context.get('workspace_root')
+    if not isinstance(root, Path) or not root.is_absolute():
+        raise ToolException('archive_root_unavailable')
+    root = root.resolve()
+    if isinstance(execution, Path) and root.is_relative_to(execution.resolve()):
+        raise ToolException('archive_root_inside_execution_root')
+    return root
 
 
 def clear_shell_outputs(plan: ClearPlan) -> tuple[int, int]:
@@ -225,7 +238,7 @@ class ShellOutputArchive:
                                              os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                         handle = os.fdopen(descriptor, 'wb', buffering=0)
                         self._handles[stream] = handle
-                        self._paths[stream] = f'{OUTPUT_DIR}/{name}'
+                        self._paths[stream] = str(directory / name)
                     # FileIO may return a partial write. Count only actual bytes.
                     view = memoryview(data)[:allowed]
                     while view:

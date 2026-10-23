@@ -5,7 +5,8 @@ import styles from './ToolResult.module.css';
 export const mcpOutcomes = { success: '成功', tool_error: '工具返回错误', not_executed: '未执行',
   outcome_unknown: '结果未知', unsupported_result: '返回内容暂不支持' };
 const archiveReasons: Record<string, string> = { command_limit: '单次归档达到上限', workspace_limit: '工作区归档达到上限',
-  directory_unavailable: '归档目录不可用', write_error: '归档写入失败', workspace_unavailable: '未绑定可用工作区' };
+  directory_unavailable: '归档目录不可用', write_error: '归档写入失败', workspace_unavailable: '未绑定可用工作区',
+  archive_root_unavailable: '未绑定输出归档目录' };
 
 export default function ToolResult({ name, result, anchor, loadChange }: { name: string; result: MessageRow; anchor?: string; loadChange?: ChangeLoader }) {
   if (name === 'subagent' && result.status !== 'error') {
@@ -32,7 +33,7 @@ export default function ToolResult({ name, result, anchor, loadChange }: { name:
       <p>结果已截断{mcp.result_bytes !== undefined ? `（原始结果 ${mcp.result_bytes} 字节）` : ''}。</p>
       <p>{mcp.archive_complete ? '归档完整' : '归档不完整或不可用'}
         {mcp.archive_reason && archiveReasons[mcp.archive_reason] && <span>：{archiveReasons[mcp.archive_reason]}</span>}</p>
-      {Object.entries(mcp.archive_paths ?? {}).map(([key, path]) => <p key={key}>工作区归档 {key}：<code>{path}</code></p>)}
+      {Object.entries(mcp.archive_paths ?? {}).map(([key, path]) => <p key={key}>输出归档 {key}：<code>{path}</code></p>)}
     </div>}
     <pre>{result.content}</pre>
   </div>;

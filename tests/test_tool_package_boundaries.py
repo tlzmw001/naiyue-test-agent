@@ -77,6 +77,7 @@ def test_bash_passes_the_original_context_control_to_the_runner(monkeypatch, tmp
               'subject': {'execution_environment': execution_environment()}}
     runtime = SimpleNamespace(tool_call_id='call', context={
         'workspace_root': tmp_path, 'session_id': 's', '_execution_permit': permit,
+        'archive_root': tmp_path.parent / (tmp_path.name + '-archive'),
         '_run_control': control,
     })
     result = bash_module.create_session_bash_tool().tool.func('echo ok', runtime, timeout=7)

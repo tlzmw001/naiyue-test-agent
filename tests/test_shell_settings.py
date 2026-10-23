@@ -24,7 +24,7 @@ def test_shell_defaults_and_configured_schema(tmp_path, caplog):
     assert defaults.tools.powershell.execution_policy == 'inherit'
     assert defaults.tools.bash.environment.unset_env == ['BASH_ENV', 'NAIYUE_WEB_TOKEN']
     specs = {s.tool.name: s for s in create_builtin_tools(settings.tools, process_settings=settings.process, shell_task_settings=settings.shell_tasks, progress_settings=settings.progress)}
-    assert set(specs) == {'read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent', 'subagent_list', 'aitest_kit', 'web_search', 'web_fetch', 'task_list', 'task_output', 'task_stop'}
+    assert set(specs) == {'read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent', 'subagent_list', 'aitest_kit', 'web_search', 'web_fetch', 'task_list', 'task_output', 'task_stop', 'history', 'memory'}
     for name in ('bash', 'powershell'):
         spec = specs[name]
         schema = spec.tool.tool_call_schema.model_json_schema()

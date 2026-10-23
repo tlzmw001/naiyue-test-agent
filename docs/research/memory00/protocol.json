@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "frozen_at": "2026-10-22T11:16:04.762191+00:00",
+  "fixtures_sha256": "0c46d61aa5bcd6ae03ca00df8377cacff69fd830d037f1b217240286004a31ec",
+  "weight_candidates": [
+    [
+      1,
+      1,
+      1
+    ],
+    [
+      3,
+      2,
+      1
+    ],
+    [
+      5,
+      3,
+      1
+    ]
+  ],
+  "rrf_k": 60,
+  "candidate_limit": 50,
+  "result_limit": 8,
+  "selection_uses": "calibration labels only",
+  "no_model_calls": true
+}

@@ -6,6 +6,7 @@ import asyncio
 import unicodedata
 from copy import deepcopy
 from threading import Lock
+from contextlib import nullcontext
 
 from .session_storage import SessionPersistenceError
 from .session_recovery import (
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 class SessionPersistence:
-    def __init__(self, storage, sessions, *, catalog, tool_registry, permission_settings, usage_persistence=None, title_max_chars=40, checkpoint_settings=None):
+    def __init__(self, storage, sessions, *, catalog, tool_registry, permission_settings, usage_persistence=None, title_max_chars=40, checkpoint_settings=None, memory=None, memory_jobs=None):
         self.storage = storage
         self.sessions = sessions
         self._catalog, self._tool_registry = catalog, tool_registry
@@ -42,6 +43,9 @@ class SessionPersistence:
         self._recovering = set()
         self._history_locks = {}
         self._prepared = {}
+        self._memory_jobs = memory_jobs
+        self._memory = memory
+        self._memory_agent = None
 
     async def astatus(self, session_id):
         row = await run_blocking(self.storage.get, session_id)
@@ -66,6 +70,59 @@ class SessionPersistence:
         value['last_reply_id'] = boundary['reply_id'] if boundary else None
         return value
 
+    async def aquery_history(self, *, source_session_id, workspace_root, agent_path, request, settings):
+        session = self.sessions.require(source_session_id)
+        current = session.describe_session()
+        if (not current['busy'] or current['workspace_root'] != str(workspace_root)
+                or 'history' not in session.get_active_tools(agent_path)):
+            raise ToolException('history_scope_mismatch: the calling session or role is unavailable.')
+        try:
+            return await run_blocking(self.storage.read_history_tool, source_session_id, workspace_root, request, settings)
+        except SessionPersistenceError as error:
+            logger.warning('history_query_failed error_type=%s', type(error).__name__)
+            raise ToolException(f'History query failed ({error}). Query the directory again if the source changed.') from error
+
+
+    def bind_memory_agent(self, agent):
+        self._memory_agent = agent
+
+    async def aquery_memory(self, *, source_session_id, workspace_root, agent_path, request, tool_call_id=None):
+        from .memory_access import MemoryReadError
+        session = self.sessions.require(source_session_id)
+        current = session.describe_session()
+        if (not current['busy'] or current['workspace_root'] != str(workspace_root)
+                or 'memory' not in session.get_active_tools(agent_path)):
+            raise ToolException('memory_scope_mismatch: the calling session or role is unavailable.')
+        if self._memory is None:
+            raise ToolException('memory_unavailable: persistent memory is unavailable.')
+        try:
+            if request['action']=='refresh_overview':
+                if self._memory_jobs is None:raise MemoryReadError('memory_unavailable')
+                identity,model=session.resolve_model()
+                return await self._memory_jobs.request(source_session_id=source_session_id,
+                    target_session_id=request['target_session_id'] or source_session_id,workspace_root=workspace_root,
+                    origin_run_id=current['run_id'],model_id=identity,model=model,tool_call_id=tool_call_id,
+                    start_sequence=request['start_sequence'],end_sequence=request['end_sequence'])
+            if request['action'] in ('record','update','disable','forget'):
+                async with self._history_lock(source_session_id):
+                    try:
+                        updates = await collect_chat_updates(self._memory_agent,self.storage,source_session_id)
+                        await run_blocking(self.storage.save_chat_updates,source_session_id,updates)
+                    except Exception as error:
+                        logger.error('memory_source_save_failed error_type=%s',type(error).__name__)
+                        raise ToolException('memory_source_save_failed: memory was not written.') from error
+                    return await run_blocking(self._memory.query,source_session_id,workspace_root,request)
+            return await run_blocking(self._memory.query, source_session_id, workspace_root, request)
+        except MemoryReadError as error:
+            logger.warning('memory_query_failed error_type=%s', type(error).__name__)
+            raise ToolException(f'Memory query failed ({error}).') from error
+
+    async def prepare_memory(self,session_id,root,messages,model,*,preview=False):
+        if self._memory_jobs is None:return []
+        try:return await run_blocking(self._memory_jobs.prepare,session_id,root,messages,model,preview=preview)
+        except (MemoryError,OSError,ValueError,SessionPersistenceError) as error:
+            logger.warning('memory_context_prepare_failed error_type=%s',type(error).__name__)
+            return []
 
     def _history_lock(self, session_id):
         return self._history_locks.setdefault(session_id, asyncio.Lock())
@@ -115,10 +172,12 @@ class SessionPersistence:
         if self._history_lock(session_id).locked():
             raise SessionPersistenceError('session_recovery_blocked')
         try:
-            with self.sessions.background_tasks.deletion_guard(session_id):
+            memory_guard=self._memory_jobs.deletion_guard(session_id) if self._memory_jobs else nullcontext()
+            with self.sessions.background_tasks.deletion_guard(session_id),memory_guard:
                 async with self._history_lock(session_id):
                     result = await self._delete(session_id, agent)
                     self.sessions.background_tasks.forget_session(session_id)
+                    if self._memory_jobs:self._memory_jobs.forget_session(session_id)
                     return result
         except ToolException as error:
             raise SessionPersistenceError('session_background_tasks_active') from error
@@ -183,9 +242,17 @@ class SessionPersistence:
             except Exception as error:
                 with self._lock:
                     self._blocked.add(session_id)
+                if self._memory_jobs is not None:
+                    try:await self._memory_jobs.after_finish(session_id,run_id,'failed',model_id=self._catalog.default_model_id)
+                    except Exception as secondary:logger.error('memory_cancel_secondary_failed error_type=%s',type(secondary).__name__)
                 logger.error('session_persistence_finalize_failed error_type=%s', type(error).__name__)
                 raise SessionPersistenceError('session_save_unconfirmed') from error
             else:
+                if self._memory_jobs is not None:
+                    try:
+                        identity,model=self.sessions.require(session_id).resolve_model()
+                        await self._memory_jobs.after_finish(session_id,run_id,status if observation.mode!='compact' else 'skipped',model_id=identity,model=model)
+                    except Exception as error:logger.error('memory_after_finish_failed error_type=%s',type(error).__name__)
                 if state == 'ready' and self._checkpoint_settings is not None:
                     try:
                         from .checkpoint_retention import prune_after_finish

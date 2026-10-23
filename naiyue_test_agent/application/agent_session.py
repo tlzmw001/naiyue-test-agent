@@ -21,7 +21,7 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
 
     def __init__(self, session_id, state: SessionState, *, catalog, tool_registry,
                  permission_settings, persistence=None, invoke_subagent=None, registered_subagents=None,
-                 progress_settings=None, subagent_result_settings=None, mcp_resources=None, process_tasks=None):
+                 progress_settings=None, subagent_result_settings=None, mcp_resources=None, process_tasks=None, archive_root=None):
         self.session_id = session_id
         self._state = state
         self._catalog = catalog
@@ -35,6 +35,8 @@ class AgentSession(AgentSessionControls, SessionExecution, AgentSessionSubagents
         self._subagent_result_settings = subagent_result_settings
         self._mcp_resources = mcp_resources
         self._process_tasks = process_tasks
+        self._archive_root = archive_root
+        self._memory_prompt_parts = []
         self._subagent_records = {}
         self._lock = Lock()
         self._model_selection_lock = Lock()

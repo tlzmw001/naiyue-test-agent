@@ -154,7 +154,7 @@ def test_web_bash_opt_in_approval_and_safe_command(monkeypatch, tmp_path):
             assert 'bash' in [spec.tool.name for spec in backend.get_registered_tools()]
             assert 'bash' not in backend.get_active_tools(sid)
             assert 'powershell' in [spec.tool.name for spec in backend.get_registered_tools()]
-            assert set(backend.get_active_tools(sid)) == {'read', 'ls', 'find', 'grep', 'write', 'edit', 'subagent', 'aitest_kit', 'web_search', 'web_fetch', 'task_list', 'task_output', 'task_stop'}
+            assert set(backend.get_active_tools(sid)) == {'read', 'ls', 'find', 'grep', 'write', 'edit', 'subagent', 'aitest_kit', 'web_search', 'web_fetch', 'task_list', 'task_output', 'task_stop', 'history', 'memory'}
             await backend.aset_active_tools(sid, ['bash'])
             assert (await client.get(f'/api/sessions/{sid}')).json()['active_tools'] == ['bash']
             origin = (await client.post(f'/api/sessions/{sid}/runs', json=request('use shell'))).json()['run_id']

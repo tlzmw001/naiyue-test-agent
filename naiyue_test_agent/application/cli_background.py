@@ -17,6 +17,13 @@ def _text(value):
 
 
 def _status(row, emit):
+    if row.get('kind') == 'memory':
+        result = {'completed': '已完成', 'partial': '部分完成', 'failed': '失败', 'stopped': '已停止'}
+        status = result.get(row.get('result_status'), row['status'])
+        emit(_text(f'{row["task_id"]}  会话 {row["session_id"]}  {status}\n'
+            f'记忆整理: {row["command_preview"]}\n'
+            f'结束原因：{row["termination"]}；收尾已确认：{row["cleanup_confirmed"]}'))
+        return
     emit(_text(f'{row["task_id"]}  会话 {row["session_id"]}  {row["status"]}\n'
         f'{row["shell"]}: {row["command_preview"]}\n'
         f'退出码：{row["exit_code"]}；结束原因：{row["termination"]}；清理已确认：{row["cleanup_confirmed"]}'))
@@ -45,14 +52,16 @@ def handle_background_command(app, line, emit):
             result = app.stop_background_task(parts[2])
             _status(result, emit)
             if not result['cleanup_confirmed']:
-                emit('进程清理尚未确认，请人工核对；任务记录仍保留。')
+                emit('记忆整理收尾尚未确认，请人工核对；任务记录仍保留。' if result.get('kind') == 'memory'
+                    else '进程清理尚未确认，请人工核对；任务记录仍保留。')
         else:
             result = app.background_task_output(parts[2])
             _status(result, emit)
             emit(_text(result['output']))
             if result['truncated']:
-                emit('以上为有界输出尾部。')
-            emit('归档引用：' + _text(json.dumps(result['archive_paths'], ensure_ascii=False)))
+                emit('以上为有界结果摘要。' if result.get('kind') == 'memory' else '以上为有界输出尾部。')
+            if result.get('kind') != 'memory':
+                emit('归档引用：' + _text(json.dumps(result['archive_paths'], ensure_ascii=False)))
             if not result['output_available']:
                 emit('日志文件不可用，以上为保留的内存尾部。')
     except TaskQueryError as error:

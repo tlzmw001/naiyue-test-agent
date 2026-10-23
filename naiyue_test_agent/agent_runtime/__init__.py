@@ -56,6 +56,7 @@ class RunContext(TypedDict):
     alist_subagents: NotRequired[Callable]
     run_id: NotRequired[str]
     workspace_root: NotRequired[Path]
+    archive_root: NotRequired[Path]
     approval_grants: NotRequired[OneUseApprovalGrants]
     read_resource_roots: NotRequired[tuple[Path, ...]]
     _run_control: NotRequired[RunControl]

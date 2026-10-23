@@ -107,8 +107,9 @@ class RunObservation:
     """Observe outcomes; the calling execution owner handles results and cleanup."""
 
     def __init__(self, publisher: RunEventPublisher | AgentEventPublisher, mode: str, *, progress_settings=None, stop_control=None,
-                 runtime_errors=None, application_errors=None):
+                 runtime_errors=None, application_errors=None, origin_run_id=None):
         self.publisher = publisher
+        self.origin_run_id = origin_run_id
         self.mode = mode
         self.stage = 'prepare'
         self.status = 'completed'
@@ -135,13 +136,13 @@ class RunObservation:
                 FailureDescription('application', 'unknown', 'unclassified', safe_error_type(error)))
 
     @contextmanager
-    def bind(self, *, ainvoke_subagent=None, process_tasks=None, background_notices=None, alist_subagents=None):
+    def bind(self, *, ainvoke_subagent=None, process_tasks=None, background_notices=None, alist_subagents=None, history_query=None, memory_query=None, task_queries=None, archive_root=None):
         if self.mode == 'approval_resume':
             observe(self.controls, self.controls.submit_approval)
         services = RunServices(self.publisher, self.runtime_errors, self.stop_control,
                                self.turns, self.controls, self.context_operations, tool_progress=self.tool_progress,
                                ainvoke_subagent=ainvoke_subagent, process_tasks=process_tasks,
-                               background_notices=background_notices, alist_subagents=alist_subagents)
+                               background_notices=background_notices, alist_subagents=alist_subagents, history_query=history_query, memory_query=memory_query, task_queries=task_queries, archive_root=archive_root)
         with bind_run_services(services), bind_http_run(self.report_http_gap):
             yield
 
@@ -150,7 +151,7 @@ class RunObservation:
 
     def start(self) -> None:
         self._started_ns = start_timer()
-        emit_event(self.publisher, 'run_started', lambda: RunStartedData(self.mode, http_observation_version=1))
+        emit_event(self.publisher, 'run_started', lambda: RunStartedData(self.mode, http_observation_version=1, origin_run_id=self.origin_run_id))
         observe(self.controls, self.controls.start)
 
     def result(self, result, pending) -> None:

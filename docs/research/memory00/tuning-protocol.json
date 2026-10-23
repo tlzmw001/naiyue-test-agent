@@ -1,0 +1,67 @@
+{
+  "schema_version": 2,
+  "fixtures_sha256": "e994e24eb9017476a6ef65a02f1c7b518cf421aa3869cbd0cbd8345e0454fae7",
+  "old_fixtures_sha256": "0c46d61aa5bcd6ae03ca00df8377cacff69fd830d037f1b217240286004a31ec",
+  "weights": [
+    [
+      1,
+      1,
+      1
+    ],
+    [
+      3,
+      2,
+      1
+    ],
+    [
+      5,
+      3,
+      1
+    ]
+  ],
+  "coverages": [
+    [
+      1,
+      2
+    ],
+    [
+      2,
+      3
+    ],
+    [
+      3,
+      4
+    ],
+    [
+      1,
+      1
+    ]
+  ],
+  "routes": [
+    "substring",
+    "adapted_or",
+    "coverage_rrf",
+    "cascade_rrf",
+    "cascade_quality"
+  ],
+  "candidate_limit": 50,
+  "result_limit": 8,
+  "rrf_k": 60,
+  "quality_formula": "literal_field_strength + sum(weight * field_token_coverage)/sum(weights); descending then RRF then scope/id",
+  "selection": [
+    "forbidden_asc",
+    "no_answer_errors_asc",
+    "positive_macro_f0_5_desc",
+    "macro_recall_desc",
+    "hit_at_1_desc",
+    "returned_count_asc",
+    "simpler_config"
+  ],
+  "provider_calls": 0,
+  "known_regression_gate": [
+    "all old required_ids returned",
+    "no forbidden results",
+    "all declared old no-answer queries empty"
+  ],
+  "revision_note": "v1 calibration+validation observed; before first final-test run add old mandatory behavior eligibility gate; fixtures and algorithm unchanged"
+}

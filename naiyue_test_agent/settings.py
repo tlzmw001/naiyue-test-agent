@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from .config_paths import StorageSettings, get_agent_dir
 from .checkpoint_settings import CheckpointRetentionSettings
 from .shell_task_settings import ShellTaskSettings
+from .memory_settings import MemorySettings
 from .mcp_client.settings import MCPSettings
 from .tools.web_settings import NetworkSettings
 from .tools.retry_settings import ToolRetrySettings
@@ -56,6 +57,7 @@ class AppSettings(BaseModel):
     web_event_cache_bytes: int = Field(default=4194304, gt=0)
     default_active_tools: tuple[str, ...] | None = None
     storage: StorageSettings = Field(default_factory=StorageSettings)
+    memory: MemorySettings = Field(default_factory=MemorySettings)
     network: NetworkSettings = Field(default_factory=NetworkSettings)
     tool_retry: ToolRetrySettings = Field(default_factory=ToolRetrySettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
@@ -114,8 +116,13 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
         logger.error('permission_settings_unavailable error_type=%s', type(error).__name__)
         raise ValueError('Permission settings could not be read or parsed') from error
-    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'default_active_tools', 'tools', 'permissions', 'process', 'tool_output', 'shell_tasks', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'checkpoint_retention', 'network', 'mcp', 'tool_retry'}:
+    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'default_active_tools', 'tools', 'permissions', 'process', 'tool_output', 'shell_tasks', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'checkpoint_retention', 'network', 'mcp', 'tool_retry', 'memory'}:
         raise ValueError('Unknown runtime settings section')
+    try:
+        memory = MemorySettings.model_validate(raw.get('memory', {}))
+    except ValidationError:
+        logger.warning('memory_settings_invalid action=disabled')
+        memory = MemorySettings(enabled=False)
     if 'tool_output' in raw:
         legacy_output = raw['tool_output']
         if not isinstance(legacy_output, dict) or set(legacy_output) - {'max_workspace_archive_bytes'}:
@@ -191,7 +198,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         logger.warning('checkpoint_retention_invalid action=disabled')
         checkpoint_retention = CheckpointRetentionSettings(enabled=False)
     try:
-        return AppSettings(storage=storage, tools=tools, network=network, mcp=mcp, tool_retry=tool_retry, permissions=permissions, process=process, shell_tasks=shell_tasks,
+        return AppSettings(storage=storage, memory=memory, tools=tools, network=network, mcp=mcp, tool_retry=tool_retry, permissions=permissions, process=process, shell_tasks=shell_tasks,
                             default_active_tools=default_active_tools,
                             progress=progress, usage_persistence=usage_persistence,
                             subagents=raw.get('subagents', ()), max_active_runs=max_active_runs,

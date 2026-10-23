@@ -64,6 +64,7 @@ def process_request(root, script):
 
 async def load(app, root, sid, script, *, call='load', limit=67108864, runner=None):
     return await app._sessions.background_tasks.submit(session_id=sid, workspace_root=root,
+        archive_root=app._sessions.session_archive_root(sid),
         run_id='benchmark', tool_call_id=call, agent_path='root', command='benchmark disposable load', name='bash',
         request=process_request(root, script), settings=BashSettings(max_archive_bytes=limit),
         runner=runner or HostProcessRunner(), control=None)

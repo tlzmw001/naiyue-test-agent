@@ -8,7 +8,7 @@ import styles from './SessionDiagnostics.module.css';
 const labels: Record<string, string> = { started: '进行中', returned: '返回', failed: '失败',
   cancelled: '取消', unconfirmed: '未确认', completed: '已完成', stopped: '已停止',
   response_headers: '收到响应头', running: '运行中', interrupted: '已中断',
-  agent: '智能体', summary: '压缩摘要', auto_fast: 'Auto 快审', auto_detailed: 'Auto 详审',
+  agent: '智能体', summary: '压缩摘要', auto_fast: 'Auto 快审', auto_detailed: 'Auto 详审', memory: '记忆整理',
   success: '成功', error_result: '错误结果', not_executed: '未执行' };
 const events: Record<string, string> = { model_call_started: '模型开始', model_call_finished: '模型结束',
   model_http_attempt_started: 'HTTP 尝试开始', model_http_attempt_finished: 'HTTP 尝试结束',
@@ -25,6 +25,8 @@ function Summary({ value }: { value: DiagnosticSummary }) {
     <div className={styles.runTop}><span>{labels[value.status ?? ''] ?? (value.capture_state === 'open' ? '运行中' : '状态未提供')}</span>
       <span>耗时{formatDuration(value.duration_ms)}</span></div>
     <p className={styles.identity}>{value.run_id}</p>
+    {value.mode === 'memory' && <p className={styles.meta}>记忆整理</p>}
+    {value.mode === 'memory' && value.origin_run_id && <p className={styles.identity}>来源运行 {value.origin_run_id}</p>}
     <p className={styles.meta}>{value.started_at ? new Date(value.started_at).toLocaleString() : '开始时间未提供'}</p>
     {!http || http.status === 'unavailable' ? <p className={styles.meta}>HTTP 采集不可用</p> : <>
       <p className={styles.meta}>已记录 HTTP 尝试 {http.observed_attempts} · 响应头 {http.response_headers} · 未确认 {http.unconfirmed}</p>

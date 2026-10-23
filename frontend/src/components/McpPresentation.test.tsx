@@ -25,8 +25,12 @@ it.each(['success', 'tool_error', 'not_executed', 'outcome_unknown', 'unsupporte
     expect(screen.queryByText(/归档/)).toBeNull();
   });
 
-it.each([true, false])('shows actual truncation and complete=%s archive facts as text', complete => {
-  const path = 'naiyue-agent-output/' + 'a'.repeat(32) + '-raw.log';
+it.each([
+  { complete: true, prefix: '' }, { complete: false, prefix: '' },
+  { complete: true, prefix: '/configured-data/workspaces/project/artifacts/' },
+  { complete: false, prefix: 'C:\\configured-data\\sessions\\session\\artifacts\\' },
+])('shows complete=$complete archive reference with prefix=$prefix as text', ({ complete, prefix }) => {
+  const path = prefix + 'naiyue-agent-output/' + 'a'.repeat(32) + '-raw.log';
   const { container } = render(<ToolCall call={call} initiallyOpen result={{ id: 'm', type: 'tool', content: 'bounded',
     provisional: false, state: 'complete', status: 'success', mcp_result: { version: 1, source, outcome: 'success',
       truncated: true, result_bytes: 9999, archive_complete: complete, archive_paths: { raw: path },
@@ -34,7 +38,7 @@ it.each([true, false])('shows actual truncation and complete=%s archive facts as
   expect(screen.getByText(/结果已截断/)).toBeTruthy();
   expect(screen.getByText(complete ? '归档完整' : '归档不完整或不可用')).toBeTruthy();
   expect(screen.getByText(path)).toBeTruthy();
-  expect(container.querySelector(`a[href="${path}"]`)).toBeNull();
+  expect(container.querySelector('a')).toBeNull();
   if (!complete) expect(screen.getByText(/单次归档达到上限/)).toBeTruthy();
 });
 

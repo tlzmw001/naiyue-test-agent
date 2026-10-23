@@ -1,0 +1,298 @@
+{
+  "schema_version": 3,
+  "experiment": "robustness",
+  "fixture_name": "robustness-fixtures.json",
+  "fixtures_sha256": "09ac791cd0b858e91f8fa0923e55f9aa9abd393883bed76e037e5b80c2afdb17",
+  "old_fixtures_sha256": "0c46d61aa5bcd6ae03ca00df8377cacff69fd830d037f1b217240286004a31ec",
+  "routes": [
+    "cascade_base",
+    "coverage_pool",
+    "topical_pool",
+    "topical_exact",
+    "topical_diverse"
+  ],
+  "configs": {
+    "cascade_base": [
+      {
+        "weights": [
+          1,
+          1,
+          1
+        ],
+        "coverage": [
+          1,
+          2
+        ]
+      }
+    ],
+    "coverage_pool": [
+      {
+        "weights": [
+          1,
+          1,
+          1
+        ],
+        "coverage": [
+          1,
+          2
+        ]
+      }
+    ],
+    "topical_pool": [
+      {
+        "weights": [
+          1,
+          1,
+          1
+        ],
+        "coverage": [
+          1,
+          3
+        ],
+        "options": {
+          "diversity_lambda": 1.0
+        }
+      },
+      {
+        "weights": [
+          1,
+          1,
+          1
+        ],
+        "coverage": [
+          1,
+          2
+        ],
+        "options": {
+          "diversity_lambda": 1.0
+        }
+      },
+      {
+        "weights": [
+          1,
+          1,
+          1
+        ],
+        "coverage": [
+          2,
+          3
+        ],
+        "options": {
+          "diversity_lambda": 1.0
+        }
+      }
+    ],
+    "topical_exact": [
+      {
+        "weights": [
+          1,
+          1,
+          1
+        ],
+        "coverage": [
+          1,
+          3
+        ],
+        "options": {
+          "diversity_lambda": 1.0
+        }
+      },
+      {
+        "weights": [
+          1,
+          1,
+          1
+        ],
+        "coverage": [
+          1,
+          2
+        ],
+        "options": {
+          "diversity_lambda": 1.0
+        }
+      },
+      {
+        "weights": [
+          1,
+          1,
+          1
+        ],
+        "coverage": [
+          2,
+          3
+        ],
+        "options": {
+          "diversity_lambda": 1.0
+        }
+      }
+    ],
+    "topical_diverse": [
+      {
+        "weights": [
+          1,
+          1,
+          1
+        ],
+        "coverage": [
+          1,
+          3
+        ],
+        "options": {
+          "diversity_lambda": 0.6
+        }
+      },
+      {
+        "weights": [
+          1,
+          1,
+          1
+        ],
+        "coverage": [
+          1,
+          3
+        ],
+        "options": {
+          "diversity_lambda": 0.8
+        }
+      },
+      {
+        "weights": [
+          1,
+          1,
+          1
+        ],
+        "coverage": [
+          1,
+          3
+        ],
+        "options": {
+          "diversity_lambda": 1.0
+        }
+      },
+      {
+        "weights": [
+          1,
+          1,
+          1
+        ],
+        "coverage": [
+          1,
+          2
+        ],
+        "options": {
+          "diversity_lambda": 0.6
+        }
+      },
+      {
+        "weights": [
+          1,
+          1,
+          1
+        ],
+        "coverage": [
+          1,
+          2
+        ],
+        "options": {
+          "diversity_lambda": 0.8
+        }
+      },
+      {
+        "weights": [
+          1,
+          1,
+          1
+        ],
+        "coverage": [
+          1,
+          2
+        ],
+        "options": {
+          "diversity_lambda": 1.0
+        }
+      },
+      {
+        "weights": [
+          1,
+          1,
+          1
+        ],
+        "coverage": [
+          2,
+          3
+        ],
+        "options": {
+          "diversity_lambda": 0.6
+        }
+      },
+      {
+        "weights": [
+          1,
+          1,
+          1
+        ],
+        "coverage": [
+          2,
+          3
+        ],
+        "options": {
+          "diversity_lambda": 0.8
+        }
+      },
+      {
+        "weights": [
+          1,
+          1,
+          1
+        ],
+        "coverage": [
+          2,
+          3
+        ],
+        "options": {
+          "diversity_lambda": 1.0
+        }
+      }
+    ]
+  },
+  "weights": [
+    [
+      1,
+      1,
+      1
+    ]
+  ],
+  "coverages": [
+    [
+      1,
+      3
+    ],
+    [
+      1,
+      2
+    ],
+    [
+      2,
+      3
+    ]
+  ],
+  "candidate_limit": 50,
+  "result_limit": 8,
+  "rrf_k": 60,
+  "selection": "balanced_robustness",
+  "ablation_config": {
+    "weights": [
+      1,
+      1,
+      1
+    ],
+    "coverage": [
+      1,
+      2
+    ],
+    "options": {
+      "diversity_lambda": 0.8
+    }
+  },
+  "provider_calls": 0
+}

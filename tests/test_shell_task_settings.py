@@ -65,7 +65,8 @@ def test_legacy_output_section_requires_table(tmp_path):
 
 
 def runtime_for(spec, args, root):
-    context = {'session_id': 's', 'workspace_root': root}
+    context = {'session_id': 's', 'workspace_root': root,
+               'archive_root': root.parent / (root.name + '-archive')}
     subject = spec.permissions.prepare(args, context)
     subject.update(args=args, tool_name=spec.tool.name, path_field='path',
                    execution_environment=execution_environment())

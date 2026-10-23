@@ -223,7 +223,9 @@ class AgentSessionSubagents:
             try:
                 observation.start()
                 observation.stage = 'execute'
-                with observation.bind():
+                with observation.bind(archive_root=self._archive_root,
+                                      history_query=getattr(self._persistence, 'aquery_history', None),
+                                      memory_query=getattr(self._persistence, 'aquery_memory', None)):
                     result = await ainvoke_subagent_step(graph, instance, resume=resume,
                         approval_grants=grants, services=current_run_services())
                     snapshot = await graph.aget_state({'configurable': {'thread_id': instance['child_thread_id']}})

@@ -1,10 +1,12 @@
 """Bounded text/JSON projections using the existing owned output archive."""
 
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
 from langchain_core.messages import ToolMessage
+from langchain_core.tools import ToolException
 
 from ..tools.output import ShellOutputArchive
 
@@ -37,14 +39,21 @@ def format_result(result, *, runtime, server, server_id, tool):
                 'truncated': truncated, 'result_bytes': len(raw), 'is_error': result.is_error,
                 'archive_complete': False, 'archive_paths': {}}
     if truncated:
-        root = (runtime.context or {}).get('workspace_root')
+        root = (runtime.context or {}).get('archive_root')
         if isinstance(root, Path) and root.is_absolute():
-            archive = ShellOutputArchive(root, SimpleNamespace(max_archive_bytes=server.max_response_bytes))
-            archive.record(raw, activate=True)
-            saved = archive.finish()
-            artifact.update(archive_complete=saved.complete, archive_paths=saved.paths, archive_reason=saved.reason)
+            from ..tools.output import require_archive_root
+            try:
+                root = require_archive_root(runtime.context)
+            except (ToolException, OSError, RuntimeError) as error:
+                logging.getLogger(__name__).warning('mcp_archive_root_unavailable error_type=%s', type(error).__name__)
+                artifact['archive_reason'] = 'archive_root_unavailable'
+            else:
+                archive = ShellOutputArchive(root, SimpleNamespace(max_archive_bytes=server.max_response_bytes))
+                archive.record(raw, activate=True)
+                saved = archive.finish()
+                artifact.update(archive_complete=saved.complete, archive_paths=saved.paths, archive_reason=saved.reason)
         else:
-            artifact['archive_reason'] = 'workspace_unavailable'
+            artifact['archive_reason'] = 'archive_root_unavailable'
         archive_status = {key: artifact[key] for key in ('archive_complete', 'archive_paths', 'archive_reason')}
         notice = ('[MCP result truncated; archive status: '
                   + json.dumps(archive_status, ensure_ascii=False) + ']\n').encode('utf-8')

@@ -1,6 +1,7 @@
 """Shared run/control facts produced by the application and runtime observers."""
 
 from dataclasses import dataclass
+import re
 from typing import Literal
 
 from .failures import RunFailureData
@@ -9,15 +10,19 @@ from .timing import validate_duration
 
 @dataclass(frozen=True)
 class RunStartedData:
-    mode: Literal['message', 'approval_resume', 'compact']
+    mode: Literal['message', 'approval_resume', 'compact', 'memory']
     http_observation_version: int | None = None
+    origin_run_id: str | None = None
 
     def __post_init__(self):
         if self.http_observation_version is not None and (type(self.http_observation_version) is not int
                                                        or self.http_observation_version != 1):
             raise ValueError('Invalid HTTP observation version')
-        if self.mode not in ('message', 'approval_resume', 'compact'):
+        if self.mode not in ('message', 'approval_resume', 'compact', 'memory'):
             raise ValueError('Invalid run start mode')
+        if self.origin_run_id is not None and (not isinstance(self.origin_run_id, str)
+                or not re.fullmatch(r'[A-Za-z0-9_.:/-]{1,128}', self.origin_run_id)):
+            raise ValueError('Invalid origin run identifier')
 
 
 

@@ -89,3 +89,30 @@ def test_cli_pagination_and_unconfirmed_stop_preserve_terminal_safety():
     handle_background_command(app, ':task stop ' + identity, messages.append)
     assert f'下一页：:tasks {identity}' in '\n'.join(messages)
     assert '进程清理尚未确认' in '\n'.join(messages) and '\x1b' not in '\n'.join(messages)
+
+
+def test_cli_memory_output_reports_result_without_process_or_archive_details():
+    from naiyue_test_agent.application.cli_background import handle_background_command
+    from types import SimpleNamespace
+    identity = 'c' * 32
+    row = dict(task_id=identity, session_id='s', kind='memory', status='finished', shell='memory',
+        command_preview='更新概览', result_status='partial', termination='completed', cleanup_confirmed=True,
+        output='<script>summary</script>\x1b[2J', truncated=False, output_available=True,
+        archive_paths={}, exit_code=None)
+    app = SimpleNamespace(background_task_output=lambda _: row)
+    messages = []
+    handle_background_command(app, ':task output ' + identity, messages.append)
+    text = '\n'.join(messages)
+    assert '记忆整理' in text and '部分完成' in text and '<script>summary</script>' in text
+    assert '退出码' not in text and '归档引用' not in text and '\x1b' not in text
+
+
+def test_cli_memory_unconfirmed_stop_does_not_call_it_process_cleanup():
+    from naiyue_test_agent.application.cli_background import handle_background_command
+    from types import SimpleNamespace
+    identity = 'd' * 32
+    row = dict(task_id=identity, session_id='s', kind='memory', status='lost', shell='memory',
+        command_preview='更新概览', result_status='stopped', termination='user_stop', cleanup_confirmed=False)
+    messages = []
+    handle_background_command(SimpleNamespace(stop_background_task=lambda _: row), ':task stop ' + identity, messages.append)
+    assert '记忆整理收尾尚未确认' in '\n'.join(messages) and '进程' not in '\n'.join(messages)

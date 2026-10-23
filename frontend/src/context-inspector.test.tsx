@@ -27,6 +27,16 @@ it('labels the background status prompt part without showing task content', () =
   expect(screen.queryByText('background_tasks')).toBeNull();
 });
 
+it('labels bounded memory and other-session indices without showing saved content', () => {
+  const current = { ...structuredClone(estimate), groups: [{ id: 'system', tokens: 6000, count: 1,
+    children: [{ id: 'memory', tokens: 120, count: 3 }, { id: 'session_directory', tokens: 240, count: 8 }] }] };
+  render(<ContextPanel usageContent={null} value={{ ...view, current: { ...view.current, estimate: current } }}
+    loading={false} error="" retry={vi.fn()} />);
+  expect(screen.getByText('长期记忆索引 · 3 项')).toBeTruthy();
+  expect(screen.getByText('其他会话索引 · 8 项')).toBeTruthy();
+  expect(screen.queryByText('session_directory')).toBeNull();
+});
+
 it('warns at the configured compaction threshold using the current estimate', () => {
   const { rerender } = render(<ContextTrigger value={{ ...view, current: { ...view.current,
     estimate: { ...estimate, estimated_input_tokens: 110000 } } }} open={false} disabled={false} toggle={vi.fn()} triggerRef={{ current: null }} />);

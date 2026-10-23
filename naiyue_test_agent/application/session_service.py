@@ -19,23 +19,29 @@ from .failure_policy import ApplicationErrorPolicy
 from .errors import SessionBusyError
 from .agent_session import AgentSession
 from .background_tasks import BackgroundProcessManager
+from .task_queries import TaskQueries
 from naiyue_test_agent.tools.subagent import subagent_selection
 
 
 class SessionService(SessionControlMixin, SessionSubagentControls):
     """Locate sessions and coordinate admission; each session drives its run."""
 
-    def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None, max_active_runs=10, mcp_resources=None, http_attempt_limit=None, shell_task_settings=None):
+    def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None, max_active_runs=10, mcp_resources=None, http_attempt_limit=None, shell_task_settings=None, data_dir=None, project_id=None):
         if type(max_active_runs) is not int or max_active_runs <= 0:
             raise ValueError('Root run capacity must be a positive integer')
         self._max_active_runs = max_active_runs
         self._progress_settings = progress_settings
+        from naiyue_test_agent.config_paths import get_data_dir, StorageSettings
+        self._data_dir = (data_dir if data_dir is not None else get_data_dir(StorageSettings())).resolve()
+        self._project_id = project_id
         self.mcp_resources = mcp_resources
         self._permission_settings = permission_settings if permission_settings is not None else PermissionSettings()
         install_model_usage_callback(catalog, http_attempt_limit=http_attempt_limit)
         self._permission_reviewer = AutoPermissionReviewer.from_catalog(catalog, self._permission_settings.auto)
         self._catalog = catalog
         self.background_tasks = BackgroundProcessManager(shell_task_settings)
+        self.task_queries = TaskQueries(self.background_tasks)
+        self.memory_jobs = None
         self._tool_registry = tool_registry if tool_registry is not None else ToolRegistry()
         initial = self._tool_registry.names() if initial_active_tools is None else initial_active_tools
         self._initial_active_tools = tuple(spec.tool.name for spec in self._tool_registry.select(subagent_selection(initial)))
@@ -123,10 +129,22 @@ class SessionService(SessionControlMixin, SessionSubagentControls):
         for session in sessions:
             session.request_scope_stop(reason='close')
 
+    def session_archive_root(self, session_id):
+        return (self._data_dir / 'workspaces' / self._project_id / 'artifacts' if self._project_id else
+                self._data_dir / 'sessions' / session_id / 'artifacts')
+
+    def workspace_archive_root(self, root):
+        with self._lock:
+            roots = {session._archive_root for session in self._sessions.values()
+                     if session.snapshot_for_context()['workspace_root'] == root}
+        if len(roots) != 1 or None in roots:
+            raise ValueError('Archive scope is unavailable or ambiguous')
+        return roots.pop()
+
     def output_guard(self, root):
         stack = ExitStack()
         with self._lock:
-            if any(session.is_busy() and session.snapshot_for_context()['workspace_root'] == root
+            if any(session.is_busy() and session._archive_root == root
                    for session in self._sessions.values()):
                 raise ValueError('Workspace has an active run')
             stack.enter_context(self.background_tasks.output_guard(root))
@@ -158,13 +176,14 @@ class SessionService(SessionControlMixin, SessionSubagentControls):
         return self.require(session_id).resolve_request_configuration(agent_path)
 
     def resolve_prompt_parts(self, session_id, agent_path='root'):
+        if agent_path=='root' and self.memory_jobs is not None:self.memory_jobs.directory_attempt(session_id)
         return self.require(session_id).resolve_prompt_parts(agent_path)
 
 
     def _admit(self, session_id, run_id, mode, *, decisions=None, remember_approved=None, stop=False, expected_conversation_revision=None):
         with self._lock:
             session = self._sessions[session_id]
-            if self.background_tasks.is_cleaning(session.snapshot_for_context()['workspace_root']):
+            if self.background_tasks.is_cleaning(session._archive_root):
                 raise SessionBusyError('Workspace output cleanup is active')
             run_id = run_id or uuid4().hex
             observation = RunObservation(self._events.publisher(session_id, run_id), mode,

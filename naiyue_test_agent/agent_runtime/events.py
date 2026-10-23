@@ -42,7 +42,7 @@ class ModelInvocationStartedData:
         _check_call_subject(self.invocation_id, self.model_id)
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', self.invocation_id):
             raise ValueError('Invalid invocation identifier')
-        if self.purpose not in (None, 'agent', 'summary', 'auto_fast', 'auto_detailed'):
+        if self.purpose not in (None, 'agent', 'summary', 'auto_fast', 'auto_detailed', 'memory'):
             raise ValueError('Invalid invocation purpose')
 
 

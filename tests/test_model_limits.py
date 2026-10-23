@@ -374,10 +374,15 @@ def test_summary_output_cap_uses_each_adapter_parameter():
     from langchain_openai import ChatOpenAI
 
     models = (
-        (ChatOpenAI(model='synthetic', api_key='synthetic-key'), 'max_tokens'),
+        (ChatOpenAI(model='synthetic', api_key='synthetic-key'), 'max_completion_tokens'),
         (ChatAnthropic(model='synthetic', api_key='synthetic-key'), 'max_tokens'),
         (ChatOllama(model='synthetic', base_url='http://127.0.0.1:11434'),
          'num_predict'),
     )
     for model, key in models:
-        assert bind_model_output_limit(model, 256).kwargs == {key: 256}
+        capped = bind_model_output_limit(model, 256)
+        if isinstance(model, ChatOllama):
+            assert capped.bound.num_predict == 256 and capped.kwargs == {}
+            assert model.num_predict is None
+        else:
+            assert capped.kwargs == {key: 256}

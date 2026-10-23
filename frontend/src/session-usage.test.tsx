@@ -136,3 +136,17 @@ it('encodes the model cursor and forwards cancellation to the HTTP request', asy
   expect(url).toBe('/api/sessions/session%2Fid/usage?after_model=gateway%2Fmodel%3Av2');
   expect(init.signal).toBe(controller.signal);
 });
+
+it('names background memory usage without presenting unknown tokens as zero', async () => {
+  const api = new WebApi('test');
+  const value = view();
+  value.activities = [{ ...value, recorded_calls: 1, id: 'memory', metrics: {
+    input_tokens: metric(null, 1), output_tokens: metric(null, 1),
+    cache_read_tokens: metric(null, 1), cache_write_tokens: metric(null, 1) } }];
+  vi.spyOn(api, 'usage').mockResolvedValue(value);
+  render(<SessionUsage api={api} sessionId="s" run={null} />);
+  const label = await screen.findByText('记忆整理');
+  expect(label.closest('div')?.textContent).toContain('输入 未提供');
+  expect(label.closest('div')?.textContent).toContain('输出 未提供');
+  expect(screen.getByText(/包含子智能体、摘要、Auto 及记忆整理/)).toBeTruthy();
+});

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from copy import deepcopy
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.errors import GraphBubbleUp
@@ -27,13 +28,18 @@ logger = logging.getLogger('naiyue_test_agent.application')
 class SessionExecution:
     """Internal part of AgentSession; it borrows shared graphs and IO."""
 
-    async def _prepare_resources(self, run, *, include_background=False):
+    async def _prepare_resources(self, run, *, include_background=False, messages=()):
         workspace_root = self.snapshot_for_context()['workspace_root']
         notices = (self._process_tasks.notice_snapshot(session_id=self.session_id,
             workspace_root=workspace_root, run_id=run.run_id)
             if include_background and self._process_tasks is not None else None)
         resources = await run_blocking(prepare_run_resources, workspace_root,
                                       enable_skills='read' in self._tool_registry.names())
+        if include_background and self._persistence is not None:
+            _,model=self.resolve_model()
+            self._memory_prompt_parts=await self._persistence.prepare_memory(self.session_id,workspace_root,messages,model)
+        # One bounded snapshot per logical turn; approval resumes never search again.
+        resources['prompt_parts'].extend(deepcopy(self._memory_prompt_parts))
         self.freeze_run_resources(run, resources['prompt_parts'], resources['project_instructions'], notices)
         return resources
 
@@ -67,7 +73,7 @@ class SessionExecution:
             messages = mark_human_messages(messages)
             resources = await self._prepare_resources(run, include_background=not compact and any(
                 isinstance(message, HumanMessage) and message.additional_kwargs.get('naiyue_human_input')
-                for message in messages))
+                for message in messages),messages=messages)
             if messages:
                 run.reply_id = messages[-1].additional_kwargs.get('naiyue_reply_id')
             observation.stage = 'execute'
@@ -83,14 +89,20 @@ class SessionExecution:
                         run_id=run_id, model_id=model_id, model=model, system_message=system,
                         tools=[spec.tool for spec in specs])
             elif workspace_root is not None:
-                with observation.bind(ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
-                                      background_notices=run.background_notices):
+                with observation.bind(archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
+                                      background_notices=run.background_notices,
+                                      history_query=getattr(self._persistence, 'aquery_history', None),
+                                      memory_query=getattr(self._persistence, 'aquery_memory', None),
+                                      task_queries=getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks):
                     result = await ainvoke_agent_run_with_resources(agent, messages,
                         session_id=session_id, thread_id=thread_id, run_id=run_id, workspace_root=workspace_root,
                         read_resource_roots=resources['read_resource_roots'], max_concurrency=max_concurrency, **options)
             else:
-                with observation.bind(ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
-                                      background_notices=run.background_notices):
+                with observation.bind(archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
+                                      background_notices=run.background_notices,
+                                      history_query=getattr(self._persistence, 'aquery_history', None),
+                                      memory_query=getattr(self._persistence, 'aquery_memory', None),
+                                      task_queries=getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks):
                     result = await ainvoke_agent_run(agent, messages, session_id=session_id,
                         thread_id=thread_id, run_id=run_id, max_concurrency=max_concurrency, **options)
             observation.stage = 'finalize'
@@ -165,7 +177,10 @@ class SessionExecution:
                 rejected_count=decisions.count('reject'),
             )
             observation.stage = 'execute'
-            with observation.bind(ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks):
+            with observation.bind(archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
+                                  history_query=getattr(self._persistence, 'aquery_history', None),
+                                  memory_query=getattr(self._persistence, 'aquery_memory', None),
+                                      task_queries=getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks):
                 result = await aresume_agent_run_with_resources(agent, session_id=session_id,
                     thread_id=thread_id, run_id=run_id, workspace_root=workspace_root, decisions=decisions,
                     approval_grants=grants, read_resource_roots=resources['read_resource_roots'],

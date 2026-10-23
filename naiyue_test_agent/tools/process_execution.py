@@ -10,7 +10,7 @@ from time import monotonic
 
 from langchain_core.tools import ToolException
 
-from .output import ShellOutputArchive
+from .output import ShellOutputArchive, require_archive_root
 from .output_text import OutputAccumulator
 from .processes import ProcessCleanupError
 from .progress import ToolProgress
@@ -126,7 +126,7 @@ class ProcessCapture:
 
 
 async def execute_process_request(request, runtime, *, name, label, settings, runner, progress_settings):
-    capture = ProcessCapture(request.cwd, settings)
+    capture = ProcessCapture(require_archive_root(runtime.context), settings)
     output = capture.output
     progress = ToolProgress(runtime, progress_settings)
     observed_bytes = 0

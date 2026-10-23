@@ -57,7 +57,7 @@ def read_summary(connection, session_id, *, model_limit, after_model=None):
     models = {name: _usage_bucket() for name in names[:model_limit]}
     unknown, total = _usage_bucket(), _usage_bucket()
     activities = {name: _usage_bucket() for name in (
-        'root_agent', 'child_agent', 'summary', 'auto_fast', 'auto_detailed', 'unattributed')}
+        'root_agent', 'child_agent', 'summary', 'auto_fast', 'auto_detailed', 'memory', 'unattributed')}
     scopes = {name: _usage_bucket() for name in ('root', 'child')}
     for row in connection.execute('''SELECT model_id,purpose,agent_path,status,usage_status,
         input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,duration_ms

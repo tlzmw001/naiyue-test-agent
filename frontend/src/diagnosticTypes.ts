@@ -1,6 +1,8 @@
 export interface DiagnosticSummary {
   session_id: string;
   run_id: string;
+  mode?: 'message' | 'approval_resume' | 'compact' | 'memory' | null;
+  origin_run_id?: string | null;
   started_at: string | null;
   status: string | null;
   duration_ms?: number | null;

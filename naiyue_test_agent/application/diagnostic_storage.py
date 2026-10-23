@@ -89,6 +89,8 @@ def _ensure(connection, record, settings):
         return None
     started = record['event_type'] == 'run_started' and record['source'] is None
     summary = {'session_id': key[0], 'run_id': key[1], 'started_at': record['timestamp'] if started else None,
+        'mode': record['data'].get('mode') if started else None,
+        'origin_run_id': record['data'].get('origin_run_id') if started else None,
         'last_observed_at': record['timestamp'], 'finished_at': None, 'status': None, 'failure': None, 'duration_ms': None,
         'capture_state': 'open', 'capture_incomplete': not started, 'reason': None if started else 'missing_start',
         'dropped_events': 0, 'last_sequence': 0, 'event_count': 0}
