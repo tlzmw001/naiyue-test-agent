@@ -4,9 +4,15 @@ import json
 import string
 
 
+def _json_text(encoded):
+    value = json.loads(encoded)[0]
+    return value if isinstance(value, str) else None
+
+
 def configure_connection(connection):
-    # SQLite's text length/substr/lower stop at NUL; visible text must not lose it.
+    # Legacy JSON1 scalar extraction and text functions can stop at NUL.
     ascii_lower = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+    connection.create_function('naiyue_visible_json_text', 1, _json_text, deterministic=True)
     connection.create_function('naiyue_visible_length', 1, len, deterministic=True)
     connection.create_function('naiyue_visible_slice', 3,
         lambda text, start, count: text[start:start + count], deterministic=True)
@@ -15,11 +21,12 @@ def configure_connection(connection):
 
 
 VISIBLE_TEXT = """CASE json_type(m.body_json,'$.data.content')
-    WHEN 'text' THEN json_extract(m.body_json,'$.data.content')
+    WHEN 'text' THEN naiyue_visible_json_text(json_extract(m.body_json,'$.data.content','$.data.content'))
     WHEN 'array' THEN COALESCE((SELECT group_concat(
-        CASE WHEN b.type='text' THEN b.value
-             WHEN b.type='object' AND json_extract(b.value,'$.type')='text'
-                  AND json_type(b.value,'$.text')='text' THEN json_extract(b.value,'$.text')
+        CASE WHEN b.type='text' THEN naiyue_visible_json_text(json_extract(m.body_json,b.fullkey,b.fullkey))
+             WHEN b.type='object' AND naiyue_visible_json_text(json_extract(b.value,'$.type','$.type'))='text'
+                  AND json_type(b.value,'$.text')='text'
+                  THEN naiyue_visible_json_text(json_extract(b.value,'$.text','$.text'))
              ELSE '' END,'') FROM json_each(m.body_json,'$.data.content') b),'')
     ELSE '' END"""
 
@@ -28,9 +35,12 @@ VISIBLE_WHERE = """m.session_id=? AND m.thread_id=? AND m.checkpoint_ns=''
     AND COALESCE(json_extract(m.body_json,'$.data.additional_kwargs.naiyue_image_carrier'),0)!=1"""
 
 FIELDS = """m.message_id,m.sequence,m.revision,m.message_type,m.parent_message_id,m.reply_id,
-    CASE WHEN m.message_type='tool' THEN json_extract(m.body_json,'$.data.tool_call_id') END AS tool_call_id,
-    CASE WHEN m.message_type='tool' THEN json_extract(m.body_json,'$.data.name') END AS name,
-    CASE WHEN m.message_type='tool' THEN json_extract(m.body_json,'$.data.status') END AS tool_status"""
+    CASE WHEN m.message_type='tool' THEN naiyue_visible_json_text(
+        json_extract(m.body_json,'$.data.tool_call_id','$.data.tool_call_id')) END AS tool_call_id,
+    CASE WHEN m.message_type='tool' THEN naiyue_visible_json_text(
+        json_extract(m.body_json,'$.data.name','$.data.name')) END AS name,
+    CASE WHEN m.message_type='tool' THEN naiyue_visible_json_text(
+        json_extract(m.body_json,'$.data.status','$.data.status')) END AS tool_status"""
 
 
 def page(connection, session_id, thread_id, *, upper, before, count, chars, terms=()):
@@ -38,14 +48,16 @@ def page(connection, session_id, thread_id, *, upper, before, count, chars, term
     sql = f"""WITH source AS (SELECT {FIELDS},{VISIBLE_TEXT} AS text FROM naiyue_chat_messages m
         WHERE {VISIBLE_WHERE} AND m.sequence<=? AND m.sequence<? ORDER BY m.sequence DESC LIMIT ?),
         matched AS (SELECT *,NOT EXISTS(SELECT 1 FROM json_each(?) q
-            WHERE instr(naiyue_visible_lower(text),naiyue_visible_lower(q.value))=0) AS matched,
+            WHERE instr(naiyue_visible_lower(text),naiyue_visible_lower(
+                naiyue_visible_json_text(json_extract(?,q.fullkey,q.fullkey))))=0) AS matched,
             CASE WHEN ?!='' THEN max(0,instr(naiyue_visible_lower(text),naiyue_visible_lower(?))-1-?) ELSE 0 END AS start FROM source)
         SELECT message_id,sequence,revision,message_type,parent_message_id,reply_id,tool_call_id,name,tool_status,
             naiyue_visible_length(text) AS text_chars,matched,start AS offset,
             CASE WHEN matched THEN naiyue_visible_slice(text,start,?) ELSE '' END AS content FROM matched
         ORDER BY sequence DESC"""
+    encoded_terms = json.dumps(terms, ensure_ascii=False)
     return [dict(r) for r in connection.execute(sql, (session_id, thread_id, upper, before, count,
-        json.dumps(terms, ensure_ascii=False), terms[0] if terms else '', terms[0] if terms else '',
+        encoded_terms, encoded_terms, terms[0] if terms else '', terms[0] if terms else '',
         chars // 3, chars))]
 
 
