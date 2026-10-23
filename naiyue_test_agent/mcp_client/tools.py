@@ -1,5 +1,6 @@
 """Frozen MCP definitions enter the existing authorization and execution chain."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 from copy import deepcopy
 from dataclasses import dataclass, field
 import json
@@ -40,7 +41,7 @@ class MCPPermission(ToolPermission):
                 'config_identity': self.config_identity, 'catalog_fingerprint': self.catalog_fingerprint}
 
     def prepare(self, args, context):
-        root = context.get('workspace_root')
+        root = context.scope.identity.execution_path
         return {'operation': 'mcp_call', 'workspace': str(root) if root is not None else None,
                 'mcp': self.identity(),
                 'target': f'MCP {self.server_id}/{self.remote_tool} ({self.transport}; external tool)\n'
@@ -51,7 +52,7 @@ def create_mcp_tool(borrow_mcp, server, identity, catalog, tool, *, resources=No
     permission = MCPPermission(server_id=catalog.server_id, remote_tool=tool.remote_name,
         config_identity=identity, catalog_fingerprint=catalog.fingerprint, transport=server.transport, resources=resources)
 
-    async def execute(runtime: ToolRuntime[dict, dict], **arguments):
+    async def execute(runtime: ToolRuntime[RuntimeContext], **arguments):
         permit = require_tool_permit(runtime)
         subject = permit['subject']
         if (permit['tool_name'] != tool.registered_name or permit['args'] != arguments
@@ -62,7 +63,7 @@ def create_mcp_tool(borrow_mcp, server, identity, catalog, tool, *, resources=No
         phase, ever_submitted = 'preflight', False
         policy = resources.retry_settings if resources is not None else None
         budget = RetryBudget(policy, tool.registered_name, server.call_timeout_seconds,
-            control=context.get('_run_control'), progress=ToolProgress(runtime))
+            control=context.scope.control, progress=ToolProgress(runtime))
 
         async def attempt():
             nonlocal phase, ever_submitted
@@ -70,7 +71,7 @@ def create_mcp_tool(borrow_mcp, server, identity, catalog, tool, *, resources=No
             if permission.unavailable_reason():
                 raise ToolException('MCP tool is disabled or its definition changed. No tools/call was sent; request a new call.')
             # Raising through borrow retires a failed connection before the next attempt.
-            async with borrow_mcp(context['session_id'], context.get('agent_path', 'root'), catalog.server_id) as lease:
+            async with borrow_mcp(context.scope.identity.session_id, context.scope.identity.agent_path, catalog.server_id) as lease:
                 if lease.config_identity != identity or lease.catalog.fingerprint != catalog.fingerprint:
                     raise ToolException('MCP configuration or catalog changed. Refresh tools to review the new definition.')
                 current = await read_catalog(catalog.server_id, server, lease.client.session)
@@ -79,7 +80,7 @@ def create_mcp_tool(borrow_mcp, server, identity, catalog, tool, *, resources=No
                 if permission.unavailable_reason():
                     raise ToolException('MCP tool is disabled or its definition changed. No tools/call was sent; request a new call.')
                 from ..tools.control import check_tool_stop
-                check_tool_stop(context.get('_run_control'), 'MCP request stopped before execution.')
+                check_tool_stop(context.scope.control, 'MCP request stopped before execution.')
                 phase, ever_submitted = 'submitted', True
                 # One low-level RPC per attempt; never use the SDK interaction/retry driver.
                 return await lease.client.session.call_tool(tool.remote_name, deepcopy(arguments),

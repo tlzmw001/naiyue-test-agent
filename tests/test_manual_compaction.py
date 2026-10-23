@@ -1,5 +1,6 @@
 """Manual compaction shares policy but does not execute an ordinary model turn."""
 
+from runtime_context_helpers import typed_context
 import asyncio
 import json
 import pytest
@@ -237,7 +238,7 @@ def test_small_model_manual_compaction_never_splits_the_latest_user_turn():
             AIMessage(content='', id='recent-call', tool_calls=[{'id': 'c', 'name': 'read', 'args': {}}]),
             ToolMessage(content='file result', tool_call_id='c', id='recent-result'), AIMessage(content='done', id='recent-ai')]
         with pytest.raises(ContextCompactionError, match='compacted_request_over_budget'):
-            await _acompact_messages(messages, model, model_id='A', context={}, system_messages=[], tools=[], force=True, trigger='manual')
+            await _acompact_messages(messages, model, model_id='A', context=typed_context(), system_messages=[], tools=[], force=True, trigger='manual')
         assert model.seen == []
         assert messages[2].id == 'recent-user' and len(messages) == 6
     asyncio.run(scenario())

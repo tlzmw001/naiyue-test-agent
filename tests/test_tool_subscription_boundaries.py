@@ -1,5 +1,6 @@
 """Approval, dispatch, guards, and batch skips never imply executor entry."""
 
+from runtime_context_helpers import RunIdentity, RunObservationPorts, typed_context
 from native_application_helpers import async_test
 
 from naiyue_test_agent.tools.permissions import ToolPermission
@@ -177,8 +178,7 @@ async def test_unbound_tool_request_is_not_executed():
     publisher.publish('run_started', RunStartedData('message'))
     request = SimpleNamespace(
         tool_call={'name': 'probe', 'args': {}, 'id': 'wrong'},
-        runtime=SimpleNamespace(context={'session_id': 'session', 'run_id': 'run',
-                                         '_run_event_publisher': publisher}),
+        runtime=SimpleNamespace(context=typed_context(identity=RunIdentity(session_id='session', run_id='run'), observation=RunObservationPorts(publisher=publisher))),
         state={'tool_execution': {'tool_names': ['probe']}, 'messages': [AIMessage(content='', tool_calls=[
             {'name': 'probe', 'args': {}, 'id': 'actual'},
         ])]},

@@ -1,5 +1,6 @@
 """A bounded UTF-8 reader for an explicitly chosen local workspace."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 import codecs
 import logging
 from pathlib import Path
@@ -188,18 +189,18 @@ def create_session_read_tool(*, settings: ReadSettings | None = None, progress_s
         limit=(int | None, Field(default=None, ge=1, le=settings.max_limit)))
 
     @tool('read', args_schema=execution_schema)
-    def read(path: str, runtime: ToolRuntime[dict, dict],
+    def read(path: str, runtime: ToolRuntime[RuntimeContext],
                   offset: int | None = None, limit: int | None = None) -> str | list[dict]:
         """Read UTF-8 text with 1-based pagination, or an image without offset/limit."""
         context = runtime.context
-        root = context.get('workspace_root') if isinstance(context, dict) else None
+        root = context.scope.identity.execution_path if isinstance(context, RuntimeContext) else None
         if not isinstance(root, Path) or not root.is_absolute():
             logger.warning('read_failed error_type=MissingWorkspaceContext')
             raise ToolException(READ_NO_WORKSPACE)
         target = require_file_target(runtime, path, operation='read')
         progress = ToolProgress(runtime, progress_settings)
         try:
-            return _read(target, offset, limit, settings=settings, control=context.get('_run_control'), progress=progress)
+            return _read(target, offset, limit, settings=settings, control=context.scope.control, progress=progress)
         finally:
             progress.flush()
 

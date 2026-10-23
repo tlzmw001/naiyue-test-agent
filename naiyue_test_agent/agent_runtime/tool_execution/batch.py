@@ -11,9 +11,6 @@ from ..run_control import stop_tool_message
 from naiyue_test_agent.tools.registry import ToolRegistry
 
 
-_PLAN_KEY = '_naiyue_tool_batch_plan'
-
-
 class ToolBatchMiddleware(AgentMiddleware):
     """Keep read-only batches parallel and serialize batches containing marked tools."""
 
@@ -25,10 +22,10 @@ class ToolBatchMiddleware(AgentMiddleware):
         context = runtime.context
         modes = self._modes(state, context)
         registered = self._registered_pending(state, modes)
-        context[_PLAN_KEY] = (AsyncBatchPlan(
+        context.invocation.tool_batch = (AsyncBatchPlan(
             [call['id'] for call in registered],
             any(modes[call['name']] == 'sequential' for call in registered),
-            context.get('run_id'), ToolBatchSchedulingError,
+            context.scope.identity.run_id, ToolBatchSchedulingError,
         ) if registered else None)
 
     def _modes(self, state, context):
@@ -63,11 +60,11 @@ class ToolBatchMiddleware(AgentMiddleware):
         )
 
     async def _adispatch_tool_call(self, request, handler):
-        context = request.runtime.context or {}
-        plan = context.get(_PLAN_KEY)
+        context = request.runtime.context
+        plan = context.invocation.tool_batch
         observe_tool_progress(context, 'report_dispatch', request, 'queued')
         async def guarded():
-            control = context.get('_run_control')
+            control = context.scope.control
             if control is not None and control.requested:
                 return stop_tool_message(request.tool_call, reason=control.reason)
             observe_tool_progress(context, 'report_dispatch', request, 'preparing')

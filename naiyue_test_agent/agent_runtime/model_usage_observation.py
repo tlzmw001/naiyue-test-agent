@@ -21,7 +21,7 @@ from .events import (ModelInvocationStartedData, ModelInvocationFinishedData,
                      ModelHttpAttemptStartedData, ModelHttpAttemptFinishedData)
 from .observation import emit_event
 from .run_control import UserStop
-from .run_services import current_run_services
+from .run_scope import current_run_scope
 from .stream_events import SUMMARY_TAG, PERMISSION_REVIEW_TAG, MEMORY_TAG
 
 
@@ -90,8 +90,8 @@ class ModelUsageCallback(AsyncCallbackHandler):
             return None
 
     async def on_chat_model_start(self, serialized, messages, *, run_id, metadata=None, tags=None, **kwargs):
-        services = current_run_services()
-        if services is None or services.publisher is None:
+        services = current_run_scope()
+        if services is None or services.observation.publisher is None:
             return
         started = start_timer()
         try:
@@ -105,11 +105,11 @@ class ModelUsageCallback(AsyncCallbackHandler):
                 if data.invocation_id in self._active:
                     logger.warning('model_usage_duplicate_start')
                     return
-                http_call = self._http_call(data, services.publisher)
-                self._active[data.invocation_id] = (services.publisher, owner, done, started, http_call)
+                http_call = self._http_call(data, services.observation.publisher)
+                self._active[data.invocation_id] = (services.observation.publisher, owner, done, started, http_call)
             if owner is not None:
                 owner.add_done_callback(done)
-            emit_event(services.publisher, 'model_call_started', data)
+            emit_event(services.observation.publisher, 'model_call_started', data)
         except Exception as error:
             logger.error('model_usage_observation_failed error_type=%s', safe_error_type(error))
 

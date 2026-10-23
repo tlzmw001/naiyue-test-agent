@@ -1,5 +1,6 @@
 """Find returns bounded names while respecting the search workspace."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from native_application_helpers import async_test
 
 import pytest
@@ -11,7 +12,7 @@ from naiyue_test_agent.tools.find import create_session_find_tool
 
 
 async def call_find(tool, args, root):
-    return (await invoke_tool_feedback(tool, args, context={'workspace_root': root}, call_id='find-call'))
+    return (await invoke_tool_feedback(tool, args, context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(root) if root is not None else None, session_id=None)), call_id='find-call'))
 
 
 @async_test

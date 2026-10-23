@@ -1,5 +1,6 @@
 """Common approved Shell execution; adapters supply only interpreter behavior."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 import logging
 import os
 from pathlib import Path
@@ -29,11 +30,11 @@ class ShellPermission(ToolPermission):
     foreground_wait_seconds: int = 120
 
     def prepare(self, args, context):
-        require_execution_directory(context)
+        require_execution_directory(context.scope.identity.execution_root, context.scope.identity.project_id)
         subject = super().prepare(args, context)
         if args.get('background', False):
             subject['target'] = '[background] ' + subject['target']
-        elif context.get('agent_path', 'root') == 'root':
+        elif context.scope.identity.agent_path == 'root':
             subject['target'] = f'[automatic background after {self.foreground_wait_seconds}s; original execution deadline applies] ' + subject['target']
         return subject
 
@@ -125,9 +126,9 @@ def build_shell_tool(adapter, settings, process_settings=None, shell_task_settin
         command=(str, Field(min_length=1, max_length=settings.max_command_chars)))
     task_settings = shell_task_settings or ShellTaskSettings()
 
-    async def execute(command: str, runtime: ToolRuntime[dict, dict], timeout: int | None = None, background: bool = False):
-        require_execution_directory(runtime.context)
-        root = runtime.context.get('workspace_root')
+    async def execute(command: str, runtime: ToolRuntime[RuntimeContext], timeout: int | None = None, background: bool = False):
+        require_execution_directory(runtime.context.scope.identity.execution_root, runtime.context.scope.identity.project_id)
+        root = runtime.context.scope.identity.execution_path
         if not isinstance(root, Path) or not root.is_absolute() or not root.is_dir():
             raise ToolException(f'{adapter.label} has no valid session workspace.')
         require_tool_permit(runtime)
@@ -140,14 +141,14 @@ def build_shell_tool(adapter, settings, process_settings=None, shell_task_settin
             from .background_tasks import task_context
             port, scope = task_context(runtime)
             context = runtime.context
-            receipt = await port.submit(**scope, run_id=context.get('run_id'),
-                tool_call_id=runtime.tool_call_id, agent_path=context.get('agent_path', 'root'),
+            receipt = await port.submit(**scope, run_id=context.scope.identity.run_id,
+                tool_call_id=runtime.tool_call_id, agent_path=context.scope.identity.agent_path,
                 command=command, name=adapter.name, request=request, runner=runner,
                 settings=settings.model_copy(update={'max_archive_bytes': task_settings.max_background_archive_bytes}),
-                control=context.get('_run_control'))
+                control=context.scope.control)
             return json.dumps({**receipt, 'query': 'Use task_list/task_output; task_stop stops this task. '
                 'running confirms process creation, not service readiness.'}, ensure_ascii=False)
-        if runtime.context.get('agent_path', 'root') == 'root' and runtime.context.get('_process_tasks') is not None:
+        if runtime.context.scope.identity.agent_path == 'root' and runtime.context.scope.capabilities.process_tasks is not None:
             from .background_tasks import task_context
             port, scope = task_context(runtime)
             return await execute_managed_foreground(port, scope, request, runtime,
@@ -156,7 +157,7 @@ def build_shell_tool(adapter, settings, process_settings=None, shell_task_settin
         return await execute_process_request(request, runtime, name=adapter.name, label=adapter.label,
             settings=settings, runner=runner, progress_settings=progress_settings)
 
-    def execute_sync(command: str, runtime: ToolRuntime[dict, dict], timeout: int | None = None, background: bool = False):
+    def execute_sync(command: str, runtime: ToolRuntime[RuntimeContext], timeout: int | None = None, background: bool = False):
         return run_async_sync(lambda: execute(command, runtime, timeout, background))
 
     description = (f'Run an approved local {adapter.label} command with current user access. '

@@ -1,5 +1,6 @@
 """Own nested search children when stopped or directly cancelled."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, ToolAuthorization, typed_context
 import asyncio
 import json
 import os
@@ -77,9 +78,7 @@ def test_direct_cancel_reaps_search_child_inside_discovery_consumer(monkeypatch,
         subject = prepare_file_subject('.', tmp_path, 'search')
         subject.update(tool_name='grep', args={'path': '.', 'pattern': 'HIT'}, path_field='path',
                        execution_environment=execution_environment())
-        runtime = SimpleNamespace(tool_call_id='g', context={'session_id': 's', 'workspace_root': tmp_path,
-            '_permission_rules': PermissionSettings(), '_session_allow': [],
-            '_execution_permit': {'call_id': 'g', 'session_id': 's', 'agent_path': 'root', 'subject': subject}})
+        runtime = SimpleNamespace(tool_call_id='g', context=typed_context(identity=RunIdentity(session_id='s', execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None), authorization=ToolAuthorization(permission_rules=PermissionSettings(), session_allow=[], permit={'call_id': 'g', 'session_id': 's', 'agent_path': 'root', 'subject': subject})))
         task = asyncio.create_task(module._grep_files(tmp_path, 'HIT', '*.txt', False, False, 0, 100,
             runtime, settings=GrepSettings(max_argument_bytes=1024), runner=HostProcessRunner()))
         pid = None

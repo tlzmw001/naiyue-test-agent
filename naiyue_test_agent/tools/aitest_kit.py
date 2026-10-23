@@ -1,5 +1,6 @@
 """A direct argv wrapper; AITest and project Skills own the testing workflow."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 import json
 import re
 from pathlib import Path
@@ -52,9 +53,9 @@ def create_aitest_kit_tool(*, settings=None, process_settings=None, progress_set
         args=(list[str], Field(min_length=1, max_length=settings.max_args)))
     runner = HostProcessRunner(process_settings)
 
-    async def execute(args: list[str], runtime: ToolRuntime[dict, dict], timeout: int | None = None):
+    async def execute(args: list[str], runtime: ToolRuntime[RuntimeContext], timeout: int | None = None):
         require_tool_permit(runtime)
-        root = runtime.context.get('workspace_root')
+        root = runtime.context.scope.identity.execution_path
         if not isinstance(root, Path) or not root.is_absolute() or not root.is_dir():
             raise ToolException('aitest_kit requires a valid session workspace.')
         if sum(len(value) for value in args) > settings.max_argument_chars:

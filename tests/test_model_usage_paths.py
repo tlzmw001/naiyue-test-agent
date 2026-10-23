@@ -1,5 +1,6 @@
 """Usage reaches existing root/child, summary, Auto and Web observations."""
 
+from runtime_context_helpers import RunIdentity, ModelCallState, typed_context
 import json
 import logging
 
@@ -119,7 +120,7 @@ def test_snapshot_old_optional_field_and_new_usage_validation(caplog):
     from naiyue_test_agent.agent_runtime.context_usage import estimate_context, request_snapshot, finish_snapshot, read_snapshot
     from test_context_inspector import model_with_limits
     from types import SimpleNamespace
-    before = request_snapshot({'_naiyue_model_call_id': 'call', '_naiyue_model_id': 'A'},
+    before = request_snapshot(typed_context(model_call=ModelCallState('call', 'A')),
                               estimate_context(model_with_limits([]), None, [], []))
     response = SimpleNamespace(result=[AIMessage(content='PRIVATE', usage_metadata={
         'input_tokens': 100, 'output_tokens': 5, 'total_tokens': 105,
@@ -179,7 +180,7 @@ async def test_invalid_auto_verdict_retains_reported_usage_without_granting_perm
     response = AIMessage(content='PRIVATE_INVALID_JSON', usage_metadata={'input_tokens': 100,
         'output_tokens': 5, 'total_tokens': 105, 'input_token_details': {'cache_creation': 20, 'cache_read': 30}})
     fast, detailed = model([response]), model([])
-    assert (await reviewer(fast, detailed).areview(payload(), {}))['decision'] == 'ask'
+    assert (await reviewer(fast, detailed).areview(payload(), typed_context()))['decision'] == 'ask'
     record = next(r.permission_review for r in caplog.records if hasattr(r, 'permission_review'))
     assert (record['input_tokens'], record['cache_read_tokens'], record['cache_write_tokens']) == (100, 30, 20)
     assert record['reason'] == 'review_unavailable' and detailed.seen == []

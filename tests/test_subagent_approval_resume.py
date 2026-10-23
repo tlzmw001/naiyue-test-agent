@@ -64,7 +64,7 @@ async def test_a_approved_and_finished_while_b_still_runs_whole_child_batch_wait
     ]), AIMessage(content='root done')])
     class TracedPermission(ToolPermission):
         def prepare(self, args, context):
-            prepares.append((context['agent_path'], args))
+            prepares.append((context.scope.identity.agent_path, args))
             return super().prepare(args, context)
     tools = [definition(calls=effects, approved=True, permissions=TracedPermission()),
              definition('ordinary', calls=effects)]

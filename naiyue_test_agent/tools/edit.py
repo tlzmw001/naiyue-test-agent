@@ -1,5 +1,6 @@
 """Exact edits to existing UTF-8 files inside a trusted session workspace."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 import codecs
 import hashlib
 import logging
@@ -279,7 +280,7 @@ def create_session_edit_tool(*, settings: EditSettings | None = None, progress_s
 
     @tool('edit', args_schema=execution_schema, response_format='content_and_artifact')
     def edit(
-        path: str, edits: list[EditReplacement], runtime: ToolRuntime[dict, dict],
+        path: str, edits: list[EditReplacement], runtime: ToolRuntime[RuntimeContext],
     ) -> tuple[str, dict]:
         """Replace unique, non-overlapping text in one existing UTF-8 file.
 
@@ -289,7 +290,7 @@ def create_session_edit_tool(*, settings: EditSettings | None = None, progress_s
         This tool cannot create a file or missing parent directories.
         """
         context = runtime.context
-        root = context.get('workspace_root') if isinstance(context, dict) else None
+        root = context.scope.identity.execution_path if isinstance(context, RuntimeContext) else None
         if not isinstance(root, Path) or not root.is_absolute():
             logger.warning('edit_failed phase=context error_type=MissingWorkspaceContext')
             raise ToolException(EDIT_NO_WORKSPACE)
@@ -297,7 +298,7 @@ def create_session_edit_tool(*, settings: EditSettings | None = None, progress_s
         progress = ToolProgress(runtime, progress_settings)
         try:
             return _edit(root, str(target), edits, settings,
-                         subject=context['_execution_permit']['subject'], control=context.get('_run_control'), progress=progress)
+                         subject=context.authorization.permit['subject'], control=context.scope.control, progress=progress)
         finally:
             progress.flush()
 

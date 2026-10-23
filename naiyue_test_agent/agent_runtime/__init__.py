@@ -1,8 +1,7 @@
 """Assembly and model routing for the LangChain agent loop."""
 
 from collections.abc import Callable
-from pathlib import Path
-from typing import Any, NotRequired, TypedDict
+from typing import Any, NotRequired
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
@@ -15,61 +14,28 @@ from naiyue_test_agent.agent_runtime.tool_execution.batch import ToolBatchMiddle
 from naiyue_test_agent.agent_runtime.context_observation import observe_model_request
 from naiyue_test_agent.agent_runtime.context_recovery import recover_input_overflow
 from .tool_execution.toolset import ToolSetMiddleware, ToolExecutionState
-from naiyue_test_agent.tools.permissions import (
-    OneUseApprovalGrants,
-)
 from naiyue_test_agent.model_access.messages import ModelInputMiddleware
-from .errors import RuntimeErrorPolicy
 from naiyue_test_agent.tools.registry import ToolRegistry
 
 
 from naiyue_test_agent.agent_runtime.call_observation import (
     make_model_selection_middleware,
 )
-from naiyue_test_agent.agent_runtime.events import RunEventPublisher, AgentEventPublisher
 from .reply_identity import ReplyIdentityMiddleware
 from .active_stop import StopModelMiddleware, StopBoundaryMiddleware
-from .run_control import RunControl
 from .session_port import SessionPort
 from naiyue_test_agent.agent_runtime.turn_observation import (
-    TurnBoundaryMiddleware, TurnObserver,
+    TurnBoundaryMiddleware,
 )
-from naiyue_test_agent.agent_runtime.control_observation import ControlObserver
 from .tool_execution import tool_error_feedback
 from .tool_execution.observation import _record_tool_call
 from .tool_execution.approval import BatchApprovalMiddleware
 from .tool_execution.permissions import AutoPermissionReviewer, PermissionMiddleware, fixed_permission_context
 from .tool_execution.authorization import ExecutionAuthorizationMiddleware
 from naiyue_test_agent.tools.permission_rules import PermissionSettings
-from naiyue_test_agent.agent_runtime.context_operation_observation import (
-    ContextOperationObserver,
-)
 
 
-from naiyue_test_agent.execution_roots import ExecutionRoot
-
-
-class RunContext(TypedDict):
-    session_id: str
-    agent_path: NotRequired[str]
-    parent_tool_call_id: NotRequired[str]
-    parent_run_id: NotRequired[str]
-    root_run_id: NotRequired[str]
-    ainvoke_subagent: NotRequired[Callable]
-    alist_subagents: NotRequired[Callable]
-    run_id: NotRequired[str]
-    workspace_root: NotRequired[Path]  # Execution path projection; never a project selector.
-    project_id: NotRequired[str | None]
-    execution_root: NotRequired[ExecutionRoot]
-    archive_root: NotRequired[Path]
-    approval_grants: NotRequired[OneUseApprovalGrants]
-    read_resource_roots: NotRequired[tuple[Path, ...]]
-    _run_control: NotRequired[RunControl]
-    _run_event_publisher: NotRequired[RunEventPublisher | AgentEventPublisher]
-    _turn_observer: NotRequired[TurnObserver]
-    _control_observer: NotRequired[ControlObserver]
-    _context_observer: NotRequired[ContextOperationObserver]
-    _failure_policy: NotRequired[RuntimeErrorPolicy]
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 
 
 class InteractiveRunState(ToolExecutionState):
@@ -102,10 +68,10 @@ def build_runtime_agent(
 
 
 def _root_session_id(runtime):
-    context = runtime.context or {}
-    if context.get('agent_path', 'root') != 'root':
+    context = runtime.context
+    if context.scope.identity.agent_path != 'root':
         raise ValueError('Interactive runtime requires root agent_path')
-    return context['session_id']
+    return context.scope.identity.session_id
 
 
 def _assemble_interactive_runtime(
@@ -191,7 +157,7 @@ def _build_runtime_agent(
         tools=[],
         system_prompt=system_prompt,
         response_format=response_format,
-        context_schema=RunContext,
+        context_schema=RuntimeContext,
         state_schema=state_schema,
         middleware=[ReplyIdentityMiddleware(), *([StopModelMiddleware()] if active_stop else []), *([TurnBoundaryMiddleware()] if observe_turns else []),
                     *request_controls,

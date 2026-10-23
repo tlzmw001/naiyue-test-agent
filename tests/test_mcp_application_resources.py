@@ -7,7 +7,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime.run_services import current_run_services
+from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
 from naiyue_test_agent.application.async_application import build_async_local_application
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.model_access import ModelCatalog
@@ -44,10 +44,10 @@ def test_formal_two_runs_keep_process_and_other_session_isolated(monkeypatch, tm
         outputs = []
         holder = {}
         async def probe():
-            services = current_run_services()
+            services = current_run_scope()
             sessions = holder['app']._sessions
             session_id = next(sid for sid in sessions.loaded_session_ids()
-                              if services.publisher.matches(sid, services.publisher.run_id))
+                              if services.observation.publisher.matches(sid, services.observation.publisher.run_id))
             outputs.append(await increment(sessions, session_id))
         model = ResourceProbeModel(replies=[AIMessage(content='ok') for _ in range(3)], probe=probe)
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
@@ -85,7 +85,7 @@ def test_real_child_driver_release_does_not_close_root(monkeypatch, tmp_path):
         path = tmp_path / 'child.jsonl'
         outputs, holder, instances = [], {}, []
         async def probe():
-            services = current_run_services()
+            services = current_run_scope()
             instance, = instances
             outputs.append(await increment(holder['app']._sessions, instance['session_id'], instance['agent_path']))
         child = ResourceProbeModel(replies=[AIMessage(content='child done')], probe=probe)

@@ -2,6 +2,7 @@
 
 import logging
 import asyncio
+from naiyue_test_agent.contracts.run_context import RunIdentity
 import sys
 from contextvars import Context
 from uuid import uuid4
@@ -14,7 +15,7 @@ from naiyue_test_agent.tools.permissions import PermissionMechanismError, permis
 from naiyue_test_agent.agent_runtime.run_control import RunControl
 from naiyue_test_agent.agent_runtime.events import AgentEventSource
 from naiyue_test_agent.agent_runtime.observation import observe
-from naiyue_test_agent.agent_runtime.run_services import current_run_services
+from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
 from naiyue_test_agent.agent_runtime.tool_execution.permissions import collect_human_messages
 from naiyue_test_agent.agent_runtime.subagents import ainvoke_subagent_step, _finish_subagent_result
 from naiyue_test_agent.agent_runtime.async_utils import await_settled, run_blocking
@@ -62,7 +63,7 @@ class SessionSubagentControls:
 
     async def ainvoke_subagent(self, agent, task, *, agent_id=None, parent_context, parent_state, parent_tool_call_id):
         with self._lock:
-            session = self._sessions[parent_context['session_id']]
+            session = self._sessions[parent_context.scope.identity.session_id]
             role = self._subagents.get(agent)
         return await session.ainvoke_subagent(agent, task, role=role, agent_id=agent_id, parent_context=parent_context,
             parent_state=parent_state, parent_tool_call_id=parent_tool_call_id)
@@ -81,10 +82,10 @@ class AgentSessionSubagents:
         from .subagent_history import subagent_records as references, merge_registered_subagents
         from .subagent_queries import annotate, bounded_list
         def require_current():
-            if (parent_context.get('agent_path', 'root') != 'root'
-                    or parent_context.get('session_id') != self.session_id or self._run is None
-                    or self._run.run_id != parent_context.get('run_id')
-                    or self._state.execution_path != parent_context.get('workspace_root')):
+            if (parent_context.scope.identity.agent_path != 'root'
+                    or parent_context.scope.identity.session_id != self.session_id or self._run is None
+                    or self._run.run_id != parent_context.scope.identity.run_id
+                    or self._state.execution_path != parent_context.scope.identity.execution_path):
                 raise PermissionMechanismError('Subagent list requires its current root run and workspace')
         with self._lock:
             require_current()
@@ -101,34 +102,34 @@ class AgentSessionSubagents:
         return bounded_list(rows, owned, self._subagent_result_settings, limit=limit, before=before)
 
     def prepare_subagent_instance(self, agent, task, *, role, parent_context, parent_state, parent_tool_call_id, agent_id=None):
-        if parent_context.get('agent_path', 'root') != 'root':
+        if parent_context.scope.identity.agent_path != 'root':
             raise ToolException('Only one level of subagent delegation is supported.')
         session_id = self.session_id
         SubAgentInput(agent=agent, task=task, agent_id=agent_id)
-        if parent_context['session_id'] != session_id:
+        if parent_context.scope.identity.session_id != session_id:
             raise PermissionMechanismError('Subagent belongs to a different session')
         batch = parent_state.get('tool_execution', {})
         call = next((item for item in batch.get('calls', []) if item['id'] == parent_tool_call_id), None)
-        permit = parent_context.get('_execution_permit')
+        permit = (parent_context.authorization.permit if parent_context.authorization is not None else None)
         expected = {'agent': agent, 'task': task}
         if call is not None and 'agent_id' in call['args']:
             expected['agent_id'] = agent_id
         if (call is None or call['name'] != 'subagent' or call['args'] != expected
                 or call['args'].get('agent_id') != agent_id
-                or permit != permission_binding(parent_context, batch.get('batch_id'), call)):
+                or permit != permission_binding(parent_context.scope.identity, batch.get('batch_id'), call)):
             raise PermissionMechanismError('Subagent parent call does not match its execution permit')
         delegation = subagent_identity(session_id, batch['batch_id'], parent_tool_call_id)
         identity = agent_id or delegation
         with self._lock:
             session, run = self._state, self._run
-            if run is None or run.run_id != parent_context.get('run_id'):
+            if run is None or run.run_id != parent_context.scope.identity.run_id:
                 raise PermissionMechanismError('Subagent requires the current active parent run')
             if run.stop_requested:
                 raise ToolException('Subagent was not started because its owning run is stopping.')
             if role is None:
                 raise ToolException('Unknown subagent role. Choose a registered role.')
             spec = role['spec']
-            if parent_context.get('workspace_root') != session.execution_path:
+            if parent_context.scope.identity.execution_path != session.execution_path:
                 raise PermissionMechanismError('Subagent workspace does not match its parent')
             path = f'root/{agent}/{identity}'
             key = path
@@ -143,14 +144,14 @@ class AgentSessionSubagents:
                 parent_reply_id=parent_state.get('active_reply_id') or run.reply_id or '',
                 child_thread_id=f'subagent:{identity}', seed_id=f'subagent-seed:{delegation}',
                 parent_tool_call_id=parent_tool_call_id, parent_run_id=run.run_id,
-                root_run_id=parent_context.get('root_run_id', run.run_id), run_id=uuid4().hex,
+                root_run_id=(parent_context.scope.identity.root_run_id if parent_context.scope.identity.root_run_id is not None else run.run_id), run_id=uuid4().hex,
                 model_id=spec.model_id or session.model_id, tool_names=spec.tool_names,
                 status='running', phase='execute', settled=False, task=task, workspace_root=run.execution_root.path if run.execution_root else None,
                 project_id=run.project_id, execution_root=run.execution_root,
-                read_resource_roots=parent_context.get('read_resource_roots', ()),
-                max_concurrency=parent_context.get('_max_concurrency', 4), control=RunControl(),
-                publisher=parent_context.get('_run_event_publisher'), pending_turn=None,
-                errors=parent_context.get('_failure_policy'), human_messages=collect_human_messages(parent_state['messages']))
+                read_resource_roots=(parent_context.inputs.read_resource_roots if parent_context.inputs.read_resource_roots is not None else ()),
+                max_concurrency=(parent_context.inputs.max_concurrency if parent_context.inputs.max_concurrency is not None else 4), control=RunControl(),
+                publisher=parent_context.scope.observation.publisher, pending_turn=None,
+                errors=parent_context.scope.errors, human_messages=collect_human_messages(parent_state['messages']))
             self._run.subagent_instances[key] = instance
             return role['agent'], instance
 
@@ -224,11 +225,13 @@ class AgentSessionSubagents:
             try:
                 observation.start()
                 observation.stage = 'execute'
-                with observation.bind(project_id=instance['project_id'], execution_root=instance['execution_root'], archive_root=self._archive_root,
+                with observation.bind(identity=RunIdentity(self.session_id, instance['run_id'], instance['agent_path'],
+                        project_id=instance['project_id'], execution_root=instance['execution_root'],
+                        parent_tool_call_id=instance['parent_tool_call_id'], parent_run_id=instance['parent_run_id'], root_run_id=instance['root_run_id']), archive_root=self._archive_root,
                                       history_query=getattr(self._persistence, 'aquery_history', None),
                                       memory_query=getattr(self._persistence, 'aquery_memory', None)):
                     result = await ainvoke_subagent_step(graph, instance, resume=resume,
-                        approval_grants=grants, services=current_run_services())
+                        approval_grants=grants, scope=current_run_scope())
                     snapshot = await graph.aget_state({'configurable': {'thread_id': instance['child_thread_id']}})
                 observation.stage = 'finalize'
                 interrupted = bool(result.get('__interrupt__'))

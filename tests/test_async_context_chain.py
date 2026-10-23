@@ -1,5 +1,7 @@
 """Actual interactive graph runs the context chain with native async model IO."""
 
+from dataclasses import replace
+from runtime_context_helpers import RunIdentity, typed_context
 from naiyue_test_agent.application import prepare_tool_registry
 
 import asyncio
@@ -112,14 +114,14 @@ def graph_for(models, selected=None, project='PROJECT'):
 
 
 CONFIG = {'configurable': {'thread_id': 's'}}
-CONTEXT = {'session_id': 's', 'run_id': 'r'}
+CONTEXT = typed_context(identity=RunIdentity(session_id='s', run_id='r'))
 
 
 async def execute(graph, messages, mode):
     if mode == 'invoke':
-        return await graph.ainvoke({'messages': messages}, context=dict(CONTEXT), config=CONFIG), []
+        return await graph.ainvoke({'messages': messages}, context=replace(CONTEXT), config=CONFIG), []
     parts, latest = [], None
-    async for part in graph.astream({'messages': messages}, context=dict(CONTEXT), config=CONFIG,
+    async for part in graph.astream({'messages': messages}, context=replace(CONTEXT), config=CONFIG,
                                    stream_mode=['updates', 'values'], version='v2'):
         parts.append(part)
         if part['type'] == 'values':

@@ -1,5 +1,8 @@
 """A grant prepared before root loss still cannot perform actual file IO."""
 
+from dataclasses import replace
+from runtime_context_helpers import ToolAuthorization
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from types import SimpleNamespace
 
 import pytest
@@ -22,10 +25,10 @@ def test_prepared_file_tool_rechecks_execution_root_before_io(tmp_path, factory,
     target.write_text('sentinel')
     spec = factory()
     args = {'path': str(target), **arguments}
-    context = {'session_id': 'S', 'workspace_root': root}
+    context = typed_context(identity=RunIdentity(session_id='S', execution_root=ExecutionRoot(root) if root is not None else None))
     subject = spec.permissions.prepare(args, context)
     subject.update(args=args, path_field='path', execution_environment=execution_environment())
-    context['_execution_permit'] = {'call_id': 'C', 'session_id': 'S', 'agent_path': 'root', 'subject': subject}
+    context = replace(context, authorization=ToolAuthorization(permit={'call_id': 'C', 'session_id': 'S', 'agent_path': 'root', 'subject': subject}))
     runtime = SimpleNamespace(context=context, tool_call_id='C')
     values = spec.validate_input(args)
     root.rmdir()
@@ -40,7 +43,7 @@ def test_relative_file_target_and_workspace_rule_follow_execution_directory(tmp_
     execution.mkdir()
     for root in (main, execution):
         (root / 'same.txt').write_text(root.name)
-    subject = FilePermission().prepare({'path': 'same.txt'}, {'workspace_root': execution})
+    subject = FilePermission().prepare({'path': 'same.txt'}, typed_context(identity=RunIdentity(execution_root=ExecutionRoot(execution) if execution is not None else None, session_id=None)))
     subject.update(tool_name='read', args={'path': 'same.txt'})
     assert subject['workspace'] == str(execution) and subject['resolved'] == str(execution / 'same.txt')
     rule = PermissionRule(tool='read', path='${workspace}/**')

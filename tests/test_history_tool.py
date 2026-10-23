@@ -1,5 +1,7 @@
 """History configuration, permission and actual Agent-to-archive wiring."""
 
+from dataclasses import replace
+from runtime_context_helpers import RunCapabilities, RunIdentity, ToolAuthorization, typed_context
 import asyncio
 import json
 from contextlib import asynccontextmanager
@@ -180,12 +182,12 @@ def test_forged_tool_arguments_never_reach_history_port():
     async def scenario():
         calls=[]
         async def forbidden(**kwargs):calls.append(kwargs)
-        context={'session_id':'source','agent_path':'root','aquery_history':forbidden}
+        context=typed_context(identity=RunIdentity(session_id='source', agent_path='root'), capabilities=RunCapabilities(history=forbidden))
         canonical=HistoryInput(action='list_sessions').model_dump()
         call_row={'id':'call','name':'history','args':{'action':'list_sessions'},
                   'subject':{'args':canonical,'execution_environment':execution_environment()}}
-        permit=permission_binding(context,'batch',call_row)
-        runtime=SimpleNamespace(context={**context,'_execution_permit':permit},tool_call_id='call',
+        permit=permission_binding(context.scope.identity, 'batch', call_row)
+        runtime=SimpleNamespace(context=replace(context, authorization=ToolAuthorization(permit=permit)),tool_call_id='call',
             state={'tool_execution':{'batch_id':'batch','calls':[call_row]}})
         with pytest.raises(PermissionMechanismError):
             await create_history_tool().tool.coroutine(runtime=runtime,action='read',session_id='other')

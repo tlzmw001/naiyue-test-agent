@@ -1,5 +1,6 @@
 """MCP execution uses the real child graph, scoped approval and owned resources."""
 
+from runtime_context_helpers import typed_scope
 import json
 import asyncio
 from typing import Any
@@ -74,7 +75,7 @@ def test_root_and_child_have_independent_processes_and_child_reuses_until_finish
 
 def test_child_publisher_cannot_borrow_root_connection(monkeypatch, tmp_path):
     from naiyue_test_agent.agent_runtime.events import AgentEventSource
-    from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
+    from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
     from naiyue_test_agent.mcp_client.resources import MCPResourceError
     async def scenario():
         path = tmp_path / 'scope.jsonl'
@@ -83,7 +84,7 @@ def test_child_publisher_cannot_borrow_root_connection(monkeypatch, tmp_path):
             sid = await app.acreate_session('A')
             publisher = app._sessions._events.publisher(sid, 'root-run').for_agent(
                 AgentEventSource('root/tester/one', 'one', 'child-run', 'root-run', 'outer'))
-            with bind_run_services(RunServices(publisher=publisher)):
+            with bind_run_scope(typed_scope(publisher=publisher)):
                 with pytest.raises(MCPResourceError, match='scope_mismatch'):
                     async with app._sessions.borrow_mcp(sid, 'root', 'local'):
                         pytest.fail('a child publisher cannot lend its control to root')

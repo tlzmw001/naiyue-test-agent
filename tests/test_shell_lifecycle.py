@@ -1,5 +1,6 @@
 """Shell archive ownership during cancellation and protected cleanup failure."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, ToolAuthorization, typed_context
 import asyncio
 from threading import Event
 from types import SimpleNamespace
@@ -9,11 +10,7 @@ import pytest
 
 def runtime_for(root):
     from naiyue_test_agent.tools.permissions import execution_environment
-    return SimpleNamespace(tool_call_id='shell-call', context={
-        'session_id': 's', 'workspace_root': root, 'archive_root': root.parent / (root.name + '-archive'),
-        '_execution_permit': {'session_id': 's', 'agent_path': 'root', 'call_id': 'shell-call',
-            'subject': {'workspace': str(root), 'execution_environment': execution_environment()}},
-    })
+    return SimpleNamespace(tool_call_id='shell-call', context=typed_context(identity=RunIdentity(session_id='s', execution_root=ExecutionRoot(root) if root is not None else None), authorization=ToolAuthorization(permit={'session_id': 's', 'agent_path': 'root', 'call_id': 'shell-call', 'subject': {'workspace': str(root), 'execution_environment': execution_environment()}}), archive_root=root.parent / (root.name + '-archive')))
 
 
 def test_cancellation_during_archive_finish_waits_for_owned_io(monkeypatch, tmp_path):

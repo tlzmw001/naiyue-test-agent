@@ -1,5 +1,6 @@
 """Offline research: compare returned model calls, graph values, and saved state."""
 
+from naiyue_test_agent.contracts.run_context import RunIdentity, RunScope, RuntimeContext
 from naiyue_test_agent.tools.permissions import ToolPermission
 
 from naiyue_test_agent.tools import ToolSpec
@@ -314,7 +315,7 @@ async def persistence_lag(resources):
 
     async def run():
         async for part in graph.astream({'messages': [('user', 'question')]}, config=config,
-                context={'session_id': session, 'run_id': 'lag-probe'}, stream_mode='values', version='v2'):
+                context=RuntimeContext(scope=RunScope(identity=RunIdentity(session_id=session, run_id='lag-probe'))), stream_mode='values', version='v2'):
             if any(isinstance(m, AIMessage) for m in part['data']['messages']):
                 ai_observed.set()
 

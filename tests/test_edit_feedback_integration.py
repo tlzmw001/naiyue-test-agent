@@ -1,5 +1,6 @@
 """Edit artifact persistence and failure boundaries, with real temporary files."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from native_application_helpers import async_test, build_application
 
 from dataclasses import asdict
@@ -80,7 +81,7 @@ async def test_feedback_failure_is_before_commit_and_cleans_temp(monkeypatch, tm
         raise RuntimeError('PRIVATE_FEEDBACK_DETAIL')
     monkeypatch.setattr(module, 'build_edit_feedback', fail_feedback)
     result = (await invoke_tool_feedback(create_session_edit_tool(), tool_call()['args'],
-        call_id='feedback-failed', context={'workspace_root': tmp_path}))
+        call_id='feedback-failed', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
     assert result.status == 'error' and 'I/O' in result.content
     assert target.read_text() == '“old”\n'
     assert sorted(p.name for p in tmp_path.iterdir()) == ['text.txt']
@@ -100,7 +101,7 @@ async def test_swap_logical_symlink_after_feedback_never_commits_old_or_new_targ
         return result
     monkeypatch.setattr(module, 'build_edit_feedback', swap)
     result = (await invoke_tool_feedback(create_session_edit_tool(), tool_call(link.name)['args'],
-        call_id='swap', context={'workspace_root': tmp_path}))
+        call_id='swap', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
     assert result.status == 'error' and 'changed' in result.content
     assert target.read_text() == '“old”\n' and other.read_text() == 'other\n'
     assert link.is_symlink() and link.resolve() == other
@@ -118,7 +119,7 @@ async def test_file_change_after_normalized_scan_is_not_overwritten(monkeypatch,
         return result
     monkeypatch.setattr(edit_matching, 'scan_normalized_matches', change)
     result = (await invoke_tool_feedback(create_session_edit_tool(), tool_call()['args'],
-        call_id='changed', context={'workspace_root': tmp_path}))
+        call_id='changed', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
     assert result.status == 'error' and 'changed' in result.content
     assert target.read_text() == 'another writer\n'
     assert not list(tmp_path.glob('.naiyue-write-*'))

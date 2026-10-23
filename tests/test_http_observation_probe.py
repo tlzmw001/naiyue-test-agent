@@ -1,5 +1,6 @@
 """Preimplementation evidence: actual SDK hooks inherit callback identity."""
 
+from runtime_context_helpers import typed_scope
 import asyncio
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from native_application_helpers import async_test
 from http_observation_helpers import sdk_catalog, sdk_response
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher, AgentEventSource
 from naiyue_test_agent.agent_runtime.model_usage_observation import ModelUsageCallback
-from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services, current_run_services
+from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope, current_run_scope
 
 
 _CURRENT = ContextVar('http_propagation_probe', default=None)
@@ -32,7 +33,7 @@ class Probe(ModelUsageCallback):
 
     async def on_chat_model_start(self, *args, run_id, **kwargs):
         await super().on_chat_model_start(*args, run_id=run_id, **kwargs)
-        record = Record(str(run_id), current_run_services().publisher, asyncio.current_task())
+        record = Record(str(run_id), current_run_scope().observation.publisher, asyncio.current_task())
         self.records[str(run_id)] = record
         _CURRENT.set(record)
 
@@ -63,7 +64,7 @@ async def test_actual_sdk_propagates_identity_and_shielded_end_invalidates_paren
         for client, asynchronous in catalog._owned_http_clients:
             client.event_hooks['request'].append(probe.arequest if asynchronous else probe.request)
         publisher = RunEventPublisher('s', 'r', (events.append,))
-        with bind_run_services(RunServices(publisher=publisher)):
+        with bind_run_scope(typed_scope(publisher=publisher)):
             if stream:
                 result = [chunk async for chunk in model.astream('task')]
                 assert result
@@ -98,7 +99,7 @@ async def test_shared_client_cross_session_child_and_tagged_call_stays_scoped(ta
             pub = RunEventPublisher(sid, 'r1', (events.append,))
             publisher = pub.for_agent(source) if child else pub
             origins[publisher] = (sid, source if child else None)
-            with bind_run_services(RunServices(publisher=publisher)):
+            with bind_run_scope(typed_scope(publisher=publisher)):
                 return await model.ainvoke('task', config={'tags': [tag]})
         blocked = asyncio.create_task(call('a', True))
         try:
@@ -120,7 +121,7 @@ async def test_shared_client_cross_session_child_and_tagged_call_stays_scoped(ta
 async def test_task_done_without_error_hook_invalidates_inherited_record():
     probe, entered, inherited = Probe(), asyncio.Event(), []
     async def owner():
-        with bind_run_services(RunServices(publisher=RunEventPublisher('s', 'r', ()))):
+        with bind_run_scope(typed_scope(publisher=RunEventPublisher('s', 'r', ()))):
             await probe.on_chat_model_start({}, [], run_id=uuid4())
             inherited.append(_CURRENT.get())
             entered.set()

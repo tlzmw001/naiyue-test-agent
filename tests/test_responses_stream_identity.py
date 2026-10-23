@@ -1,5 +1,7 @@
 """Responses starts with an empty response-id chunk; later chunks get run IDs."""
 
+from runtime_context_helpers import typed_context
+
 import asyncio
 
 from langchain_core.messages import AIMessageChunk
@@ -54,7 +56,7 @@ def test_content_only_deltas_keep_empty_response_anchor_and_original_final_snaps
     from naiyue_test_agent.web.serialization import project_event_for_web
     import json
     events = []
-    stream = _StreamState(RunEventPublisher('s', 'r', (events.append,)), {})
+    stream = _StreamState(RunEventPublisher('s', 'r', (events.append,)), typed_context())
     metadata = {'langgraph_node': 'model', 'langgraph_checkpoint_ns': '', 'langgraph_step': 1}
     stream.delta(AIMessageChunk(content='', id='resp_projection',
                                response_metadata={'id': 'resp_projection'}), metadata)

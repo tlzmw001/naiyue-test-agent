@@ -1,5 +1,6 @@
 """Tool-boundary events through the project's asynchronous LangChain agent."""
 
+from runtime_context_helpers import RunIdentity, typed_context
 from native_application_helpers import async_test
 
 from naiyue_test_agent.agent_runtime.async_invocation import ainvoke_agent_run
@@ -173,7 +174,7 @@ async def test_direct_invoke_does_not_invent_run_id_for_tool_events(caplog):
     ])
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        (await agent.ainvoke({'messages': [('user', 'probe')]}, context={'session_id': 'session-4'}))
+        (await agent.ainvoke({'messages': [('user', 'probe')]}, context=typed_context(identity=RunIdentity(session_id='session-4'))))
 
     assert [r.tool_event for r in caplog.records if hasattr(r, 'tool_event')] == [
         {'event': 'tool_started', 'tool_name': 'plain_probe', 'tool_call_id': 'call-4'},

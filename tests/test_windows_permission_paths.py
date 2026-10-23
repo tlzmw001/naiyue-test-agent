@@ -1,5 +1,6 @@
 """Windows identity comparisons use pure paths; no fake Windows filesystem claims."""
 
+from runtime_context_helpers import RunIdentity, ToolAuthorization, typed_context
 from pathlib import PureWindowsPath
 from types import SimpleNamespace
 
@@ -105,9 +106,7 @@ def test_recursive_candidates_keep_deny_and_hidden_rules(monkeypatch, name, expe
     child = subject(r'\\?\C:\work' + '/' + name, tool='grep')
     monkeypatch.setattr(paths, 'prepare_file_subject', lambda *a, **kw: dict(child))
     monkeypatch.setattr(permissions, 'execution_environment', lambda: ENV)
-    context = {'session_id': 'S', '_permission_rules': PermissionSettings(
-        deny=(PermissionRule(tool='grep', path='C:/work/private.txt'),)), '_session_allow': [],
-        '_execution_permit': {'call_id': 'call', 'session_id': 'S', 'agent_path': 'root', 'subject': parent}}
+    context = typed_context(identity=RunIdentity(session_id='S'), authorization=ToolAuthorization(permission_rules=PermissionSettings(deny=(PermissionRule(tool='grep', path='C:/work/private.txt'),)), session_allow=[], permit={'call_id': 'call', 'session_id': 'S', 'agent_path': 'root', 'subject': parent}))
     runtime = SimpleNamespace(context=context, tool_call_id='call')
     assert permissions.candidate_access(runtime, child['resolved'], operation='search') == expected
 

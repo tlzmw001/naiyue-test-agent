@@ -1,5 +1,6 @@
 """Graph control and cancellation cross retry waits without ordinary feedback."""
 
+from runtime_context_helpers import RunIdentity, ToolAuthorization, typed_context
 import asyncio
 from contextlib import asynccontextmanager
 import json
@@ -39,9 +40,7 @@ def test_graph_control_is_not_converted_or_retried(monkeypatch, stage, fault):
                               'config', catalog, tool, resources=resources)
         subject = {'operation': 'mcp_call', 'mcp': spec.permissions.identity(),
                    'args': {}, 'execution_environment': execution_environment()}
-        runtime = SimpleNamespace(context={'session_id': 's', '_execution_permit': {
-            'session_id': 's', 'agent_path': 'root', 'call_id': 'c', 'tool_name': tool.registered_name,
-            'subject': subject, 'args': {}}}, tool_call_id='c')
+        runtime = SimpleNamespace(context=typed_context(identity=RunIdentity(session_id='s'), authorization=ToolAuthorization(permit={'session_id': 's', 'agent_path': 'root', 'call_id': 'c', 'tool_name': tool.registered_name, 'subject': subject, 'args': {}})), tool_call_id='c')
         with pytest.raises(type(fault)) as caught:
             await spec.tool.coroutine(runtime)
         assert caught.value is fault and attempts == [1]
@@ -79,9 +78,7 @@ def test_deadline_includes_resource_wait_and_settles_before_return(monkeypatch, 
             'config', catalog, tool, resources=resources)
         subject = {'operation': 'mcp_call', 'mcp': spec.permissions.identity(),
                    'args': {}, 'execution_environment': execution_environment()}
-        runtime = SimpleNamespace(context={'session_id': 's', '_execution_permit': {
-            'session_id': 's', 'agent_path': 'root', 'call_id': 'c', 'tool_name': tool.registered_name,
-            'subject': subject, 'args': {}}}, tool_call_id='c')
+        runtime = SimpleNamespace(context=typed_context(identity=RunIdentity(session_id='s'), authorization=ToolAuthorization(permit={'session_id': 's', 'agent_path': 'root', 'call_id': 'c', 'tool_name': tool.registered_name, 'subject': subject, 'args': {}})), tool_call_id='c')
         result = await spec.tool.coroutine(runtime)
         assert result.status == 'error' and 'timed out' in result.content
         assert result.artifact['outcome'] == ('not_executed' if phase == 'resource_wait' else 'outcome_unknown')

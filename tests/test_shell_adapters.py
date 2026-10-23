@@ -1,5 +1,6 @@
 """Interpreter adapters preserve language, startup and host platform contracts."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from native_application_helpers import async_test
 
 import base64
@@ -23,7 +24,7 @@ async def test_bash_uses_no_profiles_and_inherits_environment_per_call(monkeypat
     monkeypatch.setenv('NAIYUE_WEB_TOKEN', 'synthetic-private')
     tool = create_session_bash_tool(settings=BashSettings(environment=EnvironmentSettings(
         values={'TEST_OVERRIDE': 'new'}, unset_env=['BASH_ENV', 'NAIYUE_WEB_TOKEN'])))
-    context = {'workspace_root': tmp_path}
+    context = typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))
     command = 'printf "%s:%s:%s" "$TEST_PARENT" "$TEST_OVERRIDE" "$NAIYUE_WEB_TOKEN"; export ONLY_HERE=yes; cd /'
     first = (await invoke_tool_feedback(tool, {'command': command}, context=context, call_id='first', permission_mode='BypassApprovals'))
     assert first.status == 'success' and 'first:new:' in first.content
@@ -40,7 +41,7 @@ async def test_bash_combines_stdout_stderr_before_tail_capture(tmp_path):
     script = 'import os;os.write(1,b"out1\\n");os.write(2,b"err2\\n");os.write(1,b"out3\\n")'
     command = f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'
     tool = create_session_bash_tool(settings=BashSettings(max_output_lines=2))
-    result = (await invoke_tool_feedback(tool, {'command': command}, context={'workspace_root': tmp_path}, call_id='merged', permission_mode='BypassApprovals'))
+    result = (await invoke_tool_feedback(tool, {'command': command}, context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None)), call_id='merged', permission_mode='BypassApprovals'))
     assert result.status == 'success' and 'output:\nerr2\nout3\n' in result.content
     assert 'returned_lines=2-3' in result.content and 'truncated=true' in result.content
     assert 'raw_path=' in result.content and 'out1\n' not in result.content
@@ -81,7 +82,7 @@ async def test_missing_explicit_executable_has_no_fallback_but_tool_is_registere
     spec = create_session_powershell_tool(settings=PowerShellSettings(executable=str(tmp_path / 'missing')))
     assert spec.tool.name == 'powershell' and spec.tool.metadata['shell']['available'] is False
     assert 'available=false' in spec.tool.description
-    result = (await invoke_tool_feedback(spec, {'command': 'Write-Output ok'}, context={'workspace_root': tmp_path}, call_id='missing', permission_mode='BypassApprovals'))
+    result = (await invoke_tool_feedback(spec, {'command': 'Write-Output ok'}, context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None)), call_id='missing', permission_mode='BypassApprovals'))
     assert result.status == 'error' and 'interpreter is unavailable' in result.content
 
 

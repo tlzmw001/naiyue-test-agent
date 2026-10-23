@@ -1,5 +1,6 @@
 """Configured context budgets remain visible through the real agent call path."""
 
+from runtime_context_helpers import RunIdentity, typed_context
 from native_application_helpers import async_test
 
 from naiyue_test_agent.tools.permissions import ToolPermission
@@ -138,7 +139,7 @@ async def test_budget_observation_follows_model_switch_and_missing_usage(tmp_pat
             system_prompt='BASE', response_format=None,
             resolve_model=lambda sid, agent_path='root': (selected[sid], catalog.get(selected[sid])))
         with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-            await agent.ainvoke({'messages': [('user', 'SECRET_REQUEST')]}, context={'session_id': 's1'})
+            await agent.ainvoke({'messages': [('user', 'SECRET_REQUEST')]}, context=typed_context(identity=RunIdentity(session_id='s1')))
 
     events = [record.model_context_budget for record in caplog.records
               if hasattr(record, 'model_context_budget')]
@@ -191,7 +192,7 @@ async def test_budget_observation_on_model_error_preserves_failure(tmp_path, mon
             resolve_model=lambda _sid, agent_path='root': ('first', catalog.get('first')))
         with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
             with pytest.raises(RuntimeError) as caught:
-                await agent.ainvoke({'messages': [('user', 'SECRET_REQUEST')]}, context={'session_id': 's1'})
+                await agent.ainvoke({'messages': [('user', 'SECRET_REQUEST')]}, context=typed_context(identity=RunIdentity(session_id='s1')))
 
     assert caught.value is failure
     budgets = [record.model_context_budget for record in caplog.records
@@ -249,7 +250,7 @@ async def test_preflight_uses_final_request_and_does_not_change_model_call(
     monkeypatch.setattr('naiyue_test_agent.agent_runtime.context_observation'
                         '.count_tokens_approximately', estimate)
     request = SimpleNamespace(
-        runtime=SimpleNamespace(context={'session_id': 's1', 'run_id': 'r1'}),
+        runtime=SimpleNamespace(context=typed_context(identity=RunIdentity(session_id='s1', run_id='r1'))),
         model=SimpleNamespace(metadata={
             'naiyue_model_limits': {
                 'model_id': 'A', 'context_window_tokens': 100,
@@ -302,7 +303,7 @@ async def test_preflight_estimation_failure_is_visible_and_does_not_block(monkey
     monkeypatch.setattr('naiyue_test_agent.agent_runtime.context_observation'
                         '.count_tokens_approximately', fail_estimate)
     request = SimpleNamespace(
-        runtime=SimpleNamespace(context={'session_id': 's1'}),
+        runtime=SimpleNamespace(context=typed_context(identity=RunIdentity(session_id='s1'))),
         model=SimpleNamespace(metadata={
             'naiyue_model_limits': {
                 'model_id': 'A', 'context_window_tokens': 100,

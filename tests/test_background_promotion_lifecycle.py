@@ -1,5 +1,6 @@
 """Promotion at the real graph, pending-spawn and cancellation boundaries."""
 
+from dataclasses import replace
 import asyncio
 import json
 from threading import Event
@@ -158,7 +159,7 @@ def test_short_managed_command_reports_final_actual_output(monkeypatch, tmp_path
         monkeypatch.setattr(shell.HostProcessRunner, 'run', run)
         spec = create_session_bash_tool()
         runtime = runtime_for(spec, {'command': 'test'}, tmp_path)
-        runtime.context.update(run_id='r', _process_tasks=manager)
+        runtime.context = replace(runtime.context, scope=replace(runtime.context.scope, identity=replace(runtime.context.scope.identity, run_id='r'), capabilities=replace(runtime.context.scope.capabilities, process_tasks=manager)))
         reports = []
         runtime.stream_writer = reports.append
         try:

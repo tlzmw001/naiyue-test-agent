@@ -1,5 +1,7 @@
 """Read-only composition uses real model inputs, not presentation history."""
 
+from runtime_context_helpers import RunIdentity, ModelCallState, typed_context
+
 import asyncio
 import json
 
@@ -189,7 +191,7 @@ def test_images_and_summary_are_counted_once_without_encoded_pixels():
 
 def test_saved_snapshot_rejects_unexpected_content_fields(caplog):
     from naiyue_test_agent.agent_runtime.context_usage import read_snapshot, request_snapshot, finish_snapshot, estimate_context
-    snapshot = finish_snapshot(request_snapshot({'_naiyue_model_call_id': 'call', '_naiyue_model_id': 'A', 'run_id': 'run'},
+    snapshot = finish_snapshot(request_snapshot(typed_context(identity=RunIdentity('s', 'run'), model_call=ModelCallState('call', 'A')),
         estimate_context(model_with_limits([]), SystemMessage(content='base'), [], [])))
     assert read_snapshot(snapshot) == snapshot
     snapshot['estimate']['groups'][0]['body'] = 'SECRET_BODY'
@@ -258,7 +260,7 @@ def test_oversized_stat_event_keeps_its_sequence_with_an_omitted_payload():
             max_frame_bytes=800, event_capacity=20), lambda _: None)
         publisher = RunEventPublisher('s', 'r', (job.observe,))
         publisher.publish('run_started', RunStartedData('message'))
-        snapshot = request_snapshot({'_naiyue_model_call_id': 'call', '_naiyue_model_id': 'A', 'run_id': 'r'},
+        snapshot = request_snapshot(typed_context(identity=RunIdentity('s', 'r'), model_call=ModelCallState('call', 'A')),
             estimate_context(model_with_limits([]), SystemMessage(content='base'), [], []))
         publisher.publish('model_context_snapshot', ModelContextSnapshotData('call', json.dumps(snapshot)))
         publisher.publish('run_finished', RunFinishedData('completed'))

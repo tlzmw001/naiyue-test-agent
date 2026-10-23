@@ -1,5 +1,6 @@
 """Observability failures preserve business results, exceptions, and control."""
 
+from runtime_context_helpers import RunIdentity, RunObservationPorts, typed_context
 from naiyue_test_agent.agent_runtime.async_message_observation import ainvoke_with_message_observation
 
 from native_application_helpers import async_test
@@ -40,9 +41,10 @@ async def test_old_invoke_object_keeps_exact_arguments_and_original_result():
             return returned
 
     pub, events = publisher()
-    result = (await ainvoke_with_message_observation(OldAgent(), 'input', context={'x': 1},
+    context = typed_context()
+    result = (await ainvoke_with_message_observation(OldAgent(), 'input', context=context,
                                             config={'y': 2}, publisher=pub))
-    assert result is returned and calls == [('input', {'context': {'x': 1}, 'config': {'y': 2}})]
+    assert result is returned and calls == [('input', {'context': context, 'config': {'y': 2}})]
     assert events[-1].data.reason == 'unsupported_state_interface'
     assert messages(events) == []
 
@@ -103,7 +105,7 @@ async def test_model_failure_or_control_keeps_original_and_only_observed_input(m
             monkeypatch.setattr(app._agent, 'astream', fail_stream)
             pub = RunEventPublisher(sid, 'control', (events.append,))
             (await ainvoke_with_message_observation(app._agent, {'messages': [('user', 'input')]},
-                context={'session_id': sid, 'run_id': 'control', '_run_event_publisher': pub},
+                context=typed_context(identity=RunIdentity(session_id=sid, run_id='control'), observation=RunObservationPorts(publisher=pub)),
                 config={'configurable': {'thread_id': app._sessions.require(sid).get_thread_id()}}, publisher=pub))
         else:
             await app.arun(sid, [('user', 'input')])
@@ -191,7 +193,7 @@ async def test_non_json_content_without_saver_is_reported_and_result_unchanged()
                                 resolve_model=lambda _s, agent_path='root': ('A', model), )
     pub, events = publisher()
     result = (await ainvoke_with_message_observation(graph, {'messages': [bad]},
-                                            context={'session_id': 'session', 'run_id': 'run'},
+                                            context=typed_context(identity=RunIdentity(session_id='session', run_id='run')),
                                             config={}, publisher=pub))
     assert result['messages'][0] is bad
     assert result['messages'][-1].content == 'done'
@@ -224,7 +226,7 @@ async def test_iterator_close_secondary_failure_preserves_primary_and_attempts_c
     monkeypatch.setattr(graph, 'astream', lambda *_a, **_kw: BrokenIterator())
     pub, events = publisher()
     with pytest.raises(RuntimeError) as caught:
-        (await ainvoke_with_message_observation(graph, {}, context={}, config={}, publisher=pub))
+        (await ainvoke_with_message_observation(graph, {}, context=typed_context(), config={}, publisher=pub))
     assert caught.value is primary and closed == [True]
     assert messages(events) == [] and 'PRIVATE_' not in caplog.text
 
@@ -278,7 +280,7 @@ async def test_state_adapter_result_equals_native_invoke_with_all_output_fields(
     graph = build_runtime_agent(model, tool_registry=_runtime_registry_3, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_3: names, system_prompt='', response_format=None,
                                 resolve_model=lambda _s, agent_path='root': ('A', model), )
     input = {'messages': [HumanMessage(id='input', content='run')]}
-    context = {'session_id': 'session', 'run_id': 'run'}
+    context = typed_context(identity=RunIdentity(session_id='session', run_id='run'))
     original = (await graph.ainvoke(input, context=context, config={}))
     pub, events = publisher()
     observed = (await ainvoke_with_message_observation(graph, input, context=context, config={}, publisher=pub))
@@ -337,7 +339,7 @@ async def test_iterator_without_optional_close_preserves_native_stream_return(mo
             return {'type': 'values', 'ns': (), 'data': expected}
     monkeypatch.setattr(app._agent, 'astream', lambda *_a, **_kw: BareIterator())
     pub, events = publisher()
-    result = (await ainvoke_with_message_observation(app._agent, {}, context={},
+    result = (await ainvoke_with_message_observation(app._agent, {}, context=typed_context(),
                                             config={'configurable': {'thread_id': 'thread'}}, publisher=pub))
     assert result is expected
     assert [e.data.message_id for e in messages(events)] == ['input']

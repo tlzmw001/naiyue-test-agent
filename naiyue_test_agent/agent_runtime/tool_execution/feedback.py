@@ -30,13 +30,13 @@ def tool_error_feedback(error, request):
             'Use the available context to decide the next step.'
         )
     try:
-        context = request.runtime.context or {}
+        context = request.runtime.context
         logger.warning('tool_error_converted error_type=%s', safe_error_type(error), extra={'tool_error': {
             'event': 'tool_error_converted',
             'tool_name': event_label(request.tool_call['name']),
             'tool_call_id': event_label(request.tool_call['id']),
-            'session_id': event_label(context.get('session_id')),
-            'run_id': event_label(context.get('run_id')),
+            'session_id': event_label(context.scope.identity.session_id),
+            'run_id': event_label(context.scope.identity.run_id),
             'error_type': safe_error_type(error),
             'cause_type': safe_error_type(error.__cause__) if error.__cause__ is not None else None,
         }})

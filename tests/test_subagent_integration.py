@@ -14,7 +14,7 @@ from pydantic import Field
 from native_application_helpers import async_test
 from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime.run_control import native_async_model
-from naiyue_test_agent.agent_runtime.run_services import current_run_services
+from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
 from naiyue_test_agent.application.async_persistent import open_async_persistent_application
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import SubAgentSpec, create_subagent_tool, create_session_read_tool, create_session_write_tool
@@ -101,11 +101,11 @@ class SyncChildModel(BaseChatModel):
         return self
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        services = current_run_services()
-        self.trace.append(('sdk_started', get_ident(), services.publisher.source.agent_path))
+        services = current_run_scope()
+        self.trace.append(('sdk_started', get_ident(), services.observation.publisher.source.agent_path))
         self.loop.call_soon_threadsafe(self.entered.set)
         assert self.release.wait(5)
-        self.trace.append(('sdk_finished', get_ident(), services.publisher.source.agent_path))
+        self.trace.append(('sdk_finished', get_ident(), services.observation.publisher.source.agent_path))
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content='late SDK response'))])
 
 
@@ -154,7 +154,7 @@ async def test_sync_sdk_fallback_waits_for_real_worker_before_releasing_owner(mo
         assert [item[0] for item in child.trace] == ['sdk_started', 'sdk_finished']
         assert instance['settled'] and instance['status'] == 'stopped' and 'driver' not in instance
         assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values()) and not app._sessions.require(sid).describe_session()['busy']
-        assert current_run_services() is None
+        assert current_run_scope() is None
         assert not any(e.source and e.event_type == 'run_finished' and e.data.status == 'completed' for e in events)
         assert closed == (['closed'] if action == 'close' else [])
     finally:

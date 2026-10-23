@@ -1,5 +1,6 @@
 """Cold approval recovery keeps the official interrupt and executes only on decision."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from native_application_helpers import async_test
 
 import asyncio
@@ -88,7 +89,7 @@ async def test_reopened_mixed_sequential_batch_waits_then_runs_once(monkeypatch,
     await scenario()
 
 
-@pytest.mark.parametrize('change', ['deny', 'target', 'environment', 'subject', 'run', 'session_allow'])
+@pytest.mark.parametrize('change', ['deny', 'target', 'environment', 'subject', 'run', 'session_allow', 'execution_kind'])
 @async_test
 async def test_revalidation_failure_has_no_writes_or_installed_session(monkeypatch, tmp_path, change):
     row, original = await approval_snapshot(monkeypatch, tmp_path)
@@ -98,6 +99,9 @@ async def test_revalidation_failure_has_no_writes_or_installed_session(monkeypat
         storage = app._storage
         if change == 'run':
             storage.connection.execute('UPDATE naiyue_sessions SET run_id=NULL WHERE session_id=?', (row['session_id'],))
+            storage.connection.commit()
+        elif change == 'execution_kind':
+            storage.connection.execute("UPDATE naiyue_sessions SET execution_root_kind='worktree' WHERE session_id=?", (row['session_id'],))
             storage.connection.commit()
         elif change not in ('deny', 'target'):
             snapshot = original._replace(values=deepcopy(original.values))
@@ -158,7 +162,7 @@ async def test_old_allow_must_be_proven_by_current_local_policy_without_auto(mon
         sid = await app.acreate_workspace_session('A', root)
         if source == 'session_allow':
             call = prepare_permission_call(request.tool_calls[0], app._tool_registry.get('read'),
-                {'session_id': sid, 'workspace_root': root}, settings.permissions, [])
+                typed_context(identity=RunIdentity(session_id=sid, execution_root=ExecutionRoot(root) if root is not None else None)), settings.permissions, [])
             owner, observation_run = app._sessions._admit(sid, 'allow-setup', 'message')
             run_id, observation = observation_run.run_id, observation_run.observation
             owner.remember_approved_rules(observation_run, [remembered_rule(call['subject'])])

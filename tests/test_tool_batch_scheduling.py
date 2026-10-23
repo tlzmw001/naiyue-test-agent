@@ -1,5 +1,6 @@
 """Batch scheduling through the actual asynchronous create_agent assembly."""
 
+from runtime_context_helpers import RunIdentity, typed_context
 from native_application_helpers import async_test
 
 from naiyue_test_agent.agent_runtime.async_invocation import ainvoke_agent_run
@@ -324,7 +325,7 @@ async def test_missing_plan_fails_closed_for_every_call_in_mixed_batch():
         tool_call=calls[0],
         state={'messages': [AIMessage(content='', tool_calls=calls)],
                'tool_execution': {'tool_names': ['read_probe', 'write_probe']}},
-        runtime=SimpleNamespace(context={}),
+        runtime=SimpleNamespace(context=typed_context()),
     )
     with pytest.raises(ToolBatchSchedulingError, match='plan'):
         async def downstream(_request):
@@ -396,7 +397,7 @@ async def test_sequential_batch_progresses_with_bounded_graph_concurrency(concur
     ])
     result = (await agent.ainvoke(
         {'messages': [('user', 'run all')]},
-        context={'session_id': f'bounded-{concurrency}'},
+        context=typed_context(identity=RunIdentity(session_id=f'bounded-{concurrency}')),
         config={'max_concurrency': concurrency},
     ))
     assert trace == ['read', 'write', 'final']

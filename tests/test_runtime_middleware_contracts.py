@@ -1,5 +1,7 @@
 """Observe real production hooks and wrappers without replacing their behavior."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
+
 import asyncio
 from functools import wraps
 
@@ -39,7 +41,7 @@ def middleware_trace(monkeypatch):
         @wraps(original)
         async def record(self, state, runtime):
             latest = next(m for m in reversed(state['messages']) if isinstance(m, AIMessage))
-            key = (runtime.context.get('agent_path', 'root'), latest.id)
+            key = ((runtime.context.scope.identity.agent_path if runtime.context.scope.identity.agent_path is not None else 'root'), latest.id)
             trace.append((label + '.enter', *key, None))
             result = await original(self, state, runtime)
             calls = (result or {}).get('tool_execution', {}).get('calls', [])
@@ -60,7 +62,7 @@ def middleware_trace(monkeypatch):
             # Class methods receive self; the shared observation instance may
             # have a bound method restored by an earlier fault-injection test.
             request, handler = args[-2:]
-            key = (request.runtime.context.get('agent_path', 'root'), request.tool_call['id'])
+            key = ((request.runtime.context.scope.identity.agent_path if request.runtime.context.scope.identity.agent_path is not None else 'root'), request.tool_call['id'])
             trace.append((label + '.enter', *key, None))
             try:
                 result = await original(*args)
@@ -82,8 +84,8 @@ def middleware_trace(monkeypatch):
     def mark_ready(self, state, runtime):
         result = ready(self, state, runtime)
         latest = next(m for m in reversed(state['messages']) if isinstance(m, AIMessage))
-        turns = runtime.context['_turn_observer']
-        trace.append(('ready', runtime.context.get('agent_path', 'root'), latest.id,
+        turns = runtime.context.scope.observation.turns
+        trace.append(('ready', (runtime.context.scope.identity.agent_path if runtime.context.scope.identity.agent_path is not None else 'root'), latest.id,
                       (turns._ready, turns._phase)))
         return result
 
@@ -93,8 +95,8 @@ def middleware_trace(monkeypatch):
     @wraps(authorize)
     def permit(self, request):
         result = authorize(self, request)
-        binding = None if isinstance(result, ToolMessage) else result.runtime.context.get('_execution_permit')
-        trace.append(('authorize', request.runtime.context.get('agent_path', 'root'), request.tool_call['id'], binding))
+        binding = None if isinstance(result, ToolMessage) else (result.runtime.context.authorization.permit if result.runtime.context.authorization is not None else None)
+        trace.append(('authorize', (request.runtime.context.scope.identity.agent_path if request.runtime.context.scope.identity.agent_path is not None else 'root'), request.tool_call['id'], binding))
         return result
 
     monkeypatch.setattr(ExecutionAuthorizationMiddleware, '_authorize', permit)
@@ -167,7 +169,7 @@ async def test_real_authorization_precedes_tool_and_error_boundary_preserves_fai
     public, execution = build_tool_schemas('BoundaryProbeInput', BaseModel)
 
     @tool(args_schema=execution)
-    def probe(runtime: ToolRuntime[dict, dict]) -> str:
+    def probe(runtime: ToolRuntime[RuntimeContext]) -> str:
         """Fail after checking the actual execution permit."""
         binding = require_tool_permit(runtime)
         trace.append(('body', 'root', runtime.tool_call_id, binding))

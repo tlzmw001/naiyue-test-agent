@@ -1,5 +1,6 @@
 """Per-tool limits must affect public schemas and actual file IO together."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from naiyue_test_agent import settings as application_settings
 
 from native_application_helpers import async_test
@@ -66,9 +67,9 @@ async def test_ls_config_controls_default_explicit_limit_and_feedback(tmp_path):
         (tmp_path / name).touch()
     tool = tools.create_session_ls_tool(settings=tools.LsSettings(
         default_limit=2, max_limit=3, max_output_bytes=128))
-    default = (await invoke_tool_feedback(tool, {}, call_id='default', context={'workspace_root': tmp_path}))
-    larger = (await invoke_tool_feedback(tool, {'limit': 3}, call_id='larger', context={'workspace_root': tmp_path}))
-    invalid = (await invoke_tool_feedback(tool, {'limit': 4}, call_id='invalid', context={'workspace_root': tmp_path}))
+    default = (await invoke_tool_feedback(tool, {}, call_id='default', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
+    larger = (await invoke_tool_feedback(tool, {'limit': 3}, call_id='larger', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
+    invalid = (await invoke_tool_feedback(tool, {'limit': 4}, call_id='invalid', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
     assert default.content == 'a\nb\n[ls: truncated at 2 entries; narrow the directory or limit]'
     assert larger.content == 'a\nb\nc\n[ls: truncated at 3 entries; narrow the directory or limit]'
     assert invalid.status == 'error' and '1 to 3' in invalid.content
@@ -82,7 +83,7 @@ async def test_ls_output_budget_counts_utf8_and_reports_its_actual_limit(tmp_pat
     (tmp_path / '中').touch()
     (tmp_path / '文').touch()
     tool = tools.create_session_ls_tool(settings=tools.LsSettings(max_output_bytes=6))
-    result = (await invoke_tool_feedback(tool, {}, call_id='ls', context={'workspace_root': tmp_path}))
+    result = (await invoke_tool_feedback(tool, {}, call_id='ls', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
     assert result.status == 'success'
     assert result.content == '中\n[ls: truncated at 6 bytes output; narrow the directory or limit]'
 
@@ -151,7 +152,7 @@ async def test_write_and_edit_keep_independent_utf8_input_budgets(tmp_path):
     target.write_text('旧', encoding='utf-8')
     writer = tools.create_session_write_tool(settings=tools.WriteSettings(max_input_bytes=4))
     editor = tools.create_session_edit_tool(settings=tools.EditSettings(max_input_bytes=9))
-    context = {'workspace_root': tmp_path}
+    context = typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))
     failed = (await invoke_tool_feedback(writer, {'path': 'doc', 'content': '中文'},
                                   call_id='write', context=context))
     assert failed.status == 'error' and 'size limit' in failed.content
@@ -173,7 +174,7 @@ async def test_edit_input_budget_does_not_limit_original_file_size(tmp_path):
     (tmp_path / 'large').write_text(original)
     editor = tools.create_session_edit_tool(settings=tools.EditSettings(max_input_bytes=2))
     result = (await invoke_tool_feedback(editor, {'path': 'large', 'edits': [
-        {'oldText': 'a', 'newText': 'b'}]}, call_id='edit', context={'workspace_root': tmp_path}))
+        {'oldText': 'a', 'newText': 'b'}]}, call_id='edit', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
     assert result.status == 'success'
     assert (tmp_path / 'large').read_text() == original[:-1] + 'b'
 

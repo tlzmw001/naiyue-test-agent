@@ -1,5 +1,6 @@
 """Observe the framework-side model request without recording its contents."""
 
+from runtime_context_helpers import RunIdentity, typed_context
 from naiyue_test_agent.agent_runtime.async_invocation import ainvoke_agent_run
 
 from native_application_helpers import async_test, build_application
@@ -132,7 +133,7 @@ async def test_failed_model_call_still_records_safe_request_and_propagates(caplo
 @async_test
 async def test_unserializable_schema_warns_without_blocking_model_call(caplog):
     request = SimpleNamespace(
-        runtime=SimpleNamespace(context={'session_id': 's1', 'run_id': 'r1'}),
+        runtime=SimpleNamespace(context=typed_context(identity=RunIdentity(session_id='s1', run_id='r1'))),
         messages=[HumanMessage(content='SECRET_REQUEST')],
         system_message=SystemMessage(content='BASE'),
         tools=[{'private': object()}],

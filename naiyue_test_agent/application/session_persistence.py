@@ -83,7 +83,8 @@ class SessionPersistence:
                 or 'history' not in session.get_active_tools(agent_path)):
             raise ToolException('history_scope_mismatch: the calling session or role is unavailable.')
         from naiyue_test_agent.tools.permissions import require_execution_directory
-        require_execution_directory({**session.snapshot_for_run()})
+        facts = session.snapshot_for_run()
+        require_execution_directory(facts['execution_root'], facts['project_id'])
         try:
             return await run_blocking(self.storage.read_history_tool, source_session_id, current['project_id'], request, settings)
         except SessionPersistenceError as error:
@@ -102,7 +103,8 @@ class SessionPersistence:
                 or 'memory' not in session.get_active_tools(agent_path)):
             raise ToolException('memory_scope_mismatch: the calling session or role is unavailable.')
         from naiyue_test_agent.tools.permissions import require_execution_directory
-        require_execution_directory({**session.snapshot_for_run()})
+        facts = session.snapshot_for_run()
+        require_execution_directory(facts['execution_root'], facts['project_id'])
         if self._memory is None:
             raise ToolException('memory_unavailable: persistent memory is unavailable.')
         try:
@@ -440,7 +442,7 @@ class SessionPersistence:
         if action == 'restore_approval':
             if classification['kind'] != 'pending_approval':
                 raise SessionPersistenceError('session_recovery_blocked')
-            pending = await run_blocking(validate_saved_approval, self._permission_settings, self._tool_registry, row, snapshot, root, names)
+            pending = await run_blocking(validate_saved_approval, self._permission_settings, self._tool_registry, row, snapshot, names)
             try:
                 updates = await await_settled(collect_chat_updates(agent, self.storage, session_id, snapshot=snapshot))
                 await run_blocking(self.storage.finish_run, session_id, 'interrupted', actual, '', 'interrupted', updates)

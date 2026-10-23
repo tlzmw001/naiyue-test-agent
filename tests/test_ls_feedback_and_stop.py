@@ -1,5 +1,6 @@
 """A directory result explicitly accounts for failed entries and cooperative stop."""
 
+from runtime_context_helpers import typed_context
 from native_application_helpers import async_test
 
 import asyncio
@@ -70,7 +71,7 @@ async def test_open_failure_has_specific_safe_message(monkeypatch, tmp_path, cap
 def test_already_stopped_listing_never_opens_directory(monkeypatch, tmp_path):
     visits = []
     monkeypatch.setattr(ls_module.os, 'scandir', lambda _: visits.append(True))
-    runtime = SimpleNamespace(context={'_run_control': SimpleNamespace(requested=True)})
+    runtime = SimpleNamespace(context=typed_context(control=SimpleNamespace(requested=True)))
     with pytest.raises(ToolException, match='stopped'):
         ls_module._list_directory(tmp_path, 2, runtime, settings=LsSettings())
     assert visits == []
@@ -85,7 +86,7 @@ def test_stop_during_enumeration_closes_iterator_and_does_not_expose_unfiltered_
         pytest.fail('A stopped listing must not keep enumerating')
     scan = Scan(entries())
     monkeypatch.setattr(ls_module.os, 'scandir', lambda _: scan)
-    runtime = SimpleNamespace(context={'_run_control': control})
+    runtime = SimpleNamespace(context=typed_context(control=control))
     with pytest.raises(ToolException, match='stopped') as caught:
         ls_module._list_directory(tmp_path, 2, runtime, settings=LsSettings())
     assert scan.closed and 'PRIVATE' not in str(caught.value)

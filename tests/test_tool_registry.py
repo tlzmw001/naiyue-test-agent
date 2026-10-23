@@ -1,5 +1,7 @@
 """Only valid, explicit tool definitions enter an application."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
+
 from native_application_helpers import async_test, build_application
 
 from naiyue_test_agent.tools.permissions import ToolPermission
@@ -96,7 +98,7 @@ def test_public_model_and_execution_model_share_validation_and_hide_runtime():
     from naiyue_test_agent.tools.schemas import build_tool_schemas
     public, execution = build_tool_schemas('PublicProbeInput', ProbeInput)
     @tool(args_schema=execution)
-    def probe(runtime: ToolRuntime[dict, dict], value: int = 1) -> str:
+    def probe(runtime: ToolRuntime[RuntimeContext], value: int = 1) -> str:
         """Return a value with trusted runtime context."""
         return str(value)
     spec = ToolSpec(probe, public, permissions=ToolPermission(default='allow'))

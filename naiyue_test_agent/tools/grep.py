@@ -1,5 +1,6 @@
 """Native rg streaming over authorized file groups, without content pre-reading."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 import asyncio
 import base64
 import json
@@ -87,7 +88,7 @@ class _GrepSearch:
         if self.binary is None:
             raise ToolException(GREP_NO_RG)
         self.root = target if target.is_dir() else target.parent
-        self.control = _SearchControl(runtime.context.get('_run_control'))
+        self.control = _SearchControl(runtime.context.scope.control)
         self.deadline = asyncio.get_running_loop().time() + timeout if timeout else None
         self.pattern, self.glob = pattern, glob
         self.ignore_case, self.literal, self.context, self.limit = ignore_case, literal, context, limit
@@ -313,18 +314,18 @@ def create_session_grep_tool(*, settings=None, process_settings=None, progress_s
         context=(int, Field(default=settings.default_context_lines, ge=0, le=settings.max_context_lines)),
         limit=(int, Field(default=settings.default_limit, ge=1, le=settings.max_limit)))
 
-    def search_files(pattern: str, runtime: ToolRuntime[dict, dict], path: str = '.',
+    def search_files(pattern: str, runtime: ToolRuntime[RuntimeContext], path: str = '.',
                      glob: str | None = None, ignoreCase: bool = False, literal: bool = False,
                      context: int = settings.default_context_lines, limit: int = settings.default_limit,
                      timeout: int | None = None) -> str:
         """Search authorized files with native rg regex, literal, glob and context."""
         return run_async_sync(lambda: asearch_files(pattern, runtime, path, glob, ignoreCase, literal, context, limit, timeout))
 
-    async def asearch_files(pattern: str, runtime: ToolRuntime[dict, dict], path: str = '.',
+    async def asearch_files(pattern: str, runtime: ToolRuntime[RuntimeContext], path: str = '.',
                             glob: str | None = None, ignoreCase: bool = False, literal: bool = False,
                             context: int = settings.default_context_lines, limit: int = settings.default_limit,
                             timeout: int | None = None) -> str:
-        root = runtime.context.get('workspace_root')
+        root = runtime.context.scope.identity.execution_path
         if not isinstance(root, Path) or not root.is_absolute():
             raise ToolException(GREP_NO_WORKSPACE)
         target = require_file_target(runtime, path, operation='search')

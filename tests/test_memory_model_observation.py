@@ -1,5 +1,6 @@
 """Memory uses existing model facts and a separate observed execution."""
 
+from runtime_context_helpers import identity_for, typed_scope
 from uuid import uuid4
 import asyncio
 
@@ -7,7 +8,7 @@ import pytest
 
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher
 from naiyue_test_agent.agent_runtime.model_usage_observation import ModelUsageCallback
-from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
+from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
 from naiyue_test_agent.application.run_events import RunObservation
 from naiyue_test_agent.application.session_storage import SessionStorage
 from native_application_helpers import async_test
@@ -22,7 +23,7 @@ async def test_memory_invocation_keeps_existing_pair_and_independent_run(tmp_pat
     publisher = RunEventPublisher('s', 'memory-run', (events.append,))
     observation = RunObservation(publisher, mode='memory')
     observation.start()
-    with observation.bind():
+    with observation.bind(identity=identity_for(observation.publisher)):
         handler = ModelUsageCallback()
         await handler.on_chat_model_start({}, [['PRIVATE_PROMPT']], run_id=identity,
             metadata=metadata(), tags=['naiyue_memory'])
@@ -73,7 +74,7 @@ async def test_memory_invocation_keeps_existing_pair_and_independent_run(tmp_pat
 async def test_conflicting_memory_tag_does_not_fabricate_a_purpose(caplog):
     from naiyue_test_agent.agent_runtime.stream_events import MEMORY_TAG, SUMMARY_TAG
     events, identity = [], uuid4()
-    with bind_run_services(RunServices(publisher=RunEventPublisher('s', 'memory-run', (events.append,)))):
+    with bind_run_scope(typed_scope(publisher=RunEventPublisher('s', 'memory-run', (events.append,)))):
         handler = ModelUsageCallback()
         await handler.on_chat_model_start({}, [], run_id=identity, metadata=metadata(),
             tags=[MEMORY_TAG, SUMMARY_TAG])
@@ -97,19 +98,19 @@ def test_cli_memory_purpose_and_execution_mode_are_named():
 
 @async_test
 async def test_cancelled_memory_call_returns_to_parent_observation_without_reusing_root_id():
-    from naiyue_test_agent.agent_runtime.run_services import current_run_services
+    from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
     from naiyue_test_agent.agent_runtime.stream_events import MEMORY_TAG
     root_events, memory_events = [], []
-    root = RunServices(publisher=RunEventPublisher('s', 'root-run', (root_events.append,)))
+    root = typed_scope(publisher=RunEventPublisher('s', 'root-run', (root_events.append,)))
     observation = RunObservation(RunEventPublisher('s', 'memory-run', (memory_events.append,)), mode='memory')
-    with bind_run_services(root):
+    with bind_run_scope(root):
         observation.start()
-        with observation.bind():
+        with observation.bind(identity=identity_for(observation.publisher)):
             handler, identity = ModelUsageCallback(), uuid4()
             await handler.on_chat_model_start({}, [], run_id=identity, metadata=metadata(), tags=[MEMORY_TAG])
             await handler.on_llm_error(asyncio.CancelledError(), run_id=identity)
             observation.status = 'stopped'
-        assert current_run_services() is root
+        assert current_run_scope() is root
         observation.finish(False)
     assert root_events == []
     assert memory_events[-2].data.status == 'cancelled'

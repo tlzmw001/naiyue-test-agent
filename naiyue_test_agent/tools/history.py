@@ -1,5 +1,6 @@
 """Read saved workspace conversations without loading or running their agents."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 import json
 from typing import Literal
 
@@ -49,20 +50,20 @@ def create_history_tool(*, settings=None):
     settings = settings or HistorySettings()
     public, execution = build_tool_schemas('HistoryInput', HistoryInput)
 
-    async def execute(runtime: ToolRuntime[dict, dict], **arguments):
+    async def execute(runtime: ToolRuntime[RuntimeContext], **arguments):
         request = public.model_validate(arguments).model_dump(mode='json')
         permit = require_tool_permit(runtime)
         batch = runtime.state.get('tool_execution', {})
         call = next((c for c in batch.get('calls', []) if c['id'] == runtime.tool_call_id), None)
-        if (call is None or permit != permission_binding(runtime.context, batch.get('batch_id'), call)
+        if (call is None or permit != permission_binding(runtime.context.scope.identity, batch.get('batch_id'), call)
                 or permit.get('tool_name') != 'history' or permit['subject'].get('args') != request):
             raise PermissionMechanismError('History query does not match its execution permit')
-        port = runtime.context.get('aquery_history')
+        port = runtime.context.scope.capabilities.history
         if not callable(port):
             raise ToolException('history_unavailable: saved workspace history is unavailable.')
-        result = await port(source_session_id=runtime.context['session_id'],
-            workspace_root=runtime.context.get('workspace_root'),
-            agent_path=runtime.context.get('agent_path', 'root'), request=request, settings=settings)
+        result = await port(source_session_id=runtime.context.scope.identity.session_id,
+            workspace_root=runtime.context.scope.identity.execution_path,
+            agent_path=runtime.context.scope.identity.agent_path, request=request, settings=settings)
         return json.dumps(result, ensure_ascii=False)
 
     item = StructuredTool.from_function(coroutine=execute, name='history', args_schema=execution,

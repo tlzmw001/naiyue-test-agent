@@ -37,14 +37,14 @@ class ObservedHumanInTheLoopMiddleware(HumanInTheLoopMiddleware):
     @staticmethod
     def _stop_update(state, runtime):
         from ..active_stop import StopBoundaryMiddleware
-        control = (runtime.context or {}).get('_run_control')
+        control = runtime.context.scope.control
         if control is not None and control.requested:
             return StopBoundaryMiddleware().after_model(state, runtime)
         return None
 
     def _create_action_and_config(self, tool_call, config, state, runtime):
         result = super()._create_action_and_config(tool_call, config, state, runtime)
-        controls = runtime.context.get('_control_observer') if runtime.context else None
+        controls = runtime.context.scope.observation.controls if runtime.context else None
         if controls is not None:
             observe(controls, controls.note_approval_candidate, tool_call['id'])
         return result
@@ -54,7 +54,7 @@ class ObservedHumanInTheLoopMiddleware(HumanInTheLoopMiddleware):
         stopped = self._stop_update(state, runtime)
         if stopped is not None:
             return stopped
-        controls = runtime.context.get('_control_observer') if runtime.context else None
+        controls = runtime.context.scope.observation.controls if runtime.context else None
         if controls is not None:
             observe(controls, controls.begin_approval_hook)
         try:

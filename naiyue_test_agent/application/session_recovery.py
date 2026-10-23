@@ -8,6 +8,8 @@ from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from naiyue_test_agent.tools.permissions import PermissionMechanismError
 from .session_approval import pending_tool_approval, is_pre_tool_approval
+from ..contracts.run_context import RunIdentity, RunScope, RuntimeContext
+from .execution_storage import root_from_row
 from .session_storage import SessionPersistenceError, STATES
 
 
@@ -151,7 +153,7 @@ def build_recovery_update(snapshot, record):
     return {'messages': additions, 'tool_execution': {}, 'run_stopped': False}
 
 
-def validate_saved_approval(settings, registry, row, snapshot, root, names):
+def validate_saved_approval(settings, registry, row, snapshot, names):
     """Recheck local authority; never load file contents, review with AI or grant access."""
     from naiyue_test_agent.agent_runtime.tool_execution.permissions import prepare_permission_call
     try:
@@ -171,7 +173,8 @@ def validate_saved_approval(settings, registry, row, snapshot, root, names):
         if not isinstance(selected, list) or not set(selected).issubset(subagent_request_tools(names, registry)):
             raise ValueError('Saved tools are unavailable')
         specs = {spec.tool.name: spec for spec in registry.select(selected)}
-        context = {'session_id': row['session_id'], 'agent_path': 'root', 'workspace_root': root}
+        context = RuntimeContext(RunScope(RunIdentity(row['session_id'],
+            project_id=row['project_id'], execution_root=root_from_row(row))))
         for saved in batch['calls']:
             current = prepare_permission_call(saved, specs[saved['name']], context, settings, [])
             if saved.get('validation') != 'valid' or current['validation'] != 'valid':

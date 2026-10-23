@@ -1,5 +1,6 @@
 """Disposable fixed-model continuation and SQLite metadata measurements."""
 
+from naiyue_test_agent.contracts.run_context import ExecutionRoot, RunIdentity, RunScope, RuntimeContext
 import argparse
 import asyncio
 from contextlib import asynccontextmanager
@@ -107,7 +108,7 @@ async def metadata_samples(root, counts, repeats):
         try:
             await asyncio.wait_for(entered.wait(), 10)
             owner = app._sessions.require(sid)
-            context = dict(session_id=sid, run_id=owner._run.run_id, agent_path='root', workspace_root=root)
+            context = RuntimeContext(scope=RunScope(identity=RunIdentity(session_id=sid, run_id=owner._run.run_id, agent_path='root', execution_root=ExecutionRoot(root) if root is not None else None)))
             current = 0
             for count in sorted(set(counts)):
                 for index in range(current, count):

@@ -1,5 +1,6 @@
 """Reject unusable model messages before LangChain can route their tools."""
 
+from runtime_context_helpers import RunIdentity, typed_context
 from native_application_helpers import async_test, build_application
 
 from naiyue_test_agent.tools.permissions import ToolPermission
@@ -105,9 +106,7 @@ async def test_model_hook_rejects_response_without_ai_message(result_messages, c
     middleware = make_model_selection_middleware(
         lambda _session, agent_path='root': ('A', model),
     )
-    request = SimpleNamespace(runtime=SimpleNamespace(context={
-        'session_id': 's', 'run_id': 'r',
-    }))
+    request = SimpleNamespace(runtime=SimpleNamespace(context=typed_context(identity=RunIdentity(session_id='s', run_id='r'))))
     request.override = lambda **_kwargs: request
     await middleware.abefore_model({}, request.runtime)
 

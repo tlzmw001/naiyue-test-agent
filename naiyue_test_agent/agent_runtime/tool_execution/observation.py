@@ -89,7 +89,7 @@ class ToolProgressObserver:
 
 def observe_tool_progress(context, operation, *args):
     """Optional observation must preserve graph controls and the primary work."""
-    observer = (context or {}).get('_tool_progress_observer')
+    observer = context.scope.observation.tool_progress if context is not None else None
     if observer is None:
         return
     try:
@@ -104,7 +104,7 @@ def observe_tool_progress(context, operation, *args):
 
 def _prepare_tool_call(request):
     context = request.runtime.context
-    run_id = context.get('run_id') if context else None
+    run_id = context.scope.identity.run_id if context else None
     correlation = {'run_id': run_id} if run_id else {}
     tool_fields = {
         'tool_name': request.tool_call['name'],

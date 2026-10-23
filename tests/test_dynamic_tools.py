@@ -1,5 +1,8 @@
 """One graph uses a session's selected definitions for each model request."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
+
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from native_application_helpers import async_test, build_application
 
 import inspect
@@ -53,7 +56,7 @@ class ValueInput(BaseModel):
 def definition(name='probe', *, calls=None, approved=False, sequential=False, **kwargs):
     public, execution = build_tool_schemas('ValueInput', ValueInput)
     @tool(name, args_schema=execution)
-    def probe(value: str, runtime: ToolRuntime[dict, dict]) -> str:
+    def probe(value: str, runtime: ToolRuntime[RuntimeContext]) -> str:
         """Return a supplied value with trusted context."""
         if approved:
             assert require_tool_permit(runtime)['args']['value'] == value
@@ -248,5 +251,5 @@ async def test_dynamic_approval_without_checkpointer_fails_before_execution(tmp_
         system_prompt='', response_format=None, resolve_model=lambda _, agent_path='root': ('A', model), )
     registry.register(definition('gated', approved=True, calls=calls))
     with pytest.raises(ValueError, match='checkpointer'):
-        (await graph.ainvoke({'messages': [('user', 'run')]}, context={'session_id': 's', 'workspace_root': tmp_path}))
+        (await graph.ainvoke({'messages': [('user', 'run')]}, context=typed_context(identity=RunIdentity(session_id='s', execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None))))
     assert calls == []

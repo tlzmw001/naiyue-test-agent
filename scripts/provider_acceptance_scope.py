@@ -22,7 +22,7 @@ class FixturePermission:
         path_field = getattr(self.original, 'path_field', None)
         if path_field is not None:
             path = Path(args[path_field])
-            requested = path if path.is_absolute() else Path(context['workspace_root']) / path
+            requested = path if path.is_absolute() else Path(context.scope.identity.execution_path) / path
             if not requested.resolve().is_relative_to(self.root):
                 raise FixtureBoundaryStop('acceptance_target_outside_fixture')
         subject = self.original.prepare(args, context)

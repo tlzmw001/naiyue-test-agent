@@ -10,7 +10,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime.async_utils import await_settled, run_blocking, acquire_blocking
 from naiyue_test_agent.contracts.failures import safe_error_type
-from naiyue_test_agent.agent_runtime.run_services import current_run_services
+from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
 from .async_event_stream import AsyncEventStream
 from .subagent_history import subagent_records
 
@@ -370,8 +370,8 @@ class AsyncApplication:
     async def aclose(self):
         if asyncio.get_running_loop() is not self._loop:
             raise RuntimeError('Async application must close on its owning event loop')
-        services = current_run_services()
-        if services is not None and services.publisher is not None:
+        services = current_run_scope()
+        if services is not None and services.observation.publisher is not None:
             raise RuntimeError('Cannot close the application from an active run')
         if asyncio.current_task() in self._operations.values() or asyncio.current_task() in self._tasks:
             raise RuntimeError('Cannot close the application from an active operation')

@@ -1,5 +1,6 @@
 """One user capability exposes delegation and bounded root-only discovery."""
 
+from runtime_context_helpers import typed_scope
 import json
 import asyncio
 
@@ -133,12 +134,13 @@ def test_candidate_status_is_metadata_only_and_does_not_claim_execution_admissio
 def test_list_projection_is_root_and_publisher_scope_only():
     from naiyue_test_agent.agent_runtime.events import RunEventPublisher
     from naiyue_test_agent.agent_runtime.invocation_context import make_invocation_context
-    from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
+    from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
     query = lambda **_: None
-    with bind_run_services(RunServices(publisher=RunEventPublisher('s', 'r', ()), alist_subagents=query)):
-        assert make_invocation_context('s', 'r', None, None, ())['alist_subagents'] is query
+    with bind_run_scope(typed_scope(publisher=RunEventPublisher('s', 'r', ()), list_subagents=query)):
+        assert make_invocation_context('s', 'r', None, None, ()).scope.capabilities.list_subagents is query
         for sid, run, path in [('other', 'r', 'root'), ('s', 'old', 'root'), ('s', 'r', 'root/tester/a')]:
-            assert 'alist_subagents' not in make_invocation_context(sid, run, None, None, (), agent_path=path)
+            with pytest.raises(ValueError, match='identity'):
+                make_invocation_context(sid, run, None, None, (), agent_path=path)
 
 
 def test_list_limits_load_from_example_and_custom_settings(tmp_path):

@@ -36,21 +36,15 @@ def execution_environment():
             else 'macos' if sys.platform == 'darwin' else 'linux'}
 
 
-def require_execution_directory(context):
-    """The legacy path projection is execution-only until typed-context migration."""
-    from naiyue_test_agent.execution_roots import ExecutionRoot, ExecutionRootUnavailable, validate_execution_root
+def require_execution_directory(root, project_id=None):
+    """Check the already selected execution identity before new filesystem work."""
+    from naiyue_test_agent.execution_roots import ExecutionRootUnavailable, validate_execution_root
     from langchain_core.tools import ToolException
-    path = context.get('workspace_root')
-    if not isinstance(path, Path) or not path.is_absolute():
-        return None
-    root = context.get('execution_root') or ExecutionRoot(path)
     try:
-        if root.path != path:
-            raise ExecutionRootUnavailable('wrong_project')
-        validate_execution_root(root, context.get('project_id'))
+        validate_execution_root(root, project_id)
     except ExecutionRootUnavailable as error:
         raise ToolException(str(error)) from error
-    return path
+    return root.path if root is not None else None
 
 
 @dataclass(frozen=True)
@@ -62,7 +56,7 @@ class ToolPermission:
             raise ValueError('Invalid default permission')
 
     def prepare(self, args, context):
-        root = context.get('workspace_root')
+        root = context.scope.identity.execution_path
         return {'operation': 'execute', 'workspace': str(root) if root is not None else None,
                 'target': args.get('command', json.dumps(args, ensure_ascii=False, sort_keys=True))}
 
@@ -80,16 +74,16 @@ class FilePermission:
     def prepare(self, args, context):
         from .paths import prepare_file_subject
         from langchain_core.tools import ToolException
-        require_execution_directory(context)
+        require_execution_directory(context.scope.identity.execution_root, context.scope.identity.project_id)
         try:
-            subject = prepare_file_subject(args[self.path_field], context.get('workspace_root'), self.operation)
+            subject = prepare_file_subject(args[self.path_field], context.scope.identity.execution_path, self.operation)
         except ToolException as error:
-            root = context.get('workspace_root')
+            root = context.scope.identity.execution_path
             message = self.workspace_message if not isinstance(root, Path) or not root.is_absolute() else self.unavailable_message
             if message is not None:
                 raise ToolException(message) from error
             raise
-        subject['resource_roots'] = [str(root) for root in context.get('read_resource_roots', ())
+        subject['resource_roots'] = [str(root) for root in (context.inputs.read_resource_roots if context.inputs.read_resource_roots is not None else ())
                                      if isinstance(root, Path) and root.is_absolute()]
         if self.unavailable_message is not None:
             subject['unavailable_message'] = self.unavailable_message
@@ -116,24 +110,27 @@ class FilePermission:
         return 'ask'
 
 
-def permission_binding(context, batch_id, call):
-    return {'session_id': context['session_id'], 'agent_path': context.get('agent_path', 'root'),
+def permission_binding(identity, batch_id, call):
+    return {'session_id': identity.session_id, 'agent_path': identity.agent_path,
             'batch_id': batch_id, 'call_id': call['id'], 'tool_name': call['name'],
             'args': call['args'], 'subject': call['subject']}
 
 
 def require_tool_permit(runtime):
-    context = runtime.context or {}
-    permit = context.get('_execution_permit')
+    context = runtime.context
+    from naiyue_test_agent.contracts.run_context import RuntimeContext
+    if not isinstance(context, RuntimeContext):
+        raise PermissionMechanismError('Current tool execution context is unavailable')
+    permit = (context.authorization.permit if context.authorization is not None else None)
     if (not isinstance(permit, dict) or permit.get('call_id') != runtime.tool_call_id
-            or permit.get('session_id') != context.get('session_id')
-            or permit.get('agent_path') != context.get('agent_path', 'root')
+            or permit.get('session_id') != context.scope.identity.session_id
+            or permit.get('agent_path') != context.scope.identity.agent_path
             or not isinstance(permit.get('subject'), dict)):
         raise PermissionMechanismError('Current tool execution permit is unavailable')
     if permit['subject'].get('execution_environment') != execution_environment():
         from langchain_core.tools import ToolException
         raise ToolException('Execution environment changed. Reissue the tool call for review.')
-    root = context.get('workspace_root')
+    root = context.scope.identity.execution_path
     if root is not None and permit['subject'].get('workspace') != str(root):
         raise PermissionMechanismError('Tool execution directory differs from its reviewed subject')
     return permit
@@ -141,7 +138,7 @@ def require_tool_permit(runtime):
 
 def require_file_target(runtime, path, *, operation):
     from .paths import verify_file_target
-    require_execution_directory(runtime.context)
+    require_execution_directory(runtime.context.scope.identity.execution_root, runtime.context.scope.identity.project_id)
     permit = require_tool_permit(runtime)
     subject = permit['subject']
     if subject.get('operation') != operation or path != subject['args'][subject['path_field']]:
@@ -206,10 +203,10 @@ def candidate_access(runtime, candidate, *, operation):
     subject['operation'] = operation
     subject.update(tool_name=parent['tool_name'], args={**parent['args'], parent['path_field']: str(candidate)},
                    execution_environment=parent['execution_environment'])
-    rules = context['_permission_rules']
+    rules = context.authorization.permission_rules
     if match_rules(rules.deny, subject, deny=True):
         return False, 'deny'
-    if match_rules(rules.allow, subject, deny=False) or matches_session_allow(context['_session_allow'], subject):
+    if match_rules(rules.allow, subject, deny=False) or matches_session_allow(context.authorization.session_allow, subject):
         return True, None
     windows = parent['execution_environment']['platform'] == 'windows'
     inside = permission_path(subject['resolved'], windows=windows).is_relative_to(

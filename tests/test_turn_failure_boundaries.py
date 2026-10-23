@@ -1,5 +1,6 @@
 """Turn failures retain primary errors and approval-attempt identity."""
 
+from runtime_context_helpers import RunIdentity, typed_context
 import asyncio
 
 from native_application_helpers import async_test
@@ -190,8 +191,8 @@ async def test_framework_and_process_control_do_not_fabricate_failed_or_cancelle
     app = await make_app(monkeypatch)
     from naiyue_test_agent.agent_runtime import async_invocation
     async def control(_agent, _input, *, context, config, publisher):
-        from naiyue_test_agent.agent_runtime.run_services import current_run_services
-        current_run_services().turns.begin('control-call')
+        from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
+        current_run_scope().observation.turns.begin('control-call')
         raise failure
     # Inject at the awaited stream boundary after starting the actual TurnObserver.
     # This keeps KeyboardInterrupt outside asyncio's internal model tasks.
@@ -278,7 +279,7 @@ async def test_dynamic_runtime_has_no_app_observation_and_fits_explicit_step_bud
     _runtime_names_1 = _runtime_registry_1.names()
     graph = build_runtime_agent(model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
                                 resolve_model=lambda _s, agent_path='root': ('A', model), )
-    result = (await graph.ainvoke({'messages': [('user', 'run')]}, context={'session_id': 'session'},
+    result = (await graph.ainvoke({'messages': [('user', 'run')]}, context=typed_context(identity=RunIdentity(session_id='session')),
                           config={'recursion_limit': 14}))
     assert [m.type for m in result['messages']] == ['human', 'ai', 'tool', 'ai']
     assert result['messages'][-1].content == 'done'

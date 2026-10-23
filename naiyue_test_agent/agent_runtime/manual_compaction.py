@@ -8,6 +8,7 @@ from .async_utils import await_settled
 from .context_compaction import _acompact_messages
 from .errors import ContextCompactionError
 from .invocation_context import make_invocation_context
+from .run_scope import current_run_scope
 from .message_observation import MessageStateObserver
 from .observation import observe
 from .run_control import UserStop, native_async_model
@@ -30,13 +31,14 @@ async def compact_checkpoint(agent, *, session_id, thread_id, run_id, model_id, 
         except Exception as error:
             raise ManualCompactionCommitError('Empty checkpoint creation is unconfirmed') from error
     messages = snapshot.values.get('messages', [])
-    context = make_invocation_context(session_id, run_id, None, None, ())
-    control = context.get('_run_control')
-    publisher = context.get('_run_event_publisher')
+    scope = current_run_scope()
+    context = make_invocation_context(session_id, run_id, scope.identity.execution_path if scope else None, None, ())
+    control = context.scope.control
+    publisher = context.scope.observation.publisher
     observer = MessageStateObserver(publisher) if publisher is not None else None
     if observer is not None:
         observe(observer, observer.seed, messages)
-    operation = context.get('_context_observer')
+    operation = context.scope.observation.context_operations
     status = 'skipped'
     update = None
     try:

@@ -1,5 +1,7 @@
 """A new approval tool is registered without editing the generic runtime."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
+
 from native_application_helpers import async_test, build_application
 
 from naiyue_test_agent.tools.permissions import ToolPermission
@@ -40,7 +42,7 @@ async def test_registered_approval_tool_pauses_and_resumes_without_runtime_tool_
     _, execution = build_tool_schemas('ApprovalProbeInput', ApprovalInput)
 
     @tool(args_schema=execution)
-    def approval_probe(value: str, runtime: ToolRuntime[dict, dict]) -> str:
+    def approval_probe(value: str, runtime: ToolRuntime[RuntimeContext]) -> str:
         """Read a synthetic approved value."""
         assert require_tool_permit(runtime)['args']['value'] == value
         calls.append(value)

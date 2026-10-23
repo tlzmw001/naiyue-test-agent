@@ -1,5 +1,6 @@
 """Diagnostic failures must never replace a model boundary's original error."""
 
+from runtime_context_helpers import RunIdentity, typed_context
 from native_application_helpers import async_test
 
 from types import SimpleNamespace
@@ -18,9 +19,7 @@ async def test_model_diagnostic_failure_preserves_original(monkeypatch, diagnost
     middleware = call_observation.make_model_selection_middleware(
         lambda _session, agent_path='root': ('A', model),
     )
-    request = SimpleNamespace(runtime=SimpleNamespace(context={
-        'session_id': 'synthetic-session', 'run_id': 'synthetic-run',
-    }))
+    request = SimpleNamespace(runtime=SimpleNamespace(context=typed_context(identity=RunIdentity(session_id='synthetic-session', run_id='synthetic-run'))))
     request.override = lambda **_kwargs: request
     await middleware.abefore_model({}, request.runtime)
     primary = RuntimeError('PRIVATE_PRIMARY')

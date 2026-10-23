@@ -1,5 +1,6 @@
 """Child instances, approvals and stopping belong to one AgentSession."""
 
+from dataclasses import replace
 import json
 import asyncio
 
@@ -101,7 +102,7 @@ async def test_preparation_rejects_context_for_another_session(monkeypatch):
     sid, other = await app.acreate_session('A'), await app.acreate_session('A')
     original = AgentSession.prepare_subagent_instance
     def forge(self, *args, **kwargs):
-        kwargs['parent_context'] = {**kwargs['parent_context'], 'session_id': other}
+        kwargs['parent_context'] = replace(kwargs['parent_context'], scope=replace(kwargs['parent_context'].scope, identity=replace(kwargs['parent_context'].scope.identity, session_id=other), background_notices=None))
         return original(self, *args, **kwargs)
     monkeypatch.setattr(AgentSession, 'prepare_subagent_instance', forge)
     with pytest.raises(PermissionMechanismError, match='session'):

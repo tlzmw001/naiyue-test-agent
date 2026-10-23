@@ -1,5 +1,6 @@
 """Application-owned task queries combine owners without weakening their scope."""
 
+from dataclasses import replace
 import asyncio
 import hashlib
 import json
@@ -153,22 +154,22 @@ def test_query_tools_use_trusted_query_port_and_preserve_permit_binding(tmp_path
         spec = next(item for item in create_background_task_tools() if item.tool.name == name)
         runtime = runtime_for(spec, args, tmp_path)
         owner = Owner([row(1, root=str(tmp_path), kind='memory')])
-        runtime.context['_task_queries'] = owner
+        runtime.context = replace(runtime.context, scope=replace(runtime.context.scope, capabilities=replace(runtime.context.scope.capabilities, task_queries=owner)))
         result = json.loads(await spec.tool.coroutine(**args, runtime=runtime))
         assert result['items'][0]['kind'] == 'memory' if name == 'task_list' else result['kind'] == 'memory'
         expected = name.removeprefix('task_')
         assert owner.calls[0][0] == expected
         assert owner.calls[0][-1]['session_id'] == 's' and owner.calls[0][-1]['workspace_root'] == tmp_path
-        runtime.context['_execution_permit']['subject']['args'] = {}
+        runtime.context.authorization.permit['subject']['args'] = {}
         with pytest.raises(PermissionMechanismError):
             await spec.tool.coroutine(**args, runtime=runtime)
         runtime = runtime_for(spec, args, tmp_path)
-        runtime.context['_process_tasks'] = owner
+        runtime.context = replace(runtime.context, scope=replace(runtime.context.scope, capabilities=replace(runtime.context.scope.capabilities, process_tasks=owner)))
         with pytest.raises(ToolException, match='scope'):
             await spec.tool.coroutine(**args, runtime=runtime)
         runtime = runtime_for(spec, args, tmp_path)
-        runtime.context.update(_task_queries=owner, agent_path='child')
-        runtime.context['_execution_permit']['agent_path'] = 'child'
+        runtime.context = replace(runtime.context, scope=replace(runtime.context.scope, capabilities=replace(runtime.context.scope.capabilities, task_queries=owner), identity=replace(runtime.context.scope.identity, agent_path='child')))
+        runtime.context.authorization.permit['agent_path'] = 'child'
         before = len(owner.calls)
         with pytest.raises(ToolException, match='root'):
             await spec.tool.coroutine(**args, runtime=runtime)

@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+from naiyue_test_agent.contracts.run_context import RunIdentity
 from copy import deepcopy
 from dataclasses import dataclass
 from uuid import uuid4
@@ -59,7 +60,7 @@ def validate_decisions(pending, decisions):
 def prepare_resume(session_id, pending, decisions, remember_approved, *, agent_path='root'):
     validate_decisions(pending, decisions)
     approved, remember = validate_remembered(pending, decisions, remember_approved)
-    bindings = {identity: permission_binding({'session_id': session_id, 'agent_path': agent_path},
+    bindings = {identity: permission_binding(RunIdentity(session_id, agent_path=agent_path),
                                             pending['batch_id'], item['prepared'])
                 for identity, item in approved.items()}
     return OneUseApprovalGrants(bindings), [remembered_rule(approved[identity]['prepared']['subject']) for identity in remember]

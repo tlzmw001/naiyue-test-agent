@@ -1,5 +1,6 @@
 """Configured Read uses one validated budget for schema, feedback, and IO."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from naiyue_test_agent import settings as application_settings
 
 from native_application_helpers import async_test
@@ -13,7 +14,7 @@ from tool_feedback_helpers import invoke_tool_feedback as _invoke_tool_feedback
 
 
 async def invoke_tool_feedback(reader, args, root):
-    return (await _invoke_tool_feedback(reader, args, call_id='settings-read', context={'workspace_root': root}))
+    return (await _invoke_tool_feedback(reader, args, call_id='settings-read', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(root) if root is not None else None, session_id=None))))
 
 
 def test_missing_settings_use_defaults_without_creating_a_file(tmp_path, caplog):

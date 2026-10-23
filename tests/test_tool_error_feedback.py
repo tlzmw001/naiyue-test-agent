@@ -1,5 +1,6 @@
 """Execution failures become paired results inside the real batch boundary."""
 
+from runtime_context_helpers import RunIdentity, typed_context
 from native_application_helpers import async_test, build_application
 
 from naiyue_test_agent.tools.permissions import ToolPermission
@@ -33,7 +34,7 @@ def graph(tools, calls, *, checkpointer=None):
 
 
 async def invoke(agent):
-    kwargs = {'context': {'session_id': 's', 'run_id': 'r'},
+    kwargs = {'context': typed_context(identity=RunIdentity('s', 'r')),
               'config': {'configurable': {'thread_id': 't'}}}
     return await agent.ainvoke({'messages': [('user', 'run')]}, **kwargs)
 

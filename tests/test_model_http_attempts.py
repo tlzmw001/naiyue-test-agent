@@ -1,5 +1,6 @@
 """Finite HTTP observations must preserve native SDK execution semantics."""
 
+from runtime_context_helpers import identity_for, typed_scope
 import asyncio
 from dataclasses import asdict
 from uuid import uuid4
@@ -10,7 +11,7 @@ import pytest
 from native_application_helpers import async_test
 from http_observation_helpers import sdk_catalog, sdk_response
 from naiyue_test_agent.agent_runtime import events as facts
-from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
+from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
 from naiyue_test_agent.agent_runtime.model_usage_observation import install_model_usage_callback
 
 
@@ -47,7 +48,7 @@ async def test_native_sdk_emits_one_paired_attempt_before_model_terminal(kind, s
     events = []
     async with sdk_catalog(kind) as catalog:
         install_model_usage_callback(catalog, http_attempt_limit=8)
-        with bind_run_services(RunServices(publisher=facts.RunEventPublisher('s', 'r', (events.append,)))):
+        with bind_run_scope(typed_scope(publisher=facts.RunEventPublisher('s', 'r', (events.append,)))):
             model = catalog.get('A')
             result = [chunk async for chunk in model.astream('task')] if stream else await model.ainvoke('task')
             assert result
@@ -75,7 +76,7 @@ async def test_sdk_retries_are_distinct_attempts_and_unconfirmed_is_not_guessed(
     async with sdk_catalog(serve=serve) as catalog:
         install_model_usage_callback(catalog, http_attempt_limit=8)
         original_retries = catalog.get('A').root_async_client.max_retries
-        with bind_run_services(RunServices(publisher=facts.RunEventPublisher('s', 'r', (events.append,)))):
+        with bind_run_scope(typed_scope(publisher=facts.RunEventPublisher('s', 'r', (events.append,)))):
             assert (await catalog.get('A').ainvoke('task')).content == 'done'
         assert catalog.get('A').root_async_client.max_retries == original_retries == 2
     starts = [e.data for e in events if e.event_type == 'model_http_attempt_started']
@@ -153,7 +154,7 @@ async def test_cancelled_owner_closes_pending_attempt_once():
     async with sdk_catalog(serve=serve) as catalog:
         install_model_usage_callback(catalog, http_attempt_limit=4)
         async def run():
-            with bind_run_services(RunServices(publisher=facts.RunEventPublisher('s', 'r', (events.append,)))):
+            with bind_run_scope(typed_scope(publisher=facts.RunEventPublisher('s', 'r', (events.append,)))):
                 return await catalog.get('A').ainvoke('task')
         task = asyncio.create_task(run())
         await asyncio.wait_for(entered.wait(), 5)
@@ -178,7 +179,7 @@ async def test_http_bookkeeping_fault_keeps_existing_model_facts(monkeypatch, ca
         install_model_usage_callback(catalog, http_attempt_limit=4)
         monkeypatch.setattr(module, 'model_http_tokens', broken) if fault_at == 'prepare' else monkeypatch.setattr(
             HttpCallObservation, 'close', broken)
-        with bind_run_services(RunServices(publisher=facts.RunEventPublisher('s', 'r', (events.append,)))):
+        with bind_run_scope(typed_scope(publisher=facts.RunEventPublisher('s', 'r', (events.append,)))):
             assert (await catalog.get('A').ainvoke('task')).content == 'done'
     model = [e for e in events if e.event_type in ('model_call_started', 'model_call_finished')]
     assert len(model) == 2 and model[-1].data.status == 'returned'
@@ -230,7 +231,7 @@ async def test_headers_200_survives_stream_failure_and_does_not_drain_body(caplo
             events.append(event)
             if event.event_type == 'model_http_attempt_finished':
                 at_headers.append(len(consumed))
-        with bind_run_services(RunServices(publisher=facts.RunEventPublisher('s', 'r', (receive,)))):
+        with bind_run_scope(typed_scope(publisher=facts.RunEventPublisher('s', 'r', (receive,)))):
             with pytest.raises(OpenAIConnectionError) as caught:
                 _ = [chunk async for chunk in catalog.get('A').astream('task')]
         assert caught.value.__cause__.__cause__ is failure
@@ -290,7 +291,7 @@ async def test_missing_model_callback_marks_run_capture_gap_instead_of_zero():
     observation = RunObservation(subscriptions.publisher('s', 'r'), 'message')
     observation.start()
     async with sdk_catalog() as catalog:
-        with observation.bind():
+        with observation.bind(identity=identity_for(observation.publisher)):
             assert (await catalog.get('A').ainvoke('task')).content == 'done'
     observation.result({}, None)
     observation.finish(False)
@@ -307,7 +308,7 @@ async def test_http_clock_failure_preserves_headers_and_success(monkeypatch, cap
     events = []
     async with sdk_catalog() as catalog:
         install_model_usage_callback(catalog, http_attempt_limit=4)
-        with bind_run_services(RunServices(publisher=facts.RunEventPublisher('s', 'r', (events.append,)))):
+        with bind_run_scope(typed_scope(publisher=facts.RunEventPublisher('s', 'r', (events.append,)))):
             assert (await catalog.get('A').ainvoke('task')).content == 'done'
     end, = [e for e in events if e.event_type == 'model_http_attempt_finished']
     assert end.data.status == 'response_headers' and end.data.http_status == 200
@@ -324,7 +325,7 @@ async def test_hook_installation_failure_does_not_prevent_catalog_or_model(monke
     events = []
     async with sdk_catalog() as catalog:
         install_model_usage_callback(catalog, http_attempt_limit=4)
-        with bind_run_services(RunServices(publisher=facts.RunEventPublisher('s', 'r', (events.append,)))):
+        with bind_run_scope(typed_scope(publisher=facts.RunEventPublisher('s', 'r', (events.append,)))):
             assert (await catalog.get('A').ainvoke('task')).content == 'done'
         assert events[-1].data.http_capture_status == 'unavailable'
     assert 'model_http_observation_failed' in caplog.text and 'PRIVATE_INSTALL' not in caplog.text

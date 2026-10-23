@@ -1,5 +1,6 @@
 """Matched unknown descriptions and legacy entry points must stay meaningful."""
 
+from runtime_context_helpers import typed_scope
 from native_application_helpers import async_test
 
 from naiyue_test_agent.tools.permissions import ToolPermission
@@ -16,7 +17,7 @@ from langchain_core.tools import tool
 from naiyue_test_agent import application
 from naiyue_test_agent.contracts.failures import FailureDescription
 from naiyue_test_agent.agent_runtime.errors import RuntimeErrorPolicy, run_failure_data
-from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
+from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
 from naiyue_test_agent.model_access import ModelCatalog, ModelConfigError
 from test_layered_failure_contract import ToolModel, ReportStorageError, VendorQuotaError, quota, build
 
@@ -45,7 +46,7 @@ def test_explicit_default_failure_conversion_is_independent_of_bound_model_catal
     error = TimeoutError('PRIVATE')
     policy = RuntimeErrorPolicy()
     before = run_failure_data(policy.describe(error, source='model'))
-    with bind_run_services(RunServices(errors=RuntimeErrorPolicy(model_describer=catalog.failure_describer()))):
+    with bind_run_scope(typed_scope(errors=RuntimeErrorPolicy(model_describer=catalog.failure_describer()))):
         during = run_failure_data(policy.describe(error, source='model'))
     assert (before.category, before.reason) == ('transient', 'timeout')
     assert during == before

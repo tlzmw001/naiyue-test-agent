@@ -1,5 +1,7 @@
 """Public timeout semantics reach the existing tool/permission execution chain."""
 
+from dataclasses import replace
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from native_application_helpers import async_test
 
 import asyncio
@@ -66,7 +68,7 @@ async def test_normalized_timeout_reaches_process_requests_through_formal_graph(
     if value != 'omitted':
         args['timeout'] = value
     feedback = (await invoke_tool_feedback(spec, args, call_id='timeout',
-        context={'workspace_root': tmp_path}, permission_mode='BypassApprovals'))
+        context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None)), permission_mode='BypassApprovals'))
     assert feedback.status == 'success'
     assert ('note.txt' if spec.tool.name == 'find' else 'HIT') in feedback.content
     assert seen
@@ -83,7 +85,7 @@ async def test_invalid_timeout_is_tool_feedback_without_starting_process(spec, m
         pytest.fail('Invalid input must not acquire a process')
     monkeypatch.setattr(HostProcessRunner, 'run', forbidden)
     feedback = (await invoke_tool_feedback(spec, {**args_for(spec), 'timeout': -1}, call_id='invalid',
-        context={'workspace_root': tmp_path}, permission_mode='BypassApprovals'))
+        context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None)), permission_mode='BypassApprovals'))
     assert feedback.status == 'error' and 'timeout' in feedback.content
     assert 'runtime' not in feedback.content
 

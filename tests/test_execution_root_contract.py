@@ -1,5 +1,7 @@
 """Execution loss blocks new work without taking persisted conversations away."""
 
+from dataclasses import replace
+from runtime_context_helpers import ExecutionRoot, RunIdentity, ToolAuthorization, typed_context
 import asyncio
 from contextlib import asynccontextmanager
 import json
@@ -123,7 +125,7 @@ def test_file_permission_rejects_missing_root_even_for_existing_external_target(
     external.mkdir() if operation in ('list', 'find', 'search') else external.write_text('sentinel')
     root.rmdir()
     with pytest.raises(ToolException, match='execution_root_unavailable.*missing'):
-        FilePermission(operation=operation).prepare({'path': str(external)}, {'workspace_root': root})
+        FilePermission(operation=operation).prepare({'path': str(external)}, typed_context(identity=RunIdentity(execution_root=ExecutionRoot(root) if root is not None else None, session_id=None)))
     assert external.is_dir() or external.read_text() == 'sentinel'
 
 
@@ -214,11 +216,10 @@ def test_execution_permit_cannot_be_consumed_in_another_directory(tmp_path):
     second.mkdir()
     permit = {'session_id': 'S', 'agent_path': 'root', 'call_id': 'C',
         'subject': {'workspace': str(first), 'execution_environment': execution_environment()}}
-    runtime = SimpleNamespace(tool_call_id='C', context={'session_id': 'S', 'workspace_root': second,
-        '_execution_permit': permit})
+    runtime = SimpleNamespace(tool_call_id='C', context=typed_context(identity=RunIdentity(session_id='S', execution_root=ExecutionRoot(second) if second is not None else None), authorization=ToolAuthorization(permit=permit)))
     with pytest.raises(PermissionMechanismError, match='execution directory differs'):
         require_tool_permit(runtime)
-    runtime.context['workspace_root'] = first
+    runtime.context = replace(runtime.context, scope=replace(runtime.context.scope, identity=replace(runtime.context.scope.identity, execution_root=ExecutionRoot(first) if first is not None else None)))
     assert require_tool_permit(runtime) is permit
 
 

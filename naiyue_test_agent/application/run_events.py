@@ -15,7 +15,8 @@ from langgraph.errors import GraphBubbleUp
 from naiyue_test_agent.contracts.failures import FailureDescription, read_failure_description, RunFailureData
 from naiyue_test_agent.contracts.session_events import RunStartedData, RunFinishedData
 from naiyue_test_agent.agent_runtime.run_control import RunControl
-from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
+from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
+from naiyue_test_agent.contracts.run_context import RunIdentity, RunScope, RunCapabilities, RunObservationPorts
 
 from naiyue_test_agent.agent_runtime.events import (
     RunEventPublisher, AgentEventPublisher,
@@ -136,14 +137,19 @@ class RunObservation:
                 FailureDescription('application', 'unknown', 'unclassified', safe_error_type(error)))
 
     @contextmanager
-    def bind(self, *, ainvoke_subagent=None, process_tasks=None, background_notices=None, alist_subagents=None, history_query=None, memory_query=None, task_queries=None, archive_root=None, project_id=None, execution_root=None):
+    def bind(self, *, identity: RunIdentity, ainvoke_subagent=None, process_tasks=None, background_notices=None, alist_subagents=None, history_query=None, memory_query=None, task_queries=None, archive_root=None):
         if self.mode == 'approval_resume':
             observe(self.controls, self.controls.submit_approval)
-        services = RunServices(self.publisher, self.runtime_errors, self.stop_control,
-                               self.turns, self.controls, self.context_operations, tool_progress=self.tool_progress,
-                               ainvoke_subagent=ainvoke_subagent, process_tasks=process_tasks,
-                               background_notices=background_notices, alist_subagents=alist_subagents, history_query=history_query, memory_query=memory_query, task_queries=task_queries, archive_root=archive_root, project_id=project_id, execution_root=execution_root)
-        with bind_run_services(services), bind_http_run(self.report_http_gap):
+        scope = RunScope(identity,
+            capabilities=RunCapabilities(invoke_subagent=ainvoke_subagent,
+                list_subagents=alist_subagents if identity.agent_path == 'root' else None,
+                process_tasks=process_tasks, task_queries=task_queries,
+                history=history_query, memory=memory_query),
+            observation=RunObservationPorts(self.publisher, self.turns, self.controls,
+                self.context_operations, self.tool_progress),
+            control=self.stop_control, errors=self.runtime_errors,
+            archive_root=archive_root, background_notices=background_notices)
+        with bind_run_scope(scope), bind_http_run(self.report_http_gap):
             yield
 
     def report_http_gap(self):

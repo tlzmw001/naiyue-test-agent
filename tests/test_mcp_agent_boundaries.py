@@ -1,5 +1,8 @@
 """Failure, output and assembly boundaries for the root MCP adapter."""
 
+from runtime_context_helpers import ExecutionRoot
+from dataclasses import replace
+from runtime_context_helpers import RunIdentity, ToolAuthorization, typed_context
 import asyncio
 import json
 from types import SimpleNamespace
@@ -170,17 +173,18 @@ def test_executor_checks_permit_before_any_resource_borrow(monkeypatch, tmp_path
         app, _ = await make_mcp_app(monkeypatch, path, [])
         try:
             spec, = app.get_registered_tools()
-            context = {'session_id': await app.acreate_session('A'), 'agent_path': 'root'}
+            context = typed_context(identity=RunIdentity(session_id=await app.acreate_session('A'), agent_path='root'))
             subject = spec.permissions.prepare({}, context)
             subject.update(args={}, execution_environment=execution_environment())
-            permit = {'call_id': 'one', 'tool_name': NAME, 'args': {}, 'subject': subject, **context}
+            permit = {'call_id': 'one', 'tool_name': NAME, 'args': {}, 'subject': subject, 'session_id': context.scope.identity.session_id, 'agent_path': context.scope.identity.agent_path}
             if change == 'args': permit['args'] = {'text': 'changed'}
             if change == 'name': permit['tool_name'] = 'mcp__other__echo'
             if change == 'identity': subject['mcp']['config_identity'] = 'changed'
             if change == 'environment': subject['execution_environment'] = {'kind': 'other'}
             if change == 'inactive_child':
-                context['agent_path'] = permit['agent_path'] = 'root/tester/missing'
-            runtime = SimpleNamespace(tool_call_id='one', context={**context, '_execution_permit': permit})
+                context = replace(context, scope=replace(context.scope, identity=replace(context.scope.identity, agent_path='root/tester/missing')))
+                permit['agent_path'] = 'root/tester/missing'
+            runtime = SimpleNamespace(tool_call_id='one', context=replace(context, authorization=ToolAuthorization(permit=permit)))
             from langchain_core.tools import ToolException
             if change == 'inactive_child':
                 output = await spec.tool.coroutine(runtime=runtime)
@@ -238,7 +242,7 @@ def test_explicit_deny_overrides_bypass_allow_and_remembered_mcp_tool(monkeypatc
         try:
             sid = await app.acreate_session('A')
             spec, = app.get_registered_tools()
-            context = {'session_id': sid, 'agent_path': 'root'}
+            context = typed_context(identity=RunIdentity(session_id=sid, agent_path='root'))
             prepared = prepare_permission_call({'id': 'first', 'name': NAME, 'args': {}}, spec, context, PermissionSettings(), [])
             remembered = remembered_rule(prepared['subject'])
             session = app._sessions.require(sid)
@@ -279,9 +283,9 @@ def test_result_archive_degradation_is_explicit_and_budgeted(tmp_path, root_kind
     if root_kind == 'symlink':
         outside = tmp_path / 'outside'; outside.mkdir()
         (tmp_path / 'naiyue-agent-output').symlink_to(outside, target_is_directory=True)
-    runtime = SimpleNamespace(tool_call_id='one', context={'archive_root': None if root_kind == 'none' else tmp_path})
+    runtime = SimpleNamespace(tool_call_id='one', context=typed_context(archive_root=None if root_kind == 'none' else tmp_path))
     if root_kind == 'inside_execution':
-        runtime.context['workspace_root'] = tmp_path
+        runtime.context = replace(runtime.context, scope=replace(runtime.context.scope, identity=replace(runtime.context.scope.identity, execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None)))
     tool = SimpleNamespace(remote_name='echo', registered_name=NAME)
     result = format_result(CallToolResult(content=[TextContent(type='text', text='大' * 5000)]), runtime=runtime,
         server=server, server_id='local', tool=tool)

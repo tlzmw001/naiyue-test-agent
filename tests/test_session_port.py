@@ -1,5 +1,6 @@
 """SessionPort is the real root/child assembly dependency with explicit scopes."""
 
+from runtime_context_helpers import RunIdentity, typed_context
 import asyncio
 import inspect
 from types import SimpleNamespace
@@ -82,7 +83,7 @@ async def test_interactive_graph_rejects_child_scope_without_consuming_root_cont
         system_prompt='', response_format=None, checkpointer=InMemorySaver())
     with pytest.raises(ValueError, match='requires root agent_path'):
         await graph.ainvoke({'messages': [('user', 'invalid root invocation')]},
-            context={'session_id': 's', 'agent_path': 'root/tester/child'},
+            context=typed_context(identity=RunIdentity(session_id='s', agent_path='root/tester/child')),
             config={'configurable': {'thread_id': 'invalid-root'}})
     assert controls == [] and model.seen == []
 
@@ -107,8 +108,8 @@ async def test_two_children_keep_scopes_while_root_switches_and_queues_controls(
     events, entered, release, paths = [], asyncio.Event(), asyncio.Event(), set()
     app.subscribe_events(events.append)
     async def wait_for_both(messages):
-        from naiyue_test_agent.agent_runtime.run_services import current_run_services
-        paths.add(current_run_services().publisher.source.agent_path)
+        from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
+        paths.add(current_run_scope().observation.publisher.source.agent_path)
         if len(paths) == 2:
             entered.set()
         await release.wait()

@@ -270,7 +270,7 @@ async def test_natural_end_closes_follow_up_before_busy_gate_is_released():
 
     class PausedAtEndAgent:
         async def ainvoke(self, _input, *, context, config):
-            assert service.finish_run_boundary(context['session_id']) == (False, [])
+            assert service.finish_run_boundary(context.scope.identity.session_id) == (False, [])
             closed.set()
             assert await asyncio.to_thread(release.wait, timeout=3)
             return {'messages': []}

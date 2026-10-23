@@ -63,7 +63,7 @@ class SessionService(SessionControlMixin, SessionSubagentControls):
 
     def borrow_mcp(self, session_id, agent_path, server_id):
         """Internal resource access; tool authorization remains a separate boundary."""
-        from naiyue_test_agent.agent_runtime.run_services import current_run_services
+        from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
         from naiyue_test_agent.mcp_client.resources import MCPResourceError
         session = self.require(session_id)
         if agent_path != 'root':
@@ -75,11 +75,11 @@ class SessionService(SessionControlMixin, SessionSubagentControls):
                 raise MCPResourceError('mcp_instance_not_active') from None
             if status['settled'] or status['status'] != 'running':
                 raise MCPResourceError('mcp_instance_not_active')
-        services = current_run_services()
-        if services and services.publisher:
-            source = getattr(services.publisher, 'source', None)
+        services = current_run_scope()
+        if services and services.observation.publisher:
+            source = getattr(services.observation.publisher, 'source', None)
             current_path = source.agent_path if source is not None else 'root'
-            if (not services.publisher.matches(session_id, services.publisher.run_id)
+            if (not services.observation.publisher.matches(session_id, services.observation.publisher.run_id)
                     or current_path != agent_path):
                 raise MCPResourceError('mcp_scope_mismatch')
         if self.mcp_resources is None:

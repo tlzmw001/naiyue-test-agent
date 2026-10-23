@@ -1,5 +1,6 @@
 """Permission composition covers target aliases, batching and internal grants."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from native_application_helpers import async_test
 
 from dataclasses import replace
@@ -133,8 +134,8 @@ async def test_modes_cannot_override_explicit_deny(monkeypatch, tmp_path, mode):
 def test_one_use_grant_checks_full_binding_and_cannot_be_replayed():
     from naiyue_test_agent.tools.permissions import permission_binding
     call_data = {'id': 'c', 'name': 'read', 'args': {'path': 'a'}, 'subject': {'operation': 'read'}}
-    context = {'session_id': 's', 'agent_path': 'root'}
-    binding = permission_binding(context, 'batch', call_data)
+    context = typed_context(identity=RunIdentity(session_id='s', agent_path='root'))
+    binding = permission_binding(context.scope.identity, 'batch', call_data)
     grants = OneUseApprovalGrants({'c': binding})
     for key, value in [('session_id', 'other'), ('agent_path', 'child'), ('batch_id', 'other'),
                        ('args', {'path': 'b'}), ('subject', {'operation': 'write'})]:
@@ -155,7 +156,7 @@ def test_selected_hidden_workspace_is_valid_but_target_policy_remains_conservati
     root.mkdir()
     assert resolve_workspace_root(root) == root.resolve()
     permission = FilePermission()
-    normal = permission.prepare({'path': 'notes.txt'}, {'workspace_root': root})
-    hidden = permission.prepare({'path': '.secret'}, {'workspace_root': root})
+    normal = permission.prepare({'path': 'notes.txt'}, typed_context(identity=RunIdentity(execution_root=ExecutionRoot(root) if root is not None else None, session_id=None)))
+    hidden = permission.prepare({'path': '.secret'}, typed_context(identity=RunIdentity(execution_root=ExecutionRoot(root) if root is not None else None, session_id=None)))
     assert permission.default_decision(normal) == 'allow'
     assert permission.default_decision(hidden) == 'ask'

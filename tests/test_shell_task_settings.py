@@ -1,5 +1,8 @@
 """Configured Shell deadlines reach the runner without changing other tools."""
 
+from dataclasses import replace
+from runtime_context_helpers import ToolAuthorization
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 import asyncio
 from types import SimpleNamespace
 
@@ -65,13 +68,11 @@ def test_legacy_output_section_requires_table(tmp_path):
 
 
 def runtime_for(spec, args, root):
-    context = {'session_id': 's', 'workspace_root': root,
-               'archive_root': root.parent / (root.name + '-archive')}
+    context = typed_context(identity=RunIdentity(session_id='s', execution_root=ExecutionRoot(root) if root is not None else None), archive_root=root.parent / (root.name + '-archive'))
     subject = spec.permissions.prepare(args, context)
     subject.update(args=args, tool_name=spec.tool.name, path_field='path',
                    execution_environment=execution_environment())
-    context['_execution_permit'] = {'call_id': 'c', 'session_id': 's', 'agent_path': 'root',
-        'batch_id': 'b', 'tool_name': spec.tool.name, 'subject': subject}
+    context = replace(context, authorization=ToolAuthorization(permit={'call_id': 'c', 'session_id': 's', 'agent_path': 'root', 'batch_id': 'b', 'tool_name': spec.tool.name, 'subject': subject}))
     return SimpleNamespace(context=context, tool_call_id='c', stream_writer=lambda _: None)
 
 

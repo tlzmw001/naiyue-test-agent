@@ -1,5 +1,6 @@
 """Unknown estimates never erase known limits or required preparation failures."""
 
+from runtime_context_helpers import RunIdentity, ModelCallState, typed_context
 import json
 import logging
 import asyncio
@@ -38,7 +39,7 @@ def test_composition_failure_preserves_total_images_and_serializable_snapshot(mo
     assert estimate['status'] == 'available' and estimate['estimated_input_tokens'] == total
     assert estimate['groups_status'] == 'unavailable' and estimate['groups'] == []
     assert estimate['image_count'] == 1
-    snapshot = context_usage.request_snapshot({'_naiyue_model_call_id': 'call', '_naiyue_model_id': 'A'}, estimate)
+    snapshot = context_usage.request_snapshot(typed_context(model_call=ModelCallState('call', 'A')), estimate)
     assert context_usage.read_snapshot(snapshot) == snapshot
     context_usage.ModelContextSnapshotData('call', json.dumps(snapshot))
     assert 'PRIVATE_' not in json.dumps(snapshot) + caplog.text
@@ -58,7 +59,7 @@ def test_total_failure_preserves_unknown_instead_of_zero(monkeypatch, caplog):
 def test_old_snapshot_without_group_status_is_read_without_rewriting():
     estimate = context_usage.estimate_context(model_with_limits([]), SystemMessage(content='base'), [], [])
     estimate.pop('groups_status', None)
-    snapshot = context_usage.request_snapshot({'_naiyue_model_call_id': 'call', '_naiyue_model_id': 'A'}, estimate)
+    snapshot = context_usage.request_snapshot(typed_context(model_call=ModelCallState('call', 'A')), estimate)
     assert context_usage.read_snapshot(snapshot) == snapshot
     assert 'groups_status' not in snapshot['estimate']
 
@@ -72,7 +73,7 @@ def test_old_snapshot_without_group_status_is_read_without_rewriting():
 def test_snapshot_rejects_inconsistent_total_and_composition(change):
     estimate = context_usage.estimate_context(model_with_limits([]), SystemMessage(content='base'), [], [])
     estimate.update(change)
-    snapshot = context_usage.request_snapshot({'_naiyue_model_call_id': 'call', '_naiyue_model_id': 'A'}, estimate)
+    snapshot = context_usage.request_snapshot(typed_context(model_call=ModelCallState('call', 'A')), estimate)
     assert context_usage.read_snapshot(snapshot) is None
 
 
@@ -157,7 +158,7 @@ async def test_required_input_conversion_is_not_skipped_for_missing_budget(monke
     monkeypatch.setattr(context_compaction, 'prepare_model_messages', fail)
     with pytest.raises(ValueError) as caught:
         await context_compaction._acompact_messages([HumanMessage(content='input')], model,
-            model_id='A', context={}, system_messages=[], tools=[])
+            model_id='A', context=typed_context(), system_messages=[], tools=[])
     assert caught.value is failure and not model.normal_inputs and not model.summary_inputs
 
 

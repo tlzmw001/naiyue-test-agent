@@ -10,7 +10,7 @@ from pydantic import Field
 
 from native_application_helpers import async_test, build_application
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime.run_services import current_run_services
+from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import SubAgentSpec, create_subagent_tool, create_session_read_tool
 from naiyue_test_agent.settings import AppSettings, load_settings
@@ -29,7 +29,7 @@ class ChildModel(StreamingToolModel):
         return self
 
     async def _next(self, messages):
-        self.services.append(current_run_services())
+        self.services.append(current_run_scope())
         if self.on_request is not None:
             await self.on_request(messages)
         return await super()._next(messages)
@@ -96,10 +96,10 @@ async def test_parent_receives_only_report_and_artifact_child_uses_real_read(mon
     assert 'ROOT_PROMPT' not in child.seen[0][0].content
     assert all('ORIGINAL_HUMAN_REQUEST' not in str(message.content) for message in child.seen[0])
     assert len(root.seen) == 2 and 'one actual test' not in str(root.seen[1])
-    assert all(service.publisher.source.agent_path == instance['agent_path'] and service.turns is not None
+    assert all(service.observation.publisher.source.agent_path == instance['agent_path'] and service.observation.turns is not None
                for service in child.services)
     assert all(service.control is instance['control'] for service in child.services)
-    assert current_run_services() is None
+    assert current_run_scope() is None
     assert sum(event.event_type == 'run_started' and event.source is None for event in events) == 1
     assert sum(event.event_type == 'run_finished' and event.source is None for event in events) == 1
     assert sum(event.event_type == 'run_started' and event.source is not None for event in events) == 1

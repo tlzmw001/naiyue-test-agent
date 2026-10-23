@@ -121,8 +121,10 @@ class BackgroundProcessManager:
             raise ToolException('Background task scope is unavailable.')
         from ..tools.output import require_archive_root
         from ..tools.permissions import require_execution_directory
-        require_execution_directory({'workspace_root': workspace_root, 'project_id': project_id, 'execution_root': execution_root})
-        archive_root = require_archive_root({'archive_root': archive_root, 'workspace_root': workspace_root})
+        if execution_root is not None and execution_root.path != workspace_root:
+            raise ToolException('execution_root_unavailable: wrong_project')
+        require_execution_directory(execution_root or ExecutionRoot(workspace_root), project_id)
+        archive_root = require_archive_root(archive_root, workspace_root)
         with self._lock:
             if self._closing or session_id in self._deleting or archive_root in self._cleaning:
                 raise ToolException('Background task admission is closed.')

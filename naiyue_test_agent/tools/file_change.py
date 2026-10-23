@@ -8,14 +8,14 @@ def read_feedback_allowed(runtime, path):
     from .permissions import FilePermission, matches_session_allow
     from .permission_rules import match_rules
     context = runtime.context
-    subject = {**context['_execution_permit']['subject'], 'operation': 'read',
+    subject = {**context.authorization.permit['subject'], 'operation': 'read',
                'tool_name': 'read', 'path_field': 'path', 'args': {'path': path}}
-    rules = context['_permission_rules']
+    rules = context.authorization.permission_rules
     if match_rules(rules.deny, subject, deny=True):
         return False
     return bool(match_rules(rules.allow, subject, deny=False)
-        or matches_session_allow(context['_session_allow'], subject)
-        or context.get('_permission_mode') == 'BypassApprovals'
+        or matches_session_allow(context.authorization.session_allow, subject)
+        or (context.authorization.permission_mode if context.authorization is not None else None) == 'BypassApprovals'
         or FilePermission().default_decision(subject) == 'allow')
 
 

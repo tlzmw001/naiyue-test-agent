@@ -1,5 +1,6 @@
 """Application-owned processes outlive their submitting run and settle explicitly."""
 
+from runtime_context_helpers import typed_scope
 import asyncio
 from dataclasses import replace
 import os
@@ -103,7 +104,7 @@ def test_scope_dedup_and_changed_identity_never_spawn_twice(tmp_path):
 
 def test_frozen_request_and_empty_worker_context(monkeypatch, tmp_path):
     from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
-    from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services, current_run_services
+    from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope, current_run_scope
     from naiyue_test_agent.tools.processes import ProcessOutcome
     async def scenario():
         manager = BackgroundProcessManager()
@@ -113,13 +114,13 @@ def test_frozen_request_and_empty_worker_context(monkeypatch, tmp_path):
             async def run(self, req, consume, control=None):
                 entered.set()
                 await release.wait()
-                seen.append((current_run_services(), req.env.get('SAMPLE'), list(req.argv), control))
+                seen.append((current_run_scope(), req.env.get('SAMPLE'), list(req.argv), control))
                 req.on_started()
                 return ProcessOutcome(0, 'exited', True, True, True, True, 0)
         req = request(tmp_path, '')
         req.env['SAMPLE'] = 'original'
         origin = SimpleNamespace(requested=False)
-        with bind_run_services(RunServices(control=origin)):
+        with bind_run_scope(typed_scope(control=origin)):
             row = await manager.submit(session_id='s', workspace_root=tmp_path, archive_root=archive_root(tmp_path), run_id='r',
                 tool_call_id='c', agent_path='root', command='test', name='bash', request=req,
                 settings=BashSettings(), runner=Runner(), control=origin)
@@ -214,12 +215,12 @@ def test_child_shell_request_is_refused_before_submission(tmp_path):
         spec = create_session_bash_tool()
         args = {'command': 'must not execute', 'background': True, 'timeout': None}
         runtime = runtime_for(spec, args, tmp_path)
-        runtime.context['agent_path'] = 'child'
-        runtime.context['_execution_permit']['agent_path'] = 'child'
+        runtime.context = replace(runtime.context, scope=replace(runtime.context.scope, identity=replace(runtime.context.scope.identity, agent_path='child')))
+        runtime.context.authorization.permit['agent_path'] = 'child'
         class Port:
             async def submit(self, **kwargs):
                 pytest.fail('Child requests cannot reach background submission')
-        runtime.context['_process_tasks'] = Port()
+        runtime.context = replace(runtime.context, scope=replace(runtime.context.scope, capabilities=replace(runtime.context.scope.capabilities, process_tasks=Port())))
         with pytest.raises(ToolException, match='root'):
             await spec.tool.coroutine(**args, runtime=runtime)
     asyncio.run(scenario())

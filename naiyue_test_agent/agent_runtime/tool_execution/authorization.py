@@ -1,6 +1,7 @@
 """Consume an approval once, then pass a per-call permit to trusted tools."""
 
 from dataclasses import replace
+from naiyue_test_agent.contracts.run_context import ToolAuthorization
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import ToolMessage
@@ -31,15 +32,16 @@ class ExecutionAuthorizationMiddleware(AgentMiddleware):
                 tool_call_id=call['id'], name=call['name'], status='error',
                 additional_kwargs={'naiyue_not_executed': 'permission_denied'})
         context = request.runtime.context
-        binding = permission_binding(context, batch['batch_id'], call)
+        binding = permission_binding(context.scope.identity, batch['batch_id'], call)
         if decision == 'ask':
-            grants = context.get('approval_grants')
+            grants = context.inputs.approval_grants
             if not isinstance(grants, OneUseApprovalGrants) or not grants.consume(call['id'], binding):
                 raise PermissionMechanismError('One-use approval is missing or does not match this call')
         elif decision != 'allow':
             raise PermissionMechanismError('Invalid saved permission decision')
-        local = {**context, '_execution_permit': binding, '_permission_rules': self.settings,
-                 '_session_allow': batch.get('session_allow', []), '_permission_mode': batch['mode']}
+        local = replace(context, authorization=ToolAuthorization(permit=binding,
+            permission_rules=self.settings, session_allow=tuple(batch.get('session_allow', ())),
+            permission_mode=batch['mode']))
         return request.override(runtime=replace(request.runtime, context=local))
 
 

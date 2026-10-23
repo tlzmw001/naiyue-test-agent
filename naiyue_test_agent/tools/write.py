@@ -1,5 +1,6 @@
 """Whole-file UTF-8 writes to a permission-approved real target."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 import logging
 import os
 import stat
@@ -265,23 +266,23 @@ def create_session_write_tool(*, settings: WriteSettings | None = None, progress
         path=(str, Field(min_length=1, max_length=settings.max_path_chars)))
 
     @tool('write', args_schema=execution_schema, response_format='content_and_artifact')
-    def write(path: str, content: str, runtime: ToolRuntime[dict, dict]) -> tuple:
+    def write(path: str, content: str, runtime: ToolRuntime[RuntimeContext]) -> tuple:
         """Create or completely overwrite one authorized UTF-8 file.
 
         Missing parent directories are created after authorization. This tool cannot make partial edits.
         """
         context = runtime.context
-        root = context.get('workspace_root') if isinstance(context, dict) else None
+        root = context.scope.identity.execution_path if isinstance(context, RuntimeContext) else None
         if not isinstance(root, Path) or not root.is_absolute():
             logger.warning('write_failed phase=context error_type=MissingWorkspaceContext')
             raise ToolException(WRITE_NO_WORKSPACE)
-        check_tool_stop(context.get('_run_control'), WRITE_STOPPED)
+        check_tool_stop(context.scope.control, WRITE_STOPPED)
         target = require_file_target(runtime, path, operation='write')
         progress = ToolProgress(runtime, progress_settings)
         try:
             artifact = {}
             result = _write(root, str(target), content, settings.max_input_bytes,
-                          subject=context['_execution_permit']['subject'], control=context.get('_run_control'), progress=progress,
+                          subject=context.authorization.permit['subject'], control=context.scope.control, progress=progress,
                           feedback_artifact=artifact, feedback_settings=settings,
                           feedback_read_allowed=read_feedback_allowed(runtime, path), feedback_path=path)
             return result, artifact

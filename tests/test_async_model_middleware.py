@@ -1,5 +1,8 @@
 """Native async model IO keeps the existing selection/gate/event contract."""
 
+from dataclasses import replace
+from runtime_context_helpers import RunIdentity, RunObservationPorts, typed_context
+from runtime_context_helpers import typed_scope
 from native_application_helpers import async_test
 
 from naiyue_test_agent.application import prepare_tool_registry
@@ -69,17 +72,17 @@ def runtime(models, selected, selections=None):
 
 async def invoke(graph, inputs, *, context, config):
     # Direct graph tests install the same callback and run scope as SessionService.
-    from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
-    with bind_run_services(RunServices(publisher=context.get('_run_event_publisher'))):
+    from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
+    with bind_run_scope(context.scope):
         return await graph.ainvoke(inputs, context=context, config=config)
 
 
 def context(events=None, sid='s', rid='r'):
-    result = {'session_id': sid, 'run_id': rid}
+    result = typed_context(identity=RunIdentity(session_id=sid, run_id=rid))
     if events is not None:
         publisher = RunEventPublisher(sid, rid, (events.append,))
         publisher.publish('run_started', RunStartedData('message'))
-        result['_run_event_publisher'] = publisher
+        result = replace(result, scope=replace(result.scope, observation=RunObservationPorts(publisher=publisher)))
     return result
 
 

@@ -1,5 +1,6 @@
 """Bounded directory names for one trusted local workspace."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 import json
 import logging
 import os
@@ -39,7 +40,7 @@ class _LsInput(BaseModel):
 
 
 def _list_directory(target: Path, limit: int, runtime, *, settings: LsSettings, progress=None) -> str:
-    control = runtime.context.get('_run_control')
+    control = runtime.context.scope.control
     progress = progress or ToolProgress(None)
     try:
         if control is not None and control.requested:
@@ -132,14 +133,14 @@ def create_session_ls_tool(*, settings: LsSettings | None = None, progress_setti
         limit=(int, Field(default=settings.default_limit, ge=1, le=settings.max_limit)))
 
     @tool('ls', args_schema=execution_schema)
-    def list_directory(runtime: ToolRuntime[dict, dict], path: str = '.',
+    def list_directory(runtime: ToolRuntime[RuntimeContext], path: str = '.',
                        limit: int = settings.default_limit) -> str:
         """List directory entry names, including dotfiles, and report skipped targets.
 
         Listing a name does not authorize reading or changing its contents.
         """
         context = runtime.context
-        root = context.get('workspace_root') if isinstance(context, dict) else None
+        root = context.scope.identity.execution_path if isinstance(context, RuntimeContext) else None
         if not isinstance(root, Path) or not root.is_absolute():
             logger.warning('ls_failed error_type=MissingWorkspaceContext')
             raise ToolException(LS_NO_WORKSPACE)

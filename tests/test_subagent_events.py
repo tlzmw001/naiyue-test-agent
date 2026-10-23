@@ -84,7 +84,7 @@ async def test_child_events_bind_saved_approval_to_one_root_stream_and_stop_wake
         assert result['run_stopped'] and effects == [] and len(child.seen) == 1 and len(root.seen) == 1
         assert app.pending_approval_batches(sid) == []
         assert events[-1].event_type == 'run_finished' and events[-1].source is None
-        assert all(service.publisher.source.agent_path == instances[0]['agent_path'] for service in child.services)
+        assert all(service.observation.publisher.source.agent_path == instances[0]['agent_path'] for service in child.services)
     finally:
         if not task.done(): task.cancel()
         await asyncio.gather(task, return_exceptions=True)

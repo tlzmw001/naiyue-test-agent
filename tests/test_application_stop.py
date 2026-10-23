@@ -229,7 +229,7 @@ async def test_stop_rejects_closed_window_while_run_is_still_busy():
 
     class PausedAtEndAgent:
         async def ainvoke(self, _input, *, context, config):
-            assert service.finish_run_boundary(context['session_id']) == (False, [])
+            assert service.finish_run_boundary(context.scope.identity.session_id) == (False, [])
             closed.set()
             assert await asyncio.to_thread(release.wait, timeout=3)
             return {'messages': []}

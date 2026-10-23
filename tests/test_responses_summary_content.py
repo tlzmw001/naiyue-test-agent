@@ -1,5 +1,6 @@
 """Native Responses text blocks must be valid text summaries."""
 
+from runtime_context_helpers import typed_context
 import asyncio
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -16,7 +17,7 @@ def summarize(content):
             'naiyue_compaction_summary_output': {'tokens': 256}})
     messages = [HumanMessage(content='Old task. ' * 1000), AIMessage(content='done'),
                 HumanMessage(content='Recent task'), AIMessage(content='recent')]
-    return asyncio.run(_acompact_messages(messages, model, model_id='synthetic', context={},
+    return asyncio.run(_acompact_messages(messages, model, model_id='synthetic', context=typed_context(),
         system_messages=[], tools=[], force=True, trigger='manual'))
 
 

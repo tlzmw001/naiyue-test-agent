@@ -40,8 +40,8 @@ class _StreamState:
                     # A cached or identical revision still confirms a draft from this run.
                     emit_event(self.publisher, 'message_completed', lambda: _snapshot(message, visibility))
                 self.drafts.discard(message.id)
-        for key in ('_control_observer', '_context_observer', '_turn_observer'):
-            item = self.context.get(key)
+        for item in (self.context.scope.observation.controls, self.context.scope.observation.context_operations,
+                     self.context.scope.observation.turns):
             if item is not None:
                 observe(item, item.observe, messages, visibility=visibility)
 
@@ -61,7 +61,7 @@ class _StreamState:
             observe(self, self.delta, *part['data'])
         elif part['type'] == 'custom':
             observe_tool_progress(self.context, 'accept_custom', part['data'])
-        turns, operations = self.context.get('_turn_observer'), self.context.get('_context_observer')
+        turns, operations = self.context.scope.observation.turns, self.context.scope.observation.context_operations
         if turns is not None:
             observe(turns, turns.try_finish)
         if operations is not None:
@@ -102,7 +102,7 @@ class _StreamState:
 async def ainvoke_with_message_observation(agent, input, *, context, config, publisher, durability=None):
     options = {'durability': durability} if durability is not None else {}
     stream = _StreamState(publisher, context)
-    turns = context.get('_turn_observer')
+    turns = context.scope.observation.turns
     if not isinstance(agent, Pregel) or getattr(agent.ainvoke, '__func__', None) is not Pregel.ainvoke:
         observe(stream.observer, stream.observer.unavailable, 'stream', 'unsupported_state_interface')
         if turns is not None:

@@ -1,5 +1,6 @@
 """Result budgets, compilation, failure identity and cancellation boundaries."""
 
+from runtime_context_helpers import typed_scope
 import json
 import asyncio
 
@@ -8,7 +9,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from native_application_helpers import async_test
 from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
-from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services, current_run_services
+from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope, current_run_scope
 from naiyue_test_agent.tools import SubAgentSpec, create_builtin_tools
 from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.settings import SubAgentOutputSettings
@@ -115,8 +116,8 @@ async def test_external_cancel_settles_child_and_restores_parent_services(monkey
     child = ChildModel(replies=[AIMessage(content='unused')], entered=entered, release=release)
     app, _ = await delegated_app(monkeypatch, child)
     sid = await app.acreate_session('A')
-    previous = RunServices()
-    with bind_run_services(previous):
+    previous = typed_scope()
+    with bind_run_scope(previous):
         task = asyncio.create_task(app.arun(sid, [('user', 'start')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
@@ -131,7 +132,7 @@ async def test_external_cancel_settles_child_and_restores_parent_services(monkey
             assert instance['control'].reason == 'failure'
             assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values()) and 'driver' not in instance
             assert not app._sessions.require(sid).describe_session()['busy']
-            assert current_run_services() is previous
+            assert current_run_scope() is previous
         finally:
             release.set()
             await asyncio.gather(task, return_exceptions=True)

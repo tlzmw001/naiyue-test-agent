@@ -180,8 +180,8 @@ def test_both_shells_only_promote_root_even_if_child_has_port(monkeypatch, tmp_p
             shell_task_settings=ShellTaskSettings(foreground_wait_seconds=1)) if s.tool.name == name)
         args = {'command': 'test'}
         runtime = runtime_for(spec, args, tmp_path)
-        runtime.context.update(agent_path=agent, run_id='r', _process_tasks=manager)
-        runtime.context['_execution_permit']['agent_path'] = agent
+        runtime.context = replace(runtime.context, scope=replace(runtime.context.scope, identity=replace(runtime.context.scope.identity, agent_path=agent, run_id='r'), capabilities=replace(runtime.context.scope.capabilities, process_tasks=manager)))
+        runtime.context.authorization.permit['agent_path'] = agent
         reports = []
         runtime.stream_writer = reports.append
         try:

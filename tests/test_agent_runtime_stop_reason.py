@@ -1,5 +1,6 @@
 """A truncated model response cannot execute its parsed tool calls."""
 
+from runtime_context_helpers import RunIdentity, typed_context
 from native_application_helpers import async_test, build_application
 
 from naiyue_test_agent.tools.permissions import ToolPermission
@@ -175,7 +176,7 @@ async def test_tool_request_without_matching_latest_model_call_fails_closed(mess
     request = SimpleNamespace(
         tool_call={'name': 'write_probe', 'args': {}, 'id': 'other'},
         state={'messages': messages},
-        runtime=SimpleNamespace(context={'run_id': 'run-1'}),
+        runtime=SimpleNamespace(context=typed_context(identity=RunIdentity(run_id='run-1', session_id=None))),
     )
     executed = []
 

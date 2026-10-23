@@ -1,5 +1,6 @@
 """Callback model and tool calls share application run metadata notifications."""
 
+from runtime_context_helpers import typed_scope
 from naiyue_test_agent.agent_runtime.async_invocation import ainvoke_agent_run
 
 from native_application_helpers import async_test
@@ -168,7 +169,7 @@ async def test_bounded_input_recovery_is_one_logical_model_call(monkeypatch):
 
 @async_test
 async def test_legacy_and_mismatched_scope_do_not_invent_application_events():
-    from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
+    from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
 
     model = ToolModel(responses=[AIMessage(content='done')])
     _runtime_registry_1 = prepare_tool_registry([])
@@ -177,22 +178,25 @@ async def test_legacy_and_mismatched_scope_do_not_invent_application_events():
         model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
         resolve_model=lambda _id, agent_path='root': ('A', model),
     )
+    result = await ainvoke_agent_run(agent, [('user', 'run')], session_id='legacy-session',
+                                    thread_id='legacy-thread', run_id='legacy-run')
+    assert result['messages'][-1].content == 'done'
     events = []
     subscriptions = ApplicationEventSubscriptions()
     subscriptions.subscribe(events.append)
     publisher = subscriptions.publisher('outer-session', 'outer-run')
     publisher.publish('run_started', RunStartedData('message'))
-    with bind_run_services(RunServices(publisher=publisher)):
-        result = (await ainvoke_agent_run(agent, [('user', 'run')], session_id='legacy-session',
-                                  thread_id='legacy-thread', run_id='legacy-run'))
+    with bind_run_scope(typed_scope(publisher=publisher)):
+        with pytest.raises(ValueError, match='identity'):
+            await ainvoke_agent_run(agent, [('user', 'run')], session_id='legacy-session',
+                                    thread_id='legacy-thread', run_id='legacy-run')
     publisher.publish('run_finished', RunFinishedData('completed'))
-    assert result['messages'][-1].content == 'done'
     assert [e.event_type for e in events] == ['run_started', 'run_finished']
 
 
 @async_test
 async def test_failed_run_binding_is_reset_before_next_direct_invocation(monkeypatch):
-    from naiyue_test_agent.agent_runtime.run_services import current_run_services
+    from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
 
     failure = TimeoutError('synthetic')
 
@@ -203,7 +207,7 @@ async def test_failed_run_binding_is_reset_before_next_direct_invocation(monkeyp
     app = await make_app(monkeypatch, FailingModel(responses=[AIMessage(content='unused')]))
     with pytest.raises(TimeoutError):
         await app.arun(await app.acreate_session('A'), [('user', 'run')])
-    assert current_run_services() is None
+    assert current_run_scope() is None
 
 
 @async_test

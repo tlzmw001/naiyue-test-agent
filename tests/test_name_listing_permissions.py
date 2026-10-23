@@ -1,5 +1,6 @@
 """Name discovery does not grant permission to read or change the listed files."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
@@ -19,9 +20,9 @@ def test_hidden_target_has_operation_specific_default(tmp_path, operation, expec
     else:
         target.write_text('PRIVATE_BODY')
     permission = FilePermission(operation=operation)
-    subject = permission.prepare({'path': str(target)}, {'workspace_root': tmp_path})
+    subject = permission.prepare({'path': str(target)}, typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None)))
     assert permission.default_decision(subject) == expected
-    outside = permission.prepare({'path': str(tmp_path.parent / '.outside')}, {'workspace_root': tmp_path})
+    outside = permission.prepare({'path': str(tmp_path.parent / '.outside')}, typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None)))
     assert permission.default_decision(outside) == 'ask'
 
 

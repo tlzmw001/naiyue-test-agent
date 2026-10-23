@@ -1,5 +1,6 @@
 """Explicitly enabled host Bash requires exact approval and bounded execution."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from native_application_helpers import async_test, build_application
 
 from tool_feedback_helpers import invoke_tool_feedback
@@ -311,10 +312,10 @@ async def test_long_bash_output_is_saved_outside_workspace_and_requires_read_per
     assert 'truncated=true' in message
     assert (tmp_path / path).read_text().endswith('END\n')
     denied = await invoke_tool_feedback(create_session_read_tool(), {'path': path},
-        call_id='archive-denied', context={'workspace_root': tmp_path})
+        call_id='archive-denied', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None)))
     assert denied.status == 'error' and 'access denied' in denied.content
     assert 'A' * 5000 in (await invoke_tool_feedback(create_session_read_tool(), {'path': path},
-        call_id='archive-read', context={'workspace_root': tmp_path}, permission_mode='BypassApprovals')).content
+        call_id='archive-read', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None)), permission_mode='BypassApprovals')).content
     output_dir = Path(path).parent
     assert not output_dir.is_relative_to(tmp_path)
     assert output_dir.stat().st_mode & 0o777 == 0o700

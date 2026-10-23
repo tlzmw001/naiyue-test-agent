@@ -1,5 +1,6 @@
 """Bounded native custom reports and run-owned dispatch identity checks."""
 
+from runtime_context_helpers import ToolAuthorization, RunObservationPorts, typed_context, typed_scope
 from naiyue_test_agent import settings as application_settings
 
 from dataclasses import asdict
@@ -14,8 +15,7 @@ from naiyue_test_agent.tools import settings as settings_module
 
 
 def runtime(writer, *, call_id='call', batch_id='batch', name='read'):
-    return SimpleNamespace(tool_call_id=call_id, stream_writer=writer, context={
-        '_execution_permit': {'batch_id': batch_id, 'tool_name': name}})
+    return SimpleNamespace(tool_call_id=call_id, stream_writer=writer, context=typed_context(authorization=ToolAuthorization(permit={'batch_id': batch_id, 'tool_name': name})))
 
 
 def request(batch='batch', call='call', name='read'):
@@ -87,7 +87,7 @@ def test_disabled_or_standalone_reporter_never_calls_writer():
     from naiyue_test_agent.tools.progress import ToolProgress
     outputs = []
     reporter(outputs.append, enabled=False).report(phase='read')
-    ToolProgress(SimpleNamespace(context={}, tool_call_id='local')).report(phase='read')
+    ToolProgress(SimpleNamespace(context=typed_context(), tool_call_id='local')).report(phase='read')
     assert not outputs
 
 
@@ -157,13 +157,14 @@ def test_progress_settings_are_loaded_and_invalid_budgets_fall_back(tmp_path, ca
     assert 'tool_progress_settings_fallback' in caplog.text
 
 
-def test_run_services_projects_only_the_matching_progress_observer():
-    from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
+def test_run_scope_keeps_matching_observer_and_rejects_foreign_identity():
+    from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
     from naiyue_test_agent.agent_runtime.invocation_context import make_invocation_context
     item = observer([])
-    with bind_run_services(RunServices(publisher=item.publisher, tool_progress=item)):
-        assert make_invocation_context('session', 'run', None, None, ())['_tool_progress_observer'] is item
-        assert '_tool_progress_observer' not in make_invocation_context('other', 'run', None, None, ())
+    with bind_run_scope(typed_scope(publisher=item.publisher, tool_progress=item)):
+        assert make_invocation_context('session', 'run', None, None, ()).scope.observation.tool_progress is item
+        with pytest.raises(ValueError, match='identity'):
+            make_invocation_context('other', 'run', None, None, ())
 
 
 @pytest.mark.parametrize('error', [GraphInterrupt(()), asyncio.CancelledError()])
@@ -174,7 +175,7 @@ def test_dispatch_and_stream_adapter_preserve_control_exception_identity(monkeyp
         raise error
     monkeypatch.setattr(item, 'accept_custom', fail)
     with pytest.raises(type(error)) as caught:
-        observe_tool_progress({'_tool_progress_observer': item}, 'accept_custom', payload())
+        observe_tool_progress(typed_context(observation=RunObservationPorts(publisher=item.publisher, tool_progress=item)), 'accept_custom', payload())
     assert caught.value is error
 
 
@@ -183,7 +184,7 @@ def test_async_receiver_ignores_child_namespace_and_unrelated_custom_payloads():
     events = []
     item = observer(events)
     item.begin_dispatch(request())
-    state = _StreamState(item.publisher, {'_tool_progress_observer': item})
+    state = _StreamState(item.publisher, typed_context(observation=RunObservationPorts(publisher=item.publisher, tool_progress=item)))
     state.part({'ns': ('child',), 'type': 'custom', 'data': payload()})
     state.part({'ns': (), 'type': 'custom', 'data': {'kind': 'unrelated'}})
     assert not events

@@ -1,5 +1,6 @@
 """Narrow application port and session-scoped background task tools."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,20 +36,20 @@ class ProcessTaskPort(Protocol):
 
 
 def task_context(runtime, *, query=False):
-    context = runtime.context or {}
+    context = runtime.context
     require_tool_permit(runtime)
-    if context.get('agent_path', 'root') != 'root':
+    if context.scope.identity.agent_path != 'root':
         raise ToolException('Background tasks are available only to the root agent.')
-    sid, root = context.get('session_id'), context.get('workspace_root')
-    port = context.get('_task_queries' if query else '_process_tasks')
+    sid, root = context.scope.identity.session_id, context.scope.identity.execution_path
+    port = context.scope.capabilities.task_queries if query else context.scope.capabilities.process_tasks
     if not isinstance(sid, str) or not sid or not isinstance(root, Path) or not root.is_absolute() or port is None:
         raise ToolException('Application background task scope is unavailable.')
     scope = {'session_id': sid, 'workspace_root': root}
     if not query:
         from .output import require_archive_root
-        scope['archive_root'] = require_archive_root(context)
-        scope['project_id'] = context.get('project_id')
-        scope['execution_root'] = context.get('execution_root')
+        scope['archive_root'] = require_archive_root(context.scope.archive_root, context.scope.identity.execution_path)
+        scope['project_id'] = context.scope.identity.project_id
+        scope['execution_root'] = context.scope.identity.execution_root
     return port, scope
 
 
@@ -73,7 +74,7 @@ def create_background_task_tools():
         public, execution = build_tool_schemas(name.title().replace('_', '') + 'Input', base)
         # Each closure freezes its own action rather than the loop's final tool.
         def build(action):
-            async def execute(runtime: ToolRuntime[dict, dict], **kwargs):
+            async def execute(runtime: ToolRuntime[RuntimeContext], **kwargs):
                 port, scope = task_context(runtime, query=True)
                 permit = require_tool_permit(runtime)
                 if permit.get('tool_name') != action or permit['subject'].get('args') != kwargs:

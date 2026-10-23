@@ -73,8 +73,7 @@ async def admit(owner, graph, instance, spec):
     from .execution_storage import root_from_row
     saved_root = root_from_row(previous, child=True) if previous is not None else instance['execution_root']
     saved_project = previous['project_id'] if previous is not None else instance['project_id']
-    require_execution_directory({'workspace_root': saved_root.path if saved_root else None,
-        'execution_root': saved_root, 'project_id': saved_project})
+    require_execution_directory(saved_root, saved_project)
     if saved_root != instance['execution_root'] or saved_project != instance['project_id']:
         raise ToolException('Subagent execution binding changed; the saved instance was not rebound.')
     if instance['continuing']:

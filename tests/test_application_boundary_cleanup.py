@@ -1,5 +1,6 @@
 """Explicit application ownership without duplicate session routes or hidden setup."""
 
+from runtime_context_helpers import identity_for
 import asyncio
 
 import pytest
@@ -65,9 +66,9 @@ def test_observation_accepts_complete_policies_without_constructing_defaults(mon
         runtime_errors=runtime, application_errors=application)
     assert observation.runtime_errors is runtime
     assert observation.application_errors is application
-    with observation.bind():
-        from naiyue_test_agent.agent_runtime.run_services import current_run_services
-        assert current_run_services().errors is runtime
+    with observation.bind(identity=identity_for(observation.publisher)):
+        from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
+        assert current_run_scope().errors is runtime
 
 
 def test_root_admission_supplies_policies_at_construction(monkeypatch):

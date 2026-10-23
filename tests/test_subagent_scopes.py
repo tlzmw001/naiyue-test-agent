@@ -1,5 +1,7 @@
 """Runtime scope consumers use the child snapshot and original human intent."""
 
+from dataclasses import replace
+from runtime_context_helpers import ToolAuthorization
 import json
 
 import pytest
@@ -85,7 +87,7 @@ async def test_subagent_scope_is_used_by_model_selection_and_compaction(monkeypa
     seen = []
     compact = request_preparation._acompact_messages
     async def record(messages, model, **kwargs):
-        seen.append((kwargs['context']['agent_path'], kwargs['model_id'], model))
+        seen.append((kwargs['context'].scope.identity.agent_path, kwargs['model_id'], model))
         return await compact(messages, model, **kwargs)
     monkeypatch.setattr(request_preparation, '_acompact_messages', record)
     await app.arun(await app.acreate_session('A'), [('user', 'start')])
@@ -112,9 +114,7 @@ async def test_mismatched_parent_permit_cannot_start_child(monkeypatch):
     original = AgentSession.prepare_subagent_instance
     def mismatch(self, *args, **kwargs):
         context = kwargs['parent_context']
-        kwargs['parent_context'] = {**context, '_execution_permit': {
-            **context['_execution_permit'], 'args': {'agent': 'other', 'task': 'different'},
-        }}
+        kwargs['parent_context'] = replace(context, authorization=ToolAuthorization(permit={**context.authorization.permit, 'args': {'agent': 'other', 'task': 'different'}}))
         return original(self, *args, **kwargs)
     monkeypatch.setattr(AgentSession, 'prepare_subagent_instance', mismatch)
     with pytest.raises(PermissionMechanismError, match='permit'):

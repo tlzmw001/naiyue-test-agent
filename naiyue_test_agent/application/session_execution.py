@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from copy import deepcopy
+from naiyue_test_agent.contracts.run_context import RunIdentity
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.errors import GraphBubbleUp
@@ -84,12 +85,12 @@ class SessionExecution:
                 roles = [(role.name, role.description) for role in self._registered_subagents()] if any(
                     spec.tool.name == 'subagent' for spec in specs) else ()
                 system = compose_model_prompt(system_prompt, self.resolve_prompt_parts(), specs, roles)
-                with observation.bind():
+                with observation.bind(identity=RunIdentity(session_id, run_id, project_id=run.project_id, execution_root=run.execution_root)):
                     result = await compact_checkpoint(agent, session_id=session_id, thread_id=thread_id,
                         run_id=run_id, model_id=model_id, model=model, system_message=system,
                         tools=[spec.tool for spec in specs])
             elif workspace_root is not None:
-                with observation.bind(project_id=run.project_id, execution_root=run.execution_root, archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
+                with observation.bind(identity=RunIdentity(session_id, run_id, project_id=run.project_id, execution_root=run.execution_root), archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
                                       background_notices=run.background_notices,
                                       history_query=getattr(self._persistence, 'aquery_history', None),
                                       memory_query=getattr(self._persistence, 'aquery_memory', None),
@@ -98,7 +99,7 @@ class SessionExecution:
                         session_id=session_id, thread_id=thread_id, run_id=run_id, workspace_root=workspace_root,
                         read_resource_roots=resources['read_resource_roots'], max_concurrency=max_concurrency, **options)
             else:
-                with observation.bind(project_id=run.project_id, execution_root=run.execution_root, archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
+                with observation.bind(identity=RunIdentity(session_id, run_id, project_id=run.project_id, execution_root=run.execution_root), archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
                                       background_notices=run.background_notices,
                                       history_query=getattr(self._persistence, 'aquery_history', None),
                                       memory_query=getattr(self._persistence, 'aquery_memory', None),
@@ -178,7 +179,7 @@ class SessionExecution:
                 rejected_count=decisions.count('reject'),
             )
             observation.stage = 'execute'
-            with observation.bind(project_id=run.project_id, execution_root=run.execution_root, archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
+            with observation.bind(identity=RunIdentity(session_id, run_id, project_id=run.project_id, execution_root=run.execution_root), archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self.alist_subagents, process_tasks=self._process_tasks,
                                   history_query=getattr(self._persistence, 'aquery_history', None),
                                   memory_query=getattr(self._persistence, 'aquery_memory', None),
                                       task_queries=getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks):

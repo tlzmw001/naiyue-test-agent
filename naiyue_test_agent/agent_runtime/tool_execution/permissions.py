@@ -3,6 +3,8 @@
 import inspect
 import json
 import logging
+from dataclasses import replace
+from naiyue_test_agent.contracts.run_context import ToolAuthorization
 from copy import deepcopy
 
 from langchain.agents.middleware import AgentMiddleware, hook_config
@@ -84,7 +86,7 @@ def prepare_review_input(messages, call, project_instructions, *, human_messages
                             for c in message.tool_calls)
     subject = {key: value for key, value in call['subject'].items()
                if key not in ('args', 'anchor', 'resource_roots', 'session_id', 'tool_name')}
-    return {'human_messages': collect_human_messages(messages) if human_messages is None else deepcopy(human_messages), 'project_instructions': project_instructions,
+    return {'human_messages': collect_human_messages(messages) if human_messages is None else deepcopy(list(human_messages)), 'project_instructions': project_instructions,
             'previous_calls': previous, 'current_call': {'id': call['id'], 'name': call['name'],
             'args': call['subject'].get('args', call['args'])}, 'subject': subject, 'reason': call['source']}
 
@@ -161,15 +163,15 @@ class AutoPermissionReviewer:
             tokens['total_tokens'] = (usage['total_tokens'] if usage
                 and type(usage.get('total_tokens')) is int and usage['total_tokens'] >= 0 else None)
             logger.info('auto_permission_review', extra={'permission_review': {
-                'session_id': event_label(context.get('session_id')), 'run_id': event_label(context.get('run_id')),
-                'tool_call_id': event_label(context.get('_review_call_id')), 'stage': stage,
+                'session_id': event_label(context.scope.identity.session_id), 'run_id': event_label(context.scope.identity.run_id),
+                'tool_call_id': event_label((context.authorization.review_call_id if context.authorization is not None else None)), 'stage': stage,
                 'model_id': event_label(self.model_ids.get(stage)), 'decision': decision, 'reason': reason,
                 'error_type': safe_error_type(error) if error is not None else None, **tokens}})
         except Exception as fault:
             logger.error('auto_review_diagnostics_failed error_type=%s', safe_error_type(fault))
 
     def _review_steps(self, data, context):
-        control = context.get('_run_control')
+        control = context.scope.control
         if control is not None and control.requested:
             raise UserStop()
         try:
@@ -214,7 +216,7 @@ class AutoPermissionReviewer:
                         return await model.ainvoke(messages, config=config)
                     return await run_blocking(model.invoke, messages, config=config)
                 try:
-                    control = context.get('_run_control')
+                    control = context.scope.control
                     response = await control.await_model(invoke) if control is not None else await invoke()
                 except BaseException as error:
                     pending = steps.throw(error)
@@ -251,7 +253,7 @@ def prepare_permission_call(call, spec, context, settings, session_allow):
                 'feedback': str(error) if isinstance(error, ToolException) else
                 'Tool target preparation failed. Check the arguments and retry with a valid target.'}
     subject.update(tool_name=spec.tool.name, args=args, side_effects=spec.side_effects,
-                   session_id=context['session_id'], execution_environment=execution_environment())
+                   session_id=context.scope.identity.session_id, execution_environment=execution_environment())
     field = getattr(spec.permissions, 'path_field', None)
     if field is not None:
         subject['path_field'] = field
@@ -302,7 +304,7 @@ class PermissionMiddleware(AgentMiddleware):
         if not message.id or any(not identity for identity in ids) or len(set(ids)) != len(ids):
             from ..errors import ModelResponseRejected
             raise ModelResponseRejected('duplicate_tool_call_ids' if len(set(ids)) != len(ids) else 'invalid_tool_call_ids')
-        choice = self.resolve_permission_context(context['session_id'], context.get('agent_path', 'root'))
+        choice = self.resolve_permission_context(context.scope.identity.session_id, context.scope.identity.agent_path)
         mode = choice['mode']
         try:
             self.settings.validate_mode(mode)
@@ -338,8 +340,8 @@ class PermissionMiddleware(AgentMiddleware):
         try:
             for call in self._pending_asks(batch):
                 data = prepare_review_input(state['messages'], call, project,
-                    human_messages=runtime.context.get('_human_review_messages'))
-                call.update(await self.reviewer.areview(data, {**runtime.context, '_review_call_id': call['id']}))
+                    human_messages=runtime.context.inputs.human_review_messages)
+                call.update(await self.reviewer.areview(data, replace(runtime.context, authorization=ToolAuthorization(review_call_id=call['id']))))
         except UserStop:
             return finish_stopped_batch(state, runtime)
         return {'tool_execution': batch}

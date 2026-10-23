@@ -1,6 +1,8 @@
 """Execute accepted memory work without retaining the completed root run."""
 
 import asyncio
+from naiyue_test_agent.contracts.run_context import RunIdentity
+from naiyue_test_agent.execution_roots import ExecutionRoot
 from datetime import datetime, timezone
 import json
 import logging
@@ -349,7 +351,7 @@ async def drive(service, job):
     result, termination = 'completed', 'completed'
     observation.start()
     try:
-        with observation.bind():
+        with observation.bind(identity=RunIdentity(job.session_id, job.task_id, project_id=job.project_id, execution_root=ExecutionRoot(job.root))):
             async with asyncio.timeout(max(0, job.deadline - time.monotonic())):
                 while True:
                     _check(job)
