@@ -1,22 +1,29 @@
-# 当前可用的工具、权限、进程、进度、用量/诊断保存及角色定义样例（Spec085-14 / Spec087 / Spec091 / Spec090C / Spec086-S1—S6 / Spec108 / Spec109）。
-# 默认位置：~/.naiyue-test-agent/settings.toml，与 models.json 同目录。
-# 文件缺失使用默认；读取失败、TOML语法错误、权限/storage/角色定义非法会终止启动。
-# shell_tasks非法会终止启动；旧tool_output.max_workspace_archive_bytes告警并忽略。
-# max_active_runs / web_event_cache_bytes / tools / process / progress / usage_persistence / diagnostics额度非法时分别警告并回退该部分默认，保留合法权限规则。
-# 权限规则启动时读取并校验，不随工具调用重新读文件；修改文件后重启服务。
-# 已接文件/Shell/subagent及aitest_kit/web_search/web_fetch；[[subagents]]配置角色。
-# 完整目标字段见 tool-runtime.example.toml，不能直接整份套用。
+# Naiyue Test Agent 0.4.0：settings.toml 字段示例（包括已注释的可选字段）。
+# 通用填写说明见 ../0.3.0功能与配置指南.md；0.4.0记忆及归档变化见 ../releases/0.4.0.md。
+# 默认位置：~/.naiyue-test-agent/settings.toml；Windows为 %USERPROFILE%\.naiyue-test-agent\settings.toml。
+# 文件名是 settings.toml（有s）；不是项目目录中的文件，也不是 models.json。
+# 本例启用常规默认值；代理认证、Auto、子角色需自行填写，两个MCP示例默认禁用。
+# 模型地址/Key/思考参数/模型重试写 models.json；Web端口用 nyt --port，不在本文件添加这些字段。
+# 秒、毫秒、字节分别按字段名标明；除明确注明外，额度必须为正数，不能把0当作不限。
+# TOML中先写顶层字段，再写[分节]；数组用[]，布尔用true/false，字符串须加引号。
+# Windows路径优先单引号，如 'D:\tools\python.exe'，避免双引号中的反斜杠转义。
+# 文件缺失使用默认；读取/TOML语法/未知顶层字段或权限/storage/角色/网络/MCP/重试/shell_tasks非法会终止启动。
+# tools/process/progress/usage_persistence/diagnostics或顶层数值非法时警告并回退该部分默认。
+# checkpoint_retention非法时告警并关闭修剪；旧tool_output.max_workspace_archive_bytes只告警忽略，不再配置。
+# 一般修改后重启；只有MCP新增/名单/启停可通过“刷新工具与模式”或 :mcp-refresh 显式应用。
 
 # CLI/Web新根会话的初始工具；省略保留当前默认（内置工具但不含Bash/PowerShell/MCP）。
 # []表示零工具；明确列表按顺序选择，可包含已登记的mcp__服务ID__原工具名。
 # 名称非法/重复或未登记会报错；旧会话保留自己保存的选择，子角色仍用tool_names。
 # PowerShell被选中仍受权限/Auto审批控制；修改后重启，对之后新建会话生效。
-# default_active_tools = ["read", "ls", "find", "grep", "write", "edit", "powershell", "web_search", "web_fetch"]
+# Windows示例；若需要子Agent或后台管理工具，一并加入subagent、task_list、task_output、task_stop。
+# subagent_list由subagent开关自动配套，不需单独加入；默认名单不是权限白名单。
+# default_active_tools = ["read", "ls", "find", "grep", "write", "edit", "powershell", "web_search", "web_fetch", "subagent", "task_list", "task_output", "task_stop"]
 
 # 同一应用最多同时占用的根运行数，严格正整数；默认10，非法时警告回退10。
 # 普通任务、手动压缩、根审批恢复计入；必要保存结束才释放，子任务不另占根额度。
 # 满额立即拒绝、不排队；不是单批工具并发量，也不是所有模型请求的限流。
-# 启动时读取，修改后重启；Web多会话任务入口待104-02接线。
+# 启动时读取，修改后重启；CLI/Web均已接入。
 max_active_runs = 10
 
 # 自动会话标题的最大字符数（1—120）；默认40，非法时仅此字段回退。
@@ -83,15 +90,40 @@ cleanup_batch_runs = 32
 # 最终返回检查范围、执行的验证、实际结果、问题证据及未验证部分。
 # """
 # 默认省略model_id/max_model_calls；需要时在本角色内填写已有模型ID/正整数。
+# 可选写法：model_id = "your-existing-model-id"；max_model_calls = 12（放在多行提示词之外）。
+# Windows角色将tool_names中的bash换成powershell；子角色不能使用subagent/subagent_list再委派。
+# 0.3.0的agent_id是模型调用subagent时的参数，不是角色配置项；续跑仍使用当前角色定义。
 
 [tools.subagent]
 # 子任务最终报告的正文行数、UTF-8字节上限，均须大于0；与角色max_model_calls分别配置。
-# 保留开头完整行；首行过长时保留完整字符前缀。截断提示另计；完整历史留在子checkpoint。
+# 保留开头完整行；首行过长时保留完整字符前缀。截断提示另计；完整历史由会话归档保留。
 max_result_lines = 2000
 max_result_bytes = 65_536
-max_list_items = 20
-max_list_bytes = 8192
-task_preview_chars = 160
+max_list_items = 20            # subagent_list每页最多展示的实例数。
+max_list_bytes = 8192          # 整页JSON的UTF-8字节上限，含分页信息。
+task_preview_chars = 160       # 列表中每条委派任务预览的字符数。
+
+# 0.4.0 Spec127：只使用已有配置语言模型，无embedding模型。
+# enabled=false关闭整个记忆模块；auto_enabled=false仅关闭阈值整理，显式refresh仍可用。
+[memory]
+enabled = true
+auto_enabled = true
+trigger_turns = 8              # 完整正常用户轮，或下方新增可见正文字符，任一达到即登记。
+trigger_chars = 20000
+# model_id = "your-existing-model-id" # 省略继承登记时会话模型；错误ID禁用记忆，不回退。
+max_input_tokens = 16000
+max_output_tokens = 4096
+overview_chars = 1200
+max_proposals = 8
+max_batches = 3
+task_timeout_seconds = 300     # 首次登记起总时限，包含根轮等待、排队、模型及SDK重试。
+max_pending_tasks = 32
+max_active_tasks = 1
+injection_tokens = 2000        # 新轮有界短索引，不包含完整历史。
+preference_limit = 3
+related_limit = 8
+directory_limit = 8
+# 检索K、候选/生效记忆各类型TTL和个人库模式详见docs/memory-tool.md。
 
 # Web工具与远程HTTP MCP的网络设置，不改变模型供应商、Bash或待测项目自身的网络配置。
 # auto：读取系统/环境HTTP_PROXY、HTTPS_PROXY、ALL_PROXY及NO_PROXY；无代理时直连。
@@ -100,10 +132,12 @@ task_preview_chars = 160
 # 网络配置非法会终止启动，避免将强制代理误回退为直连；修改后重启。
 [network]
 mode = "auto"
-# proxy = "http://127.0.0.1:7890"  # 只在mode="proxy"时使用；填写自己的代理地址。
+# 手动代理须把上方mode改为"proxy"；auto不使用下面的手动proxy地址。
+# proxy = "http://127.0.0.1:7890"  # 填代理服务真实的协议、地址和端口。
 # 有认证时分开填写原始用户名/密码，特殊字符由程序编码；两项需同时提供，可显式空密码。
 # proxy_username = "alice"
 # proxy_password = 'p@ss#word'
+# 没有认证就同时省略两项，不要只填用户名；不会在此自动展开${ENV_NAME}。
 # 仍支持旧的带认证proxy URL，但不能再同时填写上述两项；凭据不进入公共转储/日志。
 # 配置名单先于proxy/auto；域名匹配自身及点边界子域，IP按地址匹配，CIDR支持IPv4/IPv6。
 # 支持10.*、10.20.*等IPv4尾部整段通配（规范化为CIDR）；*.corp.example仅匹配子域，不含主域。
@@ -311,7 +345,7 @@ max_diagnostic_bytes = 8192
 max_argument_bytes = 16_384
 
 [tools.find]
-# 需要 PATH 中的 fd（Linux也识别同程序的fdfind名称），不自动下载/安装。
+# PyPI发行包已带fd，优先使用包内程序；源码运行需要按构建说明准备原生工具。
 # 文件和目录都占条目；先过滤权限，再计返回名额。
 default_limit = 1000
 max_limit = 2000
@@ -372,7 +406,7 @@ max_output_bytes = 65_536
 # 一次 PowerShell 调用的实际归档总量：16 MiB，含原始文件和条件文本视图。
 max_archive_bytes = 16_777_216
 # 适配器初始化文本输出后预期的编码；原生程序使用其他编码时需明确调整。
-# 该候选默认仍须用 Windows PowerShell 5.1/7 实机验证，不能仅靠此字段保证兼容。
+# Agent按此编码解码输出；外部程序若使用GBK等编码，需按实际情况调整。
 output_encoding = "utf-8"
 # 仅Windows PowerShell进程的执行策略选择：inherit尊重当前策略；bypass只影响该子进程。
 # 工程默认建议inherit，不调用Set-ExecutionPolicy改用户/机器策略；企业策略仍有效。
@@ -388,11 +422,12 @@ path_prepend = []
 # 显式新增/覆盖的非敏感字符串值；空表表示不覆盖，规则与 Bash 相同。
 
 [shell_tasks]
-# Spec125-01—04：只约束Bash/PowerShell；不改变Find/Grep、AITest及网络期限。
+# 0.3.0：只约束Bash/PowerShell；不改变Find/Grep、AITest及网络期限。
 # 严格非负整数秒；未配/0不设应用上限。非法配置终止启动，不回退成无限。
 # 模型timeout省略/null/0使用本配置；正整数与已配置正上限取较小值。
 max_execution_seconds = 0
 # 主Agent前台等待120秒后自动转后台；与执行期限共用计时原点，原期限不重置。
+# 此值必须大于0，不是“执行120秒就杀进程”；子Agent不支持显式或自动转后台。
 foreground_wait_seconds = 120
 # 后台任务各自的raw/text归档合计上限；达到额度停止该任务，默认64 MiB。
 max_background_archive_bytes = 67108864
@@ -400,3 +435,56 @@ max_background_archive_bytes = 67108864
 max_notice_items = 20
 # 包含标题及查询说明的完整提示段UTF-8字节数；放不下整条时保留待提示并诊断。
 max_notice_bytes = 8192
+
+# 必要保存成功后，小批修剪可安全删除的旧执行快照；聊天原文和恢复锚点保留。
+# 不是定时备份，也不是整个SQLite文件的大小上限；非法配置告警并关闭此维护项。
+[checkpoint_retention]
+enabled = true
+trigger_checkpoints = 128      # 单线程快照数量达到触发条件时考虑修剪，至少2。
+max_delete_checkpoints = 128   # 一次最多删除的旧快照数，范围1—4096。
+max_delete_bytes = 33554432    # 一次删除数据预算32 MiB；不强制VACUUM缩小数据库文件。
+
+# MCP可定义多个服务：将local/remote换成1—16位字母、数字或下划线组成的唯一ID。
+# 下面是格式占位示例，不是随包提供的服务；先填真实程序/地址/工具名，再enabled=true。
+# allowed_tools填服务端的原工具名，不接受*；[]只发现目录、不登记可调用工具。
+# 登记后名称为mcp__服务ID__原工具名；还须在根会话或子角色中选中，执行仍受审批。
+[mcp.servers.local]
+enabled = false
+transport = "stdio"            # 本机子进程；不经Shell，不解释&&、管道或命令字符串。
+command = "python"             # 最好改成服务器环境中Python/程序的绝对路径。
+args = ["/absolute/path/to/mcp_server.py"] # Windows可用单引号路径；服务依赖须自行安装。
+# cwd = 'D:\path\to\server'   # 可选工作目录；省略沿用启动进程的目录。
+allowed_tools = []             # 先用nyt mcp list查看实际工具名，再逐个填写。
+connect_timeout_seconds = 15   # 建连、协商和发现的总时限，必须>0秒。
+call_timeout_seconds = 0       # 单次工具总时限，含等待连接、重试及退避；0不限。
+read_timeout_seconds = 0       # 协议读取超时；0使用SDK的不限时读取。
+idle_timeout_seconds = 0       # 无在途调用时的空闲回收秒数；0不自动回收，不是调用超时。
+max_tools = 64                 # 服务目录所有分页累计工具数上限。
+max_schema_bytes = 65536       # 单工具输入/输出Schema合计JSON字节上限。
+max_response_bytes = 1048576   # 响应预算；也是超长结果单次归档上限，非进程内存硬上限。
+max_result_bytes = 65536       # 返回模型的结果正文UTF-8字节上限；超长会说明截断。
+max_concurrency = 1            # 应用内同一服务最多同时借用的调用数。
+[mcp.servers.local.env]
+# stdio不自动继承所有变量；这里只能填完整${变量名}引用，不能直接填Key或拼接字符串。
+SERVER_API_KEY = "${MY_MCP_SERVER_KEY}" # 左边是子进程变量名；右边是父进程已有变量名。
+
+[mcp.servers.remote]
+enabled = false
+transport = "streamable_http"  # 远程MCP；不支持把旧SSE地址作为独立transport。
+url = "https://example.invalid/mcp" # 改成真实MCP地址；禁止把用户名密码写进URL。
+allow_insecure_http = false    # HTTPS不需改；非回环HTTP需显式true，所有HTTP均禁止认证头。
+allowed_tools = []
+# 以下预算与local含义相同，但分别作用于本服务。
+connect_timeout_seconds = 15
+call_timeout_seconds = 0
+read_timeout_seconds = 0
+idle_timeout_seconds = 0
+max_tools = 64
+max_schema_bytes = 65536
+max_response_bytes = 1048576
+max_result_bytes = 65536
+max_concurrency = 1
+[mcp.servers.remote.headers_env]
+# 值是环境变量的名字，不写${...}，也不直接写Token。
+# 该环境变量须保存服务端要求的完整头值，例如Bearer后加空格和真实Token。
+Authorization = "MY_MCP_AUTHORIZATION"

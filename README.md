@@ -8,8 +8,9 @@
 - 工具：Read、Ls、Find、Grep、Write、Edit、Bash、PowerShell，以及一层前台子 Agent。
 - `0.1.1` 新增 `aitest_kit`、百度/Tavily 回退的 `web_search` 和 `web_fetch`，配置见[工具说明](docs/aitest-web-tools.md)。
 - `0.2.0` 统一模型请求准备与上下文预算，补充调用次数、耗时和 SDK HTTP 尝试诊断；支持分离配置代理地址、用户名/密码、直连名单及新会话默认工具，见[设置示例](docs/examples/settings.example.toml)。
-- `0.3.0` 新增 Bash/PowerShell 后台任务及统一辅助侧栏，支持按既有子 Agent 实例续跑；同时交付外部工具有限重试、CIDR/通配直连规则、迁移前备份、显式还原及任务收尾 checkpoint 修剪。配置与范围见[设置示例](docs/examples/settings.example.toml)、[后台任务](docs/specs/125-background-shell-tasks.md)和[子实例续跑](docs/specs/126-subagent-continuation.md)。
+- `0.3.0` 新增 Bash/PowerShell 后台任务及统一辅助侧栏，支持按既有子 Agent 实例续跑；同时交付外部工具有限重试、CIDR/通配直连规则、迁移前备份、显式还原及任务收尾 checkpoint 修剪。使用说明见[0.3.0功能与配置指南](docs/0.3.0功能与配置指南.md)和[全量设置示例](docs/examples/settings.example.toml)，范围见[后台任务](docs/specs/125-background-shell-tasks.md)和[子实例续跑](docs/specs/126-subagent-continuation.md)。
 - Find/Grep 使用安装包内的 `fd` / `rg`；前端已经构建，使用发行包无需 Node.js 或 npm。
+- `0.4.0` 新增 [history历史查询](docs/history-tool.md)和[memory记忆查询与维护](docs/memory-tool.md)：同目录会话原文、项目/个人记忆、来源校验、候选转正、到期及遗忘；完整用户轮保存后可在后台整理概览与记忆，新轮有界注入偏好/相关条目及首次近期会话索引。复用工具启停、权限和后台任务查看/停止，不需要embedding模型；同时迁出应用输出归档并修复单次模型输出上限，范围和效果边界见[0.4.0版本说明](docs/releases/0.4.0.md)。
 - `0.3.1` 修复 Windows 下稳定文件在 Read 后 Edit 误报冲突的问题，删除 Edit 两处重复路径解析并集中元数据比较规则；保留内容冲突与原子替换保护，安装验证增加实际 Read → Edit → Read 链路。
 - `0.2.0` 支持 `nyt mcp list` 只读发现及根/子 Agent 调用本地/远程 MCP 工具，复用活动工具选择、审批与会话连接，支持按服务显式开启空闲回收；应用运行中可刷新配置以新增服务、调整名单和启停，CLI/Web显示来源、结果状态和归档位置，重启保留历史、旧 MCP 待审需取消后重新发起，见[MCP客户端配置](docs/mcp-client.md)。
 
@@ -128,7 +129,7 @@ max_notice_items = 20
 max_notice_bytes = 8192
 ```
 
-Shell/AITest/MCP的受管输出归档位于`<workspace_root>/naiyue-agent-output/`，每次调用分别受自身额度约束；已移除工作区累计归档额度，旧`tool_output.max_workspace_archive_bytes`告警并忽略。日志不自动删除，手动清理仍需预览并确认。前台归档触限只停止归档，后台任务触限会停止自身。存在活动后台任务或未确认的收尾时，拒绝删除所属会话或清理输出；停止后才能继续。任务完成不自动发起模型请求，用户下一轮可按任务ID查询。
+从`0.4.0`起，Shell/AITest/MCP的新受管输出归档位于配置的`data_dir/workspaces/<项目UUID>/artifacts/naiyue-agent-output/`；`--no-session`不创建项目身份、不开放项目history/memory，其归档使用`data_dir/sessions/<session_id>/artifacts/naiyue-agent-output/`。归档实际位置必须在执行目录外，返回绝对路径；旧工作区内的文件不自动搬迁。后续Read仍受原权限检查，后台task_output则按已登记任务读取。每次调用分别受自身额度约束；已移除工作区累计归档额度，旧`tool_output.max_workspace_archive_bytes`告警并忽略。日志不自动删除，手动清理仍需预览并确认。前台归档触限只停止归档，后台任务触限会停止自身。存在活动后台任务或未确认的收尾时，拒绝删除所属会话或清理输出；停止后才能继续。任务完成不自动发起模型请求，用户下一轮可按任务ID查询。详见[0.4.0版本说明](docs/releases/0.4.0.md)。
 
 会话、checkpoint、聊天归档和用量等保存在工作区关联的用户数据目录中，默认位于 `~/.naiyue-test-agent/data/`。模型上下文压缩保留独立聊天归档。安装或升级应用不迁移或清理这些数据。
 

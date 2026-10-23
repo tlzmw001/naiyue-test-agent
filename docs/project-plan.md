@@ -1,5 +1,7 @@
 # Naiyue Test Agent：项目设计记录
 
+2026-10-23 0.4.0交付范围：已确认合并history/memory及应用输出归档迁出，见[版本说明](releases/0.4.0.md)和[Spec127](specs/127-memory-and-session-overviews.md)。按需历史查询、项目/个人记忆、来源与版本门禁、分类TTL、后台概览/记忆整理和有界新轮索引已接线；共享模型单次输出上限绑定已修复。新Shell/AITest/MCP归档使用执行目录外的data_dir，旧文件不自动搬迁，执行权限和MCP已知结果保持。自动提取语义质量仍按实际任务观察，不以工程或固定样本回归宣称整体达标。Spec128身份/ExecutionRoot迁移、分层context及worktree功能不在本版。
+
 2026-10-22 [Spec126](specs/126-subagent-continuation.md)四片已完成本机闭环：稳定子实例按ID继续、每次委派限额、可信登记/父事务确认、重开/压缩/退役/修剪还原和单开关派生只读list；CLI/Web保留多次报告并绑定当前执行/审批。[04](specs/126-04-subagent-acceptance.md)补正式图/真文件/SQLite共享安装worker和拒绝型检查器，同ID三次委派/重开零重放/fresh隔离通过；4223后端、415前端及四目标同源码构建/Mac干净安装通过，120样本耗时见04。当前未发布，真实模型/其他原机另验。Spec126无下一本机实现片；用户随后确认后台子Agent保留为远期候选，不占近期顺位，当前以新建会话满足并行规划需求。长期与跨会话记忆由原会话继续规划，不自动指定下一实施项。用户直聊取消；RAG/知识库和多用户SaaS已转其他项目，从本项目待办移除。多层子Agent委派与熔断、备用工具/模型及质量修复加入暂缓项，不占近期顺位；会话分叉仍独立排期。
 
 2026-10-20发行范围更新：用户确认后续取消Intel macOS，仅保留macOS Apple Silicon、Linux x86_64/ARM64、Windows x64四目标。构建/CI/完整发行检查统一消费目标配置，当前依赖版本保持；MCP本机门禁与其他原机证据分别见[Spec117-08](specs/117-08-mcp-delivery-verification.md)。下方“五平台”条目为对应历史时点。

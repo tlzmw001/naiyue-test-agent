@@ -15,6 +15,7 @@
       "api": "chat_completions",
       "profile": {
         "image_inputs": false,
+        "memory_output": "text",
         "prompt_cache": {
           "protocol": "openai",
           "retentions": ["in_memory", "24h"]
