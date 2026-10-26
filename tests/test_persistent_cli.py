@@ -217,9 +217,12 @@ async def test_interactive_auto_recovery_waits_for_new_input_before_running(monk
     capsys.readouterr()
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
     finished = Event()
-    from terminal_service_helpers import capture_hosts
-    capture_hosts(monkeypatch, lambda host, _: host.observability.subscribe(
-        lambda event: finished.set() if event.event_type == 'run_finished' else None))
+    from naiyue_test_agent.cli.cli_display import CliEventDisplay
+    write = CliEventDisplay.write
+    def observe_display(self, text):
+        write(self, text)
+        if text == '本次运行完成': finished.set()
+    monkeypatch.setattr(CliEventDisplay, 'write', observe_display)
     lines = iter(['new request', ':quit'])
     def terminal_input(_p=''):
         line = next(lines)
