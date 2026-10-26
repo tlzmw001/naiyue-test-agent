@@ -111,6 +111,7 @@ async def scenario(directory,context,image):
                     formal_read_shell='passed',selected_hidden_skill='passed',ignored_excluded='passed',
                     credentials_refused='passed',repeat_preserves_changes='passed')
             async with application() as app:
+                await app.environments.start(binding)
                 assert (await app.environments.operation_status(binding,operation))['state']=='completed'
                 assert (await app.environments.get(binding)).input_snapshot==snapshot.input_snapshot
                 files=await app.environments.files(binding,project_id=project.project_id,session_id=sid)

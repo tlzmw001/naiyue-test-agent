@@ -65,10 +65,11 @@ class SessionAPI:
         with self._owner.operation():
             return await run_blocking(self._sessions.create_session, model_id)
 
-    async def create_sandbox(self,model_id,*,request_id,include_untracked=()):
+    async def create_sandbox(self,model_id,*,request_id,include_untracked=(),profile_id=None,expected_profile_revision=None):
         from .execution_binding import create_sandbox_session
         with self._owner.operation():
-            return await create_sandbox_session(self._sessions,model_id,request_id,include_untracked)
+            return await create_sandbox_session(self._sessions,model_id,request_id,include_untracked,
+                profile_id=profile_id,expected_profile_revision=expected_profile_revision)
 
     async def result_options(self,session_id):
         from .result_api import result_call

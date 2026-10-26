@@ -140,6 +140,11 @@ class ApplicationLifetime:
                         primary = result
                     else:
                         logger.error('host_cleanup_secondary_failed error_type=%s', safe_error_type(result))
+            if self._environments is not None:
+                try:await self._environments.finish_close()
+                except BaseException as error:
+                    if primary is None:primary=error
+                    else:logger.error('container_cleanup_secondary_failed error_type=%s',safe_error_type(error))
             if primary is not None:
                 raise primary
         except BaseException as error:

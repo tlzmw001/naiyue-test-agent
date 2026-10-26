@@ -58,7 +58,9 @@ it('shows saved facts as read-only, never sends on Enter, and allows a new sessi
   expect(api.start).not.toHaveBeenCalled(); expect(api.events).not.toHaveBeenCalled();
   expect(api.select).not.toHaveBeenCalled(); expect(api.approve).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: /新建会话/ }));
-  await waitFor(() => expect(api.create).toHaveBeenCalledWith('A'));
+  await waitFor(() => expect(screen.queryByText('saved request')).toBeNull());
+  expect(api.create).not.toHaveBeenCalled();
+  expect((screen.getByRole('button', { name: '发送消息' }) as HTMLButtonElement).disabled).toBe(false);
 });
 
 it('automatically recovers on opening, keeps the draft, and waits for a new send', async () => {

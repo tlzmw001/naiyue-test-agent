@@ -47,7 +47,7 @@ function setup() {
   return { api, session };
 }
 
-it('keeps mode and tools inside the composer, and creates a session without sending the draft', async () => {
+it('keeps mode and tools inside the composer draft without creating a session', async () => {
   const { api } = setup();
   const mode = await screen.findByRole('button', { name: '权限模式：Default' });
   expect(mode.closest('form')).toBe(screen.getByRole('textbox', { name: '消息' }).closest('form'));
@@ -57,14 +57,16 @@ it('keeps mode and tools inside the composer, and creates a session without send
   expect(screen.getByText('未配置 Auto 审查模型')).toBeTruthy();
   fireEvent.click(screen.getByRole('radio', { name: /NoAsk/ }));
   await screen.findByRole('button', { name: '权限模式：NoAsk' });
-  expect(api.selectPermissionMode).toHaveBeenCalledExactlyOnceWith('s', 'NoAsk');
-  expect(api.create).toHaveBeenCalledExactlyOnceWith('A');
+  expect(api.selectPermissionMode).not.toHaveBeenCalled();
+  expect(api.create).not.toHaveBeenCalled();
   expect((input as HTMLTextAreaElement).value).toBe('keep this draft');
   expect(api.start).not.toHaveBeenCalled();
 });
 
 it('selects the registered tools for the current main agent and preserves a failed selection', async () => {
   const { api } = setup();
+  fireEvent.click(await screen.findByRole('button', { name: /Invalid Date/ }));
+  await waitFor(() => expect(api.prepare).toHaveBeenCalledWith('s'));
   fireEvent.click(await screen.findByRole('button', { name: /工具.*1/ }));
   expect(screen.getByText('下一次模型调用生效。')).toBeTruthy();
   fireEvent.click(screen.getByRole('checkbox', { name: /bash/ }));
@@ -113,21 +115,39 @@ it('shows an option loading error and retries without creating a session', async
   expect(api.create).not.toHaveBeenCalled();
 });
 
-it('reports a failed first session read, keeps its identity and draft, and retries without another create', async () => {
+it('reports failed first-send session reads, keeps the identity and draft, and retries only the read', async () => {
   const { api, session } = setup();
+  let saved = session;
   vi.mocked(api.session).mockRejectedValueOnce(new Error('first read failed'))
-    .mockRejectedValueOnce(new Error('confirmation read failed')).mockResolvedValue(session);
+    .mockRejectedValueOnce(new Error('confirmation read failed')).mockImplementation(async () => saved);
+  vi.mocked(api.selectPermissionMode).mockImplementation(async (_id, permission_mode) => {
+    saved = { ...saved, permission_mode }; return { permission_mode };
+  });
   fireEvent.change(screen.getByRole('textbox', { name: '消息' }), { target: { value: 'keep my draft' } });
   fireEvent.click(await screen.findByRole('button', { name: '权限模式：Default' }));
   fireEvent.click(screen.getByRole('radio', { name: /NoAsk/ }));
-  await screen.findByText(/当前选择刷新未确认/);
+  await screen.findByRole('button', { name: '权限模式：NoAsk' });
+  fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  await screen.findByText('操作未确认，内容已保留。请检查连接或重新同步。');
+  expect(api.session).toHaveBeenCalledTimes(1);
   expect((screen.getByRole('textbox', { name: '消息' }) as HTMLTextAreaElement).value).toBe('keep my draft');
-  fireEvent.click(screen.getByRole('button', { name: '权限模式：Default' }));
-  fireEvent.click(screen.getByRole('radio', { name: /NoAsk/ }));
+  expect(api.start).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  await waitFor(() => expect(api.session).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.getByRole('button', { name: '发送消息' }).hasAttribute('disabled')).toBe(false));
+  expect(screen.getByText('操作未确认，内容已保留。请检查连接或重新同步。')).toBeTruthy();
+  expect((screen.getByRole('textbox', { name: '消息' }) as HTMLTextAreaElement).value).toBe('keep my draft');
+  expect(api.start).not.toHaveBeenCalled();
+  vi.mocked(api.start).mockResolvedValue({ session_id: 's', run_id: 'r' });
+  vi.spyOn(api, 'run').mockResolvedValue({ session_id: 's', run_id: 'r', status: 'completed', done: true,
+    messages: [], last_sequence: 0, incomplete: false, manual_review_required: false });
+  vi.spyOn(api, 'events').mockResolvedValue(undefined);
+  fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  await waitFor(() => expect(api.start).toHaveBeenCalledTimes(1));
   await screen.findByRole('button', { name: '权限模式：NoAsk' });
   expect(api.create).toHaveBeenCalledTimes(1);
   expect(api.selectPermissionMode).toHaveBeenCalledExactlyOnceWith('s', 'NoAsk');
-  expect(api.start).not.toHaveBeenCalled();
+  expect(api.start).toHaveBeenCalledWith('s', 'keep my draft', undefined, undefined);
 });
 
 it('keeps confirmed choices when an older run refresh returns after saving', async () => {

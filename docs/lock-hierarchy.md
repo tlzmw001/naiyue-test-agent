@@ -1,6 +1,6 @@
 # 锁层级与获取约定
 
-核对日期：2026-10-25。适用代码：`codex/project-execution-root` 工作树的 R1-13B 当前实现（包含尚未提交的 R1 变更），不是仅凭分支 HEAD 判断的历史版本。主目录尚未合入该实现；合并后沿用本表。
+核对日期：2026-10-26。适用代码：`codex/project-execution-root` 工作树的 R1-13D-04 当前实现（包含尚未提交的 R1 变更），不是仅凭分支 HEAD 判断的历史版本。主目录尚未合入该实现；合并后沿用本表。
 
 本表是修改并发代码时的维护合同，记录保护对象、允许获取的入口和当前嵌套关系；不宣称已经形式化证明无死锁，也不新增运行时锁检查。核对范围是 `naiyue_test_agent/` 生产代码中的显式锁、条件变量、信号量、文件占用锁，以及应用直接使用的 saver 锁。测试里的同步对象、SDK/SQLite/日志库内部锁不逐个列入。
 
@@ -24,6 +24,7 @@
 | G3 `ScopeTasks.serial(('selection_store', path))` | 异步锁，旧数据库路径的准备／导入互斥 | 同上；只在已确定旧库路径后获取 | `G3 → G4`；允许进入 P1／F3。不得从 G4 反向准备旧目录。 |
 | G4 `HostManager._scopes.serial(('host', id))`／`('temporary', id)` | 异步锁，同一 project/chats/临时 host 的打开、列历史、关闭、移除、定位互斥 | [HostManager](../naiyue_test_agent/application/projects/host_manager.py) 的 `_scopes.open/serial`；`ProjectSelection._prepare` 的最终检查 | `G4 → {P1, G5, A1}`；host 打开／关闭期间也会进入本 host 的会话、资源和数据库入口。同 key 不可重入；跨项目不叠持 G4。冷打开共用 task，不再持全局打开锁。 |
 | G5 `DeferredModels._lock` | 异步锁，模型目录首次构造／准备的单次发布 | [DeferredModels.get](../naiyue_test_agent/application/service_application.py) | 可在 G4 内获取；模型准备可涉及自身的模型／HTTP 局部锁。不得在加载回调中反向打开 host 或获取 G4。 |
+| G6 `EnvironmentAPI._refresh_lock` | 异步锁，只串行环境配置的读取、校验与发布 | [EnvironmentAPI.refresh](../naiyue_test_agent/application/environments/api.py) | 持锁等待读取线程排空；取消不发布候选，下一次刷新须等原线程结束。发布在owner loop一次替换不可变目录；不获取G1—G5、项目／会话锁、数据库锁或Docker锁，不保护run、历史、停止和普通选项读取。 |
 | P1 `ProjectService._lock` | `RLock`，项目注册服务的懒加载、操作预留／恢复、关闭 | [ProjectService](../naiyue_test_agent/application/projects/service.py) 的 list/get/add/create/rename/relocate/remove/import/reconcile/close | `P1 → DB(registry)`；项目建库、导入、移除还允许 `P1 → F3`。保留同线程 `get/reconcile` 重入；不在持有 P1 时反向获取 G1—G4。运行期 `RegisteredExecution` 直接读取 registry.execution_facts，只取得 DB(registry)，不反取 P1。 |
 | A1 `RunAdmission.lock` | `RLock`，全应用根运行的容量检查、准入提交与项目交付预留 | [SessionService._admit](../naiyue_test_agent/application/sessions/session_service.py)；[RunAdmission.available/manage_project/check_project/release](../naiyue_test_agent/application/sessions/run_admission.py)；available要求调用者已持有A1，release只在生命周期确认排空后调用 | `A1 → A2 → S3`；统计时逐个取得 A2，释放 A2 后读取对应 actor 的 S3，不同时锁多个 service。目录／注册 revision 验证在取得 A1 前完成。 |
 | A2 `SessionService._lock` | `Lock`，已加载 actor、子 Agent 角色、组装／关闭状态的注册表 | [SessionService](../naiyue_test_agent/application/sessions/session_service.py) 的注册／查找／快照／准入／删除 guard；`RunAdmission.available` | `A2 → {S3, B1, E1, M1}`：分别用于读 actor、检查清理、取订阅快照、冻结模型错误映射。不得反向获取 A1 或 S2。建图、创建会话的必要 SQL、运行及关闭等待在释放 A2 后执行。 |
@@ -161,7 +162,11 @@ BackgroundProcessManager.submit/foreground 的 `_validate_binding` 在取得 B1 
 | DKR1 `EnvironmentService._guard` | 已知 binding ID 到生命周期锁的字典；仅 `_lock` 短查询/插入 | 在 worker 中使用，释放后才取得 DKR2；不在此锁内访问仓储、Docker、文件或回调。 |
 | DKR2 每 binding 的 `RLock` | create（包含最初 reserve）、start/stop/destroy/recover；全部从 EnvironmentAPI 的 run_blocking 进入 | `DKR2 → DB(registry)` 只做短记录提交/读取，事务释放后再 Docker IO。禁止持 DB 等待 DKR2。不同 binding 不互相等待；事件循环不取得它。文件 RPC 不持 DKR2，仍允许容器内原 Write/Edit 目标锁发现同文件冲突。 |
 
-创建 UUID 在本地确定后，先取得 DKR2 再公开 creating 记录；因此并发 destroy 必须等创建结算再销毁，不能先返回 destroyed 后被 create 复活。查找字典锁 DKR1 不与 DKR2 同时持有。ProjectService.environment_records 只在 worker 用原项目写锁获取/初始化仓储句柄，离开该锁和数据库事务才连接 Docker；轻量 execution_facts 不取得项目写锁。
+创建 UUID 在本地确定后，先预留绑定活动使用权，再取得 DKR2 并公开 creating 记录；并发 destroy 直接报 env_busy，不能先返回 destroyed 后被 create 复活。查找字典锁 DKR1 不与 DKR2 同时持有。ProjectService.environment_records 只在 worker 用原项目写锁获取/初始化仓储句柄，离开该锁和数据库事务才连接 Docker；轻量 execution_facts 不取得项目写锁。
+
+R1-13D-04 的 EnvironmentActivity._lock 是叶级短内存 RLock，只保护使用计数、管理标记和时间保存不确定集合。use/manage 上下文保留的是标记，不持该锁跨 await、SQL、绑定锁或 Docker IO。run/审批恢复/压缩/重生成、输入安装和结果捕获全程持使用权，管理独占标记与使用权互斥；Worker 的单次 RPC 和观察刷新也取得使用权。只读刷新不更新时间，本地 env_busy 不写 unknown/stale，后台采集稍后重试。空闲检查在管理前后核对 journal，避免因扫描而打断健康观察。首次执行终局且输出结算才更新时间。
+
+额度通过 DB(registry) 同一短写事务读取计数并预留 creating/starting，释放数据库锁后才连接 Docker；不新增配额锁。常驻根生命周期停止检查器并封操作入口，排空进程、run 和子宿主后，才停止全部未销毁原容器（包括上次登记 stopped 的资源），不持会话/线程锁等待 Docker，不删除卷。失败尝试剩余容器，保留首异常。
 
 envd 的 Unix socketserver 在每个容器中处理请求，其框架线程管理不是应用线程锁；容器内复用原 `_active_targets_lock` 与目标占用表、进程输出/归档锁，实例不跨容器共享。协议不携带锁、publisher 或运行中的 Python 对象。R1-11 的 Shell/argv 通过登记操作入口执行；原生 fd/rg 仍在该容器内搜索。Find/Grep 的控制端 async 入口已用 asyncio.to_thread 执行只读 require_file_target，不能在 owner loop 等待同步 Docker 校验，也不反向导入运行时层。
 

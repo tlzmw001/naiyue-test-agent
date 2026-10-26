@@ -212,12 +212,20 @@ export interface ExecutionView {
   kind: 'host' | 'sandbox'; state: 'ready' | 'preparing' | 'unavailable' | 'failed';
   binding_id?: string; input_id?: string; root?: string | null;
   error?: { code: string; paths?: string[] } | null;
+  profile_id?: string; profile_name?: string; profile_revision?: string;
 }
 export interface ExecutionOptions {
   host_available: boolean; sandbox_available: boolean; error_code: string | null;
   requires_trust: boolean; project_revision: number; network: string;
   untracked: string[]; blocked: string[];
+  default_profile?: string | null;
+  profiles?: { profile_id: string; name: string; revision: string }[];
 }
 export interface SessionCreation {
   execution: 'host' | 'sandbox'; model_id: string; include_untracked: string[]; requestId: string;
+  profile_id?: string; expected_profile_revision?: string;
 }
+export type ExecutionDraft = Pick<SessionCreation, 'execution' | 'include_untracked' | 'profile_id' | 'expected_profile_revision'> & {
+  profile_name?: string; trust_revision?: number;
+};
+export type DraftControls = Partial<Pick<SessionView, 'active_tools' | 'permission_mode' | 'thinking_level'>>;

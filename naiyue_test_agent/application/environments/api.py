@@ -1,24 +1,67 @@
 """Owner-loop domain API; Docker work is drained outside the event loop."""
+import asyncio
+from contextlib import asynccontextmanager
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking
 from naiyue_test_agent.contracts.sandbox import SandboxError
+from naiyue_test_agent.sandbox_profiles import load_sandbox_configuration
 from naiyue_test_agent.execution.docker_files import DockerFileSystem
 from .service import EnvironmentService
 from .operations import SandboxOperationService
 from .inputs import InputService
 from .results import ResultService
 from .delivery import DeliveryService
+from .lifecycle import EnvironmentLifecycle
 
 
 class EnvironmentAPI:
     def __init__(self,owner,hosts):
         self._owner,self._hosts=owner,hosts
+        self._refresh_lock=asyncio.Lock()
         self._service=EnvironmentService(hosts.projects,hosts.settings.sandbox)
-        self._operations=SandboxOperationService(self._service)
+        self._operations=SandboxOperationService(self._service,activity=self._service.activity)
         self._service.operations=self._operations
         self._inputs=InputService(self._service,self._operations)
         self._results=ResultService(self._service,self._operations,self._inputs)
         self._delivery=DeliveryService(self._results,hosts.settings.delivery)
-        owner.own_environments(self._operations)
+        self._lifecycle=EnvironmentLifecycle(self)
+        owner.own_environments(self._lifecycle)
+
+    @asynccontextmanager
+    async def using(self,binding_id):
+        with self._owner.operation(),self._service.activity.use(binding_id,used=False):
+            try:yield
+            finally:await run_blocking(self._service.activity.touch,binding_id)
+
+    async def sweep_idle(self,*,now=None):
+        with self._owner.operation():await self._lifecycle.sweep(now)
+
+    async def management(self):
+        with self._owner.operation():
+            def view():
+                rows=self._lifecycle.rows()
+                names={p.project_id:p.name for p in self._service.projects.registry.list()} if rows else {}
+                return dict(policy=self._service.configuration.lifecycle.model_dump(),
+                    usage=self._service.records().usage() if rows else dict(running=0,retained=0),
+                    items=[dict(binding_id=r.binding_id,project_id=r.project_id,session_id=r.session_id,
+                        project_name=names.get(r.project_id),profile_name=r.profile_name,lifecycle=r.lifecycle,
+                        last_used_at=r.last_used_at,error_code=r.error_code,
+                        busy=self._service.activity.busy(r.binding_id),unsettled=self._operations.unsettled(r.binding_id))
+                        for r in rows if r.lifecycle!='destroyed'])
+            return await run_blocking(view)
+
+    async def manage(self,binding_id,action,*,confirm_destroy=False):
+        if action=='destroy' and confirm_destroy is not True:raise SandboxError('env_confirmation_required')
+        with self._owner.operation(),self._operations.accepting(),self._service.activity.manage(binding_id):
+            row=await run_blocking(self._service._perform_action,binding_id,action)
+            return dict(binding_id=row.binding_id,lifecycle=row.lifecycle)
+
+    async def refresh(self,settings_path):
+        with self._owner.operation():
+            async with self._refresh_lock:
+                configured=await run_blocking(load_sandbox_configuration,settings_path)
+                self._service.configuration=configured
+                self._lifecycle.wake()
+                return configured.catalog()
 
     async def delivery_options(self,binding_id,result_id):
         with self._owner.operation():return await run_blocking(self._delivery.options,binding_id,result_id)
@@ -42,7 +85,8 @@ class EnvironmentAPI:
         with self._owner.operation():return await run_blocking(self._results.options,binding_id)
 
     async def capture_result(self,binding_id,*,result_id,include_untracked):
-        with self._owner.operation():return await run_blocking(self._results.capture,binding_id,result_id,include_untracked)
+        async with self.using(binding_id):
+            return await run_blocking(self._results.capture,binding_id,result_id,include_untracked)
 
     async def results(self,binding_id):
         with self._owner.operation():return await run_blocking(self._results.list,binding_id)
@@ -53,10 +97,10 @@ class EnvironmentAPI:
     async def result_diff(self,binding_id,result_id,path):
         with self._owner.operation():return await run_blocking(self._results.diff,binding_id,result_id,path)
 
-    async def prepare_input(self,project_id,*,input_id,include_untracked=()):
+    async def prepare_input(self,project_id,*,input_id,include_untracked=(),git_settings=None):
         with self._owner.operation():
             return await run_blocking(self._inputs.prepare,project_id,input_id=input_id,
-                include_untracked=include_untracked)
+                include_untracked=include_untracked,git_settings=git_settings)
 
     async def input(self,project_id,input_id):
         with self._owner.operation():return await run_blocking(self._inputs.get,project_id,input_id)
@@ -65,7 +109,7 @@ class EnvironmentAPI:
         with self._owner.operation():return await run_blocking(self._inputs.options,project_id)
 
     async def install_input(self,binding_id,input_id):
-        with self._owner.operation():return await run_blocking(self._inputs.install,binding_id,input_id)
+        async with self.using(binding_id):return await run_blocking(self._inputs.install,binding_id,input_id)
 
     async def create(self,project_id,session_id):
         with self._owner.operation():

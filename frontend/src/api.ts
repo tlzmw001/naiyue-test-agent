@@ -1,4 +1,5 @@
 import type { ExecutionOptions, ExecutionView, SessionCreation } from './types';
+import type { SandboxAction, SandboxManagement } from './sandboxManagementTypes';
 import type { ResultOptions, SandboxResult, ResultDiff } from './resultTypes';
 import type {DeliveryCommand,DeliveryOperation,DeliveryOptions} from './deliveryTypes';
 import type { ContextView } from './contextTypes';
@@ -136,15 +137,30 @@ export class WebApi {
   }
   reorderSessions(session_ids: string[]) { return this.json<SessionRow[]>('/session-order', 'PUT', { session_ids }); }
   deleteSession(id: string) { return this.json<{ session_id: string }>(`/sessions/${encodeURIComponent(id)}`, 'DELETE'); }
-  create(model_id: string) { return this.json<{ session_id: string }>('/sessions', 'POST', { model_id }); }
+  create(model_id: string, requestId?: string) {
+    return this.response('/sessions', { method: 'POST', body: JSON.stringify({ model_id }),
+      ...(requestId ? { headers: { 'X-Request-ID': requestId } } : {}) }).then(r => r.json() as Promise<{ session_id: string }>);
+  }
   executionOptions(): Promise<ExecutionOptions> {
     return this.response('/projects/'+encodeURIComponent(this.scopeId)+'/execution-options',{},true).then(r=>r.json());
+  }
+  refreshEnvironments() {
+    return this.response('/environments/refresh', { method: 'POST', body: JSON.stringify({}) }, true).then(r => r.json());
+  }
+  async sandboxManagement(): Promise<SandboxManagement> {
+    return (await this.response('/environments', {}, true)).json();
+  }
+  async manageSandbox(binding: string, action: SandboxAction, confirmDestroy = false, requestId: string = crypto.randomUUID()): Promise<{ binding_id: string; lifecycle: string }> {
+    return (await this.response(`/environments/${encodeURIComponent(binding)}/${action}`, {
+      method:'POST', body:JSON.stringify({confirm_destroy:confirmDestroy}), headers:{'X-Request-ID':requestId},
+    }, true)).json();
   }
   trustGit(revision: number, requestId: string = crypto.randomUUID()) { return this.projectCommand(''+encodeURIComponent(this.scopeId)+'/trust',{expected_revision:revision,trusted:true},requestId); }
   createSelected(model_id: string, choice?: SessionCreation) {
     model_id=choice?.model_id??model_id;
-    return !choice || choice.execution==='host' ? this.create(model_id) : this.response('/sessions', {
-      method:'POST',body:JSON.stringify({model_id,execution:'sandbox',include_untracked:choice.include_untracked}),
+    return !choice || choice.execution==='host' ? this.create(model_id,choice?.requestId) : this.response('/sessions', {
+      method:'POST',body:JSON.stringify({model_id,execution:'sandbox',include_untracked:choice.include_untracked,
+        profile_id:choice.profile_id,expected_profile_revision:choice.expected_profile_revision}),
       headers:{'X-Request-ID':choice.requestId},
     }).then(r=>r.json() as Promise<{session_id:string}>);
   }
@@ -280,6 +296,14 @@ export function errorText(error: unknown): string {
   const code = error instanceof ApiError ? error.code : error instanceof Error ? error.message : '';
   const messages: Record<string, string> = {
     env_image_required: '尚未配置沙箱镜像，请在应用配置中设置后重试。',
+    env_profile_changed: '所选环境配置已变化，请刷新并重新选择环境；消息已保留。',
+    env_profile_unavailable: '所选环境已移除，请刷新并重新选择环境。',
+    env_configuration_invalid: '环境配置读取或校验失败，已保留上次可用列表。',
+    env_running_capacity: '运行中的沙箱已达上限，请在管理沙箱中停止空闲环境，再核对并继续原准备。',
+    env_retained_capacity: '保留的沙箱已达上限，请先保存结果并明确销毁不需要的沙箱，再核对并继续原准备。',
+    env_busy: '沙箱正在使用，或仍有未结束的后台操作。请等待任务结束或先停止后台任务。',
+    env_confirmation_required: '销毁沙箱和文件需要明确确认。',
+    env_profile_selection_invalid: '环境选择不完整，请重新选择环境。',
     env_expired: '原沙箱已失效；会话历史保留，请新建沙箱会话。',
     env_not_running: '原沙箱没有运行，请先启动原环境。',
     env_not_registered: '原沙箱尚未登记，请核对准备状态。',

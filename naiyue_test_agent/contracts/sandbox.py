@@ -57,6 +57,11 @@ class SandboxRecord:
     input_id: str | None = None
     input_snapshot: str | None = None
     input_operation_id: str | None = None
+    profile_id: str | None = None
+    profile_name: str | None = None
+    profile_revision: str | None = None
+    created_at: float | None = None
+    last_used_at: float | None = None
 
     @property
     def environment(self):

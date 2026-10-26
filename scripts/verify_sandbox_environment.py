@@ -105,6 +105,7 @@ async def scenario(directory,context,image):
                 assert 'updated' in (await expect(ports[0],'read',{'path':'same.txt'})).content
                 report.update(file_tools='passed',isolated_volumes='passed',network_none='passed',resources='passed',permission_filter='passed',stop_start='passed')
             async with application() as app:
+                await app.environments.start(bindings[0])
                 port=await app.environments.files(bindings[0],project_id=project.project_id,session_id=sessions[0])
                 assert 'updated' in (await expect(port,'read',{'path':'same.txt'})).content
                 await app.environments.destroy(bindings[0])

@@ -75,7 +75,7 @@ export default function App({ api: supplied, active = true, selection, scopeName
   const busy = chat.run?.status === 'running' && !chat.run.done;
   const blocked = (!!busy && chat.run?.mode === 'compact') || (!busy && chat.session?.can_run === false) || chat.selectingSession || !chat.models.length || !!chat.run?.manual_review_required || !!chat.session?.manual_review_required || !!chat.session?.pending_approval;
   const controlsDisabled = chat.submitting || chat.changingControls || chat.changingModel || chat.selectingSession ||
-    chat.recovering || !!chat.session?.recovery || !chat.models.length;
+    chat.recovering || !!chat.session?.recovery || !chat.models.length || (!chat.session && chat.creation.locked);
   const openModels = () => { setSidebarOpen(false); setModelMenu(true); };
   const labels = { running: chat.stopping ? '正在停止' : '正在处理', completed: '本次运行完成', stopped: '已停止',
     interrupted: '等待审批', failed: '本次运行失败', unconfirmed: '执行结果未同步' };
@@ -95,7 +95,7 @@ export default function App({ api: supplied, active = true, selection, scopeName
         <div className={styles.headerLeft}>
           <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="打开会话栏" onClick={() => setNavigation(true)}><Icon name="menu" /></button>
           <ModelMenu models={chat.models} model={chat.session?.recovery ? chat.session.model_id : chat.model}
-            level={chat.session?.thinking_level ?? 'model_default'} options={chat.thinkingOptions[chat.model]} disabled={controlsDisabled}
+            level={chat.session?.thinking_level ?? chat.creation.controls.thinking_level ?? 'model_default'} options={chat.thinkingOptions[chat.model]} disabled={controlsDisabled}
             open={modelMenu} toggle={() => modelMenu ? closeModel() : openModels()} close={closeModel}
             selectModel={value => void chat.selectModel(value)} selectThinking={value => void chat.selectThinking(value)} />
         </div>
@@ -123,6 +123,7 @@ export default function App({ api: supplied, active = true, selection, scopeName
         recovering={chat.recovering} onRecover={action => void chat.recover(action)}
         stoppingRunId={chat.run?.status === 'running' && chat.run.stop_requested ? chat.run.run_id : undefined} />
       <div className={styles.feedback} aria-live="polite">
+        {chat.creation.preparing&&<span role="status">正在准备环境，消息仍保留…</span>}
         {chat.session?.execution?.kind==='sandbox'&&chat.session.execution.state!=='ready'&&<span className={styles.error}>沙箱尚不可执行。请在执行位置菜单核对原环境；历史仍可查看。</span>}
         {chat.session?.execution_root_error && <span className={styles.error}>执行目录不可用：{{ missing: '目录不存在', not_directory: '路径不是目录', not_registered: '执行副本未登记', wrong_project: '项目身份不匹配', unreadable: '无法访问或检查执行目录' }[chat.session.execution_root_error.reason]}。历史仍可查看。</span>}
         {background.notice && <button className={styles.syncButton} onClick={() => openSidebar('tasks')}>{background.notice}</button>}
@@ -141,11 +142,12 @@ export default function App({ api: supplied, active = true, selection, scopeName
           stop={() => void chat.stopApproval(batch)}
           submit={(decisions, remember) => chat.approve(batch, decisions, remember)} />)}
       </div>}
-      <Composer sendScroll={sendScroll} workspaceEntry={<>
+      <Composer sendScroll={sendScroll} draftControls={chat.creation.controls} workspaceEntry={<>
         {projectEntry ? projectEntry(chat.session ? chat.session.workspace_root : scopePath) : scopeName ? <div className={projectStyles.scope} role="status" aria-label="当前项目"
           title={chat.session?.workspace_root ?? scopePath}><strong>{scopeName}</strong></div> : <WorkspaceLabel api={api} session={chat.session} />}
-        {/^[0-9a-f-]{36}$/.test(api.scopeId)&&<ExecutionSelector api={api} modelId={chat.model} session={chat.session}
+        {/^[0-9a-f-]{36}$/.test(api.scopeId)&&<ExecutionSelector api={api} session={chat.session}
           disabled={chat.submitting||chat.selectingSession} running={!!busy} create={chat.newSession}
+          draft={chat.creation.draft} locked={!chat.session&&chat.creation.locked}
           refresh={async()=>{if(chat.session)await chat.selectSession(chat.session.session_id);}} />}
       </>} contextEntry={<ContextTrigger value={context.value} open={sidebarOpen && sidebarTab === 'context'}
         disabled={!chat.session || chat.selectingSession} triggerRef={contextTrigger}

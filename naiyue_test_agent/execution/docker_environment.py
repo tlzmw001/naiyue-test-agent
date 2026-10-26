@@ -54,6 +54,43 @@ def verify_container(row,data):
 class DockerEnvironment:
     def __init__(self,cli):self.cli=cli
 
+    def action(self,row,action):
+        self.cli.daemon(row.daemon_id)
+        if action=='recover':
+            data=self.cli.container(row.container_id) if row.container_id else self.cli.container(row.container_name,by_name=True)
+            if data is None:raise SandboxError('env_expired')
+            if row.container_id is None:row=row.changed(container_id=data['Id'])
+            verify_container(row,data);verify_volume(row,self.cli.volume(row.volume_name))
+            verify_volume(row,self.cli.volume(state_volume(row)),state=True)
+            state='running' if data.get('State',{}).get('Running') else 'stopped'
+            if state=='running':self.handshake(row)
+        elif action=='destroy':
+            data=self.cli.container(row.container_id) if row.container_id else self.cli.container(row.container_name,by_name=True)
+            if data is not None:
+                checked=row if row.container_id is not None else row.changed(container_id=data['Id'])
+                verify_container_identity(checked,data)
+                self.cli.run(['container','rm','--force',data['Id']],mutates=True)
+                if self.cli.container(data['Id']) is not None:raise SandboxError('env_operation_unknown')
+            for name,is_state in ((row.volume_name,False),(state_volume(row),True)):
+                volume=self.cli.volume(name)
+                if volume is not None:
+                    verify_volume(row,volume,state=is_state)
+                    self.cli.run(['volume','rm',name],mutates=True)
+                    if self.cli.volume(name) is not None:raise SandboxError('env_operation_unknown')
+            state='destroyed'
+        elif action in ('start','stop'):
+            data=self.validate(row,running=False)
+            if action=='start':
+                if not data['State']['Running']:self.cli.run(['container','start',row.container_id],mutates=True)
+                self.handshake(row);state='running'
+            else:
+                if data['State']['Running']:
+                    self.cli.run(['container','stop','--time',str(row.settings['stop_timeout_seconds']),row.container_id],mutates=True)
+                if self.validate(row,running=False)['State']['Running']:raise SandboxError('env_operation_unknown')
+                state='stopped'
+        else:raise SandboxError('env_operation_unsupported')
+        return row.changed(lifecycle=state,error_code=None)
+
     def validate(self,row,*,running=True):
         self.cli.daemon(row.daemon_id)
         data=self.cli.container(row.container_id) if row.container_id else None

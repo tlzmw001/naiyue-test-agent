@@ -7,6 +7,7 @@ import pytest
 from naiyue_test_agent.contracts.environment import EnvironmentRef
 from naiyue_test_agent.contracts.sandbox import SandboxError,PROTOCOL_VERSION
 from naiyue_test_agent.sandbox_settings import SandboxSettings
+from naiyue_test_agent.application.environments.activity import EnvironmentActivity
 
 
 def test_lost_ack_and_service_reopen_query_the_original_operation(tmp_path):
@@ -29,14 +30,14 @@ def test_lost_ack_and_service_reopen_query_the_original_operation(tmp_path):
         engine=Engine()
         service=SimpleNamespace(records=lambda:EnvironmentRegistry(registry.database),get=lambda _:row,
             validate=lambda _:row,_engine=lambda _:engine,projects=SimpleNamespace(data_dir=tmp_path))
-        local=SandboxOperationService(service)
+        local=SandboxOperationService(service,activity=EnvironmentActivity(service.records))
         payload=dict(name='bash',command='printf once >> count.txt; printf output',timeout=None,
             settings=BashSettings().model_dump(mode='json'),process_settings=ProcessSettings().model_dump(mode='json'))
         metadata=dict(offset=0,saved_bytes=0,max_archive_bytes=1000,tail_limit=1000,settings=payload['settings'],background=True)
         local.submit('B','a'*32,'shell',payload,metadata)
         remote.wait('a'*32,10)
         # A new coordinator uses the same local registry, never a new ID.
-        recovered=SandboxOperationService(service)
+        recovered=SandboxOperationService(service,activity=EnvironmentActivity(service.records))
         result=recovered.refresh('B','a'*32)
         assert result['state']=='completed' and result['metadata']['offset']==6
         assert result['metadata']['saved_bytes']==6
@@ -77,7 +78,7 @@ def test_shutdown_seals_ingress_and_waits_for_accepted_submission_before_stop(tm
     with closing(ProjectRegistry(tmp_path/'projects.sqlite')) as registry:
         service=SimpleNamespace(records=lambda:EnvironmentRegistry(registry.database),get=lambda _:row,
             validate=lambda _:row,projects=SimpleNamespace(data_dir=tmp_path))
-        local=SandboxOperationService(service)
+        local=SandboxOperationService(service,activity=EnvironmentActivity(service.records))
         def rpc(binding,operation,params,**kwargs):
             if operation=='operation_submit':
                 entered.set();assert release.wait(5);actions.append('submitted')
@@ -112,7 +113,8 @@ def test_malformed_output_frame_is_stale_protocol_failure_without_archive_stop(t
     from naiyue_test_agent.storage.project_registry import ProjectRegistry
     from naiyue_test_agent.storage.environment_registry import EnvironmentRegistry
     with closing(ProjectRegistry(tmp_path/'projects.sqlite')) as registry:
-        local=SandboxOperationService(SimpleNamespace(records=lambda:EnvironmentRegistry(registry.database),projects=SimpleNamespace(data_dir=tmp_path)))
+        service=SimpleNamespace(records=lambda:EnvironmentRegistry(registry.database),projects=SimpleNamespace(data_dir=tmp_path))
+        local=SandboxOperationService(service,activity=EnvironmentActivity(service.records))
         meta=dict(offset=0,saved_bytes=0,max_archive_bytes=1000,tail_limit=100)
         local.records().reserve('B','P','S','a'*32,'shell',{},meta)
         calls=[]
@@ -131,7 +133,7 @@ def test_background_collection_can_resume_after_a_stale_connection():
     import asyncio
     from naiyue_test_agent.application.environments.operations import SandboxOperationService
     async def scenario():
-        local=SandboxOperationService(SimpleNamespace());calls=[]
+        local=SandboxOperationService(SimpleNamespace(),activity=EnvironmentActivity(lambda:None));calls=[]
         def refresh(*_a):calls.append('query');return {'state':'unknown','stale':True}
         local.refresh=refresh
         local.watch('B','a'*32,20);await local._watchers[('B','a'*32)]
@@ -146,7 +148,8 @@ def test_confirmed_output_total_cannot_regress_or_hide_a_missing_tail(tmp_path,r
     from naiyue_test_agent.storage.project_registry import ProjectRegistry
     from naiyue_test_agent.storage.environment_registry import EnvironmentRegistry
     with closing(ProjectRegistry(tmp_path/'projects.sqlite')) as registry:
-        local=SandboxOperationService(SimpleNamespace(records=lambda:EnvironmentRegistry(registry.database),projects=SimpleNamespace(data_dir=tmp_path)))
+        service=SimpleNamespace(records=lambda:EnvironmentRegistry(registry.database),projects=SimpleNamespace(data_dir=tmp_path))
+        local=SandboxOperationService(service,activity=EnvironmentActivity(service.records))
         meta=dict(offset=0,saved_bytes=0,max_archive_bytes=1000,tail_limit=100)
         local.records().reserve('B','P','S','a'*32,'shell',{},meta)
         local.records().save('B','a'*32,dict(state='completed',observed_bytes=10))

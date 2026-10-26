@@ -31,7 +31,8 @@ def connect(app,project,tmp_path,monkeypatch,stack,count=1):
         calls.append((row.binding_id,op,dict(params)))
         return remotes[row.binding_id].dispatch(dict(protocol=PROTOCOL_VERSION,request_id='request',
             environment=row.environment.public(),session_id=row.session_id,operation=op,params=params))
-    engine=SimpleNamespace(request=request,validate=lambda *_a,**_k:None)
+    engine=SimpleNamespace(request=request,validate=lambda *_a,**_k:None,
+        action=lambda row,action:row.changed(lifecycle='stopped' if action=='stop' else 'running'))
     monkeypatch.setattr(app.environments._service,'_engine',lambda _:engine)
     return rows,roots,remotes,calls,engine
 
@@ -50,7 +51,9 @@ def test_api_installs_confirmed_input_and_never_rechecks_out_later_agent_changes
                 assert installed.input_id=='a'*32 and installed.input_operation_id
                 code=roots[installed.binding_id];assert (code/'app.txt').read_text()=='selected input\n'
                 (code/'app.txt').write_text('agent changes\n')
-                assert await app.environments.install_input(installed.binding_id,'a'*32)==installed
+                again=await app.environments.install_input(installed.binding_id,'a'*32)
+                assert again.last_used_at>=installed.last_used_at
+                assert again.changed(last_used_at=installed.last_used_at)==installed
                 assert (code/'app.txt').read_text()=='agent changes\n'
                 assert sum(op=='operation_submit' for _,op,_ in calls)==1
     asyncio.run(scenario())

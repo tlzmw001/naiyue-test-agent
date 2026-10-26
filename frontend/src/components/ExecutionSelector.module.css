@@ -9,6 +9,13 @@
 .heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: var(--fs-ui); }
 .heading button { display: grid; place-items: center; width: 28px; height: 28px; padding: 4px !important; border: 0 !important; flex-shrink: 0; }
 .heading svg { width: 16px; height: 16px; }
+.heading strong { min-width: 0; overflow-wrap: anywhere; }
+.headingActions { display: flex; flex-shrink: 0; align-items: center; gap: 4px; }
+.defaultMark { margin-left: 8px; padding: 1px 5px; border-radius: var(--r-sm); background: var(--surface-hover); color: var(--text-secondary); font-style: normal; }
+.trigger { max-width: 100%; min-width: 0; }
+.trigger span { overflow: hidden; text-overflow: ellipsis; }
+.trigger svg[data-chevron] { flex-shrink: 0; }
+.choice span { overflow-wrap: anywhere; }
 .panel button { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 12px; background: transparent; color: inherit; font: inherit; }
 .panel button:hover:not(:disabled) { background: var(--surface-hover); }
 .panel button:disabled { opacity: .45; }

@@ -68,14 +68,16 @@ class RunAPI:
             from naiyue_test_agent.agent_runtime.tool_execution.async_batch import validate_tool_concurrency
             validate_tool_concurrency(max_concurrency)
             prepared = await self._sessions.prepare_admission(session_id, stop=stop)
-            await self._sessions.confirm_admission(prepared)
-            self._owner.check_admission_open()
-            if compact:
-                return await self._sessions.acompact(self._agent, session_id, run_id=run_id, prepared_admission=prepared)
-            method = self._sessions.aresume_tool_approval if resume else self._sessions.arun
-            return await method(self._agent, session_id, value, run_id=run_id, max_concurrency=max_concurrency, prepared_admission=prepared,
-                                **({'remember_approved': remember_approved, 'stop': stop} if resume else
-                                   {'expected_conversation_revision': expected_conversation_revision}))
+            from .execution_binding import execution_use
+            async with execution_use(self._sessions,prepared[1],stop=stop):
+                await self._sessions.confirm_admission(prepared)
+                self._owner.check_admission_open()
+                if compact:
+                    return await self._sessions.acompact(self._agent, session_id, run_id=run_id, prepared_admission=prepared)
+                method = self._sessions.aresume_tool_approval if resume else self._sessions.arun
+                return await method(self._agent, session_id, value, run_id=run_id, max_concurrency=max_concurrency, prepared_admission=prepared,
+                                    **({'remember_approved': remember_approved, 'stop': stop} if resume else
+                                       {'expected_conversation_revision': expected_conversation_revision}))
 
     async def start(self, session_id, messages, *, max_concurrency=4, expected_conversation_revision=None):
         with self._owner.operation():

@@ -64,7 +64,8 @@ class CommandReceipts:
                 code = json.loads(body).get('error', {}).get('code')
             except (ValueError, AttributeError):
                 code = None
-            if code in ('invalid_request', 'stale_approval', 'stale_run', 'session_busy', 'run_capacity_exceeded'):
+            if code in ('invalid_request', 'stale_approval', 'stale_run', 'session_busy', 'run_capacity_exceeded',
+                        'env_busy','env_running_capacity','env_retained_capacity'):
                 if self.entries.get(key, (None, None))[1] is asyncio.current_task():
                     del self.entries[key], self.scopes[key]
             else:

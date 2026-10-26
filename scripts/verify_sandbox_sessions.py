@@ -77,6 +77,7 @@ async def scenario(directory,context,image):
                 report.update(parallel_session_isolation='passed',same_creation_request='passed',formal_subagent='passed',
                     actual_skills_and_context='passed',management_tasks='passed')
             async with application() as app:
+                await app.environments.start(binding)
                 host=await app.projects.open(project.project_id)
                 history=await host.history.session(sid)
                 assert history['recovery']['kind']=='pending_approval'

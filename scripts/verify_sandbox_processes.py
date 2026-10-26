@@ -116,20 +116,29 @@ async def scenario(directory,context,image):
                 assert not output['archive_complete'] and output['archive_reason']=='capture_gap',output
                 assert not output['output_complete'] and output['archive_saved_bytes']<=65536,output
                 report['retention_gap_and_final_tail']='passed'
-                # A normal application close must stop its remote task, not the container.
+                # Normal close stops the task and original container, retaining both volumes.
                 result=await call('bash',{'command':'printf closing; while :; do sleep 1; done','background':True})
                 closing_task=json.loads(result.content)['task_id']
             async with application() as app:
+                assert (await app.environments.get(binding)).lifecycle=='stopped'
+                await app.environments.start(binding)
                 tasks=await app.environments.tasks(binding,project_id=project.project_id,session_id=sid)
                 output=await tasks.output(closing_task,session_id=sid)
-                assert output['status']=='stopped' and output['cleanup_confirmed'],output
+                assert output['status']=='stopped' and output['cleanup_confirmed'] and not output['stale'],output
                 assert (await app.environments.get(binding)).lifecycle=='running'
                 report['normal_close_confirmed']='passed'
                 files=await app.environments.files(binding,project_id=project.project_id,session_id=sid)
                 processes=await app.environments.processes(binding,project_id=project.project_id,session_id=sid)
                 result=await invoke(files,processes,tasks,'bash',{'command':'printf restart; while :; do sleep 1; done','background':True})
                 interrupted=json.loads(result.content)['task_id']
-                await app.environments.stop(binding);await app.environments.start(binding)
+                try:await app.environments.stop(binding)
+                except SandboxError as error:assert error.code=='env_busy'
+                else:raise AssertionError('Managed stop interrupted an unsettled background task')
+                original=await app.environments.get(binding);engine=app.environments._service._engine(original)
+                await run_blocking(engine.validate,original)
+                await run_blocking(engine.cli.run,['container','stop',original.container_id],mutates=True)
+                await asyncio.wait_for(asyncio.shield(app.environments._operations._watchers[(binding,interrupted)]),30)
+                await app.environments.recover(binding);await app.environments.start(binding)
                 output=await tasks.output(interrupted,session_id=sid)
                 assert output['status']=='unknown',output
                 try:await tasks.stop(interrupted,session_id=sid)

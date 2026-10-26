@@ -60,7 +60,7 @@ it('opens the shared sidebar, selects tasks, and retains it when creating a chat
   fireEvent.click(screen.getByRole('tab', { name: /后台任务/ }));
   expect(await screen.findByText('没有后台任务')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: /新建会话/ }));
-  await waitFor(() => expect(api.create).toHaveBeenCalled());
+  expect(api.create).not.toHaveBeenCalled();
   expect(screen.getByRole('complementary', { name: '辅助侧栏' })).toBeTruthy();
   expect(api.start).not.toHaveBeenCalled();
 });
@@ -119,11 +119,10 @@ it('pauses selected task output on another tab and preserves its selection', asy
 
 it('collapses with Escape after the context shortcut jumps into an already open sidebar', async () => {
   const { api } = client();
+  vi.mocked(api.sessions).mockResolvedValue([{ ...await api.session('s'), title: '已有会话' }]);
   render(<App api={api} />);
-  const create = await screen.findByRole('button', { name: '新建会话' });
-  await waitFor(() => expect(create.hasAttribute('disabled')).toBe(false));
-  fireEvent.click(create);
-  await waitFor(() => expect(api.session).toHaveBeenCalled());
+  fireEvent.click(await screen.findByRole('button', { name: '已有会话 A' }));
+  await waitFor(() => expect(api.prepare).toHaveBeenCalledWith('s'));
   fireEvent.click(screen.getByRole('button', { name: '打开辅助侧栏' }));
   const context = screen.getByRole('button', { name: '查看上下文构成' });
   fireEvent.click(context);
@@ -224,9 +223,10 @@ it('clears normal completion status and the resync button after a confirmed fini
 it('keeps the shared entry available with an empty child view', async () => {
   const { api } = client();
   const list = vi.spyOn(api, 'subagents').mockResolvedValue([]);
+  vi.mocked(api.sessions).mockResolvedValue([{ ...await api.session('s'), title: '已有会话' }]);
   render(<App api={api} />);
   expect(screen.getByRole('button', { name: '打开辅助侧栏' })).toBeTruthy();
-  fireEvent.click(await screen.findByRole('button', { name: '新建会话' }));
+  fireEvent.click(await screen.findByRole('button', { name: '已有会话 A' }));
   await waitFor(() => expect(list).toHaveBeenCalled());
   expect(screen.getByRole('button', { name: '打开辅助侧栏' })).toBeTruthy();
 });
@@ -235,8 +235,9 @@ it('shows saved child instances and shares the list with the sidebar without fet
   const { api } = client();
   const list = vi.spyOn(api, 'subagents').mockResolvedValue([{ agent_id: 'saved', agent_path: 'root/tester/saved',
     agent: 'tester', task: 'inspect', tool_call_id: 'c', status: 'completed' }]);
+  vi.mocked(api.sessions).mockResolvedValue([{ ...await api.session('s'), title: '已有会话' }]);
   render(<App api={api} />);
-  fireEvent.click(await screen.findByRole('button', { name: '新建会话' }));
+  fireEvent.click(await screen.findByRole('button', { name: '已有会话 A' }));
   await waitFor(() => expect(list).toHaveBeenCalledTimes(1));
   fireEvent.click(await screen.findByRole('button', { name: '打开辅助侧栏' }));
   await screen.findByRole('region', { name: '子智能体' });

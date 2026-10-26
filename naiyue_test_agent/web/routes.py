@@ -53,7 +53,8 @@ def create_api_router():
     async def create(body: NewSession, request: Request, service=Depends(get_service)):
         if body.execution=='sandbox':
             sid=await service.application.sessions.create_sandbox(body.model_id,
-                request_id=request.headers['x-request-id'],include_untracked=body.include_untracked)
+                request_id=request.headers['x-request-id'],include_untracked=body.include_untracked,
+                profile_id=body.profile_id,expected_profile_revision=body.expected_profile_revision)
             return {'session_id':sid}
         return await service.create_session(body.model_id)
 

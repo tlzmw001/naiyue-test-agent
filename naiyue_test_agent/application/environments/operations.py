@@ -19,8 +19,9 @@ TERMINAL={'completed','failed','stopped'}
 
 
 class SandboxOperationService:
-    def __init__(self,environments):
+    def __init__(self,environments,*,activity):
         self.environments=environments
+        self.activity=activity
         self._condition=Condition(RLock());self._locks={};self._submitting=0;self._closing=False
         self._watchers={}
         self._cleaning=set();self._archive_users={}
@@ -68,12 +69,16 @@ class SandboxOperationService:
                 self._submitting-=1;self._condition.notify_all()
 
     def _rpc(self,binding,operation,params,*,mutates=False):
-        row=self.environments.get(binding)
-        if row.lifecycle!='running':raise SandboxError('env_stopped' if row.lifecycle=='stopped' else 'env_expired')
-        return self.environments._engine(row).request(row,operation,params,mutates=mutates)
+        with self.activity.use(binding,used=False):
+            row=self.environments.get(binding)
+            if row.lifecycle!='running':raise SandboxError('env_stopped' if row.lifecycle=='stopped' else 'env_expired')
+            return self.environments._engine(row).request(row,operation,params,mutates=mutates)
+
+    def unsettled(self,binding):
+        return any(row['stale'] or not self.finished(row) for row in self.records().list(binding))
 
     def submit(self,binding,ident,kind,payload,metadata):
-        with self.accepting(),self._lock(ident):
+        with self.accepting(),self.activity.use(binding),self._lock(ident):
             env=self.environments.validate(binding,require_input=False) if kind=='git_input' else self.environments.validate(binding)
             with self._archive_activity(env.project_id):
                 records=self.records()
@@ -108,8 +113,12 @@ class SandboxOperationService:
         return SandboxOutput(root,row['operation_id'])
 
     def refresh(self,binding,ident):
+        with self.activity.use(binding,used=False):return self._refresh(binding,ident)
+
+    def _refresh(self,binding,ident):
         with self._lock(ident):
             records=self.records();row=records.get(binding,ident)
+            previously_finished=self.finished(row)
             with self._archive_activity(row['project_id']):
                 try:
                     remote=self._rpc(binding,'operation_status',dict(operation_id=ident))
@@ -134,6 +143,7 @@ class SandboxOperationService:
                                 raise SandboxError('env_protocol_mismatch')
                             metadata=archive.append(metadata,frame)
                             row=records.save(binding,ident,dict(metadata=metadata,observed_bytes=frame['observed_bytes']))
+                    if self.finished(row) and not previously_finished:self.activity.touch(binding)
                     return row
                 except (SandboxError,ToolException,ProjectError) as error:
                     logger.warning('sandbox_status_unavailable error_type=%s',type(error).__name__)
@@ -148,7 +158,7 @@ class SandboxOperationService:
 
 
     def stop(self,binding,ident):
-        with self._lock(ident):
+        with self.activity.use(binding),self._lock(ident):
             row=self.records().get(binding,ident)
             try:
                 remote=self._rpc(binding,'operation_stop',dict(operation_id=ident),mutates=True)
@@ -253,8 +263,11 @@ class SandboxOperationService:
             from naiyue_test_agent.agent_runtime.async_utils import run_blocking
             try:
                 while not self._closing:
-                    row=await run_blocking(self.refresh,binding,ident)
-                    if self.finished(row) or row['stale'] or row['state']=='unknown':return
+                    try:row=await run_blocking(self.refresh,binding,ident)
+                    except SandboxError as error:
+                        if error.code!='env_busy':raise
+                    else:
+                        if self.finished(row) or row['stale'] or row['state']=='unknown':return
                     await asyncio.sleep(poll_milliseconds/1000)
             except Exception as error:logger.error('sandbox_output_collection_failed error_type=%s',type(error).__name__)
         task=asyncio.create_task(collect(),context=Context())

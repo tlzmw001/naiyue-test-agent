@@ -99,6 +99,11 @@ def prepare_terminal(args, settings):
         body={'model_id':models['default_model_id']}
         if getattr(args,'execution',None)=='sandbox':
             body.update(execution='sandbox',include_untracked=args.include_untracked)
+            if getattr(args,'environment',None) is not None:
+                choices=client.request('GET',f'/api/v1/projects/{prepared["scope_id"]}/execution-options')
+                selected=next((p for p in choices['profiles'] if p['profile_id']==args.environment),None)
+                if selected is None:raise ServiceError('env_profile_unavailable')
+                body.update(profile_id=selected['profile_id'],expected_profile_revision=selected['revision'])
         elif prepared.get('source_kind')=='git':
             raise ServiceError('project_execution_unavailable')
         sid=client.request('POST','/sessions',json=body)['session_id']

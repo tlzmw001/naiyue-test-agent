@@ -69,6 +69,7 @@ def test_root_approval_reopen_uses_original_environment_and_can_cancel_offline(t
             async with application(tmp_path,'Default') as app:
                 host=await app.projects.history_host(project.project_id)
                 if offline:transport.expired.add(binding)
+                else:await app.environments.start(binding)
                 history=await host.history.session(sid)
                 assert history['recovery']['kind']=='pending_approval'
                 await host.sessions.recover(sid,checkpoint_id=history['checkpoint_id'],action='restore_approval')
@@ -191,7 +192,9 @@ def test_child_continuation_after_restart_uses_original_sandbox(tmp_path,monkeyp
                 assert original['environment_binding_id']==binding
                 assert (tmp_path/binding/'child.txt').read_text()=='sandbox' and not (root/'child.txt').exists()
             async with application(tmp_path,roles=roles) as app:
-                host=await app.projects.open(project.project_id);await host.sessions.prepare(sid)
+                host=await app.projects.open(project.project_id)
+                await app.environments.start(binding)
+                await host.sessions.prepare(sid)
                 parent.replies.extend([call('subagent',dict(agent='worker',task='next',agent_id=identity),'D2'),AIMessage(content='done')])
                 envelope=json.loads(feedback(await host.runs.start(sid,[('user','next')])).content)
                 assert envelope['agent_id']==identity and envelope['report']=='two',envelope
@@ -200,6 +203,7 @@ def test_child_continuation_after_restart_uses_original_sandbox(tmp_path,monkeyp
                 transport.expired.add(binding)
                 with pytest.raises(SandboxError,match='env_expired'):await host.runs.start(sid,[('user','no fallback')])
                 assert host.sessions._persistence.storage.subagents.get_subagent(sid,identity)['state']=='ready'
+                transport.expired.clear()
     asyncio.run(scenario())
 
 
@@ -217,7 +221,7 @@ def test_environment_management_reserves_session_against_new_run(tmp_path,monkey
                 async def get(binding):
                     entered.set();await release.wait();return await original(binding)
                 monkeypatch.setattr(app.environments,'get',get)
-                monkeypatch.setattr(app.environments._service,'action',lambda binding,operation:transport.expired.add(binding))
+                # Use the real action gate; the controlled engine confirms resource removal.
                 task=asyncio.create_task(host.sessions.environment_action(sid,'destroy'))
                 try:
                     await entered.wait()

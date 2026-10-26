@@ -40,21 +40,23 @@ class InputService:
 
     def options(self,project_id):
         from naiyue_test_agent.contracts.git_inputs import git_path,sensitive_path
+        configuration=self.environments.configuration
+        settings=configuration.execution_settings()
         project=self.environments.projects.registry.get(project_id)
         local=isinstance(project.source,LocalSource)
         paths=[];error=None
         if local and project.trusted:
             try:
-                repo=GitRepository(project.source.path,self.environments.settings.git)
+                repo=GitRepository(project.source.path,settings.git)
                 if not (project.source.path/'.git').is_dir():raise GitInputError('git_input_no_repository')
                 if repo.run(['rev-parse','--verify','HEAD^{commit}'],check=False)[0]:raise GitInputError('git_input_no_head')
                 paths=sorted(git_path(raw) for raw in repo.run(['ls-files','--others','--exclude-standard','-z'],source_config=True).split(b'\0') if raw)
-                if len(paths)>self.environments.settings.git.max_files:raise GitInputError('git_input_budget')
+                if len(paths)>settings.git.max_files:raise GitInputError('git_input_budget')
             except GitInputError as failure:error=failure.code
-        if not self.environments.settings.image:error='env_image_required'
+        if not settings.image:error='env_image_required'
         return dict(host_available=local,sandbox_available=error is None,error_code=error,
             requires_trust=not project.trusted,project_revision=project.revision,
-            network=self.environments.settings.network.mode,untracked=paths,
+            **configuration.catalog(),network=settings.network.mode,untracked=paths,
             blocked=[path for path in paths if sensitive_path(path)])
 
     def _project(self, project_id):
@@ -63,14 +65,14 @@ class InputService:
             raise GitInputError('git_input_project_unavailable')
         return project
 
-    def prepare(self, project_id, *, input_id: str, include_untracked=()):
+    def prepare(self, project_id, *, input_id: str, include_untracked=(), git_settings=None):
         from naiyue_test_agent.contracts.git_inputs import input_id as require_id
         require_id(input_id)
         with self.operations.accepting(),self._lock(input_id):
             project = self._project(project_id)
             records = self.records()
             row,new = records.reserve(project_id,project.revision,input_id,include_untracked,
-                self.environments.settings.git)
+                git_settings if git_settings is not None else self.environments.settings.git)
             if not new:
                 if row.state=='ready':
                     return row

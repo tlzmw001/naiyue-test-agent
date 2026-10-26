@@ -18,6 +18,7 @@ class OfflineModel(FakeMessagesListChatModel):
 class SandboxTransport:
     def __init__(self,tmp_path,monkeypatch,stack,model=None):
         self.root,self.stack,self.remotes,self.created,self.expired=tmp_path,stack,{},[],set()
+        self.stopped=set();self.actions=[]
         self.model=model or OfflineModel(responses=[AIMessage(content='done')])
         monkeypatch.setattr('naiyue_test_agent.application.load_model_catalog',lambda _:ModelCatalog('fake',{'fake':self.model}))
         monkeypatch.setattr(SandboxRecord,'environment',property(lambda row:
@@ -31,7 +32,17 @@ class SandboxTransport:
             def __init__(self,cli):self.cli=cli
             def validate(self,row,**kwargs):
                 if row.binding_id in transport.expired:raise SandboxError('env_expired')
-                return {'State':{'Running':True}}
+                running=row.binding_id not in transport.stopped
+                if kwargs.get('running',True) and not running:raise SandboxError('env_stopped')
+                return {'State':{'Running':running}}
+            def action(self,row,action):
+                transport.actions.append((row.binding_id,action))
+                if action=='destroy':transport.expired.add(row.binding_id);return row.changed(lifecycle='destroyed',error_code=None)
+                if action=='start':transport.stopped.discard(row.binding_id)
+                elif action=='stop':transport.stopped.add(row.binding_id)
+                elif action!='recover':raise SandboxError('env_operation_unsupported')
+                self.validate(row,running=False)
+                return row.changed(lifecycle='stopped' if row.binding_id in transport.stopped else 'running',error_code=None)
             def create(self,row,save):
                 transport.created.append(row.binding_id)
                 Path(row.environment.root).mkdir()

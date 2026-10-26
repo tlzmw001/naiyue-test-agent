@@ -1,4 +1,6 @@
-import type { SessionCreation } from './types';
+import type { ExecutionDraft } from './types';
+import { useConversationDrafts } from './useConversationDrafts';
+import { useSessionCreation } from './useSessionCreation';
 import { useEffect, useRef, useState } from 'react';import { errorText, WebApi } from './api';
 import { subscribeRun } from './runSubscription';
 import type { ApprovalBatch, PermissionMode, RunView, SessionView, ThinkingOptions, ToolDecision } from './types';
@@ -15,8 +17,6 @@ export function useConversation(api: WebApi, active = true) {
   const history = useMessageHistory(api);
   const messages = history.messages;
   const [run, setRun] = useState<RunView | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [pending, setPending] = useState<Record<string, string[]>>({});
   const [notice, setNotice] = useState('');
   const [lastSubmission, setLastSubmission] = useState<{ session_id: string } | null>(null);
   const [connection, setConnection] = useState<{ session_id: string; run_id: string; attempt: number; failed: boolean } | null>(null);
@@ -34,21 +34,12 @@ export function useConversation(api: WebApi, active = true) {
   const selectionPending = useRef(false);
   const selected = useRef<string>('new');
   const currentRun = useRef<RunView | null>(null);
-  const draftRef = useRef<Record<string, string>>({});
-  const pendingRef = useRef<Record<string, string[]>>({});
+  const { drafts, pending, draftRef, pendingRef, writeDraft, writePending, forget } = useConversationDrafts(selected);
+  const creation = useSessionCreation(api);
   const stoppedMode = useRef<Record<string, boolean>>({});
   const busySend = useRef(false);
   const subscription = useRef<AbortController | null>(null);
   const pendingStop = useRef<string | null>(null);
-
-  const writeDraft = (value: string, id = selected.current) => {
-    draftRef.current = { ...draftRef.current, [id]: value };
-    setDrafts(draftRef.current);
-  };
-  const writePending = (value: string[], id = selected.current) => {
-    pendingRef.current = { ...pendingRef.current, [id]: value };
-    setPending(pendingRef.current);
-  };
 
   async function refreshSession(sid: string, signal?: AbortSignal, prepare = false): Promise<SessionView> {
     const revision = controlsRevision.current, generation = selectionGeneration.current, approvals = approvalRevision.current;
@@ -170,12 +161,14 @@ export function useConversation(api: WebApi, active = true) {
     }
   }
 
-  async function newSession(choice?: SessionCreation) {
+  async function newSession(choice?: ExecutionDraft) {
     if (busySend.current || selectionPending.current || !model) return;
     setNotice('');
     try {
-      const created = await api.createSelected(model,choice);
-      await selectSession(created.session_id);
+      creation.choose(choice);
+      if (selected.current !== 'new' && !draftRef.current.new) writeDraft(draftRef.current[selected.current] ?? '', 'new');
+      subscription.current?.abort(); history.reset(); selectionGeneration.current++; controlsRevision.current++;
+      selected.current = 'new'; currentRun.current = null; setSession(null); setRun(null); setConnection(null); setStopping(false);
       await refreshSessions();
     } catch (error) { setNotice(errorText(error)); if(choice) throw error; }
   }
@@ -185,8 +178,7 @@ export function useConversation(api: WebApi, active = true) {
     busySend.current = true;
     try {
       if (!await listing.deleteSession(sid)) return false;
-      delete draftRef.current[sid]; delete pendingRef.current[sid]; delete stoppedMode.current[sid];
-      setDrafts({ ...draftRef.current }); setPending({ ...pendingRef.current });
+      forget(sid); delete stoppedMode.current[sid];
       if (selected.current === sid) {
         subscription.current?.abort(); selectionGeneration.current++; controlsRevision.current++;
         selected.current = 'new'; currentRun.current = null;
@@ -229,9 +221,10 @@ export function useConversation(api: WebApi, active = true) {
   }
 
   async function selectModel(value: string) {
-    if (changingModel || selectionPending.current || recovering || session?.recovery) return;
-    if (!session) { setModel(value); return; }
+    if (busySend.current || changingModel || selectionPending.current || recovering || session?.recovery || (!session && creation.locked)) return;
+    if (!session) { creation.modelChanged(); setModel(value); return; }
     const sid = session.session_id;
+    creation.override(sid, { thinking_level: undefined });
     controlsRevision.current++;
     setChangingModel(true);
     try {
@@ -260,25 +253,21 @@ export function useConversation(api: WebApi, active = true) {
 
   async function changeControls(change: { active_tools: string[] } | { permission_mode: PermissionMode } | { thinking_level: string }) {
     if (busySend.current || selectionPending.current || recovering || session?.recovery || !model) return;
+    if (!session) {
+      try { creation.changeControls(change); } catch (error) { setNotice(errorText(error)); }
+      return;
+    }
+    creation.override(session.session_id, change);
     busySend.current = true;
     controlsRevision.current++;
     setChangingControls(true);
     setNotice('');
     let sid = selected.current;
     try {
-      if (!session) {
-        if (sid === 'new') {
-          sid = (await api.create(model)).session_id;
-          selected.current = sid;
-          writeDraft(draftRef.current.new ?? '', sid);
-          writeDraft('', 'new');
-        }
-        const value = await api.session(sid);
-        applySession(value);
-      }
       const confirmed = 'active_tools' in change ? await api.selectTools(sid, change.active_tools) :
         'permission_mode' in change ? await api.selectPermissionMode(sid, change.permission_mode) :
         await api.selectThinking(sid, model, change.thinking_level);
+      creation.acknowledge(sid, change);
       controlsRevision.current++;
       if (selected.current === sid) {
         setSession(previous => previous?.session_id === sid ? { ...previous, ...confirmed } : previous);
@@ -290,13 +279,12 @@ export function useConversation(api: WebApi, active = true) {
     } catch (error) {
       controlsRevision.current++;
       if (selected.current === sid) {
-        setNotice(errorText(error));
+        setNotice(errorText(error) + (creation.hasPending(sid) ? ' 设置尚未确认，再次发送将继续保存所选设置。' : ''));
         try {
           const actual = await api.session(sid);
           if (selected.current === sid) {
             controlsRevision.current++;
-            if (!session) applySession(actual);
-            else setSession(previous => previous?.session_id === sid ? {
+            setSession(previous => previous?.session_id === sid ? {
               ...previous, active_tools: actual.active_tools, permission_mode: actual.permission_mode,
               model_id: actual.model_id, thinking_level: actual.thinking_level,
             } : previous);
@@ -328,14 +316,17 @@ export function useConversation(api: WebApi, active = true) {
     let sid = key;
     try {
       if (key === 'new') {
-        sid = (await api.create(model)).session_id;
-        selected.current = sid;
+        const value = await creation.prepare(model);
+        sid = value.session_id;
         writeDraft(draftRef.current.new ?? '', sid);
         writeDraft('', 'new');
-        const value = await api.session(sid);
-        setSession(value);
-        history.open(sid, undefined, { ...value.history, messages: value.messages });
+        applySession(value, true);
+        if (value.execution?.kind === 'sandbox' && (value.execution.state !== 'ready' || !value.can_run)) {
+          setNotice('环境准备尚未完成，消息已保留。请在执行位置菜单核对原准备。'); await refreshSessions(); return;
+        }
       }
+      const configured = await creation.configure(sid);
+      if (configured) setSession(previous => previous?.session_id === sid ? { ...previous, ...configured } : previous);
       if (live?.status === 'running' && !live.done) {
         await api.control(live.run_id, followUp ? 'follow_up' : 'steering', combined);
         setLastSubmission({ session_id: sid });
@@ -352,7 +343,10 @@ export function useConversation(api: WebApi, active = true) {
       }
       if (draftRef.current[sid] === text) writeDraft('', sid);
       await refreshSessions();
-    } catch (error) { setNotice(errorText(error)); }
+    } catch (error) {
+      setNotice(errorText(error) + (creation.hasPending(sid) ? ' 设置尚未确认，再次发送将继续保存所选设置。' : ''));
+      if (sid !== 'new') try { await refreshSession(sid); } catch { console.warn('submitted_session_refresh_failed'); }
+    }
     finally { busySend.current = false; setSubmitting(false); }
   }
 
@@ -482,7 +476,7 @@ export function useConversation(api: WebApi, active = true) {
     finally { busySend.current = false; setSubmitting(false); }
   }
   const id = selected.current;
-  return { models, model, thinkingOptions, sessions, session, messages, run, notice, lastSubmission, listing,
+  return { models, model, thinkingOptions, sessions, session, messages, run, notice, lastSubmission, listing, creation,
     connection: connection?.session_id === id && connection.run_id === run?.run_id ? connection : null, submitting, stopping, changingModel, changingControls, selectingSession, recovering,
     history: { ...history.pagination, loadOlder: history.loadOlder, disabled: selectingSession },
     managingSessions: listing.managingSessions, updateSession: listing.updateSession, reorderSessions: listing.reorderSessions, deleteSession,

@@ -27,6 +27,7 @@ from naiyue_test_agent.web.windows_disconnect import windows_disconnect_handler
 from .browser import BrowserBoundary, BrowserFiles
 from .ownership import ServiceOwner
 from .projects import router as project_router
+from .environments import router as environment_router
 from .navigation import router as navigation_router
 from .directories import router as directory_router
 from .receipts import CommandReceipts, IdempotentCommands
@@ -158,6 +159,7 @@ def create_service_app(options, *, application_factory=None, shutdown=None):
     app.include_router(create_api_router(), prefix='/api/v1/scopes/{scope_id}')
     app.include_router(terminal_session_router, prefix='/api/v1/scopes/{scope_id}')
     app.include_router(project_router)
+    app.include_router(environment_router)
     app.include_router(navigation_router)
     app.include_router(directory_router)
     app.include_router(temporary_router)

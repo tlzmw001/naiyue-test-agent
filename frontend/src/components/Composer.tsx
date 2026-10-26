@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { WebApi } from '../api';
-import type { PermissionMode, SessionControlOptions, SessionView, SkillCatalogView } from '../types';
+import type { DraftControls, PermissionMode, SessionControlOptions, SessionView, SkillCatalogView } from '../types';
 import { errorText } from '../api';
 import { Icon } from './Icons';
 import ComposerControls from './ComposerControls';
@@ -14,7 +14,8 @@ import composer from './Composer.module.css';
 
 export default function Composer({ text, pending, pendingMode, busy, stopping, sending, blocked,
   setText, setPending, send, stop, api, session, controlsDisabled, selectTools, selectMode, contextEntry,
-  openModel, compact, openContext, openAgents, sendScroll, workspaceEntry }: {
+  openModel, compact, openContext, openAgents, sendScroll, workspaceEntry, draftControls }: {
+  draftControls?: DraftControls;
   sendScroll?: { preference: SendScroll; select: (value: SendScroll) => void };
   text: string; pending: string[]; pendingMode: boolean; busy: boolean; stopping: boolean;
   sending: boolean; blocked: boolean; setText: (text: string) => void;
@@ -37,8 +38,8 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
   const [checkingSkill, setCheckingSkill] = useState(false);
   const confirming = useRef(false);
   const mounted = useRef(true);
-  const mode = session?.permission_mode ?? options?.default_permission_mode;
-  const tools = session?.active_tools ?? options?.default_active_tools ?? [];
+  const mode = session?.permission_mode ?? draftControls?.permission_mode ?? options?.default_permission_mode;
+  const tools = session?.active_tools ?? draftControls?.active_tools ?? options?.default_active_tools ?? [];
   const readEnabled = tools.includes('read');
   const pendingVersion = JSON.stringify(pending);
   // A confirmation belongs to this draft, session and send state, never a later render.

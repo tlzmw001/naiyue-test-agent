@@ -505,13 +505,18 @@ max_concurrency = 1
 # 该环境变量须保存服务端要求的完整头值，例如Bearer后加空格和真实Token。
 Authorization = "MY_MCP_AUTHORIZATION"
 
-# Docker/envd 文件后端（R1-10 开发分支）；无 image 时纯本机流程可正常使用。
+# Docker/envd 文件后端；未配置镜像或模板时纯本机流程可正常使用。
 # 镜像先用标准 Linux wheel 构建，context 必须显式指向已授权的本机 Docker。
-# 远端 SSH 在 R1-14，完整会话环境选择在 R1-12 接线。
+# 远端 SSH 在 R1-14。13D-02/03 已支持 API/CLI 和输入框上方模板选择、刷新。
+# 修改后调用认证 POST /api/v1/environments/refresh，只重载服务固定配置文件的 sandbox 节。
+# 无效配置保留上次列表；删除整个 sandbox 节只禁用未来新建，已有会话继续按保存配置执行。
 [sandbox]
 docker_executable = "docker"
 context = "default"
 # image = "<your-compatible-envd-image>"
+# 旧 image 会转换成一项默认模板，不能与 profiles/default_profile 混用。
+# 配置多模板时取消下面 default_profile 和对应 profiles 的注释；名称只影响显示。
+# default_profile = "python-tests"
 cpus = 2.0
 memory_bytes = 2147483648
 pids_limit = 256
@@ -529,3 +534,24 @@ poll_milliseconds = 100
 # external：由公司/云网络策略控制；none：只保留回环，实际生效失败则拒绝。
 # 创建时冻结，修改配置不改变已有环境。
 mode = "external"
+
+[sandbox.lifecycle]
+# 服务/data_dir 内所有项目共用额度；unknown/准备中保守占用运行额度。
+# 停止保留文件，显式销毁原容器和两个卷后才释放保留额度。
+max_running = 2
+max_retained = 10
+idle_stop_seconds = 1800  # 0 关闭自动空闲停止；不按时间删除文件。
+sweep_seconds = 30
+# 这些策略可由环境刷新热更新；降额不停止已有任务，不改变会话镜像/网络策略。
+
+# [sandbox.profiles.python-tests]
+# name = "Python 接口测试"
+# image = "<your-compatible-python-envd-image>"
+#
+# [sandbox.profiles.frontend-tests]
+# name = "Node 前端测试"
+# image = "<your-compatible-node-envd-image>"
+#
+# 网络/资源/Git预算在本片共用。新会话冻结选择，已有会话不随模板变更而换绑。
+# 刷新按钮只重载sandbox：校验成功替换目录及生命周期策略，失败保留旧配置。
+# 输入框上沿“管理沙箱”查看全部项目；常驻服务正常退出停止原容器并保留卷。

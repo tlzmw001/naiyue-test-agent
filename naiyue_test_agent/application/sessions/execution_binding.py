@@ -2,12 +2,13 @@
 from naiyue_test_agent.execution_roots import ExecutionRootUnavailable, execution_error
 import json
 import logging
+from contextlib import asynccontextmanager
 from uuid import UUID,uuid5,NAMESPACE_URL
 
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking
 from naiyue_test_agent.contracts.sandbox import SandboxError
 from naiyue_test_agent.contracts.git_inputs import GitInputError,input_path
-from naiyue_test_agent.contracts.session_environment import SandboxSessionSetup,saved_setup
+from naiyue_test_agent.contracts.session_environment import SandboxSessionSetup,SandboxProfileSelection,SandboxProfileReference,saved_setup
 from naiyue_test_agent.storage.errors import SessionPersistenceError
 
 logger=logging.getLogger(__name__)
@@ -36,6 +37,10 @@ def check_sandbox(sessions,row):
     if (record.session_id!=row['session_id'] or record.project_id!=row['project_id']
             or record.input_id!=setup.input_id or record.input_snapshot is None):
         raise SandboxError('env_binding_mismatch')
+    if setup.selection is not None:
+        try:matches=SandboxProfileSelection.from_record(record)==setup.selection
+        except ValueError as error:raise SandboxError('env_binding_mismatch') from error
+        if not matches:raise SandboxError('env_binding_mismatch')
     return record
 
 
@@ -45,6 +50,13 @@ def environment_status(sessions,row):
         return dict(kind='host',state='unavailable' if error else 'ready')
     setup=saved_setup(row)
     value=dict(kind='sandbox',state='preparing',binding_id=setup.binding_id,input_id=setup.input_id,error=None)
+    selection=setup.selection
+    if selection is None:
+        try:selection=SandboxProfileSelection.from_record(sessions.environments._service.get(setup.binding_id))
+        except (SandboxError,ValueError):
+            logger.info('session_environment_profile_unavailable')
+    if selection is not None:
+        value.update(profile_id=selection.profile_id,profile_name=selection.name,profile_revision=selection.revision)
     try:
         record=sessions.environments._inputs.get(row['project_id'],setup.input_id)
         if record.state!='ready':
@@ -53,7 +65,18 @@ def environment_status(sessions,row):
         checked=check_sandbox(sessions,row)
         return dict(value,state='ready',root=checked.environment.root)
     except (GitInputError,SandboxError) as error:
+        if error.code=='env_not_registered':
+            capacity=sessions.environments._service.capacity_error()
+            if capacity:error=SandboxError(capacity)
         return dict(value,state='unavailable',error=dict(code=error.code,paths=list(getattr(error,'paths',()))))
+
+
+@asynccontextmanager
+async def execution_use(sessions,scope,*,stop=False):
+    if not stop and scope['execution_binding']=='sandbox':
+        setup=SandboxSessionSetup.model_validate(scope['execution_setup'])
+        async with sessions.environments.using(setup.binding_id):yield
+    else:yield
 
 
 async def resolve_capabilities(sessions,row):
@@ -78,9 +101,13 @@ async def resolve_capabilities(sessions,row):
         DockerProcesses(api._operations,record,api._owner),tasks,facts.revision)
 
 
-async def create_sandbox_session(sessions,model_id,request_id,include):
+async def create_sandbox_session(sessions,model_id,request_id,include,*,profile_id=None,expected_profile_revision=None):
     if sessions.environments is None or sessions._project is None:
         raise SandboxError('env_project_unavailable')
+    requested=None
+    if profile_id is not None or expected_profile_revision is not None:
+        try:requested=SandboxProfileReference(profile_id=profile_id,revision=expected_profile_revision)
+        except ValueError as error:raise SandboxError('env_profile_selection_invalid') from error
     with sessions.environments._operations.accepting():
         project_id=sessions._project.project_id
         await run_blocking(sessions.environments._service._project,project_id)
@@ -90,7 +117,8 @@ async def create_sandbox_session(sessions,model_id,request_id,include):
         sid=uuid5(NAMESPACE_URL,'nyt:session:'+project_id+':'+key).hex
         setup=SandboxSessionSetup(model_id=model_id,include_untracked=selected,
             input_id=uuid5(NAMESPACE_URL,'nyt:input:'+project_id+':'+key).hex,
-            binding_id=uuid5(NAMESPACE_URL,'nyt:environment:'+project_id+':'+key).hex)
+            binding_id=uuid5(NAMESPACE_URL,'nyt:environment:'+project_id+':'+key).hex,
+            requested_profile=requested)
         async with sessions._persistence.history_lock(sid):
             try:row=await run_blocking(sessions._persistence.storage.sessions.get,sid)
             except SessionPersistenceError as error:
@@ -100,10 +128,15 @@ async def create_sandbox_session(sessions,model_id,request_id,include):
                 except SandboxError as error:
                     if error.code!='env_not_registered':raise
                 else:raise SandboxError('env_binding_mismatch')
+                selection=sessions.environments._service.configuration.select(profile_id)
+                if requested is not None and requested.revision!=selection.revision:
+                    raise SandboxError('env_profile_changed')
+                setup=SandboxSessionSetup(**setup.model_dump(exclude={'selection'}),selection=selection)
                 await run_blocking(sessions._create_session,model_id,None,session_id=sid,
                     execution_setup=setup.model_dump(mode='json'))
             else:
-                if row['execution_binding']!='sandbox' or saved_setup(row)!=setup:
+                if (row['execution_binding']!='sandbox' or saved_setup(row).model_dump(exclude={'selection'})
+                        !=setup.model_dump(exclude={'selection'})):
                     raise SandboxError('env_operation_conflict')
             try:await prepare_sandbox_session(sessions,sid)
             except (GitInputError,SandboxError):
@@ -113,11 +146,27 @@ async def create_sandbox_session(sessions,model_id,request_id,include):
 
 async def prepare_sandbox_session(sessions,sid):
     row=await run_blocking(sessions._persistence.storage.sessions.get,sid)
+    setup=saved_setup(row)
+    async with sessions.environments.using(setup.binding_id):return await _prepare_sandbox_session(sessions,sid)
+
+
+async def _prepare_sandbox_session(sessions,sid):
+    row=await run_blocking(sessions._persistence.storage.sessions.get,sid)
     if row['execution_binding']!='sandbox':raise SandboxError('env_binding_mismatch')
     setup=saved_setup(row);api=sessions.environments
     with api._operations.accepting():
-        await api.prepare_input(row['project_id'],input_id=setup.input_id,include_untracked=setup.include_untracked)
-        record=await run_blocking(api._service.create,row['project_id'],sid,binding_id=setup.binding_id)
+        selection=setup.selection
+        if selection is None:
+            try:original=await api.get(setup.binding_id)
+            except SandboxError as error:
+                if error.code=='env_not_registered':raise SandboxError('env_legacy_setup_unavailable') from error
+                raise
+            try:selection=SandboxProfileSelection.from_record(original)
+            except ValueError as error:raise SandboxError('env_binding_mismatch') from error
+        await api.prepare_input(row['project_id'],input_id=setup.input_id,
+            include_untracked=setup.include_untracked,git_settings=selection.settings.git)
+        record=await run_blocking(api._service.create,row['project_id'],sid,
+            binding_id=setup.binding_id,selection=selection)
         if record.lifecycle!='running':raise SandboxError('env_operation_unknown')
         await api.install_input(setup.binding_id,setup.input_id)
         return await run_blocking(environment_status,sessions,row)

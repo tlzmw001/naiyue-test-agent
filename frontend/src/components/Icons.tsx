@@ -7,7 +7,7 @@ export function Chevron({ direction = 'down', className = '' }: { direction?: 'u
   </svg>;
 }
 
-export function Icon({ name }: { name: 'plus' | 'send' | 'stop' | 'menu' | 'close' | 'chat' | 'pin' | 'sidebar' | 'folder' | 'computer' | 'sandbox' | 'changes' }) {
+export function Icon({ name }: { name: 'plus' | 'send' | 'stop' | 'menu' | 'close' | 'chat' | 'pin' | 'sidebar' | 'folder' | 'computer' | 'sandbox' | 'changes' | 'refresh' }) {
   const paths = {
     plus: <path d="M12 5v14M5 12h14" />,
     send: <><path d="m6 11 6-6 6 6M12 5v14" /></>,
@@ -21,6 +21,7 @@ export function Icon({ name }: { name: 'plus' | 'send' | 'stop' | 'menu' | 'clos
     computer: <><rect x="4" y="3" width="16" height="13" rx="2" /><path d="M2 20h20M8 16v4m8-4v4" /></>,
     sandbox: <><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 5v10l9 5 9-5V8M12 13v10" /></>,
     changes: <><path d="M14 3H5v18h14V8l-5-5Zm0 0v5h5M8 12h8m-8 4h5" /></>,
+    refresh: <><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></>,
   };
   return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
     strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;

@@ -55,9 +55,12 @@ def test_destroy_cannot_finish_then_be_revived_by_pending_create(monkeypatch,tmp
     order=[]
     class Repo:
         row=None
-        def reserve(self,row):
+        def reserve(self,row,*,limits):
             self.row=row;reserved.set();assert allow_create.wait(5)
-        def get(self,binding):return self.row
+        def touch(self,binding,now):return True
+        def get(self,binding):
+            if self.row is None:raise SandboxError('env_not_registered')
+            return self.row
         def save(self,row):self.row=row;order.append(row.lifecycle)
     repo=Repo()
     class CLI:
@@ -72,9 +75,12 @@ def test_destroy_cannot_finish_then_be_revived_by_pending_create(monkeypatch,tmp
             order.append('create_after_'+repo.row.lifecycle)
             row=row.changed(container_id='c'*64);save(row);return row
         def handshake(self,row):pass
+        def action(self,row,action):return row.changed(lifecycle='destroyed')
     monkeypatch.setattr(service,'DockerCLI',CLI);monkeypatch.setattr(service,'DockerEnvironment',Engine)
     controller=service.EnvironmentService(SimpleNamespace(data_dir=tmp_path),SandboxSettings(image='app:test'))
     controller._project=lambda *_:None;controller.records=lambda:repo
+    from naiyue_test_agent.application.environments.activity import EnvironmentActivity
+    controller.activity=EnvironmentActivity(controller.records)
     original=controller._lock
     def lifecycle_lock(binding):
         if get_ident()!=creator.ident:destroy_attempted.set()
@@ -92,13 +98,14 @@ def test_destroy_cannot_finish_then_be_revived_by_pending_create(monkeypatch,tmp
     gate=original(repo.row.binding_id)
     unprotected=gate.acquire(blocking=False)
     if unprotected:gate.release()
-    destroyer=Thread(target=destroy);destroyer.start();assert destroy_attempted.wait(5)
-    # On the broken path, deterministically finish destroy before releasing
-    # create. On the fixed path the lifecycle gate intentionally blocks it.
-    if unprotected:assert destroy_done.wait(5)
+    destroyer=Thread(target=destroy);destroyer.start();assert destroy_done.wait(5)
+    # Active creation now rejects lifecycle mutation immediately, before IO.
+    assert len(errors)==1 and isinstance(errors[0],SandboxError) and errors[0].code=='env_busy'
+    errors.clear()
     allow_create.set();creator.join(5);destroyer.join(5)
     assert not errors and not creator.is_alive() and not destroyer.is_alive()
     assert 'create_after_destroyed' not in order
+    controller.action(repo.row.binding_id,'destroy')
     assert repo.row.lifecycle=='destroyed'
 
 

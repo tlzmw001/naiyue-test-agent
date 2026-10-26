@@ -12,6 +12,7 @@ from naiyue_test_agent.agent_runtime import build_runtime_agent
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher
 from naiyue_test_agent.application import prepare_tool_registry
 from naiyue_test_agent.application.environments.operations import SandboxOperationService
+from naiyue_test_agent.application.environments.activity import EnvironmentActivity
 from naiyue_test_agent.contracts.run_context import RuntimeContext,RunScope,RunIdentity,RunCapabilities,RunObservationPorts
 from naiyue_test_agent.contracts.sandbox import PROTOCOL_VERSION,SandboxRecord,SandboxError
 from naiyue_test_agent.envd.operations import EnvironmentOperations
@@ -53,7 +54,7 @@ def test_remote_cleanup_failure_aborts_formal_graph_before_next_model_call(tmp_p
                     return value
             service=SimpleNamespace(records=lambda:EnvironmentRegistry(registry.database),get=lambda _:record,
                 validate=lambda _:record,_engine=lambda _:Engine(),projects=SimpleNamespace(data_dir=tmp_path))
-            coordinator=SandboxOperationService(service);port=DockerProcesses(coordinator,record)
+            coordinator=SandboxOperationService(service,activity=EnvironmentActivity(service.records));port=DockerProcesses(coordinator,record)
             spec=next(spec for spec in create_builtin_tools(AppSettings().tools,
                 shell_task_settings=ShellTaskSettings(foreground_wait_seconds=1)) if spec.tool.name==name)
             args={'args':['--help']} if name=='aitest_kit' else {'command':'never started','background':background}
@@ -115,7 +116,7 @@ def test_cleanup_failure_while_stopping_queries_original_id_and_preserves_mechan
                         environment=record.environment.public(),session_id='S',operation=operation,params=params))
             service=SimpleNamespace(records=lambda:EnvironmentRegistry(registry.database),get=lambda _:record,
                 validate=lambda _:record,_engine=lambda _:Engine(),projects=SimpleNamespace(data_dir=tmp_path))
-            coordinator=SandboxOperationService(service);port=DockerProcesses(coordinator,record)
+            coordinator=SandboxOperationService(service,activity=EnvironmentActivity(service.records));port=DockerProcesses(coordinator,record)
             class Control:
                 checks=0
                 @property

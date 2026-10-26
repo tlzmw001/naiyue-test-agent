@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from .config_paths import StorageSettings, get_agent_dir
 from .project_settings import ProjectsSettings
 from .sandbox_settings import SandboxSettings
+from .sandbox_profiles import SandboxConfiguration
 from .delivery_settings import DeliverySettings
 from .checkpoint_settings import CheckpointRetentionSettings
 from .shell_task_settings import ShellTaskSettings
@@ -61,7 +62,7 @@ class AppSettings(BaseModel):
     default_active_tools: tuple[str, ...] | None = None
     storage: StorageSettings = Field(default_factory=StorageSettings)
     projects: ProjectsSettings = Field(default_factory=ProjectsSettings)
-    sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
+    sandbox: SandboxConfiguration = Field(default_factory=SandboxConfiguration)
     delivery: DeliverySettings = Field(default_factory=DeliverySettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     network: NetworkSettings = Field(default_factory=NetworkSettings)
@@ -76,6 +77,13 @@ class AppSettings(BaseModel):
     diagnostics: DiagnosticSettings = Field(default_factory=DiagnosticSettings)
     checkpoint_retention: CheckpointRetentionSettings = Field(default_factory=CheckpointRetentionSettings)
     subagents: tuple[SubAgentSpec, ...] = ()
+
+    @field_validator('sandbox',mode='before')
+    @classmethod
+    def sandbox_configuration(cls,value):
+        if isinstance(value,SandboxSettings) and not isinstance(value,SandboxConfiguration):
+            return value.model_dump(mode='python')
+        return value
 
     @field_validator('default_active_tools', mode='before')
     @classmethod
@@ -161,7 +169,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         raise ValueError('Tool retry settings are invalid') from None
     storage = StorageSettings.model_validate(raw.get('storage', {}))
     projects = ProjectsSettings.model_validate(raw.get('projects', {}))
-    sandbox = SandboxSettings.model_validate(raw.get('sandbox', {}))
+    sandbox = SandboxConfiguration.model_validate(raw.get('sandbox', {}))
     delivery = DeliverySettings.model_validate(raw.get('delivery', {}))
     permissions = PermissionSettings.model_validate(raw.get('permissions', {}))
     max_active_runs = raw.get('max_active_runs', AppSettings.model_fields['max_active_runs'].default)
