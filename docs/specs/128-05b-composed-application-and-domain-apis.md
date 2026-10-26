@@ -1,5 +1,7 @@
 # Spec128-05B：组合应用与领域子API
 
+> 版本边界（2026-10-24）：本文保留当时迁移的说明。当前终端已由 [R1-06](R1-06-cli-service-client.md) 改为 HTTP/SSE 客户端，旧 cli_async/app.call 拥有者桥已删除；默认 Web 的共享接入在 R1-07。
+
 版本更正（2026-10-23）：原十片审查发现本片遗漏原承诺的app.memory；下文“不制造空memory API”不能代替范围取消。用户随后批准补齐，当前合同和主链转到[原第7片补齐Spec](128-07-memory-api.md)。下文九个API、测试数和范围处理保留为05B历史时点；原MemoryQuery/SessionPersistence记忆编排已由新MemoryAPI替代，不作为当前入口指引。
 
 状态：用户在05A收尾和05B说明后批准“继续”，已完成本机验收（2026-10-23）。仅本片；06会话mixin和实际worktree管理独立，不提交/push/发布。基线是当前未提交的01—05A，保存于build/spec128-05b/baseline，不覆盖主目录并行成果。

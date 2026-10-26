@@ -73,7 +73,10 @@ async def _worker(args):
     from langchain_core.callbacks import AsyncCallbackHandler
     from langchain_core.messages import AIMessage
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+    if __package__:
+        from .component_fixtures import open_component_application
+    else:
+        from component_fixtures import open_component_application
     from naiyue_test_agent.application.conversation.stream_projection import StreamingMessageProjection
 
     if args.offline:
@@ -88,7 +91,7 @@ async def _worker(args):
         tool_calls.append(True)
         if len(tool_calls) > 1:
             raise RuntimeError('Probe tool budget exceeded')
-        holder['app'].runs.steer(holder['session'],
+        holder['app'].host.runs.steer(holder['session'],
             'The tool has returned. Do not call tools again. Reply only with its exact value.')
         return expected
 
@@ -106,29 +109,29 @@ async def _worker(args):
     budget = Budget(2 if args.phase == 'start' else 1)
     tools = [ToolSpec(read_probe_value, read_probe_value.args_schema, permissions=ToolPermission(default='allow'))]
     async with asyncio.timeout(args.timeout_seconds):
-        async with open_async_persistent_application(args.config, database_path=args.database,
+        async with open_component_application(args.config, database_path=args.database,
                 tools=tools, system_prompt='Return only the exact requested synthetic value.', response_format=None) as app:
-            app.runs._agent = app.runs._agent.with_config({'callbacks': [budget], 'recursion_limit': 40})
+            app.host.runs._agent = app.host.runs._agent.with_config({'callbacks': [budget], 'recursion_limit': 40})
             if args.phase == 'start':
-                session = await app.sessions.create(app.models.default_id)
+                session = await app.host.sessions.create(app.root.models.default_id)
                 prompt = 'Call read_probe_value exactly once. Then reply only with the exact value returned by it.'
             else:
                 saved = json.loads(record_path.read_text())
                 expected = saved['value']
-                session = await app.sessions.restore(saved['session_id'])
-                await app.sessions.select_tools(session, [])
-                restored = await app.history.messages(session)
+                session = await app.host.sessions.restore(saved['session_id'])
+                await app.host.sessions.select_tools(session, [])
+                restored = await app.host.history.messages(session)
                 assert any(m.content == expected for m in restored)
                 prompt = 'Without calling any tools, reply only with the exact value read by read_probe_value earlier.'
             holder.update(app=app, session=session)
             events, projection = [], StreamingMessageProjection()
-            async for event in app.runs.stream(session, [('user', prompt)]):
+            async for event in app.host.runs.stream(session, [('user', prompt)]):
                 events.append(event)
                 projection(event)
                 if event.event_type == 'run_finished':
-                    rows = await app.sessions.list()
+                    rows = await app.host.sessions.list()
                     assert rows[0]['state'] == 'ready' and rows[0]['last_run_status'] == 'completed'
-            messages = await app.history.messages(session)
+            messages = await app.host.history.messages(session)
             assert isinstance(messages[-1], AIMessage) and messages[-1].content.strip() == expected
             assert events[-1].event_type == 'run_finished' and events[-1].data.status == 'completed'
             final = messages[-1]
@@ -138,7 +141,7 @@ async def _worker(args):
             assert ''.join(e.data.text for e in deltas).strip() == expected
             visible = [row for row in projection.messages if row['id'] == final.id]
             assert len(visible) == 1 and visible[0]['content'].strip() == expected and not visible[0]['provisional']
-            row = (await app.sessions.list())[0]
+            row = (await app.host.sessions.list())[0]
             if args.phase == 'start':
                 assert len(tool_calls) == 1 and budget.count == 2
                 controls = [e for e in events if e.event_type == 'control_delivered']

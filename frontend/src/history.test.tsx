@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import App from './App';
 import { ApiError, WebApi } from './api';
@@ -66,7 +66,9 @@ it('automatically recovers on opening, keeps the draft, and waits for a new send
   let finish!: (view: SessionView) => void;
   vi.spyOn(api, 'recover').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   render(<App api={api} />);
-  fireEvent.click(await screen.findByRole('button', { name: /A · 未完成/ }));
+  const historyRow = await screen.findByRole('button', { name: / A$/ });
+  expect(within(historyRow).getByLabelText('任务状态：失败')).toBeTruthy();
+  fireEvent.click(historyRow);
   const recover = await screen.findByRole('button', { name: '结束旧运行并继续会话' });
   const input = screen.getByRole('textbox', { name: '消息' });
   fireEvent.change(input, { target: { value: 'retained new input' } });
@@ -88,7 +90,9 @@ it('refreshes a changed checkpoint after failure and requires another explicit r
   vi.spyOn(api, 'recover').mockRejectedValueOnce(new ApiError('session_save_unconfirmed'))
     .mockResolvedValueOnce({ ...history, state: 'ready', can_run: true, recovery: undefined });
   render(<App api={api} />);
-  fireEvent.click(await screen.findByRole('button', { name: /A · 未完成/ }));
+  const historyRow = await screen.findByRole('button', { name: / A$/ });
+  expect(within(historyRow).getByLabelText('任务状态：失败')).toBeTruthy();
+  fireEvent.click(historyRow);
   const recover = await screen.findByRole('button', { name: '结束旧运行并继续会话' });
   const input = screen.getByRole('textbox', { name: '消息' });
   fireEvent.change(input, { target: { value: 'retained draft' } });
@@ -107,7 +111,9 @@ it('keeps confirmed recovery usable when only the sidebar refresh fails', async 
   vi.spyOn(api, 'sessions').mockResolvedValueOnce([history]).mockRejectedValueOnce(new Error('list fixture'));
   vi.spyOn(api, 'recover').mockResolvedValue({ ...history, state: 'ready', can_run: true, recovery: undefined });
   render(<App api={api} />);
-  fireEvent.click(await screen.findByRole('button', { name: /A · 未完成/ }));
+  const historyRow = await screen.findByRole('button', { name: / A$/ });
+  expect(within(historyRow).getByLabelText('任务状态：失败')).toBeTruthy();
+  fireEvent.click(historyRow);
   expect(await screen.findByText('旧运行已结束。会话列表刷新未确认，可继续输入新消息。')).toBeTruthy();
   expect(api.session).toHaveBeenCalledTimes(1);
   expect(screen.queryByText('只读历史')).toBeNull();
@@ -128,7 +134,9 @@ it('automatically restores approval cards without approving or cancelling the ba
     pending_approval: true, approval_batches: [{ approval_batch_id: 'batch', kind: 'paused_root', agent_path: 'root', agent: null, origin_run_id: 'original-run',
     items: [{ approval_id: 'row', tool_call_id: 'call', tool_name: 'bash', target: 'python -m pytest' }] }] });
   render(<App api={api} />);
-  fireEvent.click(await screen.findByRole('button', { name: /A · 未完成/ }));
+  const historyRow = await screen.findByRole('button', { name: / A$/ });
+  expect(within(historyRow).getByLabelText('任务状态：失败')).toBeTruthy();
+  fireEvent.click(historyRow);
   expect(await screen.findByRole('region', { name: '工具审批' })).toBeTruthy();
   expect(api.recover).toHaveBeenCalledExactlyOnceWith('old', 'cp1', 'restore_approval');
   expect(api.approve).not.toHaveBeenCalled(); expect(api.start).not.toHaveBeenCalled();
@@ -158,7 +166,9 @@ it('does not cancel an inapplicable approval until the user explicitly chooses c
   vi.spyOn(api, 'recover').mockRejectedValueOnce(new ApiError('approval_restore_unavailable'))
     .mockResolvedValueOnce({ ...history, recovery: undefined, state: 'ready', can_run: true });
   render(<App api={api} />);
-  fireEvent.click(await screen.findByRole('button', { name: /A · 未完成/ }));
+  const historyRow = await screen.findByRole('button', { name: / A$/ });
+  expect(within(historyRow).getByLabelText('任务状态：失败')).toBeTruthy();
+  fireEvent.click(historyRow);
   expect(await screen.findByText(/原审批的目标或权限条件已变化/)).toBeTruthy();
   expect(api.recover).toHaveBeenCalledExactlyOnceWith('old', 'cp1', 'restore_approval');
   const input = screen.getByRole('textbox', { name: '消息' });

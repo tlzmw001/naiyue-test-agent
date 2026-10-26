@@ -76,7 +76,7 @@ class HistoryAPI:
             import json
             from langchain_core.messages import messages_from_dict
             from naiyue_test_agent.model_access.reasoning import visible_reasoning
-            from naiyue_test_agent.application.errors import SessionPersistenceError
+            from naiyue_test_agent.storage.errors import SessionPersistenceError
             row = await run_blocking(self._metadata.get, session_id)
             thread = 'subagent:' + agent_id if agent_id else row['thread_id']
             records = await run_blocking(self._conversation.reasoning_body, session_id, thread, sequence, conversation_revision, max_bytes)
@@ -94,15 +94,18 @@ class HistoryAPI:
             thread = 'subagent:' + agent_id if agent_id else row['thread_id']
             records = await run_blocking(self._conversation.file_change_body, session_id, thread, sequence, conversation_revision, max_bytes)
             if not records or records[0]['revision'] != revision or records[0]['artifact'] is None:
-                from naiyue_test_agent.application.errors import SessionPersistenceError
+                from naiyue_test_agent.storage.errors import SessionPersistenceError
                 raise SessionPersistenceError('history_cursor_stale')
             import json
             return json.loads(records[0]['artifact'])
 
     async def chat_subagents(self, session_id):
         with self._owner.operation():
+            await run_blocking(self._metadata.get, session_id)
             from naiyue_test_agent.application.subagents.subagent_queries import annotate
-            records = await run_blocking(self._conversation.chat_subagents, session_id)
+            from naiyue_test_agent.application.subagents.subagent_history import merge_registered_subagents
+            archived, registered = await run_blocking(self._conversation.subagent_snapshot, session_id)
+            records = merge_registered_subagents(archived, registered)
             owned = await run_blocking(self._subagents.get_subagent_references, session_id)
             active = self._sessions.require(session_id).describe_session()['run_id'] if self._sessions.has_session(session_id) else None
             return annotate(records, owned, self._sessions.get_registered_subagents(), self._catalog, active)

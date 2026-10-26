@@ -1,6 +1,8 @@
 """Narrow application port and session-scoped background task tools."""
 
 from naiyue_test_agent.contracts.run_context import RuntimeContext
+from naiyue_test_agent.execution_roots import ExecutionRoot
+from naiyue_test_agent.contracts.environment import EnvironmentRef
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,8 +28,8 @@ class BackgroundNoticeSnapshot:
 
 class ProcessTaskPort(Protocol):
     async def submit(self, *, session_id, workspace_root, archive_root, run_id, tool_call_id, agent_path,
-                     command, name, request, settings, runner, control, project_id=None, execution_root=None) -> dict: ...
-    async def foreground(self, *, wait_seconds, background_limit, on_progress, **scope): ...
+                     command, name, request, settings, runner, control, execution_root: ExecutionRoot, environment: EnvironmentRef, project_id=None) -> dict: ...
+    async def foreground(self, *, wait_seconds, background_limit, on_progress, execution_root: ExecutionRoot, environment: EnvironmentRef, **scope): ...
     def notice_snapshot(self, *, session_id, workspace_root, run_id=None) -> BackgroundNoticeSnapshot: ...
     def acknowledge_notices(self, snapshot, *, session_id, workspace_root, run_id): ...
     async def list(self, *, session_id=None, workspace_root=None, limit=20, before=None) -> dict: ...
@@ -42,7 +44,9 @@ def task_context(runtime, *, query=False):
         raise ToolException('Background tasks are available only to the root agent.')
     sid, root = context.scope.identity.session_id, context.scope.identity.execution_path
     port = context.scope.capabilities.task_queries if query else context.scope.capabilities.process_tasks
-    if not isinstance(sid, str) or not sid or not isinstance(root, Path) or not root.is_absolute() or port is None:
+    sandbox_query=query and context.scope.environment is not None and context.scope.environment.kind=='sandbox'
+    if (not isinstance(sid, str) or not sid or port is None or
+            not sandbox_query and (not isinstance(root, Path) or not root.is_absolute())):
         raise ToolException('Application background task scope is unavailable.')
     scope = {'session_id': sid, 'workspace_root': root}
     if not query:

@@ -32,12 +32,12 @@ async def test_responses_empty_first_chunk_anchors_deltas_to_saved_message(monke
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('fixture', {'fixture': model}))
         app = await build_application('unused', tools=[], system_prompt='', response_format=None)
         try:
-            sid = await app.sessions.create('fixture')
+            sid = await app.host.sessions.create('fixture')
             events, projection = [], StreamingMessageProjection()
-            async for event in app.runs.stream(sid, [('user', 'test')]):
+            async for event in app.host.runs.stream(sid, [('user', 'test')]):
                 events.append(event)
                 projection(event)
-            saved = await app.history.messages(sid)
+            saved = await app.host.history.messages(sid)
             assert saved[-1].id == 'resp_synthetic' and saved[-1].content == 'HELLO WORLD'
             deltas = [e for e in events if e.event_type == 'message_delta']
             assert deltas and {e.data.message_id for e in deltas} == {saved[-1].id}

@@ -15,7 +15,7 @@ import sys
 import pytest
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
-from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
+from naiyue_test_agent.contracts.memory import MemoryReadError
 from naiyue_test_agent.tools import (create_session_read_tool, create_session_write_tool,
     create_session_bash_tool, create_session_powershell_tool)
 from naiyue_test_agent.tools.history import create_history_tool
@@ -55,7 +55,7 @@ def messages(result):
 
 async def turn(app, model, sid, text, *replies):
     model.replies.extend(replies)
-    return await app.runs.start(sid, [('user', text)])
+    return await app.host.runs.start(sid, [('user', text)])
 
 
 async def record(app, model, sid, text, proposals):
@@ -69,8 +69,8 @@ async def record(app, model, sid, text, proposals):
 
 
 def source_ref(app, sid, message, quote):
-    parent = app.sessions._persistence.storage.sessions.get(sid)
-    saved, = app.sessions._persistence.storage.database.read_rows('''SELECT revision FROM naiyue_chat_messages
+    parent = app.host.sessions._persistence.storage.sessions.get(sid)
+    saved, = app.host.sessions._persistence.storage.database.read_rows('''SELECT revision FROM naiyue_chat_messages
         WHERE session_id=? AND thread_id=? AND message_id=?''', (sid, parent['thread_id'], message.id))
     return dict(session_id=sid, thread_id=parent['thread_id'], message_id=message.id,
         revision=saved['revision'], conversation_revision=parent['conversation_revision'],
@@ -82,14 +82,14 @@ def test_w01_first_directory_formal_history_and_no_other_session_execution(monke
         root, worker = StreamingToolModel(replies=[]), StreamingToolModel(replies=[response()])
         async with opened(monkeypatch, tmp_path, root, settings=settings(tmp_path),
                 tools=tools('memory', 'history'), models={'A': root, 'M': worker}) as app:
-            old = await app.sessions.create_workspace('A', tmp_path)
+            old = await app.host.sessions.create_workspace('A', tmp_path)
             raw = '旧任务原文 ' + 'x' * 600 + 'DETAIL_ONLY_MARKER'
             await turn(app, root, old, raw, call('memory', dict(action='refresh_overview'), 'overview'),
                 AIMessage(content='已完成旧任务检查，下一步继续验证'))
-            await app.sessions._sessions.memory_jobs.wait_idle()
-            cold = await app.sessions.create_workspace('A', tmp_path)
-            current = await app.sessions.create_workspace('A', tmp_path)
-            before = {sid: app.sessions._persistence.storage.sessions.get(sid) for sid in (old, cold)}
+            await app.host.sessions._sessions.memory_jobs.wait_idle()
+            cold = await app.host.sessions.create_workspace('A', tmp_path)
+            current = await app.host.sessions.create_workspace('A', tmp_path)
+            before = {sid: app.host.sessions._persistence.storage.sessions.get(sid) for sid in (old, cold)}
             count = len(root.seen)
             result = await turn(app, root, current, WORKFLOWS['w01']['name'],
                 call('history', dict(action='list_sessions'), 'directory'),
@@ -106,7 +106,7 @@ def test_w01_first_directory_formal_history_and_no_other_session_execution(monke
             assert cold_view['overview'] is None and cold_view['overview_status'] == 'not_generated'
             assert cold_view['items'] == [] and len(worker.seen) == 1
             for sid in (old, cold):
-                after = app.sessions._persistence.storage.sessions.get(sid)
+                after = app.host.sessions._persistence.storage.sessions.get(sid)
                 assert (after['run_id'], after['checkpoint_id'], after['state']) == (
                     before[sid]['run_id'], before[sid]['checkpoint_id'], before[sid]['state'])
             assert len(root.seen) == count + 4
@@ -139,7 +139,7 @@ print(json.dumps(report));sys.exit(0 if result.wasSuccessful() else 1)
         root, worker = StreamingToolModel(replies=[]), StreamingToolModel(replies=[])
         async with opened(monkeypatch, tmp_path, root, settings=settings(tmp_path),
                 tools=tools('memory', 'read', SHELL), models={'A': root, 'M': worker}) as app:
-            sid = await app.sessions.create_workspace('A', tmp_path)
+            sid = await app.host.sessions.create_workspace('A', tmp_path)
             saved = await record(app, root, sid, '以后测试工作流按当前配置解释器，断言和清理齐备，先核对资产再生成执行读报告。', [
                 proposal(kind='context', title='测试工作流环境', subject='local environment', body='测试工作流使用当前配置解释器，执行前确认。'),
                 proposal(kind='rule', title='测试工作流规范', subject='local assertions', body='测试工作流必须有前置、断言和资源清理。'),
@@ -193,7 +193,7 @@ except Exception as error:
             root, worker = StreamingToolModel(replies=[]), StreamingToolModel(replies=[])
             async with opened(monkeypatch, tmp_path, root, settings=settings(tmp_path),
                     tools=tools('memory', 'read', 'write', SHELL), models={'A': root, 'M': worker}) as app:
-                sid = await app.sessions.create_workspace('A', tmp_path)
+                sid = await app.host.sessions.create_workspace('A', tmp_path)
                 selected, = await record(app, root, sid, '以后网络保持配置代理模式，每次使用前重新检查实际配置。',
                     [proposal(title='代理环境选择', subject='network choice', body='代理环境仍采用配置代理模式；历史成功不是当前可用保证。')])
                 before = await turn(app, root, sid, WORKFLOWS['w03']['name'],
@@ -254,7 +254,7 @@ def test_w04_other_session_rejects_inflight_old_update_or_suppressed_record(monk
         worker = GatedOldProposal(replies=[], branch=branch, entered=asyncio.Event(), release=asyncio.Event())
         async with opened(monkeypatch, tmp_path, root, settings=settings(tmp_path),
                 tools=tools('memory'), models={'A': root, 'M': worker}) as app:
-            first = await app.sessions.create_workspace('A', tmp_path)
+            first = await app.host.sessions.create_workspace('A', tmp_path)
             original, = await record(app, root, first, '以后并发规则使用旧选择',
                 [proposal(kind='rule', title='并发规则', subject='concurrent rule', body='并发规则旧选择')])
             worker.memory_id = original['memory_id']
@@ -262,7 +262,7 @@ def test_w04_other_session_rejects_inflight_old_update_or_suppressed_record(monk
                 call('memory', dict(action='refresh_overview'), 'refresh'), AIMessage(content='整理已登记'))
             receipt = json.loads(messages(accepted)['refresh'].content)
             await asyncio.wait_for(worker.entered.wait(), 5)
-            second = await app.sessions.create_workspace('A', tmp_path)
+            second = await app.host.sessions.create_workspace('A', tmp_path)
             change = dict(action='update' if branch == 'correct' else 'forget', scope='workspace',
                 memory_id=original['memory_id'], expected_version=1,
                 sources=[dict(current_user=True, quote='更正并发规则为新选择' if branch == 'correct' else '遗忘并发规则旧选择')])
@@ -270,14 +270,14 @@ def test_w04_other_session_rejects_inflight_old_update_or_suppressed_record(monk
                 change['proposal'] = proposal(kind='rule', title='并发规则', subject='concurrent rule', body='并发规则新选择')
             else:change['reason'] = '用户显式遗忘'
             await turn(app, root, second, change['sources'][0]['quote'], call('memory', change, 'change'), AIMessage(content='已处理'))
-            rejected, query = [], app.memory._access.query
+            rejected, query = [], app.host.memory._access.query
             def observed(*args, **kwargs):
                 try:return query(*args, **kwargs)
                 except MemoryReadError as error:
                     rejected.append(str(error)); raise
-            monkeypatch.setattr(app.memory._access, 'query', observed)
-            worker.release.set(); await app.sessions._sessions.memory_jobs.wait_idle()
-            status = await app.tasks.output(receipt['task_id'], session_id=first, workspace_root=tmp_path)
+            monkeypatch.setattr(app.host.memory._access, 'query', observed)
+            worker.release.set(); await app.host.sessions._sessions.memory_jobs.wait_idle()
+            status = await app.host.tasks.output(receipt['task_id'], session_id=first, workspace_root=tmp_path)
             counts = json.loads(status['output'])
             assert status['result_status'] == 'partial' and status['cleanup_confirmed']
             assert counts['overview_saved'] == 1 and counts['memory_saved'] == 0 and counts['failed'] == 1
@@ -290,9 +290,9 @@ def test_w04_other_session_rejects_inflight_old_update_or_suppressed_record(monk
             else:
                 assert rows == []
                 for table in ('naiyue_memory_sources', 'naiyue_memory_versions', 'naiyue_memory_search'):
-                    assert app.sessions._persistence.storage.database.connection.execute(f'SELECT count(*) FROM {table} WHERE memory_id=?',
+                    assert app.host.sessions._persistence.storage.database.connection.execute(f'SELECT count(*) FROM {table} WHERE memory_id=?',
                         (original['memory_id'],)).fetchone()[0] == 0
-                tombstone = app.sessions._persistence.storage.database.connection.execute('SELECT body,status FROM naiyue_memories WHERE memory_id=?',
+                tombstone = app.host.sessions._persistence.storage.database.connection.execute('SELECT body,status FROM naiyue_memories WHERE memory_id=?',
                     (original['memory_id'],)).fetchone()
                 assert tuple(tombstone) == ('', 'forgotten')
             assert len(worker.seen) == 1

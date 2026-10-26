@@ -26,7 +26,7 @@ class ForegroundResult:
     stop_reason: str | None = None
 
 
-def format_process_outcome(outcome, output, archived, *, label, stop_reason=None):
+def format_process_outcome(outcome, output, archived, *, label, stop_reason=None, archive_read_hint=True):
     text = (f'exit_code={outcome.returncode}; truncated={str(output.truncated).lower()}; '
             f'output_complete={str(outcome.output_complete).lower()}; lossy={str(output.lossy).lower()}\n'
             f'observed_lines={output.observed_lines}; observed_text_bytes={output.observed_bytes}; '
@@ -44,7 +44,9 @@ def format_process_outcome(outcome, output, archived, *, label, stop_reason=None
             if not output.transformed and archived.complete else None)
         if archived.reason in ('write_error', 'read_error'):
             readable = None
-        if readable:
+        if not archive_read_hint:
+            text += '\nArchive is stored on the controller. Use task_output with the operation_id for a bounded output tail.'
+        elif readable:
             text += f'\nRead text with read(path="{readable}", offset=1).'
         else:
             text += '\nRaw archive is diagnostic bytes; no complete UTF-8 text view is available.'

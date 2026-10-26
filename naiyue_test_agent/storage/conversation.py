@@ -3,12 +3,12 @@
 import logging
 import sqlite3
 
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from .queries import read_rows, session_row
 
 from .chat_writes import write_chat_updates
 from .queries import subagent_references
-from naiyue_test_agent.application.conversation import chat_queries
+from naiyue_test_agent.storage.conversation_sql import chat_queries
 
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ class ConversationRepo:
             return chat_queries.read_page(connection, session_id, thread_id, **query)
 
     def read_history_tool(self, source_session_id, project_id, request, settings):
-        from naiyue_test_agent.application.conversation.history_queries import query
+        from naiyue_test_agent.storage.conversation_sql.history_queries import query
         try:
             with self.database.transaction() as connection:
                 return query(connection, source_session_id, project_id, request, settings)
@@ -52,14 +52,13 @@ class ConversationRepo:
         with self.database.transaction(write=False, error_code='session_read_failed') as connection:
             return chat_queries.approval_seed(connection, session_id, thread_id, batch_id)
 
-    def chat_subagents(self, session_id):
+    def subagent_snapshot(self, session_id):
         with self.database.transaction(write=False, error_code='session_read_failed') as connection:
-            from naiyue_test_agent.application.subagents.subagent_history import merge_registered_subagents
             records = chat_queries.subagent_records(connection, session_id, session_row(connection, session_id)['thread_id'])
-            return merge_registered_subagents(records, subagent_references(connection, session_id))
+            return records, subagent_references(connection, session_id)
 
     def source_reference(self, workspace_id, row, *, detail):
-        from naiyue_test_agent.application.memory.memory_results import source_reference
+        from .memory_sql.sources import source_reference
         with self.database.transaction(error_code='session_read_failed') as connection:
             return source_reference(connection, workspace_id, row, detail=detail)
 

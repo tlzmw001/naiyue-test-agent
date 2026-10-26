@@ -8,31 +8,39 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.tools import ToolException
 
-from naiyue_test_agent.tools import create_session_read_tool, create_session_write_tool, create_session_edit_tool
+from naiyue_test_agent.tools import create_session_read_tool, create_session_write_tool, create_session_edit_tool, create_session_ls_tool, create_session_find_tool, create_session_grep_tool
 from naiyue_test_agent.tools.permissions import FilePermission, execution_environment
 from naiyue_test_agent.tools.permission_rules import PermissionRule, match_rules
+from test_execution_admission import deny_execution_root
 
 
 @pytest.mark.parametrize('factory,arguments', [
     (create_session_read_tool, {}),
     (create_session_write_tool, {'content': 'changed'}),
     (create_session_edit_tool, {'edits': [{'oldText': 'sentinel', 'newText': 'changed'}]}),
+    (create_session_ls_tool, {}),
+    (create_session_find_tool, {'pattern': '*.txt'}),
+    (create_session_grep_tool, {'pattern': 'sentinel'}),
 ])
-def test_prepared_file_tool_rechecks_execution_root_before_io(tmp_path, factory, arguments):
+@pytest.mark.parametrize('reason', ['missing', 'unreadable'])
+def test_prepared_file_tool_rechecks_execution_root_before_io(monkeypatch, tmp_path, factory, arguments, reason):
     root = tmp_path / 'execution'
     root.mkdir()
     target = tmp_path / 'external.txt'
     target.write_text('sentinel')
     spec = factory()
-    args = {'path': str(target), **arguments}
+    args = {'path': str(target.parent if spec.tool.name in ('ls', 'find') else target), **arguments}
     context = typed_context(identity=RunIdentity(session_id='S', execution_root=ExecutionRoot(root) if root is not None else None))
     subject = spec.permissions.prepare(args, context)
-    subject.update(args=args, path_field='path', execution_environment=execution_environment())
+    subject.update(args=args, path_field='path', execution_environment=execution_environment(context))
     context = replace(context, authorization=ToolAuthorization(permit={'call_id': 'C', 'session_id': 'S', 'agent_path': 'root', 'subject': subject}))
     runtime = SimpleNamespace(context=context, tool_call_id='C')
     values = spec.validate_input(args)
-    root.rmdir()
-    with pytest.raises(ToolException, match='execution_root_unavailable.*missing'):
+    if reason == 'missing':
+        root.rmdir()
+    else:
+        deny_execution_root(monkeypatch, root)
+    with pytest.raises(ToolException, match=f'execution_root_unavailable.*{reason}'):
         spec.tool.func(**{key: getattr(values, key) for key in args}, runtime=runtime)
     assert target.read_text() == 'sentinel'
 

@@ -9,7 +9,7 @@ import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages.utils import count_tokens_approximately
 
-from naiyue_test_agent.application.memory import memory_overview_store
+from naiyue_test_agent.storage.memory_sql import memory_overview_store
 from naiyue_test_agent.application.memory.memory_access import MemoryAccess
 from naiyue_test_agent.application.memory.memory_jobs import MemoryJob, MemoryJobs
 from naiyue_test_agent.application.memory.memory_job_runner import _prepare, _related

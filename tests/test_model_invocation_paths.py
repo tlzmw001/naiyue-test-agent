@@ -21,10 +21,10 @@ async def test_native_model_identity_callbacks_and_thinking_binding_are_wired(mo
         sent.append(body)
         return completion_response(body, text='done')
     async with cached_application(monkeypatch, tmp_path, serve) as (app, catalog):
-        app.observability.subscribe(events.append)
-        sid = await app.sessions.create('root')
-        await app.sessions.select_thinking(sid, 'root', 'low')
-        assert (await app.runs.start(sid, [('user', 'PRIVATE_TASK')]))['messages'][-1].content == 'done'
+        app.host.observability.subscribe(events.append)
+        sid = await app.host.sessions.create('root')
+        await app.host.sessions.select_thinking(sid, 'root', 'low')
+        assert (await app.host.runs.start(sid, [('user', 'PRIVATE_TASK')]))['messages'][-1].content == 'done'
         assert catalog.get('root').metadata[MODEL_ID_METADATA_KEY] == 'root'
         assert catalog.get('root').reasoning_effort is None
     starts = [e for e in events if e.event_type == 'model_call_started']
@@ -45,8 +45,8 @@ async def test_overflow_is_three_invocations_but_one_logical_call(monkeypatch):
     model = _configured_model([_status(), AIMessage(content='done')])
     app = await _app(monkeypatch, {'A': model})
     events = []
-    app.observability.subscribe(events.append)
-    await app.runs.start(await app.sessions.create('A'), _history())
+    app.host.observability.subscribe(events.append)
+    await app.host.runs.start(await app.host.sessions.create('A'), _history())
     starts = [e for e in events if e.event_type == 'model_call_started']
     ends = [e for e in events if e.event_type == 'model_call_finished']
     assert len(starts) == len(ends) == 3
@@ -73,15 +73,15 @@ async def test_concurrent_sessions_and_failure_do_not_share_invocation_or_scope(
             return httpx.Response(400, json={'error': {'message': 'PRIVATE_ENDPOINT', 'type': 'invalid_request_error'}})
         return completion_response(body, text='done')
     async with cached_application(monkeypatch, tmp_path, serve) as (app, _):
-        app.observability.subscribe(events.append)
-        a, b, c = [await app.sessions.create('root') for _ in range(3)]
-        task = asyncio.create_task(app.runs.start(a, [('user', 'hold')]))
+        app.host.observability.subscribe(events.append)
+        a, b, c = [await app.host.sessions.create('root') for _ in range(3)]
+        task = asyncio.create_task(app.host.runs.start(a, [('user', 'hold')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            await app.runs.start(b, [('user', 'healthy')])
+            await app.host.runs.start(b, [('user', 'healthy')])
             import openai
             with pytest.raises(openai.BadRequestError):
-                await app.runs.start(c, [('user', 'fail')])
+                await app.host.runs.start(c, [('user', 'fail')])
             assert not task.done()
         finally:
             release.set()
@@ -105,12 +105,12 @@ async def test_active_stop_has_cancelled_invocation_and_original_stop_effect(mon
         finally:
             cancelled.set()
     async with cached_application(monkeypatch, tmp_path, serve) as (app, _):
-        app.observability.subscribe(events.append)
-        sid = await app.sessions.create('root')
-        task = asyncio.create_task(app.runs.start(sid, [('user', 'task')]))
+        app.host.observability.subscribe(events.append)
+        sid = await app.host.sessions.create('root')
+        task = asyncio.create_task(app.host.runs.start(sid, [('user', 'task')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            app.runs.stop(sid)
+            app.host.runs.stop(sid)
             result = await asyncio.wait_for(task, 5)
             assert result['run_stopped'] is True and cancelled.is_set()
         finally:
@@ -141,8 +141,8 @@ async def test_auto_stages_remain_distinct_when_they_share_the_agent_model(monke
     options = AppSettings(permissions=review_settings(fast_model_id='root', detailed_model_id='root').permissions)
     async with cached_application(monkeypatch, tmp_path, serve, settings=options,
             tools=[definition(calls=effects, approved=True)]) as (app, _):
-        app.observability.subscribe(events.append)
-        result = await app.runs.start(await app.sessions.create('root'), [('user', 'task')])
+        app.host.observability.subscribe(events.append)
+        result = await app.host.runs.start(await app.host.sessions.create('root'), [('user', 'task')])
         assert result['messages'][-1].content == 'done'
     starts = [e for e in events if e.event_type == 'model_call_started']
     ends = [e for e in events if e.event_type == 'model_call_finished']

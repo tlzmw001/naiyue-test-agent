@@ -21,7 +21,7 @@ from naiyue_test_agent.agent_runtime.subagents import ainvoke_subagent_step, _fi
 from naiyue_test_agent.agent_runtime.async_utils import await_settled, run_blocking
 from naiyue_test_agent.application.sessions.session_approval import announce_approval
 from naiyue_test_agent.application.observability.run_events import RunObservation
-from .subagent_history import subagent_identity
+from naiyue_test_agent.contracts.subagent_identity import subagent_identity
 from . import subagent_records
 
 
@@ -62,7 +62,9 @@ class SubagentRegistry:
             require_current()
             run_id = self._runtime.run.run_id
         owned = await self.asubagent_references()
-        rows = await run_blocking(self._persistence.storage.conversation.chat_subagents, self.session_id)
+        from .subagent_history import merge_registered_subagents
+        archived, registered = await run_blocking(self._persistence.storage.conversation.subagent_snapshot, self.session_id)
+        rows = merge_registered_subagents(archived, registered)
         rows = annotate(rows, owned, self._registered_subagents(), self._catalog, run_id)
         with self._runtime.lock:
             require_current()
@@ -114,7 +116,8 @@ class SubagentRegistry:
                 root_run_id=(parent_context.scope.identity.root_run_id if parent_context.scope.identity.root_run_id is not None else run.run_id), run_id=uuid4().hex,
                 model_id=spec.model_id or session.model_id, tool_names=spec.tool_names,
                 status='running', phase='execute', settled=False, task=task, workspace_root=run.execution_root.path if run.execution_root else None,
-                project_id=run.project_id, execution_root=run.execution_root,
+                project_id=run.project_id, execution_root=run.execution_root, files=parent_context.scope.capabilities.files, processes=parent_context.scope.capabilities.processes,
+                environment_binding_id=run.files.environment.binding_id if run.files is not None and run.files.environment.kind=='sandbox' else None,
                 read_resource_roots=(parent_context.inputs.read_resource_roots if parent_context.inputs.read_resource_roots is not None else ()),
                 max_concurrency=(parent_context.inputs.max_concurrency if parent_context.inputs.max_concurrency is not None else 4), control=RunControl(),
                 publisher=parent_context.scope.observation.publisher, pending_turn=None,
@@ -194,11 +197,11 @@ class SubagentRegistry:
             try:
                 observation.start()
                 observation.stage = 'execute'
-                with observation.bind(identity=RunIdentity(self.session_id, instance['run_id'], instance['agent_path'],
+                with observation.bind(files=instance['files'], processes=instance['processes'], identity=RunIdentity(self.session_id, instance['run_id'], instance['agent_path'],
                         project_id=instance['project_id'], execution_root=instance['execution_root'],
                         parent_tool_call_id=instance['parent_tool_call_id'], parent_run_id=instance['parent_run_id'], root_run_id=instance['root_run_id']), archive_root=self._archive_root,
                                       history_query=getattr(self._persistence, 'aquery_history', None) if instance['project_id'] is not None else None,
-                                      memory_query=self._memory.query if self._memory is not None and instance['project_id'] is not None else None):
+                                      memory_query=self._memory.query if self._memory is not None and self._memory.available_for(instance['project_id']) else None):
                     result = await ainvoke_subagent_step(graph, instance, resume=resume,
                         approval_grants=grants, scope=current_run_scope())
                     snapshot = await graph.aget_state({'configurable': {'thread_id': instance['child_thread_id']}})

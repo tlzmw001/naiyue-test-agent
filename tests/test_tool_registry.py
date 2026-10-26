@@ -143,8 +143,8 @@ def test_divergent_execution_model_is_rejected(change):
 @async_test
 async def test_invalid_initial_registry_precedes_model_and_storage_acquisition(monkeypatch, tmp_path, entry):
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.async_application import build_async_local_application
-    from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+    from scripts.component_fixtures import build_component_application
+    from scripts.component_fixtures import open_component_application
     from naiyue_test_agent.storage import resources as storage_resources
     entered = []
     def unexpected(*args, **kwargs):
@@ -157,7 +157,7 @@ async def test_invalid_initial_registry_precedes_model_and_storage_acquisition(m
         if entry == 'local':
             await build_application('synthetic', **options)
         else:
-            async with open_async_persistent_application('synthetic', database_path=tmp_path / 'sessions.sqlite', **options):
+            async with open_component_application('synthetic', database_path=tmp_path / 'sessions.sqlite', **options):
                 pytest.fail('Invalid configuration must not acquire an application')
     assert entered == [] and not (tmp_path / 'sessions.sqlite').exists()
 
@@ -183,8 +183,8 @@ def test_builtin_collection_has_real_schemas_settings_and_capability_declaration
 async def test_registered_artifact_uses_original_tool_and_survives_checkpoint(monkeypatch, tmp_path, native_model):
     from naiyue_test_agent.tools import ToolSpec
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-    from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+    from scripts.component_fixtures import open_component_application
+    from scripts.component_fixtures import open_component_application
     from naiyue_test_agent.storage.project_store import ProjectStore
     from naiyue_test_agent.model_access import ModelCatalog
     from test_write_tool import RecordingFake
@@ -199,14 +199,14 @@ async def test_registered_artifact_uses_original_tool_and_survives_checkpoint(mo
     model = StreamingToolModel(replies=replies) if native_model else RecordingFake(responses=replies)
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     async def scenario():
-        async with open_async_persistent_application('synthetic.json', database_path=tmp_path / 'async.sqlite',
+        async with open_component_application('synthetic.json', database_path=tmp_path / 'async.sqlite',
             tools=[spec], system_prompt='', response_format=None) as app:
-            assert app.tools.list() == (spec,)
-            assert app.tools.list()[0] is spec
-            assert app.tools.list()[0].tool is probe
-            sid = await app.sessions.create('A')
-            await app.runs.start(sid, [('user', 'run')])
-            return await app.history.messages(sid)
+            assert app.host.tools.list() == (spec,)
+            assert app.host.tools.list()[0] is spec
+            assert app.host.tools.list()[0].tool is probe
+            sid = await app.host.sessions.create('A')
+            await app.host.runs.start(sid, [('user', 'run')])
+            return await app.host.history.messages(sid)
     messages = await scenario()
     feedback = next(message for message in messages if isinstance(message, ToolMessage))
     assert (feedback.tool_call_id, feedback.content, feedback.artifact) == (

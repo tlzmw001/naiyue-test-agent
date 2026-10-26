@@ -1,7 +1,6 @@
 """Load bounded project instructions for a single workspace run."""
 
 import logging
-from pathlib import Path
 
 
 logger = logging.getLogger(__name__)
@@ -22,22 +21,25 @@ class ProjectInstructionsError(ValueError):
     """The selected workspace instruction file cannot be used safely."""
 
 
-def load_workspace_instruction_part(workspace_root: Path | None):
+def load_project_instruction_part(files):
     """Select AGENTS.md before CLAUDE.md and return a per-run prompt section."""
-    if workspace_root is None:
+    if files is None:
         return None
 
+    files.validate()
+    execution_path = files.environment.path(files.environment.root)
+
     for name in ('AGENTS.md', 'CLAUDE.md'):
-        candidate = workspace_root / name
+        candidate = execution_path / name
         try:
-            if not candidate.exists() and not candidate.is_symlink():
+            info = files.resource_info(str(candidate))
+            if not info.exists and not info.is_link:
                 continue
-            target = candidate.resolve(strict=True)
-            relative = target.relative_to(workspace_root)
-            if any(part.startswith('.') for part in relative.parts) or not target.is_file():
+            target = files.environment.path(files.resolve_resource(str(candidate)))
+            relative = target.relative_to(execution_path)
+            if any(part.startswith('.') for part in relative.parts) or files.resource_info(str(target)).kind != 'file':
                 raise ValueError('invalid_project_instruction_target')
-            with target.open('rb') as source:
-                content = source.read(MAX_PROJECT_INSTRUCTIONS_BYTES + 1)
+            content = files.read_resource(str(target), MAX_PROJECT_INSTRUCTIONS_BYTES)
             if len(content) > MAX_PROJECT_INSTRUCTIONS_BYTES:
                 raise ValueError('project_instruction_too_large')
             decoded = content.decode('utf-8-sig')

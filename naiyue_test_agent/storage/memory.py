@@ -4,9 +4,11 @@ import json
 import logging
 import sqlite3
 
-from naiyue_test_agent.application.memory import memory_queries as queries
-from naiyue_test_agent.application.memory import memory_overview_store as overview_sql
-from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
+from naiyue_test_agent.storage.memory_sql import memory_queries as queries
+from naiyue_test_agent.storage.memory_sql import memory_overview_store as overview_sql
+from naiyue_test_agent.contracts.memory import MemoryReadError
+from .memory_sql.archive import ArchiveReader
+from .memory_sql.writes import MemoryWriter
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +57,13 @@ class MemoryRepo:
     def progress(self, session_id):
         return self.database.read_rows('SELECT * FROM naiyue_memory_progress WHERE session_id=?', (session_id,))
 
-    def build_batch(self, **query):
-        from naiyue_test_agent.application.memory.memory_batches import build_batch
+    @contextmanager
+    def batch_reader(self, sensitive_pattern):
         try:
             with self.database.transaction() as connection:
-                return build_batch(connection, **query)
+                connection.create_function('naiyue_memory_sensitive', 1,
+                    lambda text: bool(sensitive_pattern.search(text)), deterministic=True)
+                yield ArchiveReader(connection)
         except sqlite3.Error as error:
             logger.error('memory_batch_read_failed error_type=%s', type(error).__name__)
             raise MemoryReadError('memory_batch_read_failed') from error
@@ -91,12 +95,12 @@ class MemoryRepo:
                     {'gaps': json.loads(snapshot['gaps_json'])})
             return result
 
-    def mutate_with_sources(self, archive, workspace_id, caller, request, settings, now):
-        from naiyue_test_agent.application.memory.memory_mutations import commit
-        from naiyue_test_agent.application.memory.memory_results import fit_mutation
+    @contextmanager
+    def edit_with_sources(self, archive):
         if self.database is archive.database:
             with self.database.transaction(write=True) as connection:
-                return fit_mutation(commit(connection, connection, workspace_id, caller, request, settings, now), settings.max_output_bytes)
+                yield MemoryWriter(connection), ArchiveReader(connection)
+            return
         # Source snapshot first, then target write lock: preserve project -> personal ordering.
         with archive.database.transaction() as source, self.database.transaction(write=True) as target:
-            return fit_mutation(commit(target, source, workspace_id, caller, request, settings, now), settings.max_output_bytes)
+            yield MemoryWriter(target), ArchiveReader(source)

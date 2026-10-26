@@ -8,7 +8,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_application import build_async_local_application
+from scripts.component_fixtures import build_component_application
 from naiyue_test_agent.agent_runtime.tool_execution import permissions as pipeline
 from naiyue_test_agent.tools import create_builtin_tools, permissions
 from naiyue_test_agent.settings import AppSettings
@@ -42,22 +42,22 @@ async def test_extended_windows_target_denied_before_all_file_tool_execution(mon
         pytest.fail('Denied file tool entered async execution')
     monkeypatch.setattr(spec.tool, 'func', never)
     monkeypatch.setattr(spec.tool, 'coroutine', anever)
-    monkeypatch.setattr(pipeline, 'execution_environment', lambda: environment)
-    monkeypatch.setattr(permissions, 'execution_environment', lambda: environment)
+    monkeypatch.setattr(pipeline, 'execution_environment', lambda _context=None: environment)
+    monkeypatch.setattr(permissions, 'execution_environment', lambda _context=None: environment)
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[
         {'name': tool_name, 'args': {'path': target, **args}, 'id': 'denied'}]), AIMessage(content='done')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     options = dict(tools=[spec], settings=settings, system_prompt='', response_format=None)
     async def scenario():
-        app = await build_async_local_application('synthetic', **options)
-        sid = await app.sessions.create_workspace('A', tmp_path)
+        app = await build_component_application('synthetic', **options)
+        sid = await app.host.sessions.create_workspace('A', tmp_path)
         events = []
-        app.observability.subscribe(events.append)
+        app.host.observability.subscribe(events.append)
         try:
-            result = await app.runs.start(sid, [('user', 'operate')])
+            result = await app.host.runs.start(sid, [('user', 'operate')])
             assert len(prepared) == 1
-            config = {'configurable': {'thread_id': app.sessions._sessions.require(sid).get_thread_id()}}
-            snapshots = ([item async for item in app.runs._agent.aget_state_history(config)])
+            config = {'configurable': {'thread_id': app.host.sessions._sessions.require(sid).get_thread_id()}}
+            snapshots = ([item async for item in app.host.runs._agent.aget_state_history(config)])
             batches = [item.values['tool_execution']['calls'] for item in snapshots
                        if item.values.get('tool_execution', {}).get('calls')]
             assert batches, 'prepared permission facts must be checkpointed'

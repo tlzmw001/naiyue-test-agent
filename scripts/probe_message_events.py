@@ -30,8 +30,10 @@ async def _async_worker(args):
         logging.getLogger().setLevel(logging.CRITICAL)
         from langchain.tools import tool
         from langchain_core.messages import AIMessage, ToolMessage
-        from naiyue_test_agent.application.async_application import build_async_local_application
-        from naiyue_test_agent.cli.cli_async import AsyncCliApplication
+        if __package__:
+            from .component_fixtures import build_component_application
+        else:
+            from component_fixtures import build_component_application
 
         expected = secrets.token_hex(6)
         executions, events = [], []
@@ -39,6 +41,8 @@ async def _async_worker(args):
         holder = {}
         with_control = getattr(args, 'with_control', False)
         with_cli = getattr(args, 'with_cli', False)
+        from threading import Event
+        first_displayed = Event()
         displayed = []
         @tool
         def read_probe_value() -> str:
@@ -46,15 +50,16 @@ async def _async_worker(args):
             if executions:
                 raise RuntimeError('Probe tool-call limit reached')
             if with_cli:
+                assert first_displayed.wait(5), 'First reply was not delivered before diagnostic tool completion'
                 assert any(line.strip() == 'CLI_BEFORE_TOOL' for line in displayed)
             executions.append(True)
             if with_control:
                 text = ('The requested tool has returned. Do not call more tools. '
                     'Reply with only the exact value returned by read_probe_value.')
                 if with_cli:
-                    holder['app'].call(lambda api: api.runs.steer(holder['session'], text))
+                    holder['app'].control(holder['session'], 'steering', text=text)
                 else:
-                    holder['app'].runs.steer(holder['session'], text)
+                    holder['app'].host.runs.steer(holder['session'], text)
             return expected
 
         async with guard_application_catalog(budget):
@@ -62,61 +67,62 @@ async def _async_worker(args):
                 permissions=ToolPermission(default='allow'))],
                 system_prompt='Call the requested tool and return its exact value.', response_format=None)
             if with_cli:
-                # The CLI bridge owns another loop; this caller never runs on it.
-                app = AsyncCliApplication(args.config, **options)
-                resources.callback(app.close)
-                session = app.call(lambda api: api.sessions.create(args.model_id or api.models.default_id))
+                from scripts.service_probe import terminal_probe
+                app = await resources.enter_async_context(terminal_probe(args.config, **options))
+                models = await asyncio.to_thread(app.request, 'GET', '/models')
+                session = (await asyncio.to_thread(app.request, 'POST', '/sessions',
+                    json={'model_id': args.model_id or models['default_model_id']}))['session_id']
             else:
-                app = await build_async_local_application(args.config, **options)
+                app = await build_component_application(args.config, **options)
                 resources.push_async_callback(app.aclose)
-                session = await app.sessions.create(args.model_id or app.models.default_id)
-            if with_cli:
-                app.call(lambda api: api.observability.subscribe(events.append))
-            else:
-                app.observability.subscribe(events.append)
+                session = await app.host.sessions.create(args.model_id or app.root.models.default_id)
+            if not with_cli:
+                app.host.observability.subscribe(events.append)
             holder.update(app=app, session=session)
             prompt = 'Call read_probe_value exactly once. Reply only with the exact value returned by it.'
             if with_cli:
                 from naiyue_test_agent.cli.chat import _run_and_print
                 from naiyue_test_agent.cli.cli_display import CliEventDisplay
-                view = CliEventDisplay(session, writer=displayed.append)
-                unsubscribe = app.call(lambda api: api.observability.subscribe(view))
-                original_call = app.call
-
-                def capture_result(action):
-                    value = original_call(action)
-                    if isinstance(value, dict) and 'messages' in value:
-                        holder['result'] = value
+                class ProbeDisplay(CliEventDisplay):
+                    def __call__(self, event):
+                        events.append(event)
+                        super().__call__(event)
+                def write(text):
+                    displayed.append(text)
+                    if text.strip() == 'CLI_BEFORE_TOOL': first_displayed.set()
+                view = ProbeDisplay(session, writer=write)
+                await asyncio.to_thread(app.watch, session, view)
+                original_run = app.run
+                def capture_result(*args, **kwargs):
+                    value = original_run(*args, **kwargs)
+                    holder['result'] = value
                     return value
-
-                try:
-                    with patch.object(app, 'call', capture_result):
-                        _run_and_print(app, session,
-                            'In the assistant message containing the tool call, write exactly CLI_BEFORE_TOOL as text. '
-                            + prompt, display=view)
-                finally:
-                    unsubscribe()
+                with patch.object(app, 'run', capture_result):
+                    await asyncio.to_thread(_run_and_print, app, session,
+                        'In the assistant message containing the tool call, write exactly CLI_BEFORE_TOOL as text. '
+                        + prompt, display=view)
                 result = holder['result']
                 assert sum(line.strip() == 'CLI_BEFORE_TOOL' for line in displayed) == 1
                 assert sum(line.strip() == expected for line in displayed) == 1
                 assert displayed.count('本次运行完成') == 1
                 assert '工具 read_probe_value：处理完成' in displayed
             else:
-                result = await app.runs.start(session, [('user', prompt)])
-        messages = result['messages']
+                result = await app.host.runs.start(session, [('user', prompt)])
+        from naiyue_test_agent.web.serialization import message_view
+        messages = result['messages'] if with_cli else [message_view(m) for m in result['messages']]
         snapshots = [e.data for e in events if e.event_type == 'message_completed']
         rows = [json.loads(data.snapshot_json) for data in snapshots]
         assert budget.snapshot()['used'] == 2 and len(executions) == 1
         assert [row['type'] for row in rows] == (
             ['human', 'ai', 'tool', 'human', 'ai'] if with_control else ['human', 'ai', 'tool', 'ai'])
-        assert [row['id'] for row in rows] == [m.id for m in messages]
-        assert [row['content'] for row in rows] == [m.content for m in messages]
-        calls = [c for m in messages if isinstance(m, AIMessage) for c in m.tool_calls]
-        tools = [m for m in messages if isinstance(m, ToolMessage)]
+        assert [row['id'] for row in rows] == [m['id'] for m in messages]
+        assert [row['content'] for row in rows] == [m['content'] for m in messages]
+        calls = [c for m in messages if m['type'] == 'ai' for c in m['tool_calls']]
+        tools = [m for m in messages if m['type'] == 'tool']
         assert len(calls) == len(tools) == 1
-        assert rows[1]['tool_calls'][0]['id'] == rows[2]['tool_call_id'] == calls[0]['id'] == tools[0].tool_call_id
-        assert rows[2]['content'] == expected and tools[0].status == 'success'
-        assert messages[-1].content.strip() == expected
+        assert rows[1]['tool_calls'][0]['id'] == rows[2]['tool_call_id'] == calls[0]['id'] == tools[0]['tool_call_id']
+        assert rows[2]['content'] == expected and tools[0]['status'] == 'success'
+        assert messages[-1]['content'].strip() == expected
         assert all(data.visibility == 'graph_values' for data in snapshots)
         assert [e.sequence for e in events] == list(range(1, len(events) + 1))
         assert events[-1].event_type == 'run_finished' and events[-1].data.status == 'completed'
@@ -126,15 +132,15 @@ async def _async_worker(args):
         assert [e.data.turn_id for e in starts] == [e.data.turn_id for e in ends]
         assert starts[0].data.turn_id != starts[1].data.turn_id
         assert all(e.data.status == 'completed' for e in ends)
-        assert ends[0].data.assistant_message_id == messages[1].id
-        assert ends[0].data.tool_message_ids == (messages[2].id,)
-        assert ends[1].data.assistant_message_id == messages[-1].id
+        assert ends[0].data.assistant_message_id == messages[1]['id']
+        assert ends[0].data.tool_message_ids == (messages[2]['id'],)
+        assert ends[1].data.assistant_message_id == messages[-1]['id']
         assert starts[0].sequence < ends[0].sequence < starts[1].sequence < ends[1].sequence
         if with_control:
             controls = [e for e in events if e.event_type.startswith('control_')]
             assert [e.event_type for e in controls] == ['control_accepted', 'control_delivery_started', 'control_delivered']
             assert len({e.data.control_id for e in controls}) == 1
-            assert controls[-1].data.message_id == messages[3].id
+            assert controls[-1].data.message_id == messages[3]['id']
         control_text = 'controls=1 ' if with_control else ''
         display_text = 'cli_display=verified replies=2 ' if with_cli else ''
         print(f'real_message_events=PASS events={len(events)} messages={len(rows)} '

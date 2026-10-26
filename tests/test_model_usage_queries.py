@@ -9,7 +9,7 @@ from naiyue_test_agent.agent_runtime.events import (
     AgentEventSource, ModelInvocationStartedData, ModelInvocationFinishedData, RunEventPublisher,
 )
 from naiyue_test_agent.storage.project_store import ProjectStore
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from native_application_helpers import async_test
 from test_model_usage_storage import seed
 from test_persistent_sessions import build
@@ -93,7 +93,7 @@ def test_empty_missing_and_reopened_unconfirmed_are_distinct(tmp_path):
 
 def test_one_read_snapshot_survives_a_concurrent_commit(monkeypatch, tmp_path):
     import sqlite3
-    from naiyue_test_agent.application.observability import model_usage_storage
+    from naiyue_test_agent.storage.observability_sql import model_usage_storage
     path = tmp_path / 'state.sqlite'
     with ProjectStore(path) as store:
         store.database.connection.execute('PRAGMA journal_mode=WAL')
@@ -148,12 +148,12 @@ async def test_application_query_is_read_only_cold_and_survives_reopen(monkeypat
         'input_tokens': 100, 'output_tokens': 5, 'total_tokens': 105})])
     path = tmp_path / 'state.sqlite'
     async with build(monkeypatch, path, model) as app:
-        sid = await app.sessions.create('A')
-        await app.runs.start(sid, [('user', 'task')])
-        expected = await app.observability.usage(sid, model_limit=20)
+        sid = await app.host.sessions.create('A')
+        await app.host.runs.start(sid, [('user', 'task')])
+        expected = await app.host.observability.usage(sid, model_limit=20)
         assert expected['metrics']['input_tokens']['known_sum'] == '100'
     async with build(monkeypatch, path) as app:
-        assert not app.sessions.is_loaded(sid)
-        value = await app.observability.usage(sid, model_limit=20)
+        assert not app.host.sessions.is_loaded(sid)
+        value = await app.host.observability.usage(sid, model_limit=20)
         assert value['metrics'] == expected['metrics'] and value['recorded_calls'] == 1
-        assert not app.sessions.is_loaded(sid)
+        assert not app.host.sessions.is_loaded(sid)

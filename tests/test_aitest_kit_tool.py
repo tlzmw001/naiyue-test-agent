@@ -50,7 +50,8 @@ def test_help_as_an_option_value_or_passthrough_does_not_grant_permission(tmp_pa
 
 
 def test_effective_path_lookup_preserves_windows_key_and_removed_path(monkeypatch, tmp_path):
-    from naiyue_test_agent.tools import aitest_kit as module
+    from naiyue_test_agent.execution import host_processes as module
+    from naiyue_test_agent.tools.aitest_kit import create_aitest_kit_tool
     for environment, expected in (({'Path': '/selected/tools'}, '/selected/tools'), ({}, '')):
         monkeypatch.setattr(module, 'build_environment', lambda *a, **k: environment)
         seen = []
@@ -58,6 +59,6 @@ def test_effective_path_lookup_preserves_windows_key_and_removed_path(monkeypatc
             seen.append(path)
             return None
         monkeypatch.setattr(module.shutil, 'which', which)
-        result = asyncio.run(invoke_tool_feedback(module.create_aitest_kit_tool(), {'args': ['doctor']},
+        result = asyncio.run(invoke_tool_feedback(create_aitest_kit_tool(), {'args': ['doctor']},
             call_id='aitest', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
         assert result.status == 'error' and seen == [expected]

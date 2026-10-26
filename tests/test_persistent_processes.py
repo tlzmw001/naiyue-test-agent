@@ -20,7 +20,7 @@ def test_another_process_is_rejected_while_database_is_owned(tmp_path):
         code = '''
 import sys
 from naiyue_test_agent.storage.project_store import ProjectStore
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 try:
     ProjectStore(sys.argv[1])
 except SessionPersistenceError:

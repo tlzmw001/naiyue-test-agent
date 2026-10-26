@@ -3,7 +3,7 @@ import type { WebApi } from './api';
 import type { RunView, SessionView } from './types';
 import type { ContextView } from './contextTypes';
 
-export function useContextView(api: WebApi, session: SessionView | null, run: RunView | null) {
+export function useContextView(api: WebApi, session: SessionView | null, run: RunView | null, active = true) {
   const [stored, setStored] = useState<{ key: string; value: ContextView }>();
   const [failure, setFailure] = useState<{ key: string; text: string }>();
   const [pending, setPending] = useState<string>();
@@ -14,7 +14,7 @@ export function useContextView(api: WebApi, session: SessionView | null, run: Ru
   const key = JSON.stringify([sid, session?.model_id, tools, run?.run_id, run?.status, run?.done,
     snapshot, session?.busy, revision]);
   useEffect(() => {
-    if (!sid) return;
+    if (!sid || !active) return;
     let current = true;
     setPending(key);
     setFailure(undefined);
@@ -29,7 +29,7 @@ export function useContextView(api: WebApi, session: SessionView | null, run: Ru
     }
     void read();
     return () => { current = false; };
-  }, [api, sid, key]);
+  }, [api, sid, key, active]);
   return { value: stored?.key === key ? stored.value : undefined,
     error: failure?.key === key ? failure.text : '',
     loading: !!sid && (pending === key || stored?.key !== key && failure?.key !== key),

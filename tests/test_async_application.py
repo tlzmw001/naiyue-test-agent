@@ -68,9 +68,9 @@ class StreamingToolModel(BaseChatModel):
 
 
 async def make_app(monkeypatch, model, tools=None):
-    from naiyue_test_agent.application.async_application import build_async_local_application
+    from scripts.component_fixtures import build_component_application
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
-    return await build_async_local_application('unused', tools=tools or [], system_prompt='', response_format=None)
+    return await build_component_application('unused', tools=tools or [], system_prompt='', response_format=None)
 
 
 def call(name, args, identity='t'):
@@ -83,16 +83,16 @@ def test_formal_arun_preserves_history_events_and_cleanup(monkeypatch):
         model = StreamingToolModel(replies=[AIMessage(content='first'), AIMessage(content='second')])
         app = await make_app(monkeypatch, model)
         events = []
-        app.observability.subscribe(events.append)
-        session = await app.sessions.create('A')
+        app.host.observability.subscribe(events.append)
+        session = await app.host.sessions.create('A')
         try:
-            await app.runs.start(session, [('user', 'one')])
-            result = await app.runs.start(session, [('user', 'two')])
+            await app.host.runs.start(session, [('user', 'one')])
+            result = await app.host.runs.start(session, [('user', 'two')])
             assert [m.content for m in result['messages']] == ['one', 'first', 'two', 'second']
             ends = [e for e in events if e.event_type == 'run_finished']
             assert len(ends) == 2 and all(e.data.status == 'completed' for e in ends)
             assert ends[0].run_id != ends[1].run_id
-            assert not app.sessions._sessions.require(session).describe_session()['busy']
+            assert not app.host.sessions._sessions.require(session).describe_session()['busy']
         finally:
             await app.aclose()
     asyncio.run(scenario())
@@ -104,12 +104,12 @@ def test_waiting_model_accepts_steering_then_follow_up(monkeypatch):
         model = StreamingToolModel(replies=[AIMessage(content=x) for x in ('one', 'two', 'three')],
                                    entered=entered, release=release)
         app = await make_app(monkeypatch, model)
-        session = await app.sessions.create('A')
-        task = asyncio.create_task(app.runs.start(session, [('user', 'start')]))
+        session = await app.host.sessions.create('A')
+        task = asyncio.create_task(app.host.runs.start(session, [('user', 'start')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            app.runs.steer(session, 'steering')
-            app.runs.follow_up(session, 'follow-up')
+            app.host.runs.steer(session, 'steering')
+            app.host.runs.follow_up(session, 'follow-up')
             release.set()
             result = await task
             assert [m.content for m in result['messages']] == [
@@ -127,14 +127,14 @@ def test_active_stop_returns_stopped(monkeypatch):
         entered, release = asyncio.Event(), asyncio.Event()
         model = StreamingToolModel(replies=[AIMessage(content='finished turn')], entered=entered, release=release)
         app = await make_app(monkeypatch, model)
-        session = await app.sessions.create('A')
+        session = await app.host.sessions.create('A')
         events = []
-        app.observability.subscribe(events.append)
-        task = asyncio.create_task(app.runs.start(session, [('user', 'start')]))
+        app.host.observability.subscribe(events.append)
+        task = asyncio.create_task(app.host.runs.start(session, [('user', 'start')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            app.runs.follow_up(session, 'must not run')
-            app.runs.stop(session)
+            app.host.runs.follow_up(session, 'must not run')
+            app.host.runs.stop(session)
             release.set()
             result = await task
             assert result['run_stopped'] is True and len(model.seen) == 1
@@ -156,17 +156,17 @@ def test_async_approval_resume_preserves_tool_result(monkeypatch, tmp_path, deci
         outside.write_text('outside value')
         model = StreamingToolModel(replies=[call('read', {'path': str(outside)}), AIMessage(content='after')])
         app = await make_app(monkeypatch, model, [create_session_read_tool()])
-        session = await app.sessions.create_workspace('A', workspace)
+        session = await app.host.sessions.create_workspace('A', workspace)
         try:
-            first = await app.runs.start(session, [('user', 'read')])
+            first = await app.host.runs.start(session, [('user', 'read')])
             assert len(first['approval_requests']) == 1
             assert not any(isinstance(m, ToolMessage) for m in first['messages'])
-            result = await app.runs.resume_approval(session, [decision])
+            result = await app.host.runs.resume_approval(session, [decision])
             message = next(m for m in result['messages'] if isinstance(m, ToolMessage))
             assert message.tool_call_id == 't'
             assert (message.status, message.content) == ('success', 'outside value') if decision == 'approve' else message.status == 'error'
             assert result['messages'][-1].content == 'after'
-            assert app.runs.pending_tools(session) == []
+            assert app.host.runs.pending_tools(session) == []
         finally:
             await app.aclose()
     asyncio.run(scenario())
@@ -178,12 +178,12 @@ def test_delta_is_available_before_response_and_final_snapshot_calibrates(monkey
         entered, release = asyncio.Event(), asyncio.Event()
         model = StreamingToolModel(replies=[AIMessage(content='hello')], token_entered=entered, token_release=release)
         app = await make_app(monkeypatch, model)
-        session = await app.sessions.create('A')
+        session = await app.host.sessions.create('A')
         projection = StreamingMessageProjection()
         events, saw_delta = [], asyncio.Event()
 
         async def consume():
-            async for event in app.runs.stream(session, [('user', 'start')]):
+            async for event in app.host.runs.stream(session, [('user', 'start')]):
                 events.append(event)
                 projection(event)
                 if event.event_type == 'message_delta':

@@ -22,20 +22,20 @@ def test_restricted_history_is_readable_without_live_run_or_execution(monkeypatc
         model = StreamingToolModel(replies=[])
         async with web_client(monkeypatch, tmp_path, model) as (client, app):
             backend = app.state.service.application
-            assert (await client.post(f'/api/sessions/{sid}/prepare')).status_code == 200
+            assert (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/prepare')).status_code == 200
             before = database_facts(backend.sessions._persistence.storage)
             events = []
             backend.observability.subscribe(events.append)
-            response = await client.get(f'/api/sessions/{sid}')
+            response = await client.get(f'/api/v1/scopes/chats/sessions/{sid}')
             assert response.status_code == 200
             view = response.json()
             assert [m['content'] for m in view['messages']] == ['saved human', 'saved answer']
             assert not view['can_run'] and not view['pending_approval'] and view['approval_batches'] == []
             assert view['live'] is None and view['active_run_id'] is None and view['latest_run_id'] is None
             assert view['recovery']['kind'] == 'interrupted_execution' and view['recovery']['actions'] == ['continue']
-            assert (await client.post(f'/api/sessions/{sid}/runs', json=request('must not run'))).status_code == 409
-            assert (await client.patch(f'/api/sessions/{sid}/model', json={'model_id': 'A'})).status_code == 409
-            assert (await client.get(f'/api/sessions/{sid}', headers={'Authorization': ''})).status_code == 401
+            assert (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('must not run'))).status_code == 409
+            assert (await client.patch(f'/api/v1/scopes/chats/sessions/{sid}/model', json={'model_id': 'A'})).status_code == 409
+            assert (await client.get(f'/api/v1/scopes/chats/sessions/{sid}', headers={'Authorization': ''})).status_code == 401
             assert not backend.sessions.is_loaded(sid) and events == [] and model.seen == []
             assert database_facts(backend.sessions._persistence.storage) == before
             assert app.state.delivery.latest == {}
@@ -49,8 +49,8 @@ def test_ready_checkpoint_mismatch_is_readable_but_not_executable(monkeypatch, t
             storage = app.state.service.application.sessions._persistence.storage
             storage.runs.finish_run(sid, 'ready', 'wrong', '', 'completed')
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[])) as (client, app):
-            assert (await client.post(f'/api/sessions/{sid}/prepare')).status_code == 200
-            view = (await client.get(f'/api/sessions/{sid}')).json()
+            assert (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/prepare')).status_code == 200
+            view = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
             assert view['messages'][-1]['content'] == 'saved' and not view['can_run']
             assert view['recovery']['reason'] == 'checkpoint_mismatch'
             assert not app.state.service.application.sessions.is_loaded(sid)
@@ -67,9 +67,9 @@ def test_history_stays_workspace_scoped_and_frame_bounded(monkeypatch, tmp_path)
             row = storage.sessions.get(sid)
             storage.runs.finish_run(sid, 'failed', row['checkpoint_id'], '', 'failed')
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]), workspace_root=root, max_frame_bytes=2048) as (client, app):
-            response = await client.get(f'/api/sessions/{sid}')
+            response = await client.get(f'/api/v1/scopes/chats/sessions/{sid}')
             assert response.status_code == 200 and len(response.content) <= 2048
             assert response.json()['messages'][-1]['content_truncated']
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[])) as (client, app):
-            assert (await client.get(f'/api/sessions/{sid}')).status_code == 404
+            assert (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).status_code == 404
     asyncio.run(scenario())

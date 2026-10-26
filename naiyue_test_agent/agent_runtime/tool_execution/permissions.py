@@ -253,7 +253,10 @@ def prepare_permission_call(call, spec, context, settings, session_allow):
                 'feedback': str(error) if isinstance(error, ToolException) else
                 'Tool target preparation failed. Check the arguments and retry with a valid target.'}
     subject.update(tool_name=spec.tool.name, args=args, side_effects=spec.side_effects,
-                   session_id=context.scope.identity.session_id, execution_environment=execution_environment())
+                   session_id=context.scope.identity.session_id, execution_environment=execution_environment(context))
+    root = context.scope.identity.execution_root
+    if root is not None and root.project_revision is not None:
+        subject['project_revision'] = root.project_revision
     field = getattr(spec.permissions, 'path_field', None)
     if field is not None:
         subject['path_field'] = field

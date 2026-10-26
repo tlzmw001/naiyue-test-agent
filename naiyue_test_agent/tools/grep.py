@@ -306,7 +306,6 @@ async def _grep_files(target, pattern, glob, ignore_case, literal, context, limi
 
 def create_session_grep_tool(*, settings=None, process_settings=None, progress_settings=None):
     settings = settings if settings is not None else GrepSettings()
-    runner = HostProcessRunner(process_settings)
     public, execution = build_tool_schemas('GrepInput', _GrepInput,
         pattern=(str, Field(min_length=1, max_length=settings.max_pattern_chars)),
         path=(str, Field(default='.', min_length=1, max_length=settings.max_path_chars)),
@@ -325,14 +324,12 @@ def create_session_grep_tool(*, settings=None, process_settings=None, progress_s
                             glob: str | None = None, ignoreCase: bool = False, literal: bool = False,
                             context: int = settings.default_context_lines, limit: int = settings.default_limit,
                             timeout: int | None = None) -> str:
-        root = runtime.context.scope.identity.execution_path
-        if not isinstance(root, Path) or not root.is_absolute():
-            raise ToolException(GREP_NO_WORKSPACE)
-        target = require_file_target(runtime, path, operation='search')
+        await asyncio.to_thread(require_file_target, runtime, path, operation='search')
         progress = ToolProgress(runtime, progress_settings)
         try:
-            return await _grep_files(target, pattern, glob, ignoreCase, literal, context, limit, runtime,
-                                     settings=settings, runner=runner, progress=progress, timeout=timeout)
+            return await runtime.context.scope.capabilities.files.grep(runtime.context.authorization.permit['subject'],
+                pattern, glob, ignoreCase, literal, context, limit, runtime, settings=settings,
+                process_settings=process_settings, progress=progress, timeout=timeout)
         finally:
             progress.flush()
 

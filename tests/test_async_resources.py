@@ -8,7 +8,7 @@ from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_application import build_async_local_application
+from scripts.component_fixtures import build_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from test_async_application import StreamingToolModel
 
@@ -53,7 +53,7 @@ def test_cancelled_catalog_acquisition_disposes_result(monkeypatch):
 
         monkeypatch.setattr(catalog, 'aclose', close)
         monkeypatch.setattr(application, 'load_model_catalog', load)
-        task = asyncio.create_task(build_async_local_application('unused', tools=[], system_prompt='', response_format=None))
+        task = asyncio.create_task(build_component_application('unused', tools=[], system_prompt='', response_format=None))
         try:
             await asyncio.wait_for(entered.wait(), 5)
             task.cancel()
@@ -83,7 +83,7 @@ def test_factory_cleanup_does_not_replace_assembly_error(monkeypatch, caplog):
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: catalog)
         monkeypatch.setattr(application.SessionService, 'assemble_runtime', assemble)
         with pytest.raises(ValueError, match='synthetic assembly failure') as caught:
-            await build_async_local_application('unused', tools=[], system_prompt='', response_format=None)
+            await build_component_application('unused', tools=[], system_prompt='', response_format=None)
         assert caught.value is failure and closed == [True]
         assert 'model_cleanup_secondary_failed' in caplog.text
         assert 'PRIVATE_CLOSE' not in caplog.text
@@ -97,8 +97,8 @@ def test_two_async_applications_do_not_share_owned_transports(monkeypatch, klass
         second = klass(model='synthetic', api_key='synthetic-test-key', base_url='https://example.invalid')
         catalogs = [ModelCatalog('A', {'A': first}), ModelCatalog('A', {'A': second})]
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: catalogs.pop(0))
-        a = await build_async_local_application('unused', tools=[], system_prompt='', response_format=None)
-        b = await build_async_local_application('unused', tools=[], system_prompt='', response_format=None)
+        a = await build_component_application('unused', tools=[], system_prompt='', response_format=None)
+        b = await build_component_application('unused', tools=[], system_prompt='', response_format=None)
         try:
             x = first.root_async_client if isinstance(first, ChatOpenAI) else first._async_client
             y = second.root_async_client if isinstance(second, ChatOpenAI) else second._async_client

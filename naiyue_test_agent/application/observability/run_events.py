@@ -137,18 +137,19 @@ class RunObservation:
                 FailureDescription('application', 'unknown', 'unclassified', safe_error_type(error)))
 
     @contextmanager
-    def bind(self, *, identity: RunIdentity, ainvoke_subagent=None, process_tasks=None, background_notices=None, alist_subagents=None, history_query=None, memory_query=None, task_queries=None, archive_root=None):
+    def bind(self, *, identity: RunIdentity, ainvoke_subagent=None, process_tasks=None, background_notices=None, alist_subagents=None, history_query=None, memory_query=None, task_queries=None, archive_root=None, files=None, processes=None):
         if self.mode == 'approval_resume':
             observe(self.controls, self.controls.submit_approval)
         scope = RunScope(identity,
             capabilities=RunCapabilities(invoke_subagent=ainvoke_subagent,
                 list_subagents=alist_subagents if identity.agent_path == 'root' else None,
                 process_tasks=process_tasks, task_queries=task_queries,
-                history=history_query, memory=memory_query),
+                history=history_query, memory=memory_query, files=files, processes=processes),
             observation=RunObservationPorts(self.publisher, self.turns, self.controls,
                 self.context_operations, self.tool_progress),
             control=self.stop_control, errors=self.runtime_errors,
-            archive_root=archive_root, background_notices=background_notices)
+            archive_root=archive_root, background_notices=background_notices,
+            environment=files.environment if files is not None else None)
         with bind_run_scope(scope), bind_http_run(self.report_http_gap):
             yield
 

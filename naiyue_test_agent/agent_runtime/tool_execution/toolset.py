@@ -40,7 +40,7 @@ class ToolSetMiddleware(AgentMiddleware):
         if names is None:
             names = self.resolve_active_tool_names(context.scope.identity.session_id, context.scope.identity.agent_path)
         names = subagent_request_tools(names, self.registry, agent_path=context.scope.identity.agent_path)
-        view = self.registry.select_available(names)
+        view = self.registry.select_available(names, context=context)
         context.invocation.model_call.tool_view = view
         context.invocation.model_call.subagent_roles = (tuple((role.name, role.description) for role in self.resolve_subagent_roles())
             if any(spec.tool.name == 'subagent' for spec in view) and self.resolve_subagent_roles is not None else ())
@@ -87,7 +87,7 @@ class ToolSetMiddleware(AgentMiddleware):
             if isinstance(spec.permissions, MCPPermission):
                 prepared = next((call for call in request.state.get('tool_execution', {}).get('calls', [])
                                  if call['id'] == request.tool_call['id']), None)
-                reason = spec.permissions.unavailable_reason()
+                reason = spec.permissions.unavailable_reason(request.runtime.context)
                 if prepared is not None and prepared.get('subject', {}).get('mcp') not in (None, spec.permissions.identity()):
                     reason = 'definition_changed'
                 if reason:

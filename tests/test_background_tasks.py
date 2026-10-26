@@ -1,5 +1,6 @@
 """Application-owned processes outlive their submitting run and settle explicitly."""
 
+from runtime_context_helpers import host_files
 from runtime_context_helpers import typed_scope
 import asyncio
 from dataclasses import replace
@@ -8,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from naiyue_test_agent.execution_roots import ExecutionRoot
 from naiyue_test_agent.tools.processes import HostProcessRunner, ProcessCleanupError
 from naiyue_test_agent.tools.settings import BashSettings
 from test_process_lifecycle import request
@@ -18,7 +20,7 @@ def archive_root(root):
 
 
 async def submit(manager, root, script, *, call='c', sid='s', settings=None, timeout=None, runner=None):
-    return await manager.submit(session_id=sid, workspace_root=root, archive_root=archive_root(root), run_id='r',
+    return await manager.submit(session_id=sid, workspace_root=root, execution_root=ExecutionRoot(root), environment=host_files(root).environment, archive_root=archive_root(root), run_id='r',
         tool_call_id=call, agent_path='root', command=script, name='bash',
         request=replace(request(root, script), timeout_seconds=timeout, merge_output=True),
         settings=settings or BashSettings(), runner=runner or HostProcessRunner(), control=None)
@@ -93,7 +95,7 @@ def test_scope_dedup_and_changed_identity_never_spawn_twice(tmp_path):
                     await operation(first['task_id'], session_id='other', workspace_root=tmp_path)
             assert (await manager.list(session_id='other'))['items'] == []
             with pytest.raises(ToolException, match='root'):
-                await manager.submit(session_id='s', workspace_root=tmp_path, archive_root=archive_root(tmp_path), run_id='r',
+                await manager.submit(session_id='s', workspace_root=tmp_path, execution_root=ExecutionRoot(tmp_path), environment=host_files(tmp_path).environment, archive_root=archive_root(tmp_path), run_id='r',
                     tool_call_id='child', agent_path='child', command='test', name='bash',
                     request=request(tmp_path, ''), settings=BashSettings(), runner=HostProcessRunner(), control=None)
             assert len((await manager.list())['items']) == 1
@@ -121,7 +123,7 @@ def test_frozen_request_and_empty_worker_context(monkeypatch, tmp_path):
         req.env['SAMPLE'] = 'original'
         origin = SimpleNamespace(requested=False)
         with bind_run_scope(typed_scope(control=origin)):
-            row = await manager.submit(session_id='s', workspace_root=tmp_path, archive_root=archive_root(tmp_path), run_id='r',
+            row = await manager.submit(session_id='s', workspace_root=tmp_path, execution_root=ExecutionRoot(tmp_path), environment=host_files(tmp_path).environment, archive_root=archive_root(tmp_path), run_id='r',
                 tool_call_id='c', agent_path='root', command='test', name='bash', request=req,
                 settings=BashSettings(), runner=Runner(), control=origin)
         await entered.wait()
@@ -146,7 +148,7 @@ def test_configured_deadline_and_missing_executable_have_distinct_results(tmp_pa
             result = await wait_status(manager, row['task_id'], lambda r: r['status'] == 'finished')
             assert result['termination'] == 'timeout' and result['cleanup_confirmed']
             req = replace(request(tmp_path, ''), argv=['/nonexistent/background-executable'])
-            row = await manager.submit(session_id='s', workspace_root=tmp_path, archive_root=archive_root(tmp_path), run_id='r',
+            row = await manager.submit(session_id='s', workspace_root=tmp_path, execution_root=ExecutionRoot(tmp_path), environment=host_files(tmp_path).environment, archive_root=archive_root(tmp_path), run_id='r',
                 tool_call_id='fail', agent_path='root', command='test', name='bash', request=req,
                 settings=BashSettings(), runner=HostProcessRunner(), control=None)
             result = await wait_status(manager, row['task_id'], lambda r: r['status'] == 'finished')
@@ -198,7 +200,7 @@ def test_list_pagination_and_pre_handoff_stop_are_bounded(tmp_path):
         assert second['next_before'] is None
         assert len({row['task_id'] for row in first['items'] + second['items']}) == 3
         with pytest.raises(ToolException, match='stopped before handoff'):
-            await manager.submit(session_id='s', workspace_root=tmp_path, archive_root=archive_root(tmp_path), run_id='r',
+            await manager.submit(session_id='s', workspace_root=tmp_path, execution_root=ExecutionRoot(tmp_path), environment=host_files(tmp_path).environment, archive_root=archive_root(tmp_path), run_id='r',
                 tool_call_id='stopped', agent_path='root', command='pass', name='bash',
                 request=request(tmp_path, ''), settings=BashSettings(), runner=runner,
                 control=SimpleNamespace(requested=True))

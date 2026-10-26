@@ -9,7 +9,7 @@ from naiyue_test_agent import __version__
 def main(argv=None):
     args = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(prog='nyt', description='Naiyue Test Agent',
-        usage='nyt [Web options] | nyt chat [CLI options] | nyt mcp list | nyt storage {backups,restore}',
+        usage='nyt [Web options] | nyt chat [CLI options] | nyt projects | nyt mcp list | nyt storage {backups,restore}',
         epilog='Default: start local Web. Use nyt chat --help for terminal options. '
                'Web options: --config PATH, --workspace PATH, --host, --port, '
                '--session-db PATH, --new-workspace, --frontend-dist PATH.')
@@ -19,6 +19,9 @@ def main(argv=None):
     if args and args[0] == 'chat':
         from .chat import main as chat
         return chat(args[1:])
+    if args and args[0] == 'projects':
+        from .projects import main as projects
+        return projects(args[1:])
     if args and args[0] == 'mcp':
         from .mcp import main as mcp
         return mcp(args[1:])

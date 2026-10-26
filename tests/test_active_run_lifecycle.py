@@ -17,7 +17,7 @@ def test_state_contains_only_session_facts_and_run_has_independent_defaults():
     assert {field.name for field in fields(SessionState)} == {
         'thread_id', 'model_id', 'project_id', 'execution_root', 'active_tool_names', 'permission_mode',
         'thinking_level', 'session_allow', 'pending_tool_approval', 'pending_turn',
-        'manual_review_required', 'conversation_revision'}
+        'manual_review_required', 'conversation_revision', 'last_execution_path', 'execution_binding','execution_setup'}
     a, b = ActiveRun('same', None), ActiveRun('same', None)
     from naiyue_test_agent.contracts.replies import QueuedInput
     a.steering_queue.append(QueuedInput('m', 'first', 'steering'))
@@ -62,26 +62,26 @@ async def test_close_waits_scoped_operation_not_callers_later_work(monkeypatch):
     app = await make_app(monkeypatch)
     entered, release, unrelated = asyncio.Event(), asyncio.Event(), asyncio.Event()
     calls = []
-    original = app.models._catalog.aclose
+    original = app.host.sessions._sessions._catalog.aclose
     async def close_catalog():
         calls.append('catalog')
         await original()
-    monkeypatch.setattr(app.models._catalog, 'aclose', close_catalog)
+    monkeypatch.setattr(app.host.sessions._sessions._catalog, 'aclose', close_catalog)
     async def caller():
-        with app._lifetime.operation():
+        with app.root._lifetime.operation():
             entered.set()
             await release.wait()
             # Already accepted work may finish nested operations during close.
-            with app._lifetime.operation():
-                assert app.tools.list() is not None
+            with app.root._lifetime.operation():
+                assert app.host.tools.list() is not None
         await unrelated.wait()
     task = asyncio.create_task(caller())
     await entered.wait()
     closing = asyncio.create_task(app.aclose())
     await asyncio.sleep(0)
-    assert app._lifetime._closing and calls == [] and not closing.done()
+    assert app.root._lifetime._closing and calls == [] and not closing.done()
     with pytest.raises(RuntimeError):
-        await app.sessions.create('A')
+        await app.host.sessions.create('A')
     release.set()
     try:
         await asyncio.wait_for(closing, 5)
@@ -96,13 +96,13 @@ async def test_concurrent_close_shares_protected_teardown(monkeypatch):
     app = await make_app(monkeypatch)
     entered, release = asyncio.Event(), asyncio.Event()
     calls = []
-    original = app.models._catalog.aclose
+    original = app.host.sessions._sessions._catalog.aclose
     async def close_catalog():
         calls.append('catalog')
         entered.set()
         await release.wait()
         await original()
-    monkeypatch.setattr(app.models._catalog, 'aclose', close_catalog)
+    monkeypatch.setattr(app.host.sessions._sessions._catalog, 'aclose', close_catalog)
     first = asyncio.create_task(app.aclose())
     await entered.wait()
     second = asyncio.create_task(app.aclose())
@@ -113,7 +113,7 @@ async def test_concurrent_close_shares_protected_teardown(monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await first
     await second
-    assert calls == ['catalog'] and app._lifetime._closed
+    assert calls == ['catalog'] and app.root._lifetime._closed
 
 
 def test_persistence_binding_is_startup_only():
@@ -144,14 +144,14 @@ async def test_close_drains_actual_shared_io(monkeypatch, tmp_path, operation, f
     failure = OSError('synthetic IO failure')
     async with factory(monkeypatch, tmp_path / 'sessions.sqlite',
                        StreamingToolModel(replies=[AIMessage(content='saved')])) as app:
-        sid = await app.sessions.create('A')
-        await app.runs.start(sid, [('user', 'save')])
+        sid = await app.host.sessions.create('A')
+        await app.host.runs.start(sid, [('user', 'save')])
         if operation in ('restore', 'prepare'):
-            app.sessions._sessions.remove_session(sid)
+            app.host.sessions._sessions.remove_session(sid)
         name = {'create': 'create', 'configure': 'select_permission_mode',
                 'restore': 'get', 'prepare': 'get', 'delete': 'delete'}[operation]
-        repository = app.sessions._persistence.storage.runs if operation == 'delete' else app.sessions._persistence.storage.sessions
-        original, close_catalog = getattr(repository, name), app.models._catalog.aclose
+        repository = app.host.sessions._persistence.storage.runs if operation == 'delete' else app.host.sessions._persistence.storage.sessions
+        original, close_catalog = getattr(repository, name), app.host.sessions._sessions._catalog.aclose
         def blocked(*args, **kwargs):
             loop.call_soon_threadsafe(entered.set)
             assert release.wait(5)
@@ -163,12 +163,12 @@ async def test_close_drains_actual_shared_io(monkeypatch, tmp_path, operation, f
             order.append('catalog')
             await close_catalog()
         monkeypatch.setattr(repository, name, blocked)
-        monkeypatch.setattr(app.models._catalog, 'aclose', close)
-        calls = {'create': lambda: app.sessions.create('A'),
-                 'configure': lambda: app.sessions.select_permission_mode(sid, 'NoAsk'),
-                 'restore': lambda: app.sessions.restore(sid),
-                 'prepare': lambda: app.sessions.prepare(sid),
-                 'delete': lambda: app.sessions.delete(sid)}
+        monkeypatch.setattr(app.host.sessions._sessions._catalog, 'aclose', close)
+        calls = {'create': lambda: app.host.sessions.create('A'),
+                 'configure': lambda: app.host.sessions.select_permission_mode(sid, 'NoAsk'),
+                 'restore': lambda: app.host.sessions.restore(sid),
+                 'prepare': lambda: app.host.sessions.prepare(sid),
+                 'delete': lambda: app.host.sessions.delete(sid)}
         task = asyncio.create_task(calls[operation]())
         closing = None
         try:
@@ -191,10 +191,10 @@ async def test_close_drains_actual_shared_io(monkeypatch, tmp_path, operation, f
 @async_test
 async def test_active_operation_cannot_wait_for_its_own_close(monkeypatch):
     app = await make_app(monkeypatch)
-    with app._lifetime.operation():
+    with app.root._lifetime.operation():
         with pytest.raises(RuntimeError, match='active operation'):
             await app.aclose()
-    assert not app._lifetime._closing
+    assert not app.root._lifetime._closing
     await app.aclose()
 
 
@@ -206,9 +206,9 @@ async def test_close_survives_create_rollback_after_stop_snapshot(monkeypatch, t
     loop, closes = asyncio.get_running_loop(), []
     failure = OSError('synthetic creation failure')
     async with factory(monkeypatch, tmp_path / 'sessions.sqlite', StreamingToolModel(replies=[])) as app:
-        sid = await app.sessions.create('A')
-        service, stable = app.sessions._sessions, app.sessions._sessions._sessions[sid]
-        create, stop, close_catalog = service.create_session, stable.controls.request_scope_stop, app.models._catalog.aclose
+        sid = await app.host.sessions.create('A')
+        service, stable = app.host.sessions._sessions, app.host.sessions._sessions._sessions[sid]
+        create, stop, close_catalog = service.create_session, stable.controls.request_scope_stop, app.host.sessions._sessions._catalog.aclose
         def fail_create(*args):
             loop.call_soon_threadsafe(entered.set)
             assert release.wait(5)
@@ -225,17 +225,17 @@ async def test_close_survives_create_rollback_after_stop_snapshot(monkeypatch, t
         async def close():
             closes.append(True)
             await close_catalog()
-        monkeypatch.setattr(app.sessions._persistence.storage.sessions, 'create', fail_create)
+        monkeypatch.setattr(app.host.sessions._persistence.storage.sessions, 'create', fail_create)
         monkeypatch.setattr(service, 'create_session', creating)
         monkeypatch.setattr(stable.controls, 'request_scope_stop', stop_after_rollback)
-        monkeypatch.setattr(app.models._catalog, 'aclose', close)
-        task = asyncio.create_task(app.sessions.create('A'))
+        monkeypatch.setattr(app.host.sessions._sessions._catalog, 'aclose', close)
+        task = asyncio.create_task(app.host.sessions.create('A'))
         try:
             await asyncio.wait_for(entered.wait(), 5)
             await app.aclose()
             result, = await asyncio.gather(task, return_exceptions=True)
             assert result is failure and closes == [True]
-            assert service.loaded_session_ids() == (sid,) and app._lifetime._operations == {}
+            assert service.loaded_session_ids() == (sid,) and app.root._lifetime._operations == {}
         finally:
             release.set()
             await asyncio.gather(task, return_exceptions=True)

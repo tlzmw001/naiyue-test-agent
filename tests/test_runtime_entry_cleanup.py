@@ -71,10 +71,10 @@ def test_central_run_scope_still_prevent_closing_from_active_run(monkeypatch):
             with bind_run_scope(services):
                 with pytest.raises(RuntimeError, match='active run'):
                     await app.aclose()
-                assert not app._lifetime._closing and not app._lifetime._closed
+                assert not app.root._lifetime._closing and not app.root._lifetime._closed
         finally:
             await app.aclose()
-        assert app._lifetime._closed
+        assert app.root._lifetime._closed
     asyncio.run(scenario())
 
 

@@ -18,8 +18,8 @@ async def test_child_checkpoint_io_failure_is_tool_feedback_without_secret_or_re
     child = ChildModel(replies=[AIMessage(content='report')])
     app, root = await delegated_app(monkeypatch, child)
     instances, events, attempts = record_instances(monkeypatch, app), [], []
-    app.observability.subscribe(events.append)
-    backend = app.runs._agent.checkpointer
+    app.host.observability.subscribe(events.append)
+    backend = app.host.runs._agent.checkpointer
     original = getattr(backend, operation)
     error = TimeoutError('PRIVATE_CHECKPOINT_BODY')
     async def fail(config, *args, **kwargs):
@@ -28,19 +28,19 @@ async def test_child_checkpoint_io_failure_is_tool_feedback_without_secret_or_re
             raise error
         return await original(config, *args, **kwargs)
     monkeypatch.setattr(backend, operation, fail)
-    sid = await app.sessions.create('A')
+    sid = await app.host.sessions.create('A')
     if operation == 'aget_tuple':
-        from naiyue_test_agent.application.errors import SessionPersistenceError
+        from naiyue_test_agent.storage.errors import SessionPersistenceError
         # Permanent child read failure also blocks the required archive, in both profiles.
         with pytest.raises(SessionPersistenceError, match='session_save_unconfirmed'):
-            await app.runs.start(sid, [('user', 'start')])
-        snapshot = await app.runs._agent.aget_state({'configurable': {'thread_id': app.sessions._sessions.require(sid).get_thread_id()}})
+            await app.host.runs.start(sid, [('user', 'start')])
+        snapshot = await app.host.runs._agent.aget_state({'configurable': {'thread_id': app.host.sessions._sessions.require(sid).get_thread_id()}})
         result = snapshot.values
-        assert app.sessions._persistence.storage.sessions.get(sid)['state'] == 'running'
-        assert sid in app.sessions._persistence._blocked
+        assert app.host.sessions._persistence.storage.sessions.get(sid)['state'] == 'running'
+        assert sid in app.host.sessions._persistence._blocked
         assert events[-1].event_type == 'run_finished' and events[-1].data.status == 'failed'
     else:
-        result = await app.runs.start(sid, [('user', 'start')])
+        result = await app.host.runs.start(sid, [('user', 'start')])
         assert events[-1].data.status == 'completed'
     feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert feedback.status == 'error' and 'checkpoint' in feedback.content.lower()
@@ -64,8 +64,8 @@ async def test_failed_child_save_does_not_stop_sibling_pending_approval(monkeypa
     app, _ = await delegated_app(monkeypatch, child, root=root, tools=[definition(calls=effects, approved=True)])
     instances = record_instances(monkeypatch, app)
     queue = approval_notifications(monkeypatch, app)
-    app.observability.subscribe(events.append)
-    backend = app.runs._agent.checkpointer
+    app.host.observability.subscribe(events.append)
+    backend = app.host.runs._agent.checkpointer
     save = backend.aput
     async def fail_final_a(config, checkpoint, *args, **kwargs):
         a = next((i for i in instances if i['task'] == 'A'), None)
@@ -74,15 +74,15 @@ async def test_failed_child_save_does_not_stop_sibling_pending_approval(monkeypa
             raise OSError('PRIVATE_CHILD_DISK')
         return await save(config, checkpoint, *args, **kwargs)
     monkeypatch.setattr(backend, 'aput', fail_final_a)
-    sid = await app.sessions.create('A')
-    task = asyncio.create_task(app.runs.start(sid, [('user', 'two')]))
+    sid = await app.host.sessions.create('A')
+    task = asyncio.create_task(app.host.runs.start(sid, [('user', 'two')]))
     try:
         batch = await next_approval(app, sid, queue)
         a = next(i for i in instances if i['task'] == 'A')
         a_task = a.get('driver')
         if a_task: await asyncio.wait((a_task,), timeout=5)
-        assert a['status'] == 'failed' and not app.sessions._sessions.is_stop_requested(sid)
-        assert app.runs.pending_approvals(sid) == [batch] and effects == [] and not task.done()
+        assert a['status'] == 'failed' and not app.host.sessions._sessions.is_stop_requested(sid)
+        assert app.host.runs.pending_approvals(sid) == [batch] and effects == [] and not task.done()
         await submit(app, sid, batch)
         result = await asyncio.wait_for(task, 5)
         reports = {m.tool_call_id: m for m in result['messages'] if isinstance(m, ToolMessage)}

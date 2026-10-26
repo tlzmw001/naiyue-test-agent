@@ -61,10 +61,10 @@ async def test_one_tool_loop_has_correlated_immutable_safe_events(monkeypatch, c
     ])
     app = await make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
-    app.observability.subscribe(call_metadata_only(events.append))
-    session = await app.sessions.create('A')
+    app.host.observability.subscribe(call_metadata_only(events.append))
+    session = await app.host.sessions.create('A')
     with caplog.at_level('INFO'):
-        result = await app.runs.start(session, [('user', 'PRIVATE_PROMPT')])
+        result = await app.host.runs.start(session, [('user', 'PRIVATE_PROMPT')])
     assert [e.event_type for e in events] == [
         'run_started', 'model_call_started', 'model_call_finished',
         'tool_call_started', 'tool_call_finished',
@@ -116,10 +116,10 @@ async def test_model_failure_has_no_accepted_end_and_preserves_exception(monkeyp
                                                response_metadata={'finish_reason': 'content_filter'})]))
     app = await make_app(monkeypatch, model)
     events = []
-    app.observability.subscribe(call_metadata_only(events.append))
+    app.host.observability.subscribe(call_metadata_only(events.append))
     expected = TimeoutError if kind == 'timeout' else ModelResponseRejected
     with caplog.at_level('INFO'), pytest.raises(expected) as caught:
-        await app.runs.start(await app.sessions.create('A'), [('user', 'PRIVATE_PROMPT')])
+        await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'PRIVATE_PROMPT')])
     if kind == 'timeout':
         assert caught.value is failure
     assert [e.event_type for e in events] == [
@@ -143,9 +143,9 @@ async def test_midrun_observer_failure_does_not_change_model_or_tool_result(monk
         if event.event_type == 'model_call_started':
             raise RuntimeError('PRIVATE_OBSERVER')
 
-    app.observability.subscribe(call_metadata_only(broken))
-    app.observability.subscribe(call_metadata_only(observed.append))
-    result = await app.runs.start(await app.sessions.create('A'), [('user', 'run')])
+    app.host.observability.subscribe(call_metadata_only(broken))
+    app.host.observability.subscribe(call_metadata_only(observed.append))
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'run')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
     assert broken_calls == ['run_started', 'model_call_started']
     assert observed[-1].data.status == 'completed' and len(observed) == 4
@@ -158,8 +158,8 @@ async def test_bounded_input_recovery_is_one_logical_model_call(monkeypatch):
     model = _configured_model([_status(), AIMessage(content='recovered')])
     app = await _app(monkeypatch, {'A': model})
     events = []
-    app.observability.subscribe(events.append)
-    result = await app.runs.start(await app.sessions.create('A'), _history())
+    app.host.observability.subscribe(events.append)
+    result = await app.host.runs.start(await app.host.sessions.create('A'), _history())
     assert result['messages'][-1].content == 'recovered'
     assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == 1
     assert len(events_of(events, 'model_call_started')) == 3
@@ -206,7 +206,7 @@ async def test_failed_run_binding_is_reset_before_next_direct_invocation(monkeyp
 
     app = await make_app(monkeypatch, FailingModel(responses=[AIMessage(content='unused')]))
     with pytest.raises(TimeoutError):
-        await app.runs.start(await app.sessions.create('A'), [('user', 'run')])
+        await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'run')])
     assert current_run_scope() is None
 
 
@@ -225,9 +225,9 @@ async def test_partial_invalid_tool_response_is_failed_before_dispatch(monkeypat
     ], invalid_tool_calls=[{'name': 'probe', 'args': '{', 'id': 'invalid', 'error': 'parse'}])])
     app = await make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
-    app.observability.subscribe(events.append)
+    app.host.observability.subscribe(events.append)
     with pytest.raises(ModelResponseRejected) as caught:
-        await app.runs.start(await app.sessions.create('A'), [('user', 'run')])
+        await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'run')])
     assert caught.value.reason == 'invalid_tool_calls' and called == []
     assert events_of(events, 'model_call_finished')[0].data.status == 'returned'
     assert events[-1].data.failure.reason == 'invalid_tool_calls'

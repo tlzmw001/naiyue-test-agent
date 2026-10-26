@@ -6,7 +6,7 @@ from langchain_core.messages import AIMessage
 
 from native_application_helpers import async_test
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+from scripts.component_fixtures import open_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from test_async_application import StreamingToolModel, call
 from test_subagent_execution import ChildModel
@@ -21,11 +21,11 @@ async def test_root_child_archives_stay_separate_and_delete_together(monkeypatch
         AIMessage(content='second root')])
     child = ChildModel(replies=[AIMessage(content='first child'), AIMessage(content='second child')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
-    async with open_async_persistent_application('unused', **options(tmp_path)) as app:
-        sid, other = await app.sessions.create_workspace('A', tmp_path), await app.sessions.create_workspace('A', tmp_path)
-        await app.runs.start(sid, [('user', 'delegate one')])
-        await app.runs.start(other, [('user', 'delegate two')])
-        storage = app.sessions._persistence.storage
+    async with open_component_application('unused', **options(tmp_path)) as app:
+        sid, other = await app.host.sessions.create_workspace('A', tmp_path), await app.host.sessions.create_workspace('A', tmp_path)
+        await app.host.runs.start(sid, [('user', 'delegate one')])
+        await app.host.runs.start(other, [('user', 'delegate two')])
+        storage = app.host.sessions._persistence.storage
         head = next(r for r in storage.conversation.chat_heads(sid) if r['agent_path'] != 'root')
         own = rows(storage, sid)
         root_rows = [r for r in own if r['thread_id'] == storage.sessions.get(sid)['thread_id']]
@@ -37,7 +37,7 @@ async def test_root_child_archives_stay_separate_and_delete_together(monkeypatch
         assert head['thread_id'].startswith('subagent:') and head['agent_path'].startswith('root/worker/')
         assert head['thread_id'] not in {r['thread_id'] for r in rows(storage, other)}
         untouched = rows(storage, other)
-        await app.sessions.delete(sid)
+        await app.host.sessions.delete(sid)
         assert rows(storage, sid) == [] and storage.conversation.chat_heads(sid) == []
         assert rows(storage, other) == untouched
         assert storage.database.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (head['thread_id'],)).fetchone()[0] == 0

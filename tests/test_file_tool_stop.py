@@ -24,7 +24,7 @@ def invoke_body(spec, root, args, control):
     from naiyue_test_agent.tools.permission_rules import PermissionSettings
     context = typed_context(identity=RunIdentity(session_id='file-stop', execution_root=ExecutionRoot(root) if root is not None else None), authorization=ToolAuthorization(permission_rules=PermissionSettings(), session_allow=[], permission_mode='Default'), control=control)
     subject = spec.permissions.prepare(args, context)
-    subject.update(args=args, path_field='path', execution_environment=execution_environment())
+    subject.update(args=args, path_field='path', execution_environment=execution_environment(context))
     context = replace(context, authorization=replace(context.authorization, permit={
         'call_id': 'file', 'session_id': 'file-stop', 'agent_path': 'root', 'subject': subject}))
     runtime = SimpleNamespace(context=context, tool_call_id='file')

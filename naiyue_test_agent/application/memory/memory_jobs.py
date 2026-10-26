@@ -8,6 +8,7 @@ from datetime import datetime,timezone
 import hashlib
 import json
 import logging
+from pathlib import Path
 from threading import Lock
 import time
 from uuid import uuid4
@@ -17,7 +18,7 @@ from naiyue_test_agent.agent_runtime.events import RunEventPublisher
 from naiyue_test_agent.agent_runtime.run_control import RunControl
 from naiyue_test_agent.tools.permission_rules import match_rules
 from naiyue_test_agent.application.sessions.background_tasks import TaskQueryError
-from .memory_queries import MemoryReadError
+from naiyue_test_agent.contracts.memory import MemoryReadError
 from .memory_context import prepare_memory_parts
 from naiyue_test_agent.application.observability.run_events import _log_event
 
@@ -91,10 +92,20 @@ class MemoryJobs:
         return bool(binding and row['project_id']==binding['workspace_id'] and
             'memory' in json.loads(row['active_tool_names_json']) and self.allowed(dict(action='list')))
 
+    def _execution_path(self,row):
+        if row['execution_binding']=='sandbox':return None
+        if row['execution_binding']=='project_local':
+            value=self.storage.sessions.execution_location
+        elif row['execution_binding']=='local':
+            value=row['workspace_root']
+        else:raise MemoryReadError('memory_scope_mismatch')
+        if value is None:raise MemoryReadError('memory_scope_mismatch')
+        return Path(value)
+
     def prepare(self,sid,root,messages,model,*,preview=False):
         if not self.settings.enabled or not self._enabled_for_session(sid):return []
         row=self.storage.sessions.get(sid)
-        if str(root)!=row['workspace_root']:raise MemoryReadError('memory_scope_mismatch')
+        if str(root)!=str(self._execution_path(row)):raise MemoryReadError('memory_scope_mismatch')
         if preview:
             progress=self.storage.memory.progress(sid)
             seen=bool(progress and progress[0]['directory_seen'])
@@ -126,7 +137,7 @@ class MemoryJobs:
                 or any(self._deletion_generations.get(sid,0)!=value for sid,value in generations.items())):
             raise MemoryReadError('memory_admission_closed')
         if (not binding or row['project_id']!=binding['workspace_id'] or caller['project_id']!=binding['workspace_id']
-                or caller['workspace_root']!=str(workspace_root)):
+                or str(self._execution_path(caller))!=str(workspace_root)):
             raise MemoryReadError('memory_scope_mismatch')
         old=self._entries.get(self._targets.get(target_session_id))
         if old and not old.cleanup_confirmed:
@@ -171,8 +182,7 @@ class MemoryJobs:
                 or progress['completed_chars']-progress['accepted_chars']>=self.settings.trigger_chars):
             row=await run_blocking(self.storage.sessions.get,sid)
             try:
-                from pathlib import Path
-                result=await self.request(source_session_id=sid,target_session_id=sid,workspace_root=Path(row['workspace_root']),
+                result=await self.request(source_session_id=sid,target_session_id=sid,workspace_root=self._execution_path(row),
                     origin_run_id=run_id,model_id=model_id,model=model)
                 job=self._entries[result['task_id']]
                 if job not in pending:pending.append(job)
@@ -218,7 +228,7 @@ class MemoryJobs:
         self._terminal_sequence+=1;job.terminal_revision=self._terminal_sequence
 
     def _public(self,job):
-        return dict(task_id=job.task_id,session_id=job.session_id,workspace_root=str(job.root),origin_run_id=job.origin_run_id,
+        return dict(task_id=job.task_id,session_id=job.session_id,workspace_root=str(job.root) if job.root is not None else None,origin_run_id=job.origin_run_id,
             tool_call_id=job.tool_call_id,kind='memory',shell='memory',command_preview='整理会话概览与记忆',
             status=job.status,result_status=job.result_status,created_at=job.created_at,started_at=job.started_at,
             finished_at=job.finished_at,max_execution_seconds=self.settings.task_timeout_seconds,exit_code=None,

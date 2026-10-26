@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { SessionRow } from '../types';
+import { keepDialogFocus } from '../dialogFocus';
 import styles from './SessionMenu.module.css';
 
 export default function SessionMenu({ row, title, x, y, busy, close, update, remove }: {
@@ -26,9 +27,7 @@ export default function SessionMenu({ row, title, x, y, busy, close, update, rem
     if (event.key === 'Escape' && !busy) { event.preventDefault(); close(); }
     const items = Array.from(root.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input') ?? []);
     if (dialog && event.key === 'Tab') {
-      const first = items[0], last = items.at(-1);
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      keepDialogFocus(event, root.current);
     } else if (!dialog && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
       const current = items.indexOf(document.activeElement as HTMLElement);
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 :

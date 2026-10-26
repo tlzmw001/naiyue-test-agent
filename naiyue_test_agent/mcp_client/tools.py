@@ -30,9 +30,13 @@ class MCPPermission(ToolPermission):
     config_identity: str = ''
     catalog_fingerprint: str = ''
     transport: str = ''
+    allow_sandbox: bool = False
     resources: object = field(default=None, repr=False, compare=False)
 
-    def unavailable_reason(self):
+    def unavailable_reason(self, context=None):
+        if (self.transport == 'stdio' and not self.allow_sandbox and context is not None
+                and context.scope.environment is not None and context.scope.environment.kind == 'sandbox'):
+            return 'stdio_not_allowed_for_environment'
         return (self.resources.tool_unavailable(self.server_id, self.remote_tool, self.config_identity,
                 self.catalog_fingerprint) if self.resources is not None else None)
 
@@ -50,7 +54,7 @@ class MCPPermission(ToolPermission):
 
 def create_mcp_tool(borrow_mcp, server, identity, catalog, tool, *, resources=None):
     permission = MCPPermission(server_id=catalog.server_id, remote_tool=tool.remote_name,
-        config_identity=identity, catalog_fingerprint=catalog.fingerprint, transport=server.transport, resources=resources)
+        config_identity=identity, catalog_fingerprint=catalog.fingerprint, transport=server.transport, allow_sandbox=server.allow_sandbox, resources=resources)
 
     async def execute(runtime: ToolRuntime[RuntimeContext], **arguments):
         permit = require_tool_permit(runtime)
@@ -68,7 +72,7 @@ def create_mcp_tool(borrow_mcp, server, identity, catalog, tool, *, resources=No
         async def attempt():
             nonlocal phase, ever_submitted
             phase = 'preflight'
-            if permission.unavailable_reason():
+            if permission.unavailable_reason(context):
                 raise ToolException('MCP tool is disabled or its definition changed. No tools/call was sent; request a new call.')
             # Raising through borrow retires a failed connection before the next attempt.
             async with borrow_mcp(context.scope.identity.session_id, context.scope.identity.agent_path, catalog.server_id) as lease:
@@ -77,7 +81,7 @@ def create_mcp_tool(borrow_mcp, server, identity, catalog, tool, *, resources=No
                 current = await read_catalog(catalog.server_id, server, lease.client.session)
                 if current.fingerprint != catalog.fingerprint:
                     raise ToolException('MCP catalog changed. Refresh tools to review the new definition; no tools/call was sent.')
-                if permission.unavailable_reason():
+                if permission.unavailable_reason(context):
                     raise ToolException('MCP tool is disabled or its definition changed. No tools/call was sent; request a new call.')
                 from ..tools.control import check_tool_stop
                 check_tool_stop(context.scope.control, 'MCP request stopped before execution.')

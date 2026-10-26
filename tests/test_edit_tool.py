@@ -72,7 +72,7 @@ async def test_edit_replaces_multiple_original_regions_and_returns_same_call_id(
         AIMessage(content='done'),
     ])
 
-    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
 
     assert target.read_text(encoding='utf-8') == 'ALPHA\nbeta\nGAMMA\n'
     message = tool_result(result, 'edit-1')
@@ -104,7 +104,7 @@ async def test_edit_invalid_replacement_does_not_change_file(
         AIMessage(content='done'),
     ])
 
-    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
 
     assert target.read_text(encoding='utf-8') == 'alpha same same\n'
     message = tool_result(result, 'invalid')
@@ -128,7 +128,7 @@ async def test_edit_preserves_bom_crlf_and_allows_deletion(monkeypatch, tmp_path
         AIMessage(content='done'),
     ])
 
-    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
 
     assert target.read_bytes() == b'\xef\xbb\xbfALPHA\r\n\r\n'
     assert tool_result(result, 'bom').status == 'success'
@@ -153,7 +153,7 @@ async def test_edit_large_file_with_match_crossing_chunk_keeps_untouched_bytes(
         AIMessage(content='done'),
     ])
 
-    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
 
     assert tool_result(result, 'large').status == 'success'
     assert target.read_bytes() == original.replace(
@@ -176,7 +176,7 @@ async def test_edit_rejects_duplicate_in_different_chunks(monkeypatch, tmp_path)
         AIMessage(content='done'),
     ])
 
-    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
 
     assert tool_result(result, 'duplicate').status == 'error'
     assert 'unique' in tool_result(result, 'duplicate').content.lower()
@@ -195,7 +195,7 @@ async def test_edit_rejects_invalid_utf8_split_across_chunks(monkeypatch, tmp_pa
         AIMessage(content='done'),
     ])
 
-    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
 
     assert tool_result(result, 'encoding-boundary').status == 'error'
     assert 'utf-8' in tool_result(result, 'encoding-boundary').content.lower()
@@ -220,9 +220,9 @@ async def test_edit_rejects_unsafe_or_missing_files(monkeypatch, tmp_path, path)
         AIMessage(content='done'),
     ])
 
-    session = await app.sessions.create_workspace('A', root)
-    await app.sessions.select_permission_mode(session, 'NoAsk')
-    result = await app.runs.start(session, [('user', 'edit')])
+    session = await app.host.sessions.create_workspace('A', root)
+    await app.host.sessions.select_permission_mode(session, 'NoAsk')
+    result = await app.host.runs.start(session, [('user', 'edit')])
 
     assert tool_result(result, 'denied').status == 'error'
     assert outside.read_text(encoding='utf-8') == 'outside'
@@ -238,7 +238,7 @@ async def test_edit_rejects_invalid_utf8_without_overwriting(monkeypatch, tmp_pa
         }, 'encoding')]),
         AIMessage(content='done'),
     ])
-    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
     assert tool_result(result, 'encoding').status == 'error'
     assert target.read_bytes() == b'\xffalpha'
 
@@ -253,7 +253,7 @@ async def test_edit_rejects_replacement_input_past_configured_byte_limit(monkeyp
         }, 'limit')]),
         AIMessage(content='done'),
     ], tools=[create_session_edit_tool(settings=EditSettings(max_input_bytes=4))])
-    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
     assert tool_result(result, 'limit').status == 'error'
     assert 'limit' in tool_result(result, 'limit').content.lower()
     assert target.read_text(encoding='utf-8') == 'old'
@@ -277,7 +277,7 @@ async def test_edit_rejects_file_changed_after_initial_read(monkeypatch, tmp_pat
         }, 'changed')]),
         AIMessage(content='done'),
     ])
-    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
     message = tool_result(result, 'changed')
     assert message.status == 'error'
     assert 'changed' in message.content.lower()
@@ -391,7 +391,7 @@ async def test_edit_uses_session_workspace_even_when_model_forges_runtime(
         AIMessage(content='done'),
     ])
 
-    result = await app.runs.start(await app.sessions.create_workspace('A', first), [('user', 'edit')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('A', first), [('user', 'edit')])
 
     assert tool_result(result, 'forged').status == 'success'
     assert (first / 'case.md').read_text(encoding='utf-8') == 'new'
@@ -413,7 +413,7 @@ async def test_read_edit_read_batch_observes_order(monkeypatch, tmp_path):
         AIMessage(content='done'),
     ], [create_session_read_tool(), create_session_edit_tool()])
 
-    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('A', tmp_path), [('user', 'edit')])
 
     assert tool_result(result, 'read-before').content == 'before'
     assert tool_result(result, 'edit-middle').status == 'success'
@@ -433,14 +433,14 @@ async def test_edit_commit_unknown_returns_error_and_redacts_details(
         AIMessage(content='inspect the file before another edit'),
         AIMessage(content='continued safely'),
     ])
-    session = await app.sessions.create_workspace('A', tmp_path)
+    session = await app.host.sessions.create_workspace('A', tmp_path)
 
     def unknown_replace(_source, _target):
         raise OSError('PRIVATE_IO_DETAIL')
 
     monkeypatch.setattr(write_module.os, 'replace', unknown_replace)
     with caplog.at_level(logging.INFO):
-        result = await app.runs.start(session, [('user', 'edit')])
+        result = await app.host.runs.start(session, [('user', 'edit')])
 
     assert target.read_text(encoding='utf-8') == 'old'
     assert len(model.seen) == 2
@@ -452,6 +452,6 @@ async def test_edit_commit_unknown_returns_error_and_redacts_details(
     assert len(events) == 1 and events[0]['tool_call_id'] == 'unknown'
     assert events[0]['cause_type'] == 'OSError' and events[0]['run_id']
     assert 'session_manual_review_required' not in caplog.text
-    continued = await app.runs.start(session, [('user', 'again')])
+    continued = await app.host.runs.start(session, [('user', 'again')])
     assert continued['messages'][-1].content == 'continued safely'
     assert len(model.seen) == 3

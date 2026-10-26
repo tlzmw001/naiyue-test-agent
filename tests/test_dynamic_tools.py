@@ -15,7 +15,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from pydantic import BaseModel, ConfigDict, Field
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_application import build_async_local_application
+from scripts.component_fixtures import build_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import ToolSpec, create_builtin_tools
 from naiyue_test_agent.settings import AppSettings
@@ -81,18 +81,18 @@ async def test_register_from_empty_graph_enable_one_session_and_preserve_origina
     calls = []
     model = DynamicModel(responses=[call(), AIMessage(content='done'), AIMessage(content='other')])
     app = await build(monkeypatch, model)
-    graph = app.runs._agent
-    first, second = await app.sessions.create('A'), await app.sessions.create('A')
+    graph = app.host.runs._agent
+    first, second = await app.host.sessions.create('A'), await app.host.sessions.create('A')
     spec = definition(calls=calls)
-    await app.tools.register(spec)
-    assert app.sessions.active_tools(first) == app.sessions.active_tools(second) == ()
-    assert app.sessions.active_tools(await app.sessions.create('A')) == ()
-    await app.sessions.select_tools(first, ['probe'])
-    result = await app.runs.start(first, [('user', 'run')])
+    await app.host.tools.register(spec)
+    assert app.host.sessions.active_tools(first) == app.host.sessions.active_tools(second) == ()
+    assert app.host.sessions.active_tools(await app.host.sessions.create('A')) == ()
+    await app.host.sessions.select_tools(first, ['probe'])
+    result = await app.host.runs.start(first, [('user', 'run')])
     assert calls == [('probe', 'value')]
     assert next(m for m in result['messages'] if isinstance(m, ToolMessage)).content == 'value'
-    assert app.runs._agent is graph and model.bound[0][0] is spec.tool
-    await app.runs.start(second, [('user', 'chat')])
+    assert app.host.runs._agent is graph and model.bound[0][0] is spec.tool
+    await app.host.runs.start(second, [('user', 'chat')])
     assert model.bound[-1] == []
 
 
@@ -100,10 +100,10 @@ async def test_register_from_empty_graph_enable_one_session_and_preserve_origina
 @async_test
 async def test_invalid_selection_keeps_old_names(monkeypatch, names):
     app = await build(monkeypatch, DynamicModel(responses=[]), [definition()], ['probe'])
-    sid = await app.sessions.create('A')
+    sid = await app.host.sessions.create('A')
     with pytest.raises(ValueError):
-        await app.sessions.select_tools(sid, names)
-    assert app.sessions.active_tools(sid) == ('probe',)
+        await app.host.sessions.select_tools(sid, names)
+    assert app.host.sessions.active_tools(sid) == ('probe',)
 
 
 @async_test
@@ -114,12 +114,12 @@ async def test_inactive_and_unknown_calls_never_execute_and_keep_events(monkeypa
             {'name': 'probe', 'args': {'value': 'PRIVATE'}, 'id': 'inactive'},
             {'name': 'missing', 'args': {'value': 'PRIVATE'}, 'id': 'unknown'}]), AIMessage(content='done')])
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
-        app = await build_async_local_application('synthetic', tools=[definition(calls=calls)],
+        app = await build_component_application('synthetic', tools=[definition(calls=calls)],
             initial_active_tools=[], system_prompt='BASE', response_format=None)
-        sid = await app.sessions.create('A')
-        app.observability.subscribe(events.append)
+        sid = await app.host.sessions.create('A')
+        app.host.observability.subscribe(events.append)
         try:
-            result = await app.runs.start(sid, [('user', 'run')])
+            result = await app.host.runs.start(sid, [('user', 'run')])
             feedback = [m for m in result['messages'] if isinstance(m, ToolMessage)]
             assert [m.tool_call_id for m in feedback] == ['inactive', 'unknown']
             assert all(m.status == 'error' and 'PRIVATE' not in m.content for m in feedback)
@@ -138,15 +138,15 @@ async def test_switch_during_request_applies_only_to_next_request(monkeypatch):
         model = DynamicModel(responses=[call('old'), AIMessage(content='done')])
         specs = [definition('old', calls=calls), definition('new', calls=calls)]
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
-        app = await build_async_local_application('synthetic', tools=specs, initial_active_tools=['old'],
+        app = await build_component_application('synthetic', tools=specs, initial_active_tools=['old'],
             system_prompt='BASE', response_format=None)
-        sid = await app.sessions.create('A')
+        sid = await app.host.sessions.create('A')
         async def switch(number):
             if number == 1:
-                await app.sessions.select_tools(sid, ['new'])
+                await app.host.sessions.select_tools(sid, ['new'])
         model.on_request = switch
         try:
-            result = await app.runs.start(sid, [('user', 'run')])
+            result = await app.host.runs.start(sid, [('user', 'run')])
             assert result['messages'][-1].content == 'done'
             assert calls == [('old', 'value')]
             assert [[t.name for t in tools] for tools in model.bound] == [['old'], ['new']]
@@ -166,17 +166,17 @@ async def test_dynamic_approval_holds_whole_batch_and_resumes_saved_names(monkey
             {'name': 'gated', 'args': {'value': 'review'}, 'id': 'gated'},
             {'name': 'plain', 'args': {'value': 'plain'}, 'id': 'plain'}]), AIMessage(content='done')])
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
-        app = await build_async_local_application('synthetic', tools=[], initial_active_tools=[],
+        app = await build_component_application('synthetic', tools=[], initial_active_tools=[],
             system_prompt='BASE', response_format=None)
-        sid = await app.sessions.create_workspace('A', tmp_path)
+        sid = await app.host.sessions.create_workspace('A', tmp_path)
         for spec in [definition('gated', calls=calls, approved=True, sequential=True), definition('plain', calls=calls)]:
-            await app.tools.register(spec)
-        await app.sessions.select_tools(sid, ['gated', 'plain'])
+            await app.host.tools.register(spec)
+        await app.host.sessions.select_tools(sid, ['gated', 'plain'])
         try:
-            pending = await app.runs.start(sid, [('user', 'run')])
+            pending = await app.host.runs.start(sid, [('user', 'run')])
             assert calls == [] and len(pending['approval_requests']) == 1
-            await app.sessions.select_tools(sid, [])
-            result = await app.runs.resume_approval(sid, [decision])
+            await app.host.sessions.select_tools(sid, [])
+            result = await app.host.runs.resume_approval(sid, [decision])
             assert calls == ([('gated', 'review'), ('plain', 'plain')] if decision == 'approve' else [('plain', 'plain')])
             feedback = [m for m in result['messages'] if isinstance(m, ToolMessage)]
             assert [(m.tool_call_id, m.status) for m in feedback] == [
@@ -193,10 +193,10 @@ async def test_dynamic_runtime_validation_is_safe(monkeypatch, caplog):
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'probe', 'args': {'value': 42}, 'id': 'bad'}]), AIMessage(content='done')])
     app = await build(monkeypatch, model)
-    sid = await app.sessions.create('A')
-    await app.tools.register(definition(calls=calls))
-    await app.sessions.select_tools(sid, ['probe'])
-    result = await app.runs.start(sid, [('user', 'run')])
+    sid = await app.host.sessions.create('A')
+    await app.host.tools.register(definition(calls=calls))
+    await app.host.sessions.select_tools(sid, ['probe'])
+    result = await app.host.runs.start(sid, [('user', 'run')])
     feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert feedback.status == 'error' and calls == []
     diagnostics = feedback.content + ''.join(record.getMessage() for record in caplog.records)
@@ -210,7 +210,7 @@ async def test_tool_prompt_guidelines_and_project_instructions_compose_once(monk
     first = definition('first', prompt_snippet='FIRST_SNIPPET', prompt_guidelines=('SHARED_GUIDE',))
     second = definition('second', prompt_guidelines=('SHARED_GUIDE', 'SECOND_GUIDE'))
     app = await build(monkeypatch, model, [first, second], ['first', 'second'])
-    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'run')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('A', tmp_path), [('user', 'run')])
     for messages in model.seen:
         prompt = messages[0].content
         assert prompt.count('PROJECT_INSTRUCTION') == prompt.count('SHARED_GUIDE') == 1
@@ -228,16 +228,16 @@ def test_builtin_catalog_includes_bash_without_a_special_flag():
 async def test_registration_validates_tool_prompt_metadata(monkeypatch, field, value):
     app = await build(monkeypatch, DynamicModel(responses=[]))
     with pytest.raises(ValueError):
-        await app.tools.register(definition(**{field: value}))
-    assert app.tools.list() == ()
+        await app.host.tools.register(definition(**{field: value}))
+    assert app.host.tools.list() == ()
 
 
 @async_test
 async def test_registration_rejects_bad_permission_without_publishing(monkeypatch):
     app = await build(monkeypatch, DynamicModel(responses=[]))
     with pytest.raises(ValueError, match='permission'):
-        await app.tools.register(definition(permissions=None))
-    assert app.tools.list() == ()
+        await app.host.tools.register(definition(permissions=None))
+    assert app.host.tools.list() == ()
 
 
 @async_test

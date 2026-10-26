@@ -17,8 +17,8 @@ async def test_single_callback_pair_uses_call_names_and_invocation_identity(monk
         return completion_response(sent[-1], text='done')
 
     async with cached_application(monkeypatch, tmp_path, serve) as (app, _):
-        app.observability.subscribe(events.append)
-        result = await app.runs.start(await app.sessions.create('root'), [('user', 'task')])
+        app.host.observability.subscribe(events.append)
+        result = await app.host.runs.start(await app.host.sessions.create('root'), [('user', 'task')])
     pair = [event for event in events if event.event_type.startswith('model_call_')]
     assert [event.event_type for event in pair] == ['model_call_started', 'model_call_finished']
     assert pair[0].data.invocation_id == pair[1].data.invocation_id
@@ -37,9 +37,9 @@ async def test_gate_rejection_keeps_one_returned_model_fact_and_failed_run(monke
         return completion_response(json.loads(request.content), call=('probe', '{bad', 'bad'))
 
     async with cached_application(monkeypatch, tmp_path, serve) as (app, _):
-        app.observability.subscribe(events.append)
+        app.host.observability.subscribe(events.append)
         with pytest.raises(ModelResponseRejected) as caught:
-            await app.runs.start(await app.sessions.create('root'), [('user', 'task')])
+            await app.host.runs.start(await app.host.sessions.create('root'), [('user', 'task')])
     assert caught.value.reason == 'invalid_tool_calls'
     ends = [event for event in events if event.event_type == 'model_call_finished']
     assert len(ends) == 1 and ends[0].data.status == 'returned'

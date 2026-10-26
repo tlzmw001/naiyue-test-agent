@@ -8,7 +8,7 @@ import pytest
 from langchain_core.messages import HumanMessage
 
 from naiyue_test_agent.application.memory.memory_batches import proposal_request
-from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
+from naiyue_test_agent.contracts.memory import MemoryReadError
 from test_async_application import StreamingToolModel
 from test_memory_batches import archive, batch, save
 from test_memory_job_runner import fixture, response

@@ -8,7 +8,7 @@ import pytest
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from naiyue_test_agent.application.memory import memory_overview_store as store
+from naiyue_test_agent.storage.memory_sql import memory_overview_store as store
 from test_async_application import StreamingToolModel
 from test_memory_batches import archive, save
 from test_memory_job_runner import fixture, response, until
@@ -190,13 +190,13 @@ def test_rewrite_after_previous_overview_read_cannot_revalidate_old_summary(arch
         model = StreamingToolModel(replies=[response()])
         second_service, second, _ = fixture(archive, tmp_path, model)
         second.task_id = 'b' * 32; second.start = (2, 0); second.upper = 2
-        original, calls = archive.memory.build_batch, []
+        original, calls = memory_job_runner.build_batch, []
         def rewritten(*args, **kwargs):
             if not calls:
                 calls.append(True)
                 save(archive, [HumanMessage(id='old', content='corrected saved work')])
             return original(*args, **kwargs)
-        monkeypatch.setattr(archive.memory, 'build_batch', rewritten)
+        monkeypatch.setattr(memory_job_runner, 'build_batch', rewritten)
         try:
             await memory_job_runner.drive(second_service, second)
             assert second.result_status == 'failed' and second.overview_saved == 0 and not model.seen

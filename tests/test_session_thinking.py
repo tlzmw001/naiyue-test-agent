@@ -94,21 +94,21 @@ def test_web_selection_is_validated_authenticated_and_restored(monkeypatch, tmp_
     async def scenario():
         model = StreamingToolModel(replies=[])
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
-            catalog = web.state.service.application.models._catalog
+            catalog = web.state.service.application.sessions._sessions._catalog
             catalog._thinking_capabilities['A'] = {'kind': 'openai', 'levels': ('low', 'high')}
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            endpoint = f'/api/sessions/{sid}/thinking'
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            endpoint = f'/api/v1/scopes/chats/sessions/{sid}/thinking'
             body = {'model_id': 'A', 'thinking_level': 'high'}
             assert (await client.patch(endpoint, json=body, headers={'Authorization': ''})).status_code == 401
             assert (await client.patch(endpoint, json=body)).json() == body
             for bad in ({**body, 'thinking_level': 'max'}, {**body, 'model_id': 'other'}, {**body, 'extra': 1}):
                 assert (await client.patch(endpoint, json=bad)).status_code == 422
-            assert (await client.get(f'/api/sessions/{sid}')).json()['thinking_level'] == 'high'
+            assert (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()['thinking_level'] == 'high'
             assert model.seen == []
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
-            web.state.service.application.models._catalog._thinking_capabilities['A'] = {'kind': 'openai', 'levels': ('low', 'high')}
-            assert (await client.post(f'/api/sessions/{sid}/prepare')).status_code == 200
-            assert (await client.get(f'/api/sessions/{sid}')).json()['thinking_level'] == 'high'
-            assert (await client.patch(f'/api/sessions/{sid}/model', json={'model_id': 'A'})).status_code == 200
-            assert (await client.get(f'/api/sessions/{sid}')).json()['thinking_level'] == 'model_default'
+            web.state.service.application.sessions._sessions._catalog._thinking_capabilities['A'] = {'kind': 'openai', 'levels': ('low', 'high')}
+            assert (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/prepare')).status_code == 200
+            assert (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()['thinking_level'] == 'high'
+            assert (await client.patch(f'/api/v1/scopes/chats/sessions/{sid}/model', json={'model_id': 'A'})).status_code == 200
+            assert (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()['thinking_level'] == 'model_default'
     asyncio.run(scenario())

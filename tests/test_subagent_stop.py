@@ -30,10 +30,10 @@ async def test_stop_one_pending_child_keeps_sibling_running_and_decision_history
         AIMessage(content='root continued')])
     app, _ = await delegated_app(monkeypatch, child, root=root, tools=[definition(calls=effects, approved=True)])
     instances = record_instances(monkeypatch, app)
-    app.observability.subscribe(events.append)
+    app.host.observability.subscribe(events.append)
     queue = approval_notifications(monkeypatch, app)
-    sid = await app.sessions.create('A')
-    task = asyncio.create_task(app.runs.start(sid, [('user', 'two checks')]))
+    sid = await app.host.sessions.create('A')
+    task = asyncio.create_task(app.host.runs.start(sid, [('user', 'two checks')]))
     try:
         batch = await next_approval(app, sid, queue)
         await asyncio.wait_for(entered.wait(), 5)
@@ -42,14 +42,14 @@ async def test_stop_one_pending_child_keeps_sibling_running_and_decision_history
         pending = a['approval']
         driver = a['driver']
         if approve_first: await submit(app, sid, batch)
-        assert app.runs.stop(sid, run_id=batch['origin_run_id'], agent_path=a['agent_path']) == []
+        assert app.host.runs.stop(sid, run_id=batch['origin_run_id'], agent_path=a['agent_path']) == []
         done, _ = await asyncio.wait((driver,), timeout=5)
         assert done and a['status'] == 'stopped'
-        assert not task.done() and not b['control'].requested and not app.sessions._sessions.is_stop_requested(sid)
+        assert not task.done() and not b['control'].requested and not app.host.sessions._sessions.is_stop_requested(sid)
         assert pending.status == ('accepted' if approve_first else 'invalidated')
         assert pending.decisions == (('approve',) if approve_first else None)
         with pytest.raises(ValueError): await submit(app, sid, batch)
-        assert effects == [] and app.runs.pending_approvals(sid) == []
+        assert effects == [] and app.host.runs.pending_approvals(sid) == []
         release.set()
         result = await asyncio.wait_for(task, 5)
         feedback = {m.tool_call_id: m for m in result['messages'] if isinstance(m, ToolMessage)}
@@ -71,14 +71,14 @@ async def test_root_stop_between_saved_interrupt_and_registration_cannot_leave_a
     from naiyue_test_agent.application.sessions.agent_session import AgentSession
     register = ApprovalBook.register_live_approval
     def stop_then_register(self, instance, *args):
-        app.runs.stop(instance['session_id'], run_id=instance['root_run_id'])
+        app.host.runs.stop(instance['session_id'], run_id=instance['root_run_id'])
         return register(self, instance, *args)
     monkeypatch.setattr(ApprovalBook, 'register_live_approval', stop_then_register)
-    sid = await app.sessions.create('A')
-    result = await asyncio.wait_for(app.runs.start(sid, [('user', 'start')]), 5)
+    sid = await app.host.sessions.create('A')
+    result = await asyncio.wait_for(app.host.runs.start(sid, [('user', 'start')]), 5)
     assert result['run_stopped'] and effects == [] and len(root.seen) == 1
     assert instances[0]['status'] == 'stopped' and instances[0]['settled']
-    assert app.runs.pending_approvals(sid) == [] and all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.sessions._sessions._sessions.values())
+    assert app.host.runs.pending_approvals(sid) == [] and all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.host.sessions._sessions._sessions.values())
 
 
 @async_test
@@ -88,13 +88,13 @@ async def test_close_stops_pending_child_before_waiting_and_closing_catalog(monk
     app, _ = await delegated_app(monkeypatch, child, tools=[definition(calls=effects, approved=True)])
     queue = approval_notifications(monkeypatch, app)
     instances = record_instances(monkeypatch, app)
-    sid = await app.sessions.create('A')
-    task = asyncio.create_task(app.runs.start(sid, [('user', 'start')]))
+    sid = await app.host.sessions.create('A')
+    task = asyncio.create_task(app.host.runs.start(sid, [('user', 'start')]))
     try:
         await next_approval(app, sid, queue)
         await asyncio.wait_for(app.aclose(), 5)
         result = await task
-        assert result['run_stopped'] and effects == [] and app._lifetime._closed
+        assert result['run_stopped'] and effects == [] and app.root._lifetime._closed
         instance, = instances
         assert instance['control'].reason == 'close' and instance['settled'] and instance['status'] == 'stopped'
     finally:
@@ -118,7 +118,7 @@ async def test_cross_thread_stop_is_visible_before_approval_registration_and_not
             request(reason)
         monkeypatch.setattr(instance['control'], 'request', delayed_notification)
         def stop():
-            try: app.runs.stop(instance['session_id'], agent_path=instance['agent_path'])
+            try: app.host.runs.stop(instance['session_id'], agent_path=instance['agent_path'])
             except BaseException as error: errors.append(error)
         stopper = Thread(target=stop)
         stoppers.append(stopper)
@@ -127,7 +127,7 @@ async def test_cross_thread_stop_is_visible_before_approval_registration_and_not
         return register(self, instance, *args)
     monkeypatch.setattr(ApprovalBook, 'register_live_approval', stop_then_register)
     try:
-        result = await asyncio.wait_for(app.runs.start(await app.sessions.create('A'), [('user', 'start')]), 5)
+        result = await asyncio.wait_for(app.host.runs.start(await app.host.sessions.create('A'), [('user', 'start')]), 5)
         assert result['messages'][-1].content == 'root done' and len(root.seen) == 2
         feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
         assert feedback.status == 'error' and 'stopped' in feedback.content.lower()

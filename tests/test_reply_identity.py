@@ -16,17 +16,17 @@ async def test_all_tool_rounds_share_task_and_next_task_is_distinct(monkeypatch,
         {'name': 'read', 'id': 'call', 'args': {'path': 'note'}}]),
         AIMessage(content='done'), AIMessage(content='next')])
     async with build(monkeypatch, tmp_path / 'state.sqlite', model, [create_session_read_tool()]) as app:
-        sid = await app.sessions.create_workspace('A', tmp_path)
+        sid = await app.host.sessions.create_workspace('A', tmp_path)
         events = []
-        app.observability.subscribe(events.append)
-        result = await app.runs.start(sid, [HumanMessage(content='read')])
+        app.host.observability.subscribe(events.append)
+        result = await app.host.runs.start(sid, [HumanMessage(content='read')])
         reply = result['messages'][0].additional_kwargs['naiyue_reply_id']
         assert all(m.additional_kwargs.get('naiyue_reply_id') == reply for m in result['messages'] if m.type != 'tool')
-        rows = app.sessions._persistence.storage.conversation.read_chat_page(sid, app.sessions._persistence.storage.sessions.get(sid)['thread_id'], limit=20, body_bytes=10000, preview_chars=100)
+        rows = app.host.sessions._persistence.storage.conversation.read_chat_page(sid, app.host.sessions._persistence.storage.sessions.get(sid)['thread_id'], limit=20, body_bytes=10000, preview_chars=100)
         assert {r['reply_id'] for r in rows['records']} == {reply}
         snapshots = [json.loads(e.data.snapshot_json) for e in events if e.event_type == 'message_completed']
         assert snapshots and all(row['reply_id'] == reply for row in snapshots)
-        result = await app.runs.start(sid, [('user', 'next')])
+        result = await app.host.runs.start(sid, [('user', 'next')])
         assert result['messages'][-1].additional_kwargs['naiyue_reply_id'] != reply
 
 
@@ -39,8 +39,8 @@ async def test_approval_resume_keeps_original_reply(monkeypatch, tmp_path):
     model = ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'read', 'id': 'call', 'args': {'path': str(outside)}}]), AIMessage(content='done')])
     async with build(monkeypatch, tmp_path / 'state.sqlite', model, [create_session_read_tool()]) as app:
-        sid = await app.sessions.create_workspace('A', root)
-        paused = await app.runs.start(sid, [('user', 'read outside')])
+        sid = await app.host.sessions.create_workspace('A', root)
+        paused = await app.host.runs.start(sid, [('user', 'read outside')])
         reply = paused['messages'][0].additional_kwargs['naiyue_reply_id']
-        resumed = await app.runs.resume_approval(sid, ['approve'])
+        resumed = await app.host.runs.resume_approval(sid, ['approve'])
         assert resumed['messages'][-1].additional_kwargs['naiyue_reply_id'] == reply

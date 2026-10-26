@@ -1,4 +1,4 @@
-from cli_portal_helpers import portal
+from terminal_protocol_stubs import protocol_stub
 """Observation commands read bounded saved facts without running the Agent."""
 
 import asyncio
@@ -33,7 +33,7 @@ def summary(rid='r', *, capture='partial'):
 def test_usage_command_preserves_big_duration_unknown_counts_groups_and_cursor():
     from naiyue_test_agent.cli.cli_observation import handle_observation_command
     lines, calls = [], []
-    app = portal(observability=SimpleNamespace(usage=lambda sid, **q: calls.append((sid, q)) or usage()))
+    app = protocol_stub(observability=SimpleNamespace(usage=lambda sid, **q: calls.append((sid, q)) or usage()))
     handle_observation_command(app, 's', ':usage --after-model A', lines.append)
     out = '\n'.join(lines)
     assert calls == [('s', {'after_model': 'A'})]
@@ -48,7 +48,7 @@ def test_diagnostic_list_retains_status_zero_and_unknown_http(capture):
     from naiyue_test_agent.cli.cli_observation import handle_observation_command
     lines, calls = [], []
     item = summary(capture=capture)
-    app = portal(observability=SimpleNamespace(runs=lambda sid, **q: calls.append((sid, q)) or {'session_id': sid, 'runs': [item], 'next_before': 7}))
+    app = protocol_stub(observability=SimpleNamespace(runs=lambda sid, **q: calls.append((sid, q)) or {'session_id': sid, 'runs': [item], 'next_before': 7}))
     handle_observation_command(app, 's', ':diagnostics --before 9', lines.append)
     out = '\n'.join(lines)
     assert calls == [('s', {'before': 9})]
@@ -71,7 +71,7 @@ def test_detail_shows_headers_and_model_failure_independently_with_child_identit
               {'session_id': 's', 'run_id': 'r', 'sequence': 3, 'event_type': 'model_call_finished', 'source': child,
                'data': {'invocation_id': 'i', 'status': 'failed', 'duration_ms': None,
                         'body': 'PRIVATE_BODY', 'tool_name': '\x1b[31m\nforged'}}]
-    app = portal(observability=SimpleNamespace(events=lambda sid, rid, **q: calls.append((sid, rid, q)) or {'session_id': sid, 'run_id': rid, 'summary': summary(), 'events': events, 'next_after': 3}))
+    app = protocol_stub(observability=SimpleNamespace(events=lambda sid, rid, **q: calls.append((sid, rid, q)) or {'session_id': sid, 'run_id': rid, 'summary': summary(), 'events': events, 'next_after': 3}))
     handle_observation_command(app, 's', ':diagnostics r --after 1', lines.append)
     out = '\n'.join(lines)
     assert calls == [('s', 'r', {'after': 1})]
@@ -102,7 +102,7 @@ def test_empty_records_are_reported_without_inventing_statistics(line):
             calls.append((args, kwargs))
             return value
         return query
-    app = portal(observability=SimpleNamespace(usage=read(empty_usage), runs=read({'session_id': 's', 'runs': [], 'next_before': None}), events=read({'session_id': 's', 'run_id': 'r', 'summary': summary(), 'events': [], 'next_after': None})))
+    app = protocol_stub(observability=SimpleNamespace(usage=read(empty_usage), runs=read({'session_id': 's', 'runs': [], 'next_before': None}), events=read({'session_id': 's', 'run_id': 'r', 'summary': summary(), 'events': [], 'next_after': None})))
     handle_observation_command(app, 's', line, lines.append)
     assert len(calls) == 1
     expected = {':usage': '暂无已保存的调用用量记录', ':diagnostics': '暂无已保留的运行诊断',
@@ -121,7 +121,7 @@ def test_foreign_result_is_not_displayed(foreign):
     else:
         value['session_id' if foreign == 'session' else 'run_id'] = 'PRIVATE_FOREIGN'
     lines = []
-    app = portal(observability=SimpleNamespace(events=lambda *a, **q: value))
+    app = protocol_stub(observability=SimpleNamespace(events=lambda *a, **q: value))
     handle_observation_command(app, 's', ':diagnostics r', lines.append)
     assert '读取失败' in '\n'.join(lines) and 'PRIVATE_FOREIGN' not in '\n'.join(lines)
 
@@ -130,29 +130,26 @@ def test_query_failure_is_safe_and_original_exception_is_not_printed(caplog):
     from naiyue_test_agent.cli.cli_observation import handle_observation_command
     def fail(*a, **q): raise OSError('PRIVATE_SQL_BODY')
     lines = []
-    handle_observation_command(portal(observability=SimpleNamespace(usage=fail)), 's', ':usage', lines.append)
+    handle_observation_command(protocol_stub(observability=SimpleNamespace(usage=fail)), 's', ':usage', lines.append)
     assert '读取失败' in '\n'.join(lines)
     assert 'PRIVATE_SQL_BODY' not in '\n'.join(lines) + caplog.text
     assert 'cli_observation_read_failed' in caplog.text
 
 
-def test_async_bridge_delegates_reads_on_its_existing_loop(monkeypatch):
-    from naiyue_test_agent.cli.cli_async import AsyncCliApplication
-    bridge = object.__new__(AsyncCliApplication)
+def test_observation_api_preserves_repository_query_boundaries(monkeypatch):
     calls = []
     async def read(*args, **kwargs):
         calls.append((args, kwargs)); return 'saved'
     from contextlib import nullcontext
     from naiyue_test_agent.application.observability.api import ObservationAPI
-    bridge._app = SimpleNamespace(observability=ObservationAPI(
+    api = ObservationAPI(
         SimpleNamespace(operation=nullcontext), None,
         SimpleNamespace(read_model_usage=lambda *a, **q: calls.append((a, q)) or 'saved'),
         SimpleNamespace(read_diagnostic_runs=lambda *a, **q: calls.append((a, q)) or 'saved',
-                        read_diagnostic_events=lambda *a, **q: calls.append((a, q)) or 'saved'), None, None))
-    bridge._submit = lambda call: asyncio.run(call())
-    assert bridge.call(lambda api: api.observability.usage('s', after_model='A')) == 'saved'
-    assert bridge.call(lambda api: api.observability.runs('s', before=9)) == 'saved'
-    assert bridge.call(lambda api: api.observability.events('s', 'r', after=4)) == 'saved'
+                        read_diagnostic_events=lambda *a, **q: calls.append((a, q)) or 'saved'), None, None)
+    assert asyncio.run(api.usage('s', after_model='A')) == 'saved'
+    assert asyncio.run(api.runs('s', before=9)) == 'saved'
+    assert asyncio.run(api.events('s', 'r', after=4)) == 'saved'
     assert calls == [(('s',), {'model_limit': 20, 'after_model': 'A'}),
         (('s',), {'limit': 50, 'before': 9}), (('s', 'r'), {'limit': 50, 'after': 4})]
 
@@ -179,6 +176,6 @@ def test_event_identity_is_not_translated_as_a_status():
     value = {'session_id': 's', 'run_id': 'r', 'summary': summary(), 'next_after': None,
         'events': [{'session_id': 's', 'run_id': 'r', 'sequence': 1, 'source': None,
             'event_type': 'model_call_started', 'data': {'model_id': 'failed', 'invocation_id': 'summary'}}]}
-    handle_observation_command(portal(observability=SimpleNamespace(events=lambda *a, **q: value)), 's',
+    handle_observation_command(protocol_stub(observability=SimpleNamespace(events=lambda *a, **q: value)), 's',
                                ':diagnostics r', lines.append)
     assert '模型 failed' in '\n'.join(lines) and '模型执行 summary' in '\n'.join(lines)

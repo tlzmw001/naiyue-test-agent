@@ -4,7 +4,8 @@ import json
 import logging
 import re
 
-from naiyue_test_agent.application.sessions.background_tasks import TaskQueryError
+from naiyue_test_agent.service.settings import ServiceError
+from urllib.parse import urlencode
 
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ def handle_background_command(app, line, emit):
         return
     try:
         if listing:
-            result = app.call(lambda api: api.tasks.list(before=parts[1] if len(parts) == 2 else None))
+            result = app.request('GET', '/background-tasks' + ('?' + urlencode({'before': parts[1]}) if len(parts) == 2 else ''))
             emit(f'后台活动任务：{result["active_count"]}')
             if not result['items']:
                 emit('没有后台任务')
@@ -49,13 +50,13 @@ def handle_background_command(app, line, emit):
                 emit(f'下一页：:tasks {result["next_before"]}')
             return
         if parts[1] == 'stop':
-            result = app.call(lambda api: api.tasks.stop(parts[2]))
+            result = app.request('POST', f'/background-tasks/{parts[2]}/stop')
             _status(result, emit)
             if not result['cleanup_confirmed']:
                 emit('记忆整理收尾尚未确认，请人工核对；任务记录仍保留。' if result.get('kind') == 'memory'
                     else '进程清理尚未确认，请人工核对；任务记录仍保留。')
         else:
-            result = app.call(lambda api: api.tasks.output(parts[2]))
+            result = app.request('GET', f'/background-tasks/{parts[2]}/output')
             _status(result, emit)
             emit(_text(result['output']))
             if result['truncated']:
@@ -64,8 +65,14 @@ def handle_background_command(app, line, emit):
                 emit('归档引用：' + _text(json.dumps(result['archive_paths'], ensure_ascii=False)))
             if not result['output_available']:
                 emit('日志文件不可用，以上为保留的内存尾部。')
-    except TaskQueryError as error:
-        emit('任务不存在或不在当前范围。' if error.code == 'task_not_found' else '分页位置无效，请重新执行 :tasks。')
+    except ServiceError as error:
+        if error.code == 'task_not_found':
+            emit('任务不存在或不在当前范围。')
+        elif error.code == 'task_cursor_invalid':
+            emit('分页位置无效，请重新执行 :tasks。')
+        else:
+            logger.error('cli_background_task_failed code=%s', error.code)
+            emit('后台任务操作未确认，请重新查询状态后核对。')
     except Exception as error:
         logger.error('cli_background_task_failed error_type=%s', type(error).__name__)
         emit('后台任务操作未确认，请重新查询状态后核对。')

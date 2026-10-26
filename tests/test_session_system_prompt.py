@@ -78,8 +78,8 @@ async def test_workspace_file_precedence_and_session_isolation(monkeypatch, tmp_
     app = await build_app(monkeypatch, model)
 
     for root in (first, second, empty):
-        await app.runs.start(await app.sessions.create_workspace('A', root), [('user', 'hello')])
-    await app.runs.start(await app.sessions.create('A'), [('user', 'hello')])
+        await app.host.runs.start(await app.host.sessions.create_workspace('A', root), [('user', 'hello')])
+    await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'hello')])
 
     prompts = [system_text(messages) for messages in model.inputs]
     assert 'FIRST_AGENTS_SECRET' in prompts[0]
@@ -110,10 +110,10 @@ async def test_project_instructions_are_frozen_for_one_run_and_reloaded_next_run
         AIMessage(content='second run done'),
     ])
     app = await build_app(monkeypatch, model, tools=[ToolSpec(update_instructions, update_instructions.args_schema, permissions=ToolPermission(default='allow'))])
-    session = await app.sessions.create_workspace('A', tmp_path)
+    session = await app.host.sessions.create_workspace('A', tmp_path)
 
-    await app.runs.start(session, [('user', 'update')])
-    await app.runs.start(session, [('user', 'continue')])
+    await app.host.runs.start(session, [('user', 'update')])
+    await app.host.runs.start(session, [('user', 'continue')])
 
     prompts = [system_text(messages) for messages in model.inputs]
     assert 'VERSION_ONE' in prompts[0]
@@ -136,12 +136,12 @@ async def test_approval_resume_starts_new_prompt_snapshot(monkeypatch, tmp_path)
         AIMessage(content='done'),
     ])
     app = await build_app(monkeypatch, model, tools=[create_session_read_tool()])
-    session = await app.sessions.create_workspace('A', root)
+    session = await app.host.sessions.create_workspace('A', root)
 
-    paused = await app.runs.start(session, [('user', 'read outside')])
+    paused = await app.host.runs.start(session, [('user', 'read outside')])
     assert paused['approval_requests'][0]['tool_call_id'] == 'outside-read'
     (root / 'AGENTS.md').write_text('AFTER_APPROVAL', encoding='utf-8')
-    resumed = await app.runs.resume_approval(session, ['approve'])
+    resumed = await app.host.runs.resume_approval(session, ['approve'])
 
     assert resumed['messages'][-1].content == 'done'
     assert 'BEFORE_APPROVAL' in system_text(model.inputs[0])
@@ -167,14 +167,14 @@ async def test_invalid_preferred_file_fails_before_model_and_releases_session(
         preferred.write_bytes(b'PRIVATE_BODY' + b'X' * (64 * 1024))
     model = RecordingModel(responses=[AIMessage(content='recovered')])
     app = await build_app(monkeypatch, model)
-    session = await app.sessions.create_workspace('A', root)
+    session = await app.host.sessions.create_workspace('A', root)
 
     with pytest.raises(ProjectInstructionsError):
-        await app.runs.start(session, [('user', 'first')])
+        await app.host.runs.start(session, [('user', 'first')])
     assert model.inputs == []
     assert 'PRIVATE_BODY' not in caplog.text
     assert 'MUST_NOT_FALL_BACK' not in caplog.text
 
     preferred.unlink()
-    await app.runs.start(session, [('user', 'second')])
+    await app.host.runs.start(session, [('user', 'second')])
     assert 'MUST_NOT_FALL_BACK' in system_text(model.inputs[0])

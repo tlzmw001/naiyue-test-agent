@@ -1,5 +1,5 @@
 """Necessary reply boundaries and regeneration state."""
-from naiyue_test_agent.application.conversation import reply_storage as sql
+from naiyue_test_agent.storage.conversation_sql import reply_storage as sql
 
 
 class ReplyRepo:

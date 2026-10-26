@@ -37,17 +37,17 @@ async def test_two_sessions_own_their_child_approval_and_stop_independently(monk
         call('subagent', {'agent': 'tester', 'task': 'B'}, 'outer-b'), AIMessage(content='root B done')])
     app, _ = await delegated_app(monkeypatch, child, root=root,
         tools=[definition(calls=effects, approved=True)])
-    a_id, b_id = await app.sessions.create('A'), await app.sessions.create('A')
-    a, b = app.sessions._sessions._sessions[a_id], app.sessions._sessions._sessions[b_id]
-    first = asyncio.create_task(app.runs.start(a_id, [('user', 'check A')]))
+    a_id, b_id = await app.host.sessions.create('A'), await app.host.sessions.create('A')
+    a, b = app.host.sessions._sessions._sessions[a_id], app.host.sessions._sessions._sessions[b_id]
+    first = asyncio.create_task(app.host.runs.start(a_id, [('user', 'check A')]))
     second = None
     try:
         assert (await asyncio.wait_for(queue.get(), 5))[0] == a_id
-        a_batch, = app.runs.pending_subagents(a_id)
-        second = asyncio.create_task(app.runs.start(b_id, [('user', 'check B')]))
+        a_batch, = app.host.runs.pending_subagents(a_id)
+        second = asyncio.create_task(app.host.runs.start(b_id, [('user', 'check B')]))
         assert (await asyncio.wait_for(queue.get(), 5))[0] == b_id
-        b_batch, = app.runs.pending_subagents(b_id)
-        assert not hasattr(app.sessions._sessions, '_subagent_instances')
+        b_batch, = app.host.runs.pending_subagents(b_id)
+        assert not hasattr(app.host.sessions._sessions, '_subagent_instances')
         assert tuple(a._runtime.run.subagent_instances) == (a_batch['agent_path'],)
         assert tuple(b._runtime.run.subagent_instances) == (b_batch['agent_path'],)
         a_instance, = a._runtime.run.subagent_instances.values()
@@ -61,10 +61,10 @@ async def test_two_sessions_own_their_child_approval_and_stop_independently(monk
             await submit(app, b_id, a_batch)
         assert a.is_busy() and b.is_busy() and effects == []
         root_run = b.lifecycle.snapshot_for_run()['run_id']
-        app.runs.stop(a_id, run_id=a.lifecycle.snapshot_for_run()['run_id'])
+        app.host.runs.stop(a_id, run_id=a.lifecycle.snapshot_for_run()['run_id'])
         assert (await asyncio.wait_for(first, 5))['run_stopped']
         assert not b_instance['control'].requested and not second.done()
-        assert app.runs.pending_subagents(b_id) == [b_batch]
+        assert app.host.runs.pending_subagents(b_id) == [b_batch]
         assert (a._runtime.run.subagent_instances if a._runtime.run else {}) == {} and a_instance['settled']
         with pytest.raises(SessionBusyError):
             b.controls.request_scope_stop(run_id='stale-run')
@@ -85,14 +85,14 @@ async def test_two_sessions_own_their_child_approval_and_stop_independently(monk
 async def test_role_registered_after_session_creation_uses_shared_graph(monkeypatch):
     child = ChildModel(replies=[AIMessage(content='child report')])
     app, _ = await delegated_app(monkeypatch, child, settings=AppSettings(subagents=()))
-    sid = await app.sessions.create('A')
-    owner = app.sessions._sessions._sessions[sid]
+    sid = await app.host.sessions.create('A')
+    owner = app.host.sessions._sessions._sessions[sid]
     assert (owner._runtime.run.subagent_instances if owner._runtime.run else {}) == {}
-    await app.subagents.register(role())
-    result = await app.runs.start(sid, [('user', 'check')])
+    await app.host.subagents.register(role())
+    result = await app.host.runs.start(sid, [('user', 'check')])
     feedback = next(message for message in result['messages'] if isinstance(message, ToolMessage))
     assert json.loads(feedback.content)['report'] == 'child report' and feedback.status == 'success'
-    assert app.sessions._sessions._subagents['tester']['agent'].checkpointer.backend is app.runs._agent.checkpointer
+    assert app.host.sessions._sessions._subagents['tester']['agent'].checkpointer.backend is app.host.runs._agent.checkpointer
     assert (owner._runtime.run.subagent_instances if owner._runtime.run else {}) == {} and len(child.seen) == 1
     await app.aclose()
 
@@ -101,17 +101,17 @@ async def test_role_registered_after_session_creation_uses_shared_graph(monkeypa
 async def test_preparation_rejects_context_for_another_session(monkeypatch):
     child = ChildModel(replies=[])
     app, _ = await delegated_app(monkeypatch, child)
-    sid, other = await app.sessions.create('A'), await app.sessions.create('A')
+    sid, other = await app.host.sessions.create('A'), await app.host.sessions.create('A')
     original = SubagentRegistry.prepare_subagent_instance
     def forge(self, *args, **kwargs):
         kwargs['parent_context'] = replace(kwargs['parent_context'], scope=replace(kwargs['parent_context'].scope, identity=replace(kwargs['parent_context'].scope.identity, session_id=other), background_notices=None))
         return original(self, *args, **kwargs)
     monkeypatch.setattr(SubagentRegistry, 'prepare_subagent_instance', forge)
     with pytest.raises(PermissionMechanismError, match='session'):
-        await app.runs.start(sid, [('user', 'check')])
+        await app.host.runs.start(sid, [('user', 'check')])
     assert child.seen == []
-    assert all((owner._runtime.run.subagent_instances if owner._runtime.run else {}) == {} for owner in app.sessions._sessions._sessions.values())
-    assert not app.sessions._sessions._sessions[other].is_busy()
+    assert all((owner._runtime.run.subagent_instances if owner._runtime.run else {}) == {} for owner in app.host.sessions._sessions._sessions.values())
+    assert not app.host.sessions._sessions._sessions[other].is_busy()
     await app.aclose()
 
 
@@ -129,11 +129,11 @@ async def test_root_finish_calls_its_own_child_settle_and_check(monkeypatch):
     monkeypatch.setattr(SubagentRegistry, 'assert_subagents_settled', checked)
     child = ChildModel(replies=[AIMessage(content='report')])
     app, _ = await delegated_app(monkeypatch, child)
-    sid = await app.sessions.create('A')
-    await app.runs.start(sid, [('user', 'check')])
+    sid = await app.host.sessions.create('A')
+    await app.host.runs.start(sid, [('user', 'check')])
     assert [item[:2] for item in calls] == [('settle', sid), ('check', sid)]
     assert calls[0][2] == calls[1][2]
     for name in ('prepare_subagent_instance', '_subagent_steps', 'register_live_approval',
                  'settle_subagent_drivers', 'assert_subagents_settled'):
-        assert not hasattr(app.sessions._sessions, name)
+        assert not hasattr(app.host.sessions._sessions, name)
     await app.aclose()

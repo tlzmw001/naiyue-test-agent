@@ -19,9 +19,9 @@ def test_real_write_keeps_history_lock_from_source_save_through_mutation_and_reo
             proposal=proposal(), sources=[dict(current_user=True, quote=text)])), AIMessage(content='saved')])
         observed = []
         async with opened(monkeypatch, tmp_path, model) as app:
-            sid = await app.sessions.create_workspace('A', tmp_path)
-            persistence = app.sessions._persistence
-            collect, query = session_persistence.collect_chat_updates, app.memory._access.query
+            sid = await app.host.sessions.create_workspace('A', tmp_path)
+            persistence = app.host.sessions._persistence
+            collect, query = session_persistence.collect_chat_updates, app.host.memory._access.query
             async def collect_sources(*args, **kwargs):
                 if not kwargs:
                     observed.append(('source', persistence.history_lock(sid).locked()))
@@ -33,19 +33,19 @@ def test_real_write_keeps_history_lock_from_source_save_through_mutation_and_reo
                     assert any(row['message_type'] == 'human' for row in rows)
                 return query(source, project, request, **kwargs)
             monkeypatch.setattr(session_persistence, 'collect_chat_updates', collect_sources)
-            monkeypatch.setattr(app.memory._access, 'query', mutate)
-            result = await app.runs.start(sid, [('user', text)])
+            monkeypatch.setattr(app.host.memory._access, 'query', mutate)
+            result = await app.host.runs.start(sid, [('user', text)])
             saved = json.loads(feedback(result)[0].content)['item']
             assert observed == [('source', True), ('write', True)]
             assert saved['version'] == 1 and not persistence.history_lock(sid).locked()
         model = StreamingToolModel(replies=[call('memory', dict(action='read', scope='workspace',
             memory_id=saved['memory_id'], version=1)), AIMessage(content='restored')])
         async with opened(monkeypatch, tmp_path, model) as app:
-            await app.sessions.restore(sid)
-            result = await app.runs.start(sid, [('user', 'read saved')])
+            await app.host.sessions.restore(sid)
+            result = await app.host.runs.start(sid, [('user', 'read saved')])
             assert feedback(result)[0].status == 'success' and '使用.venv' in feedback(result)[0].content
-            owner = app.sessions._sessions.require(sid)
-            assert owner.lifecycle._memory is app.memory and owner.subagents._memory is app.memory
+            owner = app.host.sessions._sessions.require(sid)
+            assert owner.lifecycle._memory is app.host.memory and owner.subagents._memory is app.host.memory
     asyncio.run(scenario())
 
 
@@ -64,15 +64,15 @@ def test_source_save_failure_rejects_memory_write_but_preserves_root_finish(monk
             return await collect(*args, **kwargs)
         monkeypatch.setattr(session_persistence, 'collect_chat_updates', fail_sources)
         async with opened(monkeypatch, tmp_path, model) as app:
-            sid = await app.sessions.create_workspace('A', tmp_path)
-            result = await app.runs.start(sid, [('user', text)])
+            sid = await app.host.sessions.create_workspace('A', tmp_path)
+            result = await app.host.runs.start(sid, [('user', text)])
             message, = feedback(result)
             assert failures == [True] and message.status == 'error' and 'memory_source_save_failed' in message.content
             assert 'PRIVATE-source-body' not in message.content + caplog.text
             assert result['messages'][-1].content == 'write failed'
-            assert (await app.sessions.status(sid))['last_run_status'] == 'completed'
-            assert app.sessions._persistence.storage.database.read_rows('SELECT memory_id FROM naiyue_memories') == []
-            assert not app.sessions._persistence.history_lock(sid).locked()
+            assert (await app.host.sessions.status(sid))['last_run_status'] == 'completed'
+            assert app.host.sessions._persistence.storage.database.read_rows('SELECT memory_id FROM naiyue_memories') == []
+            assert not app.host.sessions._persistence.history_lock(sid).locked()
     asyncio.run(scenario())
 
 
@@ -85,8 +85,8 @@ def test_close_and_cancel_drain_started_memory_io_before_unlocking_or_closing(mo
         entered, closing_started = asyncio.Event(), asyncio.Event()
         release, finished = Event(), Event()
         async with opened(monkeypatch, tmp_path, model) as app:
-            sid = await app.sessions.create_workspace('A', tmp_path)
-            access, persistence, loop = app.memory._access, app.sessions._persistence, asyncio.get_running_loop()
+            sid = await app.host.sessions.create_workspace('A', tmp_path)
+            access, persistence, loop = app.host.memory._access, app.host.sessions._persistence, asyncio.get_running_loop()
             query, close = access.query, access.close
             close_observations = []
             def held_query(source, project, request, **kwargs):
@@ -100,14 +100,14 @@ def test_close_and_cancel_drain_started_memory_io_before_unlocking_or_closing(mo
             def closed():
                 close_observations.append((finished.is_set(), persistence.history_lock(sid).locked()))
                 close()
-            stop = app.sessions._sessions.stop_loaded_sessions
+            stop = app.host.sessions._sessions.stop_loaded_sessions
             def stopping():
                 stop()
                 closing_started.set()
             monkeypatch.setattr(access, 'query', held_query)
             monkeypatch.setattr(access, 'close', closed)
-            monkeypatch.setattr(app.sessions._sessions, 'stop_loaded_sessions', stopping)
-            running = asyncio.create_task(app.runs.start(sid, [('user', text)]))
+            monkeypatch.setattr(app.host.sessions._sessions, 'stop_loaded_sessions', stopping)
+            running = asyncio.create_task(app.host.runs.start(sid, [('user', text)]))
             closing = None
             try:
                 await asyncio.wait_for(entered.wait(), 5)
@@ -118,12 +118,12 @@ def test_close_and_cancel_drain_started_memory_io_before_unlocking_or_closing(mo
                 assert not closing.done() and persistence.history_lock(sid).locked()
                 assert not close_observations and not finished.is_set()
                 with pytest.raises(RuntimeError, match='owning event loop'):
-                    await app.memory.query(scope=None, request={'action': 'list'})
+                    await app.host.memory.query(scope=None, request={'action': 'list'})
                 release.set()
                 outcome, = await asyncio.gather(running, return_exceptions=True)
                 await closing
                 assert finished.is_set() and close_observations == [(True, False)]
-                assert not app._lifetime._operations and app._lifetime._closed
+                assert not app.host.runs._owner._operations and app.root._lifetime._closed
                 if cancel:
                     assert isinstance(outcome, asyncio.CancelledError)
                 else:

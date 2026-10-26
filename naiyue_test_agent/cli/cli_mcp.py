@@ -3,7 +3,7 @@
 import json
 import logging
 
-from naiyue_test_agent.mcp_client.tools import MCPPermission
+
 
 
 logger = logging.getLogger(__name__)
@@ -16,13 +16,13 @@ def handle_mcp_command(app, session_id, line, write):
             if len(parts) != 1:
                 write('用法：:mcp-refresh；只读取用户级 settings.toml 的 MCP 配置')
                 return
-            write(json.dumps(app.call(lambda api: api.mcp.refresh()), ensure_ascii=False))
+            write(json.dumps(app.request('POST', '/mcp/refresh'), ensure_ascii=False))
             return
-        specs = {spec.tool.name: spec for spec in app.call(lambda api: api.tools.list()) if spec.tool.name != 'subagent_list'}
-        selected = list(app.call(lambda api: api.sessions.active_tools(session_id)))
+        specs = {row['name']: row for row in app.request('GET', '/session-controls')['tools']}
+        selected = app.request('GET', f'/sessions/{session_id}')['active_tools']
         if len(parts) == 1:
             for name, spec in specs.items():
-                reason = spec.permissions.unavailable_reason() if isinstance(spec.permissions, MCPPermission) else None
+                reason = spec.get('unavailable_reason')
                 state = '不可用' if reason else '已选用' if name in selected else '未选用'
                 write(f'{name}：{state}')
             write('用法：:tools +工具名 -工具名；只修改当前主 Agent 下一次模型请求的工具选择')
@@ -32,15 +32,15 @@ def handle_mcp_command(app, session_id, line, write):
             if token[:1] not in ('+', '-') or name not in specs:
                 write('工具选择无效；用 :tools 查看名称，再用 +名称 或 -名称 修改')
                 return
-            permission = specs[name].permissions
-            if token[0] == '+' and isinstance(permission, MCPPermission) and permission.unavailable_reason():
+            permission = specs[name]
+            if token[0] == '+' and permission.get('unavailable_reason'):
                 write('该 MCP 工具当前不可用，请检查服务配置并刷新')
                 return
             if token[0] == '+' and name not in selected:
                 selected.append(name)
             elif token[0] == '-' and name in selected:
                 selected.remove(name)
-        app.call(lambda api: api.sessions.select_tools(session_id, selected))
+        app.request('PATCH', f'/sessions/{session_id}/tools', json={'active_tools': selected})
         write('工具选择已保存，下一次模型请求生效。')
     except Exception as error:
         logger.warning('cli_mcp_command_failed error_type=%s', type(error).__name__)

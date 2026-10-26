@@ -4,7 +4,7 @@ import logging
 
 from .errors import WebError, public_error
 from .serialization import encoded_size
-from .chat_history import history_page, history_window
+from .chat_history import history_page, history_window,cursor_token
 from naiyue_test_agent.agent_runtime.async_utils import await_settled
 
 
@@ -12,21 +12,24 @@ logger = logging.getLogger(__name__)
 
 
 class WebService:
-    def __init__(self, application, delivery, settings):
+    def __init__(self, application, delivery, settings, *, models=None, settings_path=None):
         self.application, self.delivery, self.settings = application, delivery, settings
+        self._models = models
+        self._settings_path = settings_path
 
     def models(self):
-        return {'default_model_id': self.application.models.default_id,
-                'model_ids': list(self.application.models.ids), 'thinking_options': self.application.models.thinking_options()}
+        models = self.application.models if self._models is None else self._models
+        return {'default_model_id': models.default_id,
+                'model_ids': list(models.ids), 'thinking_options': models.thinking_options()}
 
     def service_info(self):
         root = self.settings.workspace_root
         return {'workspace_root': str(root) if root is not None else None,
                 'workspace_label': (root.name or root.anchor) if root is not None else None}
 
-    async def skills(self):
+    async def skills(self,session_id=None):
         try:
-            catalog = await self.application.sessions.skills(self.settings.workspace_root)
+            catalog = await self.application.sessions.skills(self.settings.workspace_root,session_id=session_id) if session_id else await self.application.sessions.skills(self.settings.workspace_root)
             result = {'entries': [
                 {'source_id': item.source_id, 'name': item.name, 'description': item.description,
                  'command': catalog.command_for(item)} for item in catalog.entries],
@@ -90,7 +93,8 @@ class WebService:
 
     async def refresh_mcp(self):
         try:
-            result = await self.application.mcp.refresh()
+            result = await (self.application.mcp.refresh() if self._settings_path is None
+                            else self.application.mcp.refresh(self._settings_path))
         except ValueError:
             raise WebError('mcp_settings_invalid', 422) from None
         except Exception as error:
@@ -280,6 +284,13 @@ class WebService:
             live['context_snapshot'] = None
             logger.warning('web_context_summary_omitted reason=view_limit')
         if encoded_size(result) > self.settings.max_frame_bytes:
+            coverage=page['coverage']
+            cursor=cursor_token(self.settings,[1,session_id,None,coverage['upper']+1,coverage['upper'],coverage['history_version']])
+            reserve=max(0,encoded_size(cursor)-encoded_size(page['next_cursor']))
+            budget=encoded_size(page['messages'])-(encoded_size(result)-self.settings.max_frame_bytes)-reserve
+            page=history_window(page,[],self.settings,session_id,budget=budget)
+            result.update(messages=page['messages'],history={key:item for key,item in page.items() if key!='messages'})
+        if encoded_size(result) > self.settings.max_frame_bytes:
             raise WebError('view_too_large')
         return result
 
@@ -310,7 +321,7 @@ class WebService:
                 result = await self.application.observability.events(session_id, run_id,
                     limit=self.settings.diagnostic_page_size, after=after)
         except Exception as error:
-            from naiyue_test_agent.application.errors import SessionPersistenceError
+            from naiyue_test_agent.storage.errors import SessionPersistenceError
             if isinstance(error, SessionPersistenceError) and error.args == ('diagnostic_run_not_found',):
                 raise WebError('diagnostic_run_not_found', 404) from None
             logger.error('diagnostic_view_read_failed error_type=%s', type(error).__name__)

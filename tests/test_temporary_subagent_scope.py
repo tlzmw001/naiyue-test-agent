@@ -6,7 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_application import build_async_local_application
+from scripts.component_fixtures import build_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools import create_subagent_tool
@@ -31,12 +31,12 @@ def test_temporary_root_child_and_approval_resume_have_no_project_ports(monkeypa
         settings = AppSettings.model_validate({'storage': {'data_dir': str(tmp_path / 'data')},
             'subagents': (role(tool_names=('history', 'memory')), )})
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
-        app = await build_async_local_application('unused', tools=[create_subagent_tool(), history, create_memory_tool()],
+        app = await build_component_application('unused', tools=[create_subagent_tool(), history, create_memory_tool()],
             initial_active_tools=['subagent'], system_prompt='', response_format=None, settings=settings)
-        sid = (await app.sessions.create_workspace('A', tmp_path) if with_directory
-               else await app.sessions.create('A'))
+        sid = (await app.host.sessions.create_workspace('A', tmp_path) if with_directory
+               else await app.host.sessions.create('A'))
         notifications = approval_notifications(monkeypatch, app)
-        task = asyncio.create_task(app.runs.start(sid, [('user', 'delegate')]))
+        task = asyncio.create_task(app.host.runs.start(sid, [('user', 'delegate')]))
         try:
             if approval:
                 pending = await next_approval(app, sid, notifications)
@@ -47,10 +47,15 @@ def test_temporary_root_child_and_approval_resume_have_no_project_ports(monkeypa
             for scope in [*root.services, *child.services]:
                 assert scope.identity.project_id is None
                 assert scope.capabilities.history is None and scope.capabilities.memory is None
+                assert (scope.capabilities.files is not None) == with_directory
+                assert (scope.environment is not None) == with_directory
+                if with_directory:
+                    assert scope.capabilities.files.owner_session_id == sid
+                    assert scope.environment.root == str(tmp_path)
             child_messages = child.seen[-1]
             errors = [m.content for m in child_messages if m.type == 'tool']
             assert len(errors) == 2 and 'history_unavailable' in errors[0] and 'memory_unavailable' in errors[1]
-            assert app.sessions._persistence.storage.subagents.get_subagent_references(sid)
+            assert app.host.sessions._persistence.storage.subagents.get_subagent_references(sid)
         finally:
             if not task.done():
                 task.cancel()

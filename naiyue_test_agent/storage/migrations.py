@@ -4,11 +4,11 @@ import logging
 
 from .backup import create_backup
 from .backup_schema import CURRENT_SCHEMA, SUPPORTED_SCHEMAS, read_schema_version
-from naiyue_test_agent.application.errors import StorageStartupError
-from naiyue_test_agent.application.conversation import chat_queries, reply_storage
-from naiyue_test_agent.application.observability import model_usage_storage, diagnostic_storage
-from naiyue_test_agent.application.subagents import subagent_storage
-from naiyue_test_agent.application.memory import memory_schema, memory_lifecycle_schema, memory_overview_store
+from naiyue_test_agent.storage.errors import StorageStartupError
+from naiyue_test_agent.storage.conversation_sql import chat_queries, reply_storage
+from naiyue_test_agent.storage.observability_sql import model_usage_storage, diagnostic_storage
+from naiyue_test_agent.storage import subagent_sql as subagent_storage
+from naiyue_test_agent.storage.memory_sql import memory_schema, memory_lifecycle_schema, memory_overview_store
 from . import execution_storage
 
 
@@ -109,7 +109,8 @@ def initialize_store(connection, database_path, *, existing):
         (8, chat_queries.migrate_chat_queries), (9, model_usage_storage.initialize),
         (10, diagnostic_storage.initialize), (11, reply_storage.initialize),
         (12, reply_storage.initialize_regeneration), (13, model_usage_storage.migrate_duration),
-        (14, subagent_storage.initialize), (15, memory_schema.initialize_project), (16, memory_lifecycle_schema.initialize_project), (17, memory_overview_store.initialize_project), (18, execution_storage.initialize))
+        (14, subagent_storage.initialize), (15, memory_schema.initialize_project), (16, memory_lifecycle_schema.initialize_project), (17, memory_overview_store.initialize_project), (18, execution_storage.initialize),
+        (19, execution_storage.initialize_project_local), (20, execution_storage.initialize_environments))
     for target, step in steps:
         current = None
         try:

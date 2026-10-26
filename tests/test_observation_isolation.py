@@ -23,7 +23,7 @@ from event_sequence import EventSequenceChecker
 @async_test
 async def test_success_survives_publish_fault(monkeypatch, event_type, caplog):
     app = await make_app(monkeypatch)
-    session = await app.sessions.create('A')
+    session = await app.host.sessions.create('A')
     publish = RunEventPublisher.publish
 
     def fault(self, kind, data):
@@ -32,9 +32,9 @@ async def test_success_survives_publish_fault(monkeypatch, event_type, caplog):
         return publish(self, kind, data)
 
     monkeypatch.setattr(RunEventPublisher, 'publish', fault)
-    result = await app.runs.start(session, [('user', 'probe')])
+    result = await app.host.runs.start(session, [('user', 'probe')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
-    assert app.sessions._sessions.require(session).describe_session()['busy'] is False
+    assert app.host.sessions._sessions.require(session).describe_session()['busy'] is False
     assert 'PRIVATE_EVENT_FAULT' not in caplog.text
     assert any('publish_failed' in item.message or 'observation_failed' in item.message
                for item in caplog.records)
@@ -48,15 +48,15 @@ async def test_success_survives_publish_fault(monkeypatch, event_type, caplog):
 @async_test
 async def test_observer_fault_does_not_change_result(monkeypatch, owner, operation, caplog):
     app = await make_app(monkeypatch)
-    session = await app.sessions.create('A')
+    session = await app.host.sessions.create('A')
 
     def fault(*_args, **_kwargs):
         raise ValueError('PRIVATE_OBSERVER_FAULT')
 
     monkeypatch.setattr(owner, operation, fault)
-    result = await app.runs.start(session, [('user', 'probe')])
+    result = await app.host.runs.start(session, [('user', 'probe')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
-    assert app.sessions._sessions.require(session).describe_session()['busy'] is False
+    assert app.host.sessions._sessions.require(session).describe_session()['busy'] is False
     assert 'observation_failed' in caplog.text and 'PRIVATE_OBSERVER_FAULT' not in caplog.text
 
 
@@ -68,9 +68,9 @@ async def test_listener_cannot_interrupt_the_graph(monkeypatch, caplog):
     def faulty(_event):
         raise GraphInterrupt(())
 
-    app.observability.subscribe(faulty)
-    app.observability.subscribe(received.append)
-    result = await app.runs.start(await app.sessions.create('A'), [('user', 'probe')])
+    app.host.observability.subscribe(faulty)
+    app.host.observability.subscribe(received.append)
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'probe')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
     assert received[-1].data.status == 'completed'
     assert 'event_observer_failed' in caplog.text
@@ -95,8 +95,8 @@ def test_run_observation_does_not_swallow_base_exception_from_observer(monkeypat
 async def test_sequence_checker_is_asserted_outside_delivery(monkeypatch):
     app = await make_app(monkeypatch)
     events = []
-    app.observability.subscribe(events.append)
-    await app.runs.start(await app.sessions.create('A'), [('user', 'probe')])
+    app.host.observability.subscribe(events.append)
+    await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'probe')])
     EventSequenceChecker.assert_valid(events)
     with pytest.raises(AssertionError, match='not contiguous'):
         EventSequenceChecker.assert_valid(events[1:])
@@ -111,7 +111,7 @@ async def test_payload_construction_failure_is_optional(monkeypatch, caplog):
         raise ValueError('PRIVATE_PAYLOAD_FAULT')
 
     monkeypatch.setattr(model_usage_observation, 'ModelInvocationStartedData', fault)
-    result = await app.runs.start(await app.sessions.create('A'), [('user', 'probe')])
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'probe')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
     assert 'model_usage_observation_failed' in caplog.text and 'PRIVATE_PAYLOAD_FAULT' not in caplog.text
 
@@ -141,7 +141,7 @@ async def test_web_settles_after_missing_notifications(monkeypatch, tmp_path, mi
         model = StreamingToolModel(replies=[AIMessage(content='answer'), AIMessage(content='answer')])
         options = {'max_receipts': 1} if missing == 'all' else {}
         async with web_client(monkeypatch, tmp_path, model, **options) as (client, web):
-            session = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+            session = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
             publish = RunEventPublisher.publish
 
             def drop(self, kind, data):
@@ -152,28 +152,28 @@ async def test_web_settles_after_missing_notifications(monkeypatch, tmp_path, mi
             monkeypatch.setattr(RunEventPublisher, 'publish', drop)
             body = request('question')
             response = await asyncio.wait_for(client.post(
-                f'/api/sessions/{session}/runs', json=body), 5)
+                f'/api/v1/scopes/chats/sessions/{session}/runs', json=body), 5)
             if missing == 'all':
                 assert response.status_code == 503
                 assert response.json()['error']['code'] == 'run_observation_unavailable'
                 replay = await asyncio.wait_for(client.post(
-                    f'/api/sessions/{session}/runs', json=body), 5)
+                    f'/api/v1/scopes/chats/sessions/{session}/runs', json=body), 5)
                 assert replay.status_code == 503
                 assert replay.json()['error']['code'] == 'run_observation_unavailable'
-                conflict = await client.post(f'/api/sessions/{session}/runs',
+                conflict = await client.post(f'/api/v1/scopes/chats/sessions/{session}/runs',
                     json={**body, 'text': 'different'})
                 assert conflict.status_code == 409
-                fresh = await client.post(f'/api/sessions/{session}/runs', json=request('new'))
+                fresh = await client.post(f'/api/v1/scopes/chats/sessions/{session}/runs', json=request('new'))
                 assert fresh.status_code == 409
                 assert fresh.json()['error']['code'] == 'request_window_full'
             else:
                 assert response.status_code == 202
                 run_id = response.json()['run_id']
                 await web.state.delivery.wait(run_id)
-                view = (await client.get(f'/api/runs/{run_id}')).json()
+                view = (await client.get(f'/api/v1/scopes/chats/runs/{run_id}')).json()
                 assert view['status'] == 'completed' and view['incomplete'] is True
                 assert view['messages'][-1]['content'] == 'answer'
-            state = (await client.get(f'/api/sessions/{session}')).json()
+            state = (await client.get(f'/api/v1/scopes/chats/sessions/{session}')).json()
             assert state['busy'] is False and state['messages'][-1]['content'] == 'answer'
             assert len(model.seen) == 1
     await scenario()

@@ -17,7 +17,7 @@ from naiyue_test_agent.agent_runtime.events import RunEventPublisher
 from naiyue_test_agent.agent_runtime.model_usage_observation import install_model_usage_callback
 from naiyue_test_agent.agent_runtime.run_control import RunControl
 from naiyue_test_agent.application.memory.memory_access import MemoryAccess
-from naiyue_test_agent.application.memory import memory_overview_store as store
+from naiyue_test_agent.storage.memory_sql import memory_overview_store as store
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.model_access import ModelCatalog, MODEL_LIMITS_METADATA_KEY
 from test_async_application import StreamingToolModel
@@ -406,11 +406,11 @@ def test_candidate_changed_after_search_is_skipped_with_diagnostic(archive, tmp_
 
 def test_optional_related_budget_pressure_does_not_discard_valid_primary_sources(archive, tmp_path, monkeypatch):
     from naiyue_test_agent.application.memory import memory_job_runner
-    from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
+    from naiyue_test_agent.contracts.memory import MemoryReadError
     async def scenario():
         save(archive, [HumanMessage(id='human', content='visible')])
         service, job, events = fixture(archive, tmp_path, StreamingToolModel(replies=[response()]))
-        original, calls = archive.memory.build_batch, []
+        original, calls = memory_job_runner.build_batch, []
         def constrained(*args, **kwargs):
             calls.append(kwargs['token_budget'])
             if len(calls) == 2:
@@ -418,7 +418,7 @@ def test_optional_related_budget_pressure_does_not_discard_valid_primary_sources
             return original(*args, **kwargs)
         async def related(*args):
             return [dict(memory_id='b' * 32, body='bounded optional context')]
-        monkeypatch.setattr(archive.memory, 'build_batch', constrained)
+        monkeypatch.setattr(memory_job_runner, 'build_batch', constrained)
         monkeypatch.setattr(memory_job_runner, '_related', related)
         try:
             await memory_job_runner.drive(service, job)

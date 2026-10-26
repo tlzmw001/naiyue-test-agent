@@ -28,12 +28,12 @@ async def prepared_app(monkeypatch, summary=None):
                    'input_tokens': 20, 'output_tokens': 5, 'total_tokens': 25,
                })], model_id='B')
     app = await _app(monkeypatch, {'A': a, 'B': b})
-    session = await app.sessions.create('A')
-    await app.runs.start(session, [('user', 'PRIVATE_FIRST_' + 'x' * 100)])
-    await app.runs.start(session, [('user', 'PRIVATE_SECOND_' + 'y' * 100)])
-    await app.sessions.select_model(session, 'B')
+    session = await app.host.sessions.create('A')
+    await app.host.runs.start(session, [('user', 'PRIVATE_FIRST_' + 'x' * 100)])
+    await app.host.runs.start(session, [('user', 'PRIVATE_SECOND_' + 'y' * 100)])
+    await app.host.sessions.select_model(session, 'B')
     events = []
-    app.observability.subscribe(events.append)
+    app.host.observability.subscribe(events.append)
     return app, session, b, events
 
 
@@ -41,7 +41,7 @@ async def prepared_app(monkeypatch, summary=None):
 async def test_threshold_compaction_finishes_only_after_expected_summary_is_visible(monkeypatch, caplog):
     app, session, model, events = await prepared_app(monkeypatch)
     with caplog.at_level(logging.INFO):
-        result = await app.runs.start(session, [('user', 'third')])
+        result = await app.host.runs.start(session, [('user', 'third')])
     operations = operation_events(events)
     assert [e.event_type for e in operations] == ['compaction_started', 'compaction_finished']
     start, end = operations
@@ -62,15 +62,15 @@ async def test_below_threshold_does_not_invent_compaction_operations(monkeypatch
     model = _model([AIMessage(content='done')], window=10000)
     app = await _app(monkeypatch, {'A': model})
     events = []
-    app.observability.subscribe(events.append)
-    await app.runs.start(await app.sessions.create('A'), [('user', 'short')])
+    app.host.observability.subscribe(events.append)
+    await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'short')])
     assert operation_events(events) == [] and model.summary_inputs == []
 
 
 @async_test
 async def test_eligible_summary_failure_falls_back_and_normal_request_still_runs(monkeypatch):
     app, session, model, events = await prepared_app(monkeypatch, TimeoutError('PRIVATE_TIMEOUT'))
-    result = await app.runs.start(session, [('user', 'third')])
+    result = await app.host.runs.start(session, [('user', 'third')])
     start, end = operation_events(events)
     assert start.event_type == 'compaction_started'
     assert end.data.status == 'fallback' and end.data.error_type == 'TimeoutError'
@@ -86,7 +86,7 @@ async def test_invalid_summary_fails_without_normal_model_call_or_applied_event(
         {'name': 'unexpected', 'args': {}, 'id': 'bad'},
     ]))
     with pytest.raises(ContextCompactionError) as caught:
-        await app.runs.start(session, [('user', 'third')])
+        await app.host.runs.start(session, [('user', 'third')])
     assert str(caught.value) == 'summary_invalid'
     end = operation_events(events)[-1].data
     assert end.status == 'failed' and end.reason == 'summary_invalid'
@@ -98,8 +98,8 @@ async def test_explicit_overflow_recovery_waits_for_gate_and_state_and_is_one_mo
     model = _configured_model([_status(), AIMessage(content='recovered')])
     app = await _app(monkeypatch, {'A': model})
     events = []
-    app.observability.subscribe(events.append)
-    result = await app.runs.start(await app.sessions.create('A'), _history())
+    app.host.observability.subscribe(events.append)
+    result = await app.host.runs.start(await app.host.sessions.create('A'), _history())
     operations = operation_events(events)
     assert [e.event_type for e in operations] == [
         'context_recovery_started', 'compaction_started', 'compaction_finished', 'context_recovery_finished',
@@ -123,9 +123,9 @@ async def test_retry_response_rejected_does_not_report_recovery_or_replacement_s
     ])])
     app = await _app(monkeypatch, {'A': model})
     events = []
-    app.observability.subscribe(events.append)
+    app.host.observability.subscribe(events.append)
     with pytest.raises(ModelResponseRejected) as caught:
-        await app.runs.start(await app.sessions.create('A'), _history())
+        await app.host.runs.start(await app.host.sessions.create('A'), _history())
     assert caught.value.reason == 'invalid_tool_calls'
     operations = operation_events(events)
     compaction = next(e.data for e in operations if e.event_type == 'compaction_finished')

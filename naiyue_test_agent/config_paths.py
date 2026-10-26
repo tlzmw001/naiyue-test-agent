@@ -4,7 +4,10 @@ from pathlib import Path
 import logging
 import tomllib
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+DEFAULT_BUSY_TIMEOUT_MS = 5000
 
 
 def get_agent_dir() -> Path:
@@ -19,6 +22,7 @@ class StorageSettings(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
 
     data_dir: Path | None = None
+    busy_timeout_ms: int = Field(default=DEFAULT_BUSY_TIMEOUT_MS, ge=0, le=30000)
 
     @field_validator('data_dir', mode='before')
     @classmethod

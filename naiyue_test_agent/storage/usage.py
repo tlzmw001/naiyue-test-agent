@@ -3,9 +3,9 @@
 import logging
 import sqlite3
 
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 
-from naiyue_test_agent.application.observability import model_usage_storage
+from naiyue_test_agent.storage.observability_sql import model_usage_storage
 
 
 logger = logging.getLogger(__name__)

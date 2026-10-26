@@ -10,7 +10,7 @@ import pytest
 
 def runtime_for(root):
     from naiyue_test_agent.tools.permissions import execution_environment
-    return SimpleNamespace(tool_call_id='shell-call', context=typed_context(identity=RunIdentity(session_id='s', execution_root=ExecutionRoot(root) if root is not None else None), authorization=ToolAuthorization(permit={'session_id': 's', 'agent_path': 'root', 'call_id': 'shell-call', 'subject': {'workspace': str(root), 'execution_environment': execution_environment()}}), archive_root=root.parent / (root.name + '-archive')))
+    return SimpleNamespace(tool_call_id='shell-call', context=typed_context(identity=RunIdentity(session_id='s', execution_root=ExecutionRoot(root) if root is not None else None), authorization=ToolAuthorization(permit={'session_id': 's', 'agent_path': 'root', 'call_id': 'shell-call', 'subject': {'workspace': str(root), 'execution_environment': execution_environment(typed_context(identity=RunIdentity(None, execution_root=ExecutionRoot(root))))}}), archive_root=root.parent / (root.name + '-archive')))
 
 
 def test_cancellation_during_archive_finish_waits_for_owned_io(monkeypatch, tmp_path):
@@ -18,6 +18,8 @@ def test_cancellation_during_archive_finish_waits_for_owned_io(monkeypatch, tmp_
         from naiyue_test_agent.tools import create_session_bash_tool
         from naiyue_test_agent.tools.output import ShellOutputArchive
         from naiyue_test_agent.tools.processes import HostProcessRunner, ProcessOutcome
+        from naiyue_test_agent.execution.host_shell import ShellAdapter
+        monkeypatch.setattr(ShellAdapter, 'probe_version', lambda *_: '5.2.0')
         tool = create_session_bash_tool()
         entered, release, finished = asyncio.Event(), Event(), Event()
         loop = asyncio.get_running_loop()
@@ -56,6 +58,8 @@ def test_cleanup_fault_identity_and_unsettled_writer_defers_finish(monkeypatch, 
         from naiyue_test_agent.tools import create_session_bash_tool
         from naiyue_test_agent.tools.output import ShellOutputArchive
         from naiyue_test_agent.tools.processes import HostProcessRunner, ProcessCleanupError
+        from naiyue_test_agent.execution.host_shell import ShellAdapter
+        monkeypatch.setattr(ShellAdapter, 'probe_version', lambda *_: '5.2.0')
         tool = create_session_bash_tool()
         release, finalized = asyncio.Event(), asyncio.Event()
         loop = asyncio.get_running_loop()
@@ -89,6 +93,8 @@ def test_spawn_fault_becomes_specific_tool_exception_after_finalize(monkeypatch,
         from naiyue_test_agent.tools import create_session_bash_tool
         from naiyue_test_agent.tools.processes import HostProcessRunner
         from langchain_core.tools import ToolException
+        from naiyue_test_agent.execution.host_shell import ShellAdapter
+        monkeypatch.setattr(ShellAdapter, 'probe_version', lambda *_: '5.2.0')
         tool = create_session_bash_tool()
         async def fail(*args):
             raise OSError('PRIVATE_OS_DETAIL')

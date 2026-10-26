@@ -72,16 +72,16 @@ def test_real_http_image_run_has_bounded_text_events_and_canonical_checkpoint(mo
             {'name': 'read', 'args': {'path': 'image.png'}, 'id': 'image'}]), AIMessage(content='done')],
             profile={'image_inputs': True}, metadata={MODEL_INPUT_METADATA_KEY: {'api': 'chat_completions'}})
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root, max_frame_bytes=8192) as (client, app):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=request('inspect'))).json()['run_id']
-            events = await client.get(f'/api/runs/{run}/events')
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('inspect'))).json()['run_id']
+            events = await client.get(f'/api/v1/scopes/chats/runs/{run}/events')
             assert 'resync_required' not in events.text
-            view = (await client.get(f'/api/runs/{run}')).json()
+            view = (await client.get(f'/api/v1/scopes/chats/runs/{run}')).json()
             assert view['status'] == 'completed' and view['incomplete'] is False
             row = next(m for m in view['messages'] if m['type'] == 'tool')
             assert row['content_projection'] == 'text' and 'pixels omitted' in row['content']
             assert len(view['messages']) == 4
-            restored = (await client.get(f'/api/sessions/{sid}')).json()['messages']
+            restored = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()['messages']
             assert next(m for m in restored if m['type'] == 'tool')['content_projection'] == 'text'
             canonical = await app.state.delivery.application.history.messages(sid)
             tool = next(m for m in canonical if isinstance(m, ToolMessage))

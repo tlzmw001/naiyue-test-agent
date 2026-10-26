@@ -27,8 +27,14 @@ def test_default_creates_persistent_database(monkeypatch, tmp_path, capsys):
     lines = iter(['q', ':quit'])
     monkeypatch.setattr('builtins.input', lambda _p='': next(lines))
     assert cli.main(['--config', 'unused']) == 0
-    identity = json.loads((tmp_path / '.naiyue/workspace.json').read_text())['workspace_id']
-    assert (tmp_path / '.naiyue-test-agent/data/workspaces' / identity / 'sessions.sqlite').is_file()
+    from naiyue_test_agent.storage.project_registry import ProjectRegistry
+    registry = ProjectRegistry(tmp_path / '.naiyue-test-agent/data/projects.sqlite')
+    try:
+        project = registry.list()[0]
+    finally:
+        registry.close()
+    assert project.database_path.is_file()
+    assert not (tmp_path / '.naiyue/workspace.json').exists()
     assert not (tmp_path / '.naiyue-test-agent/sessions.sqlite').exists()
     assert '持久会话' in capsys.readouterr().out
 
@@ -39,7 +45,8 @@ def test_temporary_does_not_create_session_directory(monkeypatch, tmp_path, caps
     lines = iter(['q', ':quit'])
     monkeypatch.setattr('builtins.input', lambda _p='': next(lines))
     assert cli.main(['--config', 'unused', '--no-session']) == 0
-    assert not (tmp_path / '.naiyue-test-agent').exists()
+    assert not list((tmp_path / '.naiyue-test-agent').rglob('*.sqlite*'))
+    assert not (tmp_path / '.naiyue/workspace.json').exists()
     assert 'answer' in capsys.readouterr().out
 
 
@@ -138,7 +145,7 @@ def test_picker_cancel_does_not_load_model_or_add_record(monkeypatch, tmp_path, 
 
 def test_model_save_failure_is_safe_and_keeps_previous_choice(monkeypatch, tmp_path, capsys):
     from naiyue_test_agent.storage.project_store import ProjectStore
-    from naiyue_test_agent.application.errors import SessionPersistenceError
+    from naiyue_test_agent.storage.errors import SessionPersistenceError
     monkeypatch.setattr(application, 'load_model_catalog', lambda _p: ModelCatalog('A', {
         'A': ToolModel(responses=[AIMessage(content='A answer')]),
         'B': ToolModel(responses=[AIMessage(content='B must not run')]),
@@ -210,13 +217,9 @@ async def test_interactive_auto_recovery_waits_for_new_input_before_running(monk
     capsys.readouterr()
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
     finished = Event()
-    build_cli = cli.build_persistent_application
-    def factory(*args, **kwargs):
-        app = build_cli(*args, **kwargs)
-        app.call(lambda api: api.observability.subscribe(
-            lambda event: finished.set() if event.event_type == 'run_finished' else None))
-        return app
-    monkeypatch.setattr(cli, 'build_persistent_application', factory)
+    from terminal_service_helpers import capture_hosts
+    capture_hosts(monkeypatch, lambda host, _: host.observability.subscribe(
+        lambda event: finished.set() if event.event_type == 'run_finished' else None))
     lines = iter(['new request', ':quit'])
     def terminal_input(_p=''):
         line = next(lines)
@@ -228,8 +231,8 @@ async def test_interactive_auto_recovery_waits_for_new_input_before_running(monk
     assert '只读历史' in output and '下一条新消息才会启动运行' in output
     assert output.count('本次运行完成') == 1
     async with build(monkeypatch, db) as app:
-        storage = app.sessions._persistence.storage
-        history = await app.history.session(row['session_id'])
+        storage = app.host.sessions._persistence.storage
+        history = await app.host.history.session(row['session_id'])
         assert [m.content for m in history['messages']] == ['saved request', 'answer', 'new request', 'answer']
 
 

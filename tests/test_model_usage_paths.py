@@ -47,13 +47,13 @@ async def test_root_child_summary_and_auto_report_independent_cache_usage(monkey
     async with cached_application(monkeypatch, tmp_path, serve, settings=settings,
             tools=[definition(calls=effects, approved=True), create_subagent_tool()]) as (app, _):
         from naiyue_test_agent.model_access.http_observation import install_http_hooks
-        for identity in app.models._catalog.model_ids:
-            install_http_hooks(app.models._catalog.get(identity).root_async_client._client, asynchronous=True)
-        app.observability.subscribe(events.append)
-        sid = await app.sessions.create('root')
-        await app.runs.start(sid, [('user', 'old task')])
-        await app.runs.start(sid, [('user', 'recent task')])
-        assert (await app.runs.compact(sid))['compaction_status'] == 'applied'
+        for identity in app.host.sessions._sessions._catalog.model_ids:
+            install_http_hooks(app.host.sessions._sessions._catalog.get(identity).root_async_client._client, asynchronous=True)
+        app.host.observability.subscribe(events.append)
+        sid = await app.host.sessions.create('root')
+        await app.host.runs.start(sid, [('user', 'old task')])
+        await app.host.runs.start(sid, [('user', 'recent task')])
+        assert (await app.host.runs.compact(sid))['compaction_status'] == 'applied'
     ends = [e for e in events if e.event_type == 'model_call_finished']
     assert len(ends) == len(sent) == 8
     attempts = [e for e in events if e.event_type == 'model_http_attempt_started']
@@ -103,9 +103,9 @@ async def test_rejected_final_response_still_reports_usage_and_unchanged_failure
         return httpx.Response(200, headers=response.headers,
             content=response.content.decode().replace('"arguments": "{}"', '"arguments": "not-json"'))
     async with cached_application(monkeypatch, tmp_path, serve) as (app, _):
-        app.observability.subscribe(events.append)
+        app.host.observability.subscribe(events.append)
         with pytest.raises(ModelResponseRejected) as caught:
-            await app.runs.start(await app.sessions.create('root'), [('user', 'task')])
+            await app.host.runs.start(await app.host.sessions.create('root'), [('user', 'task')])
         assert caught.value.reason == 'invalid_tool_calls'
     end = next(e.data for e in events if e.event_type == 'model_call_finished')
     assert end.status == 'returned'
@@ -143,9 +143,9 @@ async def test_unknown_usage_preserves_original_network_failure(monkeypatch):
     failure, events = TimeoutError('PRIVATE_PROVIDER_BODY'), []
     app = await make_app(monkeypatch, StreamingToolModel(replies=[failure]))
     try:
-        app.observability.subscribe(events.append)
+        app.host.observability.subscribe(events.append)
         with pytest.raises(TimeoutError) as caught:
-            await app.runs.start(await app.sessions.create('A'), [('user', 'task')])
+            await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'task')])
         assert caught.value is failure
     finally:
         await app.aclose()
@@ -162,8 +162,8 @@ async def test_invalid_cache_statistics_do_not_reject_a_successful_response(monk
     app = await make_app(monkeypatch, StreamingToolModel(replies=[reply]))
     events = []
     try:
-        app.observability.subscribe(events.append)
-        result = await app.runs.start(await app.sessions.create('A'), [('user', 'task')])
+        app.host.observability.subscribe(events.append)
+        result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'task')])
         assert result['messages'][-1].content == 'done'
     finally:
         await app.aclose()

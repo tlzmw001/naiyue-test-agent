@@ -21,21 +21,21 @@ def test_refresh_finishes_root_before_independent_model_and_persists_overview(mo
         model=StreamingToolModel(replies=[call('memory',dict(action='refresh_overview'),'refresh'),
             AIMessage(content='任务已登记'),response()])
         async with opened(monkeypatch,tmp_path,model,settings=config(tmp_path)) as app:
-            sid=await app.sessions.create_workspace('A',tmp_path)
-            events=[];app.observability.subscribe(events.append)
-            result=await app.runs.start(sid,[('user','请整理当前进展')])
+            sid=await app.host.sessions.create_workspace('A',tmp_path)
+            events=[];app.host.observability.subscribe(events.append)
+            result=await app.host.runs.start(sid,[('user','请整理当前进展')])
             assert result['messages'][-1].content=='任务已登记'
             receipt=json.loads(feedback(result)[0].content)
             assert receipt['status']=='accepted'
-            await app.sessions._sessions.memory_jobs.wait_idle()
-            task=await app.tasks.output(receipt['task_id'],session_id=sid,workspace_root=tmp_path)
+            await app.host.sessions._sessions.memory_jobs.wait_idle()
+            task=await app.host.tasks.output(receipt['task_id'],session_id=sid,workspace_root=tmp_path)
             assert task['kind']=='memory' and task['result_status']=='completed' and task['cleanup_confirmed']
             assert len(model.seen)==3
             # Worker publishes only to its own usage/diagnostic consumers.
             assert len({e.run_id for e in events})==1 and all(getattr(e.data,'mode',None)!='memory' for e in events)
-            from naiyue_test_agent.application.memory.memory_overview_store import overview
-            assert app.sessions._persistence.storage.memory.overview(sid)['overview_status']=='generated'
-            page=await app.tasks.list(session_id=sid,workspace_root=tmp_path)
+            from naiyue_test_agent.storage.memory_sql.memory_overview_store import overview
+            assert app.host.sessions._persistence.storage.memory.overview(sid)['overview_status']=='generated'
+            page=await app.host.tasks.list(session_id=sid,workspace_root=tmp_path)
             assert page['items'][0]['task_id']==receipt['task_id'] and page['active_count']==0
     asyncio.run(scenario())
 
@@ -46,14 +46,14 @@ def test_automatic_or_threshold_and_failure_does_not_repeat_old_range(monkeypatc
         model=StreamingToolModel(replies=[AIMessage(content='第一轮完成'),AIMessage(content='invalid JSON'),
             AIMessage(content='第二轮完成'),response()])
         async with opened(monkeypatch,tmp_path,model,settings=config(tmp_path,auto_enabled=True,**thresholds)) as app:
-            sid=await app.sessions.create_workspace('A',tmp_path)
-            await app.runs.start(sid,[('user','第一轮')]);await app.sessions._sessions.memory_jobs.wait_idle()
-            first=await app.tasks.list(session_id=sid,workspace_root=tmp_path)
+            sid=await app.host.sessions.create_workspace('A',tmp_path)
+            await app.host.runs.start(sid,[('user','第一轮')]);await app.host.sessions._sessions.memory_jobs.wait_idle()
+            first=await app.host.tasks.list(session_id=sid,workspace_root=tmp_path)
             assert first['items'][0]['result_status']=='failed' and len(model.seen)==2
-            await app.runs.start(sid,[('user','第二轮')]);await app.sessions._sessions.memory_jobs.wait_idle()
+            await app.host.runs.start(sid,[('user','第二轮')]);await app.host.sessions._sessions.memory_jobs.wait_idle()
             assert len(model.seen)==4
             assert '第一轮完成' not in str(model.seen[-1]) and '第二轮完成' in str(model.seen[-1])
-            assert (await app.tasks.list(session_id=sid,workspace_root=tmp_path))['items'][0]['result_status']=='completed'
+            assert (await app.host.tasks.list(session_id=sid,workspace_root=tmp_path))['items'][0]['result_status']=='completed'
     asyncio.run(scenario())
 
 
@@ -62,19 +62,19 @@ def test_new_session_directory_is_first_request_only_and_history_reads_overview(
         model=StreamingToolModel(replies=[call('memory',dict(action='refresh_overview')),AIMessage(content='已做测试'),
             response(),AIMessage(content='知道下一步'),AIMessage(content='继续工作')])
         async with opened(monkeypatch,tmp_path,model,settings=config(tmp_path)) as app:
-            first=await app.sessions.create_workspace('A',tmp_path)
-            await app.runs.start(first,[('user','本轮完成一个检查，请整理')]);await app.sessions._sessions.memory_jobs.wait_idle()
-            second=await app.sessions.create_workspace('A',tmp_path)
-            await app.runs.start(second,[('user','继续')])
+            first=await app.host.sessions.create_workspace('A',tmp_path)
+            await app.host.runs.start(first,[('user','本轮完成一个检查，请整理')]);await app.host.sessions._sessions.memory_jobs.wait_idle()
+            second=await app.host.sessions.create_workspace('A',tmp_path)
+            await app.host.runs.start(second,[('user','继续')])
             system=next(m.content for m in model.seen[-1] if isinstance(m,SystemMessage))
             assert 'Other session directory' in system and '测试任务' in system and first in system
-            await app.runs.start(second,[('user','再继续')])
+            await app.host.runs.start(second,[('user','再继续')])
             system=next(m.content for m in model.seen[-1] if isinstance(m,SystemMessage))
             assert 'Other session directory' not in system
             from naiyue_test_agent.tools.history import HistoryInput
             from naiyue_test_agent.tools.history_settings import HistorySettings
-            directory=app.sessions._persistence.storage.conversation.read_history_tool(second,app.sessions._persistence.storage.sessions.get(second)['project_id'],HistoryInput(action='list_sessions').model_dump(),HistorySettings())
+            directory=app.host.sessions._persistence.storage.conversation.read_history_tool(second,app.host.sessions._persistence.storage.sessions.get(second)['project_id'],HistoryInput(action='list_sessions').model_dump(),HistorySettings())
             assert directory['items'][0]['overview_status']=='generated'
-            detail=app.sessions._persistence.storage.conversation.read_history_tool(second,app.sessions._persistence.storage.sessions.get(second)['project_id'],HistoryInput(action='read',session_id=first).model_dump(),HistorySettings())
+            detail=app.host.sessions._persistence.storage.conversation.read_history_tool(second,app.host.sessions._persistence.storage.sessions.get(second)['project_id'],HistoryInput(action='read',session_id=first).model_dump(),HistorySettings())
             assert detail['overview']['next_step']=='继续验证'
     asyncio.run(scenario())

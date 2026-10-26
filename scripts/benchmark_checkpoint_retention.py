@@ -23,7 +23,10 @@ from langgraph.graph import END
 
 from naiyue_test_agent import application
 from naiyue_test_agent.storage import checkpoint_retention
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+if __package__:
+    from .component_fixtures import open_component_application
+else:
+    from component_fixtures import open_component_application
 from naiyue_test_agent.application.sessions.session_persistence import SessionPersistence
 from naiyue_test_agent.storage.project_store import ProjectStore
 from naiyue_test_agent.storage.unit_of_work import RunUnitOfWork
@@ -95,35 +98,35 @@ async def sample(directory, case, enabled, repetition):
           patch.object(SessionPersistence, 'afinish', observe_finish),
           patch.object(RunUnitOfWork, 'finish_run', observe_save),
           patch.object(checkpoint_retention, 'prune_after_finish', observe_prune)):
-        async with open_async_persistent_application('unused', database_path=directory / 'state.sqlite',
+        async with open_component_application('unused', database_path=directory / 'state.sqlite',
                 tools=[], system_prompt='', response_format=None, settings=settings) as app:
-            sessions = [await app.sessions.create('A') for _ in range(case['sessions'])]
+            sessions = [await app.host.sessions.create('A') for _ in range(case['sessions'])]
             seeded = bool(case.get('backlog') or case.get('oversize_prefix'))
             if seeded:
                 sid = sessions[0]
-                await app.runs.start(sid, [('user', 'synthetic seed')])
-                config = {'configurable': {'thread_id': app.sessions._persistence.storage.sessions.get(sid)['thread_id']}}
+                await app.host.runs.start(sid, [('user', 'synthetic seed')])
+                config = {'configurable': {'thread_id': app.host.sessions._persistence.storage.sessions.get(sid)['thread_id']}}
                 for _ in range(case.get('backlog', 0)):
-                    await app.runs._agent.aupdate_state(config, None, as_node=END)
+                    await app.host.runs._agent.aupdate_state(config, None, as_node=END)
                 if case.get('backlog'):
-                    await app.sessions.prepare(sid)
+                    await app.host.sessions.prepare(sid)
                 if case.get('oversize_prefix'):
-                    saved = await app.runs._agent.checkpointer.aget_tuple(config)
+                    saved = await app.host.runs._agent.checkpointer.aget_tuple(config)
                     def fixtures():
                         for number in range(case['oversize_prefix']):
                             identity = f'00000000-0000-0000-0000-{number:012d}'
                             checkpoint = {**saved.checkpoint, 'id': identity, 'channel_values': {
                                 **saved.checkpoint['channel_values'], 'messages': [HumanMessage(
                                     id=identity, content='x' * 20000)]}}
-                            kind, blob = app.runs._agent.checkpointer.serde.dumps_typed(checkpoint)
+                            kind, blob = app.host.runs._agent.checkpointer.serde.dumps_typed(checkpoint)
                             yield config['configurable']['thread_id'], '', identity, None, kind, blob, b'{}'
-                    with app.sessions._persistence.storage.database.connection:
-                        app.sessions._persistence.storage.database.connection.executemany('INSERT INTO checkpoints VALUES(?,?,?,?,?,?,?)', fixtures())
+                    with app.host.sessions._persistence.storage.database.connection:
+                        app.host.sessions._persistence.storage.database.connection.executemany('INSERT INTO checkpoints VALUES(?,?,?,?,?,?,?)', fixtures())
             if case.get('historical_boundaries'):
-                historical = await app.sessions.create('A')
-                thread = app.sessions._persistence.storage.sessions.get(historical)['thread_id']
-                with app.sessions._persistence.storage.database.connection:
-                    app.sessions._persistence.storage.database.connection.executemany('''INSERT INTO naiyue_reply_boundaries
+                historical = await app.host.sessions.create('A')
+                thread = app.host.sessions._persistence.storage.sessions.get(historical)['thread_id']
+                with app.host.sessions._persistence.storage.database.connection:
+                    app.host.sessions._persistence.storage.database.connection.executemany('''INSERT INTO naiyue_reply_boundaries
                         (session_id,thread_id,reply_id,input_message_id,source_checkpoint_id,input_sequence,source_thread_id)
                         VALUES(?,?,?,?,?,?,?)''', ((historical, thread, f'reply-{i}', f'input-{i}', None, i, thread)
                         for i in range(case['historical_boundaries'])))
@@ -131,17 +134,17 @@ async def sample(directory, case, enabled, repetition):
             async def conversation(sid):
                 for _ in range(case['turns']):
                     start = perf_counter()
-                    await app.runs.start(sid, [('user', 'q' * case['payload_chars'])])
+                    await app.host.runs.start(sid, [('user', 'q' * case['payload_chars'])])
                     elapsed = (perf_counter() - start) * 1000
-                    rid = app.sessions._persistence.storage.sessions.get(sid)['run_id']
+                    rid = app.host.sessions._persistence.storage.sessions.get(sid)['run_id']
                     samples[rid]['task_ms'] = elapsed
-                    thread = app.sessions._persistence.storage.sessions.get(sid)['thread_id']
-                    samples[rid]['retained_checkpoints'] = app.sessions._persistence.storage.database.connection.execute(
+                    thread = app.host.sessions._persistence.storage.sessions.get(sid)['thread_id']
+                    samples[rid]['retained_checkpoints'] = app.host.sessions._persistence.storage.database.connection.execute(
                         'SELECT COUNT(*) FROM checkpoints WHERE thread_id=?', (thread,)).fetchone()[0]
             await asyncio.gather(*(conversation(sid) for sid in sessions))
-            counts = app.sessions._persistence.storage.database.read_rows('''SELECT COUNT(*) AS checkpoints,
+            counts = app.host.sessions._persistence.storage.database.read_rows('''SELECT COUNT(*) AS checkpoints,
                 COALESCE(SUM(length(checkpoint)+length(metadata)),0) AS checkpoint_bytes FROM checkpoints''')[0]
-            archive = app.sessions._persistence.storage.database.read_rows('SELECT COUNT(*) AS messages FROM naiyue_chat_messages')[0]['messages']
+            archive = app.host.sessions._persistence.storage.database.read_rows('SELECT COUNT(*) AS messages FROM naiyue_chat_messages')[0]['messages']
             expected = 2 * (case['turns'] * case['sessions'] + seeded)
             if archive != expected:
                 raise AssertionError(f'Archive count {archive} != {expected}')

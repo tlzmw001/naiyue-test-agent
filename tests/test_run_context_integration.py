@@ -42,9 +42,9 @@ async def test_parallel_tools_share_one_plan_but_sessions_and_authorizations_are
     model = StatelessModel(replies=[])
     app = await make_app(monkeypatch, model, [ToolSpec(probe, public,
         permissions=ToolPermission(default='allow'))])
-    sessions = [await app.sessions.create('A') for _ in range(2)]
+    sessions = [await app.host.sessions.create('A') for _ in range(2)]
     try:
-        results = await asyncio.gather(*(app.runs.start(sid, [('user', 'read both')]) for sid in sessions))
+        results = await asyncio.gather(*(app.host.runs.start(sid, [('user', 'read both')]) for sid in sessions))
         assert all(result['messages'][-1].content == 'done' for result in results)
         groups = [[row for row in seen if row[0].scope.identity.session_id == sid] for sid in sessions]
         for first, second in groups:
@@ -97,11 +97,11 @@ async def test_approval_resume_starts_with_empty_model_state_and_no_reused_plan(
         {'name': 'approved', 'args': {}, 'id': 'one'}]), AIMessage(content='done')])
     app = await make_app(monkeypatch, model, [ToolSpec(approved, public,
         permissions=ToolPermission(default='ask'))])
-    sid = await app.sessions.create('A')
+    sid = await app.host.sessions.create('A')
     try:
-        paused = await app.runs.start(sid, [('user', 'do it')])
+        paused = await app.host.runs.start(sid, [('user', 'do it')])
         assert paused['approval_requests'] and len(model.seen) == 1 and executed == []
-        result = await app.runs.resume_approval(sid, ['approve'])
+        result = await app.host.runs.resume_approval(sid, ['approve'])
         assert result['messages'][-1].content == 'done' and len(model.seen) == 2
         assert len(executed) == 1 and len(contexts) == 2
         assert contexts[0].invocation is not contexts[1].invocation

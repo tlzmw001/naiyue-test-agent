@@ -1,6 +1,7 @@
 """Batch scheduling through the actual asynchronous create_agent assembly."""
 
-from runtime_context_helpers import RunIdentity, typed_context
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context, typed_scope
+from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
 from native_application_helpers import async_test
 
 from naiyue_test_agent.agent_runtime.async_invocation import ainvoke_agent_run
@@ -235,21 +236,22 @@ async def test_rejected_first_tool_does_not_block_later_sequential_tool(tmp_path
         AIMessage(content='done'),
     ], checkpointer=InMemorySaver())
 
-    pending = (await ainvoke_agent_run_with_resources(
-        agent, [('user', 'read then write')], session_id='review',
-        thread_id='review-thread', run_id='review-run', workspace_root=workspace, read_resource_roots=(),
-    ))
-    assert len(pending['__interrupt__']) == 1
-    assert executed == []
-    result = (await aresume_agent_run_with_resources(
-        agent, session_id='review', thread_id='review-thread',
-        run_id='review-run', workspace_root=workspace,
-        decisions=['reject'], approval_grants={}, read_resource_roots=(),
-    ))
-    assert executed == ['write']
-    assert [(message.tool_call_id, message.status) for message in tool_results(result)] == [
-        ('review-1', 'error'), ('review-2', 'success'),
-    ]
+    with bind_run_scope(typed_scope(identity=RunIdentity('review', 'review-run', execution_root=ExecutionRoot(workspace)))):
+        pending = (await ainvoke_agent_run_with_resources(
+            agent, [('user', 'read then write')], session_id='review',
+            thread_id='review-thread', run_id='review-run', workspace_root=workspace, read_resource_roots=(),
+        ))
+        assert len(pending['__interrupt__']) == 1
+        assert executed == []
+        result = (await aresume_agent_run_with_resources(
+            agent, session_id='review', thread_id='review-thread',
+            run_id='review-run', workspace_root=workspace,
+            decisions=['reject'], approval_grants={}, read_resource_roots=(),
+        ))
+        assert executed == ['write']
+        assert [(message.tool_call_id, message.status) for message in tool_results(result)] == [
+            ('review-1', 'error'), ('review-2', 'success'),
+        ]
 
 
 @async_test
@@ -273,24 +275,25 @@ async def test_approved_first_tool_completes_before_later_sequential_tool(tmp_pa
         ]),
         AIMessage(content='done'),
     ], checkpointer=InMemorySaver())
-    pending = (await ainvoke_agent_run_with_resources(
-        agent, [('user', 'read then write')], session_id='approve',
-        thread_id='approve-thread', run_id='approve-run', workspace_root=workspace, read_resource_roots=(),
-    ))
-    assert len(pending['__interrupt__']) == 1
-    assert executed == []
-    from naiyue_test_agent.application.sessions.session_approval import pending_tool_approval, prepare_resume
-    grants, _ = prepare_resume('approve', pending_tool_approval(pending), ['approve'], None)
-    result = (await aresume_agent_run_with_resources(
-        agent, session_id='approve', thread_id='approve-thread',
-        run_id='approve-run', workspace_root=workspace,
-        decisions=['approve'], read_resource_roots=(),
-        approval_grants=grants,
-    ))
-    assert executed == ['write']
-    assert [(message.tool_call_id, message.content) for message in tool_results(result)] == [
-        ('approve-1', 'approved content'), ('approve-2', 'written'),
-    ]
+    with bind_run_scope(typed_scope(identity=RunIdentity('approve', 'approve-run', execution_root=ExecutionRoot(workspace)))):
+        pending = (await ainvoke_agent_run_with_resources(
+            agent, [('user', 'read then write')], session_id='approve',
+            thread_id='approve-thread', run_id='approve-run', workspace_root=workspace, read_resource_roots=(),
+        ))
+        assert len(pending['__interrupt__']) == 1
+        assert executed == []
+        from naiyue_test_agent.application.sessions.session_approval import pending_tool_approval, prepare_resume
+        grants, _ = prepare_resume('approve', pending_tool_approval(pending), ['approve'], None)
+        result = (await aresume_agent_run_with_resources(
+            agent, session_id='approve', thread_id='approve-thread',
+            run_id='approve-run', workspace_root=workspace,
+            decisions=['approve'], read_resource_roots=(),
+            approval_grants=grants,
+        ))
+        assert executed == ['write']
+        assert [(message.tool_call_id, message.content) for message in tool_results(result)] == [
+            ('approve-1', 'approved content'), ('approve-2', 'written'),
+        ]
 
 
 def test_invalid_execution_mode_is_rejected_at_agent_assembly():

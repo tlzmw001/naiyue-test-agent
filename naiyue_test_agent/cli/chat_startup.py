@@ -1,23 +1,22 @@
-"""Select CLI session facts before handing storage ownership to the async bridge."""
+"""Terminal selection uses authenticated service facts before loading models."""
 import json
 import logging
 import sys
 from pathlib import Path
-
-from naiyue_test_agent.config_paths import get_data_dir
-from naiyue_test_agent.workspaces import prepare_workspace, locate_stored_project
-from naiyue_test_agent.tools.read import resolve_workspace_root
-from naiyue_test_agent.storage.project_store import ProjectStore
-from naiyue_test_agent.application.errors import SessionPersistenceError
-
+from urllib.parse import urlencode
+from naiyue_test_agent.config_paths import get_data_dir, get_agent_dir
+from naiyue_test_agent.resources import frontend_directory
+from naiyue_test_agent.service.settings import ServiceOptions, ServiceError
+from .terminal_client import TerminalClient
 
 logger = logging.getLogger(__name__)
 
 
-def _pick_session(storage, selected_id):
+def pick_session(rows, selected_id):
     if selected_id:
+        if not any(row['session_id'] == selected_id for row in rows):
+            raise ServiceError('session_not_found')
         return selected_id
-    rows = storage.sessions.list_sessions()
     if not rows:
         print('暂无历史会话')
         return None
@@ -42,56 +41,76 @@ def _pick_session(storage, selected_id):
         print('会话选择无效，请重新输入')
 
 
-def prepare_session(args, settings):
-    storage = None
+def prepare_terminal(args, settings):
+    options = ServiceOptions(config_path=args.config,
+        settings_path=args.settings or get_agent_dir() / 'settings.toml',
+        data_dir=get_data_dir(settings.storage), frontend_dist=frontend_directory())
+    client = TerminalClient(options)
     try:
+        if args.no_session:
+            args.workspace = (args.workspace or Path.cwd()).expanduser().resolve()
+            client.lease(args.workspace)
+            models = client.request('GET', '/models')
+            sid = client.request('POST', '/sessions', json={'model_id': models['default_model_id']})['session_id']
+            return client, sid, None
+        root = args.workspace if args.workspace is not None else None if args.project or args.session_db and args.resume is not None else Path.cwd()
+        body = dict(root=str(root) if root is not None else None, project_id=args.project,
+            database_path=str(args.session_db) if args.session_db else None,
+            resume=args.resume is not None, new_workspace=args.new_workspace, trusted=args.trust_project)
         try:
-            expected = (locate_stored_project(args.session_db, root=args.workspace)
-                        if args.resume is not None and args.session_db is not None else None)
-        except ValueError as error:
-            if args.resume != '' or str(error) != 'history_database_missing':
+            prepared = client.request('POST', '/api/v1/terminal/prepare', json=body)
+        except ServiceError as error:
+            if error.code != 'project_identity_conflict' or args.resume is None or args.session_db is None:
                 raise
-            print('暂无历史会话')
-            return None, None, None
-        if expected is not None:
-            args.workspace = expected.canonical_root
-            storage = ProjectStore(expected.database_path, require_existing=True)
-            binding = storage.sessions.get_workspace_binding()
-            if binding != {'workspace_id': expected.project_id, 'root_path': str(expected.canonical_root)}:
-                raise SessionPersistenceError('workspace_database_mismatch')
-        else:
-            try:
-                args.workspace = resolve_workspace_root(args.workspace or Path.cwd())
-            except ValueError as error:
-                if args.resume is not None:
-                    raise ValueError('history_database_required') from error
-                raise
-            if args.no_session:
-                return None, None, None
-            location = prepare_workspace(args.workspace, data_dir=get_data_dir(settings.storage),
-                database_path=args.session_db, new_workspace=args.new_workspace, create=args.resume is None)
-            if args.resume is not None and (location is None or not location.database_path.exists()):
-                if args.resume == '':
-                    print('暂无历史会话')
-                    return None, None, None
-                raise SessionPersistenceError('session_not_found')
-            storage = ProjectStore(location.database_path)
-            storage.sessions.bind_workspace(location.workspace_id, location.root)
-        restored = None
-        if args.resume is not None:
-            selected = _pick_session(storage, args.resume)
+            query = {'database_path': str(args.session_db)}
+            if args.workspace is not None:
+                query['root'] = str(args.workspace)
+            legacy = client.request('GET', '/api/v1/terminal/legacy?' + urlencode(query))
+            selected = pick_session(legacy['sessions'], args.resume)
             if selected is not None:
-                restored = storage.sessions.get(selected)
-                if expected is not None:
-                    if restored['project_id'] != expected.project_id:
-                        raise SessionPersistenceError('session_not_found')
-                elif str(args.workspace) != restored['workspace_root']:
-                    raise SessionPersistenceError('workspace_mismatch')
-        return storage, restored, expected
+                from .cli_display import CliEventDisplay
+                CliEventDisplay(selected).show_history_view(client.legacy_history(args.session_db, selected))
+            client.close()
+            return None, None, None
+        if prepared['status'] == 'trust_required':
+            print('项目目录：' + json.dumps(prepared['root'], ensure_ascii=False))
+            if not sys.stdin.isatty():
+                raise ServiceError('project_trust_required')
+            if input('允许此项目中的 Agent 执行工具？输入 trust 确认，空行取消：').strip() != 'trust':
+                client.close()
+                return None, None, None
+            body['trusted'] = True
+            prepared = client.request('POST', '/api/v1/terminal/prepare', json=body)
+        if prepared['status'] == 'empty':
+            if args.resume:
+                raise ServiceError('history_database_missing' if args.session_db else 'history_database_required')
+            print('暂无历史会话')
+            client.close()
+            return None, None, None
+        client.bind(prepared['scope_id'])
+        args.workspace = Path(prepared['root']) if prepared['root'] is not None else None
+        if args.resume is not None:
+            sid = pick_session(prepared['sessions'], args.resume)
+            if sid is None:
+                client.close()
+                return None, None, None
+            return client, sid, next(row for row in prepared['sessions'] if row['session_id'] == sid)
+        models = client.request('GET', '/models')
+        body={'model_id':models['default_model_id']}
+        if getattr(args,'execution',None)=='sandbox':
+            body.update(execution='sandbox',include_untracked=args.include_untracked)
+        elif prepared.get('source_kind')=='git':
+            raise ServiceError('project_execution_unavailable')
+        sid=client.request('POST','/sessions',json=body)['session_id']
+        status=client.request('GET',f'/sessions/{sid}')
+        execution=status.get('execution',{})
+        print('执行位置：'+('Docker 沙箱' if execution.get('kind')=='sandbox' else '此计算机'))
+        if execution.get('state')!='ready':
+            print('执行位置不可用；会话历史保留。原因='+str((execution.get('error') or {}).get('code','unavailable')))
+        return client,sid,None
     except BaseException:
-        if storage is not None:
-            try:
-                storage.close()
-            except BaseException as error:
-                logger.error('cli_preflight_cleanup_failed error_type=%s', type(error).__name__)
+        try:
+            client.close()
+        except BaseException as error:
+            logger.error('terminal_startup_cleanup_secondary_failed error_type=%s', type(error).__name__)
         raise

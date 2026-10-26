@@ -3,7 +3,7 @@
 import logging
 
 
-from naiyue_test_agent.application.observability import diagnostic_storage
+from naiyue_test_agent.storage.observability_sql import diagnostic_storage
 
 
 logger = logging.getLogger(__name__)

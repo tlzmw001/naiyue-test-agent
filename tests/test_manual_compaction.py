@@ -25,10 +25,10 @@ def compact_model():
 
 
 async def history(client):
-    sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+    sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
     for text in ('old task', 'recent task'):
-        rid = (await client.post(f'/api/sessions/{sid}/runs', json=request(text))).json()['run_id']
-        await client.get(f'/api/runs/{rid}/events')
+        rid = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request(text))).json()['run_id']
+        await client.get(f'/api/v1/scopes/chats/runs/{rid}/events')
     return sid
 
 
@@ -41,13 +41,13 @@ def test_manual_compaction_summarizes_once_saves_and_is_idempotent(monkeypatch, 
         model = compact_model()
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
             sid = await history(client)
-            endpoint = f'/api/sessions/{sid}'
+            endpoint = f'/api/v1/scopes/chats/sessions/{sid}'
             before = (await client.get(endpoint)).json()['messages']
             body = {'request_id': str(uuid4())}
             response = await client.post(endpoint + '/compact', json=body)
             assert response.status_code == 202
             rid = response.json()['run_id']
-            stream = await client.get(f'/api/runs/{rid}/events')
+            stream = await client.get(f'/api/v1/scopes/chats/runs/{rid}/events')
             operations = [event['data'] for event in stream_data(stream) if event['event_type'] == 'compaction_finished']
             assert len(operations) == 1 and operations[0]['trigger'] == 'manual' and operations[0]['status'] == 'applied'
             after = (await client.get(endpoint)).json()
@@ -76,13 +76,13 @@ def test_too_small_history_skips_without_summary_or_new_message(monkeypatch, tmp
     async def scenario():
         model = compact_model()
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            response = await client.post(f'/api/sessions/{sid}/compact', json={'request_id': str(uuid4())})
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            response = await client.post(f'/api/v1/scopes/chats/sessions/{sid}/compact', json={'request_id': str(uuid4())})
             assert response.status_code == 202
-            stream = await client.get(f'/api/runs/{response.json()["run_id"]}/events')
+            stream = await client.get(f'/api/v1/scopes/chats/runs/{response.json()["run_id"]}/events')
             assert any(event['event_type'] == 'compaction_finished' and event['data']['status'] == 'skipped' for event in stream_data(stream))
             assert model.seen == []
-            view = (await client.get(f'/api/sessions/{sid}')).json()
+            view = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
             assert view['messages'] == [] and view['can_run']
     asyncio.run(scenario())
 
@@ -93,11 +93,11 @@ def test_summary_failure_keeps_history_and_allows_continuing(monkeypatch, tmp_pa
         model.replies[-1] = AIMessage(content='')
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
             sid = await history(client)
-            endpoint = f'/api/sessions/{sid}'
+            endpoint = f'/api/v1/scopes/chats/sessions/{sid}'
             before = (await client.get(endpoint)).json()['messages']
             response = await client.post(endpoint + '/compact', json={'request_id': str(uuid4())})
             assert response.status_code == 202
-            stream = await client.get(f'/api/runs/{response.json()["run_id"]}/events')
+            stream = await client.get(f'/api/v1/scopes/chats/runs/{response.json()["run_id"]}/events')
             assert any(event['event_type'] == 'compaction_finished' and event['data']['status'] == 'failed' for event in stream_data(stream))
             after = (await client.get(endpoint)).json()
             assert after['messages'] == before and after['can_run']
@@ -122,7 +122,7 @@ def test_busy_compaction_rejects_new_work_and_stop_keeps_checkpoint(monkeypatch,
             summary_entered=asyncio.Event(), summary_release=asyncio.Event())
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
             sid = await history(client)
-            endpoint = f'/api/sessions/{sid}'
+            endpoint = f'/api/v1/scopes/chats/sessions/{sid}'
             before = await web.state.service.application.history.messages(sid)
             started = await client.post(endpoint + '/compact', json={'request_id': str(uuid4())})
             rid = started.json()['run_id']
@@ -130,15 +130,15 @@ def test_busy_compaction_rejects_new_work_and_stop_keeps_checkpoint(monkeypatch,
             try:
                 assert (await client.post(endpoint + '/compact', json={'request_id': str(uuid4())})).status_code == 409
                 control = {'request_id': str(uuid4()), 'kind': 'steering', 'text': 'do not queue'}
-                assert (await client.post(f'/api/runs/{rid}/controls', json=control)).status_code == 409
-                stop = await client.post(f'/api/runs/{rid}/controls', json={'request_id': str(uuid4()), 'kind': 'stop'})
+                assert (await client.post(f'/api/v1/scopes/chats/runs/{rid}/controls', json=control)).status_code == 409
+                stop = await client.post(f'/api/v1/scopes/chats/runs/{rid}/controls', json={'request_id': str(uuid4()), 'kind': 'stop'})
                 assert stop.status_code == 202
                 await web.state.delivery.wait(rid)
             finally:
                 model.summary_release.set()
             after = await web.state.service.application.history.messages(sid)
             assert after == before and len(model.seen) == 2
-            result = (await client.get(f'/api/runs/{rid}')).json()
+            result = (await client.get(f'/api/v1/scopes/chats/runs/{rid}')).json()
             assert result['mode'] == 'compact' and result['status'] == 'stopped' and not result['manual_review_required']
             assert (await client.get(endpoint)).json()['can_run']
     asyncio.run(scenario())
@@ -163,15 +163,15 @@ def test_replacement_failure_is_not_reported_as_summary_failure(monkeypatch, tmp
 
             with monkeypatch.context() as patch:
                 patch.setattr(type(app.runs._agent), 'aupdate_state', fail_write)
-                response = await client.post(f'/api/sessions/{sid}/compact', json={'request_id': str(uuid4())})
+                response = await client.post(f'/api/v1/scopes/chats/sessions/{sid}/compact', json={'request_id': str(uuid4())})
                 rid = response.json()['run_id']
-                stream = await client.get(f'/api/runs/{rid}/events')
+                stream = await client.get(f'/api/v1/scopes/chats/runs/{rid}/events')
             assert type(app.runs._agent).aupdate_state is original
             events = stream_data(stream)
             assert not any(e['event_type'] == 'compaction_finished' and e['data']['status'] == 'applied' for e in events)
-            view = (await client.get(f'/api/sessions/{sid}')).json()
+            view = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
             assert view['manual_review_required'] and not view['can_run']
-            result = (await client.get(f'/api/runs/{rid}')).json()
+            result = (await client.get(f'/api/v1/scopes/chats/runs/{rid}')).json()
             assert result['status'] == 'failed' and result['failure']['error_type'] == 'ManualCompactionCommitError'
     asyncio.run(scenario())
 
@@ -187,8 +187,8 @@ def test_pending_approval_cannot_be_compacted_or_implicitly_approved(monkeypatch
         model = compact_model()
         model.replies = [call('read', {'path': str(outside)}, 'outside-call')]
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, web):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            endpoint = f'/api/sessions/{sid}'
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            endpoint = f'/api/v1/scopes/chats/sessions/{sid}'
             rid = (await client.post(endpoint + '/runs', json=request('read outside'))).json()['run_id']
             await web.state.delivery.wait(rid)
             pending = (await client.get(endpoint)).json()
@@ -204,21 +204,21 @@ def test_stop_accepted_before_empty_session_compaction_still_finishes_safely(mon
     async def scenario():
         model = compact_model()
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
             app = web.state.service.application
             def stop_at_start(event):
                 if event.event_type == 'run_started' and event.data.mode == 'compact':
                     app.runs.stop(sid, run_id=event.run_id)
             unsubscribe = app.observability.subscribe(stop_at_start)
             try:
-                response = await client.post(f'/api/sessions/{sid}/compact', json={'request_id': str(uuid4())})
+                response = await client.post(f'/api/v1/scopes/chats/sessions/{sid}/compact', json={'request_id': str(uuid4())})
                 rid = response.json()['run_id']
                 await web.state.delivery.wait(rid)
             finally:
                 unsubscribe()
-            result = (await client.get(f'/api/runs/{rid}')).json()
+            result = (await client.get(f'/api/v1/scopes/chats/runs/{rid}')).json()
             assert result['status'] == 'stopped' and result['failure'] is None
-            view = (await client.get(f'/api/sessions/{sid}')).json()
+            view = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
             assert view['can_run'] and view['messages'] == [] and model.seen == []
     asyncio.run(scenario())
 
@@ -251,8 +251,8 @@ def test_multi_page_compaction_keeps_original_chat_after_reopen(monkeypatch, tmp
         model.metadata[COMPACTION_KEEP_RECENT_METADATA_KEY]['tokens'] = 1
         model.replies = [AIMessage(id=f'answer-{n}', content=f'ANSWER_{n} ' + 'x' * 2000) for n in range(4)]
         async with web_client(monkeypatch, tmp_path, model, history_page_messages=2) as (client, web):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            endpoint = f'/api/sessions/{sid}'
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            endpoint = f'/api/v1/scopes/chats/sessions/{sid}'
             for n in range(4):
                 run = (await client.post(endpoint + '/runs', json=request(f'USER_{n} ' + 'y' * 2000))).json()['run_id']
                 await web.state.delivery.wait(run)

@@ -21,7 +21,7 @@ def runtime(root, name):
     operation = 'list' if name == 'find' else 'search'
     subject = prepare_file_subject('.', root, operation)
     subject.update(tool_name=name, args={'path': '.', 'pattern': 'HIT'}, path_field='path',
-                   execution_environment=execution_environment())
+                   execution_environment=execution_environment(typed_context(identity=RunIdentity(None, execution_root=ExecutionRoot(root)))))
     return SimpleNamespace(tool_call_id='s', context=typed_context(identity=RunIdentity(session_id='session', execution_root=ExecutionRoot(root) if root is not None else None), authorization=ToolAuthorization(permission_rules=PermissionSettings(), session_allow=[], permit={'call_id': 's', 'session_id': 'session', 'agent_path': 'root', 'subject': subject})))
 
 

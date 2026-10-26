@@ -6,7 +6,7 @@ import sqlite3
 from uuid import UUID
 
 
-CURRENT_SCHEMA = 18
+CURRENT_SCHEMA = 20
 SUPPORTED_SCHEMAS = frozenset(range(4, CURRENT_SCHEMA + 1))
 
 
@@ -61,17 +61,22 @@ def check_snapshot(path):
         if version >= 13:
             required['naiyue_model_invocations'] += ' duration_ms'
         if version >= 14:
-            from naiyue_test_agent.application.subagents.subagent_storage import FIELDS, LEGACY_FIELDS
-            required['naiyue_subagent_instances'] = ' '.join(FIELDS if version >= 18 else LEGACY_FIELDS)
+            from naiyue_test_agent.storage.subagent_sql import FIELDS, LEGACY_FIELDS, EXECUTION_FIELDS
+            required['naiyue_subagent_instances'] = ' '.join(FIELDS if version >= 20 else FIELDS[:-1] if version >= 19 else EXECUTION_FIELDS if version >= 18 else LEGACY_FIELDS)
         if version >= 15:
-            from naiyue_test_agent.application.memory.memory_schema import REQUIRED, check
+            from naiyue_test_agent.storage.memory_sql.memory_schema import REQUIRED, check
             required.update(REQUIRED)
             check(connection, version=2 if version >= 16 else 1)
         if version >= 16:
             required['naiyue_chat_messages'] += ' occurred_at'
         if version >= 17:
-            from naiyue_test_agent.application.memory.memory_overview_store import REQUIRED as OVERVIEWS
+            from naiyue_test_agent.storage.memory_sql.memory_overview_store import REQUIRED as OVERVIEWS
             required.update(OVERVIEWS)
+        if version >= 19:
+            required['naiyue_sessions'] += ' execution_binding last_execution_path'
+        if version >= 20:
+            required['naiyue_sessions'] += ' execution_setup_json'
+            required['naiyue_project_identity'] = 'project_id source_kind'
         if version >= 18:
             required['naiyue_sessions'] += ' project_id execution_root_kind'
         if 'checkpoints' in tables or 'writes' in tables:
@@ -102,9 +107,19 @@ def check_snapshot(path):
             if (singleton != 1 or not isinstance(identity, str) or str(UUID(identity)) != identity
                     or not isinstance(root, str) or not root or '\0' in root):
                 raise ValueError('backup_invalid')
+        if version >= 20:
+            projects=connection.execute('SELECT project_id,source_kind FROM naiyue_project_identity').fetchall()
+            if len(projects)>1:
+                raise ValueError('backup_invalid')
+            if projects:
+                project,kind=projects[0]
+                if (kind not in ('local','git') or str(UUID(project))!=project
+                        or kind=='local' and identity!=project or kind=='git' and identity is not None):
+                    raise ValueError('backup_invalid')
+                identity=project
         if version >= 18:
             from .execution_storage import root_from_row
-            from naiyue_test_agent.application.errors import SessionPersistenceError
+            from naiyue_test_agent.storage.errors import SessionPersistenceError
             for table, child in (('naiyue_sessions', False), ('naiyue_subagent_instances', True)):
                 cursor = connection.execute(f'SELECT * FROM {table}')
                 names = tuple(field[0] for field in cursor.description)
@@ -114,7 +129,8 @@ def check_snapshot(path):
                         execution = root_from_row(record, child=child)
                     except SessionPersistenceError as error:
                         raise ValueError('backup_invalid') from error
-                    if record['project_id'] != identity or identity is not None and execution is None:
+                    if (record['project_id'] != identity or identity is not None and execution is None
+                            and record.get('execution_binding') not in ('project_local','sandbox')):
                         raise ValueError('backup_invalid')
         references = [('naiyue_sessions', 'thread_id,checkpoint_ns,checkpoint_id')]
         if version >= 7:

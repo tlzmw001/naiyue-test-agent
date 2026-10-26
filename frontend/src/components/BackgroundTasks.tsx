@@ -1,7 +1,7 @@
 import type { BackgroundTasksState } from '../useBackgroundTasks';
 import styles from './BackgroundTasks.module.css';
 
-const statuses = { starting: '启动中', running: '运行中', stopping: '停止中', finished: '已结束', lost: '需核对' };
+const statuses = { starting: '启动中', running: '运行中', stopping: '停止中', finished: '已结束', lost: '需核对', submitting:'提交中', completed:'已完成', failed:'失败', stopped:'已停止', unknown:'结果未确认' };
 const reasons: Record<string, string> = { exited: '命令退出', user_stop: '用户停止', timeout: '达到执行上限',
   output_limit: '达到日志额度', archive_error: '归档失败', start_failed: '启动失败', capture_failed: '输出收集失败',
   cleanup_unconfirmed: '收尾未确认', app_close: '应用关闭' };
@@ -39,7 +39,7 @@ export default function BackgroundTasks({ state }: { state: BackgroundTasksState
           <dt>会话</dt><dd>{row.session_id}</dd>
           <dt>结束原因</dt><dd>{row.termination ? reasons[row.termination] ?? row.termination : '—'}</dd>
           {!memory && <><dt>退出码</dt><dd>{row.exit_code ?? '—'}</dd></>}
-          <dt>执行上限</dt><dd>{row.max_execution_seconds == null ? '不限时' : `${row.max_execution_seconds} 秒`}</dd>
+          <dt>执行上限</dt><dd>{row.max_execution_seconds === undefined ? '—' : row.max_execution_seconds == null ? '不限时' : `${row.max_execution_seconds} 秒`}</dd>
         </dl>}
         {row?.status === 'lost' && <p className={styles.error}>{memory ? '记忆整理收尾未确认，请人工核对。' : '进程或输出收尾未确认，请人工核对。'}</p>}
         {state.stopError && <p className={styles.error} role="alert">{state.stopError}</p>}

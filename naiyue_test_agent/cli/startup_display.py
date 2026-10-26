@@ -3,20 +3,27 @@
 import json
 
 from naiyue_test_agent.model_access import ModelConfigError
-from naiyue_test_agent.application.errors import StorageStartupError
+from naiyue_test_agent.storage.errors import StorageStartupError
 
 
 def startup_messages(error, config_path):
-    if isinstance(error, ModelConfigError) and not config_path.expanduser().is_file():
+    if getattr(error, 'startup', None) is not None:
+        facts = error.startup.model_dump()
+        from pathlib import Path
+        facts['database_path'] = Path(facts['database_path'])
+        return startup_messages(StorageStartupError(error.code, **facts), config_path)
+    if (isinstance(error, ModelConfigError) or getattr(error, 'code', None) == 'model_unavailable') and not config_path.expanduser().is_file():
         return [f'未找到模型配置：{config_path}；请创建该文件或使用 --config 指定配置。配置格式见 README。']
     code = str(error)
+    if code == 'project_trust_required':
+        return ['核对项目目录后，请在交互终端输入 trust，或明确添加 --trust-project 参数授权。']
     if code in ('history_database_required', 'history_database_missing'):
         return ['无法定位现存历史库；请使用 --session-db 指定现存项目数据库后重试。']
     if code == 'invalid_workspace_binding':
         return ['指定数据库没有可确认的项目绑定，不能作为已有项目恢复；未创建项目身份或重新绑定。']
     if code == 'workspace_id_conflict':
         return ['检测到工作区副本；请使用 --new-workspace 为副本创建独立历史']
-    if code == 'storage_in_use':
+    if code in ('storage_in_use', 'project_in_use'):
         return ['该工作区数据库已被其他服务占用，请先关闭该服务']
     reasons = {
         'unsupported_store_schema': '当前程序不支持该会话库版本或版本信息无法确认。',

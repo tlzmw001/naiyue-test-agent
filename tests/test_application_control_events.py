@@ -33,15 +33,15 @@ async def blocked_app(monkeypatch, responses=None, *, observer=None):
             return super()._generate(*args, **kwargs)
 
     app = await make_app(monkeypatch, Blocking(responses=responses or [AIMessage(content='done')]))
-    session = await app.sessions.create('A')
+    session = await app.host.sessions.create('A')
     events, outcomes = [], []
-    app.observability.subscribe(events.append)
+    app.host.observability.subscribe(events.append)
     if observer is not None:
-        app.observability.subscribe(observer)
+        app.host.observability.subscribe(observer)
 
     async def run():
         try:
-            outcomes.append(await app.runs.start(session, [('user', 'initial')]))
+            outcomes.append(await app.host.runs.start(session, [('user', 'initial')]))
         except BaseException as error:
             outcomes.append(error)
 
@@ -65,9 +65,9 @@ async def test_running_cli_thread_controls_deliver_in_priority_order_with_real_i
             AIMessage(content='first'), AIMessage(content='second'), AIMessage(content='third'),
         ])
         try:
-            app.runs.follow_up(session, 'PRIVATE_FOLLOW')
-            app.runs.steer(session, 'PRIVATE_STEER')
-            app.runs.steer(session, 'PRIVATE_STEER')
+            app.host.runs.follow_up(session, 'PRIVATE_FOLLOW')
+            app.host.runs.steer(session, 'PRIVATE_STEER')
+            app.host.runs.steer(session, 'PRIVATE_STEER')
             assert len(controls(events, 'control_accepted')) == 3
             assert controls(events, 'control_delivered') == []
             result = await finish(worker, release, outcomes)
@@ -100,10 +100,10 @@ async def test_running_cli_thread_controls_deliver_in_priority_order_with_real_i
 async def test_stop_is_idempotent_applied_from_result_and_discards_waiting_messages(monkeypatch):
     app, session, events, outcomes, worker, release, calls = await blocked_app(monkeypatch)
     try:
-        app.runs.steer(session, 'discard steering')
-        app.runs.follow_up(session, 'discard follow')
-        app.runs.stop(session)
-        app.runs.stop(session)
+        app.host.runs.steer(session, 'discard steering')
+        app.host.runs.follow_up(session, 'discard follow')
+        app.host.runs.stop(session)
+        app.host.runs.stop(session)
         result = await finish(worker, release, outcomes)
     finally:
         release.set()
@@ -124,7 +124,7 @@ async def test_approval_is_accepted_then_applied_at_actual_hook(monkeypatch, tmp
     app, session, events = await make_approval(monkeypatch, tmp_path)
     requested = next(e for e in events if e.event_type == 'approval_requested')
     assert requested.data.tool_call_ids == ('read',)
-    result = await app.runs.resume_approval(session, [decision])
+    result = await app.host.runs.resume_approval(session, [decision])
     received = controls(events)
     assert [e.event_type for e in received] == ['control_accepted', 'control_delivery_started', 'control_applied']
     assert all(e.data.kind == 'approval' and e.data.tool_call_ids == ('read',) for e in received)
@@ -153,15 +153,15 @@ async def test_failed_tool_stage_blocks_replay_without_fake_approval_events(monk
     monkeypatch.setattr(ToolBatchMiddleware, 'awrap_tool_call', fail_once)
     app, session, events = await make_approval(monkeypatch, tmp_path)
     with pytest.raises(RuntimeError) as caught:
-        await app.runs.resume_approval(session, ['approve'])
+        await app.host.runs.resume_approval(session, ['approve'])
     assert caught.value is failure
     assert len(controls(events, 'control_applied')) == 1
     count = len(events)
     from naiyue_test_agent.application import SessionManualReviewRequiredError
     with pytest.raises(SessionManualReviewRequiredError):
-        await app.runs.resume_approval(session, ['approve'])
+        await app.host.runs.resume_approval(session, ['approve'])
     assert events[count:] == [] and attempts == [True]
-    state = app.sessions._sessions._sessions[session]
+    state = app.host.sessions._sessions._sessions[session]
     assert state.describe_session()['manual_review_required'] and not state.is_busy()
     assert state.lifecycle.snapshot_for_run()['pending'] is None
     assert len(controls(events, 'control_applied')) == 1

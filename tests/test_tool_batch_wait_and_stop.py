@@ -215,23 +215,23 @@ async def test_sync_app_settles_first_tool_then_skips_later_without_another_mode
         ToolSpec(first, first.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow')),
         ToolSpec(later, later.args_schema, permissions=ToolPermission(default='allow')),
     ])
-    app.runs._agent = app.runs._agent.with_config({'max_concurrency': concurrency})
-    session = await app.sessions.create('A')
+    app.host.runs._agent = app.host.runs._agent.with_config({'max_concurrency': concurrency})
+    session = await app.host.sessions.create('A')
 
     def observe(event):
         events.append(event)
         if event.event_type == 'tool_call_started' and event.data.tool_call_id == 'later-call':
             later_dispatched.set()
 
-    app.observability.subscribe(observe)
+    app.host.observability.subscribe(observe)
     try:
-        task = asyncio.create_task(app.runs.start(session, [('user', 'start')], max_concurrency=concurrency))
+        task = asyncio.create_task(app.host.runs.start(session, [('user', 'start')], max_concurrency=concurrency))
         try:
             assert await asyncio.to_thread(entered.wait, 5)
             if concurrency == 2:
                 assert await asyncio.to_thread(later_dispatched.wait, 5)
-            app.runs.stop(session)
-            assert app.sessions._sessions.require(session).describe_session()['busy'] and not task.done()
+            app.host.runs.stop(session)
+            assert app.host.sessions._sessions.require(session).describe_session()['busy'] and not task.done()
         finally:
             release.set()
         result = await asyncio.wait_for(asyncio.shield(task), 5)
@@ -245,13 +245,13 @@ async def test_sync_app_settles_first_tool_then_skips_later_without_another_mode
         assert finished['first-call'].outcome == 'success'
         assert finished['later-call'].outcome == 'not_executed' and finished['later-call'].reason == 'user_stop'
         assert events[-1].data.status == 'stopped' and not events[-1].data.manual_review_required
-        snapshot = await app.runs._agent.aget_state({'configurable': {'thread_id': app.sessions._sessions.require(session).get_thread_id()}})
+        snapshot = await app.host.runs._agent.aget_state({'configurable': {'thread_id': app.host.sessions._sessions.require(session).get_thread_id()}})
         assert not snapshot.next and not any(task.error or task.interrupts for task in snapshot.tasks)
-        assert not app.sessions._sessions.require(session).describe_session()['busy']
+        assert not app.host.sessions._sessions.require(session).describe_session()['busy']
         EventSequenceChecker.assert_healthy(events, caplog.records)
     finally:
         release.set()
-        await app.sessions._sessions._catalog.aclose()
+        await app.host.sessions._sessions._catalog.aclose()
 
 
 @async_test

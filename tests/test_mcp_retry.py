@@ -145,7 +145,7 @@ def test_mcp_transport_response_policy_failure_is_permanent(monkeypatch, policy)
 
 def test_real_sdk_preflight_retry_uses_one_approved_call_and_one_business_request(monkeypatch, tmp_path):
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.async_application import build_async_local_application
+    from scripts.component_fixtures import build_component_application
     from naiyue_test_agent.mcp_client import tools
     from naiyue_test_agent.model_access import ModelCatalog
     from naiyue_test_agent.settings import AppSettings
@@ -159,10 +159,10 @@ def test_real_sdk_preflight_retry_uses_one_approved_call_and_one_business_reques
         settings = AppSettings.model_validate({'mcp': {'servers': {'local':
             stdio_settings(path, 'stateful', allowed_tools=['echo']).model_dump()}},
             'tool_retry': {'initial_delay_seconds': 0}})
-        app = await build_async_local_application('unused', tools=[], system_prompt='', response_format=None,
+        app = await build_component_application('unused', tools=[], system_prompt='', response_format=None,
             initial_active_tools=[NAME], settings=settings)
         events = []
-        app.observability.subscribe(events.append)
+        app.host.observability.subscribe(events.append)
         original = tools.read_catalog
         attempts = []
         async def read(*args):
@@ -172,13 +172,13 @@ def test_real_sdk_preflight_retry_uses_one_approved_call_and_one_business_reques
             return await original(*args)
         monkeypatch.setattr(tools, 'read_catalog', read)
         try:
-            sid = await app.sessions.create('A')
-            waiting = await app.runs.start(sid, [('user', 'run')])
+            sid = await app.host.sessions.create('A')
+            waiting = await app.host.runs.start(sid, [('user', 'run')])
             assert waiting['approval_requests'] and not attempts and not calls(path)
-            result = await app.runs.resume_approval(sid, ['approve'])
+            result = await app.host.runs.resume_approval(sid, ['approve'])
             output, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
             assert output.status == 'success' and len(attempts) == 2 and len(calls(path)) == 1
-            assert app.sessions._sessions.mcp_resources.retry_settings.initial_delay_seconds == 0
+            assert app.host.sessions._sessions.mcp_resources.retry_settings.initial_delay_seconds == 0
             assert not result.get('approval_requests')
             for event_type in ('tool_call_started', 'tool_call_finished'):
                 selected = [event for event in events if event.event_type == event_type]

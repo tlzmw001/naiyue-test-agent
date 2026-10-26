@@ -7,8 +7,8 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from scripts.component_fixtures import open_component_application
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.settings import AppSettings
 from test_auto_permission_review import model, settings, verdict
@@ -27,7 +27,7 @@ async def test_unknown_review_id_fails_before_graph_even_in_default_mode(monkeyp
         if entry == 'local':
             await build_application('synthetic', **args)
         else:
-            async with open_async_persistent_application('synthetic', database_path=tmp_path / 'sessions.sqlite', **args):
+            async with open_component_application('synthetic', database_path=tmp_path / 'sessions.sqlite', **args):
                 pytest.fail('Invalid configuration must not acquire an application')
     assert reached == []
 
@@ -40,18 +40,18 @@ async def test_auto_mode_restores_with_models_and_rejects_restore_without_them(m
             'fast': model([verdict()]), 'detail': model([])})
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: catalog)
         args = dict(tools=[definition(approved=True)], settings=settings(), system_prompt='', response_format=None)
-        async with open_async_persistent_application('synthetic', database_path=path, **args) as app:
-            sid = await app.sessions.create('main')
-            await app.runs.start(sid, [('user', 'run')])
-            assert app.sessions._persistence.storage.sessions.get(sid)['permission_mode'] == 'Auto'
-        async with open_async_persistent_application('synthetic', database_path=path, **args) as restored:
-            await restored.sessions.restore(sid)
-            assert restored.sessions.permission_mode(sid) == 'Auto'
-            assert restored.sessions._sessions.resolve_permission_context(sid)['session_allow'] == []
-            assert restored.sessions._sessions.resolve_permission_context(sid)['project_instructions'] is None
+        async with open_component_application('synthetic', database_path=path, **args) as app:
+            sid = await app.host.sessions.create('main')
+            await app.host.runs.start(sid, [('user', 'run')])
+            assert app.host.sessions._persistence.storage.sessions.get(sid)['permission_mode'] == 'Auto'
+        async with open_component_application('synthetic', database_path=path, **args) as restored:
+            await restored.host.sessions.restore(sid)
+            assert restored.host.sessions.permission_mode(sid) == 'Auto'
+            assert restored.host.sessions._sessions.resolve_permission_context(sid)['session_allow'] == []
+            assert restored.host.sessions._sessions.resolve_permission_context(sid)['project_instructions'] is None
         args['settings'] = AppSettings()
-        async with open_async_persistent_application('synthetic', database_path=path, **args) as unavailable:
+        async with open_component_application('synthetic', database_path=path, **args) as unavailable:
             with pytest.raises(SessionPersistenceError, match='invalid_permission_mode'):
-                await unavailable.sessions.restore(sid)
-            assert not unavailable.sessions._sessions.has_session(sid)
+                await unavailable.host.sessions.restore(sid)
+            assert not unavailable.host.sessions._sessions.has_session(sid)
     await scenario()

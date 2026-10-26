@@ -8,10 +8,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from naiyue_test_agent.application.errors import (
-    SessionBusyError, SessionManualReviewRequiredError, SessionPendingApprovalError,
-    SessionPersistenceError,
-)
+from naiyue_test_agent.application.errors import SessionBusyError, SessionManualReviewRequiredError, SessionPendingApprovalError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelConfigError
 from naiyue_test_agent.web.errors import WebError
 from naiyue_test_agent.web.service import WebService
@@ -201,10 +199,10 @@ def test_http_settings_use_same_safe_error_contract(monkeypatch, tmp_path, caplo
     async def scenario():
         model = StreamingToolModel(replies=[])
         async with web_client(monkeypatch, tmp_path, model) as (client, app):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
             operation = AsyncMock(side_effect=ValueError(PRIVATE) if invalid else RuntimeError(PRIVATE))
             monkeypatch.setattr(app.state.service.application.sessions, setter, operation)
-            response = await client.patch(f'/api/sessions/{sid}/{endpoint}', json=body)
+            response = await client.patch(f'/api/v1/scopes/chats/sessions/{sid}/{endpoint}', json=body)
             assert response.status_code == (422 if invalid else 500)
             assert response.json() == {'error': {'code': invalid_code if invalid else 'operation_failed'}}
             assert PRIVATE not in response.text

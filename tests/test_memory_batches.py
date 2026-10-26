@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.messages.utils import count_tokens_approximately
 
 from naiyue_test_agent.application.conversation.chat_history import ChatUpdate
-from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
+from naiyue_test_agent.contracts.memory import MemoryReadError
 from naiyue_test_agent.storage.project_store import ProjectStore
 
 
@@ -37,7 +37,7 @@ def save(store, messages, *, thread='root-thread', occurred_at=1000.):
 
 def batch(store, **changes):
     from naiyue_test_agent.application.memory.memory_batches import build_batch
-    return store.memory.build_batch(**(dict(session_id='session', thread_id='root-thread', conversation_revision=0,
+    return build_batch(store.memory, **(dict(session_id='session', thread_id='root-thread', conversation_revision=0,
         start=[0, 0], upper=100, token_budget=16000, source_chars=4096) | changes))
 
 

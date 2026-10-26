@@ -13,7 +13,7 @@ def test_cancelled_start_waiter_still_has_queryable_run(monkeypatch, tmp_path):
         entered, release = asyncio.Event(), asyncio.Event()
         model = StreamingToolModel(replies=[], entered=entered, release=release)
         async with web_client(monkeypatch, tmp_path, model) as (client, app):
-            session = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+            session = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
             service = app.state.service
             holder = {}
 

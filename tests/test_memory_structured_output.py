@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from http_observation_helpers import sdk_catalog, sdk_response
 from naiyue_test_agent.application.memory.memory_batches import parse_model_result
-from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
+from naiyue_test_agent.contracts.memory import MemoryReadError
 from test_memory_batches import archive, save, result
 from test_memory_flat_contract import flat
 from test_memory_job_runner import fixture

@@ -25,7 +25,7 @@ def test_web_background_scope_paging_auth_and_stop(monkeypatch, tmp_path):
                 row = await submit(manager, root, "import time;print('READY',flush=True);time.sleep(60)", call=str(i), sid=sid)
                 await wait_status(manager, row['task_id'], lambda value: bool(value['output']))
                 rows.append(row)
-            endpoint = '/api/background-tasks'
+            endpoint = '/api/v1/scopes/chats/background-tasks'
             assert (await client.get(endpoint, headers={'Authorization': ''})).status_code == 401
             assert (await client.get(endpoint, headers={'Host': 'evil.example'})).status_code == 403
             page = (await client.get(endpoint, params={'limit': 1})).json()
@@ -62,7 +62,7 @@ def test_web_background_scope_paging_auth_and_stop(monkeypatch, tmp_path):
 def test_web_background_invalid_query(monkeypatch, tmp_path, query):
     async def scenario():
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]), workspace_root=tmp_path) as (client, _):
-            response = await client.get('/api/background-tasks?' + query)
+            response = await client.get('/api/v1/scopes/chats/background-tasks?' + query)
             assert response.status_code == 422
     asyncio.run(scenario())
 
@@ -71,10 +71,10 @@ def test_web_background_unbound_and_unknown_cursor(monkeypatch, tmp_path):
     async def scenario():
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[])) as (client, web):
             row = await submit(web.state.service.application.sessions._sessions.background_tasks, tmp_path, "print('done')")
-            assert (await client.get('/api/background-tasks')).json()['items'] == []
-            assert (await client.get(f'/api/background-tasks/{row["task_id"]}/output')).status_code == 404
+            assert (await client.get('/api/v1/scopes/chats/background-tasks')).json()['items'] == []
+            assert (await client.get(f'/api/v1/scopes/chats/background-tasks/{row["task_id"]}/output')).status_code == 404
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]), workspace_root=tmp_path) as (client, _):
-            response = await client.get('/api/background-tasks?before=' + 'a' * 32)
+            response = await client.get('/api/v1/scopes/chats/background-tasks?before=' + 'a' * 32)
             assert response.status_code == 422 and response.json()['error']['code'] == 'task_cursor_invalid'
     asyncio.run(scenario())
 
@@ -88,7 +88,7 @@ def test_web_background_missing_output_and_failure_projection(monkeypatch, tmp_p
             detail = await wait_status(manager, row['task_id'], lambda value: value['status'] == 'finished')
             for path in detail['archive_paths'].values():
                 (tmp_path / path).unlink()
-            endpoint = f'/api/background-tasks/{row["task_id"]}'
+            endpoint = f'/api/v1/scopes/chats/background-tasks/{row["task_id"]}'
             result = (await client.get(endpoint + '/output')).json()
             assert result['output_available'] is False and 'TAIL' in result['output']
             async def broken(*args, **kwargs):
@@ -111,17 +111,17 @@ def test_web_background_management_during_root_run(monkeypatch, tmp_path):
         model = StreamingToolModel(replies=[AIMessage(content='done')], entered=entered, release=release)
         async with web_client(monkeypatch, tmp_path, model, workspace_root=tmp_path) as (client, web):
             app = web.state.service.application
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
             row = await submit(app.sessions._sessions.background_tasks, tmp_path, 'import time;time.sleep(60)', sid=sid)
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=request('work'))).json()['run_id']
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('work'))).json()['run_id']
             await asyncio.wait_for(entered.wait(), 5)
-            assert (await client.get('/api/background-tasks')).json()['active_count'] == 1
-            stopped = await client.post(f'/api/background-tasks/{row["task_id"]}/stop')
+            assert (await client.get('/api/v1/scopes/chats/background-tasks')).json()['active_count'] == 1
+            stopped = await client.post(f'/api/v1/scopes/chats/background-tasks/{row["task_id"]}/stop')
             assert stopped.json()['cleanup_confirmed']
-            assert (await client.get(f'/api/runs/{run}')).json()['status'] == 'running'
+            assert (await client.get(f'/api/v1/scopes/chats/runs/{run}')).json()['status'] == 'running'
             assert 'bash' not in app.sessions.active_tools(sid)
             release.set()
-            await client.get(f'/api/runs/{run}/events')
+            await client.get(f'/api/v1/scopes/chats/runs/{run}/events')
             assert len(model.seen) == 1
     asyncio.run(scenario())
 
@@ -134,7 +134,7 @@ def test_web_background_frame_budget_preserves_utf8_tail_and_registry(monkeypatc
             manager = web.state.service.application.sessions._sessions.background_tasks
             row = await submit(manager, tmp_path, "print('中\\n'*800)")
             original = await wait_status(manager, row['task_id'], lambda value: value['status'] == 'finished')
-            response = await client.get(f'/api/background-tasks/{row["task_id"]}/output')
+            response = await client.get(f'/api/v1/scopes/chats/background-tasks/{row["task_id"]}/output')
             assert response.status_code == 200
             value = response.json()
             assert value['truncated'] and encoded_size(value) <= 2048 and value['output']
@@ -142,6 +142,6 @@ def test_web_background_frame_budget_preserves_utf8_tail_and_registry(monkeypatc
             assert '\ufffd' not in value['output'] and value['output_available']
             assert (await manager.output(row['task_id']))['output'] == original['output']
             web.state.service.settings = web.state.service.settings.model_copy(update={'max_frame_bytes': 128})
-            response = await client.get('/api/background-tasks')
+            response = await client.get('/api/v1/scopes/chats/background-tasks')
             assert response.status_code == 409 and response.json()['error']['code'] == 'view_too_large'
     asyncio.run(scenario())

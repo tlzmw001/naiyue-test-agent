@@ -11,7 +11,7 @@ from langchain_openai.chat_models.base import OpenAIRateLimitError
 
 from native_application_helpers import async_test
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+from scripts.component_fixtures import open_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import create_subagent_tool
 from naiyue_test_agent.settings import AppSettings
@@ -44,43 +44,43 @@ async def test_rate_limit_root_or_child_has_no_cross_session_cascade(monkeypatch
     options = AppSettings(max_active_runs=2, subagents=(role(),) if child else ())
     async with concurrent_app(monkeypatch, tmp_path / 'state.sqlite', model=model,
                               settings=options, tools=specs, child=children) as (app, _):
-        a, b, c = [await app.sessions.create('A') for _ in range(3)]
+        a, b, c = [await app.host.sessions.create('A') for _ in range(3)]
         events, tasks = [], []
-        app.observability.subscribe(events.append)
+        app.host.observability.subscribe(events.append)
         model.responses[a] = ([call('subagent', {'agent': 'tester', 'task': 'check'}, 'child'),
                                AIMessage(content='parent handles failed child')] if child else [failure])
         entered, _ = gated(model, b)
-        tasks.append(asyncio.create_task(app.runs.start(b, [('user', b)])))
+        tasks.append(asyncio.create_task(app.host.runs.start(b, [('user', b)])))
         try:
             await asyncio.wait_for(entered.wait(), 5)
             if child:
-                result = await app.runs.start(a, [('user', a)])
+                result = await app.host.runs.start(a, [('user', a)])
                 feedback, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
                 assert feedback.status == 'error' and 'Subagent model request failed' in feedback.content
                 assert 'limit_exceeded' in feedback.content and 'PRIVATE' not in feedback.content
                 assert result['messages'][-1].content == 'parent handles failed child'
                 assert len(model.requests[a]) == 2 and len(children.seen) == 1
-                record, = await app.history.chat_subagents(a)
+                record, = await app.host.history.chat_subagents(a)
                 assert record['status'] == 'failed'
             else:
                 with pytest.raises(type(failure)) as caught:
-                    await app.runs.start(a, [('user', a)])
+                    await app.host.runs.start(a, [('user', a)])
                 assert caught.value is failure
                 assert len(model.requests[a]) == 1
-                assert not any(isinstance(m, ToolMessage) for m in await app.history.messages(a))
+                assert not any(isinstance(m, ToolMessage) for m in await app.host.history.messages(a))
             relevant = [e for e in events if e.session_id == a and e.event_type == 'run_finished']
             failed, = [e for e in relevant if (e.source is not None) == child]
             assert failed.data.status == 'failed'
             assert failed.data.failure.stage == 'execute' and failed.data.failure.category == 'limit_exceeded'
             assert failed.data.failure.reason == 'limit_unspecified'
             assert failed.data.failure.error_type == ('ToolException' if child else type(failure).__name__)
-            assert not tasks[0].done() and set(app.sessions._persistence._active) == {b}
-            assert app.sessions._persistence.storage.sessions.get(b)['state'] == 'running'
-            assert (await app.runs.start(c, [('user', c)]))['messages'][-1].content == 'done:' + c
+            assert not tasks[0].done() and set(app.host.sessions._persistence._active) == {b}
+            assert app.host.sessions._persistence.storage.sessions.get(b)['state'] == 'running'
+            assert (await app.host.runs.start(c, [('user', c)]))['messages'][-1].content == 'done:' + c
             model.gates[b][1].set()
             assert (await tasks[0])['messages'][-1].content == 'done:' + b
-            assert app.sessions._persistence.storage.sessions.get(b)['state'] == app.sessions._persistence.storage.sessions.get(c)['state'] == 'ready'
-            assert app.sessions._persistence._active == {} and app._lifetime._operations == {}
+            assert app.host.sessions._persistence.storage.sessions.get(b)['state'] == app.host.sessions._persistence.storage.sessions.get(c)['state'] == 'ready'
+            assert app.host.sessions._persistence._active == {} and app.host.runs._owner._operations == {}
         finally:
             await drain(tasks, model)
     assert 'PRIVATE' not in caplog.text
@@ -98,25 +98,25 @@ async def test_auto_rate_limit_requires_human_while_other_root_runs(monkeypatch,
     catalog = ModelCatalog('main', {'main': primary, 'fast': fast, 'detail': detail})
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: catalog)
     options = auto_settings().model_copy(update={'max_active_runs': 2})
-    async with open_async_persistent_application('unused', database_path=tmp_path / 'state.sqlite',
+    async with open_component_application('unused', database_path=tmp_path / 'state.sqlite',
         tools=[definition(calls=effects, approved=True)], settings=options,
         system_prompt='', response_format=None) as app:
-        a, b = [await app.sessions.create('main') for _ in range(2)]
+        a, b = [await app.host.sessions.create('main') for _ in range(2)]
         primary.responses[a] = [call('probe', {'value': 'approved'}, 'needs-human'), AIMessage(content='approved')]
         entered, _ = gated(primary, b)
-        task = asyncio.create_task(app.runs.start(b, [('user', b)]))
+        task = asyncio.create_task(app.host.runs.start(b, [('user', b)]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            paused = await app.runs.start(a, [('user', a)])
+            paused = await app.host.runs.start(a, [('user', a)])
             assert [r['tool_call_id'] for r in paused['approval_requests']] == ['needs-human']
             assert effects == [] and len(primary.requests[a]) == 1 and len(failing.seen) == 1
             assert len(fast.seen) == 1 and len(detail.seen) == (stage == 'detail')
-            assert not task.done() and set(app.sessions._persistence._active) == {b}
-            assert (await app.runs.resume_approval(a, ['approve']))['messages'][-1].content == 'approved'
+            assert not task.done() and set(app.host.sessions._persistence._active) == {b}
+            assert (await app.host.runs.resume_approval(a, ['approve']))['messages'][-1].content == 'approved'
             assert effects == [('probe', 'approved')] and len(failing.seen) == 1
             primary.gates[b][1].set()
             assert (await task)['messages'][-1].content == 'done:' + b
-            assert app.sessions._persistence.storage.sessions.get(a)['state'] == app.sessions._persistence.storage.sessions.get(b)['state'] == 'ready'
+            assert app.host.sessions._persistence.storage.sessions.get(a)['state'] == app.host.sessions._persistence.storage.sessions.get(b)['state'] == 'ready'
         finally:
             await drain([task], primary)
     assert 'PRIVATE' not in caplog.text
@@ -126,22 +126,22 @@ async def test_auto_rate_limit_requires_human_while_other_root_runs(monkeypatch,
 @async_test
 async def test_stop_during_model_wait_then_other_root_rate_limit_is_isolated(monkeypatch, tmp_path, caplog):
     async with concurrent_app(monkeypatch, tmp_path / 'state.sqlite', settings=AppSettings(max_active_runs=2)) as (app, model):
-        a, b, c = [await app.sessions.create('A') for _ in range(3)]
+        a, b, c = [await app.host.sessions.create('A') for _ in range(3)]
         model.responses[b] = [rate_limit('sdk')]
         tasks = []
         try:
             for sid in (a, b):
                 entered, _ = gated(model, sid)
-                tasks.append(asyncio.create_task(app.runs.start(sid, [('user', sid)])))
+                tasks.append(asyncio.create_task(app.host.runs.start(sid, [('user', sid)])))
                 await asyncio.wait_for(entered.wait(), 5)
-            assert app.runs.stop(a) == []
+            assert app.host.runs.stop(a) == []
             assert (await tasks[0])['run_stopped'] and not tasks[1].done()
-            assert set(app.sessions._persistence._active) == {b}
-            assert (await app.runs.start(c, [('user', c)]))['messages'][-1].content == 'done:' + c
+            assert set(app.host.sessions._persistence._active) == {b}
+            assert (await app.host.runs.start(c, [('user', c)]))['messages'][-1].content == 'done:' + c
             model.gates[b][1].set()
             with pytest.raises(openai.RateLimitError):
                 await tasks[1]
-            assert app.sessions._persistence._active == {} and app._lifetime._operations == {}
+            assert app.host.sessions._persistence._active == {} and app.host.runs._owner._operations == {}
             assert len(model.requests[a]) == len(model.requests[b]) == len(model.requests[c]) == 1
         finally:
             await drain(tasks, model)

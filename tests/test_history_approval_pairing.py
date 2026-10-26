@@ -22,16 +22,16 @@ def test_cold_approval_pairs_live_and_archived_tool_results(monkeypatch, tmp_pat
         entered, release = asyncio.Event(), asyncio.Event()
         model = StreamingToolModel(replies=[AIMessage(content='done')], entered=entered, release=release)
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, web):
-            prepared = (await client.post(f'/api/sessions/{sid}/prepare')).json()
-            restored = await client.post(f'/api/sessions/{sid}/recover', json={
+            prepared = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/prepare')).json()
+            restored = await client.post(f'/api/v1/scopes/chats/sessions/{sid}/recover', json={
                 'checkpoint_id': prepared['checkpoint_id'], 'action': 'restore_approval'})
             batch, = restored.json()['approval_batches']
-            response = await client.post(f'/api/sessions/{sid}/approvals', json=approval_request(batch, ['approve']))
+            response = await client.post(f'/api/v1/scopes/chats/sessions/{sid}/approvals', json=approval_request(batch, ['approve']))
             assert response.status_code == 202
             rid = response.json()['run_id']
             try:
                 await asyncio.wait_for(entered.wait(), 5)
-                running = (await client.get(f'/api/runs/{rid}')).json()
+                running = (await client.get(f'/api/v1/scopes/chats/runs/{rid}')).json()
                 assert not any(m.get('identity_only') for m in running['messages'])
                 result, = [m for m in running['messages'] if m['type'] == 'tool']
                 assert result['parent_message_id'] == 'approval-owner'
@@ -39,7 +39,7 @@ def test_cold_approval_pairs_live_and_archived_tool_results(monkeypatch, tmp_pat
             finally:
                 release.set()
                 await web.state.delivery.wait(rid)
-            for path in (f'/api/sessions/{sid}', f'/api/sessions/{sid}/messages'):
+            for path in (f'/api/v1/scopes/chats/sessions/{sid}', f'/api/v1/scopes/chats/sessions/{sid}/messages'):
                 response = await client.get(path)
                 assert response.status_code == 200
                 result, = [m for m in response.json()['messages'] if m['type'] == 'tool']

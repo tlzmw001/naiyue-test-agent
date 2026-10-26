@@ -19,6 +19,9 @@ class MemoryAPI:
         self._owner, self._sessions, self._persistence = owner, sessions, persistence
         self._agent, self._access, self._jobs = agent, access, jobs
 
+    def available_for(self, project_id):
+        return self._access is not None and (project_id is not None or self._access.personal_only)
+
     async def query(self, *, scope: RunScope, request: dict, tool_call_id: str | None = None) -> dict:
         with self._owner.operation():
             if self._access is None:
@@ -31,7 +34,10 @@ class MemoryAPI:
                 raise ToolException('memory_scope_mismatch: the calling session or role is unavailable.') from error
             origin_run_id = session.validate_memory_scope(scope)
             identity = scope.identity
-            require_execution_directory(identity.execution_root, identity.project_id)
+            if scope.environment is not None and scope.environment.kind=='sandbox':
+                await run_blocking(scope.capabilities.files.validate)
+            else:
+                require_execution_directory(identity.execution_root, identity.project_id)
             try:
                 request = MemoryInput.model_validate(request).model_dump(mode='json')
             except ValidationError as error:

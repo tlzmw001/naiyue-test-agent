@@ -104,13 +104,13 @@ def test_listing_stop_retains_allowed_prefix_and_run_finishes_stopped(monkeypatc
             {'name': 'write', 'args': {'path': 'new/file.txt', 'content': 'not written'}, 'id': 'write'}])
         app = await make_app(monkeypatch, StreamingToolModel(replies=[response]),
             [create_session_ls_tool(), create_session_write_tool()])
-        sid = await app.sessions.create_workspace('A', tmp_path)
+        sid = await app.host.sessions.create_workspace('A', tmp_path)
         events = []
-        app.observability.subscribe(events.append)
-        task = asyncio.create_task(app.runs.start(sid, [('user', 'list')]))
+        app.host.observability.subscribe(events.append)
+        task = asyncio.create_task(app.host.runs.start(sid, [('user', 'list')]))
         try:
             assert await asyncio.to_thread(entered.wait, 5)
-            app.runs.stop(sid)
+            app.host.runs.stop(sid)
             release.set()
             result = await asyncio.wait_for(task, 5)
             outputs = {m.tool_call_id: m for m in result['messages'] if isinstance(m, ToolMessage)}
@@ -118,7 +118,7 @@ def test_listing_stop_retains_allowed_prefix_and_run_finishes_stopped(monkeypatc
             assert feedback.status == 'success' and feedback.content.startswith('a.txt\n')
             assert 'incomplete' in feedback.content and 'stopped' in feedback.content and 'b.txt' not in feedback.content
             assert result['run_stopped'] and events[-1].data.status == 'stopped'
-            assert app.sessions._sessions.require(sid).describe_session()['busy'] is False and scan.closed
+            assert app.host.sessions._sessions.require(sid).describe_session()['busy'] is False and scan.closed
             assert len([e for e in events if e.event_type == 'model_call_started']) == 1
             assert outputs['write'].status == 'error' and outputs['write'].additional_kwargs['naiyue_not_executed'] == 'user_stop'
             assert not (tmp_path / 'new').exists()

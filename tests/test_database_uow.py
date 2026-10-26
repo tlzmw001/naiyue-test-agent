@@ -6,7 +6,7 @@ import pytest
 
 from naiyue_test_agent.storage.project_store import ProjectStore
 from naiyue_test_agent.storage.database import Database
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 
 
 def create(store):
@@ -39,7 +39,8 @@ def test_nested_transaction_is_rejected_and_outer_writes_roll_back(tmp_path):
         assert store.sessions.get('s')['title'] == 'committed'
 
 
-def test_finish_run_rolls_back_reply_and_chat_when_terminal_update_fails(tmp_path):
+@pytest.mark.parametrize('failure_field', ['checkpoint_id', 'last_execution_path'])
+def test_finish_run_rolls_back_reply_and_chat_when_terminal_update_fails(tmp_path, failure_field):
     import hashlib
     import json
     from langchain_core.messages import HumanMessage, message_to_dict
@@ -54,12 +55,12 @@ def test_finish_run_rolls_back_reply_and_chat_when_terminal_update_fails(tmp_pat
             version=1, checkpoint_ns='', checkpoint_id='child-cp', last_delegation_id='delegation',
             last_parent_run_id='r', last_parent_batch_id='batch', last_parent_tool_call_id='call',
             last_parent_reply_id='reply', created_at='created', updated_at='updated', project_id=None,
-            execution_root=None, execution_root_kind=None)
+            execution_root=None, execution_root_kind=None, execution_binding=None, last_execution_path=None,environment_binding_id=None)
         store.subagents.save_subagent(child, None)
         with store.database.transaction(write=True) as conn:
             conn.execute("INSERT INTO checkpoints VALUES('subagent:c','','child-cp',NULL,'json',?,?)", (b'checkpoint', b'metadata'))
             conn.execute("INSERT INTO naiyue_regenerations VALUES('s','req','reply',0,'old','t','r','activated','[]')")
-            conn.execute("""CREATE TRIGGER fail_terminal BEFORE UPDATE OF checkpoint_id ON naiyue_sessions
+            conn.execute(f"""CREATE TRIGGER fail_terminal BEFORE UPDATE OF {failure_field} ON naiyue_sessions
                 BEGIN SELECT RAISE(ABORT,'injected'); END""")
         body = json.dumps(message_to_dict(HumanMessage(id='h', content='saved input')))
         message = dict(message_id='h', body_json=body, body_hash=hashlib.sha256(body.encode()).hexdigest(),
@@ -68,16 +69,17 @@ def test_finish_run_rolls_back_reply_and_chat_when_terminal_update_fails(tmp_pat
         updates = (ChatUpdate('t', '', 'root', 0, 'cp', (message,), boundaries=(boundary,)),
             ChatUpdate('subagent:c', '', 'root/worker/c', 0, 'child-cp', ()))
         with pytest.raises(SessionPersistenceError, match='session_save_unconfirmed'):
-            store.runs.finish_run('s', 'ready', 'cp', '', 'completed', updates, subagent_run_id='r')
+            store.runs.finish_run('s', 'ready', 'cp', '', 'completed', updates, subagent_run_id='r', execution_path=str(tmp_path))
         assert store.conversation.chat_heads('s') == []
         assert store.database.read_rows('SELECT message_id FROM naiyue_chat_messages') == []
         assert store.replies.latest('s') is None
         assert store.subagents.get_subagent('s', 'c') == child
         assert store.replies.action('s', 'req')['status'] == 'activated'
         assert store.sessions.get('s')['state'] == 'running'
+        assert store.sessions.get('s')['last_execution_path'] is None
         with store.database.transaction(write=True) as conn:
             conn.execute('DROP TRIGGER fail_terminal')
-        store.runs.finish_run('s', 'ready', 'cp', '', 'completed', updates, subagent_run_id='r')
+        store.runs.finish_run('s', 'ready', 'cp', '', 'completed', updates, subagent_run_id='r', execution_path=str(tmp_path))
         assert {row['checkpoint_id'] for row in store.conversation.chat_heads('s')} == {'cp', 'child-cp'}
         assert store.database.read_rows('SELECT message_id FROM naiyue_chat_messages') == [{'message_id': 'h'}]
         assert store.replies.latest('s')['reply_id'] == 'reply'
@@ -85,6 +87,7 @@ def test_finish_run_rolls_back_reply_and_chat_when_terminal_update_fails(tmp_pat
         assert store.subagents.get_subagent('s', 'c')['version'] == 2
         assert store.replies.action('s', 'req')['status'] == 'completed'
         assert store.sessions.get('s')['state'] == 'ready'
+        assert store.sessions.get('s')['last_execution_path'] == str(tmp_path)
 
 
 def test_parent_run_change_rolls_back_chat_head(tmp_path):
@@ -127,8 +130,8 @@ def test_transaction_boundary_io_errors_keep_save_error_and_rollback(tmp_path, p
 def test_schema_step_ddl_failure_rolls_back_and_can_retry(tmp_path, version, target):
     from contextlib import closing
     from tests.storage_backup_fixture import closed_store
-    from naiyue_test_agent.application.conversation import chat_queries, reply_storage
-    from naiyue_test_agent.application.subagents import subagent_storage
+    from naiyue_test_agent.storage.conversation_sql import chat_queries, reply_storage
+    from naiyue_test_agent.storage import subagent_sql as subagent_storage
     database, _, _ = closed_store(tmp_path, version=version)
     step = {7: chat_queries.migrate_chat_queries, 10: reply_storage.initialize,
         11: reply_storage.initialize_regeneration, 13: subagent_storage.initialize}[version]
@@ -147,7 +150,8 @@ def test_schema_step_ddl_failure_rolls_back_and_can_retry(tmp_path, version, tar
 
 
 def test_memory_batch_begin_failure_keeps_memory_error_code(tmp_path, caplog):
-    from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
+    from naiyue_test_agent.application.memory.memory_batches import build_batch
+    from naiyue_test_agent.contracts.memory import MemoryReadError
     with ProjectStore(tmp_path / 'sessions.sqlite') as store:
         connection = store.database.connection
         class FaultConnection:
@@ -160,7 +164,7 @@ def test_memory_batch_begin_failure_keeps_memory_error_code(tmp_path, caplog):
         store.database.connection = FaultConnection()
         try:
             with pytest.raises(MemoryReadError, match='memory_batch_read_failed'):
-                store.memory.build_batch(session_id='s', thread_id='t', conversation_revision=0,
+                build_batch(store.memory, session_id='s', thread_id='t', conversation_revision=0,
                     start=(0, 0), upper=0, token_budget=100, source_chars=100)
         finally:
             store.database.connection = connection
@@ -202,7 +206,7 @@ def test_stale_subagent_sql_cas_preserves_current_owner_and_can_retry(tmp_path, 
             last_task='old task', state='running', version=1, checkpoint_ns='', checkpoint_id='old-cp',
             last_delegation_id='old-delegation', last_parent_run_id='old-run', last_parent_batch_id='old-batch',
             last_parent_tool_call_id='old-call', last_parent_reply_id='old-reply', created_at='created',
-            updated_at='old-update', project_id=None, execution_root=None, execution_root_kind=None)
+            updated_at='old-update', project_id=None, execution_root=None, execution_root_kind=None, execution_binding=None, last_execution_path=None,environment_binding_id=None)
         previous = None
         if operation == 'cancel_existing_claim':
             previous = {**claimed, 'state': 'ready'}

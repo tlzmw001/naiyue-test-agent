@@ -1,6 +1,7 @@
 """Default paths and Read settings are consumed by real application entries."""
 
 from naiyue_test_agent import settings as application_settings
+from runtime_context_helpers import host_files
 
 from native_application_helpers import async_test
 
@@ -24,11 +25,8 @@ def test_cli_wires_configured_default_tools_without_model_requests(monkeypatch, 
     model = ToolCapableFake(responses=[])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     observed = []
-    original = cli.build_local_application
-    def build(*args, **kwargs):
-        observed.append(tuple(kwargs['initial_active_tools']))
-        return original(*args, **kwargs)
-    monkeypatch.setattr(cli, 'build_local_application', build)
+    from terminal_service_helpers import capture_hosts
+    capture_hosts(monkeypatch, lambda host, options: observed.append(tuple(options['initial_active_tools'])))
     monkeypatch.setattr('builtins.input', lambda *_: ':quit')
     assert cli.main(['--no-session', '--workspace', str(tmp_path)]) == 0
     assert observed == [tuple(names)]
@@ -38,18 +36,18 @@ def test_cli_wires_configured_default_tools_without_model_requests(monkeypatch, 
 @async_test
 async def test_sdk_tool_parameter_keeps_its_existing_precedence(monkeypatch, tmp_path, initial, expected):
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.async_application import build_async_local_application
+    from scripts.component_fixtures import build_component_application
     from naiyue_test_agent.model_access import ModelCatalog
     from naiyue_test_agent.settings import AppSettings
     from naiyue_test_agent.tools import create_session_read_tool
     from test_async_application import StreamingToolModel
     model = StreamingToolModel(replies=[])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
-    app = await build_async_local_application('unused', tools=[create_session_read_tool()], system_prompt='',
+    app = await build_component_application('unused', tools=[create_session_read_tool()], system_prompt='',
         response_format=None, settings=AppSettings(default_active_tools=['powershell']), initial_active_tools=initial)
     try:
-        sid = await app.sessions.create_workspace('A', tmp_path)
-        assert app.sessions.active_tools(sid) == expected
+        sid = await app.host.sessions.create_workspace('A', tmp_path)
+        assert app.host.sessions.active_tools(sid) == expected
         assert model.seen == []
     finally:
         await app.aclose()
@@ -154,9 +152,9 @@ async def test_web_uses_the_same_settings_loader(monkeypatch, tmp_path, content,
     async def scenario():
         model = StreamingToolModel(replies=[call('read', {'path': 'doc.md'}), AIMessage(content='done')])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=workspace) as (client, app):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=request('read'))).json()['run_id']
-            await client.get(f'/api/runs/{run}/events')
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('read'))).json()['run_id']
+            await client.get(f'/api/v1/scopes/chats/runs/{run}/events')
             feedback = next(m for m in model.seen[1] if isinstance(m, ToolMessage))
             assert feedback.content == expected
     if expected is None:
@@ -171,10 +169,10 @@ def test_web_entry_model_config_is_optional(monkeypatch, tmp_path):
     monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path))
     (tmp_path / 'index.html').write_text('<html>fixture</html>')
     seen = []
-    monkeypatch.setattr(entry, 'create_web_app', lambda settings: seen.append(settings))
-    def stop(*args, **kwargs):
+    async def stop(options):
+        seen.append(options)
         raise KeyboardInterrupt()
-    monkeypatch.setattr(entry.uvicorn.Server, 'run', stop)
+    monkeypatch.setattr(entry, 'ensure_service', stop)
     assert entry.main(['--frontend-dist', str(tmp_path)]) == 130
     assert len(seen) == 1
     assert seen[0].config_path == tmp_path / '.naiyue-test-agent' / 'models.json'
@@ -192,8 +190,8 @@ async def test_two_applications_keep_their_own_read_budget(monkeypatch, tmp_path
     second = await make_app(monkeypatch,
         ToolModel(responses=[call('read', {'path': 'doc.md'}), AIMessage(content='done')]),
         [create_session_read_tool(settings=ReadSettings(default_limit=3))])
-    first_result = await first.runs.start(await first.sessions.create_workspace('A', tmp_path), [('user', 'read')])
-    second_result = await second.runs.start(await second.sessions.create_workspace('A', tmp_path), [('user', 'read')])
+    first_result = await first.host.runs.start(await first.host.sessions.create_workspace('A', tmp_path), [('user', 'read')])
+    second_result = await second.host.runs.start(await second.host.sessions.create_workspace('A', tmp_path), [('user', 'read')])
     assert next(m for m in first_result['messages'] if isinstance(m, ToolMessage)).content == 'a\n[read: lines 1-1; next_offset=2]\n[read: stopped by 1 line page limit; continue with the same path, offset=2, limit=1]'
     assert next(m for m in second_result['messages'] if isinstance(m, ToolMessage)).content == 'a\nb\nc\n'
 
@@ -214,12 +212,12 @@ async def test_approval_resume_keeps_the_original_startup_settings(monkeypatch, 
     app = await make_app(monkeypatch,
         ToolModel(responses=[call('read', {'path': str(document)}), AIMessage(content='done')]),
         [reader])
-    session = await app.sessions.create_workspace('A', workspace)
-    pending = await app.runs.start(session, [('user', 'read')])
+    session = await app.host.sessions.create_workspace('A', workspace)
+    pending = await app.host.runs.start(session, [('user', 'read')])
     assert len(pending['approval_requests']) == 1
     assert not any(isinstance(m, ToolMessage) for m in pending['messages'])
     path.write_text('[tools.read]\ndefault_limit=3\n')
-    result = await app.runs.resume_approval(session, ['approve'])
+    result = await app.host.runs.resume_approval(session, ['approve'])
     assert next(m for m in result['messages'] if isinstance(m, ToolMessage)).content == 'a\n[read: lines 1-1; next_offset=2]\n[read: stopped by 1 line page limit; continue with the same path, offset=2, limit=1]'
 
 
@@ -229,7 +227,7 @@ def test_small_read_page_does_not_remove_skills_from_discovery(tmp_path):
     from skill_helpers import write_skill
     path = write_skill(tmp_path, body='body\n' * 100)
     create_session_read_tool(settings=ReadSettings(max_output_bytes=8))
-    catalog = discover_project_skills(tmp_path)
+    catalog = discover_project_skills(host_files(tmp_path))
     assert len(catalog.entries) == 1
     assert catalog.entries[0].skill_file == path.resolve()
 
@@ -275,9 +273,9 @@ async def test_entries_wire_ls_write_and_edit_settings(monkeypatch, tmp_path, en
         model = StreamingToolModel(replies=replies)
         async def scenario():
             async with web_client(monkeypatch, tmp_path, model, workspace_root=workspace) as (client, app):
-                sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-                run = (await client.post(f'/api/sessions/{sid}/runs', json=request('check files'))).json()['run_id']
-                await client.get(f'/api/runs/{run}/events')
+                sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+                run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('check files'))).json()['run_id']
+                await client.get(f'/api/v1/scopes/chats/runs/{run}/events')
         await scenario()
     feedback = {m.tool_call_id: m for m in model.seen[1] if isinstance(m, ToolMessage)}
     assert feedback['ls'].status == 'success'
@@ -300,6 +298,6 @@ async def test_two_applications_keep_their_own_ls_defaults(monkeypatch, tmp_path
         [create_session_ls_tool(settings=LsSettings(default_limit=limit))]) for limit in (1, 2)]
     outputs = []
     for app in applications:
-        result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'ls')])
+        result = await app.host.runs.start(await app.host.sessions.create_workspace('A', tmp_path), [('user', 'ls')])
         outputs.append(next(m.content for m in result['messages'] if isinstance(m, ToolMessage)))
     assert outputs == ['a\n[ls: truncated at 1 entries; narrow the directory or limit]', 'a\nb']

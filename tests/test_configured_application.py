@@ -5,7 +5,7 @@ from langchain.tools import tool
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 
-from naiyue_test_agent.application.async_application import build_async_local_application
+from scripts.component_fixtures import build_component_application
 from naiyue_test_agent.tools import ToolSpec
 from naiyue_test_agent.tools.permissions import ToolPermission
 from naiyue_test_agent.settings import AppSettings
@@ -47,17 +47,17 @@ async def test_configured_agent_uses_file_and_switches_after_tool_result(tmp_pat
         await holder['app'].sessions.select_model(holder['session'], 'second')
         return 'selected second'
 
-    app = await build_async_local_application(
+    app = await build_component_application(
         write_config(tmp_path, config),
         tools=[ToolSpec(switch_to_second, switch_to_second.args_schema,
                         permissions=ToolPermission(default='allow'))],
         system_prompt='Test model selection.', response_format=None, settings=AppSettings())
     try:
-        session = await app.sessions.create('first')
-        holder.update(app=app, session=session)
-        app.observability.subscribe(lambda event: selections.append((event.session_id, event.data.model_id))
+        session = await app.host.sessions.create('first')
+        holder.update(app=app.host, session=session)
+        app.host.observability.subscribe(lambda event: selections.append((event.session_id, event.data.model_id))
                              if event.event_type == 'model_call_started' else None)
-        result = await app.runs.start(session, [('user', 'switch, then answer')])
+        result = await app.host.runs.start(session, [('user', 'switch, then answer')])
     finally:
         await app.aclose()
 
@@ -85,14 +85,14 @@ async def test_configured_agent_forwards_checkpointer_for_continuous_messages(tm
         'providers': {'p': {'kind': 'openai', 'api_key': 'test-key'}},
         'models': {'first': {'provider_id': 'p', 'model': 'model-first', 'api': 'chat_completions'}},
     })
-    app = await build_async_local_application(config_path, tools=[], system_prompt='',
+    app = await build_component_application(config_path, tools=[], system_prompt='',
                                               response_format=None, settings=AppSettings())
     try:
-        session = await app.sessions.create('first')
-        thread = app.sessions._sessions.require(session).get_thread_id()
-        await app.runs.start(session, [('user', 'first question')])
-        result = await app.runs.start(session, [('user', 'second question')])
-        assert app.sessions._sessions.require(session).get_thread_id() == thread
+        session = await app.host.sessions.create('first')
+        thread = app.host.sessions._sessions.require(session).get_thread_id()
+        await app.host.runs.start(session, [('user', 'first question')])
+        result = await app.host.runs.start(session, [('user', 'second question')])
+        assert app.host.sessions._sessions.require(session).get_thread_id() == thread
     finally:
         await app.aclose()
 

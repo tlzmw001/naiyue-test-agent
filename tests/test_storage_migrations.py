@@ -7,7 +7,7 @@ import pytest
 
 from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.storage.project_store import ProjectStore
 from naiyue_test_agent.storage.backup import list_backups, validate_backup
 from tests.storage_backup_fixture import artifact, closed_store
@@ -52,7 +52,7 @@ def test_new_and_current_stores_do_not_backup_but_keep_recovery_initialization(t
 
 def test_backup_failure_stops_migrations_releases_lock_and_keeps_original_cause(tmp_path, monkeypatch, caplog):
     from naiyue_test_agent.storage import migrations as storage_migrations
-    from naiyue_test_agent.application.conversation import chat_queries
+    from naiyue_test_agent.storage.conversation_sql import chat_queries
     database, _, _ = closed_store(tmp_path, version=6)
     original = OSError('PRIVATE-provider-body')
     steps = []
@@ -75,8 +75,8 @@ def test_backup_failure_stops_migrations_releases_lock_and_keeps_original_cause(
 
 
 def test_middle_failure_rolls_back_only_its_step_and_next_start_resumes_committed_version(tmp_path, monkeypatch, caplog):
-    from naiyue_test_agent.application.conversation import chat_queries
-    from naiyue_test_agent.application.observability import model_usage_storage
+    from naiyue_test_agent.storage.conversation_sql import chat_queries
+    from naiyue_test_agent.storage.observability_sql import model_usage_storage
     database, _, _ = closed_store(tmp_path, version=6)
     original = RuntimeError('PRIVATE-migration-failure')
     later = []
@@ -157,7 +157,7 @@ def test_backup_cancel_preserves_interrupt_and_releases_ownership(tmp_path, monk
 
 
 def test_current_version_recovery_failure_is_not_reported_as_migration(tmp_path, monkeypatch):
-    from naiyue_test_agent.application.observability import model_usage_storage
+    from naiyue_test_agent.storage.observability_sql import model_usage_storage
     database, _, _ = closed_store(tmp_path)
     original = sqlite3.OperationalError('PRIVATE-recovery-failure')
     def failure(*args, **kwargs):
@@ -170,7 +170,7 @@ def test_current_version_recovery_failure_is_not_reported_as_migration(tmp_path,
 
 @pytest.mark.parametrize('cleanup', ['closed_connection', 'rollback_failure'])
 def test_cleanup_failure_keeps_primary_migration_error_and_does_not_guess_current_version(tmp_path, monkeypatch, caplog, cleanup):
-    from naiyue_test_agent.application.conversation import chat_queries
+    from naiyue_test_agent.storage.conversation_sql import chat_queries
     database, _, _ = closed_store(tmp_path, version=6)
     original, secondary = RuntimeError('PRIVATE-main'), OSError('PRIVATE-rollback')
     connect = sqlite3.connect

@@ -1,9 +1,11 @@
 import { Fragment, useEffect, useId, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import type { SessionRow } from '../types';
-import { Icon } from './Icons';
+import type { ReactNode } from 'react';
+import type { RunView, SessionRow, SessionView } from '../types';
+import { Chevron, Icon } from './Icons';
 import SessionMenu from './SessionMenu';
 import SessionSearch from './SessionSearch';
+import SessionIndicators from './SessionIndicators';
 import styles from '../App.module.css';
 import sidebar from './Sidebar.module.css';
 
@@ -15,11 +17,14 @@ function dateBucket(row: SessionRow, now: Date) {
   return days < 0 ? 4 : days === 0 ? 0 : days === 1 ? 1 : days < 7 ? 2 : 3;
 }
 
-export default function Sidebar({ rows, selected, open, disabled, managing, onNew, onSelect, onClose, update, remove, reorder }: {
+export default function Sidebar({ rows, selected, open, disabled, managing, onNew, onSelect, onClose, update, remove, reorder, navigation, scopeName, scopeId = 'chats', loading, failure, retry, currentSession, currentRun }: {
   rows: SessionRow[]; selected?: string; open: boolean; disabled: boolean;
   onNew: () => void; onSelect: (id: string) => void; onClose: () => void;
   managing: boolean; update: (id: string, change: { title?: string; pinned?: boolean }) => Promise<boolean>;
   remove: (id: string) => Promise<boolean>; reorder: (ids: string[]) => Promise<boolean>;
+  navigation?: (current: ReactNode) => ReactNode; scopeName?: string; scopeId?: string;
+  loading?: boolean; failure?: string; retry?: () => void;
+  currentSession?: SessionView; currentRun?: RunView | null;
 }) {
   const [menu, setMenu] = useState<{ row: SessionRow; x: number; y: number } | null>(null);
   const [dragged, setDragged] = useState<string | null>(null);
@@ -38,6 +43,7 @@ export default function Sidebar({ rows, selected, open, disabled, managing, onNe
     return () => window.clearTimeout(timer);
   }, [view, now]);
   const listId = useId();
+  const list = useRef<HTMLDivElement>(null);
   const origin = useRef<HTMLElement | null>(null);
   const searchOrigin = useRef<HTMLElement | null>(null);
   const newButton = useRef<HTMLButtonElement>(null);
@@ -93,13 +99,14 @@ export default function Sidebar({ rows, selected, open, disabled, managing, onNe
     if (!current.active) { current.active = true; event.currentTarget.setPointerCapture?.(event.pointerId); setDragged(current.id); }
     event.preventDefault();
     current.target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-session-id], [data-session-end]') ?? null;
+    if (current.target?.closest('[data-session-scope]') !== list.current) current.target = null;
     setOver(current.target?.dataset.sessionId ?? null);
   }
   function pointerUp(event: ReactPointerEvent<HTMLDivElement>) {
     const current = gesture.current;
     if (!current?.active || current.ended || view !== 'manual') { gesture.current = null; return; }
     current.ended = true; event.preventDefault();
-    const target = current.target;
+    const target = current.target?.closest('[data-session-scope]') === list.current ? current.target : null;
     if (!unavailable && target?.dataset.sessionId) {
       const row = rows.find(item => item.session_id === target.dataset.sessionId);
       if (row) void ordered(current.id, row.session_id, !!row.pinned);
@@ -115,16 +122,18 @@ export default function Sidebar({ rows, selected, open, disabled, managing, onNe
           onClick={event => {
             origin.current = event.currentTarget; event.currentTarget.focus();
             setMenu(null); cancelDrag(); setCollapsed(value => !value);
-          }}><span aria-hidden="true">{collapsed ? '›' : '‹'}</span></button>
+          }}><Chevron direction={collapsed ? 'right' : 'left'} /></button>
         <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="关闭导航" onClick={onClose}><Icon name="close" /></button>
       </div>
-      <button ref={newButton} className={`${styles.newChat} ${sidebar.newChat}`} aria-label="新建会话" title="新建会话"
-        onClick={onNew} disabled={unavailable}><Icon name="plus" /><span className={sidebar.label}>新建会话</span></button>
       <button type="button" className={sidebar.search} aria-label="搜索会话" title="搜索会话 (⌘ / Ctrl K)" aria-keyshortcuts="Meta+K Control+K"
         onClick={openSearch}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-          <circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg><span className={sidebar.label}>搜索会话</span><kbd>⌘ / Ctrl K</kbd></button>
+          <circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg><span className={sidebar.label}>{scopeName ? '搜索当前范围' : '搜索会话'}</span><kbd>⌘ / Ctrl K</kbd></button>
+      <button ref={newButton} className={`${styles.newChat} ${sidebar.newChat}`} aria-label="新建会话"
+        onClick={onNew} disabled={unavailable} title={scopeName ? `在${scopeName}中新建会话` : '新建会话'}><Icon name="plus" /><span className={sidebar.label}>新建会话</span></button>
       <nav id={listId} className={`${styles.sessionList} ${sidebar.sessions}`}>
-        {!rows.length && <p className={styles.emptyHistory}>还没有历史会话</p>}
+        {(navigation ?? (current => current))(<div ref={list} data-session-scope={scopeId}>
+        {failure ? <p className={styles.emptyHistory} role="status">{failure} <button className={styles.syncButton} onClick={retry}>重试会话目录</button></p> :
+          !rows.length && <p className={styles.emptyHistory} role={loading ? 'status' : undefined}>{loading ? '正在读取会话…' : '还没有历史会话'}</p>}
         {[true, false].map(pinned => {
           const group = rows.filter(row => !!row.pinned === pinned);
           if (!pinned && view === 'date') group.sort((a, b) => dateBucket(a, now) - dateBucket(b, now) || Date.parse(b.updated_at) - Date.parse(a.updated_at));
@@ -152,16 +161,20 @@ export default function Sidebar({ rows, selected, open, disabled, managing, onNe
               onClickCapture={event => { if (gesture.current?.ended) { event.preventDefault(); event.stopPropagation(); gesture.current = null; } }}
               onKeyDownCapture={() => { gesture.current = null; }}>
               <button disabled={unavailable} aria-current={selected === row.session_id ? 'true' : undefined}
-                aria-label={`${title(row)} ${row.model_id}${row.state !== 'ready' ? ' · 未完成' : ''}`}
-                title={`${title(row)} · ${row.model_id}${row.state !== 'ready' ? ' · 未完成' : ''}`}
+                aria-describedby={`${listId}-${row.session_id}-facts`}
+                aria-label={`${title(row)} ${row.model_id}`}
+                title={`${title(row)} · ${row.model_id}`}
                 className={`${styles.sessionButton} ${sidebar.select} ${selected === row.session_id ? styles.selected : ''}`}
                 onClick={() => { setMenu(null); onSelect(row.session_id); }}
                 onContextMenu={event => { if (!unavailable) { event.preventDefault(); openMenu(row, event.clientX, event.clientY, event.currentTarget); } }}
                 onKeyDown={event => { if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') {
                   event.preventDefault(); const box = event.currentTarget.getBoundingClientRect(); openMenu(row, box.left + 24, box.bottom, event.currentTarget);
                 } }}>
-                <span className={`${styles.sessionTitle} ${sidebar.heading}`}><Icon name="chat" /><span className={sidebar.title}>{title(row)}</span></span>
-                {row.state !== 'ready' && <span className={`${styles.sessionMeta} ${sidebar.state}`}>未完成</span>}
+                <span className={`${styles.sessionTitle} ${sidebar.heading}`}>
+                  {row.pinned ? <span className={sidebar.pin} role="img" aria-label="已置顶" title="已置顶"><Icon name="pin" /></span> : <Icon name="chat" />}
+                  <span className={sidebar.summary}><span className={sidebar.title}>{title(row)}</span>
+                    <SessionIndicators id={`${listId}-${row.session_id}-facts`} row={row} currentSession={currentSession} currentRun={currentRun} />
+                  </span></span>
               </button>
               <button type="button" className={sidebar.more} disabled={unavailable} aria-label={`${row.title ?? `未命名会话 ${row.session_id.slice(0, 8)}`}的更多操作`}
                 aria-haspopup="menu" onClick={event => { const box = event.currentTarget.getBoundingClientRect(); openMenu(row, box.right - 188, box.bottom, event.currentTarget); }}>⋯</button>
@@ -169,7 +182,7 @@ export default function Sidebar({ rows, selected, open, disabled, managing, onNe
             {dragged && !!rows.find(row => row.session_id === dragged)?.pinned === pinned &&
               <div className={sidebar.dropEnd} data-session-end={String(pinned)}>拖到这里移至组末尾</div>}
           </section>;
-        })}
+        })}</div>)}
       </nav>
       <div className={`${styles.localBadge} ${sidebar.footer}`}><span />本地工作台</div>
     </aside>

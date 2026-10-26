@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.tools import ToolException
 
 from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.tools.processes import HostProcessRunner, ProcessCleanupError
 from naiyue_test_agent.tools.settings import BashSettings
 from test_async_application import StreamingToolModel, call
@@ -131,25 +131,25 @@ def test_application_maintenance_refuses_active_tasks_then_preserves_truth(monke
     async def scenario():
         model = StreamingToolModel(replies=[call('bash', {'command': command("import time;print('saved',flush=True);time.sleep(60)"), 'background': True}), AIMessage(content='started')])
         async with background_app(monkeypatch, tmp_path, model, persistent=True) as app:
-            sid = await app.sessions.create_workspace('A', tmp_path)
-            result = await app.runs.start(sid, [('user', 'start')])
+            sid = await app.host.sessions.create_workspace('A', tmp_path)
+            result = await app.host.runs.start(sid, [('user', 'start')])
             identity = json.loads(tool_result(result, 'bash').content)['task_id']
-            ready = await wait_status(app.sessions._sessions.background_tasks, identity, lambda r: bool(r['output']))
+            ready = await wait_status(app.host.sessions._sessions.background_tasks, identity, lambda r: bool(r['output']))
             with pytest.raises(ValueError, match='active'):
-                await app.tasks.preview_outputs(tmp_path)
+                await app.host.tasks.preview_outputs(tmp_path)
             with pytest.raises(SessionPersistenceError, match='background'):
-                await app.sessions.delete(sid)
-            await app.tasks.stop(identity)
+                await app.host.sessions.delete(sid)
+            await app.host.tasks.stop(identity)
             if action == 'clear':
-                plan = await app.tasks.preview_outputs(tmp_path)
+                plan = await app.host.tasks.preview_outputs(tmp_path)
                 assert plan.file_count == 1 and plan.total_bytes > 0
-                assert await app.tasks.clear_outputs(plan) == (plan.file_count, plan.total_bytes)
-                missing = await app.tasks.output(identity)
+                assert await app.host.tasks.clear_outputs(plan) == (plan.file_count, plan.total_bytes)
+                missing = await app.host.tasks.output(identity)
                 assert missing['output_unavailable'] and missing['termination'] == 'user_stop'
                 assert missing['cleanup_confirmed'] and missing['output'] == ready['output']
             else:
-                await app.sessions.delete(sid)
-                assert (await app.tasks.list())['items'] == []
+                await app.host.sessions.delete(sid)
+                assert (await app.host.tasks.list())['items'] == []
                 assert all((tmp_path / path).exists() for path in ready['archive_paths'].values())
     asyncio.run(scenario())
 
@@ -158,15 +158,15 @@ def test_save_failure_does_not_cancel_or_replay_handed_off_process(monkeypatch, 
     async def scenario():
         model = StreamingToolModel(replies=[call('bash', {'command': command('import time;time.sleep(60)'), 'background': True}), AIMessage(content='started')])
         async with background_app(monkeypatch, tmp_path, model, persistent=True) as app:
-            sid = await app.sessions.create_workspace('A', tmp_path)
+            sid = await app.host.sessions.create_workspace('A', tmp_path)
             async def failed(*args, **kwargs):
                 raise SessionPersistenceError('session_save_unconfirmed')
-            monkeypatch.setattr(app.sessions._persistence, 'afinish', failed)
+            monkeypatch.setattr(app.host.sessions._persistence, 'afinish', failed)
             with pytest.raises(SessionPersistenceError, match='save_unconfirmed'):
-                await app.runs.start(sid, [('user', 'start')])
-            rows = (await app.tasks.list())['items']
+                await app.host.runs.start(sid, [('user', 'start')])
+            rows = (await app.host.tasks.list())['items']
             assert len(rows) == 1 and rows[0]['status'] in ('starting', 'running')
-            stopped = await app.tasks.stop(rows[0]['task_id'])
+            stopped = await app.host.tasks.stop(rows[0]['task_id'])
             assert stopped['cleanup_confirmed'] and len(model.seen) == 2
     asyncio.run(scenario())
 
@@ -209,14 +209,14 @@ def test_cleanup_guard_releases_reservation_on_failure_and_blocks_new_runs(monke
     async def scenario():
         model = StreamingToolModel(replies=[AIMessage(content='next run works')])
         async with background_app(monkeypatch, tmp_path, model) as app:
-            sid = await app.sessions.create_workspace('A', tmp_path)
+            sid = await app.host.sessions.create_workspace('A', tmp_path)
             with pytest.raises(RuntimeError, match='maintenance failed'):
-                with app.sessions._sessions.output_guard(app.sessions._sessions.workspace_archive_root(tmp_path)):
+                with app.host.sessions._sessions.output_guard(app.host.sessions._sessions.workspace_archive_root(tmp_path)):
                     with pytest.raises(SessionBusyError):
-                        await app.runs.start(sid, [('user', 'cannot race cleanup')])
+                        await app.host.runs.start(sid, [('user', 'cannot race cleanup')])
                     assert model.seen == []
                     raise RuntimeError('maintenance failed')
-            assert not app.sessions._sessions.background_tasks.is_cleaning(app.sessions._sessions.workspace_archive_root(tmp_path))
-            result = await app.runs.start(sid, [('user', 'after cleanup')])
+            assert not app.host.sessions._sessions.background_tasks.is_cleaning(app.host.sessions._sessions.workspace_archive_root(tmp_path))
+            result = await app.host.runs.start(sid, [('user', 'after cleanup')])
             assert result['messages'][-1].content == 'next run works'
     asyncio.run(scenario())

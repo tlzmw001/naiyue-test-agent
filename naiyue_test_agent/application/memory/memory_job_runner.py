@@ -18,8 +18,8 @@ from naiyue_test_agent.contracts.failures import safe_error_type
 from naiyue_test_agent.model_access import MODEL_LIMITS_METADATA_KEY, MODEL_ID_METADATA_KEY
 from naiyue_test_agent.model_access.memory_output import prepare_memory_output
 from naiyue_test_agent.tools.memory import MemoryInput
-from .memory_batches import model_batch, parse_model_result, proposal_request, response_schema
-from .memory_queries import MemoryReadError
+from .memory_batches import build_batch, model_batch, parse_model_result, proposal_request, response_schema
+from naiyue_test_agent.contracts.memory import MemoryReadError
 from .memory_sources import sensitive
 from naiyue_test_agent.application.observability.run_events import RunObservation
 
@@ -207,7 +207,7 @@ async def _prepare(service, job, upper):
     budget = cap - count_tokens_approximately(_messages(system, previous, [], {}, coverage))
     if budget <= 0:
         raise MemoryReadError('memory_batch_budget')
-    batch = await run_blocking(service.storage.memory.build_batch, session_id=job.target_session_id,
+    batch = await run_blocking(build_batch, service.storage.memory, session_id=job.target_session_id,
         thread_id=job.thread_id, conversation_revision=job.conversation_revision,
         start=job.start, upper=upper, token_budget=budget, source_chars=service.settings.read_chunk_chars, model_view=True)
     related = await _related(service, job, batch) if batch['sources'] else []
@@ -218,7 +218,7 @@ async def _prepare(service, job, upper):
             related_budget = cap - count_tokens_approximately(_messages(system, previous, related, {}, coverage))
         if related:
             try:
-                revised = await run_blocking(service.storage.memory.build_batch, session_id=job.target_session_id,
+                revised = await run_blocking(build_batch, service.storage.memory, session_id=job.target_session_id,
                     thread_id=job.thread_id, conversation_revision=job.conversation_revision,
                     start=job.start, upper=upper, token_budget=related_budget, source_chars=service.settings.read_chunk_chars,
                     model_view=True)
@@ -349,7 +349,7 @@ async def drive(service, job):
     result, termination = 'completed', 'completed'
     observation.start()
     try:
-        with observation.bind(identity=RunIdentity(job.session_id, job.task_id, project_id=job.project_id, execution_root=ExecutionRoot(job.root))):
+        with observation.bind(identity=RunIdentity(job.session_id, job.task_id, project_id=job.project_id, execution_root=ExecutionRoot(job.root) if job.root is not None else None)):
             async with asyncio.timeout(max(0, job.deadline - time.monotonic())):
                 while True:
                     _check(job)

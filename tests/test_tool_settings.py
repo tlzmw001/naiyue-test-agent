@@ -142,7 +142,7 @@ async def test_strict_injected_schema_and_path_limits_reject_before_io(tmp_path,
         AIMessage(content='done'),
     ])
     app = await make_app(monkeypatch, model, [reader])
-    result = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'read')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('A', tmp_path), [('user', 'read')])
     feedback = [m for m in result['messages'] if isinstance(m, ToolMessage)]
     assert len(feedback) == 2 and all(m.status == 'error' for m in feedback)
     assert all('runtime' not in m.content and 'workspace_root' not in m.content for m in feedback)

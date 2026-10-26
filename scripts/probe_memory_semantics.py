@@ -192,7 +192,7 @@ async def run_case(case, repeat, catalog, model_id, callback, settings):
     from naiyue_test_agent.agent_runtime.events import RunEventPublisher
     from naiyue_test_agent.application.memory.memory_access import MemoryAccess
     from naiyue_test_agent.application.memory.memory_jobs import MemoryJobs
-    from naiyue_test_agent.application.memory.memory_overview_store import overview
+    from naiyue_test_agent.storage.memory_sql.memory_overview_store import overview
     from naiyue_test_agent.storage.project_store import ProjectStore
 
     events, started = [], time.monotonic()

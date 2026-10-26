@@ -54,7 +54,7 @@ def crash_restore(location, backup_id, point):
     'move:custom.sqlite-shm', 'move:custom.sqlite-journal', 'install', 'installed', 'completed', 'cleared'])
 def test_process_crash_never_empties_store_and_explicit_retry_finishes(tmp_path, monkeypatch, capsys, point):
     from naiyue_test_agent.storage.project_store import ProjectStore
-    from naiyue_test_agent.application.errors import SessionPersistenceError
+    from naiyue_test_agent.storage.errors import SessionPersistenceError
     location, saved = saved_store(tmp_path)
     database, backup_id = location.database_path, saved['backup_id']
     original = {database.name + suffix: b'original' + suffix.encode() for suffix in ('', '-wal', '-shm', '-journal')}

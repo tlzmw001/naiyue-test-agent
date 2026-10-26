@@ -59,10 +59,10 @@ async def test_find_and_grep_tool_results_enter_next_model_turn(monkeypatch, tmp
         ]),
         AIMessage(content='I found the contract'),
     ])
-    session = await app.sessions.create_workspace('A', tmp_path)
-    await app.sessions.select_permission_mode(session, 'NoAsk')
+    session = await app.host.sessions.create_workspace('A', tmp_path)
+    await app.host.sessions.select_permission_mode(session, 'NoAsk')
 
-    result = await app.runs.start(session, [('user', 'find the discount contract')])
+    result = await app.host.runs.start(session, [('user', 'find the discount contract')])
 
     by_id = {item.tool_call_id: item for item in tool_messages(result)}
     assert by_id['find-ok'].content == 'contract.md'
@@ -88,14 +88,14 @@ async def test_find_and_grep_external_approvals_bind_separate_targets(monkeypatc
         ]),
         AIMessage(content='reviewed'),
     ])
-    session = await app.sessions.create_workspace('A', root)
+    session = await app.host.sessions.create_workspace('A', root)
 
-    pending = await app.runs.start(session, [('user', 'search outside')])
+    pending = await app.host.runs.start(session, [('user', 'search outside')])
     assert [item['tool_name'] for item in pending['approval_requests']] == [
         'find', 'grep',
     ]
     assert tool_messages(pending) == []
-    result = await app.runs.resume_approval(session, ['approve', 'reject'])
+    result = await app.host.runs.resume_approval(session, ['approve', 'reject'])
     by_id = {item.tool_call_id: item for item in tool_messages(result)}
     assert by_id['find-out'].content == 'notes.md'
     assert by_id['grep-out'].status == 'error'
@@ -120,13 +120,13 @@ async def test_grep_approval_target_change_returns_tool_error(monkeypatch, tmp_p
         ]),
         AIMessage(content='target changed'),
     ])
-    session = await app.sessions.create_workspace('A', root)
+    session = await app.host.sessions.create_workspace('A', root)
 
-    pending = await app.runs.start(session, [('user', 'search alias')])
+    pending = await app.host.runs.start(session, [('user', 'search alias')])
     assert pending['approval_requests'][0]['target'] == str(first)
     alias.unlink()
     alias.symlink_to(second)
-    result = await app.runs.resume_approval(session, ['approve'])
+    result = await app.host.runs.resume_approval(session, ['approve'])
     assert tool_messages(result)[0].status == 'error'
     assert 'approval' in tool_messages(result)[0].content.lower()
     assert 'FIRST_PRIVATE' not in str(result)
@@ -150,13 +150,13 @@ async def test_all_four_read_only_tools_share_one_review_batch(monkeypatch, tmp_
         ]),
         AIMessage(content='reviewed all tools'),
     ])
-    session = await app.sessions.create_workspace('A', root)
+    session = await app.host.sessions.create_workspace('A', root)
 
-    pending = await app.runs.start(session, [('user', 'inspect reviewed targets')])
+    pending = await app.host.runs.start(session, [('user', 'inspect reviewed targets')])
     assert [item['tool_name'] for item in pending['approval_requests']] == [
         'read', 'ls', 'find', 'grep',
     ]
-    result = await app.runs.resume_approval(session, ['approve'] * 4)
+    result = await app.host.runs.resume_approval(session, ['approve'] * 4)
     by_id = {item.tool_call_id: item for item in tool_messages(result)}
     assert {item.status for item in by_id.values()} == {'success'}
     assert by_id['read'].content == 'NEEDLE\n'

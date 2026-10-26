@@ -3,7 +3,7 @@
 import logging
 import sqlite3
 from datetime import datetime, timezone
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 
 logger = logging.getLogger(__name__)
 STATES = {'ready', 'running', 'failed', 'interrupted', 'review_required'}
@@ -45,7 +45,16 @@ def workspace_binding(connection):
     rows = read_rows(connection, 'SELECT workspace_id,root_path FROM naiyue_workspace')
     if len(rows) > 1:
         raise SessionPersistenceError('invalid_workspace_binding')
-    return rows[0] if rows else None
+    version=connection.execute('SELECT version FROM naiyue_store_info').fetchone()[0]
+    if version<20:return rows[0] if rows else None
+    identities = read_rows(connection,'SELECT project_id,source_kind FROM naiyue_project_identity')
+    if rows:
+        if identities!=[dict(project_id=rows[0]['workspace_id'],source_kind='local')]:
+            raise SessionPersistenceError('invalid_workspace_binding')
+        return rows[0]
+    if len(identities)>1 or identities and identities[0]['source_kind']!='git':
+        raise SessionPersistenceError('invalid_workspace_binding')
+    return dict(workspace_id=identities[0]['project_id'],root_path=None) if identities else None
 
 
 def subagent_row(connection, session_id, agent_id):

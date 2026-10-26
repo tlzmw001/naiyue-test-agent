@@ -41,6 +41,8 @@ class CliEventDisplay:
             self._had_reply = False
             self._incomplete = False
             self._agents = {}
+            self._approval_batches = set()
+            self._result_finished = False
 
     @property
     def terminal_displayed(self):
@@ -54,6 +56,13 @@ class CliEventDisplay:
     def control_receipt_count(self, kind):
         with self._lock:
             return self._receipts.get(kind, 0)
+
+    def show_approvals(self, batches):
+        from .cli_approval import show_approval_batches
+        with self._lock:
+            selected = [batch for batch in batches if batch['approval_batch_id'] not in self._approval_batches]
+            show_approval_batches(selected, self.write)
+            self._approval_batches.update(batch['approval_batch_id'] for batch in selected)
 
     def show_history(self, history):
         """Display stored messages without manufacturing run events or results."""
@@ -83,6 +92,42 @@ class CliEventDisplay:
         if not self._incomplete:
             self.write('消息观察不完整，将在返回时补显可确认的回答')
             self._incomplete = True
+
+    def show_history_view(self, history):
+        with self._lock:
+            self.write('只读历史：当前不恢复执行，也不会自动重跑旧调用。')
+            recovery = history['recovery']
+            self.write(f'状态：{recovery["kind"]}；原因：{recovery["reason"]}')
+            if history.get('execution_root_error'):
+                self.write(f'执行目录不可用：{history["execution_root_error"]["reason"]}；历史仍可查看。')
+            for row in history['messages']:
+                self.write(f'[{row["type"]}]\n{row["content"]}')
+                for call in row.get('tool_calls', []):
+                    self.write(f'已保存工具请求：{call["name"]}（{call["id"]}）\n'
+                               + json.dumps(call['args'], ensure_ascii=False))
+                if row.get('mcp_result'):
+                    self._mcp_result(row['mcp_result'])
+                if row.get('has_non_text'):
+                    self.write('该消息包含终端不能展示的非文本内容')
+            if recovery['unconfirmed_tool_call_ids']:
+                self.write('结果未确认：' + ', '.join(recovery['unconfirmed_tool_call_ids']))
+
+    def finish_view(self, result):
+        with self._lock:
+            if self._result_finished:
+                return
+            for row in result['reply_messages']:
+                text = row['content']
+                if text.strip() and self._texts.get(row['id']) != hashlib.sha256(text.encode()).hexdigest():
+                    self._incomplete_notice()
+                self._message(row)
+                if row.get('has_non_text'):
+                    self.write('该消息包含终端不能展示的非文本内容')
+            if not self._had_reply and result['run']['status'] != 'interrupted':
+                self.write('本轮没有可展示的回答')
+            if not self._terminal:
+                self.write('运行已返回，但未观察到终局事件')
+            self._result_finished = True
 
     def __call__(self, event):
         if event.session_id != self.session_id:
@@ -158,6 +203,7 @@ class CliEventDisplay:
         elif kind == 'approval_requested':
             self.write(f'有 {data.count} 项工具调用待审批')
             if data.items:
+                self._approval_batches.add(data.approval_batch_id)
                 from .cli_approval import show_approval_batches
                 from dataclasses import asdict
                 show_approval_batches([{'approval_batch_id': data.approval_batch_id,

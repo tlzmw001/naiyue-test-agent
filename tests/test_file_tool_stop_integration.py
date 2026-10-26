@@ -8,7 +8,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+from scripts.component_fixtures import open_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import (
     create_session_read_tool, create_session_write_tool, create_session_edit_tool,
@@ -58,16 +58,16 @@ def test_real_file_stop_pairs_error_and_saves_ready_checkpoint(monkeypatch, tmp_
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': chosen}))
         tools = [create_session_read_tool(), create_session_write_tool(), create_session_edit_tool()]
         database = tmp_path / 'sessions.sqlite'
-        async with open_async_persistent_application('unused', database_path=database,
+        async with open_component_application('unused', database_path=database,
                 tools=tools, system_prompt='', response_format=None) as app:
-            sid = await app.sessions.create_workspace('A', root)
+            sid = await app.host.sessions.create_workspace('A', root)
             events = []
-            app.observability.subscribe(events.append)
-            task = asyncio.create_task(app.runs.start(sid, [('user', 'operate on the file')]))
+            app.host.observability.subscribe(events.append)
+            task = asyncio.create_task(app.host.runs.start(sid, [('user', 'operate on the file')]))
             try:
                 assert await asyncio.to_thread(entered.wait, 5)
-                app.runs.stop(sid)
-                assert app.sessions._sessions.require(sid).describe_session()['busy'] and not task.done()
+                app.host.runs.stop(sid)
+                assert app.host.sessions._sessions.require(sid).describe_session()['busy'] and not task.done()
                 release.set()
                 result = await asyncio.wait_for(task, 5)
                 outputs = {m.tool_call_id: m for m in result['messages'] if isinstance(m, ToolMessage)}
@@ -78,10 +78,10 @@ def test_real_file_stop_pairs_error_and_saves_ready_checkpoint(monkeypatch, tmp_
                 assert result['run_stopped'] and len(chosen.seen) == 1
                 assert target.read_bytes() == b'PRIVATE_original' and not (root / 'later.txt').exists()
                 assert not list(root.glob('.naiyue-write-*'))
-                assert not app.sessions._sessions.require(sid).describe_session()['busy']
-                row = (await app.sessions.list())[0]
+                assert not app.host.sessions._sessions.require(sid).describe_session()['busy']
+                row = (await app.host.sessions.list())[0]
                 assert row['state'] == 'ready' and row['last_run_status'] == 'stopped'
-                snapshot = await app.runs._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
+                snapshot = await app.host.runs._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
                 assert not snapshot.next and not any(t.error for t in snapshot.tasks)
                 assert any(isinstance(m, ToolMessage) and m.tool_call_id == 'file'
                            and m.status == 'error' for m in snapshot.values['messages'])
@@ -92,10 +92,10 @@ def test_real_file_stop_pairs_error_and_saves_ready_checkpoint(monkeypatch, tmp_
                 await asyncio.gather(task, return_exceptions=True)
         fresh = StreamingToolModel(replies=[AIMessage(content='continued')])
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': fresh}))
-        async with open_async_persistent_application('unused', database_path=database,
+        async with open_component_application('unused', database_path=database,
                 tools=tools, system_prompt='', response_format=None) as app:
-            await app.sessions.restore(sid)
-            result = await app.runs.start(sid, [('user', 'continue')])
+            await app.host.sessions.restore(sid)
+            result = await app.host.runs.start(sid, [('user', 'continue')])
             assert result['messages'][-1].content == 'continued'
             assert len(fresh.seen) == 1 and any(isinstance(m, ToolMessage)
                 and m.tool_call_id == 'file' and m.status == 'error' for m in fresh.seen[0])

@@ -6,11 +6,12 @@ from fastapi import APIRouter, Path, Query, Request
 
 from naiyue_test_agent.application.sessions.background_tasks import TaskQueryError
 from .errors import WebError
+from .dependencies import get_service
 from .serialization import encoded_size
 
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix='/api/background-tasks')
+router = APIRouter(prefix='/background-tasks')
 TASK_ID = r'^[0-9a-f]{32}$'
 
 
@@ -35,9 +36,9 @@ def _bounded(value, budget):
 
 
 async def _perform(request, action, *, session_id=None, task_id=None, limit=20, before=None):
-    service = request.app.state.service
+    service = await get_service(request)
     root = service.settings.workspace_root
-    if root is None:
+    if root is None and service.settings.workspace_id is None:
         if action != 'list':
             raise WebError('task_not_found', 404)
         return {'items': [], 'next_before': None, 'active_count': 0, 'terminal_revision': 0, 'revision': 'empty'}

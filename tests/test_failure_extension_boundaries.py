@@ -35,10 +35,10 @@ async def test_application_unknown_match_is_not_treated_as_no_match(monkeypatch)
     async def fail(*_args, **_kwargs):
         raise error
 
-    app.observability.configure_errors(application=[describe])
+    app.host.observability.configure_errors(application=[describe])
     monkeypatch.setattr(session_execution, 'ainvoke_agent_run', fail)
     with pytest.raises(ReportStorageError) as caught:
-        await app.runs.start(await app.sessions.create('A'), [('user', 'probe')])
+        await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'probe')])
     assert caught.value is error
     assert events[-1].data.failure.reason == 'report_unclassified'
 
@@ -59,10 +59,10 @@ async def test_model_mapping_is_local_to_each_application(monkeypatch):
     error = VendorQuotaError('PRIVATE')
     first, events, _catalog = await build(monkeypatch, failure=error)
     second, second_events, _other = await build(monkeypatch, failure=error)
-    first.observability.configure_errors(model_id='A', model=[quota])
+    first.host.observability.configure_errors(model_id='A', model=[quota])
     for app in (first, second):
         with pytest.raises(VendorQuotaError) as caught:
-            await app.runs.start(await app.sessions.create('A'), [('user', 'probe')])
+            await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'probe')])
         assert caught.value is error
     assert events[-1].data.failure.reason == 'vendor_quota'
     assert second_events[-1].data.failure.reason == 'unclassified'
@@ -81,10 +81,10 @@ async def test_async_custom_model_is_described_once_and_keeps_original(monkeypat
             return quota(error, source)
 
         try:
-            app.observability.configure_errors(model_id='A', model=[describe])
-            session = await app.sessions.create('A')
+            app.host.observability.configure_errors(model_id='A', model=[describe])
+            session = await app.host.sessions.create('A')
             with pytest.raises(VendorQuotaError) as caught:
-                await app.runs.start(session, [('user', 'probe')])
+                await app.host.runs.start(session, [('user', 'probe')])
             assert caught.value is error
             assert calls == [error]
             model_end = next(e.data for e in events if e.event_type == 'model_call_finished')
@@ -105,12 +105,12 @@ async def test_configuration_is_atomic_and_rejects_async_classifiers(monkeypatch
         return None
 
     with pytest.raises(ValueError, match='synchronous'):
-        app.observability.configure_errors(model_id='A', model=[quota], runtime=[classify])
+        app.host.observability.configure_errors(model_id='A', model=[quota], runtime=[classify])
     assert catalog.describe_failure('A', VendorQuotaError()).reason == 'unclassified'
 
     with pytest.raises(ModelConfigError, match='Unknown model_id'):
-        app.observability.configure_errors(model_id='missing', model=[quota], application=[quota])
-    assert app.sessions._sessions._application_classifiers == ()
+        app.host.observability.configure_errors(model_id='missing', model=[quota], application=[quota])
+    assert app.host.sessions._sessions._application_classifiers == ()
 
 
 @async_test
@@ -129,12 +129,12 @@ async def test_configuration_rejected_while_real_run_is_busy(monkeypatch):
                   response_metadata={'finish_reason': 'tool_calls'}),
         AIMessage(content='done', response_metadata={'finish_reason': 'stop'}),
     ])
-    session = await app.sessions.create('A')
+    session = await app.host.sessions.create('A')
     outcomes = []
 
     async def run():
         try:
-            outcomes.append(await app.runs.start(session, [('user', 'probe')]))
+            outcomes.append(await app.host.runs.start(session, [('user', 'probe')]))
         except BaseException as error:
             outcomes.append(error)
 
@@ -142,13 +142,13 @@ async def test_configuration_rejected_while_real_run_is_busy(monkeypatch):
     try:
         assert await asyncio.to_thread(entered.wait, 5)
         with pytest.raises(application.SessionBusyError):
-            app.observability.configure_errors(runtime=[])
+            app.host.observability.configure_errors(runtime=[])
     finally:
         release.set()
         await asyncio.wait_for(asyncio.shield(thread), 5)
     assert thread.done() and len(outcomes) == 1
     assert isinstance(outcomes[0], dict), outcomes
-    app.observability.configure_errors(runtime=[])
+    app.host.observability.configure_errors(runtime=[])
 
 
 @pytest.mark.parametrize('invalid', ['source', 'error_type'])
@@ -161,9 +161,9 @@ async def test_model_extension_invalid_contract_falls_back(monkeypatch, invalid,
         return FailureDescription('application' if invalid == 'source' else 'model',
             'limit_exceeded', 'vendor_quota', 'OtherError' if invalid == 'error_type' else 'VendorQuotaError')
 
-    app.observability.configure_errors(model_id='A', model=[describe])
+    app.host.observability.configure_errors(model_id='A', model=[describe])
     with pytest.raises(VendorQuotaError) as caught:
-        await app.runs.start(await app.sessions.create('A'), [('user', 'probe')])
+        await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'probe')])
     assert caught.value is error
     assert events[-1].data.failure.reason == 'unclassified'
     assert events[-1].data.failure.error_type == 'VendorQuotaError'

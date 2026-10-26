@@ -1,7 +1,6 @@
 """Read-only context preparation; no graph update, summary, or model invocation."""
 
 import logging
-from pathlib import Path
 
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking
 from naiyue_test_agent.agent_runtime.context_usage import SNAPSHOT_KEY, compose_model_prompt, estimate_context, read_snapshot
@@ -40,8 +39,12 @@ async def context_view(session_id, *, sessions, agent, catalog, tool_registry, s
     if available:
         try:
             model = catalog.get(row['model_id'])
-            root = Path(row['workspace_root']) if row['workspace_root'] else None
-            resources = await run_blocking(prepare_run_resources, root,
+            from .execution_binding import resolve_capabilities
+            saved=await run_blocking(sessions._persistence.storage.sessions.get,session_id)
+            access=await resolve_capabilities(sessions,saved)
+            files=access.files
+            root=files.execution_root.path if files is not None and access.environment.kind=='host' else None
+            resources = await run_blocking(prepare_run_resources, files,
                 enable_skills='read' in tool_registry.names())
             specs = tool_registry.select_available(subagent_request_tools(row['active_tool_names'], tool_registry))
             roles = [(r.name, r.description) for r in sessions.get_registered_subagents()] if any(

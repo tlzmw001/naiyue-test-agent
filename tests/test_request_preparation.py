@@ -47,9 +47,9 @@ async def test_session_reads_model_thinking_and_tool_names_in_one_configuration(
     model = _model([], window=10000)
     app = await _app(monkeypatch, {'A': model}, tools=[definition()])
     try:
-        sid = await app.sessions.create('A')
-        await app.sessions.select_tools(sid, ['probe'])
-        configuration = app.sessions._sessions.require(sid).resolve_request_configuration()
+        sid = await app.host.sessions.create('A')
+        await app.host.sessions.select_tools(sid, ['probe'])
+        configuration = app.host.sessions._sessions.require(sid).resolve_request_configuration()
         assert configuration == ('A', model, ('probe',))
     finally:
         await app.aclose()
@@ -72,8 +72,8 @@ async def test_tool_result_growth_triggers_compaction_before_next_request(monkey
         permissions=ToolPermission(default='allow'))])
     events = []
     try:
-        app.observability.subscribe(events.append)
-        result = await app.runs.start(await app.sessions.create('A'), [
+        app.host.observability.subscribe(events.append)
+        result = await app.host.runs.start(await app.host.sessions.create('A'), [
             HumanMessage(content='earlier ' * 70, id='old'), AIMessage(content='recorded', id='reply'),
             HumanMessage(content='run the tool', id='task')])
         assert result['messages'][-1].content == 'done' and effects == ['grow']
@@ -100,8 +100,8 @@ async def test_preparation_summary_belongs_to_the_turn_before_main_callback(monk
 
     async with cached_application(monkeypatch, tmp_path, serve) as (app, catalog):
         small_window(catalog.get('root'))
-        app.observability.subscribe(events.append)
-        await app.runs.start(await app.sessions.create('root'), history())
+        app.host.observability.subscribe(events.append)
+        await app.host.runs.start(await app.host.sessions.create('root'), history())
     turn = next(e for e in events if e.event_type == 'turn_started')
     operation = next(e for e in events if e.event_type == 'compaction_started')
     assert turn.sequence < operation.sequence
@@ -122,8 +122,8 @@ async def test_preparation_failure_preserves_error_and_closes_turn_before_model(
     app = await _app(monkeypatch, {'A': model})
     events = []
     try:
-        sid = await app.sessions.create('A')
-        actor = app.sessions._sessions.require(sid)
+        sid = await app.host.sessions.create('A')
+        actor = app.host.sessions._sessions.require(sid)
 
         def fail(*args, **kwargs):
             raise failure
@@ -132,9 +132,9 @@ async def test_preparation_failure_preserves_error_and_closes_turn_before_model(
             monkeypatch.setattr(actor, 'resolve_request_configuration', fail)
         else:
             monkeypatch.setattr(ToolSetMiddleware, 'prepare_tool_view', fail)
-        app.observability.subscribe(events.append)
+        app.host.observability.subscribe(events.append)
         with pytest.raises(RuntimeError) as caught:
-            await app.runs.start(sid, [('user', 'prepare')])
+            await app.host.runs.start(sid, [('user', 'prepare')])
         assert caught.value is failure
         assert model.normal_inputs == model.summary_inputs == []
         turns = [e for e in events if e.event_type in ('turn_started', 'turn_finished')]
@@ -169,19 +169,19 @@ async def test_summary_time_configuration_change_applies_only_to_next_request(mo
     async with cached_application(monkeypatch, tmp_path, serve,
             tools=[definition('first', calls=effects), definition('second')]) as (app, catalog):
         small_window(catalog.get('root'))
-        sid = await app.sessions.create('root')
-        await app.sessions.select_thinking(sid, 'root', 'low')
-        await app.sessions.select_tools(sid, ['first'])
-        task = asyncio.create_task(app.runs.start(sid, history()))
+        sid = await app.host.sessions.create('root')
+        await app.host.sessions.select_thinking(sid, 'root', 'low')
+        await app.host.sessions.select_tools(sid, ['first'])
+        task = asyncio.create_task(app.host.runs.start(sid, history()))
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            await app.sessions.select_model(sid, 'child')
-            await app.sessions.select_tools(sid, ['second'])
+            await app.host.sessions.select_model(sid, 'child')
+            await app.host.sessions.select_tools(sid, ['second'])
         finally:
             release.set()
         assert (await task)['messages'][-1].content == 'done'
         if not same_run:
-            assert (await app.runs.start(sid, [('user', 'next request')]))['messages'][-1].content == 'done'
+            assert (await app.host.runs.start(sid, [('user', 'next request')]))['messages'][-1].content == 'done'
     summary, first, second = sent
     assert summary['model'] == first['model'] == 'root' and second['model'] == 'child'
     assert summary['reasoning_effort'] == first['reasoning_effort'] == 'low'
@@ -204,9 +204,9 @@ async def test_stop_or_cancel_in_preparation_closes_started_turn_without_main_ca
 
     async with cached_application(monkeypatch, tmp_path, serve) as (app, catalog):
         small_window(catalog.get('root'))
-        app.observability.subscribe(events.append)
-        sid = await app.sessions.create('root')
-        task = asyncio.create_task(app.runs.start(sid, history()))
+        app.host.observability.subscribe(events.append)
+        sid = await app.host.sessions.create('root')
+        task = asyncio.create_task(app.host.runs.start(sid, history()))
         try:
             await asyncio.wait_for(entered.wait(), 5)
             if cancel:
@@ -214,7 +214,7 @@ async def test_stop_or_cancel_in_preparation_closes_started_turn_without_main_ca
                 with pytest.raises(asyncio.CancelledError):
                     await task
             else:
-                app.runs.stop(sid)
+                app.host.runs.stop(sid)
                 assert (await asyncio.wait_for(task, 5))['run_stopped'] is True
         finally:
             release.set()
@@ -224,4 +224,4 @@ async def test_stop_or_cancel_in_preparation_closes_started_turn_without_main_ca
         assert turns[-1].data.status == 'failed'
         assert turns[-1].data.failure.reason == ('task_cancelled' if cancel else 'user_stop')
         assert [e.data.purpose for e in events if e.event_type == 'model_call_started'] == ['summary']
-        assert not app.sessions._sessions.require(sid).is_busy()
+        assert not app.host.sessions._sessions.require(sid).is_busy()

@@ -25,9 +25,9 @@ def approval_request(batch, choices):
 
 
 async def start(client, text='use tools'):
-    sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-    run = (await client.post(f'/api/sessions/{sid}/runs', json=request(text))).json()['run_id']
-    await client.get(f'/api/runs/{run}/events')
+    sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+    run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request(text))).json()['run_id']
+    await client.get(f'/api/v1/scopes/chats/runs/{run}/events')
     return sid, run
 
 
@@ -39,7 +39,7 @@ def test_web_workspace_read_and_tool_projection(monkeypatch, tmp_path):
         model = StreamingToolModel(replies=[calls(('read', {'path': 'sample.txt'}, 'read-1')), AIMessage(content='done')])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
             sid, run = await start(client)
-            view = (await client.get(f'/api/runs/{run}')).json()
+            view = (await client.get(f'/api/v1/scopes/chats/runs/{run}')).json()
             assert view['status'] == 'completed'
             assert view['tool_states']['read-1']['outcome'] == 'success'
             ai = next(m for m in view['messages'] if m.get('tool_calls'))
@@ -57,7 +57,7 @@ def test_web_tool_error_returns_to_model_without_failing_run(monkeypatch, tmp_pa
         model = StreamingToolModel(replies=[calls(('read', {'path': 'missing.txt'}, 'missing')), AIMessage(content='handled')])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
             _, run = await start(client)
-            view = (await client.get(f'/api/runs/{run}')).json()
+            view = (await client.get(f'/api/v1/scopes/chats/runs/{run}')).json()
             assert view['status'] == 'completed'
             assert view['tool_states']['missing']['outcome'] == 'error_result'
             returned = next(m for m in model.seen[1] if isinstance(m, ToolMessage))
@@ -76,13 +76,13 @@ def test_web_approval_matches_batch_and_resumes_exactly_once(monkeypatch, tmp_pa
             ('read', {'path': str(second)}, 'two')), AIMessage(content='continued')])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
             sid, origin = await start(client)
-            value = (await client.get(f'/api/sessions/{sid}')).json()
+            value = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
             batch, = value['approval_batches']
             assert batch['origin_run_id'] == origin and value['pending_approval']
             assert [item['tool_call_id'] for item in batch['items']] == ['one', 'two']
             assert batch['items'][0]['target'] == str(first)
             assert len(model.seen) == 1
-            endpoint = f'/api/sessions/{sid}/approvals'
+            endpoint = f'/api/v1/scopes/chats/sessions/{sid}/approvals'
             body = approval_request(batch, ['approve', 'reject'])
             for invalid in ({**body, 'origin_run_id': 'wrong'}, {**body, 'decisions': body['decisions'][:1]},
                             {**body, 'decisions': [body['decisions'][0], body['decisions'][0]]}):
@@ -91,14 +91,14 @@ def test_web_approval_matches_batch_and_resumes_exactly_once(monkeypatch, tmp_pa
             assert first_resume.status_code == 202
             resumed = first_resume.json()['run_id']
             assert resumed != origin
-            await client.get(f'/api/runs/{resumed}/events')
+            await client.get(f'/api/v1/scopes/chats/runs/{resumed}/events')
             repeated = await client.post(endpoint, json=body)
             assert repeated.json() == first_resume.json()
             returned = {m.tool_call_id: m for m in model.seen[1] if isinstance(m, ToolMessage)}
             assert set(returned) == {'one', 'two'}
             assert returned['one'].content == 'approved content' and returned['two'].status == 'error'
             assert 'rejected content' not in returned['two'].content
-            view = (await client.get(f'/api/sessions/{sid}')).json()
+            view = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
             assert view['pending_approval'] is False and view['can_run'] is True and len(model.seen) == 2
             assert (await client.post(endpoint, json={**body, 'request_id': str(uuid4())})).status_code == 409
     asyncio.run(scenario())
@@ -112,7 +112,7 @@ def test_web_restored_tool_messages_preserve_association(monkeypatch, tmp_path):
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[calls(('read', {'path': 'file.txt'}, 't')), AIMessage(content='done')]), workspace_root=root) as (client, app):
             sid, _ = await start(client)
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]), workspace_root=root) as (client, app):
-            messages = (await client.get(f'/api/sessions/{sid}')).json()['messages']
+            messages = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()['messages']
             assert next(m for m in messages if m['type'] == 'tool')['tool_call_id'] == 't'
             assert next(m for m in messages if m.get('tool_calls'))['tool_calls'][0]['id'] == 't'
     asyncio.run(scenario())
@@ -134,7 +134,7 @@ def test_all_file_tools_are_wired_through_web(monkeypatch, tmp_path):
             AIMessage(content='done')])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
             _, run = await start(client)
-            value = (await client.get(f'/api/runs/{run}')).json()
+            value = (await client.get(f'/api/v1/scopes/chats/runs/{run}')).json()
             assert value['status'] == 'completed' and (root / 'new.txt').read_text() == 'after'
             assert set(value['tool_states']) == {'write', 'edit', 'read', 'ls', 'find', 'grep'}
             assert all(row['outcome'] == 'success' for row in value['tool_states'].values())
@@ -149,22 +149,22 @@ def test_web_bash_opt_in_approval_and_safe_command(monkeypatch, tmp_path):
         root.mkdir()
         model = StreamingToolModel(replies=[calls(('bash', {'command': 'printf WEB-BASH'}, 'bash')), AIMessage(content='done')])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
             backend = app.state.service.application
             assert 'bash' in [spec.tool.name for spec in backend.tools.list()]
             assert 'bash' not in backend.sessions.active_tools(sid)
             assert 'powershell' in [spec.tool.name for spec in backend.tools.list()]
             assert set(backend.sessions.active_tools(sid)) == {'read', 'ls', 'find', 'grep', 'write', 'edit', 'subagent', 'aitest_kit', 'web_search', 'web_fetch', 'task_list', 'task_output', 'task_stop', 'history', 'memory'}
             await backend.sessions.select_tools(sid, ['bash'])
-            assert (await client.get(f'/api/sessions/{sid}')).json()['active_tools'] == ['bash']
-            origin = (await client.post(f'/api/sessions/{sid}/runs', json=request('use shell'))).json()['run_id']
-            await client.get(f'/api/runs/{origin}/events')
-            value = (await client.get(f'/api/sessions/{sid}')).json()
+            assert (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()['active_tools'] == ['bash']
+            origin = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('use shell'))).json()['run_id']
+            await client.get(f'/api/v1/scopes/chats/runs/{origin}/events')
+            value = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
             batch, = value['approval_batches']
             assert batch['items'][0]['target'] == '[automatic background after 120s; original execution deadline applies] printf WEB-BASH'
-            response = await client.post(f'/api/sessions/{sid}/approvals', json=approval_request(batch, ['approve']))
+            response = await client.post(f'/api/v1/scopes/chats/sessions/{sid}/approvals', json=approval_request(batch, ['approve']))
             response.raise_for_status()
-            await client.get(f'/api/runs/{response.json()["run_id"]}/events')
+            await client.get(f'/api/v1/scopes/chats/runs/{response.json()["run_id"]}/events')
             result = next(m for m in model.seen[1] if isinstance(m, ToolMessage))
             assert result.status == 'success' and 'WEB-BASH' in result.content
     asyncio.run(scenario())
@@ -179,8 +179,8 @@ def test_approval_request_validation_auth_and_restart_block(monkeypatch, tmp_pat
         model = StreamingToolModel(replies=[calls(('read', {'path': str(outside)}, 't'))])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
             sid, origin = await start(client)
-            endpoint = f'/api/sessions/{sid}/approvals'
-            batch, = (await client.get(f'/api/sessions/{sid}')).json()['approval_batches']
+            endpoint = f'/api/v1/scopes/chats/sessions/{sid}/approvals'
+            batch, = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()['approval_batches']
             body = approval_request(batch, ['approve'])
             assert (await client.post(endpoint, json=body, headers={'Authorization': ''})).status_code == 401
             assert (await client.post(endpoint, json={**body, 'grant': 'PRIVATE_GRANT'})).status_code == 422
@@ -189,8 +189,8 @@ def test_approval_request_validation_auth_and_restart_block(monkeypatch, tmp_pat
         next_model = StreamingToolModel(replies=[])
         async with web_client(monkeypatch, tmp_path, next_model, workspace_root=root) as (client, app):
             assert (await client.post(endpoint, json=body)).status_code == 409
-            view = (await client.get(f'/api/sessions/{sid}')).json()
-            view = (await client.post(f'/api/sessions/{sid}/prepare')).json()
+            view = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
+            view = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/prepare')).json()
             assert view['recovery']['kind'] == 'pending_approval'
             assert not view['can_run'] and not view['pending_approval']
             assert view['approval_batches'] == [] and view['live'] is None
@@ -209,13 +209,13 @@ def test_tool_outcome_keeps_run_origin_after_approval_and_next_chat(monkeypatch,
             AIMessage(content='rejection handled'), AIMessage(content='next chat')])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
             sid, origin = await start(client)
-            batch, = (await client.get(f'/api/sessions/{sid}')).json()['approval_batches']
-            response = await client.post(f'/api/sessions/{sid}/approvals', json=approval_request(batch, ['reject']))
+            batch, = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()['approval_batches']
+            response = await client.post(f'/api/v1/scopes/chats/sessions/{sid}/approvals', json=approval_request(batch, ['reject']))
             resumed = response.json()['run_id']
-            await client.get(f'/api/runs/{resumed}/events')
-            next_run = (await client.post(f'/api/sessions/{sid}/runs', json=request('another'))).json()['run_id']
-            await client.get(f'/api/runs/{next_run}/events')
-            view = (await client.get(f'/api/runs/{next_run}')).json()
+            await client.get(f'/api/v1/scopes/chats/runs/{resumed}/events')
+            next_run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('another'))).json()['run_id']
+            await client.get(f'/api/v1/scopes/chats/runs/{next_run}/events')
+            view = (await client.get(f'/api/v1/scopes/chats/runs/{next_run}')).json()
             result = next(m for m in view['messages'] if m['type'] == 'tool')
             assert result['run_id'] == resumed
             assert view['tool_states']['t']['run_id'] == resumed

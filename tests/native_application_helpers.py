@@ -1,7 +1,7 @@
 """Run native async application tests and close every locally owned application.
 
 Only pytest invocation/resource ownership lives here. Tests await the real
-application API; persistent contexts use the production factory directly.
+host APIs. Project/protocol integration tests use the production service entry.
 """
 
 import asyncio
@@ -9,7 +9,7 @@ from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from functools import wraps
 
-from naiyue_test_agent.application.async_application import build_async_local_application
+from scripts.component_fixtures import build_component_application
 
 
 _resources = ContextVar('native_application_test_resources')
@@ -30,14 +30,14 @@ def async_test(test):
 
 
 async def build_application(*args, **kwargs):
-    app = await build_async_local_application(*args, **kwargs)
+    app = await build_component_application(*args, **kwargs)
     _resources.get().push_async_callback(app.aclose)
     return app
 
 
-async def await_diagnostics_idle(app):
+async def await_diagnostics_idle(host):
     """Quiesce optional IO before attributing a database snapshot to a read."""
-    sink = app.observability._diagnostics
+    sink = host.observability._diagnostics
     async def idle():
         while True:
             with sink._lock:

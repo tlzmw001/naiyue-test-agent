@@ -34,11 +34,14 @@ def _offline_catalog():
 
 async def _worker(args):
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.async_application import build_async_local_application
+    if __package__:
+        from .component_fixtures import build_component_application
+    else:
+        from component_fixtures import build_component_application
 
     if args.offline:
         application.load_model_catalog = lambda _: _offline_catalog()
-    app = await build_async_local_application(args.config, tools=[], system_prompt='', response_format=None)
+    app = await build_component_application(args.config, tools=[], system_prompt='', response_format=None)
     events, calls, delta = [], [], asyncio.Event()
 
     def observe(event):
@@ -48,17 +51,17 @@ async def _worker(args):
         elif event.event_type == 'message_delta':
             delta.set()
 
-    app.observability.subscribe(observe)
-    session = await app.sessions.create(app.models.default_id)
-    task = asyncio.create_task(app.runs.start(session, [('user',
+    app.host.observability.subscribe(observe)
+    session = await app.host.sessions.create(app.root.models.default_id)
+    task = asyncio.create_task(app.host.runs.start(session, [('user',
         'Produce the integers from 1 to 10000, one per line. Begin immediately and do not explain.')]))
     try:
         async with asyncio.timeout(args.timeout_seconds):
             await delta.wait()
-            app.runs.stop(session)
+            app.host.runs.stop(session)
             result = await task
-            snapshot = await app.runs._agent.aget_state({'configurable': {
-                'thread_id': app.sessions._sessions.require(session).get_thread_id()}})
+            snapshot = await app.host.runs._agent.aget_state({'configurable': {
+                'thread_id': app.host.sessions._sessions.require(session).get_thread_id()}})
             assert len(calls) == 1 and result['run_stopped']
             assert not any(m.type == 'ai' for m in result['messages'])
             assert not snapshot.next and not any(t.error or t.interrupts for t in snapshot.tasks)

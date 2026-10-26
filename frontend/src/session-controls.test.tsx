@@ -17,8 +17,10 @@ it('shows each selected mode as its name and chevron without a status circle', (
   for (const mode of modes) {
     rerender(<ComposerControls {...props} mode={mode} />);
     const button = screen.getByRole('button', { name: `权限模式：${mode}` });
-    expect(button.textContent).toBe(`${mode} ⌃`);
-    expect(Array.from(button.children, child => child.textContent)).toEqual(['⌃']);
+    expect(button.textContent?.trim()).toBe(mode);
+    expect(button.querySelectorAll('svg')).toHaveLength(1);
+    expect(button.querySelector('svg')?.getAttribute('data-chevron')).toBe('down');
+    expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
   }
 });
 

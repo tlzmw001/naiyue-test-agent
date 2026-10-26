@@ -3,12 +3,12 @@
 import logging
 import re
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import PurePath
 from xml.sax.saxutils import escape, quoteattr
 
 import yaml
 
-from .project_instructions import load_workspace_instruction_part
+from .project_instructions import load_project_instruction_part
 
 
 logger = logging.getLogger(__name__)
@@ -27,8 +27,8 @@ class SkillEntry:
     source_id: str
     name: str
     description: str
-    skill_file: Path
-    resource_root: Path
+    skill_file: PurePath
+    resource_root: PurePath
 
 
 @dataclass(frozen=True)
@@ -42,7 +42,7 @@ class SkillCatalog:
                      if any(item.source_id == source for item in self.entries)), None)
 
     @property
-    def read_resource_roots(self) -> tuple[Path, ...]:
+    def read_resource_roots(self) -> tuple[PurePath, ...]:
         return tuple(dict.fromkeys(item.resource_root for item in self.entries))
 
     def command_for(self, entry: SkillEntry) -> str:
@@ -51,10 +51,10 @@ class SkillCatalog:
         return f'/{entry.source_id}:{entry.name}' if qualified else f'/{entry.name}'
 
 
-def _target(path: Path, workspace: Path) -> Path:
-    target = path.resolve(strict=True)
+def _target(path, execution_path, files):
+    target = files.environment.path(files.resolve_resource(str(path)))
     try:
-        relative = target.relative_to(workspace)
+        relative = target.relative_to(execution_path)
     except ValueError as error:
         raise _SkillError('outside_workspace') from error
     if any(part.startswith('.') and not (
@@ -79,9 +79,8 @@ def _report(diagnostics: list, source: str, reason: str, **details) -> None:
                    }})
 
 
-def _metadata(path: Path) -> dict:
-    with path.open('rb') as stream:
-        content = stream.read(_MAX_SKILL_SOURCE_BYTES + 1)
+def _metadata(path, files) -> dict:
+    content = files.read_resource(str(path), _MAX_SKILL_SOURCE_BYTES)
     if len(content) > _MAX_SKILL_SOURCE_BYTES:
         raise _SkillError('skill_too_large')
     text = content.decode('utf-8-sig')
@@ -105,22 +104,25 @@ def _metadata(path: Path) -> dict:
     return data
 
 
-def discover_project_skills(workspace_root: Path | None) -> SkillCatalog:
-    if workspace_root is None:
+def discover_project_skills(files) -> SkillCatalog:
+    if files is None:
         return SkillCatalog((), ())
-    workspace = workspace_root.resolve(strict=True)
+    files.validate()
+    execution_path = files.environment.path(files.environment.root)
     entries, diagnostics = [], []
     for source in _SOURCES:
-        origin = workspace / f'.{source}' / 'skills'
-        if not origin.exists() and not origin.is_symlink():
-            continue
+        origin = execution_path / f'.{source}' / 'skills'
         try:
-            directory = _target(origin, workspace)
-            if not directory.is_dir():
+            info = files.resource_info(str(origin))
+            if not info.exists and not info.is_link:
+                continue
+            directory = _target(origin, execution_path, files)
+            if files.resource_info(str(directory)).kind != 'directory':
                 raise _SkillError('invalid_source')
-            candidates = sorted(directory.iterdir(), key=lambda path: path.name)
+            candidates = sorted((files.environment.path(path) for path in files.list_resources(str(directory))), key=lambda path: path.name)
         except (OSError, ValueError, RuntimeError) as error:
-            reason = str(error) if isinstance(error, _SkillError) else 'source_unavailable'
+            from naiyue_test_agent.contracts.environment import ResourceBoundaryError
+            reason = str(error) if isinstance(error, (_SkillError, ResourceBoundaryError)) else 'source_unavailable'
             _report(diagnostics, source, reason, error_type=type(error).__name__)
             continue
         names = {}
@@ -128,20 +130,21 @@ def discover_project_skills(workspace_root: Path | None) -> SkillCatalog:
             if candidate.name.startswith('.'):
                 continue
             try:
-                root = _target(candidate, workspace)
-                if not root.is_dir():
+                root = _target(candidate, execution_path, files)
+                if files.resource_info(str(root)).kind != 'directory':
                     continue
                 supplied = root / 'SKILL.md'
-                if not supplied.exists() and not supplied.is_symlink():
+                info = files.resource_info(str(supplied))
+                if not info.exists and not info.is_link:
                     continue
-                path = _target(supplied, workspace)
+                path = _target(supplied, execution_path, files)
                 try:
                     path.relative_to(root)
                 except ValueError as error:
                     raise _SkillError('outside_skill_directory') from error
-                if not path.is_file():
+                if files.resource_info(str(path)).kind != 'file':
                     raise _SkillError('not_regular_file')
-                data = _metadata(path)
+                data = _metadata(path, files)
                 if data.get('disable-model-invocation') is True:
                     continue
                 name = data['name']
@@ -197,10 +200,12 @@ def format_skill_catalog(catalog: SkillCatalog) -> str | None:
     return '\n'.join(lines)
 
 
-def prepare_run_resources(workspace_root: Path | None, *, enable_skills=True):
-    part = load_workspace_instruction_part(workspace_root)
+def prepare_run_resources(files, *, enable_skills=True):
+    if files is not None:
+        files.validate()
+    part = load_project_instruction_part(files)
     instructions = part['text'] if part else None
-    catalog = discover_project_skills(workspace_root) if enable_skills else SkillCatalog((), ())
+    catalog = discover_project_skills(files) if enable_skills else SkillCatalog((), ())
     index = format_skill_catalog(catalog)
     parts = ([part] if part else []) + ([{'id': 'skills', 'text': index, 'count': len(catalog.entries)}] if index else [])
     return {'prompt_parts': parts,

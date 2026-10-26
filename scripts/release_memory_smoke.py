@@ -33,8 +33,11 @@ async def memory_scenario(root, Model):
     """Only pass a disposable directory; use no environment or provider settings."""
     from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-    from naiyue_test_agent.application.memory.memory_overview_store import overview
+    if __package__:
+        from .release_application import open_smoke_host
+    else:
+        from release_application import open_smoke_host
+    from naiyue_test_agent.storage.memory_sql.memory_overview_store import overview
     from naiyue_test_agent.model_access import ModelCatalog
     from naiyue_test_agent.settings import AppSettings
     from naiyue_test_agent.tools.memory import create_memory_tool, MemoryInput
@@ -63,7 +66,7 @@ async def memory_scenario(root, Model):
     async def opened():
         with patch.object(application, 'load_model_catalog',
                 lambda _: ModelCatalog('root', {'root': parent, 'memory': worker})):
-            async with open_async_persistent_application('unused', database_path=database,
+            async with open_smoke_host('unused', workspace=workspace, data_dir=directory / 'data', database_path=database,
                     tools=[create_memory_tool()], system_prompt='', response_format=None, settings=settings,
                     workspace_binding={'workspace_id': location.workspace_id, 'root_path': workspace}) as app:
                 yield app

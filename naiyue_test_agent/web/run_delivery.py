@@ -238,13 +238,17 @@ class RunDelivery:
     async def wait(self, run_id):
         await asyncio.shield(self.get(run_id).task)
 
-    async def close(self):
+    async def seal(self):
         async with self.start_lock:
             self._closing = True
-            tasks = tuple(job.task for job in self.active_by_session.values())
+
+    async def close(self, *, close_application=True):
+        await self.seal()
+        tasks = tuple(job.task for job in self.active_by_session.values())
         primary = None
         try:
-            await self.application.aclose()
+            if close_application:
+                await self.application.aclose()
         except BaseException as error:
             primary = error
         try:

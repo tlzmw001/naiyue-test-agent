@@ -8,7 +8,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+from scripts.component_fixtures import open_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools import create_builtin_tools
@@ -38,15 +38,15 @@ def test_running_background_task_keeps_project_archive_after_execution_root_disa
              if spec.tool.name == 'bash']
 
     async def scenario():
-        async with open_async_persistent_application('unused', database_path=location.database_path,
+        async with open_component_application('unused', database_path=location.database_path,
                 workspace_binding={'workspace_id': location.workspace_id, 'root_path': location.root},
                 tools=tools, system_prompt='', response_format=None, settings=settings) as app:
-            sid = await app.sessions.create_workspace('A', root)
-            result = await app.runs.start(sid, [('user', 'start')])
+            sid = await app.host.sessions.create_workspace('A', root)
+            result = await app.host.runs.start(sid, [('user', 'start')])
             receipt = tool_result(result, 'bash')
             assert receipt.status == 'success'
             identity = json.loads(receipt.content)['task_id']
-            manager = app.sessions._sessions.background_tasks
+            manager = app.host.sessions._sessions.background_tasks
             ready = await wait_status(manager, identity, lambda row: bool(row['output']))
             port = int(ready['output'].strip())
             root.rename(tmp_path / 'moved-execution')
@@ -60,9 +60,9 @@ def test_running_background_task_keeps_project_archive_after_execution_root_disa
                 await writer.wait_closed()
             later = await wait_status(manager, identity,
                 lambda row: 'after-directory-disappeared' in row['output'])
-            rows = await app.tasks.list(sid, workspace_root=root)
-            stopped = await app.tasks.stop(identity, sid, workspace_root=root)
-            saved = await app.tasks.output(identity, sid, workspace_root=root)
+            rows = await app.host.tasks.list(sid, workspace_root=root)
+            stopped = await app.host.tasks.stop(identity, sid, workspace_root=root)
+            saved = await app.host.tasks.output(identity, sid, workspace_root=root)
             assert [row['task_id'] for row in rows['items']] == [identity]
             assert later['status'] == 'running' and later['output_available']
             assert stopped['termination'] == 'user_stop' and stopped['cleanup_confirmed']
@@ -80,7 +80,7 @@ def test_running_background_task_keeps_project_archive_after_execution_root_disa
 
 
 def test_archive_cleanup_rejects_active_task_with_noncanonical_data_dir(monkeypatch, tmp_path):
-    from naiyue_test_agent.application.async_application import build_async_local_application
+    from scripts.component_fixtures import build_component_application
     root, data = tmp_path / 'execution', tmp_path / 'data'
     root.mkdir()
     (tmp_path / 'alias').mkdir()
@@ -94,18 +94,18 @@ def test_archive_cleanup_rejects_active_task_with_noncanonical_data_dir(monkeypa
              if spec.tool.name == 'bash']
 
     async def scenario():
-        app = await build_async_local_application('unused', tools=tools, settings=settings,
+        app = await build_component_application('unused', tools=tools, settings=settings,
                                                  system_prompt='', response_format=None)
         try:
-            sid = await app.sessions.create_workspace('A', root)
-            result = await app.runs.start(sid, [('user', 'start')])
+            sid = await app.host.sessions.create_workspace('A', root)
+            result = await app.host.runs.start(sid, [('user', 'start')])
             identity = json.loads(tool_result(result, 'bash').content)['task_id']
-            await wait_status(app.sessions._sessions.background_tasks, identity, lambda row: bool(row['output']))
-            assert not app.sessions._sessions.require(sid).is_busy()
+            await wait_status(app.host.sessions._sessions.background_tasks, identity, lambda row: bool(row['output']))
+            assert not app.host.sessions._sessions.require(sid).is_busy()
             with pytest.raises(ValueError, match='active'):
-                await app.tasks.preview_outputs(root)
-            await app.tasks.stop(identity)
-            plan = await app.tasks.preview_outputs(root)
+                await app.host.tasks.preview_outputs(root)
+            await app.host.tasks.stop(identity)
+            plan = await app.host.tasks.preview_outputs(root)
             assert plan.root == data / 'sessions' / sid / 'artifacts' and plan.file_count == 1
         finally:
             await app.aclose()
@@ -114,7 +114,7 @@ def test_archive_cleanup_rejects_active_task_with_noncanonical_data_dir(monkeypa
 
 
 def test_ephemeral_session_archives_without_project_identity_or_project_tools(monkeypatch, tmp_path):
-    from naiyue_test_agent.application.async_application import build_async_local_application
+    from scripts.component_fixtures import build_component_application
     root, data = tmp_path / 'execution', tmp_path / 'data'
     root.mkdir()
     model = StreamingToolModel(replies=[
@@ -127,16 +127,16 @@ def test_ephemeral_session_archives_without_project_identity_or_project_tools(mo
              if spec.tool.name in ('bash', 'history', 'memory')]
 
     async def scenario():
-        app = await build_async_local_application('unused', tools=tools, system_prompt='',
+        app = await build_component_application('unused', tools=tools, system_prompt='',
                                                  response_format=None, settings=settings)
         try:
-            sid = await app.sessions.create_workspace('A', root)
-            result = await app.runs.start(sid, [('user', 'run')])
+            sid = await app.host.sessions.create_workspace('A', root)
+            result = await app.host.runs.start(sid, [('user', 'run')])
             assert tool_result(result, 'bash').status == 'success'
             for name in ('history', 'memory'):
                 item = tool_result(result, name)
                 assert item.status == 'error' and name + '_unavailable' in item.content
-            plan = await app.tasks.preview_outputs(root)
+            plan = await app.host.tasks.preview_outputs(root)
             assert plan.root == data / 'sessions' / sid / 'artifacts'
             assert plan.file_count == 1 and plan.total_bytes == 1001
             assert not (root / '.naiyue').exists()

@@ -7,7 +7,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+from scripts.component_fixtures import open_component_application
 from naiyue_test_agent.cli import chat
 from naiyue_test_agent.execution_roots import Project
 from naiyue_test_agent.model_access import ModelCatalog
@@ -74,16 +74,16 @@ def test_public_cli_lost_root_does_not_resume_approval_or_interrupted_run(monkey
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     settings = AppSettings.model_validate({'storage': {'data_dir': tmp_path / 'data'}, 'memory': {'auto_enabled': False}})
     async def save():
-        async with open_async_persistent_application('unused', database_path=loc.database_path,
+        async with open_component_application('unused', database_path=loc.database_path,
                 tools=[create_session_read_tool()], system_prompt='', response_format=None, settings=settings,
                 workspace_binding={'workspace_id': loc.workspace_id, 'root_path': root}) as app:
-            sid = await app.sessions.create_workspace('A', root)
-            result = await app.runs.start(sid, [('user', 'saved original request')])
+            sid = await app.host.sessions.create_workspace('A', root)
+            result = await app.host.runs.start(sid, [('user', 'saved original request')])
             if mode == 'approval':
                 assert result['approval_requests']
             else:
                 with pytest.raises(RuntimeError, match='model failed'):
-                    await app.runs.start(sid, [('user', 'failed second request')])
+                    await app.host.runs.start(sid, [('user', 'failed second request')])
             return sid
     sid = asyncio.run(save())
     with ProjectStore(loc.database_path) as store:
@@ -105,7 +105,7 @@ def test_existing_project_and_binding_intents_cannot_be_combined(monkeypatch, tm
     path = tmp_path / 'must-not-create.sqlite'
     async def scenario():
         with pytest.raises(ValueError, match='mutually exclusive'):
-            async with open_async_persistent_application('unused', database_path=path,
+            async with open_component_application('unused', database_path=path,
                     tools=[], system_prompt='', response_format=None,
                     workspace_binding={'workspace_id': 'other', 'root_path': tmp_path},
                     expected_project=Project(str(uuid4()), tmp_path, path)):
@@ -130,6 +130,6 @@ def test_async_saver_existing_open_failure_releases_store_and_keeps_original_err
                 pytest.fail('Failed Saver open must not yield storage')
         assert caught.value is original
     asyncio.run(scenario())
-    assert observed == [(loc.database_path.as_uri() + '?mode=rw', {'uri': True})]
+    assert observed == [(loc.database_path.as_uri() + '?mode=rw', {'timeout': 5.0, 'uri': True})]
     assert_identity_unchanged(loc, sid, before)
 

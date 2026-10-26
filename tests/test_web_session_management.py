@@ -18,29 +18,29 @@ def test_names_pins_order_are_validated_and_persist_without_model_calls(monkeypa
     async def scenario():
         model = StreamingToolModel(replies=[])
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
-            ids = [(await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id'] for _ in range(3)]
-            endpoint = f'/api/sessions/{ids[0]}/presentation'
+            ids = [(await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id'] for _ in range(3)]
+            endpoint = f'/api/v1/scopes/chats/sessions/{ids[0]}/presentation'
             assert (await client.patch(endpoint, json={'title': '  接口测试  ', 'pinned': True})).status_code == 200
-            rows = (await client.get('/api/sessions')).json()
+            rows = (await client.get('/api/v1/scopes/chats/sessions')).json()
             assert rows[0]['session_id'] == ids[0] and rows[0]['title'] == '接口测试' and rows[0]['pinned'] is True
             for body in ({'title': ''}, {'title': '   '}, {'title': 'x' * 121}, {'title': 'bad\x00name'},
                          {'pinned': 1}, {}, {'title': 'ok', 'extra': True}):
                 assert (await client.patch(endpoint, json=body)).status_code == 422
             assert (await client.patch(endpoint, json={'pinned': False}, headers={'Authorization': ''})).status_code == 401
-            assert (await client.delete(f'/api/sessions/{ids[0]}', headers={'Origin': 'https://evil.example'})).status_code == 403
+            assert (await client.delete(f'/api/v1/scopes/chats/sessions/{ids[0]}', headers={'Origin': 'https://evil.example'})).status_code == 403
             ordered = [ids[0], ids[1], ids[2]]
-            assert (await client.put('/api/session-order', json={'session_ids': ordered})).status_code == 200
-            assert [row['session_id'] for row in (await client.get('/api/sessions')).json()] == ordered
+            assert (await client.put('/api/v1/scopes/chats/session-order', json={'session_ids': ordered})).status_code == 200
+            assert [row['session_id'] for row in (await client.get('/api/v1/scopes/chats/sessions')).json()] == ordered
             for invalid in ([ids[0]], ids + [ids[0]], [*ids[:2], 'foreign'], list(reversed(ids))):
-                assert (await client.put('/api/session-order', json={'session_ids': invalid})).status_code in (409, 422)
-            assert (await client.get('/api/sessions')).json()[0]['title'] == '接口测试'
+                assert (await client.put('/api/v1/scopes/chats/session-order', json={'session_ids': invalid})).status_code in (409, 422)
+            assert (await client.get('/api/v1/scopes/chats/sessions')).json()[0]['title'] == '接口测试'
             assert model.seen == []
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
-            rows = (await client.get('/api/sessions')).json()
+            rows = (await client.get('/api/v1/scopes/chats/sessions')).json()
             assert [row['session_id'] for row in rows] == ordered
             assert rows[0]['title'] == '接口测试' and rows[0]['pinned'] is True
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            assert [row['session_id'] for row in (await client.get('/api/sessions')).json()] == [ids[0], sid, ids[1], ids[2]]
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            assert [row['session_id'] for row in (await client.get('/api/v1/scopes/chats/sessions')).json()] == [ids[0], sid, ids[1], ids[2]]
     asyncio.run(scenario())
 
 
@@ -50,15 +50,15 @@ def test_other_workspace_and_stale_order_cannot_change_sessions(monkeypatch, tmp
         root.mkdir(); other.mkdir()
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]), workspace_root=root) as (client, web):
             foreign = await web.state.service.application.sessions.create_workspace('A', other)
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            assert (await client.patch(f'/api/sessions/{foreign}/presentation', json={'title': 'hidden'})).status_code == 404
-            assert (await client.delete(f'/api/sessions/{foreign}')).status_code == 404
-            assert (await client.put('/api/session-order', json={'session_ids': [foreign, sid]})).status_code == 409
-            assert (await client.put('/api/session-order', json={'session_ids': [sid]})).status_code == 200
-            new = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            response = await client.put('/api/session-order', json={'session_ids': [sid]})
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            assert (await client.patch(f'/api/v1/scopes/chats/sessions/{foreign}/presentation', json={'title': 'hidden'})).status_code == 404
+            assert (await client.delete(f'/api/v1/scopes/chats/sessions/{foreign}')).status_code == 404
+            assert (await client.put('/api/v1/scopes/chats/session-order', json={'session_ids': [foreign, sid]})).status_code == 409
+            assert (await client.put('/api/v1/scopes/chats/session-order', json={'session_ids': [sid]})).status_code == 200
+            new = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            response = await client.put('/api/v1/scopes/chats/session-order', json={'session_ids': [sid]})
             assert response.json() == {'error': {'code': 'stale_session_order'}}
-            assert [row['session_id'] for row in (await client.get('/api/sessions')).json()] == [new, sid]
+            assert [row['session_id'] for row in (await client.get('/api/v1/scopes/chats/sessions')).json()] == [new, sid]
     asyncio.run(scenario())
 
 
@@ -66,24 +66,24 @@ def test_delete_removes_all_checkpoints_and_delivery_without_touching_other_sess
     async def scenario():
         model = StreamingToolModel(replies=[AIMessage(content='saved')])
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
-            sid, kept = [(await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id'] for _ in range(2)]
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=request('hello'))).json()['run_id']
+            sid, kept = [(await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id'] for _ in range(2)]
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('hello'))).json()['run_id']
             await web.state.delivery.wait(run)
             store = web.state.service.application.sessions._persistence.storage
             thread = store.sessions.get(sid)['thread_id']
             assert store.database.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (thread,)).fetchone()[0] > 0
-            response = await client.delete(f'/api/sessions/{sid}')
+            response = await client.delete(f'/api/v1/scopes/chats/sessions/{sid}')
             assert response.status_code == 200 and response.json() == {'session_id': sid}
-            assert [row['session_id'] for row in (await client.get('/api/sessions')).json()] == [kept]
-            assert (await client.get(f'/api/sessions/{sid}')).status_code == 404
-            assert (await client.get(f'/api/runs/{run}')).status_code == 404
+            assert [row['session_id'] for row in (await client.get('/api/v1/scopes/chats/sessions')).json()] == [kept]
+            assert (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).status_code == 404
+            assert (await client.get(f'/api/v1/scopes/chats/runs/{run}')).status_code == 404
             assert not web.state.service.application.sessions.is_loaded(sid)
             assert store.database.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (thread,)).fetchone()[0] == 0
             assert store.database.connection.execute('SELECT count(*) FROM writes WHERE thread_id=?', (thread,)).fetchone()[0] == 0
             assert not any(key[0] == sid for key in web.state.delivery.receipts)
             assert len(model.seen) == 1
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
-            assert [row['session_id'] for row in (await client.get('/api/sessions')).json()] == [kept]
+            assert [row['session_id'] for row in (await client.get('/api/v1/scopes/chats/sessions')).json()] == [kept]
     asyncio.run(scenario())
 
 
@@ -92,19 +92,19 @@ def test_deletion_is_blocked_during_a_run_and_cannot_replay_its_cached_receipt(m
         entered, release = asyncio.Event(), asyncio.Event()
         model = StreamingToolModel(replies=[], entered=entered, release=release)
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=request('wait'))).json()['run_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('wait'))).json()['run_id']
             await asyncio.wait_for(entered.wait(), 5)
             try:
-                response = await client.delete(f'/api/sessions/{sid}')
+                response = await client.delete(f'/api/v1/scopes/chats/sessions/{sid}')
                 assert response.json() == {'error': {'code': 'session_busy'}}
-                assert (await client.get('/api/sessions')).json()[0]['session_id'] == sid
+                assert (await client.get('/api/v1/scopes/chats/sessions')).json()[0]['session_id'] == sid
             finally:
-                await client.post(f'/api/runs/{run}/controls', json={**request(''), 'kind': 'stop', 'text': None})
+                await client.post(f'/api/v1/scopes/chats/runs/{run}/controls', json={**request(''), 'kind': 'stop', 'text': None})
                 release.set()
                 await web.state.delivery.wait(run)
-            assert (await client.delete(f'/api/sessions/{sid}')).status_code == 200
-            assert (await client.get(f'/api/runs/{run}/events')).status_code == 404
+            assert (await client.delete(f'/api/v1/scopes/chats/sessions/{sid}')).status_code == 200
+            assert (await client.get(f'/api/v1/scopes/chats/runs/{run}/events')).status_code == 404
     asyncio.run(scenario())
 
 
@@ -120,9 +120,9 @@ def test_delete_includes_child_history_removed_from_latest_parent_checkpoint(mon
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
             app = web.state.service.application
             await app.subagents.register(SubAgentSpec(name='tester', description='Inspect a task.', system_prompt='Inspect.', tool_names=()))
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            await client.patch(f'/api/sessions/{sid}/tools', json={'active_tools': ['subagent']})
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=request('delegate'))).json()['run_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            await client.patch(f'/api/v1/scopes/chats/sessions/{sid}/tools', json={'active_tools': ['subagent']})
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('delegate'))).json()['run_id']
             await web.state.delivery.wait(run)
             child, = await app.history.subagents(sid)
             child_thread = f'subagent:{child["agent_id"]}'
@@ -136,7 +136,7 @@ def test_delete_includes_child_history_removed_from_latest_parent_checkpoint(mon
             # The prompt no longer references the child; the persisted registry still owns it.
             for owner in app.sessions._sessions._sessions.values():
                 assert owner._runtime.run is None
-            assert (await client.delete(f'/api/sessions/{sid}')).status_code == 200
+            assert (await client.delete(f'/api/v1/scopes/chats/sessions/{sid}')).status_code == 200
             assert store.database.connection.execute('SELECT count(*) FROM checkpoints WHERE thread_id=?', (child_thread,)).fetchone()[0] == 0
             assert store.database.connection.execute('SELECT count(*) FROM writes WHERE thread_id=?', (child_thread,)).fetchone()[0] == 0
             assert store.subagents.get_subagent_references(sid) == {}
@@ -173,8 +173,8 @@ def test_restore_holds_ownership_until_session_install_before_deletion(monkeypat
     async def scenario():
         model = StreamingToolModel(replies=[AIMessage(content='saved')])
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=request('hello'))).json()['run_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('hello'))).json()['run_id']
             await web.state.delivery.wait(run)
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
             app = web.state.service.application
@@ -188,16 +188,16 @@ def test_restore_holds_ownership_until_session_install_before_deletion(monkeypat
                 return snapshot
 
             monkeypatch.setattr(app.runs._agent, 'aget_state', pause)
-            reading = asyncio.create_task(client.post(f'/api/sessions/{sid}/prepare'))
+            reading = asyncio.create_task(client.post(f'/api/v1/scopes/chats/sessions/{sid}/prepare'))
             try:
                 await asyncio.wait_for(entered.wait(), 5)
-                deleting = await client.delete(f'/api/sessions/{sid}')
+                deleting = await client.delete(f'/api/v1/scopes/chats/sessions/{sid}')
                 assert deleting.status_code == 409
-                assert len((await client.get('/api/sessions')).json()) == 1
+                assert len((await client.get('/api/v1/scopes/chats/sessions')).json()) == 1
             finally:
                 release.set()
                 await reading
-            assert (await client.delete(f'/api/sessions/{sid}')).status_code == 200
+            assert (await client.delete(f'/api/v1/scopes/chats/sessions/{sid}')).status_code == 200
             assert not app.sessions.is_loaded(sid)
     asyncio.run(scenario())
 
@@ -205,8 +205,8 @@ def test_restore_holds_ownership_until_session_install_before_deletion(monkeypat
 def test_cancelled_delete_still_revokes_completed_run_cache(monkeypatch, tmp_path):
     async def scenario():
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[AIMessage(content='private history')])) as (client, web):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=request('hello'))).json()['run_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('hello'))).json()['run_id']
             await web.state.delivery.wait(run)
             store = web.state.service.application.sessions._persistence.storage
             loop, committed, release = asyncio.get_running_loop(), asyncio.Event(), Event()
@@ -218,7 +218,7 @@ def test_cancelled_delete_still_revokes_completed_run_cache(monkeypatch, tmp_pat
                 assert release.wait(5)
 
             monkeypatch.setattr(store.runs, 'delete', paused)
-            deleting = asyncio.create_task(client.delete(f'/api/sessions/{sid}'))
+            deleting = asyncio.create_task(client.delete(f'/api/v1/scopes/chats/sessions/{sid}'))
             try:
                 await asyncio.wait_for(committed.wait(), 5)
                 deleting.cancel()
@@ -226,8 +226,8 @@ def test_cancelled_delete_still_revokes_completed_run_cache(monkeypatch, tmp_pat
                 release.set()
                 with pytest.raises(asyncio.CancelledError):
                     await deleting
-            assert (await client.get(f'/api/sessions/{sid}')).status_code == 404
-            assert (await client.get(f'/api/runs/{run}')).status_code == 404
+            assert (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).status_code == 404
+            assert (await client.get(f'/api/v1/scopes/chats/runs/{run}')).status_code == 404
             assert sid not in web.state.delivery.latest
     asyncio.run(scenario())
 
@@ -238,32 +238,32 @@ def test_delete_cannot_replay_control_text_from_an_evicted_run(monkeypatch, tmp_
         model = StreamingToolModel(replies=[AIMessage(content='saved'), AIMessage(content='saved')],
                                    entered=entered, release=release)
         async with web_client(monkeypatch, tmp_path, model, retained_runs=1) as (client, web):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
             start = request('wait')
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=start)).json()['run_id']
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=start)).json()['run_id']
             await asyncio.wait_for(entered.wait(), 5)
             stop = {'request_id': request('')['request_id'], 'kind': 'stop'}
             try:
-                queued = await client.post(f'/api/runs/{run}/controls',
+                queued = await client.post(f'/api/v1/scopes/chats/runs/{run}/controls',
                     json={**request('synthetic pending text'), 'kind': 'follow_up'})
                 assert queued.status_code == 202
-                stopping = await client.post(f'/api/runs/{run}/controls', json=stop)
+                stopping = await client.post(f'/api/v1/scopes/chats/runs/{run}/controls', json=stop)
                 assert stopping.status_code == 202
                 assert stopping.json()['retained'] == ['synthetic pending text']
-                assert (await client.post(f'/api/runs/{run}/controls', json=stop)).json() == stopping.json()
+                assert (await client.post(f'/api/v1/scopes/chats/runs/{run}/controls', json=stop)).json() == stopping.json()
             finally:
                 release.set()
                 await web.state.delivery.wait(run)
             for _ in range(2):
-                current = (await client.post(f'/api/sessions/{sid}/runs', json=request('next'))).json()['run_id']
+                current = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('next'))).json()['run_id']
                 await web.state.delivery.wait(current)
             assert run not in web.state.delivery.runs
-            repeat_start = await client.post(f'/api/sessions/{sid}/runs', json=start)
+            repeat_start = await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=start)
             assert repeat_start.status_code == 202 and repeat_start.json()['run_id'] == run
             assert len(model.seen) == 3  # Eviction must not replay a session-scoped start receipt.
-            assert (await client.delete(f'/api/sessions/{sid}')).status_code == 200
-            assert (await client.get(f'/api/sessions/{sid}')).status_code == 404
-            replay = await client.post(f'/api/runs/{run}/controls', json=stop)
+            assert (await client.delete(f'/api/v1/scopes/chats/sessions/{sid}')).status_code == 200
+            assert (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).status_code == 404
+            replay = await client.post(f'/api/v1/scopes/chats/runs/{run}/controls', json=stop)
             assert replay.status_code == 404
             assert replay.json() == {'error': {'code': 'run_not_found'}}
             assert (run, stop['request_id']) not in web.state.delivery.receipts
@@ -273,15 +273,34 @@ def test_delete_cannot_replay_control_text_from_an_evicted_run(monkeypatch, tmp_
 def test_delete_failure_rolls_back_metadata_and_history(monkeypatch, tmp_path, caplog):
     async def scenario():
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[AIMessage(content='kept')])) as (client, web):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=request('hello'))).json()['run_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('hello'))).json()['run_id']
             await web.state.delivery.wait(run)
             store = web.state.service.application.sessions._persistence.storage
             store.database.connection.execute("CREATE TRIGGER fail_delete BEFORE DELETE ON naiyue_sessions BEGIN SELECT RAISE(ABORT,'PRIVATE_DETAIL'); END")
-            response = await client.delete(f'/api/sessions/{sid}')
+            response = await client.delete(f'/api/v1/scopes/chats/sessions/{sid}')
             assert response.status_code == 409 and response.json()['error']['code'] == 'session_delete_unconfirmed'
-            assert (await client.get(f'/api/sessions/{sid}')).json()['messages'][-1]['content'] == 'kept'
+            assert (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()['messages'][-1]['content'] == 'kept'
             assert store.database.connection.execute('SELECT count(*) FROM checkpoints').fetchone()[0] > 0
             assert 'PRIVATE_DETAIL' not in response.text + caplog.text
             assert 'session_delete_failed' in caplog.text
+    asyncio.run(scenario())
+
+
+def test_deleted_session_cannot_replay_cached_prepare_history(monkeypatch, tmp_path):
+    async def scenario():
+        model = StreamingToolModel(replies=[AIMessage(content='private archived reply')])
+        async with web_client(monkeypatch, tmp_path, model) as (client, web):
+            base = '/api/v1/scopes/chats/sessions'
+            sid = (await client.post(base, json={'model_id': 'A'})).json()['session_id']
+            run = (await client.post(f'{base}/{sid}/runs', json=request('private question'))).json()['run_id']
+            await web.state.delivery.wait(run)
+            identity = request('')['request_id']
+            first = await client.post(f'{base}/{sid}/prepare', json={'request_id': identity})
+            assert first.status_code == 200 and 'private archived reply' in first.text
+            assert (await client.delete(f'{base}/{sid}')).status_code == 200
+            repeated = await client.post(f'{base}/{sid}/prepare', json={'request_id': identity})
+            assert repeated.status_code == 404
+            assert repeated.json() == {'error': {'code': 'session_not_found'}}
+            assert 'private archived reply' not in repeated.text and 'private question' not in repeated.text
     asyncio.run(scenario())

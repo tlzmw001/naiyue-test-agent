@@ -1,6 +1,7 @@
 """Bounded offline TCP/SSE and two-process Web persistence probe; no model credentials."""
 
 import argparse
+from scripts.web_probe_app import command_headers
 import asyncio
 import json
 import logging
@@ -53,7 +54,7 @@ def _catalog():
 def _worker(args):
     import uvicorn
     from naiyue_test_agent import application
-    from naiyue_test_agent.web.app import create_web_app
+    from scripts.web_probe_app import create_probe_app, command_headers, async_command_headers
     from naiyue_test_agent.web.settings import WebSettings
 
     application.load_model_catalog = lambda _: _catalog()
@@ -68,7 +69,7 @@ def _worker(args):
         port = listener.getsockname()[1]
         settings = WebSettings(config_path='unused', database_path=root / 'sessions.sqlite',
             frontend_dist=assets, port=port, access_token=ACCESS)
-        app = create_web_app(settings)
+        app = create_probe_app(settings)
         descriptor = os.open(root / 'ready.json', os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         with os.fdopen(descriptor, 'w') as output:
             json.dump({'port': port}, output)
@@ -134,28 +135,28 @@ def _parent(args):
             process, output, port = _launch(root, deadline)
             origin = f'http://127.0.0.1:{port}'
             try:
-                with httpx.Client(base_url=origin, headers={'Authorization': 'Bearer ' + ACCESS,
+                with httpx.Client(event_hooks={'request': [command_headers]}, base_url=origin, headers={'Authorization': 'Bearer ' + ACCESS,
                                   'Origin': origin}, timeout=min(10, args.timeout_seconds)) as client:
                     def ready():
                         try:
-                            return client.get('/api/models').status_code == 200
+                            return client.get('/api/v1/scopes/chats/models').status_code == 200
                         except httpx.ConnectError:
                             return False
                     _until(ready, deadline)
                     if session is None:
-                        created = client.post('/api/sessions', json={'model_id': 'offline'})
+                        created = client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'offline'})
                         created.raise_for_status()
                         session = created.json()['session_id']
                     else:
-                        client.post(f'/api/sessions/{session}/prepare').raise_for_status()
-                        restored = client.get('/api/sessions/' + session)
+                        client.post(f'/api/v1/scopes/chats/sessions/{session}/prepare').raise_for_status()
+                        restored = client.get('/api/v1/scopes/chats/sessions/' + session)
                         restored.raise_for_status()
                         assert [m['content'] for m in restored.json()['messages']] == ['BLOCK']
                     body = {'request_id': str(uuid4()), 'text': 'BLOCK' if phase == 'start' else 'resume'}
-                    response = client.post(f'/api/sessions/{session}/runs', json=body)
+                    response = client.post(f'/api/v1/scopes/chats/sessions/{session}/runs', json=body)
                     response.raise_for_status()
                     run = response.json()['run_id']
-                    with client.stream('GET', f'/api/runs/{run}/events') as stream:
+                    with client.stream('GET', f'/api/v1/scopes/chats/runs/{run}/events') as stream:
                         stream.raise_for_status()
                         observed = False
                         for line in stream.iter_lines():
@@ -169,16 +170,16 @@ def _parent(args):
                         assert observed
                     # Closing an HTTP consumer must not stop its separately owned producer.
                     if phase == 'start':
-                        assert client.get(f'/api/runs/{run}').json()['status'] == 'running'
+                        assert client.get(f'/api/v1/scopes/chats/runs/{run}').json()['status'] == 'running'
                         for kind, text in [('steering', 'retained-steer'), ('follow_up', 'retained-follow')]:
-                            receipt = client.post(f'/api/runs/{run}/controls', json={
+                            receipt = client.post(f'/api/v1/scopes/chats/runs/{run}/controls', json={
                                 'request_id': str(uuid4()), 'kind': kind, 'text': text})
                             receipt.raise_for_status()
-                        receipt = client.post(f'/api/runs/{run}/controls', json={'request_id': str(uuid4()), 'kind': 'stop'})
+                        receipt = client.post(f'/api/v1/scopes/chats/runs/{run}/controls', json={'request_id': str(uuid4()), 'kind': 'stop'})
                         receipt.raise_for_status()
                         assert receipt.json()['retained'] == ['retained-steer', 'retained-follow']
                     def finished():
-                        value = client.get(f'/api/runs/{run}').json()
+                        value = client.get(f'/api/v1/scopes/chats/runs/{run}').json()
                         return value if value['done'] else None
                     view = _until(finished, deadline)
                     assert view['status'] == ('stopped' if phase == 'start' else 'completed')
@@ -187,7 +188,7 @@ def _parent(args):
                         assert all(m['provisional'] for m in view['messages'] if m['type'] == 'ai')
                     else:
                         assert view['messages'][-1]['content'] == 'RESTORED'
-                    assert client.post(f'/api/sessions/{session}/runs', json=body).json() == response.json()
+                    assert client.post(f'/api/v1/scopes/chats/sessions/{session}/runs', json=body).json() == response.json()
             finally:
                 _stop(process, output, deadline)
     print('web_probe=PASS mode=offline tcp=True sse_delta=True disconnect_keeps_run=True '

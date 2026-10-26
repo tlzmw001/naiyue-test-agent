@@ -10,8 +10,9 @@ from naiyue_test_agent.tools.permissions import PermissionMechanismError
 from .session_approval import pending_tool_approval, is_pre_tool_approval
 from naiyue_test_agent.contracts.run_context import RunIdentity, RunScope, RuntimeContext
 from naiyue_test_agent.storage.execution_storage import root_from_row
-from naiyue_test_agent.application.errors import SessionPersistenceError
-from naiyue_test_agent.storage.queries import STATES
+from naiyue_test_agent.execution_roots import ExecutionRootUnavailable
+from naiyue_test_agent.storage.recovery_records import recovery_record
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,6 @@ def _identity_matches(row, snapshot):
     return config.get('thread_id') == row['thread_id'] and config.get('checkpoint_ns', '') == ''
 
 
-
 def classify_recovery(row, snapshot):
     """Describe saved state; never authorize, repair or install a session."""
     if not _identity_matches(row, snapshot):
@@ -97,34 +97,6 @@ def classify_recovery(row, snapshot):
     return _classification('interrupted_execution', reason, missing)
 
 
-
-
-def recovery_record(row, snapshot):
-    """Validate persisted recovery ownership before trusting its saved phase."""
-    encoded = (snapshot.metadata or {}).get('naiyue_recovery')
-    if encoded is None:
-        return None
-    if not isinstance(encoded, str):
-        raise SessionPersistenceError('invalid_recovery_record')
-    try:
-        record = json.loads(encoded)
-        keys = {'version', 'recovery_id', 'session_id', 'thread_id', 'source_checkpoint_id',
-                'source_namespace', 'original_state', 'pre_tool_approval', 'phase'}
-        valid = (isinstance(record, dict) and set(record) == keys and type(record['version']) is int
-                 and record['version'] == 1 and record['session_id'] == row['session_id']
-                 and record['thread_id'] == row['thread_id'] and record['source_namespace'] == ''
-                 and isinstance(record['recovery_id'], str) and len(record['recovery_id']) == 32
-                 and all(char in '0123456789abcdef' for char in record['recovery_id'])
-                 and isinstance(record['source_checkpoint_id'], str) and bool(record['source_checkpoint_id'])
-                 and record['original_state'] in STATES and type(record['pre_tool_approval']) is bool
-                 and record['phase'] in ('cleared', 'paired', 'finished'))
-    except (ValueError, TypeError, KeyError):
-        valid = False
-    if not valid:
-        raise SessionPersistenceError('invalid_recovery_record')
-    return record
-
-
 def build_recovery_update(snapshot, record):
     """Add only missing results; leave actual messages and artifacts untouched."""
     messages = snapshot.values.get('messages', [])
@@ -154,7 +126,7 @@ def build_recovery_update(snapshot, record):
     return {'messages': additions, 'tool_execution': {}, 'run_stopped': False}
 
 
-def validate_saved_approval(settings, registry, row, snapshot, names):
+def validate_saved_approval(settings, registry, row, snapshot, names, *, execution_root=None,execution_access=None):
     """Recheck local authority; never load file contents, review with AI or grant access."""
     from naiyue_test_agent.agent_runtime.tool_execution.permissions import prepare_permission_call
     try:
@@ -174,8 +146,30 @@ def validate_saved_approval(settings, registry, row, snapshot, names):
         if not isinstance(selected, list) or not set(selected).issubset(subagent_request_tools(names, registry)):
             raise ValueError('Saved tools are unavailable')
         specs = {spec.tool.name: spec for spec in registry.select(selected)}
+        if row.get('execution_binding')=='sandbox' and execution_access is None:
+            for call in batch['calls']:specs[call['name']].validate_input(call['args'])
+            pending=pending_tool_approval({**snapshot.values,'__interrupt__':snapshot.tasks[0].interrupts})
+            pending.update(requested_run_id=row['run_id'],execution_expired=True)
+            return pending
+        if execution_root is not None and execution_root.project_revision is not None and any(
+                call.get('subject', {}).get('project_revision') != execution_root.project_revision
+                for call in batch['calls']):
+            # Restore only the original pending facts for display/cancellation.
+            # Admission compares every grant's revision before any execution.
+            for call in batch['calls']:
+                specs[call['name']].validate_input(call['args'])
+            pending = pending_tool_approval({**snapshot.values, '__interrupt__': snapshot.tasks[0].interrupts})
+            pending.update(requested_run_id=row['run_id'], execution_expired=True)
+            return pending
+        from naiyue_test_agent.contracts.run_context import RunCapabilities
+        from naiyue_test_agent.execution.host_files import HostFileSystem
+        from naiyue_test_agent.execution.host_processes import HostProcesses
+        root = execution_root if execution_root is not None else root_from_row(row)
+        files = execution_access.files if execution_access is not None else HostFileSystem(root, row['project_id'], session_id=row['session_id']) if root is not None else None
+        processes=execution_access.processes if execution_access is not None else HostProcesses(files) if files is not None else None
         context = RuntimeContext(RunScope(RunIdentity(row['session_id'],
-            project_id=row['project_id'], execution_root=root_from_row(row))))
+            project_id=row['project_id'], execution_root=root), capabilities=RunCapabilities(files=files, processes=processes),
+            environment=files.environment if files is not None else None))
         for saved in batch['calls']:
             current = prepare_permission_call(saved, specs[saved['name']], context, settings, [])
             if saved.get('validation') != 'valid' or current['validation'] != 'valid':
@@ -195,6 +189,26 @@ def validate_saved_approval(settings, registry, row, snapshot, names):
         pending = pending_tool_approval({**snapshot.values, '__interrupt__': snapshot.tasks[0].interrupts})
         pending['requested_run_id'] = row['run_id']
         return pending
-    except (ValueError, TypeError, KeyError, AttributeError, PermissionMechanismError) as error:
+    except (ValueError, TypeError, KeyError, AttributeError, PermissionMechanismError, ExecutionRootUnavailable) as error:
         logger.warning('session_approval_revalidation_failed error_type=%s', type(error).__name__)
         raise SessionPersistenceError('approval_restore_unavailable') from error
+
+
+def prepare_saved_configuration(owner, row):
+    try:
+        owner._permission_settings.validate_mode(row['permission_mode'])
+    except ValueError as error:
+        raise SessionPersistenceError('invalid_permission_mode') from error
+    saved = row['active_tool_names_json']
+    try:
+        names = json.loads(saved)
+        from naiyue_test_agent.tools.subagent import subagent_selection
+        names = subagent_selection(names)
+        specs = owner._tool_registry.select(names)
+        names = tuple(spec.tool.name for spec in specs)
+    except (ValueError, TypeError) as error:
+        raise SessionPersistenceError('invalid_active_tools') from error
+    owner._catalog.with_thinking(row['model_id'], row['thinking_level'])
+    # Saved identity can be installed for history even when execution is unavailable.
+    root = owner.sessions.saved_execution_root(row)
+    return root.path if root is not None else None, names

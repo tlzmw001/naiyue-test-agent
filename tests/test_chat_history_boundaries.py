@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from native_application_helpers import async_test
 from naiyue_test_agent.storage.project_store import ProjectStore
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from test_chat_history import rows
 from test_persistent_sessions import build
 
@@ -142,12 +142,12 @@ def test_chat_migration_is_atomic_on_ddl_failure(monkeypatch, tmp_path):
 @async_test
 async def test_delete_clears_archive_and_progress_only_for_selected_session(monkeypatch, tmp_path):
     async with build(monkeypatch, tmp_path / 'state.sqlite') as app:
-        first, second = await app.sessions.create('A'), await app.sessions.create('A')
-        await app.runs.start(first, [('user', 'one')])
-        await app.runs.start(second, [('user', 'two')])
-        storage = app.sessions._persistence.storage
+        first, second = await app.host.sessions.create('A'), await app.host.sessions.create('A')
+        await app.host.runs.start(first, [('user', 'one')])
+        await app.host.runs.start(second, [('user', 'two')])
+        storage = app.host.sessions._persistence.storage
         saved = rows(storage, second)
-        await app.sessions.delete(first)
+        await app.host.sessions.delete(first)
         assert rows(storage, first) == [] and storage.conversation.chat_heads(first) == []
         assert rows(storage, second) == saved and storage.conversation.chat_heads(second)
 
@@ -164,24 +164,24 @@ async def test_actual_saver_backfill_pages_after_saved_archive_is_absent(monkeyp
         checkpoint_retention=CheckpointRetentionSettings(enabled=False)))
     model = ToolModel(responses=[AIMessage(id=f'answer-{index}', content=f'answer {index}') for index in range(12)])
     async with build(monkeypatch, tmp_path / 'state.sqlite', model) as app:
-        sid = await app.sessions.create('A')
+        sid = await app.host.sessions.create('A')
         for index in range(12):
-            await app.runs.start(sid, [('user', f'request {index}')])
-        storage = app.sessions._persistence.storage
+            await app.host.runs.start(sid, [('user', f'request {index}')])
+        storage = app.host.sessions._persistence.storage
         original = rows(storage, sid)
         # A schema6 session starts with saved checkpoints but no archive/head.
         with storage.database.connection:
             storage.database.connection.execute('DELETE FROM naiyue_chat_messages WHERE session_id=?', (sid,))
             storage.database.connection.execute('DELETE FROM naiyue_chat_sync WHERE session_id=?', (sid,))
-        history = app.runs._agent.aget_state_history
+        history = app.host.runs._agent.aget_state_history
         reads = []
         async def counted(config, **kwargs):
             reads.append(kwargs)
             async for item in history(config, **kwargs):
                 yield item
         with monkeypatch.context() as patch:
-            patch.setattr(app.runs._agent, 'aget_state_history', counted)
-            updates = await collect_chat_updates(app.runs._agent, storage, sid)
+            patch.setattr(app.host.runs._agent, 'aget_state_history', counted)
+            updates = await collect_chat_updates(app.host.runs._agent, storage, sid)
         storage.runs.finish_run(sid, 'ready', storage.sessions.get(sid)['checkpoint_id'], '', 'completed', updates)
         assert len(reads) >= 2 and all(r['limit'] == 64 for r in reads)
         assert reads[0]['before'] is None and all(r['before'] is not None for r in reads[1:])

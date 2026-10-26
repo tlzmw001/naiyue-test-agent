@@ -15,8 +15,10 @@ import time
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.messages.utils import count_tokens_approximately
-
-from naiyue_test_agent.application.async_application import build_async_local_application
+if __package__:
+    from .component_fixtures import build_component_application
+else:
+    from component_fixtures import build_component_application
 from naiyue_test_agent.model_access import (
     COMPACTION_KEEP_RECENT_METADATA_KEY, COMPACTION_RESERVE_METADATA_KEY,
     COMPACTION_SUMMARY_OUTPUT_METADATA_KEY, MODEL_LIMITS_METADATA_KEY,
@@ -154,7 +156,7 @@ async def _async__run_case(args) -> int:
         print(json.dumps({'event': 'case_started', 'mode': args.worker}), flush=True)
         context_operations = []
         try:
-            app = await build_async_local_application(
+            app = await build_component_application(
                 args.config, tools=[], system_prompt=EVAL_SYSTEM, response_format=None,
             )
             resources.push_async_callback(app.aclose)
@@ -166,9 +168,9 @@ async def _async__run_case(args) -> int:
                                       'status': getattr(event.data, 'status', None),
                                       'visibility': getattr(event.data, 'visibility', None)}, sort_keys=True), flush=True)
 
-            app.observability.subscribe(observe_context)
-            model_id = args.model_id or app.models.default_id
-            model = app.sessions._sessions._catalog.get(model_id)
+            app.host.observability.subscribe(observe_context)
+            model_id = args.model_id or app.root.models.default_id
+            model = app.host.sessions._sessions._catalog.get(model_id)
             metadata = dict(model.metadata or {})
             limits = dict(metadata[MODEL_LIMITS_METADATA_KEY])
             output_cap = limits['max_output_tokens']
@@ -200,9 +202,9 @@ async def _async__run_case(args) -> int:
             }
             model.metadata = metadata
 
-            session = await app.sessions.create(model_id)
+            session = await app.host.sessions.create(model_id)
             started = time.monotonic()
-            result = await app.runs.start(session, messages)
+            result = await app.host.runs.start(session, messages)
             elapsed_ms = round((time.monotonic() - started) * 1000)
             answers = [message for message in result['messages']
                        if isinstance(message, AIMessage)]

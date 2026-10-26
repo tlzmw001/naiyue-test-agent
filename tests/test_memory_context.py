@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.messages.utils import count_tokens_approximately
 import pytest
 
-from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
+from naiyue_test_agent.contracts.memory import MemoryReadError
 from test_memory_readonly import memory, seed
 
 

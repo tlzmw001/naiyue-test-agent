@@ -193,14 +193,11 @@ def create_session_read_tool(*, settings: ReadSettings | None = None, progress_s
                   offset: int | None = None, limit: int | None = None) -> str | list[dict]:
         """Read UTF-8 text with 1-based pagination, or an image without offset/limit."""
         context = runtime.context
-        root = context.scope.identity.execution_path if isinstance(context, RuntimeContext) else None
-        if not isinstance(root, Path) or not root.is_absolute():
-            logger.warning('read_failed error_type=MissingWorkspaceContext')
-            raise ToolException(READ_NO_WORKSPACE)
-        target = require_file_target(runtime, path, operation='read')
+        require_file_target(runtime, path, operation='read')
         progress = ToolProgress(runtime, progress_settings)
         try:
-            return _read(target, offset, limit, settings=settings, control=context.scope.control, progress=progress)
+            return context.scope.capabilities.files.read(context.authorization.permit['subject'], offset, limit,
+                settings=settings, control=context.scope.control, progress=progress)
         finally:
             progress.flush()
 

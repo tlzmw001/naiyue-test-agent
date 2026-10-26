@@ -8,7 +8,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 
 from naiyue_test_agent.storage.project_store import ProjectStore
 from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
-from tests.legacy_store_schema import remove_memory_schema, remove_memory_lifecycle, remove_memory_overviews, remove_execution_schema
+from tests.legacy_store_schema import remove_memory_schema, remove_memory_lifecycle, remove_memory_overviews, remove_execution_schema, remove_project_local_schema,remove_environment_schema
 
 
 def source_store(tmp_path, *, version=CURRENT_SCHEMA, bound=True, checkpoints=True):
@@ -31,6 +31,10 @@ def source_store(tmp_path, *, version=CURRENT_SCHEMA, bound=True, checkpoints=Tr
         connection.execute('INSERT INTO writes VALUES(?,?,?,?,?,?,?,?)',
                            ('T', '', 'C', 'task', 0, 'pending', 'json', b'opaque-value'))
         connection.execute("UPDATE naiyue_sessions SET checkpoint_id='C'")
+    if version < 20:
+        remove_environment_schema(connection)
+    if version < 19:
+        remove_project_local_schema(connection)
     if version < 18:
         remove_execution_schema(connection)
     if version < 17:

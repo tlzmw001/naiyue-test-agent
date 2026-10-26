@@ -8,7 +8,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_application import build_async_local_application
+from scripts.component_fixtures import build_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.settings import AppSettings
@@ -41,13 +41,13 @@ async def test_exact_deny_overrides_directory_allow_without_reading(monkeypatch,
         model = DynamicModel(responses=[AIMessage(content='', tool_calls=[call(secret, 'deny'), call(plain, 'allow')]), AIMessage(content='done')])
         options = dict(deny=[{'tool': 'read', 'path': str(secret)}], allow=[{'tool': 'read', 'path': str(tmp_path) + '/**'}])
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
-        app = await build_async_local_application('synthetic', tools=[create_session_read_tool()],
+        app = await build_component_application('synthetic', tools=[create_session_read_tool()],
             settings=settings(**options), system_prompt='', response_format=None)
-        sid = await app.sessions.create_workspace('A', root)
+        sid = await app.host.sessions.create_workspace('A', root)
         events = []
-        app.observability.subscribe(events.append)
+        app.host.observability.subscribe(events.append)
         try:
-            result = await app.runs.start(sid, [('user', 'read')])
+            result = await app.host.runs.start(sid, [('user', 'read')])
             outputs = [m for m in result['messages'] if isinstance(m, ToolMessage)]
             assert [(m.tool_call_id, m.status) for m in outputs] == [('deny', 'error'), ('allow', 'success')]
             assert 'PRIVATE_DENIED' not in outputs[0].content and outputs[1].content == 'approved'
@@ -77,20 +77,20 @@ async def test_approval_prepares_once_and_remember_does_not_write_settings(monke
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[call(target)]), AIMessage(content='done'),
         AIMessage(content='', tool_calls=[call(target, 'c2')]), AIMessage(content='remembered')])
     app = await build(monkeypatch, model, [spec])
-    sid = await app.sessions.create_workspace('A', root)
-    paused = await app.runs.start(sid, [('user', 'read')])
+    sid = await app.host.sessions.create_workspace('A', root)
+    paused = await app.host.runs.start(sid, [('user', 'read')])
     assert visits == ['prepare', 'default'] and len(paused['approval_requests']) == 1
     assert paused['tool_execution']['calls'][0]['decision'] == 'ask'
     assert not any(isinstance(m, ToolMessage) for m in paused['messages'])
-    done = await app.runs.resume_approval(sid, ['approve'], remember_approved=['c1'])
+    done = await app.host.runs.resume_approval(sid, ['approve'], remember_approved=['c1'])
     assert visits == ['prepare', 'default']
     assert next(m.content for m in done['messages'] if isinstance(m, ToolMessage)) == 'approved'
-    remembered = await app.runs.start(sid, [('user', 'again')])
+    remembered = await app.host.runs.start(sid, [('user', 'again')])
     assert not remembered.get('approval_requests') and remembered['messages'][-1].content == 'remembered'
     assert visits == ['prepare', 'default', 'prepare']
-    assert app.sessions._sessions.resolve_permission_context(sid)['session_allow']
-    other = await app.sessions.create_workspace('A', root)
-    assert app.sessions._sessions.resolve_permission_context(other)['session_allow'] == []
+    assert app.host.sessions._sessions.resolve_permission_context(sid)['session_allow']
+    other = await app.host.sessions.create_workspace('A', root)
+    assert app.host.sessions._sessions.resolve_permission_context(other)['session_allow'] == []
 
 
 @pytest.mark.parametrize('mode,status,pending', [('Default', None, True), ('NoAsk', 'error', False), ('BypassApprovals', 'success', False)])
@@ -101,7 +101,7 @@ async def test_modes_resolve_remaining_ask(monkeypatch, tmp_path, mode, status, 
     path = tmp_path / 'outside.txt'
     path.write_text('data')
     app = await build(monkeypatch, DynamicModel(responses=[AIMessage(content='', tool_calls=[call(path)]), AIMessage(content='done')]), mode=mode)
-    result = await app.runs.start(await app.sessions.create_workspace('A', root), [('user', 'read')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('A', root), [('user', 'read')])
     assert bool(result.get('approval_requests')) is pending
     if not pending:
         assert next(m.status for m in result['messages'] if isinstance(m, ToolMessage)) == status
@@ -116,7 +116,7 @@ async def test_default_callback_failure_falls_back_to_human(monkeypatch, tmp_pat
             raise RuntimeError('PRIVATE_DETAIL')
     spec = replace(create_session_read_tool(), permissions=Broken('path', 'read'))
     app = await build(monkeypatch, DynamicModel(responses=[AIMessage(content='', tool_calls=[call(path)])]), [spec])
-    paused = await app.runs.start(await app.sessions.create_workspace('A', tmp_path), [('user', 'read')])
+    paused = await app.host.runs.start(await app.host.sessions.create_workspace('A', tmp_path), [('user', 'read')])
     assert paused['approval_requests'] and 'PRIVATE_DETAIL' not in caplog.text
 
 
@@ -127,12 +127,12 @@ async def test_mode_change_during_pause_does_not_change_saved_batch(monkeypatch,
     path = tmp_path / 'outside.txt'
     path.write_text('data')
     app = await build(monkeypatch, DynamicModel(responses=[AIMessage(content='', tool_calls=[call(path)]), AIMessage(content='done')]))
-    sid = await app.sessions.create_workspace('A', root)
-    paused = await app.runs.start(sid, [('user', 'read')])
-    await app.sessions.select_permission_mode(sid, 'BypassApprovals')
-    assert app.sessions.permission_mode(sid) == 'BypassApprovals'
+    sid = await app.host.sessions.create_workspace('A', root)
+    paused = await app.host.runs.start(sid, [('user', 'read')])
+    await app.host.sessions.select_permission_mode(sid, 'BypassApprovals')
+    assert app.host.sessions.permission_mode(sid) == 'BypassApprovals'
     assert paused['tool_execution']['mode'] == 'Default'
-    rejected = await app.runs.resume_approval(sid, ['reject'])
+    rejected = await app.host.runs.resume_approval(sid, ['reject'])
     assert next(m.status for m in rejected['messages'] if isinstance(m, ToolMessage)) == 'error'
 
 
@@ -146,10 +146,10 @@ async def test_target_change_after_approval_has_no_read(monkeypatch, tmp_path):
     link = root / 'link.txt'
     link.symlink_to(first)
     app = await build(monkeypatch, DynamicModel(responses=[AIMessage(content='', tool_calls=[call(link)]), AIMessage(content='done')]))
-    sid = await app.sessions.create_workspace('A', root)
-    await app.runs.start(sid, [('user', 'read')])
+    sid = await app.host.sessions.create_workspace('A', root)
+    await app.host.runs.start(sid, [('user', 'read')])
     link.unlink()
     link.symlink_to(second)
-    result = await app.runs.resume_approval(sid, ['approve'])
+    result = await app.host.runs.resume_approval(sid, ['approve'])
     output = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert output.status == 'error' and 'changed' in output.content and 'PRIVATE_TWO' not in output.content

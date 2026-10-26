@@ -35,7 +35,7 @@ def test_saved_sources_have_real_human_tool_reply_and_controlled_time(tmp_path):
             active_tool_names=['memory'], permission_mode='Default'))
         cases, _ = load_cases()
         facts = seed_sources(store, 's', cases[3]['sources'], at=1000.)
-        batch = store.memory.build_batch(session_id='s', thread_id='s', conversation_revision=0,
+        batch = build_batch(store.memory, session_id='s', thread_id='s', conversation_revision=0,
             start=(0, 0), upper=facts['upper'], token_budget=16000, source_chars=4000)
         sources = {r['message_id']: r for r in batch['sources']}
         assert set(sources) == {'e04-u', 'e04-t'}

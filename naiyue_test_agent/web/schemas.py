@@ -8,9 +8,20 @@ class MCPRefreshInput(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
 
 
-class NewSession(BaseModel):
+class ModelInput(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     model_id: str = Field(min_length=1, max_length=128)
+
+
+class NewSession(ModelInput):
+    execution: Literal['host','sandbox'] = 'host'
+    include_untracked: list[Annotated[str,Field(min_length=1,max_length=4096)]] = Field(default_factory=list,max_length=100000)
+
+    @model_validator(mode='after')
+    def sandbox_input(self):
+        if self.execution=='host' and self.include_untracked:
+            raise ValueError('Host sessions have no snapshot input selection')
+        return self
 
 
 class SessionPresentation(BaseModel):
@@ -40,7 +51,7 @@ class SessionOrder(BaseModel):
         return self
 
 
-class ThinkingInput(NewSession):
+class ThinkingInput(ModelInput):
     thinking_level: Literal['model_default', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
 

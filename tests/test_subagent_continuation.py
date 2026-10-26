@@ -20,7 +20,7 @@ def feedback(result):
 async def again(app, sid, root, identity, *, task='second task', agent='tester'):
     root.replies.extend([call('subagent', {'agent': agent, 'task': task, 'agent_id': identity}, 'next'),
                          AIMessage(content='root done again')])
-    return await app.runs.start(sid, [('user', task)])
+    return await app.host.runs.start(sid, [('user', task)])
 
 
 def test_optional_instance_id_is_full_and_strict():
@@ -38,8 +38,8 @@ async def test_same_instance_next_user_turn_keeps_history_new_controls_and_usage
     child = ChildModel(replies=[first, second])
     app, root = await delegated_app(monkeypatch, child, spec=role(max_model_calls=1))
     instances = record_instances(monkeypatch, app)
-    sid = await app.sessions.create('A')
-    result = await app.runs.start(sid, [('user', 'first request')])
+    sid = await app.host.sessions.create('A')
+    result = await app.host.runs.start(sid, [('user', 'first request')])
     original = feedback(result)
     envelope = json.loads(original.content)
     identity = envelope['agent_id']
@@ -53,11 +53,11 @@ async def test_same_instance_next_user_turn_keeps_history_new_controls_and_usage
     assert a['child_thread_id'] == b['child_thread_id'] and a['agent_path'] == b['agent_path']
     assert a['seed_id'] != b['seed_id'] and a['parent_run_id'] != b['parent_run_id']
     assert a['control'] is not b['control'] and a['run_id'] != b['run_id']
-    snapshot = await app.sessions._sessions._subagents['tester']['agent'].aget_state({'configurable': {'thread_id': b['child_thread_id']}})
+    snapshot = await app.host.sessions._sessions._subagents['tester']['agent'].aget_state({'configurable': {'thread_id': b['child_thread_id']}})
     assert [m.content for m in snapshot.values['messages']] == ['check this task', 'first report', 'second task', 'second report']
     assert snapshot.values['thread_model_call_count'] == 1
     assert [m.content for m in child.seen[1] if isinstance(m, HumanMessage)] == ['check this task', 'second task']
-    records = await app.history.subagents(sid)
+    records = await app.host.history.subagents(sid)
     assert len(records) == 1 and records[0]['agent_id'] == identity
     assert all('driver' not in item and item['settled'] for item in instances)
 
@@ -76,11 +76,11 @@ async def test_same_parent_can_delegate_again_after_success_and_omitting_id_crea
     root.on_request = continue_after_report
     app, _ = await delegated_app(monkeypatch, child, root=root)
     instances = record_instances(monkeypatch, app)
-    sid = await app.sessions.create('A')
-    await app.runs.start(sid, [('user', 'two steps')])
+    sid = await app.host.sessions.create('A')
+    await app.host.runs.start(sid, [('user', 'two steps')])
     assert len(instances) == 2 and instances[0]['agent_path'] == instances[1]['agent_path']
     root.replies.extend([call('subagent', {'agent': 'tester', 'task': 'unrelated', 'agent_id': None}, 'new'), AIMessage(content='done')])
-    latest = feedback(await app.runs.start(sid, [('user', 'unrelated')]))
+    latest = feedback(await app.host.runs.start(sid, [('user', 'unrelated')]))
     assert json.loads(latest.content)['agent_id'] != identity
     assert [m.content for m in child.seen[-1] if isinstance(m, HumanMessage)] == ['unrelated']
 
@@ -91,38 +91,38 @@ async def test_invalid_continuation_never_starts_model(monkeypatch, case):
     child = ChildModel(replies=[TimeoutError('failed child')] if case == 'failed' else [AIMessage(content='first')])
     app, root = await delegated_app(monkeypatch, child)
     instances = record_instances(monkeypatch, app)
-    sid = await app.sessions.create('A')
-    result = await app.runs.start(sid, [('user', 'first')])
+    sid = await app.host.sessions.create('A')
+    result = await app.host.runs.start(sid, [('user', 'first')])
     identity = instances[0]['agent_path'].rsplit('/', 1)[-1]
     target, agent = sid, 'tester'
     if case == 'unknown': identity = 'a' * 64
-    if case == 'other_session': target = await app.sessions.create('A')
+    if case == 'other_session': target = await app.host.sessions.create('A')
     if case == 'wrong_role':
-        await app.subagents.register(role(name='other'))
+        await app.host.subagents.register(role(name='other'))
         agent = 'other'
     if case == 'checkpoint_changed':
-        graph = app.sessions._sessions._subagents['tester']['agent']
+        graph = app.host.sessions._sessions._subagents['tester']['agent']
         await graph.aupdate_state({'configurable': {'thread_id': instances[0]['child_thread_id']}}, {'messages': [HumanMessage(content='unconfirmed change')]})
     count = len(child.seen)
     response = feedback(await again(app, target, root, identity, agent=agent))
     assert response.status == 'error' and len(child.seen) == count
     assert result['messages'][-1].content == 'root done'
     if case == 'other_session':
-        assert await app.history.subagents(target) == []
+        assert await app.host.history.subagents(target) == []
         with pytest.raises(LookupError):
-            await app.history.subagent(target, identity)
+            await app.host.history.subagent(target, identity)
 
 
 @async_test
 async def test_concurrent_delegations_to_same_instance_get_busy_without_queue(monkeypatch):
     child = ChildModel(replies=[AIMessage(content='first'), AIMessage(content='continued')])
     app, root = await delegated_app(monkeypatch, child)
-    sid = await app.sessions.create('A')
-    identity = json.loads(feedback(await app.runs.start(sid, [('user', 'first')])).content)['agent_id']
+    sid = await app.host.sessions.create('A')
+    identity = json.loads(feedback(await app.host.runs.start(sid, [('user', 'first')])).content)['agent_id']
     root.replies.extend([AIMessage(content='', tool_calls=[
         {'name': 'subagent', 'args': {'agent': 'tester', 'task': str(i), 'agent_id': identity}, 'id': f'parallel-{i}'}
         for i in range(2)]), AIMessage(content='done')])
-    result = await app.runs.start(sid, [('user', 'parallel')])
+    result = await app.host.runs.start(sid, [('user', 'parallel')])
     responses = [m for m in result['messages'] if isinstance(m, ToolMessage) and m.tool_call_id.startswith('parallel-')]
     assert sorted(m.status for m in responses) == ['error', 'success']
     assert 'busy' in next(m.content for m in responses if m.status == 'error').lower()
@@ -137,18 +137,18 @@ async def test_approval_resume_shares_cap_but_next_delegation_resets_it(monkeypa
                                 call('probe', {'value': 'second'}, 'inner-2'), AIMessage(content='second report')])
     effects = []
     app, root = await delegated_app(monkeypatch, child, spec=role(max_model_calls=2), tools=[definition(calls=effects, approved=True)])
-    sid = await app.sessions.create('A')
+    sid = await app.host.sessions.create('A')
     queue = approval_notifications(monkeypatch, app)
     identity = None
     for index in range(2):
         if index:
             task = asyncio.create_task(again(app, sid, root, identity))
         else:
-            task = asyncio.create_task(app.runs.start(sid, [('user', 'first')]))
+            task = asyncio.create_task(app.host.runs.start(sid, [('user', 'first')]))
         try:
             batch = await next_approval(app, sid, queue)
-            instance = next(iter(app.sessions._sessions.require(sid)._runtime.run.subagent_instances.values()))
-            graph = app.sessions._sessions._subagents['tester']['agent']
+            instance = next(iter(app.host.sessions._sessions.require(sid)._runtime.run.subagent_instances.values()))
+            graph = app.host.sessions._sessions._subagents['tester']['agent']
             config = {'configurable': {'thread_id': instance['child_thread_id']}}
             assert (await graph.aget_state(config)).values['thread_model_call_count'] == 1
             await submit(app, sid, batch)
@@ -166,9 +166,9 @@ async def test_approval_cannot_bypass_exhausted_model_limit(monkeypatch):
     effects = []
     child = ChildModel(replies=[call('probe', {'value': 'effect'}, 'inner'), AIMessage(content='must not run')])
     app, _ = await delegated_app(monkeypatch, child, spec=role(max_model_calls=1), tools=[definition(calls=effects, approved=True)])
-    sid = await app.sessions.create('A')
+    sid = await app.host.sessions.create('A')
     queue = approval_notifications(monkeypatch, app)
-    task = asyncio.create_task(app.runs.start(sid, [('user', 'first')]))
+    task = asyncio.create_task(app.host.runs.start(sid, [('user', 'first')]))
     try:
         await submit(app, sid, await next_approval(app, sid, queue))
         response = feedback(await asyncio.wait_for(task, 5))
@@ -184,10 +184,10 @@ async def test_small_result_budget_rejects_before_child_model(monkeypatch):
     child = ChildModel(replies=[])
     app, _ = await delegated_app(monkeypatch, child, settings=AppSettings(
         subagents=(role(),), tools={'subagent': {'max_result_bytes': 100}}))
-    sid = await app.sessions.create('A')
-    response = feedback(await app.runs.start(sid, [('user', 'work')]))
+    sid = await app.host.sessions.create('A')
+    response = feedback(await app.host.runs.start(sid, [('user', 'work')]))
     assert response.status == 'error' and 'metadata' in response.content
-    assert child.seen == [] and app.sessions._persistence.storage.subagents.get_subagent_references(sid) == {}
+    assert child.seen == [] and app.host.sessions._persistence.storage.subagents.get_subagent_references(sid) == {}
 
 
 @async_test
@@ -195,13 +195,13 @@ async def test_changed_role_rejects_without_consuming_old_ready_instance(monkeyp
     from dataclasses import replace
     child = ChildModel(replies=[AIMessage(content='first')])
     app, root = await delegated_app(monkeypatch, child)
-    sid = await app.sessions.create('A')
-    identity = json.loads(feedback(await app.runs.start(sid, [('user', 'first')])).content)['agent_id']
-    registered = app.sessions._sessions._subagents['tester']
+    sid = await app.host.sessions.create('A')
+    identity = json.loads(feedback(await app.host.runs.start(sid, [('user', 'first')])).content)['agent_id']
+    registered = app.host.sessions._sessions._subagents['tester']
     registered['spec'] = replace(registered['spec'], system_prompt='Changed execution definition')
     response = feedback(await again(app, sid, root, identity))
     assert response.status == 'error' and 'configuration changed' in response.content
-    assert len(child.seen) == 1 and app.sessions._persistence.storage.subagents.get_subagent(sid, identity)['state'] == 'ready'
+    assert len(child.seen) == 1 and app.host.sessions._persistence.storage.subagents.get_subagent(sid, identity)['state'] == 'ready'
 
 
 @pytest.mark.parametrize('scope', ['root', 'child'])
@@ -210,16 +210,16 @@ async def test_stop_after_claim_before_input_restores_previous_ready_record(monk
     from naiyue_test_agent.application.subagents import subagent_records
     child = ChildModel(replies=[AIMessage(content='first')])
     app, root = await delegated_app(monkeypatch, child)
-    sid = await app.sessions.create('A')
-    identity = json.loads(feedback(await app.runs.start(sid, [('user', 'first')])).content)['agent_id']
-    previous = app.sessions._persistence.storage.subagents.get_subagent(sid, identity).copy()
+    sid = await app.host.sessions.create('A')
+    identity = json.loads(feedback(await app.host.runs.start(sid, [('user', 'first')])).content)['agent_id']
+    previous = app.host.sessions._persistence.storage.subagents.get_subagent(sid, identity).copy()
     admit = subagent_records.admit
     async def stop_before_input(graph, instance, spec, **dependencies):
         await admit(graph, instance, spec, **dependencies)
-        app.sessions._sessions.require(sid).controls.request_scope_stop(
+        app.host.sessions._sessions.require(sid).controls.request_scope_stop(
             run_id=instance['parent_run_id'], agent_path=instance['agent_path'] if scope == 'child' else 'root')
     monkeypatch.setattr(subagent_records, 'admit', stop_before_input)
     await again(app, sid, root, identity)
-    saved = app.sessions._persistence.storage.subagents.get_subagent(sid, identity)
+    saved = app.host.sessions._persistence.storage.subagents.get_subagent(sid, identity)
     assert saved['state'] == 'ready' and saved['checkpoint_id'] == previous['checkpoint_id']
     assert saved['last_delegation_id'] == previous['last_delegation_id'] and len(child.seen) == 1

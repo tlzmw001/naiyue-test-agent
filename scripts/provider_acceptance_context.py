@@ -13,7 +13,7 @@ async def skills(env):
         (root / 'SKILL.md').write_text('---\nname: acceptance-skill\ndescription: '
             'Explicit synthetic acceptance command\n---\n'
             f'After reading this Skill, reply only with {expected}. Do not call other tools.\n')
-        catalog = await app.sessions.skills(env.root / 'work')
+        catalog = await app.host.sessions.skills(env.root / 'work')
         require(len(catalog.entries) == 1 and catalog.command_for(catalog.entries[0]) == '/acceptance-skill', 'skill_catalog_command')
         messages = await run_turn(app, sid, '/acceptance-skill')
         paired_tools(messages, ['read'])
@@ -29,19 +29,19 @@ async def compact_reopen(env):
         await run_turn(app, sid, f'Remember the synthetic acceptance identifier {expected}. '
             f'The following is redundant background, not separate tasks: {padding}\nReply only ACK.')
         await run_turn(app, sid, 'Reply only RECENT. Keep the earlier identifier for future use.')
-        before = await app.history.messages(sid)
-        result = await app.runs.compact(sid)
+        before = await app.host.history.messages(sid)
+        result = await app.host.runs.compact(sid)
         require(result.get('compaction_status') == 'applied', 'manual_summary_applied')
-        saved = await app.history.messages(sid)
+        saved = await app.host.history.messages(sid)
         require(saved[0].additional_kwargs.get('naiyue_compaction_summary'), 'summary_marker_saved')
         require(expected in saved[0].content, 'summary_preserves_identifier')
         require([m.id for m in saved[1:]] == [m.id for m in before[-2:]], 'latest_complete_turn_retained')
     async with env.open_app() as app:
-        require(await app.sessions.restore(sid) == sid, 'reopened_same_session')
-        require(await app.history.messages(sid) == saved, 'reopened_summary_history')
+        require(await app.host.sessions.restore(sid) == sid, 'reopened_same_session')
+        require(await app.host.history.messages(sid) == saved, 'reopened_summary_history')
         messages = await run_turn(app, sid, 'What is the synthetic acceptance identifier from earlier? Reply only that identifier.')
         require(final_text(messages) == expected, 'reopened_identifier_recalled')
-        view = await app.history.context(sid)
+        view = await app.host.history.context(sid)
         require(view['current']['estimate'] is not None and view['latest_request'] is not None, 'estimate_and_vendor_request_separate')
     return {'manual_compact': True, 'retained_turn': True, 'reopen_and_continue': True,
             'context_estimate_separate': True}
@@ -55,16 +55,16 @@ async def controls(env):
             nonlocal queued
             if event.event_type == 'model_call_started' and not queued:
                 queued = True
-                app.runs.steer(sid, 'For this response reply only STEER_OK.')
-                app.runs.follow_up(sid, 'Now reply only FOLLOW_OK.')
-        unsubscribe = app.observability.subscribe(inject)
+                app.host.runs.steer(sid, 'For this response reply only STEER_OK.')
+                app.host.runs.follow_up(sid, 'Now reply only FOLLOW_OK.')
+        unsubscribe = app.host.observability.subscribe(inject)
         try:
             await run_turn(app, sid, 'Reply only START_OK.')
         finally:
             unsubscribe()
         deliveries = {event.data.kind for event in env.events if event.event_type == 'control_delivered'}
         require(deliveries == {'steering', 'follow_up'}, 'both_control_deliveries')
-        require(final_text(await app.history.messages(sid)) == 'FOLLOW_OK', 'followup_result')
+        require(final_text(await app.host.history.messages(sid)) == 'FOLLOW_OK', 'followup_result')
     return {'steering_delivered': True, 'followup_delivered': True}
 
 
@@ -72,14 +72,14 @@ async def stop_stream(env):
     async with env.open_app() as app:
         sid = await env.session(app)
         requested = False
-        async for event in app.runs.stream(sid, [('user', 'Count from one to two hundred, one number per line.')]):
+        async for event in app.host.runs.stream(sid, [('user', 'Count from one to two hundred, one number per line.')]):
             if event.event_type == 'message_delta' and not requested:
-                app.runs.stop(sid)
+                app.host.runs.stop(sid)
                 requested = True
         require(requested, 'stop_after_real_delta')
         terminal = [event for event in env.events if event.event_type == 'run_finished']
         require(len(terminal) == 1 and terminal[0].data.status == 'stopped', 'stream_stop_terminal')
-        require(not app.sessions._sessions.require(sid).describe_session()['busy'], 'stopped_owner_released')
+        require(not app.host.sessions._sessions.require(sid).describe_session()['busy'], 'stopped_owner_released')
     return {'active_stop': True, 'local_settle': True, 'remote_cancel_not_proven': True}
 
 

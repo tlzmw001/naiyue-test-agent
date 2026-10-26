@@ -4,7 +4,8 @@ import logging
 from dataclasses import dataclass
 
 from naiyue_test_agent.contracts.failures import FailureDescription, normalize_classifiers, resolve_failure, safe_error_type
-from naiyue_test_agent.application.errors import SessionBusyError, SessionPendingApprovalError, SessionManualReviewRequiredError, SessionPersistenceError
+from naiyue_test_agent.application.errors import SessionBusyError, SessionPendingApprovalError, SessionManualReviewRequiredError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.application.sessions.project_instructions import ProjectInstructionsError
 
 

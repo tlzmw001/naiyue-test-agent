@@ -131,7 +131,7 @@ def test_memory_origin_is_persisted_without_requiring_it_on_older_summaries(tmp_
     from naiyue_test_agent.contracts.session_events import RunStartedData, RunFinishedData
     from naiyue_test_agent.application.observability.diagnostic_persistence import project_diagnostic_event
     from naiyue_test_agent.settings import DiagnosticSettings
-    from naiyue_test_agent.application.observability import diagnostic_storage
+    from naiyue_test_agent.storage.observability_sql import diagnostic_storage
     import json
 
     path, settings = tmp_path / 'state.sqlite', DiagnosticSettings()

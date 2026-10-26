@@ -28,9 +28,12 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
     """Only call with a disposable directory; construct real graphs and use the real CLI."""
     from langchain_core.messages import AIMessage, ToolMessage
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+    if __package__:
+        from .release_application import open_smoke_host
+    else:
+        from release_application import open_smoke_host
     from naiyue_test_agent.storage.project_store import ProjectStore
-    from naiyue_test_agent.application.errors import SessionPersistenceError
+    from naiyue_test_agent.storage.errors import SessionPersistenceError
     from naiyue_test_agent.agent_runtime.tool_execution.permissions import AutoPermissionReviewer
     from naiyue_test_agent.model_access import ModelCatalog
     from naiyue_test_agent.settings import AppSettings
@@ -54,7 +57,7 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
     async def opened(parent, child):
         with patch.object(application, 'load_model_catalog',
                           lambda _: ModelCatalog('root', {'root': parent, 'child': child})):
-            async with open_async_persistent_application('unused', database_path=database, tools=tools,
+            async with open_smoke_host('unused', workspace=workspace, data_dir=root / 'storage-data', database_path=database, tools=tools,
                     system_prompt='', response_format=None, settings=settings,
                     workspace_binding={'workspace_id': location.workspace_id, 'root_path': workspace}) as app:
                 yield app
@@ -96,8 +99,12 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
 
     # This is fixture construction on a CLOSED disposable database, never a product downgrade command.
     with closing(sqlite3.connect(database)) as connection:
+        connection.execute('DROP TABLE naiyue_project_identity')
+        connection.execute('ALTER TABLE naiyue_sessions DROP COLUMN execution_setup_json')
         connection.execute('ALTER TABLE naiyue_sessions DROP COLUMN project_id')
         connection.execute('ALTER TABLE naiyue_sessions DROP COLUMN execution_root_kind')
+        connection.execute('ALTER TABLE naiyue_sessions DROP COLUMN execution_binding')
+        connection.execute('ALTER TABLE naiyue_sessions DROP COLUMN last_execution_path')
         connection.execute('ALTER TABLE naiyue_chat_messages DROP COLUMN occurred_at')
         for table in ('naiyue_memory_overviews','naiyue_memory_progress','naiyue_memory_versions','naiyue_memory_suppression','naiyue_memory_search', 'naiyue_memories', 'naiyue_memory_sources', 'naiyue_memory_info'):
             connection.execute(f'DROP TABLE {table}')
@@ -152,6 +159,10 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
                 for row in current['naiyue_sessions']:
                     assert row.pop('project_id') == location.workspace_id
                     assert row.pop('execution_root_kind') == 'local'
+                    assert row.pop('execution_binding') == 'project_local'
+                    assert row.pop('last_execution_path') == str(workspace)
+                assert [tuple(row) for row in app.sessions._persistence.storage.database.connection.execute('SELECT project_id,source_kind FROM naiyue_project_identity')] == [(location.workspace_id,'local')]
+                assert all(row.pop('execution_setup_json') is None for row in current['naiyue_sessions'])
                 assert current == expected
                 assert len(list_backups(database)) == 2
                 events = []

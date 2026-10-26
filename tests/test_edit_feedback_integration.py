@@ -13,7 +13,7 @@ from langchain_openai.chat_models.base import _convert_message_to_dict
 
 from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime.context_compaction import _serialize_text_history
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+from scripts.component_fixtures import open_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import create_session_edit_tool
 from naiyue_test_agent.settings import AppSettings
@@ -41,14 +41,14 @@ async def test_edit_json_artifact_survives_sqlite_reopen_but_is_not_model_payloa
     options = dict(tools=tools, settings=AppSettings(), system_prompt='', response_format=None)
     database = tmp_path / 'sessions.sqlite'
     async def scenario():
-        async with open_async_persistent_application('synthetic', database_path=database, **options) as app:
-            app.observability.subscribe(events.append)
-            sid = await app.sessions.create_workspace('A', tmp_path)
-            await app.runs.start(sid, [('user', 'edit')])
-            before = await app.history.messages(sid)
-        async with open_async_persistent_application('synthetic', database_path=database, **options) as app:
-            await app.sessions.restore(sid)
-            return before, await app.history.messages(sid)
+        async with open_component_application('synthetic', database_path=database, **options) as app:
+            app.host.observability.subscribe(events.append)
+            sid = await app.host.sessions.create_workspace('A', tmp_path)
+            await app.host.runs.start(sid, [('user', 'edit')])
+            before = await app.host.history.messages(sid)
+        async with open_component_application('synthetic', database_path=database, **options) as app:
+            await app.host.sessions.restore(sid)
+            return before, await app.host.history.messages(sid)
     before, after = await scenario()
     first = next(m for m in before if isinstance(m, ToolMessage))
     restored = next(m for m in after if isinstance(m, ToolMessage))
@@ -133,16 +133,16 @@ async def test_approval_does_not_read_original_for_preview(monkeypatch, tmp_path
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     app = await build_application('synthetic', tools=[create_session_edit_tool()],
         settings=AppSettings(), system_prompt='', response_format=None)
-    sid = await app.sessions.create_workspace('A', root)
+    sid = await app.host.sessions.create_workspace('A', root)
     calls, real_scan = [], module._scan_target
     def scan(*args, **kwargs):
         calls.append(True)
         return real_scan(*args, **kwargs)
     monkeypatch.setattr(module, '_scan_target', scan)
-    await app.runs.start(sid, [('user', 'edit outside')])
+    await app.host.runs.start(sid, [('user', 'edit outside')])
     assert calls == [] and outside.read_text() == '“old”\n'
-    assert app.runs.pending_tools(sid)
-    result = await app.runs.resume_approval(sid, ['approve'])
+    assert app.host.runs.pending_tools(sid)
+    result = await app.host.runs.resume_approval(sid, ['approve'])
     feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert calls == [True] and feedback.status == 'success'
     assert outside.read_bytes() == b'"NEW"\n'

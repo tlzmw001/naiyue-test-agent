@@ -4,13 +4,13 @@ import json
 import logging
 import sqlite3
 
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from .queries import read_rows, utc_now, session_row
 
 from .queries import STATES
 from .chat_writes import write_chat_updates
-from naiyue_test_agent.application.conversation import reply_storage
-from naiyue_test_agent.application.subagents import subagent_storage
+from naiyue_test_agent.storage.conversation_sql import reply_storage
+from naiyue_test_agent.storage import subagent_sql as subagent_storage
 
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ class RunUnitOfWork:
     def __init__(self, database):
         self.database = database
 
-    def finish_run(self, session_id, state, checkpoint_id, checkpoint_ns, last_run_status, chat_updates=(), *, subagent_run_id=None):
+    def finish_run(self, session_id, state, checkpoint_id, checkpoint_ns, last_run_status, chat_updates=(), *, subagent_run_id=None, execution_path=None):
         with self.database.transaction(write=True, error_code='session_save_unconfirmed') as connection:
             if state not in STATES:
                 raise SessionPersistenceError('invalid_session_state')
@@ -35,6 +35,9 @@ class RunUnitOfWork:
                 connection.execute('''UPDATE naiyue_sessions SET state=?,checkpoint_id=?,checkpoint_ns=?,
                     last_run_status=?,updated_at=? WHERE session_id=?''',
                     (state, checkpoint_id, checkpoint_ns, last_run_status, utc_now(), session_id))
+                if state == 'ready' and last_run_status == 'completed' and execution_path is not None:
+                    connection.execute('UPDATE naiyue_sessions SET last_execution_path=?,workspace_root=? WHERE session_id=?',
+                                       (execution_path, execution_path, session_id))
             except sqlite3.Error as error:
                 logger.error('session_storage_write_failed error_type=%s', type(error).__name__)
                 raise SessionPersistenceError('session_save_unconfirmed') from error
@@ -59,7 +62,7 @@ class RunUnitOfWork:
                 connection.execute('DELETE FROM naiyue_diagnostic_runs WHERE session_id=?', (session_id,))
                 connection.execute('DELETE FROM naiyue_regenerations WHERE session_id=?', (session_id,))
                 connection.execute('DELETE FROM naiyue_subagent_instances WHERE session_id=?', (session_id,))
-                from naiyue_test_agent.application.memory.memory_overview_store import purge
+                from naiyue_test_agent.storage.memory_sql.memory_overview_store import purge
                 purge(connection,session_id)
                 connection.execute('DELETE FROM naiyue_sessions WHERE session_id=?', (session_id,))
             except sqlite3.Error as error:

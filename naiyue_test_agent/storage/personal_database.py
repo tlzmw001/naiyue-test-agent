@@ -5,8 +5,9 @@ import os
 import sqlite3
 
 from naiyue_test_agent.storage.files import check_store_directory, check_store_file, open_store_file
-from naiyue_test_agent.application.memory import memory_lexical, memory_schema, memory_lifecycle_schema
-from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
+from naiyue_test_agent.storage.memory_sql import lexical as memory_lexical
+from naiyue_test_agent.storage.memory_sql import memory_schema, memory_lifecycle_schema
+from naiyue_test_agent.contracts.memory import MemoryReadError
 
 
 logger = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ def initialize_personal(database, settings):
         elif version not in (1,2) or application != APPLICATION_ID:
             raise ValueError('memory_invalid_format')
         elif version == 1:
-            from naiyue_test_agent.application.memory.memory_personal_upgrade import backup_format1
+            from naiyue_test_agent.storage.memory_sql.memory_personal_upgrade import backup_format1
             memory_schema.check(connection,version=1)
             backup = backup_format1(database.path)
             logger.info('memory_personal_upgrade_backup_created backup_id=%s',backup.name)

@@ -14,12 +14,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.mark.parametrize('module,symbol', [
     ('application.sessions.agent_session', 'AgentSession'),
-    ('application.conversation.history_queries', 'query'),
+    ('storage.conversation_sql.history_queries', 'query'),
     ('application.subagents.subagent_records', 'role_fingerprint'),
     ('application.observability.run_events', 'RunObservation'),
     ('storage.memory', 'MemoryRepo'),
     ('storage.project_store', 'ProjectStore'),
-    ('cli.cli_async', 'AsyncCliApplication'),
+    ('cli.terminal_client', 'TerminalClient'),
 ])
 def test_domain_implementation_has_one_current_import_path(module, symbol):
     loaded = importlib.import_module('naiyue_test_agent.' + module)
@@ -64,10 +64,10 @@ def test_documented_commands_keep_their_real_entry_points(args, label):
 
 def test_application_domains_do_not_depend_on_cli_or_web_adapters():
     root = ROOT / 'naiyue_test_agent' / 'application'
-    expected = {'sessions', 'conversation', 'subagents', 'observability', 'memory'}
+    expected = {'sessions', 'conversation', 'subagents', 'observability', 'memory', 'projects', 'environments'}
     assert expected.issubset({path.name for path in root.iterdir() if path.is_dir()})
     assert {path.name for path in root.glob('*.py')} == {
-        '__init__.py', 'async_application.py', 'async_persistent.py', 'assembly.py', 'core.py', 'lifetime.py', 'catalogs.py', 'errors.py', 'cli.py'}
+        '__init__.py', 'service_application.py', 'core.py', 'lifetime.py', 'catalogs.py', 'errors.py', 'cli.py'}
     for folder in expected:
         for path in (root / folder).glob('*.py'):
             for node in ast.walk(ast.parse(path.read_text())):

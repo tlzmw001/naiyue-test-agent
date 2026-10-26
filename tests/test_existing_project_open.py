@@ -5,8 +5,8 @@ from dataclasses import replace
 import pytest
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from scripts.component_fixtures import open_component_application
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.execution_roots import Project
 from naiyue_test_agent.storage.project_store import ProjectStore
 from test_public_history_recovery import saved_project, assert_identity_unchanged
@@ -18,11 +18,11 @@ def test_existing_project_opens_without_rebinding_saved_missing_root(monkeypatch
     from naiyue_test_agent.storage.sessions import SessionRepo
     monkeypatch.setattr(SessionRepo, 'bind_workspace', lambda *_: pytest.fail('History startup must not rebind'))
     async def scenario():
-        async with open_async_persistent_application('unused', database_path=loc.database_path,
+        async with open_component_application('unused', database_path=loc.database_path,
                 tools=[], system_prompt='', response_format=None, settings=settings, expected_project=expected) as app:
-            assert any(m.content == 'saved public history' for m in (await app.history.session(sid))['messages'])
-            await app.sessions.restore(sid)
-            assert not (await app.sessions.status(sid))['can_run']
+            assert any(m.content == 'saved public history' for m in (await app.host.history.session(sid))['messages'])
+            await app.host.sessions.restore(sid)
+            assert not (await app.host.sessions.status(sid))['can_run']
     asyncio.run(scenario())
     assert len(model.seen) == 1
     assert_identity_unchanged(loc, sid, before)
@@ -44,7 +44,7 @@ def test_changed_project_after_preflight_fails_before_models_without_rebind(monk
     monkeypatch.setattr(application, 'load_model_catalog', lambda *_: called.append(True))
     async def scenario():
         with pytest.raises((SessionPersistenceError, ValueError)):
-            async with open_async_persistent_application('unused', database_path=loc.database_path,
+            async with open_component_application('unused', database_path=loc.database_path,
                     tools=[], system_prompt='', response_format=None, settings=settings, expected_project=expected):
                 pytest.fail('A changed recovery target must not start')
     asyncio.run(scenario())

@@ -1,6 +1,6 @@
 """Versioned subagent instance persistence."""
 from .queries import subagent_row, subagent_references, read_rows
-from naiyue_test_agent.application.subagents import subagent_storage as sql
+from naiyue_test_agent.storage import subagent_sql as sql
 
 
 class SubagentRepo:

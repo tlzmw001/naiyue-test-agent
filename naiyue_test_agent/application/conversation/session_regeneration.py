@@ -18,13 +18,16 @@ def _commit_replacement(replies, session, run, request_id, *, config, head, boun
     session.lifecycle.activate_regenerated_thread(run, config['configurable']['thread_id'], revision)
 
 
-async def regenerate(session_id, *, sessions, agent, persistence, metadata, conversation, replies, request_id, expected_reply_id, expected_conversation_revision):
+async def regenerate(session_id, *, sessions, agent, persistence, owner, metadata, conversation, replies, request_id, expected_reply_id, expected_conversation_revision):
     existing = await run_blocking(replies.action, session_id, request_id)
     if existing:
         if (existing['reply_id'], existing['revision']) != (expected_reply_id, expected_conversation_revision):
             raise ValueError('request_id_conflict')
         return {**existing, 'replayed': True}
-    session, run = sessions._admit(session_id, None, 'message')
+    prepared = await sessions.prepare_admission(session_id)
+    await sessions.confirm_admission(prepared)
+    owner.check_admission_open()
+    session, run = sessions._admit(session_id, None, 'message', prepared_admission=prepared)
     activated = False
     original_thread = session.get_thread_id()
     try:

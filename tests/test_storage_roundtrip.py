@@ -71,9 +71,9 @@ async def test_crashed_child_survives_restore_without_replaying_uncertain_side_e
     import importlib
     from langchain_core.messages import ToolMessage
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+    from scripts.component_fixtures import open_component_application
     from naiyue_test_agent.storage.project_store import ProjectStore
-    from naiyue_test_agent.application.errors import SessionPersistenceError
+    from naiyue_test_agent.storage.errors import SessionPersistenceError
     from naiyue_test_agent.model_access import ModelCatalog
     from naiyue_test_agent.storage.backup import list_backups
     from naiyue_test_agent.storage.restore import restore_backup
@@ -112,20 +112,20 @@ async def test_crashed_child_survives_restore_without_replaying_uncertain_side_e
     before = effects.read_text() if effects.exists() else None
     write_module = importlib.import_module('naiyue_test_agent.tools.write')
     with patch.object(write_module, '_write', wraps=write_module._write) as written:
-        async with open_async_persistent_application('unused', **fixture.options(tmp_path)) as app:
+        async with open_component_application('unused', **fixture.options(tmp_path)) as app:
             events = []
-            app.observability.subscribe(events.append)
-            history = await app.history.session(info['session_id'])
+            app.host.observability.subscribe(events.append)
+            history = await app.host.history.session(info['session_id'])
             assert history['recovery']['kind'] == 'interrupted_execution'
             with pytest.raises(SessionPersistenceError, match='session_recovery_blocked'):
-                await app.sessions.recover(info['session_id'], checkpoint_id=history['checkpoint_id'], action='restore_approval')
-            await app.sessions.recover(info['session_id'], checkpoint_id=history['checkpoint_id'], action='continue')
-            restored = await app.history.messages(info['session_id'])
+                await app.host.sessions.recover(info['session_id'], checkpoint_id=history['checkpoint_id'], action='restore_approval')
+            await app.host.sessions.recover(info['session_id'], checkpoint_id=history['checkpoint_id'], action='continue')
+            restored = await app.host.history.messages(info['session_id'])
             feedback = restored[-1]
             assert isinstance(feedback, ToolMessage) and feedback.tool_call_id == 'outer' and feedback.status == 'error'
             assert feedback.additional_kwargs['naiyue_recovery']['reason'] == 'result_unconfirmed'
-            assert not app.runs.pending_approvals(info['session_id'])
-            children = await app.history.chat_subagents(info['session_id'])
+            assert not app.host.runs.pending_approvals(info['session_id'])
+            children = await app.host.history.chat_subagents(info['session_id'])
             assert any(row['agent_id'] == info['child_thread_id'].removeprefix('subagent:') for row in children)
             assert not parent.seen and not child.seen and not events and written.call_count == 0
     assert (effects.read_text() if effects.exists() else None) == before

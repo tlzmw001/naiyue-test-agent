@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from naiyue_test_agent.application.conversation.chat_history import ChatUpdate
 from naiyue_test_agent.storage.project_store import ProjectStore
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.tools.history import HistoryInput
 from naiyue_test_agent.tools.history_settings import HistorySettings
 

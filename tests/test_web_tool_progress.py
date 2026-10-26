@@ -150,36 +150,36 @@ def test_http_receives_progress_before_tool_returns_and_restores_latest_after_re
         model = StreamingToolModel(replies=[call('probe', {}, 'call'), AIMessage(content='done')])
         # Exercise startup loader wiring too; no actual user config is changed.
         from importlib import import_module
-        web_module = import_module('naiyue_test_agent.web.app')
+        web_module = import_module('scripts.web_probe_app')
         monkeypatch.setattr(web_module, 'load_settings', lambda: AppSettings(
             progress=ToolProgressSettings(max_text_bytes=9)))
         async with web_client(monkeypatch, tmp_path, model, event_capacity=2) as (client, app):
             backend = app.state.service.application
             await backend.tools.register(spec)
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
             await backend.sessions.select_tools(sid, ['probe'])
             def observe(event):
                 if event.event_type == 'tool_progress' and event.data.phase == 'working':
                     received.set()
             unsubscribe = backend.observability.subscribe(observe)
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=request('run'))).json()['run_id']
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('run'))).json()['run_id']
             try:
                 assert app.state.delivery.get(run).progress_max_text_bytes == 9
                 await asyncio.wait_for(entered.wait(), 5)
                 await asyncio.wait_for(received.wait(), 5)
-                view = (await client.get(f'/api/runs/{run}')).json()
+                view = (await client.get(f'/api/v1/scopes/chats/runs/{run}')).json()
                 assert view['status'] == 'running' and view['done'] is False
                 assert view['tool_states']['call']['text'] == '_PROGRESS'
                 assert view['tool_states']['call']['completed'] == 3
                 assert all(row['type'] != 'tool' for row in view['messages'])
-                assert (await client.get(f'/api/runs/{run}/events')).status_code == 409
-                refreshed = (await client.get(f'/api/sessions/{sid}')).json()
+                assert (await client.get(f'/api/v1/scopes/chats/runs/{run}/events')).status_code == 409
+                refreshed = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
                 assert refreshed['live']['tool_states'] == view['tool_states']
             finally:
                 release.set()
                 await app.state.delivery.wait(run)
                 unsubscribe()
-            final = (await client.get(f'/api/runs/{run}')).json()
+            final = (await client.get(f'/api/v1/scopes/chats/runs/{run}')).json()
             assert final['tool_states']['call']['state'] == 'finished'
             assert final['tool_states']['call']['text'] == '_PROGRESS'
             assert next(row for row in final['messages'] if row['type'] == 'tool')['content'] == 'FINAL_RESULT'

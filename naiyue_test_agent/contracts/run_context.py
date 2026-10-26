@@ -1,10 +1,12 @@
 """Explicit lifetimes for runtime identity, preparation and local authorization."""
 
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, TypedDict
 
 from ..execution_roots import ExecutionRoot
+from .environment import EnvironmentRef, FileSystemPort
+from .process import ProcessPort
 from .run_ports import (
     HistoryQuery, MemoryQuery, InvokeSubagent, ListSubagents, TaskQueries,
     RunControlPort, RunErrorPolicy, ToolBatchPlan,
@@ -46,6 +48,8 @@ class RunCapabilities:
     task_queries: TaskQueries | None = None
     history: HistoryQuery | None = None
     memory: MemoryQuery | None = None
+    files: FileSystemPort | None = None
+    processes: ProcessPort | None = None
 
 
 @dataclass(frozen=True)
@@ -71,6 +75,7 @@ class RunScope:
     errors: 'RunErrorPolicy | None' = None
     archive_root: Path | None = None
     background_notices: 'BackgroundNoticeSnapshot | None' = None
+    environment: EnvironmentRef | None = None
 
     def __post_init__(self):
         notice = self.background_notices
@@ -116,7 +121,7 @@ class HumanReviewMessage(TypedDict):
 @dataclass(frozen=True)
 class InvocationInputs:
     approval_grants: 'OneUseApprovalGrants | None' = None
-    read_resource_roots: tuple[Path, ...] = ()
+    read_resource_roots: tuple[PurePath, ...] = ()
     max_concurrency: int = 4
     human_review_messages: tuple[HumanReviewMessage, ...] | None = None
     subagent_model_id: str | None = None

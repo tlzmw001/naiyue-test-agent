@@ -16,7 +16,7 @@ from naiyue_test_agent.agent_runtime import context_compaction, context_usage
 from naiyue_test_agent.agent_runtime.context_compaction import ContextCompactionError, SUMMARY_MARKER, SUMMARY_PREFIX
 from naiyue_test_agent.model_access import MODEL_ID_METADATA_KEY
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+from scripts.component_fixtures import open_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from test_context_compaction import _app, _model
 from test_context_inspector import model_with_limits
@@ -91,10 +91,10 @@ async def test_ordinary_unknown_budget_sends_original_with_explicit_diagnostic(m
     app = await _app(monkeypatch, {'A': model})
     events = []
     try:
-        sid = await app.sessions.create('A')
-        app.observability.subscribe(events.append)
+        sid = await app.host.sessions.create('A')
+        app.host.observability.subscribe(events.append)
         with caplog.at_level(logging.INFO):
-            result = await app.runs.start(sid, [('user', 'original input')])
+            result = await app.host.runs.start(sid, [('user', 'original input')])
         assert result['messages'][-1].content == 'done'
         assert len(model.normal_inputs) == 1 and not model.summary_inputs
         assert model.normal_inputs[0][-1].content == 'original input'
@@ -132,13 +132,13 @@ async def test_invalid_budget_is_required_failure_even_when_estimator_is_unavail
     app = await _app(monkeypatch, {'A': model})
     events = []
     try:
-        sid = await app.sessions.create('A')
-        app.observability.subscribe(events.append)
+        sid = await app.host.sessions.create('A')
+        app.host.observability.subscribe(events.append)
         with pytest.raises(ValueError, match='compaction'):
-            await app.runs.start(sid, [('user', 'prepare')])
+            await app.host.runs.start(sid, [('user', 'prepare')])
         assert not counted and not model.normal_inputs and not model.summary_inputs
         assert not any(e.event_type == 'model_call_started' for e in events)
-        assert events[-1].data.status == 'failed' and not app.sessions._sessions.require(sid).is_busy()
+        assert events[-1].data.status == 'failed' and not app.host.sessions._sessions.require(sid).is_busy()
         assert not any(hasattr(r, 'context_preparation') for r in caplog.records)
         assert 'PRIVATE_' not in caplog.text
         EventSequenceChecker.assert_healthy(events, caplog.records)
@@ -181,12 +181,12 @@ async def test_known_over_budget_cannot_fall_back_when_candidate_estimate_fails(
     monkeypatch.setattr(context_compaction, 'count_tokens_approximately', checked)
     app = await _app(monkeypatch, {'A': model})
     try:
-        sid = await app.sessions.create('A')
+        sid = await app.host.sessions.create('A')
         with pytest.raises(ContextCompactionError) as caught:
-            await app.runs.start(sid, messages)
+            await app.host.runs.start(sid, messages)
         assert caught.value.__cause__ is failure
         assert not model.normal_inputs and len(model.summary_inputs) == (stage == 'post_summary')
-        saved = await app.runs._agent.aget_state({'configurable': {'thread_id': app.sessions._sessions.require(sid).get_thread_id()}})
+        saved = await app.host.runs._agent.aget_state({'configurable': {'thread_id': app.host.sessions._sessions.require(sid).get_thread_id()}})
         assert [m.content for m in saved.values['messages']] == [m.content for m in messages]
         assert not any(m.additional_kwargs.get(SUMMARY_MARKER) for m in saved.values['messages'])
         assert 'context_budget_unverified' not in caplog.text and 'PRIVATE_' not in caplog.text
@@ -204,12 +204,12 @@ async def test_explicit_overflow_with_unknown_estimate_never_retries_unchanged_i
     monkeypatch.setattr(context_compaction, 'count_tokens_approximately', fail)
     app = await _app(monkeypatch, {'A': model})
     try:
-        sid = await app.sessions.create('A')
+        sid = await app.host.sessions.create('A')
         with pytest.raises(ContextCompactionError, match='compaction_unavailable'):
-            await app.runs.start(sid, _history())
+            await app.host.runs.start(sid, _history())
         assert len(model.normal_inputs) == 1 and not model.summary_inputs
         assert 'context_overflow_retry_started' not in caplog.text
-        assert not app.sessions._sessions.require(sid).is_busy()
+        assert not app.host.sessions._sessions.require(sid).is_busy()
     finally:
         await app.aclose()
 
@@ -225,20 +225,20 @@ async def test_total_only_snapshot_survives_persistent_query_and_reopen(monkeypa
 
     monkeypatch.setattr(context_usage, '_system_children', fail)
     options = {'database_path': tmp_path / 'state.sqlite', 'tools': [], 'system_prompt': 'BASE', 'response_format': None}
-    async with open_async_persistent_application('unused', **options) as app:
-        sid = await app.sessions.create('A')
+    async with open_component_application('unused', **options) as app:
+        sid = await app.host.sessions.create('A')
         events = []
-        app.observability.subscribe(events.append)
-        await app.runs.start(sid, [('user', 'input')])
-        view = await app.history.context(sid)
+        app.host.observability.subscribe(events.append)
+        await app.host.runs.start(sid, [('user', 'input')])
+        view = await app.host.history.context(sid)
         saved = view['latest_request']
         assert saved['estimate']['status'] == 'available'
         assert saved['estimate']['estimated_input_tokens'] > 0
         assert saved['estimate']['groups_status'] == 'unavailable' and saved['estimate']['groups'] == []
         assert 'PRIVATE_' not in repr(saved) + caplog.text
         EventSequenceChecker.assert_healthy(events, caplog.records)
-    async with open_async_persistent_application('unused', **options) as app:
-        assert (await app.history.context(sid))['latest_request'] == saved
+    async with open_component_application('unused', **options) as app:
+        assert (await app.host.history.context(sid))['latest_request'] == saved
         assert len(model.normal_inputs) == 1
 
 
@@ -266,21 +266,21 @@ async def test_overflow_recovery_keeps_request_configuration_and_never_replays_p
     async with cached_application(monkeypatch, tmp_path, serve,
             tools=[definition('first', calls=effects), definition('second')]) as (app, catalog):
         catalog.get('root').metadata['naiyue_compaction_keep_recent'] = {'tokens': 8, 'source': 'config'}
-        sid = await app.sessions.create('root')
-        await app.sessions.select_thinking(sid, 'root', 'low')
-        await app.sessions.select_tools(sid, ['first'])
-        app.observability.subscribe(events.append)
-        task = asyncio.create_task(app.runs.start(sid, _history()))
+        sid = await app.host.sessions.create('root')
+        await app.host.sessions.select_thinking(sid, 'root', 'low')
+        await app.host.sessions.select_tools(sid, ['first'])
+        app.host.observability.subscribe(events.append)
+        task = asyncio.create_task(app.host.runs.start(sid, _history()))
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            await app.sessions.select_model(sid, 'child')
-            await app.sessions.select_tools(sid, ['second'])
+            await app.host.sessions.select_model(sid, 'child')
+            await app.host.sessions.select_tools(sid, ['second'])
         finally:
             release.set()
         result = await task
         assert result['messages'][-1].content == 'done'
         assert result['messages'][0].additional_kwargs[SUMMARY_MARKER] is True
-        await app.runs.start(sid, [('user', 'next request')])
+        await app.host.runs.start(sid, [('user', 'next request')])
     assert effects == [('first', 'once')] and normal_calls == 4
     assert [body['model'] for body in sent] == ['root', 'root', 'root', 'root', 'child']
     assert all(body['reasoning_effort'] == 'low' for body in sent[:-1])

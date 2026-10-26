@@ -98,13 +98,13 @@ def test_missing_or_disabled_observer_preserves_fallback_without_calling():
 async def test_health_check_rejects_success_with_isolated_observer_fault(monkeypatch, caplog):
     app = await make_app(monkeypatch)
     events = []
-    app.observability.subscribe(events.append)
+    app.host.observability.subscribe(events.append)
 
     def fail(*_args):
         raise TypeError('PRIVATE_BAD_OBSERVATION')
 
     monkeypatch.setattr(TurnObserver, 'begin', fail)
-    assert (await app.runs.start(await app.sessions.create('A'), [('user', 'probe')]))['messages'][-1].content == 'PRIVATE_REPLY'
+    assert (await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'probe')]))['messages'][-1].content == 'PRIVATE_REPLY'
     with pytest.raises(AssertionError, match='Unexpected observation diagnostics'):
         EventSequenceChecker.assert_healthy(events, caplog.records)
 
@@ -113,9 +113,9 @@ async def test_health_check_rejects_success_with_isolated_observer_fault(monkeyp
 async def test_health_check_rejects_unavailable_observation_without_exception(monkeypatch, caplog):
     app = await make_app(monkeypatch)
     events = []
-    app.observability.subscribe(events.append)
+    app.host.observability.subscribe(events.append)
     monkeypatch.setattr(TurnObserver, 'begin', lambda self, _call: self.disable())
-    assert (await app.runs.start(await app.sessions.create('A'), [('user', 'probe')]))['messages'][-1].content == 'PRIVATE_REPLY'
+    assert (await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'probe')]))['messages'][-1].content == 'PRIVATE_REPLY'
     with pytest.raises(AssertionError, match='Unexpected observation unavailability'):
         EventSequenceChecker.assert_healthy(events, caplog.records)
 
@@ -133,8 +133,8 @@ async def test_sync_tool_cycle_has_healthy_observation(monkeypatch, caplog):
         AIMessage(content='done', response_metadata={'finish_reason': 'stop'})])
     app = await make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
-    app.observability.subscribe(events.append)
-    assert (await app.runs.start(await app.sessions.create('A'), [('user', 'run')]))['messages'][-1].content == 'done'
+    app.host.observability.subscribe(events.append)
+    assert (await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'run')]))['messages'][-1].content == 'done'
     EventSequenceChecker.assert_healthy(events, caplog.records)
     assert sum(event.event_type == 'turn_finished' for event in events) == 2
     assert sum(event.event_type == 'tool_call_finished' for event in events) == 1
@@ -148,13 +148,13 @@ async def test_async_steering_follow_up_have_healthy_observation(monkeypatch, ca
                                    entered=entered, release=release)
         app = await make_async_app(monkeypatch, model)
         events = []
-        app.observability.subscribe(events.append)
-        session = await app.sessions.create('A')
-        task = asyncio.create_task(app.runs.start(session, [('user', 'start')]))
+        app.host.observability.subscribe(events.append)
+        session = await app.host.sessions.create('A')
+        task = asyncio.create_task(app.host.runs.start(session, [('user', 'start')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            app.runs.steer(session, 'steering')
-            app.runs.follow_up(session, 'follow-up')
+            app.host.runs.steer(session, 'steering')
+            app.host.runs.follow_up(session, 'follow-up')
             release.set()
             result = await asyncio.wait_for(task, 5)
             assert [message.content for message in result['messages']] == [
@@ -175,12 +175,12 @@ async def test_async_stop_has_healthy_observation(monkeypatch, caplog):
         model = StreamingToolModel(replies=[], entered=entered, release=release)
         app = await make_async_app(monkeypatch, model)
         events = []
-        app.observability.subscribe(events.append)
-        session = await app.sessions.create('A')
-        task = asyncio.create_task(app.runs.start(session, [('user', 'start')]))
+        app.host.observability.subscribe(events.append)
+        session = await app.host.sessions.create('A')
+        task = asyncio.create_task(app.host.runs.start(session, [('user', 'start')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            app.runs.stop(session)
+            app.host.runs.stop(session)
             result = await asyncio.wait_for(task, 5)
             assert result['run_stopped'] is True
             EventSequenceChecker.assert_healthy(events, caplog.records)
@@ -201,14 +201,14 @@ async def test_approval_and_resume_have_healthy_observation(monkeypatch, tmp_pat
     model = ToolModel(responses=[AIMessage(content='', tool_calls=[
         {'name': 'read', 'args': {'path': str(outside)}, 'id': 'read-call'}]), AIMessage(content='done')])
     app = await make_app(monkeypatch, model, [create_session_read_tool()])
-    session = await app.sessions.create_workspace('A', root)
+    session = await app.host.sessions.create_workspace('A', root)
     events = []
-    app.observability.subscribe(events.append)
-    paused = await app.runs.start(session, [('user', 'read')])
+    app.host.observability.subscribe(events.append)
+    paused = await app.host.runs.start(session, [('user', 'read')])
     assert paused['approval_requests'] and events[-1].data.status == 'interrupted'
     EventSequenceChecker.assert_healthy(events, caplog.records)
     events.clear()
-    result = await app.runs.resume_approval(session, ['approve'])
+    result = await app.host.runs.resume_approval(session, ['approve'])
     assert result['messages'][-1].content == 'done'
     EventSequenceChecker.assert_healthy(events, caplog.records)
     assert any(event.event_type == 'turn_resumed' for event in events)
@@ -224,10 +224,10 @@ async def test_context_operations_have_healthy_observation(monkeypatch, caplog, 
     else:
         model = _configured_model([_status(), AIMessage(content='recovered')])
         app = await _app(monkeypatch, {'A': model})
-        session, events = await app.sessions.create('A'), []
-        app.observability.subscribe(events.append)
+        session, events = await app.host.sessions.create('A'), []
+        app.host.observability.subscribe(events.append)
         messages = _history()
-    await app.runs.start(session, messages)
+    await app.host.runs.start(session, messages)
     EventSequenceChecker.assert_healthy(events, caplog.records)
     expected = 'compaction_finished' if operation == 'compaction' else 'context_recovery_finished'
     assert any(event.event_type == expected for event in events)

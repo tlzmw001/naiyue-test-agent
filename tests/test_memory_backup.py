@@ -28,8 +28,8 @@ def test_schema14_upgrade_takes_prechange_backup_and_creates_transactional_index
 
 
 def test_memory_migration_failure_keeps_schema14_and_usable_backup(tmp_path,monkeypatch):
-    from naiyue_test_agent.application.memory import memory_schema
-    from naiyue_test_agent.application.errors import StorageStartupError
+    from naiyue_test_agent.storage.memory_sql import memory_schema
+    from naiyue_test_agent.storage.errors import StorageStartupError
     database,_,_=closed_store(tmp_path,version=14)
     error=RuntimeError('private-failure')
     def fail(connection):

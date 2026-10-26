@@ -442,7 +442,8 @@ def test_read_does_not_turn_graph_interrupt_into_tool_error(tmp_path, monkeypatc
     monkeypatch.setattr(Path, 'open', interrupt_open)
     from naiyue_test_agent.tools.permissions import execution_environment
     subject = tool.permissions.prepare({'path': 'doc.md'}, typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None)))
-    subject.update(args={'path': 'doc.md'}, path_field='path', execution_environment=execution_environment())
+    subject.update(args={'path': 'doc.md'}, path_field='path', execution_environment=execution_environment(
+        typed_context(identity=RunIdentity('s', execution_root=ExecutionRoot(tmp_path)))))
     permit = {'call_id': 'call-1', 'session_id': 's', 'agent_path': 'root', 'subject': subject}
     runtime = ToolRuntime(state={}, context=typed_context(identity=RunIdentity(session_id='s', execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None), authorization=ToolAuthorization(permit=permit)), config={},
                           stream_writer=lambda _: None, tool_call_id='call-1', store=None)

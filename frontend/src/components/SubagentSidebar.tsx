@@ -4,6 +4,7 @@ import { useSubagents } from '../useSubagents';
 import type { SubagentList } from '../useSubagentList';
 import Conversation from './Conversation';
 import styles from './SubagentSidebar.module.css';
+import { Chevron } from './Icons';
 
 const labels: Record<string, string> = { running: '运行中', awaiting_approval: '等待审批', interrupted: '等待审批',
   stopping: '正在收尾', completed: '已完成', stopped: '已停止', failed: '失败', unconfirmed: '状态未确认' };
@@ -27,7 +28,7 @@ export default function SubagentSidebar({ api, sessionId, conversationRevision =
   return <section className={styles.panel} aria-label="子智能体">
     {view.selected ? <>
       <div className={styles.selection}>
-        <div className={styles.selectionTop}><button className={styles.back} onClick={() => view.select()}>返回名称列表</button>
+        <div className={styles.selectionTop}><button className={styles.back} onClick={() => view.select()}><Chevron direction="left" />返回名称列表</button>
           {status && <span className={styles.status}>{labels[status]}</span>}</div>
         {view.record?.task && <p className={styles.task}>{view.record.task}</p>}
         {view.record?.resume_available === true && !active && <p className={styles.notice}>可由主智能体继续委派</p>}
@@ -62,7 +63,7 @@ export default function SubagentSidebar({ api, sessionId, conversationRevision =
         aria-label={`查看子智能体 ${row.agent} · ${row.agent_id.slice(0, 6)}`} onClick={() => view.select(row.agent_id)}>
         <span className={styles.rowTop}><strong>{row.agent} · {row.agent_id.slice(0, 6)}</strong>
           <span className={styles.status}>{labels[row.status]}</span></span>
-        {row.task && <span className={styles.rowTask}>{row.task}</span>}<span className={styles.arrow}>›</span>
+        {row.task && <span className={styles.rowTask}>{row.task}</span>}<Chevron direction="right" className={styles.arrow} />
       </button>)}</div>
       <footer className={styles.footer}><span>在主会话统一处理审批</span></footer>
     </>}

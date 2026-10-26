@@ -1,4 +1,4 @@
-"""Terminal input driver with native async Agent execution for one local Agent session."""
+"""Terminal input driver for one session owned by the shared service."""
 
 import argparse
 import json
@@ -8,110 +8,64 @@ from pathlib import Path
 
 from naiyue_test_agent.config_paths import get_models_path
 from threading import Thread, Lock
-from uuid import uuid4
 
-from langchain_core.messages import AIMessage, HumanMessage
 
-from naiyue_test_agent.application import (
-    SessionBusyError, SessionManualReviewRequiredError, SessionPendingApprovalError,
-)
-from naiyue_test_agent.application.sessions.project_instructions import BASE_SYSTEM_PROMPT
-from naiyue_test_agent.tools import create_builtin_tools
 from naiyue_test_agent.settings import load_settings
-from naiyue_test_agent.tools.processes import ProcessCleanupError
-from naiyue_test_agent.model_access import ModelConfigError
 from .cli_display import CliEventDisplay
-from .cli_async import build_local_application, build_persistent_application
-from .cli_approval import handle_approval, handle_scope_stop, show_approval_batches, settle_cli_worker
-from .chat_startup import prepare_session
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.service.settings import ServiceError
+from .cli_approval import handle_approval, handle_scope_stop, show_approval_batches, settle_cli_worker, report_command_failure
+from .chat_startup import prepare_terminal
 from .startup_display import startup_messages
 
 
 logger = logging.getLogger(__name__)
 
 
-def _run_and_print(app, session_id: str, text: str, *, display=None) -> bool:
-    write = display.write if display is not None else print
-    if display is not None:
-        display.begin_call()
-    request = HumanMessage(content=text, id=uuid4().hex)
+def _run_and_print(app, session_id, text, *, display=None):
+    write = display.write if display else print
     try:
-        result = app.call(lambda api: api.runs.start(session_id, [request]))
-        if display is not None:
-            display.finish_result(result, input_message_id=request.id)
+        result = app.run(session_id, text)
+        if display:
+            display.finish_view(result)
+        else:
+            for row in result['reply_messages']:
+                if row['content'].strip(): write(row['content'])
+        if display:
+            display.show_approvals(app.pending_approvals(session_id))
+        else:
+            show_approval_batches(app.pending_approvals(session_id), write)
+        return True
+    except ServiceError as error:
+        if app.disconnecting:
             return True
-        messages = result['messages']
-        start = next((index for index, message in enumerate(messages)
-                      if message.id == request.id), None)
-        if start is None:
-            raise RuntimeError('Current input is missing from the run result')
-        replies = [str(message.text) for message in messages[start + 1:]
-                   if isinstance(message, AIMessage) and str(message.text).strip()]
-    except SessionManualReviewRequiredError:
-        write('本会话工具副作用待核对；请检查执行结果后重启会话')
-        return False
-    except (SessionBusyError, SessionPendingApprovalError):
-        write('当前会话尚不能接收新请求，待发送内容保留')
-        return False
-    except ProcessCleanupError as error:
-        logger.error('cli_run_failed error_type=%s', type(error).__name__)
-        if display is None or not display.terminal_displayed:
-            write('工具副作用无法确认；请先检查执行结果，勿直接重试')
-        return True
-    except Exception as error:
-        logger.error('cli_run_failed error_type=%s', type(error).__name__)
-        if display is None or not display.terminal_displayed:
-            write(f'运行失败（{type(error).__name__}）')
+        if error.code in ('session_busy', 'approval_required'):
+            write('当前会话尚不能接收新请求，待发送内容保留')
+            return False
+        if error.code in ('manual_review_required', 'session_recovery_blocked',
+                          'run_capacity_exceeded', 'execution_root_unavailable'):
+            write('本会话尚不能执行；工具副作用待核对，待发送内容仍保留')
+            return False
+        logger.error('terminal_run_failed code=%s', error.code)
+        write('工具副作用待核对，请检查执行结果。' if error.code == 'manual_review_required' else
+              f'运行结果未确认（{error.code}），请查询会话状态，勿直接重发。')
         return True
 
-    if replies:
-        for reply in replies:
-            print(reply)
-    elif not result.get('approval_requests'):
-        print('本轮没有可展示的回答')
-    show_approval_batches(app.call(lambda api: api.runs.pending_approvals(session_id)), print)
-    if result.get('run_stopped'):
-        print('已停止')
 
-    return True
-
-def _resume_and_print(app, session_id: str, decisions: list[str], *, display=None, remember_approved=None, stop_batch=None) -> None:
-    write = display.write if display is not None else print
-    if display is not None:
-        display.begin_call()
+def _resume_and_print(app, session_id, receipt, *, display=None):
     try:
-        result = (app.call(lambda api: api.runs.stop_approval(session_id, approval_batch_id=stop_batch['approval_batch_id'], origin_run_id=stop_batch['origin_run_id'])) if stop_batch is not None else
-                  app.call(lambda api: api.runs.resume_approval(session_id, decisions, remember_approved=remember_approved)))
-        if display is not None:
-            display.finish_result(result, resume_start_index=result.get('resume_start_index'))
+        result = app.wait(session_id, receipt['run_id'], before=receipt.get('terminal_before', ()))
+        if display:
+            display.finish_view(result)
+            display.show_approvals(app.pending_approvals(session_id))
+        else:
+            for row in result['reply_messages']:
+                if row['content'].strip(): print(row['content'])
+            show_approval_batches(app.pending_approvals(session_id), print)
+    except ServiceError as error:
+        if app.disconnecting:
             return
-        messages = result['messages']
-        start = result['resume_start_index']
-        replies = [str(message.text) for message in messages[start:]
-                   if isinstance(message, AIMessage) and str(message.text).strip()]
-    except SessionManualReviewRequiredError:
-        write('本会话工具副作用待核对；请检查执行结果后重启会话')
-        return
-    except ProcessCleanupError as error:
-        logger.error('cli_approval_failed error_type=%s', type(error).__name__)
-        if display is None or not display.terminal_displayed:
-            write('工具副作用无法确认；请先检查执行结果，勿直接重试')
-        return
-    except Exception as error:
-        logger.error('cli_approval_failed error_type=%s', type(error).__name__)
-        if display is None or not display.terminal_displayed:
-            write(f'审批恢复失败（{type(error).__name__}）')
-        return
-
-    if replies:
-        for reply in replies:
-            print(reply)
-    elif not result.get('approval_requests'):
-        print('本轮没有可展示的回答')
-    show_approval_batches(app.call(lambda api: api.runs.pending_approvals(session_id)), print)
-    if result.get('run_stopped'):
-        print('已停止')
+        logger.error('terminal_approval_failed code=%s', error.code)
+        (display.write if display else print)(f'审批恢复结果未确认（{error.code}），请查询状态。')
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -119,60 +73,54 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, default=get_models_path())
     parser.add_argument('--workspace', type=Path)
+    parser.add_argument('--settings', type=Path)
+    parser.add_argument('--project', help='Registered project UUID')
+    parser.add_argument('--trust-project', action='store_true', help='Explicitly trust the selected project directory')
     parser.add_argument('--no-session', action='store_true', help='Use an ephemeral in-memory session')
     parser.add_argument('--session-db', type=Path, help='Override the session database path')
     parser.add_argument('--new-workspace', action='store_true', help='Give a copied workspace a new identity')
     parser.add_argument('--resume', nargs='?', const='', help='Choose a session, or resume the exact ID')
+    parser.add_argument('--execution',choices=('host','sandbox'),help='Execution location for a new persistent session')
+    parser.add_argument('--include-untracked',action='append',default=[],help='Explicit relative file to include in sandbox input; repeatable')
     args = parser.parse_args(argv)
+    if args.include_untracked and args.execution!='sandbox':parser.error('--include-untracked requires --execution sandbox')
+    if args.execution is not None and args.resume is not None:parser.error('--execution cannot replace a restored session binding')
+    if args.no_session and args.execution=='sandbox':parser.error('--no-session cannot use sandbox')
+    if args.project and (args.no_session or args.session_db is not None or args.new_workspace):
+        parser.error('--project conflicts with --no-session, --session-db and --new-workspace')
     if args.no_session and (args.resume is not None or args.session_db is not None):
         parser.error('--no-session conflicts with --resume and --session-db')
 
     if args.new_workspace and (args.no_session or args.session_db is not None or args.resume is not None):
         parser.error('--new-workspace conflicts with --no-session, --session-db and --resume')
 
-    storage = None
     app = None
     restored = None
     history = None
     try:
-        tool_settings = load_settings()
-        storage, restored, expected_project = prepare_session(args, tool_settings)
-        if args.resume is not None and restored is None:
-            if storage is not None:
-                storage.close()
+        tool_settings = load_settings(args.settings) if args.settings else load_settings()
+        app, session_id, restored = prepare_terminal(args, tool_settings)
+        if app is None:
             return 0
-        tools = create_builtin_tools(tool_settings.tools, process_settings=tool_settings.process, shell_task_settings=tool_settings.shell_tasks, progress_settings=tool_settings.progress, network_settings=tool_settings.network, retry_settings=tool_settings.tool_retry)
-        initial_tools = tool_settings.default_active_tools
-        if initial_tools is None:
-            initial_tools = [spec.tool.name for spec in tools if spec.tool.name not in ('bash', 'powershell', 'subagent_list')]
-        factory = build_local_application if storage is None else build_persistent_application
-        options = {} if storage is None else {'storage': storage}
-        if expected_project is not None:
-            options['expected_project'] = expected_project
-        app = factory(
-            args.config, tools=tools, system_prompt=BASE_SYSTEM_PROMPT,
-            response_format=None, initial_active_tools=initial_tools, settings=tool_settings, **options,
-        )
-        if restored is None:
-            session_id = app.call(lambda api: api.sessions.create_workspace(api.models.default_id, args.workspace))
-        else:
-            session_id = restored['session_id']
-            status = app.call(lambda api: api.sessions.status(session_id))
-            if status['execution_root_error'] is not None:
-                history = app.call(lambda api: api.history.session(session_id))
-            elif restored['state'] == 'ready':
-                try:
-                    app.call(lambda api: api.sessions.restore(session_id))
-                except (SessionPersistenceError, ModelConfigError, ValueError):
-                    history = app.call(lambda api: api.history.session(session_id))
-            else:
-                history = app.call(lambda api: api.history.session(session_id))
+        history = None
+        if restored is not None:
+            status = app.request('GET', f'/sessions/{session_id}')
+            if status.get('execution_root_error'):
+                history = app.history(session_id)
+            elif 'recovery' in status:
+                if restored['state'] != 'ready':
+                    history = app.history(session_id)
+                else:
+                    try:
+                        app.request('POST', f'/sessions/{session_id}/prepare')
+                    except ServiceError:
+                        history = app.history(session_id)
         display = CliEventDisplay(session_id, progress_settings=tool_settings.progress)
-        unsubscribe = app.call(lambda api: api.observability.subscribe(display)) if display is not None and history is None else None
+        if history is None: app.watch(session_id, display)
         emit = display.write if display is not None else print
     except Exception as error:
         logger.error('cli_initialization_failed error_type=%s', type(error).__name__)
-        emit(f'初始化失败（{type(error).__name__}）')
+        emit(f'初始化失败（{error.code if isinstance(error, ServiceError) else type(error).__name__}）')
         for message in startup_messages(error, args.config):
             emit(message)
         if app is not None and callable(getattr(app, 'close', None)):
@@ -180,26 +128,26 @@ def main(argv: list[str] | None = None) -> int:
                 app.close()
             except Exception as closing_error:
                 logger.error('cli_initialization_cleanup_failed error_type=%s', type(closing_error).__name__)
-        if storage is not None:
-            storage.__exit__(type(error), error, error.__traceback__)
         return 1
 
     worker: Thread | None = None
     try:
-        emit(f'当前模型：{restored["model_id"] if restored else app.call(lambda api: api.models.default_id)}')
-        emit(f'{"持久会话" if storage is not None else "临时会话"}：{session_id}\n查询：:usage；:diagnostics [run_id]；:tasks；后台管理：:task output/stop ID')
+        emit(f'当前模型：{restored["model_id"] if restored else app.request("GET", "/models")["default_model_id"]}')
+        emit(f'{"临时会话" if args.no_session else "持久会话"}：{session_id}\n查询：:usage；:diagnostics [run_id]；:tasks；后台管理：:task output/stop ID')
         interactive = sys.stdin.isatty()
         if history is not None:
-            display.show_history(history)
+            display.show_history_view(history)
             kind, actions = history['recovery']['kind'], history['recovery']['actions']
             action = ('restore_approval' if kind == 'pending_approval' and 'restore_approval' in actions else
                       'continue' if kind == 'interrupted_execution' and 'continue' in actions else None)
             if action is None:
                 return 0
             try:
-                app.call(lambda api: api.sessions.recover(session_id, checkpoint_id=history['checkpoint_id'], action=action))
+                app.request('POST', f'/sessions/{session_id}/prepare')
+                app.request('POST', f'/sessions/{session_id}/recover', json={'checkpoint_id': history['checkpoint_id'], 'action': action})
             except Exception as error:
-                logger.error('cli_session_recovery_failed error_type=%s', type(error).__name__)
+                logger.error('cli_session_recovery_failed error_type=%s code=%s', type(error).__name__,
+                             error.code if isinstance(error, ServiceError) else 'unknown')
                 if action != 'restore_approval' or str(error) != 'approval_restore_unavailable' or not interactive:
                     emit('会话恢复未确认；已保留历史，请重新打开会话核对当前状态。')
                     return 1
@@ -207,8 +155,8 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     if input('恢复操作：').strip() != 'continue':
                         return 0
-                    current = app.call(lambda api: api.history.session(session_id))
-                    app.call(lambda api: api.sessions.recover(session_id, checkpoint_id=current['checkpoint_id'], action='continue'))
+                    current = app.history(session_id)
+                    app.request('POST', f'/sessions/{session_id}/recover', json={'checkpoint_id': current['checkpoint_id'], 'action': 'continue'})
                     action = 'continue'
                 except EOFError:
                     return 0
@@ -216,17 +164,16 @@ def main(argv: list[str] | None = None) -> int:
                     logger.error('cli_session_recovery_failed error_type=%s', type(fault).__name__)
                     emit('会话恢复未确认；已保留历史，请重新打开会话核对当前状态。')
                     return 1
-            unsubscribe = app.call(lambda api: api.observability.subscribe(display))
+            app.watch(session_id, display)
             if action == 'restore_approval':
                 emit('已恢复待审批批次，工具尚未执行。用 :review 为每项提供 approve/reject。')
-                show_approval_batches(app.call(lambda api: api.runs.pending_approvals(session_id)), emit)
+                show_approval_batches(app.pending_approvals(session_id), emit)
             else:
                 emit('旧运行已结束；下一条新消息才会启动运行。')
         output_clear_plan = None
         pending_input = []
         pending_lock = Lock()
         stopped_input = False
-        output_workspace = args.workspace
         piped_input = []
         submitted_root = None
 
@@ -239,39 +186,42 @@ def main(argv: list[str] | None = None) -> int:
                         del pending_input[:pending_count]
                 elif pending_count:
                     emit('待发送内容仍保留，可用 :pending 查看')
+                elif not accepted:
+                    with pending_lock:
+                        pending_input.append(text)
+                    emit('待发送内容仍保留，可用 :pending 查看')
             worker = Thread(target=execute)
             worker.start()
 
-        def start_approval(decisions: list[str], remembered) -> None:
+        def start_approval(receipt) -> None:
             nonlocal worker
-            worker = Thread(target=_resume_and_print, args=(app, session_id, decisions),
-                            kwargs={'display': display, 'remember_approved': remembered})
+            worker = Thread(target=_resume_and_print, args=(app, session_id, receipt), kwargs={'display': display})
             worker.start()
 
         def start_approval_stop(batch):
             nonlocal worker
-            worker = Thread(target=_resume_and_print, args=(app, session_id, []),
-                            kwargs={'display': display, 'stop_batch': batch})
+            worker = Thread(target=_resume_and_print, args=(app, session_id, app.approve(session_id, {k: batch[k] for k in ('approval_batch_id', 'origin_run_id')}, stop=True)), kwargs={'display': display})
             worker.start()
 
         def drain_pipe(*, allow_approval=False):
             while piped_input:
-                if allow_approval and app.call(lambda api: api.runs.pending_approvals(session_id)):
+                if allow_approval and app.pending_approvals(session_id):
                     return
                 if not settle_cli_worker(app, session_id, worker, emit, stop_waits=not allow_approval):
                     return
-                if allow_approval and app.call(lambda api: api.runs.pending_approvals(session_id)):
+                if allow_approval and app.pending_approvals(session_id):
                     return
                 kind, text = piped_input.pop(0)
-                if kind == 'model': app.call(lambda api: api.sessions.select_model(session_id, text))
+                if kind == 'model': app.request('PATCH', f'/sessions/{session_id}/model', json={'model_id': text})
                 else: start_run(text)
 
         while True:
             try:
                 line = input('> ').strip()
             except EOFError:
-                drain_pipe()
-                settle_cli_worker(app, session_id, worker, emit, stop_active=interactive)
+                if not interactive:
+                    drain_pipe()
+                    settle_cli_worker(app, session_id, worker, emit)
                 return 0
 
             if not line:
@@ -292,9 +242,10 @@ def main(argv: list[str] | None = None) -> int:
             if command != ':outputs':
                 output_clear_plan = None
             if command == ':quit':
-                drain_pipe()
-                settle_cli_worker(app, session_id, worker, emit, stop_active=interactive)
-                if app.call(lambda api: api.runs.pending_approvals(session_id)):
+                if not interactive:
+                    drain_pipe()
+                    settle_cli_worker(app, session_id, worker, emit)
+                if app.pending_approvals(session_id):
                     emit('待审批未处理；下次打开会话时将重新核对恢复条件')
                 return 0
             if command in (':pending', ':send'):
@@ -322,10 +273,10 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 try:
                     if action == 'clear':
-                        output_clear_plan = app.call(lambda api: api.tasks.preview_outputs(output_workspace))
-                        if output_clear_plan.file_count:
-                            emit(f'将清理 {output_clear_plan.file_count} 个文件，'
-                                  f'{output_clear_plan.total_bytes} 字节；'
+                        output_clear_plan = app.request('POST', '/terminal/outputs/preview')
+                        if output_clear_plan['file_count']:
+                            emit(f'将清理 {output_clear_plan['file_count']} 个文件，'
+                                  f'{output_clear_plan['total_bytes']} 字节；'
                                   '确认请输入 :outputs clear confirm')
                         else:
                             emit('没有可清理的 Shell 输出')
@@ -333,17 +284,18 @@ def main(argv: list[str] | None = None) -> int:
                     elif output_clear_plan is None:
                         emit('请先输入 :outputs clear 查看待清理文件')
                     else:
-                        count, size = app.call(lambda api: api.tasks.clear_outputs(output_clear_plan))
+                        cleared = app.request('POST', '/terminal/outputs/clear', json={'confirmation_id': output_clear_plan['confirmation_id']})
+                        count, size = cleared['file_count'], cleared['total_bytes']
                         output_clear_plan = None
                         emit(f'已清理 {count} 个文件，{size} 字节')
-                except (OSError, ValueError, UnicodeError) as error:
+                except (OSError, ValueError, UnicodeError, ServiceError) as error:
                     output_clear_plan = None
                     logger.warning('bash_output_clear_failed error_type=%s', type(error).__name__)
                     emit('Shell 输出目录异常或预览后已变化，未完成清理')
                 continue
             if command in (':approve', ':deny', ':review', ':approvals'):
                 while (submitted_root is not None and worker is not None and worker.is_alive() and
-                       any(batch['approval_batch_id'] == submitted_root for batch in app.call(lambda api: api.runs.pending_approvals(session_id)))):
+                       any(batch['approval_batch_id'] == submitted_root for batch in app.pending_approvals(session_id))):
                     worker.join(0.05)
                 if not interactive and command != ':approvals':
                     drain_pipe(allow_approval=True)
@@ -355,19 +307,19 @@ def main(argv: list[str] | None = None) -> int:
                 if handle_scope_stop(app, session_id, target, worker=worker, write=emit, start_root=start_approval_stop):
                     if target == 'root': stopped_input = True
                     continue
-                if worker is None or not worker.is_alive():
+                if app.active_run(session_id) is None:
                     emit('当前没有运行')
                     continue
                 try:
                     receipt_before = display.control_receipt_count('stop') if display is not None else 0
-                    retained = app.call(lambda api: api.runs.stop(session_id))
+                    retained = app.control(session_id, 'stop')['retained']
                     pending_input.extend(retained or [])
                     stopped_input = True
                     emit('停止后的输入将保留待发送；用 :pending 查看，:send 显式提交')
                     if pending_input:
                         emit('待发送内容：\n' + '\n\n'.join(pending_input))
-                except SessionBusyError:
-                    emit('停止请求未被接受（运行尚未开窗或已进入收尾）')
+                except ServiceError as error:
+                    report_command_failure(error, '停止', emit)
                 else:
                     if display is None or display.control_receipt_count('stop') == receipt_before:
                         emit('已请求停止，正在等待收尾')
@@ -381,12 +333,11 @@ def main(argv: list[str] | None = None) -> int:
                     piped_input.append(('model', model_id))
                     continue
                 try:
-                    app.call(lambda api: api.sessions.select_model(session_id, model_id))
-                except ModelConfigError:
-                    emit('模型 ID 不可用')
-                except SessionPersistenceError as error:
+                    app.request('PATCH', f'/sessions/{session_id}/model', json={'model_id': model_id})
+                except ServiceError as error:
                     logger.error('cli_model_selection_save_failed error_type=%s', type(error).__name__)
-                    emit('模型选择未保存，继续使用原选择')
+                    emit('模型 ID 不可用' if isinstance(error, ServiceError) and error.code == 'model_unavailable'
+                         else '模型选择未保存，继续使用原选择')
                 else:
                     emit(f'模型已切换：{model_id}（下一次模型调用生效）')
                 continue
@@ -399,15 +350,19 @@ def main(argv: list[str] | None = None) -> int:
                     emit('请输入 Follow-up 内容')
                     continue
                 text = rest[0].strip()
-                if app.call(lambda api: api.runs.pending_approvals(session_id)):
+                if app.pending_approvals(session_id):
                     emit('当前有待审批工具调用，请先处理审批')
                     continue
-                if worker is not None and worker.is_alive():
+                if app.active_run(session_id) is not None:
                     try:
                         receipt_before = display.control_receipt_count('follow_up') if display is not None else 0
-                        app.call(lambda api: api.runs.follow_up(session_id, text))
-                    except SessionBusyError:
-                        worker.join()
+                        app.control(session_id, 'follow_up', text=text)
+                    except ServiceError as error:
+                        if error.code not in ('stale_run', 'session_busy'):
+                            pending_input.append(text)
+                            emit(f'控制请求结果未确认（{error.code}）；内容保留，请核对状态后再决定是否发送。')
+                            continue
+                        if worker is not None: worker.join()
                     else:
                         if display is None or display.control_receipt_count('follow_up') == receipt_before:
                             emit('Follow-up 已排队')
@@ -425,33 +380,44 @@ def main(argv: list[str] | None = None) -> int:
             if not interactive and ((worker is not None and worker.is_alive()) or piped_input):
                 piped_input.append(('run', line))
                 continue
-            if app.call(lambda api: api.runs.pending_approvals(session_id)):
+            if app.pending_approvals(session_id):
                 emit('当前有待审批工具调用，请先处理审批')
                 continue
-            if worker is not None and worker.is_alive():
+            if app.active_run(session_id) is not None:
                 try:
                     receipt_before = display.control_receipt_count('steering') if display is not None else 0
-                    app.call(lambda api: api.runs.steer(session_id, line))
-                except (SessionBusyError, SessionPendingApprovalError):
-                    worker.join()
+                    app.control(session_id, 'steering', text=line)
+                except ServiceError as error:
+                    if error.code not in ('stale_run', 'session_busy'):
+                        pending_input.append(line)
+                        emit(f'控制请求结果未确认（{error.code}）；内容保留，请核对状态后再决定是否发送。')
+                        continue
+                    if worker is not None: worker.join()
                 else:
                     if display is None or display.control_receipt_count('steering') == receipt_before:
                         emit('Steering 已排队')
                     continue
             start_run(line)
+    except ServiceError as error:
+        emit(f'连接或请求结果未确认（{error.code}）；请重新连接当前会话核对，不会自动重发。')
+        return 1
     finally:
-        if worker is not None and worker.is_alive():
-            settle_cli_worker(app, session_id, worker, emit, stop_active=True)
+        primary, close_failed = sys.exception(), False
         try:
-            if unsubscribe is not None:
-                unsubscribe()
-        finally:
+            app.close()
+        except Exception as error:
+            close_failed = True
+            logger.error('cli_close_failed error_type=%s code=%s', type(error).__name__,
+                         error.code if isinstance(error, ServiceError) else 'unknown')
             try:
-                if callable(getattr(app, 'close', None)):
-                    app.close()
-            finally:
-                if storage is not None:
-                    storage.__exit__(*sys.exc_info())
+                emit('退出清理结果未确认，请核对服务中的会话和任务状态。')
+            except Exception as display_error:
+                logger.error('cli_close_display_failed error_type=%s', type(display_error).__name__)
+        finally:
+            if worker is not None:
+                worker.join()
+        if close_failed and primary is None:
+            return 1
 
 
 if __name__ == '__main__':

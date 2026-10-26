@@ -38,7 +38,10 @@ def tool_result(result, name):
 async def background_scenario(root, model_type, *, automatic=False, executable=None):
     from langchain_core.messages import AIMessage, SystemMessage
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+    if __package__:
+        from .release_application import open_smoke_host
+    else:
+        from release_application import open_smoke_host
     from naiyue_test_agent.model_access import ModelCatalog
     from naiyue_test_agent.settings import AppSettings
     from naiyue_test_agent.tools import create_builtin_tools
@@ -66,7 +69,7 @@ async def background_scenario(root, model_type, *, automatic=False, executable=N
     options = dict(database_path=directory / 'sessions.sqlite', tools=tools, system_prompt='',
                    response_format=None, settings=settings)
     with patch.object(application, 'load_model_catalog', lambda _: ModelCatalog('offline', {'offline': model})):
-        async with open_async_persistent_application('unused', **options) as app:
+        async with open_smoke_host('unused', workspace=directory, data_dir=root / ('background-auto-data' if automatic else 'background-explicit-data'), **options) as app:
             sid = await app.sessions.create_workspace('offline', directory)
             events = []
             unsubscribe = app.observability.subscribe(events.append)
@@ -112,7 +115,7 @@ async def background_scenario(root, model_type, *, automatic=False, executable=N
             finally:
                 unsubscribe()
         calls = len(model.seen)
-        async with open_async_persistent_application('unused', **options) as reopened:
+        async with open_smoke_host('unused', workspace=directory, data_dir=root / ('background-auto-data' if automatic else 'background-explicit-data'), **options) as reopened:
             assert (await reopened.tasks.list())['items'] == []
             await reopened.sessions.restore(sid)
             history = await reopened.history.messages(sid)

@@ -8,6 +8,9 @@ import tomllib
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .config_paths import StorageSettings, get_agent_dir
+from .project_settings import ProjectsSettings
+from .sandbox_settings import SandboxSettings
+from .delivery_settings import DeliverySettings
 from .checkpoint_settings import CheckpointRetentionSettings
 from .shell_task_settings import ShellTaskSettings
 from .memory_settings import MemorySettings
@@ -57,6 +60,9 @@ class AppSettings(BaseModel):
     web_event_cache_bytes: int = Field(default=4194304, gt=0)
     default_active_tools: tuple[str, ...] | None = None
     storage: StorageSettings = Field(default_factory=StorageSettings)
+    projects: ProjectsSettings = Field(default_factory=ProjectsSettings)
+    sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
+    delivery: DeliverySettings = Field(default_factory=DeliverySettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     network: NetworkSettings = Field(default_factory=NetworkSettings)
     tool_retry: ToolRetrySettings = Field(default_factory=ToolRetrySettings)
@@ -116,7 +122,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
         logger.error('permission_settings_unavailable error_type=%s', type(error).__name__)
         raise ValueError('Permission settings could not be read or parsed') from error
-    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'default_active_tools', 'tools', 'permissions', 'process', 'tool_output', 'shell_tasks', 'storage', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'checkpoint_retention', 'network', 'mcp', 'tool_retry', 'memory'}:
+    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'default_active_tools', 'tools', 'permissions', 'process', 'tool_output', 'shell_tasks', 'storage', 'projects', 'sandbox', 'delivery', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'checkpoint_retention', 'network', 'mcp', 'tool_retry', 'memory'}:
         raise ValueError('Unknown runtime settings section')
     try:
         memory = MemorySettings.model_validate(raw.get('memory', {}))
@@ -154,6 +160,9 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         logger.error('tool_retry_settings_invalid')
         raise ValueError('Tool retry settings are invalid') from None
     storage = StorageSettings.model_validate(raw.get('storage', {}))
+    projects = ProjectsSettings.model_validate(raw.get('projects', {}))
+    sandbox = SandboxSettings.model_validate(raw.get('sandbox', {}))
+    delivery = DeliverySettings.model_validate(raw.get('delivery', {}))
     permissions = PermissionSettings.model_validate(raw.get('permissions', {}))
     max_active_runs = raw.get('max_active_runs', AppSettings.model_fields['max_active_runs'].default)
     if type(max_active_runs) is not int or max_active_runs <= 0:
@@ -198,7 +207,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         logger.warning('checkpoint_retention_invalid action=disabled')
         checkpoint_retention = CheckpointRetentionSettings(enabled=False)
     try:
-        return AppSettings(storage=storage, memory=memory, tools=tools, network=network, mcp=mcp, tool_retry=tool_retry, permissions=permissions, process=process, shell_tasks=shell_tasks,
+        return AppSettings(storage=storage, projects=projects, sandbox=sandbox, delivery=delivery, memory=memory, tools=tools, network=network, mcp=mcp, tool_retry=tool_retry, permissions=permissions, process=process, shell_tasks=shell_tasks,
                             default_active_tools=default_active_tools,
                             progress=progress, usage_persistence=usage_persistence,
                             subagents=raw.get('subagents', ()), max_active_runs=max_active_runs,

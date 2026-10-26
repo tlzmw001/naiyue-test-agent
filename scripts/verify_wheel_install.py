@@ -110,7 +110,7 @@ def main():
         verify_install_report(json.loads(install_report.read_text(encoding='utf-8')), info, from_pypi=args.from_pypi)
         subprocess.run([str(python), '-m', 'pip', 'check'], cwd=outside, env=env, check=True, timeout=30)
         nyt = bin_path / ('nyt.exe' if os.name == 'nt' else 'nyt')
-        for args_list in (['--help'], ['--version'], ['chat', '--help']):
+        for args_list in (['--help'], ['--version'], ['chat', '--help'], ['projects', '--help']):
             result = subprocess.run([str(nyt), *args_list], cwd=outside, env=env,
                 capture_output=True, text=True, check=True, timeout=30)
             assert result.stdout.strip()

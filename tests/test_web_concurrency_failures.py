@@ -26,25 +26,25 @@ async def test_running_a_allows_cold_b_recovery_and_idle_deletion(monkeypatch, t
     async with web_client(monkeypatch, tmp_path, model) as (client, web):
         a, idle = await sessions(client, 2)
         delivery = web.state.delivery
-        idle_run = (await client.post(f'/api/sessions/{idle}/runs', json=request(idle))).json()['run_id']
+        idle_run = (await client.post(f'/api/v1/scopes/chats/sessions/{idle}/runs', json=request(idle))).json()['run_id']
         await delivery.wait(idle_run)
         entered, release = gated(model, a)
-        ra = (await client.post(f'/api/sessions/{a}/runs', json=request(a))).json()['run_id']
+        ra = (await client.post(f'/api/v1/scopes/chats/sessions/{a}/runs', json=request(a))).json()['run_id']
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            history = (await client.post(f'/api/sessions/{cold}/prepare')).json()
+            history = (await client.post(f'/api/v1/scopes/chats/sessions/{cold}/prepare')).json()
             assert history['recovery']['kind'] == 'interrupted_execution'
-            recovered = await client.post(f'/api/sessions/{cold}/recover', json={
+            recovered = await client.post(f'/api/v1/scopes/chats/sessions/{cold}/recover', json={
                 'checkpoint_id': history['checkpoint_id'], 'action': 'continue'})
             assert recovered.status_code == 200 and recovered.json()['can_run']
             assert cold not in model.requests
-            assert (await client.delete(f'/api/sessions/{idle}')).status_code == 200
-            assert (await client.get(f'/api/runs/{idle_run}')).status_code == 404
-            assert (await client.delete(f'/api/sessions/{cold}')).status_code == 200
+            assert (await client.delete(f'/api/v1/scopes/chats/sessions/{idle}')).status_code == 200
+            assert (await client.get(f'/api/v1/scopes/chats/runs/{idle_run}')).status_code == 404
+            assert (await client.delete(f'/api/v1/scopes/chats/sessions/{cold}')).status_code == 200
             assert set(delivery.active_by_session) == {a} and delivery.latest == {a: ra}
             assert not delivery.get(ra).task.done()
-            assert (await client.delete(f'/api/sessions/{a}')).json()['error']['code'] == 'session_busy'
-            assert [row['session_id'] for row in (await client.get('/api/sessions')).json()] == [a]
+            assert (await client.delete(f'/api/v1/scopes/chats/sessions/{a}')).json()['error']['code'] == 'session_busy'
+            assert [row['session_id'] for row in (await client.get('/api/v1/scopes/chats/sessions')).json()] == [a]
         finally:
             release.set()
 
@@ -63,10 +63,10 @@ async def test_a_save_failure_keeps_b_active_and_its_save_healthy(monkeypatch, t
             return finish(sid, *args, **kwargs)
         monkeypatch.setattr(backend.sessions._persistence.storage.runs, 'finish_run', fail)
         entered, release = gated(model, b)
-        rb = (await client.post(f'/api/sessions/{b}/runs', json=request(b))).json()['run_id']
+        rb = (await client.post(f'/api/v1/scopes/chats/sessions/{b}/runs', json=request(b))).json()['run_id']
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            ra = (await client.post(f'/api/sessions/{a}/runs', json=request(a))).json()['run_id']
+            ra = (await client.post(f'/api/v1/scopes/chats/sessions/{a}/runs', json=request(a))).json()['run_id']
             await delivery.wait(ra)
             assert delivery.get(ra).status == 'failed' and set(delivery.active_by_session) == {b}
             assert not delivery.get(rb).task.done() and set(backend.sessions._persistence._active) == {b}
@@ -92,17 +92,17 @@ async def test_cancelled_http_start_keeps_a_owned_and_does_not_block_b(monkeypat
                 request_task.cancel('cancel A HTTP waiter')
         unsubscribe = web.state.service.application.observability.subscribe(cancel)
         body = request(a)
-        request_task = asyncio.create_task(client.post(f'/api/sessions/{a}/runs', json=body))
+        request_task = asyncio.create_task(client.post(f'/api/v1/scopes/chats/sessions/{a}/runs', json=body))
         try:
             with pytest.raises(asyncio.CancelledError):
                 await request_task
             await asyncio.wait_for(entered.wait(), 5)
             ra = web.state.delivery.latest[a]
-            b_response = await client.post(f'/api/sessions/{b}/runs', json=request(b))
+            b_response = await client.post(f'/api/v1/scopes/chats/sessions/{b}/runs', json=request(b))
             assert b_response.status_code == 202
             await web.state.delivery.wait(b_response.json()['run_id'])
             assert not web.state.delivery.get(ra).task.done()
-            repeated = await client.post(f'/api/sessions/{a}/runs', json=body)
+            repeated = await client.post(f'/api/v1/scopes/chats/sessions/{a}/runs', json=body)
             assert repeated.json()['run_id'] == ra and len(model.requests[a]) == 1
         finally:
             release.set()
@@ -164,7 +164,7 @@ async def test_unsubscribe_failure_is_observable_and_does_not_retain_an_active_j
                 raise ValueError('PRIVATE_UNSUBSCRIBE')
             return fail
         monkeypatch.setattr(subscriptions, 'subscribe', failing_subscription)
-        rid = (await client.post(f'/api/sessions/{sid}/runs', json=request(sid))).json()['run_id']
+        rid = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request(sid))).json()['run_id']
         await web.state.delivery.wait(rid)
         assert web.state.delivery.get(rid).status == 'completed'
         assert web.state.delivery.active_by_session == {} and subscriptions._handlers == application_handlers

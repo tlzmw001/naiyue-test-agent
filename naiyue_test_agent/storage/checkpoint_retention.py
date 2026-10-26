@@ -9,7 +9,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking
 from .queries import read_rows, session_row, subagent_references, chat_heads
-from naiyue_test_agent.application.sessions.session_recovery import recovery_record
+from naiyue_test_agent.storage.recovery_records import recovery_record
 
 
 logger = logging.getLogger(__name__)

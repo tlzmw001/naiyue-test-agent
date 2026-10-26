@@ -13,19 +13,23 @@ class RunAPI:
         self._metadata, self._conversation, self._replies = metadata, conversation, replies
 
     def steer(self, session_id, text):
+        self._owner.check_controls_open()
         if not isinstance(text, str) or not text.strip():
             raise ValueError('A non-empty steering message is required')
         self._sessions.require(session_id).controls.steer(text)
 
     def follow_up(self, session_id, text):
+        self._owner.check_controls_open()
         if not isinstance(text, str) or not text.strip():
             raise ValueError('A non-empty follow-up message is required')
         self._sessions.require(session_id).controls.follow_up(text)
 
     def stop(self, session_id, *, run_id=None, agent_path='root', agent_run_id=None, approval_batch_id=None):
+        self._owner.check_controls_open()
         return self._sessions.require(session_id).controls.request_scope_stop(run_id=run_id, agent_path=agent_path, agent_run_id=agent_run_id, approval_batch_id=approval_batch_id)
 
     def pending_tools(self, session_id):
+        self._owner.check_controls_open()
         return self._sessions.require(session_id).approvals.pending_tool_approvals()
 
     def pending_subagents(self, session_id):
@@ -42,14 +46,34 @@ class RunAPI:
 
     async def submit_subagent_approval(self, session_id, *, approval_batch_id, decisions, origin_run_id, remember_approved=()):
         with self._owner.operation():
-            return self._sessions.require(session_id).approvals.submit_subagent_approval(approval_batch_id=approval_batch_id, decisions=decisions, origin_run_id=origin_run_id, remember_approved=remember_approved)
+            actor = self._sessions.require(session_id)
+            scope = actor.lifecycle.snapshot_for_run()
+            root = scope['execution_root']
+            approving = isinstance(decisions, list) and any(
+                isinstance(choice, dict) and choice.get('decision') == 'approve' for choice in decisions)
+            if root is not None and root.project_revision is not None and approving:
+                facts = await run_blocking(root.authority.registry.execution_facts, scope['project_id'])
+                if facts.revision != root.project_revision:
+                    from naiyue_test_agent.application.errors import SessionApprovalExpiredError
+                    raise SessionApprovalExpiredError('approval_expired: cancel the pending call and request a fresh review')
+            if scope.get('execution_binding')=='sandbox' and approving:
+                from .execution_binding import check_sandbox
+                row=await run_blocking(self._metadata.get,session_id)
+                await run_blocking(check_sandbox,self._sessions,row)
+            self._owner.check_admission_open()
+            return actor.approvals.submit_subagent_approval(approval_batch_id=approval_batch_id, decisions=decisions, origin_run_id=origin_run_id, remember_approved=remember_approved)
 
     async def _execute(self, session_id, value, resume, run_id, max_concurrency, *, remember_approved=None, stop=False, compact=False, expected_conversation_revision=None):
         with self._owner.operation():
+            from naiyue_test_agent.agent_runtime.tool_execution.async_batch import validate_tool_concurrency
+            validate_tool_concurrency(max_concurrency)
+            prepared = await self._sessions.prepare_admission(session_id, stop=stop)
+            await self._sessions.confirm_admission(prepared)
+            self._owner.check_admission_open()
             if compact:
-                return await self._sessions.acompact(self._agent, session_id, run_id=run_id)
+                return await self._sessions.acompact(self._agent, session_id, run_id=run_id, prepared_admission=prepared)
             method = self._sessions.aresume_tool_approval if resume else self._sessions.arun
-            return await method(self._agent, session_id, value, run_id=run_id, max_concurrency=max_concurrency,
+            return await method(self._agent, session_id, value, run_id=run_id, max_concurrency=max_concurrency, prepared_admission=prepared,
                                 **({'remember_approved': remember_approved, 'stop': stop} if resume else
                                    {'expected_conversation_revision': expected_conversation_revision}))
 
@@ -119,11 +143,12 @@ class RunAPI:
 
     async def regeneration_action(self, session_id, request_id):
         with self._owner.operation():
+            await run_blocking(self._metadata.get, session_id)
             return await run_blocking(self._replies.action, session_id, request_id)
 
     async def regenerate(self, session_id, *, request_id, expected_reply_id, expected_conversation_revision):
         with self._owner.operation():
             from naiyue_test_agent.application.conversation.session_regeneration import regenerate
-            return await regenerate(session_id, sessions=self._sessions, agent=self._agent, persistence=self._persistence,
+            return await regenerate(session_id, sessions=self._sessions, agent=self._agent, persistence=self._persistence, owner=self._owner,
                 metadata=self._metadata, conversation=self._conversation, replies=self._replies, request_id=request_id, expected_reply_id=expected_reply_id,
                                     expected_conversation_revision=expected_conversation_revision)

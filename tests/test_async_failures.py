@@ -48,7 +48,7 @@ def test_parallel_fatal_waits_for_other_started_tool_before_terminal(monkeypatch
             {'name': 'fail', 'args': {}, 'id': 'failure'}, {'name': 'slow', 'args': {}, 'id': 'slow'},
         ])])
         app = await make_app(monkeypatch, model, [ToolSpec(fail, fail.args_schema, permissions=ToolPermission(default='allow')), ToolSpec(slow, slow.args_schema, permissions=ToolPermission(default='allow'))])
-        session = await app.sessions.create('A')
+        session = await app.host.sessions.create('A')
         events = []
 
         def observe(event):
@@ -56,21 +56,21 @@ def test_parallel_fatal_waits_for_other_started_tool_before_terminal(monkeypatch
             if event.event_type == 'tool_call_finished' and event.data.tool_call_id == 'failure':
                 failed.set()
 
-        app.observability.subscribe(observe)
-        task = asyncio.create_task(app.runs.start(session, [('user', 'run')]))
+        app.host.observability.subscribe(observe)
+        task = asyncio.create_task(app.host.runs.start(session, [('user', 'run')]))
         try:
             await asyncio.wait_for(failed.wait(), 5)
             # The peer is held by an Event; this is a liveness deadline, not a timing race.
             with pytest.raises(TimeoutError):
                 await asyncio.wait_for(asyncio.shield(task), 1)
-            assert app.sessions._sessions.require(session).describe_session()['busy']
+            assert app.host.sessions._sessions.require(session).describe_session()['busy']
             assert not any(e.event_type == 'run_finished' for e in events)
             release.set()
             with pytest.raises(RuntimeError) as caught:
                 await task
             assert caught.value is original and settled.is_set()
             assert events[-1].data.status == 'failed'
-            assert app.sessions._sessions.require(session).describe_session()['manual_review_required']
+            assert app.host.sessions._sessions.require(session).describe_session()['manual_review_required']
         finally:
             release.set()
             await asyncio.gather(task, return_exceptions=True)

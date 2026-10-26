@@ -22,14 +22,14 @@ def test_temporary_api_is_present_unavailable_and_closed_with_owner(monkeypatch,
     async def scenario():
         app = await make_app(monkeypatch, StreamingToolModel(replies=[]), [create_memory_tool()])
         try:
-            assert app.memory._owner is app._lifetime and app.memory._access is None
+            assert app.host.memory._owner is app.host.sessions._owner and app.host.memory._owner._parent is app.root._lifetime and app.host.memory._access is None
             with pytest.raises(ToolException, match='memory_unavailable'):
-                await app.memory.query(scope=RunScope(RunIdentity('absent')), request={'action': 'list'})
+                await app.host.memory.query(scope=RunScope(RunIdentity('absent')), request={'action': 'list'})
             assert not (tmp_path / '.naiyue').exists()
         finally:
             await app.aclose()
         with pytest.raises(RuntimeError, match='owning event loop'):
-            await app.memory.query(scope=RunScope(RunIdentity('absent')), request={'action': 'list'})
+            await app.host.memory.query(scope=RunScope(RunIdentity('absent')), request={'action': 'list'})
     asyncio.run(scenario())
 
 
@@ -64,9 +64,9 @@ def test_formal_root_child_and_approval_use_same_memory_api(monkeypatch, tmp_pat
                 SubAgentSpec('tester', 'Read memory', 'Read saved records.', ('memory',), model_id='B'),)})
         async with opened(monkeypatch, tmp_path, root, settings=settings,
                 tools=[memory_tool, create_subagent_tool()], models={'A': root, 'B': reader}) as app:
-            sid = await app.sessions.create_workspace('A', tmp_path)
+            sid = await app.host.sessions.create_workspace('A', tmp_path)
             queue = approval_notifications(monkeypatch, app) if child and approval else None
-            task = asyncio.create_task(app.runs.start(sid, [('user', 'read')]))
+            task = asyncio.create_task(app.host.runs.start(sid, [('user', 'read')]))
             try:
                 if child and approval:
                     batch = await next_approval(app, sid, queue)
@@ -75,16 +75,16 @@ def test_formal_root_child_and_approval_use_same_memory_api(monkeypatch, tmp_pat
                 result = await task
                 if approval and not child:
                     assert result['approval_requests'] and seen == []
-                    result = await app.runs.resume_approval(sid, ['approve'])
+                    result = await app.host.runs.resume_approval(sid, ['approve'])
                 message = (next(m for m in reader.seen[-1] if isinstance(m, ToolMessage) and m.name == 'memory')
                            if child else feedback(result)[0])
                 assert message.status == 'success' and json.loads(message.content)['items'] == []
                 api, scope, bound = seen[0]
-                assert len(seen) == 1 and api is app.memory
-                assert scope.capabilities.memory.__self__ is app.memory and scope is bound
+                assert len(seen) == 1 and api is app.host.memory
+                assert scope.capabilities.memory.__self__ is app.host.memory and scope is bound
                 assert scope.identity.session_id == sid and scope.identity.project_id is not None
                 assert (scope.identity.agent_path != 'root') is child
-                assert not hasattr(app.sessions._persistence, 'aquery_memory')
+                assert not hasattr(app.host.sessions._persistence, 'aquery_memory')
             finally:
                 if not task.done():
                     task.cancel()
@@ -99,9 +99,9 @@ def test_unconfigured_memory_api_uses_no_resources(monkeypatch, tmp_path, enable
                                                'memory': {'enabled': enabled}})
         tools = [create_subagent_tool()] if enabled else [create_memory_tool()]
         async with opened(monkeypatch, tmp_path, StreamingToolModel(replies=[]), settings=settings, tools=tools) as app:
-            assert app.memory._owner is app._lifetime and app.memory._access is None and app.memory._jobs is None
+            assert app.host.memory._owner is app.host.sessions._owner and app.host.memory._owner._parent is app.root._lifetime and app.host.memory._access is None and app.host.memory._jobs is None
             with pytest.raises(ToolException, match='memory_unavailable'):
-                await app.memory.query(scope=RunScope(RunIdentity('absent')), request={'action': 'list'})
+                await app.host.memory.query(scope=RunScope(RunIdentity('absent')), request={'action': 'list'})
         assert not (tmp_path / 'data/personal/memory.sqlite').exists()
     asyncio.run(scenario())
 
@@ -127,7 +127,7 @@ def test_api_rejects_foreign_stale_inactive_and_invalid_requests(monkeypatch, tm
             elif invalid == 'root': broken = replace(broken, identity=replace(identity, execution_root=ExecutionRoot(tmp_path / 'other')))
             elif invalid == 'role': broken = replace(broken, identity=replace(identity, agent_path='root/absent/child'))
             elif invalid == 'publisher': broken = replace(broken, observation=type(scope.observation)())
-            elif invalid == 'inactive': await app.sessions.select_tools(identity.session_id, [])
+            elif invalid == 'inactive': await app.host.sessions.select_tools(identity.session_id, [])
             elif invalid == 'schema': payload = {'action': 'list', 'project_id': 'other'}
             elif invalid == 'missing': (tmp_path / '.naiyue/workspace.json').unlink()
             with monkeypatch.context() as guard:
@@ -140,8 +140,8 @@ def test_api_rejects_foreign_stale_inactive_and_invalid_requests(monkeypatch, tm
         monkeypatch.setattr(MemoryAPI, 'query', check)
         model = StreamingToolModel(replies=[call('memory', {'action': 'list'}), AIMessage(content='done')])
         async with opened(monkeypatch, tmp_path, model) as app:
-            sid = await app.sessions.create_workspace('A', tmp_path)
-            result = await app.runs.start(sid, [('user', 'read')])
+            sid = await app.host.sessions.create_workspace('A', tmp_path)
+            result = await app.host.runs.start(sid, [('user', 'read')])
             assert checked == [True] and feedback(result)[0].status == 'success'
             assert queries == []
     asyncio.run(scenario())
@@ -162,10 +162,10 @@ def test_api_rejects_finished_scope_during_next_run(monkeypatch, tmp_path):
         model = StreamingToolModel(replies=[call('memory', {'action': 'list'}), AIMessage(content='one'),
                                            call('memory', {'action': 'list'}), AIMessage(content='two')])
         async with opened(monkeypatch, tmp_path, model) as app:
-            sid = await app.sessions.create_workspace('A', tmp_path)
+            sid = await app.host.sessions.create_workspace('A', tmp_path)
             for text in ('one', 'two'):
-                assert feedback(await app.runs.start(sid, [('user', text)]))[0].status == 'success'
+                assert feedback(await app.host.runs.start(sid, [('user', text)]))[0].status == 'success'
                 with pytest.raises(ToolException, match='memory_scope_mismatch'):
-                    await original(app.memory, scope=captured[-1], request={'action': 'list'})
+                    await original(app.host.memory, scope=captured[-1], request={'action': 'list'})
             assert len(captured) == 2 and captured[0].identity.run_id != captured[1].identity.run_id
     asyncio.run(scenario())

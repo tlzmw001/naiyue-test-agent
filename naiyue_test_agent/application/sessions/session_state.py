@@ -5,10 +5,12 @@ from dataclasses import dataclass, field
 from threading import Lock
 from _thread import LockType
 from naiyue_test_agent.execution_roots import ExecutionRoot
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from naiyue_test_agent.tools.background_tasks import BackgroundNoticeSnapshot
+    from naiyue_test_agent.contracts.environment import FileSystemPort
+    from naiyue_test_agent.contracts.process import ProcessPort
 
 from naiyue_test_agent.application.observability.run_events import RunObservation
 from naiyue_test_agent.contracts.replies import QueuedInput
@@ -28,6 +30,9 @@ class SessionState:
     pending_tool_approval: dict | None = None
     pending_turn: dict | None = None
     manual_review_required: bool = False
+    last_execution_path: str | None = None
+    execution_binding: Literal['local', 'project_local','sandbox'] | None = None
+    execution_setup: dict | None = None
 
     @property
     def execution_path(self):
@@ -49,10 +54,14 @@ class ActiveRun:
     controls_open: bool = True
     steering_open: bool = False
     stop_requested: bool = False
+    relocation_from: str | None = None
     steering_queue: deque[QueuedInput] = field(default_factory=deque)
     follow_up_queue: deque[QueuedInput] = field(default_factory=deque)
     subagent_instances: dict[str, dict] = field(default_factory=dict)
     subagent_calls: set[str] = field(default_factory=set)
+    processes: 'ProcessPort | None' = None
+    files: 'FileSystemPort | None' = None
+    task_queries: object = None
 
 
 @dataclass

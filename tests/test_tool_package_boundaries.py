@@ -75,7 +75,7 @@ def test_bash_passes_the_original_context_control_to_the_runner(monkeypatch, tmp
     monkeypatch.setattr(HostProcessRunner, 'run', run)
     from naiyue_test_agent.tools.permissions import execution_environment
     permit = {'call_id': 'call', 'session_id': 's', 'agent_path': 'root',
-              'subject': {'workspace': str(tmp_path), 'execution_environment': execution_environment()}}
+              'subject': {'workspace': str(tmp_path), 'execution_environment': execution_environment(typed_context(identity=RunIdentity(None, execution_root=ExecutionRoot(tmp_path))))}}
     runtime = SimpleNamespace(tool_call_id='call', context=typed_context(identity=RunIdentity(session_id='s', execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None), authorization=ToolAuthorization(permit=permit), archive_root=tmp_path.parent / (tmp_path.name + '-archive'), control=control))
     result = bash_module.create_session_bash_tool().tool.func('echo ok', runtime, timeout=7)
     assert seen == [('echo ok', tmp_path, 7, control)]

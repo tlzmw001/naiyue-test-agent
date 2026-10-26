@@ -71,7 +71,9 @@ class AgentSession:
                         child['parent_run_id'], child['root_run_id'])
                     publisher, names = child.get('publisher_view'), child['tool_names']
                     live = child['phase'] == 'execute' and not child['settled']
-                if (live and identity == expected and identity.project_id is not None
+                bound=(run.files is None or scope.environment==run.files.environment and
+                    (run.files.environment.kind!='sandbox' or scope.capabilities.files is run.files))
+                if (live and identity == expected and bound
                         and publisher is not None and scope.observation.publisher is publisher and 'memory' in names):
                     return run.run_id
         raise ToolException('memory_scope_mismatch: the calling session or role is unavailable.')
@@ -90,6 +92,9 @@ class AgentSession:
             return {'thread_id': row.thread_id, 'model_id': row.model_id,
                 'workspace_root': row.execution_path, 'project_id': row.project_id,
                 'execution_root': row.execution_root, 'active_tool_names': row.active_tool_names,
+                'last_execution_path': row.last_execution_path,
+                'execution_binding': row.execution_binding,
+                'execution_setup':deepcopy(row.execution_setup),
                 'busy': (self._runtime.run is not None), 'pending_approval': row.pending_tool_approval is not None,
                 'manual_review_required': row.manual_review_required}
 

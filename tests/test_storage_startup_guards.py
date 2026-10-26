@@ -7,7 +7,7 @@ import pytest
 
 from naiyue_test_agent.storage.project_store import ProjectStore
 
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.workspaces import prepare_workspace
 from tests.storage_backup_fixture import closed_store
 

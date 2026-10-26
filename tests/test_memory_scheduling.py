@@ -5,8 +5,8 @@ import asyncio
 import pytest
 
 from naiyue_test_agent.application.memory.memory_jobs import MemoryJobs
-from naiyue_test_agent.application.memory import memory_overview_store as store
-from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
+from naiyue_test_agent.storage.memory_sql import memory_overview_store as store
+from naiyue_test_agent.contracts.memory import MemoryReadError
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.model_access import ModelCatalog
 from test_memory_jobs import jobs

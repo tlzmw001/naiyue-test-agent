@@ -67,10 +67,10 @@ async def test_truncated_call_gets_error_result_then_model_can_reissue(monkeypat
         Path('synthetic.json'), tools=[ToolSpec(write_probe, write_probe.args_schema, permissions=ToolPermission(default='allow'))],
         system_prompt='', response_format=None,
     )
-    session_id = await app.sessions.create('A')
+    session_id = await app.host.sessions.create('A')
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        result = await app.runs.start(session_id, [('user', 'write a probe value')])
+        result = await app.host.runs.start(session_id, [('user', 'write a probe value')])
 
     messages = result['messages']
     tool_results = [message for message in messages if isinstance(message, ToolMessage)]
@@ -118,7 +118,7 @@ async def test_every_call_in_one_truncated_response_is_rejected(monkeypatch):
         Path('synthetic.json'), tools=[ToolSpec(write_probe, write_probe.args_schema, permissions=ToolPermission(default='allow'))],
         system_prompt='', response_format=None,
     )
-    result = await app.runs.start(await app.sessions.create('A'), [('user', 'probe')])
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'probe')])
 
     tool_results = [item for item in result['messages'] if isinstance(item, ToolMessage)]
     assert executed == []
@@ -152,7 +152,7 @@ async def test_claude_context_window_truncation_rejects_tool_through_application
         Path('synthetic.json'), tools=[ToolSpec(write_probe, write_probe.args_schema, permissions=ToolPermission(default='allow'))],
         system_prompt='', response_format=None,
     )
-    result = await app.runs.start(await app.sessions.create('A'), [('user', 'probe')])
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'probe')])
 
     tool_results = [item for item in result['messages'] if isinstance(item, ToolMessage)]
     assert executed == []

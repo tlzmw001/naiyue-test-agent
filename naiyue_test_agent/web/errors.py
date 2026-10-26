@@ -3,9 +3,10 @@
 from naiyue_test_agent.application import (
     RunCapacityExceededError, SessionBusyError, SessionManualReviewRequiredError, SessionPendingApprovalError,
 )
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelConfigError
 from naiyue_test_agent.execution_roots import ExecutionRootUnavailable
+from naiyue_test_agent.application.errors import SessionApprovalExpiredError
 
 
 class WebError(Exception):
@@ -15,6 +16,13 @@ class WebError(Exception):
 
 
 def public_error(error):
+    from naiyue_test_agent.contracts.projects import ProjectError
+    if isinstance(error,ProjectError):return WebError(error.code,404 if error.code in ('project_not_found','project_not_open') else 409)
+    from naiyue_test_agent.contracts.sandbox import SandboxError
+    from naiyue_test_agent.contracts.git_inputs import GitInputError
+    from naiyue_test_agent.contracts.git_delivery import GitDeliveryError
+    if isinstance(error,(SandboxError,GitInputError,GitDeliveryError)):
+        return WebError(error.code)
     if isinstance(error, WebError):
         return error
     if isinstance(error, ExecutionRootUnavailable):
@@ -25,6 +33,8 @@ def public_error(error):
         return WebError('run_capacity_exceeded')
     if isinstance(error, SessionManualReviewRequiredError):
         return WebError('manual_review_required')
+    if isinstance(error, SessionApprovalExpiredError):
+        return WebError('approval_expired')
     if isinstance(error, SessionPendingApprovalError):
         return WebError('approval_required')
     if isinstance(error, ModelConfigError):
@@ -35,7 +45,7 @@ def public_error(error):
         code = error.args[0] if error.args else ''
         if code in ('session_not_found', 'history_message_not_found'):
             return WebError(code, 404)
-        return WebError(code if code in ('session_recovery_blocked', 'session_background_tasks_active', 'workspace_mismatch',
+        return WebError(code if code in ('storage_in_use', 'session_recovery_blocked', 'session_background_tasks_active','session_environment_in_use', 'workspace_mismatch',
             'checkpoint_mismatch', 'session_save_unconfirmed', 'approval_restore_unavailable',
             'session_delete_unconfirmed', 'history_cursor_stale', 'history_invalid_offset') else
             'session_unavailable')

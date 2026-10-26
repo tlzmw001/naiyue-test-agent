@@ -9,11 +9,12 @@ import threading
 import pytest
 from pydantic import ValidationError
 
-from naiyue_test_agent.application.memory import memory_lexical, memory_schema, memory_lifecycle_schema
+from naiyue_test_agent.storage.memory_sql import lexical as memory_lexical
+from naiyue_test_agent.storage.memory_sql import memory_schema, memory_lifecycle_schema
 from naiyue_test_agent.application.memory.memory_access import MemoryAccess
 from naiyue_test_agent.storage.database import Database
 from naiyue_test_agent.storage.personal_database import APPLICATION_ID
-from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
+from naiyue_test_agent.contracts.memory import MemoryReadError
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.tools.memory import MemoryInput
 from test_memory_lifecycle import memory, storage_memory, source, proposal, write
@@ -59,7 +60,7 @@ def test_upgrade_failure_rolls_back_original_and_preserves_backup(tmp_path,monke
 
 
 def test_backup_failure_prevents_upgrade(tmp_path,monkeypatch):
-    from naiyue_test_agent.application.memory import memory_personal_upgrade
+    from naiyue_test_agent.storage.memory_sql import memory_personal_upgrade
     path=tmp_path/'memory.sqlite';format1(path)
     def fail(*args):raise OSError('private snapshot error')
     monkeypatch.setattr(memory_personal_upgrade,'backup_format1',fail)
@@ -228,7 +229,7 @@ def test_personal_stale_source_preserves_all_projections_and_can_retry(memory, a
     ref = source(access, sid, text='以后测试使用.venv运行pytest')
     initial = MemoryInput(action='record', scope='personal', proposal=proposal(), sources=[ref]).model_dump(mode='json')
     saved = access.query(sid, project_id, initial, now=1000.)['item']
-    target = access._personal
+    target = access._personal_store.database
     assert target is not project and target.connection is not project.connection
     assert target.path == root / 'data/personal/memory.sqlite' and target.path != project.path
 
@@ -276,7 +277,7 @@ def test_personal_mid_write_failure_rolls_back_every_projection_and_can_retry(me
     ref = source(access, sid, text='以后测试使用.venv运行pytest')
     initial = MemoryInput(action='record', scope='personal', proposal=proposal(), sources=[ref]).model_dump(mode='json')
     saved = access.query(sid, project_id, initial, now=1000.)['item']
-    target = access._personal
+    target = access._personal_store.database
     assert target is not project and target.connection is not project.connection
     assert target.path == root / 'data/personal/memory.sqlite' and target.path != project.path
     before = memory_rows(target)

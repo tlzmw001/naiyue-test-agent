@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from native_application_helpers import async_test, build_application
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+from scripts.component_fixtures import open_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import create_subagent_tool
 from naiyue_test_agent.settings import AppSettings
@@ -33,8 +33,8 @@ async def test_auto_runs_once_before_pause_with_original_human_input(monkeypatch
     app = await build_application('unused', tools=[create_subagent_tool(), definition(calls=effects, approved=True)],
         initial_active_tools=['subagent'], system_prompt='', response_format=None, settings=settings)
     queue = approval_notifications(monkeypatch, app)
-    sid = await app.sessions.create('A')
-    task = asyncio.create_task(app.runs.start(sid, [('user', 'ORIGINAL_HUMAN_REQUEST')]))
+    sid = await app.host.sessions.create('A')
+    task = asyncio.create_task(app.host.runs.start(sid, [('user', 'ORIGINAL_HUMAN_REQUEST')]))
     try:
         batch = await next_approval(app, sid, queue)
         assert effects == [] and len(fast.seen) == len(detail.seen) == 1
@@ -55,16 +55,16 @@ async def test_sqlite_child_approval_resumes_original_thread_and_parent_saves_re
     root = StreamingToolModel(replies=[call('subagent', {'agent': 'tester', 'task': 'check'}, 'delegate'),
                                        AIMessage(content='root done')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
-    async with open_async_persistent_application('unused', database_path=tmp_path / 'state.sqlite',
+    async with open_component_application('unused', database_path=tmp_path / 'state.sqlite',
             tools=[create_subagent_tool(), definition(calls=effects, approved=True)], initial_active_tools=['subagent'],
             system_prompt='', response_format=None, settings=AppSettings(subagents=(role(max_model_calls=2),))) as app:
         queue = approval_notifications(monkeypatch, app)
         instances = record_instances(monkeypatch, app)
-        sid = await app.sessions.create('A')
-        task = asyncio.create_task(app.runs.start(sid, [('user', 'run')]))
+        sid = await app.host.sessions.create('A')
+        task = asyncio.create_task(app.host.runs.start(sid, [('user', 'run')]))
         try:
             batch = await next_approval(app, sid, queue)
-            graph = app.sessions._sessions._subagents['tester']['agent']
+            graph = app.host.sessions._sessions._subagents['tester']['agent']
             config = {'configurable': {'thread_id': instances[0]['child_thread_id']}}
             saved = await graph.aget_state(config)
             # Official after_model counting runs after the earlier HITL node;
@@ -78,7 +78,7 @@ async def test_sqlite_child_approval_resumes_original_thread_and_parent_saves_re
             assert [m.content for m in saved.values['messages']] == ['check', '', 'once', 'child report']
             assert effects == [('probe', 'once')] and len(instances) == 1
             assert json.loads(next(m for m in result['messages'] if isinstance(m, ToolMessage)).content)['report'] == 'child report'
-            assert len(await app.sessions.list()) == 1 and (await app.sessions.list())[0]['state'] == 'ready'
+            assert len(await app.host.sessions.list()) == 1 and (await app.host.sessions.list())[0]['state'] == 'ready'
         finally:
             await cancel_run(task)
 
@@ -89,29 +89,29 @@ async def test_external_cancel_invalidates_pending_and_releases_all_owned_waiter
     effects = []
     app, _ = await delegated_app(monkeypatch, child, tools=[definition(calls=effects, approved=True)])
     queue = approval_notifications(monkeypatch, app)
-    sid = await app.sessions.create('A')
-    task = asyncio.create_task(app.runs.start(sid, [('user', 'run')]))
+    sid = await app.host.sessions.create('A')
+    task = asyncio.create_task(app.host.runs.start(sid, [('user', 'run')]))
     try:
         batch = await next_approval(app, sid, queue)
-        instance, = app.sessions._sessions._sessions[sid]._runtime.run.subagent_instances.values()
+        instance, = app.host.sessions._sessions._sessions[sid]._runtime.run.subagent_instances.values()
         pending, driver = instance['approval'], instance['driver']
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, 5)
         assert pending.status == 'invalidated' and pending.future.result() == ([], None) and driver.done()
         assert instance['control'].reason == 'failure' and instance['status'] == 'stopped'
-        assert effects == [] and all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.sessions._sessions._sessions.values())
-        assert app.runs.pending_subagents(sid) == [] and not app.sessions._sessions.require(sid).describe_session()['busy']
+        assert effects == [] and all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.host.sessions._sessions._sessions.values())
+        assert app.host.runs.pending_subagents(sid) == [] and not app.host.sessions._sessions.require(sid).describe_session()['busy']
         with pytest.raises(ValueError):
             await submit(app, sid, batch)
     finally:
         await cancel_run(task)
 
 
-def test_cli_bridge_submits_live_child_without_joining_root_worker(monkeypatch):
+def test_cli_protocol_submits_live_child_without_joining_root_worker(monkeypatch, tmp_path):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
-    from naiyue_test_agent.cli.cli_async import build_local_application
+    from terminal_service_helpers import terminal_runtime
     from naiyue_test_agent.application.sessions.session_approval import ApprovalBook
     registered = Event()
     child = ChildModel(replies=[call('probe', {'value': 'once'}, 'inner'), AIMessage(content='report')])
@@ -124,30 +124,33 @@ def test_cli_bridge_submits_live_child_without_joining_root_worker(monkeypatch):
         registered.set()
         return pending
     monkeypatch.setattr(ApprovalBook, 'register_live_approval', note)
-    cli = build_local_application('unused', tools=[create_subagent_tool(), definition(approved=True)],
-        initial_active_tools=['subagent'], system_prompt='', response_format=None,
-        settings=AppSettings(subagents=(role(),)))
-    gate = cli._submit(asyncio.Event)
+    manager = terminal_runtime(tmp_path, tools=[create_subagent_tool(), definition(approved=True)],
+        initial_active_tools=['subagent'], settings=AppSettings(subagents=(role(),)))
+    cli, probe = manager.__enter__()
+
+    gate = probe.inspect(lambda _: asyncio.Event())
     async def hold_root_final(_messages):
         if len(root.seen) == 1:
             await gate.wait()
     root.on_request = hold_root_final
     try:
-        sid = cli.call(lambda api: api.sessions.create('A'))
+        sid = cli.request('POST', '/sessions', json={'model_id': 'A'})['session_id']
         with ThreadPoolExecutor(max_workers=2) as pool:
-            run = pool.submit(cli.call, lambda api: api.runs.start(sid, [('user', 'run')]))
+            run = pool.submit(cli.run, sid, 'run')
             try:
                 assert registered.wait(5)
-                batch, = cli.call(lambda api: api.runs.pending_subagents(sid))
+                batch, = cli.pending_approvals(sid)
                 decision = [{'approval_id': batch['items'][0]['approval_id'], 'decision': 'approve'}]
-                delivery = pool.submit(cli.call, lambda api: api.runs.submit_subagent_approval(sid,
-                    approval_batch_id=batch['approval_batch_id'], decisions=decision, origin_run_id=batch['origin_run_id']))
-                assert delivery.result(timeout=5) == {'accepted': True, 'run_id': batch['origin_run_id']}
+                delivery = pool.submit(cli.approve, sid, dict(approval_batch_id=batch['approval_batch_id'],
+                    decisions=decision, origin_run_id=batch['origin_run_id']))
+                receipt = delivery.result(timeout=5)
+                assert receipt['accepted'] is True and receipt['run_id'] == batch['origin_run_id']
+                assert receipt['kind'] == 'live_child'
                 assert not run.done()
-                cli._loop.call_soon_threadsafe(gate.set)
-                assert run.result(timeout=5)['messages'][-1].content == 'done'
+                probe.loop.call_soon_threadsafe(gate.set)
+                assert run.result(timeout=5)['messages'][-1]['content'] == 'done'
             finally:
-                cli._loop.call_soon_threadsafe(gate.set)
-                cli._submit(lambda: [task.cancel() for task in tuple(cli._app._lifetime._tasks)])
+                probe.loop.call_soon_threadsafe(gate.set)
+                probe.inspect(lambda host: [task.cancel() for task in tuple(host.runs._owner._tasks)])
     finally:
-        cli.close()
+        manager.__exit__(None, None, None)

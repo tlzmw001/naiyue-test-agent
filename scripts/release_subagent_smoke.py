@@ -58,7 +58,10 @@ async def subagent_scenario(root, Model):
     """Only pass a disposable root; every write runs through the real tool graph."""
     from langchain_core.messages import AIMessage
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+    if __package__:
+        from .release_application import open_smoke_host
+    else:
+        from release_application import open_smoke_host
     from naiyue_test_agent.agent_runtime.tool_execution.permissions import AutoPermissionReviewer
     from naiyue_test_agent.model_access import ModelCatalog
     from naiyue_test_agent.settings import AppSettings
@@ -76,7 +79,7 @@ async def subagent_scenario(root, Model):
     @asynccontextmanager
     async def opened():
         with patch.object(application, 'load_model_catalog', lambda _: ModelCatalog('root', {'root': parent, 'child': child})):
-            async with open_async_persistent_application('unused', database_path=directory / 'state.sqlite',
+            async with open_smoke_host('unused', workspace=workspace, data_dir=directory / 'service-data', database_path=directory / 'state.sqlite',
                     tools=tools, initial_active_tools=['subagent'], system_prompt='', response_format=None, settings=settings) as app:
                 yield app
 

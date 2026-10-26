@@ -8,7 +8,10 @@ import json
 from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+if __package__:
+    from .component_fixtures import open_component_application
+else:
+    from component_fixtures import open_component_application
 from naiyue_test_agent.model_access import load_model_catalog, COMPACTION_SUMMARY_OUTPUT_METADATA_KEY
 from naiyue_test_agent.model_access.messages import content_text
 from naiyue_test_agent.settings import AppSettings
@@ -88,12 +91,12 @@ class CaseEnvironment:
         specs = [replace(spec, permissions=FixturePermission(spec.tool.name, spec.permissions, self.root))
                  for spec in create_builtin_tools(settings.tools, process_settings=settings.process, shell_task_settings=settings.shell_tasks, progress_settings=settings.progress, retry_settings=settings.tool_retry) if spec.tool.name in names]
         try:
-            async with open_async_persistent_application(self.config, database_path=self.root / database,
+            async with open_component_application(self.config, database_path=self.root / database,
                     tools=specs, initial_active_tools=initial, settings=settings,
                     system_prompt='Follow the synthetic acceptance task exactly. Use only requested tools. '
                                   'After all requested results, reply with only the requested answer. '
                                   'A refused or failed call must not be retried.', response_format=None) as app:
-                app.observability.subscribe(self.events.append)
+                app.host.observability.subscribe(self.events.append)
                 yield app
         finally:
             application.load_model_catalog = previous
@@ -103,7 +106,7 @@ class CaseEnvironment:
     async def session(self, app):
         workspace = self.root / 'work'
         workspace.mkdir(exist_ok=True)
-        return await app.sessions.create_workspace(self.model_id, workspace)
+        return await app.host.sessions.create_workspace(self.model_id, workspace)
 
     def evidence(self):
         # Usage is vendor reported, deliberately separate from local context estimates.
@@ -133,11 +136,11 @@ class CaseEnvironment:
 
 
 async def run_turn(app, sid, prompt):
-    result = await app.runs.start(sid, [('user', prompt)])
+    result = await app.host.runs.start(sid, [('user', prompt)])
     require(not result.get('approval_requests'), 'unexpected_approval')
     require(not result.get('run_stopped'), 'unexpected_stop')
-    rows = await app.sessions.list()
+    rows = await app.host.sessions.list()
     row = next(row for row in rows if row['session_id'] == sid)
     require(row['state'] == 'ready' and row['last_run_status'] == 'completed', 'saved_completed')
-    require(await app.history.messages(sid) == result['messages'], 'saved_messages')
+    require(await app.host.history.messages(sid) == result['messages'], 'saved_messages')
     return result['messages']

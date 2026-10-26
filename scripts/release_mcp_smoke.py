@@ -50,8 +50,11 @@ def _write_config(path, server):
 async def mcp_scenario(root, model_type):
     from langchain_core.messages import AIMessage, ToolMessage
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.async_application import build_async_local_application
-    from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+    from naiyue_test_agent.application.service_application import open_service_application
+    if __package__:
+        from .release_application import open_smoke_host
+    else:
+        from release_application import open_smoke_host
     from naiyue_test_agent.model_access import ModelCatalog
     from naiyue_test_agent.settings import AppSettings
     from naiyue_test_agent.tools import create_subagent_tool, SubAgentSpec
@@ -73,15 +76,13 @@ async def mcp_scenario(root, model_type):
     disabled_model = model_type(replies=[AIMessage(content='disabled-ok')])
     with patch.object(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': disabled_model})), \
             patch('naiyue_test_agent.mcp_client.connections.open_connection', side_effect=AssertionError('disabled MCP IO')):
-        app = await build_async_local_application('unused', tools=[], system_prompt='', response_format=None,
-                                                  settings=AppSettings())
-        try:
+        async with open_service_application('unused', tools=[], system_prompt='', response_format=None,
+                settings=AppSettings.model_validate({'storage': {'data_dir': root / 'disabled-data'}})) as owner:
+            app = await owner.temporary.open('disabled-check')
             sid = await app.sessions.create('A')
             result = await app.runs.start(sid, [('user', 'disabled')])
             assert result['messages'][-1].content == 'disabled-ok' and not records()
             assert not app.sessions._sessions.mcp_resources._idle_handles
-        finally:
-            await app.aclose()
 
     server = {'enabled': True, 'transport': 'stdio', 'command': sys.executable,
               'args': [str(fixture), '--audit', str(audit), '--mode', 'tools'], 'allowed_tools': ['echo']}
@@ -103,14 +104,16 @@ async def mcp_scenario(root, model_type):
     model = model_type(replies=replies)
     child = model_type(replies=[invoke(NAME, {}, 'child-one'), invoke(NAME, {}, 'child-two'), AIMessage(content='child done')])
     catalog = ModelCatalog('A', {'A': model, 'B': child})
-    options = dict(database_path=root / 'mcp.sqlite', tools=[create_subagent_tool()], initial_active_tools=[],
+    workspace = root / 'mcp-workspace'
+    workspace.mkdir()
+    options = dict(database_path=root / 'mcp.sqlite', workspace=workspace, data_dir=root / 'mcp-data', tools=[create_subagent_tool()], initial_active_tools=[],
                    system_prompt='', response_format=None)
     with patch.object(application, 'load_model_catalog', lambda _: catalog):
-        async with open_async_persistent_application('unused', settings=AppSettings(), **options) as app:
+        async with open_smoke_host('unused', settings=AppSettings(), **options) as app:
             resources = app.sessions._sessions.mcp_resources
             now = [100.0]
             resources._clock = lambda: now[0]
-            sid = await app.sessions.create_workspace('A', root)
+            sid = await app.sessions.create_workspace('A', workspace)
             report = await app.mcp.refresh(config)
             assert report['servers'][0]['status'] == 'enabled' and app.sessions.active_tools(sid) == () and not calls()
             role = SubAgentSpec('tester', 'Installed MCP check', 'Use explicitly selected tools', (NAME,), model_id='B')
@@ -162,7 +165,7 @@ async def mcp_scenario(root, model_type):
             assert calls()[-1]['pid'] != calls()[-2]['pid']
         seen = len(model.seen) + len(child.seen)
         reopened = AppSettings.model_validate({'mcp': {'servers': {'local': server}}})
-        async with open_async_persistent_application('unused', settings=reopened, **options) as app:
+        async with open_smoke_host('unused', settings=reopened, **options) as app:
             history = await app.history.session(sid)
             assert any(message.content == 'after ttl' for message in history['messages'])
             assert len(calls()) == 8 and len(model.seen) + len(child.seen) == seen

@@ -34,7 +34,7 @@ it('shows the bound workspace on an empty homepage through the authenticated ser
   expect(await screen.findByText('中文项目')).toBeTruthy();
   expect(screen.getByTitle(info.workspace_root).textContent).toBe('中文项目');
   expect(fetcher).toHaveBeenCalledTimes(1);
-  expect(fetcher.mock.calls[0][0]).toBe('/api/service');
+  expect(fetcher.mock.calls[0][0]).toBe('/api/v1/scopes/chats/service');
   expect(fetcher.mock.calls[0][1]).toMatchObject({ method: 'GET', headers: { Authorization: 'Bearer synthetic-workspace-access' } });
   expect(api.prepare).not.toHaveBeenCalled();
   expect(api.session).not.toHaveBeenCalled();

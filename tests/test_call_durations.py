@@ -197,7 +197,7 @@ async def test_tool_clock_failure_preserves_original_business_error(monkeypatch,
 @async_test
 async def test_root_duration_waits_for_required_save_and_preserves_failures(monkeypatch, tmp_path, model_error, save_error):
     from naiyue_test_agent.contracts import timing
-    from naiyue_test_agent.application.errors import SessionPersistenceError
+    from naiyue_test_agent.storage.errors import SessionPersistenceError
     from test_persistent_sessions import build
     from test_async_application import StreamingToolModel
     tick, events = [0], []
@@ -206,9 +206,9 @@ async def test_root_duration_waits_for_required_save_and_preserves_failures(monk
     model = StreamingToolModel(replies=[primary if model_error else AIMessage(content='done')])
     entered, release = asyncio.Event(), asyncio.Event()
     async with build(monkeypatch, tmp_path / 'state.sqlite', model) as app:
-        sid = await app.sessions.create('A')
-        app.observability.subscribe(events.append)
-        original = app.sessions._persistence.afinish
+        sid = await app.host.sessions.create('A')
+        app.host.observability.subscribe(events.append)
+        original = app.host.sessions._persistence.afinish
         async def finish(*args):
             entered.set()
             await release.wait()
@@ -216,12 +216,12 @@ async def test_root_duration_waits_for_required_save_and_preserves_failures(monk
                 return await original(*args)
             finally:
                 tick[0] = 86_900_000
-        monkeypatch.setattr(app.sessions._persistence, 'afinish', finish)
+        monkeypatch.setattr(app.host.sessions._persistence, 'afinish', finish)
         if save_error:
             def fail_save(*args, **kwargs):
                 raise secondary
-            monkeypatch.setattr(app.sessions._persistence.storage.runs, 'finish_run', fail_save)
-        task = asyncio.create_task(app.runs.start(sid, [('user', 'task')]))
+            monkeypatch.setattr(app.host.sessions._persistence.storage.runs, 'finish_run', fail_save)
+        task = asyncio.create_task(app.host.runs.start(sid, [('user', 'task')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
             assert not task.done() and not any(e.event_type == 'run_finished' for e in events)
@@ -242,4 +242,4 @@ async def test_root_duration_waits_for_required_save_and_preserves_failures(monk
         end, = [e for e in events if e.event_type == 'run_finished']
         assert end.data.duration_ms == 86
         assert end.data.status == ('failed' if model_error or save_error else 'completed')
-        assert not app.sessions._sessions.require(sid).describe_session()['busy']
+        assert not app.host.sessions._sessions.require(sid).describe_session()['busy']

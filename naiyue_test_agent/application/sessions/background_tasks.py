@@ -21,6 +21,9 @@ from naiyue_test_agent.tools.processes import ProcessCleanupError
 from naiyue_test_agent.tools.background_tasks import BackgroundNoticeSnapshot
 from naiyue_test_agent.shell_task_settings import ShellTaskSettings
 from naiyue_test_agent.execution_roots import ExecutionRoot
+from naiyue_test_agent.contracts.environment import EnvironmentRef
+from naiyue_test_agent.execution.host_files import HostFileSystem
+from naiyue_test_agent.agent_runtime.async_utils import run_blocking
 
 
 logger = logging.getLogger(__name__)
@@ -49,9 +52,10 @@ class _Operation:
     request: object = field(repr=False)
     settings: object = field(repr=False)
     capture: ProcessCapture = field(repr=False)
+    execution_root: ExecutionRoot
+    environment: EnvironmentRef
     background: bool = True
     project_id: str | None = None
-    execution_root: ExecutionRoot | None = None
     execution_origin: float | None = None
     exited: bool = False
     outcome: object = field(default=None, repr=False)
@@ -104,27 +108,40 @@ class BackgroundProcessManager:
             'error_type': item.error_type}
 
     async def submit(self, *, session_id, workspace_root, archive_root, run_id, tool_call_id, agent_path,
-                     command, name, request, settings, runner, control, project_id=None, execution_root=None):
+                     command, name, request, settings, runner, control, execution_root: ExecutionRoot, environment: EnvironmentRef, project_id=None):
+        archive_root = await run_blocking(self._validate_binding, execution_root, project_id, workspace_root, environment, request, archive_root)
         item = self._register(session_id=session_id, workspace_root=workspace_root, archive_root=archive_root, run_id=run_id,
             tool_call_id=tool_call_id, agent_path=agent_path, command=command, name=name,
-            request=request, settings=settings, runner=runner, control=control, background=True, project_id=project_id, execution_root=execution_root)
+            request=request, settings=settings, runner=runner, control=control, background=True, project_id=project_id, execution_root=execution_root, environment=environment)
         return self._public(item)
 
+    @staticmethod
+    def _validate_binding(execution_root, project_id, workspace_root, environment, request, archive_root):
+        if request.stdin_fd is not None:
+            raise ToolException('Background tasks cannot borrow transport input.')
+        if (not isinstance(workspace_root, Path) or not workspace_root.is_absolute()
+                or not isinstance(execution_root, ExecutionRoot) or execution_root.path != workspace_root
+                or request.cwd != workspace_root):
+            raise ToolException('Background task scope is unavailable.')
+        from naiyue_test_agent.tools.permissions import require_execution_directory
+        from naiyue_test_agent.tools.output import require_archive_root
+        require_execution_directory(execution_root, project_id)
+        expected = HostFileSystem(execution_root, project_id).environment
+        if (not isinstance(environment, EnvironmentRef) or environment != expected
+                or request.execution_environment != environment.public()):
+            raise ToolException('Background task environment differs from its execution binding.')
+        return require_archive_root(archive_root, workspace_root)
+
     def _register(self, *, session_id, workspace_root, archive_root, run_id, tool_call_id, agent_path,
-                  command, name, request, settings, runner, control, background, project_id=None, execution_root=None):
+                  command, name, request, settings, runner, control, background, execution_root: ExecutionRoot, environment: EnvironmentRef, project_id=None):
         self._check_loop()
         if agent_path != 'root':
             raise ToolException('Only the root agent can start background commands.')
         if (not all(isinstance(value, str) and value for value in (session_id, run_id, tool_call_id))
                 or not isinstance(workspace_root, Path) or not workspace_root.is_absolute()
+                or not isinstance(execution_root, ExecutionRoot) or execution_root.path != workspace_root
                 or request.cwd != workspace_root):
             raise ToolException('Background task scope is unavailable.')
-        from naiyue_test_agent.tools.output import require_archive_root
-        from naiyue_test_agent.tools.permissions import require_execution_directory
-        if execution_root is not None and execution_root.path != workspace_root:
-            raise ToolException('execution_root_unavailable: wrong_project')
-        require_execution_directory(execution_root or ExecutionRoot(workspace_root), project_id)
-        archive_root = require_archive_root(archive_root, workspace_root)
         with self._lock:
             if self._closing or session_id in self._deleting or archive_root in self._cleaning:
                 raise ToolException('Background task admission is closed.')
@@ -135,13 +152,13 @@ class BackgroundProcessManager:
             if existing is not None:
                 if (existing.session_id != session_id or existing.request != request or existing.archive_root != archive_root
                         or existing.settings != settings or existing.name != name or existing.command != command
-                        or existing.project_id != project_id or existing.execution_root != execution_root):
+                        or existing.project_id != project_id or existing.execution_root != execution_root or existing.environment != environment):
                     raise ToolException('Background call identity conflicts with an existing operation.')
                 return existing
             frozen = deepcopy(request)
             frozen_settings = settings.model_copy(deep=True)
             item = _Operation(uuid4().hex, session_id, workspace_root, archive_root, run_id, tool_call_id,
-                name, command, frozen, frozen_settings, ProcessCapture(archive_root, frozen_settings, background=background), background=background, project_id=project_id, execution_root=execution_root)
+                name, command, frozen, frozen_settings, ProcessCapture(archive_root, frozen_settings, background=background), background=background, project_id=project_id, execution_root=execution_root, environment=environment)
             self._entries[item.task_id] = item
             self._calls[key] = item.task_id
             try:
@@ -154,9 +171,12 @@ class BackgroundProcessManager:
             # receipt is returned, only the application owns the process worker.
             return item
 
-    async def foreground(self, *, wait_seconds, background_limit, on_progress, **scope):
+    async def foreground(self, *, wait_seconds, background_limit, on_progress, execution_root: ExecutionRoot, environment: EnvironmentRef, **scope):
         """The waiting caller observes its run; the worker never owns that caller."""
+        scope.update(execution_root=execution_root, environment=environment)
         control = scope['control']
+        scope['archive_root'] = await run_blocking(self._validate_binding, scope['execution_root'], scope.get('project_id'),
+            scope['workspace_root'], scope['environment'], scope['request'], scope['archive_root'])
         item = self._register(**scope, background=False)
         if item.background:
             return self._public(item)

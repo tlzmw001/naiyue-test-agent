@@ -9,18 +9,23 @@ from .background_tasks import TaskQueryError
 
 
 class TaskQueries:
-    def __init__(self, shell, memory=None):
+    def __init__(self, shell, memory=None, *, others=()):
         self.shell = shell
         self.memory = memory
+        self.others = tuple(others)
+
+    @property
+    def owners(self):
+        return (self.shell,*((self.memory,) if self.memory is not None else ()),*self.others)
 
     async def list(self, *, session_id=None, workspace_root=None, limit=20, before=None):
         scope = dict(session_id=session_id, workspace_root=workspace_root)
-        if self.memory is None:
+        if len(self.owners)==1:
             return await self.shell.list(**scope, limit=limit, before=before)
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ToolException('Task list limit must be an integer from 1 to 100.')
         rows, summaries = [], []
-        for owner in (self.shell, self.memory):
+        for owner in self.owners:
             page = await owner.list(**scope, limit=100)
             summaries.append(page)
             rows.extend(page['items'])
@@ -42,17 +47,15 @@ class TaskQueries:
         return dict(summary, items=page, next_before=page[-1]['task_id'] if len(rows) > limit else None)
 
     async def output(self, task_id, *, session_id=None, workspace_root=None):
-        try:
-            return await self.shell.output(task_id, session_id=session_id, workspace_root=workspace_root)
-        except TaskQueryError as error:
-            if error.code != 'task_not_found' or self.memory is None:
-                raise
-        return await self.memory.output(task_id, session_id=session_id, workspace_root=workspace_root)
+        return await self._perform('output',task_id,session_id,workspace_root)
 
     async def stop(self, task_id, *, session_id=None, workspace_root=None):
-        try:
-            return await self.shell.stop(task_id, session_id=session_id, workspace_root=workspace_root)
-        except TaskQueryError as error:
-            if error.code != 'task_not_found' or self.memory is None:
-                raise
-        return await self.memory.stop(task_id, session_id=session_id, workspace_root=workspace_root)
+        return await self._perform('stop',task_id,session_id,workspace_root)
+
+    async def _perform(self,action,task_id,session_id,workspace_root):
+        for owner in self.owners:
+            try:
+                return await getattr(owner,action)(task_id,session_id=session_id,workspace_root=workspace_root)
+            except TaskQueryError as error:
+                if error.code!='task_not_found':raise
+        raise TaskQueryError('task_not_found','Task does not exist in this scope.')

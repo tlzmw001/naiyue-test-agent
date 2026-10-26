@@ -290,15 +290,15 @@ def create_session_edit_tool(*, settings: EditSettings | None = None, progress_s
         This tool cannot create a file or missing parent directories.
         """
         context = runtime.context
-        root = context.scope.identity.execution_path if isinstance(context, RuntimeContext) else None
-        if not isinstance(root, Path) or not root.is_absolute():
-            logger.warning('edit_failed phase=context error_type=MissingWorkspaceContext')
-            raise ToolException(EDIT_NO_WORKSPACE)
-        target = require_file_target(runtime, path, operation='write')
+        require_file_target(runtime, path, operation='write')
         progress = ToolProgress(runtime, progress_settings)
+        subject=context.authorization.permit['subject']
+        if context.scope.environment.kind=='sandbox':
+            from naiyue_test_agent.contracts.sandbox import operation_id
+            subject={**subject,'operation_id':operation_id(runtime)}
         try:
-            return _edit(root, str(target), edits, settings,
-                         subject=context.authorization.permit['subject'], control=context.scope.control, progress=progress)
+            return context.scope.capabilities.files.edit(subject, edits,
+                settings=settings, control=context.scope.control, progress=progress)
         finally:
             progress.flush()
 

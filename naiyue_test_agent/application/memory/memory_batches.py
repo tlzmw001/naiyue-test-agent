@@ -1,9 +1,7 @@
 """Project saved text into bounded batches; never trust model source metadata."""
 
 import json
-import logging
 import math
-import sqlite3
 from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -13,12 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from naiyue_test_agent.model_access.stop_reason import normalize_stop_reason
 from naiyue_test_agent.tools.memory import MemoryInput
 from naiyue_test_agent.tools.memory_writes import Kind, MemoryProposal
-from naiyue_test_agent.application.conversation import history_projection
-from .memory_queries import MemoryReadError
+from naiyue_test_agent.contracts.memory import MemoryReadError
 from .memory_sources import SECRET
-
-
-logger = logging.getLogger(__name__)
 
 
 def model_batch(batch):
@@ -35,30 +29,23 @@ def _tokens(value, model_view=False):
         model_batch(value) if model_view else value, ensure_ascii=False))])
 
 
-def _batch(connection, *, session_id, thread_id, conversation_revision, start, upper, token_budget, source_chars, model_view):
-    saved = connection.execute('SELECT thread_id,conversation_revision,project_id FROM naiyue_sessions WHERE session_id=?',
-        (session_id,)).fetchone()
-    binding = connection.execute('SELECT workspace_id FROM naiyue_workspace WHERE singleton=1').fetchone()
+def _batch(archive, *, session_id, thread_id, conversation_revision, start, upper, token_budget, source_chars, model_view):
+    saved = archive.parent(session_id)
+    binding = archive.binding()
     if saved is None or saved['thread_id'] != thread_id or saved['conversation_revision'] != conversation_revision:
         raise MemoryReadError('memory_source_changed')
-    if binding is None or saved['project_id'] is None or saved['project_id'] != binding[0]:
+    if binding is None or saved['project_id'] is None or saved['project_id'] != binding:
         raise MemoryReadError('memory_source_scope_mismatch')
-    head = connection.execute("SELECT history_version FROM naiyue_chat_sync WHERE session_id=? AND thread_id=? AND checkpoint_ns=''",
-        (session_id, thread_id)).fetchone()
+    history_version = archive.history_version(session_id, thread_id)
     position = [max(start[0], 1), start[1]]
     result = dict(sources=[], next_position=position, complete=position[0] > upper, skipped=[],
-        history_version=head['history_version'] if head else 0)
+        history_version=history_version)
     if _tokens(result, model_view) > token_budget:
         raise MemoryReadError('memory_batch_budget')
     row = None
     while position[0] <= upper:
-        sql = f"""SELECT {history_projection.FIELDS},m.occurred_at,
-            naiyue_visible_length({history_projection.VISIBLE_TEXT}) AS text_chars,
-            naiyue_memory_sensitive({history_projection.VISIBLE_TEXT}) AS sensitive
-            FROM naiyue_chat_messages m WHERE {history_projection.VISIBLE_WHERE}
-            AND m.sequence>=? AND m.sequence<=? ORDER BY m.sequence LIMIT 1"""
         if row is None or row['sequence'] != position[0]:
-            row = connection.execute(sql, (session_id, thread_id, position[0], upper)).fetchone()
+            row = archive.next_visible(session_id, thread_id, position[0], upper)
         if row is None:
             result.update(next_position=[upper + 1, 0], complete=True)
             if _tokens(result, model_view) > token_budget:
@@ -72,7 +59,7 @@ def _batch(connection, *, session_id, thread_id, conversation_revision, start, u
             or not math.isfinite(row['occurred_at']) else 'empty' if offset == total else None)
         content = ''
         if reason is None:
-            visible = history_projection.message(connection, session_id, thread_id, sequence,
+            visible = archive.visible(session_id, thread_id, sequence,
                 offset=offset, chars=source_chars)
             content = visible['content']
         source = dict(source_key=f'{sequence}:{offset}', session_id=session_id, thread_id=thread_id,
@@ -111,24 +98,17 @@ def _batch(connection, *, session_id, thread_id, conversation_revision, start, u
     return result
 
 
-def build_batch(connection, *, session_id, thread_id, conversation_revision, start, upper, token_budget, source_chars,
+def build_batch(memory_repo, *, session_id, thread_id, conversation_revision, start, upper, token_budget, source_chars,
         model_view=False):
     numbers = [conversation_revision, upper, token_budget, source_chars]
     if (not isinstance(start, (tuple, list)) or len(start) != 2
             or any(type(n) is not int or not 0 <= n <= 9223372036854775807 for n in [*start, *numbers])
             or token_budget == 0 or source_chars == 0 or start[0] == 0 and start[1] != 0):
         raise MemoryReadError('memory_batch_position_invalid')
-    try:
-        # Check the complete visible source before slicing: a secret may be in a later chunk.
-        # The callback returns only a boolean; raw message JSON/hidden fields never leave SQL.
-        connection.create_function('naiyue_memory_sensitive', 1,
-            lambda text: bool(SECRET.search(text)), deterministic=True)
-        return _batch(connection, session_id=session_id, thread_id=thread_id,
+    with memory_repo.batch_reader(SECRET) as archive:
+        return _batch(archive, session_id=session_id, thread_id=thread_id,
             conversation_revision=conversation_revision, start=start, upper=upper,
             token_budget=token_budget, source_chars=source_chars, model_view=model_view)
-    except sqlite3.Error as error:
-        logger.error('memory_batch_read_failed error_type=%s', type(error).__name__)
-        raise MemoryReadError('memory_batch_read_failed') from error
 
 
 class _Overview(BaseModel):

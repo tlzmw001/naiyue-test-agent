@@ -170,7 +170,7 @@ def test_sources_only_quote_current_visible_archive_and_foreign_reference_is_met
     assert not sources[1]['available'] and 'quote' not in sources[1]
     assert 'HIDDEN-SOURCE' not in json.dumps(result,ensure_ascii=False)
     query(memory,action='list',scope='personal')
-    personal = access._personal.connection
+    personal = access._personal_store.database.connection
     other = seed(personal,2,scope='personal')
     add_source(personal,other,str(uuid4()),quote='FOREIGN-SECRET')
     source, = query(memory,action='read',scope='personal',memory_id=other)['items'][0]['sources']

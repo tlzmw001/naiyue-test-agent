@@ -23,7 +23,10 @@ from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import BaseModel
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_application import build_async_local_application
+if __package__:
+    from .component_fixtures import build_component_application
+else:
+    from component_fixtures import build_component_application
 from naiyue_test_agent.tools.permissions import PermissionMechanismError
 from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.model_access import ModelCatalog
@@ -101,14 +104,14 @@ class StateProbe:
 
 async def make_app(model, *, resources, tools=None, workspace=None, response_format=None):
     with patch.object(application, 'load_model_catalog', return_value=ModelCatalog('A', {'A': model})):
-        app = await build_async_local_application(
+        app = await build_component_application(
             'synthetic.json', tools=tools or [], system_prompt='', response_format=response_format,
         )
     resources.push_async_callback(app.aclose)
-    probe = StateProbe(app.runs._agent)
-    app.runs._agent = probe
-    app.observability.subscribe(probe.record_event)
-    session = await app.sessions.create_workspace('A', workspace) if workspace else await app.sessions.create('A')
+    probe = StateProbe(app.host.runs._agent)
+    app.host.runs._agent = probe
+    app.host.observability.subscribe(probe.record_event)
+    session = await app.host.sessions.create_workspace('A', workspace) if workspace else await app.host.sessions.create('A')
     return app, session, probe
 
 
@@ -136,7 +139,7 @@ async def normal_and_followup(resources):
     ], response_metadata={'finish_reason': 'tool_calls'}),
         AIMessage(content='answer', response_metadata={'finish_reason': 'stop'})])
     app, session, probe = await make_app(model, tools=[ToolSpec(probe_value, probe_value.args_schema, permissions=ToolPermission(default='allow'))], resources=resources)
-    result = await app.runs.start(session, [('user', 'question')])
+    result = await app.host.runs.start(session, [('user', 'question')])
     assert [row['role'] for row in probe.values[-1]] == ['human', 'ai', 'tool', 'ai']
     assert probe.returned_ai_counts == [0, 1]
     assert len({row['id'] for row in probe.values[-1]}) == 4
@@ -151,12 +154,12 @@ async def normal_and_followup(resources):
             nonlocal queued
             if not queued:
                 queued = True
-                holder['app'].runs.follow_up(holder['session'], 'follow question')
+                holder['app'].host.runs.follow_up(holder['session'], 'follow question')
             return super()._generate(*args, **kwargs)
 
     app, session, probe = await make_app(QueueingModel(responses=[AIMessage(content='first'), AIMessage(content='second')]), resources=resources)
     holder.update(app=app, session=session)
-    result = await app.runs.start(session, [('user', 'initial')])
+    result = await app.host.runs.start(session, [('user', 'initial')])
     assert [m.type for m in result['messages']] == ['human', 'ai', 'human', 'ai']
     assert probe.task_starts.count('model') == 2
     assert any(name.endswith('inject_at_natural_end.after_agent') for name in probe.update_nodes)
@@ -171,10 +174,10 @@ async def approval_and_failure(root, resources):
     app, session, probe = await make_app(Model(responses=[AIMessage(content='', tool_calls=[
         {'name': 'read', 'args': {'path': str(outside)}, 'id': 'approval-1'},
     ]), AIMessage(content='handled')]), tools=[create_session_read_tool()], workspace=workspace, resources=resources)
-    paused = await app.runs.start(session, [('user', 'read outside')])
+    paused = await app.host.runs.start(session, [('user', 'read outside')])
     assert paused['approval_requests'] and '__interrupt__' in paused
     pending_ai_id = probe.values[-1][-1]['id']
-    result = await app.runs.resume_approval(session, ['reject'])
+    result = await app.host.runs.resume_approval(session, ['reject'])
     assert probe.runs[1][0][-1]['id'] == pending_ai_id
     assert [m.type for m in result['messages']] == ['human', 'ai', 'tool', 'ai']
     assert any(row['tool_result'] == 'approval-1' for rows in probe.runs[1] for row in rows)
@@ -188,7 +191,7 @@ async def approval_and_failure(root, resources):
 
     app, session, probe = await make_app(Failing(responses=[AIMessage(content='unused')]), resources=resources)
     try:
-        await app.runs.start(session, [('user', 'question')])
+        await app.host.runs.start(session, [('user', 'question')])
     except RuntimeError as error:
         assert error is failure
     else:
@@ -206,9 +209,9 @@ async def steering_stop_and_partial_failure(resources):
         def controlled_tool() -> str:
             """Submit one controlled run signal during tool execution."""
             if action == 'steer':
-                holder['app'].runs.steer(holder['session'], 'adjust question')
+                holder['app'].host.runs.steer(holder['session'], 'adjust question')
             else:
-                holder['app'].runs.stop(holder['session'])
+                holder['app'].host.runs.stop(holder['session'])
             return 'value'
 
         model = Model(responses=[AIMessage(content='', tool_calls=[
@@ -216,7 +219,7 @@ async def steering_stop_and_partial_failure(resources):
         ]), AIMessage(content='answer')])
         app, session, probe = await make_app(model, tools=[ToolSpec(controlled_tool, controlled_tool.args_schema, permissions=ToolPermission(default='allow'))], resources=resources)
         holder.update(app=app, session=session)
-        result = await app.runs.start(session, [('user', 'question')])
+        result = await app.host.runs.start(session, [('user', 'question')])
         expected = ['human', 'ai', 'tool', 'human', 'ai'] if action == 'steer' else ['human', 'ai', 'tool']
         assert [m.type for m in result['messages']] == expected
         assert probe.task_starts.count('model') == (2 if action == 'steer' else 1)
@@ -243,12 +246,12 @@ async def steering_stop_and_partial_failure(resources):
     ])])
     app, session, probe = await make_app(model, tools=[ToolSpec(fatal, fatal.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow')), ToolSpec(skipped, skipped.args_schema, permissions=ToolPermission(default='allow'))], resources=resources)
     try:
-        await app.runs.start(session, [('user', 'run')])
+        await app.host.runs.start(session, [('user', 'run')])
     except RuntimeError as error:
         assert error is failure
     else:
         raise AssertionError('Expected tool failure')
-    config = {'configurable': {'thread_id': app.sessions._sessions.require(session).get_thread_id()}}
+    config = {'configurable': {'thread_id': app.host.sessions._sessions.require(session).get_thread_id()}}
     saved = await probe.graph.checkpointer.aget_tuple(config)
     pending_tools = []
     for _task, channel, value in saved.pending_writes:
@@ -273,7 +276,7 @@ async def recovery_and_structured(resources):
 
     model = _configured_model([_status(), AIMessage(content='recovered')])
     app, session, probe = await make_app(model, resources=resources)
-    result = await app.runs.start(session, _history())
+    result = await app.host.runs.start(session, _history())
     initial_ids = {row['id'] for row in probe.values[0]}
     final = probe.values[-1]
     assert final[0]['summary'] and initial_ids - {row['id'] for row in final}
@@ -288,7 +291,7 @@ async def recovery_and_structured(resources):
         {'name': 'Answer', 'args': {'value': 'structured'}, 'id': 'format-1'},
     ])])
     app, session, probe = await make_app(model, response_format=ToolStrategy(Answer), resources=resources)
-    result = await app.runs.start(session, [('user', 'answer')])
+    result = await app.host.runs.start(session, [('user', 'answer')])
     assert result['structured_response'].value == 'structured'
     assert [m.type for m in result['messages']] == ['human', 'ai', 'tool']
     assert 'tools' not in probe.task_starts

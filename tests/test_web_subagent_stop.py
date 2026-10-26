@@ -27,15 +27,15 @@ def test_http_stop_only_a_while_b_waits_in_model_and_reject_stale_child_approval
         async with web_client(monkeypatch, tmp_path, model, workspace_root=workspace, runtime_settings=runtime) as (client, web):
             app = web.state.service.application
             app.observability.subscribe(lambda event: notified.set() if event.source and event.event_type == 'approval_requested' else None)
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=request('two'))).json()['run_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('two'))).json()['run_id']
             try:
                 await asyncio.wait_for(notified.wait(), 5); await asyncio.wait_for(entered.wait(), 5)
-                batch, = (await client.get(f'/api/sessions/{sid}')).json()['approval_batches']
+                batch, = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()['approval_batches']
                 source = web.state.delivery.get(run).agents[batch['agent_path']]['source']
                 body = {'request_id': str(uuid4()), 'kind': 'stop', 'agent_path': batch['agent_path'],
                         'agent_run_id': source['agent_run_id'], 'approval_batch_id': batch['approval_batch_id']}
-                endpoint = f'/api/runs/{run}/controls'
+                endpoint = f'/api/v1/scopes/chats/runs/{run}/controls'
                 assert (await client.post(endpoint, json=body, headers={'Authorization': ''})).status_code == 401
                 assert (await client.post(endpoint, json={**body, 'agent_path': 'root/tester/other'})).status_code == 409
                 assert (await client.post(endpoint, json={**body, 'agent_run_id': 'stale'})).status_code == 409
@@ -44,14 +44,14 @@ def test_http_stop_only_a_while_b_waits_in_model_and_reject_stale_child_approval
                 receipt = await client.post(endpoint, json=body)
                 assert receipt.status_code == 202 and receipt.json()['retained'] == []
                 assert (await client.post(endpoint, json=body)).json() == receipt.json()
-                rejected = await client.post(f'/api/sessions/{sid}/approvals', json=approval_request(batch, ['approve']))
+                rejected = await client.post(f'/api/v1/scopes/chats/sessions/{sid}/approvals', json=approval_request(batch, ['approve']))
                 assert rejected.status_code == 409
-                view = (await client.get(f'/api/runs/{run}')).json()
+                view = (await client.get(f'/api/v1/scopes/chats/runs/{run}')).json()
                 assert view['status'] == 'running' and not view['done'] and not view['stop_requested']
                 assert len(web.state.delivery.runs) == 1
                 release.set()
                 await asyncio.wait_for(web.state.delivery.wait(run), 5)
-                final = (await client.get(f'/api/runs/{run}')).json()
+                final = (await client.get(f'/api/v1/scopes/chats/runs/{run}')).json()
                 assert final['status'] == 'completed' and final['agents'][batch['agent_path']]['status'] == 'stopped'
                 reports = {m['tool_call_id']: m for m in final['messages'] if m['type'] == 'tool'}
                 assert reports['outer-A']['status'] == 'error' and json.loads(reports['outer-B']['content'])['report'] == 'B report'
@@ -68,17 +68,17 @@ def test_http_paused_root_stop_new_run_idempotence_and_zero_tool_execution(monke
         model = ChildModel(replies=[call('read', {'path': str(outside)}, 'inner')])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=workspace) as (client, web):
             sid, origin = await start(client)
-            batch, = (await client.get(f'/api/sessions/{sid}')).json()['approval_batches']
+            batch, = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()['approval_batches']
             body = {'request_id': str(uuid4()), 'origin_run_id': origin, 'approval_batch_id': batch['approval_batch_id']}
-            endpoint = f'/api/sessions/{sid}/approvals/stop'
+            endpoint = f'/api/v1/scopes/chats/sessions/{sid}/approvals/stop'
             assert (await client.post(endpoint, json=body, headers={'Authorization': ''})).status_code == 401
             assert (await client.post(endpoint, json={**body, 'approval_batch_id': 'stale'})).status_code == 409
             receipt = await client.post(endpoint, json=body)
             assert receipt.status_code == 202 and receipt.json()['run_id'] != origin
-            await client.get(f'/api/runs/{receipt.json()["run_id"]}/events')
+            await client.get(f'/api/v1/scopes/chats/runs/{receipt.json()["run_id"]}/events')
             assert (await client.post(endpoint, json=body)).json() == receipt.json()
             assert (await client.post(endpoint, json={**body, 'request_id': str(uuid4())})).status_code == 409
-            final = (await client.get(f'/api/sessions/{sid}')).json()
+            final = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
             assert final['live']['status'] == 'stopped' and final['approval_batches'] == [] and final['can_run']
             message, = [row for row in final['messages'] if row['type'] == 'tool']
             assert 'stopped' in message['content'] and 'not approved' not in message['content']

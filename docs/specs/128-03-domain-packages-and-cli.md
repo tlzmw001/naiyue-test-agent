@@ -1,5 +1,9 @@
 # Spec128-03：领域分包与CLI适配器迁移
 
+> 版本边界（2026-10-24）：本文保留当时迁移的说明。当前终端已由 [R1-06](R1-06-cli-service-client.md) 改为 HTTP/SSE 客户端，旧 cli_async/app.call 拥有者桥已删除；默认 Web 的共享接入在 R1-07。
+
+路径版本边界（2026-10-24）：R1-02 已将 application 内的 SQL/schema 下沉到 storage，当前逐模块映射及事务合同见 [R1-02](R1-02-storage-dependency-direction.md)。本文件保留 Spec128 实施时点，不将旧内部导入路径当作兼容合同。
+
 日期：2026-10-23。03已完成本机验收，未提交/push/发布；本片只迁移目录、导入和入口接线，不重写业务行为。基于v0.4.0标签的codex/project-execution-root工作区，01/02成果仍未提交；02已通过4686后端/423前端、标准构建和源码外安装。memory/history已随v0.4.0提交发布，满足搬迁前置条件。
 
 版本边界：本表和验收描述03完成时的模块。04随后删除SessionStorage/PersonalMemory两个旧资源所有者并拆分仓储，当前存储入口见[04对象与调用链](128-04-database-repositories-and-uow.md#6-当前对象调用链和删除项)；03的纯搬迁证据保持。

@@ -2,9 +2,9 @@
 
 import logging
 
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 
-from naiyue_test_agent.application.conversation import reply_storage
+from naiyue_test_agent.storage.conversation_sql import reply_storage
 
 
 logger = logging.getLogger(__name__)

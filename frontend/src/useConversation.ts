@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
-import { errorText, WebApi } from './api';
+import type { SessionCreation } from './types';
+import { useEffect, useRef, useState } from 'react';import { errorText, WebApi } from './api';
 import { subscribeRun } from './runSubscription';
 import type { ApprovalBatch, PermissionMode, RunView, SessionView, ThinkingOptions, ToolDecision } from './types';
 import { useSessions } from './useSessions';
+import { useConversationSync } from './useConversationSync';
 import { useMessageHistory } from './useMessageHistory';
 import { stopObservedSubagent } from './subagentControls';
-
-export function useConversation(api: WebApi) {
+export function useConversation(api: WebApi, active = true) {
+  const activeRef = useRef(active); activeRef.current = active;
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState('');
   const [thinkingOptions, setThinkingOptions] = useState<Record<string, ThinkingOptions>>({});
@@ -64,13 +65,12 @@ export function useConversation(api: WebApi) {
     return value;
   }
 
-  useEffect(() => {
-    let disposed = false;
-    Promise.all([api.models(), refreshSessions()]).then(([config]) => {
-      if (!disposed) { setModels(config.model_ids); setModel(config.default_model_id); setThinkingOptions(config.thinking_options ?? {}); }
-    }).catch(error => { if (!disposed) setNotice(errorText(error)); });
-    return () => { disposed = true; subscription.current?.abort(); };
-  }, [api]);
+  useConversationSync({ api, active, session, applySession, refreshSessions,
+    canRefresh: resuming => !busySend.current && !selectionPending.current && !changingControls && !changingModel && !recovering && !submitting && (resuming || !(currentRun.current && !currentRun.current.done)),
+    revision: () => JSON.stringify([selectionGeneration.current, controlsRevision.current, approvalRevision.current]),
+    onModels: config => { setModels(config.model_ids); setModel(config.default_model_id); setThinkingOptions(config.thinking_options ?? {}); },
+    onError: error => setNotice(errorText(error)), onClose: () => { subscription.current?.abort(); history.cancel(); },
+  });
 
   function display(view: RunView, sid: string) {
     if (selected.current !== sid) return;
@@ -90,7 +90,7 @@ export function useConversation(api: WebApi) {
   }
 
   async function watch(runId: string, sid: string, initial?: RunView, resynchronize = false) {
-    if (selected.current !== sid) return;
+    if (selected.current !== sid || !activeRef.current) return;
     subscription.current?.abort();
     const controller = new AbortController();
     subscription.current = controller;
@@ -170,14 +170,14 @@ export function useConversation(api: WebApi) {
     }
   }
 
-  async function newSession() {
+  async function newSession(choice?: SessionCreation) {
     if (busySend.current || selectionPending.current || !model) return;
     setNotice('');
     try {
-      const created = await api.create(model);
+      const created = await api.createSelected(model,choice);
       await selectSession(created.session_id);
       await refreshSessions();
-    } catch (error) { setNotice(errorText(error)); }
+    } catch (error) { setNotice(errorText(error)); if(choice) throw error; }
   }
 
   async function deleteSession(sid: string) {
@@ -481,9 +481,8 @@ export function useConversation(api: WebApi) {
     } catch (error) { if (selected.current === sid) setNotice(errorText(error)); }
     finally { busySend.current = false; setSubmitting(false); }
   }
-
   const id = selected.current;
-  return { models, model, thinkingOptions, sessions, session, messages, run, notice, lastSubmission,
+  return { models, model, thinkingOptions, sessions, session, messages, run, notice, lastSubmission, listing,
     connection: connection?.session_id === id && connection.run_id === run?.run_id ? connection : null, submitting, stopping, changingModel, changingControls, selectingSession, recovering,
     history: { ...history.pagination, loadOlder: history.loadOlder, disabled: selectingSession },
     managingSessions: listing.managingSessions, updateSession: listing.updateSession, reorderSessions: listing.reorderSessions, deleteSession,

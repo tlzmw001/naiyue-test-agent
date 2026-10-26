@@ -92,7 +92,7 @@ def test_invalid_manifest_is_not_overwritten(tmp_path):
 
 def test_binding_failure_rolls_back_all_roots(tmp_path):
     from naiyue_test_agent.storage.project_store import ProjectStore
-    from naiyue_test_agent.application.errors import SessionPersistenceError
+    from naiyue_test_agent.storage.errors import SessionPersistenceError
     root = tmp_path / 'A'
     root.mkdir()
     loc = prepare(root, tmp_path / 'data')
@@ -124,7 +124,7 @@ def test_storage_root_setting_is_absolute_and_does_not_silently_fallback(tmp_pat
 
 def test_unavailable_data_root_does_not_fallback(tmp_path):
     from naiyue_test_agent.storage.project_store import ProjectStore
-    from naiyue_test_agent.application.errors import SessionPersistenceError
+    from naiyue_test_agent.storage.errors import SessionPersistenceError
     root, data = tmp_path / 'A', tmp_path / 'blocked'
     root.mkdir()
     data.write_text('not a directory')
@@ -165,7 +165,7 @@ def test_existing_marker_empty_resume_performs_no_write(tmp_path, monkeypatch):
 def test_schema_three_is_rejected_without_changes(tmp_path):
     import sqlite3
     from naiyue_test_agent.storage.project_store import ProjectStore
-    from naiyue_test_agent.application.errors import SessionPersistenceError
+    from naiyue_test_agent.storage.errors import SessionPersistenceError
     db = tmp_path / 'old.sqlite'
     with sqlite3.connect(db) as connection:
         connection.executescript('CREATE TABLE naiyue_store_info(version INTEGER); INSERT INTO naiyue_store_info VALUES(3);')

@@ -140,14 +140,11 @@ def create_session_ls_tool(*, settings: LsSettings | None = None, progress_setti
         Listing a name does not authorize reading or changing its contents.
         """
         context = runtime.context
-        root = context.scope.identity.execution_path if isinstance(context, RuntimeContext) else None
-        if not isinstance(root, Path) or not root.is_absolute():
-            logger.warning('ls_failed error_type=MissingWorkspaceContext')
-            raise ToolException(LS_NO_WORKSPACE)
-        target = require_file_target(runtime, path, operation='list')
+        require_file_target(runtime, path, operation='list')
         progress = ToolProgress(runtime, progress_settings)
         try:
-            return _list_directory(target, limit, runtime, settings=settings, progress=progress)
+            return context.scope.capabilities.files.list(context.authorization.permit['subject'], limit,
+                runtime, settings=settings, progress=progress)
         finally:
             progress.flush()
 

@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict
 import pytest
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+from scripts.component_fixtures import open_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import ToolSpec
 from naiyue_test_agent.tools.permissions import ToolPermission, PermissionMechanismError
@@ -48,14 +48,14 @@ def test_recovery_keeps_completed_pending_writes_and_original_task_records(monke
             return result
         monkeypatch.setattr(AsyncSqliteSaver, 'aput_writes', writes)
         def opened():
-            return open_async_persistent_application('unused', database_path=tmp_path / 'state.sqlite',
+            return open_component_application('unused', database_path=tmp_path / 'state.sqlite',
                 tools=specs, system_prompt='', response_format=None)
         async with opened() as app:
-            sid = await app.sessions.create('A')
+            sid = await app.host.sessions.create('A')
             with pytest.raises(PermissionMechanismError):
-                await app.runs.start(sid, [('user', 'fixture')])
-            row = app.sessions._persistence.storage.sessions.get(sid)
-            storage = app.sessions._persistence.storage
+                await app.host.runs.start(sid, [('user', 'fixture')])
+            row = app.host.sessions._persistence.storage.sessions.get(sid)
+            storage = app.host.sessions._persistence.storage
             archived = [json.loads(r[0])['data'] for r in storage.database.connection.execute(
                 'SELECT body_json FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (sid,))]
             actual = [r for r in archived if r.get('tool_call_id') == 'a']
@@ -63,14 +63,14 @@ def test_recovery_keeps_completed_pending_writes_and_original_task_records(monke
         model.seen.clear()
         async with opened() as app:
             config = {'configurable': {'thread_id': row['thread_id']}}
-            snapshot = await app.runs._agent.aget_state(config)
-            before = await app.runs._agent.checkpointer.aget_tuple(snapshot.config)
+            snapshot = await app.host.runs._agent.aget_state(config)
+            before = await app.host.runs._agent.checkpointer.aget_tuple(snapshot.config)
             assert any(isinstance(m, ToolMessage) and m.tool_call_id == 'a' for m in snapshot.values['messages'])
             events = []
-            app.observability.subscribe(events.append)
-            await app.sessions.recover(sid, checkpoint_id=snapshot.config['configurable']['checkpoint_id'], action='continue')
-            final = await app.runs._agent.aget_state(config)
-            after = await app.runs._agent.checkpointer.aget_tuple(snapshot.config)
+            app.host.observability.subscribe(events.append)
+            await app.host.sessions.recover(sid, checkpoint_id=snapshot.config['configurable']['checkpoint_id'], action='continue')
+            final = await app.host.runs._agent.aget_state(config)
+            after = await app.host.runs._agent.checkpointer.aget_tuple(snapshot.config)
             assert before.checkpoint == after.checkpoint and before.pending_writes == after.pending_writes
             results = [m for m in final.values['messages'] if isinstance(m, ToolMessage)]
             assert [m.tool_call_id for m in results] == ['a', 'b']
@@ -78,7 +78,7 @@ def test_recovery_keeps_completed_pending_writes_and_original_task_records(monke
             assert results[0].id == next(m.id for m in snapshot.values['messages'] if isinstance(m, ToolMessage))
             assert results[1].status == 'error' and calls == ['a', 'b']
             assert model.seen == [] and events == [] and final.next == () and final.tasks == ()
-            storage = app.sessions._persistence.storage
+            storage = app.host.sessions._persistence.storage
             archived = [json.loads(r[0])['data'] for r in storage.database.connection.execute(
                 'SELECT body_json FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (sid,))]
             assert [r['id'] for r in archived] == [m.id for m in final.values['messages']]

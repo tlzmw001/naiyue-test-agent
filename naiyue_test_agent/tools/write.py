@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 _active_targets: set[str] = set()
 _active_targets_lock = Lock()
 
+
+class WriteOutcomeUnknown(ToolException):
+    """Atomic replacement could have occurred; another write must be explicit."""
+
 WRITE_UNAVAILABLE = ('write cannot use this path. Check the file type, links and '
                      'access permissions, then choose an allowed file target.')
 WRITE_PARENT_FAILURE = ('write could not create or verify its parent directories. '
@@ -113,7 +117,7 @@ def _replace_temp(temporary: Path, target: Path, *, existed: bool) -> None:
             os.replace(temporary, target)
     except OSError as error:
         logger.error('write_commit_unknown error_type=%s', type(error).__name__)
-        raise ToolException('File write outcome is unknown; inspect the file '
+        raise WriteOutcomeUnknown('File write outcome is unknown; inspect the file '
                             'before another write.') from error
 
 
@@ -272,20 +276,17 @@ def create_session_write_tool(*, settings: WriteSettings | None = None, progress
         Missing parent directories are created after authorization. This tool cannot make partial edits.
         """
         context = runtime.context
-        root = context.scope.identity.execution_path if isinstance(context, RuntimeContext) else None
-        if not isinstance(root, Path) or not root.is_absolute():
-            logger.warning('write_failed phase=context error_type=MissingWorkspaceContext')
-            raise ToolException(WRITE_NO_WORKSPACE)
         check_tool_stop(context.scope.control, WRITE_STOPPED)
-        target = require_file_target(runtime, path, operation='write')
+        require_file_target(runtime, path, operation='write')
         progress = ToolProgress(runtime, progress_settings)
+        subject=context.authorization.permit['subject']
+        if context.scope.environment.kind=='sandbox':
+            from naiyue_test_agent.contracts.sandbox import operation_id
+            subject={**subject,'operation_id':operation_id(runtime)}
         try:
-            artifact = {}
-            result = _write(root, str(target), content, settings.max_input_bytes,
-                          subject=context.authorization.permit['subject'], control=context.scope.control, progress=progress,
-                          feedback_artifact=artifact, feedback_settings=settings,
-                          feedback_read_allowed=read_feedback_allowed(runtime, path), feedback_path=path)
-            return result, artifact
+            return context.scope.capabilities.files.write(subject, content,
+                settings=settings, control=context.scope.control, progress=progress,
+                read_allowed=read_feedback_allowed(runtime, path))
         finally:
             progress.flush()
 

@@ -22,18 +22,18 @@ def test_user_stop_terminates_bash_and_preserves_partial_output(monkeypatch, tmp
         app = await make_app(monkeypatch, StreamingToolModel(replies=[
             call('bash', {'command': command}), AIMessage(content='must not run')]),
             [create_session_bash_tool()])
-        session = await app.sessions.create_workspace('A', tmp_path)
+        session = await app.host.sessions.create_workspace('A', tmp_path)
         task = None
         pid = None
         try:
-            first = await app.runs.start(session, [('user', 'run')])
+            first = await app.host.runs.start(session, [('user', 'run')])
             assert first['approval_requests']
-            task = asyncio.create_task(app.runs.resume_approval(session, ['approve']))
+            task = asyncio.create_task(app.host.runs.resume_approval(session, ['approve']))
             async with asyncio.timeout(5):
                 while not marker.exists() or not marker.read_text():
                     await asyncio.sleep(0.01)
             pid = int(marker.read_text())
-            app.runs.stop(session)
+            app.host.runs.stop(session)
             result = await asyncio.wait_for(task, 5)
             message = next(m for m in result['messages'] if isinstance(m, ToolMessage))
             assert message.status == 'error' and message.tool_call_id == 't'
@@ -42,8 +42,8 @@ def test_user_stop_terminates_bash_and_preserves_partial_output(monkeypatch, tmp
             assert not any(m.content == 'must not run' for m in result['messages'])
             with pytest.raises(ProcessLookupError):
                 os.kill(pid, 0)
-            assert not app.sessions._sessions.require(session).describe_session()['manual_review_required']
-            assert not app.sessions._sessions.require(session).describe_session()['busy']
+            assert not app.host.sessions._sessions.require(session).describe_session()['manual_review_required']
+            assert not app.host.sessions._sessions.require(session).describe_session()['busy']
         finally:
             if pid is not None:
                 try:

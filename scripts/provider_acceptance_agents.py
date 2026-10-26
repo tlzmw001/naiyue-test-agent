@@ -21,7 +21,7 @@ def review_settings(env):
 async def review_roles(env):
     decisions, usage = {}, []
     async with env.open_app() as app:
-        model = app.models._catalog.get(env.model_id)
+        model = app.host.sessions._sessions._catalog.get(env.model_id)
         reviewer = AutoPermissionReviewer(review_settings(env), model, model)
         data = {'human_messages': [{'sequence': 0, 'id': 'synthetic-human', 'content':
                 'Run exactly printf REVIEW_OK in this synthetic workspace; no other changes.'}],
@@ -45,7 +45,7 @@ async def auto_pipeline(env):
         sid = await env.session(app)
         (env.root / 'work' / 'seed.txt').write_text(secret)
         (env.root / 'work' / 'AGENTS.md').write_text('Synthetic acceptance: only run the exact requested printf command.')
-        reviewer = app.sessions._sessions._permission_reviewer
+        reviewer = app.host.sessions._sessions._permission_reviewer
         reviewer.models = {stage: model.model_copy(update={'max_tokens': cap}) for (stage, model), cap in
                            zip(reviewer.models.items(), (256, 2048), strict=True)}
         messages_method, diagnostic = reviewer._messages, reviewer._diagnostic
@@ -62,13 +62,13 @@ async def auto_pipeline(env):
                     for key in ('input_tokens', 'output_tokens', 'total_tokens')}})
             diagnostic(context, stage, decision, reason, response, error)
         with patch.object(reviewer, '_messages', capture), patch.object(reviewer, '_diagnostic', capture_diagnostic):
-            first = await app.runs.start(sid, [('user', 'First call read on seed.txt. After seeing its result, '
+            first = await app.host.runs.start(sid, [('user', 'First call read on seed.txt. After seeing its result, '
                 'call bash exactly once with command "printf AUTO_OK". This is an authorized synthetic '
                 'test of that exact command, with no file or network changes. Reply exactly AUTO_OK.')])
             expected_calls(first['messages'], [('read', {'path': 'seed.txt'}), ('bash', {'command': 'printf AUTO_OK'})], env.root / 'work')
             if first.get('approval_requests'):
                 # A valid Ask is a successful review contract, resolved by the harness as the human.
-                first = await app.runs.resume_approval(sid, ['approve'])
+                first = await app.host.runs.resume_approval(sid, ['approve'])
         paired_tools(first['messages'], ['read', 'bash'])
         require(final_text(first['messages']) == 'AUTO_OK', 'auto_task_answer')
         require(bool(seen) and bool(diagnostics), 'auto_review_observed')
@@ -93,9 +93,9 @@ async def child_normal(env):
         result, = paired_tools(messages, ['subagent'])
         require(result.artifact['status'] == 'completed', 'child_artifact_status')
         require(final_text(messages) == expected, 'child_report_answer')
-        records = await app.history.subagents(sid)
+        records = await app.host.history.subagents(sid)
         require(len(records) == 1, 'one_child_record')
-        child = await app.history.subagent(sid, records[0]['agent_id'])
+        child = await app.host.history.subagent(sid, records[0]['agent_id'])
         require(child['available'] and child['agent_path'].startswith('root/tester/'), 'child_history_scope')
         tool, = paired_tools(child['messages'], ['read'])
         single_line_read(tool.content, expected)
@@ -105,7 +105,7 @@ async def child_normal(env):
 async def wait_pending(app, sid, task, minimum=1):
     # Poll application state, never assume the network/model finishes inside a small sleep.
     while not task.done():
-        batches = app.runs.pending_subagents(sid)
+        batches = app.host.runs.pending_subagents(sid)
         if len(batches) >= minimum:
             return batches
         await asyncio.sleep(0.05)
@@ -116,7 +116,7 @@ async def wait_pending(app, sid, task, minimum=1):
 async def submit(app, sid, batch, expected_target):
     require(len(batch['items']) == 1 and batch['items'][0]['tool_name'] == 'read'
             and batch['items'][0]['target'] == str(expected_target), 'child_expected_approval')
-    return await app.runs.submit_subagent_approval(sid, approval_batch_id=batch['approval_batch_id'],
+    return await app.host.runs.submit_subagent_approval(sid, approval_batch_id=batch['approval_batch_id'],
         origin_run_id=batch['origin_run_id'], decisions=[{'approval_id': item['approval_id'], 'decision': 'approve'}
                                                       for item in batch['items']])
 
@@ -127,13 +127,13 @@ async def siblings(env):
     right.write_text('RIGHT_OK')
     async with env.open_app(['subagent', 'read'], settings=child_settings(env), initial=['subagent']) as app:
         sid = await env.session(app)
-        task = asyncio.create_task(app.runs.start(sid, [('user', 'In ONE tool batch delegate two independent tester tasks: '
+        task = asyncio.create_task(app.host.runs.start(sid, [('user', 'In ONE tool batch delegate two independent tester tasks: '
             f'first read {left} once; second read {right} once. After both reports reply exactly SIBLINGS_OK.')]))
         try:
             pending = await wait_pending(app, sid, task, minimum=2)
             require(len(pending) == 2, 'both_siblings_pending')
             require({item['target'] for batch in pending for item in batch['items']} == {str(left), str(right)}, 'sibling_expected_targets')
-            parents = [m for m in await app.history.messages(sid) if getattr(m, 'tool_calls', None)]
+            parents = [m for m in await app.host.history.messages(sid) if getattr(m, 'tool_calls', None)]
             require(len(parents) == 1 and len(parents[0].tool_calls) == 2, 'one_parent_tool_batch')
             first = pending[0]
             first_target = first['items'][0]['target']
@@ -147,23 +147,23 @@ async def siblings(env):
                 await asyncio.sleep(0.05)
             second = remaining[0]
             require(first['agent_path'] != second['agent_path'], 'sibling_distinct_paths')
-            instance = app.sessions._sessions.require(sid).subagents.subagent_status(first['agent_path'])
+            instance = app.host.sessions._sessions.require(sid).subagents.subagent_status(first['agent_path'])
             while not instance['settled']:
                 await asyncio.sleep(0.05)
-                instance = app.sessions._sessions.require(sid).subagents.subagent_status(first['agent_path'])
+                instance = app.host.sessions._sessions.require(sid).subagents.subagent_status(first['agent_path'])
             require(instance['status'] == 'completed' and not task.done(), 'first_finishes_while_second_waits')
             require(any(batch['approval_batch_id'] == second['approval_batch_id']
-                        for batch in app.runs.pending_subagents(sid)), 'second_remains_pending')
+                        for batch in app.host.runs.pending_subagents(sid)), 'second_remains_pending')
             await submit(app, sid, second, str(right) if first_target == str(left) else str(left))
             result = await task
             paired_tools(result['messages'], ['subagent', 'subagent'])
             require(final_text(result['messages']) == 'SIBLINGS_OK', 'sibling_reports')
-            require(not app.runs.pending_subagents(sid), 'sibling_approvals_cleared')
-            records = await app.history.subagents(sid)
+            require(not app.host.runs.pending_subagents(sid), 'sibling_approvals_cleared')
+            records = await app.host.history.subagents(sid)
             require(len(records) == 2 and all(row['status'] == 'completed' for row in records), 'sibling_history')
         finally:
             if not task.done():
-                app.runs.stop(sid)
+                app.host.runs.stop(sid)
             await asyncio.gather(task, return_exceptions=True)
     return {'two_scopes': True, 'independent_approvals': True, 'completed_children': 2}
 
@@ -173,21 +173,21 @@ async def child_stop(env):
     outside.write_text(nonce())
     async with env.open_app(['subagent', 'read'], settings=child_settings(env), initial=['subagent']) as app:
         sid = await env.session(app)
-        task = asyncio.create_task(app.runs.start(sid, [('user', f'Delegate exactly once to tester: read {outside}. '
+        task = asyncio.create_task(app.host.runs.start(sid, [('user', f'Delegate exactly once to tester: read {outside}. '
             'The task may be stopped. Do not redelegate. After it returns reply exactly CHILD_STOPPED.')]))
         try:
             batch = (await wait_pending(app, sid, task))[0]
-            app.runs.stop(sid, agent_path=batch['agent_path'])
+            app.host.runs.stop(sid, agent_path=batch['agent_path'])
             result = await task
             feedback, = paired_tools(result['messages'], ['subagent'], statuses=['error'])
             require('stopped' in feedback.content.lower(), 'child_stop_feedback')
-            records = await app.history.subagents(sid)
+            records = await app.host.history.subagents(sid)
             require(len(records) == 1 and records[0]['status'] == 'stopped', 'child_stop_checkpoint')
-            require(not app.runs.pending_subagents(sid), 'stopped_child_cleared')
+            require(not app.host.runs.pending_subagents(sid), 'stopped_child_cleared')
             require(final_text(result['messages']) == 'CHILD_STOPPED', 'parent_continues_after_child_stop')
         finally:
             if not task.done():
-                app.runs.stop(sid)
+                app.host.runs.stop(sid)
             await asyncio.gather(task, return_exceptions=True)
     return {'child_stop': True, 'parent_continues': True, 'no_external_read': True}
 

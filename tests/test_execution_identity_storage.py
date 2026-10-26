@@ -4,7 +4,7 @@ import sqlite3
 from contextlib import closing
 
 from naiyue_test_agent.storage.project_store import ProjectStore
-from naiyue_test_agent.storage.backup_schema import check_snapshot
+from naiyue_test_agent.storage.backup_schema import check_snapshot, CURRENT_SCHEMA
 from naiyue_test_agent.workspaces import prepare_workspace
 
 
@@ -15,12 +15,8 @@ def create(store, root):
 
 def schema17(path):
     with closing(sqlite3.connect(path)) as connection, connection:
-        for table, fields in (('naiyue_sessions', ('project_id', 'execution_root_kind')),
-                ('naiyue_subagent_instances', ('project_id', 'execution_root', 'execution_root_kind'))):
-            columns = {row[1] for row in connection.execute(f'PRAGMA table_info({table})')}
-            for field in fields:
-                if field in columns:
-                    connection.execute(f'ALTER TABLE {table} DROP COLUMN {field}')
+        from tests.legacy_store_schema import remove_execution_schema
+        remove_execution_schema(connection)
         connection.execute('UPDATE naiyue_store_info SET version=17')
 
 
@@ -41,7 +37,7 @@ def test_bound_schema17_migrates_without_touching_missing_execution_directory(tm
         assert row['workspace_root'] == str(root)
         assert row['thread_id'] == 'T' and row['state'] == 'ready'
     assert not root.exists()
-    assert check_snapshot(location.database_path)['source_schema'] == 18
+    assert check_snapshot(location.database_path)['source_schema'] == CURRENT_SCHEMA
 
 
 def test_unbound_schema17_remains_without_project_or_new_identity_file(tmp_path):
@@ -89,9 +85,9 @@ def test_schema17_child_identity_is_backfilled_without_reopening_its_directory(m
         model = StreamingToolModel(replies=[call('subagent', {'agent': 'worker', 'task': 'inspect'}), AIMessage(content='saved')])
         child = ChildModel(replies=[AIMessage(content='child saved')])
         async with opened(monkeypatch, tmp_path, model, location=location, child=child) as app:
-            sid = await app.sessions.create_workspace('A', root)
-            await app.runs.start(sid, [('user', 'delegate')])
-            before, = app.sessions._persistence.storage.subagents.get_subagent_references(sid).values()
+            sid = await app.host.sessions.create_workspace('A', root)
+            await app.host.runs.start(sid, [('user', 'delegate')])
+            before, = app.host.sessions._persistence.storage.subagents.get_subagent_references(sid).values()
         schema17(location.database_path)
         assert check_snapshot(location.database_path)['source_schema'] == 17
         root.rename(tmp_path / 'removed')

@@ -42,12 +42,12 @@ async def test_listed_hidden_names_need_only_directory_scope(monkeypatch, tmp_pa
         'name': name, 'id': 'names', 'args': {**args, 'path': str(target)}}]), AIMessage(content='done')])
     app = await build(monkeypatch, model, [spec])
     try:
-        sid = await app.sessions.create_workspace('A', root)
-        result = await app.runs.start(sid, [('user', 'List the directory names.')])
+        sid = await app.host.sessions.create_workspace('A', root)
+        result = await app.host.runs.start(sid, [('user', 'List the directory names.')])
         if external:
             assert len(result['approval_requests']) == 1
             assert not any(isinstance(m, ToolMessage) for m in result['messages'])
-            result = await app.runs.resume_approval(sid, ['approve'])
+            result = await app.host.runs.resume_approval(sid, ['approve'])
         else:
             assert not result.get('approval_requests')
         message, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
@@ -73,8 +73,8 @@ async def test_listing_a_name_does_not_authorize_its_content(monkeypatch, tmp_pa
     ])
     app = await build(monkeypatch, model, tools)
     try:
-        sid = await app.sessions.create_workspace('A', tmp_path)
-        result = await app.runs.start(sid, [('user', 'Inspect the project.')])
+        sid = await app.host.sessions.create_workspace('A', tmp_path)
+        result = await app.host.runs.start(sid, [('user', 'Inspect the project.')])
         message, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
         assert message.status == 'success' and message.content == '.env'
         assert [r['tool_call_id'] for r in result['approval_requests']] == ['content']

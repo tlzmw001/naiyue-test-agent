@@ -28,18 +28,18 @@ def test_graph_projects_real_source_and_outcome(monkeypatch, tmp_path, action, o
         app, model = await make_mcp_app(monkeypatch, path, [call(NAME, args), AIMessage(content='done')],
             mode='Default' if action in ('reject', 'drift') else 'BypassApprovals',
             server=stdio_settings(path, 'stateful' if action == 'drop' else 'tools', allowed_tools=['echo']))
-        events = []; app.observability.subscribe(events.append)
+        events = []; app.host.observability.subscribe(events.append)
         try:
-            sid = await app.sessions.create_workspace('A', tmp_path)
-            result = await app.runs.start(sid, [('user', 'check')])
+            sid = await app.host.sessions.create_workspace('A', tmp_path)
+            result = await app.host.runs.start(sid, [('user', 'check')])
             if action in ('reject', 'drift'):
                 if action == 'drift':
                     path.with_suffix('.drift').touch()
-                pending = app.runs.pending_approvals(sid)[0]
+                pending = app.host.runs.pending_approvals(sid)[0]
                 assert pending['items'][0]['mcp_source'] == {'server_id': 'local', 'remote_tool': 'echo'}
                 approval = next(e for e in events if e.event_type == 'approval_requested')
                 assert approval.data.items[0].mcp_source == pending['items'][0]['mcp_source']
-                result = await app.runs.resume_approval(sid, ['reject' if action == 'reject' else 'approve'])
+                result = await app.host.runs.resume_approval(sid, ['reject' if action == 'reject' else 'approve'])
             output, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
             view = message_view(output)['mcp_result']
             assert view['source']['server_id'] == 'local' and view['source']['remote_tool'] == 'echo'
@@ -86,7 +86,7 @@ def test_catalog_uses_permission_source_and_explicit_child_role(monkeypatch, tmp
         app, _ = await make_child_app(monkeypatch, tmp_path / 'catalog.jsonl', MCPChildModel(replies=[]))
         try:
             service = object.__new__(WebService)
-            service.application, service.settings = app, SimpleNamespace(max_frame_bytes=100000)
+            service.application, service.settings = app.host, SimpleNamespace(max_frame_bytes=100000)
             value = service.session_control_options()
             row = next(t for t in value['tools'] if t['name'] == NAME)
             assert row['mcp_source'] == {'server_id': 'local', 'remote_tool': 'echo', 'transport': 'stdio'}
@@ -106,9 +106,9 @@ def test_long_result_sql_preview_and_reopen_match_live_projection(monkeypatch, t
         settings = AppSettings.model_validate({'mcp': {'servers': {'local': stdio_settings(path, 'tools',
             allowed_tools=['echo'], max_result_bytes=budget).model_dump()}}})
         async with opened(monkeypatch, path, database, [call(NAME, {'text': 'large'}), AIMessage(content='done')], settings=settings) as (app, _):
-            sid = await app.sessions.create_workspace('A', tmp_path)
-            await app.runs.start(sid, [('user', 'large result')])
-            result = await app.runs.resume_approval(sid, ['approve'])
+            sid = await app.host.sessions.create_workspace('A', tmp_path)
+            await app.host.runs.start(sid, [('user', 'large result')])
+            result = await app.host.runs.resume_approval(sid, ['approve'])
             output, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
             expected = message_view(output)['mcp_result']
             assert expected['outcome'] == 'success'
@@ -117,13 +117,13 @@ def test_long_result_sql_preview_and_reopen_match_live_projection(monkeypatch, t
             if budget == 512:
                 assert expected['archive_paths']['raw'] == output.artifact['archive_paths']['raw']
                 assert (tmp_path / expected['archive_paths']['raw']).is_file()
-            page = await app.history.page(sid, limit=20, body_bytes=100, preview_chars=20)
+            page = await app.host.history.page(sid, limit=20, body_bytes=100, preview_chars=20)
             saved = next(r for r in page['records'] if r['message_type'] == 'tool')
             assert saved['body_json'] is None
             assert len(saved['mcp_artifact_json'].encode()) <= 4096
             assert record_view(saved)['mcp_result'] == expected
         async with opened(monkeypatch, path, database, [], settings=settings) as (app, _):
-            page = await app.history.page(sid, limit=20, body_bytes=100, preview_chars=20)
+            page = await app.host.history.page(sid, limit=20, body_bytes=100, preview_chars=20)
             saved = next(r for r in page['records'] if r['message_type'] == 'tool')
             assert record_view(saved)['mcp_result'] == expected
         assert len(calls(path)) == 1

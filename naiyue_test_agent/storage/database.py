@@ -9,26 +9,30 @@ from threading import RLock
 from uuid import uuid4
 
 
-from naiyue_test_agent.application.errors import SessionPersistenceError, StorageStartupError
+from naiyue_test_agent.storage.errors import SessionPersistenceError, StorageStartupError
+from naiyue_test_agent.config_paths import DEFAULT_BUSY_TIMEOUT_MS
 from .migrations import initialize_store
 from .backup_schema import CURRENT_SCHEMA
 from .maintenance import check_restore_marker
 from .files import acquire_store_lock, check_store_directory, check_store_file, open_store_file, release_store_lock
-from naiyue_test_agent.application.conversation import history_projection
-from naiyue_test_agent.application.memory import memory_lexical
+from naiyue_test_agent.storage.conversation_sql import history_projection
+from naiyue_test_agent.storage.memory_sql import lexical as memory_lexical
 
 
 logger = logging.getLogger(__name__)
 
 
 class Database:
-    def __init__(self, path, *, require_existing=False):
+    def __init__(self, path, *, require_existing=False, create_new=False, reserved_project=None,
+                 expected_file=None, runtime_profile=None, busy_timeout_ms=DEFAULT_BUSY_TIMEOUT_MS):
         self._initialize_owner(Path(path).expanduser().absolute())
         try:
             if require_existing:
                 check_store_directory(self.path.parent)
             else:
                 self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                if create_new:
+                    check_store_directory(self.path.parent)
             lock_path = self.path.with_name(self.path.name + '.lock')
             fd = open_store_file(lock_path)
             self._stack.callback(os.close, fd)
@@ -41,6 +45,8 @@ class Database:
             try:
                 check_store_file(self.path)
                 existing = True
+                if create_new:
+                    raise FileExistsError('store_already_exists')
             except FileNotFoundError:
                 if require_existing:
                     raise
@@ -53,12 +59,24 @@ class Database:
                     check_store_file(sidecar)
                 except FileNotFoundError:
                     pass
-            self.connection = (sqlite3.connect(self.path.as_uri() + '?mode=rw', uri=True, check_same_thread=False)
-                               if require_existing else sqlite3.connect(self.path, check_same_thread=False))
+            self.connection = (sqlite3.connect(self.path.as_uri() + '?mode=rw', uri=True,
+                check_same_thread=False, timeout=busy_timeout_ms / 1000) if require_existing else
+                sqlite3.connect(self.path, check_same_thread=False, timeout=busy_timeout_ms / 1000))
             self._stack.callback(self.connection.close)
             self.connection.row_factory = sqlite3.Row
             history_projection.configure_connection(self.connection)
             memory_lexical.configure(self.connection)
+            if existing and runtime_profile is not None:
+                from .project_databases import validate_runtime_connection
+                self.connection.execute('PRAGMA query_only=ON')
+                validate_runtime_connection(self.connection, runtime_profile)
+                self.connection.execute('PRAGMA query_only=OFF')
+            if existing and reserved_project is not None:
+                from .project_databases import validate_reserved_connection
+                # Validate the actual owned connection before any initialization/migration.
+                self.connection.execute('PRAGMA query_only=ON')
+                validate_reserved_connection(self.connection, self.path, reserved_project, expected_file)
+                self.connection.execute('PRAGMA query_only=OFF')
             initialize_store(self.connection, self.path, existing=existing)
         except BaseException as error:
             logger.error('session_storage_open_failed error_type=%s', type(error).__name__)
@@ -83,12 +101,13 @@ class Database:
         self._closed = self._active = False
 
     @classmethod
-    def open_memory(cls):
+    def open_memory(cls, *, busy_timeout_ms=DEFAULT_BUSY_TIMEOUT_MS):
         database = cls.__new__(cls)
         database._initialize_owner(None)
         database.uri = f'file:/naiyue-{uuid4().hex}?vfs=memdb'
         try:
-            database.connection = sqlite3.connect(database.uri, uri=True, check_same_thread=False)
+            database.connection = sqlite3.connect(database.uri, uri=True, check_same_thread=False,
+                                                  timeout=busy_timeout_ms / 1000)
             database._stack.callback(database.connection.close)
             database.connection.row_factory = sqlite3.Row
             history_projection.configure_connection(database.connection)
@@ -118,9 +137,25 @@ class Database:
                 database.close()
             except BaseException as closing_error:
                 logger.error('memory_personal_cleanup_secondary_failed error_type=%s', type(closing_error).__name__)
-            from naiyue_test_agent.application.memory.memory_queries import MemoryReadError
+            from naiyue_test_agent.contracts.memory import MemoryReadError
             if isinstance(error, ValueError) and not isinstance(error, MemoryReadError):
                 raise MemoryReadError('memory_invalid_format') from error
+            raise
+        return database
+
+    @classmethod
+    def open_registry(cls, path):
+        from .registry_database import initialize_registry
+        database = cls.__new__(cls)
+        database._initialize_owner(Path(path).expanduser().absolute())
+        try:
+            initialize_registry(database)
+        except BaseException as error:
+            logger.error('project_registry_open_failed error_type=%s', type(error).__name__)
+            try:
+                database.close()
+            except BaseException as secondary:
+                logger.error('project_registry_cleanup_secondary_failed error_type=%s', type(secondary).__name__)
             raise
         return database
 

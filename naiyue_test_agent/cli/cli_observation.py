@@ -1,10 +1,11 @@
 """Read-only views of saved usage and finite diagnostics on the existing CLI."""
 
 import logging
+from urllib.parse import urlencode
 import shlex
 import unicodedata
 
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.contracts.failures import safe_error_type
 
 
@@ -138,11 +139,11 @@ def handle_observation_command(app, session_id, line, write):
         return
     try:
         if command == ':usage':
-            value = app.call(lambda api: api.observability.usage(session_id, after_model=cursor))
+            value = app.request('GET', f'/sessions/{session_id}/usage' + ('?' + urlencode({'after_model': cursor}) if cursor else ''))
         elif run_id is None:
-            value = app.call(lambda api: api.observability.runs(session_id, before=cursor))
+            value = app.request('GET', f'/sessions/{session_id}/diagnostics' + ('?' + urlencode({'before': cursor}) if cursor is not None else ''))
         else:
-            value = app.call(lambda api: api.observability.events(session_id, run_id, after=cursor or 0))
+            value = app.request('GET', f'/sessions/{session_id}/diagnostics/{run_id}?after={cursor or 0}')
         if value['session_id'] != session_id:
             raise ValueError('observation_session_mismatch')
         if command == ':usage':

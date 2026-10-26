@@ -21,9 +21,9 @@ async def test_one_finish_obeys_shared_budget_with_real_database_deletions(monke
     configure(monkeypatch, enabled=False)
     model = ToolModel(responses=[AIMessage(content=f'reply {n} ' * 5) for n in range(25)])
     async with build(monkeypatch, path, model) as app:
-        sid = await app.sessions.create('A')
+        sid = await app.host.sessions.create('A')
         for n in range(20):
-            await app.runs.start(sid, [('user', f'input {n} ' * 5)])
+            await app.host.runs.start(sid, [('user', f'input {n} ' * 5)])
     settings = configure(monkeypatch, trigger_checkpoints=2,
         max_delete_checkpoints=1 if budget == 'count' else 128, max_delete_bytes=65536)
     measurements = []
@@ -36,8 +36,8 @@ async def test_one_finish_obeys_shared_budget_with_real_database_deletions(monke
         return result
     monkeypatch.setattr(retention, '_commit', measured)
     async with build(monkeypatch, path, model) as app:
-        await app.sessions.restore(sid)
-        await app.runs.start(sid, [('user', 'next')])
+        await app.host.sessions.restore(sid)
+        await app.host.runs.start(sid, [('user', 'next')])
     assert len(measurements) == 1
     actual, result = measurements[0]
     assert actual == result['deleted_checkpoints'] > 0
@@ -61,19 +61,19 @@ async def test_pending_approval_and_writes_survive_close_reopen(monkeypatch, tmp
         {'name': 'read', 'id': 'outside', 'args': {'path': str(outside)}}]), AIMessage(content='done')])
     tools = [create_session_read_tool()]
     async with build(monkeypatch, path, model, tools) as app:
-        sid = await app.sessions.create_workspace('A', root)
-        paused = await app.runs.start(sid, [('user', 'read')])
+        sid = await app.host.sessions.create_workspace('A', root)
+        paused = await app.host.runs.start(sid, [('user', 'read')])
         assert paused['approval_requests']
-        row = app.sessions._persistence.storage.sessions.get(sid)
+        row = app.host.sessions._persistence.storage.sessions.get(sid)
         thread = row['thread_id']
-        before = app.sessions._persistence.storage.database.read_rows('SELECT * FROM checkpoints WHERE thread_id=?', (thread,))
-        writes = app.sessions._persistence.storage.database.read_rows('SELECT * FROM writes WHERE thread_id=?', (thread,))
+        before = app.host.sessions._persistence.storage.database.read_rows('SELECT * FROM checkpoints WHERE thread_id=?', (thread,))
+        writes = app.host.sessions._persistence.storage.database.read_rows('SELECT * FROM writes WHERE thread_id=?', (thread,))
     async with build(monkeypatch, path, model, tools) as app:
-        saved = await app.runs._agent.aget_state({'configurable': {'thread_id': thread}})
-        await app.sessions.recover(sid, checkpoint_id=saved.config['configurable']['checkpoint_id'], action='restore_approval')
-        assert app.sessions._persistence.storage.database.read_rows('SELECT * FROM checkpoints WHERE thread_id=?', (thread,)) == before
-        assert app.sessions._persistence.storage.database.read_rows('SELECT * FROM writes WHERE thread_id=?', (thread,)) == writes
-        result = await app.runs.resume_approval(sid, ['approve'])
+        saved = await app.host.runs._agent.aget_state({'configurable': {'thread_id': thread}})
+        await app.host.sessions.recover(sid, checkpoint_id=saved.config['configurable']['checkpoint_id'], action='restore_approval')
+        assert app.host.sessions._persistence.storage.database.read_rows('SELECT * FROM checkpoints WHERE thread_id=?', (thread,)) == before
+        assert app.host.sessions._persistence.storage.database.read_rows('SELECT * FROM writes WHERE thread_id=?', (thread,)) == writes
+        result = await app.host.runs.resume_approval(sid, ['approve'])
         assert result['messages'][-1].content == 'done'
         assert any(m.type == 'tool' and m.content == 'synthetic allowed result' for m in result['messages'])
 
@@ -97,8 +97,8 @@ async def test_transaction_revalidates_before_deleting(monkeypatch, tmp_path, mu
             observations.append((before, storage.database.read_rows('SELECT * FROM checkpoints')))
     monkeypatch.setattr(retention, '_commit', changed)
     async with build(monkeypatch, tmp_path / 'state.sqlite') as app:
-        sid = await app.sessions.create('A')
-        await app.runs.start(sid, [('user', 'one')])
+        sid = await app.host.sessions.create('A')
+        await app.host.runs.start(sid, [('user', 'one')])
     assert observations and all(before == after for before, after in observations)
     assert ('session_changed' if mutation == 'state' else 'archive_changed') in caplog.text
 
@@ -107,23 +107,23 @@ async def test_transaction_revalidates_before_deleting(monkeypatch, tmp_path, mu
 async def test_unknown_format_and_inspection_budget_skip_without_deletion(monkeypatch, tmp_path):
     configure(monkeypatch, enabled=False)
     async with build(monkeypatch, tmp_path / 'state.sqlite') as app:
-        sid = await app.sessions.create('A')
-        await app.runs.start(sid, [('user', 'one')])
-        row = app.sessions._persistence.storage.sessions.get(sid)
-        saved = await app.runs._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
-        before = app.sessions._persistence.storage.database.read_rows('SELECT * FROM checkpoints')
-        result = await retention.prune_after_finish(app.runs._agent, app.sessions._persistence.storage, sid, row['run_id'],
+        sid = await app.host.sessions.create('A')
+        await app.host.runs.start(sid, [('user', 'one')])
+        row = app.host.sessions._persistence.storage.sessions.get(sid)
+        saved = await app.host.runs._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
+        before = app.host.sessions._persistence.storage.database.read_rows('SELECT * FROM checkpoints')
+        result = await retention.prune_after_finish(app.host.runs._agent, app.host.sessions._persistence.storage, sid, row['run_id'],
             CheckpointRetentionSettings(trigger_checkpoints=2, max_delete_bytes=1), snapshot=saved)
         assert result['reason'] == 'inspection_budget' and result['deleted_checkpoints'] == 0
-        original = app.runs._agent.checkpointer.aget_tuple
+        original = app.host.runs._agent.checkpointer.aget_tuple
         async def old_format(config):
             value = await original(config)
             return value._replace(checkpoint={**value.checkpoint, 'v': 3})
-        monkeypatch.setattr(app.runs._agent.checkpointer, 'aget_tuple', old_format)
-        result = await retention.prune_after_finish(app.runs._agent, app.sessions._persistence.storage, sid, row['run_id'],
+        monkeypatch.setattr(app.host.runs._agent.checkpointer, 'aget_tuple', old_format)
+        result = await retention.prune_after_finish(app.host.runs._agent, app.host.sessions._persistence.storage, sid, row['run_id'],
             CheckpointRetentionSettings(trigger_checkpoints=2), snapshot=saved)
         assert result['reason'] == 'checkpoint_format_unsupported' and result['deleted_checkpoints'] == 0
-        assert app.sessions._persistence.storage.database.read_rows('SELECT * FROM checkpoints') == before
+        assert app.host.sessions._persistence.storage.database.read_rows('SELECT * FROM checkpoints') == before
 
 
 @async_test
@@ -131,24 +131,24 @@ async def test_finished_recovery_keeps_original_source_and_pending_writes(monkey
     configure(monkeypatch, enabled=False)
     path = tmp_path / 'state.sqlite'
     async with build(monkeypatch, path) as app:
-        sid = await app.sessions.create('A')
-        await app.runs.start(sid, [('user', 'one')])
-        storage = app.sessions._persistence.storage
+        sid = await app.host.sessions.create('A')
+        await app.host.runs.start(sid, [('user', 'one')])
+        storage = app.host.sessions._persistence.storage
         row = storage.sessions.get(sid)
-        original = await app.runs._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
+        original = await app.host.runs._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
         source = original.config['configurable']['checkpoint_id']
         storage.runs.finish_run(sid, 'interrupted', source, '', 'interrupted')
     # Explicit recovery is a cold-session operation, not an in-memory rollback.
     async with build(monkeypatch, path) as app:
-        storage = app.sessions._persistence.storage
-        await app.sessions.recover(sid, checkpoint_id=source, action='continue')
-        saved = await app.runs._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
+        storage = app.host.sessions._persistence.storage
+        await app.host.sessions.recover(sid, checkpoint_id=source, action='continue')
+        saved = await app.host.runs._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
         assert json.loads(saved.metadata['naiyue_recovery'])['source_checkpoint_id'] == source
-        before = await app.runs._agent.checkpointer.aget_tuple(original.config)
+        before = await app.host.runs._agent.checkpointer.aget_tuple(original.config)
         row = storage.sessions.get(sid)
-        result = await retention.prune_after_finish(app.runs._agent, storage, sid, row['run_id'],
+        result = await retention.prune_after_finish(app.host.runs._agent, storage, sid, row['run_id'],
             CheckpointRetentionSettings(trigger_checkpoints=2), snapshot=saved)
-        after = await app.runs._agent.checkpointer.aget_tuple(original.config)
+        after = await app.host.runs._agent.checkpointer.aget_tuple(original.config)
         assert result['deleted_checkpoints'] > 0
         assert before.checkpoint == after.checkpoint and before.pending_writes == after.pending_writes
         assert storage.sessions.get(sid)['state'] == 'ready'
@@ -166,24 +166,24 @@ async def test_pruned_compacted_root_keeps_child_archive_and_deletion_ownership(
         AIMessage(content='child report'), AIMessage(content='root done'),
         AIMessage(content='after summary'), AIMessage(content='last task')])
     async with build(monkeypatch, tmp_path / 'state.sqlite', model, [create_subagent_tool()]) as app:
-        await app.subagents.register(SubAgentSpec(name='worker', description='Inspect.', system_prompt='Inspect.', tool_names=()))
-        sid = await app.sessions.create_workspace('A', tmp_path)
-        await app.runs.start(sid, [('user', 'delegate')])
-        child, = await app.history.chat_subagents(sid)
+        await app.host.subagents.register(SubAgentSpec(name='worker', description='Inspect.', system_prompt='Inspect.', tool_names=()))
+        sid = await app.host.sessions.create_workspace('A', tmp_path)
+        await app.host.runs.start(sid, [('user', 'delegate')])
+        child, = await app.host.history.chat_subagents(sid)
         child_thread = 'subagent:' + child['agent_id']
-        thread = app.sessions._persistence.storage.sessions.get(sid)['thread_id']
-        old_page = await app.history.page(sid, agent_id=child['agent_id'], limit=20, body_bytes=20000, preview_chars=100)
+        thread = app.host.sessions._persistence.storage.sessions.get(sid)['thread_id']
+        old_page = await app.host.history.page(sid, agent_id=child['agent_id'], limit=20, body_bytes=20000, preview_chars=100)
         assert old_page['records'] and len(checkpoints(app, child_thread)) > 0
-        await app.runs._agent.aupdate_state({'configurable': {'thread_id': thread}}, {'messages': [
+        await app.host.runs._agent.aupdate_state({'configurable': {'thread_id': thread}}, {'messages': [
             RemoveMessage(id=REMOVE_ALL_MESSAGES), HumanMessage(content='synthetic compacted context')]}, as_node='model')
-        await app.runs.start(sid, [('user', 'continue')])
-        await app.runs.start(sid, [('user', 'last')])
-        remaining = [saved async for saved in app.runs._agent.aget_state_history({'configurable': {'thread_id': thread}})]
+        await app.host.runs.start(sid, [('user', 'continue')])
+        await app.host.runs.start(sid, [('user', 'last')])
+        remaining = [saved async for saved in app.host.runs._agent.aget_state_history({'configurable': {'thread_id': thread}})]
         assert remaining and all(not any(getattr(m, 'tool_calls', []) for m in saved.values['messages']) for saved in remaining)
-        assert await app.history.page(sid, agent_id=child['agent_id'], limit=20, body_bytes=20000, preview_chars=100) == old_page
-        await app.sessions.delete(sid)
+        assert await app.host.history.page(sid, agent_id=child['agent_id'], limit=20, body_bytes=20000, preview_chars=100) == old_page
+        await app.host.sessions.delete(sid)
         assert checkpoints(app, child_thread) == []
-        assert app.sessions._persistence.storage.database.read_rows('SELECT * FROM writes WHERE thread_id=?', (child_thread,)) == []
+        assert app.host.sessions._persistence.storage.database.read_rows('SELECT * FROM writes WHERE thread_id=?', (child_thread,)) == []
 
 
 @async_test
@@ -193,17 +193,17 @@ async def test_real_manual_compaction_keeps_full_archive_after_pruning_and_reope
     model = compact_model()
     path = tmp_path / 'state.sqlite'
     async with build(monkeypatch, path, model) as app:
-        sid = await app.sessions.create('A')
-        await app.runs.start(sid, [('user', 'old task')])
-        await app.runs.start(sid, [('user', 'recent task')])
-        before = app.sessions._persistence.storage.database.read_rows('SELECT message_id,body_json FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (sid,))
-        await app.runs.compact(sid)
-        compressed = await app.history.messages(sid)
+        sid = await app.host.sessions.create('A')
+        await app.host.runs.start(sid, [('user', 'old task')])
+        await app.host.runs.start(sid, [('user', 'recent task')])
+        before = app.host.sessions._persistence.storage.database.read_rows('SELECT message_id,body_json FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (sid,))
+        await app.host.runs.compact(sid)
+        compressed = await app.host.history.messages(sid)
         assert compressed[0].additional_kwargs['naiyue_compaction_summary']
-        after = app.sessions._persistence.storage.database.read_rows('SELECT message_id,body_json FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (sid,))
+        after = app.host.sessions._persistence.storage.database.read_rows('SELECT message_id,body_json FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (sid,))
         assert after[:len(before)] == before
-        assert len(checkpoints(app, app.sessions._persistence.storage.sessions.get(sid)['thread_id'])) < 10
+        assert len(checkpoints(app, app.host.sessions._persistence.storage.sessions.get(sid)['thread_id'])) < 10
     async with build(monkeypatch, path, model) as app:
-        await app.sessions.restore(sid)
-        assert [m.id for m in await app.history.messages(sid)] == [m.id for m in compressed]
-        assert app.sessions._persistence.storage.database.read_rows('SELECT message_id,body_json FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (sid,)) == after
+        await app.host.sessions.restore(sid)
+        assert [m.id for m in await app.host.history.messages(sid)] == [m.id for m in compressed]
+        assert app.host.sessions._persistence.storage.database.read_rows('SELECT message_id,body_json FROM naiyue_chat_messages WHERE session_id=? ORDER BY sequence', (sid,)) == after

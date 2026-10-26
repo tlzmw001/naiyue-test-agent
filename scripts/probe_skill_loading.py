@@ -13,8 +13,10 @@ import sys
 from tempfile import TemporaryDirectory
 
 from langchain_core.messages import AIMessage, ToolMessage
-
-from naiyue_test_agent.application.async_application import build_async_local_application
+if __package__:
+    from .component_fixtures import build_component_application
+else:
+    from component_fixtures import build_component_application
 from naiyue_test_agent.application.sessions.project_instructions import BASE_SYSTEM_PROMPT
 from naiyue_test_agent.tools import create_session_read_tool
 
@@ -73,14 +75,14 @@ async def _async__worker(args) -> int:
             (folder / 'references/source.txt').write_text(marker + '\n', encoding='utf-8')
         os.environ['LANGSMITH_TRACING'] = 'false'
         os.environ['LANGCHAIN_TRACING_V2'] = 'false'
-        app = await build_async_local_application(
+        app = await build_component_application(
             args.config, tools=[create_session_read_tool()],
             system_prompt=BASE_SYSTEM_PROMPT, response_format=None,
         )
         resources.push_async_callback(app.aclose)
-        session = await app.sessions.create_workspace(args.model_id or app.models.default_id, root)
+        session = await app.host.sessions.create_workspace(args.model_id or app.root.models.default_id, root)
         print('phase=default_started', flush=True)
-        first = await app.runs.start(session, [('user', 'Use the source-check Skill for a controlled '
+        first = await app.host.runs.start(session, [('user', 'Use the source-check Skill for a controlled '
                                   'verification task. Follow the default source in the '
                                   'available Skill index and report the required marker.')])
         if first.get('approval_requests'):
@@ -88,7 +90,7 @@ async def _async__worker(args) -> int:
         first_count = check_skill_trace(first['messages'], root, 'agents')
         print(f'phase=default_verified source=agents read_calls={first_count}', flush=True)
         print('phase=explicit_started', flush=True)
-        second = await app.runs.start(session, [('user', 'Now explicitly use the source-check Skill from '
+        second = await app.host.runs.start(session, [('user', 'Now explicitly use the source-check Skill from '
                                    '.claude/skills. Read that source and its required '
                                    'reference, then report only its exact marker.')])
         if second.get('approval_requests'):

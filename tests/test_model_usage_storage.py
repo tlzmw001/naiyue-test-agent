@@ -137,7 +137,7 @@ def test_usage_ddl_failure_rolls_back_without_damaging_existing_schema(monkeypat
         connection.set_authorizer(lambda action, name, *rest: sqlite3.SQLITE_DENY
             if action == sqlite3.SQLITE_CREATE_TABLE and name == 'naiyue_model_invocations' else sqlite3.SQLITE_OK)
         return connection
-    from naiyue_test_agent.application.errors import SessionPersistenceError
+    from naiyue_test_agent.storage.errors import SessionPersistenceError
     with monkeypatch.context() as patch:
         patch.setattr(sqlite3, 'connect', denied)
         with pytest.raises(SessionPersistenceError, match='migration_failed') as caught:

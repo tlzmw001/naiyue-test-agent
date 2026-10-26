@@ -1,6 +1,7 @@
 """Offline Web tool/approval/TCP probe; browser fixtures use the same production UI."""
 
 import argparse
+from scripts.web_probe_app import command_headers
 import asyncio
 import json
 import logging
@@ -63,7 +64,7 @@ def _catalog(root):
 def _worker(args):
     import uvicorn
     from naiyue_test_agent import application
-    from naiyue_test_agent.web.app import create_web_app
+    from scripts.web_probe_app import create_probe_app, command_headers, async_command_headers
     from naiyue_test_agent.web.settings import WebSettings
 
     root = Path(args.worker)
@@ -90,7 +91,7 @@ def _worker(args):
         with os.fdopen(descriptor, 'w') as output:
             json.dump({'port': port}, output)
         try:
-            uvicorn.Server(uvicorn.Config(create_web_app(settings), access_log=False, log_level='warning')).run(sockets=[listener])
+            uvicorn.Server(uvicorn.Config(create_probe_app(settings), access_log=False, log_level='warning')).run(sockets=[listener])
         except KeyboardInterrupt:
             logging.getLogger(__name__).info('offline_tools_worker_shutdown')
 
@@ -108,53 +109,53 @@ def _parent(args):
             process, output, port = _launch(root, deadline, worker_module='scripts.probe_web_tools')
             origin = f'http://127.0.0.1:{port}'
             try:
-                with httpx.Client(base_url=origin, headers={'Authorization': 'Bearer ' + ACCESS,
+                with httpx.Client(event_hooks={'request': [command_headers]}, base_url=origin, headers={'Authorization': 'Bearer ' + ACCESS,
                     'Origin': origin}, timeout=10) as client:
                     def ready():
                         try:
-                            return client.get('/api/models').status_code == 200
+                            return client.get('/api/v1/scopes/chats/models').status_code == 200
                         except httpx.ConnectError:
                             return False
                     _until(ready, deadline)
                     if sid is None:
-                        response = client.post('/api/sessions', json={'model_id': 'offline-tools'})
+                        response = client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'offline-tools'})
                         response.raise_for_status()
                         sid = response.json()['session_id']
                     else:
-                        client.post(f'/api/sessions/{sid}/prepare').raise_for_status()
-                        restored = client.get(f'/api/sessions/{sid}')
+                        client.post(f'/api/v1/scopes/chats/sessions/{sid}/prepare').raise_for_status()
+                        restored = client.get(f'/api/v1/scopes/chats/sessions/{sid}')
                         restored.raise_for_status()
                         assert {'external-one', 'external-two', 'listing'} == {
                             m['tool_call_id'] for m in restored.json()['messages'] if m['type'] == 'tool'}
-                    response = client.post(f'/api/sessions/{sid}/runs', json={
+                    response = client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json={
                         'request_id': str(uuid4()), 'text': 'Use fixture tools' if phase == 'start' else 'Verify restored history'})
                     response.raise_for_status()
                     run = response.json()['run_id']
-                    stream = client.get(f'/api/runs/{run}/events')
+                    stream = client.get(f'/api/v1/scopes/chats/runs/{run}/events')
                     stream.raise_for_status()
                     if phase == 'start':
                         assert 'approval_requested' in stream.text
-                        value = client.get(f'/api/sessions/{sid}').json()
+                        value = client.get(f'/api/v1/scopes/chats/sessions/{sid}').json()
                         batch, = value['approval_batches']
                         assert value['pending_approval'] and len(batch['items']) == 2
                         assert [row['tool_call_id'] for row in batch['items']] == ['external-one', 'external-two']
                         body = {'request_id': str(uuid4()), 'origin_run_id': run, 'approval_batch_id': batch['approval_batch_id'],
                             'decisions': [{'approval_id': row['approval_id'], 'decision': decision}
                                 for row, decision in zip(batch['items'], ['approve', 'reject'], strict=True)]}
-                        resumed = client.post(f'/api/sessions/{sid}/approvals', json=body)
+                        resumed = client.post(f'/api/v1/scopes/chats/sessions/{sid}/approvals', json=body)
                         resumed.raise_for_status()
                         new_run = resumed.json()['run_id']
                         assert new_run != run
-                        events = client.get(f'/api/runs/{new_run}/events')
+                        events = client.get(f'/api/v1/scopes/chats/runs/{new_run}/events')
                         events.raise_for_status()
                         assert 'tool_call_finished' in events.text
-                        assert client.post(f'/api/sessions/{sid}/approvals', json=body).json() == resumed.json()
-                        view = client.get(f'/api/runs/{new_run}').json()
+                        assert client.post(f'/api/v1/scopes/chats/sessions/{sid}/approvals', json=body).json() == resumed.json()
+                        view = client.get(f'/api/v1/scopes/chats/runs/{new_run}').json()
                         assert view['status'] == 'completed' and not view['incomplete']
                         assert view['tool_states']['external-one']['outcome'] == 'success'
                         assert view['tool_states']['external-two']['outcome'] == 'not_executed'
                     else:
-                        view = client.get(f'/api/runs/{run}').json()
+                        view = client.get(f'/api/v1/scopes/chats/runs/{run}').json()
                         assert view['status'] == 'completed' and view['messages'][-1]['content'] == 'TOOL HISTORY RESTORED'
             finally:
                 _stop(process, output, deadline)

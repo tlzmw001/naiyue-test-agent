@@ -26,6 +26,28 @@ def test_search_settings_roundtrip_schema_and_process_snapshot(tmp_path, monkeyp
     registry = prepare_tool_registry(specs)
     names = registry.names()
     assert names == ('read', 'ls', 'find', 'grep', 'write', 'edit', 'bash', 'powershell', 'subagent', 'subagent_list', 'aitest_kit', 'web_search', 'web_fetch', 'task_list', 'task_output', 'task_stop', 'history', 'memory')
+    # Both file and process runners are selected by their verified providers.
+    import asyncio
+    from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
+    from tool_feedback_helpers import invoke_tool_feedback
+    from naiyue_test_agent.tools import find, grep
+    from naiyue_test_agent.execution import host_processes
+    from naiyue_test_agent.execution.host_shell import ShellAdapter
+    async def search(*args, **kwargs):
+        return 'provider search'
+    monkeypatch.setattr(find, '_find_files', search)
+    monkeypatch.setattr(grep, '_grep_files', search)
+    monkeypatch.setattr(ShellAdapter, 'resolve_executable', lambda *_: '/owned/interpreter')
+    monkeypatch.setattr(ShellAdapter, 'probe_version', lambda *_: '7.4.0')
+    monkeypatch.setattr(host_processes.shutil, 'which', lambda *_a, **_k: '/owned/aitest')
+    monkeypatch.setattr(host_processes, 'execute_process_request', search)
+    for spec in (registry.get(name) for name in ('find', 'grep', 'bash', 'powershell', 'aitest_kit')):
+        args = ({'command': 'text'} if spec.tool.name in ('bash', 'powershell') else
+                {'args': ['doctor']} if spec.tool.name == 'aitest_kit' else
+                {'pattern': '*.txt' if spec.tool.name == 'find' else 'text'})
+        result = asyncio.run(invoke_tool_feedback(spec, args, call_id=spec.tool.name,
+            context=typed_context(identity=RunIdentity('S', execution_root=ExecutionRoot(tmp_path))), permission_mode='BypassApprovals'))
+        assert result.status == 'success' and result.content == 'provider search'
     # Find/Grep, Bash/PowerShell and the direct AITest CLI all use this snapshot.
     assert seen == [settings.process] * 5
     schemas = {s.tool.name: s.tool.tool_call_schema.model_json_schema() for s in specs}

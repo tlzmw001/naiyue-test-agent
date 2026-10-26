@@ -11,10 +11,31 @@ class SessionAPI:
         with self._owner.operation():
             await run_blocking(self._sessions.require(session_id).select_thinking, model_id, level)
 
-    async def skills(self, workspace_root):
+    async def skills(self, workspace_root, *, session_id=None):
         with self._owner.operation():
             from naiyue_test_agent.application.sessions.skills import discover_project_skills
-            return await run_blocking(discover_project_skills, workspace_root)
+            from naiyue_test_agent.execution.host_files import HostFileSystem
+            from naiyue_test_agent.execution_roots import ExecutionRoot, ExecutionRootUnavailable
+            from naiyue_test_agent.tools.read import resolve_workspace_root
+            if session_id is not None:
+                from .execution_binding import resolve_capabilities
+                row=await run_blocking(self._metadata.get,session_id)
+                access=await resolve_capabilities(self._sessions,row)
+                return await run_blocking(discover_project_skills,access.files)
+            def discover():
+                if workspace_root is None:
+                    return discover_project_skills(None)
+                root = resolve_workspace_root(workspace_root)
+                project = self._sessions._project
+                if self._sessions._execution_authority is not None:
+                    execution = self._sessions.resolve_execution_root(None, project.project_id, 'project_local')
+                    if execution.path != root:
+                        raise ExecutionRootUnavailable('wrong_project')
+                else:
+                    execution = ExecutionRoot(root)
+                files = HostFileSystem(execution, project.project_id if project is not None else None)
+                return discover_project_skills(files)
+            return await run_blocking(discover)
 
     def control_options(self):
         self._owner.check_open()
@@ -37,11 +58,70 @@ class SessionAPI:
             await run_blocking(self._sessions.require(session_id).set_permission_mode, mode)
 
     def is_loaded(self, session_id):
+        self._owner.check_open()
         return self._sessions.has_session(session_id)
 
     async def create(self, model_id):
         with self._owner.operation():
             return await run_blocking(self._sessions.create_session, model_id)
+
+    async def create_sandbox(self,model_id,*,request_id,include_untracked=()):
+        from .execution_binding import create_sandbox_session
+        with self._owner.operation():
+            return await create_sandbox_session(self._sessions,model_id,request_id,include_untracked)
+
+    async def result_options(self,session_id):
+        from .result_api import result_call
+        return await result_call(self,session_id,'result_options')
+
+    async def capture_result(self,session_id,*,result_id,include_untracked):
+        from .result_api import result_call
+        return await result_call(self,session_id,'capture_result',result_id=result_id,include_untracked=include_untracked)
+
+    async def results(self,session_id):
+        from .result_api import result_call
+        return await result_call(self,session_id,'results')
+
+    async def result(self,session_id,result_id):
+        from .result_api import result_call
+        return await result_call(self,session_id,'result',result_id)
+
+    async def result_diff(self,session_id,result_id,path):
+        from .result_api import result_call
+        return await result_call(self,session_id,'result_diff',result_id,path)
+
+    async def delivery_options(self,session_id,result_id):
+        from .result_api import result_call
+        return await result_call(self,session_id,'delivery_options',result_id)
+
+    async def deliver(self,session_id,result_id,command):
+        from .result_api import result_call
+        return await result_call(self,session_id,'deliver',result_id,command)
+
+    async def delivery_operations(self,session_id,result_id):
+        from .result_api import result_call
+        return await result_call(self,session_id,'delivery_operations',result_id)
+
+    async def acknowledge_delivery(self,session_id,result_id,operation_id):
+        from .result_api import result_call
+        return await result_call(self,session_id,'acknowledge_delivery',result_id,operation_id)
+
+    async def prepare_environment(self,session_id):
+        from .execution_binding import prepare_sandbox_session
+        with self._owner.operation():
+            async with self._persistence.history_lock(session_id):
+                return await prepare_sandbox_session(self._sessions,session_id)
+
+    async def environment_action(self,session_id,action):
+        from .execution_binding import environment_action
+        with self._owner.operation():
+            async with self._persistence.history_lock(session_id):
+                status=await self.status(session_id)
+                if status['state']=='running':
+                    from naiyue_test_agent.application.errors import SessionBusyError
+                    raise SessionBusyError('Session is busy')
+                with self._sessions.manage_environment(session_id):
+                    return await environment_action(self._sessions,session_id,action)
 
     async def create_workspace(self, model_id, workspace_root):
         with self._owner.operation():

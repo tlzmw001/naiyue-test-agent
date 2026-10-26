@@ -1,3 +1,4 @@
+from .session_recovery import prepare_saved_configuration
 """Critical persistence boundaries, separate from optional event consumers."""
 
 import logging
@@ -8,10 +9,10 @@ from copy import deepcopy
 from threading import Lock
 from contextlib import nullcontext
 
-from naiyue_test_agent.application.errors import SessionPersistenceError
-from naiyue_test_agent.storage.execution_storage import root_from_row
-from naiyue_test_agent.execution_roots import execution_error
-from .session_recovery import _classification, _identity_matches, _message_facts, classify_recovery, recovery_record, build_recovery_update, validate_saved_approval
+from naiyue_test_agent.storage.errors import SessionPersistenceError
+from .execution_binding import resolve_saved_execution, saved_execution_status
+from naiyue_test_agent.application.sessions.session_recovery import _classification, _identity_matches, _message_facts, classify_recovery, build_recovery_update, validate_saved_approval
+from naiyue_test_agent.storage.recovery_records import recovery_record
 from .session_approval import is_pre_tool_approval
 from langchain_core.messages import BaseMessage
 from langchain_core.tools import ToolException
@@ -60,13 +61,18 @@ class SessionPersistence:
         value['history_ready'] = (session_id in self._prepared or loaded and row['run_id'] is None) and not blocked
         value['can_run'] = (loaded and not blocked and row['state'] != 'running' and not value['busy']
                             and not value['manual_review_required'] and not value['pending_approval'])
-        root = root_from_row(row)
+        root, error = await run_blocking(saved_execution_status, self.sessions, row)
         value['project_id'] = row['project_id']
+        value['workspace_root'] = str(root.path) if root is not None else None
+        value['last_execution_path'] = row['last_execution_path']
         value['execution_root_kind'] = row['execution_root_kind']
-        value['execution_root_error'] = execution_error(root, row['project_id'])
+        value['execution_root_error'] = error
         value['can_run'] = value['can_run'] and value['execution_root_error'] is None
+        from .execution_binding import environment_status
+        value['execution']=await run_blocking(environment_status,self.sessions,row)
+        value['can_run']=value['can_run'] and value['execution']['state']=='ready'
         value.pop('approval_run_id', None)
-        from naiyue_test_agent.application.conversation.reply_storage import latest
+        from naiyue_test_agent.storage.conversation_sql.reply_storage import latest
         boundary = await run_blocking(self.storage.replies.latest, session_id)
         value['last_reply_id'] = boundary['reply_id'] if boundary else None
         return value
@@ -74,12 +80,15 @@ class SessionPersistence:
     async def aquery_history(self, *, source_session_id, workspace_root, agent_path, request, settings):
         session = self.sessions.require(source_session_id)
         current = session.describe_session()
-        if (not current['busy'] or current['workspace_root'] != str(workspace_root)
+        if (not current['busy'] or current['workspace_root'] != (str(workspace_root) if workspace_root is not None else None)
                 or 'history' not in session.get_active_tools(agent_path)):
             raise ToolException('history_scope_mismatch: the calling session or role is unavailable.')
         from naiyue_test_agent.tools.permissions import require_execution_directory
         facts = session.lifecycle.snapshot_for_run()
-        require_execution_directory(facts['execution_root'], facts['project_id'])
+        if facts['files'] is not None and facts['files'].environment.kind=='sandbox':
+            await run_blocking(facts['files'].validate)
+        else:
+            require_execution_directory(facts['execution_root'], facts['project_id'])
         try:
             return await run_blocking(self.storage.conversation.read_history_tool, source_session_id, current['project_id'], request, settings)
         except SessionPersistenceError as error:
@@ -97,7 +106,19 @@ class SessionPersistence:
             raise ToolException('memory_source_save_failed: memory was not written.') from error
 
     async def prepare_memory(self,session_id,root,messages,model,*,preview=False):
-        if self._memory_jobs is None:return []
+        if self._memory_jobs is None:
+            access = self.sessions.memory._access if self.sessions.memory else None
+            if access is None or not access.personal_only:
+                return []
+            if 'memory' not in self.sessions.require(session_id).get_active_tools():
+                return []
+            from naiyue_test_agent.application.memory.memory_context import prepare_memory_parts
+            from naiyue_test_agent.tools.permission_rules import match_rules
+            def allowed(request):
+                return match_rules(self._permission_settings.deny,
+                    dict(tool_name='memory', args=request), deny=True) is None
+            return await run_blocking(prepare_memory_parts, access, session_id, None, messages, model,
+                                      allowed=allowed)
         try:return await run_blocking(self._memory_jobs.prepare,session_id,root,messages,model,preview=preview)
         except (MemoryError,OSError,ValueError,SessionPersistenceError) as error:
             logger.warning('memory_context_prepare_failed error_type=%s',type(error).__name__)
@@ -154,6 +175,8 @@ class SessionPersistence:
             memory_guard=self._memory_jobs.deletion_guard(session_id) if self._memory_jobs else nullcontext()
             with self.sessions.background_tasks.deletion_guard(session_id),memory_guard:
                 async with self.history_lock(session_id):
+                    from .execution_binding import check_environment_deletion
+                    await check_environment_deletion(self.sessions,session_id)
                     result = await self._delete(session_id, agent)
                     self.sessions.background_tasks.forget_session(session_id)
                     if self._memory_jobs:self._memory_jobs.forget_session(session_id)
@@ -215,7 +238,9 @@ class SessionPersistence:
                         raise SessionPersistenceError('checkpoint_not_safely_finished')
                 updates = await await_settled(collect_chat_updates(agent, self.storage, session_id, snapshot=snapshot))
                 await run_blocking(self.storage.runs.finish_run, session_id, state, checkpoint_id, namespace, status, updates,
-                                  subagent_run_id=run_id)
+                                  subagent_run_id=run_id, execution_path=session['workspace_root'])
+                if state == 'ready' and status == 'completed':
+                    self.sessions.require(session_id).lifecycle.confirm_execution_path(run_id, session['workspace_root'])
                 self._prepared[session_id] = {}
                 await self._ensure_title(session_id)
             except Exception as error:
@@ -288,7 +313,7 @@ class SessionPersistence:
             row = await run_blocking(self.storage.sessions.get, session_id)
             if row['state'] != 'ready':
                 raise SessionPersistenceError('session_recovery_blocked')
-            root, names = await self._aprepare_saved_configuration(row)
+            root, names = prepare_saved_configuration(self, row)
             snapshot = await await_settled(agent.aget_state({'configurable': {'thread_id': row['thread_id']}}))
             actual = snapshot.config.get('configurable', {}).get('checkpoint_id')
             namespace = snapshot.config.get('configurable', {}).get('checkpoint_ns', '')
@@ -302,25 +327,6 @@ class SessionPersistence:
                 self._recovering.discard(session_id)
 
 
-    async def _aprepare_saved_configuration(self, row):
-        try:
-            self._permission_settings.validate_mode(row['permission_mode'])
-        except ValueError as error:
-            raise SessionPersistenceError('invalid_permission_mode') from error
-        saved = row['active_tool_names_json']
-        try:
-            names = json.loads(saved)
-            from naiyue_test_agent.tools.subagent import subagent_selection
-            names = subagent_selection(names)
-            specs = self._tool_registry.select(names)
-            names = tuple(spec.tool.name for spec in specs)
-        except (ValueError, TypeError) as error:
-            raise SessionPersistenceError('invalid_active_tools') from error
-        self._catalog.with_thinking(row['model_id'], row['thinking_level'])
-        # Saved identity can be installed for history even when execution is unavailable.
-        root = root_from_row(row)
-        return root.path if root is not None else None, names
-
     def _install_session(self, row, root, names, *, recovering=False, pending=None):
         session_id = row['session_id']
         with self._lock:
@@ -330,7 +336,8 @@ class SessionPersistence:
             self.sessions.install_restored_session(session_id, thread_id=row['thread_id'],
                 model_id=row['model_id'], thinking_level=row['thinking_level'], workspace_root=root,
                 active_tool_names=names, permission_mode=row['permission_mode'], pending=pending, conversation_revision=row['conversation_revision'],
-                project_id=row['project_id'], execution_root_kind=row['execution_root_kind'])
+                project_id=row['project_id'], execution_root_kind=row['execution_root_kind'], last_execution_path=row['last_execution_path'], execution_binding=row['execution_binding'],
+                execution_setup=json.loads(row['execution_setup_json']) if row.get('execution_setup_json') else None)
 
     async def _read_history(self, session_id, agent, *, snapshot=None, include_messages=True):
         row = await run_blocking(self.storage.sessions.get, session_id)
@@ -353,9 +360,10 @@ class SessionPersistence:
                 value['messages'] = messages
         unavailable = None
         try:
-            _, names = await self._aprepare_saved_configuration(row)
+            _, names = prepare_saved_configuration(self, row)
             value['active_tools'] = list(names)
-            value['execution_root_error'] = execution_error(root_from_row(row), row['project_id'])
+            root, value['execution_root_error'] = await run_blocking(saved_execution_status, self.sessions, row)
+            value['workspace_root'] = str(root.path) if root is not None else None
             if value['execution_root_error'] is not None:
                 unavailable = 'execution_root_unavailable'
         except (ValueError, TypeError, ModelConfigError, SessionPersistenceError) as error:
@@ -386,9 +394,9 @@ class SessionPersistence:
         if action not in ('continue', 'restore_approval'):
             raise SessionPersistenceError('invalid_recovery_action')
         row = await run_blocking(self.storage.sessions.get, session_id)
-        root, names = await self._aprepare_saved_configuration(row)
+        root, names = prepare_saved_configuration(self, row)
         binding = await run_blocking(self.storage.sessions.get_workspace_binding)
-        if binding and str(root) != binding['root_path']:
+        if binding and not self.sessions._fixed_execution and str(root) != binding['root_path']:
             raise SessionPersistenceError('workspace_mismatch')
         config = {'configurable': {'thread_id': row['thread_id']}}
         try:
@@ -407,7 +415,16 @@ class SessionPersistence:
         if action == 'restore_approval':
             if classification['kind'] != 'pending_approval':
                 raise SessionPersistenceError('session_recovery_blocked')
-            pending = await run_blocking(validate_saved_approval, self._permission_settings, self._tool_registry, row, snapshot, names)
+            execution = await run_blocking(resolve_saved_execution, self.sessions, row)
+            access=None
+            if row['execution_binding']=='sandbox':
+                from .execution_binding import resolve_capabilities
+                from naiyue_test_agent.contracts.sandbox import SandboxError
+                try:access=await resolve_capabilities(self.sessions,row)
+                except SandboxError as error:
+                    logger.warning('approval_environment_unavailable code=%s',error.code)
+            pending = await run_blocking(validate_saved_approval, self._permission_settings, self._tool_registry,
+                row, snapshot, names, execution_root=execution,execution_access=access)
             try:
                 updates = await await_settled(collect_chat_updates(agent, self.storage, session_id, snapshot=snapshot))
                 await run_blocking(self.storage.runs.finish_run, session_id, 'interrupted', actual, '', 'interrupted', updates)

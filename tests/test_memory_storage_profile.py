@@ -18,7 +18,7 @@ def test_memory_database_never_enters_disk_guards(monkeypatch, tmp_path):
         assert database.path is None
         assert database.uri.startswith('file:/naiyue-') and database.uri.endswith('?vfs=memdb')
         assert database.connection.execute('PRAGMA journal_mode').fetchone()[0] == 'memory'
-        assert database.read_rows('SELECT version FROM naiyue_store_info') == [{'version': 18}]
+        assert database.read_rows('SELECT version FROM naiyue_store_info') == [{'version': 20}]
     assert list(tmp_path.iterdir()) == []
 
 
@@ -59,7 +59,7 @@ def test_official_saver_shares_memory_store_and_last_close_discards_data():
 def test_saver_setup_failure_closes_store_before_model_start(monkeypatch, tmp_path, disk):
     async def scenario():
         from naiyue_test_agent import application
-        from naiyue_test_agent.application.assembly import build_application
+        from scripts.component_fixtures import build_component_application as build_application
         from naiyue_test_agent.storage import resources as module
         stores = []
         original_assemble = ProjectStore._assemble

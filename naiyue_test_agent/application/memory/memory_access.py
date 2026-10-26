@@ -5,15 +5,14 @@ import binascii
 import hashlib
 import json
 import logging
-from pathlib import Path
 import sqlite3
-from threading import RLock
 import time
 
-from naiyue_test_agent.storage.database import Database
-from naiyue_test_agent.storage.memory import MemoryRepo
-from .memory_queries import MemoryReadError
-from . import memory_results as public, memory_lexical as lexical
+from .personal_memory import PersonalMemory
+from naiyue_test_agent.contracts.memory import MemoryReadError
+from . import memory_results as public
+from .memory_lexical import select
+from naiyue_test_agent.contracts import memory_lexical as lexical
 
 
 logger = logging.getLogger(__name__)
@@ -39,27 +38,25 @@ def _decode(token, expected):
 
 
 class MemoryAccess:
-    def __init__(self, storage, settings, data_dir):
+    def __init__(self, storage, settings, data_dir, *, personal=None, personal_only=False):
         self.storage, self.settings = storage, settings
-        self._path = Path(data_dir) / 'personal' / 'memory.sqlite'
-        self._personal = None
-        self._lock = RLock()
+        self._personal_store = personal if personal is not None else PersonalMemory(data_dir, settings)
+        self._owns_personal, self.personal_only = personal is None, personal_only
+        self._lock = self._personal_store.lock
         self._closed = False
 
     def close(self):
         with self._lock:
             self._closed = True
-            if self._personal is not None:
-                self._personal.close()
+            if self._owns_personal:
+                self._personal_store.close()
 
     def _stores(self, requested):
         result = []
-        if requested in ('both', 'workspace'):
+        if requested in ('both', 'workspace') and not self.personal_only:
             result.append(('workspace', self.storage.memory))
         if requested in ('both', 'personal'):
-            if self._personal is None:
-                self._personal = Database.open_personal(self._path, self.settings)
-            result.append(('personal', MemoryRepo(self._personal)))
+            result.append(('personal', self._personal_store.repository()))
         return result
 
 
@@ -70,11 +67,20 @@ class MemoryAccess:
                     raise MemoryReadError('memory_unavailable')
                 binding = self.storage.sessions.get_workspace_binding()
                 source = self.storage.sessions.get(source_session_id)
-                if (not binding or project_id is None or source['project_id'] != project_id
+                if self.personal_only:
+                    if (binding is not None or project_id is not None or source['project_id'] is not None
+                            or source['workspace_root'] is not None):
+                        raise MemoryReadError('memory_scope_mismatch')
+                    if request['scope'] == 'workspace' or request['action'] == 'refresh_overview':
+                        raise MemoryReadError('memory_scope_mismatch')
+                    namespace = 'chats'
+                elif (not binding or project_id is None or source['project_id'] != project_id
                         or binding['workspace_id'] != project_id):
                     raise MemoryReadError('memory_scope_mismatch')
+                else:
+                    namespace = binding['workspace_id']
                 if request['action'] in ('record','update','disable','forget'):
-                    return self._mutate(binding['workspace_id'],source_session_id,request,time.time() if now is None else now)
+                    return self._mutate(namespace,source_session_id,request,time.time() if now is None else now)
                 count = request['limit'] or self.settings.default_limit
                 variants = tuple(dict.fromkeys((request['query'], *request['expansions']))) if request['query'] else ()
                 if count > self.settings.max_limit:
@@ -82,7 +88,7 @@ class MemoryAccess:
                 if any(len(q) > self.settings.max_query_chars for q in variants):
                     raise MemoryReadError('memory_query_too_complex')
                 stores = self._stores(request['scope'])
-                return self._query(stores, binding['workspace_id'], source_session_id, request,
+                return self._query(stores, namespace, source_session_id, request,
                                    time.time() if now is None else now, count, variants)
         except MemoryReadError:
             raise
@@ -93,8 +99,11 @@ class MemoryAccess:
             raise MemoryReadError(code) from error
 
     def _mutate(self, workspace_id, caller, request, now):
+        from .memory_mutations import commit
         _, target = self._stores(request['scope'])[0]
-        return target.mutate_with_sources(self.storage.memory, workspace_id, caller, request, self.settings, now)
+        with target.edit_with_sources(self.storage.memory) as (writer, archive):
+            result = commit(writer, archive, workspace_id, caller, request, self.settings, now)
+            return public.fit_mutation(result, self.settings.max_output_bytes)
 
     def _query(self, stores, workspace_id, source, request, now, count, variants):
         selector = {key: value for key, value in request.items() if key not in ('cursor', 'offset')}
@@ -162,5 +171,5 @@ class MemoryAccess:
             candidates.append({**row, 'score':sum(score for _, score in valid),
                                'matched_variants':list(dict.fromkeys(v for v, _ in valid))})
         candidates.sort(key=lambda row: (-row['score'], row['scope'], row['memory_id']))
-        selected, more = lexical.select(candidates, variants, limit=count, coverage=self.settings.fallback_coverage)
+        selected, more = select(candidates, variants, limit=count, coverage=self.settings.fallback_coverage)
         return selected, truncated or more

@@ -153,7 +153,6 @@ async def _find_files(target, pattern, limit, runtime, *, settings, runner, prog
 
 def create_session_find_tool(*, settings=None, process_settings=None, progress_settings=None):
     settings = settings if settings is not None else FindSettings()
-    runner = HostProcessRunner(process_settings)
     public, execution = build_tool_schemas('FindInput', _FindInput,
         pattern=(str, Field(min_length=1, max_length=settings.max_pattern_chars)),
         path=(str, Field(default='.', min_length=1, max_length=settings.max_path_chars)),
@@ -169,14 +168,12 @@ def create_session_find_tool(*, settings=None, process_settings=None, progress_s
 
     async def afind_files(pattern: str, runtime: ToolRuntime[RuntimeContext], path: str = '.',
                           limit: int = settings.default_limit, timeout: int | None = None) -> str:
-        root = runtime.context.scope.identity.execution_path
-        if not isinstance(root, Path) or not root.is_absolute():
-            raise ToolException(FIND_NO_WORKSPACE)
-        target = require_file_target(runtime, path, operation='list')
+        await asyncio.to_thread(require_file_target, runtime, path, operation='list')
         progress = ToolProgress(runtime, progress_settings)
         try:
-            return await _find_files(target, pattern, limit, runtime,
-                settings=settings, runner=runner, progress=progress, timeout=timeout)
+            return await runtime.context.scope.capabilities.files.find(runtime.context.authorization.permit['subject'],
+                pattern, limit, runtime, settings=settings, process_settings=process_settings,
+                progress=progress, timeout=timeout)
         finally:
             progress.flush()
 

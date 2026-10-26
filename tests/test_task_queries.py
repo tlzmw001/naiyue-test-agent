@@ -175,3 +175,17 @@ def test_query_tools_use_trusted_query_port_and_preserve_permit_binding(tmp_path
             await spec.tool.coroutine(**args, runtime=runtime)
         assert len(owner.calls) == before
     asyncio.run(scenario())
+
+
+def test_memory_owner_attached_during_host_assembly_is_visible():
+    from naiyue_test_agent.application.sessions.task_queries import TaskQueries
+    import asyncio
+    class Owner:
+        def __init__(self,name):self.name=name
+        async def list(self,**kwargs):
+            return dict(items=[dict(task_id=self.name,created_at=self.name)],next_before=None,active_count=0,terminal_revision=0,revision=self.name)
+    async def scenario():
+        queries=TaskQueries(Owner('host'))
+        queries.memory=Owner('memory')
+        assert {row['task_id'] for row in (await queries.list())['items']}=={'host','memory'}
+    asyncio.run(scenario())

@@ -12,8 +12,8 @@ import pytest
 from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.errors import SessionPersistenceError
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+from naiyue_test_agent.storage.errors import SessionPersistenceError
+from scripts.component_fixtures import open_component_application
 from naiyue_test_agent.storage.project_store import ProjectStore
 from naiyue_test_agent.model_access import ModelConfigError
 from naiyue_test_agent.settings import AppSettings
@@ -39,7 +39,7 @@ def test_async_backup_failure_never_reaches_catalog_mcp_or_saver(tmp_path, monke
     monkeypatch.setattr(storage_resources, 'AsyncSqliteSaver', forbidden)
     async def run():
         with pytest.raises(SessionPersistenceError, match='backup_failed') as caught:
-            async with open_async_persistent_application('unused', database_path=database, tools=[],
+            async with open_component_application('unused', database_path=database, tools=[],
                     system_prompt='', response_format=None, settings=AppSettings()):
                 pytest.fail('must not enter the application')
         assert caught.value.__cause__ is original
@@ -55,7 +55,7 @@ def test_model_failure_after_migration_stays_model_failure_and_does_not_restore(
     monkeypatch.setattr(application, 'load_model_catalog', failure)
     async def run():
         with pytest.raises(ModelConfigError) as caught:
-            async with open_async_persistent_application('unused', database_path=database, tools=[],
+            async with open_component_application('unused', database_path=database, tools=[],
                     system_prompt='', response_format=None, settings=AppSettings()):
                 pytest.fail('must not enter the application')
         assert caught.value is original
@@ -67,7 +67,7 @@ def test_model_failure_after_migration_stays_model_failure_and_does_not_restore(
 
 def test_chat_reports_structured_migration_failure_without_private_body(tmp_path, monkeypatch, capsys, caplog):
     from naiyue_test_agent.cli import chat as cli
-    from naiyue_test_agent.application.conversation import chat_queries
+    from naiyue_test_agent.storage.conversation_sql import chat_queries
     database, root, _ = closed_store(tmp_path, version=6)
     monkeypatch.setattr(cli, 'load_settings', lambda: AppSettings())
     def failure(*args, **kwargs):
@@ -80,39 +80,33 @@ def test_chat_reports_structured_migration_failure_without_private_body(tmp_path
     assert 'PRIVATE-SQL-parameters' not in output + caplog.text
 
 
-@pytest.mark.parametrize('system_exit', [False, True])
-def test_web_terminal_forwards_lifespan_failure_for_both_server_exit_paths(tmp_path, monkeypatch, capsys, caplog, system_exit):
+@pytest.mark.parametrize('stage', ['connect', 'prepare'])
+def test_web_terminal_forwards_structured_service_failure(tmp_path, monkeypatch, capsys, caplog, stage):
     from naiyue_test_agent.web import __main__ as entry
-    from naiyue_test_agent.web.app import create_web_app
-    from naiyue_test_agent.web.settings import WebSettings
-    from naiyue_test_agent.application.errors import StorageStartupError
+    from naiyue_test_agent.storage.errors import StorageStartupError
+    from naiyue_test_agent.service.settings import ServiceError, StartupFailure
+    from naiyue_test_agent.application.projects.selection import ProjectSelection
+    from web_service_helpers import isolated_web_launch
     original = StorageStartupError('migration_failed', database_path=tmp_path / 'db', phase='schema_8',
         source_schema=6, current_schema=7, target_schema=CURRENT_SCHEMA, backup_id='a' * 32)
     original.__cause__ = OSError('PRIVATE-provider-response')
     cause = original.__cause__
-    @asynccontextmanager
-    async def factory():
+    async def failure(*args, **kwargs):
         raise original
-        yield
-    configured = WebSettings(config_path=tmp_path / 'unused', database_path=tmp_path / 'db',
-        frontend_dist=tmp_path, runtime_settings=AppSettings())
-    app = create_web_app(configured, application_factory=factory)
-    async def startup():
-        with pytest.raises(SessionPersistenceError) as caught:
-            async with app.router.lifespan_context(app):
-                pytest.fail('must not complete startup')
-        assert 'PRIVATE-provider-response' not in ''.join(traceback.format_exception(caught.value))
-    def run(server, **kwargs):
-        asyncio.run(startup())
-        if system_exit:
-            raise SystemExit(3)
     (tmp_path / 'index.html').write_text('<html>fixture</html>')
-    monkeypatch.setattr(entry, 'load_settings', lambda: AppSettings())
-    monkeypatch.setattr(entry, 'create_web_app', lambda settings: app)
-    monkeypatch.setattr(entry.uvicorn.Server, 'run', run)
-    monkeypatch.setenv('NAIYUE_WEB_PORT', '0')
-    assert entry.main(['--workspace', str(tmp_path), '--frontend-dist', str(tmp_path)]) == 1
-    assert app.state.startup_error is original
+    monkeypatch.setattr(entry, 'load_settings', lambda *a: AppSettings.model_validate(
+        {'storage': {'data_dir': tmp_path / 'data'}}))
+    if stage == 'connect':
+        facts = StartupFailure(database_path=str(tmp_path / 'db'), phase='schema_8',
+            source_schema=6, current_schema=7, target_schema=CURRENT_SCHEMA, backup_id='a'*32)
+        async def connect(options):
+            raise ServiceError('migration_failed', startup=facts) from None
+        monkeypatch.setattr(entry, 'ensure_service', connect)
+        assert entry.main(['--workspace', str(tmp_path), '--frontend-dist', str(tmp_path)]) == 1
+    else:
+        monkeypatch.setattr(ProjectSelection, 'prepare', failure)
+        with isolated_web_launch(monkeypatch):
+            assert entry.main(['--workspace', str(tmp_path), '--frontend-dist', str(tmp_path)]) == 1
     assert original.__cause__ is cause
     output = capsys.readouterr().out
     assert all(value in output for value in ('migration_failed', '源版本=6', '当前版本=7', 'a' * 32))

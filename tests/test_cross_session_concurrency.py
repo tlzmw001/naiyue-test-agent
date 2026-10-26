@@ -9,8 +9,8 @@ from pydantic import Field, ValidationError
 
 from native_application_helpers import async_test
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_application import build_async_local_application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+from scripts.component_fixtures import build_component_application
+from scripts.component_fixtures import open_component_application
 from naiyue_test_agent.application.errors import SessionBusyError
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.settings import AppSettings, load_settings
@@ -43,10 +43,10 @@ async def concurrent_app(monkeypatch, path=None, *, settings=None, model=None, t
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', models))
     kwargs = dict(tools=list(tools), system_prompt='', response_format=None, settings=settings or AppSettings())
     if path is not None:
-        async with open_async_persistent_application('unused', database_path=path, **kwargs) as app:
+        async with open_component_application('unused', database_path=path, **kwargs) as app:
             yield app, model
     else:
-        app = await build_async_local_application('unused', **kwargs)
+        app = await build_component_application('unused', **kwargs)
         try:
             yield app, model
         finally:
@@ -98,50 +98,50 @@ async def test_capacity_is_atomic_and_rejection_has_no_run_effects(monkeypatch, 
     count = limit or 10
     async with concurrent_app(monkeypatch, tmp_path / 'state.sqlite' if persistent else None,
                               settings=settings) as (app, model):
-        ids = [await app.sessions.create('A') for _ in range(count + 1)]
+        ids = [await app.host.sessions.create('A') for _ in range(count + 1)]
         events, tasks = [], []
-        app.observability.subscribe(events.append)
+        app.host.observability.subscribe(events.append)
         try:
             for sid in ids[:-1]:
                 entered, _ = gated(model, sid)
-                task = asyncio.create_task(app.runs.start(sid, [('user', sid)]))
+                task = asyncio.create_task(app.host.runs.start(sid, [('user', sid)]))
                 tasks.append(task)
                 await asyncio.wait_for(entered.wait(), 5)
-            assert all(app.sessions._sessions.require(sid).describe_session()['busy'] for sid in ids[:-1])
+            assert all(app.host.sessions._sessions.require(sid).describe_session()['busy'] for sid in ids[:-1])
             if persistent:
-                assert set(app.sessions._persistence._active) == set(ids[:-1])
+                assert set(app.host.sessions._persistence._active) == set(ids[:-1])
             with pytest.raises(SessionBusyError):
-                await app.runs.start(ids[0], [('user', 'duplicate')])
+                await app.host.runs.start(ids[0], [('user', 'duplicate')])
             with pytest.raises(RunCapacityExceededError):
-                await app.runs.start(ids[-1], [('user', ids[-1])])
+                await app.host.runs.start(ids[-1], [('user', ids[-1])])
             with pytest.raises(RunCapacityExceededError):
-                await app.runs.compact(ids[-1])
+                await app.host.runs.compact(ids[-1])
             assert ids[-1] not in model.requests and not any(e.session_id == ids[-1] for e in events)
-            assert not app.sessions._sessions.require(ids[-1]).describe_session()['busy']
-            snapshot = await app.runs._agent.aget_state({'configurable': {'thread_id': app.sessions._sessions.require(ids[-1]).get_thread_id()}})
+            assert not app.host.sessions._sessions.require(ids[-1]).describe_session()['busy']
+            snapshot = await app.host.runs._agent.aget_state({'configurable': {'thread_id': app.host.sessions._sessions.require(ids[-1]).get_thread_id()}})
             assert not snapshot.values and not snapshot.config['configurable'].get('checkpoint_id')
             if persistent:
-                assert app.sessions._persistence.storage.sessions.get(ids[-1])['run_id'] is None
+                assert app.host.sessions._persistence.storage.sessions.get(ids[-1])['run_id'] is None
             model.gates[ids[0]][1].set()
             await tasks[0]
-            result = await app.runs.start(ids[-1], [('user', ids[-1])])
+            result = await app.host.runs.start(ids[-1], [('user', ids[-1])])
             assert result['messages'][-1].content == 'done:' + ids[-1]
         finally:
             await drain(tasks, model)
         for sid in ids:
-            messages = await app.history.messages(sid)
+            messages = await app.host.history.messages(sid)
             assert [m.content for m in messages] == [sid, 'done:' + sid]
             own_events = [e for e in events if e.session_id == sid]
             assert len({e.run_id for e in own_events}) == 1
             assert own_events[0].event_type == 'run_started'
             assert own_events[-1].event_type == 'run_finished' and own_events[-1].data.status == 'completed'
             if persistent:
-                assert app.sessions._persistence.storage.sessions.get(sid)['state'] == 'ready'
-                page = await app.history.page(sid, limit=50, body_bytes=128000, preview_chars=100)
+                assert app.host.sessions._persistence.storage.sessions.get(sid)['state'] == 'ready'
+                page = await app.host.history.page(sid, limit=50, body_bytes=128000, preview_chars=100)
                 assert {r['message_id'] for r in page['records']} == {m.id for m in messages}
         if persistent:
-            assert app.sessions._persistence._active == {}
-        assert app._lifetime._operations == {}
+            assert app.host.sessions._persistence._active == {}
+        assert app.host.runs._owner._operations == {}
 
 
 @async_test
@@ -158,21 +158,21 @@ async def test_active_compaction_consumes_capacity_until_its_finish(monkeypatch,
         return await original(self, messages)
     async with concurrent_app(monkeypatch, tmp_path / 'state.sqlite', model=model,
                               settings=AppSettings(max_active_runs=1)) as (app, _):
-        a, b = [await app.sessions.create('A') for _ in range(2)]
-        await app.runs.start(a, [('user', 'old task')])
-        await app.runs.start(a, [('user', 'recent task')])
+        a, b = [await app.host.sessions.create('A') for _ in range(2)]
+        await app.host.runs.start(a, [('user', 'old task')])
+        await app.host.runs.start(a, [('user', 'recent task')])
         monkeypatch.setattr(type(model), '_next', hold_summary)
-        task = asyncio.create_task(app.runs.compact(a))
+        task = asyncio.create_task(app.host.runs.compact(a))
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            assert set(app.sessions._persistence._active) == {a}
+            assert set(app.host.sessions._persistence._active) == {a}
             with pytest.raises(RunCapacityExceededError):
-                await app.runs.start(b, [('user', 'not started')])
+                await app.host.runs.start(b, [('user', 'not started')])
             release.set()
             assert (await task)['compaction_status'] == 'applied'
-            assert app.sessions._persistence._active == {} and not app.sessions._sessions.require(a).describe_session()['busy']
+            assert app.host.sessions._persistence._active == {} and not app.host.sessions._sessions.require(a).describe_session()['busy']
             model.replies.append(AIMessage(content='new task'))
-            assert (await app.runs.start(b, [('user', 'start after compaction')]))['messages'][-1].content == 'new task'
+            assert (await app.host.runs.start(b, [('user', 'start after compaction')]))['messages'][-1].content == 'new task'
             assert len(model.seen) == 4
         finally:
             release.set()

@@ -64,7 +64,7 @@ async def build(monkeypatch, *, failure=None, tools=None, replies=None):
         'synthetic.json', tools=tools or [], system_prompt='', response_format=None,
     )
     events = []
-    app.observability.subscribe(events.append)
+    app.host.observability.subscribe(events.append)
     return app, events, catalog
 
 
@@ -127,10 +127,10 @@ def test_runtime_protected_errors_cannot_be_overridden():
 async def test_custom_model_error_reaches_model_and_run_events_without_core_edits(monkeypatch):
     error = VendorQuotaError('PRIVATE')
     app, events, _catalog = await build(monkeypatch, failure=error)
-    app.observability.configure_errors(model_id='A', model=[quota])
-    session = await app.sessions.create('A')
+    app.host.observability.configure_errors(model_id='A', model=[quota])
+    session = await app.host.sessions.create('A')
     with pytest.raises(VendorQuotaError) as caught:
-        await app.runs.start(session, [('user', 'probe')])
+        await app.host.runs.start(session, [('user', 'probe')])
     assert caught.value is error
     model_end = next(e.data for e in events if e.event_type == 'model_call_finished')
     terminal = events[-1].data
@@ -158,9 +158,9 @@ async def test_custom_fatal_tool_description_is_reported_to_application(monkeypa
         AIMessage(content='', tool_calls=[{'name': 'probe', 'args': {}, 'id': 'c1'}],
                   response_metadata={'finish_reason': 'tool_calls'}),
     ])
-    app.observability.configure_errors(runtime=[describe])
+    app.host.observability.configure_errors(runtime=[describe])
     with pytest.raises(ToolDataError) as caught:
-        await app.runs.start(await app.sessions.create('A'), [('user', 'probe')])
+        await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'probe')])
     assert caught.value is error
     tool_end = next(e.data for e in events if e.event_type == 'tool_call_finished')
     assert tool_end.failure.reason == 'data_unavailable'
@@ -182,7 +182,7 @@ async def test_custom_recoverable_tool_uses_existing_framework_feedback(monkeypa
                   response_metadata={'finish_reason': 'tool_calls'}),
         AIMessage(content='recovered', response_metadata={'finish_reason': 'stop'}),
     ])
-    result = await app.runs.start(await app.sessions.create('A'), [('user', 'probe')])
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'probe')])
     feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert feedback.status == 'error' and feedback.tool_call_id == 'c1'
     assert feedback.content == 'Input is unavailable; choose another input.'
@@ -201,13 +201,13 @@ async def test_application_extension_is_local_and_has_correct_stage(monkeypatch)
             return FailureDescription('application', 'storage_error', 'report_unavailable', 'ReportStorageError')
         return None
 
-    app.observability.configure_errors(application=[describe])
+    app.host.observability.configure_errors(application=[describe])
 
     def fail(*_args, **_kwargs):
         raise error
 
     monkeypatch.setattr(session_execution, 'prepare_run_resources', fail)
-    for item in (app, other):
+    for item in (app.host, other.host):
         with pytest.raises(ReportStorageError) as caught:
             await item.runs.start(await item.sessions.create('A'), [('user', 'probe')])
         assert caught.value is error
@@ -224,9 +224,9 @@ async def test_invalid_extension_does_not_expose_raw_text_or_replace_error(monke
     def invalid(_error, _source):
         raise ValueError('PRIVATE_DIAGNOSTIC')
 
-    app.observability.configure_errors(model_id='A', model=[invalid])
+    app.host.observability.configure_errors(model_id='A', model=[invalid])
     with pytest.raises(VendorQuotaError) as caught:
-        await app.runs.start(await app.sessions.create('A'), [('user', 'probe')])
+        await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'probe')])
     assert caught.value is error
     assert events[-1].data.failure.category == 'unknown'
     assert 'PRIVATE_' not in caplog.text + repr(events)

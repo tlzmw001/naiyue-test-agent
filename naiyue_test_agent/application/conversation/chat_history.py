@@ -9,7 +9,7 @@ from hashlib import sha256
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage, message_to_dict
 
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.application.subagents.subagent_history import subagent_records
 
 
