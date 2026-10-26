@@ -9,11 +9,11 @@ import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages.utils import count_tokens_approximately
 
-from naiyue_test_agent.application import memory_overview_store
-from naiyue_test_agent.application.memory_access import MemoryAccess
-from naiyue_test_agent.application.memory_jobs import MemoryJob, MemoryJobs
-from naiyue_test_agent.application.memory_job_runner import _prepare, _related
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.storage.memory_sql import memory_overview_store
+from naiyue_test_agent.application.memory.memory_access import MemoryAccess
+from naiyue_test_agent.application.memory.memory_jobs import MemoryJob, MemoryJobs
+from naiyue_test_agent.application.memory.memory_job_runner import _prepare, _related
+from naiyue_test_agent.storage.project_store import ProjectStore
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools.memory import MemoryInput
@@ -22,9 +22,9 @@ from scripts.probe_memory_semantics import load_cases, seed_candidate, seed_sour
 
 @pytest.fixture
 def inputs(tmp_path):
-    with SessionStorage(tmp_path / 'sessions.sqlite') as storage:
-        storage.bind_workspace(str(uuid4()), tmp_path)
-        storage.create('probe', dict(thread_id='probe', model_id='offline', workspace_root=tmp_path,
+    with ProjectStore(tmp_path / 'sessions.sqlite') as storage:
+        storage.sessions.bind_workspace(str(uuid4()), tmp_path)
+        storage.sessions.create('probe', dict(thread_id='probe', model_id='offline', workspace_root=tmp_path,
             active_tool_names=['memory'], permission_mode='Default'))
         settings = MemorySettings(auto_enabled=False)
         memory = MemoryAccess(storage, settings, tmp_path / 'data')
@@ -33,12 +33,12 @@ def inputs(tmp_path):
         coordinator = MemoryJobs(memory, ModelCatalog('offline', {'offline': model}))
         cases, _ = load_cases()
         at = time.time() - 3600
-        candidate = seed_candidate(memory, 'probe', tmp_path, cases, at=at)
+        candidate = seed_candidate(memory, 'probe', cases, at=at)
         coordinator.prepare('probe', tmp_path, [], model)
         facts = seed_sources(storage, 'probe', cases[10]['sources'], at=at + 10)
-        progress = memory_overview_store.ensure(storage, 'probe')
+        progress = storage.memory.ensure('probe')
         job = MemoryJob(uuid4().hex, 'probe', 'probe', tmp_path, 'root-run', '', 'offline', model,
-            'probe', 0, deadline=time.monotonic() + 300,
+            'probe', 0, project_id=storage.sessions.get('probe')['project_id'], deadline=time.monotonic() + 300,
             start=(progress['next_sequence'], progress['next_offset']), upper=facts['upper'])
         try:
             yield coordinator, job, candidate, cases, at
@@ -60,7 +60,7 @@ def test_e11_current_production_input_contains_old_id_complete_gap_and_keeps_ver
     batch, messages, payload = prepared(inputs)
     query = ' '.join(s['text'] for s in batch['sources'] if s['role'] == 'human')
     lexical = MemoryInput(action='search', status='candidate', query=query).model_dump(mode='json')
-    assert service.memory.query('probe', job.root, lexical)['items'] == []
+    assert service.memory.query('probe', job.project_id, lexical)['items'] == []
     row, = payload['related_memories']
     assert row['memory_id'] == candidate['actual_memory_id'] and 'version' not in row
     frozen = asyncio.run(_prepare(service, job, job.upper))[4]
@@ -74,9 +74,9 @@ def test_e11_current_production_input_contains_old_id_complete_gap_and_keeps_ver
 
 def test_latest_page_does_not_add_another_session_candidate(inputs):
     service, job, own, cases, at = inputs
-    service.storage.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
+    service.storage.sessions.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
         active_tool_names=['memory'], permission_mode='Default'))
-    foreign = seed_candidate(service.memory, 'other', job.root, cases, at=at + 20)
+    foreign = seed_candidate(service.memory, 'other', cases, at=at + 20)
     _, _, payload = prepared(inputs)
     ids = {row['memory_id'] for row in payload['related_memories']}
     assert own['actual_memory_id'] in ids and foreign['actual_memory_id'] not in ids
@@ -90,13 +90,13 @@ def test_latest_candidate_requires_all_available_current_thread_sources(inputs, 
     if failure == 'changed':
         seed_sources(storage, 'probe', [dict(id=old_id, role='assistant', text='此旧来源已经更正。')], at=at + 20)
     elif failure == 'other_thread':
-        from naiyue_test_agent.application.chat_history import ChatUpdate
-        saved = storage._read('SELECT * FROM naiyue_chat_messages WHERE message_id=?', (old_id,))[0]
+        from naiyue_test_agent.application.conversation.chat_history import ChatUpdate
+        saved = storage.database.read_rows('SELECT * FROM naiyue_chat_messages WHERE message_id=?', (old_id,))[0]
         message = {key: saved[key] for key in ('message_id', 'body_json', 'body_hash', 'kind',
             'source_checkpoint_id', 'message_type', 'parent_message_id', 'reply_id', 'occurred_at')}
-        storage.save_chat_updates('probe', [ChatUpdate('other-thread', '', 'root', 0, 'other', (message,))])
-        with storage.connection:
-            storage.connection.execute('UPDATE naiyue_memory_sources SET thread_id=? WHERE memory_id=?',
+        storage.conversation.save_chat_updates('probe', [ChatUpdate('other-thread', '', 'root', 0, 'other', (message,))])
+        with storage.database.connection:
+            storage.database.connection.execute('UPDATE naiyue_memory_sources SET thread_id=? WHERE memory_id=?',
                 ('other-thread', own['actual_memory_id']))
     elif failure == 'truncated':
         service.settings = service.memory.settings = MemorySettings(auto_enabled=False, source_limit=1)
@@ -107,12 +107,12 @@ def test_latest_candidate_requires_all_available_current_thread_sources(inputs, 
         request = MemoryInput(action='update', scope='workspace', memory_id=own['actual_memory_id'], expected_version=2,
             proposal=proposal, sources=[dict(session_id='probe', thread_id='probe', message_id='extra-source',
                 revision=1, conversation_revision=0, quote=text, offset=0)]).model_dump(mode='json')
-        service.memory.query('probe', job.root, request)
+        service.memory.query('probe', job.project_id, request)
     else:
-        with storage.connection:
-            storage.connection.execute('DELETE FROM naiyue_memory_sources WHERE memory_id=?', (own['actual_memory_id'],))
+        with storage.database.connection:
+            storage.database.connection.execute('DELETE FROM naiyue_memory_sources WHERE memory_id=?', (own['actual_memory_id'],))
     latest = MemoryInput(action='list', status='candidate', limit=8).model_dump(mode='json')
-    listed, = service.memory.query('probe', job.root, latest)['items']
+    listed, = service.memory.query('probe', job.project_id, latest)['items']
     if failure == 'other_thread':
         assert all(source['available'] for source in listed['sources'])
         assert all(source['thread_id'] == 'other-thread' for source in listed['sources'])
@@ -181,8 +181,8 @@ def test_stale_full_read_is_not_retried_at_a_new_version(inputs, monkeypatch):
     def query(sid, root, request):
         if request['action'] == 'read' and not changed:
             changed.append(True)
-            with service.storage.connection:
-                service.storage.connection.execute('UPDATE naiyue_memories SET version=version+1 WHERE memory_id=?',
+            with service.storage.database.connection:
+                service.storage.database.connection.execute('UPDATE naiyue_memories SET version=version+1 WHERE memory_id=?',
                     (own['actual_memory_id'],))
         return original(sid, root, request)
     monkeypatch.setattr(service.memory, 'query', query)
@@ -194,8 +194,8 @@ def test_input_budget_can_drop_optional_candidate_but_keeps_valid_primary_source
     service.settings = service.memory.settings = MemorySettings(auto_enabled=False, related_limit=0)
     original_sources, messages, _ = prepared(inputs)
     cap = count_tokens_approximately(messages) + 32
-    with service.storage.connection:
-        service.storage.connection.execute('UPDATE naiyue_memories SET body=? WHERE memory_id=?',
+    with service.storage.database.connection:
+        service.storage.database.connection.execute('UPDATE naiyue_memories SET body=? WHERE memory_id=?',
             ('bounded optional context ' * 100, own['actual_memory_id']))
     service.settings = service.memory.settings = MemorySettings(auto_enabled=False, related_limit=8, max_input_tokens=cap)
     batch, messages, payload = prepared(inputs)
@@ -206,9 +206,9 @@ def test_input_budget_can_drop_optional_candidate_but_keeps_valid_primary_source
 
 def test_existing_cross_session_search_hit_is_not_filtered_by_latest_page_rules(inputs):
     service, job, own, cases, at = inputs
-    service.storage.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
+    service.storage.sessions.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
         active_tool_names=['memory'], permission_mode='Default'))
-    foreign = seed_candidate(service.memory, 'other', job.root, cases, at=at + 20)
+    foreign = seed_candidate(service.memory, 'other', cases, at=at + 20)
     service.allowed = lambda request: request['action'] != 'list'
     rows = asyncio.run(_related(service, job, dict(sources=[dict(role='human', text='自动化用例编排')])))
     assert {row['memory_id'] for row in rows} == {own['actual_memory_id'], foreign['actual_memory_id']}
@@ -217,9 +217,9 @@ def test_existing_cross_session_search_hit_is_not_filtered_by_latest_page_rules(
 def test_ineligible_latest_page_is_not_followed_to_find_an_older_local_candidate(inputs, monkeypatch):
     service, job, _, cases, at = inputs
     service.settings = service.memory.settings = MemorySettings(auto_enabled=False, related_limit=1)
-    service.storage.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
+    service.storage.sessions.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
         active_tool_names=['memory'], permission_mode='Default'))
-    seed_candidate(service.memory, 'other', job.root, cases, at=at + 20)
+    seed_candidate(service.memory, 'other', cases, at=at + 20)
     calls, original = [], service.memory.query
     def query(sid, root, request):
         calls.append(request)
@@ -256,7 +256,7 @@ def test_search_plus_latest_candidates_share_the_same_candidate_count_limit(inpu
         proposal = dict(kind='context', title=f'其他候选事项{index}', body='等待网络策略确认',
             subject=f'候选网络事项{index}', basis='inference', intent='candidate', gaps=['待确认'], reason='有限测试前置')
         request = MemoryInput(action='record', scope='workspace', proposal=proposal, sources=[reference]).model_dump(mode='json')
-        additional.append(service.memory.query('probe', job.root, request, now=at + 100 + index)['item']['memory_id'])
+        additional.append(service.memory.query('probe', job.project_id, request, now=at + 100 + index)['item']['memory_id'])
     calls, original = [], service.memory.query
     def query(sid, root, request):
         calls.append(request)

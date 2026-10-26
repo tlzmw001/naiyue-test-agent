@@ -1,5 +1,6 @@
 """Bounded, one-request native async model probe; never prints model content."""
 
+from naiyue_test_agent.contracts.run_context import RunIdentity, RunObservationPorts, RunScope, RuntimeContext
 import argparse
 
 from naiyue_test_agent.config_paths import get_models_path
@@ -26,7 +27,7 @@ async def _worker(args):
     from naiyue_test_agent.agent_runtime.tool_execution.permissions import fixed_permission_context
 
     from naiyue_test_agent.agent_runtime.model_usage_observation import install_model_usage_callback
-    from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
+    from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
     catalog = load_model_catalog(args.config)
     install_model_usage_callback(catalog)
     try:
@@ -77,7 +78,7 @@ async def _worker(args):
                 resolve_model=resolve_model, resolve_active_tool_names=lambda _sid, agent_path='root': ())
         marker = uuid4().hex
         config = {'configurable': {'thread_id': 'async-probe'}, 'callbacks': [CountCalls()]}
-        context = {'session_id': 'async-probe', 'run_id': publisher.run_id, '_run_event_publisher': publisher}
+        context = RuntimeContext(scope=RunScope(identity=RunIdentity(session_id='async-probe', run_id=publisher.run_id), observation=RunObservationPorts(publisher=publisher)))
         inputs = [('user', f'Reply only with this exact value: {marker}')]
         if args.with_context:
             inputs = [HumanMessage(content=f'Remember this synthetic code: {marker}. '
@@ -86,7 +87,7 @@ async def _worker(args):
                       HumanMessage(content='Keep that code for the next question.'),
                       AIMessage(content='Acknowledged.'),
                       HumanMessage(content='Reply only with the synthetic code from earlier conversation.')]
-        with bind_run_services(RunServices(publisher=publisher)):
+        with bind_run_scope(RunScope(identity=RunIdentity(publisher._session_id, publisher.run_id), observation=RunObservationPorts(publisher=publisher))):
             async with asyncio.timeout(args.timeout_seconds):
                 if args.with_context:
                     result, summary_visible = None, False

@@ -70,16 +70,16 @@ async def test_shared_agent_reads_only_its_session_workspace(monkeypatch, tmp_pa
     app = await build_application(
         Path('synthetic.json'), tools=[tool], system_prompt='', response_format=None,
     )
-    first = await app.acreate_workspace_session('A', first_root)
-    second = await app.acreate_workspace_session('A', second_root)
+    first = await app.host.sessions.create_workspace('A', first_root)
+    second = await app.host.sessions.create_workspace('A', second_root)
 
-    first_own = await app.arun(first, [('user', 'read mine')])
-    second_own = await app.arun(second, [('user', 'read mine')])
-    first_cross = await app.arun(first, [('user', 'read other absolute path')])
-    first_cross_rejected = await app.aresume_tool_approval(first, ['reject'])
-    first_link = await app.arun(first, [('user', 'read link to other workspace')])
-    first_link_rejected = await app.aresume_tool_approval(first, ['reject'])
-    first_forged = await app.arun(first, [('user', 'read mine with forged runtime')])
+    first_own = await app.host.runs.start(first, [('user', 'read mine')])
+    second_own = await app.host.runs.start(second, [('user', 'read mine')])
+    first_cross = await app.host.runs.start(first, [('user', 'read other absolute path')])
+    first_cross_rejected = await app.host.runs.resume_approval(first, ['reject'])
+    first_link = await app.host.runs.start(first, [('user', 'read link to other workspace')])
+    first_link_rejected = await app.host.runs.resume_approval(first, ['reject'])
+    first_forged = await app.host.runs.start(first, [('user', 'read mine with forged runtime')])
 
     def last_tool(result):
         return next(msg for msg in reversed(result['messages']) if isinstance(msg, ToolMessage))
@@ -112,7 +112,7 @@ async def test_session_read_tool_fails_closed_without_workspace(monkeypatch, tmp
         system_prompt='', response_format=None,
     )
 
-    result = await app.arun(await app.acreate_session('A'), [('user', 'read absolute path')])
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'read absolute path')])
 
     denied = next(msg for msg in result['messages'] if isinstance(msg, ToolMessage))
     assert denied.status == 'error'
@@ -133,7 +133,7 @@ async def test_workspace_session_rejects_invalid_root(monkeypatch, tmp_path):
     )
 
     with pytest.raises(ValueError, match='workspace'):
-        await app.acreate_workspace_session('A', tmp_path / 'missing')
+        await app.host.sessions.create_workspace('A', tmp_path / 'missing')
 
 
 @async_test
@@ -153,10 +153,10 @@ async def test_read_failure_messages_reach_next_model_turn_with_matching_ids(
         Path('synthetic.json'), tools=[create_session_read_tool()],
         system_prompt='', response_format=None,
     )
-    session = await app.acreate_workspace_session('A', tmp_path)
+    session = await app.host.sessions.create_workspace('A', tmp_path)
 
     with caplog.at_level('INFO', logger='naiyue_test_agent.agent_runtime'):
-        result = await app.arun(session, [('user', 'Read a file')])
+        result = await app.host.runs.start(session, [('user', 'Read a file')])
 
     errors = {message.tool_call_id: message for message in result['messages']
               if isinstance(message, ToolMessage)}

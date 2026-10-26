@@ -6,9 +6,9 @@ from uuid import uuid4
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-from naiyue_test_agent.application.session_storage import SessionStorage
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
-from tests.legacy_store_schema import remove_memory_schema, remove_memory_lifecycle, remove_memory_overviews
+from naiyue_test_agent.storage.project_store import ProjectStore
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
+from tests.legacy_store_schema import remove_memory_schema, remove_memory_lifecycle, remove_memory_overviews, remove_execution_schema, remove_project_local_schema,remove_environment_schema
 
 
 def source_store(tmp_path, *, version=CURRENT_SCHEMA, bound=True, checkpoints=True):
@@ -17,13 +17,13 @@ def source_store(tmp_path, *, version=CURRENT_SCHEMA, bound=True, checkpoints=Tr
     identity = str(uuid4())
     (root / '.naiyue/workspace.json').write_text(json.dumps({'version': 1, 'workspace_id': identity}))
     database = tmp_path / 'custom.sqlite'
-    storage = SessionStorage(database)
+    storage = ProjectStore(database)
     if bound:
-        storage.bind_workspace(identity, root)
-    storage.create('S', {'thread_id': 'T', 'model_id': 'M', 'workspace_root': root,
+        storage.sessions.bind_workspace(identity, root)
+    storage.sessions.create('S', {'thread_id': 'T', 'model_id': 'M', 'workspace_root': root,
         'active_tool_names': (), 'permission_mode': 'Default'})
-    storage.mark_running('S', 'R')
-    connection = storage.connection
+    storage.sessions.mark_running('S', 'R')
+    connection = storage.database.connection
     if checkpoints:
         SqliteSaver(connection).setup()
         connection.execute('INSERT INTO checkpoints VALUES(?,?,?,?,?,?,?)',
@@ -31,6 +31,12 @@ def source_store(tmp_path, *, version=CURRENT_SCHEMA, bound=True, checkpoints=Tr
         connection.execute('INSERT INTO writes VALUES(?,?,?,?,?,?,?,?)',
                            ('T', '', 'C', 'task', 0, 'pending', 'json', b'opaque-value'))
         connection.execute("UPDATE naiyue_sessions SET checkpoint_id='C'")
+    if version < 20:
+        remove_environment_schema(connection)
+    if version < 19:
+        remove_project_local_schema(connection)
+    if version < 18:
+        remove_execution_schema(connection)
     if version < 17:
         remove_memory_overviews(connection)
     if version < 16:
@@ -70,7 +76,8 @@ def source_store(tmp_path, *, version=CURRENT_SCHEMA, bound=True, checkpoints=Tr
         connection.execute('ALTER TABLE naiyue_sessions DROP COLUMN thinking_level')
     connection.execute('UPDATE naiyue_store_info SET version=?', (version,))
     connection.commit()
-    return storage, root, identity
+    # Backup/restore consumers operate on the database owner, not domain repositories.
+    return storage.database, root, identity
 
 
 def artifact(database, backup_id):

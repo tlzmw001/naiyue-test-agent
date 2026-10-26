@@ -1,5 +1,7 @@
 """A new approval tool is registered without editing the generic runtime."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
+
 from native_application_helpers import async_test, build_application
 
 from naiyue_test_agent.tools.permissions import ToolPermission
@@ -40,7 +42,7 @@ async def test_registered_approval_tool_pauses_and_resumes_without_runtime_tool_
     _, execution = build_tool_schemas('ApprovalProbeInput', ApprovalInput)
 
     @tool(args_schema=execution)
-    def approval_probe(value: str, runtime: ToolRuntime[dict, dict]) -> str:
+    def approval_probe(value: str, runtime: ToolRuntime[RuntimeContext]) -> str:
         """Read a synthetic approved value."""
         assert require_tool_permit(runtime)['args']['value'] == value
         calls.append(value)
@@ -58,14 +60,14 @@ async def test_registered_approval_tool_pauses_and_resumes_without_runtime_tool_
         Path('synthetic.json'), tools=[ToolSpec(approval_probe, ApprovalInput, permissions=ToolPermission())],
         system_prompt='', response_format=None,
     )
-    session = await app.acreate_workspace_session('A', tmp_path)
+    session = await app.host.sessions.create_workspace('A', tmp_path)
 
-    pending = await app.arun(session, [('user', 'use probe')])
+    pending = await app.host.runs.start(session, [('user', 'use probe')])
     assert calls == []
     assert pending['approval_requests'] == [{
         'tool_call_id': 'probe-1', 'tool_name': 'approval_probe', 'target': '{"value": "approved"}',
     }]
-    result = await app.aresume_tool_approval(session, ['approve'])
+    result = await app.host.runs.resume_approval(session, ['approve'])
     assert calls == ['approved']
     assert [(message.tool_call_id, message.content) for message in result['messages']
             if isinstance(message, ToolMessage)] == [('probe-1', 'approved')]

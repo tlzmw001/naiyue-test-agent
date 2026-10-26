@@ -1,5 +1,6 @@
 """Real owned subprocesses, bounded streaming, and cancellation settlement."""
 
+from runtime_context_helpers import host_files
 import asyncio
 import os
 import signal
@@ -15,8 +16,8 @@ from naiyue_test_agent.tools.settings import ProcessSettings
 
 
 def request(root, script, **kwargs):
-    return ProcessRequest(argv=[sys.executable, '-u', '-c', script], cwd=root,
-        env=dict(os.environ), timeout_seconds=5, execution_environment={'kind': 'host'},
+    return ProcessRequest(argv=[sys.executable, '-u', '-c', script], cwd=root, execution_environment=host_files(root).environment.public(),
+        env=dict(os.environ), timeout_seconds=5,
         **kwargs)
 
 

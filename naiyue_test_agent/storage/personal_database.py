@@ -1,0 +1,60 @@
+"""Personal database initialization and format upgrade; Database owns its lifetime."""
+
+import logging
+import os
+import sqlite3
+
+from naiyue_test_agent.storage.files import check_store_directory, check_store_file, open_store_file
+from naiyue_test_agent.storage.memory_sql import lexical as memory_lexical
+from naiyue_test_agent.storage.memory_sql import memory_schema, memory_lifecycle_schema
+from naiyue_test_agent.contracts.memory import MemoryReadError
+
+
+logger = logging.getLogger(__name__)
+APPLICATION_ID = 0x4E59544D
+
+
+def initialize_personal(database, settings):
+    missing, directory = [], database.path.parent
+    while not directory.exists():
+        missing.append(directory)
+        directory = directory.parent
+    check_store_directory(directory)
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o700, exist_ok=True)
+        check_store_directory(directory)
+    fd = open_store_file(database.path)
+    os.close(fd)
+    for suffix in ('-wal', '-shm', '-journal'):
+        try:check_store_file(database.path.with_name(database.path.name + suffix))
+        except FileNotFoundError:pass
+    connection = database.connection = sqlite3.connect(database.path, check_same_thread=False,
+        timeout=settings.busy_timeout_ms / 1000)
+    database._stack.callback(connection.close)
+    connection.row_factory = sqlite3.Row
+    memory_lexical.configure(connection)
+    mode = connection.execute('PRAGMA journal_mode').fetchone()[0]
+    if mode != 'delete':
+        raise MemoryReadError('memory_personal_mode_unavailable')
+    connection.execute('PRAGMA synchronous=FULL')
+    with connection:
+        connection.execute('BEGIN IMMEDIATE')
+        objects = connection.execute('SELECT name FROM sqlite_master').fetchall()
+        version = connection.execute('PRAGMA user_version').fetchone()[0]
+        application = connection.execute('PRAGMA application_id').fetchone()[0]
+        if not objects and version == 0 and application == 0:
+            memory_schema.create(connection)
+            memory_lifecycle_schema.upgrade(connection)
+            connection.execute('PRAGMA user_version=2')
+            connection.execute(f'PRAGMA application_id={APPLICATION_ID}')
+        elif version not in (1,2) or application != APPLICATION_ID:
+            raise ValueError('memory_invalid_format')
+        elif version == 1:
+            from naiyue_test_agent.storage.memory_sql.memory_personal_upgrade import backup_format1
+            memory_schema.check(connection,version=1)
+            backup = backup_format1(database.path)
+            logger.info('memory_personal_upgrade_backup_created backup_id=%s',backup.name)
+            memory_lifecycle_schema.upgrade(connection)
+            connection.execute('PRAGMA user_version=2')
+        memory_schema.check(connection)
+    connection.execute('PRAGMA synchronous=FULL')

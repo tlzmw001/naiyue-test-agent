@@ -99,10 +99,9 @@ def preview_shell_outputs(root: Path) -> ClearPlan:
         return ClearPlan(root, _snapshot(directory) if directory is not None else ())
 
 
-def require_archive_root(context):
+def require_archive_root(root, execution):
     """Archive custody is supplied by the application, independently of cwd."""
     from langchain_core.tools import ToolException
-    root, execution = context.get('archive_root'), context.get('workspace_root')
     if not isinstance(root, Path) or not root.is_absolute():
         raise ToolException('archive_root_unavailable')
     root = root.resolve()

@@ -1,12 +1,14 @@
 """Responses starts with an empty response-id chunk; later chunks get run IDs."""
 
+from runtime_context_helpers import typed_context
+
 import asyncio
 
 from langchain_core.messages import AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.stream_projection import StreamingMessageProjection
+from naiyue_test_agent.application.conversation.stream_projection import StreamingMessageProjection
 from test_async_application import StreamingToolModel
 from native_application_helpers import async_test
 
@@ -30,12 +32,12 @@ async def test_responses_empty_first_chunk_anchors_deltas_to_saved_message(monke
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('fixture', {'fixture': model}))
         app = await build_application('unused', tools=[], system_prompt='', response_format=None)
         try:
-            sid = await app.acreate_session('fixture')
+            sid = await app.host.sessions.create('fixture')
             events, projection = [], StreamingMessageProjection()
-            async for event in app.astream_run(sid, [('user', 'test')]):
+            async for event in app.host.runs.stream(sid, [('user', 'test')]):
                 events.append(event)
                 projection(event)
-            saved = await app.aget_messages(sid)
+            saved = await app.host.history.messages(sid)
             assert saved[-1].id == 'resp_synthetic' and saved[-1].content == 'HELLO WORLD'
             deltas = [e for e in events if e.event_type == 'message_delta']
             assert deltas and {e.data.message_id for e in deltas} == {saved[-1].id}
@@ -54,7 +56,7 @@ def test_content_only_deltas_keep_empty_response_anchor_and_original_final_snaps
     from naiyue_test_agent.web.serialization import project_event_for_web
     import json
     events = []
-    stream = _StreamState(RunEventPublisher('s', 'r', (events.append,)), {})
+    stream = _StreamState(RunEventPublisher('s', 'r', (events.append,)), typed_context())
     metadata = {'langgraph_node': 'model', 'langgraph_checkpoint_ns': '', 'langgraph_step': 1}
     stream.delta(AIMessageChunk(content='', id='resp_projection',
                                response_metadata={'id': 'resp_projection'}), metadata)

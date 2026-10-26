@@ -4,7 +4,7 @@ import logging
 
 from .errors import WebError, public_error
 from .serialization import encoded_size
-from .chat_history import history_page, history_window
+from .chat_history import history_page, history_window,cursor_token
 from naiyue_test_agent.agent_runtime.async_utils import await_settled
 
 
@@ -12,27 +12,30 @@ logger = logging.getLogger(__name__)
 
 
 class WebService:
-    def __init__(self, application, delivery, settings):
+    def __init__(self, application, delivery, settings, *, models=None, settings_path=None):
         self.application, self.delivery, self.settings = application, delivery, settings
+        self._models = models
+        self._settings_path = settings_path
 
     def models(self):
-        return {'default_model_id': self.application.default_model_id,
-                'model_ids': list(self.application.model_ids), 'thinking_options': self.application.get_thinking_options()}
+        models = self.application.models if self._models is None else self._models
+        return {'default_model_id': models.default_id,
+                'model_ids': list(models.ids), 'thinking_options': models.thinking_options()}
 
     def service_info(self):
         root = self.settings.workspace_root
         return {'workspace_root': str(root) if root is not None else None,
                 'workspace_label': (root.name or root.anchor) if root is not None else None}
 
-    async def skills(self):
+    async def skills(self,session_id=None):
         try:
-            catalog = await self.application.aget_skills(self.settings.workspace_root)
+            catalog = await self.application.sessions.skills(self.settings.workspace_root,session_id=session_id) if session_id else await self.application.sessions.skills(self.settings.workspace_root)
             result = {'entries': [
                 {'source_id': item.source_id, 'name': item.name, 'description': item.description,
                  'command': catalog.command_for(item)} for item in catalog.entries],
                 'default_source': catalog.default_source,
                 'diagnostics': [{key: row[key] for key in ('source_id', 'reason')} for row in catalog.diagnostics],
-                'read_registered': any(spec.tool.name == 'read' for spec in self.application.get_registered_tools())}
+                'read_registered': any(spec.tool.name == 'read' for spec in self.application.tools.list())}
         except Exception as error:
             logger.error('skill_catalog_read_failed error_type=%s', type(error).__name__)
             raise WebError('skill_catalog_unavailable', 503) from None
@@ -44,14 +47,14 @@ class WebService:
         value = await self._session_status(session_id)
         if 'recovery' in value:
             raise WebError('session_recovery_blocked')
-        await self._apply_setting(self.application.aselect_thinking(session_id, model_id, level),
+        await self._apply_setting(self.application.sessions.select_thinking(session_id, model_id, level),
             invalid_code='thinking_unavailable', invalid_event='web_thinking_selection_invalid',
             failure_event='web_thinking_selection_failed')
         return {'model_id': model_id, 'thinking_level': level}
 
     async def regenerate(self, session_id, body):
         value = await self._session_status(session_id)
-        saved = await self.application.aget_regeneration_action(session_id, body.request_id)
+        saved = await self.application.runs.regeneration_action(session_id, body.request_id)
         if saved:
             if (saved['reply_id'], saved['revision']) != (body.expected_reply_id, body.expected_conversation_revision):
                 raise WebError('request_id_conflict')
@@ -62,17 +65,17 @@ class WebService:
         elif (value.get('last_reply_id') != body.expected_reply_id
                 or value.get('conversation_revision') != body.expected_conversation_revision):
             raise WebError('regeneration_stale')
-        return await self.delivery.regenerate(session_id, body, [], can_run=value['can_run'])
+        return await self.delivery.regenerate(session_id, body, [], can_run=value['can_run'], execution_root_error=value.get('execution_root_error'))
 
     async def compact(self, session_id, body):
         value = await self._session_status(session_id)
-        return await self.delivery.compact(session_id, body, [], can_run=value['can_run'], conversation_revision=value['conversation_revision'])
+        return await self.delivery.compact(session_id, body, [], can_run=value['can_run'], conversation_revision=value['conversation_revision'], execution_root_error=value.get('execution_root_error'))
 
     def session_control_options(self):
         from naiyue_test_agent.mcp_client.presentation import permission_source
-        roles = self.application.get_registered_subagents()
+        roles = self.application.subagents.list()
         tools = []
-        for spec in self.application.get_registered_tools():
+        for spec in self.application.tools.list():
             if spec.tool.name == 'subagent_list':
                 continue
             row = {'name': spec.tool.name, 'description': spec.tool.description}
@@ -82,15 +85,16 @@ class WebService:
                 row.update(mcp_source=source, subagent_roles=[role.name for role in roles if spec.tool.name in role.tool_names],
                            available=reason is None, unavailable_reason=reason)
             tools.append(row)
-        result = {**self.application.get_session_control_options(), 'tools': tools,
-                  'mcp_servers': self.application.get_mcp_status()['servers']}
+        result = {**self.application.sessions.control_options(), 'tools': tools,
+                  'mcp_servers': self.application.mcp.status()['servers']}
         if encoded_size(result) > self.settings.max_frame_bytes:
             raise WebError('view_too_large')
         return result
 
     async def refresh_mcp(self):
         try:
-            result = await self.application.arefresh_mcp()
+            result = await (self.application.mcp.refresh() if self._settings_path is None
+                            else self.application.mcp.refresh(self._settings_path))
         except ValueError:
             raise WebError('mcp_settings_invalid', 422) from None
         except Exception as error:
@@ -104,19 +108,19 @@ class WebService:
         value = await self._session_status(session_id)
         if 'recovery' in value:
             raise WebError('session_recovery_blocked')
-        await self._apply_setting(self.application.aset_active_tools(session_id, names),
+        await self._apply_setting(self.application.sessions.select_tools(session_id, names),
             invalid_code='invalid_tool_selection', invalid_event='web_tool_selection_invalid',
             failure_event='web_tool_selection_failed')
-        return {'active_tools': list(self.application.get_active_tools(session_id))}
+        return {'active_tools': list(self.application.sessions.active_tools(session_id))}
 
     async def select_permission_mode(self, session_id, mode):
         value = await self._session_status(session_id)
         if 'recovery' in value:
             raise WebError('session_recovery_blocked')
-        await self._apply_setting(self.application.aset_permission_mode(session_id, mode),
+        await self._apply_setting(self.application.sessions.select_permission_mode(session_id, mode),
             invalid_code='permission_mode_unavailable', invalid_event='web_permission_mode_unavailable',
             failure_event='web_permission_mode_failed')
-        return {'permission_mode': self.application.get_permission_mode(session_id)}
+        return {'permission_mode': self.application.sessions.permission_mode(session_id)}
 
     async def _apply_setting(self, operation, *, invalid_code, invalid_event, failure_event):
         try:
@@ -129,13 +133,13 @@ class WebService:
             raise public_error(error) from None
 
     async def sessions(self):
-        rows = await self.application.alist_workspace_sessions(self.settings.workspace_root)
+        rows = await self.application.sessions.list_workspace(self.settings.workspace_root)
         return [{**row, 'pinned': bool(row['pinned'])} for row in rows]
 
     async def update_presentation(self, session_id, body):
         await self._session_status(session_id)
         try:
-            await self.application.aupdate_session_presentation(session_id, **body.model_dump(exclude_unset=True))
+            await self.application.sessions.update_presentation(session_id, **body.model_dump(exclude_unset=True))
         except Exception as error:
             logger.error('session_presentation_save_failed error_type=%s', type(error).__name__)
             raise public_error(error) from None
@@ -143,7 +147,7 @@ class WebService:
 
     async def reorder_sessions(self, body):
         try:
-            await self.application.areorder_sessions(self.settings.workspace_root, body.session_ids)
+            await self.application.sessions.reorder(self.settings.workspace_root, body.session_ids)
         except ValueError as error:
             raise WebError(str(error), 409 if str(error) == 'stale_session_order' else 422) from None
         except Exception as error:
@@ -158,7 +162,7 @@ class WebService:
                 raise WebError('session_busy')
 
             async def commit():
-                await self.application.adelete_session(session_id)
+                await self.application.sessions.delete(session_id)
                 self.delivery.forget_session(session_id)
 
             try:
@@ -170,23 +174,24 @@ class WebService:
     async def create_session(self, model_id):
         try:
             if self.settings.workspace_root is None:
-                identity = await self.application.acreate_session(model_id)
+                identity = await self.application.sessions.create(model_id)
             else:
-                identity = await self.application.acreate_workspace_session(model_id, self.settings.workspace_root)
+                identity = await self.application.sessions.create_workspace(model_id, self.settings.workspace_root)
             return {'session_id': identity}
         except Exception as error:
             raise public_error(error) from None
 
     async def _session_status(self, session_id):
         try:
-            value = await self.application.aget_session_status(session_id)
+            value = await self.application.sessions.status(session_id)
         except Exception as error:
             raise public_error(error) from None
         root = str(self.settings.workspace_root) if self.settings.workspace_root is not None else None
-        if value['workspace_root'] != root:
+        if (value.get('project_id') != self.settings.workspace_id if self.settings.workspace_id is not None
+                else value['workspace_root'] != root):
             raise WebError('session_not_found', 404)
         read_only = 'recovery' in value
-        batches = [] if read_only else self.application.pending_approval_batches(session_id)
+        batches = [] if read_only else self.application.runs.pending_approvals(session_id)
         latest = None if read_only else self.delivery.latest.get(session_id)
         return {**value, 'approval_batches': batches, 'pending_approval': bool(batches),
                 'active_run_id': value.get('run_id'), 'latest_run_id': latest}
@@ -194,7 +199,7 @@ class WebService:
     async def prepare(self, session_id):
         await self._session_status(session_id)
         try:
-            await self.application.aprepare_session(session_id)
+            await self.application.sessions.prepare(session_id)
         except Exception as error:
             logger.error('web_history_prepare_failed error_type=%s', type(error).__name__)
             raise public_error(error) from None
@@ -215,7 +220,7 @@ class WebService:
         if agent_id and not any(row['agent_id'] == agent_id for row in await self.subagents(session_id)):
             raise WebError('subagent_not_found', 404)
         try:
-            result = await self.application.aget_chat_message(session_id, sequence, agent_id=agent_id,
+            result = await self.application.history.message(session_id, sequence, agent_id=agent_id,
                 revision=revision, offset=offset, conversation_revision=conversation_revision, chars=min(self.settings.history_detail_chars,
                     max(1, self.settings.max_frame_bytes // 12)))
             if encoded_size(result) > self.settings.max_frame_bytes:
@@ -229,7 +234,7 @@ class WebService:
         if agent_id and not any(row['agent_id'] == agent_id for row in await self.subagents(session_id)):
             raise WebError('subagent_not_found', 404)
         try:
-            return await self.application.aget_message_reasoning(session_id, sequence, revision=revision, agent_id=agent_id,
+            return await self.application.history.reasoning(session_id, sequence, revision=revision, agent_id=agent_id,
                 conversation_revision=conversation_revision, offset=offset, chars=min(self.settings.history_detail_chars,
                     max(1, self.settings.max_frame_bytes // 12)), max_bytes=self.settings.max_frame_bytes * 2)
         except Exception as error:
@@ -242,7 +247,7 @@ class WebService:
             raise WebError('subagent_not_found', 404)
         try:
             from naiyue_test_agent.tools.file_change import change_projection
-            artifact = await self.application.aget_file_change(session_id, sequence, revision=revision,
+            artifact = await self.application.history.file_change(session_id, sequence, revision=revision,
                 agent_id=agent_id, conversation_revision=conversation_revision, max_bytes=self.settings.max_frame_bytes * 2)
             projection = change_projection(artifact, preview_bytes=self.settings.max_frame_bytes // 4)
             if projection is None:
@@ -279,18 +284,25 @@ class WebService:
             live['context_snapshot'] = None
             logger.warning('web_context_summary_omitted reason=view_limit')
         if encoded_size(result) > self.settings.max_frame_bytes:
+            coverage=page['coverage']
+            cursor=cursor_token(self.settings,[1,session_id,None,coverage['upper']+1,coverage['upper'],coverage['history_version']])
+            reserve=max(0,encoded_size(cursor)-encoded_size(page['next_cursor']))
+            budget=encoded_size(page['messages'])-(encoded_size(result)-self.settings.max_frame_bytes)-reserve
+            page=history_window(page,[],self.settings,session_id,budget=budget)
+            result.update(messages=page['messages'],history={key:item for key,item in page.items() if key!='messages'})
+        if encoded_size(result) > self.settings.max_frame_bytes:
             raise WebError('view_too_large')
         return result
 
     async def start(self, session_id, body):
         value = await self._session_status(session_id)
         # RunDelivery handles the duplicate receipt before checking busy.
-        return await self.delivery.start(session_id, body, [], can_run=value['can_run'], conversation_revision=value['conversation_revision'])
+        return await self.delivery.start(session_id, body, [], can_run=value['can_run'], conversation_revision=value['conversation_revision'], execution_root_error=value.get('execution_root_error'))
 
     async def usage(self, session_id, *, after_model=None):
         await self._session_status(session_id)
         try:
-            result = await self.application.aget_model_usage(session_id,
+            result = await self.application.observability.usage(session_id,
                 model_limit=self.settings.usage_page_models, after_model=after_model)
         except Exception as error:
             logger.error('model_usage_view_read_failed error_type=%s', type(error).__name__)
@@ -303,13 +315,13 @@ class WebService:
         await self._session_status(session_id)
         try:
             if run_id is None:
-                result = await self.application.alist_diagnostic_runs(session_id,
+                result = await self.application.observability.runs(session_id,
                     limit=self.settings.diagnostic_page_size, before=before)
             else:
-                result = await self.application.aget_diagnostic_events(session_id, run_id,
+                result = await self.application.observability.events(session_id, run_id,
                     limit=self.settings.diagnostic_page_size, after=after)
         except Exception as error:
-            from naiyue_test_agent.application.errors import SessionPersistenceError
+            from naiyue_test_agent.storage.errors import SessionPersistenceError
             if isinstance(error, SessionPersistenceError) and error.args == ('diagnostic_run_not_found',):
                 raise WebError('diagnostic_run_not_found', 404) from None
             logger.error('diagnostic_view_read_failed error_type=%s', type(error).__name__)
@@ -321,7 +333,7 @@ class WebService:
     async def context(self, session_id):
         await self._session_status(session_id)
         try:
-            result = await self.application.aget_context_view(session_id)
+            result = await self.application.history.context(session_id)
             latest = self.delivery.latest.get(session_id)
             live = self.delivery.get(latest).context_view() if latest else None
             if live is not None:
@@ -338,7 +350,7 @@ class WebService:
     async def subagents(self, session_id):
         value = await self._session_status(session_id)
         try:
-            records = {r['agent_path']: r for r in await self.application.aget_chat_subagents(session_id)}
+            records = {r['agent_path']: r for r in await self.application.history.chat_subagents(session_id)}
             latest = self.delivery.latest.get(session_id)
             if latest:
                 job = self.delivery.get(latest)
@@ -396,7 +408,7 @@ class WebService:
         if 'recovery' in value:
             raise WebError('session_recovery_blocked')
         try:
-            await self.application.aselect_model(session_id, model_id)
+            await self.application.sessions.select_model(session_id, model_id)
         except Exception as error:
             raise public_error(error) from None
         return {'model_id': model_id}
@@ -412,7 +424,7 @@ class WebService:
             if value.get('checkpoint_id') != body.checkpoint_id:
                 raise WebError('checkpoint_mismatch')
             try:
-                await self.application.arecover_session(session_id, checkpoint_id=body.checkpoint_id, action=body.action)
+                await self.application.sessions.recover(session_id, checkpoint_id=body.checkpoint_id, action=body.action)
             except Exception as error:
                 raise public_error(error) from None
             return await self.session(session_id)
@@ -428,12 +440,12 @@ class WebService:
             prepared = {'kind': batch['kind'], 'messages': [], 'conversation_revision': value['conversation_revision']}
             if batch['kind'] == 'paused_root':
                 try:
-                    prepared['decisions'], prepared['remember_approved'] = self.application.prepare_root_approval_submission(
+                    prepared['decisions'], prepared['remember_approved'] = self.application.runs.prepare_approval(
                         session_id, approval_batch_id=body.approval_batch_id, origin_run_id=body.origin_run_id,
                         decisions=[item.model_dump() for item in body.decisions], remember_approved=body.remember_approved)
                 except ValueError:
                     raise WebError('stale_approval') from None
-                prepared['messages'] = await self.application.aget_approval_seed(session_id)
+                prepared['messages'] = await self.application.history.approval_seed(session_id)
             return prepared
         # Re-read under the same admission lock as start; duplicate receipts are checked first.
         return await self.delivery.resume(session_id, body, check_current)
@@ -446,5 +458,5 @@ class WebService:
                 and batch['approval_batch_id'] == body.approval_batch_id and batch['origin_run_id'] == body.origin_run_id), None)
             if value['manual_review_required'] or batch is None:
                 raise WebError('stale_approval')
-            return {'kind': 'paused_root', 'messages': await self.application.aget_approval_seed(session_id), 'stop': True, 'conversation_revision': value['conversation_revision']}
+            return {'kind': 'paused_root', 'messages': await self.application.history.approval_seed(session_id), 'stop': True, 'conversation_revision': value['conversation_revision']}
         return await self.delivery.resume(session_id, body, check_current)

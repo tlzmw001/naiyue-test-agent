@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_application import build_async_local_application
+from scripts.component_fixtures import build_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from test_async_context_chain import overflow_error
 from test_dynamic_tools import DynamicModel, call, definition
@@ -41,10 +41,10 @@ async def test_each_request_prepares_one_view_before_compaction_and_model(monkey
     model.on_request = lambda _: trace.append('model')
     async def scenario():
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
-        app = await build_async_local_application('synthetic', tools=[spec], system_prompt='BASE', response_format=None)
-        sid = await app.acreate_session('A')
+        app = await build_component_application('synthetic', tools=[spec], system_prompt='BASE', response_format=None)
+        sid = await app.host.sessions.create('A')
         try:
-            await app.arun(sid, [('user', 'run')])
+            await app.host.runs.start(sid, [('user', 'run')])
         finally:
             await app.aclose()
     await scenario()
@@ -82,15 +82,15 @@ async def test_overflow_retry_keeps_view_then_next_request_refreshes(monkeypatch
         model = OverflowModel(responses=[AIMessage(content='rejected'), call('old'), AIMessage(content='done')])
         old, new = definition('old', calls=calls), definition('new', calls=calls)
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
-        app = await build_async_local_application('synthetic', tools=[old, new], initial_active_tools=['old'],
+        app = await build_component_application('synthetic', tools=[old, new], initial_active_tools=['old'],
             system_prompt='BASE', response_format=None)
-        sid = await app.acreate_session('A')
+        sid = await app.host.sessions.create('A')
         async def change(number):
             if number == 1:
-                await app.aset_active_tools(sid, ['new'])
+                await app.host.sessions.select_tools(sid, ['new'])
         model.on_request = change
         try:
-            result = await app.arun(sid, [('user', 'run')])
+            result = await app.host.runs.start(sid, [('user', 'run')])
             assert result['messages'][-1].content == 'done' and calls == [('old', 'value')]
             assert [[tool.name for tool in bound] for bound in model.bound] == [['old'], ['old'], ['new']]
             assert model.seen[0][0].content == model.seen[1][0].content
@@ -114,13 +114,13 @@ async def test_concurrent_sessions_do_not_share_selected_tools(monkeypatch):
                 return result
         model = ConcurrentModel(responses=[AIMessage(content='done')])
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
-        app = await build_async_local_application('synthetic', tools=[definition('first'), definition('second')],
+        app = await build_component_application('synthetic', tools=[definition('first'), definition('second')],
             initial_active_tools=[], system_prompt='BASE', response_format=None)
         try:
-            first, second = await app.acreate_session('A'), await app.acreate_session('A')
-            await app.aset_active_tools(first, ['first'])
-            await app.aset_active_tools(second, ['second'])
-            await asyncio.wait_for(asyncio.gather(app.arun(first, [('user', 'one')]), app.arun(second, [('user', 'two')])), 10)
+            first, second = await app.host.sessions.create('A'), await app.host.sessions.create('A')
+            await app.host.sessions.select_tools(first, ['first'])
+            await app.host.sessions.select_tools(second, ['second'])
+            await asyncio.wait_for(asyncio.gather(app.host.runs.start(first, [('user', 'one')]), app.host.runs.start(second, [('user', 'two')])), 10)
             assert sorted([[tool.name for tool in bound] for bound in model.bound]) == [['first'], ['second']]
             assert sorted('first:' in messages[0].content for messages in model.seen) == [False, True]
         finally:

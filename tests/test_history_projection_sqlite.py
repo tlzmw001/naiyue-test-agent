@@ -35,7 +35,7 @@ def _legacy_json_extract(document, *paths):
 
 def legacy(archive):
     store, _ = archive
-    store.connection.create_function('json_extract', -1, _legacy_json_extract, deterministic=True)
+    store.database.connection.create_function('json_extract', -1, _legacy_json_extract, deterministic=True)
     return store
 
 

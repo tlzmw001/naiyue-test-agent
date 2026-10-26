@@ -24,7 +24,7 @@
 .row small { min-width: 35px; text-align: right; color: var(--muted); font-size: var(--fs-caption); }
 .group { border-bottom: 1px solid var(--line); }
 .group summary { cursor: pointer; }
-.group summary > span::after { content: '⌄'; color: var(--faint); margin-left: 6px; }
+.group[open] > summary .groupChevron { transform: rotate(0); }
 .children { padding: 0 0 10px 15px; }
 .children > div { display: flex; justify-content: space-between; gap: 10px; font-size: var(--fs-caption); line-height: var(--lh-relaxed); color: var(--muted); padding: 2px 0; }
 .note { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 12px; font-size: var(--fs-caption); color: var(--muted); line-height: var(--lh-relaxed); }

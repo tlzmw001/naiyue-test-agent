@@ -37,36 +37,36 @@ def test_missing_resume_does_not_initialize_workspace(tmp_path):
 
 
 def test_workspace_move_updates_binding_and_sessions_without_resetting_state(tmp_path):
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.project_store import ProjectStore
     root, data = tmp_path / 'A', tmp_path / 'data'
     root.mkdir()
     before = prepare(root, data)
-    with SessionStorage(before.database_path) as storage:
-        storage.bind_workspace(before.workspace_id, before.root)
-        storage.create('S', {'thread_id': 'T', 'model_id': 'M', 'workspace_root': root,
+    with ProjectStore(before.database_path) as storage:
+        storage.sessions.bind_workspace(before.workspace_id, before.root)
+        storage.sessions.create('S', {'thread_id': 'T', 'model_id': 'M', 'workspace_root': root,
             'active_tool_names': (), 'permission_mode': 'NoAsk'})
-        storage.mark_running('S', 'R')
+        storage.sessions.mark_running('S', 'R')
     moved = tmp_path / 'B'
     root.rename(moved)
     after = prepare(moved, data)
     assert after.workspace_id == before.workspace_id
     assert after.database_path == before.database_path
-    with SessionStorage(after.database_path) as storage:
-        storage.bind_workspace(after.workspace_id, after.root)
-        row = storage.get('S')
+    with ProjectStore(after.database_path) as storage:
+        storage.sessions.bind_workspace(after.workspace_id, after.root)
+        row = storage.sessions.get('S')
         assert row['workspace_root'] == str(moved.resolve())
         assert (row['thread_id'], row['model_id'], row['state'], row['run_id']) == ('T', 'M', 'running', 'R')
         assert row['permission_mode'] == 'NoAsk'
-        assert storage.get_workspace_binding()['root_path'] == str(moved.resolve())
+        assert storage.sessions.get_workspace_binding()['root_path'] == str(moved.resolve())
 
 
 def test_copy_requires_explicit_new_identity_and_preserves_original(tmp_path):
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from naiyue_test_agent.storage.project_store import ProjectStore
     original, copied, data = tmp_path / 'A', tmp_path / 'B', tmp_path / 'data'
     original.mkdir()
     first = prepare(original, data)
-    with SessionStorage(first.database_path) as storage:
-        storage.bind_workspace(first.workspace_id, first.root)
+    with ProjectStore(first.database_path) as storage:
+        storage.sessions.bind_workspace(first.workspace_id, first.root)
     shutil.copytree(original, copied)
     with pytest.raises(ValueError, match='workspace_id_conflict'):
         prepare(copied, data)
@@ -91,23 +91,24 @@ def test_invalid_manifest_is_not_overwritten(tmp_path):
 
 
 def test_binding_failure_rolls_back_all_roots(tmp_path):
-    from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+    from naiyue_test_agent.storage.project_store import ProjectStore
+    from naiyue_test_agent.storage.errors import SessionPersistenceError
     root = tmp_path / 'A'
     root.mkdir()
     loc = prepare(root, tmp_path / 'data')
-    with SessionStorage(loc.database_path) as storage:
-        storage.bind_workspace(loc.workspace_id, root)
-        storage.create('S', {'thread_id': 'T', 'model_id': 'M', 'workspace_root': root,
+    with ProjectStore(loc.database_path) as storage:
+        storage.sessions.bind_workspace(loc.workspace_id, root)
+        storage.sessions.create('S', {'thread_id': 'T', 'model_id': 'M', 'workspace_root': root,
             'active_tool_names': (), 'permission_mode': 'Default'})
-        storage.connection.execute("CREATE TRIGGER reject_root BEFORE UPDATE OF workspace_root ON naiyue_sessions BEGIN SELECT RAISE(ABORT,'synthetic'); END")
-        storage.connection.commit()
+        storage.database.connection.execute("CREATE TRIGGER reject_root BEFORE UPDATE OF workspace_root ON naiyue_sessions BEGIN SELECT RAISE(ABORT,'synthetic'); END")
+        storage.database.connection.commit()
     moved = tmp_path / 'B'
     root.rename(moved)
-    with SessionStorage(loc.database_path) as storage:
+    with ProjectStore(loc.database_path) as storage:
         with pytest.raises(SessionPersistenceError):
-            storage.bind_workspace(loc.workspace_id, moved)
-        assert storage.get_workspace_binding()['root_path'] == str(root)
-        assert storage.get('S')['workspace_root'] == str(root)
+            storage.sessions.bind_workspace(loc.workspace_id, moved)
+        assert storage.sessions.get_workspace_binding()['root_path'] == str(root)
+        assert storage.sessions.get('S')['workspace_root'] == str(root)
 
 
 def test_storage_root_setting_is_absolute_and_does_not_silently_fallback(tmp_path):
@@ -122,13 +123,14 @@ def test_storage_root_setting_is_absolute_and_does_not_silently_fallback(tmp_pat
 
 
 def test_unavailable_data_root_does_not_fallback(tmp_path):
-    from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+    from naiyue_test_agent.storage.project_store import ProjectStore
+    from naiyue_test_agent.storage.errors import SessionPersistenceError
     root, data = tmp_path / 'A', tmp_path / 'blocked'
     root.mkdir()
     data.write_text('not a directory')
     loc = prepare(root, data)
     with pytest.raises(SessionPersistenceError):
-        SessionStorage(loc.database_path)
+        ProjectStore(loc.database_path)
     assert data.read_text() == 'not a directory'
 
 
@@ -162,13 +164,14 @@ def test_existing_marker_empty_resume_performs_no_write(tmp_path, monkeypatch):
 
 def test_schema_three_is_rejected_without_changes(tmp_path):
     import sqlite3
-    from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+    from naiyue_test_agent.storage.project_store import ProjectStore
+    from naiyue_test_agent.storage.errors import SessionPersistenceError
     db = tmp_path / 'old.sqlite'
     with sqlite3.connect(db) as connection:
         connection.executescript('CREATE TABLE naiyue_store_info(version INTEGER); INSERT INTO naiyue_store_info VALUES(3);')
     before = db.read_bytes()
     with pytest.raises(SessionPersistenceError, match='unsupported_store_schema'):
-        SessionStorage(db)
+        ProjectStore(db)
     assert db.read_bytes() == before
 
 

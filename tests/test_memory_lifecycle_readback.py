@@ -31,7 +31,7 @@ def test_low_budget_history_can_truncate_without_hiding_current_lifecycle(memory
 
 def test_write_rejects_unreadable_metadata_before_committing(memory):
     import pytest
-    from naiyue_test_agent.application.memory_queries import MemoryReadError
+    from naiyue_test_agent.contracts.memory import MemoryReadError
     from naiyue_test_agent.memory_settings import MemorySettings
     access,sid,_,_=memory
     ref=source(access,sid)
@@ -40,4 +40,4 @@ def test_write_rejects_unreadable_metadata_before_committing(memory):
     with pytest.raises(MemoryReadError,match='memory_metadata_budget'):
         write(memory,proposal=p,sources=[ref])
     for table in ('naiyue_memories','naiyue_memory_versions','naiyue_memory_sources','naiyue_memory_search'):
-        assert access.storage.connection.execute(f'SELECT count(*) FROM {table}').fetchone()[0]==0
+        assert access.storage.database.connection.execute(f'SELECT count(*) FROM {table}').fetchone()[0]==0

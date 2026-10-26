@@ -30,7 +30,7 @@ async def test_auto_input_and_no_extra_main_model_messages(monkeypatch, tmp_path
     write_skill(tmp_path, description='SKILL_INDEX_PRIVATE')
     primary, fast, detailed = DynamicModel(responses=[call(), AIMessage(content='done')]), model([verdict()]), model([])
     app = await build(monkeypatch, primary, fast, detailed, specs=[definition(approved=True), create_session_read_tool()])
-    result = await app.arun(await app.acreate_workspace_session('main', tmp_path), [('user', 'run probe')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('main', tmp_path), [('user', 'run probe')])
     assert not result.get('approval_requests') and result['messages'][-1].content == 'done'
     data = json.loads(fast.seen[0][-1].content)
     assert data['human_messages'][0]['content'] == 'run probe'
@@ -50,11 +50,11 @@ async def test_two_asks_pause_entire_batch_and_resume_does_not_review_again(monk
         {'name': 'ordinary', 'args': {'value': 'ordinary'}, 'id': 'ordinary'}]), AIMessage(content='done')])
     app = await build(monkeypatch, primary, fast, detailed,
         specs=[definition(calls=executed, approved=True), definition('ordinary', calls=executed)])
-    sid = await app.acreate_session('main')
-    paused = await app.arun(sid, [('user', 'run both')])
+    sid = await app.host.sessions.create('main')
+    paused = await app.host.runs.start(sid, [('user', 'run both')])
     assert [r['tool_call_id'] for r in paused['approval_requests']] == ['ask'] and executed == []
-    await app.aset_permission_mode(sid, 'BypassApprovals')
-    result = await app.aresume_tool_approval(sid, ['approve'])
+    await app.host.sessions.select_permission_mode(sid, 'BypassApprovals')
+    result = await app.host.runs.resume_approval(sid, ['approve'])
     assert executed == [('probe', 'approved'), ('ordinary', 'ordinary')]
     assert len(fast.seen) == len(detailed.seen) == 1
     assert result['messages'][-1].content == 'done'
@@ -67,7 +67,7 @@ async def test_explicit_rules_do_not_call_review_models(monkeypatch, decision):
         decision: (PermissionRule(tool='probe'),)})})
     fast, detailed = model([]), model([])
     app = await build(monkeypatch, DynamicModel(responses=[call(), AIMessage(content='done')]), fast, detailed, options=options)
-    result = await app.arun(await app.acreate_session('main'), [('user', 'run')])
+    result = await app.host.runs.start(await app.host.sessions.create('main'), [('user', 'run')])
     output = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert output.status == ('success' if decision == 'allow' else 'error')
     assert fast.seen == detailed.seen == []
@@ -89,39 +89,39 @@ async def test_switching_to_auto_requires_configuration_but_default_can_use_conf
     options = settings().model_copy(update={'permissions': settings().permissions.model_copy(update={'mode': 'Default'})})
     fast, detailed = model([verdict()]), model([])
     app = await build(monkeypatch, DynamicModel(responses=[call(), AIMessage(content='done')]), fast, detailed, options=options)
-    sid = await app.acreate_session('main')
-    await app.aset_permission_mode(sid, 'Auto')
-    assert (await app.arun(sid, [('user', 'run')]))['messages'][-1].content == 'done'
+    sid = await app.host.sessions.create('main')
+    await app.host.sessions.select_permission_mode(sid, 'Auto')
+    assert (await app.host.runs.start(sid, [('user', 'run')]))['messages'][-1].content == 'done'
     assert len(fast.seen) == 1
 
 
 @pytest.mark.parametrize('agents', [True, False])
 @async_test
 async def test_project_selection_frozen_within_run_and_refreshed_next_run(monkeypatch, tmp_path, agents):
-    from naiyue_test_agent.application import skills
+    from naiyue_test_agent.application.sessions import skills
     target = tmp_path / ('AGENTS.md' if agents else 'CLAUDE.md')
     (tmp_path / 'CLAUDE.md').write_text('CLAUDE_FALLBACK')
     target.write_text('PROJECT_OLD')
     reads = []
-    original = skills.load_workspace_instruction_part
+    original = skills.load_project_instruction_part
     def load(root):
         reads.append(root)
         return original(root)
-    monkeypatch.setattr(skills, 'load_workspace_instruction_part', load)
+    monkeypatch.setattr(skills, 'load_project_instruction_part', load)
     fast, detailed = model([verdict('ask'), verdict()]), model([verdict()])
     fast.on_request = lambda number: target.write_text('PROJECT_NEW') if number == 1 else None
     primary = DynamicModel(responses=[call(call_id='one'), AIMessage(content='one'),
                                       call(call_id='two'), AIMessage(content='two')])
     app = await build(monkeypatch, primary, fast, detailed)
-    sid = await app.acreate_workspace_session('main', tmp_path)
-    await app.arun(sid, [('user', 'run one')])
+    sid = await app.host.sessions.create_workspace('main', tmp_path)
+    await app.host.runs.start(sid, [('user', 'run one')])
     assert len(reads) == 1
     first = json.loads(fast.seen[0][-1].content)
     assert 'PROJECT_OLD' in first['project_instructions'] and 'CLAUDE_FALLBACK' not in str(first)
     assert fast.seen[0][-1].content == detailed.seen[0][-1].content
-    await app.arun(sid, [('user', 'run two')])
+    await app.host.runs.start(sid, [('user', 'run two')])
     assert len(reads) == 2 and 'PROJECT_NEW' in json.loads(fast.seen[1][-1].content)['project_instructions']
-    assert app._sessions.resolve_permission_context(sid)['project_instructions'] is None
+    assert app.host.sessions._sessions.resolve_permission_context(sid)['project_instructions'] is None
 
 
 @async_test
@@ -132,10 +132,10 @@ async def test_resume_uses_saved_ask_and_refreshes_only_subsequent_batch(monkeyp
     primary = DynamicModel(responses=[call(call_id='old'), call(call_id='next'), AIMessage(content='done')])
     executed = []
     app = await build(monkeypatch, primary, fast, detailed, specs=[definition(calls=executed, approved=True)])
-    sid = await app.acreate_workspace_session('main', tmp_path)
-    await app.arun(sid, [('user', 'run both')])
+    sid = await app.host.sessions.create_workspace('main', tmp_path)
+    await app.host.runs.start(sid, [('user', 'run both')])
     target.write_text('NEW_RULE')
-    result = await app.aresume_tool_approval(sid, ['approve'])
+    result = await app.host.runs.resume_approval(sid, ['approve'])
     assert result['messages'][-1].content == 'done' and len(executed) == 2
     assert len(fast.seen) == 2 and len(detailed.seen) == 1
     before, after = [json.loads(request[-1].content) for request in fast.seen]
@@ -149,14 +149,14 @@ async def test_mode_switched_during_review_applies_to_next_batch(monkeypatch):
     fast, detailed = model([verdict()]), model([])
     primary = DynamicModel(responses=[call(call_id='old'), call(call_id='next'), AIMessage(content='done')])
     app = await build(monkeypatch, primary, fast, detailed)
-    sid = await app.acreate_session('main')
+    sid = await app.host.sessions.create('main')
     async def on_request(_):
-        return await app.aset_permission_mode(sid, 'NoAsk')
+        return await app.host.sessions.select_permission_mode(sid, 'NoAsk')
     fast.on_request = on_request
-    result = await app.arun(sid, [('user', 'run twice')])
+    result = await app.host.runs.start(sid, [('user', 'run twice')])
     outputs = [m for m in result['messages'] if isinstance(m, ToolMessage)]
     assert [(m.tool_call_id, m.status) for m in outputs] == [('old', 'success'), ('next', 'error')]
-    assert len(fast.seen) == 1 and app.get_permission_mode(sid) == 'NoAsk'
+    assert len(fast.seen) == 1 and app.host.sessions.permission_mode(sid) == 'NoAsk'
 
 
 @async_test
@@ -169,14 +169,14 @@ async def test_control_messages_keep_human_provenance_when_optional_observation_
                                       call(call_id='three'), AIMessage(content='done')])
     fast, detailed = model([verdict(), verdict(), verdict()]), model([])
     app = await build(monkeypatch, primary, fast, detailed)
-    sid = await app.acreate_session('main')
+    sid = await app.host.sessions.create('main')
     def queue(number):
         if number == 1:
-            app.steer(sid, 'steering task')
-            app.follow_up(sid, 'follow-up task')
+            app.host.runs.steer(sid, 'steering task')
+            app.host.runs.follow_up(sid, 'follow-up task')
     primary.on_request = queue
     source = HumanMessage(content='initial task', id='human', additional_kwargs={'custom': 'preserved'})
-    result = await app.arun(sid, [source])
+    result = await app.host.runs.start(sid, [source])
     inputs = [json.loads(request[-1].content) for request in fast.seen]
     assert [[h['content'] for h in data['human_messages']] for data in inputs] == [
         ['initial task'], ['initial task', 'steering task'], ['initial task', 'steering task', 'follow-up task']]
@@ -197,11 +197,11 @@ async def test_invalid_arguments_and_session_allow_bypass_review(monkeypatch):
         {'name': 'probe', 'args': {'value': 'same'}, 'id': 'ask'}]), AIMessage(content='done'),
         call(value='same', call_id='remembered'), AIMessage(content='done')])
     app = await build(monkeypatch, primary, fast, detailed)
-    sid = await app.acreate_session('main')
-    paused = await app.arun(sid, [('user', 'run')])
+    sid = await app.host.sessions.create('main')
+    paused = await app.host.runs.start(sid, [('user', 'run')])
     assert [r['tool_call_id'] for r in paused['approval_requests']] == ['ask']
-    done = await app.aresume_tool_approval(sid, ['approve'], remember_approved=['ask'])
+    done = await app.host.runs.resume_approval(sid, ['approve'], remember_approved=['ask'])
     assert [(m.tool_call_id, m.status) for m in done['messages'] if isinstance(m, ToolMessage)] == [
         ('invalid', 'error'), ('ask', 'success')]
-    result = await app.arun(sid, [('user', 'run again')])
+    result = await app.host.runs.start(sid, [('user', 'run again')])
     assert not result.get('approval_requests') and len(fast.seen) == len(detailed.seen) == 1

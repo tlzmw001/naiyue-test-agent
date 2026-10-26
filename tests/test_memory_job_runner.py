@@ -16,8 +16,8 @@ from pydantic import Field
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher
 from naiyue_test_agent.agent_runtime.model_usage_observation import install_model_usage_callback
 from naiyue_test_agent.agent_runtime.run_control import RunControl
-from naiyue_test_agent.application.memory_access import MemoryAccess
-from naiyue_test_agent.application import memory_overview_store as store
+from naiyue_test_agent.application.memory.memory_access import MemoryAccess
+from naiyue_test_agent.storage.memory_sql import memory_overview_store as store
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.model_access import ModelCatalog, MODEL_LIMITS_METADATA_KEY
 from test_async_application import StreamingToolModel
@@ -47,7 +47,7 @@ def fixture(archive, tmp_path, model, **changes):
     service._terminal = terminal
     job = SimpleNamespace(task_id='a' * 32, session_id='session', target_session_id='session',
         root=tmp_path, origin_run_id='root-run', model_id='A', model=model, thread_id='root-thread',
-        conversation_revision=0, deadline=time.monotonic() + 30, start=(0, 0), upper=1,
+        conversation_revision=0, project_id=archive.sessions.get('session')['project_id'], deadline=time.monotonic() + 30, start=(0, 0), upper=1,
         batches=0, saved=0, failed=0, overview_saved=0, skipped=[], control=RunControl(),
         released=True, pending_runs=set(), changed=asyncio.Event(), status='starting',
         started_at=None, result_status=None, termination=None, cleanup_confirmed=False, error_type=None)
@@ -60,7 +60,7 @@ def response(proposals=None):
 
 
 def test_normal_worker_saves_overview_and_memory_with_independent_event_identity(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='human', content='以后使用.venv', additional_kwargs={'naiyue_human_input': True})])
         model = StreamingToolModel(replies=[response([proposed()])])
@@ -69,8 +69,8 @@ def test_normal_worker_saves_overview_and_memory_with_independent_event_identity
             await drive(service, job)
             assert job.result_status == 'completed' and job.cleanup_confirmed
             assert job.saved == 1 and job.overview_saved == 1 and job.batches == 1 and job.failed == 0
-            assert store.overview(archive, 'session')['overview'] == result()['overview']
-            assert archive.connection.execute('SELECT count(*) FROM naiyue_memories').fetchone()[0] == 1
+            assert archive.memory.overview('session')['overview'] == result()['overview']
+            assert archive.database.connection.execute('SELECT count(*) FROM naiyue_memories').fetchone()[0] == 1
             starts = [e for e in events if e.event_type == 'run_started']
             ends = [e for e in events if e.event_type == 'run_finished']
             calls = [e for e in events if e.event_type == 'model_call_started']
@@ -84,7 +84,7 @@ def test_normal_worker_saves_overview_and_memory_with_independent_event_identity
 
 
 def test_invalid_proposal_and_permission_failure_preserve_independent_success(archive, tmp_path, caplog):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='human', content='以后使用.venv', additional_kwargs={'naiyue_human_input': True})])
         model = StreamingToolModel(replies=[response([{'unexpected': 'SYNTHETIC_PRIVATE'}, proposed()])])
@@ -101,7 +101,7 @@ def test_invalid_proposal_and_permission_failure_preserve_independent_success(ar
 
 
 def test_json_failure_has_no_false_save_and_no_model_repair_loop(archive, tmp_path, caplog):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='human', content='visible')])
         model = StreamingToolModel(replies=[AIMessage(content='{SYNTHETIC_PRIVATE')])
@@ -110,7 +110,7 @@ def test_json_failure_has_no_false_save_and_no_model_repair_loop(archive, tmp_pa
             await drive(service, job)
             assert job.result_status == 'failed' and job.failed == 1 and job.cleanup_confirmed
             assert job.overview_saved == job.saved == 0 and len(model.seen) == 1
-            assert store.overview(archive, 'session')['overview'] is None
+            assert archive.memory.overview('session')['overview'] is None
             assert 'SYNTHETIC_PRIVATE' not in caplog.text
             assert [e for e in events if e.event_type == 'run_finished'][0].data.status == 'failed'
         finally:
@@ -119,7 +119,7 @@ def test_json_failure_has_no_false_save_and_no_model_repair_loop(archive, tmp_pa
 
 
 def test_waiting_root_stop_never_takes_slot_or_calls_model(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         model = StreamingToolModel(replies=[])
         service, job, events = fixture(archive, tmp_path, model)
@@ -140,7 +140,7 @@ def test_waiting_root_stop_never_takes_slot_or_calls_model(archive, tmp_path):
 @pytest.mark.parametrize('termination,status', [('root_not_completed', 'stopped'),
     ('source_changed', 'failed'), ('admission_save_failed', 'failed')])
 def test_admission_failure_is_distinguished_from_an_uncompleted_root(archive, tmp_path, termination, status):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         model = StreamingToolModel(replies=[])
         service, job, events = fixture(archive, tmp_path, model)
@@ -157,7 +157,7 @@ def test_admission_failure_is_distinguished_from_an_uncompleted_root(archive, tm
 
 
 def test_native_model_stop_and_expired_deadline_do_not_save(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='human', content='visible')])
         model = StreamingToolModel(replies=[response()], entered=asyncio.Event(), release=asyncio.Event())
@@ -183,7 +183,7 @@ def test_native_model_stop_and_expired_deadline_do_not_save(archive, tmp_path):
 
 
 def test_merging_root_wait_does_not_hold_slot_and_processes_new_saved_upper(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='one', content='first source')])
         model = StreamingToolModel(replies=[response(), response()])
@@ -198,7 +198,7 @@ def test_merging_root_wait_does_not_hold_slot_and_processes_new_saved_upper(arch
             await asyncio.wait_for(worker, 5)
             assert job.result_status == 'completed' and job.batches == 2 and job.overview_saved == 2
             assert len(model.seen) == 2
-            assert store.overview(archive, 'session')['coverage']['upper'] == 2
+            assert archive.memory.overview('session')['coverage']['upper'] == 2
         finally:
             service.memory.close()
     asyncio.run(scenario())
@@ -212,7 +212,7 @@ class CapturingModel(StreamingToolModel):
 
 
 def test_long_message_respects_model_window_output_cap_and_batch_limit(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='long', content='长🧪文本' * 10000)])
         model = CapturingModel(replies=[response(), response(), response()], metadata={
@@ -245,7 +245,7 @@ class ThreadModel(BaseChatModel):
 
 
 def test_sync_model_stop_waits_for_thread_before_terminal_cleanup(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='human', content='visible')])
         model = ThreadModel(entered=threading.Event(), release=threading.Event())
@@ -269,7 +269,7 @@ def test_sync_model_stop_waits_for_thread_before_terminal_cleanup(archive, tmp_p
 
 
 def test_queued_stop_does_not_wait_for_an_unrelated_task_or_lose_a_slot(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='human', content='visible')])
         model = StreamingToolModel(replies=[])
@@ -289,17 +289,17 @@ def test_queued_stop_does_not_wait_for_an_unrelated_task_or_lose_a_slot(archive,
 
 
 def test_stop_during_necessary_commit_drains_and_counts_the_real_save(archive, tmp_path, monkeypatch):
-    from naiyue_test_agent.application import memory_job_runner
+    from naiyue_test_agent.application.memory import memory_job_runner
     async def scenario():
         save(archive, [HumanMessage(id='human', content='visible')])
         entered, release = threading.Event(), threading.Event()
-        original = store.save_overview
+        original = archive.memory.save_overview
         def gated(*args, **kwargs):
             entered.set()
             if not release.wait(5):
                 raise RuntimeError('Test commit was not released')
             return original(*args, **kwargs)
-        monkeypatch.setattr(memory_job_runner.store, 'save_overview', gated)
+        monkeypatch.setattr(archive.memory, 'save_overview', gated)
         service, job, events = fixture(archive, tmp_path, StreamingToolModel(replies=[response()]))
         worker = asyncio.create_task(memory_job_runner.drive(service, job))
         try:
@@ -311,7 +311,7 @@ def test_stop_during_necessary_commit_drains_and_counts_the_real_save(archive, t
             release.set()
             await asyncio.wait_for(worker, 5)
             assert job.result_status == 'stopped' and job.overview_saved == 1 and job.cleanup_confirmed
-            assert store.overview(archive, 'session')['overview'] == result()['overview']
+            assert archive.memory.overview('session')['overview'] == result()['overview']
         finally:
             release.set()
             await worker
@@ -320,7 +320,7 @@ def test_stop_during_necessary_commit_drains_and_counts_the_real_save(archive, t
 
 
 def test_source_rewritten_during_model_call_cannot_save_stale_overview_or_memory(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='human', content='使用.venv', additional_kwargs={'naiyue_human_input': True})])
         model = StreamingToolModel(replies=[response([proposed()])], entered=asyncio.Event(), release=asyncio.Event())
@@ -332,7 +332,7 @@ def test_source_rewritten_during_model_call_cannot_save_stale_overview_or_memory
             model.release.set()
             await asyncio.wait_for(worker, 5)
             assert job.overview_saved == job.saved == 0 and job.failed == 2 and job.result_status == 'failed'
-            assert store.overview(archive, 'session')['overview'] is None
+            assert archive.memory.overview('session')['overview'] is None
         finally:
             model.release.set()
             await worker
@@ -341,7 +341,7 @@ def test_source_rewritten_during_model_call_cannot_save_stale_overview_or_memory
 
 
 def test_related_active_and_candidate_records_enter_the_same_single_model_call(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     from naiyue_test_agent.tools.memory import MemoryInput
     async def scenario():
         save(archive, [HumanMessage(id='human', content='使用.venv', additional_kwargs={'naiyue_human_input': True})],
@@ -355,7 +355,7 @@ def test_related_active_and_candidate_records_enter_the_same_single_model_call(a
                 body='使用.venv ' + 'existing detail ' * 40,
                 gaps=['等待确认测试环境'] if intent == 'candidate' else [])
             request = MemoryInput(action='record', scope='workspace', proposal=value, sources=[ref]).model_dump(mode='json')
-            service.memory.query('session', tmp_path, request)
+            service.memory.query('session', service.storage.sessions.get('session')['project_id'], request)
         try:
             await drive(service, job)
             assert job.result_status == 'completed' and len(model.seen) == 1
@@ -371,7 +371,7 @@ def test_related_active_and_candidate_records_enter_the_same_single_model_call(a
 
 
 def test_candidate_changed_after_search_is_skipped_with_diagnostic(archive, tmp_path, monkeypatch, caplog):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     from naiyue_test_agent.tools.memory import MemoryInput
     async def scenario():
         save(archive, [HumanMessage(id='human', content='使用.venv', additional_kwargs={'naiyue_human_input': True})],
@@ -382,7 +382,7 @@ def test_candidate_changed_after_search_is_skipped_with_diagnostic(archive, tmp_
             conversation_revision=0, quote='使用.venv', offset=0)
         value = dict(proposal(reason='用户明确约定'), intent='candidate', gaps=['等待确认'])
         record = MemoryInput(action='record', scope='workspace', proposal=value, sources=[ref]).model_dump(mode='json')
-        saved = service.memory.query('session', tmp_path, record)['item']
+        saved = service.memory.query('session', service.storage.sessions.get('session')['project_id'], record)['item']
         original = service.memory.query
         reads = []
         def changed(sid, root, request):
@@ -405,8 +405,8 @@ def test_candidate_changed_after_search_is_skipped_with_diagnostic(archive, tmp_
 
 
 def test_optional_related_budget_pressure_does_not_discard_valid_primary_sources(archive, tmp_path, monkeypatch):
-    from naiyue_test_agent.application import memory_job_runner
-    from naiyue_test_agent.application.memory_queries import MemoryReadError
+    from naiyue_test_agent.application.memory import memory_job_runner
+    from naiyue_test_agent.contracts.memory import MemoryReadError
     async def scenario():
         save(archive, [HumanMessage(id='human', content='visible')])
         service, job, events = fixture(archive, tmp_path, StreamingToolModel(replies=[response()]))

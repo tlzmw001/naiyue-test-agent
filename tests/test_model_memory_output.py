@@ -29,7 +29,7 @@ def test_invalid_memory_output_does_not_silently_select_another_protocol(tmp_pat
 @pytest.mark.parametrize('name', ['official', 'gateway', 'claude', 'local'])
 @pytest.mark.parametrize('mode', ['json_schema', 'function_calling'])
 def test_official_wrapper_binds_schema_and_output_limit_without_mutating_model(tmp_path, name, mode):
-    from naiyue_test_agent.application.memory_batches import response_schema
+    from naiyue_test_agent.application.memory.memory_batches import response_schema
     from naiyue_test_agent.model_access.memory_output import prepare_memory_output
     data = config_for_all_kinds()
     data['models'][name]['profile'] = {'memory_output': mode}
@@ -62,7 +62,7 @@ def test_text_default_uses_existing_cap_and_has_no_schema_overhead():
 
 def test_sdk_protocol_fallback_is_rejected_before_any_request():
     from langchain_openai import ChatOpenAI
-    from naiyue_test_agent.application.memory_batches import response_schema
+    from naiyue_test_agent.application.memory.memory_batches import response_schema
     from naiyue_test_agent.model_access.memory_output import prepare_memory_output
     model = ChatOpenAI(model='gpt-4', api_key='offline-placeholder')
     model.profile = {'memory_output': 'json_schema'}
@@ -97,7 +97,7 @@ def test_single_request_cap_overrides_configured_openai_default_without_mutation
     from http_observation_helpers import sdk_catalog
     from test_memory_batches import result
     from test_memory_structured_output import wire_response
-    from naiyue_test_agent.application.memory_batches import response_schema
+    from naiyue_test_agent.application.memory.memory_batches import response_schema
     from naiyue_test_agent.model_access.memory_output import prepare_memory_output
 
     async def scenario():

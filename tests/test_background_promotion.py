@@ -1,12 +1,14 @@
 """One process and deadline survive the foreground/background handoff."""
 
+from runtime_context_helpers import host_files
 import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 
-from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
+from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
+from naiyue_test_agent.execution_roots import ExecutionRoot
 from naiyue_test_agent.tools.processes import HostProcessRunner, ProcessOutcome
 from naiyue_test_agent.tools.settings import BashSettings
 from test_process_lifecycle import request
@@ -14,7 +16,7 @@ from test_background_tasks import wait_status, archive_root
 
 
 async def foreground(manager, root, runner, *, timeout=None, control=None, progress=None, settings=None, cap=1000):
-    return await manager.foreground(session_id='s', workspace_root=root, archive_root=archive_root(root), run_id='r',
+    return await manager.foreground(session_id='s', workspace_root=root, execution_root=ExecutionRoot(root), environment=host_files(root).environment, archive_root=archive_root(root), run_id='r',
         tool_call_id='c', agent_path='root', command='test', name='bash',
         request=replace(request(root, ''), timeout_seconds=timeout),
         settings=settings or BashSettings(), runner=runner, control=control,
@@ -137,7 +139,7 @@ def test_actual_process_promotes_once_and_keeps_original_timeout(tmp_path):
         script = "import os,time;print(os.getpid(),flush=True);time.sleep(60)"
         req = replace(request(tmp_path, script), timeout_seconds=3, merge_output=True)
         try:
-            receipt = await manager.foreground(session_id='s', workspace_root=tmp_path, archive_root=archive_root(tmp_path),
+            receipt = await manager.foreground(session_id='s', workspace_root=tmp_path, execution_root=ExecutionRoot(tmp_path), environment=host_files(tmp_path).environment, archive_root=archive_root(tmp_path),
                 run_id='r', tool_call_id='c', agent_path='root', command=script, name='bash',
                 request=req, settings=BashSettings(), runner=runner, control=None,
                 wait_seconds=1, background_limit=1000, on_progress=lambda *_: None)
@@ -158,7 +160,8 @@ def test_actual_process_promotes_once_and_keeps_original_timeout(tmp_path):
 @pytest.mark.parametrize('name', ['bash', 'powershell'])
 @pytest.mark.parametrize('agent', ['root', 'root/child'])
 def test_both_shells_only_promote_root_even_if_child_has_port(monkeypatch, tmp_path, name, agent):
-    from naiyue_test_agent.tools import create_builtin_tools, shell
+    from naiyue_test_agent.tools import create_builtin_tools
+    from naiyue_test_agent.execution import host_shell as shell
     from naiyue_test_agent.settings import AppSettings
     from test_shell_task_settings import runtime_for
     from naiyue_test_agent.shell_task_settings import ShellTaskSettings
@@ -175,13 +178,13 @@ def test_both_shells_only_promote_root_even_if_child_has_port(monkeypatch, tmp_p
                 await release.wait()
             await consume('stdout', b'finished')
             return ProcessOutcome(0, 'exited', True, True, True, True, 0)
-        monkeypatch.setattr(shell.HostProcessRunner, 'run', run)
+        monkeypatch.setattr(HostProcessRunner, 'run', run)
         spec = next(s for s in create_builtin_tools(AppSettings().tools,
             shell_task_settings=ShellTaskSettings(foreground_wait_seconds=1)) if s.tool.name == name)
         args = {'command': 'test'}
         runtime = runtime_for(spec, args, tmp_path)
-        runtime.context.update(agent_path=agent, run_id='r', _process_tasks=manager)
-        runtime.context['_execution_permit']['agent_path'] = agent
+        runtime.context = replace(runtime.context, scope=replace(runtime.context.scope, identity=replace(runtime.context.scope.identity, agent_path=agent, run_id='r'), capabilities=replace(runtime.context.scope.capabilities, process_tasks=manager)))
+        runtime.context.authorization.permit['agent_path'] = agent
         reports = []
         runtime.stream_writer = reports.append
         try:

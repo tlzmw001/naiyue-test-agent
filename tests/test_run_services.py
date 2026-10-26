@@ -1,10 +1,11 @@
 """One scoped service object replaces independent ambient channels."""
 
+from runtime_context_helpers import RunIdentity, ExecutionRoot, typed_context, typed_scope
 from threading import Thread
 
 import pytest
 
-from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services, current_run_services
+from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope, current_run_scope
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher
 from naiyue_test_agent.agent_runtime.errors import RuntimeErrorPolicy
 from naiyue_test_agent.agent_runtime.invocation_context import make_invocation_context
@@ -15,26 +16,27 @@ def test_single_binding_builds_explicit_context_and_restores_parent():
     publisher = RunEventPublisher('s', 'r', ())
     control = RunControl()
     policy = RuntimeErrorPolicy()
-    services = RunServices(publisher=publisher, control=control, errors=policy)
-    assert current_run_services() is None
-    with bind_run_services(services):
-        assert current_run_services().publisher is publisher and current_run_services().control is control
+    services = typed_scope(publisher=publisher, control=control, errors=policy)
+    assert current_run_scope() is None
+    with bind_run_scope(services):
+        assert current_run_scope().observation.publisher is publisher and current_run_scope().control is control
         context = make_invocation_context('s', 'r', None, None, ())
-        assert context['_run_event_publisher'] is publisher and context['_failure_policy'] is policy
-        assert context['_run_control'] is control and '_failure_reporter' not in context
-        assert '_run_control' not in make_invocation_context('other', 'r', None, None, ())
+        assert context.scope.observation.publisher is publisher and context.scope.errors is policy
+        assert context.scope.control is control and not hasattr(context, '_failure_reporter')
+        with pytest.raises(ValueError, match='identity'):
+            make_invocation_context('other', 'r', None, None, ())
         with pytest.raises(ValueError):
-            with bind_run_services(RunServices()):
-                assert current_run_services() is not services
+            with bind_run_scope(typed_scope()):
+                assert current_run_scope() is not services
                 raise ValueError('probe')
-        assert current_run_services() is services
-    assert current_run_services() is None
+        assert current_run_scope() is services
+    assert current_run_scope() is None
 
 
 def test_new_thread_does_not_inherit_another_runs_services():
     values = []
-    with bind_run_services(RunServices(publisher=RunEventPublisher('s', 'r', ()))):
-        thread = Thread(target=lambda: values.append(current_run_services()))
+    with bind_run_scope(typed_scope(publisher=RunEventPublisher('s', 'r', ()))):
+        thread = Thread(target=lambda: values.append(current_run_scope()))
         thread.start()
         thread.join(timeout=5)
         assert not thread.is_alive()
@@ -44,13 +46,15 @@ def test_new_thread_does_not_inherit_another_runs_services():
 def test_background_notice_projection_is_root_and_exact_scope_only(tmp_path):
     from naiyue_test_agent.tools.background_tasks import BackgroundNoticeSnapshot
     notice = BackgroundNoticeSnapshot('s', tmp_path, 'r', (('a' * 32, 1),), 'status')
-    with bind_run_services(RunServices(background_notices=notice)):
-        assert make_invocation_context('s', 'r', tmp_path, None, ())['_background_notices'] is notice
+    identity = RunIdentity('s', 'r', execution_root=ExecutionRoot(tmp_path))
+    with bind_run_scope(typed_scope(identity=identity, background_notices=notice)):
+        assert make_invocation_context('s', 'r', tmp_path, None, ()).scope.background_notices is notice
         for sid, run, root, path in [('other', 'r', tmp_path, 'root'), ('s', 'other', tmp_path, 'root'),
                 ('s', 'r', tmp_path / 'other', 'root'), ('s', 'r', tmp_path, 'root/tester/1')]:
-            assert '_background_notices' not in make_invocation_context(sid, run, root, None, (), agent_path=path)
-    with bind_run_services(RunServices(publisher=RunEventPublisher('foreign', 'r', ()), background_notices=notice)):
-        assert '_background_notices' not in make_invocation_context('s', 'r', tmp_path, None, ())
+            with pytest.raises(ValueError, match='identity'):
+                make_invocation_context(sid, run, root, None, (), agent_path=path)
+    with pytest.raises(ValueError, match='notice scope'):
+        typed_scope(identity=RunIdentity('foreign', 'r'), background_notices=notice)
 
 
 def test_session_contract_types_are_shared_without_application_imports():
@@ -74,12 +78,8 @@ def test_session_contract_types_are_shared_without_application_imports():
     ('s', 'other'),
 ], ids=['different-session', 'different-run'])
 def test_context_projection_rejects_mismatched_run(session_id, run_id):
-    services = RunServices(
-        publisher=RunEventPublisher('s', 'r', ()),
-        errors=RuntimeErrorPolicy(),
-        control=RunControl(),
-    )
-    with bind_run_services(services):
-        context = make_invocation_context(session_id, run_id, None, None, ())
-        assert context == {'session_id': session_id, 'run_id': run_id, 'agent_path': 'root'}
-        assert current_run_services() is services
+    services = typed_scope(publisher=RunEventPublisher('s', 'r', ()), errors=RuntimeErrorPolicy(), control=RunControl())
+    with bind_run_scope(services):
+        with pytest.raises(ValueError, match='identity'):
+            make_invocation_context(session_id, run_id, None, None, ())
+        assert current_run_scope() is services

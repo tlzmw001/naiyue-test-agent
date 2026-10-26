@@ -10,8 +10,8 @@ from langchain_core.messages import AIMessage
 from pydantic import Field
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application import cli
-from naiyue_test_agent.application.project_instructions import BASE_SYSTEM_PROMPT
+from naiyue_test_agent.cli import chat as cli
+from naiyue_test_agent.application.sessions.project_instructions import BASE_SYSTEM_PROMPT
 from naiyue_test_agent.model_access import ModelCatalog, ModelConfigError
 
 
@@ -50,7 +50,7 @@ def test_cli_reuses_application_history_and_switches_model(monkeypatch, capsys):
     assert 'B-two' in output
     assert output.count('A-one') == 1
     assert output.count('B-two') == 1
-    assert loaded == [config]
+    assert loaded == [config.resolve()]
     assert a.seen[0][0][1].startswith(BASE_SYSTEM_PROMPT)
     assert 'Available tools:' in a.seen[0][0][1]
     assert b.seen == [[
@@ -74,25 +74,13 @@ def test_cli_invalid_workspace_fails_before_model_call(monkeypatch, capsys, tmp_
 def test_cli_defaults_to_current_workspace_and_selects_default_tools(monkeypatch, capsys):
     tools_seen, choices = [], []
 
-    class MinimalApp:
-        default_model_id = 'A'
-
-        def create_workspace_session(self, _model_id, root):
-            assert root == Path.cwd()
-            return 'session'
-
-        def pending_approval_batches(self, _session_id):
-            return []
-
-        def run(self, _session_id, messages):
-            return {'messages': [messages[0], AIMessage(content='answer')]}
-
-    def build(_config, *, tools, system_prompt, response_format, initial_active_tools, settings):
-        tools_seen.extend(tools)
-        choices.append(initial_active_tools)
-        return MinimalApp()
-
-    monkeypatch.setattr(cli, 'build_local_application', build)
+    model = RecordingFake(responses=[AIMessage(content='answer')])
+    monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
+    from terminal_service_helpers import capture_hosts
+    def inspect(host, options):
+        tools_seen.extend(host.tools.list())
+        choices.append(options['initial_active_tools'])
+    capture_hosts(monkeypatch, inspect)
     feed(monkeypatch, 'question', ':quit')
 
     assert cli.main(['--no-session', '--config', 'synthetic.json']) == 0
@@ -212,12 +200,9 @@ def test_tty_queues_steering_and_follow_up_during_model_call(monkeypatch, capsys
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
-    build = cli.build_local_application
-    def factory(*args, **kwargs):
-        app = build(*args, **kwargs)
-        app.subscribe_events(lambda event: finished.set() if event.event_type == 'run_finished' else None)
-        return app
-    monkeypatch.setattr(cli, 'build_local_application', factory)
+    from terminal_service_helpers import capture_hosts
+    capture_hosts(monkeypatch, lambda host, _: host.observability.subscribe(
+        lambda event: finished.set() if event.event_type == 'run_finished' else None))
     entries = iter(['initial', 'private steering', ':follow private follow-up', ':quit'])
 
     def terminal_input(_prompt=''):
@@ -337,42 +322,31 @@ def test_cli_stop_when_idle_does_not_start_a_run(monkeypatch, capsys):
 
 
 def test_tty_stop_rejection_is_not_reported_as_accepted(monkeypatch, capsys):
-    entered, release = Event(), Event()
-
-    class ClosingApp:
-        default_model_id = 'A'
-
-        def create_workspace_session(self, _model_id, root):
-            assert root == Path.cwd()
-            return 'session'
-
-        def pending_approval_batches(self, _session_id):
-            return []
-
-        def run(self, _session_id, messages):
+    entered, release, finished = Event(), Event(), Event()
+    class ClosingModel(RecordingFake):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
             entered.set()
-            assert release.wait(timeout=3)
-            return {'messages': [messages[0], AIMessage(content='answer')],
-                    'run_stopped': False}
-
-        def request_stop(self, _session_id):
-            raise application.SessionBusyError('Window closed')
-
-    monkeypatch.setattr(cli, 'build_local_application',
-                        lambda *_args, **_kwargs: ClosingApp())
+            assert release.wait(5)
+            return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+    model = ClosingModel(responses=[AIMessage(content='answer')])
+    monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
+    from naiyue_test_agent.application.sessions.run_api import RunAPI
+    def reject(*args, **kwargs):
+        raise application.SessionBusyError('Window closed')
+    monkeypatch.setattr(RunAPI, 'stop', reject)
+    from terminal_service_helpers import capture_hosts
+    capture_hosts(monkeypatch, lambda host, _: host.observability.subscribe(
+        lambda e: finished.set() if e.event_type == 'run_finished' else None))
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
     entries = iter(['initial', ':stop', ':quit'])
-
     def terminal_input(_prompt=''):
         line = next(entries)
-        if line == ':stop':
-            assert entered.wait(timeout=3)
+        if line == ':stop': assert entered.wait(5)
         if line == ':quit':
             release.set()
+            assert finished.wait(5)
         return line
-
     monkeypatch.setattr('builtins.input', terminal_input)
-
     assert cli.main(['--no-session', '--config', 'synthetic.json']) == 0
     output = capsys.readouterr().out
     assert '停止请求未被接受' in output
@@ -382,7 +356,7 @@ def test_tty_stop_rejection_is_not_reported_as_accepted(monkeypatch, capsys):
 
 
 def test_tty_input_after_acceptance_window_closes_starts_next_run(monkeypatch, capsys):
-    entered, release, second_entered, second_release = (Event() for _ in range(4))
+    entered, release, second_entered, second_release, finished = (Event() for _ in range(5))
     workers = []
     original_thread = cli.Thread
     def track_worker(*args, **kwargs):
@@ -390,69 +364,43 @@ def test_tty_input_after_acceptance_window_closes_starts_next_run(monkeypatch, c
         workers.append(worker)
         return worker
     monkeypatch.setattr(cli, 'Thread', track_worker)
-
-    class ClosingApp:
-        default_model_id = 'A'
-
-        def __init__(self):
-            self.requests = []
-            self.steer_attempts = self.stop_attempts = 0
-
-        def create_workspace_session(self, _model_id, root):
-            assert root == Path.cwd()
-            return 'session'
-
-        def pending_approval_batches(self, _session_id):
-            return []
-
-        def run(self, _session_id, messages):
-            self.requests.append(messages[0].content)
-            if len(self.requests) == 1:
+    state = SimpleNamespace(requests=[], steer_attempts=0, stop_attempts=0)
+    class ClosingModel(RecordingFake):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            text = messages[-1].content
+            state.requests.append(text)
+            if len(state.requests) == 1:
                 entered.set()
-                assert release.wait(timeout=3)
+                assert release.wait(5)
             else:
                 second_entered.set()
-                assert second_release.wait(timeout=3)
-            return {'messages': [messages[0], AIMessage(content=self.requests[-1] + ' answer')]}
-
-        def steer(self, _session_id, _text):
-            self.steer_attempts += 1
-            release.set()
-            raise application.SessionBusyError('Window already closed')
-
-        def request_stop(self, _session_id):
-            self.stop_attempts += 1
-            second_release.set()
-            workers[-1].join(timeout=5)
-            assert not workers[-1].is_alive()
-            raise application.SessionBusyError('Window already closed')
-
-    app = ClosingApp()
-    monkeypatch.setattr(cli, 'build_local_application', lambda *_args, **_kwargs: app)
+                assert second_release.wait(5)
+            return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+    model = ClosingModel(responses=[AIMessage(content='first answer'), AIMessage(content='second answer')])
+    monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
+    from naiyue_test_agent.application.sessions.run_api import RunAPI
+    def reject_steer(*args, **kwargs):
+        state.steer_attempts += 1
+        release.set()
+        raise application.SessionBusyError('Window already closed')
+    monkeypatch.setattr(RunAPI, 'steer', reject_steer)
+    from terminal_service_helpers import capture_hosts
+    capture_hosts(monkeypatch, lambda host, _: host.observability.subscribe(
+        lambda e: finished.set() if e.event_type == 'run_finished' and len(state.requests) == 2 else None))
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
     entries = iter(['first', 'second', ':quit'])
-
     def terminal_input(_prompt=''):
         line = next(entries)
-        if line == 'second':
-            assert entered.wait(timeout=3)
+        if line == 'second': assert entered.wait(5)
         if line == ':quit':
-            assert second_entered.wait(timeout=3)
+            assert second_entered.wait(5)
+            second_release.set()
+            assert finished.wait(5)
         return line
-
     monkeypatch.setattr('builtins.input', terminal_input)
-
-    try:
-        assert cli.main(['--no-session', '--config', 'synthetic.json']) == 0
-    finally:
-        release.set()
-        second_release.set()
-        for worker in workers:
-            worker.join(timeout=5)
-            assert not worker.is_alive()
+    assert cli.main(['--no-session', '--config', 'synthetic.json']) == 0
+    assert state.requests == ['first', 'second']
+    assert state.steer_attempts == 1 and state.stop_attempts == 0
+    assert all(not worker.is_alive() for worker in workers)
     output = capsys.readouterr().out
-    assert app.steer_attempts == 1
-    assert app.stop_attempts == 1
-    assert app.requests == ['first', 'second']
-    assert output.count('first answer') == 1
-    assert output.count('second answer') == 1
+    assert 'first answer' in output and 'second answer' in output

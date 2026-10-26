@@ -21,19 +21,19 @@ async def test_role_index_is_short_dynamic_and_absent_when_tool_inactive(monkeyp
         budget_prompts.append(kwargs['system_messages'][0].content)
         return await compact(messages, model, **kwargs)
     monkeypatch.setattr(request_preparation, '_acompact_messages', record_budget)
-    sid = await app.acreate_session('A')
-    await app.aset_active_tools(sid, ['subagent', 'probe'])
+    sid = await app.host.sessions.create('A')
+    await app.host.sessions.select_tools(sid, ['subagent', 'probe'])
     async def add_on_first_request(number):
         if number == 1:
-            await app.aregister_subagent(SubAgentSpec('writer', 'WRITER_SHORT_DESCRIPTION', 'PRIVATE_WRITER_PROMPT', ()))
+            await app.host.subagents.register(SubAgentSpec('writer', 'WRITER_SHORT_DESCRIPTION', 'PRIVATE_WRITER_PROMPT', ()))
     root.on_request = add_on_first_request
-    await app.arun(sid, [('user', 'inspect')])
+    await app.host.runs.start(sid, [('user', 'inspect')])
     first, second = (messages[0].content for messages in root.seen)
     assert 'tester' in first and 'Verify tests' in first and 'CHILD_ROLE_PROMPT' not in first
     assert 'WRITER_SHORT_DESCRIPTION' not in first
     assert 'writer' in second and 'WRITER_SHORT_DESCRIPTION' in second and 'PRIVATE_WRITER_PROMPT' not in second
-    await app.aset_active_tools(sid, ['probe'])
-    await app.arun(sid, [('user', 'without delegation')])
+    await app.host.sessions.select_tools(sid, ['probe'])
+    await app.host.runs.start(sid, [('user', 'without delegation')])
     assert 'WRITER_SHORT_DESCRIPTION' not in root.seen[-1][0].content
     assert 'Verify tests' not in root.seen[-1][0].content and child.seen == []
     assert budget_prompts == [messages[0].content for messages in root.seen]

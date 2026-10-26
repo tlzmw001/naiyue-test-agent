@@ -1,6 +1,6 @@
 """Pass application-owned read scopes through ordinary and resumed invocation."""
 
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from langgraph.types import Command
 
@@ -10,7 +10,12 @@ from .async_invocation import ainvoke_agent_run
 def _check_resources(workspace_root, read_resource_roots):
     if workspace_root is None and read_resource_roots == ():
         return
-    if (not isinstance(workspace_root, Path) or not workspace_root.is_absolute()
+    if workspace_root is None:
+        from .run_scope import current_run_scope
+        scope=current_run_scope()
+        if scope is not None and scope.environment is not None and scope.environment.kind=='sandbox':
+            workspace_root=scope.environment.path(scope.environment.root)
+    if (not isinstance(workspace_root, PurePath) or not workspace_root.is_absolute()
             or '..' in workspace_root.parts):
         raise ValueError('A canonical workspace_root is required')
     if not isinstance(read_resource_roots, tuple):
@@ -18,7 +23,7 @@ def _check_resources(workspace_root, read_resource_roots):
     for root in read_resource_roots:
         # These are canonical discovery snapshots. Files may disappear before
         # invocation; Read revalidates the filesystem and returns a ToolMessage.
-        if not isinstance(root, Path) or not root.is_absolute() or '..' in root.parts:
+        if not isinstance(root, PurePath) or not root.is_absolute() or '..' in root.parts:
             raise ValueError('A canonical resource directory is required')
         root.relative_to(workspace_root)
 

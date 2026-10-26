@@ -1,5 +1,6 @@
 """AITest is an argv wrapper, with existing approval and output contracts."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 import asyncio
 import sys
 
@@ -14,14 +15,14 @@ def test_aitest_args_are_literal_and_doctor_report_default_allow(tmp_path):
     spec = create_aitest_kit_tool(settings=settings)
     for command in ('doctor', 'report'):
         result = asyncio.run(invoke_tool_feedback(spec, {'args': [command, 'literal; $(no-shell)']},
-            call_id='aitest', context={'workspace_root': tmp_path}))
+            call_id='aitest', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
         assert result.status == 'success' and 'literal; $(no-shell)' in result.content
     for args in (['--help'], ['run', '--help']):
         result = asyncio.run(invoke_tool_feedback(spec, {'args': args}, call_id='aitest',
-            context={'workspace_root': tmp_path}))
+            context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
         assert result.status == 'success'
     blocked = asyncio.run(invoke_tool_feedback(spec, {'args': ['run']},
-        call_id='aitest', context={'workspace_root': tmp_path}))
+        call_id='aitest', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
     assert blocked.status == 'error' and blocked.content == EXPECTED_NOASK
     assert spec.execution_mode == 'sequential' and spec.side_effects == 'may_mutate'
     assert '.claude/skills' in ' '.join(spec.prompt_guidelines)
@@ -33,7 +34,7 @@ def test_aitest_nonzero_output_is_tool_feedback(tmp_path):
     spec = create_aitest_kit_tool(settings=AITestSettings(executable=sys.executable,
         prefix_args=['-c', 'import sys; print("actual output"); sys.exit(7)']))
     result = asyncio.run(invoke_tool_feedback(spec, {'args': ['doctor']}, call_id='aitest',
-        context={'workspace_root': tmp_path}))
+        context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
     assert result.status == 'error' and 'exit_code=7' in result.content and 'actual output' in result.content
 
 
@@ -44,12 +45,13 @@ def test_help_as_an_option_value_or_passthrough_does_not_grant_permission(tmp_pa
         prefix_args=['-c', 'raise AssertionError("must not execute")']))
     for args in (['init', '--target', '--help', '--force'], ['run', '--', '--help']):
         result = asyncio.run(invoke_tool_feedback(spec, {'args': args}, call_id='aitest',
-            context={'workspace_root': tmp_path}))
+            context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
         assert result.content == EXPECTED_NOASK
 
 
 def test_effective_path_lookup_preserves_windows_key_and_removed_path(monkeypatch, tmp_path):
-    from naiyue_test_agent.tools import aitest_kit as module
+    from naiyue_test_agent.execution import host_processes as module
+    from naiyue_test_agent.tools.aitest_kit import create_aitest_kit_tool
     for environment, expected in (({'Path': '/selected/tools'}, '/selected/tools'), ({}, '')):
         monkeypatch.setattr(module, 'build_environment', lambda *a, **k: environment)
         seen = []
@@ -57,6 +59,6 @@ def test_effective_path_lookup_preserves_windows_key_and_removed_path(monkeypatc
             seen.append(path)
             return None
         monkeypatch.setattr(module.shutil, 'which', which)
-        result = asyncio.run(invoke_tool_feedback(module.create_aitest_kit_tool(), {'args': ['doctor']},
-            call_id='aitest', context={'workspace_root': tmp_path}))
+        result = asyncio.run(invoke_tool_feedback(create_aitest_kit_tool(), {'args': ['doctor']},
+            call_id='aitest', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
         assert result.status == 'error' and seen == [expected]

@@ -8,6 +8,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 from naiyue_test_agent.agent_runtime import build_runtime_agent
 from test_agent_runtime import ToolCapableFake
 from pathlib import Path
+from dataclasses import replace
+from runtime_context_helpers import RunIdentity, typed_context
 
 
 EXPECTED_NOASK = 'Tool was not executed: access denied by the permission policy (NoAsk).'
@@ -28,10 +30,13 @@ async def invoke_tool_feedback(spec, args, *, call_id, context=None, permission_
         resolve_permission_context=lambda _sid, agent_path='root': {'mode': permission_mode, 'session_allow': []},
     )
     config = {'configurable': {'thread_id': 'feedback'}}
-    context = {'session_id': 'feedback', **(context or {})}
-    root = context.get('workspace_root')
+    context = context if context is not None else typed_context(identity=RunIdentity('feedback'))
+    if context.scope.identity.session_id is None:
+        context = replace(context, scope=replace(context.scope, identity=replace(context.scope.identity, session_id='feedback')))
+    root = context.scope.identity.execution_path
     if isinstance(root, Path):
-        context.setdefault('archive_root', root.parent / (root.name + '-archive'))
+        if context.scope.archive_root is None:
+            context = replace(context, scope=replace(context.scope, archive_root=root.parent / (root.name + '-archive')))
     result = (await agent.ainvoke({'messages': [('user', 'run tool')]},
                           context=context, config=config))
     feedback = next(m for m in result['messages']

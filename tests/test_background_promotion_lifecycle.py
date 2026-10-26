@@ -1,5 +1,7 @@
 """Promotion at the real graph, pending-spawn and cancellation boundaries."""
 
+from runtime_context_helpers import host_files
+from dataclasses import replace
 import asyncio
 import json
 from threading import Event
@@ -7,8 +9,9 @@ from threading import Event
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
-from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
-from naiyue_test_agent.tools.processes import ProcessOutcome, ProcessCleanupError
+from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
+from naiyue_test_agent.execution_roots import ExecutionRoot
+from naiyue_test_agent.tools.processes import ProcessOutcome, HostProcessRunner, ProcessCleanupError
 from test_async_application import StreamingToolModel, call
 from test_background_tools import background_app, command, tool_result
 from test_background_tasks import archive_root, wait_status
@@ -21,20 +24,20 @@ def test_root_graph_returns_one_receipt_and_next_round_sees_same_process(monkeyp
         script = "import os,time;open('starts','a').write(str(os.getpid())+'\\n');print(os.getpid(),flush=True);time.sleep(60)"
         model = StreamingToolModel(replies=[call('bash', {'command': command(script)}), AIMessage(content='started')])
         async with background_app(monkeypatch, tmp_path, model, persistent=persistent, wait_seconds=1) as app:
-            sid = await app.acreate_workspace_session('A', tmp_path)
-            result = await app.arun(sid, [('user', 'start service')])
+            sid = await app.host.sessions.create_workspace('A', tmp_path)
+            result = await app.host.runs.start(sid, [('user', 'start service')])
             receipt = json.loads(tool_result(result, 'bash').content)
             identity = receipt['task_id']
-            ready = await wait_status(app._sessions.background_tasks, identity, lambda r: bool(r['output']))
+            ready = await wait_status(app.host.sessions._sessions.background_tasks, identity, lambda r: bool(r['output']))
             assert (tmp_path / 'starts').read_text() == ready['output']
-            assert not app._sessions.require(sid).is_busy()
+            assert not app.host.sessions._sessions.require(sid).is_busy()
             model.replies.extend([call('task_output', {'task_id': identity}, 'query'), AIMessage(content='alive')])
-            second = await app.arun(sid, [('user', 'query')])
+            second = await app.host.runs.start(sid, [('user', 'query')])
             assert json.loads(tool_result(second, 'task_output').content)['output'] == ready['output']
             assert len([m for m in second['messages'] if isinstance(m, ToolMessage) and m.tool_call_id == 't']) == 1
             assert (tmp_path / 'starts').read_text() == ready['output']
             count = len(model.seen)
-            stopped = await app.astop_background_task(identity, sid)
+            stopped = await app.host.tasks.stop(identity, sid)
             assert stopped['cleanup_confirmed'] and stopped['termination'] == 'user_stop'
             assert len(model.seen) == count
     asyncio.run(scenario())
@@ -44,13 +47,13 @@ def test_approval_explains_configured_promotion_before_execution(monkeypatch, tm
     async def scenario():
         model = StreamingToolModel(replies=[call('bash', {'command': 'printf approved'}), AIMessage(content='done')])
         async with background_app(monkeypatch, tmp_path, model, mode='Default', wait_seconds=7) as app:
-            sid = await app.acreate_workspace_session('A', tmp_path)
-            pending = await app.arun(sid, [('user', 'run')])
+            sid = await app.host.sessions.create_workspace('A', tmp_path)
+            pending = await app.host.runs.start(sid, [('user', 'run')])
             assert pending['approval_requests'][0]['target'] == '[automatic background after 7s; original execution deadline applies] printf approved'
-            assert (await app.alist_background_tasks())['items'] == []
-            result = await app.aresume_tool_approval(sid, ['approve'])
+            assert (await app.host.tasks.list())['items'] == []
+            result = await app.host.runs.resume_approval(sid, ['approve'])
             assert 'exit_code=0' in tool_result(result, 'bash').content
-            assert (await app.alist_background_tasks())['items'] == []
+            assert (await app.host.tasks.list())['items'] == []
     asyncio.run(scenario())
 
 
@@ -70,7 +73,7 @@ def test_pending_spawn_counts_towards_wait_but_does_not_fake_running(monkeypatch
             return await original(*args, **kwargs)
         monkeypatch.setattr(loop, 'subprocess_exec', delayed)
         manager = BackgroundProcessManager()
-        pending = asyncio.create_task(manager.foreground(session_id='s', workspace_root=tmp_path, archive_root=archive_root(tmp_path),
+        pending = asyncio.create_task(manager.foreground(session_id='s', workspace_root=tmp_path, execution_root=ExecutionRoot(tmp_path), environment=host_files(tmp_path).environment, archive_root=archive_root(tmp_path),
             run_id='r', tool_call_id='c', agent_path='root', command='test', name='bash',
             request=request(tmp_path, 'import time;time.sleep(60)'), settings=BashSettings(),
             runner=HostProcessRunner(), control=None, wait_seconds=1, background_limit=1000,
@@ -146,7 +149,8 @@ def test_foreground_cleanup_fault_keeps_identity_and_lost_record(tmp_path):
 
 
 def test_short_managed_command_reports_final_actual_output(monkeypatch, tmp_path):
-    from naiyue_test_agent.tools import shell, create_session_bash_tool
+    from naiyue_test_agent.execution import host_shell as shell
+    from naiyue_test_agent.tools import create_session_bash_tool
     from test_shell_task_settings import runtime_for
     async def scenario():
         manager = BackgroundProcessManager()
@@ -155,10 +159,10 @@ def test_short_managed_command_reports_final_actual_output(monkeypatch, tmp_path
         async def run(self, req, consume, control=None):
             await consume('stdout', b'actual output')
             return ProcessOutcome(0, 'exited', True, True, True, True, 0)
-        monkeypatch.setattr(shell.HostProcessRunner, 'run', run)
+        monkeypatch.setattr(HostProcessRunner, 'run', run)
         spec = create_session_bash_tool()
         runtime = runtime_for(spec, {'command': 'test'}, tmp_path)
-        runtime.context.update(run_id='r', _process_tasks=manager)
+        runtime.context = replace(runtime.context, scope=replace(runtime.context.scope, identity=replace(runtime.context.scope.identity, run_id='r'), capabilities=replace(runtime.context.scope.capabilities, process_tasks=manager)))
         reports = []
         runtime.stream_writer = reports.append
         try:

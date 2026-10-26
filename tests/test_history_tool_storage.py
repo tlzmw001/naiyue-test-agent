@@ -1,38 +1,53 @@
 """The model history projection is read-only, bounded and scope/version checked."""
 
 from hashlib import sha256
+from pathlib import Path
 import json
+from uuid import uuid4
+
+from naiyue_test_agent.storage.queries import write_one
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage, message_to_dict
 
-from naiyue_test_agent.application.chat_history import ChatUpdate
-from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+from naiyue_test_agent.application.conversation.chat_history import ChatUpdate
+from naiyue_test_agent.storage.project_store import ProjectStore
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.tools.history import HistoryInput
 from naiyue_test_agent.tools.history_settings import HistorySettings
 
 
 def create(store, identity, root, thread=None):
-    store.create(identity, dict(thread_id=thread or identity, model_id='A', workspace_root=root,
+    binding = store.sessions.get_workspace_binding()
+    actual = Path(binding['root_path']) if binding else root
+    store.sessions.create(identity, dict(thread_id=thread or identity, model_id='A', workspace_root=actual,
                                active_tool_names=['history'], permission_mode='Default'))
+    if root != actual:
+        # Foreign-project record injection preserves the query boundary regression.
+        with store.database.transaction(write=True) as connection:
+            write_one(connection, 'UPDATE naiyue_sessions SET project_id=?,workspace_root=? WHERE session_id=?',
+                         (str(uuid4()), str(root), identity))
 
 
 def save(store, sid, messages, *, thread=None):
     thread = thread or sid
-    head = next((h for h in store.chat_heads(sid) if h['thread_id'] == thread), None)
+    head = next((h for h in store.conversation.chat_heads(sid) if h['thread_id'] == thread), None)
     facts = []
     for message in messages:
         body = json.dumps(message_to_dict(message), ensure_ascii=False)
         facts.append(dict(message_id=message.id, body_json=body, body_hash=sha256(body.encode()).hexdigest(),
             kind='context_summary' if message.additional_kwargs.get('naiyue_compaction_summary') else 'message',
             source_checkpoint_id='cp', message_type=message.type, parent_message_id=None, reply_id=None))
-    store.save_chat_updates(sid, [ChatUpdate(thread, '', 'root', head['revision'] if head else 0,
+    store.conversation.save_chat_updates(sid, [ChatUpdate(thread, '', 'root', head['revision'] if head else 0,
                                            'cp', tuple(facts))])
 
 
 @pytest.fixture
 def archive(tmp_path):
-    with SessionStorage(tmp_path / 'sessions.sqlite') as store:
+    from naiyue_test_agent.workspaces import prepare_workspace
+    location = prepare_workspace(tmp_path, data_dir=tmp_path / 'data', database_path=tmp_path / 'sessions.sqlite')
+    with ProjectStore(tmp_path / 'sessions.sqlite') as store:
+        store.sessions.bind_workspace(location.workspace_id, tmp_path)
         create(store, 'caller', tmp_path)
         create(store, 'target', tmp_path)
         yield store, tmp_path
@@ -40,20 +55,20 @@ def archive(tmp_path):
 
 def query(archive, settings=None, **args):
     store, root = archive
-    return store.read_history_tool('caller', root, HistoryInput(**args).model_dump(), settings or HistorySettings())
+    return store.conversation.read_history_tool('caller', json.loads((root / '.naiyue/workspace.json').read_text())['workspace_id'], HistoryInput(**args).model_dump(), settings or HistorySettings())
 
 
 def test_directory_contains_real_metadata_no_fake_overview_and_no_writes(archive):
     store, root = archive
     create(store, 'foreign', root / 'elsewhere')
-    store.update_presentation('target', title='订单测试')
-    before = store.connection.total_changes
+    store.sessions.update_presentation('target', title='订单测试')
+    before = store.database.connection.total_changes
     result = query(archive, action='list_sessions')
     assert [v['session_id'] for v in result['items']] == ['target']
     assert result['items'][0]['title'] == '订单测试'
     assert result['items'][0]['overview'] is None
     assert result['items'][0]['overview_status'] == 'not_generated'
-    assert store.connection.total_changes == before
+    assert store.database.connection.total_changes == before
 
 
 def test_visible_arrays_and_tool_text_exclude_hidden_fields_from_read_and_search(archive):
@@ -136,25 +151,27 @@ def test_cursors_and_targets_cannot_cross_scope_or_query(archive):
                  dict(action='read', session_id='foreign')):
         with pytest.raises(SessionPersistenceError):query(archive, **args)
     with pytest.raises(SessionPersistenceError):
-        store.read_history_tool('caller', root / 'other', HistoryInput(action='list_sessions').model_dump(), HistorySettings())
+        store.conversation.read_history_tool('caller', root / 'other', HistoryInput(action='list_sessions').model_dump(), HistorySettings())
     assert query(archive, action='search', session_id='target', query="' OR 1=1 --")['items'] == []
 
 
 def test_read_checks_conversation_revision_and_reports_missing_archive(archive):
     store, _ = archive
     save(store, 'target', [HumanMessage(id='h', content='saved')])
-    store._write('UPDATE naiyue_sessions SET conversation_revision=1 WHERE session_id=?', ('target',))
+    with store.database.transaction(write=True) as connection:
+        write_one(connection, 'UPDATE naiyue_sessions SET conversation_revision=1 WHERE session_id=?', ('target',))
     with pytest.raises(SessionPersistenceError, match='history_cursor_stale'):
         query(archive, action='read', session_id='target', sequence=1, revision=1, conversation_revision=0)
     create(store, 'cold', archive[1])
-    store._write('UPDATE naiyue_sessions SET checkpoint_id=? WHERE session_id=?', ('not-archived', 'cold'))
+    with store.database.transaction(write=True) as connection:
+        write_one(connection, 'UPDATE naiyue_sessions SET checkpoint_id=? WHERE session_id=?', ('not-archived', 'cold'))
     result = query(archive, action='read', session_id='cold')
     assert result['items'] == [] and result['coverage']['status'] == 'unprepared'
 
 
 def test_sqlite_failure_is_diagnostic_not_empty_success(archive, caplog):
     store, _ = archive
-    store.connection.close()
+    store.database.connection.close()
     with pytest.raises(SessionPersistenceError, match='history_read_failed'):
         query(archive, action='list_sessions')
     assert 'history_tool_read_failed' in caplog.text

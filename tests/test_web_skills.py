@@ -1,5 +1,7 @@
 """The Skill picker lists metadata without running or loading Skill bodies."""
 
+from runtime_context_helpers import host_files
+
 import asyncio
 import logging
 
@@ -21,7 +23,7 @@ def test_skills_catalog_is_authenticated_metadata_only_and_refreshes(monkeypatch
         write_skill(root, name='case-review', directory='zz-duplicate')
         model = StreamingToolModel(replies=[])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
-            endpoint = '/api/skills'
+            endpoint = '/api/v1/scopes/chats/skills'
             assert (await client.get(endpoint, headers={'Authorization': ''})).status_code == 401
             assert (await client.get(endpoint, headers={'Origin': 'https://evil.example'})).status_code == 403
             response = await client.get(endpoint)
@@ -34,13 +36,13 @@ def test_skills_catalog_is_authenticated_metadata_only_and_refreshes(monkeypatch
             ], 'default_source': 'agents', 'diagnostics': [{'source_id': 'agents', 'reason': 'name_collision'}],
                 'read_registered': True}
             assert 'PRIVATE_BODY' not in response.text and str(root) not in response.text
-            assert (await client.get('/api/sessions')).json() == [] and model.seen == []
+            assert (await client.get('/api/v1/scopes/chats/sessions')).json() == [] and model.seen == []
             write_skill(root, name='new-skill', description='New description')
             assert any(row['command'] == '/new-skill' for row in (await client.get(endpoint)).json()['entries'])
             other = tmp_path / 'other'
             write_skill(other, name='foreign-skill', body='FOREIGN_BODY')
             assert 'foreign-skill' not in (await client.get(endpoint, params={'workspace_root': str(other)})).text
-            monkeypatch.setattr(app.state.service.application, 'get_registered_tools', lambda: ())
+            monkeypatch.setattr(app.state.service.application.tools, 'list', lambda: ())
             unavailable = (await client.get(endpoint)).json()
             assert unavailable['read_registered'] is False
             assert {row['command'] for row in unavailable['entries']} == {
@@ -51,15 +53,15 @@ def test_skills_catalog_is_authenticated_metadata_only_and_refreshes(monkeypatch
 def test_empty_catalog_and_discovery_failure_are_safe(monkeypatch, tmp_path, caplog):
     async def scenario():
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[])) as (client, app):
-            assert (await client.get('/api/skills')).json() == {
+            assert (await client.get('/api/v1/scopes/chats/skills')).json() == {
                 'entries': [], 'default_source': None, 'diagnostics': [], 'read_registered': True}
 
             async def fail(_root):
                 raise OSError('PRIVATE_PATH_AND_BODY')
 
-            monkeypatch.setattr(app.state.service.application, 'aget_skills', fail)
+            monkeypatch.setattr(app.state.service.application.sessions, 'skills', fail)
             with caplog.at_level(logging.ERROR):
-                response = await client.get('/api/skills')
+                response = await client.get('/api/v1/scopes/chats/skills')
             assert response.status_code == 503
             assert response.json() == {'error': {'code': 'skill_catalog_unavailable'}}
             assert 'skill_catalog_read_failed' in caplog.text
@@ -72,22 +74,22 @@ def test_skill_catalog_delivery_limit_is_enforced(monkeypatch, tmp_path):
         write_skill(tmp_path, name='large', description='x' * 1024)
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[]),
                               workspace_root=tmp_path, max_frame_bytes=1024) as (client, app):
-            response = await client.get('/api/skills')
+            response = await client.get('/api/v1/scopes/chats/skills')
             assert response.status_code == 409
             assert response.json() == {'error': {'code': 'view_too_large'}}
     asyncio.run(scenario())
 
 
 def test_skill_commands_keep_source_identity_when_default_source_disappears(tmp_path):
-    from naiyue_test_agent.application.skills import discover_project_skills
+    from naiyue_test_agent.application.sessions.skills import discover_project_skills
 
     primary = write_skill(tmp_path, name='case-review')
     write_skill(tmp_path, source='claude', name='case-review')
-    before = discover_project_skills(tmp_path)
+    before = discover_project_skills(host_files(tmp_path))
     selected = before.command_for(next(row for row in before.entries if row.source_id == 'agents'))
     assert selected == '/case-review'
     primary.unlink()
-    after = discover_project_skills(tmp_path)
+    after = discover_project_skills(host_files(tmp_path))
     assert after.default_source == 'claude'
     assert [after.command_for(row) for row in after.entries] == ['/claude:case-review']
     assert selected not in [after.command_for(row) for row in after.entries]
@@ -99,10 +101,10 @@ def test_explicit_skill_command_keeps_source_and_uses_normal_read_chain(monkeypa
         selected = write_skill(tmp_path, source='claude', name='case-review', body='SELECTED_BODY')
         model = StreamingToolModel(replies=[calls(('read', {'path': str(selected)}, 'skill-read')), AIMessage(content='done')])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=tmp_path) as (client, app):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
             text = '/claude:case-review inspect failing tests\nwith details'
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=request(text))).json()['run_id']
-            await client.get(f'/api/runs/{run}/events')
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request(text))).json()['run_id']
+            await client.get(f'/api/v1/scopes/chats/runs/{run}/events')
             first = '\n'.join(str(m.content) for m in model.seen[0] if m.type == 'system')
             assert '<command>/case-review</command>' in first
             assert '<command>/claude:case-review</command>' in first

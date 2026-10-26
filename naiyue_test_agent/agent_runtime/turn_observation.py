@@ -197,7 +197,7 @@ class TurnBoundaryMiddleware(AgentMiddleware):
     """Last after_model hook; observation only, no state update or routing."""
 
     def after_model(self, state, runtime):
-        observer = runtime.context.get('_turn_observer') if runtime.context else None
+        observer = runtime.context.scope.observation.turns if runtime.context else None
         if observer is not None:
             observe(observer, observer.mark_ready)
         return None

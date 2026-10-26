@@ -1,5 +1,7 @@
 """Queue duration is unbounded; ordering, settlement and stop guards remain."""
 
+from dataclasses import replace
+from runtime_context_helpers import RunIdentity, typed_context
 from native_application_helpers import async_test
 
 import asyncio
@@ -33,9 +35,9 @@ def prepared(mode='sequential', *, control=None, unknown=False):
              for label in ('first', 'later')]
     state = {'messages': [AIMessage(content='', tool_calls=calls)],
              'tool_execution': {'tool_names': ['queue_probe']}}
-    context = {'session_id': 's', 'run_id': 'r'}
+    context = typed_context(identity=RunIdentity(session_id='s', run_id='r'))
     if control is not None:
-        context['_run_control'] = control
+        context = replace(context, scope=replace(context.scope, control=control))
     runtime = SimpleNamespace(context=context, config={'max_concurrency': 2})
     return middleware, state, runtime, calls
 
@@ -44,7 +46,7 @@ def prepared(mode='sequential', *, control=None, unknown=False):
 async def test_blocking_tool_keeps_later_call_queued_past_old_deadline(monkeypatch):
     middleware, state, runtime, _ = prepared()
     await middleware.aafter_model(state, runtime)
-    plan = runtime.context[batch._PLAN_KEY]
+    plan = runtime.context.invocation.tool_batch
     entered, release = Event(), Event()
     waiting, observed = asyncio.Event(), asyncio.Event()
     clock, trace = [0.0], []
@@ -131,7 +133,7 @@ async def test_async_later_call_has_no_execution_deadline_while_queued(monkeypat
             Condition=ObservableCondition, Semaphore=asyncio.Semaphore, timeout=ManualTimeout))
         middleware, state, runtime, _ = prepared()
         await middleware.aafter_model(state, runtime)
-        plan = runtime.context[batch._PLAN_KEY]
+        plan = runtime.context.invocation.tool_batch
 
         async def first_body():
             trace.append('first:start')
@@ -213,23 +215,23 @@ async def test_sync_app_settles_first_tool_then_skips_later_without_another_mode
         ToolSpec(first, first.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow')),
         ToolSpec(later, later.args_schema, permissions=ToolPermission(default='allow')),
     ])
-    app._agent = app._agent.with_config({'max_concurrency': concurrency})
-    session = await app.acreate_session('A')
+    app.host.runs._agent = app.host.runs._agent.with_config({'max_concurrency': concurrency})
+    session = await app.host.sessions.create('A')
 
     def observe(event):
         events.append(event)
         if event.event_type == 'tool_call_started' and event.data.tool_call_id == 'later-call':
             later_dispatched.set()
 
-    app.subscribe_events(observe)
+    app.host.observability.subscribe(observe)
     try:
-        task = asyncio.create_task(app.arun(session, [('user', 'start')], max_concurrency=concurrency))
+        task = asyncio.create_task(app.host.runs.start(session, [('user', 'start')], max_concurrency=concurrency))
         try:
             assert await asyncio.to_thread(entered.wait, 5)
             if concurrency == 2:
                 assert await asyncio.to_thread(later_dispatched.wait, 5)
-            app.request_stop(session)
-            assert app._sessions.require(session).describe_session()['busy'] and not task.done()
+            app.host.runs.stop(session)
+            assert app.host.sessions._sessions.require(session).describe_session()['busy'] and not task.done()
         finally:
             release.set()
         result = await asyncio.wait_for(asyncio.shield(task), 5)
@@ -243,13 +245,13 @@ async def test_sync_app_settles_first_tool_then_skips_later_without_another_mode
         assert finished['first-call'].outcome == 'success'
         assert finished['later-call'].outcome == 'not_executed' and finished['later-call'].reason == 'user_stop'
         assert events[-1].data.status == 'stopped' and not events[-1].data.manual_review_required
-        snapshot = await app._agent.aget_state({'configurable': {'thread_id': app._sessions.require(session).get_thread_id()}})
+        snapshot = await app.host.runs._agent.aget_state({'configurable': {'thread_id': app.host.sessions._sessions.require(session).get_thread_id()}})
         assert not snapshot.next and not any(task.error or task.interrupts for task in snapshot.tasks)
-        assert not app._sessions.require(session).describe_session()['busy']
+        assert not app.host.sessions._sessions.require(session).describe_session()['busy']
         EventSequenceChecker.assert_healthy(events, caplog.records)
     finally:
         release.set()
-        await app._sessions._catalog.aclose()
+        await app.host.sessions._sessions._catalog.aclose()
 
 
 @async_test
@@ -259,7 +261,7 @@ async def test_async_cancelled_waiter_wakes_remaining_calls_without_running_them
         calls.append({'name': 'queue_probe', 'args': {'label': 'tail'}, 'id': 'tail'})
         state['messages'] = [AIMessage(content='', tool_calls=calls)]
         await middleware.aafter_model(state, runtime)
-        plan = runtime.context[batch._PLAN_KEY]
+        plan = runtime.context.invocation.tool_batch
         waiting, release = asyncio.Event(), asyncio.Event()
         trace = []
 

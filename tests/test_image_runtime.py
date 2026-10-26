@@ -8,7 +8,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+from scripts.component_fixtures import open_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.model_access.messages import MODEL_INPUT_METADATA_KEY
 from naiyue_test_agent.tools import create_session_read_tool
@@ -34,13 +34,13 @@ async def test_image_runtime_and_sqlite_reopen_keep_pixels_without_carriers(monk
     database = tmp_path / 'images.sqlite'
     arguments = dict(tools=[create_session_read_tool()], settings=AppSettings(), system_prompt='', response_format=None)
     async def scenario():
-        async with open_async_persistent_application('synthetic', database_path=database, **arguments) as app:
-            sid = await app.acreate_workspace_session('A', tmp_path)
-            await app.arun(sid, [('user', 'inspect image')])
-            first = await app.aget_messages(sid)
-        async with open_async_persistent_application('synthetic', database_path=database, **arguments) as app:
-            await app.arestore_session(sid)
-            return first, await app.aget_messages(sid)
+        async with open_component_application('synthetic', database_path=database, **arguments) as app:
+            sid = await app.host.sessions.create_workspace('A', tmp_path)
+            await app.host.runs.start(sid, [('user', 'inspect image')])
+            first = await app.host.history.messages(sid)
+        async with open_component_application('synthetic', database_path=database, **arguments) as app:
+            await app.host.sessions.restore(sid)
+            return first, await app.host.history.messages(sid)
     before, after = await scenario()
     old_tool = next(m for m in before if isinstance(m, ToolMessage))
     restored = next(m for m in after if isinstance(m, ToolMessage))
@@ -62,13 +62,13 @@ async def test_switching_to_vision_model_uses_saved_pixels_without_reading_again
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': first, 'B': second}))
     app = await build_application('synthetic', tools=[create_session_read_tool()],
         settings=AppSettings(), system_prompt='', response_format=None)
-    sid = await app.acreate_workspace_session('A', tmp_path)
-    result = await app.arun(sid, [('user', 'inspect')])
+    sid = await app.host.sessions.create_workspace('A', tmp_path)
+    result = await app.host.runs.start(sid, [('user', 'inspect')])
     pixels = next(m for m in result['messages'] if isinstance(m, ToolMessage)).content[-1]['base64']
     assert pixels not in json.dumps([m.content for m in first.seen[1]])
     target.unlink()
-    await app.aselect_model(sid, 'B')
-    continued = await app.arun(sid, [('user', 'now inspect the saved image')])
+    await app.host.sessions.select_model(sid, 'B')
+    continued = await app.host.runs.start(sid, [('user', 'now inspect the saved image')])
     assert pixels in json.dumps([m.content for m in second.seen[0]])
     assert not any(m.additional_kwargs.get('naiyue_image_carrier') for m in continued['messages'])
 
@@ -90,7 +90,7 @@ async def test_overflow_retry_rebuilds_carrier_from_canonical_and_summary_omits_
     insertion = 3 if image_in_recent_turn else 1
     messages[insertion:insertion] = image_messages
     app = await _app(monkeypatch, {'A': model})
-    result = await app.arun(await app.acreate_session('A'), messages)
+    result = await app.host.runs.start(await app.host.sessions.create('A'), messages)
     assert result['messages'][-1].content == 'recovered'
     assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == 1
     assert sum(bool(m.additional_kwargs.get('naiyue_image_carrier')) for m in model.normal_inputs[0]) == 1
@@ -113,14 +113,14 @@ async def test_image_approval_resumes_once_without_decoder_before_approval(monke
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     app = await build_application('synthetic', tools=[create_session_read_tool()],
         settings=AppSettings(), system_prompt='', response_format=None)
-    sid = await app.acreate_workspace_session('A', root)
+    sid = await app.host.sessions.create_workspace('A', root)
     entered, real_read = [], module.read_image
     def read(*args, **kwargs):
         entered.append(True)
         return real_read(*args, **kwargs)
     monkeypatch.setattr(module, 'read_image', read)
-    paused = await app.arun(sid, [('user', 'inspect outside image')])
+    paused = await app.host.runs.start(sid, [('user', 'inspect outside image')])
     assert paused['approval_requests'] and entered == []
-    resumed = await app.aresume_tool_approval(sid, ['approve'])
+    resumed = await app.host.runs.resume_approval(sid, ['approve'])
     output = next(m for m in resumed['messages'] if isinstance(m, ToolMessage))
     assert entered == [True] and output.status == 'success' and output.tool_call_id == 'image'

@@ -54,8 +54,8 @@ def test_actual_rejection_reasons_match_the_declared_runtime_protocol(reason):
 def test_application_has_one_native_async_execution_surface():
     from importlib.util import find_spec
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.session_service import SessionService
-    from naiyue_test_agent.application.session_persistence import SessionPersistence
+    from naiyue_test_agent.application.sessions.session_service import SessionService
+    from naiyue_test_agent.application.sessions.session_persistence import SessionPersistence
     assert not hasattr(application, 'LocalApplication')
     assert not hasattr(application, 'build_local_application')
     assert find_spec('naiyue_test_agent.application.persistent') is None
@@ -96,7 +96,7 @@ def test_historical_test_agent_package_is_absent():
 def test_application_final_save_settles_before_repeated_cancellation_escapes(monkeypatch, caplog, write_fails):
     import asyncio
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-    from naiyue_test_agent.application import session_service, session_execution
+    from naiyue_test_agent.application.sessions import session_service, session_execution
     from naiyue_test_agent.model_access import ModelCatalog
 
     async def scenario():
@@ -119,7 +119,7 @@ def test_application_final_save_settles_before_repeated_cancellation_escapes(mon
         from types import SimpleNamespace
         persistence = Persistence()
         persistence.sessions = sessions
-        persistence.storage = SimpleNamespace(create=lambda *args: None)
+        persistence.storage = SimpleNamespace(sessions=SimpleNamespace(create=lambda *args: None))
         sessions.bind_persistence(persistence)
         sid = sessions.create_session('A')
         async def execute(*_args, **_kwargs):
@@ -163,7 +163,7 @@ def test_tool_body_interrupt_is_not_mistaken_for_pre_tool_approval(monkeypatch):
     from langchain_core.tools import tool
     from langgraph.types import interrupt
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.async_application import build_async_local_application
+    from scripts.component_fixtures import build_component_application
     from naiyue_test_agent.model_access import ModelCatalog
     from naiyue_test_agent.tools import ToolSpec
     from naiyue_test_agent.tools.permissions import ToolPermission
@@ -180,17 +180,17 @@ def test_tool_body_interrupt_is_not_mistaken_for_pre_tool_approval(monkeypatch):
         {'id': 'custom', 'name': 'custom_pause', 'args': {}}])])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     async def scenario():
-        app = await build_async_local_application('synthetic', tools=[ToolSpec(custom_pause,
+        app = await build_component_application('synthetic', tools=[ToolSpec(custom_pause,
             custom_pause.args_schema, permissions=ToolPermission(default='allow'))], system_prompt='', response_format=None)
         try:
-            sid = await app.acreate_session('A')
+            sid = await app.host.sessions.create('A')
             with pytest.raises(AttributeError):
-                await app.arun(sid, [('user', 'run')])
+                await app.host.runs.start(sid, [('user', 'run')])
             assert effects == ['effect']
-            assert app._sessions.require(sid).describe_session()['manual_review_required']
-            assert not app._sessions.require(sid).describe_session()['busy']
+            assert app.host.sessions._sessions.require(sid).describe_session()['manual_review_required']
+            assert not app.host.sessions._sessions.require(sid).describe_session()['busy']
             with pytest.raises(application.SessionManualReviewRequiredError):
-                await app.arun(sid, [('user', 'retry')])
+                await app.host.runs.start(sid, [('user', 'retry')])
             assert effects == ['effect']
         finally:
             await app.aclose()

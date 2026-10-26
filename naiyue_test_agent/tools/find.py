@@ -1,5 +1,6 @@
 """Native fd discovery with bounded names and permission checks before counting."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 import asyncio
 import logging
 import os
@@ -62,7 +63,7 @@ async def _find_files(target, pattern, limit, runtime, *, settings, runner, prog
     binary = resolve_tool_binary('fd')
     if binary is None:
         raise ToolException(FIND_NO_FD)
-    control = runtime.context.get('_run_control')
+    control = runtime.context.scope.control
     deadline = asyncio.get_running_loop().time() + timeout if timeout else None
     parser = RecordBuffer(b'\0', settings.max_record_bytes)
     diagnostics = DiagnosticTail(settings.max_diagnostic_bytes)
@@ -152,13 +153,12 @@ async def _find_files(target, pattern, limit, runtime, *, settings, runner, prog
 
 def create_session_find_tool(*, settings=None, process_settings=None, progress_settings=None):
     settings = settings if settings is not None else FindSettings()
-    runner = HostProcessRunner(process_settings)
     public, execution = build_tool_schemas('FindInput', _FindInput,
         pattern=(str, Field(min_length=1, max_length=settings.max_pattern_chars)),
         path=(str, Field(default='.', min_length=1, max_length=settings.max_path_chars)),
         limit=(int, Field(default=settings.default_limit, ge=1, le=settings.max_limit)))
 
-    def find_files(pattern: str, runtime: ToolRuntime[dict, dict], path: str = '.',
+    def find_files(pattern: str, runtime: ToolRuntime[RuntimeContext], path: str = '.',
                    limit: int = settings.default_limit, timeout: int | None = None) -> str:
         """Find file and directory names, including dotfiles, by fd glob and smart case.
 
@@ -166,16 +166,14 @@ def create_session_find_tool(*, settings=None, process_settings=None, progress_s
         """
         return run_async_sync(lambda: afind_files(pattern, runtime, path, limit, timeout))
 
-    async def afind_files(pattern: str, runtime: ToolRuntime[dict, dict], path: str = '.',
+    async def afind_files(pattern: str, runtime: ToolRuntime[RuntimeContext], path: str = '.',
                           limit: int = settings.default_limit, timeout: int | None = None) -> str:
-        root = runtime.context.get('workspace_root')
-        if not isinstance(root, Path) or not root.is_absolute():
-            raise ToolException(FIND_NO_WORKSPACE)
-        target = require_file_target(runtime, path, operation='list')
+        await asyncio.to_thread(require_file_target, runtime, path, operation='list')
         progress = ToolProgress(runtime, progress_settings)
         try:
-            return await _find_files(target, pattern, limit, runtime,
-                settings=settings, runner=runner, progress=progress, timeout=timeout)
+            return await runtime.context.scope.capabilities.files.find(runtime.context.authorization.permit['subject'],
+                pattern, limit, runtime, settings=settings, process_settings=process_settings,
+                progress=progress, timeout=timeout)
         finally:
             progress.flush()
 

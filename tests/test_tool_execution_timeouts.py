@@ -1,5 +1,7 @@
 """Public timeout semantics reach the existing tool/permission execution chain."""
 
+from dataclasses import replace
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from native_application_helpers import async_test
 
 import asyncio
@@ -10,7 +12,7 @@ from pydantic import ValidationError
 
 from naiyue_test_agent.tools import create_builtin_tools
 from naiyue_test_agent.tools.processes import HostProcessRunner, ProcessOutcome
-from naiyue_test_agent.tools.shell import ShellAdapter
+from naiyue_test_agent.execution.host_shell import ShellAdapter
 from naiyue_test_agent.settings import AppSettings
 from tool_feedback_helpers import invoke_tool_feedback
 
@@ -66,7 +68,7 @@ async def test_normalized_timeout_reaches_process_requests_through_formal_graph(
     if value != 'omitted':
         args['timeout'] = value
     feedback = (await invoke_tool_feedback(spec, args, call_id='timeout',
-        context={'workspace_root': tmp_path}, permission_mode='BypassApprovals'))
+        context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None)), permission_mode='BypassApprovals'))
     assert feedback.status == 'success'
     assert ('note.txt' if spec.tool.name == 'find' else 'HIT') in feedback.content
     assert seen
@@ -83,7 +85,7 @@ async def test_invalid_timeout_is_tool_feedback_without_starting_process(spec, m
         pytest.fail('Invalid input must not acquire a process')
     monkeypatch.setattr(HostProcessRunner, 'run', forbidden)
     feedback = (await invoke_tool_feedback(spec, {**args_for(spec), 'timeout': -1}, call_id='invalid',
-        context={'workspace_root': tmp_path}, permission_mode='BypassApprovals'))
+        context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None)), permission_mode='BypassApprovals'))
     assert feedback.status == 'error' and 'timeout' in feedback.content
     assert 'runtime' not in feedback.content
 
@@ -127,11 +129,11 @@ def test_async_approval_resume_preserves_explicit_timeout_and_does_not_run_befor
         model = StreamingToolModel(replies=[call('bash', {'command': 'test-command', 'timeout': 600}),
                                             AIMessage(content='done')])
         app = await make_app(monkeypatch, model, [create_session_bash_tool()])
-        sid = await app.acreate_workspace_session('A', tmp_path)
+        sid = await app.host.sessions.create_workspace('A', tmp_path)
         try:
-            pending = await app.arun(sid, [('user', 'run')])
+            pending = await app.host.runs.start(sid, [('user', 'run')])
             assert pending['approval_requests'] and seen == []
-            result = await app.aresume_tool_approval(sid, ['approve'])
+            result = await app.host.runs.resume_approval(sid, ['approve'])
             assert seen == [600]
             feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
             assert feedback.status == 'success' and 'approved' in feedback.content
@@ -160,10 +162,10 @@ def test_native_async_graph_runs_each_tool_with_the_new_timeout_contract(spec, m
         model = StreamingToolModel(replies=[call(spec.tool.name, {**args_for(spec), 'timeout': timeout}),
                                             AIMessage(content='done')])
         app = await make_app(monkeypatch, model, [spec])
-        sid = await app.acreate_workspace_session('A', tmp_path)
-        await app.aset_permission_mode(sid, 'BypassApprovals')
+        sid = await app.host.sessions.create_workspace('A', tmp_path)
+        await app.host.sessions.select_permission_mode(sid, 'BypassApprovals')
         try:
-            result = await app.arun(sid, [('user', 'run')])
+            result = await app.host.runs.start(sid, [('user', 'run')])
             feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
             assert feedback.status == 'success' and 'HIT' in feedback.content
             assert result['messages'][-1].content == 'done' and len(model.seen) == 2

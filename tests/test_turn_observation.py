@@ -1,5 +1,6 @@
 """Finite turn state and JSON-only approval continuation."""
 
+from runtime_context_helpers import identity_for
 import json
 
 import pytest
@@ -140,19 +141,19 @@ def test_approval_retry_can_suspend_and_resume_without_inventing_model_call():
 
 
 def test_run_observation_scope_binds_both_contexts_and_resets_after_error():
-    from naiyue_test_agent.application.run_events import RunObservation
-    from naiyue_test_agent.agent_runtime.run_services import current_run_services
+    from naiyue_test_agent.application.observability.run_events import RunObservation
+    from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
 
     observer, events = make_observer()
     run = RunObservation(observer.publisher, 'message')
     primary = RuntimeError('synthetic')
     with pytest.raises(RuntimeError) as caught:
-        with run.bind():
-            assert current_run_services().publisher is run.publisher
-            assert current_run_services().turns is run.turns
+        with run.bind(identity=identity_for(run.publisher)):
+            assert current_run_scope().observation.publisher is run.publisher
+            assert current_run_scope().observation.turns is run.turns
             raise primary
     assert caught.value is primary
-    assert current_run_services() is None
+    assert current_run_scope() is None
 
 
 def test_missing_state_confirmation_reports_unavailable_not_completed():

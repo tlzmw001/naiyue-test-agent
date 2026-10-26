@@ -1,5 +1,6 @@
 """A truncated model response cannot execute its parsed tool calls."""
 
+from runtime_context_helpers import RunIdentity, typed_context
 from native_application_helpers import async_test, build_application
 
 from naiyue_test_agent.tools.permissions import ToolPermission
@@ -66,10 +67,10 @@ async def test_truncated_call_gets_error_result_then_model_can_reissue(monkeypat
         Path('synthetic.json'), tools=[ToolSpec(write_probe, write_probe.args_schema, permissions=ToolPermission(default='allow'))],
         system_prompt='', response_format=None,
     )
-    session_id = await app.acreate_session('A')
+    session_id = await app.host.sessions.create('A')
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        result = await app.arun(session_id, [('user', 'write a probe value')])
+        result = await app.host.runs.start(session_id, [('user', 'write a probe value')])
 
     messages = result['messages']
     tool_results = [message for message in messages if isinstance(message, ToolMessage)]
@@ -117,7 +118,7 @@ async def test_every_call_in_one_truncated_response_is_rejected(monkeypatch):
         Path('synthetic.json'), tools=[ToolSpec(write_probe, write_probe.args_schema, permissions=ToolPermission(default='allow'))],
         system_prompt='', response_format=None,
     )
-    result = await app.arun(await app.acreate_session('A'), [('user', 'probe')])
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'probe')])
 
     tool_results = [item for item in result['messages'] if isinstance(item, ToolMessage)]
     assert executed == []
@@ -151,7 +152,7 @@ async def test_claude_context_window_truncation_rejects_tool_through_application
         Path('synthetic.json'), tools=[ToolSpec(write_probe, write_probe.args_schema, permissions=ToolPermission(default='allow'))],
         system_prompt='', response_format=None,
     )
-    result = await app.arun(await app.acreate_session('A'), [('user', 'probe')])
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'probe')])
 
     tool_results = [item for item in result['messages'] if isinstance(item, ToolMessage)]
     assert executed == []
@@ -175,7 +176,7 @@ async def test_tool_request_without_matching_latest_model_call_fails_closed(mess
     request = SimpleNamespace(
         tool_call={'name': 'write_probe', 'args': {}, 'id': 'other'},
         state={'messages': messages},
-        runtime=SimpleNamespace(context={'run_id': 'run-1'}),
+        runtime=SimpleNamespace(context=typed_context(identity=RunIdentity(run_id='run-1', session_id=None))),
     )
     executed = []
 

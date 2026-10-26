@@ -24,7 +24,7 @@ CLI在`nyt chat`当前会话中使用：
 | `:diagnostics <run_id>` | 指定运行摘要与第一页事件 |
 | `:diagnostics <run_id> --after <sequence>` | 下一页事件 |
 
-下一页命令由输出给出，可直接复制；未知和0分别显示。`--no-session`明确查询不可用。以上只读入口沿用应用原查询/身份作用域，HTTP尝试沿有限run诊断保存，不作为永久会话总账。原运行/审批/停止/保存和SDK重试策略保持。
+下一页命令由输出给出，可直接复制；未知和0分别显示。当前开发分支中`--no-session`可通过同一线程桥查询本实例RAM中的用量/诊断，关闭后丢弃；不开放项目history/memory。以上只读入口沿用应用原查询/身份作用域，HTTP尝试沿有限run诊断保存，不作为永久会话总账。原运行/审批/停止/保存和SDK重试策略保持。
 
 以下为既有Web实现与历史阶段记录。
 
@@ -78,7 +78,7 @@ npm --prefix frontend run build
 Composer 输入 → useConversation.submit → WebApi.start（request_id）
   → POST runs → schema + token/Host/Origin 检查
   → WebService._session_status 读取轻量权威状态 → RunDelivery 去重/准入
-  → 独立 asyncio Task 调用 AsyncApplication.arun
+  → 独立 asyncio Task 调用 Application.runs.start
   → 原 SessionService / LangChain / middleware / 模型与 checkpoint
   → 领域订阅（只更新内存 projection/有界缓冲并唤醒）
   → GET events → FastAPI async generator SSE → fetch/TextDecoder
@@ -86,7 +86,7 @@ Composer 输入 → useConversation.submit → WebApi.start（request_id）
   → React 更新正文和状态
 ```
 
-控制通过独立 REST 请求调用原 `steer`、`follow_up`、`request_stop`。SSE 消费连接和 Agent 生产任务分别拥有生命周期；断开连接只是停止交付，不取消生产。HTTP 请求等待者取消也不移除已经产生的 run 登记和回执。准入、控制接受、模型返回、消息确认、持久保存与界面显示是不同事实。
+控制通过独立 REST 请求调用 `app.runs.steer`、`follow_up`、`stop`。SSE 消费连接和 Agent 生产任务分别拥有生命周期；断开连接只是停止交付，不取消生产。HTTP 请求等待者取消也不移除已经产生的 run 登记和回执。准入、控制接受、模型返回、消息确认、持久保存与界面显示是不同事实。
 
 浏览历史链：选择会话→POST prepare→useMessageHistory.open安装近期页；接近顶部→loadOlder→GET messages(cursor,agent_id)→SQL有限页→按ID/revision前插→Conversation布局阶段恢复原正文偏移。根与选中子范围共用机制，审批仍由主会话处理。SSE缺口先prepare补录已保存边界，再synchronize补齐近期窗口与已加载末端之间的缺页，不重发执行POST、不把显示页装入模型上下文。
 
@@ -100,12 +100,12 @@ Composer 输入 → useConversation.submit → WebApi.start（request_id）
 | `web/service.py` | 调用现有应用、选择/恢复会话、公开 DTO，不重建循环 |
 | `web/run_delivery.py` | 独立生产任务、幂等回执与控制，不生成全历史作为准入 |
 | `web/delivered_run.py`、`chat_history.py` | 单run临时投影/回放；历史游标/有界消息wire，均不拥有永久档案 |
-| `application/chat_queries.py`、`session_storage.py` | 档案有界SQL；连接、事务和锁仍由SessionStorage持有 |
+| `application/conversation/api.py`、`chat_queries.py` 与 `storage/conversation.py` | 档案查询和有界SQL；连接、事务和锁由 `storage/Database` 持有 |
 | `frontend/src/api.ts`、`sse.ts`、`events.ts` | 请求、UTF-8 跨 chunk 解析、事件序号及完整消息校准 |
 | `frontend/src/useConversation.ts` | 会话选择、草稿、订阅、控制与确认后的展示 |
 | `frontend/src/components/` | Sidebar/Conversation/Composer，纯 UI 展示和用户动作 |
 
-模型目录只读 `model_ids`、应用 `has_session` 和消息投影 DTO `seed`仍有当前消费者；原Web专用 `aget_session_view`全量包装已由轻量 `aget_session_status`及显式 `aprepare_session`/档案查询替代并删除。`aget_messages`继续服务模型当前上下文与CLI/测试，不改成聊天分页。运行层无新的Web依赖。公开视图只提供必要元数据和有界消息，不传SDK对象、供应商地址或密钥。
+当前应用由领域子 API 组合：模型目录用 `app.models.ids`，已加载判断用 `app.sessions.is_loaded`，轻量状态/显式准备用 `app.sessions.status` / `prepare`，档案分页用 `app.history.page`。`app.history.messages`继续服务模型当前上下文与CLI/测试，不改成聊天分页。旧平铺应用方法已迁移，WebService 的认证、归属、幂等、错误映射与投影职责保留，见[Spec128-05B](specs/128-05b-composed-application-and-domain-apis.md)。运行层无新的Web依赖。公开视图只提供必要元数据和有界消息，不传SDK对象、供应商地址或密钥。
 
 ## 验证结果与边界
 

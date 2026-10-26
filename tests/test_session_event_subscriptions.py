@@ -3,8 +3,8 @@
 import pytest
 
 from native_application_helpers import async_test
-from naiyue_test_agent.application import run_events
-from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions
+from naiyue_test_agent.application.observability import run_events
+from naiyue_test_agent.application.observability.run_events import ApplicationEventSubscriptions
 from naiyue_test_agent.agent_runtime.events import AgentEventSource
 from naiyue_test_agent.contracts.session_events import RunStartedData
 from test_async_application import make_app, StreamingToolModel
@@ -74,11 +74,11 @@ async def test_application_forwards_session_scope_without_changing_global_consum
     app = await make_app(monkeypatch, StreamingToolModel(replies=[]))
     a, b, global_events = [], [], []
     try:
-        app.subscribe_events(a.append, session_id='A')
-        app.subscribe_events(b.append, session_id='B')
-        app.subscribe_events(global_events.append)
+        app.host.observability.subscribe(a.append, session_id='A')
+        app.host.observability.subscribe(b.append, session_id='B')
+        app.host.observability.subscribe(global_events.append)
         for sid in ('A', 'B'):
-            app._sessions._events.publisher(sid, sid).publish('run_started', RunStartedData('message'))
+            app.host.sessions._sessions._events.publisher(sid, sid).publish('run_started', RunStartedData('message'))
         assert [e.session_id for e in a] == ['A']
         assert [e.session_id for e in b] == ['B']
         assert [e.session_id for e in global_events] == ['A', 'B']

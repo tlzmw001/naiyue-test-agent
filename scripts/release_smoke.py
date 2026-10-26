@@ -25,7 +25,7 @@ async def web_scenario(root):
     from naiyue_test_agent.resources import frontend_directory
     from naiyue_test_agent.settings import load_settings
     from naiyue_test_agent.tools.web_network import selected_proxy
-    from naiyue_test_agent.web.app import create_web_app
+    from web_probe_app import create_probe_app, command_headers, async_command_headers
     from naiyue_test_agent.web.settings import WebSettings
 
     class OfflineModel(BaseChatModel):
@@ -87,11 +87,11 @@ async def web_scenario(root):
         runtime_settings=runtime_settings, access_token='offline-install-smoke', port=8123)
     origin = settings.origin
     headers = {'Authorization': 'Bearer offline-install-smoke', 'Origin': origin}
-    app = create_web_app(settings)
+    app = create_probe_app(settings)
     async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=origin,
+        async with httpx.AsyncClient(event_hooks={'request': [async_command_headers]}, transport=httpx.ASGITransport(app=app), base_url=origin,
                                     headers=headers) as client:
-            assert (await client.get('/api/models', headers={'Authorization': ''})).status_code == 401
+            assert (await client.get('/api/v1/scopes/chats/models', headers={'Authorization': ''})).status_code == 401
             page = await client.get('/')
             assert page.status_code == 200 and '<html' in page.text.lower()
             import re
@@ -99,28 +99,28 @@ async def web_scenario(root):
             assert assets
             for asset in assets:
                 assert (await client.get(asset)).status_code == 200
-            response = await client.post('/api/sessions', json={'model_id': 'offline'})
+            response = await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'offline'})
             assert response.status_code == 201, response.text
             session = response.json()['session_id']
-            assert (await client.get(f'/api/sessions/{session}')).json()['active_tools'] == ['read', 'find', 'grep', 'edit']
-            response = await client.post(f'/api/sessions/{session}/runs',
+            assert (await client.get(f'/api/v1/scopes/chats/sessions/{session}')).json()['active_tools'] == ['read', 'find', 'grep', 'edit']
+            response = await client.post(f'/api/v1/scopes/chats/sessions/{session}/runs',
                 json={'request_id': str(uuid4()), 'text': 'inspect installed tools'})
             assert response.status_code == 202, response.text
             first_run = response.json()['run_id']
-            events = await client.get(f'/api/runs/{first_run}/events')
+            events = await client.get(f'/api/v1/scopes/chats/runs/{first_run}/events')
             assert events.status_code == 200 and 'run_finished' in events.text
-            view = (await client.get(f'/api/sessions/{session}')).json()
+            view = (await client.get(f'/api/v1/scopes/chats/sessions/{session}')).json()
             batch, = view['approval_batches']
             assert len(model.seen) == 1
-            response = await client.post(f'/api/sessions/{session}/approvals', json={
+            response = await client.post(f'/api/v1/scopes/chats/sessions/{session}/approvals', json={
                 'request_id': str(uuid4()), 'origin_run_id': batch['origin_run_id'],
                 'approval_batch_id': batch['approval_batch_id'],
                 'decisions': [{'approval_id': item['approval_id'], 'decision': 'approve'} for item in batch['items']],
             })
             assert response.status_code == 202, response.text
             resumed = response.json()['run_id']
-            await client.get(f'/api/runs/{resumed}/events')
-            assert (await client.get(f'/api/runs/{resumed}')).json()['status'] == 'completed'
+            await client.get(f'/api/v1/scopes/chats/runs/{resumed}/events')
+            assert (await client.get(f'/api/v1/scopes/chats/runs/{resumed}')).json()['status'] == 'completed'
             returned = {message.tool_call_id: message for message in model.seen[1] if isinstance(message, ToolMessage)}
             assert set(returned) == {'find-installed', 'grep-installed', 'read-approved',
                 'read-edit-before', 'edit-installed', 'read-edit-after'}
@@ -132,18 +132,46 @@ async def web_scenario(root):
             assert returned['read-edit-after'].content == 'needle edited\n'
             assert (workspace / 'sample.py').read_bytes() == b'needle edited\n'
             assert returned['read-approved'].content == 'approved outside content'
-    reopened = create_web_app(settings)
+    reopened = create_probe_app(settings)
     async with reopened.router.lifespan_context(reopened):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=reopened), base_url=origin,
+        async with httpx.AsyncClient(event_hooks={'request': [async_command_headers]}, transport=httpx.ASGITransport(app=reopened), base_url=origin,
                                     headers=headers) as client:
-            assert (await client.post(f'/api/sessions/{session}/prepare')).status_code == 200
-            restored = (await client.get(f'/api/sessions/{session}')).json()
+            assert (await client.post(f'/api/v1/scopes/chats/sessions/{session}/prepare')).status_code == 200
+            restored = (await client.get(f'/api/v1/scopes/chats/sessions/{session}')).json()
             assert restored['can_run'] and not restored['busy']
             assert any(message['content'] == 'installed-ok' for message in restored['messages'])
             assert len(model.seen) == 2, 'Reopen executed model/tool work'
     from release_mcp_smoke import mcp_scenario
     mcp = await mcp_scenario(root, OfflineModel)
     return workspace, model, mcp
+
+
+async def cli_scenario(root, model_type):
+    from langchain_core.messages import AIMessage
+    from naiyue_test_agent import application
+    from naiyue_test_agent.model_access import ModelCatalog
+    from naiyue_test_agent.cli import chat as cli, chat_startup
+    from naiyue_test_agent.cli import main as command, projects
+    from naiyue_test_agent.cli.terminal_client import TerminalClient
+    from service_probe import terminal_probe
+    model = model_type(replies=[AIMessage(content='installed-cli-answer')])
+    application.load_model_catalog = lambda _: ModelCatalog('offline', {'offline': model})
+    output = io.StringIO()
+    async with terminal_probe(root / 'unused.json', lease=False,
+            tools=(), system_prompt='', response_format=None) as client:
+        lines = iter(['installed-cli-question', ':quit'])
+        def terminal():
+            with patch.object(chat_startup, 'TerminalClient', return_value=client), \
+                    patch('builtins.input', side_effect=lambda _: next(lines)), redirect_stdout(output):
+                assert cli.main(['--workspace', str(root / 'workspace'), '--no-session', '--config', 'unused']) == 0
+            with patch.object(projects, 'TerminalClient', side_effect=lambda _: TerminalClient(client.options)), \
+                    redirect_stdout(output):
+                assert command(['projects']) == 0
+        await asyncio.to_thread(terminal)
+    assert '当前模型' in output.getvalue() and 'installed-cli-answer' in output.getvalue()
+    assert '暂无项目' in output.getvalue()
+    assert len(model.seen) == 1
+    return {'http_sse': 'passed', 'temporary_chat': 'passed'}
 
 
 def main():
@@ -172,15 +200,11 @@ def main():
     subagents = asyncio.run(subagent_scenario(root, type(model)))
     from release_memory_smoke import memory_scenario
     memory = asyncio.run(memory_scenario(root, type(model)))
-    from naiyue_test_agent.application import cli
-    output = io.StringIO()
-    with patch('builtins.input', return_value=':quit'), redirect_stdout(output):
-        assert cli.main(['--workspace', str(workspace), '--no-session', '--config', 'unused']) == 0
-    assert '当前模型' in output.getvalue()
+    cli = asyncio.run(cli_scenario(root, type(model)))
     print(json.dumps({'target': native['target'], 'version': naiyue_test_agent.__version__,
         'installed_package': str(installed), 'native_tools': 'passed', 'frontend_api': 'passed',
         'find_grep': 'passed', 'read_edit_read': 'passed',
-        'approval_resume': 'passed', 'sqlite_reopen': 'passed', 'cli': 'passed',
+        'approval_resume': 'passed', 'sqlite_reopen': 'passed', 'cli': 'passed', 'cli_protocol': cli,
         'configuration': 'passed', **storage, 'mcp': mcp, 'background_tasks': background,
         'subagent_continuation': subagents, 'memory': memory}))
 

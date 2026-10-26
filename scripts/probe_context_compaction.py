@@ -3,6 +3,7 @@
 Exploratory, deterministic framework experiment; not wired into the product agent.
 """
 
+from naiyue_test_agent.contracts.run_context import RunIdentity, RunScope, RuntimeContext
 import asyncio
 
 from pydantic import Field
@@ -14,7 +15,7 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
-from naiyue_test_agent.agent_runtime import RunContext, make_model_selection_middleware
+from naiyue_test_agent.agent_runtime import make_model_selection_middleware
 
 
 class RecordingFake(FakeMessagesListChatModel):
@@ -64,7 +65,7 @@ def _make_agent(summary_model):
         token_counter=lambda messages: 15 * len(messages),
     )
     agent = create_agent(
-        model=model_a, tools=[read_probe], context_schema=RunContext,
+        model=model_a, tools=[read_probe], context_schema=RuntimeContext,
         middleware=[
             make_model_selection_middleware(
                 lambda session_id, agent_path='root': (selected[session_id], models[selected[session_id]]),
@@ -78,7 +79,7 @@ def _make_agent(summary_model):
 
 async def _invoke(agent, text):
     return (await agent.ainvoke(
-        {'messages': [('user', text)]}, context={'session_id': 'probe'},
+        {'messages': [('user', text)]}, context=RuntimeContext(scope=RunScope(identity=RunIdentity(session_id='probe'))),
         config={'configurable': {'thread_id': 'probe-thread'}},
     ))
 

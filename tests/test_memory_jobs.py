@@ -8,9 +8,9 @@ from uuid import uuid4
 import pytest
 from langchain_core.messages import AIMessage
 
-from naiyue_test_agent.application.memory_jobs import MemoryJobs
-from naiyue_test_agent.application.memory_access import MemoryAccess
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.application.memory.memory_jobs import MemoryJobs
+from naiyue_test_agent.application.memory.memory_access import MemoryAccess
+from naiyue_test_agent.storage.project_store import ProjectStore
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.model_access import ModelCatalog
 from test_memory_lifecycle import source
@@ -25,9 +25,9 @@ def response(**changes):
 
 @pytest.fixture
 def jobs(tmp_path):
-    with SessionStorage(tmp_path/'sessions.sqlite') as storage:
-        storage.bind_workspace(str(uuid4()),tmp_path)
-        storage.create('s',dict(thread_id='s',model_id='A',workspace_root=tmp_path,active_tool_names=['memory'],permission_mode='Default'))
+    with ProjectStore(tmp_path/'sessions.sqlite') as storage:
+        storage.sessions.bind_workspace(str(uuid4()),tmp_path)
+        storage.sessions.create('s',dict(thread_id='s',model_id='A',workspace_root=tmp_path,active_tool_names=['memory'],permission_mode='Default'))
         access=MemoryAccess(storage,MemorySettings(auto_enabled=False),tmp_path/'data')
         model=StreamingToolModel(replies=[response()])
         yield storage,access,model,tmp_path
@@ -49,8 +49,8 @@ def test_explicit_waits_for_normal_saved_finish_then_overview_is_visible(jobs):
             row=await service.output(accepted['task_id'],session_id='s',workspace_root=root)
             assert row['result_status']=='completed' and row['cleanup_confirmed']
             assert len(model.seen)==1 and '完成测试' in str(model.seen[0])
-            from naiyue_test_agent.application.memory_overview_store import overview
-            saved=overview(storage,'s')
+            from naiyue_test_agent.storage.memory_sql.memory_overview_store import overview
+            saved=storage.memory.overview('s')
             assert saved['overview_status']=='generated' and saved['overview']['next_step']=='继续验证'
         finally:await service.aclose()
     asyncio.run(scenario())
@@ -75,3 +75,31 @@ def test_invalid_model_is_not_silently_replaced(jobs):
     storage,access,model,_=jobs
     access.settings=MemorySettings(model_id='missing')
     with pytest.raises(ValueError,match='memory_model_unavailable'):MemoryJobs(access,ModelCatalog('A',{'A':model}))
+
+
+@pytest.mark.parametrize('entry', ['prepare', 'request', 'automatic'])
+def test_project_local_memory_uses_verified_host_location_not_audit_path(jobs, entry):
+    async def scenario():
+        storage,access,model,root=jobs
+        identity=storage.sessions.get_workspace_binding()['workspace_id']
+        storage.sessions.bind_project_execution(identity)
+        location=root/'relocated';location.mkdir()
+        storage.sessions.execution_location=location
+        access.settings=MemorySettings(auto_enabled=entry=='automatic',trigger_turns=1)
+        service=MemoryJobs(access,ModelCatalog('A',{'A':model}))
+        try:
+            if entry=='prepare':
+                assert isinstance(service.prepare('s',location,[],model),list)
+            elif entry=='request':
+                result=await service.request(source_session_id='s',target_session_id='s',workspace_root=location,
+                    origin_run_id='R',model_id='A')
+                assert service._entries[result['task_id']].root==location
+            else:
+                storage.memory.ensure('s')
+                source(access,'s',text='完成测试',at=1000.)
+                await service.after_finish('s','R','completed',model_id='A')
+                assert len(service._entries)==1
+                assert next(iter(service._entries.values())).root==location
+            assert storage.sessions.get('s')['last_execution_path']==str(root)
+        finally:await service.aclose()
+    asyncio.run(scenario())

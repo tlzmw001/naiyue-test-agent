@@ -1,5 +1,6 @@
 """Read current workspace/personal memory using the trusted runtime capability."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 import json
 from typing import Literal
 
@@ -85,19 +86,18 @@ class MemoryInput(BaseModel):
 def create_memory_tool():
     public, execution = build_tool_schemas('MemoryInput', MemoryInput)
 
-    async def execute(runtime: ToolRuntime[dict, dict], **arguments):
+    async def execute(runtime: ToolRuntime[RuntimeContext], **arguments):
         request = public.model_validate(arguments).model_dump(mode='json')
         permit = require_tool_permit(runtime)
         batch = runtime.state.get('tool_execution', {})
         call = next((c for c in batch.get('calls', []) if c['id'] == runtime.tool_call_id), None)
-        if (call is None or permit != permission_binding(runtime.context, batch.get('batch_id'), call)
+        if (call is None or permit != permission_binding(runtime.context.scope.identity, batch.get('batch_id'), call)
                 or permit.get('tool_name') != 'memory' or permit['subject'].get('args') != request):
             raise PermissionMechanismError('Memory query does not match its execution permit')
-        port = runtime.context.get('aquery_memory')
+        port = runtime.context.scope.capabilities.memory
         if not callable(port):
             raise ToolException('memory_unavailable: persistent memory is unavailable.')
-        result = await port(source_session_id=runtime.context['session_id'],
-            workspace_root=runtime.context.get('workspace_root'), agent_path=runtime.context.get('agent_path', 'root'),
+        result = await port(scope=runtime.context.scope,
             request=request, **({'tool_call_id':runtime.tool_call_id} if request['action']=='refresh_overview' else {}))
         return json.dumps(result, ensure_ascii=False)
 

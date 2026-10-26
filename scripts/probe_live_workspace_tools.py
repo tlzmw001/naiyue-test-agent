@@ -11,8 +11,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from langchain_core.messages import AIMessage, ToolMessage
-
-from naiyue_test_agent.application.async_application import build_async_local_application
+if __package__:
+    from .component_fixtures import build_component_application
+else:
+    from component_fixtures import build_component_application
 from naiyue_test_agent.tools import (
     create_session_bash_tool, create_session_edit_tool, create_session_find_tool,
     create_session_grep_tool, create_session_ls_tool, create_session_read_tool,
@@ -72,7 +74,7 @@ async def _async_main() -> int:
                      create_session_find_tool(), create_session_grep_tool(),
                      create_session_write_tool(), create_session_edit_tool(),
                      create_session_bash_tool()]
-            app = await build_async_local_application(
+            app = await build_component_application(
                 args.config, tools=tools,
                 system_prompt=('This is a controlled tool integration check. Use the requested '
                                'tools on files inside the selected workspace. Do not access '
@@ -81,12 +83,12 @@ async def _async_main() -> int:
                 response_format=None,
             )
             resources.push_async_callback(app.aclose)
-            model_id = args.model_id or app.default_model_id
-            session = await app.acreate_workspace_session(model_id, root)
+            model_id = args.model_id or app.root.models.default_id
+            session = await app.host.sessions.create_workspace(model_id, root)
             print(f'model_id={model_id}')
             results: list[ToolMessage] = []
 
-            first = await app.arun(session, [('user',
+            first = await app.host.runs.start(session, [('user',
                 "Use ls on '.', find with pattern '*.md', grep for literal CASE_PROBE "
                 "in '.', and read contract.md. Actually call all four tools; wait for "
                 'their results, then briefly report the marker.')])
@@ -105,7 +107,7 @@ async def _async_main() -> int:
                        for message in results):
                 raise AssertionError('discovery did not read the fixture')
 
-            second = await app.arun(session, [('user',
+            second = await app.host.runs.start(session, [('user',
                 "Use write to create draft.md with exactly these two lines and a final newline: "
                 "status=unreviewed, then marker=CASE_PROBE. Then use edit on draft.md "
                 "to replace the exact text 'status=unreviewed' with 'status=reviewed'. "
@@ -127,7 +129,7 @@ async def _async_main() -> int:
                        for message in results):
                 raise AssertionError('model did not read the final draft content')
 
-            pending = await app.arun(session, [('user',
+            pending = await app.host.runs.start(session, [('user',
                 f'Call bash exactly once with command {SAFE_COMMAND!r} and timeout 10. '
                 'Wait for the tool result and report the stdout.')])
             pending_messages = pending['messages'][len(second['messages']):]
@@ -142,7 +144,7 @@ async def _async_main() -> int:
                 raise AssertionError('bash returned a result before approval')
             print('approval=exact_safe_command_only')
 
-            resumed = await app.aresume_tool_approval(session, ['approve'])
+            resumed = await app.host.runs.resume_approval(session, ['approve'])
             if resumed.get('approval_requests'):
                 raise AssertionError('additional command unexpectedly requested approval')
             resumed_messages = resumed['messages'][resumed['resume_start_index']:]

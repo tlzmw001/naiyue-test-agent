@@ -156,7 +156,7 @@ def test_real_web_lifespan_installs_handler_and_stays_available_after_reset(monk
                 loop.call_soon(item._call_connection_lost, None)
                 await asyncio.sleep(0)
                 assert sock.closed and item._called_connection_lost
-                assert (await client.get('/api/models')).status_code == 200
+                assert (await client.get('/api/v1/scopes/chats/models')).status_code == 200
             assert loop.get_exception_handler() is previous
         finally:
             sock.close(); item._sock = None; item._called_connection_lost = True

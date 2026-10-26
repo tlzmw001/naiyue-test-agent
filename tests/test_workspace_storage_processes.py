@@ -9,7 +9,9 @@ from threading import Thread
 
 import pytest
 
-from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+from naiyue_test_agent.storage.project_store import ProjectStore
+
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.workspaces import prepare_workspace
 
 
@@ -18,14 +20,14 @@ OWNER = '''
 import json, os, sys
 from pathlib import Path
 from naiyue_test_agent.workspaces import prepare_workspace
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.storage.project_store import ProjectStore
 loc = prepare_workspace(Path(sys.argv[1]), data_dir=Path(sys.argv[2]))
-with SessionStorage(loc.database_path) as storage:
-    storage.bind_workspace(loc.workspace_id, loc.root)
+with ProjectStore(loc.database_path) as storage:
+    storage.sessions.bind_workspace(loc.workspace_id, loc.root)
     if sys.argv[3] == 'crash':
-        storage.create('S', dict(thread_id='T', model_id='M', workspace_root=loc.root,
+        storage.sessions.create('S', dict(thread_id='T', model_id='M', workspace_root=loc.root,
             active_tool_names=[], permission_mode='Default'))
-        storage.mark_running('S', 'R')
+        storage.sessions.mark_running('S', 'R')
     print(json.dumps(dict(workspace_id=loc.workspace_id, database_path=str(loc.database_path))), flush=True)
     sys.stdin.readline()
     if sys.argv[3] == 'crash':
@@ -66,12 +68,12 @@ def test_different_projects_run_together_same_project_rejects_and_close_releases
         assert one.poll() is None and two.poll() is None
         assert first['database_path'] != second['database_path']
         with pytest.raises(SessionPersistenceError, match='storage_in_use'):
-            SessionStorage(first['database_path'])
+            ProjectStore(first['database_path'])
         one.communicate('\n', timeout=10)
         assert one.returncode == 0
         # Stale lock file remains; its existence must never block a subsequent owner.
-        with SessionStorage(first['database_path']) as reopened:
-            assert reopened.get_workspace_binding()['workspace_id'] == first['workspace_id']
+        with ProjectStore(first['database_path']) as reopened:
+            assert reopened.sessions.get_workspace_binding()['workspace_id'] == first['workspace_id']
     finally:
         stop(one)
         if two is not None:
@@ -85,9 +87,9 @@ def test_abnormal_exit_releases_lock_but_does_not_clear_running_state(tmp_path):
     try:
         child.communicate('\n', timeout=10)
         assert child.returncode == 7
-        with SessionStorage(result['database_path']) as reopened:
-            assert reopened.get('S')['state'] == 'running'
-            assert reopened.get('S')['run_id'] == 'R'
+        with ProjectStore(result['database_path']) as reopened:
+            assert reopened.sessions.get('S')['state'] == 'running'
+            assert reopened.sessions.get('S')['run_id'] == 'R'
     finally:
         stop(child)
 

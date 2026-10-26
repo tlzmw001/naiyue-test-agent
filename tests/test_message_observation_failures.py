@@ -1,5 +1,6 @@
 """Observability failures preserve business results, exceptions, and control."""
 
+from runtime_context_helpers import RunIdentity, RunObservationPorts, typed_context
 from naiyue_test_agent.agent_runtime.async_message_observation import ainvoke_with_message_observation
 
 from native_application_helpers import async_test
@@ -40,9 +41,10 @@ async def test_old_invoke_object_keeps_exact_arguments_and_original_result():
             return returned
 
     pub, events = publisher()
-    result = (await ainvoke_with_message_observation(OldAgent(), 'input', context={'x': 1},
+    context = typed_context()
+    result = (await ainvoke_with_message_observation(OldAgent(), 'input', context=context,
                                             config={'y': 2}, publisher=pub))
-    assert result is returned and calls == [('input', {'context': {'x': 1}, 'config': {'y': 2}})]
+    assert result is returned and calls == [('input', {'context': context, 'config': {'y': 2}})]
     assert events[-1].data.reason == 'unsupported_state_interface'
     assert messages(events) == []
 
@@ -51,7 +53,7 @@ async def test_old_invoke_object_keeps_exact_arguments_and_original_result():
 async def test_baseline_read_failure_falls_back_once_without_inventing_history(monkeypatch):
     model = ToolModel(responses=[AIMessage(content='done')])
     app = await make_app(monkeypatch, model)
-    graph = app._agent
+    graph = app.host.runs._agent
     original_stream = graph.astream
     streams = []
 
@@ -59,15 +61,21 @@ async def test_baseline_read_failure_falls_back_once_without_inventing_history(m
         streams.append(kwargs.get('version', 'v1'))
         return original_stream(*args, **kwargs)
 
+    get_state = graph.aget_state
+    reads = []
     async def bad_state(*args, **kwargs):
-        raise OSError('PRIVATE_BASELINE')
+        reads.append(True)
+        if len(reads) == 1:
+            raise OSError('PRIVATE_BASELINE')
+        return await get_state(*args, **kwargs)
 
     monkeypatch.setattr(graph, 'astream', stream)
     monkeypatch.setattr(graph, 'aget_state', bad_state)
     events = []
-    app.subscribe_events(events.append)
-    assert (await app.arun(await app.acreate_session('A'), [('user', 'run')]))['messages'][-1].content == 'done'
+    app.host.observability.subscribe(events.append)
+    assert (await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'run')]))['messages'][-1].content == 'done'
     assert streams == ['v1'] and messages(events) == []
+    assert len(reads) > 1  # Necessary archive reads still use the actual graph.
     unavailable = next(e for e in events if e.event_type == 'message_snapshot_unavailable')
     assert unavailable.data.reason == 'baseline_read_failed' and unavailable.data.error_type == 'OSError'
     assert 'PRIVATE_BASELINE' not in repr(unavailable)
@@ -82,13 +90,13 @@ async def test_model_failure_or_control_keeps_original_and_only_observed_input(m
 
     app = await make_app(monkeypatch, Failing(responses=[AIMessage(content='unused')]))
     events = []
-    app.subscribe_events(events.append)
-    sid = await app.acreate_session('A')
+    app.host.observability.subscribe(events.append)
+    sid = await app.host.sessions.create('A')
     with pytest.raises(type(error)) as caught:
         if isinstance(error, KeyboardInterrupt):
             # Inject at the stream boundary: asyncio gives KeyboardInterrupt
             # special process-level handling when raised by an internal model Task.
-            original = app._agent.astream
+            original = app.host.runs._agent.astream
             def fail_stream(*args, **kwargs):
                 iterator = original(*args, **kwargs)
                 async def parts():
@@ -100,13 +108,13 @@ async def test_model_failure_or_control_keeps_original_and_only_observed_input(m
                     finally:
                         await iterator.aclose()
                 return parts()
-            monkeypatch.setattr(app._agent, 'astream', fail_stream)
+            monkeypatch.setattr(app.host.runs._agent, 'astream', fail_stream)
             pub = RunEventPublisher(sid, 'control', (events.append,))
-            (await ainvoke_with_message_observation(app._agent, {'messages': [('user', 'input')]},
-                context={'session_id': sid, 'run_id': 'control', '_run_event_publisher': pub},
-                config={'configurable': {'thread_id': app._sessions.require(sid).get_thread_id()}}, publisher=pub))
+            (await ainvoke_with_message_observation(app.host.runs._agent, {'messages': [('user', 'input')]},
+                context=typed_context(identity=RunIdentity(session_id=sid, run_id='control'), observation=RunObservationPorts(publisher=pub)),
+                config={'configurable': {'thread_id': app.host.sessions._sessions.require(sid).get_thread_id()}}, publisher=pub))
         else:
-            await app.arun(sid, [('user', 'input')])
+            await app.host.runs.start(sid, [('user', 'input')])
     assert caught.value is error
     assert [row['type'] for row in rows(events)] == ['human']
     ends = [e for e in events if e.event_type == 'run_finished']
@@ -138,9 +146,9 @@ async def test_fatal_batch_pending_error_is_recovery_view_not_success(monkeypatc
         {'name': 'skipped', 'args': {}, 'id': 'skip'},
     ])]), [ToolSpec(fatal, fatal.args_schema, execution_mode='sequential', permissions=ToolPermission(default='allow')), ToolSpec(skipped, skipped.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
-    app.subscribe_events(events.append)
+    app.host.observability.subscribe(events.append)
     with pytest.raises(RuntimeError) as caught:
-        await app.arun(await app.acreate_session('A'), [('user', 'run')])
+        await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'run')])
     assert caught.value is failure and entered == []
     pending = [e.data for e in messages(events) if e.data.message_type == 'tool']
     assert len(pending) == 1
@@ -161,7 +169,7 @@ async def test_failed_recovery_read_cannot_replace_original_error(monkeypatch, c
             raise failure
 
     app = await make_app(monkeypatch, Failing(responses=[AIMessage(content='unused')]))
-    original = app._agent.aget_state
+    original = app.host.runs._agent.aget_state
     reads = []
 
     async def get_state(*args, **kwargs):
@@ -170,11 +178,11 @@ async def test_failed_recovery_read_cannot_replace_original_error(monkeypatch, c
             raise OSError('PRIVATE_SECONDARY')
         return await original(*args, **kwargs)
 
-    monkeypatch.setattr(app._agent, 'aget_state', get_state)
+    monkeypatch.setattr(app.host.runs._agent, 'aget_state', get_state)
     events = []
-    app.subscribe_events(events.append)
+    app.host.observability.subscribe(events.append)
     with pytest.raises(RuntimeError) as caught:
-        await app.arun(await app.acreate_session('A'), [('user', 'run')])
+        await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'run')])
     assert caught.value is failure
     unavailable = next(e for e in events if e.event_type == 'message_snapshot_unavailable')
     assert unavailable.data.reason == 'recovery_read_failed' and unavailable.data.error_type == 'OSError'
@@ -191,7 +199,7 @@ async def test_non_json_content_without_saver_is_reported_and_result_unchanged()
                                 resolve_model=lambda _s, agent_path='root': ('A', model), )
     pub, events = publisher()
     result = (await ainvoke_with_message_observation(graph, {'messages': [bad]},
-                                            context={'session_id': 'session', 'run_id': 'run'},
+                                            context=typed_context(identity=RunIdentity(session_id='session', run_id='run')),
                                             config={}, publisher=pub))
     assert result['messages'][0] is bad
     assert result['messages'][-1].content == 'done'
@@ -224,7 +232,7 @@ async def test_iterator_close_secondary_failure_preserves_primary_and_attempts_c
     monkeypatch.setattr(graph, 'astream', lambda *_a, **_kw: BrokenIterator())
     pub, events = publisher()
     with pytest.raises(RuntimeError) as caught:
-        (await ainvoke_with_message_observation(graph, {}, context={}, config={}, publisher=pub))
+        (await ainvoke_with_message_observation(graph, {}, context=typed_context(), config={}, publisher=pub))
     assert caught.value is primary and closed == [True]
     assert messages(events) == [] and 'PRIVATE_' not in caplog.text
 
@@ -239,10 +247,11 @@ async def test_custom_invoke_on_compiled_graph_is_not_bypassed(monkeypatch):
         invoked.append(input)
         return original_result
 
-    monkeypatch.setattr(app._agent, 'ainvoke', custom)
-    events = []
-    app.subscribe_events(events.append)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'run')])
+    monkeypatch.setattr(app.host.runs._agent, 'ainvoke', custom)
+    pub, events = publisher()
+    # Arbitrary custom results are a runtime contract; they cannot confirm a saved application run.
+    result = await ainvoke_with_message_observation(app.host.runs._agent, {'messages': [('user', 'run')]},
+        context=typed_context(), config={'configurable': {'thread_id': 'custom'}}, publisher=pub)
     assert result is original_result and len(invoked) == 1
     assert messages(events) == []
     assert next(e.data.reason for e in events if e.event_type == 'message_snapshot_unavailable') == (
@@ -260,9 +269,9 @@ async def test_message_consumer_failure_is_isolated_from_other_consumers_and_res
         if event.event_type == 'message_completed':
             raise ValueError('PRIVATE_BODY_REJECTED')
 
-    app.subscribe_events(broken)
-    app.subscribe_events(events.append)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'run')])
+    app.host.observability.subscribe(broken)
+    app.host.observability.subscribe(events.append)
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'run')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
     assert calls == ['run_started', 'message_completed']
     assert [row['type'] for row in rows(events)] == ['human', 'ai']
@@ -278,7 +287,7 @@ async def test_state_adapter_result_equals_native_invoke_with_all_output_fields(
     graph = build_runtime_agent(model, tool_registry=_runtime_registry_3, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_3: names, system_prompt='', response_format=None,
                                 resolve_model=lambda _s, agent_path='root': ('A', model), )
     input = {'messages': [HumanMessage(id='input', content='run')]}
-    context = {'session_id': 'session', 'run_id': 'run'}
+    context = typed_context(identity=RunIdentity(session_id='session', run_id='run'))
     original = (await graph.ainvoke(input, context=context, config={}))
     pub, events = publisher()
     observed = (await ainvoke_with_message_observation(graph, input, context=context, config={}, publisher=pub))
@@ -335,9 +344,9 @@ async def test_iterator_without_optional_close_preserves_native_stream_return(mo
                 raise StopAsyncIteration
             self.done = True
             return {'type': 'values', 'ns': (), 'data': expected}
-    monkeypatch.setattr(app._agent, 'astream', lambda *_a, **_kw: BareIterator())
+    monkeypatch.setattr(app.host.runs._agent, 'astream', lambda *_a, **_kw: BareIterator())
     pub, events = publisher()
-    result = (await ainvoke_with_message_observation(app._agent, {}, context={},
+    result = (await ainvoke_with_message_observation(app.host.runs._agent, {}, context=typed_context(),
                                             config={'configurable': {'thread_id': 'thread'}}, publisher=pub))
     assert result is expected
     assert [e.data.message_id for e in messages(events)] == ['input']

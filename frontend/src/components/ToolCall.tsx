@@ -3,6 +3,7 @@ import type { AgentView, ChangeLoader, MessageRow, ToolCallRow, ToolState } from
 import ToolResult, { mcpOutcomes } from './ToolResult';
 import styles from '../App.module.css';
 import card from './ToolCall.module.css';
+import { Chevron } from './Icons';
 
 const activities: Record<string, string> = { queued: '排队中', preparing: '准备中', running: '运行中',
   stopping: '停止中', settling: '收尾中' };
@@ -57,7 +58,7 @@ export default function ToolCall({ call, result, phase, loadChange, contentContr
   const preview = target.length > 160 ? `${target.slice(0, 159)}…` : target;
   const icon = label === '成功' ? '✓' : ['错误结果', '执行异常'].includes(label) ? '!' : active ? '⋯' : '◇';
   return <><details open={expanded} onToggle={event => setExpanded(event.currentTarget.open)} className={`${styles.toolCall} ${card.card} ${!active ? card.terminal : ''}`}>
-    <summary><span className={card.icon} aria-hidden="true">{icon}</span>
+    <summary><Chevron direction={expanded ? 'down' : 'right'} /><span className={card.icon} aria-hidden="true">{icon}</span>
       <span className={`${styles.toolName} ${card.name}`} title={call.name}>{call.name}</span>
       {preview && <code className={card.target}>{preview}</code>}
       <span className={`${styles.toolStatus} ${card.status}`}>{active && !stopping && delegation ? delegation : label}</span>
@@ -85,7 +86,7 @@ export default function ToolCall({ call, result, phase, loadChange, contentContr
           {openAgent ? <button className={styles.agentLink}
             aria-label={`查看子智能体 ${agent.source.agent_path.split('/')[1]} · ${agent.source.agent_id.slice(0, 6)}`}
             onClick={() => openAgent(agent.source.agent_path)}>
-            {agent.source.agent_path.split('/')[1]} · {agent.source.agent_id.slice(0, 6)} <span>›</span>
+            {agent.source.agent_path.split('/')[1]} · {agent.source.agent_id.slice(0, 6)} <Chevron direction="right" />
           </button> : <span>{agent.source.agent_path.split('/')[1]} · {agent.source.agent_id.slice(0, 6)}</span>}
           <span className={styles.agentState}>{
           ({ running: '运行中', awaiting_approval: '等待审批', completed: '已完成', failed: '失败', stopped: '已停止',

@@ -42,6 +42,17 @@ web_event_cache_bytes = 4194304
 # 字节为有限事实JSON的UTF-8预算，默认4 MiB，不代表进程总内存。
 # 任一超限拒绝新事实并标统计缺口，已接收的记录继续写入。
 # 非法预算警告并回退本节默认；修改后重启，私有配置不会自动写入。
+[projects]
+# 开发分支 R1-03：可选默认新建位置，仅影响新建项目时的初始位置；不限制选择其他目录。
+# 省略表示由用户选择父目录；修改不移动已有项目，加载配置不会创建目录。
+# default_parent_dir = "/absolute/path/to/projects"
+
+# 审查后显式交付，使用本机 Git 预算，不将凭据传进沙箱。
+# 超过额度明确拒绝，不删除旧操作或自动重放未知动作；修改后重启。
+[delivery]
+max_commits = 256
+max_operations_per_project = 1024
+
 [usage_persistence]
 max_pending_events = 1024
 max_pending_bytes = 4194304
@@ -211,6 +222,9 @@ min_interval_milliseconds = 200
 max_text_bytes = 8_192
 
 [storage]
+# 项目/普通对话/RAM 库两条 SQLite 连接的锁等待上限，毫秒，0..30000；修改后重启。
+# 0 表示冲突立即失败；只控制锁等待，不限制 SQL 总耗时。个人记忆仍用 memory.busy_timeout_ms。
+busy_timeout_ms = 5000
 # 会话数据根目录；不改变 models.json / settings.toml 的配置位置。
 # 未设置默认 ~/.naiyue-test-agent/data。必须是绝对路径，支持 ~；修改后重启。
 # Windows可用TOML单引号避免反斜杠转义，例如 data_dir = 'D:\NaiyueData'。
@@ -449,6 +463,8 @@ max_delete_bytes = 33554432    # 一次删除数据预算32 MiB；不强制VACUU
 # allowed_tools填服务端的原工具名，不接受*；[]只发现目录、不登记可调用工具。
 # 登记后名称为mcp__服务ID__原工具名；还须在根会话或子角色中选中，执行仍受审批。
 [mcp.servers.local]
+# 允许沙箱会话调用本机 stdio MCP；默认关闭，开启后该服务仍在本机执行。
+allow_sandbox = false
 enabled = false
 transport = "stdio"            # 本机子进程；不经Shell，不解释&&、管道或命令字符串。
 command = "python"             # 最好改成服务器环境中Python/程序的绝对路径。
@@ -488,3 +504,54 @@ max_concurrency = 1
 # 值是环境变量的名字，不写${...}，也不直接写Token。
 # 该环境变量须保存服务端要求的完整头值，例如Bearer后加空格和真实Token。
 Authorization = "MY_MCP_AUTHORIZATION"
+
+# Docker/envd 文件后端；未配置镜像或模板时纯本机流程可正常使用。
+# 镜像先用标准 Linux wheel 构建，context 必须显式指向已授权的本机 Docker。
+# 远端 SSH 在 R1-14。13D-02/03 已支持 API/CLI 和输入框上方模板选择、刷新。
+# 修改后调用认证 POST /api/v1/environments/refresh，只重载服务固定配置文件的 sandbox 节。
+# 无效配置保留上次列表；删除整个 sandbox 节只禁用未来新建，已有会话继续按保存配置执行。
+[sandbox]
+docker_executable = "docker"
+context = "default"
+# image = "<your-compatible-envd-image>"
+# 旧 image 会转换成一项默认模板，不能与 profiles/default_profile 混用。
+# 配置多模板时取消下面 default_profile 和对应 profiles 的注释；名称只影响显示。
+# default_profile = "python-tests"
+cpus = 2.0
+memory_bytes = 2147483648
+pids_limit = 256
+rpc_timeout_seconds = 60
+stop_timeout_seconds = 10
+max_message_bytes = 16777216
+# envd 持久输出暂存和操作日志限额；创建环境时冻结。
+process_output_bytes = 8388608
+total_output_bytes = 67108864
+max_operation_records = 1024
+max_active_operations = 16
+poll_milliseconds = 100
+
+[sandbox.network]
+# external：由公司/云网络策略控制；none：只保留回环，实际生效失败则拒绝。
+# 创建时冻结，修改配置不改变已有环境。
+mode = "external"
+
+[sandbox.lifecycle]
+# 服务/data_dir 内所有项目共用额度；unknown/准备中保守占用运行额度。
+# 停止保留文件，显式销毁原容器和两个卷后才释放保留额度。
+max_running = 2
+max_retained = 10
+idle_stop_seconds = 1800  # 0 关闭自动空闲停止；不按时间删除文件。
+sweep_seconds = 30
+# 这些策略可由环境刷新热更新；降额不停止已有任务，不改变会话镜像/网络策略。
+
+# [sandbox.profiles.python-tests]
+# name = "Python 接口测试"
+# image = "<your-compatible-python-envd-image>"
+#
+# [sandbox.profiles.frontend-tests]
+# name = "Node 前端测试"
+# image = "<your-compatible-node-envd-image>"
+#
+# 网络/资源/Git预算在本片共用。新会话冻结选择，已有会话不随模板变更而换绑。
+# 刷新按钮只重载sandbox：校验成功替换目录及生命周期策略，失败保留旧配置。
+# 输入框上沿“管理沙箱”查看全部项目；常驻服务正常退出停止原容器并保留卷。

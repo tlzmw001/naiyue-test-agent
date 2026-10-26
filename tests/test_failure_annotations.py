@@ -57,13 +57,13 @@ async def test_application_reads_annotation_and_classifies_model_once(monkeypatc
     def classify(error, source):
         calls.append(error)
         return quota(error, source)
-    app.configure_error_classifiers(model_id='A', model=[classify])
+    app.host.observability.configure_errors(model_id='A', model=[classify])
     with pytest.raises(VendorQuotaError) as caught:
-        await app.arun(await app.acreate_session('A'), [('user', 'probe')])
+        await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'probe')])
     assert caught.value is error and calls == [error]
     assert read_failure_description(error, run_id=events[-1].run_id).reason == 'vendor_quota'
     assert events[-1].data.failure.reason == 'vendor_quota'
-    assert all(owner._run is None for owner in app._sessions._sessions.values())
+    assert all(owner._runtime.run is None for owner in app.host.sessions._sessions._sessions.values())
 
 
 def test_broken_annotation_getter_is_safe_and_does_not_search_cause(caplog):

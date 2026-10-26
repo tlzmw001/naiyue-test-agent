@@ -6,7 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+from scripts.component_fixtures import open_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import create_subagent_tool
 from test_async_application import StreamingToolModel, call
@@ -25,9 +25,9 @@ def test_child_checkpoint_failure_after_mcp_effect_returns_error_without_replay(
         options = dict(database_path=tmp_path / 'state.sqlite', tools=[create_subagent_tool()],
             initial_active_tools=['subagent'], system_prompt='', response_format=None,
             settings=child_settings(path, mode='BypassApprovals'))
-        async with open_async_persistent_application('unused', **options) as app:
+        async with open_component_application('unused', **options) as app:
             instances = record_instances(monkeypatch, app)
-            backend = app._agent.checkpointer
+            backend = app.host.runs._agent.checkpointer
             original = backend.aput
             attempts = []
             async def fail(config, *args, **kwargs):
@@ -36,15 +36,15 @@ def test_child_checkpoint_failure_after_mcp_effect_returns_error_without_replay(
                     raise OSError('PRIVATE-MCP-CHECKPOINT')
                 return await original(config, *args, **kwargs)
             monkeypatch.setattr(backend, 'aput', fail)
-            sid = await app.acreate_session('A')
-            result = await app.arun(sid, [('user', 'child call')])
+            sid = await app.host.sessions.create('A')
+            result = await app.host.runs.start(sid, [('user', 'child call')])
             outer, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
             assert outer.status == 'error' and 'checkpoint' in outer.content.lower()
             assert result['messages'][-1].content == 'root handled save failure'
             assert attempts and len(calls(path)) == 1
             assert instances[0]['status'] == 'failed' and instances[0]['settled']
             assert not process_alive(calls(path)[0]['pid'])
-            assert (await app.aget_session_status(sid))['state'] == 'ready'
+            assert (await app.host.sessions.status(sid))['state'] == 'ready'
             assert 'PRIVATE-MCP-CHECKPOINT' not in str(result) + caplog.text
     asyncio.run(scenario())
 
@@ -56,7 +56,7 @@ def test_distinct_child_cleanup_failure_is_reported_and_application_still_closes
         holder = {}
         async def inject_after_effect(messages):
             if not isinstance(messages[-1], ToolMessage): return
-            owner, = [owner for key, owner in holder['app']._sessions.mcp_resources._owners.items()
+            owner, = [owner for key, owner in holder['app'].host.sessions._sessions.mcp_resources._owners.items()
                       if key[1] != 'root']
             close = owner.close
             async def fail():
@@ -67,12 +67,12 @@ def test_distinct_child_cleanup_failure_is_reported_and_application_still_closes
         app, _ = await make_child_app(monkeypatch, path, child, mode='BypassApprovals')
         holder['app'] = app
         instances = record_instances(monkeypatch, app)
-        sid = await app.acreate_session('A')
+        sid = await app.host.sessions.create('A')
         with pytest.raises(ExceptionGroup):
-            await app.arun(sid, [('user', 'cleanup fault')])
+            await app.host.runs.start(sid, [('user', 'cleanup fault')])
         assert len(calls(path)) == 1 and not process_alive(calls(path)[0]['pid'])
         assert instances[0]['status'] == 'failed' and instances[0]['settled']
         with pytest.raises(ExceptionGroup): await app.aclose()
-        assert app._closed
+        assert app.root._lifetime._closed
         assert all(not process_alive(r['pid']) for r in facts(path) if r['event'] == 'start')
     asyncio.run(scenario())

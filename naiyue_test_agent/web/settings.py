@@ -1,12 +1,14 @@
 """Explicit local-server settings; credentials never appear in object repr."""
 
 from pathlib import Path
+import os
 import secrets
 
 from naiyue_test_agent.config_paths import get_models_path
 from naiyue_test_agent.settings import AppSettings
+from naiyue_test_agent.execution_roots import Project
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class WebSettings(BaseModel):
@@ -15,6 +17,7 @@ class WebSettings(BaseModel):
     config_path: Path = Field(default_factory=get_models_path)
     database_path: Path
     frontend_dist: Path
+    expected_project: Project | None = Field(default=None, exclude=True)
     workspace_root: Path | None = None
     workspace_id: str | None = None
     runtime_settings: AppSettings | None = Field(default=None, exclude=True, repr=False)
@@ -43,8 +46,19 @@ class WebSettings(BaseModel):
 
     @field_validator('workspace_root')
     @classmethod
-    def canonical_workspace(cls, value):
+    def canonical_workspace(cls, value, info):
+        if value is not None and info.data.get('expected_project') is not None:
+            return Path(os.path.abspath(value.expanduser()))
         return value.expanduser().resolve(strict=True) if value is not None else None
+
+    @model_validator(mode='after')
+    def existing_project_matches_scope(self):
+        project = self.expected_project
+        if project is not None and (self.workspace_id != project.project_id
+                or self.workspace_root != project.canonical_root
+                or self.database_path.expanduser().absolute() != project.database_path):
+            raise ValueError('workspace_database_mismatch')
+        return self
 
     @property
     def authority(self):

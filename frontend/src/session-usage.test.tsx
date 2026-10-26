@@ -133,7 +133,7 @@ it('encodes the model cursor and forwards cancellation to the HTTP request', asy
   const controller = new AbortController();
   await new WebApi('test').usage('session/id', 'gateway/model:v2', controller.signal);
   const [url, init] = fetcher.mock.calls[0];
-  expect(url).toBe('/api/sessions/session%2Fid/usage?after_model=gateway%2Fmodel%3Av2');
+  expect(url).toBe('/api/v1/scopes/chats/sessions/session%2Fid/usage?after_model=gateway%2Fmodel%3Av2');
   expect(init.signal).toBe(controller.signal);
 });
 

@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 
 from tests.storage_backup_fixture import artifact
 from tests.test_storage_restore import saved_store, maintenance, invoke, final_result
@@ -115,8 +115,8 @@ def test_unsafe_files_cannot_be_used_or_moved(tmp_path, monkeypatch, capsys, kin
 
 @pytest.mark.parametrize('point', ['candidate', 'marker', 'move', 'install', 'completion', 'unlink'])
 def test_io_failure_preserves_primary_error_and_all_recovery_evidence(tmp_path, monkeypatch, caplog, point):
-    from naiyue_test_agent.storage_restore import restore_backup
-    from naiyue_test_agent import storage_restore as executor, storage_restore_record as records
+    from naiyue_test_agent.storage.restore import restore_backup
+    from naiyue_test_agent.storage import restore as executor, restore_record as records
     location, saved = saved_store(tmp_path)
     database = location.database_path
     original = database.read_bytes()

@@ -6,7 +6,7 @@ import pytest
 
 
 def test_lock_is_nonblocking_and_released_on_close(tmp_path):
-    from naiyue_test_agent.storage_files import open_store_file, acquire_store_lock, release_store_lock
+    from naiyue_test_agent.storage.files import open_store_file, acquire_store_lock, release_store_lock
     path = tmp_path / 'owner.lock'
     first, second = open_store_file(path), open_store_file(path)
     try:
@@ -23,7 +23,7 @@ def test_lock_is_nonblocking_and_released_on_close(tmp_path):
 
 
 def test_regular_files_keep_permissions_and_links_are_rejected(tmp_path):
-    from naiyue_test_agent.storage_files import open_store_file, check_store_file
+    from naiyue_test_agent.storage.files import open_store_file, check_store_file
     target = tmp_path / 'regular'
     target.write_bytes(b'content')
     target.chmod(0o644)
@@ -43,7 +43,7 @@ def test_windows_lock_dispatch_uses_fixed_range_and_preserves_other_io(monkeypat
     import errno
     from types import SimpleNamespace
     import sys
-    from naiyue_test_agent import storage_files
+    from naiyue_test_agent.storage import files as storage_files
     calls = []
     monkeypatch.setattr(storage_files, 'os', SimpleNamespace(name='nt', SEEK_SET=0,
         lseek=lambda *args: calls.append(('seek', *args))))
@@ -66,7 +66,7 @@ def test_windows_open_uses_reparse_handle_and_noninherit_crt_flags(monkeypatch, 
     import ctypes
     from types import SimpleNamespace
     import sys
-    from naiyue_test_agent import storage_files
+    from naiyue_test_agent.storage import files as storage_files
     calls = []
     def create(*args):
         calls.append(('create', args))
@@ -97,7 +97,7 @@ def test_windows_handle_is_closed_when_crt_conversion_fails(monkeypatch, tmp_pat
     import ctypes
     from types import SimpleNamespace
     import sys
-    from naiyue_test_agent import storage_files
+    from naiyue_test_agent.storage import files as storage_files
     closed = []
     def create(*args):
         return 456

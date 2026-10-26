@@ -8,8 +8,9 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+from scripts.component_fixtures import open_component_application
+from naiyue_test_agent.storage.project_store import ProjectStore
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import create_session_read_tool
 from naiyue_test_agent.settings import AppSettings
@@ -20,7 +21,7 @@ from test_permission_pipeline import call
 def persistent(monkeypatch, storage, replies):
     model = DynamicModel(responses=replies)
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
-    return open_async_persistent_application('synthetic', database_path=storage, tools=[create_session_read_tool()],
+    return open_component_application('synthetic', database_path=storage, tools=[create_session_read_tool()],
         settings=AppSettings(), system_prompt='', response_format=None)
 
 
@@ -30,34 +31,34 @@ async def test_mode_persists_but_remembered_target_does_not(monkeypatch, tmp_pat
     root.mkdir(); target.write_text('data')
     database = tmp_path / 'sessions.sqlite'
     async with persistent(monkeypatch, database, [AIMessage(content='', tool_calls=[call(target)]), AIMessage(content='done')]) as app:
-        storage = app._storage
-        sid = await app.acreate_workspace_session('A', root)
-        await app.arun(sid, [('user', 'read')])
-        await app.aresume_tool_approval(sid, ['approve'], remember_approved=['c1'])
-        assert app._sessions.resolve_permission_context(sid)['session_allow']
-        await app.aset_permission_mode(sid, 'NoAsk')
-        assert storage.get(sid)['permission_mode'] == 'NoAsk'
+        storage = app.host.sessions._persistence.storage
+        sid = await app.host.sessions.create_workspace('A', root)
+        await app.host.runs.start(sid, [('user', 'read')])
+        await app.host.runs.resume_approval(sid, ['approve'], remember_approved=['c1'])
+        assert app.host.sessions._sessions.resolve_permission_context(sid)['session_allow']
+        await app.host.sessions.select_permission_mode(sid, 'NoAsk')
+        assert storage.sessions.get(sid)['permission_mode'] == 'NoAsk'
     async with persistent(monkeypatch, database, []) as app:
-        storage = app._storage
-        await app.arestore_session(sid)
-        assert app.get_permission_mode(sid) == 'NoAsk'
-        assert app._sessions.resolve_permission_context(sid)['session_allow'] == []
-        assert app._sessions.require(sid).describe_session()['permission_mode'] == 'NoAsk'
+        storage = app.host.sessions._persistence.storage
+        await app.host.sessions.restore(sid)
+        assert app.host.sessions.permission_mode(sid) == 'NoAsk'
+        assert app.host.sessions._sessions.resolve_permission_context(sid)['session_allow'] == []
+        assert app.host.sessions._sessions.require(sid).describe_session()['permission_mode'] == 'NoAsk'
 
 
 @async_test
 async def test_mode_save_failure_does_not_change_published_mode(monkeypatch, tmp_path):
     async with persistent(monkeypatch, tmp_path / 'sessions.sqlite', []) as app:
-        storage = app._storage
-        sid = await app.acreate_session('A')
+        storage = app.host.sessions._persistence.storage
+        sid = await app.host.sessions.create('A')
         def fail(*args):
             raise SessionPersistenceError('synthetic_save_failed')
-        monkeypatch.setattr(storage, 'select_permission_mode', fail)
+        monkeypatch.setattr(storage.sessions, 'select_permission_mode', fail)
         with pytest.raises(SessionPersistenceError):
-            await app.aset_permission_mode(sid, 'NoAsk')
-        assert app.get_permission_mode(sid) == storage.get(sid)['permission_mode'] == 'Default'
+            await app.host.sessions.select_permission_mode(sid, 'NoAsk')
+        assert app.host.sessions.permission_mode(sid) == storage.sessions.get(sid)['permission_mode'] == 'Default'
         with pytest.raises(ValueError):
-            await app.aset_permission_mode(sid, 'Auto')
+            await app.host.sessions.select_permission_mode(sid, 'Auto')
 
 
 def test_v2_database_is_rejected_without_migration(tmp_path):
@@ -77,7 +78,7 @@ def test_v2_database_is_rejected_without_migration(tmp_path):
     before = path.read_bytes()
     for _ in range(2):
         with pytest.raises(SessionPersistenceError, match='unsupported_store_schema'):
-            SessionStorage(path)
+            ProjectStore(path)
         assert path.read_bytes() == before
 
 
@@ -107,5 +108,5 @@ async def test_dynamic_registration_validates_wildcard_rule_before_publishing(mo
         """Has no public value argument required by the wildcard rule."""
         return str(count)
     with pytest.raises(ValueError, match='unknown public argument'):
-        await app.aregister_tool(ToolSpec(incompatible, incompatible.args_schema, permissions=ToolPermission(default='allow')))
-    assert [s.tool.name for s in app.get_registered_tools()] == ['probe']
+        await app.host.tools.register(ToolSpec(incompatible, incompatible.args_schema, permissions=ToolPermission(default='allow')))
+    assert [s.tool.name for s in app.host.tools.list()] == ['probe']

@@ -1,4 +1,7 @@
 .form { position: relative; }
+.workspaceContext { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: 2px 8px; min-width: 0; padding: 8px 10px 5px; margin: 0 12px -1px; border: 1px solid var(--line); border-bottom: 0; border-radius: var(--r-lg) var(--r-lg) 0 0; background: var(--surface-subtle); }
+.workspaceContext > :first-child { min-width: 0; flex: 0 1 auto; max-width: 50%; }
+@media (max-width: 480px) { .workspaceContext { margin-inline: 8px; padding-inline: 6px; gap: 2px 4px; } }
 .modeRow { display: flex; justify-content: flex-start; margin-bottom: 8px; }
 .form > .editor { resize: none; }
 .suggestions { position: absolute; bottom: calc(100% + 8px); left: 0; width: 100%; z-index: 20; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: 0 6px 24px var(--shadow); padding: 8px; }

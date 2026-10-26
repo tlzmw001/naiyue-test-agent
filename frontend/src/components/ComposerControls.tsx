@@ -5,7 +5,7 @@ import type { WebApi } from '../api';
 import SkillsMenu from './SkillsMenu';
 import { commands } from '../commands';
 import type { CommandName, ComposerMenu } from '../commands';
-import { Icon } from './Icons';
+import { Chevron, Icon } from './Icons';
 import { sendScrollOptions, type SendScroll } from '../useSendScroll';
 import styles from './ComposerControls.module.css';
 
@@ -95,7 +95,7 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
     <button type="button" className={styles.trigger} aria-label={`权限模式：${mode ?? '加载中'}`}
       aria-expanded={open === 'modes'} aria-controls={open === 'modes' ? id : undefined}
       onClick={event => toggle('modes', event.currentTarget)} disabled={disabled} title="权限模式 · Shift + Tab 切换">
-      {mode ?? '权限模式'} <span className={styles.chevron}>⌃</span>
+      {mode ?? '权限模式'} <Chevron direction={open === 'modes' ? 'up' : 'down'} />
     </button>
     <button type="button" className={styles.trigger} aria-label={`工具 · ${enabledCount} 项启用`}
       aria-expanded={open === 'tools'} aria-controls={open === 'tools' ? id : undefined}
@@ -117,7 +117,7 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
           aria-haspopup="menu" aria-expanded={!!scrollMenuMode} aria-controls={scrollMenuMode ? `${id}-scroll` : undefined}
           onClick={() => setScrollMenuMode('keyboard')} onKeyDown={event => {
             if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); setScrollMenuMode('keyboard'); }
-          }}><span>发送后滚动</span><span className={styles.chevron} aria-hidden="true">›</span></button>
+          }}><span>发送后滚动</span><Chevron direction="right" /></button>
         {scrollMenuMode && <section id={`${id}-scroll`} ref={scrollMenu} role="menu" aria-label="发送后滚动"
           className={`${styles.popover} ${styles.submenu}`}>
           {(Object.keys(sendScrollOptions) as SendScroll[]).map(value => <button key={value} type="button"
@@ -129,7 +129,7 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
       </div>}
       <p className={styles.note}>可在输入框输入以上指令。压缩需先结束运行并处理审批。</p>
     </section>}
-    {open === 'skills' && <SkillsMenu api={api} readEnabled={tools.includes('read')} className={styles.popover}
+    {open === 'skills' && <SkillsMenu api={api} sessionId={sessionId} readEnabled={tools.includes('read')} className={styles.popover}
       select={selectSkill} close={() => { setOpen(null); focusEditor(); }} />}
     {(open === 'modes' || open === 'tools') && <section id={id} role="dialog" aria-label={open === 'modes' ? '权限模式' : '主 Agent 工具'} className={styles.popover}>
       <div className={styles.heading}>{open === 'modes' ? '权限模式' : '主 Agent 可用工具'}

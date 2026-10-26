@@ -123,8 +123,8 @@ def estimate_context(model, system_message, messages, tools):
 
 
 def request_snapshot(context, estimate):
-    return {'version': 1, 'model_call_id': context['_naiyue_model_call_id'],
-        'model_id': context['_naiyue_model_id'], 'run_id': context.get('run_id'),
+    return {'version': 1, 'model_call_id': context.invocation.model_call.call_id,
+        'model_id': context.invocation.model_call.model_id, 'run_id': context.scope.identity.run_id,
         'recorded_at': datetime.now(timezone.utc).isoformat(), 'status': 'running',
         'estimate': estimate, 'usage': None}
 

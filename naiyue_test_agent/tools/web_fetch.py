@@ -1,5 +1,6 @@
 """GET readable Web content with reviewed DNS pins and per-hop permission checks."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 import asyncio
 from html.parser import HTMLParser
 import logging
@@ -94,12 +95,12 @@ def readable_content(data, headers, url):
 
 def _redirect_allowed(subject, runtime):
     context = runtime.context
-    rules = context['_permission_rules']
+    rules = context.authorization.permission_rules
     if match_rules(rules.deny, subject, deny=True):
         return False
     return (bool(match_rules(rules.allow, subject, deny=False))
-        or matches_session_allow(context['_session_allow'], subject)
-        or context['_permission_mode'] == 'BypassApprovals' or not subject['private'])
+        or matches_session_allow(context.authorization.session_allow, subject)
+        or context.authorization.permission_mode == 'BypassApprovals' or not subject['private'])
 
 
 def create_web_fetch_tool(*, settings=None, network_settings=None, progress_settings=None, retry_settings=None):
@@ -108,12 +109,12 @@ def create_web_fetch_tool(*, settings=None, network_settings=None, progress_sett
     public, execution = build_tool_schemas('WebFetchInput', _FetchInput,
         url=(str, Field(min_length=1, max_length=settings.max_url_chars)))
 
-    async def fetch(url: str, runtime: ToolRuntime[dict, dict], timeout: int | None = None):
+    async def fetch(url: str, runtime: ToolRuntime[RuntimeContext], timeout: int | None = None):
         permit = require_tool_permit(runtime)
         subject = permit['subject']
         if subject['args']['url'] != url:
             raise ToolException('web_fetch target does not match its reviewed URL.')
-        control = runtime.context.get('_run_control')
+        control = runtime.context.scope.control
         progress = ToolProgress(runtime, progress_settings)
         budget = retry.RetryBudget(retry_settings, 'web_fetch',
             settings.request_timeout_seconds if timeout is None else timeout, control=control, progress=progress)

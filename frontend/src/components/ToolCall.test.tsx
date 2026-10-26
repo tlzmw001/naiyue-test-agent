@@ -196,7 +196,7 @@ it('does not promote a result without a confirmed outcome, and preserves unconfi
   const { container, rerender } = render(<ToolCall call={call} result={result} />);
   expect(container.querySelector('summary')!.textContent).toContain('已有结果');
   expect(container.querySelector('summary')!.textContent).not.toContain('成功');
-  expect(container.querySelector('summary [aria-hidden="true"]')!.textContent).toBe('◇');
+  expect(container.querySelector('summary span[aria-hidden="true"]')!.textContent).toBe('◇');
   rerender(<ToolCall call={call} phase={phase} result={result} unconfirmed />);
   expect(container.querySelector('summary')!.textContent).toContain('结果未确认');
   expect(container.querySelector('summary')!.textContent).not.toContain('成功');

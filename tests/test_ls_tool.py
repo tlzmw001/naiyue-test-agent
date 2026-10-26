@@ -1,5 +1,6 @@
 """Pi-shaped directory listing with the project's workspace boundary."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from native_application_helpers import async_test
 
 import pytest
@@ -11,7 +12,7 @@ from naiyue_test_agent.tools.ls import create_session_ls_tool
 
 
 async def call_ls(tool, args, root):
-    return (await invoke_tool_feedback(tool, args, context={'workspace_root': root}, call_id='ls-call'))
+    return (await invoke_tool_feedback(tool, args, context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(root) if root is not None else None, session_id=None)), call_id='ls-call'))
 
 
 @async_test

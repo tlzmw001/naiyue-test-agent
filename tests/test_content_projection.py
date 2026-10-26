@@ -53,7 +53,7 @@ def test_unsupported_top_level_content_has_the_same_strict_error(content, delta)
 
 
 def test_retired_projection_wrappers_are_absent():
-    from naiyue_test_agent.application import cli_display
+    from naiyue_test_agent.cli import cli_display
     from naiyue_test_agent.agent_runtime import async_message_observation
     from naiyue_test_agent.web import serialization
     assert not hasattr(cli_display, '_text')

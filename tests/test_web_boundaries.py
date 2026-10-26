@@ -12,18 +12,18 @@ from test_async_application import StreamingToolModel
 def test_completed_session_restores_after_web_lifespan_restart(monkeypatch, tmp_path):
     async def scenario():
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[AIMessage(content='first')])) as (client, app):
-            session = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            run = (await client.post(f'/api/sessions/{session}/runs', json=request('one'))).json()['run_id']
-            await client.get(f'/api/runs/{run}/events')
+            session = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{session}/runs', json=request('one'))).json()['run_id']
+            await client.get(f'/api/v1/scopes/chats/runs/{run}/events')
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[AIMessage(content='second')])) as (client, app):
-            assert (await client.post(f'/api/sessions/{session}/prepare')).status_code == 200
-            old = (await client.get(f'/api/sessions/{session}')).json()
+            assert (await client.post(f'/api/v1/scopes/chats/sessions/{session}/prepare')).status_code == 200
+            old = (await client.get(f'/api/v1/scopes/chats/sessions/{session}')).json()
             assert [m['content'] for m in old['messages']] == ['one', 'first']
-            run = (await client.post(f'/api/sessions/{session}/runs', json=request('two'))).json()['run_id']
-            await client.get(f'/api/runs/{run}/events')
-            assert [m['content'] for m in (await client.get(f'/api/sessions/{session}')).json()['messages']] == [
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{session}/runs', json=request('two'))).json()['run_id']
+            await client.get(f'/api/v1/scopes/chats/runs/{run}/events')
+            assert [m['content'] for m in (await client.get(f'/api/v1/scopes/chats/sessions/{session}')).json()['messages']] == [
                 'one', 'first', 'two', 'second']
-            assert [m['content'] for m in (await client.get(f'/api/runs/{run}')).json()['messages']] == ['two', 'second']
+            assert [m['content'] for m in (await client.get(f'/api/v1/scopes/chats/runs/{run}')).json()['messages']] == ['two', 'second']
     asyncio.run(scenario())
 
 
@@ -31,23 +31,23 @@ def test_model_failure_is_safe_and_restart_does_not_replay(monkeypatch, tmp_path
     async def scenario():
         model = StreamingToolModel(replies=[RuntimeError('PRIVATE_GATEWAY_BODY')])
         async with web_client(monkeypatch, tmp_path, model) as (client, app):
-            session = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            run = (await client.post(f'/api/sessions/{session}/runs', json=request('start'))).json()['run_id']
-            stream = await client.get(f'/api/runs/{run}/events')
-            view = (await client.get(f'/api/runs/{run}')).json()
+            session = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{session}/runs', json=request('start'))).json()['run_id']
+            stream = await client.get(f'/api/v1/scopes/chats/runs/{run}/events')
+            view = (await client.get(f'/api/v1/scopes/chats/runs/{run}')).json()
             assert view['status'] == 'failed' and 'PRIVATE_GATEWAY_BODY' not in stream.text
         next_model = StreamingToolModel(replies=[])
         async with web_client(monkeypatch, tmp_path, next_model) as (client, app):
-            assert (await client.post(f'/api/sessions/{session}/prepare')).status_code == 200
-            response = await client.get(f'/api/sessions/{session}')
+            assert (await client.post(f'/api/v1/scopes/chats/sessions/{session}/prepare')).status_code == 200
+            response = await client.get(f'/api/v1/scopes/chats/sessions/{session}')
             assert response.status_code == 200 and next_model.seen == []
             history = response.json()
             assert history['recovery']['kind'] == 'interrupted_execution' and not history['can_run']
             assert [m['content'] for m in history['messages']] == ['start']
             assert history['live'] is None and history['recovery']['actions'] == ['continue']
             assert 'PRIVATE_GATEWAY_BODY' not in response.text
-            assert (await client.post(f'/api/sessions/{session}/runs', json=request('no replay'))).status_code == 409
-            assert next_model.seen == [] and not app.state.service.application.has_session(session)
+            assert (await client.post(f'/api/v1/scopes/chats/sessions/{session}/runs', json=request('no replay'))).status_code == 409
+            assert next_model.seen == [] and not app.state.service.application.sessions.is_loaded(session)
     asyncio.run(scenario())
     assert 'PRIVATE_GATEWAY_BODY' not in caplog.text
 
@@ -71,30 +71,30 @@ def test_request_window_is_bounded_without_eviction_replays(monkeypatch, tmp_pat
     async def scenario():
         model = StreamingToolModel(replies=[AIMessage(content='answer')])
         async with web_client(monkeypatch, tmp_path, model, max_receipts=1) as (client, app):
-            session = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+            session = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
             body = request('first')
-            first = await client.post(f'/api/sessions/{session}/runs', json=body)
-            await client.get(f'/api/runs/{first.json()["run_id"]}/events')
-            blocked = await client.post(f'/api/sessions/{session}/runs', json=request('next'))
+            first = await client.post(f'/api/v1/scopes/chats/sessions/{session}/runs', json=body)
+            await client.get(f'/api/v1/scopes/chats/runs/{first.json()["run_id"]}/events')
+            blocked = await client.post(f'/api/v1/scopes/chats/sessions/{session}/runs', json=request('next'))
             assert blocked.status_code == 409 and blocked.json()['error']['code'] == 'request_window_full'
-            duplicate = await client.post(f'/api/sessions/{session}/runs', json=body)
+            duplicate = await client.post(f'/api/v1/scopes/chats/sessions/{session}/runs', json=body)
             assert duplicate.json() == first.json() and len(model.seen) == 1
     asyncio.run(scenario())
 
 
 def test_save_failure_cannot_be_presented_as_web_completion(monkeypatch, tmp_path):
-    from naiyue_test_agent.application.session_storage import SessionPersistenceError
+    from naiyue_test_agent.storage.errors import SessionPersistenceError
 
     async def scenario():
         async with web_client(monkeypatch, tmp_path, StreamingToolModel(replies=[AIMessage(content='answer')])) as (client, app):
-            session = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+            session = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
             def fail(*args):
                 raise SessionPersistenceError('PRIVATE_SAVE_BODY')
-            monkeypatch.setattr(app.state.service.application._storage, 'finish_run', fail)
-            run = (await client.post(f'/api/sessions/{session}/runs', json=request('one'))).json()['run_id']
-            stream = await client.get(f'/api/runs/{run}/events')
-            view = (await client.get(f'/api/runs/{run}')).json()
+            monkeypatch.setattr(app.state.service.application.sessions._persistence.storage.runs, 'finish_run', fail)
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{session}/runs', json=request('one'))).json()['run_id']
+            stream = await client.get(f'/api/v1/scopes/chats/runs/{run}/events')
+            view = (await client.get(f'/api/v1/scopes/chats/runs/{run}')).json()
             assert view['status'] == 'failed' and view['done'] is True
             assert 'PRIVATE_SAVE_BODY' not in stream.text
-            assert (await client.post(f'/api/sessions/{session}/runs', json=request('retry'))).status_code == 409
+            assert (await client.post(f'/api/v1/scopes/chats/sessions/{session}/runs', json=request('retry'))).status_code == 409
     asyncio.run(scenario())

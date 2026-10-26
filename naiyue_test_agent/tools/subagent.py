@@ -1,5 +1,6 @@
 """Immutable role definitions; execution is supplied by the application."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 from dataclasses import dataclass
 import re
 
@@ -59,10 +60,10 @@ def create_subagent_tool():
     public, execution = build_tool_schemas('SubAgentInput', SubAgentInput)
 
     @tool('subagent', args_schema=execution, response_format='content_and_artifact')
-    async def delegate(agent: str, task: str, runtime: ToolRuntime[dict, dict], agent_id: str | None = None):
+    async def delegate(agent: str, task: str, runtime: ToolRuntime[RuntimeContext], agent_id: str | None = None):
         """Delegate a foreground task. Omit agent_id for fresh history, or pass a returned ID to continue."""
         require_tool_permit(runtime)
-        port = runtime.context.get('ainvoke_subagent')
+        port = runtime.context.scope.capabilities.invoke_subagent
         if not callable(port):
             raise PermissionMechanismError('Subagent execution port is unavailable')
         return await port(agent, task, agent_id=agent_id, parent_context=runtime.context,
@@ -100,20 +101,20 @@ def create_subagent_list_tool():
     public, execution = build_tool_schemas('SubAgentListInput', SubAgentListInput)
 
     @tool('subagent_list', args_schema=execution)
-    async def list_instances(runtime: ToolRuntime[dict, dict], limit: int | None = None, before: str | None = None):
+    async def list_instances(runtime: ToolRuntime[RuntimeContext], limit: int | None = None, before: str | None = None):
         """Find this session's child instances and continuation candidates. Metadata only; paginate with next_before."""
         permit = require_tool_permit(runtime)
-        if runtime.context.get('agent_path', 'root') != 'root':
+        if runtime.context.scope.identity.agent_path != 'root':
             raise ToolException('Only the root agent can list subagent instances.')
         if permit.get('tool_name') != 'subagent_list':
             raise PermissionMechanismError('Subagent list permission does not match its tool')
         batch = runtime.state.get('tool_execution', {})
         call = next((call for call in batch.get('calls', [])
             if call['id'] == runtime.tool_call_id), None)
-        if (call is None or permit != permission_binding(runtime.context, batch.get('batch_id'), call)
+        if (call is None or permit != permission_binding(runtime.context.scope.identity, batch.get('batch_id'), call)
                 or permit['subject'].get('args') != {'limit': limit, 'before': before}):
             raise PermissionMechanismError('Subagent list arguments do not match its execution permit')
-        port = runtime.context.get('alist_subagents')
+        port = runtime.context.scope.capabilities.list_subagents
         if not callable(port):
             raise PermissionMechanismError('Subagent list execution port is unavailable')
         return await port(parent_context=runtime.context, parent_state=runtime.state, limit=limit, before=before)

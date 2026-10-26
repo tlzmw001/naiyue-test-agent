@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage
 from pydantic import Field
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application import cli
+from naiyue_test_agent.cli import chat as cli
 from naiyue_test_agent.tools import write as write_module
 from naiyue_test_agent.model_access import ModelCatalog
 
@@ -65,10 +65,15 @@ def test_cli_uncertain_write_tells_user_to_inspect_before_retry(
                         lambda _path: ModelCatalog('A', {'A': model}))
 
     attempts = []
+    real_replace = write_module.os.replace
 
     def unknown_replace(_source, _target):
-        attempts.append(True)
-        raise OSError('PRIVATE_DISK_DETAIL')
+        # Fault only the user-file commit, not discovery/SQLite infrastructure
+        # that now starts before the remote tool is called.
+        if Path(_target) == tmp_path / 'case.md':
+            attempts.append(True)
+            raise OSError('PRIVATE_DISK_DETAIL')
+        return real_replace(_source, _target)
 
     monkeypatch.setattr(write_module.os, 'replace', unknown_replace)
     feed(monkeypatch, 'write case', 'try again', ':quit')

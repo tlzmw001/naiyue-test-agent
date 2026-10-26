@@ -8,7 +8,7 @@ import json
 import logging
 from threading import Lock
 
-from naiyue_test_agent.application.stream_projection import StreamingMessageProjection
+from naiyue_test_agent.application.conversation.stream_projection import StreamingMessageProjection
 from naiyue_test_agent.tools.settings import ToolProgressSettings
 from .errors import WebError
 from .serialization import encoded_size, wire_event, project_event_for_web

@@ -6,6 +6,7 @@ from .observation import observe, emit_event
 
 import asyncio
 import logging
+from naiyue_test_agent.contracts.run_context import ModelCallState, PreparedRequest, RuntimeContext
 import re
 from collections.abc import Callable
 from uuid import uuid4
@@ -14,7 +15,7 @@ from langchain.agents.middleware import AgentMiddleware, hook_config
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from .run_control import UserStop, native_async_model
-from .request_preparation import PREPARED_REQUEST_KEY, prepare_request
+from .request_preparation import prepare_request
 
 from naiyue_test_agent.agent_runtime.events import (
     RunEventPublisher, AgentEventPublisher,
@@ -56,24 +57,23 @@ class _ModelSelectionMiddleware(AgentMiddleware):
         return 'select_model'
 
     def _prepare(self, runtime):
-        context = runtime.context or {}
-        context.pop(PREPARED_REQUEST_KEY, None)
-        session_id = context.get('session_id') if context else None
+        context = runtime.context
+        session_id = context.scope.identity.session_id if context else None
         if not isinstance(session_id, str) or not session_id.strip():
             raise ValueError('A non-empty session_id is required')
-        run_id = context.get('run_id') if context else None
+        run_id = context.scope.identity.run_id if context else None
         correlation = {'run_id': run_id} if run_id else {}
 
         call_id = uuid4().hex
-        context['_naiyue_model_call_id'] = call_id
-        context.pop('_naiyue_model_id', None)
-        turns = context.get('_turn_observer')
+        context.invocation.model_call = ModelCallState(call_id)
+        context.invocation.tool_batch = None
+        turns = context.scope.observation.turns
         if turns is not None:
             observe(turns, turns.begin, call_id)
-        context_operations = context.get('_context_observer')
+        context_operations = context.scope.observation.context_operations
         if context_operations is not None:
             observe(context_operations, context_operations.model_call_started, call_id)
-        path = context.get('agent_path', 'root')
+        path = context.scope.identity.agent_path
         if self.resolve_request_configuration is not None:
             model_id, model, names = self.resolve_request_configuration(session_id, path)
         else:
@@ -88,26 +88,27 @@ class _ModelSelectionMiddleware(AgentMiddleware):
                     'event': 'model_selected', 'model_id': model_id, **correlation,
                 }},
             )
-        context['_naiyue_model_id'] = event_label(model_id)
-        return {'model_id': model_id, 'model_call_id': call_id, 'model': model,
-                'active_tool_names': names}
+        context.invocation.model_call.model_id = event_label(model_id)
+        return PreparedRequest(model_id, call_id, model, active_tool_names=names)
 
     @hook_config(can_jump_to=['end'])
     async def abefore_model(self, state, runtime):
-        context = runtime.context or {}
-        control = context.get('_run_control') if context else None
+        context = runtime.context
+        if not isinstance(context, RuntimeContext):
+            raise ValueError('A non-empty session_id is required')
+        control = context.scope.control
         if control is not None and control.requested:
             return {'run_stopped': True, 'jump_to': 'end'}
         try:
             prepared = self._prepare(runtime)
             return await prepare_request(state, runtime, prepared, toolset=self.toolset, compact=self.compact)
         except (Exception, asyncio.CancelledError, UserStop) as error:
-            operations = context.get('_context_observer')
+            operations = context.scope.observation.context_operations
             if operations is not None:
-                observe(operations, operations.model_call_failed, context.get('_naiyue_model_call_id'), error)
+                observe(operations, operations.model_call_failed, (context.invocation.model_call.call_id if context.invocation.model_call is not None else None), error)
             description = describe_failure_in_context(error, context, source='runtime')
             logger.error('model_request_preparation_failed error_type=%s', safe_error_type(error))
-            turns = context.get('_turn_observer')
+            turns = context.scope.observation.turns
             if turns is not None:
                 observe(turns, turns.fail, run_failure_data(description))
             if isinstance(error, UserStop):
@@ -116,10 +117,10 @@ class _ModelSelectionMiddleware(AgentMiddleware):
 
     def _accept(self, request, response, model_id, call_id):
         context = request.runtime.context
-        run_id = context.get('run_id')
+        run_id = context.scope.identity.run_id
         correlation = {'run_id': run_id} if run_id else {}
-        context_operations = context.get('_context_observer')
-        turns = context.get('_turn_observer')
+        context_operations = context.scope.observation.context_operations
+        turns = context.scope.observation.turns
         message = next((item for item in response.result if isinstance(item, AIMessage)), None)
         if message is not None:
             message.response_metadata[MODEL_STOP_REASON_KEY] = normalize_stop_reason(message)
@@ -158,21 +159,22 @@ class _ModelSelectionMiddleware(AgentMiddleware):
             observe(turns, turns.accept, message)
         if context_operations is not None:
             observe(context_operations, context_operations.model_call_accepted, call_id)
-        prepared = context.get(PREPARED_REQUEST_KEY, {})
-        notices, tasks = prepared.get('background_notices'), context.get('_process_tasks')
-        control = context.get('_run_control')
+        prepared = context.invocation.model_call.prepared if context.invocation.model_call else None
+        notices = prepared.background_notices if prepared is not None else None
+        tasks = context.scope.capabilities.process_tasks
+        control = context.scope.control
         if notices is not None and tasks is not None and not (control is not None and control.requested):
             try:
-                tasks.acknowledge_notices(notices, session_id=context['session_id'],
-                    workspace_root=context.get('workspace_root'), run_id=context['run_id'])
+                tasks.acknowledge_notices(notices, session_id=context.scope.identity.session_id,
+                    workspace_root=context.scope.identity.execution_path, run_id=context.scope.identity.run_id)
             except Exception as error:
                 logger.warning('background_notice_ack_failed error_type=%s', safe_error_type(error))
         return response
 
     def _failed(self, context, error, model_id, call_id):
-        run_id = context.get('run_id')
+        run_id = context.scope.identity.run_id
         correlation = {'run_id': run_id} if run_id else {}
-        context_operations = context.get('_context_observer')
+        context_operations = context.scope.observation.context_operations
         if context_operations is not None:
             observe(context_operations, context_operations.model_call_failed, call_id, error)
         description = describe_failure_in_context(error, context, source='model', model_id=model_id)
@@ -195,13 +197,16 @@ class _ModelSelectionMiddleware(AgentMiddleware):
 
 
     async def awrap_model_call(self, request, handler):
-        prepared = request.runtime.context[PREPARED_REQUEST_KEY]
-        model_id, call_id, model = prepared['model_id'], prepared['model_call_id'], prepared['model']
+        prepared = request.runtime.context.invocation.model_call.prepared
+        if prepared is None:
+            raise RuntimeError('Current model request is not prepared')
+        model_id, call_id, model = prepared.model_id, prepared.model_call_id, prepared.model
         response = None
         try:
-            configured = request.override(**{key: prepared[key] for key in ('model', 'tools', 'system_message')
-                                              if key in prepared})
-            control = request.runtime.context.get('_run_control')
+            configured = request.override(model=prepared.model,
+                **({'tools': prepared.tools} if prepared.tools is not None else {}),
+                **({'system_message': prepared.system_message} if prepared.system_message is not None else {}))
+            control = request.runtime.context.scope.control
             if control is not None and native_async_model(model):
                 response = await control.await_model(lambda: handler(configured))
             else:
@@ -221,8 +226,8 @@ def token_count(value):
 
 
 def _emit(context, event_type, data, *, primary_error=None):
-    publisher = context.get('_run_event_publisher') if isinstance(context, dict) else None
+    publisher = context.scope.observation.publisher if isinstance(context, RuntimeContext) else None
     if (not isinstance(publisher, (RunEventPublisher, AgentEventPublisher))
-            or not publisher.matches(context.get('session_id'), context.get('run_id'))):
+            or not publisher.matches(context.scope.identity.session_id, context.scope.identity.run_id)):
         return
     emit_event(publisher, event_type, data)

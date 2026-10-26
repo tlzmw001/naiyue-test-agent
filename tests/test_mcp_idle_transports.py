@@ -58,14 +58,14 @@ def test_ttl_added_during_occupied_run_uses_existing_session_occupation(monkeypa
         app, model = await empty_app(monkeypatch, [AIMessage(content='first'), call(NAME, {}), AIMessage(content='done')])
         entered, release = asyncio.Event(), asyncio.Event()
         model.entered, model.release = entered, release
-        sid = await app.acreate_session('A')
-        task = asyncio.create_task(app.arun(sid, [('user', 'hold model')]))
-        resources = app._sessions.mcp_resources
+        sid = await app.host.sessions.create('A')
+        task = asyncio.create_task(app.host.runs.start(sid, [('user', 'hold model')]))
+        resources = app.host.sessions._sessions.mcp_resources
         now = clock(resources)
         try:
             await entered.wait()
             write_config(config, {'local': stdio_settings(path, 'stateful', allowed_tools=['echo'], idle_timeout_seconds=10)})
-            await app.arefresh_mcp(config)
+            await app.host.mcp.refresh(config)
             client = await use(resources, sid)
             assert sid in resources._active_sessions and not resources._idle_handles
             now[0] = 1000
@@ -77,9 +77,9 @@ def test_ttl_added_during_occupied_run_uses_existing_session_occupation(monkeypa
             expire(resources)
             await settled(resources)
             assert not resources._owners and not calls(path)
-            await app.aset_active_tools(sid, [NAME])
-            await app.arun(sid, [('user', 'call new')])
-            await app.aresume_tool_approval(sid, ['approve'])
+            await app.host.sessions.select_tools(sid, [NAME])
+            await app.host.runs.start(sid, [('user', 'call new')])
+            await app.host.runs.resume_approval(sid, ['approve'])
             assert len(calls(path)) == 1
             assert next(iter(resources._owners.values())).ready.result().client is not client
         finally:

@@ -48,7 +48,7 @@ export async function subscribeRun({ api, runId, sessionId, signal, initial, res
       return confirmed;
     } catch (error) {
       if (signal.aborted) return;
-      const permanent = error instanceof ApiError && ['unauthorized', 'invalid_host', 'invalid_origin', 'run_not_found', 'session_not_found'].includes(error.code) ||
+      const permanent = error instanceof ApiError && ['unauthorized', 'invalid_host', 'invalid_origin', 'service_instance_mismatch', 'run_not_found', 'session_not_found'].includes(error.code) ||
         error instanceof Error && error.message === 'invalid_event';
       if (permanent || attempt === runReconnectDelays.length) throw error;
       reconnecting(attempt + 1);

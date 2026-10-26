@@ -13,7 +13,7 @@ from langchain_core.messages import HumanMessage, ToolMessage
 
 from native_application_helpers import async_test
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_application import build_async_local_application
+from scripts.component_fixtures import build_component_application
 from naiyue_test_agent.model_access import load_model_catalog
 from naiyue_test_agent.tools import create_subagent_tool
 from naiyue_test_agent.settings import AppSettings
@@ -60,7 +60,7 @@ async def cached_application(monkeypatch, tmp_path, serve, *, tools=(), settings
     config['models']['root']['thinking'] = {'supported_levels': ['low'], 'default_level': 'model_default'}
     catalog = load_model_catalog(write_config(tmp_path, config))
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: catalog)
-    app = await build_async_local_application('unused', tools=list(tools), settings=settings or AppSettings(),
+    app = await build_component_application('unused', tools=list(tools), settings=settings or AppSettings(),
         initial_active_tools=[spec.tool.name for spec in tools], system_prompt='ROOT', response_format=None)
     async with httpx.AsyncClient(transport=httpx.MockTransport(serve)) as transport:
         for name in catalog.model_ids:
@@ -101,16 +101,16 @@ async def test_root_child_summary_and_auto_use_own_model_defaults(monkeypatch, t
     async with cached_application(monkeypatch, tmp_path, serve, settings=options,
                                   tools=[definition(calls=effects, approved=True), create_subagent_tool()]) as (app, catalog):
         defaults = {name: deepcopy(catalog.get(name).model_kwargs) for name in catalog.model_ids}
-        sid = await app.acreate_session('root')
-        await app.aselect_thinking(sid, 'root', 'low')
-        result = await app.arun(sid, [('user', 'old task')])
+        sid = await app.host.sessions.create('root')
+        await app.host.sessions.select_thinking(sid, 'root', 'low')
+        result = await app.host.runs.start(sid, [('user', 'old task')])
         assert result['messages'][-1].content == 'older details ' * 500
         assert effects == [('probe', 'parent'), ('probe', 'child')]
         assert [(m.tool_call_id, m.status) for m in result['messages'] if isinstance(m, ToolMessage)] == [
             ('parent-probe', 'success'), ('delegate', 'success')]
-        await app.arun(sid, [('user', 'recent task')])
+        await app.host.runs.start(sid, [('user', 'recent task')])
         before = len(sent)
-        compacted = await app.acompact_context(sid)
+        compacted = await app.host.runs.compact(sid)
         assert compacted['compaction_status'] == 'applied' and len(sent) == before + 1
         assert sent[-1]['max_completion_tokens'] == 256
         assert sent[-1]['messages'][0]['content'].startswith('Summarize completed conversation history')
@@ -144,15 +144,15 @@ async def test_shared_model_defaults_survive_concurrent_calls_and_endpoint_failu
                                                       'code': 'unsupported_parameter', 'type': 'invalid_request_error'}})
         return completion_response(body, text='done ' + human)
     async with cached_application(monkeypatch, tmp_path, serve) as (app, catalog):
-        a, b, c = [await app.acreate_session('root') for _ in range(3)]
+        a, b, c = [await app.host.sessions.create('root') for _ in range(3)]
         before = deepcopy(catalog.get('root').model_kwargs)
-        task = asyncio.create_task(app.arun(a, [('user', 'hold')]))
+        task = asyncio.create_task(app.host.runs.start(a, [('user', 'hold')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            assert (await app.arun(b, [('user', 'healthy')]))['messages'][-1].content == 'done healthy'
+            assert (await app.host.runs.start(b, [('user', 'healthy')]))['messages'][-1].content == 'done healthy'
             import openai
             with pytest.raises(openai.BadRequestError):
-                await app.arun(c, [('user', 'fail')])
+                await app.host.runs.start(c, [('user', 'fail')])
             assert not task.done() and len(sent) == 3
             release.set()
             assert (await task)['messages'][-1].content == 'done hold'

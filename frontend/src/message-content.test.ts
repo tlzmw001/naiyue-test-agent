@@ -25,7 +25,7 @@ it('loads bounded JSON pages by server offsets with session, child, and revision
   expect(fetcher.mock.calls.length).toBeGreaterThan(2);
   for (const [path, options] of fetcher.mock.calls) {
     const url = new URL(path, 'http://localhost');
-    expect(url.pathname).toBe('/api/sessions/a%2Fb/messages/2/content');
+    expect(url.pathname).toBe('/api/v1/scopes/chats/sessions/a%2Fb/messages/2/content');
     expect(url.searchParams.get('agent_id')).toBe('child/one');
     expect(url.searchParams.get('revision')).toBe('3');
     expect(url.searchParams.get('conversation_revision')).toBe('7');

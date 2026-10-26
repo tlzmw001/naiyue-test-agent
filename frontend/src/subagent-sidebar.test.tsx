@@ -44,7 +44,9 @@ it('opens children only on request, keeps approval in main and links delegation 
   const approve = vi.spyOn(api, 'approve').mockResolvedValue({ kind: 'live_child', accepted: true, session_id: 's', run_id: 'r' });
   const stop = vi.spyOn(api, 'control').mockResolvedValue({ accepted: true, retained: [] });
   render(<App api={api} />);
-  fireEvent.click(await screen.findByRole('button', { name: /A · 未完成/ }));
+  const historyRow = await screen.findByRole('button', { name: / A$/ });
+  expect(within(historyRow).getByLabelText('任务状态：运行中')).toBeTruthy();
+  fireEvent.click(historyRow);
   await screen.findByRole('region', { name: '工具审批' });
   expect(screen.queryByRole('region', { name: '子智能体' })).toBeNull();
   expect(screen.queryByText('CHILD_PUBLIC_TEXT')).toBeNull();
@@ -94,7 +96,9 @@ it.each(['completed', 'stopped'])('renders child deltas and %s in the real sideb
     return new Promise(resolve => signal.addEventListener('abort', () => resolve()));
   });
   render(<App api={api} />);
-  fireEvent.click(await screen.findByRole('button', { name: /A · 未完成/ }));
+  const historyRow = await screen.findByRole('button', { name: / A$/ });
+  expect(within(historyRow).getByLabelText('任务状态：运行中')).toBeTruthy();
+  fireEvent.click(historyRow);
   await waitFor(() => expect(receive).toBeTypeOf('function'));
   fireEvent.click(screen.getByRole('button', { name: '查看子智能体 tester · child-' }));
   const panel = await screen.findByRole('region', { name: '子智能体' });

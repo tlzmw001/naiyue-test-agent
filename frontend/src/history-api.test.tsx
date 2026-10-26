@@ -17,7 +17,7 @@ it('opens explicitly and rebuilds the local delta baseline without another GET',
   vi.stubGlobal('fetch', fetcher);
   const session = await new WebApi('synthetic-access').prepare('s');
   expect(fetcher).toHaveBeenCalledTimes(1);
-  expect(fetcher.mock.calls[0][0]).toBe('/api/sessions/s/prepare');
+  expect(fetcher.mock.calls[0][0]).toBe('/api/v1/scopes/chats/sessions/s/prepare');
   expect(fetcher.mock.calls[0][1].method).toBe('POST');
   expect(session.live?.messages).toBe(session.messages);
   const next = applyEvent(session.live!, validateEvent({ version: 1, session_id: 's', run_id: 'r',
@@ -31,7 +31,7 @@ it('keeps GET read-only and passes opaque child cursors without executable threa
   const api = new WebApi('synthetic-access');
   await api.session('a/b');
   await api.messages('a/b', 'opaque+/cursor', 'actual-child');
-  expect(fetcher.mock.calls[0][0]).toBe('/api/sessions/a%2Fb');
+  expect(fetcher.mock.calls[0][0]).toBe('/api/v1/scopes/chats/sessions/a%2Fb');
   expect(fetcher.mock.calls[0][1].method).toBe('GET');
   const url = new URL(fetcher.mock.calls[1][0], 'http://localhost');
   expect(url.searchParams.get('before')).toBe('opaque+/cursor');

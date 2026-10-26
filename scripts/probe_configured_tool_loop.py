@@ -29,7 +29,10 @@ async def main() -> int:
     signal.alarm(90)
 
     from langchain.tools import tool
-    from naiyue_test_agent.application.async_application import build_async_local_application
+    if __package__:
+        from .component_fixtures import build_component_application
+    else:
+        from component_fixtures import build_component_application
     from scripts.provider_acceptance_budget import RequestBudget, guard_application_catalog
 
     expected = secrets.token_hex(6)
@@ -46,13 +49,13 @@ async def main() -> int:
 
     try:
         async with guard_application_catalog(budget):
-            app = await build_async_local_application(args.config,
+            app = await build_component_application(args.config,
                 tools=[ToolSpec(read_probe_value, read_probe_value.args_schema,
                                 permissions=ToolPermission(default='allow'))],
                 system_prompt='Call the requested tool, then return exactly its result.', response_format=None)
             try:
-                session = await app.acreate_session(args.model_id)
-                result = await app.arun(session, [('user',
+                session = await app.host.sessions.create(args.model_id)
+                result = await app.host.runs.start(session, [('user',
                     'Call read_probe_value exactly once, then reply only with the exact value it returns.')])
             finally:
                 await app.aclose()

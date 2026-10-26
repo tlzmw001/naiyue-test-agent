@@ -9,13 +9,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 
 from tests.storage_backup_fixture import artifact, source_store
 
 
 def test_destination_cleanup_keeps_original_backup_failure(tmp_path, monkeypatch, caplog):
-    from naiyue_test_agent import storage_backup
+    from naiyue_test_agent.storage import backup as storage_backup
     original, secondary = OSError('PRIVATE-original'), OSError('PRIVATE-close')
     connect = sqlite3.connect
     class FailedDestination(sqlite3.Connection):
@@ -37,7 +37,7 @@ def test_destination_cleanup_keeps_original_backup_failure(tmp_path, monkeypatch
 
 
 def test_snapshot_flush_uses_writable_handle(tmp_path, monkeypatch):
-    from naiyue_test_agent import storage_backup
+    from naiyue_test_agent.storage import backup as storage_backup
     sync = os.fsync
     observed = []
     def flush(fd):
@@ -54,7 +54,7 @@ def test_snapshot_flush_uses_writable_handle(tmp_path, monkeypatch):
 
 
 def test_readonly_handles_never_create_change_or_follow_files(tmp_path):
-    from naiyue_test_agent.storage_files import open_store_readonly
+    from naiyue_test_agent.storage.files import open_store_readonly
     path = tmp_path / 'file'
     with pytest.raises(FileNotFoundError):
         open_store_readonly(path)
@@ -77,7 +77,7 @@ def test_readonly_handles_never_create_change_or_follow_files(tmp_path):
 
 
 def test_windows_readonly_open_uses_existing_and_read_access(monkeypatch, tmp_path):
-    from naiyue_test_agent import storage_files
+    from naiyue_test_agent.storage import files as storage_files
     calls = []
     def create(*args):
         calls.append(args)
@@ -98,7 +98,7 @@ def test_windows_readonly_open_uses_existing_and_read_access(monkeypatch, tmp_pa
 
 @pytest.mark.parametrize('kind', ['manifest_link', 'backup_link', 'parent_link', *(['fifo'] if os.name != 'nt' else [])])
 def test_unsafe_backup_entries_are_invalid_without_traversal(tmp_path, kind):
-    from naiyue_test_agent.storage_backup import create_backup, validate_backup
+    from naiyue_test_agent.storage.backup import create_backup, validate_backup
     with closing(source_store(tmp_path)[0]) as source:
         saved = create_backup(source.connection, source.path, target_schema=CURRENT_SCHEMA)
         directory = artifact(source.path, saved['backup_id'])

@@ -22,16 +22,18 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ProcessRequest:
+    """Native Host request; run authority is supplied by the process capability."""
     argv: list[str]
     cwd: Path
     env: dict[str, str]
     timeout_seconds: float | None = None
     merge_output: bool = False
     eof_policy: Literal['shell', 'complete'] = 'complete'
-    execution_environment: dict[str, str] = field(default_factory=lambda: {'kind': 'host'})
+    execution_environment: dict[str, object] = field(default_factory=lambda: {'kind': 'host'})
     on_started: Callable[[], None] | None = field(default=None, compare=False, repr=False)
     on_execution_started: Callable[[float], None] | None = field(default=None, compare=False, repr=False)
     on_exited: Callable[[], None] | None = field(default=None, compare=False, repr=False)
+    stdin_fd: int | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,7 @@ class HostProcessRunner:
             raise ValueError('Only host process execution is available')
         seconds = request.timeout_seconds
         if (not request.argv or request.eof_policy not in ('shell', 'complete') or
+                request.stdin_fd is not None and (type(request.stdin_fd) is not int or request.stdin_fd < 0) or
                 seconds is not None and (type(seconds) not in (int, float) or
                     not math.isfinite(seconds) or seconds <= 0)):
             raise ValueError('Invalid process request')
@@ -78,7 +81,7 @@ class HostProcessRunner:
         options = ({'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt'
                    else {'start_new_session': True})
         spawn = asyncio.create_task(loop.subprocess_exec(lambda: protocol, *request.argv,
-            cwd=request.cwd, env=request.env, stdin=subprocess.DEVNULL,
+            cwd=request.cwd, env=request.env, stdin=request.stdin_fd if request.stdin_fd is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT if request.merge_output else subprocess.PIPE, **options))
         consumer = None

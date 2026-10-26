@@ -1,4 +1,6 @@
 """JSON Schema definitions enter the same registry without weakening Pydantic."""
+
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 from copy import deepcopy
 import math
 
@@ -27,11 +29,11 @@ VALID = {'choice': {'kind': 'count', 'value': 3}}
 
 def definition(schema=None, *, seen=None, permission=None, result_format='content', failure=None):
     schema = deepcopy(SCHEMA if schema is None else schema)
-    async def execute(runtime: ToolRuntime[dict, dict], **arguments):
+    async def execute(runtime: ToolRuntime[RuntimeContext], **arguments):
         permit = require_tool_permit(runtime)
         assert permit['subject']['args'] == arguments
         if seen is not None:
-            seen.append({'args': arguments, 'permit': permit, 'session_id': runtime.context['session_id']})
+            seen.append({'args': arguments, 'permit': permit, 'session_id': runtime.context.scope.identity.session_id})
         if failure is not None:
             raise failure
         return ('ok', {'args': arguments}) if result_format == 'content_and_artifact' else 'ok'

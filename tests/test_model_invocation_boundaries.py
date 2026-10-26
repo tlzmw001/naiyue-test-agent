@@ -1,5 +1,6 @@
 """Invocation observation closes once, preserves scopes, and tolerates faults."""
 
+from runtime_context_helpers import typed_scope
 import asyncio
 from uuid import uuid4
 
@@ -9,7 +10,7 @@ from langchain_core.outputs import LLMResult
 
 from native_application_helpers import async_test
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher
-from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
+from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
 from test_model_invocation_observation import callback, metadata, output
 
 
@@ -23,7 +24,7 @@ async def test_owner_task_closes_missing_framework_error_hook_once(monkeypatch, 
     handler, entered, release, closed = callback(), asyncio.Event(), asyncio.Event(), asyncio.Event()
     failure = RuntimeError('PRIVATE_FAILURE')
     async def call():
-        with bind_run_services(RunServices(publisher=RunEventPublisher('s', 'r', (events.append,)))):
+        with bind_run_scope(typed_scope(publisher=RunEventPublisher('s', 'r', (events.append,)))):
             await handler.on_chat_model_start({}, [], run_id=identity, metadata=metadata())
             entered.set()
             await release.wait()
@@ -50,9 +51,9 @@ async def test_owner_task_closes_missing_framework_error_hook_once(monkeypatch, 
 @async_test
 async def test_completed_invocation_uses_start_scope_after_binding_changes():
     a, b, identity, handler = [], [], uuid4(), callback()
-    with bind_run_services(RunServices(publisher=RunEventPublisher('a', 'r-a', (a.append,)))):
+    with bind_run_scope(typed_scope(publisher=RunEventPublisher('a', 'r-a', (a.append,)))):
         await handler.on_chat_model_start({}, [], run_id=identity, metadata=metadata())
-    with bind_run_services(RunServices(publisher=RunEventPublisher('b', 'r-b', (b.append,)))):
+    with bind_run_scope(typed_scope(publisher=RunEventPublisher('b', 'r-b', (b.append,)))):
         await handler.on_llm_end(output(None), run_id=identity)
     assert b == [] and len(a) == 2 and {e.session_id for e in a} == {'a'}
     assert a[-1].data.usage_status == 'unavailable' and handler._active == {}
@@ -61,7 +62,7 @@ async def test_completed_invocation_uses_start_scope_after_binding_changes():
 @async_test
 async def test_duplicate_start_and_finish_are_observable_and_do_not_duplicate_facts(caplog):
     events, identity, handler = [], uuid4(), callback()
-    with bind_run_services(RunServices(publisher=RunEventPublisher('s', 'r', (events.append,)))):
+    with bind_run_scope(typed_scope(publisher=RunEventPublisher('s', 'r', (events.append,)))):
         for _ in range(2):
             await handler.on_chat_model_start({}, [], run_id=identity, metadata=metadata())
         for _ in range(2):
@@ -74,7 +75,7 @@ async def test_duplicate_start_and_finish_are_observable_and_do_not_duplicate_fa
 @pytest.mark.parametrize('tags', [['naiyue_permission_review'], ['naiyue_summary', 'naiyue_permission_review_fast']])
 async def test_ambiguous_purpose_is_unknown_with_a_fixed_diagnostic(tags, caplog):
     events, identity, handler = [], uuid4(), callback()
-    with bind_run_services(RunServices(publisher=RunEventPublisher('s', 'r', (events.append,)))):
+    with bind_run_scope(typed_scope(publisher=RunEventPublisher('s', 'r', (events.append,)))):
         await handler.on_chat_model_start({}, [], run_id=identity, metadata=metadata(), tags=tags)
         await handler.on_llm_end(output(None), run_id=identity)
     assert events[0].data.purpose is None and 'model_usage_purpose_unavailable' in caplog.text
@@ -85,7 +86,7 @@ async def test_sync_model_async_fallback_releases_completed_records():
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
     model = FakeMessagesListChatModel(responses=[AIMessage(content='done')], callbacks=[callback()], metadata=metadata())
     events = []
-    with bind_run_services(RunServices(publisher=RunEventPublisher('s', 'r', (events.append,)))):
+    with bind_run_scope(typed_scope(publisher=RunEventPublisher('s', 'r', (events.append,)))):
         assert (await model.ainvoke('PRIVATE_INPUT')).content == 'done'
     assert len(events) == 2 and events[-1].data.status == 'returned'
     assert model.callbacks[0]._active == {}
@@ -95,7 +96,7 @@ async def test_sync_model_async_fallback_releases_completed_records():
 @pytest.mark.parametrize('response', [None, LLMResult(generations=[]), LLMResult(generations=[[], []])])
 async def test_absent_or_ambiguous_result_does_not_invent_usage(response):
     events, identity, handler = [], uuid4(), callback()
-    with bind_run_services(RunServices(publisher=RunEventPublisher('s', 'r', (events.append,)))):
+    with bind_run_scope(typed_scope(publisher=RunEventPublisher('s', 'r', (events.append,)))):
         await handler.on_chat_model_start({}, [], run_id=identity, metadata=metadata())
         await handler.on_llm_end(response, run_id=identity)
     assert events[-1].data.status == 'returned' and events[-1].data.usage_status == 'unavailable'
@@ -146,7 +147,7 @@ async def test_native_stream_error_keeps_partial_usage_and_original_exception(er
             raise failure
     handler, events = callback(), []
     model = PartialModel(responses=[], callbacks=[handler], metadata=metadata())
-    with bind_run_services(RunServices(publisher=RunEventPublisher('s', 'r', (events.append,)))):
+    with bind_run_scope(typed_scope(publisher=RunEventPublisher('s', 'r', (events.append,)))):
         with pytest.raises(RuntimeError) as caught:
             async for _ in model.astream('PRIVATE_TASK'):
                 pass
@@ -171,7 +172,7 @@ async def test_native_stream_cancellation_keeps_partial_usage_without_duplicate_
             await release.wait()
     model = StreamingModel(responses=[], callbacks=[handler], metadata=metadata())
     async def call():
-        with bind_run_services(RunServices(publisher=RunEventPublisher('s', 'r', (events.append,)))):
+        with bind_run_scope(typed_scope(publisher=RunEventPublisher('s', 'r', (events.append,)))):
             async for _ in model.astream('task'):
                 pass
     task = asyncio.create_task(call())

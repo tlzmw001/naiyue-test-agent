@@ -7,7 +7,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_application import build_async_local_application
+from scripts.component_fixtures import build_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.permissions import matches_session_allow, remembered_rule
@@ -47,7 +47,7 @@ async def make_mcp_app(monkeypatch, path, replies, *, mode='Default', rules=None
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     settings = AppSettings.model_validate({'mcp': {'servers': {'local': (server or stdio_settings(
         path, 'stateful', allowed_tools=['echo'])).model_dump()}}, 'permissions': {'mode': mode, **(rules or {})}})
-    app = await build_async_local_application('unused', tools=[], system_prompt='', response_format=None,
+    app = await build_component_application('unused', tools=[], system_prompt='', response_format=None,
         initial_active_tools=initial, settings=settings)
     return app, model
 
@@ -64,18 +64,18 @@ def test_root_agent_permission_call_result_and_events(monkeypatch, tmp_path, act
         mode = action if action in ('NoAsk', 'BypassApprovals') else 'Default'
         args = {'text': 3} if action == 'invalid' else {'text': 'hello'}
         app, model = await make_mcp_app(monkeypatch, path, [call(NAME, args), AIMessage(content='done')], mode=mode, rules=rules)
-        events = []; app.subscribe_events(events.append)
+        events = []; app.host.observability.subscribe(events.append)
         try:
-            spec, = app.get_registered_tools()
+            spec, = app.host.tools.list()
             assert spec.side_effects == 'unknown' and spec.execution_mode == 'sequential'
-            sid = await app.acreate_session('A')
-            result = await app.arun(sid, [('user', 'MCP')])
+            sid = await app.host.sessions.create('A')
+            result = await app.host.runs.start(sid, [('user', 'MCP')])
             if action in ('approve', 'reject'):
                 assert not calls(path)
                 assert result['approval_requests'][0]['remember_scope'] == 'tool'
                 prepared = result['tool_execution']['calls'][0]['subject']
                 assert prepared['mcp']['server_id'] == 'local' and prepared['args'] == args
-                result = await app.aresume_tool_approval(sid, [action])
+                result = await app.host.runs.resume_approval(sid, [action])
             output, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
             success = action in ('approve', 'allow', 'BypassApprovals')
             assert output.status == ('success' if success else 'error')
@@ -97,16 +97,16 @@ def test_session_remembered_tool_changes_args_reuses_client_but_other_session_as
         app, _ = await make_mcp_app(monkeypatch, path, [call(NAME, {'text': 'first'}, 'a'), AIMessage(content='one'),
             call(NAME, {'text': 'second'}, 'b'), AIMessage(content='two'), call(NAME, {}, 'c')])
         try:
-            sid = await app.acreate_session('A')
-            result = await app.arun(sid, [('user', 'first')])
+            sid = await app.host.sessions.create('A')
+            result = await app.host.runs.start(sid, [('user', 'first')])
             assert result['approval_requests']
-            await app.aresume_tool_approval(sid, ['approve'], remember_approved=['a'])
-            result = await app.arun(sid, [('user', 'second')])
+            await app.host.runs.resume_approval(sid, ['approve'], remember_approved=['a'])
+            result = await app.host.runs.start(sid, [('user', 'second')])
             assert not result.get('approval_requests')
             assert [r['count'] for r in calls(path)] == [1, 2]
             assert len({r['pid'] for r in calls(path)}) == 1
-            other = await app.acreate_session('A')
-            result = await app.arun(other, [('user', 'other')])
+            other = await app.host.sessions.create('A')
+            result = await app.host.runs.start(other, [('user', 'other')])
             assert result['approval_requests'] and len(calls(path)) == 2
         finally:
             await app.aclose()
@@ -119,11 +119,11 @@ def test_failure_or_stop_never_replays_business_call(monkeypatch, tmp_path, acti
         path = tmp_path / 'failure.jsonl'
         app, _ = await make_mcp_app(monkeypatch, path, [call(NAME, {'text': action}), AIMessage(content='failure handled')], mode='BypassApprovals')
         try:
-            sid = await app.acreate_session('A')
-            task = asyncio.create_task(app.arun(sid, [('user', action)]))
+            sid = await app.host.sessions.create('A')
+            task = asyncio.create_task(app.host.runs.start(sid, [('user', action)]))
             if action == 'wait':
                 await until(lambda: bool(calls(path)))
-                app.request_stop(sid)
+                app.host.runs.stop(sid)
             result = await asyncio.wait_for(task, 15)
             assert len(calls(path)) == 1
             if action == 'wait':

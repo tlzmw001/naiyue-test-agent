@@ -9,7 +9,7 @@ import sqlite3
 
 import pytest
 
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 
 from tests.storage_backup_fixture import artifact, source_store
 
@@ -17,7 +17,7 @@ from tests.storage_backup_fixture import artifact, source_store
 @pytest.mark.parametrize('operation', ['backup', 'file_facts', 'restore_snapshot'])
 def test_descriptor_change_time_can_differ_from_path_birth_time(tmp_path, monkeypatch, operation):
     from types import SimpleNamespace
-    from naiyue_test_agent import storage_backup
+    from naiyue_test_agent.storage import backup as storage_backup
     source, root, _ = source_store(tmp_path)
     with closing(source):
         manifest = storage_backup.create_backup(source.connection, source.path, target_schema=CURRENT_SCHEMA)
@@ -36,10 +36,10 @@ def test_descriptor_change_time_can_differ_from_path_birth_time(tmp_path, monkey
         if operation == 'backup':
             assert storage_backup.validate_backup(source.path, manifest['backup_id']) == manifest
         elif operation == 'file_facts':
-            from naiyue_test_agent.storage_restore_record import file_facts
+            from naiyue_test_agent.storage.restore_record import file_facts
             assert file_facts(snapshot)['sha256'] == manifest['sha256']
         else:
-            from naiyue_test_agent.storage_restore_record import verify_snapshot
+            from naiyue_test_agent.storage.restore_record import verify_snapshot
             from naiyue_test_agent.workspaces import locate_workspace
             location = locate_workspace(root, data_dir=None, database_path=source.path)
             verify_snapshot(snapshot, {'source_schema': manifest['source_schema'],
@@ -48,7 +48,7 @@ def test_descriptor_change_time_can_differ_from_path_birth_time(tmp_path, monkey
 
 @pytest.mark.parametrize('fault', ['manifest', 'identity'])
 def test_invalid_backup_reports_only_safe_validation_stage(tmp_path, monkeypatch, caplog, fault):
-    from naiyue_test_agent import storage_backup
+    from naiyue_test_agent.storage import backup as storage_backup
     with closing(source_store(tmp_path)[0]) as source:
         manifest = storage_backup.create_backup(source.connection, source.path, target_schema=CURRENT_SCHEMA)
         directory = artifact(source.path, manifest['backup_id'])
@@ -77,7 +77,7 @@ def test_invalid_backup_reports_only_safe_validation_stage(tmp_path, monkeypatch
     'workspace', 'version', 'missing', 'symlink', 'hardlink', 'directory', 'sidecar',
     'snapshot_structure', 'snapshot_identity', 'corruption'])
 def test_invalid_backup_is_visible_and_never_accepted(tmp_path, caplog, fault):
-    from naiyue_test_agent.storage_backup import create_backup, validate_backup, list_backups
+    from naiyue_test_agent.storage.backup import create_backup, validate_backup, list_backups
     with closing(source_store(tmp_path)[0]) as source:
         manifest = create_backup(source.connection, source.path, target_schema=CURRENT_SCHEMA)
         backup_id = manifest['backup_id']
@@ -130,13 +130,13 @@ def test_invalid_backup_is_visible_and_never_accepted(tmp_path, caplog, fault):
 
 @pytest.mark.parametrize('identity', ['../outside', '/tmp/path', 'A' * 32, '.', '', '0' * 33])
 def test_id_is_not_a_path(tmp_path, identity):
-    from naiyue_test_agent.storage_backup import validate_backup
+    from naiyue_test_agent.storage.backup import validate_backup
     with pytest.raises(ValueError, match='backup_invalid'):
         validate_backup(tmp_path / 'db', identity)
 
 
 def test_higher_planned_target_is_diagnostic_and_listing_is_read_only_sorted(tmp_path):
-    from naiyue_test_agent.storage_backup import create_backup, validate_backup, list_backups
+    from naiyue_test_agent.storage.backup import create_backup, validate_backup, list_backups
     with closing(source_store(tmp_path)[0]) as source:
         first = create_backup(source.connection, source.path, target_schema=CURRENT_SCHEMA)
         second = create_backup(source.connection, source.path, target_schema=CURRENT_SCHEMA)
@@ -158,7 +158,7 @@ def test_higher_planned_target_is_diagnostic_and_listing_is_read_only_sorted(tmp
 
 
 def test_deeply_nested_manifest_does_not_hide_healthy_backups(tmp_path, caplog):
-    from naiyue_test_agent.storage_backup import create_backup, validate_backup, list_backups
+    from naiyue_test_agent.storage.backup import create_backup, validate_backup, list_backups
     with closing(source_store(tmp_path)[0]) as source:
         good = create_backup(source.connection, source.path, target_schema=CURRENT_SCHEMA)
         bad = create_backup(source.connection, source.path, target_schema=CURRENT_SCHEMA)
@@ -174,7 +174,7 @@ def test_deeply_nested_manifest_does_not_hide_healthy_backups(tmp_path, caplog):
 @pytest.mark.parametrize('fault', ['other_database', 'other_workspace', 'missing_checkpoint_table',
     'missing_writes_column', 'duplicate_version', 'foreign_key'])
 def test_snapshot_ownership_and_structure_cannot_be_replaced_by_matching_hash(tmp_path, fault):
-    from naiyue_test_agent.storage_backup import create_backup, validate_backup
+    from naiyue_test_agent.storage.backup import create_backup, validate_backup
     with closing(source_store(tmp_path)[0]) as source:
         saved = create_backup(source.connection, source.path, target_schema=CURRENT_SCHEMA)
         target, expected = source.path, saved['workspace_id']

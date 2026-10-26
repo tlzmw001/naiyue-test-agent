@@ -7,8 +7,8 @@ import time
 import pytest
 from langchain_core.messages import HumanMessage
 
-from naiyue_test_agent.application.memory_batches import proposal_request
-from naiyue_test_agent.application.memory_queries import MemoryReadError
+from naiyue_test_agent.application.memory.memory_batches import proposal_request
+from naiyue_test_agent.contracts.memory import MemoryReadError
 from test_async_application import StreamingToolModel
 from test_memory_batches import archive, batch, save
 from test_memory_job_runner import fixture, response
@@ -87,7 +87,7 @@ def test_update_cannot_select_hidden_ambiguous_incomplete_or_different_scope_rec
 
 
 def test_prepare_sends_compact_sources_and_keeps_the_trusted_envelope(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import _prepare
+    from naiyue_test_agent.application.memory.memory_job_runner import _prepare
     async def scenario():
         at = time.time() - 10
         save(archive, [HumanMessage(id='human', content='使用.venv',
@@ -117,8 +117,8 @@ def test_frozen_update_cannot_overwrite_a_newer_version_in_real_store(archive, t
         service, job, _ = fixture(archive, tmp_path, StreamingToolModel(replies=[]))
         try:
             sources = batch(archive)['sources']
-            created = service.memory.query('session', tmp_path, proposal_request(flat(intent='candidate'), sources))['item']
-            saved = service.memory.query('session', tmp_path, MemoryInput(action='read', scope='workspace',
+            created = service.memory.query('session', service.storage.sessions.get('session')['project_id'], proposal_request(flat(intent='candidate'), sources))['item']
+            saved = service.memory.query('session', service.storage.sessions.get('session')['project_id'], MemoryInput(action='read', scope='workspace',
                 status='candidate', memory_id=created['memory_id']).model_dump(mode='json'))['items'][0]
             save(archive, [HumanMessage(id='confirmation', content='以后使用.venv',
                 additional_kwargs={'naiyue_human_input': True})], occurred_at=time.time() - 1)
@@ -126,10 +126,10 @@ def test_frozen_update_cannot_overwrite_a_newer_version_in_real_store(archive, t
             frozen = proposal_request(flat(memory_id=created['memory_id'], gaps=[],
                 sources=[dict(source_key='2:0', quote='使用.venv')]), sources, [saved])
             assert frozen['expected_version'] == 1
-            service.memory.query('session', tmp_path, frozen)
+            service.memory.query('session', service.storage.sessions.get('session')['project_id'], frozen)
             with pytest.raises(MemoryReadError, match='memory_conflict'):
-                service.memory.query('session', tmp_path, frozen)
-            row = archive.connection.execute('SELECT version,status FROM naiyue_memories').fetchone()
+                service.memory.query('session', service.storage.sessions.get('session')['project_id'], frozen)
+            row = archive.database.connection.execute('SELECT version,status FROM naiyue_memories').fetchone()
             assert tuple(row) == (2, 'active')
         finally:
             service.memory.close()
@@ -137,7 +137,7 @@ def test_frozen_update_cannot_overwrite_a_newer_version_in_real_store(archive, t
 
 
 def test_flat_worker_saves_valid_items_independently_of_bad_old_envelopes(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='human', content='使用.venv',
             additional_kwargs={'naiyue_human_input': True})])

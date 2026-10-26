@@ -56,9 +56,9 @@ async def test_session_ls_result_and_error_return_to_next_model_turn(monkeypatch
                                           call('ls', 'missing', 'bad')]),
         AIMessage(content='I found a.md'),
     ])
-    session = await app.acreate_workspace_session('A', root)
+    session = await app.host.sessions.create_workspace('A', root)
 
-    result = await app.arun(session, [('user', 'list files')])
+    result = await app.host.runs.start(session, [('user', 'list files')])
 
     by_id = {item.tool_call_id: item for item in tool_messages(result)}
     assert by_id['good'].content == 'a.md'
@@ -86,16 +86,16 @@ async def test_external_ls_requires_approval_and_revalidates_target(monkeypatch,
         AIMessage(content='', tool_calls=[call('ls', alias, 'outside')]),
         AIMessage(content='handled'),
     ])
-    session = await app.acreate_workspace_session('A', root)
+    session = await app.host.sessions.create_workspace('A', root)
 
-    pending = await app.arun(session, [('user', 'list alias')])
+    pending = await app.host.runs.start(session, [('user', 'list alias')])
     assert pending['approval_requests'] == [{
         'tool_call_id': 'outside', 'tool_name': 'ls', 'target': str(first),
     }]
     assert tool_messages(pending) == []
     alias.unlink()
     alias.symlink_to(second, target_is_directory=True)
-    result = await app.aresume_tool_approval(session, ['approve'])
+    result = await app.host.runs.resume_approval(session, ['approve'])
     assert tool_messages(result)[0].status == 'error'
     assert 'approval' in tool_messages(result)[0].content.lower()
     assert 'one.md' not in str(result) and 'two.md' not in str(result)
@@ -115,13 +115,13 @@ async def test_mixed_read_and_ls_approval_resumes_each_call(monkeypatch, tmp_pat
                                           call('read', outside_file, 'file')]),
         AIMessage(content='finished'),
     ])
-    session = await app.acreate_workspace_session('A', root)
+    session = await app.host.sessions.create_workspace('A', root)
 
-    pending = await app.arun(session, [('user', 'inspect external inputs')])
+    pending = await app.host.runs.start(session, [('user', 'inspect external inputs')])
     assert [item['tool_name'] for item in pending['approval_requests']] == [
         'ls', 'read',
     ]
-    result = await app.aresume_tool_approval(session, ['approve', 'reject'])
+    result = await app.host.runs.resume_approval(session, ['approve', 'reject'])
     by_id = {item.tool_call_id: item for item in tool_messages(result)}
     assert by_id['dir'].content == 'listed.md'
     assert by_id['file'].status == 'error'
@@ -142,10 +142,10 @@ async def test_session_workspaces_are_isolated_for_ls(monkeypatch, tmp_path):
         AIMessage(content='', tool_calls=[call('ls', '.', 'second-list')]),
         AIMessage(content='second done'),
     ])
-    first = await app.acreate_workspace_session('A', first_root)
-    second = await app.acreate_workspace_session('A', second_root)
+    first = await app.host.sessions.create_workspace('A', first_root)
+    second = await app.host.sessions.create_workspace('A', second_root)
 
-    one = await app.arun(first, [('user', 'list')])
-    two = await app.arun(second, [('user', 'list')])
+    one = await app.host.runs.start(first, [('user', 'list')])
+    two = await app.host.runs.start(second, [('user', 'list')])
     assert tool_messages(one)[0].content == 'FIRST.md'
     assert tool_messages(two)[0].content == 'SECOND.md'

@@ -1,5 +1,6 @@
 """Application-owned task queries combine owners without weakening their scope."""
 
+from dataclasses import replace
 import asyncio
 import hashlib
 import json
@@ -7,7 +8,7 @@ import json
 import pytest
 from langchain_core.tools import ToolException
 
-from naiyue_test_agent.application.background_tasks import TaskQueryError
+from naiyue_test_agent.application.sessions.background_tasks import TaskQueryError
 
 
 def row(number, *, kind=None, session='s', root='/workspace', status='running'):
@@ -54,7 +55,7 @@ class Owner:
 
 
 def test_shell_only_delegates_exact_arguments_and_result():
-    from naiyue_test_agent.application.task_queries import TaskQueries
+    from naiyue_test_agent.application.sessions.task_queries import TaskQueries
     async def scenario():
         shell = Owner([row(2), row(1)], terminal=3)
         queries = TaskQueries(shell)
@@ -68,7 +69,7 @@ def test_shell_only_delegates_exact_arguments_and_result():
 
 
 def test_combined_list_paginates_before_ids_and_scopes_before_merging(tmp_path):
-    from naiyue_test_agent.application.task_queries import TaskQueries
+    from naiyue_test_agent.application.sessions.task_queries import TaskQueries
     async def scenario():
         root = str(tmp_path)
         shell = Owner([row(7, session='other', root=root), row(5, root=root), row(1, root=root)], terminal=2)
@@ -93,7 +94,7 @@ def test_combined_list_paginates_before_ids_and_scopes_before_merging(tmp_path):
 
 
 def test_combined_list_includes_older_backend_pages_and_revisions():
-    from naiyue_test_agent.application.task_queries import TaskQueries
+    from naiyue_test_agent.application.sessions.task_queries import TaskQueries
     async def scenario():
         shell = Owner([row(i) for i in range(150, 0, -1)])
         memory = Owner([row(151, kind='memory')])
@@ -112,7 +113,7 @@ def test_combined_list_includes_older_backend_pages_and_revisions():
 
 
 def test_combined_list_rejects_owner_revision_changing_between_pages():
-    from naiyue_test_agent.application.task_queries import TaskQueries
+    from naiyue_test_agent.application.sessions.task_queries import TaskQueries
     async def scenario():
         shell = Owner([row(i) for i in range(150, 0, -1)])
         original = shell.list
@@ -131,7 +132,7 @@ def test_combined_list_rejects_owner_revision_changing_between_pages():
 @pytest.mark.parametrize('action', ['output', 'stop'])
 @pytest.mark.parametrize('failure', [OSError('private IO failure'), TaskQueryError('cleanup_unconfirmed', 'still active')])
 def test_owner_failures_never_turn_into_missing_task(action, failure):
-    from naiyue_test_agent.application.task_queries import TaskQueries
+    from naiyue_test_agent.application.sessions.task_queries import TaskQueries
     async def scenario():
         shell, memory = Owner([]), Owner([row(1, kind='memory')])
         async def broken(*args, **kwargs):
@@ -153,24 +154,38 @@ def test_query_tools_use_trusted_query_port_and_preserve_permit_binding(tmp_path
         spec = next(item for item in create_background_task_tools() if item.tool.name == name)
         runtime = runtime_for(spec, args, tmp_path)
         owner = Owner([row(1, root=str(tmp_path), kind='memory')])
-        runtime.context['_task_queries'] = owner
+        runtime.context = replace(runtime.context, scope=replace(runtime.context.scope, capabilities=replace(runtime.context.scope.capabilities, task_queries=owner)))
         result = json.loads(await spec.tool.coroutine(**args, runtime=runtime))
         assert result['items'][0]['kind'] == 'memory' if name == 'task_list' else result['kind'] == 'memory'
         expected = name.removeprefix('task_')
         assert owner.calls[0][0] == expected
         assert owner.calls[0][-1]['session_id'] == 's' and owner.calls[0][-1]['workspace_root'] == tmp_path
-        runtime.context['_execution_permit']['subject']['args'] = {}
+        runtime.context.authorization.permit['subject']['args'] = {}
         with pytest.raises(PermissionMechanismError):
             await spec.tool.coroutine(**args, runtime=runtime)
         runtime = runtime_for(spec, args, tmp_path)
-        runtime.context['_process_tasks'] = owner
+        runtime.context = replace(runtime.context, scope=replace(runtime.context.scope, capabilities=replace(runtime.context.scope.capabilities, process_tasks=owner)))
         with pytest.raises(ToolException, match='scope'):
             await spec.tool.coroutine(**args, runtime=runtime)
         runtime = runtime_for(spec, args, tmp_path)
-        runtime.context.update(_task_queries=owner, agent_path='child')
-        runtime.context['_execution_permit']['agent_path'] = 'child'
+        runtime.context = replace(runtime.context, scope=replace(runtime.context.scope, capabilities=replace(runtime.context.scope.capabilities, task_queries=owner), identity=replace(runtime.context.scope.identity, agent_path='child')))
+        runtime.context.authorization.permit['agent_path'] = 'child'
         before = len(owner.calls)
         with pytest.raises(ToolException, match='root'):
             await spec.tool.coroutine(**args, runtime=runtime)
         assert len(owner.calls) == before
+    asyncio.run(scenario())
+
+
+def test_memory_owner_attached_during_host_assembly_is_visible():
+    from naiyue_test_agent.application.sessions.task_queries import TaskQueries
+    import asyncio
+    class Owner:
+        def __init__(self,name):self.name=name
+        async def list(self,**kwargs):
+            return dict(items=[dict(task_id=self.name,created_at=self.name)],next_before=None,active_count=0,terminal_revision=0,revision=self.name)
+    async def scenario():
+        queries=TaskQueries(Owner('host'))
+        queries.memory=Owner('memory')
+        assert {row['task_id'] for row in (await queries.list())['items']}=={'host','memory'}
     asyncio.run(scenario())

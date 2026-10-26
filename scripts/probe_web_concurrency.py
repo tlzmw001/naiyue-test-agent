@@ -1,6 +1,7 @@
 """Bounded offline multi-session TCP/SSE, approvals and two-process archive probe."""
 
 import argparse
+from scripts.web_probe_app import command_headers
 import asyncio
 from contextlib import asynccontextmanager
 import json
@@ -88,7 +89,7 @@ def _worker(args):
     from naiyue_test_agent import application
     from naiyue_test_agent.tools import SubAgentSpec, write as write_module
     from naiyue_test_agent.settings import AppSettings
-    from naiyue_test_agent.web.app import create_web_app
+    from scripts.web_probe_app import create_probe_app, command_headers, async_command_headers
     from naiyue_test_agent.web.settings import WebSettings
 
     root = Path(args.worker)
@@ -113,7 +114,7 @@ def _worker(args):
             workspace_root=workspace, port=port, access_token=ACCESS, runtime_settings=AppSettings(max_active_runs=2,
                 subagents=(SubAgentSpec(name='tester', description='Read approved fixture', system_prompt='Read fixture',
                                        tool_names=('read',)),)))
-        app = create_web_app(settings)
+        app = create_probe_app(settings)
         lifespan = app.router.lifespan_context
         @asynccontextmanager
         async def observed(server):
@@ -121,7 +122,7 @@ def _worker(args):
                 def event(value):
                     if value.event_type == 'tool_call_finished':
                         _record(root, {'kind': 'tool', 'name': value.data.tool_name, 'outcome': value.data.outcome})
-                unsubscribe = server.state.service.application.subscribe_events(event)
+                unsubscribe = server.state.service.application.observability.subscribe(event)
                 try:
                     yield
                 finally:
@@ -140,9 +141,9 @@ def _approve(client, sid, batch):
     body = {'request_id': str(uuid4()), 'origin_run_id': batch['origin_run_id'],
             'approval_batch_id': batch['approval_batch_id'], 'decisions': [
                 {'approval_id': item['approval_id'], 'decision': 'approve'} for item in batch['items']]}
-    response = client.post(f'/api/sessions/{sid}/approvals', json=body)
+    response = client.post(f'/api/v1/scopes/chats/sessions/{sid}/approvals', json=body)
     response.raise_for_status()
-    assert client.post(f'/api/sessions/{sid}/approvals', json=body).json() == response.json()
+    assert client.post(f'/api/v1/scopes/chats/sessions/{sid}/approvals', json=body).json() == response.json()
     return response.json()
 
 
@@ -158,50 +159,50 @@ def _parent(args):
             process, output, port = _launch(root, deadline, worker_module='scripts.probe_web_concurrency')
             origin = f'http://127.0.0.1:{port}'
             try:
-                with httpx.Client(base_url=origin, timeout=10,
+                with httpx.Client(event_hooks={'request': [command_headers]}, base_url=origin, timeout=10,
                     headers={'Authorization': 'Bearer ' + ACCESS, 'Origin': origin}) as client:
                     def ready():
                         try:
-                            return client.get('/api/models').status_code == 200
+                            return client.get('/api/v1/scopes/chats/models').status_code == 200
                         except httpx.ConnectError:
                             return False
                     _until(ready, deadline)
                     if phase == 'restore':
                         before = (root / 'ledger.jsonl').read_text()
                         for sid in ids:
-                            prepared = client.post(f'/api/sessions/{sid}/prepare')
+                            prepared = client.post(f'/api/v1/scopes/chats/sessions/{sid}/prepare')
                             prepared.raise_for_status()
-                            restored = client.get(f'/api/sessions/{sid}').json()
+                            restored = client.get(f'/api/v1/scopes/chats/sessions/{sid}').json()
                             assert restored['can_run'] and not restored['busy'] and 'recovery' not in restored
-                        children = client.get(f'/api/sessions/{ids[1]}/subagents').json()
+                        children = client.get(f'/api/v1/scopes/chats/sessions/{ids[1]}/subagents').json()
                         child, = children
                         assert child['status'] == 'completed'
-                        detail = client.get(f'/api/sessions/{ids[1]}/subagents/{child["agent_id"]}').json()
+                        detail = client.get(f'/api/v1/scopes/chats/sessions/{ids[1]}/subagents/{child["agent_id"]}').json()
                         assert any(m['type'] == 'tool' and m['content'] == 'COMMITTED_ONCE' for m in detail['messages'])
-                        assert client.get(f'/api/sessions/{ids[0]}/subagents').json() == []
+                        assert client.get(f'/api/v1/scopes/chats/sessions/{ids[0]}/subagents').json() == []
                         assert (root / 'ledger.jsonl').read_text() == before
-                        response = client.post(f'/api/sessions/{ids[1]}/runs', json={
+                        response = client.post(f'/api/v1/scopes/chats/sessions/{ids[1]}/runs', json={
                             'request_id': str(uuid4()), 'text': 'Verify saved context'})
                         response.raise_for_status()
                         rid = response.json()['run_id']
-                        client.get(f'/api/runs/{rid}/events').raise_for_status()
-                        final = client.get(f'/api/runs/{rid}').json()
+                        client.get(f'/api/v1/scopes/chats/runs/{rid}/events').raise_for_status()
+                        final = client.get(f'/api/v1/scopes/chats/runs/{rid}').json()
                         assert final['status'] == 'completed' and final['messages'][-1]['content'] == 'RESTORED_B'
                         continue
                     for _ in range(2):
-                        response = client.post('/api/sessions', json={'model_id': 'offline-concurrent'})
+                        response = client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'offline-concurrent'})
                         response.raise_for_status()
                         ids.append(response.json()['session_id'])
                     runs = []
                     for sid, prompt in zip(ids, ('OFFLINE_A', 'OFFLINE_B'), strict=True):
                         body = {'request_id': str(uuid4()), 'text': prompt}
-                        response = client.post(f'/api/sessions/{sid}/runs', json=body)
+                        response = client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=body)
                         response.raise_for_status()
-                        assert client.post(f'/api/sessions/{sid}/runs', json=body).json() == response.json()
+                        assert client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=body).json() == response.json()
                         runs.append(response.json()['run_id'])
                     # Both producers are live before either stream detaches.
                     for sid, rid, delta in zip(ids, runs, ('A_DELTA', 'B_DELTA'), strict=True):
-                        with client.stream('GET', f'/api/runs/{rid}/events') as stream:
+                        with client.stream('GET', f'/api/v1/scopes/chats/runs/{rid}/events') as stream:
                             stream.raise_for_status()
                             for line in stream.iter_lines():
                                 if line.startswith('data: ') and '"event_type"' in line:
@@ -212,34 +213,34 @@ def _parent(args):
                                         break
                             else:
                                 raise AssertionError('Missing live delta')
-                    assert all(not client.get(f'/api/runs/{rid}').json()['done'] for rid in runs)
+                    assert all(not client.get(f'/api/v1/scopes/chats/runs/{rid}').json()['done'] for rid in runs)
                     for kind in ('steering', 'follow_up'):
-                        response = client.post(f'/api/runs/{runs[0]}/controls', json={
+                        response = client.post(f'/api/v1/scopes/chats/runs/{runs[0]}/controls', json={
                             'request_id': str(uuid4()), 'kind': kind, 'text': 'A ' + kind})
                         response.raise_for_status()
                     stop_body = {'request_id': str(uuid4()), 'kind': 'stop'}
-                    stopped = client.post(f'/api/runs/{runs[0]}/controls', json=stop_body)
+                    stopped = client.post(f'/api/v1/scopes/chats/runs/{runs[0]}/controls', json=stop_body)
                     stopped.raise_for_status()
                     assert stopped.json()['retained'] == ['A steering', 'A follow_up']
-                    assert client.post(f'/api/runs/{runs[0]}/controls', json=stop_body).json() == stopped.json()
-                    _until(lambda: client.get(f'/api/runs/{runs[0]}').json()['done'], deadline)
-                    assert client.get(f'/api/runs/{runs[0]}').json()['status'] == 'stopped'
-                    assert not client.get(f'/api/runs/{runs[1]}').json()['done']
+                    assert client.post(f'/api/v1/scopes/chats/runs/{runs[0]}/controls', json=stop_body).json() == stopped.json()
+                    _until(lambda: client.get(f'/api/v1/scopes/chats/runs/{runs[0]}').json()['done'], deadline)
+                    assert client.get(f'/api/v1/scopes/chats/runs/{runs[0]}').json()['status'] == 'stopped'
+                    assert not client.get(f'/api/v1/scopes/chats/runs/{runs[1]}').json()['done']
                     (root / 'release-b').touch()
-                    client.get(f'/api/runs/{runs[1]}/events').raise_for_status()
-                    batch, = client.get(f'/api/sessions/{ids[1]}').json()['approval_batches']
+                    client.get(f'/api/v1/scopes/chats/runs/{runs[1]}/events').raise_for_status()
+                    batch, = client.get(f'/api/v1/scopes/chats/sessions/{ids[1]}').json()['approval_batches']
                     assert batch['kind'] == 'paused_root' and not (root / 'outside.txt').exists()
                     resumed = _approve(client, ids[1], batch)
                     resumed_id = resumed['run_id']
                     assert resumed_id != runs[1]
                     def child_pending():
-                        batches = client.get(f'/api/sessions/{ids[1]}').json()['approval_batches']
+                        batches = client.get(f'/api/v1/scopes/chats/sessions/{ids[1]}').json()['approval_batches']
                         return batches and batches[0]['kind'] == 'live_child' and batches[0]
                     child_batch = _until(child_pending, deadline)
                     assert child_batch['origin_run_id'] == resumed_id
                     assert _approve(client, ids[1], child_batch)['run_id'] == resumed_id
-                    client.get(f'/api/runs/{resumed_id}/events').raise_for_status()
-                    final = client.get(f'/api/runs/{resumed_id}').json()
+                    client.get(f'/api/v1/scopes/chats/runs/{resumed_id}/events').raise_for_status()
+                    final = client.get(f'/api/v1/scopes/chats/runs/{resumed_id}').json()
                     assert final['status'] == 'completed' and final['messages'][-1]['content'] == 'B_COMPLETE'
                     assert (root / 'outside.txt').read_text() == 'COMMITTED_ONCE'
             finally:

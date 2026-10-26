@@ -1,5 +1,6 @@
 """Grep searches only readable text and returns matched lines to the model."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from native_application_helpers import async_test
 
 import json
@@ -15,7 +16,7 @@ from naiyue_test_agent.tools.processes import ProcessOutcome
 
 
 async def call_grep(tool, args, root):
-    return (await invoke_tool_feedback(tool, args, context={'workspace_root': root}, call_id='grep-call'))
+    return (await invoke_tool_feedback(tool, args, context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(root) if root is not None else None, session_id=None)), call_id='grep-call'))
 
 
 @async_test

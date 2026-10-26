@@ -7,13 +7,13 @@ from uuid import uuid4
 
 import pytest
 
-from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
 
 from tests.storage_backup_fixture import artifact, source_store
 
 
 def saved_store(tmp_path, *, version=12, bound=True):
-    from naiyue_test_agent.storage_backup import create_backup
+    from naiyue_test_agent.storage.backup import create_backup
     from naiyue_test_agent.workspaces import locate_workspace
     with closing(source_store(tmp_path, version=version, bound=bound)[0]) as source:
         saved = create_backup(source.connection, source.path, target_schema=CURRENT_SCHEMA)
@@ -54,7 +54,7 @@ def test_restore_corrupt_or_missing_target_preserves_original_group_and_snapshot
     def confirm(prompt):
         assert str(database) in capsys.readouterr().out
         assert not maintenance(database).exists()
-        from naiyue_test_agent.storage_files import open_store_file, acquire_store_lock
+        from naiyue_test_agent.storage.files import open_store_file, acquire_store_lock
         import os
         fd = open_store_file(database.with_name(database.name + '.lock'))
         try:
@@ -116,8 +116,8 @@ def test_invalid_selection_or_occupied_store_refused_before_confirmation(tmp_pat
     def forbidden(prompt):
         raise AssertionError('invalid selection must not ask for confirmation')
     monkeypatch.setattr('builtins.input', forbidden)
-    from naiyue_test_agent.application.session_storage import SessionStorage
-    with closing(SessionStorage(database)) if kind == 'busy' else nullcontext():
+    from naiyue_test_agent.storage.project_store import ProjectStore
+    with closing(ProjectStore(database)) if kind == 'busy' else nullcontext():
         before = database.read_bytes()
         assert invoke(location, backup_id) == 1
         assert final_result(capsys)['error'] == reason

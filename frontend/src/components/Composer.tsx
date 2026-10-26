@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { WebApi } from '../api';
-import type { PermissionMode, SessionControlOptions, SessionView, SkillCatalogView } from '../types';
+import type { DraftControls, PermissionMode, SessionControlOptions, SessionView, SkillCatalogView } from '../types';
 import { errorText } from '../api';
 import { Icon } from './Icons';
 import ComposerControls from './ComposerControls';
@@ -14,12 +14,14 @@ import composer from './Composer.module.css';
 
 export default function Composer({ text, pending, pendingMode, busy, stopping, sending, blocked,
   setText, setPending, send, stop, api, session, controlsDisabled, selectTools, selectMode, contextEntry,
-  openModel, compact, openContext, openAgents, sendScroll }: {
+  openModel, compact, openContext, openAgents, sendScroll, workspaceEntry, draftControls }: {
+  draftControls?: DraftControls;
   sendScroll?: { preference: SendScroll; select: (value: SendScroll) => void };
   text: string; pending: string[]; pendingMode: boolean; busy: boolean; stopping: boolean;
   sending: boolean; blocked: boolean; setText: (text: string) => void;
   setPending: (values: string[]) => void; send: (followUp: boolean) => void; stop: () => void;
   contextEntry?: ReactNode;
+  workspaceEntry?: ReactNode;
   api: WebApi; session: SessionView | null; controlsDisabled: boolean;
   selectTools: (names: string[]) => void; selectMode: (mode: PermissionMode) => void;
   openModel: () => void;
@@ -36,8 +38,8 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
   const [checkingSkill, setCheckingSkill] = useState(false);
   const confirming = useRef(false);
   const mounted = useRef(true);
-  const mode = session?.permission_mode ?? options?.default_permission_mode;
-  const tools = session?.active_tools ?? options?.default_active_tools ?? [];
+  const mode = session?.permission_mode ?? draftControls?.permission_mode ?? options?.default_permission_mode;
+  const tools = session?.active_tools ?? draftControls?.active_tools ?? options?.default_active_tools ?? [];
   const readEnabled = tools.includes('read');
   const pendingVersion = JSON.stringify(pending);
   // A confirmation belongs to this draft, session and send state, never a later render.
@@ -112,7 +114,7 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
     const captured = submission.current;
     confirming.current = true; setCheckingSkill(true); setCommandNotice('');
     try {
-      const catalog = await api.skills();
+      const catalog = await (session?.session_id ? api.skills(session.session_id) : api.skills());
       if (!mounted.current || submission.current !== captured) return;
       if (!catalog.entries.some(item => item.command === `/${match[1]}`))
         setCommandNotice('不支持的指令，请从加号菜单查看可用指令。');
@@ -140,6 +142,7 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
           setPending(pending.filter((_, i) => i !== index))}><Icon name="close" /></button>
       </div>)}
     </section>}
+    {workspaceEntry && <div className={composer.workspaceContext} role="region" aria-label="项目与执行位置">{workspaceEntry}</div>}
     <form className={`${styles.composer} ${composer.form}`} onSubmit={event => { event.preventDefault(); submit(); }}>
       {canSupplement && text.trim() && <div className={composer.modeRow}>
         <select className={styles.sendMode} aria-label="发送方式" value={followUp ? 'follow_up' : 'steering'}

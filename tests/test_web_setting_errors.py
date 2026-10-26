@@ -8,10 +8,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from naiyue_test_agent.application.errors import (
-    SessionBusyError, SessionManualReviewRequiredError, SessionPendingApprovalError,
-    SessionPersistenceError,
-)
+from naiyue_test_agent.application.errors import SessionBusyError, SessionManualReviewRequiredError, SessionPendingApprovalError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelConfigError
 from naiyue_test_agent.web.errors import WebError
 from naiyue_test_agent.web.service import WebService
@@ -21,12 +19,12 @@ from test_web_api import web_client
 
 PRIVATE = 'PRIVATE_SETTING_INPUT'
 CASES = [
-    ('select_thinking', 'aselect_thinking', ('model-A', 'high'), 'thinking_unavailable',
+    ('select_thinking', 'select_thinking', ('model-A', 'high'), 'thinking_unavailable',
      'web_thinking_selection_invalid', 'web_thinking_selection_failed',
      {'model_id': 'model-A', 'thinking_level': 'high'}),
-    ('select_tools', 'aset_active_tools', (['read'],), 'invalid_tool_selection',
+    ('select_tools', 'select_tools', (['read'],), 'invalid_tool_selection',
      'web_tool_selection_invalid', 'web_tool_selection_failed', {'active_tools': ['grep']}),
-    ('select_permission_mode', 'aset_permission_mode', ('NoAsk',), 'permission_mode_unavailable',
+    ('select_permission_mode', 'select_permission_mode', ('NoAsk',), 'permission_mode_unavailable',
      'web_permission_mode_unavailable', 'web_permission_mode_failed', {'permission_mode': 'Default'}),
 ]
 
@@ -34,15 +32,13 @@ CASES = [
 @pytest.fixture(params=CASES, ids=['thinking', 'tools', 'permission-mode'])
 def setting(request):
     method, setter, args, invalid_code, invalid_event, failure_event, expected = request.param
-    application = SimpleNamespace(
-        aget_session_status=AsyncMock(return_value={'workspace_root': None}),
-        pending_approval_batches=Mock(return_value=[]),
-        get_active_tools=Mock(return_value=('grep',)),
-        get_permission_mode=Mock(return_value='Default'),
-    )
+    application = SimpleNamespace(sessions=SimpleNamespace(
+        status=AsyncMock(return_value={'workspace_root': None}),
+        active_tools=Mock(return_value=('grep',)), permission_mode=Mock(return_value='Default')),
+        runs=SimpleNamespace(pending_approvals=Mock(return_value=[])))
     operation = AsyncMock()
-    setattr(application, setter, operation)
-    service = WebService(application, SimpleNamespace(latest={}), SimpleNamespace(workspace_root=None))
+    setattr(application.sessions, setter, operation)
+    service = WebService(application, SimpleNamespace(latest={}), SimpleNamespace(workspace_root=None, workspace_id=None))
     return SimpleNamespace(service=service, application=application, method=method, setter=setter,
         args=args, operation=operation, invalid_code=invalid_code, invalid_event=invalid_event,
         failure_event=failure_event, expected=expected)
@@ -63,13 +59,13 @@ def test_actual_entries_await_shared_boundary_once_and_keep_confirmed_results(se
         result = await getattr(setting.service, setting.method)('session-A', *setting.args)
         assert result == setting.expected
         setting.operation.assert_awaited_once_with('session-A', *setting.args)
-        setting.application.aget_session_status.assert_awaited_once_with('session-A')
+        setting.application.sessions.status.assert_awaited_once_with('session-A')
         assert calls == [{'invalid_code': setting.invalid_code, 'invalid_event': setting.invalid_event,
                           'failure_event': setting.failure_event}]
         if setting.method == 'select_tools':
-            setting.application.get_active_tools.assert_called_once_with('session-A')
+            setting.application.sessions.active_tools.assert_called_once_with('session-A')
         elif setting.method == 'select_permission_mode':
-            setting.application.get_permission_mode.assert_called_once_with('session-A')
+            setting.application.sessions.permission_mode.assert_called_once_with('session-A')
 
     with caplog.at_level(logging.DEBUG, logger='naiyue_test_agent.web.service'):
         asyncio.run(scenario())
@@ -152,8 +148,8 @@ def test_stop_during_await_reaches_setter_cleanup_without_success_getter(setting
             await task
         assert cleaned.is_set() and caught.value is observed[0]
         setting.operation.assert_awaited_once_with('session-A', *setting.args)
-        setting.application.get_active_tools.assert_not_called()
-        setting.application.get_permission_mode.assert_not_called()
+        setting.application.sessions.active_tools.assert_not_called()
+        setting.application.sessions.permission_mode.assert_not_called()
 
     asyncio.run(scenario())
     assert not caplog.records
@@ -166,13 +162,13 @@ def test_stop_during_await_reaches_setter_cleanup_without_success_getter(setting
 ])
 def test_admission_finishes_before_operation_is_created(setting, gate, code, status, caplog):
     factory = Mock(side_effect=AssertionError('must not create the setter coroutine'))
-    setattr(setting.application, setting.setter, factory)
+    setattr(setting.application.sessions, setting.setter, factory)
     if gate == 'status-error':
-        setting.application.aget_session_status.side_effect = KeyError(PRIVATE)
+        setting.application.sessions.status.side_effect = KeyError(PRIVATE)
     elif gate == 'workspace':
-        setting.application.aget_session_status.return_value = {'workspace_root': '/other-workspace'}
+        setting.application.sessions.status.return_value = {'workspace_root': '/other-workspace'}
     else:
-        setting.application.aget_session_status.return_value = {'workspace_root': None, 'recovery': {}}
+        setting.application.sessions.status.return_value = {'workspace_root': None, 'recovery': {}}
     with pytest.raises(WebError) as caught:
         asyncio.run(getattr(setting.service, setting.method)('session-A', *setting.args))
     assert (caught.value.code, caught.value.status) == (code, status)
@@ -183,7 +179,7 @@ def test_admission_finishes_before_operation_is_created(setting, gate, code, sta
 
 @pytest.mark.parametrize('setting', CASES[1:], indirect=True, ids=['tools', 'permission-mode'])
 def test_success_getter_remains_outside_operation_error_mapping(setting, caplog):
-    getter = setting.application.get_active_tools if setting.method == 'select_tools' else setting.application.get_permission_mode
+    getter = setting.application.sessions.active_tools if setting.method == 'select_tools' else setting.application.sessions.permission_mode
     failure = ValueError(PRIVATE)
     getter.side_effect = failure
     with pytest.raises(ValueError) as caught:
@@ -194,19 +190,19 @@ def test_success_getter_remains_outside_operation_error_mapping(setting, caplog)
 
 
 @pytest.mark.parametrize(('endpoint', 'setter', 'body', 'invalid_code'), [
-    ('thinking', 'aselect_thinking', {'model_id': 'A', 'thinking_level': 'high'}, 'thinking_unavailable'),
-    ('tools', 'aset_active_tools', {'active_tools': ['read']}, 'invalid_tool_selection'),
-    ('permission-mode', 'aset_permission_mode', {'permission_mode': 'NoAsk'}, 'permission_mode_unavailable'),
+    ('thinking', 'select_thinking', {'model_id': 'A', 'thinking_level': 'high'}, 'thinking_unavailable'),
+    ('tools', 'select_tools', {'active_tools': ['read']}, 'invalid_tool_selection'),
+    ('permission-mode', 'select_permission_mode', {'permission_mode': 'NoAsk'}, 'permission_mode_unavailable'),
 ])
 @pytest.mark.parametrize('invalid', [True, False], ids=['invalid', 'unexpected'])
 def test_http_settings_use_same_safe_error_contract(monkeypatch, tmp_path, caplog, endpoint, setter, body, invalid_code, invalid):
     async def scenario():
         model = StreamingToolModel(replies=[])
         async with web_client(monkeypatch, tmp_path, model) as (client, app):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
             operation = AsyncMock(side_effect=ValueError(PRIVATE) if invalid else RuntimeError(PRIVATE))
-            monkeypatch.setattr(app.state.service.application, setter, operation)
-            response = await client.patch(f'/api/sessions/{sid}/{endpoint}', json=body)
+            monkeypatch.setattr(app.state.service.application.sessions, setter, operation)
+            response = await client.patch(f'/api/v1/scopes/chats/sessions/{sid}/{endpoint}', json=body)
             assert response.status_code == (422 if invalid else 500)
             assert response.json() == {'error': {'code': invalid_code if invalid else 'operation_failed'}}
             assert PRIVATE not in response.text

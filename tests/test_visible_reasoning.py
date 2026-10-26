@@ -1,5 +1,7 @@
 """Visible reasoning is protocol data, independent of the answer and hidden signatures."""
 
+from runtime_context_helpers import typed_context
+
 from langchain_core.messages import AIMessage, AIMessageChunk
 from naiyue_test_agent.web.serialization import message_view
 
@@ -47,7 +49,7 @@ def test_reasoning_stream_has_independent_indices_and_filters_internal_calls():
     from naiyue_test_agent.agent_runtime.events import RunEventPublisher
     from naiyue_test_agent.agent_runtime.stream_events import SUMMARY_TAG
     events = []
-    state = _StreamState(RunEventPublisher('session', 'run', [events.append]), {})
+    state = _StreamState(RunEventPublisher('session', 'run', [events.append]), typed_context())
     state.latest = {'active_reply_id': 'reply'}
     meta = {'langgraph_node': 'model', 'langgraph_step': 1}
     state.delta(AIMessageChunk(id='a', content=[{'type': 'reasoning', 'reasoning': 'one'}]), meta)

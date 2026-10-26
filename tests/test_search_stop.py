@@ -1,5 +1,6 @@
 """Own nested search children when stopped or directly cancelled."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, ToolAuthorization, typed_context
 import asyncio
 import json
 import os
@@ -76,10 +77,8 @@ def test_direct_cancel_reaps_search_child_inside_discovery_consumer(monkeypatch,
         marker = owned_native_program(monkeypatch, tmp_path)
         subject = prepare_file_subject('.', tmp_path, 'search')
         subject.update(tool_name='grep', args={'path': '.', 'pattern': 'HIT'}, path_field='path',
-                       execution_environment=execution_environment())
-        runtime = SimpleNamespace(tool_call_id='g', context={'session_id': 's', 'workspace_root': tmp_path,
-            '_permission_rules': PermissionSettings(), '_session_allow': [],
-            '_execution_permit': {'call_id': 'g', 'session_id': 's', 'agent_path': 'root', 'subject': subject}})
+                       execution_environment=execution_environment(typed_context(identity=RunIdentity(None, execution_root=ExecutionRoot(tmp_path)))))
+        runtime = SimpleNamespace(tool_call_id='g', context=typed_context(identity=RunIdentity(session_id='s', execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None), authorization=ToolAuthorization(permission_rules=PermissionSettings(), session_allow=[], permit={'call_id': 'g', 'session_id': 's', 'agent_path': 'root', 'subject': subject})))
         task = asyncio.create_task(module._grep_files(tmp_path, 'HIT', '*.txt', False, False, 0, 100,
             runtime, settings=GrepSettings(max_argument_bytes=1024), runner=HostProcessRunner()))
         pid = None
@@ -114,13 +113,13 @@ def test_active_stop_keeps_partial_result_and_ends_without_next_model(monkeypatc
         model = StreamingToolModel(replies=[call('grep', {'pattern': 'HIT', 'glob': '*.txt'}),
                                             AIMessage(content='must not run')])
         app = await make_app(monkeypatch, model, [module.create_session_grep_tool()])
-        sid = await app.acreate_workspace_session('A', tmp_path)
+        sid = await app.host.sessions.create_workspace('A', tmp_path)
         pid = None
-        task = asyncio.create_task(app.arun(sid, [('user', 'search')]))
+        task = asyncio.create_task(app.host.runs.start(sid, [('user', 'search')]))
         try:
             pid = await started_pid(marker)
             await asyncio.wait_for(received.wait(), 5)
-            app.request_stop(sid)
+            app.host.runs.stop(sid)
             result = await asyncio.wait_for(task, 8)
             message = next(m for m in result['messages'] if isinstance(m, ToolMessage))
             assert message.tool_call_id == 't' and 'note.txt:1: HIT' in message.content
@@ -129,8 +128,8 @@ def test_active_stop_keeps_partial_result_and_ends_without_next_model(monkeypatc
             with pytest.raises(ProcessLookupError):
                 os.kill(pid, 0)
         finally:
-            if app._sessions.require(sid).describe_session()['busy']:
-                app.request_stop(sid)
+            if app.host.sessions._sessions.require(sid).describe_session()['busy']:
+                app.host.runs.stop(sid)
             if pid is not None:
                 try:
                     os.kill(pid, 9)

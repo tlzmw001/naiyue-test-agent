@@ -1,4 +1,5 @@
 
+from runtime_context_helpers import RunIdentity, RuntimeContext, typed_context
 from native_application_helpers import async_test
 
 
@@ -23,7 +24,6 @@ from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import Field
 
 from naiyue_test_agent.agent_runtime import (
-    RunContext,
     build_runtime_agent,
     make_model_selection_middleware,
 )
@@ -65,16 +65,16 @@ async def test_checkpointer_continues_messages_and_switches_model_between_invoke
 
     first = (await agent.ainvoke(
         {'messages': [('user', 'first question')]},
-        context={'session_id': 's1'}, config={'configurable': {'thread_id': 'thread-s1'}},
+        context=typed_context(identity=RunIdentity(session_id='s1')), config={'configurable': {'thread_id': 'thread-s1'}},
     ))
     selected['s1'] = 'B'
     second = (await agent.ainvoke(
         {'messages': [('user', 'follow-up question')]},
-        context={'session_id': 's1'}, config={'configurable': {'thread_id': 'thread-s1'}},
+        context=typed_context(identity=RunIdentity(session_id='s1')), config={'configurable': {'thread_id': 'thread-s1'}},
     ))
     other = (await agent.ainvoke(
         {'messages': [('user', 'other session question')]},
-        context={'session_id': 's2'}, config={'configurable': {'thread_id': 'thread-s2'}},
+        context=typed_context(identity=RunIdentity(session_id='s2')), config={'configurable': {'thread_id': 'thread-s2'}},
     ))
 
     assert [message.content for message in first['messages']] == ['first question', 'answer-A1']
@@ -117,14 +117,14 @@ async def test_switches_model_after_tool_result_in_same_run():
         return model_id, models[model_id]
 
     agent = create_agent(
-        model=models['A'], tools=[switch_to_b], context_schema=RunContext,
+        model=models['A'], tools=[switch_to_b], context_schema=RuntimeContext,
         middleware=[make_model_selection_middleware(
             resolve_model
         )],
     )
     result = (await agent.ainvoke(
         {'messages': [('user', 'switch model, then answer')]},
-        context={'session_id': 's1'},
+        context=typed_context(identity=RunIdentity(session_id='s1')),
     ))
 
     assert selections == [('s1', 'A'), ('s1', 'B')]
@@ -148,13 +148,13 @@ async def test_model_selection_is_isolated_by_session(caplog):
         return model_id, models[model_id]
 
     agent = create_agent(
-        model=models['A'], tools=[], context_schema=RunContext,
+        model=models['A'], tools=[], context_schema=RuntimeContext,
         middleware=[make_model_selection_middleware(
             resolve_model
         )],
     )
-    answer_s1 = (await agent.ainvoke({'messages': [('user', 'ping')]}, context={'session_id': 's1'}))
-    answer_s2 = (await agent.ainvoke({'messages': [('user', 'ping')]}, context={'session_id': 's2'}))
+    answer_s1 = (await agent.ainvoke({'messages': [('user', 'ping')]}, context=typed_context(identity=RunIdentity(session_id='s1'))))
+    answer_s2 = (await agent.ainvoke({'messages': [('user', 'ping')]}, context=typed_context(identity=RunIdentity(session_id='s2'))))
 
     assert answer_s1['messages'][-1].content == 'answer-from-A'
     assert answer_s2['messages'][-1].content == 'answer-from-B'
@@ -185,7 +185,7 @@ async def test_successful_model_call_records_reported_cache_usage(
     )
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        result = (await agent.ainvoke({'messages': [('user', 'ping')]}, context={'session_id': 's1'}))
+        result = (await agent.ainvoke({'messages': [('user', 'ping')]}, context=typed_context(identity=RunIdentity(session_id='s1'))))
 
     events = [record.model_usage for record in caplog.records
               if hasattr(record, 'model_usage')]
@@ -209,12 +209,12 @@ async def test_missing_session_id_fails_before_model_call(caplog):
         return 'A', model
 
     agent = create_agent(
-        model=model, tools=[], context_schema=RunContext,
+        model=model, tools=[], context_schema=RuntimeContext,
         middleware=[make_model_selection_middleware(resolve_model)],
     )
 
     with pytest.raises(ValueError, match='session_id'):
-        (await agent.ainvoke({'messages': [('user', 'ping')]}, context={}))
+        (await agent.ainvoke({'messages': [('user', 'ping')]}, context=typed_context()))
     assert calls == []
     assert not any(hasattr(record, 'model_failure') for record in caplog.records)
 
@@ -229,14 +229,14 @@ async def test_model_resolver_failure_is_not_a_model_call_failure(caplog):
         raise failure
 
     agent = create_agent(
-        model=model, tools=[], context_schema=RunContext,
+        model=model, tools=[], context_schema=RuntimeContext,
         middleware=[make_model_selection_middleware(
             fail_resolving,
         )],
     )
 
     with pytest.raises(RuntimeError, match='model resolver failed') as caught:
-        (await agent.ainvoke({'messages': [('user', 'ping')]}, context={'session_id': 's1'}))
+        (await agent.ainvoke({'messages': [('user', 'ping')]}, context=typed_context(identity=RunIdentity(session_id='s1'))))
     assert caught.value is failure
     assert not any(hasattr(record, 'model_failure') for record in caplog.records)
 
@@ -270,7 +270,7 @@ async def test_model_failure_records_safe_event_and_propagates_same_exception(
 
     with caplog.at_level(logging.ERROR, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(error_type) as caught:
-            (await agent.ainvoke({'messages': [('user', 'ping')]}, context={'session_id': 's1'}))
+            (await agent.ainvoke({'messages': [('user', 'ping')]}, context=typed_context(identity=RunIdentity(session_id='s1'))))
 
     assert caught.value is failure
     assert selections == [('s1', 'model-A')]
@@ -311,7 +311,7 @@ async def test_openai_authentication_failure_is_classified_without_leaking_respo
 
     with caplog.at_level(logging.ERROR, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(AuthenticationError) as caught:
-            (await agent.ainvoke({'messages': [('user', 'ping')]}, context={'session_id': 's1'}))
+            (await agent.ainvoke({'messages': [('user', 'ping')]}, context=typed_context(identity=RunIdentity(session_id='s1'))))
 
     assert caught.value is failure
     events = [record.model_failure for record in caplog.records
@@ -346,7 +346,7 @@ async def test_openai_transport_failure_reaches_agent_as_terminal_error(error_ty
 
     with caplog.at_level(logging.ERROR, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(error_type) as caught:
-            (await agent.ainvoke({'messages': [('user', 'secret-marker')]}, context={'session_id': 's1'}))
+            (await agent.ainvoke({'messages': [('user', 'secret-marker')]}, context=typed_context(identity=RunIdentity(session_id='s1'))))
 
     assert caught.value is failure
     events = [record.model_failure for record in caplog.records
@@ -386,7 +386,7 @@ async def test_non_openai_failure_reaches_agent_event_without_leaking_body(
 
     with caplog.at_level(logging.ERROR, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(type(failure)) as caught:
-            (await agent.ainvoke({'messages': [('user', 'ping')]}, context={'session_id': 's1'}))
+            (await agent.ainvoke({'messages': [('user', 'ping')]}, context=typed_context(identity=RunIdentity(session_id='s1'))))
 
     assert caught.value is failure
     events = [record.model_failure for record in caplog.records

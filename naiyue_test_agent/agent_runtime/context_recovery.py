@@ -19,17 +19,17 @@ logger = logging.getLogger(__name__)
 def _begin_recovery(request, reason):
     # ModelInputMiddleware is inside this wrapper: request still contains canonical
     # blocks, and each handler(retry) builds a fresh provider-specific copy.
-    context = request.runtime.context or {}
+    context = request.runtime.context
     metadata = getattr(request.model, 'metadata', None) or {}
     limits = metadata.get(MODEL_LIMITS_METADATA_KEY, {})
     correlation = {
-        'session_id': context.get('session_id'), 'run_id': context.get('run_id'),
+        'session_id': context.scope.identity.session_id, 'run_id': context.scope.identity.run_id,
         'model_id': limits.get('model_id'),
     }
     logger.warning('context_overflow_detected', extra={'context_recovery': {
         'event': 'context_overflow_detected', **correlation, 'reason': reason,
     }})
-    observer = context.get('_context_observer')
+    observer = context.scope.observation.context_operations
     operation_id = observe(observer, observer.begin_recovery, limits.get('model_id')) if observer is not None else None
     arguments = dict(
         messages=request.messages, model=request.model, model_id=limits.get('model_id'),

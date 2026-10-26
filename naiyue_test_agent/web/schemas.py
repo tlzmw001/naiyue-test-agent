@@ -2,15 +2,33 @@
 
 from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from naiyue_test_agent.contracts.session_environment import ProfileId
 
 
 class MCPRefreshInput(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
 
 
-class NewSession(BaseModel):
+class ModelInput(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     model_id: str = Field(min_length=1, max_length=128)
+
+
+class NewSession(ModelInput):
+    execution: Literal['host','sandbox'] = 'host'
+    include_untracked: list[Annotated[str,Field(min_length=1,max_length=4096)]] = Field(default_factory=list,max_length=100000)
+    profile_id: ProfileId | None = None
+    expected_profile_revision: str | None = Field(default=None,pattern='^[0-9a-f]{64}$')
+
+    @model_validator(mode='after')
+    def sandbox_input(self):
+        if self.execution=='host' and self.include_untracked:
+            raise ValueError('Host sessions have no snapshot input selection')
+        if (self.profile_id is None)!=(self.expected_profile_revision is None):
+            raise ValueError('An explicit environment requires its expected revision')
+        if self.execution=='host' and self.profile_id is not None:
+            raise ValueError('Host sessions have no sandbox profile')
+        return self
 
 
 class SessionPresentation(BaseModel):
@@ -40,7 +58,7 @@ class SessionOrder(BaseModel):
         return self
 
 
-class ThinkingInput(NewSession):
+class ThinkingInput(ModelInput):
     thinking_level: Literal['model_default', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
 
