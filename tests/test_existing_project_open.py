@@ -76,4 +76,3 @@ def test_existing_open_requires_file_even_when_it_disappears_after_file_check(mo
     with pytest.raises(SessionPersistenceError, match='storage_unavailable'):
         Database(path, require_existing=True)
     assert removed == [True] and not path.exists()
-

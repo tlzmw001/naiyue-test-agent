@@ -204,4 +204,3 @@ def test_cli_ready_valid_directory_still_accepts_new_message(monkeypatch, tmp_pa
     monkeypatch.setattr('builtins.input', lambda *_: next(lines))
     assert chat.main(['--config', 'unused', '--session-db', str(location.database_path), '--resume', sid]) == 0
     assert 'continued answer' in capsys.readouterr().out and len(model.seen) == 2
-

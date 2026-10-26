@@ -151,4 +151,3 @@ async def settle(instance, *, subagents):
         updated.update(state='pending_parent', checkpoint_id=config['checkpoint_id'], checkpoint_ns=config.get('checkpoint_ns', ''))
     await _save(subagents, updated, record['version'])
     instance['record'] = updated
-
