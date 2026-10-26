@@ -78,6 +78,11 @@ def test_ci_checks_source_tests_and_all_wheels_before_upload_gate():
     assert '--complete-release' in json.dumps(workflow['jobs']['complete']['steps'])
 
 
+def test_backend_ci_budget_allows_the_complete_suite_to_finish():
+    workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)
+    assert int(workflow['jobs']['test']['timeout-minutes']) >= 40
+
+
 def test_complete_release_rejects_missing_and_duplicate_targets(monkeypatch):
     from scripts import release_artifacts
     targets = json.loads((ROOT / 'release/native-tools.json').read_text())['targets']
