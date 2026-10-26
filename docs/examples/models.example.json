@@ -13,6 +13,11 @@
       "provider_id": "gateway",
       "model": "<your-model-name>",
       "api": "chat_completions",
+      "request": {
+        "timeout_seconds": 300,
+        "stream_chunk_timeout_seconds": 600,
+        "tool_stream": true
+      },
       "profile": {
         "image_inputs": false,
         "memory_output": "text",

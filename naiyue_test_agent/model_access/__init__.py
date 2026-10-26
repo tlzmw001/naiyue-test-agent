@@ -360,7 +360,8 @@ def load_model_catalog(path: str | Path | None = None) -> ModelCatalog:
         request = {}
         if 'request' in entry:
             request = _object(entry['request'], f'models.{model_id}.request', set(),
-                              {'timeout_seconds', 'sdk_max_retries', 'prompt_cache', 'reasoning_summary'})
+                              {'timeout_seconds', 'sdk_max_retries', 'prompt_cache', 'reasoning_summary',
+                               'tool_stream', 'stream_chunk_timeout_seconds'})
         timeout_seconds = request.get('timeout_seconds', DEFAULT_REQUEST_TIMEOUT_SECONDS)
         if (type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds)
                 or timeout_seconds <= 0):
@@ -371,6 +372,23 @@ def load_model_catalog(path: str | Path | None = None) -> ModelCatalog:
         if provider['kind'] == 'ollama' and 'sdk_max_retries' in request:
             raise ModelConfigError(f'models.{model_id}.request.sdk_max_retries is unsupported for ollama')
         request_settings = {'timeout': timeout_seconds, 'max_retries': sdk_max_retries}
+        if 'tool_stream' in request:
+            if provider['kind'] != 'openai_compatible' or api != 'chat_completions':
+                raise ModelConfigError(
+                    f'models.{model_id}.request.tool_stream requires openai_compatible chat_completions')
+            if type(request['tool_stream']) is not bool:
+                raise ModelConfigError(f'models.{model_id}.request.tool_stream must be a boolean')
+            request_settings['extra_body'] = {'tool_stream': request['tool_stream']}
+        if 'stream_chunk_timeout_seconds' in request:
+            if provider['kind'] not in ('openai', 'openai_compatible'):
+                raise ModelConfigError(
+                    f'models.{model_id}.request.stream_chunk_timeout_seconds requires an OpenAI adapter')
+            chunk_timeout = request['stream_chunk_timeout_seconds']
+            if (type(chunk_timeout) not in (int, float) or not math.isfinite(chunk_timeout)
+                    or chunk_timeout < 0):
+                raise ModelConfigError(
+                    f'models.{model_id}.request.stream_chunk_timeout_seconds must be non-negative and finite')
+            request_settings['stream_chunk_timeout'] = chunk_timeout
         try:
             request_settings.update(prompt_cache_model_settings(profile, request, provider['kind']))
         except ValueError as exc:
