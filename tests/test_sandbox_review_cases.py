@@ -49,6 +49,30 @@ def test_malformed_reply_retains_unknown_write_outcome(mutates,body):
         engine.request(row,'write',{},mutates=mutates)
 
 
+@pytest.mark.parametrize('reply_version,accepted', [('0.5.1', True), ('0.5.2', True), ('', False), (None, False)])
+def test_handshake_accepts_independent_envd_version_only_with_matching_contract(reply_version,accepted):
+    from naiyue_test_agent.execution.docker_environment import DockerEnvironment
+    row=SandboxRecord('B','P','S','running','D','container','volume','image',{},container_id='c'*64)
+    engine=DockerEnvironment(None)
+    engine.request=lambda *_a,**_k:dict(protocol=PROTOCOL_VERSION,package_version=reply_version,
+        environment=row.environment.public(),session_id=row.session_id)
+    if accepted:
+        engine.handshake(row)
+    else:
+        with pytest.raises(SandboxError,match='env_protocol_mismatch'):
+            engine.handshake(row)
+
+
+def test_handshake_rejects_incompatible_protocol_even_with_package_version():
+    from naiyue_test_agent.execution.docker_environment import DockerEnvironment
+    row=SandboxRecord('B','P','S','running','D','container','volume','image',{},container_id='c'*64)
+    engine=DockerEnvironment(None)
+    engine.request=lambda *_a,**_k:dict(protocol=PROTOCOL_VERSION+1,package_version='0.5.1',
+        environment=row.environment.public(),session_id=row.session_id)
+    with pytest.raises(SandboxError,match='env_protocol_mismatch'):
+        engine.handshake(row)
+
+
 def test_destroy_cannot_finish_then_be_revived_by_pending_create(monkeypatch,tmp_path):
     from naiyue_test_agent.application.environments import service
     reserved,allow_create,destroy_attempted,destroy_done=Event(),Event(),Event(),Event()

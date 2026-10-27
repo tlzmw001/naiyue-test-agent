@@ -4,6 +4,7 @@ from email.parser import BytesParser
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
+import re
 import shutil
 import stat
 import tomllib
@@ -13,7 +14,7 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 from scripts.native_assets import ROOT, load_config
-from scripts.release_artifacts import release_source, source_version
+from scripts.release_artifacts import release_source
 
 PACKAGE = 'naiyue_test_agent'
 DISTRIBUTION = 'naiyue-test-agent-envd'
@@ -21,8 +22,14 @@ DISTRIBUTION = 'naiyue-test-agent-envd'
 
 def load_profile(root=ROOT):
     profile = json.loads(release_source(root / 'release/envd.json', root).read_text())
-    if set(profile) != {'schema_version', 'files', 'dependencies'} or profile['schema_version'] != 1:
+    if (set(profile) != {'schema_version', 'version', 'execution_sha256', 'dependencies_sha256', 'files', 'dependencies'}
+            or profile['schema_version'] != 2):
         raise ValueError('Invalid execution profile')
+    if not isinstance(profile['version'], str) or re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', profile['version']) is None:
+        raise ValueError('Invalid execution package version')
+    if any(not isinstance(profile[name],str) or re.fullmatch(r'[0-9a-f]{64}',profile[name]) is None
+            for name in ('execution_sha256','dependencies_sha256')):
+        raise ValueError('Invalid execution profile digest')
     files = profile['files']
     if not isinstance(files, list) or len(files) != len(set(files)):
         raise ValueError('Execution files must be a unique list')
@@ -76,6 +83,19 @@ def protocol_version(root=ROOT):
     raise ValueError('Missing execution protocol version')
 
 
+def execution_source(root, name, version):
+    source = release_source(root / name, root)
+    if name == PACKAGE + '/__init__.py':
+        nodes = [node for node in ast.parse(source.read_text()).body
+            if not (isinstance(node,ast.Expr) and isinstance(node.value,ast.Constant) and isinstance(node.value.value,str))]
+        if (len(nodes) != 1 or not isinstance(nodes[0],ast.Assign) or len(nodes[0].targets) != 1
+                or not isinstance(nodes[0].targets[0],ast.Name) or nodes[0].targets[0].id != '__version__'
+                or not isinstance(nodes[0].value,ast.Constant) or not isinstance(nodes[0].value.value,str)):
+            raise ValueError('Execution package root contains unsupported controller source')
+        return ('"""Naiyue Test Agent application modules."""\n\n__version__ = ' + repr(version) + '\n').encode()
+    return source.read_bytes()
+
+
 def stage_envd(root, destination, target):
     root, destination = Path(root), Path(destination)
     profile = load_profile(root)
@@ -85,11 +105,14 @@ def stage_envd(root, destination, target):
     destination.mkdir(parents=True, exist_ok=False)
     hashes = {}
     for name in profile['files']:
-        source = release_source(root / name, root)
         output = destination / name
         output.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, output)
-        hashes[name] = hashlib.sha256(source.read_bytes()).hexdigest()
+        content = execution_source(root, name, profile['version'])
+        output.write_bytes(content)
+        hashes[name] = hashlib.sha256(content).hexdigest()
+    if (execution_digest(hashes) != profile['execution_sha256'] or
+            hashlib.sha256(json.dumps(pins,separators=(',',':')).encode()).hexdigest() != profile['dependencies_sha256']):
+        raise ValueError('Execution source or dependencies changed without an execution version update')
     for name in ('setup.py', 'LICENSE'):
         shutil.copyfile(release_source(root / name, root), destination / name)
     settings = tomllib.loads(release_source(root / 'pyproject.toml', root).read_text())
@@ -97,7 +120,7 @@ def stage_envd(root, destination, target):
     metadata = [
         '[build-system]', 'requires = ' + quote(settings['build-system']['requires']),
         'build-backend = ' + quote(settings['build-system']['build-backend']), '', '[project]',
-        'name = ' + quote(DISTRIBUTION), 'version = ' + quote(source_version(root)),
+        'name = ' + quote(DISTRIBUTION), 'version = ' + quote(profile['version']),
         'description = "Container-local file, process and Git execution runtime"',
         'readme = { text = "Execution service for Naiyue sandboxes. No controller or model provider.", content-type = "text/plain" }',
         'requires-python = ' + quote(settings['project']['requires-python']),
@@ -110,7 +133,7 @@ def stage_envd(root, destination, target):
     (destination / 'pyproject.toml').write_text('\n'.join(metadata) + '\n')
     assets = destination / PACKAGE / '_assets'
     assets.mkdir(exist_ok=True)
-    manifest = dict(schema_version=1, package_version=source_version(root), protocol_version=protocol_version(root),
+    manifest = dict(schema_version=1, package_version=profile['version'], protocol_version=protocol_version(root),
         target=target, files=hashes, dependencies=pins, execution_sha256=execution_digest(hashes))
     (assets / 'envd.json').write_text(json.dumps(manifest, sort_keys=True, indent=2) + '\n')
 
@@ -143,8 +166,8 @@ def inspect_envd_wheel(path):
         if target is None or target['os'] != 'linux' or native['wheel_tag'] != target['wheel_tag']:
             raise ValueError('Invalid execution wheel platform')
         version = metadata['Version']
-        if version != source_version(ROOT):
-            raise ValueError('Execution package version differs from the current source version')
+        if version != profile['version']:
+            raise ValueError('Execution package version differs from the execution profile version')
         tag = native['wheel_tag']
         dist = DISTRIBUTION.replace('-', '_')
         if (prefix != f'{dist}-{version}.dist-info/' or path.name != f'{dist}-{version}-py3-none-{tag}.whl' or
@@ -189,8 +212,11 @@ def inspect_envd_wheel(path):
         hashes = {name: hashlib.sha256(archive.read(name)).hexdigest() for name in profile['files']}
         if hashes != manifest['files'] or execution_digest(hashes) != manifest['execution_sha256']:
             raise ValueError('Execution source SHA-256 mismatch')
-        expected = {name: hashlib.sha256(release_source(ROOT / name, ROOT).read_bytes()).hexdigest()
+        expected = {name: hashlib.sha256(execution_source(ROOT, name, profile['version'])).hexdigest()
             for name in profile['files']}
+        if (execution_digest(expected) != profile['execution_sha256'] or
+                hashlib.sha256(json.dumps(expected_pins,separators=(',',':')).encode()).hexdigest() != profile['dependencies_sha256']):
+            raise ValueError('Execution source or dependencies changed without an execution version update')
         if hashes != expected:
             raise ValueError('Execution source differs from the current build source')
     return dict(filename=path.name, version=version, target=native['target'], files=len(names), bytes=path.stat().st_size,

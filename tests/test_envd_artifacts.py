@@ -2,6 +2,7 @@
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import stat
 import sys
 import tomllib
@@ -69,7 +70,7 @@ def test_stage_uses_only_execution_sources_and_root_locked_dependencies(tmp_path
     files = {p.relative_to(target).as_posix() for p in (target / 'naiyue_test_agent').rglob('*.py')}
     assert files == set(profile['files'])
     for name in files:
-        assert (target / name).read_bytes() == (runtime.ROOT / name).read_bytes()
+        assert (target / name).read_bytes() == runtime.execution_source(runtime.ROOT, name, profile['version'])
     project = tomllib.loads((target / 'pyproject.toml').read_text())['project']
     original = tomllib.loads((runtime.ROOT / 'pyproject.toml').read_text())['project']
     assert project['name'] == 'naiyue-test-agent-envd'
@@ -78,6 +79,65 @@ def test_stage_uses_only_execution_sources_and_root_locked_dependencies(tmp_path
     assert not project.get('scripts')
     assert not (target / 'naiyue_test_agent/cli').exists()
     assert not (target / 'naiyue_test_agent/_assets/web').exists()
+
+
+def test_execution_version_is_independent_of_controller_source_version(tmp_path):
+    root=tmp_path/'source'
+    profile=runtime.load_profile()
+    for name in [*profile['files'],'pyproject.toml','setup.py','LICENSE','release/envd.json']:
+        source=runtime.ROOT/name
+        target=root/name
+        target.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(source,target)
+    (root/'naiyue_test_agent/__init__.py').write_text("__version__ = '9.9.9'\n")
+    staged=tmp_path/'staged'
+    runtime.stage_envd(root,staged,'linux-x86_64')
+    project=tomllib.loads((staged/'pyproject.toml').read_text())['project']
+    assert project['version']==profile['version']
+    assert (staged/'naiyue_test_agent/__init__.py').read_text().strip().endswith(repr(profile['version']))
+    manifest=json.loads((staged/'naiyue_test_agent/_assets/envd.json').read_text())
+    assert manifest['package_version']==profile['version']
+
+
+def test_execution_stage_does_not_silently_drop_new_package_root_logic(tmp_path):
+    root=tmp_path/'source'
+    profile=runtime.load_profile()
+    for name in [*profile['files'],'pyproject.toml','setup.py','LICENSE','release/envd.json']:
+        source=runtime.ROOT/name
+        target=root/name
+        target.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(source,target)
+    target=root/'naiyue_test_agent/__init__.py'
+    target.write_text(target.read_text()+'\nNEW_RUNTIME_BEHAVIOR = True\n')
+    with pytest.raises(ValueError,match='unsupported controller source'):
+        runtime.stage_envd(root,tmp_path/'staged','linux-x86_64')
+
+
+@pytest.mark.parametrize('changed', ['source', 'dependency'])
+def test_execution_build_requires_new_version_for_changed_content(tmp_path,changed):
+    root=tmp_path/'source'
+    profile=runtime.load_profile()
+    for name in [*profile['files'],'pyproject.toml','setup.py','LICENSE','release/envd.json']:
+        source=runtime.ROOT/name
+        target=root/name
+        target.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(source,target)
+    if changed=='source':
+        target=root/'naiyue_test_agent/execution/git_snapshot.py'
+        target.write_text(target.read_text()+'\n# changed execution source\n')
+    else:
+        target=root/'pyproject.toml'
+        target.write_text(target.read_text().replace('Pillow==12.3.0','Pillow==12.3.1'))
+    with pytest.raises(ValueError,match='changed without an execution version update'):
+        runtime.stage_envd(root,tmp_path/'staged','linux-x86_64')
+
+
+def test_execution_inspector_rejects_profile_digest_drift(tmp_path,monkeypatch):
+    path=_wheel(tmp_path)
+    profile=runtime.load_profile()
+    monkeypatch.setattr(runtime,'load_profile',lambda root=runtime.ROOT:{**profile,'execution_sha256':'0'*64})
+    with pytest.raises(ValueError,match='changed without an execution version update'):
+        runtime.inspect_envd_wheel(path)
 
 
 @pytest.mark.parametrize('target', ['linux-x86_64', 'linux-arm64'])
@@ -134,12 +194,12 @@ def test_rehashing_a_modified_source_cannot_claim_the_current_execution_build(tm
         runtime.inspect_envd_wheel(path)
 
 
-def test_distribution_metadata_cannot_claim_a_different_source_version(tmp_path):
+def test_distribution_metadata_cannot_claim_a_different_execution_version(tmp_path):
     path = _wheel(tmp_path)
     with zipfile.ZipFile(path) as archive:
         content = {name: archive.read(name) for name in archive.namelist()}
     metadata = next(name for name in content if name.endswith('.dist-info/METADATA'))
-    version = runtime.source_version(runtime.ROOT)
+    version = runtime.load_profile()['version']
     claimed = version + '.99'
     content[metadata] = content[metadata].replace(('Version: ' + version + '\n').encode(), ('Version: ' + claimed + '\n').encode())
     manifest_path = 'naiyue_test_agent/_assets/envd.json'

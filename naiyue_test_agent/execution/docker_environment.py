@@ -168,8 +168,9 @@ class DockerEnvironment:
         return response['result']
 
     def handshake(self,row):
-        from naiyue_test_agent import __version__
         result=self.request(row,'hello',{})
-        if result!={'protocol':PROTOCOL_VERSION,'package_version':__version__,
-                    'environment':row.environment.public(),'session_id':row.session_id}:
+        if (not isinstance(result,dict) or set(result)!={'protocol','package_version','environment','session_id'}
+                or result['protocol']!=PROTOCOL_VERSION or not isinstance(result['package_version'],str)
+                or not result['package_version'] or len(result['package_version'])>64
+                or result['environment']!=row.environment.public() or result['session_id']!=row.session_id):
             raise SandboxError('env_protocol_mismatch')

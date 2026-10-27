@@ -6,9 +6,9 @@ import subprocess
 import sys
 import tempfile
 
-from scripts.envd_artifacts import ROOT, inspect_envd_wheel, stage_envd
+from scripts.envd_artifacts import ROOT, inspect_envd_wheel, load_profile, stage_envd
 from scripts.native_assets import load_config, prepare_native
-from scripts.release_artifacts import check_tag, source_version
+from scripts.release_artifacts import check_tag
 
 
 def main():
@@ -17,11 +17,12 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--tag')
     args = parser.parse_args()
+    version = load_profile(ROOT)['version']
     if args.tag:
-        check_tag(args.tag, source_version(ROOT))
+        check_tag(args.tag, version)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    filename = f'naiyue_test_agent_envd-{source_version(ROOT)}-py3-none-{load_config()["targets"][args.target]["wheel_tag"]}.whl'
+    filename = f'naiyue_test_agent_envd-{version}-py3-none-{load_config()["targets"][args.target]["wheel_tag"]}.whl'
     if (output / filename).exists():
         raise FileExistsError('Execution wheel already exists; choose a fresh output directory')
     with tempfile.TemporaryDirectory(prefix='nyt-envd-build-') as directory:
