@@ -45,7 +45,9 @@ def read_input(root, path, limit):
                 return os.readlink(target).encode('utf-8'), '120000', file_identity(before)
             fd = open_store_readonly(target); stack.callback(os.close, fd)
         opened = os.fstat(fd)
-        if file_identity(before) != file_identity(opened):
+        # Windows path stat and descriptor fstat can report different ctime meanings.
+        if ((before.st_dev,before.st_ino,before.st_size)
+                != (opened.st_dev,opened.st_ino,opened.st_size)):
             raise GitInputError('git_input_source_changed', (path,))
         if opened.st_size > limit:
             raise GitInputError('git_input_budget', (path,))
@@ -55,7 +57,7 @@ def read_input(root, path, limit):
             raise GitInputError('git_input_budget', (path,))
         if file_identity(os.fstat(fd)) != file_identity(opened):
             raise GitInputError('git_input_source_changed', (path,))
-        return content, '100755' if opened.st_mode & stat.S_IXUSR else '100644', file_identity(opened)
+        return content, '100755' if opened.st_mode & stat.S_IXUSR else '100644', file_identity(before)
 
 
 def check_links(contents):

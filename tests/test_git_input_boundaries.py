@@ -1,4 +1,5 @@
 """Reject malformed inputs and observable source races before accepting a snapshot."""
+import os
 import pytest
 
 from naiyue_test_agent.contracts.git_inputs import GitInputError, input_path
@@ -46,6 +47,25 @@ def test_index_change_during_snapshot_is_rejected(tmp_path,monkeypatch):
             git(root,'update-index','--chmod=+x','app.txt')
         return result
     (root/'app.txt').write_text('dirty\n')
+    monkeypatch.setattr(GitRepository,'run',run)
+    with pytest.raises(GitInputError,match='git_input_source_changed'):
+        SnapshotBuilder(tmp_path/'snapshot',GitInputSettings()).prepare(LocalSource(root),'a'*32)
+    assert changed
+
+
+def test_same_size_file_change_during_snapshot_is_rejected(tmp_path,monkeypatch):
+    root=repository(tmp_path)
+    original=GitRepository.run;changed=False
+    def run(self,args,**kwargs):
+        nonlocal changed
+        result=original(self,args,**kwargs)
+        if args[0]=='hash-object' and kwargs.get('data')==b'base\n' and not changed:
+            changed=True
+            target=root/'app.txt'
+            target.write_bytes(b'evil\n')
+            info=target.stat()
+            os.utime(target,ns=(info.st_atime_ns,info.st_mtime_ns+1_000_000_000))
+        return result
     monkeypatch.setattr(GitRepository,'run',run)
     with pytest.raises(GitInputError,match='git_input_source_changed'):
         SnapshotBuilder(tmp_path/'snapshot',GitInputSettings()).prepare(LocalSource(root),'a'*32)

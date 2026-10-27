@@ -1,11 +1,14 @@
 """User working-copy inputs are explicit; application Git never mutates its index."""
 import hashlib
+import os
+from types import SimpleNamespace
 
 import pytest
 
 from naiyue_test_agent.contracts.git_inputs import GitInputError
 from naiyue_test_agent.contracts.projects import LocalSource, GitSource
 from naiyue_test_agent.execution.git_snapshot import SnapshotBuilder
+from naiyue_test_agent.execution import git_snapshot
 from naiyue_test_agent.sandbox_settings import GitInputSettings
 from git_input_helpers import git, repository
 
@@ -16,6 +19,24 @@ def builder(tmp_path, **settings):
 
 def blob(tmp_path, path):
     return git(tmp_path/'snapshot'/'objects.git','show','refs/naiyue/input/'+'a'*32+':'+path)
+
+
+def test_windows_descriptor_ctime_difference_does_not_reject_unchanged_input(tmp_path, monkeypatch):
+    root=repository(tmp_path)
+    info=(root/'app.txt').stat()
+    identity=(info.st_dev,info.st_ino)
+    fstat=os.fstat
+    def descriptor_stat(fd):
+        value=fstat(fd)
+        if (value.st_dev,value.st_ino)!=identity:
+            return value
+        fields={name:getattr(value,name) for name in dir(value) if name.startswith('st_')}
+        fields['st_ctime_ns']+=1_000_000_000
+        return SimpleNamespace(**fields)
+    monkeypatch.setattr(git_snapshot.os,'fstat',descriptor_stat)
+    result=builder(tmp_path).prepare(LocalSource(root),'a'*32)
+    assert blob(tmp_path,'app.txt')==b'base\n'
+    assert any(item.path=='app.txt' for item in result.manifest)
 
 
 def test_partial_staging_and_user_git_objects_remain_unchanged(tmp_path):
