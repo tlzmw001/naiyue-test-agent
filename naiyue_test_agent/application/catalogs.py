@@ -65,4 +65,3 @@ class McpAPI:
             settings = await run_blocking(load_mcp_settings, settings_path)
             return await refresh_mcp(self._sessions.mcp_resources, self._tool_registry, settings,
                 borrow_mcp=self._sessions.borrow_mcp, permission_settings=self._sessions._permission_settings)
-

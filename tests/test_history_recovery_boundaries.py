@@ -132,4 +132,3 @@ def test_async_saver_existing_open_failure_releases_store_and_keeps_original_err
     asyncio.run(scenario())
     assert observed == [(loc.database_path.as_uri() + '?mode=rw', {'timeout': 5.0, 'uri': True})]
     assert_identity_unchanged(loc, sid, before)
-
