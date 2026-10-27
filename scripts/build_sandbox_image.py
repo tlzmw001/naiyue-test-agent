@@ -1,4 +1,4 @@
-"""Build a sandbox image from the ordinary Linux release wheel, never a checkout mount."""
+"""Build a sandbox image from the execution-only Linux wheel, never a checkout mount."""
 import argparse
 from email.parser import BytesParser
 import json
@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
-from scripts.release_artifacts import inspect_wheel
+from scripts.envd_artifacts import inspect_envd_wheel
 
 
 def main():
@@ -19,19 +19,19 @@ def main():
     parser.add_argument('--output',type=Path,required=True)
     args=parser.parse_args()
     wheels=list(args.wheel_dir.glob('*.whl'))
-    if len(wheels)!=1:raise ValueError('Exactly one standard Linux wheel is required')
-    wheel=wheels[0].resolve();info=inspect_wheel(wheel)
+    if len(wheels)!=1:raise ValueError('Exactly one execution Linux wheel is required')
+    wheel=wheels[0].resolve();info=inspect_envd_wheel(wheel)
     if not info['target'].startswith('linux-'):raise ValueError('Sandbox image requires a Linux release wheel')
     docker=['docker','--context',args.context]
     daemon=json.loads(subprocess.check_output([*docker,'info','--format','{{json .}}']))
-    architecture={'aarch64':'arm64','arm64':'arm64','x86_64':'x64','amd64':'x64'}[daemon['Architecture']]
+    architecture={'aarch64':'arm64','arm64':'arm64','x86_64':'x86_64','amd64':'x86_64'}[daemon['Architecture']]
     if info['target']!='linux-'+architecture:raise ValueError('Wheel architecture does not match Docker daemon')
     subprocess.run([*docker,'pull',args.base_image],check=True)
     base=json.loads(subprocess.check_output([*docker,'image','inspect',args.base_image]))[0]
     with tempfile.TemporaryDirectory(prefix='nyt-sandbox-build-') as directory:
         stage=Path(directory)
         shutil.copyfile(Path(__file__).resolve().parents[1]/'sandbox/Dockerfile',stage/'Dockerfile')
-        shutil.copyfile(wheel,stage/'application.whl')
+        shutil.copyfile(wheel,stage/'envd.whl')
         with zipfile.ZipFile(wheel) as archive:
             metadata=BytesParser().parsebytes(archive.read(next(name for name in archive.namelist() if name.endswith('.dist-info/METADATA'))))
         requirements=[item for item in metadata.get_all('Requires-Dist',[]) if 'extra ==' not in item]

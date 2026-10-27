@@ -45,9 +45,10 @@ def verify_container(row,data):
             or config.get('Cmd')!=['-I','-m','naiyue_test_agent.envd','serve','--max-bytes',str(settings['max_message_bytes'])]):
         raise SandboxError('env_policy_mismatch')
     env=config.get('Env') or []
+    policy={key:value for key,value in row.settings.items() if key!='ssh'}
     if ('NYT_ENVIRONMENT='+json.dumps(row.environment.public(),sort_keys=True) not in env
             or 'NYT_SESSION_ID='+row.session_id not in env
-            or 'NYT_SANDBOX_POLICY='+json.dumps(row.settings,sort_keys=True) not in env):
+            or 'NYT_SANDBOX_POLICY='+json.dumps(policy,sort_keys=True) not in env):
         raise SandboxError('env_binding_mismatch')
 
 
@@ -103,6 +104,7 @@ class DockerEnvironment:
 
     def create(self,row,save):
         self.cli.daemon(row.daemon_id)
+        policy={key:value for key,value in row.settings.items() if key!='ssh'}
         for name,is_state in ((row.volume_name,False),(state_volume(row),True)):
             args=['volume','create']
             for key,value in labels(row).items():args.extend(['--label',key+'='+value])
@@ -117,7 +119,7 @@ class DockerEnvironment:
               '--workdir',SANDBOX_ROOT,'--entrypoint','python',
               '--env','NYT_ENVIRONMENT='+json.dumps(row.environment.public(),sort_keys=True),
               '--env','NYT_SESSION_ID='+row.session_id,
-              '--env','NYT_SANDBOX_POLICY='+json.dumps(row.settings,sort_keys=True)]
+              '--env','NYT_SANDBOX_POLICY='+json.dumps(policy,sort_keys=True)]
         for key,value in labels(row).items():args.extend(['--label',key+'='+value])
         identity=self.cli.run([*args,row.image_id,'-I','-m','naiyue_test_agent.envd','serve',
                               '--max-bytes',str(row.settings['max_message_bytes'])],mutates=True).decode().strip()

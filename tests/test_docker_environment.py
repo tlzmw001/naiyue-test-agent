@@ -10,13 +10,16 @@ def record():
 
 
 @pytest.mark.parametrize('field,value', [('ReadonlyRootfs',False),('Privileged',True),('NetworkMode','host')])
-def test_policy_mismatch_cannot_become_success(field,value):
+@pytest.mark.parametrize('ssh', [False, True])
+def test_policy_mismatch_cannot_become_success(field,value,ssh):
     from naiyue_test_agent.execution.docker_environment import verify_container
     row=record()
+    container_policy=__import__('json').dumps(row.settings,sort_keys=True)
+    if ssh:row=row.changed(settings={**row.settings,'ssh':{'host':'private-control-host'}})
     data={'Id':row.container_id,'Image':row.image_id,'Name':'/'+row.container_name,
         'Config':{'User':'1000:1000','Labels':{'naiyue.binding':'B','naiyue.project':'P','naiyue.session':'S'},
             'Env':['NYT_ENVIRONMENT='+__import__('json').dumps(row.environment.public(),sort_keys=True),'NYT_SESSION_ID=S',
-                   'NYT_SANDBOX_POLICY='+__import__('json').dumps(row.settings,sort_keys=True)],
+                   'NYT_SANDBOX_POLICY='+container_policy],
             'Entrypoint':['python'],'Cmd':['-I','-m','naiyue_test_agent.envd','serve','--max-bytes','16777216']},
         'HostConfig':{'ReadonlyRootfs':True,'Privileged':False,'NetworkMode':'bridge',
             'NanoCpus':2000000000,'Memory':2147483648,'PidsLimit':256,

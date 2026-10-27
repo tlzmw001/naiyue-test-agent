@@ -20,6 +20,12 @@ it('explains catalog failures and changed choices without showing raw codes', ()
   expect(errorText(new ApiError('env_profile_changed'))).toContain('重新选择');
   expect(errorText(new ApiError('env_configuration_invalid'))).toContain('保留');
 });
+it('explains a missing local SSH client without suggesting local Docker installation', () => {
+  const message = errorText(new ApiError('env_ssh_unavailable'));
+  expect(message).toContain('OpenSSH');
+  expect(message).not.toContain('env_ssh_unavailable');
+  expect(message).not.toContain('Docker');
+});
 it('retains the same request ID when retrying a host session draft', async () => {
   const fetch = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ session_id: 'S' })));
   vi.stubGlobal('fetch', fetch);

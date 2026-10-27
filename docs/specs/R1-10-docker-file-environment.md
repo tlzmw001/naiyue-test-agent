@@ -1,5 +1,7 @@
 # R1-10：Docker/envd 文件通道
 
+> 版本边界：下文保留本片当时使用完整应用wheel的设计与验收记录。2026-10-27起新镜像构建改用[执行端专用wheel](R1-14A-01-envd-runtime-package.md)及`scripts.build_envd`；不要把历史`build_release`产物作为当前镜像输入。历史证据和既有镜像协议不因此改写。
+
 2026-10-25 用户批准实施10，完成后只讲11。保留01–09 dirty，基线 build/r1-10/baseline.json；不提交/push/发布，不修改真实应用配置/用户库/依赖。另获用户明确授权准备本机Docker：Homebrew Colima+Docker CLI/buildx，专用 nyt-r1-10 profile（4CPU/6GiB/40GiB稀疏盘），不挂载主目录、不转发SSH agent、不激活默认context；测试仅管理带本片所有权标记的自建资源。
 
 ## 1. 当前链与本片外部边界

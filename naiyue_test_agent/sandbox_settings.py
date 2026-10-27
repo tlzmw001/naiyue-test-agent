@@ -1,12 +1,45 @@
 """Global Docker execution policy; no daemon is contacted while loading it."""
 import re
+from pathlib import PurePosixPath
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class SandboxNetworkSettings(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
     mode: Literal['external', 'none'] = 'external'
+
+
+class SandboxSSHSettings(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid', frozen=True, hide_input_in_errors=True)
+    host: str = Field(min_length=1, max_length=255)
+    executable: str = 'ssh'
+    docker_executable: str = 'docker'
+    socket_path: str = '/var/run/docker.sock'
+    connect_timeout_seconds: int = Field(default=15, ge=1, le=3600)
+
+    @field_validator('host')
+    @classmethod
+    def host_alias(cls, value):
+        if re.fullmatch(r'\w[\w.-]*', value) is None:
+            raise ValueError('SSH target must be an OpenSSH host alias')
+        return value
+
+    @field_validator('executable', 'docker_executable')
+    @classmethod
+    def executable_name(cls, value):
+        if not value.strip() or len(value) > 512 or value.startswith('-') or re.search(r'[\x00-\x1f\x7f]', value):
+            raise ValueError('Invalid SSH or remote Docker executable')
+        return value
+
+    @field_validator('socket_path')
+    @classmethod
+    def unix_socket(cls, value):
+        path = PurePosixPath(value)
+        if (not path.is_absolute() or path == PurePosixPath('/') or '..' in path.parts
+                or len(value) > 512 or '\\' in value or re.search(r'[\x00-\x1f\x7f]', value)):
+            raise ValueError('An absolute remote Unix socket path is required')
+        return value
 
 
 class GitInputSettings(BaseModel):
@@ -34,6 +67,7 @@ class SandboxSettings(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
     docker_executable: str = 'docker'
     context: str = 'default'
+    ssh: SandboxSSHSettings | None = Field(default=None, exclude_if=lambda value: value is None)
     image: str | None = None
     cpus: float = Field(default=2.0, gt=0, le=64)
     memory_bytes: int = Field(default=2147483648, ge=134217728)
@@ -48,6 +82,12 @@ class SandboxSettings(BaseModel):
     poll_milliseconds: int = Field(default=100, ge=20, le=10000)
     network: SandboxNetworkSettings = Field(default_factory=SandboxNetworkSettings)
     git: GitInputSettings = Field(default_factory=GitInputSettings)
+
+    @model_validator(mode='after')
+    def one_connection(self):
+        if self.ssh is not None and self.context != 'default':
+            raise ValueError('SSH transport cannot be combined with a local Docker context')
+        return self
 
     @field_validator('docker_executable', 'context', 'image')
     @classmethod

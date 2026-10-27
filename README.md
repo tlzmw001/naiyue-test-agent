@@ -13,7 +13,9 @@
 - **外部集成**：MCP、网页搜索与抓取、AITest 工具，以及项目 Skills。
 - **可选 Docker 沙箱**：按会话选择环境模板，隔离文件和进程执行；取回结果、审查差异后再确认交付到本机。
 
-0.5.0 的更新与升级说明见[版本说明](https://github.com/tlzmw001/naiyue-test-agent/blob/v0.5.0/docs/releases/0.5.0.md)。
+0.5.1 的更新与升级说明见[版本说明](https://github.com/tlzmw001/naiyue-test-agent/blob/v0.5.1/docs/releases/0.5.1.md)。
+
+远端沙箱支持直接 SSH 连接 Linux Docker，Windows 可复用 OpenSSH 和跳板机配置，无需安装 Docker CLI。当前使用预先准备的 key/ssh-agent；公司原机验收及普通密码后台认证尚未完成，准备步骤见[远端 SSH 使用说明](docs/remote-docker-ssh.md)。[0.5.1 Release](https://github.com/tlzmw001/naiyue-test-agent/releases/tag/v0.5.1) 提供 Linux x64 执行端离线镜像附件。
 
 ## 安装
 

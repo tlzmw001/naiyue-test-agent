@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import shlex
 import shutil
 from pathlib import Path
 from naiyue_test_agent.contracts.sandbox import SandboxError
@@ -17,8 +18,9 @@ class DockerCLI:
     def run(self,args,*,input_bytes=None,mutates=False):
         from contextlib import ExitStack
         import tempfile
-        executable=shutil.which(self.settings.docker_executable)
-        if executable is None:raise SandboxError('env_docker_unavailable')
+        ssh=self.settings.ssh
+        executable=shutil.which(ssh.executable if ssh is not None else self.settings.docker_executable)
+        if executable is None:raise SandboxError('env_ssh_unavailable' if ssh is not None else 'env_docker_unavailable')
         output=bytearray()
         error_size=0
         async def consume(stream,chunk):
@@ -32,7 +34,13 @@ class DockerCLI:
                 output.extend(chunk)
         environment={key:value for key,value in os.environ.items()
             if key in ('PATH','HOME','USERPROFILE','SYSTEMROOT','TMPDIR','TEMP','TMP','SSH_AUTH_SOCK','DOCKER_CONFIG')}
-        argv=[executable,'--context',self.settings.context,*args]
+        if ssh is None:
+            argv=[executable,'--context',self.settings.context,*args]
+        else:
+            command='exec '+shlex.join([ssh.docker_executable,'--host','unix://'+ssh.socket_path,*args])
+            argv=[executable,'-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes',
+                  '-o','ForwardAgent=no','-o','ClearAllForwardings=yes',
+                  '-o','ConnectTimeout='+str(ssh.connect_timeout_seconds),'--',ssh.host,command]
         with ExitStack() as stack:
             source=None
             if input_bytes is not None:
@@ -57,9 +65,10 @@ class DockerCLI:
         except (ValueError,UnicodeError) as error:raise SandboxError('env_protocol_mismatch') from error
 
     def daemon(self,expected=None):
-        contexts=self.json(['context','inspect',self.settings.context])
-        endpoint=contexts[0]['Endpoints']['docker']['Host']
-        if not endpoint.startswith(('unix://','npipe://')):raise SandboxError('env_endpoint_unsupported')
+        if self.settings.ssh is None:
+            contexts=self.json(['context','inspect',self.settings.context])
+            endpoint=contexts[0]['Endpoints']['docker']['Host']
+            if not endpoint.startswith(('unix://','npipe://')):raise SandboxError('env_endpoint_unsupported')
         info=self.json(['info','--format','{{json .}}'])
         if info.get('OSType')!='linux':raise SandboxError('env_platform_unsupported')
         identity=info.get('ID')

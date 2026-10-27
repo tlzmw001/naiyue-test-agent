@@ -87,3 +87,13 @@ MCP专项通过原安装worker的必经路径运行，复用离线模型与check
 - PyPI 不允许覆盖已用文件名；修复通常使用新版本。索引传播延迟可以等待后重新执行安装验证，不以重新发布处理。
 
 本地检查与远端 CI、上传成功与公开安装成功分别是独立证据。尚未执行相应阶段时，不宣称已发布或已验证全部系统。
+
+## 执行端离线镜像附件
+
+执行端和完整Agent分别安装在容器/控制端的独立环境，不向同一site-packages混装。按当前版本使用 `scripts.build_envd --target linux-x86_64 --tag v版本 --output 新目录`，再用 `scripts.build_sandbox_image` 选择已核对的构建context、基础镜像、独立tag和报告路径；镜像构建入口拒绝完整Agent wheel，不放宽主包门禁。
+
+离线交付须从最终同版本源构建，沿标准Dockerfile准备全部执行依赖。用构建机支持的 `docker image save --platform linux/amd64` 导出；核对legacy manifest.json、仅一平台、config身份和gzip层后重导入，并在非root/只读/禁网/限额容器运行版本化 `sandbox/check_runtime.py` 及正式Docker探针。新Docker或旧seccomp预检不能替代公司原机验收。
+
+发布镜像ZIP放在build产物目录，仓库仅提交 `release/offline/版本-linux-amd64.json`、使用说明和下载链接，避免普通Git的单文件上限及历史体积增长。ZIP包括镜像tar、同源compatibility.py、限定原daemon/镜像身份的check.sh、manifest、SHA256SUMS与README；先验证ZIP和各文件SHA，再作为对应版本GitHub Release附件上传ZIP/外部SHA文件，下载回读比较SHA。不要覆盖未知旧附件或以旧版本镜像改名交付。
+
+PyPI发布只上传完整Agent的四平台wheel；执行端wheel和离线镜像属于单独构建/附件，不混入release-candidate的四目标集合。配置说明指向对应版本和附件，保留未验证的公司环境/网络/密码边界。

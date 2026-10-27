@@ -314,6 +314,7 @@ export class WebApi {
 export function errorText(error: unknown): string {
   const code = error instanceof ApiError ? error.code : error instanceof Error ? error.message : '';
   const messages: Record<string, string> = {
+    env_ssh_unavailable: '未找到本机 OpenSSH 客户端，请检查 SSH 程序路径后继续原准备。',
     env_image_required: '尚未配置沙箱镜像，请在应用配置中设置后重试。',
     env_profile_changed: '所选环境配置已变化，请刷新并重新选择环境；消息已保留。',
     env_profile_unavailable: '所选环境已移除，请刷新并重新选择环境。',

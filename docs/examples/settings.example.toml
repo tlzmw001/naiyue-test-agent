@@ -507,7 +507,8 @@ Authorization = "MY_MCP_AUTHORIZATION"
 
 # Docker/envd 文件后端；未配置镜像或模板时纯本机流程可正常使用。
 # 镜像先用标准 Linux wheel 构建，context 必须显式指向已授权的本机 Docker。
-# 远端 SSH 在 R1-14。13D-02/03 已支持 API/CLI 和输入框上方模板选择、刷新。
+# R1-14A 可配置 sandbox.ssh，直接使用 OpenSSH 执行远端 Docker；无须本机 Docker CLI。
+# key/ssh-agent 与跳板机 Host 配置须事先准备；普通密码后台认证在 14B。
 # 修改后调用认证 POST /api/v1/environments/refresh，只重载服务固定配置文件的 sandbox 节。
 # 无效配置保留上次列表；删除整个 sandbox 节只禁用未来新建，已有会话继续按保存配置执行。
 [sandbox]
@@ -529,6 +530,17 @@ total_output_bytes = 67108864
 max_operation_records = 1024
 max_active_operations = 16
 poll_milliseconds = 100
+
+# 启用远端时取消下面注释，Host 使用本机默认 .ssh/config 中已核对的别名。
+# context 必须保持未设置或 default，docker_executable 是这里的远端路径。
+# [sandbox.ssh]
+# host = "company-dev"
+# executable = "ssh"
+# docker_executable = "/usr/bin/docker"
+# socket_path = "/var/run/docker.sock"
+# connect_timeout_seconds = 15
+# 目标连接强制 BatchMode/主机身份检查且禁止附加转发；跳板机配置须独立核对。
+# SSH 元信息不进入容器；不接受 password/private_key 字段，不修改真实 SSH 文件。
 
 [sandbox.network]
 # external：由公司/云网络策略控制；none：只保留回环，实际生效失败则拒绝。
