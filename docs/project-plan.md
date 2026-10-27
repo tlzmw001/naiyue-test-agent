@@ -577,3 +577,29 @@
 同日用户要求把复盘落成持续规则，AGENTS已加入设计边界/可读性验收，并将抽象条件限定同一职责。异常学习改为当前Spec083的一条TimeoutError主线、6节新课重建（Lesson39–44尚未开始），达到本人追踪/小实现/故障预测检查后回第二章stop_reason。原学习记录保留历史，当前路线为权威入口。
 
 同日后续进度：Lesson41九分类分支与Lesson42四规则接线场景均有正确复述，Lesson43开始正常标注/读回；独立debug与实现仍待验收。用户授权提交并推送当前代码，收尾重新验证后端1060、前端27与构建通过；最新记录见handoff第323节，上两段的“未提交/尚未开始”为当时阶段状态。
+
+
+## 主目录保留的整合前记录
+
+以下内容是旧阶段与课堂记录，当前实施状态以文档顶部为准。
+
+**R1-07B 已完成本机验收（2026-10-24）**：独立工作树 `codex/project-execution-root` 已接普通对话/项目会话树、目录刷新和真实范围显示。固定 scope 的 App/WebApi 分别持有草稿与会话；离开暂停观察，返回只读同步后续接 live run；页面主题/滚动偏好共用。目录读取不加载模型/编译图，复用热仓储并核对冷库身份；未信任项目可看历史，实际执行仍拒绝。首轮全量发现迁移结构化异常被通用包装的回归，已按既有测试复现、修源并完整重跑。最终 **5052 后端/410.04s、444 前端**，TS/Vite、标准 Mac ARM64 wheel/Twine/源码外安装通过；295 Python/4 Web 资源一致、955 冻结输入无漂移。0 供应商请求；桌面/375px 实际页面、命令与证据见 [7B Spec](/Users/zmw/.codex/worktrees/project-execution-root/naiyue-test-agent/docs/specs/R1-07B-project-navigation.md) 和 `build/r1-07b/verification.json`。真实配置/用户库/依赖/版本及主目录并行 Spec129/XML 保持，未提交/push/合并/发布，无新增用户掌握证据。**唯一下一步：讲解并批准 07C 目录浏览、选择/新建文件夹和信任流程；尚未实施。**
+
+**R1-07A 已完成本机验收（2026-10-24）**：实现位于独立工作树 `codex/project-execution-root`，主目录未合入。默认 `nyt` 连接/拉起共享服务，输出固定scope/instance的私有链接后只关闭启动器；浏览器迁到scoped API、统一写ID/实例核对，空闲可见页只读发现其他客户端run再接SSE。旧独占Web工厂删除；冲突旧库只读历史、无执行/登记。收据明确拒绝释放、临时销毁task身份及跨scope复用、删除后缓存历史重放均有确定性回归；正常/失败主链与测试装配迁移见[7A Spec](/Users/zmw/.codex/worktrees/project-execution-root/naiyue-test-agent/docs/specs/R1-07A-web-service-client.md)。最终 **5046后端/420.09s、436前端**、TS/Vite、标准Mac ARM64 wheel/Twine/源码外新环境安装通过，294Python/4Web资源一致、948冻结输入无漂移，0供应商。首次全量4项测试装配失败已修并完整重跑；日志与两份候选保留在`build/r1-07a/`。主目录并行Spec129/XML保持；未提交/push/合并/发布，无新增用户掌握证据。**唯一下一步：讲解并批准7B项目侧栏/会话范围；7C目录浏览和后续沙箱不提前实现。**
+
+**2026-10-24 R1-06 收束**：实现位于独立开发工作树 `codex/project-execution-root`，主目录未合入；主目录并行 Spec129/XML 保持、未纳入候选。`nyt chat` 已连接共享服务，临时租约断线销毁、项目选择/列举、完整交互、只读旧库与旧桥清理已接入，见[本片 Spec](/Users/zmw/.codex/worktrees/project-execution-root/naiyue-test-agent/docs/specs/R1-06-cli-service-client.md)。三项异常尾项已按原范围补齐，新增 19 项；最终后端 5033、标准候选及源码外安装通过；前端此次未改未重跑，初验 424 项记录保留。下一步只解释/批准 R1-07：默认 nyt 的共享 Web 启动、项目会话侧栏、输入区项目入口、认证目录浏览/新建和失败边界；07 与沙箱均尚未实施。
+
+**2026-10-24 R1-05 收束**：实现位于独立开发工作树 `codex/project-execution-root`，主目录未合入；主目录并行 Spec129/XML 修复保持，未纳入本片候选。系统锁全生命周期持有，发现/认证握手、受控拉起、范围绑定 HTTP/SSE 与有限幂等回执已接入第四片 Application；关闭先停止应用并保存再等待 SSE，最后释放锁，详见[本片 Spec](/Users/zmw/.codex/worktrees/project-execution-root/naiyue-test-agent/docs/specs/R1-05-single-service-and-protocol.md)。最终后端 4984、前端 424、标准候选包与源外安装通过。下一步只说明/批准 R1-06：CLI 改协议客户端、项目选择和 --no-session 合同、完整交互和旧桥清理；Web/UI 在 07，尚未实施或提交。
+
+**2026-10-24 R1-04 开发分支收束**：第四片在独立开发工作树完成，主目录尚未合入；[实际合同与验收](/Users/zmw/.codex/worktrees/project-execution-root/naiyue-test-agent/docs/specs/R1-04-multi-project-runtime.md)。当前以共享 Application 拥有模型/个人库/准入、ProjectHost 拥有独立项目运行资源；普通对话与注册位置校验已接。完整后端 4950、前端 424 与 Mac ARM64 本地候选安装通过。下一步仅讨论/批准 R1-05 单一服务与会话协议，未实施 05，也未提前开发 06/07。
+
+**2026-10-24 R1-03 收束**：项目登记、旧库导入和默认位置已完成本机验收，见[本片 Spec](/Users/zmw/.codex/worktrees/project-execution-root/naiyue-test-agent/docs/specs/R1-03-project-registry.md)；注册表独立于项目库，新项目不写身份文件，当前执行/CLI/Web 仍为单项目链。下一片 R1-04 装配各项目独立根/子图与 saver，集中拥有个人库/模型/运行额度，并接普通对话及注册表身份准入，详见总体方案第 8.3 节。R1-04 未获实施授权，侧栏/目录选择器仍在 07。
+
+**2026-10-24 R1-02 收束**：存储依赖方向、12 个 SQL 模块及混合记忆职责已完成本机验收，详见 [重构 checkout 的 R1-02 Spec](/Users/zmw/.codex/worktrees/project-execution-root/naiyue-test-agent/docs/specs/R1-02-storage-dependency-direction.md)；当前仍是既有单项目运行形态。第三片计划接入 projects 领域 API、独立注册表、旧 UUID 导入与可恢复操作，建议保留现有项目库布局；正常登记/中断对账/位置失效/重新定位/删除边界见[总体方案第 8.2 节](research/多项目与远端执行架构方案-2026-10-23.md#82-第三片-r1-03项目注册与旧数据导入待讨论未实施)。R1-03 未获实施授权，多项目资源装配仍在 04，CLI/Web 入口在 06/07。
+
+**2026-10-24 当前方向更新（设计，未实施）**：用户取消 worktree，采用[多项目与远端 R1 方案](research/多项目与远端执行架构方案-2026-10-23.md)：本机单服务管理注册表、每项目库/根子图/saver、独立 chats 库与共享个人记忆；文件/进程通过明确环境绑定选择 Host 或每会话 Docker，Agent 循环留本机。首版网络 external/none；Git bundle 以原始 HEAD/输入快照/输出提交审查并受控合入；MCP 本机执行边界显式。暂缓跨库 checkpointer、自动空闲回收、RunExecutor/R2、脏工作区应用和网络白名单。建议按 R1-01—14 逐片说明与批准，第一片修正既有执行准入与错误分类。代码基线为尚未合入 main 的 d717d14；本段不表示功能实现或合并授权，下方早期实现/下一步记录保留其历史语境。
+
+
+2026-10-22架构拆分合同：[Spec128](specs/128-project-execution-and-run-context.md)确认先区分稳定Project与会话ExecutionRoot、运行context按生命周期分层，分别实施。归档迁出子步骤已接线，其余身份/准入迁移和分层RunScope尚未实施。执行根失效阻止新执行，历史和已有后台管理可用；新Shell/后台/MCP应用归档已使用执行目录外的data_dir，后台真实归档故障继续停止进程，MCP可选归档失败保留已知结果。临时`--no-session`不创建身份、不开放项目history/memory，归档按session_id隔离；不在前置片创建/附着worktree。应用领域分包等当前memory/history提交后再做，随后存储职责拆分→门面组合，mixin单独处理。AppSettings已有，不新增根配置；只识别Control/ContextOperation投递相似，不统一所有观察器。
+
+2026-10-22记忆方案：[Spec127](specs/127-memory-and-session-overviews.md)00—03见各片；[04—06](specs/127-04-06-memory-completion.md)实现和工程验收完成：保存后双输出worker、OR阈值/基线推进、任务查看停止、独立memory观测和有界索引，schema17/个人format2/DELETE-FULL。后端4562、前端422/构建、研究116、四流程5、四目标同源码候选/Mac源码外安装通过。模型质量未通过：两轮48请求，第二轮13/24符合固定预期；最后压短提示修预算，未追加真实效果验证。唯一未关闭项为提取输出契约与语义可靠性，不以工程通过宣称模块质量达标。不改实际配置/用户库/依赖/版本或提交发布，保留并行范围。
