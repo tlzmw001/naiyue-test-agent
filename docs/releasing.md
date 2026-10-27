@@ -29,7 +29,7 @@ Workflow name 填文件名，不是界面显示名 Publish，也不填 `.github/
 - 仓库：`tlzmw001/naiyue-test-agent`，Actions 已启用。
 - Environment 名称为 `pypi`。可从 Settings → Environments 预先创建；工作流首次引用不存在的环境时 GitHub 也会创建。
 - 若设置 deployment branches/tags，允许对应的 `v*` 标签。自动发布不要求配置每次人工批准；是否增加环境审批由维护者决定。
-- 只有 publish job 有 `id-token: write`。构建和测试任务仅需读仓库，PR 不触发上传。
+- 只有 publish job 有 `id-token: write`。构建和测试任务只读仓库，候选发现与跨运行下载使用 `actions: read`；PR 不触发上传。
 - OIDC 上传 job 直接定义在 `publish.yml`；被它调用的 CI 工作流不作为 PyPI 信任身份。
 
 ## 本地构建候选 wheel
@@ -57,8 +57,10 @@ python -m scripts.verify_wheel_install --wheel-dir build/candidate --output buil
 2. 修改唯一 Python 版本事实 `naiyue_test_agent.__version__`；pyproject 从该值读取版本。前端 package.json 是独立构建项目的版本，不作为 Python 发布版本来源。
 3. 跑全部测试、前端构建与安装 smoke，提交并确认主分支 CI 成功。
 4. 在确认的提交上创建并推送对应标签，例如 `v0.1.0`。此步骤会正式上传 PyPI，须核对授权、提交和产物后执行。
-5. Publish 自动调用 CI：校验标签、全部后端测试、前端测试/构建、四平台安装 smoke、集中白名单/版本/源码指纹检查全部通过，才上传四份 wheel。
+5. Publish 自动调用 CI：先校验标签与源码版本。如果同一完整提交 SHA 已有本仓库 main push 的成功 CI，且 `release-candidate` 未过期，则下载那次已验收的产物；清单身份、运行 ID、版本、精确文件集合、逐文件 SHA-256、四目标与应用源码指纹全部再次核验后上传。没有可复用候选时，仍完整运行后端测试、前端测试/构建与四平台安装 smoke。查询/校验失败明确阻断，不采纳其他提交或 PR/fork 的产物。
 6. 发布后的四平台 job 查询 PyPI 元数据、核对发行文件 SHA-256、下载正式文件，并通过普通 PyPI 安装再次验证产品链路。
+
+日常 CI 将全部后端测试按文件稳定分为两片并行执行，各片使用 pytest `-x`，全部通过时覆盖完整 tests。每片的 JUnit 随成功/失败上传；`complete` 只有在两片与全部平台成功后生成 `release-candidate/manifest.json` 和 `wheels/`。候选清单绑定仓库、提交、验收运行、版本及每个 wheel 的目标/哈希。重复发布准备可复用同提交产物，新提交仍完整检查，不能为了命中复用而移动已有标签。具体设计见 [Spec131](specs/131-ci-shards-and-release-reuse.md)。
 
 CI 安装 smoke 使用全新 venv、临时 home/workspace/SQLite、源码外 cwd 和移除系统工具的 PATH。验证命令、包内 rg/fd、生产 Find/Grep、前端/API、审批恢复、SQLite 重开与 CLI；使用确定性模型，模型网络请求为零。报告作为 Actions artifact 保存，不进入产品包。安装检查现在要求本包及全部依赖均以wheel安装
 （`--only-binary=:all:`），不允许CI预装编译器掩盖用户机器缺少二进制依赖的问题。

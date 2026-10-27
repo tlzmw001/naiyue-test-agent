@@ -22,8 +22,8 @@ const markdownComponents: Components = {
 };
 
 // Progress/loading updates must not reparse unchanged long message bodies.
-const MessageMarkdown = memo(function MessageMarkdown({ content, prefix }: { content: string; prefix: string }) {
-  return <ReactMarkdown skipHtml urlTransform={safeUrl}
+const MessageMarkdown = memo(function MessageMarkdown({ content, prefix, literalHtml = false }: { content: string; prefix: string; literalHtml?: boolean }) {
+  return <ReactMarkdown skipHtml={!literalHtml} urlTransform={safeUrl}
     remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
     remarkRehypeOptions={{ clobberPrefix: prefix }} components={markdownComponents}>{content}</ReactMarkdown>;
 });
@@ -205,7 +205,7 @@ export default function Conversation({ messages: sourceMessages, compacted, tool
           {row.images?.length && loadImage ? <MessageImages messageId={row.id} images={row.images} load={loadImage} /> : null}
           <div className={styles.messageBody} data-message-id={row.type === 'tool' ? row.id : undefined}>
             {row.type === 'tool' || (row.provisional && row.type !== 'ai') ? <div className={styles.draftText}>{row.content}</div> :
-              <MessageMarkdown content={row.content} prefix={`${markdownId}-${encodeURIComponent(row.id)}-`} />}
+              <MessageMarkdown content={row.content} prefix={`${markdownId}-${encodeURIComponent(row.id)}-`} literalHtml={row.type === 'human'} />}
           </div>
           {contentControl(row)}
           {(row.arguments_truncated || row.tool_calls_truncated) && <p className={styles.historyPreview}>工具调用信息未完整显示。</p>}

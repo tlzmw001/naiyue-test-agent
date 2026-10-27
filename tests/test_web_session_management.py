@@ -226,6 +226,8 @@ def test_cancelled_delete_still_revokes_completed_run_cache(monkeypatch, tmp_pat
                 release.set()
                 with pytest.raises(asyncio.CancelledError):
                     await deleting
+            # Accepted command producers outlive cancelled HTTP callers.
+            await web.state.receipts.drain()
             assert (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).status_code == 404
             assert (await client.get(f'/api/v1/scopes/chats/runs/{run}')).status_code == 404
             assert sid not in web.state.delivery.latest

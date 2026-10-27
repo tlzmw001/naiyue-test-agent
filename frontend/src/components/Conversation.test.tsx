@@ -4,6 +4,21 @@ import { afterEach, expect, it } from 'vitest';
 import Conversation from './Conversation';
 
 afterEach(cleanup);
+it.each([
+  '<endpoints>\n  <endpoint name="synthetic" />\n</endpoints>',
+  '<!-- synthetic configuration -->',
+  '<div>用户粘贴的内容</div>',
+  '<script>alert("synthetic")</script>\n<img src="https://example.invalid/image" onerror="alert(1)">',
+])('shows pasted user markup as text instead of an empty bubble: %s', content => {
+  const { container } = render(<Conversation compacted={false} messages={[{
+    id: 'user-markup', type: 'human', content, provisional: false, state: 'complete',
+  }]} />);
+  const bubble = container.querySelector('article');
+  expect(bubble?.textContent).toBe(content);
+  expect(bubble?.querySelector('endpoints, endpoint, div > div > div, script, img')).toBeNull();
+  expect(bubble?.querySelector('[onerror]')).toBeNull();
+});
+
 it('explains why a saved MCP approval requires a new call and only offers cancellation', () => {
   render(<Conversation compacted={false} messages={[]} recovery={{ kind: 'pending_approval',
     reason: 'mcp_approval_requires_new_call', actions: ['continue'], unconfirmed_tool_call_ids: ['old'] }}

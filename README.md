@@ -2,7 +2,9 @@
 
 本地运行的通用编程与测试 Agent，提供浏览器界面和终端交互。通过配置的模型、项目提示词、Skills 和工具读取项目、修改文件、执行命令，并保留会话历史。
 
-- 本地 Web：流式 Markdown、工具执行过程、权限审批、会话管理和历史滚动加载；首任务自动标题、文件差异预览/patch 下载、可见思考和最后任务重新生成。 当前开发分支还支持截图粘贴、拖入/选择图片、多图及仅图发送、图片引导/跟进、停止保留和历史预览，见[图片输入说明](docs/composer-images.md)。
+`0.5.0` 接入多项目共享服务和可选 Docker 沙箱：Web/CLI 共用服务，项目独立会话与草稿，按会话选择环境模板，并显式审查、取回和交付沙箱结果；同时支持模型流式配置并修复 XML 用户消息空气泡。升级行为、配置及限制见 [0.5.0 版本说明](docs/releases/0.5.0.md)。
+
+- 本地 Web：流式 Markdown、工具执行过程、权限审批、会话管理和历史滚动加载；首任务自动标题、文件差异预览/patch 下载、可见思考和最后任务重新生成。 支持截图粘贴、拖入/选择图片、多图及仅图发送、图片引导/跟进、停止保留和历史预览，见[图片输入说明](docs/composer-images.md)。
 - 终端 CLI：多轮对话、恢复历史、审批、停止、Steering 和 Follow-up。
 - 模型接入：OpenAI、兼容 OpenAI 的接口、Anthropic、Ollama。
 - 工具：Read、Ls、Find、Grep、Write、Edit、Bash、PowerShell，以及一层前台子 Agent。
@@ -10,17 +12,17 @@
 - `0.2.0` 统一模型请求准备与上下文预算，补充调用次数、耗时和 SDK HTTP 尝试诊断；支持分离配置代理地址、用户名/密码、直连名单及新会话默认工具，见[设置示例](docs/examples/settings.example.toml)。
 - `0.3.0` 新增 Bash/PowerShell 后台任务及统一辅助侧栏，支持按既有子 Agent 实例续跑；同时交付外部工具有限重试、CIDR/通配直连规则、迁移前备份、显式还原及任务收尾 checkpoint 修剪。使用说明见[0.3.0功能与配置指南](docs/0.3.0功能与配置指南.md)和[全量设置示例](docs/examples/settings.example.toml)，范围见[后台任务](docs/specs/125-background-shell-tasks.md)和[子实例续跑](docs/specs/126-subagent-continuation.md)。
 - Find/Grep 使用安装包内的 `fd` / `rg`；前端已经构建，使用发行包无需 Node.js 或 npm。
-- 当前开发分支已提供 Docker/envd 文件与进程后端：每个沙箱独立容器、代码卷和状态卷，支持 `external` / `none` 网络、环境生命周期、后台任务与有界输出恢复。Git 输入可通过应用内部 API 准备不可变快照并传入沙箱，不改用户的 index/HEAD；未跟踪文件须明确选择，忽略文件首版不传，选定的已知凭据明确拒绝，不承诺清理 Git 历史。丢失回执时按原操作 ID 查询，结果未知时不自动重放；常驻服务正常关闭确认停止进程和原容器，保留卷和文件。纯本机使用无需 Docker。Web新会话可选择此计算机或Docker沙箱；已建会话固定原环境，历史可打开但失效环境不能执行。GitSource项目无伪造的本机目录，执行前须显式信任。现已支持显式取回沙箱结果，在本机校验 bundle 并审查输入快照到结果的差异，保留用户工作文件/HEAD/暂存区；未跟踪输出仍需明确选择。Web 在沙箱会话输入框上沿的“查看改动”中操作，原请求断线后只核对同一结果，已取回结果在销毁沙箱后仍可审查；现在可在审查后单独确认合入当前本地分支、创建本机新分支（不切换分支）或丢弃应用任务引用。未知交付只核对原操作，不自动重放；远端推送、PR和其他发布操作由用户自行处理，应用不提供这些入口；配置与验证边界见 [R1-10 Spec](docs/specs/R1-10-docker-file-environment.md)、[R1-11 Spec](docs/specs/R1-11-sandbox-process-recovery.md) 、[R1-12A Spec](docs/specs/R1-12A-git-input-snapshots.md) 、[R1-12B Spec](docs/specs/R1-12B-sandbox-sessions.md) 、[R1-13A Spec](docs/specs/R1-13A-sandbox-results.md) 和 [R1-13B Spec](docs/specs/R1-13B-controlled-delivery.md)。
+- 0.5.0已提供 Docker/envd 文件与进程后端：每个沙箱独立容器、代码卷和状态卷，支持 `external` / `none` 网络、环境生命周期、后台任务与有界输出恢复。Git 输入可通过应用内部 API 准备不可变快照并传入沙箱，不改用户的 index/HEAD；未跟踪文件须明确选择，忽略文件首版不传，选定的已知凭据明确拒绝，不承诺清理 Git 历史。丢失回执时按原操作 ID 查询，结果未知时不自动重放；常驻服务正常关闭确认停止进程和原容器，保留卷和文件。纯本机使用无需 Docker。Web新会话可选择此计算机或Docker沙箱；已建会话固定原环境，历史可打开但失效环境不能执行。GitSource项目无伪造的本机目录，执行前须显式信任。现已支持显式取回沙箱结果，在本机校验 bundle 并审查输入快照到结果的差异，保留用户工作文件/HEAD/暂存区；未跟踪输出仍需明确选择。Web 在沙箱会话输入框上沿的“查看改动”中操作，原请求断线后只核对同一结果，已取回结果在销毁沙箱后仍可审查；现在可在审查后单独确认合入当前本地分支、创建本机新分支（不切换分支）或丢弃应用任务引用。未知交付只核对原操作，不自动重放；远端推送、PR和其他发布操作由用户自行处理，应用不提供这些入口；配置与验证边界见 [R1-10 Spec](docs/specs/R1-10-docker-file-environment.md)、[R1-11 Spec](docs/specs/R1-11-sandbox-process-recovery.md) 、[R1-12A Spec](docs/specs/R1-12A-git-input-snapshots.md) 、[R1-12B Spec](docs/specs/R1-12B-sandbox-sessions.md) 、[R1-13A Spec](docs/specs/R1-13A-sandbox-results.md) 和 [R1-13B Spec](docs/specs/R1-13B-controlled-delivery.md)。
 - `0.4.0` 新增 [history历史查询](docs/history-tool.md)和[memory记忆查询与维护](docs/memory-tool.md)：同目录会话原文、项目/个人记忆、来源校验、候选转正、到期及遗忘；完整用户轮保存后可在后台整理概览与记忆，新轮有界注入偏好/相关条目及首次近期会话索引。复用工具启停、权限和后台任务查看/停止，不需要embedding模型；同时迁出应用输出归档并修复单次模型输出上限，范围和效果边界见[0.4.0版本说明](docs/releases/0.4.0.md)。
-- 开发分支 [R1-13D-01](docs/specs/R1-13D-01-environment-profile-contracts.md) 支持在 `sandbox.profiles` 配置多套已准备镜像，由 `default_profile` 选择新沙箱会话的默认模板；旧 `sandbox.image` 仍可单独使用。[R1-13D-02](docs/specs/R1-13D-02-environment-refresh-selection.md) 已接服务端显式选择和热更新：认证的 `POST /api/v1/environments/refresh` 从服务启动时固定的配置文件只读重载 sandbox，成功替换列表，失败保留旧版，不需要重启。`execution-options` 返回 ID、名称、指纹；新建沙箱会话可提交 `profile_id` 与 `expected_profile_revision`，配置变化后须重新确认。会话先保存完整选择快照，原请求重试和恢复继续使用原镜像与预算，模板删除也不换绑。[R1-13D-03](docs/specs/R1-13D-03-environment-composer.md) 已接输入框上方的环境列表、刷新和首次发送准备：选择环境及权限/工具/推理设置时只保留草稿，首次发送才创建所选环境、确认设置并开始运行；失败保留文字和原请求。已有会话显示原保存环境名称。容器额度与空闲管理已由第四片接入；纯本机使用无需配置模板。
+- 0.5.0 [R1-13D-01](docs/specs/R1-13D-01-environment-profile-contracts.md) 支持在 `sandbox.profiles` 配置多套已准备镜像，由 `default_profile` 选择新沙箱会话的默认模板；旧 `sandbox.image` 仍可单独使用。[R1-13D-02](docs/specs/R1-13D-02-environment-refresh-selection.md) 已接服务端显式选择和热更新：认证的 `POST /api/v1/environments/refresh` 从服务启动时固定的配置文件只读重载 sandbox，成功替换列表，失败保留旧版，不需要重启。`execution-options` 返回 ID、名称、指纹；新建沙箱会话可提交 `profile_id` 与 `expected_profile_revision`，配置变化后须重新确认。会话先保存完整选择快照，原请求重试和恢复继续使用原镜像与预算，模板删除也不换绑。[R1-13D-03](docs/specs/R1-13D-03-environment-composer.md) 已接输入框上方的环境列表、刷新和首次发送准备：选择环境及权限/工具/推理设置时只保留草稿，首次发送才创建所选环境、确认设置并开始运行；失败保留文字和原请求。已有会话显示原保存环境名称。容器额度与空闲管理已由第四片接入；纯本机使用无需配置模板。
 - `0.3.1` 修复 Windows 下稳定文件在 Read 后 Edit 误报冲突的问题，删除 Edit 两处重复路径解析并集中元数据比较规则；保留内容冲突与原子替换保护，安装验证增加实际 Read → Edit → Read 链路。
 - `0.2.0` 支持 `nyt mcp list` 只读发现及根/子 Agent 调用本地/远程 MCP 工具，复用活动工具选择、审批与会话连接，支持按服务显式开启空闲回收；应用运行中可刷新配置以新增服务、调整名单和启停，CLI/Web显示来源、结果状态和归档位置，重启保留历史、旧 MCP 待审需取消后重新发起，见[MCP客户端配置](docs/mcp-client.md)。
 
-开发分支 [R1-13D-04](docs/specs/R1-13D-04-sandbox-lifecycle.md) 已接沙箱资源管理：输入框上沿“管理沙箱”可查看全部项目的登记状态、启动/停止/核对原资源，明确确认后销毁原容器、代码卷和状态卷。`sandbox.lifecycle` 默认运行占用 2、保留数量 10、空闲 30 分钟停止、每 30 秒检查；未知状态保守占用额度。活动任务、待审批和未确认后台操作受保护；停止保留文件，正常关闭常驻服务会在运行和进程排空后停止原容器，关闭客户端不触发该行为。生命周期策略随环境配置热更新，降额不杀已有任务；数量上限不等于磁盘字节上限，不会自动按时间删除文件。R1-11 的退出行为由本片替换；[R1-13D-05](docs/specs/R1-13D-05-real-docker-acceptance.md)已用本机真实 Docker 和两套镜像完成组合验收，含隔离、热更新、额度、后台/审批保护、退出重开、原操作核对和清理。该证据使用离线固定模型，不代表真实模型效果或公司远端部署。
+0.5.0 [R1-13D-04](docs/specs/R1-13D-04-sandbox-lifecycle.md) 已接沙箱资源管理：输入框上沿“管理沙箱”可查看全部项目的登记状态、启动/停止/核对原资源，明确确认后销毁原容器、代码卷和状态卷。`sandbox.lifecycle` 默认运行占用 2、保留数量 10、空闲 30 分钟停止、每 30 秒检查；未知状态保守占用额度。活动任务、待审批和未确认后台操作受保护；停止保留文件，正常关闭常驻服务会在运行和进程排空后停止原容器，关闭客户端不触发该行为。生命周期策略随环境配置热更新，降额不杀已有任务；数量上限不等于磁盘字节上限，不会自动按时间删除文件。R1-11 的退出行为由本片替换；[R1-13D-05](docs/specs/R1-13D-05-real-docker-acceptance.md)已用本机真实 Docker 和两套镜像完成组合验收，含隔离、热更新、额度、后台/审批保护、退出重开、原操作核对和清理。该证据使用离线固定模型，不代表真实模型效果或公司远端部署。
 
 ## 安装
 
-需要 Python 3.12 或更高版本；当前 CI 基线为 Python 3.12。建议使用独立虚拟环境。
+需要 Python 3.12.4 或更高版本；当前 CI 基线为 Python 3.12。该补丁版本起 Windows 支持新建私密服务目录所需的 `0700` 行为。建议使用独立虚拟环境；已有服务目录须保持当前用户及系统管理员可访问的私有权限，不应对其他本机用户共享。
 
 ```bash
 python -m venv .venv
@@ -70,6 +72,24 @@ OpenAI / 兼容接口的 `api` 可选 `chat_completions` 或 `responses`，应�
 
 对于使用 `reasoning_content` 返回可见思考的兼容网关，可在对应模型的 `profile` 中声明 `"reasoning_output": "reasoning_content"`；Responses 可在 `request` 中配置 `"reasoning_summary": "auto"`（或 `concise` / `detailed`）。未配置时不额外请求思考摘要；模型没有返回可见思考时，界面不显示该区域。重新生成会重新执行最后一次任务及其工具，工作区文件不会回滚。
 
+当前源码支持在单个模型的 `request` 中配置工具参数流式和流式等待阈值。以下片段适用于已确认支持 `tool_stream` 的兼容 Chat Completions 服务（例如智谱接口；公司网关是否透传需另行确认）：
+
+```json
+"request": {
+  "timeout_seconds": 300,
+  "stream_chunk_timeout_seconds": 600,
+  "tool_stream": true
+}
+```
+
+| 字段 | 功能与适用范围 |
+| --- | --- |
+| `timeout_seconds` | HTTP 超时，有限正数，默认 60 秒；不代表整次 Agent 任务总时限。 |
+| `stream_chunk_timeout_seconds` | 异步流式调用等待下一个已解析数据块的秒数，允许有限非负数，`0` 关闭这一层等待阈值；HTTP 超时及用户停止仍有效。支持 OpenAI/兼容接口的 Chat Completions 与 Responses。 |
+| `tool_stream` | 严格 `true` / `false`；控制服务端是否逐块返回工具调用参数，仅允许 `openai_compatible` + `chat_completions`，且要求服务支持此扩展。收到完整调用后仍由应用执行工具。 |
+
+两项新字段都可省略：不配 `tool_stream` 就不发送该扩展；不配流式阈值就沿用 SDK 的 `LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S` 环境变量，环境变量未设置时为 120 秒。模型中显式配置优先于该环境变量；每个模型单独生效，修改后需重启。HTTP 保活不算已解析数据块。其他供应商的这两项配置及不支持的协议组合会在启动时明确拒绝。完整 JSON 示例包含这些可选项，不支持工具流式扩展的网关应删除 `tool_stream` 行。这些配置位于 `models.json`，不放入 `settings.toml`。
+
 模型凭证由用户保管，不随包提供。使用远程模型时，发送给模型的消息和工具结果会交给所配置的供应商；本地应用不代表模型也在本地运行。
 
 ## 启动 Web
@@ -110,9 +130,9 @@ nyt chat --help
 
 常用交互命令：`:quit` 退出、`:stop` 停止、`:approve` / `:deny` 处理审批。完整交互说明以终端提示为准。
 
-`0.2.0` 支持只读查询：`:usage` 查看当前会话累计模型用量和调用耗时，`:diagnostics` 列最近运行，`:diagnostics <run_id>` 查看模型、工具和 HTTP 尝试明细；有后续页时会打印下一页命令。Web 在原上下文侧栏的“会话累计”和“运行诊断”查看同一批已保存事实。当前开发分支的临时会话 `--no-session` 也可查询本实例的用量与诊断，聊天档案、回复边界和检查点共用独立 RAM SQLite；关闭即丢弃，不创建项目身份或聊天数据库，不开放项目 history/memory。工具输出仍可能按下文规则写入外部归档。诊断只在有限保留范围内可用。口径与入口见[调用观测说明](docs/web-chat.md#调用观测与只读查询)。
+`0.2.0` 支持只读查询：`:usage` 查看当前会话累计模型用量和调用耗时，`:diagnostics` 列最近运行，`:diagnostics <run_id>` 查看模型、工具和 HTTP 尝试明细；有后续页时会打印下一页命令。Web 在原上下文侧栏的“会话累计”和“运行诊断”查看同一批已保存事实。0.5.0的临时会话 `--no-session` 也可查询本实例的用量与诊断，聊天档案、回复边界和检查点共用独立 RAM SQLite；关闭即丢弃，不创建项目身份或聊天数据库，不开放项目 history/memory。工具输出仍可能按下文规则写入外部归档。诊断只在有限保留范围内可用。口径与入口见[调用观测说明](docs/web-chat.md#调用观测与只读查询)。
 
-当前开发分支的 `nyt chat` 连接或自动拉起同一操作系统用户、同一数据目录的共享服务。多个终端可同时使用；同会话只接受一个运行，其他终端可查看和停止它。持久终端退出只断开客户端，运行继续；`--no-session` 的专用租约断开会停止临时工作并销毁 RAM 聊天，不开放项目 history/memory。新项目需确认真实目录，非交互使用显式 `--trust-project`；`nyt projects` 列项目 UUID，`--project` 选择它，配置可用 `--config`/`--settings` 指定。连接失败不会自动重发执行请求。详见 [R1-06 合同](docs/specs/R1-06-cli-service-client.md)。默认 `nyt` 的共享接入已在 [R1-07A](docs/specs/R1-07A-web-service-client.md) 接线，页面固定连接该服务实例，并在 [R1-07B 项目侧栏](docs/specs/R1-07B-project-navigation.md) 中切换普通对话与已登记项目。每个项目保留独立会话和草稿，离开只断开观察；目录元数据不会加载所有项目的运行图。[R1-07C 文件夹入口](docs/specs/R1-07C-project-folders.md) 提供本机目录浏览、选择已有文件夹和创建新文件夹，确认真实目录与信任后添加项目；默认位置不限制其他目录。未登记的旧版身份继续使用正式导入流程，目录界面不会覆盖旧身份。显式旧库遇到目录身份冲突时仅开放历史档案，不重新登记或执行。
+0.5.0的 `nyt chat` 连接或自动拉起同一操作系统用户、同一数据目录的共享服务。多个终端可同时使用；同会话只接受一个运行，其他终端可查看和停止它。持久终端退出只断开客户端，运行继续；`--no-session` 的专用租约断开会停止临时工作并销毁 RAM 聊天，不开放项目 history/memory。新项目需确认真实目录，非交互使用显式 `--trust-project`；`nyt projects` 列项目 UUID，`--project` 选择它，配置可用 `--config`/`--settings` 指定。连接失败不会自动重发执行请求。详见 [R1-06 合同](docs/specs/R1-06-cli-service-client.md)。默认 `nyt` 的共享接入已在 [R1-07A](docs/specs/R1-07A-web-service-client.md) 接线，页面固定连接该服务实例，并在 [R1-07B 项目侧栏](docs/specs/R1-07B-project-navigation.md) 中切换普通对话与已登记项目。每个项目保留独立会话和草稿，离开只断开观察；目录元数据不会加载所有项目的运行图。[R1-07C 文件夹入口](docs/specs/R1-07C-project-folders.md) 提供本机目录浏览、选择已有文件夹和创建新文件夹，确认真实目录与信任后添加项目；默认位置不限制其他目录。未登记的旧版身份继续使用正式导入流程，目录界面不会覆盖旧身份。显式旧库遇到目录身份冲突时仅开放历史档案，不重新登记或执行。
 
 离线查看会话库备份：`nyt storage backups --workspace /path/to/project`；使用自定义数据库时追加 `--session-db /path/to/sessions.sqlite`。命令输出 JSON，区分有效、无效和未完成备份；只读取已有工作区身份，不创建新库，当前库丢失或损坏也能查询。默认定位只读取设置的 `storage` 段；显式指定数据库时跳过设置读取，不依赖模型/MCP配置。当前源码在已有库需要迁移时自动生成并验证整库备份，新库和当前版本库不会重复备份；备份失败停止迁移，迁移失败保留原始副本和已提交步骤，终端显示失败阶段与版本。
 
@@ -128,7 +148,7 @@ Bash/PowerShell可在应用设置中配置执行总上限（秒）；未配或`0
 
 独立管理入口见[Spec125-05](docs/specs/125-05-background-management.md)：CLI输入`:tasks`分页查看本应用任务，`:tasks before`继续下一页，`:task output ID`查看输出，`:task stop ID`停止；这些命令在Agent运行中也可用。Web顶部的侧栏图标统一打开“子智能体／后台任务／上下文”三个页签；输入框旁的上下文图标仍可直接跳到上下文页签。任务页签显示当前工作区的活动数、所属会话、状态、输出尾部与归档引用，并提供停止；图标再次点击、关闭按钮或Esc均可收起。切换聊天保留面板，子Agent详情按新会话重新定位；切页签保留已挂载的内容选择。页面可见时每3秒刷新有限任务元数据，任务页签可见且选中任务时才读尾部，隐藏页面暂停读取。完成只更新界面提示；查看不会消费下一轮模型通知，也不会启动新推理。清理未确认保留“需核对”，读取失败显示未知并允许刷新。[06组合验收与性能范围](docs/specs/125-06-background-acceptance.md)区分本机运行、跨平台构建和真实模型效果。
 
-当前源码的[子Agent续跑](docs/specs/126-subagent-continuation.md)已接入原`subagent`工具：主Agent省略`agent_id`创建干净实例，传返回的完整ID继续同会话中成功且保存确认的实例。结果包含ID与报告，Web工具卡显示正文；`max_model_calls`仍限制本次委派，后续委派重新计数，同次审批恢复共用额度。[生命周期第二片](docs/specs/126-02-subagent-continuation-lifecycle.md)补齐正常重开、父/子压缩、重新生成退役及修剪/备份还原一致性；恢复不重放旧子工具，不把未确认实例推断为可续跑。[查找与展示第三片](docs/specs/126-03-subagent-discovery-delivery.md)将新建、继续与查询合并为一个“子智能体”开关：启用subagent即配套开放只读subagent_list，旧会话不改库；模型按需查询，不自动读取列表。每页条数/完整JSON字节/任务预览长度可通过tools.subagent配置，默认20/8192/160。CLI/Web按稳定实例区分当前委派与审批恢复，侧栏显示可继续候选或原因；停止绑定当前子执行/审批，已有历史继续保留。[标准安装验收](docs/specs/126-04-subagent-acceptance.md)使用共享固定模型场景，核对同ID三次委派、关闭重开后的历史、每次调用限额和真实文件写入次数。用户直聊不做；这些源码变更尚未发布。
+当前源码的[子Agent续跑](docs/specs/126-subagent-continuation.md)已接入原`subagent`工具：主Agent省略`agent_id`创建干净实例，传返回的完整ID继续同会话中成功且保存确认的实例。结果包含ID与报告，Web工具卡显示正文；`max_model_calls`仍限制本次委派，后续委派重新计数，同次审批恢复共用额度。[生命周期第二片](docs/specs/126-02-subagent-continuation-lifecycle.md)补齐正常重开、父/子压缩、重新生成退役及修剪/备份还原一致性；恢复不重放旧子工具，不把未确认实例推断为可续跑。[查找与展示第三片](docs/specs/126-03-subagent-discovery-delivery.md)将新建、继续与查询合并为一个“子智能体”开关：启用subagent即配套开放只读subagent_list，旧会话不改库；模型按需查询，不自动读取列表。每页条数/完整JSON字节/任务预览长度可通过tools.subagent配置，默认20/8192/160。CLI/Web按稳定实例区分当前委派与审批恢复，侧栏显示可继续候选或原因；停止绑定当前子执行/审批，已有历史继续保留。[标准安装验收](docs/specs/126-04-subagent-acceptance.md)使用共享固定模型场景，核对同ID三次委派、关闭重开后的历史、每次调用限额和真实文件写入次数。用户直聊不做；这些能力已包含在当前发行版中。
 
 ```toml
 [shell_tasks]
@@ -167,15 +187,15 @@ python -m pip install --upgrade naiyue-test-agent
 
 当前 R1-02 将 SQL/schema 按领域收拢到 `storage/conversation_sql`、`storage/memory_sql`、`storage/observability_sql` 与 `storage/subagent_sql.py`；应用层通过仓储事务接口装配记忆批次和写入，存储层独立导入不加载应用层。当前目录、事务主链和验证见 [R1-02](docs/specs/R1-02-storage-dependency-direction.md)。
 
-当前开发分支的 [R1-07D](docs/specs/R1-07D-admission-and-project-local.md) 已替换旧默认宿主工厂：由 `open_service_application` 创建根应用，通过 `app.projects.open(project_id)`、`app.chats.open()` 或 `app.temporary.open(identity)` 取得明确宿主，再使用其会话/运行等子 API。注册项目会话与子 Agent 引用项目本机绑定；用户显式重新定位并确认信任后，旧对话继续在新位置执行，原路径只作审计。首轮模型提示旧路径失效，旧修订的待审许可需取消后重新请求。目录失效时历史可读，执行明确拒绝，不回退其他目录。本机环境仍使用当前用户权限，不提供沙箱保证。
+0.5.0的 [R1-07D](docs/specs/R1-07D-admission-and-project-local.md) 已替换旧默认宿主工厂：由 `open_service_application` 创建根应用，通过 `app.projects.open(project_id)`、`app.chats.open()` 或 `app.temporary.open(identity)` 取得明确宿主，再使用其会话/运行等子 API。注册项目会话与子 Agent 引用项目本机绑定；用户显式重新定位并确认信任后，旧对话继续在新位置执行，原路径只作审计。首轮模型提示旧路径失效，旧修订的待审许可需取消后重新请求。目录失效时历史可读，执行明确拒绝，不回退其他目录。本机环境仍使用当前用户权限，不提供沙箱保证。
 
-当前开发分支以一个 `Application` 组合 `sessions`、`runs`、`history`、`tasks` 等领域 API，磁盘和临时存储共用这些接口。终端通过明确的 HTTP 请求和 SSE 订阅调用共享服务，旧 `cli_async` 和 `app.call` 拥有者桥已被替换；应用不持有终端循环。Web 保留认证、归属、幂等和错误映射。原组合迁移的历史版本见[应用组合与调用边界](docs/specs/128-05b-composed-application-and-domain-apis.md)，当前终端合同见 [R1-06](docs/specs/R1-06-cli-service-client.md)。
+0.5.0以一个 `Application` 组合 `sessions`、`runs`、`history`、`tasks` 等领域 API，磁盘和临时存储共用这些接口。终端通过明确的 HTTP 请求和 SSE 订阅调用共享服务，旧 `cli_async` 和 `app.call` 拥有者桥已被替换；应用不持有终端循环。Web 保留认证、归属、幂等和错误映射。原组合迁移的历史版本见[应用组合与调用边界](docs/specs/128-05b-composed-application-and-domain-apis.md)，当前终端合同见 [R1-06](docs/specs/R1-06-cli-service-client.md)。
 
 当前 R1-03 已接入 `app.projects`，在独立注册表登记本机/Git 来源、导入旧 UUID、记录跨库操作进度；可选 `[projects].default_parent_dir` 只作新建默认位置，详见 [R1-03](docs/specs/R1-03-project-registry.md)。R1-04 接入 `await app.projects.open(project_id)` 和 `await app.chats.open()`：各宿主拥有独立根/子图、saver、会话与任务，应用共享模型、个人记忆库和根运行额度。普通对话保存在 `data_dir/chats/sessions.sqlite`，只开放个人记忆；新登记项目按注册表核验执行位置，不写 marker。详见 [R1-04 的资源、归属与关闭合同](docs/specs/R1-04-multi-project-runtime.md)。R1-05 已接入独立共享服务底座、认证握手、明确项目范围的 HTTP/SSE、有限幂等回执及协议客户端，见 [R1-05 服务合同](docs/specs/R1-05-single-service-and-protocol.md)。`nyt chat` 已在 06 迁为协议客户端；默认 `nyt` 的 Web 服务接入、目录选择器与项目/会话侧栏在 07。
 
 会话执行由 `RunLifecycle`、`ControlQueue`、`ApprovalBook`、`SubagentRegistry` 组合，借用同一份 `SessionRuntime` 状态、当前 run 和短锁；具体行为与失败边界见[会话协作对象](docs/specs/128-06-session-collaborators.md)。
 
-发布维护、四平台构建和 PyPI 首次授权步骤见 [发行指南](https://github.com/tlzmw001/naiyue-test-agent/blob/main/docs/releasing.md)。项目设计与开发记录保留在 GitHub 仓库，不进入 wheel。
+CI 的完整后端测试分两片并行执行，失败尽早结束并上传 JUnit；标签发布可复用同一提交已经通过 main CI 的四平台产物，校验失败阻断，没有候选则完整验证。发布维护、四平台构建和 PyPI 首次授权步骤见 [发行指南](https://github.com/tlzmw001/naiyue-test-agent/blob/main/docs/releasing.md)。项目设计与开发记录保留在 GitHub 仓库，不进入 wheel。
 
 ## 许可证
 
