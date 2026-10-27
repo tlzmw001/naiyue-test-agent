@@ -203,7 +203,6 @@ def test_restricted_resume_prints_history_without_reading_input_or_running_model
 
 @async_test
 async def test_interactive_auto_recovery_waits_for_new_input_before_running(monkeypatch, tmp_path, capsys):
-    from threading import Event
     from naiyue_test_agent.storage.project_store import ProjectStore
     from test_persistent_sessions import build
     configure(monkeypatch)
@@ -216,10 +215,8 @@ async def test_interactive_auto_recovery_waits_for_new_input_before_running(monk
         storage.runs.finish_run(row['session_id'], 'failed', row['checkpoint_id'], '', 'failed')
     capsys.readouterr()
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
-    finished = Event()
-    from terminal_service_helpers import capture_hosts
-    capture_hosts(monkeypatch, lambda host, _: host.observability.subscribe(
-        lambda event: finished.set() if event.event_type == 'run_finished' else None))
+    from terminal_service_helpers import terminal_completed
+    finished = terminal_completed(monkeypatch)
     lines = iter(['new request', ':quit'])
     def terminal_input(_p=''):
         line = next(lines)
