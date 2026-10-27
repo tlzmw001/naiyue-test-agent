@@ -1,6 +1,6 @@
 # Naiyue Test Agent：项目设计记录
 
-**0.5.1 交付授权（2026-10-27）**：用户批准将本次SSH/执行端精简与此前main功能一起正式发布0.5.1，离线包上传同版本Release附件，Git仅保存小型清单/说明/SHA。当前已整合到main，按完整回归、标准构建/安装、main CI、标签/PyPI公开安装、附件下载核对推进；旧开发快照保留，未提前宣称公司原机/密码14B完成。详见[发行说明](releases/0.5.1.md)和[14A-01发行范围](specs/R1-14A-01-envd-runtime-package.md#051-发行范围2026-10-27用户已授权)。
+**0.5.1 已交付（2026-10-27）**：发行提交 `5d3074b` 已push main并打 `v0.5.1`，main CI和四平台候选安装通过，PyPI发布/四平台公开安装全部通过。[Release](https://github.com/tlzmw001/naiyue-test-agent/releases/tag/v0.5.1)提供109.34MiB执行端离线ZIP和校验附件，仓库只保存小型清单与说明；上传后下载SHA及公开链接已核对。首次PyPI Simple索引传播延迟只重跑失败安装任务，没有覆盖已发布文件或移动标签。最终证据 `build/release-0.5.1/verification.json`。后续仅做公司原机镜像→Windows两跳key→真实任务/恢复验收；普通密码14B独立。此处收尾文档不改变发布源码，研究资料/旧开发树/真实配置保持。[发行说明](releases/0.5.1.md)、[SSH步骤](remote-docker-ssh.md#32-051-release-离线镜像附件)。
 
 **R1-14 路线与当前进度（2026-10-27）**：发布标签 `v0.5.0` 上的独立分支 `codex/ssh-remote-docker` 已接Windows本机OpenSSH→原跳板机→Linux Docker，不要求Windows Docker CLI；连接随会话保存，不回退本机或重放未知写入。按用户最新授权，[14A-01](specs/R1-14A-01-envd-runtime-package.md)将基础镜像改为执行端专用wheel，58源/45依赖，完整Agent业务/供应商SDK/Web/CLI不进入基础镜像，必要共享工具框架保留；完整控制端原72依赖/354源/4Web及门禁保持。后端完整5684通过＋新增2项/相关92通过，逐ID覆盖当前5686项；四个wheel构建/Twine、Mac全新安装、58共享源一致性通过。真实Docker六脚本50项、默认与19.03官方seccomp14项、导出重导入后同一检查脚本7项通过，0供应商请求，两个VM停止、容器/卷0。新公司ZIP为109.34MiB，比保留的旧包少13.94%；证据 `build/r1-14a-envd/verification.json`，当前使用[离线说明](remote-docker-ssh.md#32-051-release-离线镜像附件)里的新runtime包/tag。下一步由用户在公司kernel5.4/Docker19原机核对并导入新镜像、跑check.sh；通过后安装同源Windows快照验收SSH任务与恢复。公司既有四容器/配置未由工具操作，真实SSH/Docker设置、旧ARM环境及默认context保持。14B普通密码认证独立；本轮未提交/push/发布，无新增掌握证据。
 
