@@ -62,7 +62,13 @@ export default function ProjectNavigation({ api, projects, failure, retry, scope
         <button className={styles.expand} aria-label={`${open ? '收起' : '展开'}${name}`} aria-expanded={open}
           onClick={() => expand(id, !open)}><Chevron direction={open ? 'down' : 'right'} /></button>
         <button className={styles.enter} aria-current={id === scopeId ? 'location' : undefined}
-          aria-label={`进入${name}`} onClick={() => { expand(id, true); select(id); }}>
+          aria-label={`进入${name}`} aria-expanded={open}
+          aria-description={id === scopeId ? open ? '点击收起会话列表' : '点击展开会话列表' : undefined}
+          title={id === scopeId ? open ? '收起会话列表' : '展开会话列表' : `进入${name}`}
+          onClick={() => {
+            if (id === scopeId) { expand(id, !open); return; }
+            expand(id, true); select(id);
+          }}>
           <Icon name={id === 'chats' ? 'chat' : 'folder'} /><span>{name}</span>
         </button>
       </div>

@@ -52,6 +52,22 @@ it('keeps ordinary conversations and projects as peers without sidebar project c
   expect(screen.getByRole('button', { name: '创建新文件夹' })).toBeTruthy();
 });
 
+it('clicking the current project name folds and reopens its sessions without changing selection', async () => {
+  const { root, api } = fixture(); render(<ProjectWorkspace api={root} />);
+  fireEvent.click(await screen.findByRole('button', { name: '进入项目 A' }));
+  const session = await screen.findByRole('button', { name: '会话 A A' });
+  fireEvent.click(session);
+  await waitFor(() => expect(api(a).prepare).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole('button', { name: '进入项目 A' }));
+  expect(screen.getByRole('button', { name: '展开项目 A' }).getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByRole('button', { name: '会话 A A' })).toBeNull();
+  expect(screen.getByRole('status', { name: '当前项目' }).textContent).toContain('项目 A');
+  fireEvent.click(screen.getByRole('button', { name: '进入项目 A' }));
+  expect(screen.getByRole('button', { name: '收起项目 A' }).getAttribute('aria-expanded')).toBe('true');
+  expect(await screen.findByRole('button', { name: '会话 A A' })).toBeTruthy();
+  expect(api(a).prepare).toHaveBeenCalledTimes(1);
+});
+
 it('shows saved pin markers while browsing another scope without opening its host', async () => {
   const { root, apis } = fixture();
   vi.mocked(root.directory).mockResolvedValue([{ session_id: 'pinned', title: '已保存的任务', pinned: true, model_id: 'A', execution_binding: 'sandbox',
