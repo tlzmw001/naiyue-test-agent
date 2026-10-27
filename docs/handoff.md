@@ -1,5 +1,9 @@
 # Naiyue Test Agent：当前开发学习交接
 
+**图片入口移入加号菜单（2026-10-27）**：用户要求把输入框右下角选图入口改为加号菜单的“添加图片”，保留原文件选择、图片草稿、粘贴、拖入、预览和发送行为。只调整 Composer 与 ComposerControls 的入口接线，菜单项沿用原 `imageInputs.addFiles` 和原禁用条件；右下角入口已移除。新增菜单选图回归先红后绿，原指令菜单顺序断言同步；提交前前端定向 10 项、全量 **68 文件／553 项**、`npm run build`（TypeScript 与 Vite）、`git diff --check` 通过；后端全量 **5606 passed in 584.17s**，compileall、pip check、本机 Mac ARM64 wheel 构建／内容检查与 Twine 均通过。Mac 锁屏，未做浏览器桌面／375px 实际视觉检查；没有真实模型请求。本次提交范围包含此前服务控制和项目栏改动；`research/` 保留本地，未发布。**下一步：核对 main CI，并在浏览器中实测三处交互和窄屏呈现。**
+
+**服务控制、日志与项目栏收起（2026-10-27）**：用户确认保留后台共享服务。按 [Spec 132](specs/132-service-control-and-project-folding.md) 新增 `nyt service stop [--config/--settings]`，只认证连接已有实例并请求正常关闭；`nyt service logs [--settings] [--follow]` 只读显示私有服务日志，Ctrl+C 只退出日志查看。项目名称在当前项目已展开时再次点击可收起，保持当前项目/会话；跨项目点击仍进入并展开。先红灯复现 CLI 缺入口和项目名称无法收起，后端定向 9 项、前端定向 14 项通过；后端完整 `PATH="$PWD/build/release-native-0ff7df8/bin:$PATH" .venv/bin/python -m pytest -q tests` 为 **5606 passed in 575.33s**，前端 68 文件 **552 passed**、TS/Vite 构建、compileall 与 diff check 均退出 0。临时真实子进程验证日志跟随追加行和 Ctrl+C 仅退出查看器。第一次仓库根 pytest 收集到研究目录的独立样本而报错；第一次产品全量因 PATH 缺源码开发所需 `fd` 在 Find 用例失败，未改测试或研究目录，改用仓库已有 Mac ARM64 `fd 10.5.0` 后全绿。没有修改真实配置、用户库或当前服务，没有真实模型请求；未验证用户浏览器实际点击体验。**下一步：用户用已构建版本试用命令及项目栏交互。**
+
 **0.5.0 正式发布范围（2026-10-26）**：用户已授权精简 README，并从 main 创建正式 `v0.5.0` 标签触发 PyPI 发布。README 保留安装、模型配置、Web/CLI、功能和必要权限/数据边界，移除历史版本流水、内部 R1 调用链及旧沙箱表述；产品源码、真实配置、用户库和其他工作目录保持。按发行指南在 README 提交的 main CI 全绿后打标签，复用同提交候选；公开上传、文件哈希与四平台安装以 [Publish](https://github.com/tlzmw001/naiyue-test-agent/actions/workflows/publish.yml) 和 [PyPI 0.5.0](https://pypi.org/project/naiyue-test-agent/0.5.0/) 为准，本机证据保存在 build/release-050-readme/。下述“不打标签/不发布”仅为此前阶段边界，本轮授权已替换；SSH14 与学习安排保持。
 
 本轮前端复验暴露旧 ProjectPicker 测试的就绪竞态：按钮出现时目录元数据仍可能未返回，disabled 点击被忽略。受控挂起初始目录响应稳定复现同一缺失确认页；修正选择/创建/焦点测试为等待按钮可用，同文件复用就绪 helper，不改产品、全局测试设施或原有业务断言。AST 核对原 13 个用例的断言全部保留，新增受控初始加载保护测试后，相关 14 项与全量 68 文件/551 项及构建通过；原探针和日志在上述本机证据目录。正式标签以本次 main 全量门禁通过的提交为准。
