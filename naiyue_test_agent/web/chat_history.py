@@ -121,6 +121,10 @@ def record_view(record):
             value['tool_calls'] = [{**call, 'args': {}} for call in record.get('calls', [])]
             value['arguments_truncated'] = bool(record['calls'])
             value['tool_calls_truncated'] = record['tool_calls_truncated']
+    if record.get('images_json'):
+        images = json.loads(record['images_json'])
+        if images:
+            value['images'] = images
     return {**value, 'reply_id': record.get('reply_id'), 'sequence': record['sequence'], 'revision': record['revision'],
             'parent_message_id': record['parent_message_id'],
             'detail': {'sequence': record['sequence'], 'revision': record['revision']}}

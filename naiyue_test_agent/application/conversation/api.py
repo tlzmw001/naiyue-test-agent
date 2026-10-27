@@ -17,6 +17,13 @@ class HistoryAPI:
             snapshot = await self._agent.aget_state({'configurable': {'thread_id': thread}})
             return [m.model_copy(deep=True) for m in snapshot.values.get('messages', [])]
 
+    async def image(self, session_id, message_id, index, *, source_revision, conversation_revision):
+        from .image_history import read_image
+        with self._owner.operation():
+            row = await run_blocking(self._metadata.get, session_id)
+            return await read_image(self, row, session_id, message_id, index,
+                source_revision=source_revision, conversation_revision=conversation_revision)
+
     async def context(self, session_id):
         with self._owner.operation():
             from naiyue_test_agent.application.sessions.session_context import context_view

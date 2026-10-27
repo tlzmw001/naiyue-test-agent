@@ -2,7 +2,7 @@
 
 本地运行的通用编程与测试 Agent，提供浏览器界面和终端交互。通过配置的模型、项目提示词、Skills 和工具读取项目、修改文件、执行命令，并保留会话历史。
 
-- 本地 Web：流式 Markdown、工具执行过程、权限审批、会话管理和历史滚动加载；首任务自动标题、文件差异预览/patch 下载、可见思考和最后任务重新生成。
+- 本地 Web：流式 Markdown、工具执行过程、权限审批、会话管理和历史滚动加载；首任务自动标题、文件差异预览/patch 下载、可见思考和最后任务重新生成。 当前开发分支还支持截图粘贴、拖入/选择图片、多图及仅图发送、图片引导/跟进、停止保留和历史预览，见[图片输入说明](docs/composer-images.md)。
 - 终端 CLI：多轮对话、恢复历史、审批、停止、Steering 和 Follow-up。
 - 模型接入：OpenAI、兼容 OpenAI 的接口、Anthropic、Ollama。
 - 工具：Read、Ls、Find、Grep、Write、Edit、Bash、PowerShell，以及一层前台子 Agent。

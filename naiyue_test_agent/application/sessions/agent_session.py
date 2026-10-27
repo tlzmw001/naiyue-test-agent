@@ -14,7 +14,7 @@ from naiyue_test_agent.application.subagents.session_subagents import SubagentRe
 class AgentSession:
     def __init__(self, session_id, state: SessionState, *, catalog, tool_registry,
                  permission_settings, persistence=None, invoke_subagent=None, registered_subagents=None,
-                 progress_settings=None, subagent_result_settings=None, mcp_resources=None, process_tasks=None, archive_root=None, memory=None):
+                 progress_settings=None, subagent_result_settings=None, mcp_resources=None, process_tasks=None, archive_root=None, memory=None, image_input_settings=None):
         self.session_id = session_id
         self._runtime = SessionRuntime(session_id, state)
         self._catalog, self._tool_registry = catalog, tool_registry
@@ -23,7 +23,7 @@ class AgentSession:
         self._model_selection_lock = Lock()
         self._tool_selection_lock = Lock()
         self._permission_selection_lock = Lock()
-        self.controls = ControlQueue(self._runtime)
+        self.controls = ControlQueue(self._runtime, image_input_settings)
         self.approvals = ApprovalBook(self._runtime)
         self.subagents = SubagentRegistry(self._runtime, controls=self.controls, approvals=self.approvals,
             catalog=catalog, persistence=persistence, registered_subagents=registered_subagents,
@@ -183,3 +183,15 @@ class AgentSession:
             return {'mode': self._runtime.state.permission_mode,
                 'session_allow': deepcopy(self._runtime.state.session_allow),
                 'project_instructions': (self._runtime.run.project_instructions if self._runtime.run else None)}
+
+
+def build_session(service, session_id, state):
+    """New and restored actors receive the same host-owned settings/resources."""
+    return AgentSession(session_id, state, catalog=service._catalog,
+        tool_registry=service._tool_registry, permission_settings=service._permission_settings,
+        persistence=service._persistence, invoke_subagent=service.ainvoke_subagent, memory=service.memory,
+        registered_subagents=service.get_registered_subagents, progress_settings=service._progress_settings,
+        image_input_settings=service.image_input_settings,
+        subagent_result_settings=getattr(service, '_subagent_result_settings', None),
+        mcp_resources=service.mcp_resources, process_tasks=service.background_tasks,
+        archive_root=service.session_archive_root(session_id))

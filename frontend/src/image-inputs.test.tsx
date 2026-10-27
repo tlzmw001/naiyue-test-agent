@@ -1,0 +1,50 @@
+import { useConversationDrafts } from './useConversationDrafts';
+import { act, cleanup, renderHook } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import { useComposerImages } from './useComposerImages';
+import { WebApi } from './api';
+import type { RefObject } from 'react';
+afterEach(cleanup);
+const limits = { max_images_per_message: 2, max_input_bytes: 1024, max_total_input_bytes: 2048 };
+it('retains independent image drafts and binds late file reads to their original session', async () => {
+  const selected = { current: 'one' } satisfies RefObject<string>;
+  const api = new WebApi('test');
+  const { result, rerender } = renderHook(() => useComposerImages(api, selected, useConversationDrafts(selected)));
+  act(() => result.current.configure({ image_input_limits: limits, capabilities: { A: { image_inputs: true } } }));
+  let task!: Promise<void>;
+  act(() => { task = result.current.addFiles([new File(['pixels'], '截图.png', { type: 'image/png' })]); });
+  selected.current = 'two'; rerender();
+  await act(async () => task);
+  expect(result.current.current).toEqual([]);
+  selected.current = 'one'; rerender();
+  expect(result.current.current[0].name).toBe('截图.png');
+  expect(result.current.supports('A')).toBe(true);
+  expect(result.current.supports('unknown')).toBe(false);
+});
+it('enforces server supplied count and byte limits without dropping existing images', async () => {
+  const selected = { current: 'one' } satisfies RefObject<string>;
+  const api = new WebApi('test');
+  const { result } = renderHook(() => useComposerImages(api, selected, useConversationDrafts(selected)));
+  act(() => result.current.configure({ image_input_limits: { ...limits, max_images_per_message: 1 } }));
+  await act(async () => result.current.addFiles([new File(['one'], 'one.png', { type: 'image/png' })]));
+  await act(async () => result.current.addFiles([new File(['two'], 'two.png', { type: 'image/png' })]));
+  expect(result.current.current).toHaveLength(1);
+  expect(result.current.error).toContain('数量');
+});
+
+it('restores retained text and pixels to their captured session after a late image read', async () => {
+  const selected = { current:'one' };
+  const api = new WebApi('test');
+  let release!: (blob:Blob)=>void;
+  vi.spyOn(api,'pendingImage').mockImplementation(()=>new Promise(resolve=>{release=resolve;}));
+  vi.spyOn(api,'pendingInputs').mockResolvedValue({inputs:[]});
+  const {result,rerender}=renderHook(()=>{const drafts=useConversationDrafts(selected);return {drafts,images:useComposerImages(api,selected,drafts)};});
+  act(()=>result.current.images.configure({image_input_limits:limits}));
+  let restoring!: Promise<unknown>;
+  act(()=>{restoring=result.current.images.restore({message_id:'pending',text:'retained text',kind:'follow_up',status:'retained',images:[{index:1,name:'one.png',mime_type:'image/png',width:1,height:1,bytes:1,image_digest:'digest'}]});});
+  selected.current='two';rerender();
+  await act(async()=>{release(new Blob(['pixels'],{type:'image/png'}));await restoring;});
+  expect(result.current.drafts.draftRef.current.two??'').toBe('');
+  expect(result.current.drafts.draftRef.current.one).toBe('retained text');
+  expect(result.current.drafts.imageRef.current.one).toHaveLength(1);
+});

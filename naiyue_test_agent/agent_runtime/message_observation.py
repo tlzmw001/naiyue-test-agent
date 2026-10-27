@@ -45,6 +45,10 @@ def _snapshot(message, visibility, *, reply_id=None):
         row.update(tool_call_id=message.tool_call_id, status=message.status)
     if isinstance(message, ChatMessage):
         row['role'] = message.role
+    from naiyue_test_agent.contracts.image_content import message_images
+    images = message_images(message)
+    if images:
+        row['images'] = images
     encoded = json.dumps(row, ensure_ascii=False, sort_keys=True, allow_nan=False)
     body = encoded.encode('utf-8')
     return MessageSnapshotData(

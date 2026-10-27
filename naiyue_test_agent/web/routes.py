@@ -84,6 +84,21 @@ def create_api_router():
                        limit: int | None = Query(default=None, ge=1, le=256), service=Depends(get_service)):
         return await service.messages(session_id, agent_id=agent_id, before=before, limit=limit)
 
+    @router.get('/sessions/{session_id}/messages/{message_id}/images/{index}')
+    async def message_image(session_id: str, message_id: str, index: int,
+                            source_revision: str = Query(pattern='^[0-9a-f]{64}$'),
+                            conversation_revision: int = Query(ge=0), service=Depends(get_service)):
+        try:
+            data, mime = await service.application.history.image(session_id, message_id, index,
+                source_revision=source_revision, conversation_revision=conversation_revision)
+        except Exception as error:
+            from naiyue_test_agent.storage.errors import SessionPersistenceError
+            if isinstance(error,SessionPersistenceError) and error.args == ('session_not_found',):
+                raise WebError('image_not_found',404) from None
+            from .errors import public_error
+            raise public_error(error) from None
+        return Response(data,media_type=mime,headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
+
     @router.get('/sessions/{session_id}/messages/{sequence}/content')
     async def message_content(session_id: str, sequence: int, revision: int = Query(ge=1),
                               conversation_revision: int = Query(default=0, ge=0), offset: int = Query(default=0, ge=0),
@@ -201,4 +216,6 @@ def create_api_router():
 
     router.include_router(background_task_router)
     router.include_router(result_router)
+    from .image_queue_routes import router as image_queue_router
+    router.include_router(image_queue_router)
     return router

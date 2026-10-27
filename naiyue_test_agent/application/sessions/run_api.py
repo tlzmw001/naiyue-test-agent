@@ -12,6 +12,24 @@ class RunAPI:
         self._persistence = persistence
         self._metadata, self._conversation, self._replies = metadata, conversation, replies
 
+    async def prepare_input(self, session_id, text, images, *, message_id):
+        from langchain_core.messages import HumanMessage
+        from naiyue_test_agent.application.conversation.image_inputs import normalize_input
+        with self._owner.operation():
+            if not images:
+                return HumanMessage(content=text,id=message_id)
+            if images:
+                self._check_image_model(self._sessions.require(session_id))
+            content = await run_blocking(normalize_input, text, images, self._sessions.image_input_settings)
+            return HumanMessage(content=content, id=message_id)
+
+    def _check_image_model(self, actor):
+        from naiyue_test_agent.contracts.image_inputs import ImageInputError
+        identity = actor.lifecycle.snapshot_for_run()['model_id']
+        model = self._sessions._catalog.get(identity)
+        if (getattr(model, 'profile', None) or {}).get('image_inputs') is not True:
+            raise ImageInputError('model_image_input_unsupported')
+
     def steer(self, session_id, text):
         self._owner.check_controls_open()
         if not isinstance(text, str) or not text.strip():
@@ -23,6 +41,35 @@ class RunAPI:
         if not isinstance(text, str) or not text.strip():
             raise ValueError('A non-empty follow-up message is required')
         self._sessions.require(session_id).controls.follow_up(text)
+
+    def queue_input(self, session_id, message, *, kind, replace_ids=()):
+        from naiyue_test_agent.model_access.messages import content_text
+        self._owner.check_controls_open()
+        actor=self._sessions.require(session_id)
+        if isinstance(message.content,list):
+            self._check_image_model(actor)
+        method=actor.controls.steer if kind=='steering' else actor.controls.follow_up
+        method(content_text(message.content) + ('\n[图片已保留，可在 Web 待发送列表查看。]' if isinstance(message.content,list) else ''),content=message.content,replace_ids=replace_ids)
+
+    def validate_pending(self, session_id, identities):
+        self._owner.check_open()
+        self._sessions.require(session_id).controls.validate_pending(identities)
+
+    def pending_inputs(self, session_id):
+        self._owner.check_open()
+        return self._sessions.require(session_id).controls.pending_inputs()
+
+    def pending_text(self,session_id,message_id):
+        self._owner.check_open()
+        return self._sessions.require(session_id).controls.pending_text(message_id)
+
+    def pending_image(self,session_id,message_id,index):
+        self._owner.check_open()
+        return self._sessions.require(session_id).controls.pending_image(message_id,index)
+
+    def remove_pending(self,session_id,message_id):
+        self._owner.check_controls_open()
+        self._sessions.require(session_id).controls.remove_pending(message_id)
 
     def stop(self, session_id, *, run_id=None, agent_path='root', agent_run_id=None, approval_batch_id=None):
         self._owner.check_controls_open()
@@ -67,6 +114,12 @@ class RunAPI:
         with self._owner.operation():
             from naiyue_test_agent.agent_runtime.tool_execution.async_batch import validate_tool_concurrency
             validate_tool_concurrency(max_concurrency)
+            if not resume and not compact:
+                from langchain_core.messages import convert_to_messages
+                value = convert_to_messages(value)
+                from naiyue_test_agent.contracts.image_content import has_user_images
+                if any(has_user_images(m.content) for m in value):
+                    self._check_image_model(self._sessions.require(session_id))
             prepared = await self._sessions.prepare_admission(session_id, stop=stop)
             from .execution_binding import execution_use
             async with execution_use(self._sessions,prepared[1],stop=stop):

@@ -141,3 +141,28 @@ def test_scope_cleanup_cannot_remove_a_later_key_reused_by_another_scope(tmp_pat
         assert await receipts.execute('reused', 'new', accepted, scope_id='project-B') == cached
         assert effects == [True]
     asyncio.run(scenario())
+
+
+def test_image_lease_outlives_cancelled_caller_and_rejects_extra_work(tmp_path):
+    from naiyue_test_agent.image_input_settings import ImageInputSettings
+    from naiyue_test_agent.web.errors import WebError
+    import pytest
+    async def scenario():
+        receipts=CommandReceipts(options(tmp_path), image_settings=ImageInputSettings(max_in_flight_requests=1))
+        scope={'method':'POST','path':'/api/v1/scopes/chats/sessions/one/runs','headers':[(b'x-image-input',b'1')]}
+        lease=receipts.images.reserve(scope)
+        entered, release=asyncio.Event(),asyncio.Event()
+        async def operation():
+            entered.set(); await release.wait()
+            return 202,[],b'{}'
+        caller=asyncio.create_task(receipts.execute('image','hash',operation,image_lease=lease))
+        await asyncio.wait_for(entered.wait(),5)
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError): await caller
+        assert lease.transferred and receipts.images.active==1
+        with pytest.raises(WebError,match='image_input_busy'): receipts.images.reserve(scope)
+        release.set(); await receipts.entries['image'][1]
+        assert lease.released and receipts.images.active==0
+        lease.release()
+        assert receipts.images.active==0
+    asyncio.run(scenario())

@@ -1,0 +1,11 @@
+# 130-03 完整图片输入的引导、跟进与保留
+
+QueuedInput扩展完整content，text保留CLI文字投影。应用先按实际模型能力及集中额度规范化，再在现有S3锁内原子入队。会话持有有界图片输入记录，生命周期独立于ActiveRun；图片队列与保留记录合计按会话额度计数。普通文字行为保持。
+
+选择输入时标记selected；准备HumanMessage时绑定本轮来源，消费前再次检查模型；ControlObserver既有delivered事实用于确定是否送入状态，必要保存成功后释放对应图片记录。停止/失败剩余未选择图片转retained，已选择未确认转uncertain。通过认证pending-inputs元数据/图片GET跨浏览器读取；显式移除或明确重新提交后释放。不会自动重发不确定输入。应用关闭丢弃这些内存记录，页面显示这一边界。
+
+前端04从会话query恢复保留输入，用户明确恢复到输入框并发送；所有SSE/response只携带元数据。锁表同步S3→ControlObserver记录锁已有顺序，无新增全局锁。
+
+验证：仅图跟进先红（422），接线后停止保留、run结束后查询、认证字节读取和显式移除通过；与异步主链/Web图片共15 passed。必要保存成功后以canonical消息ID确认释放，未保存的selected保持uncertain。
+
+收尾边界：图片worker移到control_lock之前，取得锁后复核run；事件阻塞worker时stop仍能完成，迟到输入409且不入队。pending媒体记录不可变且ID不复用，不携带历史canonical source_revision；归属始终由会话和输入ID验证。列表/回执只含有界文字预览（text_truncated）和图片metadata，完整文字通过认证GET `/pending-inputs/{message_id}/text?offset=...` 按既有history_detail_chars与frame预算读取；恢复一次性合并完整文字及图片。4096字节frame下32768字符无损分块恢复已验证。

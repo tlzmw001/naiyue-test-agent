@@ -38,35 +38,43 @@ def mark_human_messages(messages):
 class ControlQueue:
     """Borrow one runtime; mutate paired queues and stop targets under its lock."""
 
-    def __init__(self, runtime: SessionRuntime):
+    def __init__(self, runtime: SessionRuntime, image_settings=None):
+        from naiyue_test_agent.image_input_settings import ImageInputSettings
+        self.image_settings = image_settings or ImageInputSettings()
         self._runtime, self.session_id = runtime, runtime.session_id
 
     def _current_control(self):
         # Caller holds the session state lock; this only borrows the reference.
         return self._runtime.run.observation.controls if self._runtime.run is not None and self._runtime.run.controls_open else None
 
-    def steer(self, text):
+    def steer(self, text, *, content=None, replace_ids=()):
         with self._runtime.lock:
             row = self._runtime.run
             if row is None or not row.steering_open:
                 raise SessionBusyError('Session is not accepting steering messages')
             control, run_id = self._current_control(), row.run_id
             size = len(row.steering_queue)
-            row.steering_queue.append(QueuedInput(uuid4().hex, text, 'steering'))
+            item = QueuedInput(uuid4().hex, text, 'steering', content)
+            from .pending_images import retain
+            retain(self._runtime, item, self.image_settings, replace_ids)
+            row.steering_queue.append(item)
             if control:
                 observe(control, control.accept, 'steering', queue_size=size)
         self._record_steering('steering_accepted', self.session_id, run_id, 1)
         if control:
             observe(control, control.flush)
 
-    def follow_up(self, text):
+    def follow_up(self, text, *, content=None, replace_ids=()):
         with self._runtime.lock:
             row = self._runtime.run
             if row is None or not row.steering_open:
                 raise SessionBusyError('Session is not accepting follow-up messages')
             control, run_id = self._current_control(), row.run_id
             size = len(row.follow_up_queue)
-            row.follow_up_queue.append(QueuedInput(uuid4().hex, text, 'follow_up'))
+            item = QueuedInput(uuid4().hex, text, 'follow_up', content)
+            from .pending_images import retain
+            retain(self._runtime, item, self.image_settings, replace_ids)
+            row.follow_up_queue.append(item)
             if control:
                 observe(control, control.accept, 'follow_up', queue_size=size)
         self._record_follow_up('follow_up_accepted', self.session_id, run_id, 1)
@@ -157,6 +165,9 @@ class ControlQueue:
             control, run_id = self._current_control(), row.run_id
             messages = list(row.steering_queue)
             row.steering_queue.clear()
+            for item in messages:
+                if item.message_id in self._runtime.pending_images:
+                    self._runtime.pending_images[item.message_id]['status'] = 'selected'
             if control and messages:
                 observe(control, control.select, 'steering', len(messages))
         if messages:
@@ -182,6 +193,9 @@ class ControlQueue:
                 row.steering_open = False
                 return False, []
             control, run_id = self._current_control(), row.run_id
+            for item in messages:
+                if item.message_id in self._runtime.pending_images:
+                    self._runtime.pending_images[item.message_id]['status'] = 'selected'
             if control:
                 observe(control, control.select, kind, len(messages))
         if kind == 'steering':
@@ -197,14 +211,57 @@ class ControlQueue:
             control = self._current_control()
             run = self._runtime.run
             kind = messages[0].kind
-            prepared = [HumanMessage(id=item.message_id, content=item.text) for item in messages]
+            prepared = [HumanMessage(id=item.message_id, content=item.content if item.content is not None else item.text) for item in messages]
             prepared = _tag_inputs(mark_human_messages(prepared), kind=kind,
                                   reply_id=run.reply_id if run and kind == 'steering' else None)
+            for message in prepared:
+                if isinstance(message.content,list) and run:
+                    message.additional_kwargs['naiyue_image_origin_run_id'] = run.run_id
             if run and prepared:
                 run.reply_id = prepared[-1].additional_kwargs['naiyue_reply_id']
         if control is not None:
             observe(control, control.record_messages, prepared)
         return prepared
+
+    def pending_inputs(self):
+        from .pending_images import views
+        with self._runtime.lock:
+            records = tuple((key, dict(row)) for key, row in self._runtime.pending_images.items())
+        return views(records)
+
+    def pending_text(self, message_id):
+        from naiyue_test_agent.contracts.image_content import input_text
+        from naiyue_test_agent.contracts.image_inputs import ImageInputError
+        with self._runtime.lock:
+            row = self._runtime.pending_images.get(message_id)
+            if row is None:
+                raise ImageInputError('image_not_found',status=404)
+            item = row['item']
+        return input_text(item.content)
+
+    def pending_image(self, message_id, index):
+        from .pending_images import content
+        with self._runtime.lock:
+            return content(self._runtime,message_id,index)
+
+    def validate_pending(self, identities):
+        from .pending_images import validate_release
+        with self._runtime.lock:
+            validate_release(self._runtime, identities)
+
+    def remove_pending(self, message_id):
+        with self._runtime.lock:
+            row=self._runtime.pending_images.get(message_id)
+            if row and row['status'] in ('queued','selected'):
+                raise SessionBusyError('Input is still active')
+            self._runtime.pending_images.pop(message_id,None)
+
+    def confirm_saved_inputs(self, messages):
+        ids={m.id for m in messages}
+        with self._runtime.lock:
+            for key in list(self._runtime.pending_images):
+                if key in ids:
+                    del self._runtime.pending_images[key]
 
     @staticmethod
     def _record_steering(event: str, session_id: str, run_id: str, count: int) -> None:
@@ -224,6 +281,9 @@ class ControlQueue:
             row, observation = self._runtime.state, run.observation
             row.pending_turn = observe(observation.turns, observation.turns.snapshot,
                 pending=row.pending_tool_approval is not None)
+            for record in self._runtime.pending_images.values():
+                if record['run_id'] == run.run_id:
+                    record['status'] = ('uncertain' if record['status'] == 'selected' else 'retained')
             discarded, follow_up = len(run.steering_queue), len(run.follow_up_queue)
             run.steering_queue.clear()
             run.follow_up_queue.clear()

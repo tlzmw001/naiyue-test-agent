@@ -14,7 +14,7 @@ from naiyue_test_agent.agent_runtime.tool_execution.batch import ToolBatchMiddle
 from naiyue_test_agent.agent_runtime.context_observation import observe_model_request
 from naiyue_test_agent.agent_runtime.context_recovery import recover_input_overflow
 from .tool_execution.toolset import ToolSetMiddleware, ToolExecutionState
-from naiyue_test_agent.model_access.messages import ModelInputMiddleware
+from .model_input import ModelInputMiddleware
 from naiyue_test_agent.tools.registry import ToolRegistry
 
 

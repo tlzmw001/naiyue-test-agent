@@ -3,6 +3,7 @@
 from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from naiyue_test_agent.contracts.session_environment import ProfileId
+from naiyue_test_agent.contracts.image_inputs import ImageUpload
 
 
 class MCPRefreshInput(BaseModel):
@@ -91,12 +92,14 @@ class RecoveryInput(BaseModel):
 class MessageInput(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     request_id: str = Field(pattern=r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
-    text: str = Field(min_length=1, max_length=32768)
+    text: str = Field(default='', max_length=32768)
+    images: list[ImageUpload] = Field(default_factory=list)
     expected_conversation_revision: int | None = Field(default=None, ge=0)
+    pending_input_ids: list[Annotated[str,Field(min_length=1,max_length=128)]] = Field(default_factory=list,max_length=128)
 
     @model_validator(mode='after')
     def meaningful_text(self):
-        if not self.text.strip():
+        if not self.text.strip() and not self.images:
             raise ValueError('Text must not be blank')
         return self
 
@@ -104,8 +107,10 @@ class MessageInput(BaseModel):
 class ControlInput(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     request_id: str = Field(pattern=r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+    images: list[ImageUpload] = Field(default_factory=list)
+    pending_input_ids: list[Annotated[str,Field(min_length=1,max_length=128)]] = Field(default_factory=list,max_length=128)
     kind: Literal['steering', 'follow_up', 'stop']
-    text: str | None = Field(default=None, min_length=1, max_length=32768)
+    text: str | None = Field(default=None, max_length=32768)
     agent_path: str = Field(default='root', min_length=1, max_length=256)
     agent_run_id: str | None = Field(default=None, min_length=1, max_length=256)
     approval_batch_id: str | None = Field(default=None, min_length=1, max_length=256)
@@ -114,9 +119,9 @@ class ControlInput(BaseModel):
     def match_control(self):
         if self.agent_path != 'root' and self.kind != 'stop':
             raise ValueError('Only stop may target a child agent')
-        if self.kind == 'stop' and self.text is not None:
+        if self.kind == 'stop' and (self.text is not None or self.images or self.pending_input_ids):
             raise ValueError('Stop has no message text')
-        if self.kind != 'stop' and (self.text is None or not self.text.strip()):
+        if self.kind != 'stop' and not self.images and (self.text is None or not self.text.strip()):
             raise ValueError('A control message is required')
         return self
 

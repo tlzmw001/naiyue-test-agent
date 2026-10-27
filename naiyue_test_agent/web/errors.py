@@ -16,6 +16,9 @@ class WebError(Exception):
 
 
 def public_error(error):
+    from naiyue_test_agent.contracts.image_inputs import ImageInputError
+    if isinstance(error, ImageInputError):
+        return WebError(error.code, error.status)
     from naiyue_test_agent.contracts.projects import ProjectError
     if isinstance(error,ProjectError):return WebError(error.code,404 if error.code in ('project_not_found','project_not_open') else 409)
     from naiyue_test_agent.contracts.sandbox import SandboxError

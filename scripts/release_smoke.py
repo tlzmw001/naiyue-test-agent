@@ -200,13 +200,15 @@ def main():
     subagents = asyncio.run(subagent_scenario(root, type(model)))
     from release_memory_smoke import memory_scenario
     memory = asyncio.run(memory_scenario(root, type(model)))
+    from release_image_smoke import image_scenario
+    images = asyncio.run(image_scenario(root, type(model)))
     cli = asyncio.run(cli_scenario(root, type(model)))
     print(json.dumps({'target': native['target'], 'version': naiyue_test_agent.__version__,
         'installed_package': str(installed), 'native_tools': 'passed', 'frontend_api': 'passed',
         'find_grep': 'passed', 'read_edit_read': 'passed',
         'approval_resume': 'passed', 'sqlite_reopen': 'passed', 'cli': 'passed', 'cli_protocol': cli,
         'configuration': 'passed', **storage, 'mcp': mcp, 'background_tasks': background,
-        'subagent_continuation': subagents, 'memory': memory}))
+        'subagent_continuation': subagents, 'memory': memory, 'user_images': images}))
 
 
 if __name__ == '__main__':

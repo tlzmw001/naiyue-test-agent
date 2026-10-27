@@ -76,6 +76,7 @@ class SessionRuntime:
     state: SessionState
     run: ActiveRun | None = None
     lock: LockType = field(default_factory=Lock)
+    pending_images: dict = field(default_factory=dict)
 
     def require_run(self, run: ActiveRun):
         from naiyue_test_agent.application.errors import SessionBusyError

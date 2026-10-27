@@ -555,3 +555,18 @@ sweep_seconds = 30
 # 网络/资源/Git预算在本片共用。新会话冻结选择，已有会话不随模板变更而换绑。
 # 刷新按钮只重载sandbox：校验成功替换目录及生命周期策略，失败保留旧配置。
 # 输入框上沿“管理沙箱”查看全部项目；常驻服务正常退出停止原容器并保留卷。
+
+# 用户附图：原始文件只在请求期间处理；持久化规范化后的版本。
+# 前端从服务读取这些额度；Read工具自己的图片额度仍在tools.read.image下。
+[image_inputs]
+max_images_per_message = 4
+max_input_bytes = 10485760
+max_total_input_bytes = 20971520
+max_pixels = 40000000
+max_dimension = 4096
+max_base64_bytes = 4718592
+max_total_base64_bytes = 12582912
+max_request_bytes = 29360128
+max_in_flight_requests = 2
+max_pending_image_messages = 16
+max_pending_image_bytes = 33554432

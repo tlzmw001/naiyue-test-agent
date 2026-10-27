@@ -99,6 +99,10 @@ class RunLifecycle:
             if self._persistence is not None:
                 await run_blocking(self._persistence.start, session_id, run_id)
             messages = mark_human_messages(messages)
+            from naiyue_test_agent.contracts.image_content import has_user_images
+            for message in messages:
+                if isinstance(message, HumanMessage) and has_user_images(message.content):
+                    message.additional_kwargs['naiyue_image_origin_run_id'] = run_id
             resources = await self._prepare_resources(run, include_background=not compact and any(
                 isinstance(message, HumanMessage) and message.additional_kwargs.get('naiyue_human_input')
                 for message in messages),messages=messages)
@@ -263,6 +267,9 @@ class RunLifecycle:
         try:
             if self._persistence is not None:
                 await self._persistence.afinish(session_id, run_id, agent, observation, self.snapshot_for_finish())
+            if self._runtime.pending_images:
+                snapshot = await agent.aget_state({'configurable': {'thread_id': self.snapshot_for_finish()['thread_id']}})
+                self._controls.confirm_saved_inputs(snapshot.values.get('messages', []))
         except Exception as error:
             if primary_error is None and secondary is None:
                 secondary = error

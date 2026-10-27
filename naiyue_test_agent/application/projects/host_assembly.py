@@ -60,7 +60,7 @@ async def assemble_host(*, catalog, parent, personal, admission, database_path, 
             http_attempt_limit=settings.diagnostics.max_pending_events, shell_task_settings=settings.shell_tasks,
             data_dir=get_data_dir(settings.storage), project=project, admission=admission,
             execution_authority=execution_authority, fixed_execution=chats or registered_project is not None,
-            environments=environments)
+            environments=environments, image_input_settings=settings.image_inputs)
         usage = await _enter_resource(stack, 'usage', ModelUsagePersistence(storage, sessions.subscribe_events, settings.usage_persistence))
         diagnostics = await _enter_resource(stack, 'diagnostic', DiagnosticPersistence(storage, sessions.subscribe_events, settings.diagnostics))
         jobs = None

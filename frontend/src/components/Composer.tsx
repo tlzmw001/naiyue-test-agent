@@ -1,3 +1,5 @@
+import ImageAttachments, { type ImageInputs } from './ImageAttachments';
+import RetainedImageInputs from './RetainedImageInputs';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { WebApi } from '../api';
@@ -14,7 +16,9 @@ import composer from './Composer.module.css';
 
 export default function Composer({ text, pending, pendingMode, busy, stopping, sending, blocked,
   setText, setPending, send, stop, api, session, controlsDisabled, selectTools, selectMode, contextEntry,
-  openModel, compact, openContext, openAgents, sendScroll, workspaceEntry, draftControls }: {
+  openModel, compact, openContext, openAgents, sendScroll, workspaceEntry, draftControls, imageInputs, imageSupported = false, retryImageSubmission }: {
+  retryImageSubmission?: () => void;
+  imageInputs?: ImageInputs; imageSupported?: boolean;
   draftControls?: DraftControls;
   sendScroll?: { preference: SendScroll; select: (value: SendScroll) => void };
   text: string; pending: string[]; pendingMode: boolean; busy: boolean; stopping: boolean;
@@ -55,7 +59,7 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
     previousSession.current = session?.session_id;
     setCommandNotice('');
   }, [session?.session_id]);
-  useEffect(() => { if (!text.trim()) setFollowUp(true); }, [text]);
+  useEffect(() => { if (!text.trim() && !imageInputs?.current.length) setFollowUp(true); }, [text, imageInputs?.current.length]);
   useLayoutEffect(() => {
     const element = editor.current;
     if (!element) return;
@@ -77,8 +81,9 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
     if (element.parentElement) observer?.observe(element.parentElement);
     return () => { window.removeEventListener('resize', resize); observer?.disconnect(); };
   }, [text]);
+  const hasImages = !!imageInputs?.current.length;
   const canSupplement = busy && !pendingMode && !blocked && !stopping;
-  const showStop = busy && (!text.trim() || !canSupplement);
+  const showStop = busy && ((sending && (hasImages || !!imageInputs?.uncertain)) || imageInputs?.reading || (!text.trim() && !hasImages) || !canSupplement);
   const compactDisabled = !session || !session.can_run || busy || controlsDisabled;
   function runCommand(command: CommandName, typed = false) {
     setCommandNotice('');
@@ -105,7 +110,7 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
   async function submit() {
     if (confirming.current || sending || blocked) return;
     const match = /^\/([a-z0-9][a-z0-9_:-]*)(?:\s+([\s\S]*))?$/i.exec(text.trim());
-    if (!match) { setCommandNotice(''); send(busy && followUp); return; }
+    if (hasImages || !match) { setCommandNotice(''); send(busy && followUp); return; }
     const command = commands.find(item => item.name === match[1]);
     if (command) {
       if (match[2]) { setCommandNotice(`/${command.name} 暂不接受参数，请直接输入该指令。`); return; }
@@ -133,18 +138,30 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
     return () => { disposed = true; };
   }, [api, reload]);
   return <div className={styles.composerArea}>
+    {imageInputs?.uncertain && <div className={styles.pendingHint} role="status">
+      上次图片发送结果尚未确认，新输入已保留。同一请求重试不会重复执行已接受的任务；原请求未到达时可能开始执行。
+      <button type="button" disabled={sending} onClick={retryImageSubmission}>重试原图片发送</button>
+      <button type="button" disabled={sending} onClick={() => imageInputs.settle(imageInputs.uncertain!.sessionId,imageInputs.uncertain!.requestId)}>已人工核对，解除发送锁</button>
+    </div>}
+    {imageInputs && <RetainedImageInputs inputs={imageInputs} />}
     {!!pending.length && <section className={styles.pending} aria-label="待发送内容">
       <div className={styles.pendingTitle}>待发送内容 · {pending.length} 条</div>
       {pending.map((value, index) => <div key={index} className={styles.pendingItem}>
-        <textarea aria-label={`待发送消息 ${index + 1}`} value={value} rows={2} onChange={event =>
+        <textarea aria-label={`待发送消息 ${index + 1}`} value={value} rows={2} disabled={!!imageInputs?.uncertain} onChange={event =>
           setPending(pending.map((item, i) => i === index ? event.target.value : item))} />
-        <button className={styles.iconButton} aria-label={`移除待发送消息 ${index + 1}`} onClick={() =>
+        <button className={styles.iconButton} aria-label={`移除待发送消息 ${index + 1}`} disabled={!!imageInputs?.uncertain} onClick={() =>
           setPending(pending.filter((_, i) => i !== index))}><Icon name="close" /></button>
       </div>)}
     </section>}
     {workspaceEntry && <div className={composer.workspaceContext} role="region" aria-label="项目与执行位置">{workspaceEntry}</div>}
-    <form className={`${styles.composer} ${composer.form}`} onSubmit={event => { event.preventDefault(); submit(); }}>
-      {canSupplement && text.trim() && <div className={composer.modeRow}>
+    <form className={`${styles.composer} ${composer.form}`} onSubmit={event => { event.preventDefault(); submit(); }}
+      onPaste={event => {
+        const files = Array.from(event.clipboardData.items ?? []).filter(item => item.kind === 'file').map(item => item.getAsFile()).filter((file): file is File => !!file);
+        if (files.length && imageInputs) { event.preventDefault(); void imageInputs.addFiles(files); }
+      }} onDragOver={event => { if (Array.from(event.dataTransfer.types).includes('Files')) event.preventDefault(); }}
+      onDrop={event => { if (event.dataTransfer.files.length && imageInputs) { event.preventDefault(); void imageInputs.addFiles(Array.from(event.dataTransfer.files)); } }}>
+      {imageInputs && <ImageAttachments inputs={imageInputs} supported={imageSupported} />}
+      {canSupplement && (text.trim() || hasImages) && <div className={composer.modeRow}>
         <select className={styles.sendMode} aria-label="发送方式" value={followUp ? 'follow_up' : 'steering'}
           disabled={sending || checkingSkill} onChange={event => setFollowUp(event.target.value === 'follow_up')}>
           <option value="follow_up">结束后跟进</option><option value="steering">引导本轮</option>
@@ -171,12 +188,22 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
           disabled={controlsDisabled} loading={loadingOptions} error={optionsError} reload={() => setReload(value => value + 1)}
           selectMode={selectMode} selectTools={selectTools} />
         <div className={styles.actionGroup}>
+          {imageInputs && <label className={styles.iconButton} title="添加图片">
+            <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" multiple hidden aria-label="添加图片"
+              disabled={sending || imageInputs.reading || !imageInputs.limits} onChange={event => {
+                if (event.target.files) void imageInputs.addFiles(Array.from(event.target.files));
+                event.target.value = '';
+              }} />
+            <span role="button" tabIndex={0} aria-label="选择图片" onKeyDown={event => {
+              if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); (event.currentTarget.previousElementSibling as HTMLInputElement).click(); }
+            }}><Icon name="image" /></span>
+          </label>}
           {pendingMode && !busy && <span className={styles.resendLabel}>重新发送</span>}
           {contextEntry}
           {showStop ? <button type="button" className={styles.stopButton} aria-label="停止运行" onClick={stop} disabled={stopping}>
             <Icon name="stop" /></button> :
             <button type="submit" className={styles.sendButton} aria-label={pendingMode && !busy ? '重新发送消息' : '发送消息'}
-              disabled={sending || checkingSkill || blocked || (!text.trim() && !pending.some(value => value.trim()))}><Icon name="send" /></button>}
+              disabled={sending || checkingSkill || blocked || !!imageInputs?.uncertain || imageInputs?.reading || (hasImages && !imageSupported) || (!text.trim() && !hasImages && !pending.some(value => value.trim()))}><Icon name="send" /></button>}
         </div>
       </div>
       {pendingMode && <div className={styles.pendingHint}>{busy ? '停止期间仅保留输入' : '内容由你明确重新发送'}</div>}
