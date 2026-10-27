@@ -32,24 +32,26 @@ def _image_header(head):
 def prepare_image_blocks(image, source_format, settings, *, control=None, progress=None):
     """Finite scaling/encoding attempts; preserve transparency and first-frame semantics."""
     check_tool_stop(control, IMAGE_STOPPED)
-    progress = progress or ToolProgress(None)
     alpha = image.mode in ('RGBA', 'LA') or 'transparency' in image.info
     output_format = source_format if source_format in ('JPEG', 'WEBP') else 'PNG'
     mime = {'JPEG': 'image/jpeg', 'WEBP': 'image/webp', 'PNG': 'image/png'}[output_format]
     with image.convert('RGBA' if alpha else 'RGB') as frame:
         check_tool_stop(control, IMAGE_STOPPED)
-        progress.report(phase='image_resize')
+        if progress is not None:
+            progress.report(phase='image_resize')
         frame.thumbnail((settings.max_dimension, settings.max_dimension), Image.Resampling.LANCZOS)
         check_tool_stop(control, IMAGE_STOPPED)
         for attempt in range(4):
             check_tool_stop(control, IMAGE_STOPPED)
-            progress.report(phase='image_encode', completed=attempt, total=4)
+            if progress is not None:
+                progress.report(phase='image_encode', completed=attempt, total=4)
             output = BytesIO()
             options = {'quality': 85} if output_format == 'JPEG' else {'lossless': True} if output_format == 'WEBP' else {}
             frame.save(output, format=output_format, **options)
             check_tool_stop(control, IMAGE_STOPPED)
             encoded = output.getvalue()
-            progress.report(phase='image_encode', completed=attempt + 1, total=4)
+            if progress is not None:
+                progress.report(phase='image_encode', completed=attempt + 1, total=4)
             if 4 * ((len(encoded) + 2) // 3) <= settings.max_base64_bytes:
                 note = '; first frame only' if source_format == 'GIF' else ''
                 blocks = [{'type': 'text', 'text': f'Image: {output_format}, {frame.width} x {frame.height}{note}'},
@@ -83,8 +85,14 @@ def read_image(source, offset, limit, *, settings, control=None, progress=None):
     check_tool_stop(control, IMAGE_STOPPED)
     if len(encoded) > settings.max_input_bytes:
         raise ToolException('Image exceeds the configured input byte budget. Use a smaller image.')
+    return decode_image_bytes(encoded, settings=settings, control=control, progress=progress)
+
+
+def decode_image_bytes(encoded, *, settings, control=None, progress=None, expected_mime=None):
+    """Decode actual bounded bytes, shared by Read and user message ingress."""
     try:
-        progress.report(phase='image_decode')
+        if progress is not None:
+            progress.report(phase='image_decode')
         with Image.open(BytesIO(encoded)) as image:
             check_tool_stop(control, IMAGE_STOPPED)
             if image.format not in _SUPPORTED:
@@ -95,6 +103,9 @@ def read_image(source, offset, limit, *, settings, control=None, progress=None):
             if image.width * image.height > pixel_limit:
                 raise ToolException('Image exceeds the configured decoded pixel budget or Pillow safety threshold. Use a smaller image.')
             source_format = image.format
+            mime = {'PNG':'image/png','JPEG':'image/jpeg','WEBP':'image/webp','GIF':'image/gif','BMP':'image/bmp'}[source_format]
+            if expected_mime is not None and expected_mime != mime:
+                raise ToolException('Image MIME does not match decoded format.')
             image.seek(0)
             image.load()
             check_tool_stop(control, IMAGE_STOPPED)

@@ -1,5 +1,6 @@
 """Public search uses real feedback/permission boundaries and synthetic HTTP."""
 
+from runtime_context_helpers import RunIdentity, ToolAuthorization, typed_context
 import asyncio
 import json
 
@@ -125,9 +126,7 @@ def test_stop_during_first_provider_settles_without_starting_second(monkeypatch)
             @property
             def requested(self):
                 return signal.is_set()
-        context = {'session_id': 's', '_run_control': Control(), '_execution_permit': {
-            'session_id': 's', 'agent_path': 'root', 'call_id': 'c',
-            'subject': {'execution_environment': execution_environment()}}}
+        context = typed_context(identity=RunIdentity(session_id='s'), authorization=ToolAuthorization(permit={'session_id': 's', 'agent_path': 'root', 'call_id': 'c', 'subject': {'execution_environment': execution_environment()}}), control=Control())
         runtime = SimpleNamespace(context=context, tool_call_id='c', stream_writer=None)
         task = asyncio.create_task(create_web_search_tool().tool.coroutine('docs', runtime, timeout=0))
         await started.wait()

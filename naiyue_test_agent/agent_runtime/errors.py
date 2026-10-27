@@ -101,15 +101,15 @@ class RuntimeErrorPolicy:
 
 
 def describe_failure_in_context(error, context, *, source, model_id=None):
-    policy = context.get('_failure_policy')
-    if not isinstance(policy, RuntimeErrorPolicy):
+    policy = context.scope.errors
+    if policy is None:
         policy = RuntimeErrorPolicy()
     description = policy.describe(error, source=source, model_id=model_id)
-    control = context.get('_run_control')
+    control = context.scope.control
     if isinstance(error, UserStop) and control is not None and control.reason != 'user':
         description = FailureDescription('runtime', 'cancelled',
             {'failure': 'run_failure', 'close': 'application_close'}[control.reason], safe_error_type(error))
-    attach_failure_description(error, description, run_id=context.get('run_id'))
+    attach_failure_description(error, description, run_id=context.scope.identity.run_id)
     return description
 
 

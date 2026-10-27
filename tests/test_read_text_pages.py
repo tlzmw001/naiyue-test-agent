@@ -126,7 +126,7 @@ async def test_full_graph_returns_partial_text_as_success_and_model_continues(mo
     (tmp_path / 'long.txt').write_bytes(b'x' * 70000)
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[call('long.txt', 'read-long')]), AIMessage(content='received prefix')])
     app = await build(monkeypatch, model)
-    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'read the long file')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('A', tmp_path), [('user', 'read the long file')])
     feedback = [m for m in result['messages'] if isinstance(m, ToolMessage)]
     assert len(feedback) == 1 and feedback[0].tool_call_id == 'read-long' and feedback[0].status == 'success'
     assert feedback[0].content.startswith('x' * 65536) and 'line remainder omitted' in feedback[0].content

@@ -26,7 +26,7 @@ class ForegroundResult:
     stop_reason: str | None = None
 
 
-def format_process_outcome(outcome, output, archived, *, label, stop_reason=None):
+def format_process_outcome(outcome, output, archived, *, label, stop_reason=None, archive_read_hint=True):
     text = (f'exit_code={outcome.returncode}; truncated={str(output.truncated).lower()}; '
             f'output_complete={str(outcome.output_complete).lower()}; lossy={str(output.lossy).lower()}\n'
             f'observed_lines={output.observed_lines}; observed_text_bytes={output.observed_bytes}; '
@@ -44,7 +44,9 @@ def format_process_outcome(outcome, output, archived, *, label, stop_reason=None
             if not output.transformed and archived.complete else None)
         if archived.reason in ('write_error', 'read_error'):
             readable = None
-        if readable:
+        if not archive_read_hint:
+            text += '\nArchive is stored on the controller. Use task_output with the operation_id for a bounded output tail.'
+        elif readable:
             text += f'\nRead text with read(path="{readable}", offset=1).'
         else:
             text += '\nRaw archive is diagnostic bytes; no complete UTF-8 text view is available.'
@@ -126,7 +128,7 @@ class ProcessCapture:
 
 
 async def execute_process_request(request, runtime, *, name, label, settings, runner, progress_settings):
-    capture = ProcessCapture(require_archive_root(runtime.context), settings)
+    capture = ProcessCapture(require_archive_root(runtime.context.scope.archive_root, runtime.context.scope.identity.execution_path), settings)
     output = capture.output
     progress = ToolProgress(runtime, progress_settings)
     observed_bytes = 0
@@ -138,7 +140,7 @@ async def execute_process_request(request, runtime, *, name, label, settings, ru
         progress.report(phase='process_output', completed=observed_bytes, unit='bytes', text=output.text)
     try:
         progress.report(phase='process_starting', activity='preparing', completed=0, unit='bytes')
-        outcome = await runner.run(request, consume, runtime.context.get('_run_control'))
+        outcome = await runner.run(request, consume, runtime.context.scope.control)
     except BaseException as error:
         if isinstance(error, ProcessCleanupError) and error.consumer_task is not None:
             # Closing under an unsettled writer would break resource ownership.
@@ -167,7 +169,7 @@ async def execute_process_request(request, runtime, *, name, label, settings, ru
 
 def log_process_completed(outcome, capture, archived, runtime, name, started):
     logger.info('shell_completed', extra={'shell_event': {
-        'event': 'shell_completed', 'shell': name, 'run_id': runtime.context.get('run_id'),
+        'event': 'shell_completed', 'shell': name, 'run_id': runtime.context.scope.identity.run_id,
         'tool_call_id': runtime.tool_call_id, 'exit_code': outcome.returncode,
         'termination': outcome.termination, 'truncated': capture.output.truncated,
         'output_complete': outcome.output_complete, 'archive_complete': archived.complete,
@@ -183,10 +185,10 @@ async def execute_managed_foreground(port, scope, request, runtime, *, command, 
         progress.report(phase='process_output', completed=count, unit='bytes', text=text)
     progress.report(phase='process_starting', activity='preparing', completed=0, unit='bytes')
     try:
-        result = await port.foreground(**scope, run_id=runtime.context.get('run_id'),
-            tool_call_id=runtime.tool_call_id, agent_path=runtime.context.get('agent_path', 'root'),
+        result = await port.foreground(**scope, run_id=runtime.context.scope.identity.run_id,
+            tool_call_id=runtime.tool_call_id, agent_path=runtime.context.scope.identity.agent_path,
             command=command, name=name, request=request, settings=settings, runner=runner,
-            control=runtime.context.get('_run_control'), wait_seconds=task_settings.foreground_wait_seconds,
+            control=runtime.context.scope.control, wait_seconds=task_settings.foreground_wait_seconds,
             background_limit=task_settings.max_background_archive_bytes, on_progress=report)
         if isinstance(result, dict):
             # Handoff has already committed. Never deliver to this run again.

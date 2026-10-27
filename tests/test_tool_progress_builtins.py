@@ -1,5 +1,7 @@
 """Real builtin IO reports stages without exposing file or image bodies."""
 
+from dataclasses import replace
+from runtime_context_helpers import ExecutionRoot, RunIdentity, ToolAuthorization, typed_context
 import asyncio
 from types import SimpleNamespace
 
@@ -18,7 +20,7 @@ def test_each_builtin_reports_actual_work_with_one_configured_budget(monkeypatch
     target = tmp_path / 'file.txt'
     target.write_text(secret + '\n')
     if name == 'powershell':
-        from naiyue_test_agent.tools.powershell import PowerShellAdapter
+        from naiyue_test_agent.execution.host_shell import PowerShellAdapter
         from naiyue_test_agent.tools.processes import HostProcessRunner
         monkeypatch.setattr(PowerShellAdapter, 'discover', lambda *_: '/synthetic/pwsh')
         async def run(self, request, consume, control=None):
@@ -35,13 +37,10 @@ def test_each_builtin_reports_actual_work_with_one_configured_budget(monkeypatch
             'powershell': {'command': 'Write-Output SHELL_OUTPUT'}}[name]
     validated = spec.validate_input(args)
     kwargs = {key: getattr(validated, key) for key in spec.input_schema.model_fields}
-    context = {'session_id': 's', 'workspace_root': tmp_path,
-               'archive_root': tmp_path.parent / (tmp_path.name + '-archive'),
-               '_permission_rules': settings.permissions, '_session_allow': []}
+    context = typed_context(identity=RunIdentity(session_id='s', execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None), authorization=ToolAuthorization(permission_rules=settings.permissions, session_allow=[]), archive_root=tmp_path.parent / (tmp_path.name + '-archive'))
     subject = spec.permissions.prepare(kwargs, context)
-    subject.update(args=kwargs, tool_name=name, path_field='path', execution_environment=execution_environment())
-    context['_execution_permit'] = {'call_id': 'c', 'session_id': 's', 'agent_path': 'root',
-                                  'batch_id': 'b', 'tool_name': name, 'subject': subject}
+    subject.update(args=kwargs, tool_name=name, path_field='path', execution_environment=execution_environment(context))
+    context = replace(context, authorization=replace(context.authorization, permit={'call_id': 'c', 'session_id': 's', 'agent_path': 'root', 'batch_id': 'b', 'tool_name': name, 'subject': subject}))
     reports = []
     runtime = SimpleNamespace(context=context, tool_call_id='c', stream_writer=reports.append)
     if spec.tool.coroutine:
@@ -74,11 +73,10 @@ def test_image_and_fuzzy_edit_have_specific_internal_stages(tmp_path):
         (specs[1], {'path': target.name, 'edits': [{'oldText': '"old"', 'newText': 'new'}]},
          {'scan_exact', 'scan_normalized', 'temp_copy', 'diff', 'commit'})]:
         reports = []
-        context = {'session_id': 's', 'workspace_root': tmp_path}
+        context = typed_context(identity=RunIdentity(session_id='s', execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None))
         subject = spec.permissions.prepare(args, context)
-        subject.update(args=args, path_field='path', execution_environment=execution_environment())
-        context['_execution_permit'] = {'call_id': 'c', 'session_id': 's', 'agent_path': 'root',
-            'batch_id': 'b', 'tool_name': spec.tool.name, 'subject': subject}
+        subject.update(args=args, path_field='path', execution_environment=execution_environment(context))
+        context = replace(context, authorization=ToolAuthorization( permit={'call_id': 'c', 'session_id': 's', 'agent_path': 'root', 'batch_id': 'b', 'tool_name': spec.tool.name, 'subject': subject}))
         runtime = SimpleNamespace(context=context, tool_call_id='c', stream_writer=reports.append)
         values = spec.validate_input(args)
         spec.tool.func(**{key: getattr(values, key) for key in args}, runtime=runtime)

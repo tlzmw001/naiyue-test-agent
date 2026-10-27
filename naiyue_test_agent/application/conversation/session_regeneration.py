@@ -1,0 +1,93 @@
+"""Prepare one replacement under normal admission, then use the existing run lifecycle."""
+
+import json
+import logging
+from uuid import uuid4
+from langchain_core.messages import HumanMessage, messages_from_dict
+from langgraph.graph import START, END
+from naiyue_test_agent.agent_runtime.async_utils import await_settled, run_blocking
+from naiyue_test_agent.application.sessions.session_recovery import _message_facts
+from naiyue_test_agent.application.sessions.session_controls import mark_human_messages
+
+logger = logging.getLogger(__name__)
+
+
+def _commit_replacement(replies, session, run, request_id, *, config, head, boundary, revision):
+    replies.activate(session.session_id, request_id,
+        checkpoint=config['configurable']['checkpoint_id'], head_checkpoint=head, boundary=boundary)
+    session.lifecycle.activate_regenerated_thread(run, config['configurable']['thread_id'], revision)
+
+
+async def regenerate(session_id, *, sessions, agent, persistence, owner, metadata, conversation, replies, request_id, expected_reply_id, expected_conversation_revision):
+    existing = await run_blocking(replies.action, session_id, request_id)
+    if existing:
+        if (existing['reply_id'], existing['revision']) != (expected_reply_id, expected_conversation_revision):
+            raise ValueError('request_id_conflict')
+        return {**existing, 'replayed': True}
+    prepared = await sessions.prepare_admission(session_id)
+    from naiyue_test_agent.application.sessions.execution_binding import execution_use
+    async with execution_use(sessions,prepared[1]):
+        await sessions.confirm_admission(prepared)
+        owner.check_admission_open()
+        session, run = sessions._admit(session_id, None, 'message', prepared_admission=prepared)
+        activated = False
+        original_thread = session.get_thread_id()
+        try:
+            row = await run_blocking(metadata.get, session_id)
+            boundary = await run_blocking(replies.latest, session_id)
+            if (row['state'] != 'ready' or row['conversation_revision'] != expected_conversation_revision
+                    or not boundary or boundary['reply_id'] != expected_reply_id):
+                raise ValueError('regeneration_stale')
+            if session_id in persistence._blocked:
+                raise ValueError('session_recovery_blocked')
+            source = {'configurable': {'thread_id': boundary['source_thread_id'] or boundary['thread_id'],
+                                       'checkpoint_id': boundary['source_checkpoint_id']}}
+            prefix = []
+            if boundary['source_checkpoint_id']:
+                saved = await agent.aget_state(source)
+                if (saved.config or {}).get('configurable', {}).get('checkpoint_id') != boundary['source_checkpoint_id']:
+                    raise ValueError('regeneration_source_unavailable')
+                prefix = saved.values.get('messages', [])
+            elif boundary['input_sequence'] != 1:
+                raise ValueError('regeneration_source_unavailable')
+            if (any(m.additional_kwargs.get('naiyue_reply_id') == expected_reply_id for m in prefix)
+                    or any(_message_facts(prefix))):
+                raise ValueError('regeneration_source_unavailable')
+            records = await run_blocking(conversation.reply_inputs, session_id, row['thread_id'], expected_reply_id)
+            inputs = [m for m in messages_from_dict([json.loads(r['body_json']) for r in records]) if isinstance(m, HumanMessage)]
+            if not inputs:
+                raise ValueError('regeneration_source_unavailable')
+            inputs = mark_human_messages([m.model_copy(update={'id': uuid4().hex, 'additional_kwargs': {
+                **{k: v for k, v in m.additional_kwargs.items() if k not in ('naiyue_reply_id', 'naiyue_input_kind')},
+                'naiyue_input_source': 'regenerated_task'}}) for m in inputs])
+            new_thread = uuid4().hex
+            await run_blocking(replies.record_action, session_id, request_id, boundary,
+                              expected_conversation_revision, new_thread, run.run_id)
+            config = {'configurable': {'thread_id': new_thread}}
+            values = {'messages': prefix, 'tool_execution': {}, 'run_stopped': False, 'active_reply_id': None}
+            config = await await_settled(agent.aupdate_state(config, values, as_node=START))
+            config = await await_settled(agent.aupdate_state(config, None, as_node=END))
+            head = config['configurable']['checkpoint_id']
+            # Save the actual replayed human input before activation. A crash must not lose it.
+            config = await await_settled(agent.aupdate_state(config, {'messages': inputs}, as_node=START))
+            config = await await_settled(agent.aupdate_state(config, None, as_node=END))
+            snapshot = await agent.aget_state(config)
+            if snapshot.next or snapshot.tasks or run.stop_requested:
+                raise ValueError('regeneration_preparation_stopped')
+            await await_settled(run_blocking(_commit_replacement, replies, session, run, request_id,
+                config=config, head=head, boundary=boundary, revision=expected_conversation_revision + 1))
+            activated = True
+        except BaseException:
+            logger.warning('regeneration_prepare_failed')
+            # No model/tool was called during preparation. Settle before releasing the quota.
+            if activated or session.get_thread_id() != original_thread:
+                session.approvals.mark_manual_review(run)
+            else:
+                try:
+                    await await_settled(run_blocking(replies.fail_preparation, session_id, request_id))
+                except BaseException as secondary:
+                    logger.error('regeneration_failure_save_failed error_type=%s', type(secondary).__name__)
+            session.controls.close_control_window(run)
+            session.lifecycle.release_run(run)
+            raise
+        return await session.lifecycle.arun(agent, inputs, run=run)

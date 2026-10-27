@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { ReactNode, RefObject } from 'react';
 import type { ContextEstimate, ContextGroup, ContextView } from '../contextTypes';
 import styles from './ContextPanel.module.css';
+import { Chevron } from './Icons';
 
 const labels: Record<string, string> = { system: '系统说明', tool_definitions: '工具定义', user: '用户消息',
   assistant: '模型消息与工具调用参数', tool_results: '工具结果', summary: '历史压缩摘要', other: '其他消息',
@@ -39,7 +40,7 @@ function Group({ row, total }: { row: ContextGroup; total: number }) {
   const heading = <><i style={{ background: colors[row.id] }} /><span>{labels[row.id] ?? '其他消息'}
     {row.id !== 'system' && row.count != null ? ` · ${row.count}${row.id === 'tool_definitions' ? ' 项' : ' 条'}` : ''}</span>
     <b>≈ {format(row.tokens)}</b><small>{total > 0 ? (row.tokens / total * 100).toFixed(1) + '%' : ''}</small></>;
-  return row.children?.length ? <details className={styles.group} open><summary className={styles.row}>{heading}</summary>
+  return row.children?.length ? <details className={styles.group} open><summary className={styles.row}><Chevron direction="right" className={styles.groupChevron} />{heading}</summary>
     <div className={styles.children}>{row.children.map((part, index) => <div key={`${part.id}:${index}`}>
       <span>{part.source ?? labels[part.id]}{part.count != null ? ` · ${part.count} 项` : ''}</span>
       <span>≈ {format(part.tokens)}</span></div>)}</div></details> : <div className={styles.row}>{heading}</div>;

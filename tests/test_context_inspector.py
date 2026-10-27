@@ -1,5 +1,7 @@
 """Read-only composition uses real model inputs, not presentation history."""
 
+from runtime_context_helpers import RunIdentity, ModelCallState, typed_context
+
 import asyncio
 import json
 
@@ -44,15 +46,15 @@ def test_read_only_preview_and_report_survive_checkpoint_reopen(monkeypatch, tmp
             'input_token_details': {'cache_read': 0, 'cache_creation': 20}})
         model = model_with_limits([reply])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            endpoint = f'/api/sessions/{sid}/context'
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            endpoint = f'/api/v1/scopes/chats/sessions/{sid}/context'
             first = await client.get(endpoint)
             assert first.status_code == 200
             assert first.json()['current']['basis'] == 'next_request'
             assert first.json()['latest_request'] is None
             assert model.seen == []
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=request('SECRET_USER'))).json()['run_id']
-            await client.get(f'/api/runs/{run}/events')
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('SECRET_USER'))).json()['run_id']
+            await client.get(f'/api/v1/scopes/chats/runs/{run}/events')
             value = (await client.get(endpoint)).json()
             saved = value['latest_request']
             assert saved['model_call_id']
@@ -63,7 +65,7 @@ def test_read_only_preview_and_report_survive_checkpoint_reopen(monkeypatch, tmp
             assert 'SECRET' not in json.dumps(value)
             assert len(model.seen) == 1
             assert (await client.get(endpoint, headers={'Authorization': ''})).status_code == 401
-            assert (await client.get('/api/sessions/missing/context')).status_code == 404
+            assert (await client.get('/api/v1/scopes/chats/sessions/missing/context')).status_code == 404
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, app):
             reopened = (await client.get(endpoint)).json()
             assert reopened['latest_request'] == saved
@@ -80,21 +82,21 @@ def test_live_snapshot_is_frozen_and_usage_is_not_guessed(monkeypatch, tmp_path)
         model = model_with_limits([AIMessage(content='done')])
         model.entered, model.release = entered, release
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, web):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=request('task'))).json()['run_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('task'))).json()['run_id']
             try:
                 await asyncio.wait_for(entered.wait(), 5)
-                first = (await client.get(f'/api/sessions/{sid}/context')).json()
+                first = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}/context')).json()
                 assert first['current']['basis'] == 'last_sent'
                 assert first['latest_request']['status'] == 'running'
                 assert first['latest_request']['usage'] is None
                 (root / 'AGENTS.md').write_text('CHANGED_CONTENT' * 100)
-                assert (await client.get(f'/api/sessions/{sid}/context')).json() == first
+                assert (await client.get(f'/api/v1/scopes/chats/sessions/{sid}/context')).json() == first
                 assert len(model.seen) == 1
             finally:
                 release.set()
             await web.state.delivery.wait(run)
-            after = (await client.get(f'/api/sessions/{sid}/context')).json()
+            after = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}/context')).json()
             assert after['current']['basis'] == 'next_request'
             assert after['latest_request']['usage'] is None
             assert after['current']['estimate']['estimated_input_tokens'] > first['current']['estimate']['estimated_input_tokens']
@@ -103,18 +105,18 @@ def test_live_snapshot_is_frozen_and_usage_is_not_guessed(monkeypatch, tmp_path)
 
 
 def test_preview_fault_does_not_change_checkpoint_or_start_model(monkeypatch, tmp_path, caplog):
-    from naiyue_test_agent.application import session_context
+    from naiyue_test_agent.application.sessions import session_context
     async def scenario():
         model = model_with_limits([])
         async with web_client(monkeypatch, tmp_path, model) as (client, web):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            before = (await client.get(f'/api/sessions/{sid}')).json()
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            before = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
             def broken(*args, **kwargs):
                 raise OSError('SECRET_RESOURCE_PATH')
             monkeypatch.setattr(session_context, 'prepare_run_resources', broken)
-            value = (await client.get(f'/api/sessions/{sid}/context')).json()
+            value = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}/context')).json()
             assert value['current'] == {'basis': 'unavailable', 'estimate': None}
-            assert (await client.get(f'/api/sessions/{sid}')).json() == before
+            assert (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json() == before
             assert model.seen == []
     asyncio.run(scenario())
     assert 'context_preview_unavailable' in caplog.text
@@ -133,10 +135,10 @@ def test_child_usage_does_not_replace_root_snapshot(monkeypatch, tmp_path):
         root.mkdir()
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root,
                 runtime_settings=AppSettings(subagents=(role(tool_names=(), model_id=None),))) as (client, web):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=request('parent task'))).json()['run_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('parent task'))).json()['run_id']
             await web.state.delivery.wait(run)
-            view = (await client.get(f'/api/sessions/{sid}/context')).json()
+            view = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}/context')).json()
             assert view['latest_request']['usage']['input_tokens'] == 120
             snapshots = [event for event in web.state.delivery.get(run).events if event['event_type'] == 'model_context_snapshot']
             assert any(event['source'] for event in snapshots)
@@ -157,9 +159,9 @@ def test_observation_fault_preserves_original_model_failure(monkeypatch, tmp_pat
         monkeypatch.setattr(context_observation, 'estimate_context', broken)
         app = await make_app(monkeypatch, model)
         try:
-            sid = await app.acreate_session('A')
+            sid = await app.host.sessions.create('A')
             try:
-                await app.arun(sid, [('user', 'task')])
+                await app.host.runs.start(sid, [('user', 'task')])
             except RuntimeError as caught:
                 assert caught is failure
             else:
@@ -189,7 +191,7 @@ def test_images_and_summary_are_counted_once_without_encoded_pixels():
 
 def test_saved_snapshot_rejects_unexpected_content_fields(caplog):
     from naiyue_test_agent.agent_runtime.context_usage import read_snapshot, request_snapshot, finish_snapshot, estimate_context
-    snapshot = finish_snapshot(request_snapshot({'_naiyue_model_call_id': 'call', '_naiyue_model_id': 'A', 'run_id': 'run'},
+    snapshot = finish_snapshot(request_snapshot(typed_context(identity=RunIdentity('s', 'run'), model_call=ModelCallState('call', 'A')),
         estimate_context(model_with_limits([]), SystemMessage(content='base'), [], [])))
     assert read_snapshot(snapshot) == snapshot
     snapshot['estimate']['groups'][0]['body'] = 'SECRET_BODY'
@@ -206,12 +208,12 @@ def test_pending_approval_keeps_latest_request_but_is_not_a_next_request_preview
         outside.write_text('NOT_READ_BEFORE_APPROVAL')
         model = model_with_limits([call('read', {'path': str(outside)}, 'read-outside')])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, web):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=request('read outside'))).json()['run_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('read outside'))).json()['run_id']
             await web.state.delivery.wait(run)
-            session = (await client.get(f'/api/sessions/{sid}')).json()
+            session = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
             assert session['pending_approval'] and not session['busy']
-            value = (await client.get(f'/api/sessions/{sid}/context')).json()
+            value = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}/context')).json()
             assert value['current'] == {'basis': 'unavailable', 'estimate': None}
             assert value['latest_request']['status'] == 'returned'
             assert not any(row['type'] == 'tool' for row in session['messages'])
@@ -226,23 +228,23 @@ def test_optional_context_statistics_do_not_overflow_main_delivery(monkeypatch, 
         (root / 'AGENTS.md').write_text('RULE')
         model = model_with_limits([AIMessage(content='ok')])
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root) as (client, web):
-            sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-            run = (await client.post(f'/api/sessions/{sid}/runs', json=request('short'))).json()['run_id']
+            sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+            run = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('short'))).json()['run_id']
             await web.state.delivery.wait(run)
             from naiyue_test_agent.web.serialization import encoded_size
-            baseline = (await client.get(f'/api/sessions/{sid}')).json()
+            baseline = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
             assert baseline['live']['context_snapshot'] is not None
             baseline['live']['context_snapshot'] = None
             # Derive a valid core-message budget, independent of temp path length/OS.
             settings = web.state.service.settings.model_copy(update={'max_frame_bytes': encoded_size(baseline) + 1})
             web.state.service.settings = settings
             web.state.delivery.get(run).settings = settings
-            view = (await client.get(f'/api/runs/{run}')).json()
+            view = (await client.get(f'/api/v1/scopes/chats/runs/{run}')).json()
             assert view['status'] == 'completed' and not view['incomplete']
             assert view['messages'][-1]['content'] == 'ok'
-            stream = await client.get(f'/api/runs/{run}/events')
+            stream = await client.get(f'/api/v1/scopes/chats/runs/{run}/events')
             assert stream.status_code == 200
-            session = await client.get(f'/api/sessions/{sid}')
+            session = await client.get(f'/api/v1/scopes/chats/sessions/{sid}')
             assert session.status_code == 200 and session.json()['live']['context_snapshot'] is None
             assert len(model.seen) == 1
     asyncio.run(scenario())
@@ -258,7 +260,7 @@ def test_oversized_stat_event_keeps_its_sequence_with_an_omitted_payload():
             max_frame_bytes=800, event_capacity=20), lambda _: None)
         publisher = RunEventPublisher('s', 'r', (job.observe,))
         publisher.publish('run_started', RunStartedData('message'))
-        snapshot = request_snapshot({'_naiyue_model_call_id': 'call', '_naiyue_model_id': 'A', 'run_id': 'r'},
+        snapshot = request_snapshot(typed_context(identity=RunIdentity('s', 'r'), model_call=ModelCallState('call', 'A')),
             estimate_context(model_with_limits([]), SystemMessage(content='base'), [], []))
         publisher.publish('model_context_snapshot', ModelContextSnapshotData('call', json.dumps(snapshot)))
         publisher.publish('run_finished', RunFinishedData('completed'))

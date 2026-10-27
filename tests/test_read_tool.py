@@ -1,5 +1,6 @@
 """Read-file tool contract before it is exposed to a model."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, ToolAuthorization, typed_context
 from native_application_helpers import async_test
 
 import logging
@@ -32,7 +33,7 @@ EXPECTED_NON_TEXT = ('read only supports text; this file contains non-text contr
 
 
 async def call_read(tool, args, root):
-    return (await invoke_tool_feedback(tool, args, context={'workspace_root': root}, call_id='call-1'))
+    return (await invoke_tool_feedback(tool, args, context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(root) if root is not None else None, session_id=None)), call_id='call-1'))
 
 
 @async_test
@@ -440,10 +441,11 @@ def test_read_does_not_turn_graph_interrupt_into_tool_error(tmp_path, monkeypatc
 
     monkeypatch.setattr(Path, 'open', interrupt_open)
     from naiyue_test_agent.tools.permissions import execution_environment
-    subject = tool.permissions.prepare({'path': 'doc.md'}, {'workspace_root': tmp_path})
-    subject.update(args={'path': 'doc.md'}, path_field='path', execution_environment=execution_environment())
+    subject = tool.permissions.prepare({'path': 'doc.md'}, typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None)))
+    subject.update(args={'path': 'doc.md'}, path_field='path', execution_environment=execution_environment(
+        typed_context(identity=RunIdentity('s', execution_root=ExecutionRoot(tmp_path)))))
     permit = {'call_id': 'call-1', 'session_id': 's', 'agent_path': 'root', 'subject': subject}
-    runtime = ToolRuntime(state={}, context={'workspace_root': tmp_path, 'session_id': 's', '_execution_permit': permit}, config={},
+    runtime = ToolRuntime(state={}, context=typed_context(identity=RunIdentity(session_id='s', execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None), authorization=ToolAuthorization(permit=permit)), config={},
                           stream_writer=lambda _: None, tool_call_id='call-1', store=None)
     with pytest.raises(GraphInterrupt):
         tool.tool.invoke({'name': 'read', 'args': {'path': 'doc.md', 'runtime': runtime},

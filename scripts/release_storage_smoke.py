@@ -28,12 +28,16 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
     """Only call with a disposable directory; construct real graphs and use the real CLI."""
     from langchain_core.messages import AIMessage, ToolMessage
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-    from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+    if __package__:
+        from .release_application import open_smoke_host
+    else:
+        from release_application import open_smoke_host
+    from naiyue_test_agent.storage.project_store import ProjectStore
+    from naiyue_test_agent.storage.errors import SessionPersistenceError
     from naiyue_test_agent.agent_runtime.tool_execution.permissions import AutoPermissionReviewer
     from naiyue_test_agent.model_access import ModelCatalog
     from naiyue_test_agent.settings import AppSettings
-    from naiyue_test_agent.storage_backup import list_backups
+    from naiyue_test_agent.storage.backup import list_backups
     from naiyue_test_agent.tools import (SubAgentSpec, create_subagent_tool,
         create_session_read_tool, create_session_write_tool)
     from naiyue_test_agent.workspaces import prepare_workspace
@@ -53,7 +57,7 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
     async def opened(parent, child):
         with patch.object(application, 'load_model_catalog',
                           lambda _: ModelCatalog('root', {'root': parent, 'child': child})):
-            async with open_async_persistent_application('unused', database_path=database, tools=tools,
+            async with open_smoke_host('unused', workspace=workspace, data_dir=root / 'storage-data', database_path=database, tools=tools,
                     system_prompt='', response_format=None, settings=settings,
                     workspace_binding={'workspace_id': location.workspace_id, 'root_path': workspace}) as app:
                 yield app
@@ -69,32 +73,38 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
         {'name': 'read', 'args': {'path': 'note.txt'}, 'id': 'child-read'}]),
         AIMessage(content='child report', usage_metadata={'input_tokens': 11, 'output_tokens': 2, 'total_tokens': 13})])
     async with opened(parent, child) as app:
-        normal = await app.acreate_workspace_session('root', workspace)
-        await app.arun(normal, [('user', 'first')])
-        await app.arun(normal, [('user', 'second')])
-        await app.aupdate_session_presentation(normal, title='Saved title', pinned=True)
-        messages = await app.aget_messages(normal)
-        usage = await app.aget_model_usage(normal, model_limit=20)
+        normal = await app.sessions.create_workspace('root', workspace)
+        await app.runs.start(normal, [('user', 'first')])
+        await app.runs.start(normal, [('user', 'second')])
+        await app.sessions.update_presentation(normal, title='Saved title', pinned=True)
+        messages = await app.history.messages(normal)
+        usage = await app.observability.usage(normal, model_limit=20)
         assert usage['metrics']['input_tokens'] == {'known_sum': '101', 'reported_calls': 1, 'unknown_calls': 1}
-        delegated = await app.acreate_workspace_session('root', workspace)
-        result = await app.arun(delegated, [('user', 'delegate one read')])
+        delegated = await app.sessions.create_workspace('root', workspace)
+        result = await app.runs.start(delegated, [('user', 'delegate one read')])
         assert result['messages'][-1].content == 'root report'
-        children = await app.aget_chat_subagents(delegated)
+        children = await app.history.chat_subagents(delegated)
         assert len(children) == 1
         child_id = children[0]['agent_id']
-        child_page = await app.aget_chat_page(delegated, agent_id=child_id, limit=50, body_bytes=16384, preview_chars=2048)
+        child_page = await app.history.page(delegated, agent_id=child_id, limit=50, body_bytes=16384, preview_chars=2048)
         assert child_page['records'][-1]['message_id']
-        pending = await app.acreate_workspace_session('root', workspace)
-        await app.arun(pending, [('user', 'write outside after approval')])
-        assert len(app.pending_tool_approvals(pending)) == 1 and not outside.exists()
-        pending_row = app._storage.get(pending)
-        pending_state = await app._agent.aget_state({'configurable': {'thread_id': pending_row['thread_id']}})
-        pending_checkpoint = await app._agent.checkpointer.aget_tuple(pending_state.config)
+        pending = await app.sessions.create_workspace('root', workspace)
+        await app.runs.start(pending, [('user', 'write outside after approval')])
+        assert len(app.runs.pending_tools(pending)) == 1 and not outside.exists()
+        pending_row = app.sessions._persistence.storage.sessions.get(pending)
+        pending_state = await app.runs._agent.aget_state({'configurable': {'thread_id': pending_row['thread_id']}})
+        pending_checkpoint = await app.runs._agent.checkpointer.aget_tuple(pending_state.config)
         assert not any(isinstance(message, ToolMessage) for message in pending_state.values['messages'])
     assert len(parent.seen) == 5 and len(child.seen) == 2 and not parent.replies and not child.replies
 
     # This is fixture construction on a CLOSED disposable database, never a product downgrade command.
     with closing(sqlite3.connect(database)) as connection:
+        connection.execute('DROP TABLE naiyue_project_identity')
+        connection.execute('ALTER TABLE naiyue_sessions DROP COLUMN execution_setup_json')
+        connection.execute('ALTER TABLE naiyue_sessions DROP COLUMN project_id')
+        connection.execute('ALTER TABLE naiyue_sessions DROP COLUMN execution_root_kind')
+        connection.execute('ALTER TABLE naiyue_sessions DROP COLUMN execution_binding')
+        connection.execute('ALTER TABLE naiyue_sessions DROP COLUMN last_execution_path')
         connection.execute('ALTER TABLE naiyue_chat_messages DROP COLUMN occurred_at')
         for table in ('naiyue_memory_overviews','naiyue_memory_progress','naiyue_memory_versions','naiyue_memory_suppression','naiyue_memory_search', 'naiyue_memories', 'naiyue_memory_sources', 'naiyue_memory_info'):
             connection.execute(f'DROP TABLE {table}')
@@ -103,10 +113,10 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
         connection.execute('UPDATE naiyue_store_info SET version=12')
         connection.commit()
     before = _facts(database)
-    with SessionStorage(database) as storage:
+    with ProjectStore(database) as storage:
         backup, = list_backups(database, workspace_id=location.workspace_id)
         assert backup['manifest']['source_schema'] == 12
-        storage.update_presentation(normal, title='After backup')
+        storage.sessions.update_presentation(normal, title='After backup')
     library_side_effect = root / 'outside-after-backup.txt'
     library_side_effect.write_text('not rolled back', encoding='utf-8')
     database.write_bytes(b'corrupt target retained as original')
@@ -140,48 +150,55 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
         with patch.object(AutoPermissionReviewer, 'areview', side_effect=AssertionError('Unexpected Auto call')) as auto:
             async with opened(parent, child) as app:
                 current = _facts(database)
-                from naiyue_test_agent.storage_backup_schema import CURRENT_SCHEMA
+                from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
                 assert current.pop('naiyue_store_info') == [{'version': CURRENT_SCHEMA}]
-                assert app._storage.connection.execute('SELECT COUNT(*) FROM naiyue_subagent_instances').fetchone()[0] == 0
+                assert app.sessions._persistence.storage.database.connection.execute('SELECT COUNT(*) FROM naiyue_subagent_instances').fetchone()[0] == 0
                 expected = {key: value for key, value in before.items() if key != 'naiyue_store_info'}
                 assert all(row.pop('duration_ms') is None for row in current['naiyue_model_invocations'])
                 assert all(row.pop('occurred_at') is None for row in current['naiyue_chat_messages'])
+                for row in current['naiyue_sessions']:
+                    assert row.pop('project_id') == location.workspace_id
+                    assert row.pop('execution_root_kind') == 'local'
+                    assert row.pop('execution_binding') == 'project_local'
+                    assert row.pop('last_execution_path') == str(workspace)
+                assert [tuple(row) for row in app.sessions._persistence.storage.database.connection.execute('SELECT project_id,source_kind FROM naiyue_project_identity')] == [(location.workspace_id,'local')]
+                assert all(row.pop('execution_setup_json') is None for row in current['naiyue_sessions'])
                 assert current == expected
                 assert len(list_backups(database)) == 2
                 events = []
-                app.subscribe_events(events.append)
-                await app.arestore_session(normal)
-                assert await app.aget_messages(normal) == messages
-                row = app._storage.get(normal)
+                app.observability.subscribe(events.append)
+                await app.sessions.restore(normal)
+                assert await app.history.messages(normal) == messages
+                row = app.sessions._persistence.storage.sessions.get(normal)
                 assert row['title'] == 'Saved title' and row['pinned']
-                summary = await app.aget_model_usage(normal, model_limit=20)
+                summary = await app.observability.usage(normal, model_limit=20)
                 assert summary['metrics'] == usage['metrics']
                 assert summary['duration'] == {'known_sum_ms': None, 'reported_calls': 0, 'unknown_calls': 2}
                 assert summary['status_counts'] == usage['status_counts'] and summary['recorded_calls'] == 2
-                assert await app.alist_diagnostic_runs(normal)
-                await app.arestore_session(delegated)
-                assert await app.aget_chat_subagents(delegated) == [
+                assert await app.observability.runs(normal)
+                await app.sessions.restore(delegated)
+                assert await app.history.chat_subagents(delegated) == [
                     {**child, 'resume_available': False, 'resume_reason': 'legacy_instance'} for child in children]
-                assert await app.aget_chat_page(delegated, agent_id=child_id, limit=50,
+                assert await app.history.page(delegated, agent_id=child_id, limit=50,
                     body_bytes=16384, preview_chars=2048) == child_page
                 try:
-                    await app.arestore_session(pending)
+                    await app.sessions.restore(pending)
                 except SessionPersistenceError as error:
                     assert str(error) == 'session_recovery_blocked'
                 else:
                     raise AssertionError('Pending approval was restored without recovery')
-                history = await app.aget_session_history(pending)
+                history = await app.history.session(pending)
                 assert history['recovery']['kind'] == 'pending_approval'
-                await app.arecover_session(pending, checkpoint_id=history['checkpoint_id'], action='restore_approval')
-                assert await app._agent.checkpointer.aget_tuple(pending_state.config) == pending_checkpoint
-                memory = app._sessions._sessions[pending]
+                await app.sessions.recover(pending, checkpoint_id=history['checkpoint_id'], action='restore_approval')
+                assert await app.runs._agent.checkpointer.aget_tuple(pending_state.config) == pending_checkpoint
+                memory = app.sessions._sessions._sessions[pending]
                 assert memory.resolve_permission_context()['session_allow'] == []
-                assert app.pending_tool_approvals(pending)[0]['tool_call_id'] == 'approval-call'
+                assert app.runs.pending_tools(pending)[0]['tool_call_id'] == 'approval-call'
                 assert not parent.seen and not child.seen and written.call_count == auto.call_count == 0 and events == []
                 restore_phase_calls = {'model': len(parent.seen) + len(child.seen),
                                        'write': written.call_count, 'auto': auto.call_count}
                 parent.replies.append(AIMessage(content='after decision'))
-                result = await app.aresume_tool_approval(pending, [decision])
+                result = await app.runs.resume_approval(pending, [decision])
                 feedback, = [message for message in result['messages'] if isinstance(message, ToolMessage)]
                 assert feedback.tool_call_id == 'approval-call'
                 assert feedback.status == ('success' if decision == 'approve' else 'error')
@@ -189,15 +206,15 @@ async def storage_scenario(root, Model, command, *, decision='approve'):
                 assert outside.exists() is (decision == 'approve')
                 if outside.exists():
                     assert outside.read_text(encoding='utf-8') == 'approved once'
-                assert app._storage.get(pending)['state'] == 'ready' and not app.pending_tool_approvals(pending)
+                assert app.sessions._persistence.storage.sessions.get(pending)['state'] == 'ready' and not app.runs.pending_tools(pending)
                 parent.replies.append(AIMessage(content='continued after restore'))
-                continued = await app.arun(normal, [('user', 'after restore')])
+                continued = await app.runs.start(normal, [('user', 'after restore')])
                 assert continued['messages'][:-2] == messages
                 assert [message.content for message in continued['messages'][-2:]] == ['after restore', 'continued after restore']
                 assert [message.content for message in parent.seen[-1][-5:]] == [message.content for message in messages] + ['after restore']
                 assert len(parent.seen) == 2 and not child.seen and written.call_count == int(decision == 'approve')
-                assert await app.aget_messages(normal) == continued['messages']
-                saved = app._storage.get(normal)
+                assert await app.history.messages(normal) == continued['messages']
+                saved = app.sessions._persistence.storage.sessions.get(normal)
                 assert saved['state'] == 'ready' and saved['checkpoint_id']
     return {'storage_backups': 'passed', 'migration_backup': 'passed', 'storage_restore': 'passed',
         'storage_roundtrip': 'passed', 'history_reopen': 'passed', 'usage_reopen': 'passed',

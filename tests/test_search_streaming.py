@@ -1,5 +1,6 @@
 """Native rg/fd behavior and search budgets through actual ToolError feedback."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from native_application_helpers import async_test
 
 from pathlib import Path
@@ -11,7 +12,7 @@ from tool_feedback_helpers import invoke_tool_feedback
 
 
 async def invoke(spec, root, **args):
-    return (await invoke_tool_feedback(spec, args, call_id='search', context={'workspace_root': root}))
+    return (await invoke_tool_feedback(spec, args, call_id='search', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(root) if root is not None else None, session_id=None))))
 
 
 @async_test

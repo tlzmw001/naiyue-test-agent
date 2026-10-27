@@ -1,12 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
-import { errorText, WebApi } from './api';
+import { createConversationSubmit } from './conversationSubmit';
+import { useComposerImages } from './useComposerImages';
+import type { ExecutionDraft } from './types';
+import { useConversationDrafts } from './useConversationDrafts';
+import { useSessionCreation } from './useSessionCreation';
+import { useEffect, useRef, useState } from 'react';import { errorText, WebApi } from './api';
 import { subscribeRun } from './runSubscription';
 import type { ApprovalBatch, PermissionMode, RunView, SessionView, ThinkingOptions, ToolDecision } from './types';
 import { useSessions } from './useSessions';
+import { useConversationSync } from './useConversationSync';
 import { useMessageHistory } from './useMessageHistory';
 import { stopObservedSubagent } from './subagentControls';
-
-export function useConversation(api: WebApi) {
+export function useConversation(api: WebApi, active = true) {
+  const activeRef = useRef(active); activeRef.current = active;
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState('');
   const [thinkingOptions, setThinkingOptions] = useState<Record<string, ThinkingOptions>>({});
@@ -14,8 +19,6 @@ export function useConversation(api: WebApi) {
   const history = useMessageHistory(api);
   const messages = history.messages;
   const [run, setRun] = useState<RunView | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [pending, setPending] = useState<Record<string, string[]>>({});
   const [notice, setNotice] = useState('');
   const [lastSubmission, setLastSubmission] = useState<{ session_id: string } | null>(null);
   const [connection, setConnection] = useState<{ session_id: string; run_id: string; attempt: number; failed: boolean } | null>(null);
@@ -33,21 +36,14 @@ export function useConversation(api: WebApi) {
   const selectionPending = useRef(false);
   const selected = useRef<string>('new');
   const currentRun = useRef<RunView | null>(null);
-  const draftRef = useRef<Record<string, string>>({});
-  const pendingRef = useRef<Record<string, string[]>>({});
+  const draftState = useConversationDrafts(selected);
+  const { drafts, pending, draftRef, pendingRef, writeDraft, writePending } = draftState;
+  const creation = useSessionCreation(api);
+  const imageInputs = useComposerImages(api, selected, draftState);
   const stoppedMode = useRef<Record<string, boolean>>({});
   const busySend = useRef(false);
   const subscription = useRef<AbortController | null>(null);
   const pendingStop = useRef<string | null>(null);
-
-  const writeDraft = (value: string, id = selected.current) => {
-    draftRef.current = { ...draftRef.current, [id]: value };
-    setDrafts(draftRef.current);
-  };
-  const writePending = (value: string[], id = selected.current) => {
-    pendingRef.current = { ...pendingRef.current, [id]: value };
-    setPending(pendingRef.current);
-  };
 
   async function refreshSession(sid: string, signal?: AbortSignal, prepare = false): Promise<SessionView> {
     const revision = controlsRevision.current, generation = selectionGeneration.current, approvals = approvalRevision.current;
@@ -64,13 +60,12 @@ export function useConversation(api: WebApi) {
     return value;
   }
 
-  useEffect(() => {
-    let disposed = false;
-    Promise.all([api.models(), refreshSessions()]).then(([config]) => {
-      if (!disposed) { setModels(config.model_ids); setModel(config.default_model_id); setThinkingOptions(config.thinking_options ?? {}); }
-    }).catch(error => { if (!disposed) setNotice(errorText(error)); });
-    return () => { disposed = true; subscription.current?.abort(); };
-  }, [api]);
+  useConversationSync({ api, active, session, applySession, refreshSessions,
+    canRefresh: resuming => !busySend.current && !selectionPending.current && !changingControls && !changingModel && !recovering && !submitting && (resuming || !(currentRun.current && !currentRun.current.done)),
+    revision: () => JSON.stringify([selectionGeneration.current, controlsRevision.current, approvalRevision.current]),
+    onModels: config => { imageInputs.configure(config); setModels(config.model_ids); setModel(config.default_model_id); setThinkingOptions(config.thinking_options ?? {}); },
+    onError: error => setNotice(errorText(error)), onClose: () => { subscription.current?.abort(); history.cancel(); },
+  });
 
   function display(view: RunView, sid: string) {
     if (selected.current !== sid) return;
@@ -83,6 +78,7 @@ export function useConversation(api: WebApi) {
         '当前暂无可压缩的早期对话，已保留全部上下文。' : '压缩未成功，原上下文已保留，可以继续对话或重试。');
     }
     setStopping(view.status === 'running' && (view.stop_requested === true || pendingStop.current === view.run_id));
+    if (view.done) void imageInputs.refreshPending();
     if (view.status !== 'running') {
       setStopping(false);
       if (view.status === 'stopped') setNotice('已停止，保留内容可由你重新发送。');
@@ -90,7 +86,7 @@ export function useConversation(api: WebApi) {
   }
 
   async function watch(runId: string, sid: string, initial?: RunView, resynchronize = false) {
-    if (selected.current !== sid) return;
+    if (selected.current !== sid || !activeRef.current) return;
     subscription.current?.abort();
     const controller = new AbortController();
     subscription.current = controller;
@@ -170,14 +166,16 @@ export function useConversation(api: WebApi) {
     }
   }
 
-  async function newSession() {
+  async function newSession(choice?: ExecutionDraft) {
     if (busySend.current || selectionPending.current || !model) return;
     setNotice('');
     try {
-      const created = await api.create(model);
-      await selectSession(created.session_id);
+      creation.choose(choice);
+      if (selected.current !== 'new' && !draftRef.current.new) writeDraft(draftRef.current[selected.current] ?? '', 'new');
+      subscription.current?.abort(); history.reset(); selectionGeneration.current++; controlsRevision.current++;
+      selected.current = 'new'; currentRun.current = null; setSession(null); setRun(null); setConnection(null); setStopping(false);
       await refreshSessions();
-    } catch (error) { setNotice(errorText(error)); }
+    } catch (error) { setNotice(errorText(error)); if(choice) throw error; }
   }
 
   async function deleteSession(sid: string) {
@@ -185,8 +183,7 @@ export function useConversation(api: WebApi) {
     busySend.current = true;
     try {
       if (!await listing.deleteSession(sid)) return false;
-      delete draftRef.current[sid]; delete pendingRef.current[sid]; delete stoppedMode.current[sid];
-      setDrafts({ ...draftRef.current }); setPending({ ...pendingRef.current });
+      imageInputs.forget(sid); delete stoppedMode.current[sid];
       if (selected.current === sid) {
         subscription.current?.abort(); selectionGeneration.current++; controlsRevision.current++;
         selected.current = 'new'; currentRun.current = null;
@@ -229,9 +226,10 @@ export function useConversation(api: WebApi) {
   }
 
   async function selectModel(value: string) {
-    if (changingModel || selectionPending.current || recovering || session?.recovery) return;
-    if (!session) { setModel(value); return; }
+    if (busySend.current || changingModel || selectionPending.current || recovering || session?.recovery || (!session && creation.locked)) return;
+    if (!session) { creation.modelChanged(); setModel(value); return; }
     const sid = session.session_id;
+    creation.override(sid, { thinking_level: undefined });
     controlsRevision.current++;
     setChangingModel(true);
     try {
@@ -260,25 +258,21 @@ export function useConversation(api: WebApi) {
 
   async function changeControls(change: { active_tools: string[] } | { permission_mode: PermissionMode } | { thinking_level: string }) {
     if (busySend.current || selectionPending.current || recovering || session?.recovery || !model) return;
+    if (!session) {
+      try { creation.changeControls(change); } catch (error) { setNotice(errorText(error)); }
+      return;
+    }
+    creation.override(session.session_id, change);
     busySend.current = true;
     controlsRevision.current++;
     setChangingControls(true);
     setNotice('');
     let sid = selected.current;
     try {
-      if (!session) {
-        if (sid === 'new') {
-          sid = (await api.create(model)).session_id;
-          selected.current = sid;
-          writeDraft(draftRef.current.new ?? '', sid);
-          writeDraft('', 'new');
-        }
-        const value = await api.session(sid);
-        applySession(value);
-      }
       const confirmed = 'active_tools' in change ? await api.selectTools(sid, change.active_tools) :
         'permission_mode' in change ? await api.selectPermissionMode(sid, change.permission_mode) :
         await api.selectThinking(sid, model, change.thinking_level);
+      creation.acknowledge(sid, change);
       controlsRevision.current++;
       if (selected.current === sid) {
         setSession(previous => previous?.session_id === sid ? { ...previous, ...confirmed } : previous);
@@ -290,13 +284,12 @@ export function useConversation(api: WebApi) {
     } catch (error) {
       controlsRevision.current++;
       if (selected.current === sid) {
-        setNotice(errorText(error));
+        setNotice(errorText(error) + (creation.hasPending(sid) ? ' 设置尚未确认，再次发送将继续保存所选设置。' : ''));
         try {
           const actual = await api.session(sid);
           if (selected.current === sid) {
             controlsRevision.current++;
-            if (!session) applySession(actual);
-            else setSession(previous => previous?.session_id === sid ? {
+            setSession(previous => previous?.session_id === sid ? {
               ...previous, active_tools: actual.active_tools, permission_mode: actual.permission_mode,
               model_id: actual.model_id, thinking_level: actual.thinking_level,
             } : previous);
@@ -307,54 +300,9 @@ export function useConversation(api: WebApi) {
     } finally { busySend.current = false; setChangingControls(false); }
   }
 
-  async function submit(followUp: boolean) {
-    if (busySend.current || selectionPending.current || !model) return;
-    if (session?.recovery) { setNotice('当前仅可查看已保存历史。'); return; }
-    const key = selected.current;
-    const text = draftRef.current[key] ?? '';
-    const queued = pendingRef.current[key] ?? [];
-    const live = currentRun.current;
-    if (stoppedMode.current[key] && live?.status === 'running') {
-      if (text.trim()) { writePending([...queued, text], key); writeDraft('', key); }
-      setNotice('上一轮正在停止，内容已保留待发送。');
-      return;
-    }
-    const combined = stoppedMode.current[key] ? [...queued, text].filter(Boolean).join('\n\n') : text;
-    if (!combined.trim()) return;
-    if (combined.length > 32768) { setNotice('待发送内容过长，请编辑后分批提交。'); return; }
-    busySend.current = true;
-    setSubmitting(true);
-    setNotice('');
-    let sid = key;
-    try {
-      if (key === 'new') {
-        sid = (await api.create(model)).session_id;
-        selected.current = sid;
-        writeDraft(draftRef.current.new ?? '', sid);
-        writeDraft('', 'new');
-        const value = await api.session(sid);
-        setSession(value);
-        history.open(sid, undefined, { ...value.history, messages: value.messages });
-      }
-      if (live?.status === 'running' && !live.done) {
-        await api.control(live.run_id, followUp ? 'follow_up' : 'steering', combined);
-        setLastSubmission({ session_id: sid });
-        setNotice(followUp ? 'Follow-up 已排队，将在自然结束后处理。' : '补充消息已排队。');
-      } else {
-        const started = await api.start(sid, combined, undefined, session?.conversation_revision);
-        setLastSubmission({ session_id: sid });
-        const value = await api.run(started.run_id);
-        currentRun.current = value;
-        display(value, sid);
-        void watch(started.run_id, sid, value);
-        stoppedMode.current[sid] = false;
-        writePending([], sid);
-      }
-      if (draftRef.current[sid] === text) writeDraft('', sid);
-      await refreshSessions();
-    } catch (error) { setNotice(errorText(error)); }
-    finally { busySend.current = false; setSubmitting(false); }
-  }
+  const submit = createConversationSubmit({ busySend, selectionPending, model, session, selected, draftRef, pendingRef,
+    currentRun, stoppedMode, writeDraft, writePending, setNotice, setSubmitting, setLastSubmission, setSession,
+    creation, imageInputs, api, applySession, display, watch, refreshSessions, refreshSession });
 
   async function regenerate() {
     if (busySend.current || !session?.can_run || !session.last_reply_id || selectionPending.current) return;
@@ -481,13 +429,13 @@ export function useConversation(api: WebApi) {
     } catch (error) { if (selected.current === sid) setNotice(errorText(error)); }
     finally { busySend.current = false; setSubmitting(false); }
   }
-
   const id = selected.current;
-  return { models, model, thinkingOptions, sessions, session, messages, run, notice, lastSubmission,
+  return { imageInputs, models, model, thinkingOptions, sessions, session, messages, run, notice, lastSubmission, listing, creation,
     connection: connection?.session_id === id && connection.run_id === run?.run_id ? connection : null, submitting, stopping, changingModel, changingControls, selectingSession, recovering,
     history: { ...history.pagination, loadOlder: history.loadOlder, disabled: selectingSession },
     managingSessions: listing.managingSessions, updateSession: listing.updateSession, reorderSessions: listing.reorderSessions, deleteSession,
     draft: drafts[id] ?? '', pending: pending[id] ?? [], pendingMode: !!stoppedMode.current[id],
+    retryImageSubmission: () => submit(false,true),
     setDraft: writeDraft, setPending: writePending, submit, compact, regenerate, stop, approve, stopAgent, stopApproval, selectSession, newSession, selectModel,
     selectThinking: (level: string) => changeControls({ thinking_level: level }),
     selectTools: (names: string[]) => changeControls({ active_tools: names }),

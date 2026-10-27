@@ -14,8 +14,8 @@ from pydantic import Field
 from native_application_helpers import async_test
 from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime.run_control import native_async_model
-from naiyue_test_agent.agent_runtime.run_services import current_run_services
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
+from scripts.component_fixtures import open_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import SubAgentSpec, create_subagent_tool, create_session_read_tool, create_session_write_tool
 from naiyue_test_agent.settings import AppSettings
@@ -46,25 +46,25 @@ async def test_real_read_write_report_ready_reopen_and_new_delegation(monkeypatc
         root = StreamingToolModel(replies=[call('subagent', {'agent': 'writer', 'task': f'round {round_number}'}, 'outer'),
             AIMessage(content=f'root done {round_number}')])
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
-        async with open_async_persistent_application('unused', **options) as app:
+        async with open_component_application('unused', **options) as app:
             instances = record_instances(monkeypatch, app)
             events = []
-            app.subscribe_events(events.append)
+            app.host.observability.subscribe(events.append)
             if round_number == 1:
-                sid = await app.acreate_workspace_session('A', workspace)
+                sid = await app.host.sessions.create_workspace('A', workspace)
             else:
-                assert await app.arestore_session(sid) == sid
-                assert await app.aget_messages(sid) == saved_root
-                assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
-            result = await app.arun(sid, [('user', f'check round {round_number}')])
-            saved_root = await app.aget_messages(sid)
+                assert await app.host.sessions.restore(sid) == sid
+                assert await app.host.history.messages(sid) == saved_root
+                assert all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.host.sessions._sessions._sessions.values())
+            result = await app.host.runs.start(sid, [('user', f'check round {round_number}')])
+            saved_root = await app.host.history.messages(sid)
             assert saved_root == result['messages']
             assert (workspace / 'nested/output.txt').read_text(encoding='utf-8') == body
             instance, = instances
             identities.append(instance['agent_path'])
             assert instance['status'] == 'completed' and instance['settled']
-            assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values()) and app.pending_approval_batches(sid) == []
-            graph = app._sessions._subagents['writer']['agent']
+            assert all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.host.sessions._sessions._sessions.values()) and app.host.runs.pending_approvals(sid) == []
+            graph = app.host.sessions._sessions._subagents['writer']['agent']
             snapshot = await graph.aget_state({'configurable': {'thread_id': instance['child_thread_id']}})
             assert not snapshot.next and not snapshot.interrupts
             messages = snapshot.values['messages']
@@ -78,7 +78,7 @@ async def test_real_read_write_report_ready_reopen_and_new_delegation(monkeypatc
             assert feedback.artifact['status'] == 'completed'
             assert 'leaf input stays in the child' not in str(saved_root)
             assert not any(m.name in ('read', 'write') for m in saved_root if isinstance(m, ToolMessage))
-            row, = await app.alist_sessions()
+            row, = await app.host.sessions.list()
             assert row['session_id'] == sid and row['state'] == 'ready' and row['last_run_status'] == 'completed'
             assert [(e.source is None, e.data.status) for e in events if e.event_type == 'run_finished'] == [
                 (False, 'completed'), (True, 'completed')]
@@ -101,11 +101,11 @@ class SyncChildModel(BaseChatModel):
         return self
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        services = current_run_services()
-        self.trace.append(('sdk_started', get_ident(), services.publisher.source.agent_path))
+        services = current_run_scope()
+        self.trace.append(('sdk_started', get_ident(), services.observation.publisher.source.agent_path))
         self.loop.call_soon_threadsafe(self.entered.set)
         assert self.release.wait(5)
-        self.trace.append(('sdk_finished', get_ident(), services.publisher.source.agent_path))
+        self.trace.append(('sdk_finished', get_ident(), services.observation.publisher.source.agent_path))
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content='late SDK response'))])
 
 
@@ -118,14 +118,14 @@ async def test_sync_sdk_fallback_waits_for_real_worker_before_releasing_owner(mo
     assert not native_async_model(child)
     app, root = await delegated_app(monkeypatch, child, tools=[definition()])
     instances, events, closed = record_instances(monkeypatch, app), [], []
-    app.subscribe_events(events.append)
-    close = app._catalog.aclose
+    app.host.observability.subscribe(events.append)
+    close = app.host.sessions._sessions._catalog.aclose
     async def close_catalog():
         closed.append('closed')
         await close()
-    monkeypatch.setattr(app._catalog, 'aclose', close_catalog)
-    sid = await app.acreate_session('A')
-    task = asyncio.create_task(app.arun(sid, [('user', 'run sync SDK')]))
+    monkeypatch.setattr(app.host.sessions._sessions._catalog, 'aclose', close_catalog)
+    sid = await app.host.sessions.create('A')
+    task = asyncio.create_task(app.host.runs.start(sid, [('user', 'run sync SDK')]))
     closing = None
     try:
         await asyncio.wait_for(entered.wait(), 5)
@@ -137,9 +137,9 @@ async def test_sync_sdk_fallback_waits_for_real_worker_before_releasing_owner(mo
         monkeypatch.setattr(instance['control'], 'request', notify)
         if action == 'parent_cancel': task.cancel()
         elif action == 'close': closing = asyncio.create_task(app.aclose())
-        else: app.request_stop(sid, agent_path=instance['agent_path'])
+        else: app.host.runs.stop(sid, agent_path=instance['agent_path'])
         await asyncio.wait_for(notified.wait(), 5)
-        assert not task.done() and app._sessions.require(sid).describe_session()['busy']
+        assert not task.done() and app.host.sessions._sessions.require(sid).describe_session()['busy']
         assert not instance['settled'] and 'driver' in instance and not closed
         assert child.trace == [('sdk_started', child.trace[0][1], instance['agent_path'])]
         assert child.trace[0][1] != get_ident()
@@ -153,8 +153,8 @@ async def test_sync_sdk_fallback_waits_for_real_worker_before_releasing_owner(mo
         if closing is not None: await asyncio.wait_for(closing, 5)
         assert [item[0] for item in child.trace] == ['sdk_started', 'sdk_finished']
         assert instance['settled'] and instance['status'] == 'stopped' and 'driver' not in instance
-        assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values()) and not app._sessions.require(sid).describe_session()['busy']
-        assert current_run_services() is None
+        assert all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.host.sessions._sessions._sessions.values()) and not app.host.sessions._sessions.require(sid).describe_session()['busy']
+        assert current_run_scope() is None
         assert not any(e.source and e.event_type == 'run_finished' and e.data.status == 'completed' for e in events)
         assert closed == (['closed'] if action == 'close' else [])
     finally:

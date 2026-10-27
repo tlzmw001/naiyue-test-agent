@@ -1,5 +1,6 @@
 """Result budgets, compilation, failure identity and cancellation boundaries."""
 
+from runtime_context_helpers import typed_scope
 import json
 import asyncio
 
@@ -8,7 +9,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from native_application_helpers import async_test
 from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
-from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services, current_run_services
+from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope, current_run_scope
 from naiyue_test_agent.tools import SubAgentSpec, create_builtin_tools
 from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.settings import SubAgentOutputSettings
@@ -26,7 +27,7 @@ async def test_result_budget_from_settings_preserves_prefix_and_marks_truncation
     child = ChildModel(replies=[AIMessage(content=text)])
     configured = AppSettings(subagents=(role(),), tools={'subagent': SubAgentOutputSettings(**settings)})
     app, _ = await delegated_app(monkeypatch, child, settings=configured)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'report')])
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'report')])
     feedback = next(message for message in result['messages'] if isinstance(message, ToolMessage))
     envelope = json.loads(feedback.content)
     assert envelope['report'] == expected
@@ -41,7 +42,7 @@ async def test_content_blocks_and_usage_are_projected_without_thinking_or_full_h
     child = ChildModel(replies=[AIMessage(content=[{'type': 'thinking', 'thinking': 'PRIVATE_THINKING'},
         {'type': 'text', 'text': 'report'}], usage_metadata={'input_tokens': 2, 'output_tokens': 3, 'total_tokens': 5})])
     app, _ = await delegated_app(monkeypatch, child)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'report')])
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'report')])
     feedback = next(message for message in result['messages'] if isinstance(message, ToolMessage))
     assert json.loads(feedback.content)['report'] == 'report' and 'PRIVATE_THINKING' not in str(feedback.artifact)
     assert feedback.artifact['usage']['total_tokens'] == 5 and 'messages' not in feedback.artifact
@@ -53,7 +54,7 @@ async def test_child_model_request_failure_is_safe_tool_feedback_with_cause(monk
     child = ChildModel(replies=[error])
     app, root = await delegated_app(monkeypatch, child)
     instances = record_instances(monkeypatch, app)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'start')])
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'start')])
     feedback = next(message for message in result['messages'] if isinstance(message, ToolMessage))
     assert feedback.status == 'error' and 'timeout' in feedback.content
     assert 'PRIVATE_PROVIDER_BODY' not in feedback.content + caplog.text
@@ -66,7 +67,7 @@ async def test_response_gate_error_keeps_identity_instead_of_becoming_tool_feedb
     child = ChildModel(replies=[AIMessage(content='', response_metadata={'finish_reason': 'tool_calls'})])
     app, root = await delegated_app(monkeypatch, child)
     with pytest.raises(ModelResponseRejected):
-        await app.arun(await app.acreate_session('A'), [('user', 'start')])
+        await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'start')])
     assert len(root.seen) == len(child.seen) == 1
 
 
@@ -75,7 +76,7 @@ async def test_child_checkpoint_failure_is_not_mistaken_for_model_timeout(monkey
     from langchain_core.tools import ToolException
     child = ChildModel(replies=[AIMessage(content='done')])
     app, root = await delegated_app(monkeypatch, child)
-    saver = app._agent.checkpointer
+    saver = app.host.runs._agent.checkpointer
     save = saver.aput
     error = TimeoutError('PRIVATE_SAVE_BODY')
     async def fail_child(config, *args, **kwargs):
@@ -83,11 +84,11 @@ async def test_child_checkpoint_failure_is_not_mistaken_for_model_timeout(monkey
             raise error
         return await save(config, *args, **kwargs)
     monkeypatch.setattr(saver, 'aput', fail_child)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'start')])
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'start')])
     feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
     assert feedback.status == 'error' and 'checkpoint' in feedback.content
     assert 'model request failed' not in feedback.content and len(root.seen) == 2 and child.seen == []
-    child_saver = app._sessions._subagents['tester']['agent'].checkpointer
+    child_saver = app.host.sessions._sessions._subagents['tester']['agent'].checkpointer
     with pytest.raises(ToolException) as caught:
         await child_saver.aput({'configurable': {'thread_id': 'subagent:source-check'}}, {}, {}, {})
     assert caught.value.__cause__ is error
@@ -98,14 +99,14 @@ async def test_compilation_failure_does_not_publish_role_or_replace_existing_gra
     from naiyue_test_agent.agent_runtime import subagents as module
     child = ChildModel(replies=[])
     app, _ = await delegated_app(monkeypatch, child)
-    original = app._sessions._subagents['tester']
+    original = app.host.sessions._sessions._subagents['tester']
     error = RuntimeError('compile failed')
     def fail(*args, **kwargs):
         raise error
     monkeypatch.setattr(module, 'build_subagent_runtime', fail)
     with pytest.raises(RuntimeError) as caught:
-        await app.aregister_subagent(SubAgentSpec('other', 'Other', 'Prompt', ()))
-    assert caught.value is error and app._sessions._subagents == {'tester': original}
+        await app.host.subagents.register(SubAgentSpec('other', 'Other', 'Prompt', ()))
+    assert caught.value is error and app.host.sessions._sessions._subagents == {'tester': original}
     assert child.seen == []
 
 
@@ -114,13 +115,13 @@ async def test_external_cancel_settles_child_and_restores_parent_services(monkey
     entered, release = asyncio.Event(), asyncio.Event()
     child = ChildModel(replies=[AIMessage(content='unused')], entered=entered, release=release)
     app, _ = await delegated_app(monkeypatch, child)
-    sid = await app.acreate_session('A')
-    previous = RunServices()
-    with bind_run_services(previous):
-        task = asyncio.create_task(app.arun(sid, [('user', 'start')]))
+    sid = await app.host.sessions.create('A')
+    previous = typed_scope()
+    with bind_run_scope(previous):
+        task = asyncio.create_task(app.host.runs.start(sid, [('user', 'start')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            instance, = app._sessions._sessions[sid]._run.subagent_instances.values()
+            instance, = app.host.sessions._sessions._sessions[sid]._runtime.run.subagent_instances.values()
             driver = instance['driver']
             task.cancel()
             done, _ = await asyncio.wait((task,), timeout=5)
@@ -129,9 +130,9 @@ async def test_external_cancel_settles_child_and_restores_parent_services(monkey
                 await task
             assert instance['status'] == 'stopped' and driver.done() and instance['settled']
             assert instance['control'].reason == 'failure'
-            assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values()) and 'driver' not in instance
-            assert not app._sessions.require(sid).describe_session()['busy']
-            assert current_run_services() is previous
+            assert all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.host.sessions._sessions._sessions.values()) and 'driver' not in instance
+            assert not app.host.sessions._sessions.require(sid).describe_session()['busy']
+            assert current_run_scope() is previous
         finally:
             release.set()
             await asyncio.gather(task, return_exceptions=True)
@@ -150,13 +151,13 @@ async def test_finished_roots_release_instances_and_drivers_but_keep_checkpoints
         call('subagent', {'agent': 'tester', 'task': f'task {index}'}, f'outer-{index}'), AIMessage(content='done'))])
     app, _ = await delegated_app(monkeypatch, child, root=root)
     instances = record_instances(monkeypatch, app)
-    sid = await app.acreate_session('A')
+    sid = await app.host.sessions.create('A')
     for index in range(2):
-        await app.arun(sid, [('user', f'run {index}')])
-        assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
+        await app.host.runs.start(sid, [('user', f'run {index}')])
+        assert all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.host.sessions._sessions._sessions.values())
         assert all('driver' not in instance and instance['status'] == 'completed' for instance in instances)
-        snapshot = await app._sessions._subagents['tester']['agent'].aget_state(
+        snapshot = await app.host.sessions._sessions._subagents['tester']['agent'].aget_state(
             {'configurable': {'thread_id': instances[-1]['child_thread_id']}})
         assert snapshot.values['messages'][-1].content == 'report' + 'x' * 20000
-        assert not app._sessions.require(sid).describe_session()['busy']
+        assert not app.host.sessions._sessions.require(sid).describe_session()['busy']
     assert len(instances) == 2

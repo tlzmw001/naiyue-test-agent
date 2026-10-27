@@ -4,7 +4,7 @@ from dataclasses import asdict
 
 from naiyue_test_agent.agent_runtime.events import AgentEventSource, RunEventPublisher
 from naiyue_test_agent.contracts.session_events import RunStartedData, RunFinishedData
-from naiyue_test_agent.application.stream_projection import StreamingMessageProjection
+from naiyue_test_agent.application.conversation.stream_projection import StreamingMessageProjection
 
 
 def test_live_projection_rebinds_repeated_call_id_and_ignores_previous_delegation_terminal():
@@ -66,25 +66,25 @@ async def test_child_events_bind_saved_approval_to_one_root_stream_and_stop_wake
     def receive(event):
         events.append(event)
         if event.event_type == 'approval_requested' and event.source:
-            assert app.pending_approval_batches(event.session_id)[0]['approval_batch_id'] == event.data.approval_batch_id
+            assert app.host.runs.pending_approvals(event.session_id)[0]['approval_batch_id'] == event.data.approval_batch_id
             requested.set()
-    app.subscribe_events(receive)
-    sid = await app.acreate_session('A')
-    task = asyncio.create_task(app.arun(sid, [('user', 'start')]))
+    app.host.observability.subscribe(receive)
+    sid = await app.host.sessions.create('A')
+    task = asyncio.create_task(app.host.runs.start(sid, [('user', 'start')]))
     try:
         await asyncio.wait_for(requested.wait(), 5)
-        batch, = app.pending_approval_batches(sid)
+        batch, = app.host.runs.pending_approvals(sid)
         assert batch['kind'] == 'live_child' and not task.done() and effects == []
         assert [event.sequence for event in events] == list(range(1, len(events) + 1))
         assert len({event.run_id for event in events}) == 1
         assert any(event.source and event.event_type == 'run_finished' and event.data.status == 'interrupted' for event in events)
         assert not any(not event.source and event.event_type == 'run_finished' for event in events)
-        app.request_stop(sid, run_id=batch['origin_run_id'])
+        app.host.runs.stop(sid, run_id=batch['origin_run_id'])
         result = await asyncio.wait_for(task, 5)
         assert result['run_stopped'] and effects == [] and len(child.seen) == 1 and len(root.seen) == 1
-        assert app.pending_approval_batches(sid) == []
+        assert app.host.runs.pending_approvals(sid) == []
         assert events[-1].event_type == 'run_finished' and events[-1].source is None
-        assert all(service.publisher.source.agent_path == instances[0]['agent_path'] for service in child.services)
+        assert all(service.observation.publisher.source.agent_path == instances[0]['agent_path'] for service in child.services)
     finally:
         if not task.done(): task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -95,8 +95,8 @@ async def test_invalid_final_report_publishes_failed_child_instead_of_completed(
     child = ChildModel(replies=[AIMessage(content='')])
     app, _ = await delegated_app(monkeypatch, child)
     events = []
-    app.subscribe_events(events.append)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'start')])
+    app.host.observability.subscribe(events.append)
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'start')])
     assert next(message for message in result['messages'] if message.type == 'tool').status == 'error'
     terminal = [event.data.status for event in events if event.source and event.event_type == 'run_finished']
     assert terminal == ['failed']
@@ -114,13 +114,13 @@ async def test_failed_notification_does_not_remove_saved_approval_or_execute_too
         if event.source and event.event_type == 'approval_requested':
             seen.append(event.data.approval_batch_id)
             raise RuntimeError('PRIVATE_OBSERVER_BODY')
-    app.subscribe_events(fail)
-    sid = await app.acreate_session('A')
-    task = asyncio.create_task(app.arun(sid, [('user', 'start')]))
+    app.host.observability.subscribe(fail)
+    sid = await app.host.sessions.create('A')
+    task = asyncio.create_task(app.host.runs.start(sid, [('user', 'start')]))
     try:
         batch = await next_approval(app, sid, queue)
         assert seen == [batch['approval_batch_id']] and effects == []
-        assert app.pending_approval_batches(sid) == [batch] and not task.done()
+        assert app.host.runs.pending_approvals(sid) == [batch] and not task.done()
         await submit(app, sid, batch)
         await asyncio.wait_for(task, 5)
         assert effects == [('probe', 'once')]

@@ -52,7 +52,8 @@ it('places commands before the mode, keeps context beside send and puts models i
   expect(context.closest('form')).toBe(send.closest('form'));
   fireEvent.click(plus);
   expect(screen.getByRole('menuitem', { name: /压缩上下文.*compact/ })).toBeTruthy();
-  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['压缩上下文/compact', '技能/skills', '发送后滚动›']);
+  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['压缩上下文/compact', '技能/skills', '发送后滚动']);
+  expect(screen.getByRole('menuitem', { name: '发送后滚动' }).querySelector('[data-chevron="right"]')).not.toBeNull();
   fireEvent.keyDown(screen.getByRole('menu', { name: '指令与功能' }), { key: 'Escape' });
   expect(screen.queryByRole('menu')).toBeNull();
   expect(document.activeElement).toBe(plus);
@@ -80,13 +81,13 @@ it('only offers supported thinking levels and resets on model change', async () 
   await selectExisting();
   fireEvent.click(screen.getByRole('button', { name: /模型与推理强度：A/ }));
   const dialog = screen.getByRole('dialog', { name: '模型与推理强度' });
-  expect(within(dialog).queryByRole('option', { name: 'max' })).toBeNull();
-  fireEvent.change(within(dialog).getByRole('combobox', { name: '推理强度' }), { target: { value: 'high' } });
+  expect(within(dialog).queryByRole('radio', { name: 'max' })).toBeNull();
+  fireEvent.click(within(screen.getByRole('group', { name: '推理强度' })).getByRole('radio', { name: 'high' }));
   await waitFor(() => expect(api.selectThinking).toHaveBeenCalledExactlyOnceWith('s', 'A', 'high'));
   await screen.findByRole('button', { name: /模型与推理强度：A · high/ });
-  fireEvent.change(screen.getByRole('combobox', { name: '模型' }), { target: { value: 'B' } });
+  fireEvent.click(within(screen.getByRole('group', { name: '模型' })).getByRole('radio', { name: 'B' }));
   await screen.findByRole('button', { name: /模型与推理强度：B · 配置默认/ });
-  expect((screen.getByRole('combobox', { name: '推理强度' }) as HTMLSelectElement).disabled).toBe(true);
+  expect(within(screen.getByRole('group', { name: '推理强度' })).getByRole('radio', { name: '配置默认' }).matches(':disabled')).toBe(true);
 });
 
 it('keeps failed compact commands and unknown commands out of the model', async () => {

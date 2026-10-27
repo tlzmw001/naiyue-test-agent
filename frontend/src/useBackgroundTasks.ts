@@ -3,7 +3,7 @@ import { errorText, type WebApi } from './api';
 import type { BackgroundTaskOutput, BackgroundTaskPage } from './backgroundTaskTypes';
 import { backgroundTaskPollMs } from './uiSettings';
 
-export function useBackgroundTasks(api: WebApi, open: boolean) {
+export function useBackgroundTasks(api: WebApi, open: boolean, active = true) {
   const [visible, setVisible] = useState(document.visibilityState !== 'hidden');
   const [saved, setSaved] = useState<{ api: WebApi; page: BackgroundTaskPage }>();
   const savedRef = useRef(saved); savedRef.current = saved;
@@ -34,7 +34,7 @@ export function useBackgroundTasks(api: WebApi, open: boolean) {
   }, [api]);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || !active) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
@@ -55,11 +55,11 @@ export function useBackgroundTasks(api: WebApi, open: boolean) {
     }
     void poll();
     return () => { controller.abort(); clearTimeout(timer); more.current?.abort(); more.current = undefined; setMoreLoading(false); };
-  }, [api, visible, refresh]);
+  }, [api, visible, refresh, active]);
 
   useEffect(() => {
     setOutputError('');
-    if (!visible || !open || !selected) { setOutputLoading(false); return; }
+    if (!active || !visible || !open || !selected) { setOutputLoading(false); return; }
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
@@ -76,7 +76,7 @@ export function useBackgroundTasks(api: WebApi, open: boolean) {
     }
     void poll();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [api, visible, open, selected, refresh]);
+  }, [api, visible, open, selected, refresh, active]);
 
   const loadMore = async () => {
     const snapshot = savedRef.current;

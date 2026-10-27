@@ -29,7 +29,8 @@ def project_event_for_web(event, *, progress_max_text_bytes=ToolProgressSettings
     row = json.loads(event.data.snapshot_json)
     if not isinstance(row.get('content'), list):
         return event
-    row.update(content=content_text(row['content']), content_projection='text')
+    from naiyue_test_agent.contracts.image_content import input_text
+    row.update(content=input_text(row['content']) if row.get('images') else content_text(row['content']), content_projection='text')
     snapshot = json.dumps(row, ensure_ascii=False, sort_keys=True, allow_nan=False)
     data = replace(event.data, snapshot_json=snapshot, snapshot_bytes=len(snapshot.encode('utf-8')),
                    snapshot_sha256=hashlib.sha256(snapshot.encode('utf-8')).hexdigest())
@@ -41,6 +42,12 @@ def message_view(message):
     row = {'id': message.id, 'type': message.type, 'content': content_text(message.content),
             'is_context_summary': summary, 'reply_id': message.additional_kwargs.get('naiyue_reply_id'), 'provisional': False, 'state': 'complete'}
     if isinstance(message.content, list):
+        from naiyue_test_agent.contracts.image_content import message_images
+        images = message_images(message)
+        if images:
+            row['images'] = images
+            from naiyue_test_agent.contracts.image_content import input_text
+            row['content'] = input_text(message.content)
         row['content_projection'] = 'text'
     if isinstance(message, AIMessage):
         from naiyue_test_agent.model_access.reasoning import visible_reasoning
@@ -59,3 +66,14 @@ def message_view(message):
             row['mcp_result'] = mcp
         row.update(tool_call_id=message.tool_call_id, status=message.status, name=message.name)
     return row
+
+
+def pending_input_views(rows, settings):
+    """A list/receipt is metadata; full retained text has its bounded GET."""
+    from .errors import WebError
+    chars = min(settings.history_preview_chars, max(0,settings.max_frame_bytes//(max(1,len(rows))*12)))
+    result = [{key:value for key,value in row.items() if key != 'legacy_text'} |
+        {'text':row['text'][:chars], 'text_truncated':len(row['text'])>chars} for row in rows]
+    if encoded_size({'inputs':result}) > settings.max_frame_bytes:
+        raise WebError('view_too_large')
+    return result

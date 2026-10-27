@@ -1,4 +1,5 @@
 """A delegated task has its own graph history, model snapshot and tool scope."""
+from naiyue_test_agent.application.subagents.session_subagents import SubagentRegistry
 
 import json
 import asyncio
@@ -10,7 +11,7 @@ from pydantic import Field
 
 from native_application_helpers import async_test, build_application
 from naiyue_test_agent import application
-from naiyue_test_agent.agent_runtime.run_services import current_run_services
+from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import SubAgentSpec, create_subagent_tool, create_session_read_tool
 from naiyue_test_agent.settings import AppSettings, load_settings
@@ -29,7 +30,7 @@ class ChildModel(StreamingToolModel):
         return self
 
     async def _next(self, messages):
-        self.services.append(current_run_services())
+        self.services.append(current_run_scope())
         if self.on_request is not None:
             await self.on_request(messages)
         return await super()._next(messages)
@@ -54,14 +55,15 @@ async def delegated_app(monkeypatch, child, *, root=None, spec=None, tools=None,
 
 def record_instances(monkeypatch, app):
     instances = []
-    from naiyue_test_agent.application.agent_session import AgentSession
-    prepare = AgentSession.prepare_subagent_instance
+    from naiyue_test_agent.application.sessions.agent_session import AgentSession
+    prepare = SubagentRegistry.prepare_subagent_instance
     def record(self, *args, **kwargs):
         graph, instance = prepare(self, *args, **kwargs)
-        if app._sessions._sessions.get(self.session_id) is self:
+        owner = app.host.sessions._sessions._sessions.get(self.session_id)
+        if owner is not None and owner.subagents is self:
             instances.append(instance)
         return graph, instance
-    monkeypatch.setattr(AgentSession, 'prepare_subagent_instance', record)
+    monkeypatch.setattr(SubagentRegistry, 'prepare_subagent_instance', record)
     return instances
 
 
@@ -73,9 +75,9 @@ async def test_parent_receives_only_report_and_artifact_child_uses_real_read(mon
     app, root = await delegated_app(monkeypatch, child, spec=spec, tools=[create_session_read_tool()])
     instances = record_instances(monkeypatch, app)
     events = []
-    app.subscribe_events(events.append)
-    sid = await app.acreate_workspace_session('A', tmp_path)
-    result = await app.arun(sid, [('user', 'ORIGINAL_HUMAN_REQUEST')])
+    app.host.observability.subscribe(events.append)
+    sid = await app.host.sessions.create_workspace('A', tmp_path)
+    result = await app.host.runs.start(sid, [('user', 'ORIGINAL_HUMAN_REQUEST')])
     outer = [message for message in result['messages'] if isinstance(message, ToolMessage)]
     assert len(outer) == 1
     assert (outer[0].tool_call_id, outer[0].status, json.loads(outer[0].content)['report']) == ('delegate', 'success', 'verified report')
@@ -84,22 +86,26 @@ async def test_parent_receives_only_report_and_artifact_child_uses_real_read(mon
     instance, = instances
     assert artifact['agent_path'] == instance['agent_path']
     assert instance['agent_path'].startswith('root/tester/') and instance['status'] == 'completed'
-    child_graph = app._sessions._subagents['tester']['agent']
-    assert child_graph.checkpointer.backend is app._agent.checkpointer
+    child_graph = app.host.sessions._sessions._subagents['tester']['agent']
+    assert child_graph.checkpointer.backend is app.host.runs._agent.checkpointer
     snapshot = await child_graph.aget_state({'configurable': {'thread_id': instance['child_thread_id']}})
     messages = snapshot.values['messages']
     assert [message.content for message in messages] == ['check this task', '', 'one actual test\n', 'verified report']
     assert messages[0].additional_kwargs.get('naiyue_human_input') is not True
     assert messages[0].additional_kwargs['naiyue_input_source'] == 'delegated_task'
     assert child.bound == [('read',), ('read',)]
+    assert instance['files'] is not None
+    assert instance['files'].owner_session_id == sid
+    assert all(scope.capabilities.files is instance['files'] and scope.environment == instance['files'].environment
+               for scope in child.services)
     assert 'CHILD_ROLE_PROMPT' in child.seen[0][0].content
     assert 'ROOT_PROMPT' not in child.seen[0][0].content
     assert all('ORIGINAL_HUMAN_REQUEST' not in str(message.content) for message in child.seen[0])
     assert len(root.seen) == 2 and 'one actual test' not in str(root.seen[1])
-    assert all(service.publisher.source.agent_path == instance['agent_path'] and service.turns is not None
+    assert all(service.observation.publisher.source.agent_path == instance['agent_path'] and service.observation.turns is not None
                for service in child.services)
     assert all(service.control is instance['control'] for service in child.services)
-    assert current_run_services() is None
+    assert current_run_scope() is None
     assert sum(event.event_type == 'run_started' and event.source is None for event in events) == 1
     assert sum(event.event_type == 'run_finished' and event.source is None for event in events) == 1
     assert sum(event.event_type == 'run_started' and event.source is not None for event in events) == 1
@@ -120,7 +126,7 @@ async def test_model_call_limit_from_toml_counts_requests_and_keeps_tool_effects
     probe = definition(calls=effects, approved=True, permissions=ToolPermission(default='allow'))
     app, root = await delegated_app(monkeypatch, child, settings=load_settings(path), tools=[probe])
     instances = record_instances(monkeypatch, app)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'verify')])
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'verify')])
     feedback = next(message for message in result['messages'] if isinstance(message, ToolMessage))
     assert feedback.status == status and feedback.tool_call_id == 'delegate'
     assert len(child.seen) == expected_calls and len(root.seen) == 2
@@ -128,7 +134,7 @@ async def test_model_call_limit_from_toml_counts_requests_and_keeps_tool_effects
     if status == 'error':
         assert 'model call limit' in feedback.content.lower()
     instance, = instances
-    snapshot = await app._sessions._subagents['tester']['agent'].aget_state(
+    snapshot = await app.host.sessions._sessions._subagents['tester']['agent'].aget_state(
         {'configurable': {'thread_id': instance['child_thread_id']}})
     if limit is not None:
         assert snapshot.values['thread_model_call_count'] == expected_calls
@@ -143,8 +149,8 @@ async def test_same_role_parallel_instances_do_not_share_history_or_model_counts
     ]), AIMessage(content='root done')])
     app, _ = await delegated_app(monkeypatch, child, root=root, spec=role(max_model_calls=1))
     instances = record_instances(monkeypatch, app)
-    sid = await app.acreate_session('A')
-    result = await app.arun(sid, [('user', 'two checks')])
+    sid = await app.host.sessions.create('A')
+    result = await app.host.runs.start(sid, [('user', 'two checks')])
     feedback = [message for message in result['messages'] if isinstance(message, ToolMessage)]
     assert [(message.tool_call_id, message.status) for message in feedback] == [('one', 'success'), ('two', 'success')]
     assert len({instance['child_thread_id'] for instance in instances}) == 2
@@ -152,7 +158,7 @@ async def test_same_role_parallel_instances_do_not_share_history_or_model_counts
     assert {next(message.content for message in seen if isinstance(message, HumanMessage)) for seen in child.seen} == {'task one', 'task two'}
     assert all(sum(isinstance(message, HumanMessage) for message in seen) == 1 for seen in child.seen)
     for instance in instances:
-        snapshot = await app._sessions._subagents['tester']['agent'].aget_state(
+        snapshot = await app.host.sessions._sessions._subagents['tester']['agent'].aget_state(
             {'configurable': {'thread_id': instance['child_thread_id']}})
         assert snapshot.values['thread_model_call_count'] == 1
 
@@ -168,18 +174,18 @@ async def test_inherited_child_model_is_frozen_when_root_model_switches(monkeypa
     app = await build_application('unused', tools=[create_subagent_tool(), definition()], initial_active_tools=['subagent'],
                                   system_prompt='ROOT_PROMPT', response_format=None, settings=AppSettings(subagents=(spec,)))
     instances = record_instances(monkeypatch, app)
-    sid = await app.acreate_session('A')
+    sid = await app.host.sessions.create('A')
     async def switch_during_child(messages):
         if 'CHILD_ROLE_PROMPT' in messages[0].content and not switched.is_set():
-            await app.aselect_model(sid, 'B')
-            assert app._sessions.resolve_model(sid, instances[0]['agent_path'])[0] == 'A'
+            await app.host.sessions.select_model(sid, 'B')
+            assert app.host.sessions._sessions.resolve_model(sid, instances[0]['agent_path'])[0] == 'A'
             switched.set()
     original.on_request = switch_during_child
-    result = await app.arun(sid, [('user', 'start')])
+    result = await app.host.runs.start(sid, [('user', 'start')])
     assert switched.is_set() and len(original.seen) == 3 and len(alternate.seen) == 1
     assert result['messages'][-1].content == 'root using B'
     instance, = instances
-    assert instance['model_id'] == 'A' and app._sessions.resolve_model(sid)[0] == 'B'
+    assert instance['model_id'] == 'A' and app.host.sessions._sessions.resolve_model(sid)[0] == 'B'
 
 
 @async_test
@@ -187,11 +193,11 @@ async def test_unknown_role_is_tool_error_and_does_not_start_child(monkeypatch):
     child = ChildModel(replies=[])
     root = StreamingToolModel(replies=[call('subagent', {'agent': 'missing', 'task': 'task'}, 'delegate'), AIMessage(content='continue')])
     app, _ = await delegated_app(monkeypatch, child, root=root)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'start')])
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'start')])
     feedback = next(message for message in result['messages'] if isinstance(message, ToolMessage))
     assert feedback.status == 'error' and 'Unknown subagent' in feedback.content
     assert result['messages'][-1].content == 'continue' and child.seen == []
-    assert all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
+    assert all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.host.sessions._sessions._sessions.values())
 
 
 @async_test
@@ -199,7 +205,7 @@ async def test_leaf_tool_error_stays_in_child_history(monkeypatch, tmp_path):
     child = ChildModel(replies=[call('read', {'path': 'absent'}, 'inner'), AIMessage(content='file unavailable')])
     spec = SubAgentSpec('tester', 'Read', 'Prompt', ('read',), model_id='B')
     app, _ = await delegated_app(monkeypatch, child, spec=spec, tools=[create_session_read_tool()])
-    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'read')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('A', tmp_path), [('user', 'read')])
     assert next(message for message in child.seen[1] if isinstance(message, ToolMessage)).status == 'error'
     assert json.loads(next(message for message in result['messages'] if isinstance(message, ToolMessage)).content)['report'] == 'file unavailable'
 
@@ -212,17 +218,17 @@ async def test_child_ask_keeps_checkpoint_and_never_executes_before_approval(mon
     app, root = await delegated_app(monkeypatch, child, tools=[definition(calls=effects, approved=True)])
     instances = record_instances(monkeypatch, app)
     queue = approval_notifications(monkeypatch, app)
-    sid = await app.acreate_session('A')
-    task = asyncio.create_task(app.arun(sid, [('user', 'ask')]))
+    sid = await app.host.sessions.create('A')
+    task = asyncio.create_task(app.host.runs.start(sid, [('user', 'ask')]))
     try:
         batch = await next_approval(app, sid, queue)
         assert effects == [] and len(root.seen) == len(child.seen) == 1
         instance, = instances
         assert instance['status'] == 'awaiting_approval'
-        snapshot = await app._sessions._subagents['tester']['agent'].aget_state(
+        snapshot = await app.host.sessions._sessions._subagents['tester']['agent'].aget_state(
             {'configurable': {'thread_id': instance['child_thread_id']}})
         assert any(item.interrupts for item in snapshot.tasks)
-        assert app.pending_tool_approvals(sid) == []
+        assert app.host.runs.pending_tools(sid) == []
         await submit(app, sid, batch)
         await asyncio.wait_for(task, 5)
         assert effects == [('probe', 'unapproved')] and instance['status'] == 'completed'

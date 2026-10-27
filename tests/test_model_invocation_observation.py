@@ -1,5 +1,6 @@
 """Model callbacks publish finite facts and release in-flight references."""
 
+from runtime_context_helpers import typed_scope
 import asyncio
 from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
@@ -12,7 +13,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher, RunStartedData, AgentEventSource
-from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
+from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
 from native_application_helpers import async_test
 
 
@@ -38,7 +39,7 @@ async def test_start_end_pairing_uses_framework_id_and_existing_scope(tags, purp
     events, identity = [], uuid4()
     publisher = RunEventPublisher('session', 'root-run', (events.append,))
     publisher.publish('run_started', RunStartedData('message'))
-    with bind_run_services(RunServices(publisher=publisher)):
+    with bind_run_scope(typed_scope(publisher=publisher)):
         handler = callback()
         await handler.on_chat_model_start({'PRIVATE': 'SERIALIZED'}, [['PRIVATE_PROMPT']],
             run_id=identity, metadata=metadata(), tags=tags)
@@ -62,7 +63,7 @@ async def test_start_end_pairing_uses_framework_id_and_existing_scope(tags, purp
 async def test_error_facts_preserve_partial_vs_unavailable_without_raising(error, expected, partial):
     events, identity = [], uuid4()
     publisher = RunEventPublisher('s', 'r', (events.append,))
-    with bind_run_services(RunServices(publisher=publisher)):
+    with bind_run_scope(typed_scope(publisher=publisher)):
         handler = callback()
         await handler.on_chat_model_start({}, [], run_id=identity, metadata=metadata())
         await handler.on_llm_error(error, run_id=identity, response=output({
@@ -82,7 +83,7 @@ async def test_child_facts_use_original_root_envelope_and_child_source():
     root = RunEventPublisher('s', 'r', (events.append,))
     source = AgentEventSource('root/tester/child', 'child', 'child-run', 'r', 'delegate')
     handler, identity = callback(), uuid4()
-    with bind_run_services(RunServices(publisher=root.for_agent(source))):
+    with bind_run_scope(typed_scope(publisher=root.for_agent(source))):
         await handler.on_chat_model_start({}, [], run_id=identity, metadata=metadata())
         await handler.on_llm_end(output(None), run_id=identity)
     assert events[0].session_id == 's' and events[0].run_id == 'r'
@@ -94,7 +95,7 @@ async def test_no_run_does_not_fabricate_a_session_and_unknown_identity_is_obser
     await callback().on_chat_model_start({}, [], run_id=uuid4(), metadata=metadata())
     events = []
     handler, identity = callback(), uuid4()
-    with bind_run_services(RunServices(publisher=RunEventPublisher('s', 'r', (events.append,)))):
+    with bind_run_scope(typed_scope(publisher=RunEventPublisher('s', 'r', (events.append,)))):
         await handler.on_chat_model_start({}, [], run_id=identity, metadata={'PRIVATE': 'NOT_ID'})
         await handler.on_llm_end(output(None), run_id=identity)
     assert events[0].data.model_id is None
@@ -107,7 +108,7 @@ async def test_observation_fault_is_diagnosed_without_provider_content(monkeypat
     def broken(_):
         raise ValueError('PRIVATE_INTERNAL')
     monkeypatch.setattr(module, 'normalize_model_usage', broken)
-    with bind_run_services(RunServices(publisher=RunEventPublisher('s', 'r', ()))):
+    with bind_run_scope(typed_scope(publisher=RunEventPublisher('s', 'r', ()))):
         handler = callback()
         for status in ('returned', 'failed'):
             identity = uuid4()

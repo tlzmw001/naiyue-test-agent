@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from native_application_helpers import async_test, build_application
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+from scripts.component_fixtures import open_component_application
 from naiyue_test_agent.model_access import ModelCatalog, ModelConfigError
 from naiyue_test_agent.tools import SubAgentSpec
 from naiyue_test_agent.settings import AppSettings, load_settings
@@ -111,17 +111,17 @@ async def test_configured_roles_are_a_startup_snapshot_and_custom_tools_are_refe
     tools = [definition(), definition('extra')]
     first = await build_application('unused', tools=tools, initial_active_tools=[],
                                     system_prompt='', response_format=None)
-    original = first.get_registered_subagents()[0]
+    original = first.host.subagents.list()[0]
     path.write_text(CONFIG.replace('["probe"]', '["probe", "extra"]')
                     .replace('PRIVATE_CONFIG_PROMPT', 'UPDATED_CONFIG_PROMPT'))
     second = await build_application('unused', tools=tools, initial_active_tools=[],
                                      system_prompt='', response_format=None)
-    assert first.get_registered_subagents() == (original,)
+    assert first.host.subagents.list() == (original,)
     assert original.tool_names == ('probe',) and original.system_prompt == 'PRIVATE_CONFIG_PROMPT'
-    updated = second.get_registered_subagents()[0]
+    updated = second.host.subagents.list()[0]
     assert updated.tool_names == ('probe', 'extra') and updated.system_prompt == 'UPDATED_CONFIG_PROMPT'
-    sid = await second.acreate_session('A')
-    assert second.get_active_tools(sid) == () and await second.aget_messages(sid) == []
+    sid = await second.host.sessions.create('A')
+    assert second.host.sessions.active_tools(sid) == () and await second.host.history.messages(sid) == []
     assert all(model.seen == [] for model in models)
 
 
@@ -129,8 +129,8 @@ async def test_configured_roles_are_a_startup_snapshot_and_custom_tools_are_refe
 @pytest.mark.parametrize('failure', ['tool', 'model'])
 @async_test
 async def test_invalid_startup_dependencies_raise_and_release_owned_resources(monkeypatch, tmp_path, persistent, failure):
-    from naiyue_test_agent.application.async_application import build_async_local_application
-    from naiyue_test_agent.application.session_storage import SessionStorage
+    from scripts.component_fixtures import build_component_application
+    from naiyue_test_agent.storage.project_store import ProjectStore
     closed, catalogs = [], []
     def catalog(_):
         instance = ModelCatalog('A', {'A': StreamingToolModel(replies=[])})
@@ -151,14 +151,14 @@ async def test_invalid_startup_dependencies_raise_and_release_owned_resources(mo
     database = tmp_path / 'roles.sqlite'
     with pytest.raises(error_type):
         if persistent:
-            async with open_async_persistent_application('unused', database_path=database, **options):
+            async with open_component_application('unused', database_path=database, **options):
                 pytest.fail('Invalid roles must prevent application publication')
         else:
-            await build_async_local_application('unused', **options)
+            await build_component_application('unused', **options)
     assert len(catalogs) == 1 and closed == catalogs
     if persistent:
-        with SessionStorage(database) as storage:
-            assert storage.list_sessions() == []
+        with ProjectStore(database) as storage:
+            assert storage.sessions.list_sessions() == []
 
 
 @async_test
@@ -167,17 +167,17 @@ async def test_persistent_app_reregisters_current_config_without_persisting_defi
     path = tmp_path / 'settings.toml'
     path.write_text(CONFIG)
     options = dict(database_path=tmp_path / 'roles.sqlite', tools=[definition()], system_prompt='', response_format=None)
-    async with open_async_persistent_application('unused', settings=load_settings(path), **options) as app:
-        assert [spec.name for spec in app.get_registered_subagents()] == ['tester']
-        await app.aregister_subagent(SubAgentSpec('temporary', 'Temporary', 'Prompt', ()))
+    async with open_component_application('unused', settings=load_settings(path), **options) as app:
+        assert [spec.name for spec in app.host.subagents.list()] == ['tester']
+        await app.host.subagents.register(SubAgentSpec('temporary', 'Temporary', 'Prompt', ()))
     path.write_text(CONFIG.replace('name = "tester"', 'name = "updated"'))
-    async with open_async_persistent_application('unused', settings=load_settings(path), **options) as app:
-        assert [spec.name for spec in app.get_registered_subagents()] == ['updated']
+    async with open_component_application('unused', settings=load_settings(path), **options) as app:
+        assert [spec.name for spec in app.host.subagents.list()] == ['updated']
 
 
 @pytest.mark.parametrize('invalid', [False, True])
 def test_cli_main_consumes_configured_roles_and_reports_registration_failures(monkeypatch, tmp_path, capsys, invalid):
-    from naiyue_test_agent.application import cli
+    from naiyue_test_agent.cli import chat as cli
     from naiyue_test_agent.tools import settings as module
     root = tmp_path / 'settings'
     root.mkdir()
@@ -190,12 +190,8 @@ def test_cli_main_consumes_configured_roles_and_reports_registration_failures(mo
         assert model.seen == []
         return ':quit'
     monkeypatch.setattr('builtins.input', read)
-    original = cli.build_local_application
-    def build(*args, **kwargs):
-        app = original(*args, **kwargs)
-        seen.extend(app.get_registered_subagents())
-        return app
-    monkeypatch.setattr(cli, 'build_local_application', build)
+    from terminal_service_helpers import capture_hosts
+    capture_hosts(monkeypatch, lambda host, _: seen.extend(host.subagents.list()))
     assert cli.main(['--no-session', '--workspace', str(tmp_path)]) == (1 if invalid else 0)
     assert [spec.name for spec in seen] == ([] if invalid else ['tester'])
     output = capsys.readouterr().out
@@ -216,8 +212,8 @@ async def test_web_lifespan_consumes_the_same_role_configuration(monkeypatch, tm
     async def scenario():
         async with web_client(monkeypatch, tmp_path, model, workspace_root=tmp_path) as (client, web):
             app = web.state.service.application
-            assert [spec.name for spec in app.get_registered_subagents()] == ['tester']
-            assert (await client.get('/api/models')).status_code == 200
+            assert [spec.name for spec in app.subagents.list()] == ['tester']
+            assert (await client.get('/api/v1/scopes/chats/models')).status_code == 200
             assert model.seen == []
     if invalid:
         with pytest.raises(ValueError, match='Unknown tool'):

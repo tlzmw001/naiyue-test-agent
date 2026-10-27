@@ -1,5 +1,8 @@
 """Configured Shell deadlines reach the runner without changing other tools."""
 
+from dataclasses import replace
+from runtime_context_helpers import ToolAuthorization
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 import asyncio
 from types import SimpleNamespace
 
@@ -8,7 +11,7 @@ import pytest
 from naiyue_test_agent.settings import AppSettings, load_settings
 from naiyue_test_agent.tools import create_builtin_tools
 from naiyue_test_agent.tools.permissions import execution_environment
-from naiyue_test_agent.tools.processes import ProcessOutcome
+from naiyue_test_agent.tools.processes import ProcessOutcome, HostProcessRunner
 
 
 def test_execution_limit_defaults_to_unlimited(tmp_path):
@@ -65,13 +68,11 @@ def test_legacy_output_section_requires_table(tmp_path):
 
 
 def runtime_for(spec, args, root):
-    context = {'session_id': 's', 'workspace_root': root,
-               'archive_root': root.parent / (root.name + '-archive')}
+    context = typed_context(identity=RunIdentity(session_id='s', execution_root=ExecutionRoot(root) if root is not None else None), archive_root=root.parent / (root.name + '-archive'))
     subject = spec.permissions.prepare(args, context)
     subject.update(args=args, tool_name=spec.tool.name, path_field='path',
-                   execution_environment=execution_environment())
-    context['_execution_permit'] = {'call_id': 'c', 'session_id': 's', 'agent_path': 'root',
-        'batch_id': 'b', 'tool_name': spec.tool.name, 'subject': subject}
+                   execution_environment=execution_environment(context))
+    context = replace(context, authorization=ToolAuthorization(permit={'call_id': 'c', 'session_id': 's', 'agent_path': 'root', 'batch_id': 'b', 'tool_name': spec.tool.name, 'subject': subject}))
     return SimpleNamespace(context=context, tool_call_id='c', stream_writer=lambda _: None)
 
 
@@ -79,7 +80,7 @@ def runtime_for(spec, args, root):
 @pytest.mark.parametrize('cap', [0, 120])
 @pytest.mark.parametrize('timeout', ['omitted', None, 0, 1, 60, 600])
 def test_effective_deadline_reaches_real_process_request(monkeypatch, tmp_path, name, cap, timeout):
-    from naiyue_test_agent.tools import shell
+    from naiyue_test_agent.execution import host_shell as shell
     requests = []
     monkeypatch.setattr(shell.ShellAdapter, 'resolve_executable', lambda *_: '/test/interpreter')
     monkeypatch.setattr(shell.ShellAdapter, 'probe_version', lambda *_: '7.4.0')
@@ -87,7 +88,7 @@ def test_effective_deadline_reaches_real_process_request(monkeypatch, tmp_path, 
         requests.append(request)
         await consume('stdout', b'done\n')
         return ProcessOutcome(0, 'exited', True, True, True, True, 0)
-    monkeypatch.setattr(shell.HostProcessRunner, 'run', run)
+    monkeypatch.setattr(HostProcessRunner, 'run', run)
     path = tmp_path / 'settings.toml'
     path.write_text(f'[shell_tasks]\nmax_execution_seconds={cap}\n')
     settings = load_settings(path)
@@ -135,14 +136,15 @@ def test_shell_execution_cap_does_not_change_search_tools(monkeypatch, tmp_path,
 def test_sync_shell_entry_applies_configured_cap(monkeypatch, tmp_path):
     from naiyue_test_agent.shell_task_settings import ShellTaskSettings
     from naiyue_test_agent.tools.bash import create_session_bash_tool
-    from naiyue_test_agent.tools import shell
+    from naiyue_test_agent.execution import host_shell as shell
     requests = []
     async def execute(request, *_args, **_kwargs):
         requests.append(request)
         return 'done'
     monkeypatch.setattr(shell.ShellAdapter, 'resolve_executable', lambda *_: '/test/bash')
     monkeypatch.setattr(shell.ShellAdapter, 'probe_version', lambda *_: '5.2.0')
-    monkeypatch.setattr(shell, 'execute_process_request', execute)
+    from naiyue_test_agent.execution import host_processes
+    monkeypatch.setattr(host_processes, 'execute_process_request', execute)
     spec = create_session_bash_tool(shell_task_settings=ShellTaskSettings(max_execution_seconds=90))
     args = {'command': 'test', 'timeout': 0}
     assert spec.tool.func(**args, runtime=runtime_for(spec, args, tmp_path)) == 'done'
@@ -167,7 +169,7 @@ def test_configured_cap_terminates_real_shell_and_settles_output(tmp_path, timeo
 
 def test_cli_loads_shell_policy_into_registered_tools(monkeypatch, tmp_path):
     from naiyue_test_agent import application
-    from naiyue_test_agent.application import cli
+    from naiyue_test_agent.cli import chat as cli
     from naiyue_test_agent import settings as module
     from naiyue_test_agent.model_access import ModelCatalog
     from test_async_application import StreamingToolModel
@@ -176,13 +178,10 @@ def test_cli_loads_shell_policy_into_registered_tools(monkeypatch, tmp_path):
     model = StreamingToolModel(replies=[])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     monkeypatch.setattr('builtins.input', lambda _prompt='': ':quit')
-    original, descriptions = cli.build_local_application, []
-    def build(*args, **kwargs):
-        app = original(*args, **kwargs)
-        descriptions.extend(spec.tool.description for spec in app.get_registered_tools()
-                            if spec.tool.name in ('bash', 'powershell'))
-        return app
-    monkeypatch.setattr(cli, 'build_local_application', build)
+    from terminal_service_helpers import capture_hosts
+    descriptions = []
+    capture_hosts(monkeypatch, lambda host, _: descriptions.extend(spec.tool.description
+        for spec in host.tools.list() if spec.tool.name in ('bash', 'powershell')))
     assert cli.main(['--no-session', '--workspace', str(tmp_path)]) == 0
     assert len(descriptions) == 2
     assert all('limit: 731 seconds' in description for description in descriptions)
@@ -201,7 +200,7 @@ def test_web_loads_shell_policy_into_registered_tools(monkeypatch, tmp_path, pre
     async def scenario():
         options = {'runtime_settings': load_settings(path)} if preloaded else {}
         async with web_client(monkeypatch, tmp_path, model, **options) as (_client, web):
-            specs = web.state.service.application.get_registered_tools()
+            specs = web.state.service.application.tools.list()
             descriptions = [spec.tool.description for spec in specs if spec.tool.name in ('bash', 'powershell')]
             assert len(descriptions) == 2
             assert all('limit: 831 seconds' in description for description in descriptions)

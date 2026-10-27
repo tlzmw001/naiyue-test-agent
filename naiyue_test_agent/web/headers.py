@@ -15,7 +15,7 @@ class LocalHeaders:
                     (b'cache-control', b'no-store'), (b'x-content-type-options', b'nosniff'),
                     (b'referrer-policy', b'no-referrer'), (b'x-frame-options', b'DENY'),
                     (b'content-security-policy', b"default-src 'self'; script-src 'self'; style-src 'self'; "
-                     b"connect-src 'self'; img-src 'self'; font-src 'self'; object-src 'none'; "
+                     b"connect-src 'self'; img-src 'self' blob:; font-src 'self'; object-src 'none'; "
                      b"base-uri 'none'; frame-ancestors 'none'"),
                 ])
                 message = {**message, 'headers': headers}

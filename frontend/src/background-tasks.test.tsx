@@ -105,7 +105,7 @@ it('encodes task identities and passes cancellation through the actual HTTP API'
   const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(page())));
   const api = new WebApi('test'); const controller = new AbortController();
   await api.backgroundTasks('cursor /?', controller.signal);
-  expect(fetcher.mock.calls[0][0]).toBe('/api/background-tasks?before=cursor+%2F%3F');
+  expect(fetcher.mock.calls[0][0]).toBe('/api/v1/scopes/chats/background-tasks?before=cursor+%2F%3F');
   expect(fetcher.mock.calls[0][1]?.signal).toBe(controller.signal);
 });
 

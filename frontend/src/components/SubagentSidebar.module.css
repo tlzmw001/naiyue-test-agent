@@ -1,8 +1,7 @@
 .panel { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface); }
 .selection { padding: 16px 22px; border-bottom: 1px solid var(--line); }
 .selectionTop, .rowTop { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.back { border: 0; background: transparent; color: var(--muted); padding: 0; font-size: var(--fs-meta); cursor: pointer; }
-.back::before { content: '‹'; margin-right: 7px; }
+.back { display: inline-flex; align-items: center; gap: 7px; border: 0; background: transparent; color: var(--muted); padding: 0; font-size: var(--fs-meta); cursor: pointer; }
 .status { display: inline-block; border-radius: var(--r-xs); background: var(--surface-hover); color: var(--text-secondary); padding: 4px 7px; font-size: var(--fs-caption); white-space: nowrap; }
 .task { margin: 10px 0 0; line-height: var(--lh-relaxed); color: var(--muted); font-size: var(--fs-caption); overflow-wrap: anywhere; }
 .intro { padding: 20px 22px 16px; border-bottom: 1px solid var(--line); font-size: var(--fs-meta); }
@@ -12,7 +11,7 @@
 .row:hover { background: var(--surface-soft); }
 .rowTop strong { font-size: var(--fs-ui); font-weight: var(--fw-semibold); overflow-wrap: anywhere; min-width: 0; }
 .rowTask { display: block; color: var(--text-secondary); font-size: var(--fs-meta); line-height: var(--lh-relaxed); margin: 10px 18px 0 0; overflow-wrap: anywhere; }
-.arrow { position: absolute; right: 24px; bottom: 22px; color: var(--faint); }
+.arrow { position: absolute; right: 24px; top: 50%; margin-top: -7px; }
 .notice { font-size: var(--fs-caption); color: var(--muted); line-height: var(--lh-relaxed); margin: 16px 22px; }
 .notice button { margin-left: 10px; border: 0; background: transparent; text-decoration: underline; color: inherit; cursor: pointer; }
 .footer { padding: 14px 22px; margin-top: auto; border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; font-size: var(--fs-caption); color: var(--muted); }

@@ -11,7 +11,7 @@ import pytest
 from langchain.tools import tool
 from langchain_core.messages import AIMessage, ToolMessage
 
-from naiyue_test_agent.application.session_storage import SessionPersistenceError
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from test_async_application import make_app, StreamingToolModel, call
 from test_async_persistent import factory
 
@@ -29,13 +29,13 @@ def test_started_tool_error_result_is_preserved_when_user_stops(monkeypatch):
             raise failure
 
         app = await make_app(monkeypatch, StreamingToolModel(replies=[call('failing', {})]), [ToolSpec(failing, failing.args_schema, permissions=ToolPermission(default='allow'))])
-        session = await app.acreate_session('A')
+        session = await app.host.sessions.create('A')
         events = []
-        app.subscribe_events(events.append)
-        task = asyncio.create_task(app.arun(session, [('user', 'start')]))
+        app.host.observability.subscribe(events.append)
+        task = asyncio.create_task(app.host.runs.start(session, [('user', 'start')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            app.request_stop(session)
+            app.host.runs.stop(session)
             release.set()
             result = await task
             feedback = next(m for m in result['messages'] if isinstance(m, ToolMessage))
@@ -58,21 +58,21 @@ def test_stop_save_failure_does_not_publish_stopped(monkeypatch, tmp_path):
         entered, release = asyncio.Event(), asyncio.Event()
         chosen = StreamingToolModel(replies=[], entered=entered, release=release)
         async with factory(monkeypatch, tmp_path / 'session.sqlite', chosen) as app:
-            session = await app.acreate_session('A')
+            session = await app.host.sessions.create('A')
             events = []
-            app.subscribe_events(events.append)
+            app.host.observability.subscribe(events.append)
 
             def fail(*args):
                 raise SessionPersistenceError('synthetic_save_failure')
 
-            monkeypatch.setattr(app._storage, 'finish_run', fail)
-            task = asyncio.create_task(app.arun(session, [('user', 'start')]))
+            monkeypatch.setattr(app.host.sessions._persistence.storage.runs, 'finish_run', fail)
+            task = asyncio.create_task(app.host.runs.start(session, [('user', 'start')]))
             await asyncio.wait_for(entered.wait(), 5)
-            app.request_stop(session)
+            app.host.runs.stop(session)
             with pytest.raises(SessionPersistenceError, match='session_save_unconfirmed'):
                 await task
             assert events[-1].data.status == 'failed' and events[-1].data.stop_mode is None
-            assert (await app.alist_sessions())[0]['state'] == 'running'
+            assert (await app.host.sessions.list())[0]['state'] == 'running'
     asyncio.run(scenario())
 
 
@@ -84,15 +84,15 @@ def test_other_session_keeps_running_after_first_session_stop(monkeypatch):
         b = StreamingToolModel(replies=[AIMessage(content='other session')], entered=entered_b, release=release_b)
         from naiyue_test_agent import application
         from naiyue_test_agent.model_access import ModelCatalog
-        from naiyue_test_agent.application.async_application import build_async_local_application
+        from scripts.component_fixtures import build_component_application
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': a, 'B': b}))
-        app = await build_async_local_application('unused', tools=[], system_prompt='', response_format=None)
-        first, second = await app.acreate_session('A'), await app.acreate_session('B')
-        tasks = [asyncio.create_task(app.arun(first, [('user', 'first')])),
-                 asyncio.create_task(app.arun(second, [('user', 'second')]))]
+        app = await build_component_application('unused', tools=[], system_prompt='', response_format=None)
+        first, second = await app.host.sessions.create('A'), await app.host.sessions.create('B')
+        tasks = [asyncio.create_task(app.host.runs.start(first, [('user', 'first')])),
+                 asyncio.create_task(app.host.runs.start(second, [('user', 'second')]))]
         try:
             await asyncio.wait_for(asyncio.gather(entered_a.wait(), entered_b.wait()), 5)
-            app.request_stop(first)
+            app.host.runs.stop(first)
             assert (await asyncio.wait_for(tasks[0], 5))['run_stopped']
             assert not tasks[1].done()
             release_b.set()

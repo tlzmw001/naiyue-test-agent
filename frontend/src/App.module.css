@@ -33,8 +33,7 @@
 @media (max-width: 700px) { .headerActions { gap: 8px; } }
 .delegatedAgent { border-bottom: 1px solid var(--line); padding: 12px 0; font-size: var(--fs-meta); }
 .delegatedHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.agentLink { border: 0; background: transparent; padding: 0; color: var(--text); cursor: pointer; text-align: left; overflow-wrap: anywhere; }
-.agentLink span { margin-left: 8px; color: var(--faint); }
+.agentLink { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; padding: 0; color: var(--text); cursor: pointer; text-align: left; overflow-wrap: anywhere; }
 .agentState { color: var(--muted); font-size: var(--fs-caption); white-space: nowrap; }
 .delegatedTask { font-size: var(--fs-caption); color: var(--muted); margin: 6px 0; }
 .conversation { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; position: relative; padding: 20px 28px; }
@@ -126,8 +125,6 @@
 }
 .toolCall { background: var(--surface-subtle); border: 1px solid var(--line); border-radius: var(--r-lg); margin: 9px 0; min-width: 0; }
 .toolCall > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; cursor: pointer; padding: 11px 14px; font-size: var(--fs-meta); }
-.toolCall > summary::before { content: '›'; color: var(--muted); }
-.toolCall[open] > summary::before { transform: rotate(90deg); }
 .toolName { font-weight: var(--fw-semibold); overflow-wrap: anywhere; min-width: 0; }
 .toolStatus { color: var(--muted); margin-left: auto; font-size: var(--fs-caption); }
 .toolPhase { color: var(--text-secondary); font-size: var(--fs-caption); flex-basis: 100%; padding-left: 18px; overflow-wrap: anywhere; }

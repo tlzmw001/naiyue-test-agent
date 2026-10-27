@@ -1,5 +1,7 @@
 """Memory preparation participates in existing content-free context accounting."""
 
+from runtime_context_helpers import RunIdentity, ModelCallState, typed_context
+
 from langchain_core.messages import AIMessage, HumanMessage
 
 from naiyue_test_agent.agent_runtime.context_usage import (
@@ -16,7 +18,7 @@ def test_memory_and_directory_are_additive_validated_system_children():
     children = next(group for group in estimate['groups'] if group['id'] == 'system')['children']
     assert [(part['id'], part.get('count')) for part in children] == [
         ('base', None), ('memory', 3), ('session_directory', 8)]
-    snapshot = finish_snapshot(request_snapshot(dict(_naiyue_model_call_id='call', _naiyue_model_id='A'), estimate))
+    snapshot = finish_snapshot(request_snapshot(typed_context(model_call=ModelCallState('call', 'A')), estimate))
     assert read_snapshot(snapshot) == snapshot
     assert 'PRIVATE_' not in str(snapshot)
     assert sum(part['tokens'] for part in children) == next(group for group in estimate['groups'] if group['id'] == 'system')['tokens']

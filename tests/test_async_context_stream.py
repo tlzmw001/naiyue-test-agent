@@ -6,7 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage
 from pydantic import Field
 
-from naiyue_test_agent.application.stream_projection import StreamingMessageProjection
+from naiyue_test_agent.application.conversation.stream_projection import StreamingMessageProjection
 from naiyue_test_agent.agent_runtime.context_compaction import SUMMARY_MARKER
 from test_async_application import StreamingToolModel, make_app
 from test_async_context_chain import model, history, overflow_error
@@ -28,10 +28,10 @@ def test_summary_delta_is_hidden_and_state_operations_confirm(monkeypatch, overf
         chosen = ContextStreamModel(replies=([overflow_error()] if overflow else []) + [AIMessage(content='answer')],
             metadata=model(window=2000 if overflow else 500, reserve=20 if overflow else 450).metadata)
         app = await make_app(monkeypatch, chosen)
-        session = await app.acreate_session('A')
+        session = await app.host.sessions.create('A')
         events, projection = [], StreamingMessageProjection()
         try:
-            async for event in app.astream_run(session, history()):
+            async for event in app.host.runs.stream(session, history()):
                 events.append(event)
                 projection(event)
             assert len(chosen.summary_seen) == 1
@@ -42,7 +42,7 @@ def test_summary_delta_is_hidden_and_state_operations_confirm(monkeypatch, overf
             if overflow:
                 recovery = next(e for e in events if e.event_type == 'context_recovery_finished')
                 assert recovery.data.status == 'recovered'
-            snapshots = await app.aget_messages(session)
+            snapshots = await app.host.history.messages(session)
             assert snapshots[0].additional_kwargs[SUMMARY_MARKER] is True
             assert not any(m.id == 'old-user' for m in snapshots)
             assert any(row['id'] == 'old-user' for row in projection.messages)

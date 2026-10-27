@@ -4,8 +4,8 @@ import type { WebApi } from '../api';
 import type { SkillCatalogView } from '../types';
 import styles from './SkillsMenu.module.css';
 
-export default function SkillsMenu({ api, readEnabled, className, close, select }: {
-  api: WebApi; readEnabled: boolean; className: string; close: () => void;
+export default function SkillsMenu({ api, sessionId, readEnabled, className, close, select }: {
+  api: WebApi; sessionId?: string | null; readEnabled: boolean; className: string; close: () => void;
   select: (command: string, catalog: SkillCatalogView) => void;
 }) {
   const [catalog, setCatalog] = useState<SkillCatalogView | null>(null);
@@ -16,11 +16,11 @@ export default function SkillsMenu({ api, readEnabled, className, close, select 
   useEffect(() => {
     let disposed = false;
     setLoading(true); setError(''); setCatalog(null);
-    api.skills().then(value => { if (!disposed) setCatalog(value); })
+    (sessionId ? api.skills(sessionId) : api.skills()).then(value => { if (!disposed) setCatalog(value); })
       .catch(error => { if (!disposed) setError(errorText(error)); })
       .finally(() => { if (!disposed) setLoading(false); });
     return () => { disposed = true; };
-  }, [api, revision]);
+  }, [api, revision, sessionId]);
   useEffect(() => {
     if (catalog && root.current?.contains(document.activeElement))
       root.current.querySelector<HTMLButtonElement>('[data-skill-option]:not(:disabled)')?.focus();

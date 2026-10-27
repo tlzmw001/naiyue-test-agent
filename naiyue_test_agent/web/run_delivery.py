@@ -61,19 +61,19 @@ class RunDelivery:
             raise WebError('request_window_full')
         return key, fingerprint, deepcopy(old[1]) if old else None
 
-    async def start(self, session_id, body, rows, *, can_run=True, conversation_revision=0):
-        return await self._launch(session_id, body, rows, can_run=can_run, conversation_revision=conversation_revision)
+    async def start(self, session_id, body, rows, *, can_run=True, conversation_revision=0, execution_root_error=None, prepared_message=None):
+        return await self._launch(session_id, body, rows, can_run=can_run, conversation_revision=conversation_revision, execution_root_error=execution_root_error, prepared_message=prepared_message)
 
-    async def regenerate(self, session_id, body, rows, *, can_run=True):
-        return await self._launch(session_id, body, rows, can_run=can_run, regenerate=True)
+    async def regenerate(self, session_id, body, rows, *, can_run=True, execution_root_error=None):
+        return await self._launch(session_id, body, rows, can_run=can_run, regenerate=True, execution_root_error=execution_root_error)
 
-    async def compact(self, session_id, body, rows, *, can_run=True, conversation_revision=0):
-        return await self._launch(session_id, body, rows, can_run=can_run, compact=True, conversation_revision=conversation_revision)
+    async def compact(self, session_id, body, rows, *, can_run=True, conversation_revision=0, execution_root_error=None):
+        return await self._launch(session_id, body, rows, can_run=can_run, compact=True, conversation_revision=conversation_revision, execution_root_error=execution_root_error)
 
     async def resume(self, session_id, body, check_current):
         return await self._launch(session_id, body, [], resume_check=check_current)
 
-    async def _launch(self, session_id, body, rows, *, can_run=True, resume_check=None, compact=False, regenerate=False, conversation_revision=0):
+    async def _launch(self, session_id, body, rows, *, can_run=True, resume_check=None, compact=False, regenerate=False, conversation_revision=0, execution_root_error=None, prepared_message=None):
         async with self.start_lock:
             if self._closing:
                 raise WebError('session_unavailable', 503)
@@ -93,7 +93,7 @@ class RunDelivery:
                     if (active is None or active.task.done() or active.run_id != body.origin_run_id):
                         raise WebError('stale_approval')
                     try:
-                        receipt = await self.application.asubmit_subagent_approval(session_id,
+                        receipt = await self.application.runs.submit_subagent_approval(session_id,
                             approval_batch_id=body.approval_batch_id, origin_run_id=body.origin_run_id,
                             decisions=[item.model_dump() for item in body.decisions], remember_approved=body.remember_approved)
                     except ValueError:
@@ -104,6 +104,8 @@ class RunDelivery:
                 if active is not None and not active.task.done():
                     raise WebError('session_busy')
                 if not can_run:
+                    if execution_root_error is not None:
+                        raise WebError('execution_root_unavailable', reason=execution_root_error['reason'])
                     raise WebError('session_recovery_blocked')
                 def register(job):
                     self.runs[job.run_id] = job
@@ -123,10 +125,10 @@ class RunDelivery:
                 job.conversation_revision = (body.expected_conversation_revision + 1 if regenerate else
                     (prepared or {}).get('conversation_revision', conversation_revision))
                 job.tool_states = states
-                job.unsubscribe = self.application.subscribe_events(job.observe, session_id=session_id)
+                job.unsubscribe = self.application.observability.subscribe(job.observe, session_id=session_id)
                 self.pending_receipts[key] = (fingerprint, job)
                 self.active_by_session[session_id] = job
-                job.task = asyncio.create_task(self._produce(job, body, receipt_key=key, prepared=prepared, compact=compact, regenerate=regenerate))
+                job.task = asyncio.create_task(self._produce(job, body.model_copy(update={'images': []}) if hasattr(body, 'images') else body, receipt_key=key, prepared=prepared, compact=compact, regenerate=regenerate, prepared_message=prepared_message))
         # Missing observations may keep this future pending for the whole run.
         # That must not hold the registration lock or cancel the producer.
         run_id = await asyncio.shield(job.started)
@@ -142,25 +144,25 @@ class RunDelivery:
             if self.latest.get(old.session_id) == key:
                 self.latest.pop(old.session_id, None)
 
-    async def _produce(self, job, body, *, receipt_key, prepared=None, compact=False, regenerate=False):
+    async def _produce(self, job, body, *, receipt_key, prepared=None, compact=False, regenerate=False, prepared_message=None):
         try:
             if regenerate:
-                result = await self.application.aregenerate_last_reply(job.session_id, **body.model_dump())
+                result = await self.application.runs.regenerate(job.session_id, **body.model_dump())
             elif compact:
-                result = await self.application.acompact_context(job.session_id)
+                result = await self.application.runs.compact(job.session_id)
                 if job.compaction_result is None and result.get('compaction_status') is not None:
                     with job.lock:
                         job.compaction_result = {'status': result['compaction_status'], 'reason': None}
             elif prepared is not None:
                 if prepared.get('stop'):
-                    result = await self.application.astop_tool_approval(job.session_id,
+                    result = await self.application.runs.stop_approval(job.session_id,
                         approval_batch_id=body.approval_batch_id, origin_run_id=body.origin_run_id)
                 else:
-                    result = await self.application.aresume_tool_approval(job.session_id, prepared['decisions'],
+                    result = await self.application.runs.resume_approval(job.session_id, prepared['decisions'],
                         remember_approved=prepared['remember_approved'])
             else:
-                result = await self.application.arun(job.session_id,
-                    [HumanMessage(content=body.text, id=body.request_id)],
+                result = await self.application.runs.start(job.session_id,
+                    [prepared_message if prepared_message is not None else HumanMessage(content=body.text, id=body.request_id)],
                     **({'expected_conversation_revision': body.expected_conversation_revision}
                        if body.expected_conversation_revision is not None else {}))
             if job.status == 'running':
@@ -206,6 +208,21 @@ class RunDelivery:
             job.changed.set()
 
     async def control(self, run_id, body):
+        prepared_message = None
+        if body.images:
+            # Only the paired queue transition holds control_lock. A stop must
+            # remain usable while an image worker drains outside this lock.
+            _, _, cached = self._cached(run_id, body.request_id, body.model_dump())
+            if cached is not None:
+                return cached
+            initial = self.get(run_id)
+            if self.active_by_session.get(initial.session_id) is not initial or initial.done or initial.status != 'running':
+                raise WebError('stale_run')
+            try:
+                prepared_message = await self.application.runs.prepare_input(initial.session_id,
+                    body.text or '', body.images, message_id=body.request_id)
+            except Exception as error:
+                raise public_error(error) from None
         async with self.control_lock:
             key, fingerprint, old = self._cached(run_id, body.request_id, body.model_dump())
             if old is not None:
@@ -217,32 +234,50 @@ class RunDelivery:
                 if body.kind == 'stop':
                     options = {key: value for key, value in (('agent_run_id', body.agent_run_id),
                         ('approval_batch_id', body.approval_batch_id)) if value is not None}
-                    retained = self.application.request_stop(job.session_id, run_id=run_id, agent_path=body.agent_path, **options)
+                    retained = self.application.runs.stop(job.session_id, run_id=run_id, agent_path=body.agent_path, **options)
                     if body.agent_path == 'root':
+                        from collections import Counter
+                        image_texts = Counter(row['legacy_text'] for row in self.application.runs.pending_inputs(job.session_id))
+                        kept = []
+                        for text in retained:
+                            if image_texts[text]:
+                                image_texts[text] -= 1
+                            else:
+                                kept.append(text)
+                        retained = kept
                         with job.lock:
                             job.retained = list(retained)
                             if job.status == 'running':
                                 job.stop_requested = True
                 else:
-                    method = self.application.steer if body.kind == 'steering' else self.application.follow_up
-                    method(job.session_id, body.text)
+                    method = self.application.runs.steer if body.kind == 'steering' else self.application.runs.follow_up
+                    if body.images:
+                        self.application.runs.queue_input(job.session_id,prepared_message,kind=body.kind,replace_ids=body.pending_input_ids)
+                    else:
+                        method(job.session_id, body.text)
                     retained = []
             except Exception as error:
                 raise public_error(error) from None
-            result = {'accepted': True, 'kind': body.kind, 'retained': retained}
+            from .serialization import pending_input_views
+            result = {'accepted': True, 'kind': body.kind, 'retained': retained,
+                      'retained_inputs': pending_input_views(self.application.runs.pending_inputs(job.session_id), self.settings)}
             self.receipts[key] = (fingerprint, result)
             return result
 
     async def wait(self, run_id):
         await asyncio.shield(self.get(run_id).task)
 
-    async def close(self):
+    async def seal(self):
         async with self.start_lock:
             self._closing = True
-            tasks = tuple(job.task for job in self.active_by_session.values())
+
+    async def close(self, *, close_application=True):
+        await self.seal()
+        tasks = tuple(job.task for job in self.active_by_session.values())
         primary = None
         try:
-            await self.application.aclose()
+            if close_application:
+                await self.application.aclose()
         except BaseException as error:
             primary = error
         try:

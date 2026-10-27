@@ -1,5 +1,6 @@
 """SessionPort is the real root/child assembly dependency with explicit scopes."""
 
+from runtime_context_helpers import RunIdentity, typed_context
 import asyncio
 import inspect
 from types import SimpleNamespace
@@ -57,10 +58,10 @@ async def test_application_passes_the_same_port_to_root_and_child_assembly(monke
         'drain_steering', 'is_stop_requested', 'finish_run_boundary', 'prepare_control_messages',
         'resolve_project_instructions', 'resolve_subagent_roles', 'resolve_prompt_parts'}
     for _, options in captured:
-        assert options['session_port'] is app._sessions
+        assert options['session_port'] is app.host.sessions._sessions
         assert not retired.intersection(options)
-    sid = await app.acreate_session('A')
-    assert (await app.arun(sid, [('user', 'run')]))['messages'][-1].content == 'done'
+    sid = await app.host.sessions.create('A')
+    assert (await app.host.runs.start(sid, [('user', 'run')]))['messages'][-1].content == 'done'
 
 
 @async_test
@@ -82,7 +83,7 @@ async def test_interactive_graph_rejects_child_scope_without_consuming_root_cont
         system_prompt='', response_format=None, checkpointer=InMemorySaver())
     with pytest.raises(ValueError, match='requires root agent_path'):
         await graph.ainvoke({'messages': [('user', 'invalid root invocation')]},
-            context={'session_id': 's', 'agent_path': 'root/tester/child'},
+            context=typed_context(identity=RunIdentity(session_id='s', agent_path='root/tester/child')),
             config={'configurable': {'thread_id': 'invalid-root'}})
     assert controls == [] and model.seen == []
 
@@ -102,38 +103,38 @@ async def test_two_children_keep_scopes_while_root_switches_and_queues_controls(
         initial_active_tools=['subagent'], system_prompt='ROOT_PORT_PROMPT', response_format=None,
         settings=AppSettings(subagents=(SubAgentSpec('tester', 'Check', 'CHILD_PORT_PROMPT', ('probe',), model_id='B'),)))
     instances = record_instances(monkeypatch, app)
-    sid = await app.acreate_workspace_session('A', tmp_path)
-    other = await app.acreate_session('A')
+    sid = await app.host.sessions.create_workspace('A', tmp_path)
+    other = await app.host.sessions.create('A')
     events, entered, release, paths = [], asyncio.Event(), asyncio.Event(), set()
-    app.subscribe_events(events.append)
+    app.host.observability.subscribe(events.append)
     async def wait_for_both(messages):
-        from naiyue_test_agent.agent_runtime.run_services import current_run_services
-        paths.add(current_run_services().publisher.source.agent_path)
+        from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
+        paths.add(current_run_scope().observation.publisher.source.agent_path)
         if len(paths) == 2:
             entered.set()
         await release.wait()
     child.on_request = wait_for_both
-    running = asyncio.create_task(app.arun(sid, [('user', 'delegate both')]))
+    running = asyncio.create_task(app.host.runs.start(sid, [('user', 'delegate both')]))
     try:
         await asyncio.wait_for(entered.wait(), 5)
-        await app.aselect_model(sid, 'C')
-        await app.aset_active_tools(sid, ['probe'])
-        await app.aset_permission_mode(sid, 'NoAsk')
-        app.steer(sid, 'ROOT_STEERING_PORT')
-        app.follow_up(sid, 'ROOT_FOLLOWUP_PORT')
+        await app.host.sessions.select_model(sid, 'C')
+        await app.host.sessions.select_tools(sid, ['probe'])
+        await app.host.sessions.select_permission_mode(sid, 'NoAsk')
+        app.host.runs.steer(sid, 'ROOT_STEERING_PORT')
+        app.host.runs.follow_up(sid, 'ROOT_FOLLOWUP_PORT')
         assert len(instances) == len(paths) == 2
         for path in paths:
-            assert app._sessions.resolve_model(sid, path) == ('B', child)
-            assert app._sessions.resolve_active_tool_names(sid, path) == ('probe',)
-            assert app._sessions.resolve_permission_context(sid, path)['mode'] == 'NoAsk'
-        assert app._sessions.resolve_model(sid)[0] == 'C'
-        assert app._sessions.resolve_active_tool_names(sid) == ('probe',)
-        assert app._sessions.resolve_model(other)[0] == 'A'
-        assert app._sessions.resolve_active_tool_names(other) == ('subagent',)
-        assert app.get_permission_mode(other) == 'Default'
+            assert app.host.sessions._sessions.resolve_model(sid, path) == ('B', child)
+            assert app.host.sessions._sessions.resolve_active_tool_names(sid, path) == ('probe',)
+            assert app.host.sessions._sessions.resolve_permission_context(sid, path)['mode'] == 'NoAsk'
+        assert app.host.sessions._sessions.resolve_model(sid)[0] == 'C'
+        assert app.host.sessions._sessions.resolve_active_tool_names(sid) == ('probe',)
+        assert app.host.sessions._sessions.resolve_model(other)[0] == 'A'
+        assert app.host.sessions._sessions.resolve_active_tool_names(other) == ('subagent',)
+        assert app.host.sessions.permission_mode(other) == 'Default'
         assert not any(e.event_type == 'control_delivered' for e in events)
-        for resolve in (app._sessions.resolve_model, app._sessions.resolve_active_tool_names,
-                        app._sessions.resolve_permission_context):
+        for resolve in (app.host.sessions._sessions.resolve_model, app.host.sessions._sessions.resolve_active_tool_names,
+                        app.host.sessions._sessions.resolve_permission_context):
             with pytest.raises(KeyError):
                 resolve(sid, 'root/tester/missing')
         release.set()
@@ -157,5 +158,5 @@ async def test_two_children_keep_scopes_while_root_switches_and_queues_controls(
     assert {e.source.agent_path for e in events if e.source and e.event_type == 'model_call_started'} == paths
     delivered = [e for e in events if e.event_type == 'control_delivered']
     assert len(delivered) == 2 and all(e.source is None for e in delivered)
-    assert (await app.arun(other, [('user', 'independent')]))['messages'][-1].content == 'other session'
+    assert (await app.host.runs.start(other, [('user', 'independent')]))['messages'][-1].content == 'other session'
     assert 'PROJECT_PORT_CONSTRAINT' not in root.seen[-1][0].content

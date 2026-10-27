@@ -3,11 +3,12 @@ import { afterEach, expect, it, vi } from 'vitest';
 import App from './App';
 import { WebApi } from './api';
 import type { SseFrame } from './sse';
+import type { SessionView } from './types';
 
 afterEach(cleanup);
 
-function client() {
-  const api = new WebApi('synthetic-test-access');
+function client(scopeId?: string) {
+  const api = new WebApi('synthetic-test-access', scopeId);
   vi.spyOn(api, 'backgroundTasks').mockResolvedValue({ items: [], active_count: 0, terminal_revision: 0, revision: 'empty', next_before: null });
   vi.spyOn(api, 'prepare').mockImplementation(id => api.session(id));
   const row = { session_id: 's', model_id: 'A', workspace_root: null, state: 'ready',
@@ -33,6 +34,25 @@ function client() {
   return { api, emit: (frame: SseFrame) => receive(frame) };
 }
 
+it.each([
+  ['missing', '目录不存在'],
+  ['unreadable', '无法访问或检查执行目录'],
+] as const)('keeps history visible for execution directory reason %s', async (reason, explanation) => {
+  const { api } = client();
+  const original: SessionView = { ...await api.session('s'), title: '已保存会话', messages: [
+    { id: 'saved', type: 'ai', content: '历史回答', provisional: false, state: 'complete' }
+  ] };
+  vi.mocked(api.sessions).mockResolvedValue([original]);
+  vi.mocked(api.session).mockResolvedValue({ ...original, can_run: false,
+    execution_root_error: { code: 'execution_root_unavailable', reason } });
+  render(<App api={api} />);
+  fireEvent.click(await screen.findByRole('button', { name: '已保存会话 A' }));
+  expect(await screen.findByText('历史回答')).toBeTruthy();
+  expect(await screen.findByText(`执行目录不可用：${explanation}。历史仍可查看。`)).toBeTruthy();
+  expect((screen.getByRole('button', { name: '发送消息' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(api.start).not.toHaveBeenCalled();
+});
+
 it('opens the shared sidebar, selects tasks, and retains it when creating a chat', async () => {
   const { api } = client();
   render(<App api={api} />);
@@ -40,7 +60,7 @@ it('opens the shared sidebar, selects tasks, and retains it when creating a chat
   fireEvent.click(screen.getByRole('tab', { name: /后台任务/ }));
   expect(await screen.findByText('没有后台任务')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: /新建会话/ }));
-  await waitFor(() => expect(api.create).toHaveBeenCalled());
+  expect(api.create).not.toHaveBeenCalled();
   expect(screen.getByRole('complementary', { name: '辅助侧栏' })).toBeTruthy();
   expect(api.start).not.toHaveBeenCalled();
 });
@@ -99,11 +119,10 @@ it('pauses selected task output on another tab and preserves its selection', asy
 
 it('collapses with Escape after the context shortcut jumps into an already open sidebar', async () => {
   const { api } = client();
+  vi.mocked(api.sessions).mockResolvedValue([{ ...await api.session('s'), title: '已有会话' }]);
   render(<App api={api} />);
-  const create = await screen.findByRole('button', { name: '新建会话' });
-  await waitFor(() => expect(create.hasAttribute('disabled')).toBe(false));
-  fireEvent.click(create);
-  await waitFor(() => expect(api.session).toHaveBeenCalled());
+  fireEvent.click(await screen.findByRole('button', { name: '已有会话 A' }));
+  await waitFor(() => expect(api.prepare).toHaveBeenCalledWith('s'));
   fireEvent.click(screen.getByRole('button', { name: '打开辅助侧栏' }));
   const context = screen.getByRole('button', { name: '查看上下文构成' });
   fireEvent.click(context);
@@ -151,13 +170,27 @@ it('retains input during stop, without automatically starting another run', asyn
   expect(api.start).toHaveBeenCalledTimes(1);
 });
 
+it('puts project and execution selection immediately above the message in the composer', async () => {
+  const { api } = client('11111111-1111-1111-1111-111111111111');
+  const options = vi.spyOn(api, 'executionOptions');
+  render(<App api={api} projectEntry={() => <button>项目选择入口</button>} />);
+  const context = await screen.findByRole('region', { name: '项目与执行位置' });
+  const project = within(context).getByRole('button', { name: '项目选择入口' });
+  const execution = within(context).getByRole('button', { name: '执行位置：此计算机' });
+  expect(project.closest('header')).toBeNull();
+  expect(execution.closest('header')).toBeNull();
+  expect(context.parentElement?.contains(screen.getByRole('textbox', { name: '消息' }))).toBe(true);
+  expect(context.compareDocumentPosition(screen.getByRole('textbox', { name: '消息' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(options).not.toHaveBeenCalled();
+});
+
 it('keeps the model selector in the header without a product title', async () => {
   const { api } = client();
   render(<App api={api} />);
   fireEvent.click(await screen.findByRole('button', { name: /模型与推理强度：A/ }));
   expect(screen.queryByText('Test Agent')).toBeNull();
-  expect((screen.getByRole('combobox', { name: '模型' }) as HTMLSelectElement).value).toBe('A');
-  expect(screen.getByRole('combobox', { name: '模型' }).closest('header')).not.toBeNull();
+  expect((within(screen.getByRole('group', { name: '模型' })).getByRole('radio', { name: 'A' }) as HTMLInputElement).checked).toBe(true);
+  expect(screen.getByRole('group', { name: '模型' }).closest('header')).not.toBeNull();
 });
 
 it('opens the same header model menu with /model without starting a run', async () => {
@@ -190,9 +223,10 @@ it('clears normal completion status and the resync button after a confirmed fini
 it('keeps the shared entry available with an empty child view', async () => {
   const { api } = client();
   const list = vi.spyOn(api, 'subagents').mockResolvedValue([]);
+  vi.mocked(api.sessions).mockResolvedValue([{ ...await api.session('s'), title: '已有会话' }]);
   render(<App api={api} />);
   expect(screen.getByRole('button', { name: '打开辅助侧栏' })).toBeTruthy();
-  fireEvent.click(await screen.findByRole('button', { name: '新建会话' }));
+  fireEvent.click(await screen.findByRole('button', { name: '已有会话 A' }));
   await waitFor(() => expect(list).toHaveBeenCalled());
   expect(screen.getByRole('button', { name: '打开辅助侧栏' })).toBeTruthy();
 });
@@ -201,8 +235,9 @@ it('shows saved child instances and shares the list with the sidebar without fet
   const { api } = client();
   const list = vi.spyOn(api, 'subagents').mockResolvedValue([{ agent_id: 'saved', agent_path: 'root/tester/saved',
     agent: 'tester', task: 'inspect', tool_call_id: 'c', status: 'completed' }]);
+  vi.mocked(api.sessions).mockResolvedValue([{ ...await api.session('s'), title: '已有会话' }]);
   render(<App api={api} />);
-  fireEvent.click(await screen.findByRole('button', { name: '新建会话' }));
+  fireEvent.click(await screen.findByRole('button', { name: '已有会话 A' }));
   await waitFor(() => expect(list).toHaveBeenCalledTimes(1));
   fireEvent.click(await screen.findByRole('button', { name: '打开辅助侧栏' }));
   await screen.findByRole('region', { name: '子智能体' });

@@ -1,6 +1,7 @@
 """Offline TCP history/compaction probe using two real service processes."""
 
 import argparse
+from scripts.web_probe_app import command_headers
 import asyncio
 import json
 import logging
@@ -68,7 +69,7 @@ def _catalog(root):
 def _worker(args):
     import uvicorn
     from naiyue_test_agent import application
-    from naiyue_test_agent.web.app import create_web_app
+    from scripts.web_probe_app import create_probe_app, command_headers, async_command_headers
     from naiyue_test_agent.web.settings import WebSettings
 
     root = Path(args.worker)
@@ -83,7 +84,7 @@ def _worker(args):
         port = listener.getsockname()[1]
         settings = WebSettings(config_path='unused', database_path=root / 'sessions.sqlite',
             frontend_dist=assets, port=port, access_token=ACCESS, history_page_messages=3)
-        app = create_web_app(settings)
+        app = create_probe_app(settings)
         (root / 'ready.json').write_text(json.dumps({'port': port}), encoding='utf-8')
         try:
             uvicorn.Server(uvicorn.Config(app, access_log=False, log_level='warning')).run(sockets=[listener])
@@ -114,7 +115,7 @@ def _finished(client, response, deadline):
     response.raise_for_status()
     identity = response.json()['run_id']
     def state():
-        value = client.get(f'/api/runs/{identity}')
+        value = client.get(f'/api/v1/scopes/chats/runs/{identity}')
         value.raise_for_status()
         view = value.json()
         return view if view['done'] else None
@@ -140,18 +141,18 @@ def _parent(args):
             process, output, port = _launch(root, deadline, worker_module='scripts.probe_web_history')
             origin = f'http://127.0.0.1:{port}'
             try:
-                with httpx.Client(base_url=origin, headers={'Authorization': 'Bearer ' + ACCESS,
+                with httpx.Client(event_hooks={'request': [command_headers]}, base_url=origin, headers={'Authorization': 'Bearer ' + ACCESS,
                         'Origin': origin}, timeout=min(10, args.timeout_seconds)) as client:
                     def ready():
                         try:
-                            return client.get('/api/models').status_code == 200
+                            return client.get('/api/v1/scopes/chats/models').status_code == 200
                         except httpx.ConnectError:
                             return False
                     _until(ready, deadline)
                     if phase == 'create':
-                        created = client.post('/api/sessions', json={'model_id': 'offline'})
+                        created = client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'offline'})
                         created.raise_for_status()
-                        endpoint = '/api/sessions/' + created.json()['session_id']
+                        endpoint = '/api/v1/scopes/chats/sessions/' + created.json()['session_id']
                         for n in range(18):
                             _finished(client, client.post(endpoint + '/runs', json={
                                 'request_id': str(uuid4()), 'text': f'QUESTION_{n:02} ' + 'q' * 30000}), deadline)

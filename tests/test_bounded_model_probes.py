@@ -71,7 +71,13 @@ def install_transport(monkeypatch, *, extra_tool=False):
         return response(200, headers={'content-type': 'text/event-stream'}, content=body.encode())
 
     for module in (httpx, httpx2):
-        monkeypatch.setattr(module.AsyncHTTPTransport, 'handle_async_request', reply)
+        original_request = module.AsyncHTTPTransport.handle_async_request
+        async def provider_only(transport, request, original_request=original_request):
+            # The terminal now uses real loopback HTTP; only provider IO is mocked.
+            if request.url.host in ('127.0.0.1', '::1', 'localhost'):
+                return await original_request(transport, request)
+            return await reply(transport, request)
+        monkeypatch.setattr(module.AsyncHTTPTransport, 'handle_async_request', provider_only)
     return catalog, attempts, guarded
 
 

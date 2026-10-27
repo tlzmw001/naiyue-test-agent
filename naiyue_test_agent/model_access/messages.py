@@ -2,7 +2,6 @@
 
 import json
 
-from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
@@ -50,7 +49,7 @@ def content_text(content, *, strict=False, delta=False):
     return ''.join(parts)
 
 
-def prepare_model_messages(messages, model):
+def prepare_model_messages(messages, model, *, fresh_run_id=None):
     """Copy canonical history. Only CC tool images need an extra user carrier."""
     profile = getattr(model, 'profile', None) or {}
     vision = profile.get('image_inputs') is True
@@ -75,6 +74,9 @@ def prepare_model_messages(messages, model):
             blocks = message.content
             images = [block for block in blocks if is_image_block(block)]
         if images and not vision:
+            if fresh_run_id and isinstance(message, HumanMessage) and message.additional_kwargs.get('naiyue_image_origin_run_id') == fresh_run_id:
+                from ..contracts.image_inputs import ImageInputError
+                raise ImageInputError('model_image_input_unsupported')
             message.content = [({'type': 'text', 'text': '[Image pixels not provided: current model does not support image input.]'}
                                 if is_image_block(block) else block) for block in blocks]
         elif images and api == 'chat_completions' and isinstance(message, ToolMessage):
@@ -93,17 +95,3 @@ def prepare_model_messages(messages, model):
     if carrier:
         raise ValueError('Image tool batch is incomplete')
     return result
-
-
-class ModelInputMiddleware(AgentMiddleware):
-    """No state update: overflow recovery outside sees the original request."""
-
-    @property
-    def name(self):
-        return 'prepare_model_input'
-
-    def wrap_model_call(self, request, handler):
-        return handler(request.override(messages=prepare_model_messages(request.messages, request.model)))
-
-    async def awrap_model_call(self, request, handler):
-        return await handler(request.override(messages=prepare_model_messages(request.messages, request.model)))

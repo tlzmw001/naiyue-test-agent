@@ -16,7 +16,7 @@ from test_async_persistent import factory
 
 
 def database_facts(storage):
-    return tuple(storage.connection.iterdump())
+    return tuple(storage.database.connection.iterdump())
 
 
 @pytest.mark.parametrize('state', ['running', 'failed', 'interrupted', 'review_required', 'ready'])
@@ -24,24 +24,24 @@ def database_facts(storage):
 async def test_reopened_history_is_read_only_and_preserves_saved_messages(monkeypatch, tmp_path, state):
     path = tmp_path / 'state.sqlite'
     async with build(monkeypatch, path) as app:
-        storage = app._storage
-        sid = await app.acreate_session('A')
-        original = (await app.arun(sid, [HumanMessage(content='saved question', id='human')]))['messages']
-        row = storage.get(sid)
-        storage.finish_run(sid, state, row['checkpoint_id'], '', state)
+        storage = app.host.sessions._persistence.storage
+        sid = await app.host.sessions.create('A')
+        original = (await app.host.runs.start(sid, [HumanMessage(content='saved question', id='human')]))['messages']
+        row = storage.sessions.get(sid)
+        storage.runs.finish_run(sid, state, row['checkpoint_id'], '', state)
     model = ToolModel(responses=[])
     async with build(monkeypatch, path, model) as app:
-        storage = app._storage
+        storage = app.host.sessions._persistence.storage
         before = database_facts(storage)
         events = []
-        app.subscribe_events(events.append)
-        view = await app.aget_session_history(sid)
+        app.host.observability.subscribe(events.append)
+        view = await app.host.history.session(sid)
         assert view['messages'] == original
         assert view['checkpoint_id'] == row['checkpoint_id'] == view['confirmed_checkpoint_id']
         assert view['recovery']['kind'] == ('ready' if state == 'ready' else 'interrupted_execution')
         assert view['recovery']['actions'] == ([] if state == 'ready' else ['continue'])
         assert view['recovery']['unconfirmed_tool_call_ids'] == []
-        assert not app._sessions.has_session(sid) and events == [] and model.responses == []
+        assert not app.host.sessions._sessions.has_session(sid) and events == [] and model.responses == []
         assert database_facts(storage) == before
 
 
@@ -49,22 +49,22 @@ async def test_reopened_history_is_read_only_and_preserves_saved_messages(monkey
 async def test_history_uses_latest_checkpoint_instead_of_confirmed_pointer(monkeypatch, tmp_path):
     path = tmp_path / 'state.sqlite'
     async with build(monkeypatch, path) as app:
-        storage = app._storage
-        sid = await app.acreate_session('A')
-        await app.arun(sid, [('user', 'old')])
-        row = storage.get(sid)
+        storage = app.host.sessions._persistence.storage
+        sid = await app.host.sessions.create('A')
+        await app.host.runs.start(sid, [('user', 'old')])
+        row = storage.sessions.get(sid)
         config = {'configurable': {'thread_id': row['thread_id']}}
-        await app._agent.aupdate_state(config, {'messages': [AIMessage(content='new request', id='ai-new', tool_calls=[
+        await app.host.runs._agent.aupdate_state(config, {'messages': [AIMessage(content='new request', id='ai-new', tool_calls=[
             {'id': 'unconfirmed', 'name': 'read', 'args': {'path': 'x'}}])]}, as_node='model')
-        storage.finish_run(sid, 'running', row['checkpoint_id'], '', None)
+        storage.runs.finish_run(sid, 'running', row['checkpoint_id'], '', None)
     async with build(monkeypatch, path) as app:
-        storage = app._storage
+        storage = app.host.sessions._persistence.storage
         before = database_facts(storage)
-        view = await app.aget_session_history(sid)
+        view = await app.host.history.session(sid)
         assert view['checkpoint_id'] != view['confirmed_checkpoint_id'] == row['checkpoint_id']
         assert view['messages'][-1].id == 'ai-new'
         assert view['recovery']['unconfirmed_tool_call_ids'] == ['unconfirmed']
-        assert database_facts(storage) == before and not app._sessions.has_session(sid)
+        assert database_facts(storage) == before and not app.host.sessions._sessions.has_session(sid)
 
 
 async def approval_snapshot(monkeypatch, tmp_path):
@@ -73,17 +73,17 @@ async def approval_snapshot(monkeypatch, tmp_path):
     async with build(monkeypatch, tmp_path / 'approval.sqlite', ToolModel(responses=[AIMessage(content='', tool_calls=[
             {'name': 'read', 'args': {'path': str(tmp_path / 'outside')}, 'id': 'call'}])]),
             [create_session_read_tool()]) as app:
-        storage = app._storage
-        sid = await app.acreate_workspace_session('A', root)
-        await app.arun(sid, [('user', 'read outside')])
-        row = storage.get(sid)
-        snapshot = await app._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
+        storage = app.host.sessions._persistence.storage
+        sid = await app.host.sessions.create_workspace('A', root)
+        await app.host.runs.start(sid, [('user', 'read outside')])
+        row = storage.sessions.get(sid)
+        snapshot = await app.host.runs._agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
         return row, snapshot
 
 
 @async_test
 async def test_real_approval_is_candidate_only_and_no_tool_was_run(monkeypatch, tmp_path):
-    from naiyue_test_agent.application.session_recovery import classify_recovery
+    from naiyue_test_agent.application.sessions.session_recovery import classify_recovery
     row, snapshot = await approval_snapshot(monkeypatch, tmp_path)
     result = classify_recovery(row, snapshot)
     assert result == {'kind': 'pending_approval', 'reason': 'saved_pre_tool_approval',
@@ -94,7 +94,7 @@ async def test_real_approval_is_candidate_only_and_no_tool_was_run(monkeypatch, 
 @pytest.mark.parametrize('change', ['node', 'namespace', 'batch', 'args', 'result', 'error', 'marker', 'tool_result', 'extra_task'])
 @async_test
 async def test_approval_classification_requires_exact_saved_shape(monkeypatch, tmp_path, change):
-    from naiyue_test_agent.application.session_recovery import classify_recovery
+    from naiyue_test_agent.application.sessions.session_recovery import classify_recovery
     row, original = await approval_snapshot(monkeypatch, tmp_path)
     snapshot = original._replace(values=deepcopy(original.values), config=deepcopy(original.config))
     task = snapshot.tasks[0]
@@ -122,11 +122,11 @@ async def test_approval_classification_requires_exact_saved_shape(monkeypatch, t
 async def test_no_checkpoint_distinguishes_never_run_from_missing(monkeypatch, tmp_path, state, kind):
     path = tmp_path / 'state.sqlite'
     async with build(monkeypatch, path) as app:
-        storage = app._storage
-        sid = await app.acreate_session('A')
-        storage.finish_run(sid, state, None, '', None)
+        storage = app.host.sessions._persistence.storage
+        sid = await app.host.sessions.create('A')
+        storage.runs.finish_run(sid, state, None, '', None)
     async with build(monkeypatch, path) as app:
-        view = await app.aget_session_history(sid)
+        view = await app.host.history.session(sid)
         assert view['messages'] == [] and view['checkpoint_id'] is None
         assert view['recovery']['kind'] == kind
 
@@ -136,18 +136,18 @@ async def test_no_checkpoint_distinguishes_never_run_from_missing(monkeypatch, t
 async def test_unavailable_history_retains_only_safe_readable_facts(monkeypatch, tmp_path, caplog, failure):
     path = tmp_path / 'state.sqlite'
     async def verify(app):
-        storage = app._storage
-        await await_diagnostics_idle(app)
+        storage = app.host.sessions._persistence.storage
+        await await_diagnostics_idle(app.host)
         if failure == 'read':
             async def broken(*_a):
                 raise ValueError('PRIVATE_CHECKPOINT')
-            monkeypatch.setattr(app._agent, 'aget_state', broken)
+            monkeypatch.setattr(app.host.runs._agent, 'aget_state', broken)
         elif failure == 'identity':
-            snapshot = await app._agent.aget_state({'configurable': {'thread_id': storage.get(sid)['thread_id']}})
+            snapshot = await app.host.runs._agent.aget_state({'configurable': {'thread_id': storage.sessions.get(sid)['thread_id']}})
             snapshot.config['configurable']['thread_id'] = 'different'
             async def snapshot_read(*_a):
                 return snapshot
-            monkeypatch.setattr(app._agent, 'aget_state', snapshot_read)
+            monkeypatch.setattr(app.host.runs._agent, 'aget_state', snapshot_read)
         elif failure in ('model', 'tools', 'mode', 'workspace'):
             query, value = {
                 'model': ('UPDATE naiyue_sessions SET model_id=? WHERE session_id=?', 'removed'),
@@ -155,17 +155,17 @@ async def test_unavailable_history_retains_only_safe_readable_facts(monkeypatch,
                 'mode': ('UPDATE naiyue_sessions SET permission_mode=? WHERE session_id=?', 'removed'),
                 'workspace': ('UPDATE naiyue_sessions SET workspace_root=? WHERE session_id=?', str(tmp_path / 'missing')),
             }[failure]
-            storage.connection.execute(query, (value, sid))
-            storage.connection.commit()
+            storage.database.connection.execute(query, (value, sid))
+            storage.database.connection.commit()
         before = database_facts(storage)
-        view = await app.aget_session_history(sid)
+        view = await app.host.history.session(sid)
         assert view['recovery']['kind'] == 'unavailable' and view['recovery']['actions'] == []
         assert [m.content for m in view['messages']] == ([] if failure in ('read', 'identity') else ['saved', 'answer'])
         assert 'PRIVATE' not in caplog.text and database_facts(storage) == before
-        assert app._sessions.has_session(sid) == (failure == 'loaded')
+        assert app.host.sessions._sessions.has_session(sid) == (failure == 'loaded')
     async with build(monkeypatch, path) as first:
-        sid = await first.acreate_session('A')
-        await first.arun(sid, [('user', 'saved')])
+        sid = await first.host.sessions.create('A')
+        await first.host.runs.start(sid, [('user', 'saved')])
         if failure == 'loaded':
             await verify(first)
     if failure != 'loaded':
@@ -178,28 +178,28 @@ async def test_native_history_matches_reopened_and_does_not_install_or_call_mode
     path = tmp_path / 'state.sqlite'
     async def scenario():
         async with factory(monkeypatch, path, StreamingToolModel(replies=[AIMessage(content='saved')])) as app:
-            sid = await app.acreate_session('A')
-            await app.arun(sid, [('user', 'question')])
-            storage = app._storage
-            row = storage.get(sid)
-            storage.finish_run(sid, 'failed', row['checkpoint_id'], '', 'failed')
+            sid = await app.host.sessions.create('A')
+            await app.host.runs.start(sid, [('user', 'question')])
+            storage = app.host.sessions._persistence.storage
+            row = storage.sessions.get(sid)
+            storage.runs.finish_run(sid, 'failed', row['checkpoint_id'], '', 'failed')
         model = StreamingToolModel(replies=[])
         async with factory(monkeypatch, path, model) as app:
-            before = database_facts(app._storage)
-            view = await app.aget_session_history(sid)
-            assert not app._sessions.has_session(sid) and model.seen == []
-            assert database_facts(app._storage) == before
+            before = database_facts(app.host.sessions._persistence.storage)
+            view = await app.host.history.session(sid)
+            assert not app.host.sessions._sessions.has_session(sid) and model.seen == []
+            assert database_facts(app.host.sessions._persistence.storage) == before
         return sid, view
     sid, asynchronous = await scenario()
     async with build(monkeypatch, path) as app:
-        reopened = await app.aget_session_history(sid)
+        reopened = await app.host.history.session(sid)
     assert reopened == asynchronous
 
 
 @pytest.mark.parametrize('corruption', ['values', 'messages', 'message_id', 'call_id', 'orphan', 'duplicate_result'])
 @async_test
 async def test_malformed_history_has_explicit_unavailable_reason(monkeypatch, tmp_path, corruption):
-    from naiyue_test_agent.application.session_recovery import classify_recovery
+    from naiyue_test_agent.application.sessions.session_recovery import classify_recovery
     row, original = await approval_snapshot(monkeypatch, tmp_path)
     snapshot = original._replace(values=deepcopy(original.values))
     messages = snapshot.values['messages']
@@ -232,17 +232,17 @@ async def test_reopened_real_approval_never_prepares_or_executes_tools_or_auto(m
         reached.append(True)
         raise AssertionError('History must only read')
     async with build(monkeypatch, tmp_path / 'approval.sqlite', ToolModel(responses=[]), [create_session_read_tool()]) as app:
-        storage = app._storage
+        storage = app.host.sessions._persistence.storage
         before = database_facts(storage)
         for name in ('ainvoke', 'aupdate_state'):
-            monkeypatch.setattr(app._agent, name, forbidden)
+            monkeypatch.setattr(app.host.runs._agent, name, forbidden)
         monkeypatch.setattr(FilePermission, 'prepare', forbidden)
         monkeypatch.setattr(AutoPermissionReviewer, 'areview', forbidden)
         monkeypatch.setattr(AutoPermissionReviewer, 'areview', forbidden)
         monkeypatch.setattr(importlib.import_module('naiyue_test_agent.tools.read'), '_read', forbidden)
-        view = await app.aget_session_history(row['session_id'])
+        view = await app.host.history.session(row['session_id'])
         assert view['recovery']['kind'] == 'pending_approval' and view['messages'] == original.values['messages']
-        assert reached == [] and not app._sessions.has_session(row['session_id'])
+        assert reached == [] and not app.host.sessions._sessions.has_session(row['session_id'])
         assert database_facts(storage) == before
 
 
@@ -256,13 +256,13 @@ async def test_history_preserves_artifacts_and_pairs_reused_call_ids_by_batch(mo
             ToolMessage(content=[{'type': 'text', 'text': f'result{index}'}], id=f'r{index}',
                 tool_call_id='same', artifact={'record': [index]}, status='success')])
     async with build(monkeypatch, path) as app:
-        storage = app._storage
-        sid = await app.acreate_session('A')
-        row = storage.get(sid)
-        await app._agent.aupdate_state({'configurable': {'thread_id': row['thread_id']}}, {'messages': messages}, as_node='tools')
-        storage.finish_run(sid, 'failed', None, '', 'failed')
+        storage = app.host.sessions._persistence.storage
+        sid = await app.host.sessions.create('A')
+        row = storage.sessions.get(sid)
+        await app.host.runs._agent.aupdate_state({'configurable': {'thread_id': row['thread_id']}}, {'messages': messages}, as_node='tools')
+        storage.runs.finish_run(sid, 'failed', None, '', 'failed')
     async with build(monkeypatch, path) as app:
-        view = await app.aget_session_history(sid)
+        view = await app.host.history.session(sid)
         assert view['messages'] == messages
         assert view['messages'][-1].artifact == {'record': [2]}
         assert view['recovery']['kind'] == 'interrupted_execution'
@@ -292,9 +292,9 @@ async def test_latest_history_projects_completed_pending_writes_without_replay(m
             calls.append('fail')
             raise RuntimeError('PRIVATE_EXECUTION')
         async with build(monkeypatch, path) as app:
-            storage = app._storage
-            sid = await app.acreate_session('A')
-            row = storage.get(sid)
+            storage = app.host.sessions._persistence.storage
+            sid = await app.host.sessions.create('A')
+            row = storage.sessions.get(sid)
             config = {'configurable': {'thread_id': row['thread_id']}}
             builder = StateGraph(State)
             for name, function in (('fast', fast), ('fail', fail)):
@@ -306,15 +306,15 @@ async def test_latest_history_projects_completed_pending_writes_without_replay(m
                 with pytest.raises(RuntimeError, match='PRIVATE_EXECUTION'):
                     await graph.ainvoke({'messages': [AIMessage(content='', id='ai', tool_calls=[
                         {'name': 'fast', 'args': {}, 'id': 'fast'}, {'name': 'fail', 'args': {}, 'id': 'fail'}])]}, config)
-            storage.finish_run(sid, 'failed', None, '', 'failed')
+            storage.runs.finish_run(sid, 'failed', None, '', 'failed')
         async with build(monkeypatch, path) as app:
-            storage = app._storage
+            storage = app.host.sessions._persistence.storage
             async with AsyncSqliteSaver.from_conn_string(str(path)) as saver:
                 graph = builder.compile(checkpointer=saver)
                 before = database_facts(storage)
-                view = await app._persistence.ahistory(sid, graph)
+                view = await app.host.sessions._persistence.ahistory(sid, graph)
                 assert [m.content for m in view['messages']] == ['', 'saved result']
-                assert view['recovery']['kind'] == 'interrupted_execution' and not app._sessions.has_session(sid)
+                assert view['recovery']['kind'] == 'interrupted_execution' and not app.host.sessions._sessions.has_session(sid)
                 assert view['recovery']['unconfirmed_tool_call_ids'] == ['fail']
                 assert database_facts(storage) == before and calls == ['fast', 'fail']
     await scenario()

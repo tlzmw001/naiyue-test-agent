@@ -1,5 +1,6 @@
 """Real image bytes must travel through the authorized Read/ToolError chain."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from native_application_helpers import async_test
 
 import base64
@@ -27,7 +28,7 @@ def png_bytes(width=2, height=1):
 async def test_read_detects_image_content_and_keeps_tool_id(tmp_path, name):
     (tmp_path / name).write_bytes(png_bytes())
     message = (await invoke_tool_feedback(create_session_read_tool(), {'path': name},
-        call_id='image', context={'workspace_root': tmp_path}))
+        call_id='image', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
     assert message.status == 'success', message.content
     assert message.tool_call_id == 'image' and isinstance(message.content, list)
     block = next(b for b in message.content if b['type'] == 'image')
@@ -39,7 +40,7 @@ async def test_read_detects_image_content_and_keeps_tool_id(tmp_path, name):
 async def test_image_budget_is_separate_from_text_page_budget(tmp_path):
     (tmp_path / 'image.png').write_bytes(png_bytes())
     message = (await invoke_tool_feedback(create_session_read_tool(settings=ReadSettings(max_output_bytes=8)),
-        {'path': 'image.png'}, call_id='image', context={'workspace_root': tmp_path}))
+        {'path': 'image.png'}, call_id='image', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
     assert message.status == 'success' and isinstance(message.content, list)
 
 
@@ -47,7 +48,7 @@ async def test_image_budget_is_separate_from_text_page_budget(tmp_path):
 async def test_image_does_not_accept_text_pagination(tmp_path):
     (tmp_path / 'image.png').write_bytes(png_bytes())
     message = (await invoke_tool_feedback(create_session_read_tool(), {'path': 'image.png', 'offset': 1},
-        call_id='image', context={'workspace_root': tmp_path}))
+        call_id='image', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
     assert message.status == 'error' and 'pagination' in message.content
 
 
@@ -65,7 +66,7 @@ def test_image_tool_history_can_be_summarized_without_pixel_bytes():
 async def image_result(tmp_path, data, settings=None, name='image.bin'):
     (tmp_path / name).write_bytes(data)
     return (await invoke_tool_feedback(create_session_read_tool(settings=ReadSettings(image=settings or ReadImageSettings())),
-        {'path': name}, call_id='image', context={'workspace_root': tmp_path}))
+        {'path': name}, call_id='image', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
 
 
 @async_test
@@ -187,7 +188,7 @@ async def test_unapproved_image_has_no_detection_or_decoder_io(tmp_path, monkeyp
     entered = []
     monkeypatch.setattr(module, 'read_image', lambda *args, **kwargs: entered.append(True))
     message = (await invoke_tool_feedback(create_session_read_tool(), {'path': str(outside)},
-        call_id='denied', context={'workspace_root': workspace}))
+        call_id='denied', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(workspace) if workspace is not None else None, session_id=None))))
     assert message.status == 'error' and entered == []
 
 

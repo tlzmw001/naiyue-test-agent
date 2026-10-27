@@ -30,7 +30,10 @@ async def _async__worker(args):
     from langchain_core.messages import AIMessage, HumanMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+    if __package__:
+        from .component_fixtures import open_component_application
+    else:
+        from component_fixtures import open_component_application
     from naiyue_test_agent.model_access import ModelCatalog
 
     budget = RequestBudget(1)
@@ -50,17 +53,17 @@ async def _async__worker(args):
         else:
             resources.enter_context(patch.object(application, 'load_model_catalog',
                 lambda _p: ModelCatalog('offline', {'offline': HistoryModel(responses=[])})))
-        async with open_async_persistent_application(args.config, database_path=args.database, tools=[],
+        async with open_component_application(args.config, database_path=args.database, tools=[],
                 system_prompt='Keep the synthetic test fact. Answer only the requested exact value.', response_format=None) as app:
-            storage = app._storage
+            storage = app.host.sessions._persistence.storage
             if args.worker == 'save':
-                session = await app.acreate_session(app.default_model_id)
+                session = await app.host.sessions.create(app.root.models.default_id)
                 prompt = f'The synthetic test fact is {args.value}. Remember it and reply only SAVED.'
             else:
-                session = await app.arestore_session(args.session)
+                session = await app.host.sessions.restore(args.session)
                 prompt = 'What is the synthetic test fact from the earlier conversation? Reply with only its exact value.'
-            result = await app.arun(session, [('user', prompt)])
-            row = storage.get(session)
+            result = await app.host.runs.start(session, [('user', prompt)])
+            row = storage.sessions.get(session)
             assert budget.snapshot()['used'] == 1 and row['state'] == 'ready'
             history_used = result['messages'][-1].text.strip() == args.value if args.worker == 'resume' else None
             if args.worker == 'resume':

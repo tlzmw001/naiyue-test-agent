@@ -5,9 +5,9 @@ from uuid import uuid4
 
 import pytest
 
-from naiyue_test_agent.application.session_storage import SessionStorage
-from naiyue_test_agent.application.memory_access import MemoryAccess, MemoryReadError
-from naiyue_test_agent.application.memory_personal import PersonalMemory
+from naiyue_test_agent.storage.project_store import ProjectStore
+from naiyue_test_agent.application.memory.memory_access import MemoryAccess, MemoryReadError
+from naiyue_test_agent.storage.database import Database
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.tools.memory import MemoryInput
 
@@ -31,9 +31,9 @@ def seed(connection, number, *, scope='workspace', workspace_id=None, title='测
 @pytest.fixture
 def memory(tmp_path):
     identity = str(uuid4())
-    with SessionStorage(tmp_path / 'sessions.sqlite') as storage:
-        storage.bind_workspace(identity, tmp_path)
-        storage.create('caller', dict(thread_id='caller', model_id='A', workspace_root=tmp_path,
+    with ProjectStore(tmp_path / 'sessions.sqlite') as storage:
+        storage.sessions.bind_workspace(identity, tmp_path)
+        storage.sessions.create('caller', dict(thread_id='caller', model_id='A', workspace_root=tmp_path,
             active_tool_names=['memory'], permission_mode='Default'))
         access = MemoryAccess(storage, MemorySettings(), tmp_path / 'data')
         try:yield storage, access, identity, tmp_path
@@ -42,15 +42,15 @@ def memory(tmp_path):
 
 def query(memory, **arguments):
     _, access, _, root = memory
-    return access.query('caller', root, MemoryInput(**arguments).model_dump(), now=2000000000.0)
+    return access.query('caller', access.storage.sessions.get('caller')['project_id'], MemoryInput(**arguments).model_dump(), now=2000000000.0)
 
 
 def test_empty_query_is_readonly_and_personal_is_lazy(memory):
     storage, access, _, root = memory
     assert not (root / 'data/personal/memory.sqlite').exists()
-    before = storage.connection.total_changes
+    before = storage.database.connection.total_changes
     assert query(memory, action='list', scope='workspace')['items'] == []
-    assert storage.connection.total_changes == before
+    assert storage.database.connection.total_changes == before
     assert not (root / 'data/personal/memory.sqlite').exists()
     assert query(memory, action='list')['items'] == []
     assert (root / 'data/personal/memory.sqlite').exists()
@@ -58,7 +58,7 @@ def test_empty_query_is_readonly_and_personal_is_lazy(memory):
 
 def test_scope_status_expiry_conditions_and_reads_never_renew(memory):
     storage, _, identity, _ = memory
-    c = storage.connection
+    c = storage.database.connection
     valid = seed(c, 1, workspace_id=identity, machine='windows')
     for number, changes in enumerate([{'status':'candidate'}, {'status':'inactive'}, {'status':'forgotten'},
             {'expires_at':2000000000.0}, {'workspace_id':str(uuid4())}], 2):
@@ -77,7 +77,7 @@ def test_scope_status_expiry_conditions_and_reads_never_renew(memory):
 
 def test_cascade_and_technical_anchors_reject_weak_or_different_environment(memory):
     storage, _, identity, _ = memory
-    c = storage.connection
+    c = storage.database.connection
     seed(c, 1, workspace_id=identity, title='测试环境', body='测试执行前确认解释器')
     exact = seed(c, 2, workspace_id=identity, title='pytest测试类组织', body='使用TestOrder')
     assert [r['memory_id'] for r in query(memory, action='search', scope='workspace', query='测试类')['items']] == [exact]
@@ -91,7 +91,7 @@ def test_cascade_and_technical_anchors_reject_weak_or_different_environment(memo
 def test_configurable_k_deduplicates_after_top_k_without_refill(memory):
     storage, access, identity, _ = memory
     access.settings = MemorySettings(default_limit=2, max_limit=3)
-    for number in range(1, 5):seed(storage.connection, number, workspace_id=identity)
+    for number in range(1, 5):seed(storage.database.connection, number, workspace_id=identity)
     result = query(memory, action='search', scope='workspace', query='测试环境')
     assert len(result['items']) == 1 and len(result['items'][0]['duplicate_ids']) == 1
     assert result['requested_limit'] == 2 and result['truncated']
@@ -102,23 +102,23 @@ def test_configurable_k_deduplicates_after_top_k_without_refill(memory):
 
 def test_current_version_and_digest_control_stale_index(memory):
     storage, _, identity, _ = memory
-    item = seed(storage.connection, 1, workspace_id=identity, body='old-needle')
-    with storage.connection:
-        storage.connection.execute('UPDATE naiyue_memories SET body=?,version=2 WHERE memory_id=?', ('new-needle', item))
+    item = seed(storage.database.connection, 1, workspace_id=identity, body='old-needle')
+    with storage.database.connection:
+        storage.database.connection.execute('UPDATE naiyue_memories SET body=?,version=2 WHERE memory_id=?', ('new-needle', item))
     assert query(memory, action='search', scope='workspace', query='old-needle')['items'] == []
     assert query(memory, action='search', scope='workspace', query='new-needle')['items'][0]['version'] == 2
     with pytest.raises(MemoryReadError, match='memory_version_changed'):
         query(memory, action='read', scope='workspace', memory_id=item, version=1)
-    with storage.connection:
-        storage.connection.execute("UPDATE naiyue_memory_search SET memory_version=1")
+    with storage.database.connection:
+        storage.database.connection.execute("UPDATE naiyue_memory_search SET memory_version=1")
     assert query(memory, action='search', scope='workspace', query='new-needle')['items'] == []
 
 
 def test_detail_nul_unicode_budget_and_cursor_scope(memory):
     storage, access, identity, _ = memory
     text = '前文\0正文🧪' * 100
-    item = seed(storage.connection, 1, workspace_id=identity, body=text)
-    seed(storage.connection, 2, workspace_id=identity)
+    item = seed(storage.database.connection, 1, workspace_id=identity, body=text)
+    seed(storage.database.connection, 2, workspace_id=identity)
     access.settings = MemorySettings(read_chunk_chars=57, max_output_bytes=4096)
     chunks, offset = [], 0
     for _ in range(30):
@@ -139,11 +139,11 @@ def test_detail_nul_unicode_budget_and_cursor_scope(memory):
 def test_personal_shared_connection_and_foreign_sources_do_not_read_other_project(memory):
     storage, _, _, root = memory
     path = root / 'data/personal/memory.sqlite'
-    with PersonalMemory(path, MemorySettings()) as personal:
+    with Database.open_personal(path, MemorySettings()) as personal:
         item = seed(personal.connection, 1, scope='personal')
     result = query(memory, action='search', query='测试环境')
     assert result['items'][0]['scope'] == 'personal' and result['items'][0]['memory_id'] == item
-    assert storage.connection.execute('SELECT count(*) FROM naiyue_memories').fetchone()[0] == 0
+    assert storage.database.connection.execute('SELECT count(*) FROM naiyue_memories').fetchone()[0] == 0
 
 
 def add_source(connection, item, workspace, *, quote, message='h', role='human', offset=0):
@@ -161,16 +161,16 @@ def test_sources_only_quote_current_visible_archive_and_foreign_reference_is_met
     save(storage, 'caller', [HumanMessage(id='h',content='明确使用.venv'),
         AIMessage(id='a',content=[{'type':'reasoning','reasoning':'HIDDEN-SOURCE'},
                                 {'type':'text','text':'可见结果'}])])
-    item = seed(storage.connection, 1, workspace_id=identity)
-    add_source(storage.connection,item,identity,quote='使用.venv',offset=2)
-    add_source(storage.connection,item,identity,quote='HIDDEN-SOURCE',message='a',role='ai')
+    item = seed(storage.database.connection, 1, workspace_id=identity)
+    add_source(storage.database.connection,item,identity,quote='使用.venv',offset=2)
+    add_source(storage.database.connection,item,identity,quote='HIDDEN-SOURCE',message='a',role='ai')
     result = query(memory,action='read',scope='workspace',memory_id=item,version=1)
     sources = result['items'][0]['sources']
     assert sources[0]['available'] and sources[0]['quote']=='使用.venv'
     assert not sources[1]['available'] and 'quote' not in sources[1]
     assert 'HIDDEN-SOURCE' not in json.dumps(result,ensure_ascii=False)
     query(memory,action='list',scope='personal')
-    personal = access._personal.connection
+    personal = access._personal_store.database.connection
     other = seed(personal,2,scope='personal')
     add_source(personal,other,str(uuid4()),quote='FOREIGN-SECRET')
     source, = query(memory,action='read',scope='personal',memory_id=other)['items'][0]['sources']
@@ -181,11 +181,11 @@ def test_sources_only_quote_current_visible_archive_and_foreign_reference_is_met
 
 def test_expansion_anchors_cannot_override_original_and_fallback_is_configurable(memory):
     storage, access, identity, _ = memory
-    expected = seed(storage.connection,1,workspace_id=identity,title='代理',body='10.0.0.1走代理')
-    seed(storage.connection,2,workspace_id=identity,title='代理',body='10.0.0.2走代理')
+    expected = seed(storage.database.connection,1,workspace_id=identity,title='代理',body='10.0.0.1走代理')
+    seed(storage.database.connection,2,workspace_id=identity,title='代理',body='10.0.0.2走代理')
     result=query(memory,action='search',scope='workspace',query='代理 10.0.0.1',expansions=['代理 10.0.0.2'])
     assert [r['memory_id'] for r in result['items']]==[expected]
-    reversed_item=seed(storage.connection,3,workspace_id=identity,title='生成用例',body='流程')
+    reversed_item=seed(storage.database.connection,3,workspace_id=identity,title='生成用例',body='流程')
     assert query(memory,action='search',scope='workspace',query='用例生成')['items'][0]['memory_id']==reversed_item
     access.settings=MemorySettings(fallback_coverage=1.0)
     assert query(memory,action='search',scope='workspace',query='用例生成')['items']==[]
@@ -195,7 +195,7 @@ def test_exact_folding_preserves_conditions_basis_and_code_whitespace(memory):
     storage,_,identity,_=memory
     for number,changes in enumerate([{}, {'subject':'other'}, {'basis':'inference'},
             {'body':'pytest\n    pass'}, {'body':'pytest\n pass'}],1):
-        seed(storage.connection,number,workspace_id=identity,title='pytest',body=changes.pop('body','pytest'),**changes)
+        seed(storage.database.connection,number,workspace_id=identity,title='pytest',body=changes.pop('body','pytest'),**changes)
     result=query(memory,action='search',scope='workspace',query='pytest')
     assert len(result['items'])==5 and all(not row['duplicate_ids'] for row in result['items'])
 
@@ -215,13 +215,13 @@ def test_source_call_and_reply_ids_must_match_visible_authority(memory,column,va
     from test_history_tool_storage import save
     storage,_,identity,_=memory
     save(storage,'caller',[ToolMessage(id='t',tool_call_id='actual-call',content='观察成功')])
-    item=seed(storage.connection,1,workspace_id=identity)
-    add_source(storage.connection,item,identity,quote='观察成功',message='t',role='tool')
-    with storage.connection:
-        storage.connection.execute("UPDATE naiyue_memory_sources SET tool_call_id='actual-call'")
+    item=seed(storage.database.connection,1,workspace_id=identity)
+    add_source(storage.database.connection,item,identity,quote='观察成功',message='t',role='tool')
+    with storage.database.connection:
+        storage.database.connection.execute("UPDATE naiyue_memory_sources SET tool_call_id='actual-call'")
     assert query(memory,action='read',scope='workspace',memory_id=item)['items'][0]['sources'][0]['available']
-    with storage.connection:
-        storage.connection.execute(f'UPDATE naiyue_memory_sources SET {column}=?',(value,))
+    with storage.database.connection:
+        storage.database.connection.execute(f'UPDATE naiyue_memory_sources SET {column}=?',(value,))
     source=query(memory,action='read',scope='workspace',memory_id=item)['items'][0]['sources'][0]
     assert not source['available'] and 'quote' not in source
 
@@ -230,6 +230,6 @@ def test_explicit_history_search_does_not_fold_different_lifecycle_or_expiry(mem
     storage,_,identity,_=memory
     for number,changes in enumerate([{}, {'status':'candidate'}, {'status':'inactive'},
                                     {'expires_at':1900000000.0}],1):
-        seed(storage.connection,number,workspace_id=identity,**changes)
+        seed(storage.database.connection,number,workspace_id=identity,**changes)
     result=query(memory,action='search',scope='workspace',query='测试环境',status='all')
     assert len(result['items'])==4 and all(not row['duplicate_ids'] for row in result['items'])

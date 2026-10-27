@@ -17,8 +17,8 @@ async def test_default_frame_limit_preserves_complete_snapshot_and_full_saved_bo
     model = StreamingToolModel(replies=[AIMessage(id='large', content=text,
         response_metadata={'finish_reason': 'stop'})])
     async with web_client(monkeypatch, tmp_path, model) as (client, web):
-        sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-        receipt = (await client.post(f'/api/sessions/{sid}/runs', json=request('large answer'))).json()
+        sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+        receipt = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('large answer'))).json()
         rid = receipt['run_id']
         await web.state.delivery.wait(rid)
         job = web.state.delivery.get(rid)
@@ -28,14 +28,14 @@ async def test_default_frame_limit_preserves_complete_snapshot_and_full_saved_bo
         assert not job.view()['incomplete']
         assert job.view()['messages'][-1]['provisional'] is False
         for _ in range(2):
-            response = await client.get(f'/api/sessions/{sid}')
+            response = await client.get(f'/api/v1/scopes/chats/sessions/{sid}')
             assert response.status_code == 200 and len(response.content) <= limit
             row = response.json()['messages'][-1]
             assert row['id'] == 'large' and row['state'] == 'complete' and row['provisional'] is False
             assert row['content_truncated'] and row['detail']
         result, offset = [], 0
         while True:
-            response = await client.get(f'/api/sessions/{sid}/messages/{row["sequence"]}/content',
+            response = await client.get(f'/api/v1/scopes/chats/sessions/{sid}/messages/{row["sequence"]}/content',
                 params={'revision': row['revision'], 'offset': offset})
             assert response.status_code == 200 and len(response.content) <= limit
             chunk = response.json()
@@ -45,11 +45,11 @@ async def test_default_frame_limit_preserves_complete_snapshot_and_full_saved_bo
             assert chunk['next_offset'] > offset
             offset = chunk['next_offset']
         assert json.loads(''.join(result))['data']['content'] == text
-        gap = await client.get(f'/api/runs/{rid}/events?after=0')
+        gap = await client.get(f'/api/v1/scopes/chats/runs/{rid}/events?after=0')
         assert gap.status_code == 409 and gap.json()['error']['code'] == 'resync_required'
-        assert (await client.get(f'/api/runs/{rid}/events?after={job.last_sequence}')).status_code == 200
+        assert (await client.get(f'/api/v1/scopes/chats/runs/{rid}/events?after={job.last_sequence}')).status_code == 200
         assert all(len(json.dumps(event, ensure_ascii=False).encode()) <= limit for event in job.events)
-        assert (await client.post(f'/api/sessions/{sid}/runs', json=request('unused'),
+        assert (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('unused'),
             headers={'Authorization': ''})).status_code == 401
         assert len(model.seen) == 1
 
@@ -58,14 +58,14 @@ async def test_default_frame_limit_preserves_complete_snapshot_and_full_saved_bo
 async def test_completed_archive_corrects_stale_live_draft_without_reexecuting(monkeypatch, tmp_path):
     model = StreamingToolModel(replies=[AIMessage(id='answer', content='saved final answer')])
     async with web_client(monkeypatch, tmp_path, model) as (client, web):
-        sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-        rid = (await client.post(f'/api/sessions/{sid}/runs', json=request('question'))).json()['run_id']
+        sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+        rid = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('question'))).json()['run_id']
         await web.state.delivery.wait(rid)
         job = web.state.delivery.get(rid)
         job.projection.seed(sid, [{'id': 'answer', 'type': 'ai', 'content': 'saved',
             'provisional': True, 'state': 'unconfirmed', 'run_id': rid}])
         job.projection.incomplete = True  # A genuine optional observation failure stays diagnostic.
-        view = (await client.get(f'/api/sessions/{sid}')).json()
+        view = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
         row = view['messages'][-1]
         assert row['content'] == 'saved final answer'
         assert row['provisional'] is False and row['state'] == 'complete'
@@ -79,15 +79,15 @@ async def test_active_revision_keeps_live_draft_instead_of_older_archive(monkeyp
     model = StreamingToolModel(replies=[AIMessage(id='same-id', content='old saved answer'),
         AIMessage(id='same-id', content='new streaming answer')])
     async with web_client(monkeypatch, tmp_path, model) as (client, web):
-        sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-        first = (await client.post(f'/api/sessions/{sid}/runs', json=request('first'))).json()['run_id']
+        sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+        first = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('first'))).json()['run_id']
         await web.state.delivery.wait(first)
         entered, release = asyncio.Event(), asyncio.Event()
         model.token_entered, model.token_release = entered, release
-        second = (await client.post(f'/api/sessions/{sid}/runs', json=request('second'))).json()['run_id']
+        second = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('second'))).json()['run_id']
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            view = (await client.get(f'/api/sessions/{sid}')).json()
+            view = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
             row = next(row for row in view['messages'] if row['id'] == 'same-id')
             assert row['content'].startswith('new stream') and row['provisional'] is True
             assert row['run_id'] == second and not view['live']['done']
@@ -102,12 +102,12 @@ async def test_run_finishing_during_history_read_cannot_promote_the_older_archiv
     model = StreamingToolModel(replies=[AIMessage(id='same-id', content='old saved answer'),
         AIMessage(id='same-id', content='new streaming answer')])
     async with web_client(monkeypatch, tmp_path, model) as (client, web):
-        sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-        first = (await client.post(f'/api/sessions/{sid}/runs', json=request('first'))).json()['run_id']
+        sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+        first = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('first'))).json()['run_id']
         await web.state.delivery.wait(first)
         entered, release = asyncio.Event(), asyncio.Event()
         model.token_entered, model.token_release = entered, release
-        second = (await client.post(f'/api/sessions/{sid}/runs', json=request('second'))).json()['run_id']
+        second = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('second'))).json()['run_id']
         await asyncio.wait_for(entered.wait(), 5)
         original = web.state.service.messages
 
@@ -119,13 +119,13 @@ async def test_run_finishing_during_history_read_cannot_promote_the_older_archiv
 
         monkeypatch.setattr(web.state.service, 'messages', old_page_then_finish)
         try:
-            rows = (await client.get(f'/api/sessions/{sid}')).json()['messages']
+            rows = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()['messages']
             row = next(row for row in rows if row['id'] == 'same-id')
             assert row['content'].startswith('new stream') and row['content'] != 'old saved answer'
         finally:
             release.set()
             await web.state.delivery.wait(second)
-        rows = (await client.get(f'/api/sessions/{sid}')).json()['messages']
+        rows = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()['messages']
         refreshed = next(row for row in rows if row['id'] == 'same-id')
         assert refreshed['content'] == 'new streaming answer' and refreshed['provisional'] is False
         assert len(model.seen) == 2
@@ -142,10 +142,10 @@ async def test_failed_partial_message_is_not_promoted_to_a_completed_saved_messa
             raise RuntimeError('private provider failure')
 
     async with web_client(monkeypatch, tmp_path, BrokenStream(replies=[])) as (client, web):
-        sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-        rid = (await client.post(f'/api/sessions/{sid}/runs', json=request('question'))).json()['run_id']
+        sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+        rid = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('question'))).json()['run_id']
         await web.state.delivery.wait(rid)
-        response = await client.get(f'/api/sessions/{sid}')
+        response = await client.get(f'/api/v1/scopes/chats/sessions/{sid}')
         assert response.status_code == 200
         view = response.json()
         row = next(row for row in view['messages'] if row['id'] == 'partial')
@@ -160,14 +160,14 @@ async def test_failed_partial_message_is_not_promoted_to_a_completed_saved_messa
 async def test_archive_fallback_requires_a_successful_settled_scope(monkeypatch, tmp_path, status, settled):
     model = StreamingToolModel(replies=[AIMessage(id='same-id', content='old saved answer')])
     async with web_client(monkeypatch, tmp_path, model) as (client, web):
-        sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-        rid = (await client.post(f'/api/sessions/{sid}/runs', json=request('question'))).json()['run_id']
+        sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+        rid = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('question'))).json()['run_id']
         await web.state.delivery.wait(rid)
         job = web.state.delivery.get(rid)
         job.status, job.done = status, settled
         job.projection.seed(sid, [{'id': 'same-id', 'type': 'ai', 'content': 'new partial',
             'provisional': True, 'state': 'unconfirmed', 'run_id': rid}])
-        response = await client.get(f'/api/sessions/{sid}')
+        response = await client.get(f'/api/v1/scopes/chats/sessions/{sid}')
         row = response.json()['messages'][-1]
         assert row['content'] == 'new partial' and row['provisional'] is True and row['state'] == 'unconfirmed'
         assert response.json()['live']['status'] == status and response.json()['live']['done'] is settled
@@ -181,15 +181,15 @@ async def test_stopped_stream_keeps_partial_output_unconfirmed(monkeypatch, tmp_
     model = StreamingToolModel(replies=[AIMessage(id='partial', content='received partial response')],
         token_entered=entered, token_release=release)
     async with web_client(monkeypatch, tmp_path, model) as (client, web):
-        sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-        rid = (await client.post(f'/api/sessions/{sid}/runs', json=request('question'))).json()['run_id']
+        sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+        rid = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('question'))).json()['run_id']
         try:
             await asyncio.wait_for(entered.wait(), 5)
-            stopped = await client.post(f'/api/runs/{rid}/controls', json={
+            stopped = await client.post(f'/api/v1/scopes/chats/runs/{rid}/controls', json={
                 'request_id': request('')['request_id'], 'kind': 'stop'})
             assert stopped.status_code == 202
             await asyncio.wait_for(web.state.delivery.wait(rid), 5)
-            view = (await client.get(f'/api/sessions/{sid}')).json()
+            view = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
             row = next(row for row in view['messages'] if row['id'] == 'partial')
             assert view['live']['status'] == 'stopped' and view['live']['done']
             assert row['content'].startswith('received') and row['provisional'] is True and row['state'] == 'unconfirmed'
@@ -217,18 +217,18 @@ async def test_oversized_child_reply_is_complete_while_parent_runs_and_after_arc
     model.on_request = wait_at_parent
     settings = AppSettings(subagents=(role(tool_names=('read',), model_id=None),))
     async with web_client(monkeypatch, tmp_path, model, workspace_root=tmp_path, runtime_settings=settings) as (client, web):
-        sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
-        rid = (await client.post(f'/api/sessions/{sid}/runs', json=request('inspect'))).json()['run_id']
+        sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
+        rid = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=request('inspect'))).json()['run_id']
         try:
             await asyncio.wait_for(entered.wait(), 10)
-            record, = (await client.get(f'/api/sessions/{sid}/subagents')).json()
-            endpoint = f'/api/sessions/{sid}/subagents/{record["agent_id"]}'
+            record, = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}/subagents')).json()
+            endpoint = f'/api/v1/scopes/chats/sessions/{sid}/subagents/{record["agent_id"]}'
             response = await client.get(endpoint)
             assert response.status_code == 200 and len(response.content) <= web.state.delivery.settings.max_frame_bytes
             row = response.json()['messages'][-1]
             assert row['id'] == 'large-child' and row['provisional'] is False and row['content_truncated']
             assert not web.state.delivery.get(rid).done
-            root = (await client.get(f'/api/sessions/{sid}')).json()
+            root = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
             assert all(item['id'] != 'large-child' for item in root['messages'])
         finally:
             release.set()
@@ -241,7 +241,7 @@ async def test_oversized_child_reply_is_complete_while_parent_runs_and_after_arc
         assert row['content'].startswith('child-only') and row['content_truncated']
         pieces, offset = [], 0
         while True:
-            detail = await client.get(f'/api/sessions/{sid}/messages/{row["sequence"]}/content', params={
+            detail = await client.get(f'/api/v1/scopes/chats/sessions/{sid}/messages/{row["sequence"]}/content', params={
                 'agent_id': record['agent_id'], 'revision': row['revision'], 'offset': offset})
             assert detail.status_code == 200
             data = detail.json()

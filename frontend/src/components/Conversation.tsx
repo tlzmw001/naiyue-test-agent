@@ -1,3 +1,4 @@
+import MessageImages, { type ImageLoader } from './MessageImages';
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -27,7 +28,8 @@ const MessageMarkdown = memo(function MessageMarkdown({ content, prefix }: { con
     remarkRehypeOptions={{ clobberPrefix: prefix }} components={markdownComponents}>{content}</ReactMarkdown>;
 });
 
-export default function Conversation({ messages: sourceMessages, compacted, toolStates = {}, agents = {}, stopAgent, openAgent, stoppingRunId, recovery, recovering = false, onRecover, history, loadChange, loadReasoning, loadContent, contentScope = '', regenerate, lastReplyId, canRegenerate, scrollAfterSend = false, lastSubmission }: {
+export default function Conversation({ messages: sourceMessages, compacted, toolStates = {}, agents = {}, stopAgent, openAgent, stoppingRunId, recovery, recovering = false, onRecover, history, loadChange, loadReasoning, loadContent, contentScope = '', regenerate, lastReplyId, canRegenerate, scrollAfterSend = false, lastSubmission, loadImage }: {
+  loadImage?: ImageLoader;
   scrollAfterSend?: boolean; lastSubmission?: { session_id: string } | null;
   regenerate?: () => void; lastReplyId?: string | null; canRegenerate?: boolean;
   loadChange?: ChangeLoader; loadReasoning?: ReasoningLoader; loadContent?: ContentLoader; contentScope?: string;
@@ -200,6 +202,7 @@ export default function Conversation({ messages: sourceMessages, compacted, tool
           {row.type === 'ai' && groups.get(row.reply_id ?? row.id)?.[0].id === row.id && <hr className={styles.replyDivider} />}
           {(row.type === 'tool' || row.provisional) && <div className={styles.speaker}>{row.type === 'tool' && '工具结果'}{row.provisional && <span>{row.state === 'unconfirmed' ? '未完成内容' : '正在生成'}</span>}</div>}
           {row.reasoning && <ReasoningContent row={row} loadReasoning={loadReasoning} />}
+          {row.images?.length && loadImage ? <MessageImages messageId={row.id} images={row.images} load={loadImage} /> : null}
           <div className={styles.messageBody} data-message-id={row.type === 'tool' ? row.id : undefined}>
             {row.type === 'tool' || (row.provisional && row.type !== 'ai') ? <div className={styles.draftText}>{row.content}</div> :
               <MessageMarkdown content={row.content} prefix={`${markdownId}-${encodeURIComponent(row.id)}-`} />}

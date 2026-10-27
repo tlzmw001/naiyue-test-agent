@@ -1,3 +1,4 @@
+from terminal_protocol_stubs import protocol_stub
 """Observation commands read bounded saved facts without running the Agent."""
 
 import asyncio
@@ -30,10 +31,10 @@ def summary(rid='r', *, capture='partial'):
 
 
 def test_usage_command_preserves_big_duration_unknown_counts_groups_and_cursor():
-    from naiyue_test_agent.application.cli_observation import handle_observation_command
+    from naiyue_test_agent.cli.cli_observation import handle_observation_command
     lines, calls = [], []
-    app = SimpleNamespace(get_model_usage=lambda sid, **q: calls.append((sid, q)) or usage())
-    handle_observation_command(app, 's', ':usage --after-model A', lines.append, persistent=True)
+    app = protocol_stub(observability=SimpleNamespace(usage=lambda sid, **q: calls.append((sid, q)) or usage()))
+    handle_observation_command(app, 's', ':usage --after-model A', lines.append)
     out = '\n'.join(lines)
     assert calls == [('s', {'after_model': 'A'})]
     assert '9007199254740993.001 秒' in out and '另有 1 次未提供' in out
@@ -44,12 +45,11 @@ def test_usage_command_preserves_big_duration_unknown_counts_groups_and_cursor()
 
 @pytest.mark.parametrize('capture', ['complete', 'partial', 'unavailable'])
 def test_diagnostic_list_retains_status_zero_and_unknown_http(capture):
-    from naiyue_test_agent.application.cli_observation import handle_observation_command
+    from naiyue_test_agent.cli.cli_observation import handle_observation_command
     lines, calls = [], []
     item = summary(capture=capture)
-    app = SimpleNamespace(list_diagnostic_runs=lambda sid, **q: calls.append((sid, q)) or
-                          {'session_id': sid, 'runs': [item], 'next_before': 7})
-    handle_observation_command(app, 's', ':diagnostics --before 9', lines.append, persistent=True)
+    app = protocol_stub(observability=SimpleNamespace(runs=lambda sid, **q: calls.append((sid, q)) or {'session_id': sid, 'runs': [item], 'next_before': 7}))
+    handle_observation_command(app, 's', ':diagnostics --before 9', lines.append)
     out = '\n'.join(lines)
     assert calls == [('s', {'before': 9})]
     assert 'r' in out and '失败' in out and '0 毫秒' in out and ':diagnostics --before 7' in out
@@ -62,7 +62,7 @@ def test_diagnostic_list_retains_status_zero_and_unknown_http(capture):
 
 
 def test_detail_shows_headers_and_model_failure_independently_with_child_identity():
-    from naiyue_test_agent.application.cli_observation import handle_observation_command
+    from naiyue_test_agent.cli.cli_observation import handle_observation_command
     lines, calls = [], []
     child = {'agent_path': 'root/tester/id', 'agent_id': 'id', 'agent_run_id': 'child-run'}
     events = [{'session_id': 's', 'run_id': 'r', 'sequence': 2, 'event_type': 'model_http_attempt_finished', 'source': child,
@@ -71,10 +71,8 @@ def test_detail_shows_headers_and_model_failure_independently_with_child_identit
               {'session_id': 's', 'run_id': 'r', 'sequence': 3, 'event_type': 'model_call_finished', 'source': child,
                'data': {'invocation_id': 'i', 'status': 'failed', 'duration_ms': None,
                         'body': 'PRIVATE_BODY', 'tool_name': '\x1b[31m\nforged'}}]
-    app = SimpleNamespace(get_diagnostic_events=lambda sid, rid, **q: calls.append((sid, rid, q)) or
-                          {'session_id': sid, 'run_id': rid, 'summary': summary(),
-                           'events': events, 'next_after': 3})
-    handle_observation_command(app, 's', ':diagnostics r --after 1', lines.append, persistent=True)
+    app = protocol_stub(observability=SimpleNamespace(events=lambda sid, rid, **q: calls.append((sid, rid, q)) or {'session_id': sid, 'run_id': rid, 'summary': summary(), 'events': events, 'next_after': 3}))
+    handle_observation_command(app, 's', ':diagnostics r --after 1', lines.append)
     out = '\n'.join(lines)
     assert calls == [('s', 'r', {'after': 1})]
     assert '200' in out and '失败' in out and '0 毫秒' in out and '未提供' in out
@@ -88,23 +86,34 @@ def test_detail_shows_headers_and_model_failure_independently_with_child_identit
     ':diagnostics --after 1', ':diagnostics r --after -1', ':diagnostics r --after 1 --after 2',
     ':diagnostics a b', ':diagnostics "unterminated'])
 def test_invalid_command_does_not_query_or_exit(line):
-    from naiyue_test_agent.application.cli_observation import handle_observation_command
+    from naiyue_test_agent.cli.cli_observation import handle_observation_command
     lines = []
-    handle_observation_command(SimpleNamespace(), 's', line, lines.append, persistent=True)
+    handle_observation_command(SimpleNamespace(), 's', line, lines.append)
     assert '用法' in '\n'.join(lines)
 
 
 @pytest.mark.parametrize('line', [':usage', ':diagnostics', ':diagnostics r'])
-def test_no_session_reports_unavailable_without_creating_memory_statistics(line):
-    from naiyue_test_agent.application.cli_observation import handle_observation_command
-    lines = []
-    handle_observation_command(SimpleNamespace(), 's', line, lines.append, persistent=False)
-    assert '持久化' in '\n'.join(lines)
+def test_empty_records_are_reported_without_inventing_statistics(line):
+    from naiyue_test_agent.cli.cli_observation import handle_observation_command
+    lines, calls = [], []
+    empty_usage = {**usage(), 'recorded_calls': 0}
+    def read(value):
+        def query(*args, **kwargs):
+            calls.append((args, kwargs))
+            return value
+        return query
+    app = protocol_stub(observability=SimpleNamespace(usage=read(empty_usage), runs=read({'session_id': 's', 'runs': [], 'next_before': None}), events=read({'session_id': 's', 'run_id': 'r', 'summary': summary(), 'events': [], 'next_after': None})))
+    handle_observation_command(app, 's', line, lines.append)
+    assert len(calls) == 1
+    expected = {':usage': '暂无已保存的调用用量记录', ':diagnostics': '暂无已保留的运行诊断',
+                ':diagnostics r': '暂无本页事件'}
+    assert expected[line] in '\n'.join(lines)
+    assert '查询不可用' not in '\n'.join(lines)
 
 
 @pytest.mark.parametrize('foreign', ['session', 'run', 'event'])
 def test_foreign_result_is_not_displayed(foreign):
-    from naiyue_test_agent.application.cli_observation import handle_observation_command
+    from naiyue_test_agent.cli.cli_observation import handle_observation_command
     value = {'session_id': 's', 'run_id': 'r', 'summary': summary(), 'events': [], 'next_after': None}
     if foreign == 'event':
         value['events'] = [{'session_id': 'other', 'run_id': 'r', 'sequence': 1,
@@ -112,39 +121,42 @@ def test_foreign_result_is_not_displayed(foreign):
     else:
         value['session_id' if foreign == 'session' else 'run_id'] = 'PRIVATE_FOREIGN'
     lines = []
-    app = SimpleNamespace(get_diagnostic_events=lambda *a, **q: value)
-    handle_observation_command(app, 's', ':diagnostics r', lines.append, persistent=True)
+    app = protocol_stub(observability=SimpleNamespace(events=lambda *a, **q: value))
+    handle_observation_command(app, 's', ':diagnostics r', lines.append)
     assert '读取失败' in '\n'.join(lines) and 'PRIVATE_FOREIGN' not in '\n'.join(lines)
 
 
 def test_query_failure_is_safe_and_original_exception_is_not_printed(caplog):
-    from naiyue_test_agent.application.cli_observation import handle_observation_command
+    from naiyue_test_agent.cli.cli_observation import handle_observation_command
     def fail(*a, **q): raise OSError('PRIVATE_SQL_BODY')
     lines = []
-    handle_observation_command(SimpleNamespace(get_model_usage=fail), 's', ':usage', lines.append, persistent=True)
+    handle_observation_command(protocol_stub(observability=SimpleNamespace(usage=fail)), 's', ':usage', lines.append)
     assert '读取失败' in '\n'.join(lines)
     assert 'PRIVATE_SQL_BODY' not in '\n'.join(lines) + caplog.text
     assert 'cli_observation_read_failed' in caplog.text
 
 
-def test_async_bridge_delegates_reads_on_its_existing_loop(monkeypatch):
-    from naiyue_test_agent.application.cli_async import AsyncCliApplication
-    bridge = object.__new__(AsyncCliApplication)
+def test_observation_api_preserves_repository_query_boundaries(monkeypatch):
     calls = []
     async def read(*args, **kwargs):
         calls.append((args, kwargs)); return 'saved'
-    bridge._app = SimpleNamespace(aget_model_usage=read, alist_diagnostic_runs=read, aget_diagnostic_events=read)
-    bridge._submit = lambda call: asyncio.run(call())
-    assert bridge.get_model_usage('s', after_model='A') == 'saved'
-    assert bridge.list_diagnostic_runs('s', before=9) == 'saved'
-    assert bridge.get_diagnostic_events('s', 'r', after=4) == 'saved'
+    from contextlib import nullcontext
+    from naiyue_test_agent.application.observability.api import ObservationAPI
+    api = ObservationAPI(
+        SimpleNamespace(operation=nullcontext), None,
+        SimpleNamespace(read_model_usage=lambda *a, **q: calls.append((a, q)) or 'saved'),
+        SimpleNamespace(read_diagnostic_runs=lambda *a, **q: calls.append((a, q)) or 'saved',
+                        read_diagnostic_events=lambda *a, **q: calls.append((a, q)) or 'saved'), None, None)
+    assert asyncio.run(api.usage('s', after_model='A')) == 'saved'
+    assert asyncio.run(api.runs('s', before=9)) == 'saved'
+    assert asyncio.run(api.events('s', 'r', after=4)) == 'saved'
     assert calls == [(('s',), {'model_limit': 20, 'after_model': 'A'}),
         (('s',), {'limit': 50, 'before': 9}), (('s', 'r'), {'limit': 50, 'after': 4})]
 
 
 def test_chat_dispatches_queries_without_model_calls(monkeypatch, tmp_path, capsys):
     from naiyue_test_agent import application
-    from naiyue_test_agent.application import cli
+    from naiyue_test_agent.cli import chat as cli
     from naiyue_test_agent.model_access import ModelCatalog
     from test_application_cli import RecordingFake, feed
     from langchain_core.messages import AIMessage
@@ -159,11 +171,11 @@ def test_chat_dispatches_queries_without_model_calls(monkeypatch, tmp_path, caps
 
 
 def test_event_identity_is_not_translated_as_a_status():
-    from naiyue_test_agent.application.cli_observation import handle_observation_command
+    from naiyue_test_agent.cli.cli_observation import handle_observation_command
     lines = []
     value = {'session_id': 's', 'run_id': 'r', 'summary': summary(), 'next_after': None,
         'events': [{'session_id': 's', 'run_id': 'r', 'sequence': 1, 'source': None,
             'event_type': 'model_call_started', 'data': {'model_id': 'failed', 'invocation_id': 'summary'}}]}
-    handle_observation_command(SimpleNamespace(get_diagnostic_events=lambda *a, **q: value), 's',
-                               ':diagnostics r', lines.append, persistent=True)
+    handle_observation_command(protocol_stub(observability=SimpleNamespace(events=lambda *a, **q: value)), 's',
+                               ':diagnostics r', lines.append)
     assert '模型 failed' in '\n'.join(lines) and '模型执行 summary' in '\n'.join(lines)

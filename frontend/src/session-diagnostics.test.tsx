@@ -194,8 +194,8 @@ it('encodes diagnostic identities and cursors and forwards authentication and ca
   const controller = new AbortController();
   await api.diagnosticRuns('session/id', 7, controller.signal);
   await api.diagnosticEvents('session/id', 'run/id', 9, controller.signal);
-  expect(fetcher.mock.calls[0][0]).toBe('/api/sessions/session%2Fid/diagnostics?before=7');
-  expect(fetcher.mock.calls[1][0]).toBe('/api/sessions/session%2Fid/diagnostics/run%2Fid?after=9');
+  expect(fetcher.mock.calls[0][0]).toBe('/api/v1/scopes/chats/sessions/session%2Fid/diagnostics?before=7');
+  expect(fetcher.mock.calls[1][0]).toBe('/api/v1/scopes/chats/sessions/session%2Fid/diagnostics/run%2Fid?after=9');
   for (const [, init] of fetcher.mock.calls) {
     expect(init.signal).toBe(controller.signal);
     expect(init.headers.Authorization).toBe('Bearer test');

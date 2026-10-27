@@ -56,13 +56,13 @@ def _tool_schema_summary(tools) -> tuple[str, int | None, str | None]:
 
 def _prepare_observation(request):
     """Build per-call diagnostic data; never retain it on the shared middleware."""
-    context = request.runtime.context or {}
+    context = request.runtime.context
     messages = request.messages
     schema_status, schema_bytes, schema_hash = _tool_schema_summary(request.tools)
     payload = {
         'event': 'model_request_context',
-        'session_id': context.get('session_id'),
-        'run_id': context.get('run_id'),
+        'session_id': context.scope.identity.session_id,
+        'run_id': context.scope.identity.run_id,
         'message_count': len(messages),
         'message_types': dict(Counter(message.type for message in messages)),
         'system_text_chars': (_text_chars(request.system_message.content)
@@ -94,8 +94,8 @@ def _prepare_observation(request):
             budget = {
                 'event': 'model_context_budget',
                 'model_id': limits.get('model_id'),
-                'session_id': context.get('session_id'),
-                'run_id': context.get('run_id'),
+                'session_id': context.scope.identity.session_id,
+                'run_id': context.scope.identity.run_id,
                 'context_window_tokens': window,
                 'max_output_tokens': output,
                 'input_budget_tokens': max(0, window - output),
@@ -111,8 +111,8 @@ def _prepare_observation(request):
                 preflight = {
                     'event': 'model_context_preflight',
                     'model_id': limits.get('model_id'),
-                    'session_id': context.get('session_id'),
-                    'run_id': context.get('run_id'),
+                    'session_id': context.scope.identity.session_id,
+                    'run_id': context.scope.identity.run_id,
                     'context_window_tokens': window,
                     'context_window_source': limits.get('context_window_source'),
                     'max_output_tokens': output,
@@ -170,9 +170,9 @@ class _ModelRequestObservationMiddleware(AgentMiddleware):
     async def awrap_model_call(self, request: ModelRequest, handler):
         payload, budget = _prepare_observation(request)
         snapshot = None
-        context = request.runtime.context or {}
+        context = request.runtime.context
         try:
-            if context.get('_naiyue_model_call_id'):
+            if (context.invocation.model_call.call_id if context.invocation.model_call is not None else None):
                 snapshot = request_snapshot(context, estimate_context(
                     request.model, request.system_message, request.messages, request.tools))
                 _publish_snapshot(context, snapshot)
@@ -196,5 +196,5 @@ observe_model_request = _ModelRequestObservationMiddleware()
 
 
 def _publish_snapshot(context, snapshot):
-    emit_event(context.get('_run_event_publisher'), 'model_context_snapshot', lambda: ModelContextSnapshotData(
+    emit_event(context.scope.observation.publisher, 'model_context_snapshot', lambda: ModelContextSnapshotData(
         snapshot['model_call_id'], json.dumps(snapshot, ensure_ascii=False, allow_nan=False)))

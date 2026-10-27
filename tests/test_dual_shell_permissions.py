@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 def test_both_shells_wait_for_whole_batch_and_keep_original_names(monkeypatch, tmp_path):
     async def scenario():
         from naiyue_test_agent.tools import create_session_bash_tool, create_session_powershell_tool
-        from naiyue_test_agent.tools.powershell import PowerShellAdapter
+        from naiyue_test_agent.execution.host_shell import PowerShellAdapter
         from naiyue_test_agent.tools.processes import HostProcessRunner, ProcessOutcome
         from test_async_application import StreamingToolModel, make_app
         seen = []
@@ -27,14 +27,14 @@ def test_both_shells_wait_for_whole_batch_and_keep_original_names(monkeypatch, t
             {'name': 'powershell', 'id': 'ps-call', 'args': {'command': 'Write-Output ok'}},
         ]), AIMessage(content='done')])
         app = await make_app(monkeypatch, model, specs)
-        sid = await app.acreate_workspace_session('A', tmp_path)
+        sid = await app.host.sessions.create_workspace('A', tmp_path)
         events = []
-        app.subscribe_events(events.append)
+        app.host.observability.subscribe(events.append)
         try:
-            pending = await app.arun(sid, [('user', 'run both')])
+            pending = await app.host.runs.start(sid, [('user', 'run both')])
             assert [r['tool_name'] for r in pending['approval_requests']] == ['bash', 'powershell']
             assert seen == []
-            result = await app.aresume_tool_approval(sid, ['approve', 'approve'])
+            result = await app.host.runs.resume_approval(sid, ['approve', 'approve'])
             messages = [m for m in result['messages'] if isinstance(m, ToolMessage)]
             assert [(m.name, m.tool_call_id, m.status) for m in messages] == [
                 ('bash', 'bash-call', 'success'), ('powershell', 'ps-call', 'success')]
@@ -58,7 +58,7 @@ def test_bash_exact_allow_does_not_authorize_powershell_or_suffix(monkeypatch, t
 
 
 def test_cli_powershell_approval_displays_workspace_and_escaped_command():
-    from naiyue_test_agent.application.cli_approval import show_approval_batches
+    from naiyue_test_agent.cli.cli_approval import show_approval_batches
     lines = []
     show_approval_batches([{'approval_batch_id': 'batch', 'agent_path': 'root', 'items': [{
         'tool_name': 'powershell', 'target': 'Write-Output "中"\n\x1b[31m',

@@ -1,5 +1,6 @@
 """Permission composition covers target aliases, batching and internal grants."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from native_application_helpers import async_test
 
 from dataclasses import replace
@@ -42,11 +43,11 @@ async def test_file_and_directory_aliases_use_real_target_without_replacing_link
     spec = next(s for s in create_builtin_tools(AppSettings().tools) if s.tool.name == tool_name)
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[{'name': tool_name, 'args': args, 'id': 'op'}]), AIMessage(content='done')])
     app = await build(monkeypatch, model, [spec])
-    sid = await app.acreate_workspace_session('A', root)
-    paused = await app.arun(sid, [('user', 'operate on the alias')])
+    sid = await app.host.sessions.create_workspace('A', root)
+    paused = await app.host.runs.start(sid, [('user', 'operate on the alias')])
     assert paused['approval_requests'][0]['target'] == str(target)
     assert target.read_text() == 'before' and link.is_symlink()
-    result = await app.aresume_tool_approval(sid, ['approve'])
+    result = await app.host.runs.resume_approval(sid, ['approve'])
     assert outputs(result)['op'].status == 'success'
     assert target.read_text() == ('before' if tool_name == 'read' else 'after')
     assert link.is_symlink()
@@ -68,11 +69,11 @@ async def test_directory_permission_filters_deny_and_keeps_content_checks(monkey
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[
         {'name': name, 'args': {**args, 'path': str(directory)}, 'id': 'search'}]), AIMessage(content='done')])
     app = await build(monkeypatch, model, [spec], **options)
-    sid = await app.acreate_workspace_session('A', root)
-    result = await app.arun(sid, [('user', 'search the directory')])
+    sid = await app.host.sessions.create_workspace('A', root)
+    result = await app.host.runs.start(sid, [('user', 'search the directory')])
     if not explicit_allow:
         assert result['approval_requests'] and not outputs(result)
-        result = await app.aresume_tool_approval(sid, ['approve'])
+        result = await app.host.runs.resume_approval(sid, ['approve'])
     else:
         assert not result.get('approval_requests')
     message = outputs(result)['search']
@@ -94,11 +95,11 @@ async def test_schema_error_waits_for_batch_approval_without_reading_first(monke
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[
         call('unused', 'invalid', offset=0), call(outside, 'valid')]), AIMessage(content='done')])
     app = await build(monkeypatch, model)
-    sid = await app.acreate_workspace_session('A', tmp_path)
-    paused = await app.arun(sid, [('user', 'read')])
+    sid = await app.host.sessions.create_workspace('A', tmp_path)
+    paused = await app.host.runs.start(sid, [('user', 'read')])
     assert [item['tool_call_id'] for item in paused['approval_requests']] == ['valid']
     assert not outputs(paused)
-    result = await app.aresume_tool_approval(sid, ['approve'])
+    result = await app.host.runs.resume_approval(sid, ['approve'])
     assert outputs(result)['invalid'].status == 'error'
     assert 'Invalid read arguments' in outputs(result)['invalid'].content
     assert 'runtime' not in outputs(result)['invalid'].content
@@ -110,10 +111,10 @@ async def test_custom_tool_without_declaration_requires_review(monkeypatch):
     spec = replace(definition(), permissions=ToolPermission())
     model = DynamicModel(responses=[AIMessage(content='', tool_calls=[{'name': 'probe', 'args': {'value': 'v'}, 'id': 'c'}]), AIMessage(content='done')])
     app = await build(monkeypatch, model, [spec])
-    sid = await app.acreate_session('A')
-    paused = await app.arun(sid, [('user', 'run')])
+    sid = await app.host.sessions.create('A')
+    paused = await app.host.runs.start(sid, [('user', 'run')])
     assert paused['approval_requests'] and not outputs(paused)
-    result = await app.aresume_tool_approval(sid, ['approve'])
+    result = await app.host.runs.resume_approval(sid, ['approve'])
     assert outputs(result)['c'].content == 'v'
 
 
@@ -124,7 +125,7 @@ async def test_modes_cannot_override_explicit_deny(monkeypatch, tmp_path, mode):
     path.write_text('PRIVATE_DENIED')
     app = await build(monkeypatch, DynamicModel(responses=[AIMessage(content='', tool_calls=[call(path)]), AIMessage(content='done')]),
         mode=mode, deny=[{'tool': 'read', 'path': str(path)}], allow=[{'tool': 'read', 'path': str(tmp_path) + '/**'}])
-    result = await app.arun(await app.acreate_workspace_session('A', tmp_path), [('user', 'read')])
+    result = await app.host.runs.start(await app.host.sessions.create_workspace('A', tmp_path), [('user', 'read')])
     assert outputs(result)['c1'].status == 'error'
     assert 'PRIVATE_DENIED' not in outputs(result)['c1'].content
     assert not result.get('approval_requests')
@@ -133,8 +134,8 @@ async def test_modes_cannot_override_explicit_deny(monkeypatch, tmp_path, mode):
 def test_one_use_grant_checks_full_binding_and_cannot_be_replayed():
     from naiyue_test_agent.tools.permissions import permission_binding
     call_data = {'id': 'c', 'name': 'read', 'args': {'path': 'a'}, 'subject': {'operation': 'read'}}
-    context = {'session_id': 's', 'agent_path': 'root'}
-    binding = permission_binding(context, 'batch', call_data)
+    context = typed_context(identity=RunIdentity(session_id='s', agent_path='root'))
+    binding = permission_binding(context.scope.identity, 'batch', call_data)
     grants = OneUseApprovalGrants({'c': binding})
     for key, value in [('session_id', 'other'), ('agent_path', 'child'), ('batch_id', 'other'),
                        ('args', {'path': 'b'}), ('subject', {'operation': 'write'})]:
@@ -155,7 +156,7 @@ def test_selected_hidden_workspace_is_valid_but_target_policy_remains_conservati
     root.mkdir()
     assert resolve_workspace_root(root) == root.resolve()
     permission = FilePermission()
-    normal = permission.prepare({'path': 'notes.txt'}, {'workspace_root': root})
-    hidden = permission.prepare({'path': '.secret'}, {'workspace_root': root})
+    normal = permission.prepare({'path': 'notes.txt'}, typed_context(identity=RunIdentity(execution_root=ExecutionRoot(root) if root is not None else None, session_id=None)))
+    hidden = permission.prepare({'path': '.secret'}, typed_context(identity=RunIdentity(execution_root=ExecutionRoot(root) if root is not None else None, session_id=None)))
     assert permission.default_decision(normal) == 'allow'
     assert permission.default_decision(hidden) == 'ask'

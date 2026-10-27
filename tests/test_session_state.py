@@ -9,9 +9,9 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 
 from native_application_helpers import async_test
 from naiyue_test_agent.application import SessionService
-from naiyue_test_agent.application.agent_session import AgentSession
-from naiyue_test_agent.application.session_state import ActiveRun, SessionState
-from naiyue_test_agent.application.errors import SessionPersistenceError
+from naiyue_test_agent.application.sessions.agent_session import AgentSession
+from naiyue_test_agent.application.sessions.session_state import ActiveRun, SessionState
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
 
 
@@ -32,9 +32,12 @@ def test_new_and_restored_states_use_one_dataclass_and_isolate_mutable_defaults(
     sessions.install_restored_session('saved', **restored_config())
     first, second = sessions._sessions[fresh], sessions._sessions['saved']
     assert isinstance(first, AgentSession) and type(first) is type(second)
-    first_state, second_state = (SessionState(**restored_config()) for _ in range(2))
+    configuration = restored_config()
+    configuration.pop('workspace_root')
+    first_state, second_state = (SessionState(**configuration, execution_root=None) for _ in range(2))
     assert is_dataclass(first_state) and type(first_state) is type(second_state)
-    assert len(fields(first_state)) == 11
+    assert len(fields(first_state)) == 15
+    assert first_state.last_execution_path is None
     assert not hasattr(first_state, '__getitem__')
     for name in ('session_allow',):
         left, right = getattr(first_state, name), getattr(second_state, name)
@@ -54,13 +57,14 @@ def test_new_and_restored_states_use_one_dataclass_and_isolate_mutable_defaults(
 def test_purpose_snapshots_are_bounded_and_do_not_expose_live_state():
     sessions = service()
     sid = sessions.create_session('A')
-    finish = sessions._sessions[sid].snapshot_for_finish()
-    assert finish == {'thread_id': sessions.require(sid).get_thread_id(), 'manual_review_required': False}
+    finish = sessions._sessions[sid].lifecycle.snapshot_for_finish()
+    assert finish == {'thread_id': sessions.require(sid).get_thread_id(), 'manual_review_required': False, 'workspace_root': None}
     finish['manual_review_required'] = True
     assert sessions.require(sid).describe_session()['manual_review_required'] is False
     view = sessions.require(sid).snapshot_for_context()
     assert set(view) == {'thread_id', 'model_id', 'workspace_root', 'active_tool_names',
-                         'busy', 'pending_approval', 'manual_review_required'}
+                         'busy', 'pending_approval', 'manual_review_required', 'project_id', 'execution_root', 'last_execution_path', 'execution_binding','execution_setup'}
+    assert view['last_execution_path'] is None
     assert isinstance(view['active_tool_names'], tuple)
     assert sessions.context_snapshot_is_current(sid, view)
     view['model_id'] = 'outside-mutation'
@@ -81,8 +85,8 @@ def test_context_snapshot_is_invalidated_by_selection_busy_pending_and_removal()
     owner, observation_run = sessions._admit(sid, 'context-run', 'message')
     run_id, observation = observation_run.run_id, observation_run.observation
     assert not sessions.context_snapshot_is_current(sid, current)
-    owner.replace_pending_approval(observation_run, {'batch_id': 'batch'})
-    owner._cleanup_run(observation_run)
+    owner.approvals.replace_pending_approval(observation_run, {'batch_id': 'batch'})
+    owner.lifecycle._cleanup_run(observation_run)
     assert not sessions.context_snapshot_is_current(sid, current)
     sessions.remove_session(sid)
     assert not sessions.context_snapshot_is_current(sid, current)
@@ -94,7 +98,7 @@ def test_restored_pending_is_detached_and_duplicate_install_does_not_replace_sta
     sessions.install_restored_session('saved', **restored_config(), pending=pending)
     assert sessions.require('saved').approval_seed_identity() == ('saved-thread', 'b1')
     pending['items'][0]['args']['path'] = 'outside-mutation'
-    assert sessions._sessions['saved'].snapshot_for_run()['pending']['items'][0]['args']['path'] == 'original'
+    assert sessions._sessions['saved'].lifecycle.snapshot_for_run()['pending']['items'][0]['args']['path'] == 'original'
     existing = sessions._sessions['saved']
     with pytest.raises(SessionPersistenceError, match='session_already_loaded'):
         sessions.install_restored_session('saved', **restored_config())
@@ -116,11 +120,11 @@ def test_delete_guard_holds_only_the_admission_boundary_and_rejects_busy():
     with pytest.raises(SessionPersistenceError, match='session_recovery_blocked'):
         with sessions.deletion_guard(sid):
             pytest.fail('Busy session must not reserve deletion')
-    owner._cleanup_run(observation_run)
+    owner.lifecycle._cleanup_run(observation_run)
     other = sessions.create_session('A')
-    sessions._sessions[sid]._run.subagent_instances['root/child'] = {'child_thread_id': 'child-thread'}
+    sessions._sessions[sid]._runtime.run.subagent_instances['root/child'] = {'child_thread_id': 'child-thread'}
     sessions._admit(other, 'other-run', 'message')
-    sessions._sessions[other]._run.subagent_instances['root/child'] = {'child_thread_id': 'other-thread'}
+    sessions._sessions[other]._runtime.run.subagent_instances['root/child'] = {'child_thread_id': 'other-thread'}
     assert sessions.child_thread_ids(sid) == ('child-thread',)
     sessions.remove_session(sid)
     assert not sessions.has_session(sid)
@@ -133,24 +137,24 @@ async def test_real_persistent_restore_preserves_configuration_but_resets_transi
 
     database = tmp_path / 'sessions.sqlite'
     async with build(monkeypatch, database) as app:
-        sid = await app.acreate_session('A')
-        await app.arun(sid, [('user', 'save')])
-        await app.aset_permission_mode(sid, 'NoAsk')
-        thread = app._sessions.require(sid).get_thread_id()
+        sid = await app.host.sessions.create('A')
+        await app.host.runs.start(sid, [('user', 'save')])
+        await app.host.sessions.select_permission_mode(sid, 'NoAsk')
+        thread = app.host.sessions._sessions.require(sid).get_thread_id()
     async with build(monkeypatch, database) as app:
-        await app.arestore_session(sid)
-        state = app._sessions._sessions[sid]
+        await app.host.sessions.restore(sid)
+        state = app.host.sessions._sessions._sessions[sid]
         assert isinstance(state, AgentSession)
         assert state.get_thread_id() == thread and state.get_permission_mode() == 'NoAsk'
-        assert state.snapshot_for_run()['run_id'] is None and not state.is_busy()
-        assert state.resolve_permission_context()['session_allow'] == [] and state.resolve_prompt_parts() == []
-        assert app._sessions.drain_steering(sid) == [] and app._sessions.finish_run_boundary(sid) == (False, [])
-        assert [m.content for m in await app.aget_messages(sid)] == ['save', 'answer']
+        assert state.lifecycle.snapshot_for_run()['run_id'] is None and not state.is_busy()
+        assert state.resolve_permission_context()['session_allow'] == [] and state.lifecycle.resolve_prompt_parts() == []
+        assert app.host.sessions._sessions.drain_steering(sid) == [] and app.host.sessions._sessions.finish_run_boundary(sid) == (False, [])
+        assert [m.content for m in await app.host.history.messages(sid)] == ['save', 'answer']
 
 
 @pytest.mark.parametrize('filename', [
-    'async_application.py', 'async_persistent.py', 'session_context.py',
-    'session_persistence.py', 'session_recovery.py',
+    'service_application.py', 'projects/host_assembly.py', 'projects/host_manager.py', 'sessions/session_context.py',
+    'sessions/session_persistence.py', 'sessions/session_recovery.py',
 ])
 def test_state_consumers_do_not_pierce_service_state_or_lock(filename):
     path = Path(__file__).parents[1] / 'naiyue_test_agent' / 'application' / filename

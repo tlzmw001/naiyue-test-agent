@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { browserToken, WebApi } from './api';
+import type { ReactNode } from 'react';
+import type { ScopeSelection } from './projectTypes';
+import projectStyles from './components/ProjectNavigation.module.css';
+import { browserConnection, WebApi } from './api';
 import { useConversation } from './useConversation';
+import ExecutionSelector from './components/ExecutionSelector';
 import Sidebar from './components/Sidebar';
 import Conversation from './components/Conversation';
 import Composer from './components/Composer';
@@ -23,12 +27,24 @@ import ThemeMenu from './components/ThemeMenu';
 import { useSendScroll } from './useSendScroll';
 import styles from './App.module.css';
 
-export default function App({ api: supplied }: { api?: WebApi }) {
-  const api = useMemo(() => supplied ?? new WebApi(browserToken()), [supplied]);
-  const chat = useConversation(api);
+export default function App({ api: supplied, active = true, selection, scopeName, scopePath, navigation: projectNavigation, preferences, projectEntry }: {
+  api?: WebApi; active?: boolean; selection?: ScopeSelection; scopeName?: string; scopePath?: string;
+  navigation?: (current: ReactNode) => ReactNode;
+  preferences?: { theme: ReturnType<typeof useTheme>; sendScroll: ReturnType<typeof useSendScroll> };
+  projectEntry?: (path?: string | null) => ReactNode;
+}) {
+  const api = useMemo(() => supplied ?? (() => { const c = browserConnection(); return new WebApi(c.token, c.scopeId, c.instanceId); })(), [supplied]);
+  const chat = useConversation(api, active);
+  const appliedSelection = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!active || !selection?.sessionId || appliedSelection.current === selection.revision ||
+        chat.submitting || chat.changingControls || chat.changingModel || chat.selectingSession || chat.recovering || !chat.models.length) return;
+    appliedSelection.current = selection.revision;
+    void chat.selectSession(selection.sessionId);
+  }, [active, selection, chat]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<ActivityTab>('agents');
-  const background = useBackgroundTasks(api, sidebarOpen && sidebarTab === 'tasks');
+  const background = useBackgroundTasks(api, sidebarOpen && sidebarTab === 'tasks', active);
   const sidebarTrigger = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef<HTMLButtonElement | null>(null);
   const closeSidebar = () => { setSidebarOpen(false); returnFocus.current?.focus(); };
@@ -37,14 +53,15 @@ export default function App({ api: supplied }: { api?: WebApi }) {
     returnFocus.current = fromContext ? contextTrigger.current : sidebarTrigger.current;
     if (tab === 'tasks') background.dismissNotice();
   };
-  const agents = useSubagentList(api, chat.session?.session_id, chat.run);
-  const theme = useTheme();
-  const sendScroll = useSendScroll();
-  const context = useContextView(api, chat.session, chat.run);
+  const agents = useSubagentList(api, chat.session?.session_id, chat.run, active);
+  const localTheme = useTheme(!preferences), localSendScroll = useSendScroll();
+  const theme = preferences?.theme ?? localTheme, sendScroll = preferences?.sendScroll ?? localSendScroll;
+  const context = useContextView(api, chat.session, chat.run, active);
   const [modelMenu, setModelMenu] = useState(false);
   const closeModel = useCallback(() => setModelMenu(false), []);
   const contextTrigger = useRef<HTMLButtonElement>(null);
   const [navigation, setNavigation] = useState(false);
+  useEffect(() => { if (!active) { setNavigation(false); setModelMenu(false); } }, [active]);
   const [agentPanel, setAgentPanel] = useState<{ sessionId: string; agentId?: string; revision: number } | null>(null);
   const approvalArea = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -58,34 +75,39 @@ export default function App({ api: supplied }: { api?: WebApi }) {
   const busy = chat.run?.status === 'running' && !chat.run.done;
   const blocked = (!!busy && chat.run?.mode === 'compact') || (!busy && chat.session?.can_run === false) || chat.selectingSession || !chat.models.length || !!chat.run?.manual_review_required || !!chat.session?.manual_review_required || !!chat.session?.pending_approval;
   const controlsDisabled = chat.submitting || chat.changingControls || chat.changingModel || chat.selectingSession ||
-    chat.recovering || !!chat.session?.recovery || !chat.models.length;
+    chat.recovering || !!chat.session?.recovery || !chat.models.length || (!chat.session && chat.creation.locked);
   const openModels = () => { setSidebarOpen(false); setModelMenu(true); };
   const labels = { running: chat.stopping ? '正在停止' : '正在处理', completed: '本次运行完成', stopped: '已停止',
     interrupted: '等待审批', failed: '本次运行失败', unconfirmed: '执行结果未同步' };
 
   return <div className={styles.app}>
-    <Sidebar rows={chat.sessions} selected={chat.session?.session_id} open={navigation}
+    {active && <Sidebar rows={chat.sessions} selected={chat.session?.session_id} open={navigation}
+      navigation={projectNavigation} scopeName={scopeName} scopeId={api.scopeId}
+      currentSession={chat.session ?? undefined} currentRun={chat.run}
+      loading={chat.listing.loading} failure={chat.listing.failure}
+      retry={() => void chat.listing.refreshSessions().catch(() => console.warn('session_directory_retry_failed'))}
       disabled={chat.submitting || chat.changingControls || !chat.model} managing={chat.managingSessions}
       update={chat.updateSession} remove={chat.deleteSession} reorder={chat.reorderSessions}
       onNew={() => { void chat.newSession(); setNavigation(false); }}
-      onSelect={id => { void chat.selectSession(id); setNavigation(false); }} onClose={() => setNavigation(false)} />
+      onSelect={id => { void chat.selectSession(id); setNavigation(false); }} onClose={() => setNavigation(false)} />}
     <main className={styles.workspace}>
       <header className={styles.header}>
         <div className={styles.headerLeft}>
           <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="打开会话栏" onClick={() => setNavigation(true)}><Icon name="menu" /></button>
           <ModelMenu models={chat.models} model={chat.session?.recovery ? chat.session.model_id : chat.model}
-            level={chat.session?.thinking_level ?? 'model_default'} options={chat.thinkingOptions[chat.model]} disabled={controlsDisabled}
+            level={chat.session?.thinking_level ?? chat.creation.controls.thinking_level ?? 'model_default'} options={chat.thinkingOptions[chat.model]} disabled={controlsDisabled}
             open={modelMenu} toggle={() => modelMenu ? closeModel() : openModels()} close={closeModel}
             selectModel={value => void chat.selectModel(value)} selectThinking={value => void chat.selectThinking(value)} />
         </div>
-        <div className={styles.headerActions}><WorkspaceLabel api={api} session={chat.session} />
+        <div className={styles.headerActions}>
         <button ref={sidebarTrigger} className={styles.iconButton} aria-label="打开辅助侧栏" aria-expanded={sidebarOpen}
           aria-controls="activity-sidebar" title={`辅助侧栏 · 后台任务 ${background.activeCount ?? '状态未同步'}`}
           onClick={() => sidebarOpen ? closeSidebar() : openSidebar(sidebarTab)}>
           <Icon name="sidebar" />{(background.notice || (background.activeCount ?? 0) > 0) && <i className={styles.activityDot} />}</button>
         <ThemeMenu theme={theme.theme} select={theme.selectTheme} /></div>
       </header>
-      <Conversation regenerate={() => void chat.regenerate()} lastReplyId={chat.session?.last_reply_id}
+      {chat.messages.some(row => row.images?.length) && !chat.imageInputs.supports(chat.model) && <p className={styles.compactionNote} role="status">当前模型不会接收历史图片像素，已保存图片仍可查看。</p>}
+      <Conversation loadImage={(id, image, signal) => api.messageImage(chat.session!.session_id, id, image, chat.session?.conversation_revision ?? 0, signal)} regenerate={() => void chat.regenerate()} lastReplyId={chat.session?.last_reply_id}
         scrollAfterSend={sendScroll.preference === 'latest'}
         lastSubmission={chat.lastSubmission?.session_id === chat.session?.session_id ? chat.lastSubmission : null}
         canRegenerate={!!chat.session?.can_run && !chat.submitting && !chat.selectingSession}
@@ -102,6 +124,9 @@ export default function App({ api: supplied }: { api?: WebApi }) {
         recovering={chat.recovering} onRecover={action => void chat.recover(action)}
         stoppingRunId={chat.run?.status === 'running' && chat.run.stop_requested ? chat.run.run_id : undefined} />
       <div className={styles.feedback} aria-live="polite">
+        {chat.creation.preparing&&<span role="status">正在准备环境，消息仍保留…</span>}
+        {chat.session?.execution?.kind==='sandbox'&&chat.session.execution.state!=='ready'&&<span className={styles.error}>沙箱尚不可执行。请在执行位置菜单核对原环境；历史仍可查看。</span>}
+        {chat.session?.execution_root_error && <span className={styles.error}>执行目录不可用：{{ missing: '目录不存在', not_directory: '路径不是目录', not_registered: '执行副本未登记', wrong_project: '项目身份不匹配', unreadable: '无法访问或检查执行目录' }[chat.session.execution_root_error.reason]}。历史仍可查看。</span>}
         {background.notice && <button className={styles.syncButton} onClick={() => openSidebar('tasks')}>{background.notice}</button>}
         {chat.run && chat.run.status !== 'completed' && <span className={`${styles.runStatus} ${busy ? styles.running : ''}`}><i />{busy && chat.run.mode === 'compact' ? '正在压缩上下文' : labels[chat.run.status]}</span>}
         {!!chat.connection?.attempt && !chat.connection.failed && <span role="status">正在恢复连接（{chat.connection.attempt}/{runReconnectDelays.length}）</span>}
@@ -118,7 +143,14 @@ export default function App({ api: supplied }: { api?: WebApi }) {
           stop={() => void chat.stopApproval(batch)}
           submit={(decisions, remember) => chat.approve(batch, decisions, remember)} />)}
       </div>}
-      <Composer sendScroll={sendScroll} contextEntry={<ContextTrigger value={context.value} open={sidebarOpen && sidebarTab === 'context'}
+      <Composer retryImageSubmission={() => void chat.retryImageSubmission()} imageInputs={chat.imageInputs} imageSupported={chat.imageInputs.supports(chat.model)} sendScroll={sendScroll} draftControls={chat.creation.controls} workspaceEntry={<>
+        {projectEntry ? projectEntry(chat.session ? chat.session.workspace_root : scopePath) : scopeName ? <div className={projectStyles.scope} role="status" aria-label="当前项目"
+          title={chat.session?.workspace_root ?? scopePath}><strong>{scopeName}</strong></div> : <WorkspaceLabel api={api} session={chat.session} />}
+        {/^[0-9a-f-]{36}$/.test(api.scopeId)&&<ExecutionSelector api={api} session={chat.session}
+          disabled={chat.submitting||chat.selectingSession} running={!!busy} create={chat.newSession}
+          draft={chat.creation.draft} locked={!chat.session&&chat.creation.locked}
+          refresh={async()=>{if(chat.session)await chat.selectSession(chat.session.session_id);}} />}
+      </>} contextEntry={<ContextTrigger value={context.value} open={sidebarOpen && sidebarTab === 'context'}
         disabled={!chat.session || chat.selectingSession} triggerRef={contextTrigger}
         toggle={() => sidebarOpen && sidebarTab === 'context' ? closeSidebar() : openSidebar('context', true)} />} text={chat.draft} pending={chat.pending} pendingMode={chat.pendingMode} busy={!!busy}
         stopping={chat.stopping} sending={chat.submitting || chat.changingControls || chat.changingModel} blocked={blocked} setText={chat.setDraft}
@@ -129,7 +161,7 @@ export default function App({ api: supplied }: { api?: WebApi }) {
         openAgents={() => openAgent()}
         selectTools={names => void chat.selectTools(names)} controlsDisabled={controlsDisabled} />
     </main>
-    {sidebarOpen && <ActivitySidebar tab={sidebarTab} select={tab => { setSidebarTab(tab); if (tab === 'tasks') background.dismissNotice(); }}
+    {active && sidebarOpen && <ActivitySidebar tab={sidebarTab} select={tab => { setSidebarTab(tab); if (tab === 'tasks') background.dismissNotice(); }}
       activeCount={background.activeCount} close={closeSidebar}>{ {
       tasks: <BackgroundTasks state={background} />,
       context: chat.session ? <ContextPanel value={context.value} loading={context.loading} error={context.error}

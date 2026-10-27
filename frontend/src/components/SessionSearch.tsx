@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { SessionRow } from '../types';
+import { keepDialogFocus } from '../dialogFocus';
 import styles from './SessionSearch.module.css';
 
 export default function SessionSearch({ rows, title, disabled, select, close, restoreTarget }: {
@@ -35,12 +36,7 @@ export default function SessionSearch({ rows, title, disabled, select, close, re
       onKeyDown={event => {
         if (event.nativeEvent.isComposing) return;
         if (event.key === 'Escape') { event.preventDefault(); close(); return; }
-        if (event.key === 'Tab') {
-          const items = Array.from(root.current?.querySelectorAll<HTMLElement>('input, button:not(:disabled):not([tabindex="-1"])') ?? []);
-          const first = items[0], last = items.at(-1);
-          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-        }
+        keepDialogFocus(event, root.current);
         if (event.target !== input.current) return;
         if (['ArrowDown', 'ArrowUp'].includes(event.key) && matches.length && !disabled) {
           event.preventDefault();

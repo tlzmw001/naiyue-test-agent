@@ -1,5 +1,8 @@
 """Narrow application port and session-scoped background task tools."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
+from naiyue_test_agent.execution_roots import ExecutionRoot
+from naiyue_test_agent.contracts.environment import EnvironmentRef
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,8 +28,8 @@ class BackgroundNoticeSnapshot:
 
 class ProcessTaskPort(Protocol):
     async def submit(self, *, session_id, workspace_root, archive_root, run_id, tool_call_id, agent_path,
-                     command, name, request, settings, runner, control) -> dict: ...
-    async def foreground(self, *, wait_seconds, background_limit, on_progress, **scope): ...
+                     command, name, request, settings, runner, control, execution_root: ExecutionRoot, environment: EnvironmentRef, project_id=None) -> dict: ...
+    async def foreground(self, *, wait_seconds, background_limit, on_progress, execution_root: ExecutionRoot, environment: EnvironmentRef, **scope): ...
     def notice_snapshot(self, *, session_id, workspace_root, run_id=None) -> BackgroundNoticeSnapshot: ...
     def acknowledge_notices(self, snapshot, *, session_id, workspace_root, run_id): ...
     async def list(self, *, session_id=None, workspace_root=None, limit=20, before=None) -> dict: ...
@@ -35,18 +38,22 @@ class ProcessTaskPort(Protocol):
 
 
 def task_context(runtime, *, query=False):
-    context = runtime.context or {}
+    context = runtime.context
     require_tool_permit(runtime)
-    if context.get('agent_path', 'root') != 'root':
+    if context.scope.identity.agent_path != 'root':
         raise ToolException('Background tasks are available only to the root agent.')
-    sid, root = context.get('session_id'), context.get('workspace_root')
-    port = context.get('_task_queries' if query else '_process_tasks')
-    if not isinstance(sid, str) or not sid or not isinstance(root, Path) or not root.is_absolute() or port is None:
+    sid, root = context.scope.identity.session_id, context.scope.identity.execution_path
+    port = context.scope.capabilities.task_queries if query else context.scope.capabilities.process_tasks
+    sandbox_query=query and context.scope.environment is not None and context.scope.environment.kind=='sandbox'
+    if (not isinstance(sid, str) or not sid or port is None or
+            not sandbox_query and (not isinstance(root, Path) or not root.is_absolute())):
         raise ToolException('Application background task scope is unavailable.')
     scope = {'session_id': sid, 'workspace_root': root}
     if not query:
         from .output import require_archive_root
-        scope['archive_root'] = require_archive_root(context)
+        scope['archive_root'] = require_archive_root(context.scope.archive_root, context.scope.identity.execution_path)
+        scope['project_id'] = context.scope.identity.project_id
+        scope['execution_root'] = context.scope.identity.execution_root
     return port, scope
 
 
@@ -71,7 +78,7 @@ def create_background_task_tools():
         public, execution = build_tool_schemas(name.title().replace('_', '') + 'Input', base)
         # Each closure freezes its own action rather than the loop's final tool.
         def build(action):
-            async def execute(runtime: ToolRuntime[dict, dict], **kwargs):
+            async def execute(runtime: ToolRuntime[RuntimeContext], **kwargs):
                 port, scope = task_context(runtime, query=True)
                 permit = require_tool_permit(runtime)
                 if permit.get('tool_name') != action or permit['subject'].get('args') != kwargs:

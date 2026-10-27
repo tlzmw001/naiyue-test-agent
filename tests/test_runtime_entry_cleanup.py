@@ -1,5 +1,6 @@
 """Retired entry points stay removed while current lifecycle guards remain."""
 
+from runtime_context_helpers import typed_scope
 import asyncio
 import importlib
 import importlib.util
@@ -8,7 +9,7 @@ import inspect
 import pytest
 
 from naiyue_test_agent.agent_runtime.events import RunEventPublisher
-from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
+from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
 from test_async_application import StreamingToolModel, make_app
 
 
@@ -20,7 +21,6 @@ from test_async_application import StreamingToolModel, make_app
     ('context_operation_observation', 'current_context_operation_observer'),
     ('run_control', 'bind_run_control'), ('run_control', 'current_run_control'),
     ('errors', 'bind_failure_policy'), ('errors', 'current_failure_policy'),
-    ('run_services', 'bind_service'), ('run_services', 'current_service'),
     ('call_observation', 'failure_data'),
     ('', 'build_steerable_runtime_agent'), ('', 'build_interactive_runtime_agent'),
     ('', 'invoke_agent_run_in_workspace'), ('', 'resume_agent_run_in_workspace'),
@@ -37,8 +37,9 @@ def test_retired_session_boundary_is_not_available(name):
     assert not hasattr(SessionService, name)
 
 
-def test_retired_control_event_forwarding_module_is_not_available():
-    assert importlib.util.find_spec('naiyue_test_agent.agent_runtime.control_events') is None
+@pytest.mark.parametrize('module', ['control_events', 'run_services'])
+def test_retired_runtime_bridge_module_is_not_available(module):
+    assert importlib.util.find_spec('naiyue_test_agent.agent_runtime.' + module) is None
 
 
 @pytest.mark.parametrize('name', ['ModelResponseRejected', 'RejectionReason'])
@@ -62,18 +63,18 @@ def test_current_assembly_requires_port_with_one_natural_end_boundary():
     assert not hasattr(SessionPort, 'finish_pending_messages')
 
 
-def test_central_run_services_still_prevent_closing_from_active_run(monkeypatch):
+def test_central_run_scope_still_prevent_closing_from_active_run(monkeypatch):
     async def scenario():
         app = await make_app(monkeypatch, StreamingToolModel(replies=[]))
-        services = RunServices(publisher=RunEventPublisher('s', 'r', ()))
+        services = typed_scope(publisher=RunEventPublisher('s', 'r', ()))
         try:
-            with bind_run_services(services):
+            with bind_run_scope(services):
                 with pytest.raises(RuntimeError, match='active run'):
                     await app.aclose()
-                assert not app._closing and not app._closed
+                assert not app.root._lifetime._closing and not app.root._lifetime._closed
         finally:
             await app.aclose()
-        assert app._closed
+        assert app.root._lifetime._closed
     asyncio.run(scenario())
 
 

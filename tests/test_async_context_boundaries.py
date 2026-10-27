@@ -1,5 +1,6 @@
 """Async IO must preserve compaction budgets, history rules and error identity."""
 
+from runtime_context_helpers import RunIdentity, RunObservationPorts, typed_context
 import asyncio
 import logging
 import re
@@ -26,7 +27,7 @@ from test_async_context_chain import AsyncContextModel
 
 async def compact(chosen, messages=None, *, force=False, context=None):
     return await context_compaction._acompact_messages(
-        history() if messages is None else messages, chosen, model_id='A', context=context or {},
+        history() if messages is None else messages, chosen, model_id='A', context=context if context is not None else typed_context(),
         system_messages=[SystemMessage(content='BASEPROJECT')], tools=[], force=force,
     )
 
@@ -100,7 +101,7 @@ def test_native_and_sync_sdk_compaction_share_cut_and_previous_summary():
         sync = _model([], window=500, reserve=450, keep=10,
                       summaries=[AIMessage(content='brief summary')])
         expected = await context_compaction._acompact_messages(
-            messages, sync, model_id='A', context={},
+            messages, sync, model_id='A', context=typed_context(),
             system_messages=[SystemMessage(content='BASEPROJECT')], tools=[],
         )
         actual = await compact(native, messages)
@@ -148,9 +149,7 @@ def test_cancelled_summary_closes_context_observation_and_preserves_signal(caplo
         observer = ContextOperationObserver(pub)
         entered, release = asyncio.Event(), asyncio.Event()
         chosen = model(summary_entered=entered, summary_release=release)
-        task = asyncio.create_task(compact(chosen, context={
-            'session_id': 's', 'run_id': 'r', '_context_observer': observer,
-        }))
+        task = asyncio.create_task(compact(chosen, context=typed_context(identity=RunIdentity(session_id='s', run_id='r'), observation=RunObservationPorts(publisher=observer.publisher, context_operations=observer))))
         try:
             await asyncio.wait_for(entered.wait(), 5)
             task.cancel('PRIVATE')
@@ -175,7 +174,7 @@ def test_retry_request_construction_failure_is_classified_as_retry(native_model,
         chosen = (model(window=2000, reserve=20) if native_model else
                   _model([], window=2000, reserve=20, summaries=[AIMessage(content='brief summary')]))
         error, calls = ValueError('PRIVATE'), []
-        request = SimpleNamespace(runtime=SimpleNamespace(context={}), model=chosen,
+        request = SimpleNamespace(runtime=SimpleNamespace(context=typed_context()), model=chosen,
                                   messages=history(), system_message=SystemMessage(content='BASE'), tools=[])
 
         def override(**kwargs):

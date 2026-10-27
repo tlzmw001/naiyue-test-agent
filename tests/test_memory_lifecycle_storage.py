@@ -9,10 +9,12 @@ import threading
 import pytest
 from pydantic import ValidationError
 
-from naiyue_test_agent.application import memory_lexical, memory_schema, memory_lifecycle_schema
-from naiyue_test_agent.application.memory_access import MemoryAccess
-from naiyue_test_agent.application.memory_personal import PersonalMemory, APPLICATION_ID
-from naiyue_test_agent.application.memory_queries import MemoryReadError
+from naiyue_test_agent.storage.memory_sql import lexical as memory_lexical
+from naiyue_test_agent.storage.memory_sql import memory_schema, memory_lifecycle_schema
+from naiyue_test_agent.application.memory.memory_access import MemoryAccess
+from naiyue_test_agent.storage.database import Database
+from naiyue_test_agent.storage.personal_database import APPLICATION_ID
+from naiyue_test_agent.contracts.memory import MemoryReadError
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.tools.memory import MemoryInput
 from test_memory_lifecycle import memory, storage_memory, source, proposal, write
@@ -29,7 +31,7 @@ def format1(path):
 
 def test_personal_upgrade_has_closed_validated_prechange_backup(tmp_path):
     path=tmp_path/'memory.sqlite';format1(path)
-    with PersonalMemory(path,MemorySettings()) as store:
+    with Database.open_personal(path,MemorySettings()) as store:
         assert store.connection.execute('PRAGMA user_version').fetchone()[0]==2
         assert store.connection.execute('PRAGMA journal_mode').fetchone()[0]=='delete'
         assert store.connection.execute('PRAGMA synchronous').fetchone()[0]==2
@@ -48,7 +50,7 @@ def test_upgrade_failure_rolls_back_original_and_preserves_backup(tmp_path,monke
         c.execute('CREATE TABLE partial(value TEXT)')
         raise expected
     monkeypatch.setattr(memory_lifecycle_schema,'upgrade',fail)
-    with pytest.raises(RuntimeError) as caught:PersonalMemory(path,MemorySettings())
+    with pytest.raises(RuntimeError) as caught:Database.open_personal(path,MemorySettings())
     assert caught.value is expected
     with closing(sqlite3.connect(path)) as c:
         memory_schema.check(c,version=1)
@@ -58,11 +60,11 @@ def test_upgrade_failure_rolls_back_original_and_preserves_backup(tmp_path,monke
 
 
 def test_backup_failure_prevents_upgrade(tmp_path,monkeypatch):
-    from naiyue_test_agent.application import memory_personal_upgrade
+    from naiyue_test_agent.storage.memory_sql import memory_personal_upgrade
     path=tmp_path/'memory.sqlite';format1(path)
     def fail(*args):raise OSError('private snapshot error')
     monkeypatch.setattr(memory_personal_upgrade,'backup_format1',fail)
-    with pytest.raises(OSError):PersonalMemory(path,MemorySettings())
+    with pytest.raises(OSError):Database.open_personal(path,MemorySettings())
     with closing(sqlite3.connect(path)) as c:memory_schema.check(c,version=1)
 
 
@@ -70,16 +72,16 @@ def test_personal_two_owners_cas_only_one_commit(memory):
     access,sid,root,_=memory
     ref=source(access,sid)
     request=MemoryInput(action='record',scope='personal',proposal=proposal(),sources=[ref]).model_dump(mode='json')
-    item=access.query(sid,root,request,now=1000)['item']
+    item=access.query(sid,access.storage.sessions.get(sid)['project_id'],request,now=1000)['item']
     other=MemoryAccess(access.storage,access.settings,root/'data')
     try:
-        other.query(sid,root,MemoryInput(action='list',scope='personal').model_dump(),now=1000)
+        other.query(sid,access.storage.sessions.get(sid)['project_id'],MemoryInput(action='list',scope='personal').model_dump(),now=1000)
         barrier=threading.Barrier(2)
         def update(owner):
             barrier.wait()
             req=MemoryInput(action='update',scope='personal',memory_id=item['memory_id'],expected_version=1,
                 proposal=proposal(),sources=[ref]).model_dump(mode='json')
-            try:return owner.query(sid,root,req,now=2000)['item']['version']
+            try:return owner.query(sid,access.storage.sessions.get(sid)['project_id'],req,now=2000)['item']['version']
             except MemoryReadError as error:return str(error)
         with ThreadPoolExecutor(2) as pool:results=list(pool.map(update,[access,other]))
         assert sorted(str(r) for r in results)==['2','memory_conflict']
@@ -148,11 +150,11 @@ def test_explicit_deadline_survives_new_confirmation_without_new_deadline(memory
 def test_source_from_different_workspace_session_is_rejected(memory,tmp_path):
     access,sid,_,_=memory
     (tmp_path/'other').mkdir()
-    access.storage.create('foreign',dict(thread_id='foreign',model_id='A',workspace_root=memory[2],
+    access.storage.sessions.create('foreign',dict(thread_id='foreign',model_id='A',workspace_root=memory[2],
         active_tool_names=['memory'],permission_mode='Default'))
     # Imported/legacy rows are still checked at the source boundary.
-    with access.storage.connection:
-        access.storage.connection.execute('UPDATE naiyue_sessions SET workspace_root=? WHERE session_id=?',(str(tmp_path/'other'),'foreign'))
+    with access.storage.database.connection:
+        access.storage.database.connection.execute('UPDATE naiyue_sessions SET project_id=? WHERE session_id=?',('foreign-project','foreign'))
     ref=source(access,'foreign')
     with pytest.raises(MemoryReadError,match='memory_source_scope_mismatch'):
         write(memory,proposal=proposal(),sources=[ref])
@@ -164,7 +166,7 @@ def test_sensitive_pattern_checks_original_text_not_json_escapes(memory,separato
     ref=source(access,sid)
     with pytest.raises(MemoryReadError,match='memory_sensitive_content'):
         write(memory,proposal=proposal(body='password'+separator+'= SYNTHETIC_NOT_A_CREDENTIAL'),sources=[ref])
-    assert access.storage.connection.execute('SELECT count(*) FROM naiyue_memories').fetchone()[0]==0
+    assert access.storage.database.connection.execute('SELECT count(*) FROM naiyue_memories').fetchone()[0]==0
 
 
 def test_write_response_obeys_output_budget_and_commit_is_readable(memory):
@@ -174,7 +176,7 @@ def test_write_response_obeys_output_budget_and_commit_is_readable(memory):
     item=write(memory,proposal=proposal(body='字'*1000,reason='原'*300,gaps=['缺'*128]*8),sources=[ref])
     assert len(json.dumps(item,ensure_ascii=False).encode())<=4096
     assert item['status']=='still_candidate'
-    row=access.storage.connection.execute('SELECT body FROM naiyue_memories').fetchone()
+    row=access.storage.database.connection.execute('SELECT body FROM naiyue_memories').fetchone()
     assert row['body']=='字'*1000
 
 
@@ -201,7 +203,118 @@ def test_format1_existing_current_version_becomes_history_baseline(tmp_path):
     with closing(sqlite3.connect(path)) as c:
         memory_lexical.configure(c)
         mid=seed(c,1,scope='personal',body='OLD-ORIGINAL')
-    with PersonalMemory(path,MemorySettings()) as store:
+    with Database.open_personal(path,MemorySettings()) as store:
         row=store.connection.execute('SELECT snapshot_json FROM naiyue_memory_versions WHERE memory_id=? AND version=1',(mid,)).fetchone()
         assert row is not None
         assert json.loads(row[0])['body']=='OLD-ORIGINAL'
+
+
+def memory_rows(database):
+    """Compare every persisted projection before/after failure and after reopening."""
+    return {
+        'items': database.read_rows('SELECT * FROM naiyue_memories ORDER BY memory_id'),
+        'versions': database.read_rows('SELECT * FROM naiyue_memory_versions ORDER BY memory_id,version'),
+        'sources': database.read_rows('SELECT * FROM naiyue_memory_sources ORDER BY source_id'),
+        'search': database.read_rows('SELECT rowid,* FROM naiyue_memory_search ORDER BY rowid'),
+        'suppression': database.read_rows('SELECT * FROM naiyue_memory_suppression ORDER BY source_hash'),
+    }
+
+
+@pytest.mark.parametrize('action', ['record', 'update'])
+@pytest.mark.parametrize('changed', ['revision', 'conversation_revision'])
+def test_personal_stale_source_preserves_all_projections_and_can_retry(memory, action, changed):
+    access, sid, root, _ = memory
+    project = access.storage.database
+    project_id = access.storage.sessions.get(sid)['project_id']
+    ref = source(access, sid, text='以后测试使用.venv运行pytest')
+    initial = MemoryInput(action='record', scope='personal', proposal=proposal(), sources=[ref]).model_dump(mode='json')
+    saved = access.query(sid, project_id, initial, now=1000.)['item']
+    target = access._personal_store.database
+    assert target is not project and target.connection is not project.connection
+    assert target.path == root / 'data/personal/memory.sqlite' and target.path != project.path
+
+    # Model the archive advancing after the caller obtained its original reference.
+    with project.transaction(write=True) as connection:
+        if changed == 'revision':
+            connection.execute('UPDATE naiyue_chat_messages SET revision=revision+1 WHERE session_id=? AND thread_id=? AND message_id=?',
+                (sid, ref['thread_id'], ref['message_id']))
+        else:
+            connection.execute('UPDATE naiyue_sessions SET conversation_revision=conversation_revision+1 WHERE session_id=?', (sid,))
+    current_revision = project.read_rows('SELECT revision FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? AND message_id=?',
+        (sid, ref['thread_id'], ref['message_id']))[0]['revision']
+    current_conversation = access.storage.sessions.get(sid)['conversation_revision']
+    assert (current_revision, current_conversation) == ((2, 0) if changed == 'revision' else (1, 1))
+    before = memory_rows(target)
+    archive = project.read_rows('SELECT * FROM naiyue_chat_messages ORDER BY sequence')
+    source_changes = project.connection.total_changes
+    arguments = dict(action=action, scope='personal', proposal=proposal(subject='new environment', body='使用.venv运行pytest'), sources=[ref])
+    if action == 'update':
+        arguments.update(memory_id=saved['memory_id'], expected_version=1)
+    request = MemoryInput(**arguments).model_dump(mode='json')
+
+    with pytest.raises(MemoryReadError, match='^memory_source_changed$'):
+        access.query(sid, project_id, request, now=2000.)
+    assert memory_rows(target) == before
+    assert project.read_rows('SELECT * FROM naiyue_chat_messages ORDER BY sequence') == archive
+    assert project.connection.total_changes == source_changes
+    assert not target.connection.in_transaction and not target._active
+    assert not project.connection.in_transaction and not project._active
+    with Database.open_personal(target.path, access.settings) as reopened:
+        assert memory_rows(reopened) == before
+
+    request['sources'][0].update(revision=current_revision, conversation_revision=current_conversation)
+    result = access.query(sid, project_id, request, now=2000.)
+    assert result['status'] == 'saved' and result['item']['version'] == (1 if action == 'record' else 2)
+    assert result['item']['body'] == '使用.venv运行pytest'
+    assert project.connection.total_changes == source_changes
+
+
+@pytest.mark.parametrize('action', ['record', 'update'])
+def test_personal_mid_write_failure_rolls_back_every_projection_and_can_retry(memory, action, caplog):
+    access, sid, root, _ = memory
+    project = access.storage.database
+    project_id = access.storage.sessions.get(sid)['project_id']
+    ref = source(access, sid, text='以后测试使用.venv运行pytest')
+    initial = MemoryInput(action='record', scope='personal', proposal=proposal(), sources=[ref]).model_dump(mode='json')
+    saved = access.query(sid, project_id, initial, now=1000.)['item']
+    target = access._personal_store.database
+    assert target is not project and target.connection is not project.connection
+    assert target.path == root / 'data/personal/memory.sqlite' and target.path != project.path
+    before = memory_rows(target)
+    assert all(len(before[key]) == 1 for key in ('items', 'versions', 'sources', 'search'))
+    assert before['suppression'] == []
+    archive = project.read_rows('SELECT * FROM naiyue_chat_messages ORDER BY sequence')
+    source_changes = project.connection.total_changes
+    arguments = dict(action=action, scope='personal', proposal=proposal(subject='new environment', body='使用.venv运行pytest'), sources=[ref])
+    if action == 'update':
+        arguments.update(memory_id=saved['memory_id'], expected_version=1)
+    request = MemoryInput(**arguments).model_dump(mode='json')
+    with target.transaction(write=True) as connection:
+        connection.execute('''CREATE TRIGGER fail_personal_version BEFORE INSERT ON naiyue_memory_versions
+            BEGIN SELECT RAISE(ABORT,'PRIVATE_PERSONAL_VERSION_FAULT'); END''')
+    target_changes = target.connection.total_changes
+
+    with pytest.raises(MemoryReadError, match='^memory_write_failed$') as caught:
+        access.query(sid, project_id, request, now=2000.)
+    assert isinstance(caught.value.__cause__, sqlite3.IntegrityError)
+    assert target.connection.total_changes > target_changes  # Body/FTS ran before the version insert failed.
+    assert memory_rows(target) == before
+    assert project.read_rows('SELECT * FROM naiyue_chat_messages ORDER BY sequence') == archive
+    assert project.connection.total_changes == source_changes
+    assert not target.connection.in_transaction and not target._active
+    assert not project.connection.in_transaction and not project._active
+    assert 'memory_read_failed' in caplog.text and 'PRIVATE_PERSONAL_VERSION_FAULT' not in caplog.text
+    with Database.open_personal(target.path, access.settings) as reopened:
+        assert memory_rows(reopened) == before
+
+    with target.transaction(write=True) as connection:
+        connection.execute('DROP TRIGGER fail_personal_version')
+    result = access.query(sid, project_id, request, now=2000.)
+    assert result['status'] == 'saved' and result['item']['version'] == (1 if action == 'record' else 2)
+    assert result['item']['body'] == '使用.venv运行pytest'
+    after = memory_rows(target)
+    assert len(after['items']) == len(after['search']) == (2 if action == 'record' else 1)
+    assert len(after['versions']) == len(after['sources']) == 2
+    assert project.connection.total_changes == source_changes
+    with Database.open_personal(target.path, access.settings) as reopened:
+        assert memory_rows(reopened) == after

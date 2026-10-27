@@ -1,5 +1,6 @@
 """Auto review sends bounded source-aware data through two distinct stages."""
 
+from runtime_context_helpers import RunIdentity, ToolAuthorization, typed_context
 from native_application_helpers import async_test
 
 import json
@@ -55,7 +56,7 @@ async def test_review_stage_contract_and_no_shared_model_mutation(first, second,
     fast, detailed = model([verdict(first)]), model([verdict(second)])
     original = dict(fast.metadata)
     review = reviewer(fast, detailed)
-    result = (await review.areview(payload(), {'session_id': 's', 'run_id': 'r'}))
+    result = (await review.areview(payload(), typed_context(identity=RunIdentity(session_id='s', run_id='r'))))
     assert result['decision'] == expected
     assert len(fast.seen) == 1 and len(detailed.seen) == calls
     assert isinstance(fast.seen[0][0], SystemMessage)
@@ -75,7 +76,7 @@ async def test_review_stage_contract_and_no_shared_model_mutation(first, second,
 ])
 async def test_invalid_fast_response_goes_to_human_without_detailed_call(response):
     fast, detailed = model([response]), model([verdict()])
-    assert (await reviewer(fast, detailed).areview(payload(), {}))['decision'] == 'ask'
+    assert (await reviewer(fast, detailed).areview(payload(), typed_context()))['decision'] == 'ask'
     assert len(fast.seen) == 1 and detailed.seen == []
 
 
@@ -90,7 +91,7 @@ async def test_network_error_is_safe_ask_without_retry(stage, caplog):
     failing = Failing(responses=[], metadata=model([]).metadata)
     fast = failing if stage == 'fast' else model([verdict('ask')])
     detail = model([]) if stage == 'fast' else failing
-    assert (await reviewer(fast, detail).areview(payload(), {'session_id': 's', 'run_id': 'r'}))['decision'] == 'ask'
+    assert (await reviewer(fast, detail).areview(payload(), typed_context(identity=RunIdentity(session_id='s', run_id='r'))))['decision'] == 'ask'
     assert len(failing.seen) == 1
     assert detail.seen == [] if stage == 'fast' else len(detail.seen) == 1
     assert 'PRIVATE_PROVIDER_DETAIL' not in caplog.text
@@ -135,7 +136,7 @@ async def test_missing_intent_or_budget_never_sends_partial_current_call(unavail
         data['project_instructions'] = 'PROJECT_END ' * 10000
     else:
         fast.metadata = {}
-    assert (await reviewer(fast, detailed).areview(data, {}))['decision'] == 'ask'
+    assert (await reviewer(fast, detailed).areview(data, typed_context()))['decision'] == 'ask'
     assert fast.seen == detailed.seen == []
 
 
@@ -144,7 +145,7 @@ async def test_old_history_can_be_removed_but_current_call_and_project_are_compl
     fast, detailed = model([verdict()], window=2048), model([verdict()], window=2048)
     data = payload()
     data['previous_calls'] = [{'sequence': -1, 'id': 'old', 'name': 'write', 'args': {'content': 'OLD ' * 10000}}]
-    result = (await reviewer(fast, detailed).areview(data, {}))
+    result = (await reviewer(fast, detailed).areview(data, typed_context()))
     assert result['decision'] == 'allow'
     sent = json.loads(fast.seen[0][-1].content)
     assert sent['previous_calls'] == []
@@ -160,7 +161,7 @@ async def test_graph_control_is_not_an_ask():
             raise failure
     review = reviewer(Signalling(responses=[], metadata=model([]).metadata), model([]))
     with pytest.raises(GraphBubbleUp) as caught:
-        (await review.areview(payload(), {}))
+        (await review.areview(payload(), typed_context()))
     assert caught.value is failure
 
 
@@ -172,7 +173,7 @@ async def test_reasoning_blocks_are_supported_and_only_safe_usage_is_logged(capl
         response_metadata={'stop_reason': 'end_turn'},
         usage_metadata={'input_tokens': 20, 'output_tokens': 4, 'total_tokens': 24})
     fast, detailed = model([response]), model([])
-    assert (await reviewer(fast, detailed).areview(payload(), {'session_id': 's', 'run_id': 'r', '_review_call_id': 'c'}))['decision'] == 'allow'
+    assert (await reviewer(fast, detailed).areview(payload(), typed_context(identity=RunIdentity(session_id='s', run_id='r'), authorization=ToolAuthorization(review_call_id='c'))))['decision'] == 'allow'
     entries = [r.permission_review for r in caplog.records if hasattr(r, 'permission_review')]
     assert len(entries) == 1 and entries[0]['input_tokens'] == 20 and entries[0]['output_tokens'] == 4
     assert entries[0]['stage'] == 'fast' and entries[0]['tool_call_id'] == 'c'
@@ -199,7 +200,7 @@ def test_settings_loader_keeps_auto_configuration_and_tool_budgets(tmp_path):
 async def test_unmarked_stored_history_is_not_upgraded_to_human_intent():
     fast, detailed = model([verdict()]), model([])
     data = prepare_review_input([HumanMessage(content='old unmarked history')], prepared(), None)
-    assert (await reviewer(fast, detailed).areview(data, {}))['decision'] == 'ask'
+    assert (await reviewer(fast, detailed).areview(data, typed_context()))['decision'] == 'ask'
     assert fast.seen == detailed.seen == []
 
 
@@ -209,5 +210,5 @@ async def test_diagnostic_failure_does_not_change_review_decision(monkeypatch, c
     def fail(*args, **kwargs):
         raise RuntimeError('PRIVATE_DIAGNOSTIC')
     monkeypatch.setattr(permissions.logger, 'info', fail)
-    assert (await reviewer(model([verdict()]), model([])).areview(payload(), {}))['decision'] == 'allow'
+    assert (await reviewer(model([verdict()]), model([])).areview(payload(), typed_context()))['decision'] == 'allow'
     assert 'auto_review_diagnostics_failed' in caplog.text and 'PRIVATE_DIAGNOSTIC' not in caplog.text

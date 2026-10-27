@@ -1,6 +1,7 @@
 """Async run entry uses the same graph, correlation and trusted context."""
 
 import logging
+from dataclasses import replace
 
 from langgraph.types import Command
 from langchain_core.messages import BaseMessage
@@ -22,13 +23,13 @@ async def ainvoke_agent_run(agent, messages, *, session_id, thread_id, run_id,
     correlation = {'run_id': run_id, 'session_id': session_id}
     logger.info('run_started', extra={'run_event': {'event': 'run_started', **correlation}})
     context = make_invocation_context(session_id, run_id, workspace_root, approval_grants, read_resource_roots)
-    context['_max_concurrency'] = max_concurrency
+    context = replace(context, inputs=replace(context.inputs, max_concurrency=max_concurrency))
     input = messages if isinstance(messages, Command) else {'messages': messages,
         'active_reply_id': next((reply_identity(m) for m in reversed(messages) if isinstance(m, BaseMessage) and reply_identity(m)), None)}
     config = {'configurable': {'thread_id': thread_id}, 'max_concurrency': max_concurrency}
     options = {'durability': durability} if durability is not None else {}
     try:
-        publisher = context.get('_run_event_publisher')
+        publisher = context.scope.observation.publisher
         if publisher is not None:
             result = await ainvoke_with_message_observation(agent, input, context=context, config=config, publisher=publisher, **options)
         else:

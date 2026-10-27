@@ -8,15 +8,16 @@ import sqlite3
 import pytest
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-from naiyue_test_agent.application.session_storage import SessionStorage, SessionPersistenceError
+from scripts.component_fixtures import open_component_application
+from naiyue_test_agent.storage.project_store import ProjectStore
+from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.model_access import ModelCatalog
 from test_dynamic_tools import DynamicModel, definition
 
 
 def build(monkeypatch, storage, names=None, specs=None):
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': DynamicModel(responses=[])}))
-    return open_async_persistent_application('synthetic', database_path=storage, tools=specs or [definition()],
+    return open_component_application('synthetic', database_path=storage, tools=specs or [definition()],
         initial_active_tools=names, system_prompt='', response_format=None)
 
 
@@ -24,29 +25,29 @@ def build(monkeypatch, storage, names=None, specs=None):
 async def test_empty_selection_survives_reopen(monkeypatch, tmp_path):
     path = tmp_path / 'sessions.sqlite'
     async with build(monkeypatch, path) as app:
-        storage = app._storage
-        sid = await app.acreate_session('A')
-        await app.aset_active_tools(sid, [])
-        assert json.loads(storage.get(sid)['active_tool_names_json']) == []
+        storage = app.host.sessions._persistence.storage
+        sid = await app.host.sessions.create('A')
+        await app.host.sessions.select_tools(sid, [])
+        assert json.loads(storage.sessions.get(sid)['active_tool_names_json']) == []
     async with build(monkeypatch, path) as app:
-        storage = app._storage
-        await app.arestore_session(sid)
-        assert app.get_active_tools(sid) == ()
-        assert app._sessions.require(sid).describe_session()['active_tools'] == []
+        storage = app.host.sessions._persistence.storage
+        await app.host.sessions.restore(sid)
+        assert app.host.sessions.active_tools(sid) == ()
+        assert app.host.sessions._sessions.require(sid).describe_session()['active_tools'] == []
 
 
 @async_test
 async def test_save_failure_keeps_old_selection(monkeypatch, tmp_path):
     async with build(monkeypatch, tmp_path / 'sessions.sqlite') as app:
-        storage = app._storage
-        sid = await app.acreate_session('A')
+        storage = app.host.sessions._persistence.storage
+        sid = await app.host.sessions.create('A')
         def fail(*args):
             raise SessionPersistenceError('synthetic_save_failed')
-        monkeypatch.setattr(storage, 'select_active_tools', fail)
+        monkeypatch.setattr(storage.sessions, 'select_active_tools', fail)
         with pytest.raises(SessionPersistenceError):
-            await app.aset_active_tools(sid, [])
-        assert app.get_active_tools(sid) == ('probe',)
-        assert json.loads(storage.get(sid)['active_tool_names_json']) == ['probe']
+            await app.host.sessions.select_tools(sid, [])
+        assert app.host.sessions.active_tools(sid) == ('probe',)
+        assert json.loads(storage.sessions.get(sid)['active_tool_names_json']) == ['probe']
 
 
 @pytest.mark.parametrize('saved', ['broken-json', '["missing"]', '"probe"', '["probe","probe"]'])
@@ -54,15 +55,15 @@ async def test_save_failure_keeps_old_selection(monkeypatch, tmp_path):
 async def test_invalid_saved_selection_fails_without_publishing(monkeypatch, tmp_path, saved):
     path = tmp_path / 'sessions.sqlite'
     async with build(monkeypatch, path) as app:
-        storage = app._storage
-        sid = await app.acreate_session('A')
-        storage.connection.execute('UPDATE naiyue_sessions SET active_tool_names_json=? WHERE session_id=?', (saved, sid))
-        storage.connection.commit()
+        storage = app.host.sessions._persistence.storage
+        sid = await app.host.sessions.create('A')
+        storage.database.connection.execute('UPDATE naiyue_sessions SET active_tool_names_json=? WHERE session_id=?', (saved, sid))
+        storage.database.connection.commit()
     async with build(monkeypatch, path) as app:
-        storage = app._storage
+        storage = app.host.sessions._persistence.storage
         with pytest.raises(SessionPersistenceError, match='invalid_active_tools'):
-            await app.arestore_session(sid)
-        assert not app._sessions.has_session(sid)
+            await app.host.sessions.restore(sid)
+        assert not app.host.sessions._sessions.has_session(sid)
 
 
 def test_v1_database_is_rejected_without_migration(monkeypatch, tmp_path):
@@ -82,5 +83,5 @@ def test_v1_database_is_rejected_without_migration(monkeypatch, tmp_path):
     connection.close()
     before = path.read_bytes()
     with pytest.raises(SessionPersistenceError, match='unsupported_store_schema'):
-        SessionStorage(path)
+        ProjectStore(path)
     assert path.read_bytes() == before

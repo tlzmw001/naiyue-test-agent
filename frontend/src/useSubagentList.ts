@@ -2,14 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { errorText, type WebApi } from './api';
 import type { RunView, SubagentRecord } from './types';
 
-export function useSubagentList(api: WebApi, sessionId?: string, run?: RunView | null) {
+export function useSubagentList(api: WebApi, sessionId?: string, run?: RunView | null, active = true) {
   const [saved, setSaved] = useState<{ api: WebApi; sid: string; rows: SubagentRecord[] }>();
   const [failure, setFailure] = useState<{ api: WebApi; sid: string; text: string }>();
   const [pending, setPending] = useState<string>();
   const [revision, setRevision] = useState(0);
   const currentRun = run?.session_id === sessionId ? run : undefined;
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || !active) return;
     const controller = new AbortController();
     setPending(sessionId); setFailure(undefined);
     api.subagents(sessionId, controller.signal).then(rows => {
@@ -21,7 +21,7 @@ export function useSubagentList(api: WebApi, sessionId?: string, run?: RunView |
       }
     }).finally(() => { if (!controller.signal.aborted) setPending(undefined); });
     return () => controller.abort();
-  }, [api, sessionId, currentRun?.run_id, currentRun?.done, revision]);
+  }, [api, sessionId, currentRun?.run_id, currentRun?.done, revision, active]);
   const records = useMemo(() => {
     const rows = new Map((saved?.api === api && saved.sid === sessionId ? saved.rows : []).map(row => [row.agent_path, row]));
     for (const agent of Object.values(currentRun?.agents ?? {})) {

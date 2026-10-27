@@ -195,8 +195,8 @@ class ToolRegistry:
         with self._lock:
             return tuple(self._specs)
 
-    def select_available(self, names):
+    def select_available(self, names, *, context=None):
         """Prepare new requests; saved batches must continue using select()."""
         from naiyue_test_agent.mcp_client.tools import MCPPermission
         return tuple(spec for spec in self.select(names) if not isinstance(spec.permissions, MCPPermission)
-                     or spec.permissions.unavailable_reason() is None)
+                     or spec.permissions.unavailable_reason(context) is None)

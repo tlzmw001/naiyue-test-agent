@@ -1,3 +1,4 @@
+from naiyue_test_agent.service import app as service_module
 """CLI input remains available while a child waits inside its parent's call."""
 
 from threading import Event
@@ -8,7 +9,7 @@ import sys
 import pytest
 from langchain_core.messages import AIMessage
 from naiyue_test_agent import application
-from naiyue_test_agent.application import cli
+from naiyue_test_agent.cli import chat as cli
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.tools import create_subagent_tool
 from naiyue_test_agent.settings import AppSettings
@@ -26,17 +27,12 @@ def test_pipe_child_approval_and_exit_never_join_an_unresolved_child(monkeypatch
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
     settings = AppSettings(subagents=(role(),))
     monkeypatch.setattr(cli, 'load_settings', lambda: settings)
-    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _, *, process_settings, shell_task_settings, progress_settings, network_settings, retry_settings: [create_subagent_tool(), definition(calls=effects, approved=True)])
-    build = cli.build_local_application
-    def factory(*args, **kwargs):
-        app = build(*args, **kwargs)
-        apps.append(app)
-        def receive(event):
-            events.append(event)
-            if event.source and event.event_type == 'approval_requested': requested.set()
-        app.subscribe_events(receive)
-        return app
-    monkeypatch.setattr(cli, 'build_local_application', factory)
+    monkeypatch.setattr(service_module, 'create_builtin_tools', lambda _, *, process_settings, shell_task_settings, progress_settings, network_settings, retry_settings: [create_subagent_tool(), definition(calls=effects, approved=True)])
+    from terminal_service_helpers import capture_hosts
+    def receive(event):
+        events.append(event)
+        if event.source and event.event_type == 'approval_requested': requested.set()
+    apps = capture_hosts(monkeypatch, lambda host, _: host.observability.subscribe(receive))
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: False))
     entries = iter(['task', ':approve', ':quit'] if exit_kind == 'approve' else ['task', ':quit'] if exit_kind == 'quit' else ['task'])
     def read(_prompt=''):
@@ -56,7 +52,7 @@ def test_pipe_child_approval_and_exit_never_join_an_unresolved_child(monkeypatch
     else:
         assert effects == [] and len(child.seen) == len(root.seen) == 1
         assert '已停止' in output
-    assert all(app._closed for app in apps)
+    assert all(app.host._lifetime._closed for app in apps)
 
 
 def test_pipe_approval_waits_for_preceding_queued_request(monkeypatch, capsys):
@@ -74,7 +70,7 @@ def test_pipe_approval_waits_for_preceding_queued_request(monkeypatch, capsys):
     child = ChildModel(replies=[call('probe', {'value': 'second'}, 'inner'), AIMessage(content='child report')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
     monkeypatch.setattr(cli, 'load_settings', lambda: AppSettings(subagents=(role(),)))
-    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _, *, process_settings, shell_task_settings, progress_settings, network_settings, retry_settings: [create_subagent_tool(), definition(calls=effects, approved=True)])
+    monkeypatch.setattr(service_module, 'create_builtin_tools', lambda _, *, process_settings, shell_task_settings, progress_settings, network_settings, retry_settings: [create_subagent_tool(), definition(calls=effects, approved=True)])
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: False))
     lines = iter(['first', 'second', ':approve', ':quit'])
     def read(_prompt=''):
@@ -107,7 +103,7 @@ def test_pipe_does_not_reselect_submitted_root_batch_before_resume_starts(monkey
     child = ChildModel(replies=[call('probe', {'value': 'second'}, 'inner'), AIMessage(content='report')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': root, 'B': child}))
     monkeypatch.setattr(cli, 'load_settings', lambda: AppSettings(subagents=(role(),)))
-    monkeypatch.setattr(cli, 'create_builtin_tools', lambda _, *, process_settings, shell_task_settings, progress_settings, network_settings, retry_settings: [create_subagent_tool(), definition(calls=effects, approved=True)])
+    monkeypatch.setattr(service_module, 'create_builtin_tools', lambda _, *, process_settings, shell_task_settings, progress_settings, network_settings, retry_settings: [create_subagent_tool(), definition(calls=effects, approved=True)])
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: False))
     resume = cli._resume_and_print
     def delayed(*args, **kwargs):

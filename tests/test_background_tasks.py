@@ -1,5 +1,7 @@
 """Application-owned processes outlive their submitting run and settle explicitly."""
 
+from runtime_context_helpers import host_files
+from runtime_context_helpers import typed_scope
 import asyncio
 from dataclasses import replace
 import os
@@ -7,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from naiyue_test_agent.execution_roots import ExecutionRoot
 from naiyue_test_agent.tools.processes import HostProcessRunner, ProcessCleanupError
 from naiyue_test_agent.tools.settings import BashSettings
 from test_process_lifecycle import request
@@ -17,7 +20,7 @@ def archive_root(root):
 
 
 async def submit(manager, root, script, *, call='c', sid='s', settings=None, timeout=None, runner=None):
-    return await manager.submit(session_id=sid, workspace_root=root, archive_root=archive_root(root), run_id='r',
+    return await manager.submit(session_id=sid, workspace_root=root, execution_root=ExecutionRoot(root), environment=host_files(root).environment, archive_root=archive_root(root), run_id='r',
         tool_call_id=call, agent_path='root', command=script, name='bash',
         request=replace(request(root, script), timeout_seconds=timeout, merge_output=True),
         settings=settings or BashSettings(), runner=runner or HostProcessRunner(), control=None)
@@ -34,7 +37,7 @@ async def wait_status(manager, identity, predicate):
 
 
 def test_registered_process_keeps_running_and_stop_confirms_cleanup(tmp_path):
-    from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
+    from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
     async def scenario():
         manager = BackgroundProcessManager()
         try:
@@ -57,7 +60,7 @@ def test_registered_process_keeps_running_and_stop_confirms_cleanup(tmp_path):
 
 
 def test_quota_stops_only_its_task_and_keeps_bounded_tail(tmp_path):
-    from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
+    from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
     async def scenario():
         manager = BackgroundProcessManager()
         try:
@@ -78,7 +81,7 @@ def test_quota_stops_only_its_task_and_keeps_bounded_tail(tmp_path):
 
 def test_scope_dedup_and_changed_identity_never_spawn_twice(tmp_path):
     from langchain_core.tools import ToolException
-    from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
+    from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
     async def scenario():
         manager = BackgroundProcessManager()
         try:
@@ -92,7 +95,7 @@ def test_scope_dedup_and_changed_identity_never_spawn_twice(tmp_path):
                     await operation(first['task_id'], session_id='other', workspace_root=tmp_path)
             assert (await manager.list(session_id='other'))['items'] == []
             with pytest.raises(ToolException, match='root'):
-                await manager.submit(session_id='s', workspace_root=tmp_path, archive_root=archive_root(tmp_path), run_id='r',
+                await manager.submit(session_id='s', workspace_root=tmp_path, execution_root=ExecutionRoot(tmp_path), environment=host_files(tmp_path).environment, archive_root=archive_root(tmp_path), run_id='r',
                     tool_call_id='child', agent_path='child', command='test', name='bash',
                     request=request(tmp_path, ''), settings=BashSettings(), runner=HostProcessRunner(), control=None)
             assert len((await manager.list())['items']) == 1
@@ -102,8 +105,8 @@ def test_scope_dedup_and_changed_identity_never_spawn_twice(tmp_path):
 
 
 def test_frozen_request_and_empty_worker_context(monkeypatch, tmp_path):
-    from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
-    from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services, current_run_services
+    from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
+    from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope, current_run_scope
     from naiyue_test_agent.tools.processes import ProcessOutcome
     async def scenario():
         manager = BackgroundProcessManager()
@@ -113,14 +116,14 @@ def test_frozen_request_and_empty_worker_context(monkeypatch, tmp_path):
             async def run(self, req, consume, control=None):
                 entered.set()
                 await release.wait()
-                seen.append((current_run_services(), req.env.get('SAMPLE'), list(req.argv), control))
+                seen.append((current_run_scope(), req.env.get('SAMPLE'), list(req.argv), control))
                 req.on_started()
                 return ProcessOutcome(0, 'exited', True, True, True, True, 0)
         req = request(tmp_path, '')
         req.env['SAMPLE'] = 'original'
         origin = SimpleNamespace(requested=False)
-        with bind_run_services(RunServices(control=origin)):
-            row = await manager.submit(session_id='s', workspace_root=tmp_path, archive_root=archive_root(tmp_path), run_id='r',
+        with bind_run_scope(typed_scope(control=origin)):
+            row = await manager.submit(session_id='s', workspace_root=tmp_path, execution_root=ExecutionRoot(tmp_path), environment=host_files(tmp_path).environment, archive_root=archive_root(tmp_path), run_id='r',
                 tool_call_id='c', agent_path='root', command='test', name='bash', request=req,
                 settings=BashSettings(), runner=Runner(), control=origin)
         await entered.wait()
@@ -137,7 +140,7 @@ def test_frozen_request_and_empty_worker_context(monkeypatch, tmp_path):
 
 
 def test_configured_deadline_and_missing_executable_have_distinct_results(tmp_path):
-    from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
+    from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
     async def scenario():
         manager = BackgroundProcessManager()
         try:
@@ -145,7 +148,7 @@ def test_configured_deadline_and_missing_executable_have_distinct_results(tmp_pa
             result = await wait_status(manager, row['task_id'], lambda r: r['status'] == 'finished')
             assert result['termination'] == 'timeout' and result['cleanup_confirmed']
             req = replace(request(tmp_path, ''), argv=['/nonexistent/background-executable'])
-            row = await manager.submit(session_id='s', workspace_root=tmp_path, archive_root=archive_root(tmp_path), run_id='r',
+            row = await manager.submit(session_id='s', workspace_root=tmp_path, execution_root=ExecutionRoot(tmp_path), environment=host_files(tmp_path).environment, archive_root=archive_root(tmp_path), run_id='r',
                 tool_call_id='fail', agent_path='root', command='test', name='bash', request=req,
                 settings=BashSettings(), runner=HostProcessRunner(), control=None)
             result = await wait_status(manager, row['task_id'], lambda r: r['status'] == 'finished')
@@ -178,7 +181,7 @@ def test_background_defaults_and_strict_model_flag():
 
 def test_list_pagination_and_pre_handoff_stop_are_bounded(tmp_path):
     from langchain_core.tools import ToolException
-    from naiyue_test_agent.application.background_tasks import BackgroundProcessManager
+    from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
     from naiyue_test_agent.tools.processes import ProcessOutcome
     async def scenario():
         manager = BackgroundProcessManager()
@@ -197,7 +200,7 @@ def test_list_pagination_and_pre_handoff_stop_are_bounded(tmp_path):
         assert second['next_before'] is None
         assert len({row['task_id'] for row in first['items'] + second['items']}) == 3
         with pytest.raises(ToolException, match='stopped before handoff'):
-            await manager.submit(session_id='s', workspace_root=tmp_path, archive_root=archive_root(tmp_path), run_id='r',
+            await manager.submit(session_id='s', workspace_root=tmp_path, execution_root=ExecutionRoot(tmp_path), environment=host_files(tmp_path).environment, archive_root=archive_root(tmp_path), run_id='r',
                 tool_call_id='stopped', agent_path='root', command='pass', name='bash',
                 request=request(tmp_path, ''), settings=BashSettings(), runner=runner,
                 control=SimpleNamespace(requested=True))
@@ -214,12 +217,12 @@ def test_child_shell_request_is_refused_before_submission(tmp_path):
         spec = create_session_bash_tool()
         args = {'command': 'must not execute', 'background': True, 'timeout': None}
         runtime = runtime_for(spec, args, tmp_path)
-        runtime.context['agent_path'] = 'child'
-        runtime.context['_execution_permit']['agent_path'] = 'child'
+        runtime.context = replace(runtime.context, scope=replace(runtime.context.scope, identity=replace(runtime.context.scope.identity, agent_path='child')))
+        runtime.context.authorization.permit['agent_path'] = 'child'
         class Port:
             async def submit(self, **kwargs):
                 pytest.fail('Child requests cannot reach background submission')
-        runtime.context['_process_tasks'] = Port()
+        runtime.context = replace(runtime.context, scope=replace(runtime.context.scope, capabilities=replace(runtime.context.scope.capabilities, process_tasks=Port())))
         with pytest.raises(ToolException, match='root'):
             await spec.tool.coroutine(**args, runtime=runtime)
     asyncio.run(scenario())

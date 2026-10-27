@@ -13,7 +13,7 @@ from naiyue_test_agent.agent_runtime.run_control import UserStop
 from naiyue_test_agent.tools.processes import ProcessCleanupError
 from test_layered_failure_contract import VendorQuotaError, build
 from naiyue_test_agent.model_access import errors as model_errors
-from naiyue_test_agent.application.failure_policy import ApplicationErrorPolicy
+from naiyue_test_agent.application.observability.failure_policy import ApplicationErrorPolicy
 
 
 def test_single_argument_classifier_is_rejected_without_invoking():
@@ -54,9 +54,9 @@ async def test_wrong_classifier_arity_leaves_all_mappings_unchanged(monkeypatch)
         return None
 
     with pytest.raises(ValueError, match='error and source'):
-        app.configure_error_classifiers(model_id='A', model=[model], runtime=[wrong])
+        app.host.observability.configure_errors(model_id='A', model=[model], runtime=[wrong])
     assert catalog.describe_failure('A', VendorQuotaError()).reason == 'unclassified'
-    assert app._sessions._runtime_classifiers == ()
+    assert app.host.sessions._sessions._runtime_classifiers == ()
 
 
 @pytest.mark.parametrize('error,source,category,reason', [

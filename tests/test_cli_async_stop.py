@@ -9,7 +9,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application import cli
+from naiyue_test_agent.cli import chat as cli
 from naiyue_test_agent.model_access import ModelCatalog
 from test_async_application import StreamingToolModel
 
@@ -57,12 +57,8 @@ def test_explicit_resubmit_clears_only_admitted_pending_input(monkeypatch, capsy
             return AIMessage(content='new answer')
 
     model, workers, apps = WaitingModel(replies=[]), [], []
-    original_factory = cli.build_local_application
-
-    def build(*args, **kwargs):
-        app = original_factory(*args, **kwargs)
-        apps.append(app)
-        return app
+    from terminal_service_helpers import capture_hosts
+    apps = capture_hosts(monkeypatch)
 
     def worker(*args, **kwargs):
         instance = Thread(*args, **kwargs)
@@ -70,7 +66,6 @@ def test_explicit_resubmit_clears_only_admitted_pending_input(monkeypatch, capsy
         return instance
 
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
-    monkeypatch.setattr(cli, 'build_local_application', build)
     monkeypatch.setattr(cli, 'Thread', worker)
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
     lines = iter(['start', 'queued request', ':stop', 'next request', ':send', ':pending', ':quit'])
@@ -84,14 +79,14 @@ def test_explicit_resubmit_clears_only_admitted_pending_input(monkeypatch, capsy
             assert not workers[0].is_alive()
             if blocked:
                 bridge = apps[0]
-                def require_review():
-                    sessions = bridge._app._sessions
+                def require_review(host):
+                    sessions = host.sessions._sessions
                     sid = sessions.loaded_session_ids()[0]
                     owner, observation_run = sessions._admit(sid, 'review-fault', 'message')
                     run_id, observation = observation_run.run_id, observation_run.observation
-                    owner.mark_manual_review(observation_run)
-                    owner._cleanup_run(observation_run)
-                bridge._submit(require_review)
+                    owner.approvals.mark_manual_review(observation_run)
+                    owner.lifecycle._cleanup_run(observation_run)
+                bridge.inspect(require_review)
         if line == ':pending':
             workers[-1].join(5)
             assert not workers[-1].is_alive()

@@ -224,19 +224,19 @@ async def test_http_byte_gap_refreshes_complete_history_without_reexecuting(monk
     from test_web_api import web_client, request
     model = StreamingToolModel(replies=[AIMessage(content='完整答复')])
     async with web_client(monkeypatch, tmp_path, model, event_cache_bytes=1) as (client, app):
-        sid = (await client.post('/api/sessions', json={'model_id': 'A'})).json()['session_id']
+        sid = (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'})).json()['session_id']
         body = request('问题')
-        receipt = (await client.post(f'/api/sessions/{sid}/runs', json=body)).json()
+        receipt = (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=body)).json()
         rid = receipt['run_id']
         await asyncio.wait_for(app.state.delivery.wait(rid), 5)
-        gap = await client.get(f'/api/runs/{rid}/events?after=0')
+        gap = await client.get(f'/api/v1/scopes/chats/runs/{rid}/events?after=0')
         assert gap.status_code == 409 and gap.json()['error']['code'] == 'resync_required'
-        view = (await client.get(f'/api/runs/{rid}')).json()
+        view = (await client.get(f'/api/v1/scopes/chats/runs/{rid}')).json()
         assert view['status'] == 'completed' and view['incomplete'] is False
         assert [row['content'] for row in view['messages']] == ['问题', '完整答复']
-        assert (await client.get(f'/api/runs/{rid}/events?after={view["last_sequence"]}')).status_code == 200
-        history = (await client.get(f'/api/sessions/{sid}/messages')).json()
+        assert (await client.get(f'/api/v1/scopes/chats/runs/{rid}/events?after={view["last_sequence"]}')).status_code == 200
+        history = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}/messages')).json()
         assert '完整答复' in str(history)
-        assert (await client.post(f'/api/sessions/{sid}/runs', json=body)).json() == receipt
+        assert (await client.post(f'/api/v1/scopes/chats/sessions/{sid}/runs', json=body)).json() == receipt
         assert len(model.seen) == 1
         assert not app.state.delivery.get(rid).events

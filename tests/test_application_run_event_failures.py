@@ -16,11 +16,11 @@ from test_application_run_events import ToolModel, make_app, run_events_only
 @async_test
 async def test_stage_failure_keeps_original_exception_and_cleans(monkeypatch, stage, caplog):
     app = await make_app(monkeypatch)
-    session = await app.acreate_session('A')
+    session = await app.host.sessions.create('A')
     received = []
-    app.subscribe_events(run_events_only(received.append))
+    app.host.observability.subscribe(run_events_only(received.append))
     # Inject at the session execution owner, where the graph call is made.
-    module = __import__('naiyue_test_agent.application.session_execution', fromlist=['SessionExecution'])
+    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['RunLifecycle'])
     function = {'prepare': 'prepare_run_resources', 'execute': 'ainvoke_agent_run',
                 'finalize': 'pending_tool_approval'}[stage]
     failure = RuntimeError('PRIVATE_ORIGINAL_ERROR')
@@ -32,14 +32,14 @@ async def test_stage_failure_keeps_original_exception_and_cleans(monkeypatch, st
         return fail(*args, **kwargs)
     monkeypatch.setattr(module, function, fail_async if stage == 'execute' else fail)
     with caplog.at_level(logging.INFO), pytest.raises(RuntimeError) as caught:
-        await app.arun(session, [('user', 'PRIVATE_PROMPT')])
+        await app.host.runs.start(session, [('user', 'PRIVATE_PROMPT')])
     assert caught.value is failure
     assert len(received) == 2
     terminal = received[-1].data
     assert terminal.status == 'failed' and terminal.failure.stage == stage
     assert terminal.failure.error_type == 'RuntimeError'
     assert terminal.failure.category == 'unknown'
-    assert not app._sessions.require(session).describe_session()['busy']
+    assert not app.host.sessions._sessions.require(session).describe_session()['busy']
     assert 'PRIVATE_' not in caplog.text + repr(received)
 
 
@@ -47,14 +47,14 @@ async def test_stage_failure_keeps_original_exception_and_cleans(monkeypatch, st
 @async_test
 async def test_cleanup_failure_is_reported_without_masking_primary(monkeypatch, has_primary, caplog):
     app = await make_app(monkeypatch)
-    session = await app.acreate_session('A')
+    session = await app.host.sessions.create('A')
     received = []
-    app.subscribe_events(run_events_only(received.append))
-    module = __import__('naiyue_test_agent.application.session_execution', fromlist=['SessionExecution'])
+    app.host.observability.subscribe(run_events_only(received.append))
+    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['RunLifecycle'])
     primary = RuntimeError('PRIVATE_PRIMARY_ERROR')
     secondary = ValueError('PRIVATE_CLEANUP_ERROR')
 
-    original = app._sessions._sessions[session]._cleanup_run
+    original = app.host.sessions._sessions._sessions[session].lifecycle._cleanup_run
 
     def fail_cleanup(*args, **kwargs):
         # Fail after real cleanup, rather than mutating a closed control queue.
@@ -64,15 +64,15 @@ async def test_cleanup_failure_is_reported_without_masking_primary(monkeypatch, 
     def fail_prepare(*_args, **_kwargs):
         raise primary
 
-    monkeypatch.setattr(app._sessions._sessions[session], '_cleanup_run', fail_cleanup)
+    monkeypatch.setattr(app.host.sessions._sessions._sessions[session].lifecycle, '_cleanup_run', fail_cleanup)
     if has_primary:
         monkeypatch.setattr(module, 'prepare_run_resources', fail_prepare)
     with pytest.raises(Exception) as caught:
-        await app.arun(session, [('user', 'run')])
+        await app.host.runs.start(session, [('user', 'run')])
     assert caught.value is (primary if has_primary else secondary)
     assert received[-1].data.status == 'failed'
     assert received[-1].data.failure.stage == ('prepare' if has_primary else 'cleanup')
-    assert not app._sessions.require(session).describe_session()['busy']
+    assert not app.host.sessions._sessions.require(session).describe_session()['busy']
     assert 'PRIVATE_' not in caplog.text
 
 
@@ -87,63 +87,63 @@ async def test_accepted_approval_failure_is_cleaned_and_keeps_pending(monkeypatc
         {'name': 'read', 'args': {'path': str(outside)}, 'id': 'read-1'},
     ])])
     app = await make_app(monkeypatch, model, [create_session_read_tool()])
-    session = await app.acreate_workspace_session('A', root)
+    session = await app.host.sessions.create_workspace('A', root)
     received = []
-    app.subscribe_events(run_events_only(received.append))
-    paused = await app.arun(session, [('user', 'read')])
+    app.host.observability.subscribe(run_events_only(received.append))
+    paused = await app.host.runs.start(session, [('user', 'read')])
     failure = RuntimeError('PRIVATE_RESUME_FAILURE')
 
     def fail(*_args, **_kwargs):
         raise failure
 
     if failure_stage == 'grant':
-        from naiyue_test_agent.application import session_approval
+        from naiyue_test_agent.application.sessions import session_approval
         monkeypatch.setattr(session_approval, 'OneUseApprovalGrants', fail)
     else:
-        module = __import__('naiyue_test_agent.application.session_execution', fromlist=['SessionExecution'])
+        module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['RunLifecycle'])
         async def fail_async(*args, **kwargs):
             return fail(*args, **kwargs)
         monkeypatch.setattr(module, 'aresume_agent_run_with_resources', fail_async)
     with pytest.raises(RuntimeError) as caught:
-        await app.aresume_tool_approval(session, ['approve'])
+        await app.host.runs.resume_approval(session, ['approve'])
     assert caught.value is failure
     assert len(received) == 4 and received[2].data.mode == 'approval_resume'
     assert received[-1].data.status == 'failed'
     assert received[-1].data.failure.stage == ('prepare' if failure_stage == 'grant' else 'execute')
-    assert not app._sessions.require(session).describe_session()['busy']
-    assert app.pending_tool_approvals(session) == paused['approval_requests']
+    assert not app.host.sessions._sessions.require(session).describe_session()['busy']
+    assert app.host.runs.pending_tools(session) == paused['approval_requests']
 
 
 @pytest.mark.parametrize('control', [KeyboardInterrupt('PRIVATE_CONTROL')])
 @async_test
 async def test_process_control_is_not_converted_to_completed_or_failed(monkeypatch, control):
     app = await make_app(monkeypatch)
-    session = await app.acreate_session('A')
+    session = await app.host.sessions.create('A')
     received = []
-    app.subscribe_events(run_events_only(received.append))
-    module = __import__('naiyue_test_agent.application.session_execution', fromlist=['SessionExecution'])
+    app.host.observability.subscribe(run_events_only(received.append))
+    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['RunLifecycle'])
 
     async def stop(*_args, **_kwargs):
         raise control
 
     monkeypatch.setattr(module, 'ainvoke_agent_run', stop)
     with pytest.raises(type(control)) as caught:
-        await app.arun(session, [('user', 'run')])
+        await app.host.runs.start(session, [('user', 'run')])
     assert caught.value is control
     assert [e.event_type for e in received] == ['run_started']
-    assert not app._sessions.require(session).describe_session()['busy']
+    assert not app.host.sessions._sessions.require(session).describe_session()['busy']
 
 
 @pytest.mark.parametrize('diagnostic_failure', ['raises', 'invalid_codes'])
 @async_test
 async def test_failure_diagnostic_fault_does_not_replace_primary(monkeypatch, diagnostic_failure, caplog):
-    from naiyue_test_agent.application import run_events
+    from naiyue_test_agent.application.observability import run_events
 
     app = await make_app(monkeypatch)
-    session = await app.acreate_session('A')
+    session = await app.host.sessions.create('A')
     received = []
-    app.subscribe_events(run_events_only(received.append))
-    module = __import__('naiyue_test_agent.application.session_execution', fromlist=['SessionExecution'])
+    app.host.observability.subscribe(run_events_only(received.append))
+    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['RunLifecycle'])
     failure = RuntimeError('PRIVATE_ORIGINAL')
 
     def fail(*_args, **_kwargs):
@@ -160,7 +160,7 @@ async def test_failure_diagnostic_fault_does_not_replace_primary(monkeypatch, di
     monkeypatch.setattr(module, 'ainvoke_agent_run', execute_failure)
     monkeypatch.setattr(run_events.RunObservation, '_describe_failure', bad_diagnostic)
     with pytest.raises(RuntimeError) as caught:
-        await app.arun(session, [('user', 'run')])
+        await app.host.runs.start(session, [('user', 'run')])
     assert caught.value is failure
     assert received[-1].data.status == 'failed'
     assert received[-1].data.failure.category == 'unknown'
@@ -174,8 +174,8 @@ async def test_terminal_publish_fault_does_not_replace_primary(monkeypatch, capl
     from naiyue_test_agent.agent_runtime.events import RunEventPublisher
 
     app = await make_app(monkeypatch)
-    session = await app.acreate_session('A')
-    module = __import__('naiyue_test_agent.application.session_execution', fromlist=['SessionExecution'])
+    session = await app.host.sessions.create('A')
+    module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['RunLifecycle'])
     failure = RuntimeError('PRIVATE_ORIGINAL')
 
     def fail(*_args, **_kwargs):
@@ -193,7 +193,7 @@ async def test_terminal_publish_fault_does_not_replace_primary(monkeypatch, capl
     monkeypatch.setattr(module, 'ainvoke_agent_run', execute_failure)
     monkeypatch.setattr(RunEventPublisher, 'publish', fail_terminal)
     with pytest.raises(RuntimeError) as caught:
-        await app.arun(session, [('user', 'run')])
+        await app.host.runs.start(session, [('user', 'run')])
     assert caught.value is failure
-    assert not app._sessions.require(session).describe_session()['busy']
+    assert not app.host.sessions._sessions.require(session).describe_session()['busy']
     assert 'run_event_publish_failed' in caplog.text and 'PRIVATE_' not in caplog.text

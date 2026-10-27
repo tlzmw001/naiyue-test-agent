@@ -10,7 +10,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.run_events import RunObservation
+from naiyue_test_agent.application.observability.run_events import RunObservation
 from test_application_control_events import blocked_app, controls, finish
 from test_application_run_events import ToolModel, make_app
 from test_turn_failure_boundaries import make_approval
@@ -18,7 +18,7 @@ from test_turn_failure_boundaries import make_approval
 
 async def worker_run(app, session, outcomes):
     try:
-        outcomes.append(await app.arun(session, [('user', 'initial')]))
+        outcomes.append(await app.host.runs.start(session, [('user', 'initial')]))
     except BaseException as error:
         outcomes.append(error)
 
@@ -35,13 +35,13 @@ async def test_control_accepted_before_start_is_buffered_until_run_started(monke
 
     monkeypatch.setattr(RunObservation, 'start', delayed_start)
     app = await make_app(monkeypatch)
-    session = await app.acreate_session('A')
+    session = await app.host.sessions.create('A')
     events, outcomes = [], []
-    app.subscribe_events(events.append)
+    app.host.observability.subscribe(events.append)
     def submit_control():
         assert entered.wait(timeout=5)
         try:
-            app.steer(session, 'queued before started')
+            app.host.runs.steer(session, 'queued before started')
             assert events == []
         finally:
             release.set()
@@ -65,7 +65,7 @@ async def test_delayed_accept_notification_cannot_be_overtaken_by_delivery(monke
         AIMessage(id='first', content='done'), AIMessage(id='second', content='done'),
     ])
     entered, release_accept = Event(), Event()
-    original = app._sessions._sessions[session]._record_steering
+    original = app.host.sessions._sessions._sessions[session].controls._record_steering
     accepted_errors = []
 
     def pause_accept(event, *args):
@@ -74,11 +74,11 @@ async def test_delayed_accept_notification_cannot_be_overtaken_by_delivery(monke
             assert release_accept.wait(timeout=5)
         original(event, *args)
 
-    monkeypatch.setattr(app._sessions._sessions[session], '_record_steering', pause_accept)
+    monkeypatch.setattr(app.host.sessions._sessions._sessions[session].controls, '_record_steering', pause_accept)
 
     def accept():
         try:
-            app.steer(session, 'delayed notification')
+            app.host.runs.steer(session, 'delayed notification')
         except BaseException as error:
             accepted_errors.append(error)
 
@@ -119,19 +119,19 @@ async def test_failure_discards_unprocessed_request_and_preserves_primary(monkey
             raise failure
 
     app = await make_app(monkeypatch, Failing(responses=[AIMessage(content='unused')]))
-    session = await app.acreate_session('A')
+    session = await app.host.sessions.create('A')
     events, outcomes = [], []
-    app.subscribe_events(events.append)
+    app.host.observability.subscribe(events.append)
     worker = asyncio.create_task(worker_run(app, session, outcomes))
 
     try:
         assert await asyncio.to_thread(entered.wait, timeout=5)
         if kind == 'steering':
-            app.steer(session, 'PRIVATE_STEER')
+            app.host.runs.steer(session, 'PRIVATE_STEER')
         elif kind == 'follow_up':
-            app.follow_up(session, 'PRIVATE_FOLLOW')
+            app.host.runs.follow_up(session, 'PRIVATE_FOLLOW')
         else:
-            app.request_stop(session)
+            app.host.runs.stop(session)
     finally:
         release.set()
         await asyncio.wait_for(asyncio.shield(worker), 6)
@@ -141,12 +141,12 @@ async def test_failure_discards_unprocessed_request_and_preserves_primary(monkey
     assert observed[-1].data.reason == 'run_failed' and observed[-1].data.kind == kind
     assert observed[0].data.control_id == observed[1].data.control_id
     assert observed[-1].sequence < events[-1].sequence and events[-1].data.status == 'failed'
-    assert app._sessions._sessions[session]._run is None
+    assert app.host.sessions._sessions._sessions[session]._runtime.run is None
 
 
 @async_test
 async def test_approval_preparation_failure_is_discarded_not_submitted_or_applied(monkeypatch, tmp_path):
-    from naiyue_test_agent.application import session_execution
+    from naiyue_test_agent.application.sessions import session_execution
 
     app, session, events = await make_approval(monkeypatch, tmp_path)
     count = len(events)
@@ -157,12 +157,12 @@ async def test_approval_preparation_failure_is_discarded_not_submitted_or_applie
 
     monkeypatch.setattr(session_execution, 'prepare_run_resources', fail_prepare)
     with pytest.raises(OSError) as caught:
-        await app.aresume_tool_approval(session, ['approve'])
+        await app.host.runs.resume_approval(session, ['approve'])
     assert caught.value is failure
     observed = controls(events[count:])
     assert [e.event_type for e in observed] == ['control_accepted', 'control_discarded']
     assert observed[-1].data.reason == 'prepare_failed'
-    assert app.pending_tool_approvals(session)
+    assert app.host.runs.pending_tools(session)
 
 
 @async_test
@@ -190,14 +190,14 @@ async def test_active_stop_before_approval_skips_tool_and_finishes(monkeypatch, 
     monkeypatch.setattr(application, 'load_model_catalog', lambda _p: ModelCatalog('A', {'A': model}))
     app = await build_application('synthetic.json', tools=[create_session_read_tool()],
                                                system_prompt='', response_format=None)
-    session = await app.acreate_workspace_session('A', root)
+    session = await app.host.sessions.create_workspace('A', root)
     events, outcomes = [], []
-    app.subscribe_events(events.append)
+    app.host.observability.subscribe(events.append)
     worker = asyncio.create_task(worker_run(app, session, outcomes))
 
     try:
         assert await asyncio.to_thread(entered.wait, timeout=5)
-        app.request_stop(session)
+        app.host.runs.stop(session)
         result = await finish(worker, release, outcomes)
     finally:
         release.set()
@@ -214,17 +214,17 @@ async def test_active_stop_before_approval_skips_tool_and_finishes(monkeypatch, 
 @async_test
 async def test_rejected_control_api_calls_never_create_accepted_events(monkeypatch):
     app = await make_app(monkeypatch)
-    session = await app.acreate_session('A')
+    session = await app.host.sessions.create('A')
     events = []
-    app.subscribe_events(events.append)
-    for callback in (lambda: app.steer(session, 'idle'), lambda: app.follow_up(session, 'idle'),
-                     lambda: app.request_stop(session)):
+    app.host.observability.subscribe(events.append)
+    for callback in (lambda: app.host.runs.steer(session, 'idle'), lambda: app.host.runs.follow_up(session, 'idle'),
+                     lambda: app.host.runs.stop(session)):
         with pytest.raises(application.SessionBusyError):
             callback()
     with pytest.raises(ValueError):
-        app.steer(session, '')
+        app.host.runs.steer(session, '')
     with pytest.raises(application.SessionPendingApprovalError):
-        await app.aresume_tool_approval(session, ['approve'])
+        await app.host.runs.resume_approval(session, ['approve'])
     assert events == []
 
 
@@ -241,23 +241,23 @@ async def test_control_callbacks_run_without_session_lock(monkeypatch):
     app = await make_app(monkeypatch, Blocking(responses=[
         AIMessage(id='one', content='one'), AIMessage(id='two', content='two'),
     ]))
-    session = await app.acreate_session('A')
+    session = await app.host.sessions.create('A')
     outcomes = []
     lock_states = []
 
     def observe(event):
         if event.event_type.startswith('control_'):
-            acquired = app._sessions._lock.acquire(blocking=False)
+            acquired = app.host.sessions._sessions._lock.acquire(blocking=False)
             lock_states.append(acquired)
             if acquired:
-                app._sessions._lock.release()
+                app.host.sessions._sessions._lock.release()
 
-    app.subscribe_events(observe)
+    app.host.observability.subscribe(observe)
     worker = asyncio.create_task(worker_run(app, session, outcomes))
 
     try:
         assert await asyncio.to_thread(entered.wait, timeout=5)
-        app.steer(session, 'check lock')
+        app.host.runs.steer(session, 'check lock')
         await finish(worker, release, outcomes)
     finally:
         release.set()
@@ -272,14 +272,14 @@ async def test_old_cleanup_control_notifications_keep_their_run_before_next_run(
     ])
     old_run = events[0].run_id
     try:
-        app.steer(session, 'old queued')
-        app.request_stop(session)
+        app.host.runs.steer(session, 'old queued')
+        app.host.runs.stop(session)
     finally:
         release.set()
         await asyncio.wait_for(asyncio.shield(worker), 6)
     assert worker.done() and len(outcomes) == 1 and isinstance(outcomes[0], dict), outcomes
-    assert not app._sessions.require(session).describe_session()['busy']
-    new_result = await app.arun(session, [('user', 'new')])
+    assert not app.host.sessions._sessions.require(session).describe_session()['busy']
+    new_result = await app.host.runs.start(session, [('user', 'new')])
     new_start = next(e for e in events if e.event_type == 'run_started' and e.run_id != old_run)
     assert new_result['messages'][-1].content == 'new'
     discarded = controls(events, 'control_discarded')
@@ -288,7 +288,7 @@ async def test_old_cleanup_control_notifications_keep_their_run_before_next_run(
     assert discarded[0].sequence < next(e.sequence for e in events
         if e.run_id == old_run and e.event_type == 'run_finished')
     assert not controls([e for e in events if e.run_id == new_start.run_id])
-    assert app._sessions._sessions[session]._run is None
+    assert app.host.sessions._sessions._sessions[session]._runtime.run is None
 
 
 @async_test
@@ -310,14 +310,14 @@ async def test_two_sessions_have_independent_control_ids_and_sequences(monkeypat
             return ChatResult(generations=[ChatGeneration(message=AIMessage(content='done'))])
 
     app = await make_app(monkeypatch, Concurrent(responses=[AIMessage(content='unused')]))
-    sessions = [await app.acreate_session('A') for _ in range(2)]
+    sessions = [await app.host.sessions.create('A') for _ in range(2)]
     events, outcomes = [], []
-    app.subscribe_events(events.append)
+    app.host.observability.subscribe(events.append)
     workers = [asyncio.create_task(worker_run(app, session, outcomes)) for session in sessions]
     try:
         await asyncio.to_thread(entered.wait, timeout=5)
         for session in sessions:
-            app.steer(session, 'same')
+            app.host.runs.steer(session, 'same')
     finally:
         release.set()
         for worker in workers:
@@ -348,7 +348,7 @@ async def test_control_consumer_failure_is_isolated_from_delivery_and_result(mon
         AIMessage(id='one', content='one'), AIMessage(id='two', content='two'),
     ], observer=broken)
     try:
-        app.steer(session, 'PRIVATE_INPUT')
+        app.host.runs.steer(session, 'PRIVATE_INPUT')
         result = await finish(worker, release, outcomes)
     finally:
         release.set()
@@ -364,7 +364,7 @@ async def test_control_publish_failure_does_not_undo_accepted_input_or_fail_run(
     app, session, events, outcomes, worker, release, _calls = await blocked_app(monkeypatch, [
         AIMessage(id='one', content='one'), AIMessage(id='two', content='two'),
     ])
-    publisher = app._sessions._sessions[session]._run.observation.publisher
+    publisher = app.host.sessions._sessions._sessions[session]._runtime.run.observation.publisher
     original = publisher.publish
 
     def fail_control(event_type, data):
@@ -374,13 +374,13 @@ async def test_control_publish_failure_does_not_undo_accepted_input_or_fail_run(
 
     monkeypatch.setattr(publisher, 'publish', fail_control)
     try:
-        app.steer(session, 'still delivered')
+        app.host.runs.steer(session, 'still delivered')
         result = await finish(worker, release, outcomes)
     finally:
         release.set()
         await asyncio.wait_for(asyncio.shield(worker), 6)
     assert [m.content for m in result['messages'] if m.type == 'human'] == ['initial', 'still delivered']
-    assert events[-1].data.status == 'completed' and app._sessions._sessions[session]._run is None
+    assert events[-1].data.status == 'completed' and app.host.sessions._sessions._sessions[session]._runtime.run is None
     assert 'control_event_publish_failed' in caplog.text and 'PRIVATE_' not in caplog.text
 
 
@@ -400,14 +400,14 @@ async def test_delivery_before_next_model_failure_is_not_relabelled_as_discard(m
             raise failure
 
     app = await make_app(monkeypatch, SecondFails(responses=[AIMessage(content='first')]))
-    session = await app.acreate_session('A')
+    session = await app.host.sessions.create('A')
     events, outcomes = [], []
-    app.subscribe_events(events.append)
+    app.host.observability.subscribe(events.append)
     worker = asyncio.create_task(worker_run(app, session, outcomes))
 
     try:
         assert await asyncio.to_thread(entered.wait, timeout=5)
-        app.steer(session, 'delivered')
+        app.host.runs.steer(session, 'delivered')
     finally:
         release.set()
         await asyncio.wait_for(asyncio.shield(worker), 6)

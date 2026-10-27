@@ -1,7 +1,6 @@
 .controls { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: 3px; min-width: 0; }
 .trigger { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text-secondary); padding: 7px 8px; min-height: 34px; font-size: var(--fs-ui); white-space: nowrap; }
 .trigger:hover:not(:disabled), .trigger[aria-expanded="true"] { background: var(--surface-hover); color: var(--text); }
-.chevron { color: var(--faint); font-size: var(--fs-caption); }
 .plus { width: 30px; justify-content: center; padding-inline: 4px; }
 .command { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; border: 0; background: transparent; border-radius: var(--r-sm); padding: 11px 10px; color: var(--text); font-size: var(--fs-ui); text-align: left; }
 .command:hover:not(:disabled), .command:focus-visible { background: var(--surface-hover); }

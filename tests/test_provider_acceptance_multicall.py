@@ -51,7 +51,9 @@ def test_diagnostic_sdk_transport_and_incomplete_gateway_shape(monkeypatch, tmp_
         @asynccontextmanager
         async def opened(*args):
             try:
-                yield SimpleNamespace(_catalog=catalog, get_registered_tools=lambda: [create_subagent_tool()])
+                yield SimpleNamespace(host=SimpleNamespace(
+                    sessions=SimpleNamespace(_sessions=SimpleNamespace(_catalog=catalog)),
+                    tools=SimpleNamespace(list=lambda: [create_subagent_tool()])))
             finally:
                 await catalog.aclose()
         env.open_app = opened

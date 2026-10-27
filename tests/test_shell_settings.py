@@ -72,7 +72,7 @@ def test_removed_workspace_budget_is_ignored_without_fallback(tmp_path, caplog):
 
 def test_environment_inherits_overrides_prepends_and_removes_last(monkeypatch):
     from naiyue_test_agent.tools.settings import EnvironmentSettings
-    from naiyue_test_agent.tools.shell import build_environment
+    from naiyue_test_agent.execution.host_shell import build_environment
     monkeypatch.setenv('TEST_PARENT', 'inherited')
     monkeypatch.setenv('PATH', '/parent')
     settings = EnvironmentSettings(values={'PATH': '/override', 'X': 'changed'},
@@ -85,7 +85,7 @@ def test_environment_inherits_overrides_prepends_and_removes_last(monkeypatch):
 
 def test_windows_environment_is_case_insensitive():
     from naiyue_test_agent.tools.settings import EnvironmentSettings
-    from naiyue_test_agent.tools.shell import build_environment
+    from naiyue_test_agent.execution.host_shell import build_environment
     env = build_environment(EnvironmentSettings(values={'PATH': 'D:\\override', 'SeCrEt': 'x'},
         path_prepend=['C:\\tools'], unset_env=['SECRET']),
         parent={'Path': 'C:\\old', 'USER': 'me'}, platform='win32')

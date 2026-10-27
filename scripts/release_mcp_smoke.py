@@ -50,8 +50,11 @@ def _write_config(path, server):
 async def mcp_scenario(root, model_type):
     from langchain_core.messages import AIMessage, ToolMessage
     from naiyue_test_agent import application
-    from naiyue_test_agent.application.async_application import build_async_local_application
-    from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+    from naiyue_test_agent.application.service_application import open_service_application
+    if __package__:
+        from .release_application import open_smoke_host
+    else:
+        from release_application import open_smoke_host
     from naiyue_test_agent.model_access import ModelCatalog
     from naiyue_test_agent.settings import AppSettings
     from naiyue_test_agent.tools import create_subagent_tool, SubAgentSpec
@@ -73,15 +76,13 @@ async def mcp_scenario(root, model_type):
     disabled_model = model_type(replies=[AIMessage(content='disabled-ok')])
     with patch.object(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': disabled_model})), \
             patch('naiyue_test_agent.mcp_client.connections.open_connection', side_effect=AssertionError('disabled MCP IO')):
-        app = await build_async_local_application('unused', tools=[], system_prompt='', response_format=None,
-                                                  settings=AppSettings())
-        try:
-            sid = await app.acreate_session('A')
-            result = await app.arun(sid, [('user', 'disabled')])
+        async with open_service_application('unused', tools=[], system_prompt='', response_format=None,
+                settings=AppSettings.model_validate({'storage': {'data_dir': root / 'disabled-data'}})) as owner:
+            app = await owner.temporary.open('disabled-check')
+            sid = await app.sessions.create('A')
+            result = await app.runs.start(sid, [('user', 'disabled')])
             assert result['messages'][-1].content == 'disabled-ok' and not records()
-            assert not app._sessions.mcp_resources._idle_handles
-        finally:
-            await app.aclose()
+            assert not app.sessions._sessions.mcp_resources._idle_handles
 
     server = {'enabled': True, 'transport': 'stdio', 'command': sys.executable,
               'args': [str(fixture), '--audit', str(audit), '--mode', 'tools'], 'allowed_tools': ['echo']}
@@ -103,52 +104,54 @@ async def mcp_scenario(root, model_type):
     model = model_type(replies=replies)
     child = model_type(replies=[invoke(NAME, {}, 'child-one'), invoke(NAME, {}, 'child-two'), AIMessage(content='child done')])
     catalog = ModelCatalog('A', {'A': model, 'B': child})
-    options = dict(database_path=root / 'mcp.sqlite', tools=[create_subagent_tool()], initial_active_tools=[],
+    workspace = root / 'mcp-workspace'
+    workspace.mkdir()
+    options = dict(database_path=root / 'mcp.sqlite', workspace=workspace, data_dir=root / 'mcp-data', tools=[create_subagent_tool()], initial_active_tools=[],
                    system_prompt='', response_format=None)
     with patch.object(application, 'load_model_catalog', lambda _: catalog):
-        async with open_async_persistent_application('unused', settings=AppSettings(), **options) as app:
-            resources = app._sessions.mcp_resources
+        async with open_smoke_host('unused', settings=AppSettings(), **options) as app:
+            resources = app.sessions._sessions.mcp_resources
             now = [100.0]
             resources._clock = lambda: now[0]
-            sid = await app.acreate_workspace_session('A', root)
-            report = await app.arefresh_mcp(config)
-            assert report['servers'][0]['status'] == 'enabled' and app.get_active_tools(sid) == () and not calls()
+            sid = await app.sessions.create_workspace('A', workspace)
+            report = await app.mcp.refresh(config)
+            assert report['servers'][0]['status'] == 'enabled' and app.sessions.active_tools(sid) == () and not calls()
             role = SubAgentSpec('tester', 'Installed MCP check', 'Use explicitly selected tools', (NAME,), model_id='B')
-            await app.aregister_subagent(role)
-            await app.aset_active_tools(sid, [NAME, 'subagent'])
-            pending = await app.arun(sid, [('user', 'one')])
+            await app.subagents.register(role)
+            await app.sessions.select_tools(sid, [NAME, 'subagent'])
+            pending = await app.runs.start(sid, [('user', 'one')])
             assert pending['approval_requests'] and not calls()
-            await app.aresume_tool_approval(sid, ['approve'], remember_approved=['one'])
-            await app.arun(sid, [('user', 'two')])
+            await app.runs.resume_approval(sid, ['approve'], remember_approved=['one'])
+            await app.runs.start(sid, [('user', 'two')])
             assert [r['count'] for r in calls()] == [1, 2] and calls()[0]['pid'] == calls()[1]['pid']
-            await app.arun(sid, [('user', 'child')])
+            await app.runs.start(sid, [('user', 'child')])
             assert [r['count'] for r in calls()][2:] == [1, 2]
             assert calls()[2]['pid'] == calls()[3]['pid'] != calls()[0]['pid']
             assert not process_alive(calls()[2]['pid']), 'MCP fixture process leaked'
-            known = await app.arun(sid, [('user', 'error')])
-            unknown = await app.arun(sid, [('user', 'drop')])
+            known = await app.runs.start(sid, [('user', 'error')])
+            unknown = await app.runs.start(sid, [('user', 'drop')])
             assert outcome(known, 'error') == 'tool_error' and outcome(unknown, 'drop') == 'outcome_unknown'
             assert len(calls()) == 6
             server['allowed_tools'] = ['echo', 'other']
             _write_config(config, server)
-            await app.arefresh_mcp(config)
-            pending = await app.arun(sid, [('user', 'stale')])
+            await app.mcp.refresh(config)
+            pending = await app.runs.start(sid, [('user', 'stale')])
             assert pending['approval_requests'] and len(calls()) == 6
             server['enabled'] = False
             _write_config(config, server)
-            await app.arefresh_mcp(config)
-            result = await app.aresume_tool_approval(sid, ['approve'])
+            await app.mcp.refresh(config)
+            result = await app.runs.resume_approval(sid, ['approve'])
             assert outcome(result, 'stale') == 'not_executed' and len(calls()) == 6
             server.update(enabled=True, idle_timeout_seconds=.2)
             _write_config(config, server)
-            await app.arefresh_mcp(config)
-            await app.arun(sid, [('user', 'on')])
-            await app.aresume_tool_approval(sid, ['approve'])
+            await app.mcp.refresh(config)
+            await app.runs.start(sid, [('user', 'on')])
+            await app.runs.resume_approval(sid, ['approve'])
             owner, = resources._owners.values()
-            await app.arun(sid, [('user', 'pending')])
+            await app.runs.start(sid, [('user', 'pending')])
             now[0] = 1000
             assert not owner.task.done() and not resources._idle_handles
-            await app.aresume_tool_approval(sid, ['reject'])
+            await app.runs.resume_approval(sid, ['reject'])
             assert next(iter(resources._idle_handles.values()))[2] == 1000.2
             now[0] = 1000.2
             async with asyncio.timeout(10):
@@ -156,14 +159,14 @@ async def mcp_scenario(root, model_type):
                 while resources._idle_tasks:
                     await asyncio.sleep(0)
             assert not resources._owners
-            await app.arun(sid, [('user', 'ttl')])
-            await app.aresume_tool_approval(sid, ['approve'])
+            await app.runs.start(sid, [('user', 'ttl')])
+            await app.runs.resume_approval(sid, ['approve'])
             assert len(calls()) == 8 and [r['count'] for r in calls()][-2:] == [1, 1]
             assert calls()[-1]['pid'] != calls()[-2]['pid']
         seen = len(model.seen) + len(child.seen)
         reopened = AppSettings.model_validate({'mcp': {'servers': {'local': server}}})
-        async with open_async_persistent_application('unused', settings=reopened, **options) as app:
-            history = await app.aget_session_history(sid)
+        async with open_smoke_host('unused', settings=reopened, **options) as app:
+            history = await app.history.session(sid)
             assert any(message.content == 'after ttl' for message in history['messages'])
             assert len(calls()) == 8 and len(model.seen) + len(child.seen) == seen
     assert all(not process_alive(row['pid']) for row in records() if row['event'] == 'start'), 'MCP fixture process leaked'

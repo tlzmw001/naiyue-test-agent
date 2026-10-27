@@ -56,8 +56,8 @@ async def test_two_application_sessions_contending_for_same_target_get_a_conflic
         Path('synthetic.json'), tools=[create_session_write_tool()],
         system_prompt='', response_format=None,
     )
-    first_session = await app.acreate_workspace_session('A', tmp_path)
-    second_session = await app.acreate_workspace_session('A', tmp_path)
+    first_session = await app.host.sessions.create_workspace('A', tmp_path)
+    second_session = await app.host.sessions.create_workspace('A', tmp_path)
     entered = Event()
     release = Event()
     real_replace = write_module.os.replace
@@ -69,10 +69,10 @@ async def test_two_application_sessions_contending_for_same_target_get_a_conflic
         return real_replace(source, target)
 
     monkeypatch.setattr(write_module.os, 'replace', hold_first_write)
-    first = asyncio.create_task(app.arun(first_session, [('user', 'FIRST')]))
+    first = asyncio.create_task(app.host.runs.start(first_session, [('user', 'FIRST')]))
     try:
         assert await asyncio.to_thread(entered.wait, 5)
-        second = await app.arun(second_session, [('user', 'SECOND')])
+        second = await app.host.runs.start(second_session, [('user', 'SECOND')])
     finally:
         release.set()
         first_result = await asyncio.wait_for(asyncio.shield(first), 5)
@@ -94,23 +94,23 @@ async def test_unknown_write_outcome_keeps_sessions_usable_with_explicit_feedbac
         Path('synthetic.json'), tools=[create_session_write_tool()],
         system_prompt='', response_format=None,
     )
-    uncertain_session = await app.acreate_workspace_session('A', tmp_path)
-    other_session = await app.acreate_workspace_session('A', tmp_path)
+    uncertain_session = await app.host.sessions.create_workspace('A', tmp_path)
+    other_session = await app.host.sessions.create_workspace('A', tmp_path)
     real_replace = write_module.os.replace
 
     def unknown_replace(_source, _target):
         raise OSError('PRIVATE_COMMIT_DETAIL')
 
     monkeypatch.setattr(write_module.os, 'replace', unknown_replace)
-    uncertain = await app.arun(uncertain_session, [('user', 'FIRST')])
+    uncertain = await app.host.runs.start(uncertain_session, [('user', 'FIRST')])
     assert results(uncertain)[0].status == 'error'
     assert 'outcome is unknown' in results(uncertain)[0].content
     assert not (tmp_path / 'shared.md').exists()
     monkeypatch.setattr(write_module.os, 'replace', real_replace)
 
-    retried = await app.arun(uncertain_session, [('user', 'retry')])
+    retried = await app.host.runs.start(uncertain_session, [('user', 'retry')])
     assert results(retried)[-1].status == 'success'
-    other_result = await app.arun(other_session, [('user', 'SECOND')])
+    other_result = await app.host.runs.start(other_session, [('user', 'SECOND')])
     assert results(other_result)[0].status == 'success'
     assert (tmp_path / 'shared.md').read_text() == 'SECOND'
 
@@ -124,7 +124,7 @@ async def test_session_write_fails_closed_without_workspace(monkeypatch, tmp_pat
         AIMessage(content='denied'),
     ])
 
-    result = await app.arun(await app.acreate_session('A'), [('user', 'write without workspace')])
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'write without workspace')])
 
     message = results(result)[0]
     assert message.tool_call_id == 'no-workspace'

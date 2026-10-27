@@ -1,5 +1,6 @@
 """Duration is optional observation of real terminal facts, never execution policy."""
 
+from runtime_context_helpers import RunIdentity, RunObservationPorts, typed_context, typed_scope
 import asyncio
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -15,10 +16,10 @@ from naiyue_test_agent.agent_runtime import events as event_module
 from naiyue_test_agent.agent_runtime.events import (
     RunEventPublisher, RunStartedData, RunFinishedData, ModelInvocationFinishedData, ToolCallFinishedData,
 )
-from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
+from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
 from naiyue_test_agent.agent_runtime.tool_execution.observation import aobserve_tool_dispatch
-from naiyue_test_agent.application.run_events import RunObservation, ApplicationEventSubscriptions
-from naiyue_test_agent.application.diagnostic_persistence import project_diagnostic_event
+from naiyue_test_agent.application.observability.run_events import RunObservation, ApplicationEventSubscriptions
+from naiyue_test_agent.application.observability.diagnostic_persistence import project_diagnostic_event
 from naiyue_test_agent.web.serialization import wire_event
 from test_model_invocation_observation import callback, metadata, output
 
@@ -68,7 +69,7 @@ async def test_model_duration_uses_callback_identity_and_monotonic_clock(monkeyp
 
     monkeypatch.setattr(event_module, 'datetime', JumpedUTC)
     events, identity, handler = [], uuid4(), callback()
-    with bind_run_services(RunServices(publisher=RunEventPublisher('s', 'r', (events.append,)))):
+    with bind_run_scope(typed_scope(publisher=RunEventPublisher('s', 'r', (events.append,)))):
         await handler.on_chat_model_start({}, [], run_id=identity, metadata=metadata())
         tick[0] = 8_700_000
         if status == 'returned':
@@ -95,7 +96,7 @@ async def test_clock_failure_keeps_original_model_terminal(monkeypatch, caplog, 
         return 0
     monkeypatch.setattr(timing, 'monotonic_ns', clock)
     events, identity, handler = [], uuid4(), callback()
-    with bind_run_services(RunServices(publisher=RunEventPublisher('s', 'r', (events.append,)))):
+    with bind_run_scope(typed_scope(publisher=RunEventPublisher('s', 'r', (events.append,)))):
         await handler.on_chat_model_start({}, [], run_id=identity, metadata=metadata())
         await handler.on_llm_end(output(None), run_id=identity)
     assert len(events) == 2 and events[-1].data.status == 'returned'
@@ -112,8 +113,7 @@ async def test_dispatch_duration_keeps_outcomes_and_control_contract(monkeypatch
     events = []
     pub = RunEventPublisher('s', 'r', (events.append,))
     call = {'name': 'probe', 'id': 'call', 'args': {}}
-    request = SimpleNamespace(tool_call=call, runtime=SimpleNamespace(context={
-        'session_id': 's', 'run_id': 'r', '_run_event_publisher': pub}), state={
+    request = SimpleNamespace(tool_call=call, runtime=SimpleNamespace(context=typed_context(identity=RunIdentity(session_id='s', run_id='r'), observation=RunObservationPorts(publisher=pub))), state={
             'messages': [AIMessage(content='', tool_calls=[call])]})
     failure = (GraphBubbleUp() if outcome == 'bubble' else asyncio.CancelledError('PRIVATE')
                if outcome == 'cancelled' else RuntimeError('PRIVATE'))
@@ -179,8 +179,7 @@ async def test_tool_clock_failure_preserves_original_business_error(monkeypatch,
     monkeypatch.setattr(timing, 'monotonic_ns', broken_clock)
     events, failure = [], RuntimeError('PRIVATE_BUSINESS')
     call = {'name': 'probe', 'id': 'call', 'args': {}}
-    request = SimpleNamespace(tool_call=call, runtime=SimpleNamespace(context={
-        'session_id': 's', 'run_id': 'r', '_run_event_publisher': RunEventPublisher('s', 'r', (events.append,))}),
+    request = SimpleNamespace(tool_call=call, runtime=SimpleNamespace(context=typed_context(identity=RunIdentity(session_id='s', run_id='r'), observation=RunObservationPorts(publisher=RunEventPublisher('s', 'r', (events.append,))))),
         state={'messages': [AIMessage(content='', tool_calls=[call])]})
     async def handler(_):
         raise failure
@@ -198,7 +197,7 @@ async def test_tool_clock_failure_preserves_original_business_error(monkeypatch,
 @async_test
 async def test_root_duration_waits_for_required_save_and_preserves_failures(monkeypatch, tmp_path, model_error, save_error):
     from naiyue_test_agent.contracts import timing
-    from naiyue_test_agent.application.session_storage import SessionPersistenceError
+    from naiyue_test_agent.storage.errors import SessionPersistenceError
     from test_persistent_sessions import build
     from test_async_application import StreamingToolModel
     tick, events = [0], []
@@ -207,9 +206,9 @@ async def test_root_duration_waits_for_required_save_and_preserves_failures(monk
     model = StreamingToolModel(replies=[primary if model_error else AIMessage(content='done')])
     entered, release = asyncio.Event(), asyncio.Event()
     async with build(monkeypatch, tmp_path / 'state.sqlite', model) as app:
-        sid = await app.acreate_session('A')
-        app.subscribe_events(events.append)
-        original = app._persistence.afinish
+        sid = await app.host.sessions.create('A')
+        app.host.observability.subscribe(events.append)
+        original = app.host.sessions._persistence.afinish
         async def finish(*args):
             entered.set()
             await release.wait()
@@ -217,12 +216,12 @@ async def test_root_duration_waits_for_required_save_and_preserves_failures(monk
                 return await original(*args)
             finally:
                 tick[0] = 86_900_000
-        monkeypatch.setattr(app._persistence, 'afinish', finish)
+        monkeypatch.setattr(app.host.sessions._persistence, 'afinish', finish)
         if save_error:
             def fail_save(*args, **kwargs):
                 raise secondary
-            monkeypatch.setattr(app._storage, 'finish_run', fail_save)
-        task = asyncio.create_task(app.arun(sid, [('user', 'task')]))
+            monkeypatch.setattr(app.host.sessions._persistence.storage.runs, 'finish_run', fail_save)
+        task = asyncio.create_task(app.host.runs.start(sid, [('user', 'task')]))
         try:
             await asyncio.wait_for(entered.wait(), 5)
             assert not task.done() and not any(e.event_type == 'run_finished' for e in events)
@@ -243,4 +242,4 @@ async def test_root_duration_waits_for_required_save_and_preserves_failures(monk
         end, = [e for e in events if e.event_type == 'run_finished']
         assert end.data.duration_ms == 86
         assert end.data.status == ('failed' if model_error or save_error else 'completed')
-        assert not app._sessions.require(sid).describe_session()['busy']
+        assert not app.host.sessions._sessions.require(sid).describe_session()['busy']

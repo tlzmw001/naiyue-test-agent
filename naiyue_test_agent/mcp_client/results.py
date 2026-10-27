@@ -39,11 +39,11 @@ def format_result(result, *, runtime, server, server_id, tool):
                 'truncated': truncated, 'result_bytes': len(raw), 'is_error': result.is_error,
                 'archive_complete': False, 'archive_paths': {}}
     if truncated:
-        root = (runtime.context or {}).get('archive_root')
+        root = runtime.context.scope.archive_root
         if isinstance(root, Path) and root.is_absolute():
             from ..tools.output import require_archive_root
             try:
-                root = require_archive_root(runtime.context)
+                root = require_archive_root(runtime.context.scope.archive_root, runtime.context.scope.identity.execution_path)
             except (ToolException, OSError, RuntimeError) as error:
                 logging.getLogger(__name__).warning('mcp_archive_root_unavailable error_type=%s', type(error).__name__)
                 artifact['archive_reason'] = 'archive_root_unavailable'

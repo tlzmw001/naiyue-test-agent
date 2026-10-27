@@ -1,5 +1,6 @@
 """Edit behavior through the real permission, dispatch and ToolError boundary."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from native_application_helpers import async_test
 
 import json
@@ -17,7 +18,7 @@ async def run_edit(tmp_path, original, edits, settings=None):
     target.write_bytes(original)
     result = (await invoke_tool_feedback(create_session_edit_tool(settings=settings),
         {'path': target.name, 'edits': [{'oldText': old, 'newText': new} for old, new in edits]},
-        call_id='edit-detail', context={'workspace_root': tmp_path}))
+        call_id='edit-detail', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
     return result, target.read_bytes()
 
 
@@ -201,7 +202,7 @@ async def test_patch_headers_support_spaces_without_quote_parser_dependency(tmp_
     target = tmp_path / 'text with space.txt'
     target.write_text('old\n')
     result = (await invoke_tool_feedback(create_session_edit_tool(), {'path': target.name,
-        'edits': [{'oldText': 'old', 'newText': 'NEW'}]}, call_id='space', context={'workspace_root': tmp_path}))
+        'edits': [{'oldText': 'old', 'newText': 'NEW'}]}, call_id='space', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
     assert result.status == 'success'
     assert result.artifact['patch'].startswith('--- a/text with space.txt\t\n+++ b/text with space.txt\t\n')
 
@@ -212,7 +213,7 @@ async def test_unrepresentable_patch_filename_does_not_inject_headers(tmp_path, 
     target = tmp_path / name
     target.write_text('old\n')
     result = (await invoke_tool_feedback(create_session_edit_tool(), {'path': name,
-        'edits': [{'oldText': 'old', 'newText': 'NEW'}]}, call_id='path', context={'workspace_root': tmp_path}))
+        'edits': [{'oldText': 'old', 'newText': 'NEW'}]}, call_id='path', context=typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None))))
     assert result.status == 'success' and target.read_text() == 'NEW\n'
     assert result.artifact['patch'] is None and result.artifact['patch_omitted'] is True
     assert result.artifact['diff_truncated'] is False

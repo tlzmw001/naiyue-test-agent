@@ -8,14 +8,14 @@ import pytest
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from naiyue_test_agent.application import memory_overview_store as store
+from naiyue_test_agent.storage.memory_sql import memory_overview_store as store
 from test_async_application import StreamingToolModel
 from test_memory_batches import archive, save
 from test_memory_job_runner import fixture, response, until
 
 
 def test_many_batches_and_two_tasks_inherit_used_overview_range_and_omissions(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='secret', content='password = SYNTHETIC_NOT_A_CREDENTIAL'),
             HumanMessage(id='long', content='visible source ' * 20)])
@@ -26,7 +26,7 @@ def test_many_batches_and_two_tasks_inherit_used_overview_range_and_omissions(ar
         try:
             await drive(first_service, first)
             assert first.result_status == 'completed' and first.batches > 1
-            saved = store.overview(archive, 'session')
+            saved = archive.memory.overview('session')
             assert saved['coverage']['lower'] == 1 and saved['coverage']['upper'] == 2
             assert saved['coverage']['skipped'] == ['sensitive:1']
             assert not any(note.startswith('partial_source:') for note in saved['coverage']['skipped'])
@@ -37,7 +37,7 @@ def test_many_batches_and_two_tasks_inherit_used_overview_range_and_omissions(ar
             try:
                 await drive(second_service, second)
                 assert second.result_status == 'completed'
-                current = store.overview(archive, 'session')['coverage']
+                current = archive.memory.overview('session')['coverage']
                 assert current['lower'] == 1 and current['upper'] == 3
                 assert current['skipped'] == ['sensitive:1']
                 payload = json.loads(second_model.seen[0][-1].content)
@@ -51,7 +51,7 @@ def test_many_batches_and_two_tasks_inherit_used_overview_range_and_omissions(ar
 
 
 def test_failed_accepted_range_is_a_hole_in_the_next_successful_overview(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='secret', content='password = SYNTHETIC_NOT_A_CREDENTIAL'),
             *[HumanMessage(id=f'm{i}', content=f'work {i}') for i in range(2, 7)]])
@@ -60,7 +60,7 @@ def test_failed_accepted_range_is_a_hole_in_the_next_successful_overview(archive
         await drive(service1, first)
         failed_service, failed, _ = fixture(archive, tmp_path, StreamingToolModel(replies=[AIMessage(content='{')]))
         failed.task_id = 'b' * 32; failed.start = (3, 0); failed.upper = 4
-        store.accept(archive, 'session', thread_id='root-thread', conversation_revision=0, upper=4)
+        archive.memory.accept('session', thread_id='root-thread', conversation_revision=0, upper=4)
         await drive(failed_service, failed)
         assert failed.result_status == 'failed'
         service3, third, _ = fixture(archive, tmp_path, StreamingToolModel(replies=[response()]))
@@ -68,7 +68,7 @@ def test_failed_accepted_range_is_a_hole_in_the_next_successful_overview(archive
         try:
             await drive(service3, third)
             assert third.result_status == 'completed'
-            coverage = store.overview(archive, 'session')['coverage']
+            coverage = archive.memory.overview('session')['coverage']
             assert coverage['lower'] == 1 and coverage['upper'] == 6
             assert coverage['skipped'] == ['sensitive:1', 'unprocessed:3:0:4']
         finally:
@@ -78,7 +78,7 @@ def test_failed_accepted_range_is_a_hole_in_the_next_successful_overview(archive
 
 
 def test_abandoned_partial_source_becomes_real_gap_instead_of_stale_partial(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='long', content='visible source ' * 100)])
         service1, first, _ = fixture(archive, tmp_path, StreamingToolModel(replies=[response()]),
@@ -91,7 +91,7 @@ def test_abandoned_partial_source_becomes_real_gap_instead_of_stale_partial(arch
         second.task_id = 'b' * 32; second.start = (2, 0); second.upper = 2
         try:
             await drive(service2, second)
-            coverage = store.overview(archive, 'session')['coverage']
+            coverage = archive.memory.overview('session')['coverage']
             assert coverage['lower'] == 1 and coverage['upper'] == 2
             assert coverage['skipped'] == [f'unprocessed:1:{offset}:1']
             assert not any(note.startswith('partial_source:') for note in coverage['skipped'])
@@ -101,7 +101,7 @@ def test_abandoned_partial_source_becomes_real_gap_instead_of_stale_partial(arch
 
 
 def test_many_omission_notes_remain_bounded_with_explicit_truncation(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [*[HumanMessage(id=f's{i}', content='password = SYNTHETIC_NOT_A_CREDENTIAL')
             for i in range(700)], HumanMessage(id='safe', content='safe final source')])
@@ -110,7 +110,7 @@ def test_many_omission_notes_remain_bounded_with_explicit_truncation(archive, tm
         try:
             await drive(service, job)
             assert job.result_status == 'completed' and job.overview_saved == 1
-            notes = store.overview(archive, 'session')['coverage']['skipped']
+            notes = archive.memory.overview('session')['coverage']['skipped']
             assert len(json.dumps(notes, ensure_ascii=False, separators=(',', ':')).encode()) <= 4096
             assert any(note.startswith('coverage_notes_truncated:') for note in notes)
         finally:
@@ -119,7 +119,7 @@ def test_many_omission_notes_remain_bounded_with_explicit_truncation(archive, tm
 
 
 def test_only_slot_owner_is_running_and_pending_root_wait_is_starting(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='human', content='visible')])
         model = StreamingToolModel(replies=[response()], entered=asyncio.Event(), release=asyncio.Event())
@@ -151,7 +151,7 @@ def test_only_slot_owner_is_running_and_pending_root_wait_is_starting(archive, t
 
 @pytest.mark.parametrize('denied', ['search', 'read'])
 def test_background_related_reads_honor_each_normalized_request_permission(archive, tmp_path, monkeypatch, denied):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     from naiyue_test_agent.tools.memory import MemoryInput
     from test_memory_lifecycle import proposal
     async def scenario():
@@ -163,7 +163,7 @@ def test_background_related_reads_honor_each_normalized_request_permission(archi
             body='使用.venv PRIVATE_CANDIDATE_BODY', intent='candidate', gaps=['需确认']),
             sources=[dict(session_id='session', thread_id='root-thread', message_id='human', revision=1,
                 conversation_revision=0, quote='使用.venv', offset=0)]).model_dump(mode='json')
-        service.memory.query('session', tmp_path, request)
+        service.memory.query('session', service.storage.sessions.get('session')['project_id'], request)
         original, calls = service.memory.query, []
         def observed(*args):
             calls.append(args[-1])
@@ -181,7 +181,7 @@ def test_background_related_reads_honor_each_normalized_request_permission(archi
 
 
 def test_rewrite_after_previous_overview_read_cannot_revalidate_old_summary(archive, tmp_path, monkeypatch):
-    from naiyue_test_agent.application import memory_job_runner
+    from naiyue_test_agent.application.memory import memory_job_runner
     async def scenario():
         save(archive, [HumanMessage(id='old', content='old saved work')])
         first_service, first, _ = fixture(archive, tmp_path, StreamingToolModel(replies=[response()]))
@@ -200,7 +200,7 @@ def test_rewrite_after_previous_overview_read_cannot_revalidate_old_summary(arch
         try:
             await memory_job_runner.drive(second_service, second)
             assert second.result_status == 'failed' and second.overview_saved == 0 and not model.seen
-            overview = store.overview(archive, 'session')
+            overview = archive.memory.overview('session')
             assert overview['overview_version'] == 1 and overview['overview_status'] == 'stale'
         finally:
             first_service.memory.close(); second_service.memory.close()

@@ -6,12 +6,22 @@ import type { SessionRow } from './types';
 export function useSessions(api: WebApi, notice: (text: string) => void) {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [managingSessions, setManaging] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [failure, setFailure] = useState('');
   const version = useRef(0);
   const inFlight = useRef(false);
-  const refreshSessions = useCallback(async () => {
+  const refreshSessions = useCallback(async (signal?: AbortSignal) => {
     const generation = ++version.current;
-    const rows = await api.sessions();
-    if (generation === version.current) setSessions(rows);
+    setLoading(true);
+    try {
+      const rows = await api.sessions(signal);
+      if (!signal?.aborted && generation === version.current) { setSessions(rows); setFailure(''); }
+    } catch (error) {
+      if (!signal?.aborted && generation === version.current) {
+        console.warn('session_directory_read_failed'); setFailure(errorText(error));
+      }
+      throw error;
+    } finally { if (!signal?.aborted && generation === version.current) setLoading(false); }
   }, [api]);
 
   async function change(perform: () => Promise<void>) {
@@ -31,7 +41,7 @@ export function useSessions(api: WebApi, notice: (text: string) => void) {
     } finally { inFlight.current = false; setManaging(false); }
   }
 
-  return { sessions, managingSessions, refreshSessions,
+  return { sessions, loading, failure, managingSessions, refreshSessions,
     updateSession: (id: string, update: { title?: string; pinned?: boolean }) => change(async () => {
       const saved = await api.updateSession(id, update);
       setSessions(rows => rows.map(row => row.session_id === id ? saved : row)

@@ -1,5 +1,6 @@
 """Acceptance limits apply before transport, including SDK-internal retry paths."""
 
+from runtime_context_helpers import typed_context
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -161,7 +162,7 @@ def test_auto_empty_callbacks_cannot_convert_budget_stop_into_ask(monkeypatch):
                     'project_instructions': '', 'previous_calls': [], 'history_truncated': False,
                     'current_call': {'name': 'read', 'args': {'path': 'test.txt'}}, 'subject': {}}
             with pytest.raises(AcceptanceBudgetStop):
-                await reviewer.areview(data, {})
+                await reviewer.areview(data, typed_context())
             assert attempts == ['POST'] and budget.snapshot()['used'] == 1
             assert budget.snapshot()['stopped'] is True
         finally:

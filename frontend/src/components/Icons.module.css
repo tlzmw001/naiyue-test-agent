@@ -1,0 +1,4 @@
+.chevron { display: block; width: 14px; height: 14px; flex-shrink: 0; color: var(--muted); pointer-events: none; }
+.chevron[data-chevron="up"] { transform: rotate(180deg); }
+.chevron[data-chevron="right"] { transform: rotate(-90deg); }
+.chevron[data-chevron="left"] { transform: rotate(90deg); }

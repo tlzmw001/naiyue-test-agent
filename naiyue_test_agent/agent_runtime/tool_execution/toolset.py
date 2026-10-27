@@ -11,10 +11,6 @@ from ..context_usage import compose_model_prompt
 from naiyue_test_agent.tools.subagent import subagent_request_tools
 
 
-_VIEW_KEY = '_naiyue_tool_view'
-_ROLES_KEY = '_naiyue_subagent_roles'
-
-
 class ToolExecutionState(AgentState):
     tool_execution: NotRequired[dict]
 
@@ -23,7 +19,7 @@ def batch_tool_specs(registry, state, context):
     names = state.get('tool_execution', {}).get('tool_names')
     if names is None:
         raise RuntimeError('Current tool selection is unavailable')
-    view = context.get(_VIEW_KEY)
+    view = (context.invocation.model_call.tool_view if context.invocation.model_call is not None else None)
     if view is not None and tuple(spec.tool.name for spec in view) == tuple(names):
         return view
     return registry.select(names)
@@ -42,19 +38,19 @@ class ToolSetMiddleware(AgentMiddleware):
     def prepare_tool_view(self, runtime, *, names=None):
         context = runtime.context
         if names is None:
-            names = self.resolve_active_tool_names(context['session_id'], context.get('agent_path', 'root'))
-        names = subagent_request_tools(names, self.registry, agent_path=context.get('agent_path', 'root'))
-        view = self.registry.select_available(names)
-        context[_VIEW_KEY] = view
-        context[_ROLES_KEY] = (tuple((role.name, role.description) for role in self.resolve_subagent_roles())
+            names = self.resolve_active_tool_names(context.scope.identity.session_id, context.scope.identity.agent_path)
+        names = subagent_request_tools(names, self.registry, agent_path=context.scope.identity.agent_path)
+        view = self.registry.select_available(names, context=context)
+        context.invocation.model_call.tool_view = view
+        context.invocation.model_call.subagent_roles = (tuple((role.name, role.description) for role in self.resolve_subagent_roles())
             if any(spec.tool.name == 'subagent' for spec in view) and self.resolve_subagent_roles is not None else ())
         return {'tool_execution': {'tool_names': [spec.tool.name for spec in view]}}
 
     def _inputs(self, state, runtime):
         specs = batch_tool_specs(self.registry, state, runtime.context)
-        sid = runtime.context['session_id']
-        parts = self.resolve_prompt_parts(sid, runtime.context.get('agent_path', 'root')) if self.resolve_prompt_parts is not None else []
-        prompt = compose_model_prompt(self.system_prompt, parts, specs, runtime.context.get(_ROLES_KEY, ()))
+        sid = runtime.context.scope.identity.session_id
+        parts = self.resolve_prompt_parts(sid, runtime.context.scope.identity.agent_path) if self.resolve_prompt_parts is not None else []
+        prompt = compose_model_prompt(self.system_prompt, parts, specs, (runtime.context.invocation.model_call.subagent_roles if runtime.context.invocation.model_call is not None else ()))
         tools = []
         for spec in specs:
             if isinstance(spec.input_schema, dict):
@@ -91,7 +87,7 @@ class ToolSetMiddleware(AgentMiddleware):
             if isinstance(spec.permissions, MCPPermission):
                 prepared = next((call for call in request.state.get('tool_execution', {}).get('calls', [])
                                  if call['id'] == request.tool_call['id']), None)
-                reason = spec.permissions.unavailable_reason()
+                reason = spec.permissions.unavailable_reason(request.runtime.context)
                 if prepared is not None and prepared.get('subject', {}).get('mcp') not in (None, spec.permissions.identity()):
                     reason = 'definition_changed'
                 if reason:

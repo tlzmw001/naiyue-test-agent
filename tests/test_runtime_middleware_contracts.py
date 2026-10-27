@@ -1,5 +1,7 @@
 """Observe real production hooks and wrappers without replacing their behavior."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
+
 import asyncio
 from functools import wraps
 
@@ -39,7 +41,7 @@ def middleware_trace(monkeypatch):
         @wraps(original)
         async def record(self, state, runtime):
             latest = next(m for m in reversed(state['messages']) if isinstance(m, AIMessage))
-            key = (runtime.context.get('agent_path', 'root'), latest.id)
+            key = ((runtime.context.scope.identity.agent_path if runtime.context.scope.identity.agent_path is not None else 'root'), latest.id)
             trace.append((label + '.enter', *key, None))
             result = await original(self, state, runtime)
             calls = (result or {}).get('tool_execution', {}).get('calls', [])
@@ -60,7 +62,7 @@ def middleware_trace(monkeypatch):
             # Class methods receive self; the shared observation instance may
             # have a bound method restored by an earlier fault-injection test.
             request, handler = args[-2:]
-            key = (request.runtime.context.get('agent_path', 'root'), request.tool_call['id'])
+            key = ((request.runtime.context.scope.identity.agent_path if request.runtime.context.scope.identity.agent_path is not None else 'root'), request.tool_call['id'])
             trace.append((label + '.enter', *key, None))
             try:
                 result = await original(*args)
@@ -82,8 +84,8 @@ def middleware_trace(monkeypatch):
     def mark_ready(self, state, runtime):
         result = ready(self, state, runtime)
         latest = next(m for m in reversed(state['messages']) if isinstance(m, AIMessage))
-        turns = runtime.context['_turn_observer']
-        trace.append(('ready', runtime.context.get('agent_path', 'root'), latest.id,
+        turns = runtime.context.scope.observation.turns
+        trace.append(('ready', (runtime.context.scope.identity.agent_path if runtime.context.scope.identity.agent_path is not None else 'root'), latest.id,
                       (turns._ready, turns._phase)))
         return result
 
@@ -93,8 +95,8 @@ def middleware_trace(monkeypatch):
     @wraps(authorize)
     def permit(self, request):
         result = authorize(self, request)
-        binding = None if isinstance(result, ToolMessage) else result.runtime.context.get('_execution_permit')
-        trace.append(('authorize', request.runtime.context.get('agent_path', 'root'), request.tool_call['id'], binding))
+        binding = None if isinstance(result, ToolMessage) else (result.runtime.context.authorization.permit if result.runtime.context.authorization is not None else None)
+        trace.append(('authorize', (request.runtime.context.scope.identity.agent_path if request.runtime.context.scope.identity.agent_path is not None else 'root'), request.tool_call['id'], binding))
         return result
 
     monkeypatch.setattr(ExecutionAuthorizationMiddleware, '_authorize', permit)
@@ -116,9 +118,9 @@ async def test_production_batch_prepares_before_approval_and_executes_only_after
     app = await build_application('unused', tools=[definition(calls=effects, approved=True, sequential=True),
         definition('ordinary', calls=effects)], system_prompt='', response_format=None)
     events = []
-    app.subscribe_events(events.append)
-    sid = await app.acreate_session('A')
-    paused = await app.arun(sid, [('user', 'run both')])
+    app.host.observability.subscribe(events.append)
+    sid = await app.host.sessions.create('A')
+    paused = await app.host.runs.start(sid, [('user', 'run both')])
     assert [r['tool_call_id'] for r in paused['approval_requests']] == ['ask']
     assert effects == [] and len(model.seen) == 1
     assert [row[0] for row in trace] == ['permission.enter', 'permission.exit', 'approval.enter']
@@ -126,7 +128,7 @@ async def test_production_batch_prepares_before_approval_and_executes_only_after
     assert not any(isinstance(m, ToolMessage) for m in paused['messages'])
     assert [e.event_type for e in events if e.event_type.startswith('turn_')] == ['turn_started', 'turn_suspended']
 
-    result = await app.aresume_tool_approval(sid, [decision])
+    result = await app.host.runs.resume_approval(sid, [decision])
     batch = [row for row in trace if row[2] == 'batch']
     assert [row[0] for row in batch] == ['permission.enter', 'permission.exit', 'approval.enter',
         'approval.enter', 'approval.exit', 'plan.enter', 'plan.exit', 'ready']
@@ -167,7 +169,7 @@ async def test_real_authorization_precedes_tool_and_error_boundary_preserves_fai
     public, execution = build_tool_schemas('BoundaryProbeInput', BaseModel)
 
     @tool(args_schema=execution)
-    def probe(runtime: ToolRuntime[dict, dict]) -> str:
+    def probe(runtime: ToolRuntime[RuntimeContext]) -> str:
         """Fail after checking the actual execution permit."""
         binding = require_tool_permit(runtime)
         trace.append(('body', 'root', runtime.tool_call_id, binding))
@@ -187,15 +189,15 @@ async def test_real_authorization_precedes_tool_and_error_boundary_preserves_fai
     app = await build_application('unused', tools=[ToolSpec(probe, public,
         permissions=ToolPermission(default='allow'))], system_prompt='', response_format=None)
     events = []
-    app.subscribe_events(events.append)
-    sid = await app.acreate_session('A')
+    app.host.observability.subscribe(events.append)
+    sid = await app.host.sessions.create('A')
     if mechanism:
         with pytest.raises(PermissionMechanismError) as caught:
-            await app.arun(sid, [('user', 'run')])
+            await app.host.runs.start(sid, [('user', 'run')])
         assert caught.value is failure and len(model.seen) == 1
         assert [e.data.status for e in events if e.event_type == 'turn_finished'] == ['failed']
     else:
-        result = await app.arun(sid, [('user', 'run')])
+        result = await app.host.runs.start(sid, [('user', 'run')])
         output, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
         assert (output.tool_call_id, output.status, output.content) == ('call', 'error', str(failure))
         assert result['messages'][-1].content == 'handled' and len(model.seen) == 2
@@ -232,12 +234,12 @@ async def test_request_observer_sees_selected_model_tools_prompt_and_adapted_mes
     (tmp_path / 'AGENTS.md').write_text('PROJECT_CONSTRAINT', encoding='utf-8')
     app = await build_application('unused', tools=[definition(), definition('unused')],
         initial_active_tools=['unused'], system_prompt='BASE_PROMPT', response_format=None)
-    sid = await app.acreate_workspace_session('A', tmp_path)
-    await app.aselect_model(sid, 'B')
-    await app.aset_active_tools(sid, ['probe'])
+    sid = await app.host.sessions.create_workspace('A', tmp_path)
+    await app.host.sessions.select_model(sid, 'B')
+    await app.host.sessions.select_tools(sid, ['probe'])
     canonical = [{'type': 'text', 'text': 'request'},
                  {'type': 'image', 'source_type': 'base64', 'data': 'PRIVATE_PIXELS', 'mime_type': 'image/png'}]
-    result = await app.arun(sid, [HumanMessage(content=canonical)])
+    result = await app.host.runs.start(sid, [HumanMessage(content=canonical)])
     observed_model, tools, prompt, messages = requests[0]
     assert len(requests) == 1 and observed_model is selected and default.seen == []
     assert tools == [t.name for t in selected.bound[0]] == ['probe']
@@ -264,18 +266,18 @@ async def test_stop_after_model_response_jumps_past_permission_approval_plan_and
     @wraps(original)
     def stop_after_accept(self, request, response, model_id, call_id):
         result = original(self, request, response, model_id, call_id)
-        app.request_stop(sid)
+        app.host.runs.stop(sid)
         return result
 
     monkeypatch.setattr(_ModelSelectionMiddleware, '_accept', stop_after_accept)
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     app = await build_application('unused', tools=[definition(calls=effects, approved=True)],
                                   system_prompt='', response_format=None)
-    sid = await app.acreate_session('A')
-    result = await app.arun(sid, [('user', 'run')])
+    sid = await app.host.sessions.create('A')
+    result = await app.host.runs.start(sid, [('user', 'run')])
     assert result['run_stopped'] and '__interrupt__' not in result
     assert middleware_trace == [] and effects == [] and len(model.seen) == 1
-    assert app.pending_tool_approvals(sid) == []
+    assert app.host.runs.pending_tools(sid) == []
     output, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
     assert (output.tool_call_id, output.status, output.additional_kwargs['naiyue_not_executed']) == (
         'stopped', 'error', 'user_stop')
@@ -300,8 +302,8 @@ async def test_child_graph_uses_same_permission_approval_plan_and_authorization_
     root.metadata = {**(root.metadata or {}), MODEL_ID_METADATA_KEY: 'A'}
     child.metadata = {**(child.metadata or {}), MODEL_ID_METADATA_KEY: 'B'}
     queue = approval_notifications(monkeypatch, app)
-    sid = await app.acreate_session('A')
-    task = asyncio.create_task(app.arun(sid, [('user', 'delegate')]))
+    sid = await app.host.sessions.create('A')
+    task = asyncio.create_task(app.host.runs.start(sid, [('user', 'delegate')]))
     try:
         batch = await next_approval(app, sid, queue)
         path = batch['agent_path']
@@ -327,7 +329,7 @@ async def test_child_graph_uses_same_permission_approval_plan_and_authorization_
             ('ask', 'success' if decision == 'approve' else 'error'), ('ordinary', 'success')]
         assert effects == ([('probe', 'ask'), ('ordinary', 'allow')] if decision == 'approve' else [('ordinary', 'allow')])
         assert len(child.seen) == len(root.seen) == 2
-        assert result['messages'][-1].content == 'root done' and app.pending_subagent_approvals(sid) == []
+        assert result['messages'][-1].content == 'root done' and app.host.runs.pending_subagents(sid) == []
         assert not any('observation_failed' in row.getMessage() or 'unavailable' in row.getMessage()
                        for row in caplog.records)
     finally:

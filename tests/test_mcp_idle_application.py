@@ -6,7 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+from scripts.component_fixtures import open_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.settings import AppSettings
 from test_async_application import StreamingToolModel, call
@@ -32,7 +32,7 @@ def test_root_pending_approval_keeps_connection_then_rebuilds_after_full_idle(mo
         if persistent:
             model = StreamingToolModel(replies=replies)
             monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
-            context = open_async_persistent_application('unused', database_path=tmp_path / 'state.sqlite',
+            context = open_component_application('unused', database_path=tmp_path / 'state.sqlite',
                 tools=[], initial_active_tools=[NAME], system_prompt='', response_format=None, settings=options)
         else:
             from contextlib import asynccontextmanager
@@ -43,26 +43,26 @@ def test_root_pending_approval_keeps_connection_then_rebuilds_after_full_idle(mo
                 finally: await app.aclose()
             context = opened()
         async with context as app:
-            resources = app._sessions.mcp_resources
+            resources = app.host.sessions._sessions.mcp_resources
             now = clock(resources)
-            sid = await app.acreate_session('A')
-            await app.arun(sid, [('user', 'one')])
-            await app.aresume_tool_approval(sid, ['approve'])
+            sid = await app.host.sessions.create('A')
+            await app.host.runs.start(sid, [('user', 'one')])
+            await app.host.runs.resume_approval(sid, ['approve'])
             pid = calls(path)[0]['pid']
             assert resources._idle_handles and sid not in resources._active_sessions
-            result = await app.arun(sid, [('user', 'two')])
+            result = await app.host.runs.start(sid, [('user', 'two')])
             assert result['approval_requests'] and sid in resources._active_sessions
             now[0] = 1000
             expire(resources)
             assert not resources._idle_handles and process_alive(pid)
-            await app.aresume_tool_approval(sid, ['reject'])
+            await app.host.runs.resume_approval(sid, ['reject'])
             assert next(iter(resources._idle_handles.values()))[2] == 1010
             now[0] = 1010
             expire(resources)
             await settled(resources)
             assert not process_alive(pid)
-            await app.arun(sid, [('user', 'three')])
-            await app.aresume_tool_approval(sid, ['approve'])
+            await app.host.runs.start(sid, [('user', 'three')])
+            await app.host.runs.resume_approval(sid, ['approve'])
             assert [r['count'] for r in calls(path)] == [1, 1] and calls(path)[-1]['pid'] != pid
         assert all(not process_alive(r['pid']) for r in facts(path) if r['event'] == 'start')
     asyncio.run(scenario())
@@ -75,7 +75,7 @@ def test_active_run_protects_connection_until_model_and_rpc_finish(monkeypatch, 
         app, model = await make_mcp_app(monkeypatch, path,
             [call(NAME, {'text': 'wait' if phase == 'rpc' else 'one'}), AIMessage(content='done')],
             server=server(path), mode='BypassApprovals')
-        resources = app._sessions.mcp_resources
+        resources = app.host.sessions._sessions.mcp_resources
         now = clock(resources)
         entered, release = asyncio.Event(), asyncio.Event()
         original = StreamingToolModel._next
@@ -85,8 +85,8 @@ def test_active_run_protects_connection_until_model_and_rpc_finish(monkeypatch, 
                 await release.wait()
             return await original(self, messages)
         monkeypatch.setattr(StreamingToolModel, '_next', next_response)
-        sid = await app.acreate_session('A')
-        run = asyncio.create_task(app.arun(sid, [('user', 'hold')]))
+        sid = await app.host.sessions.create('A')
+        run = asyncio.create_task(app.host.runs.start(sid, [('user', 'hold')]))
         try:
             if phase == 'model': await entered.wait()
             else: await reached(lambda: bool(calls(path)))
@@ -117,20 +117,20 @@ def test_required_persistence_finish_remains_occupied(monkeypatch, tmp_path):
         monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
         settings = AppSettings.model_validate({'permissions': {'mode': 'BypassApprovals'},
             'mcp': {'servers': {'local': server(path).model_dump()}}})
-        async with open_async_persistent_application('unused', database_path=tmp_path / 'state.sqlite',
+        async with open_component_application('unused', database_path=tmp_path / 'state.sqlite',
                 tools=[], initial_active_tools=[NAME], system_prompt='', response_format=None, settings=settings) as app:
-            resources = app._sessions.mcp_resources
+            resources = app.host.sessions._sessions.mcp_resources
             now = clock(resources)
             entered, release = asyncio.Event(), asyncio.Event()
-            persistence = app._sessions._persistence
+            persistence = app.host.sessions._sessions._persistence
             original = persistence.afinish
             async def finishing(*args, **kwargs):
                 entered.set()
                 await release.wait()
                 return await original(*args, **kwargs)
             monkeypatch.setattr(persistence, 'afinish', finishing)
-            sid = await app.acreate_session('A')
-            task = asyncio.create_task(app.arun(sid, [('user', 'save')]))
+            sid = await app.host.sessions.create('A')
+            task = asyncio.create_task(app.host.runs.start(sid, [('user', 'save')]))
             try:
                 await entered.wait()
                 now[0] = 1000
@@ -151,11 +151,11 @@ def test_live_child_approval_keeps_owner_until_child_final_release(monkeypatch, 
         path = tmp_path / 'child.jsonl'
         child = MCPChildModel(replies=[call(NAME, {}, 'a'), call(NAME, {}, 'b'), AIMessage(content='child done')])
         app, _ = await make_child_app(monkeypatch, path, child, server=server(path))
-        resources = app._sessions.mcp_resources
+        resources = app.host.sessions._sessions.mcp_resources
         now = clock(resources)
         queue = approval_notifications(monkeypatch, app)
-        sid = await app.acreate_session('A')
-        task = asyncio.create_task(app.arun(sid, [('user', 'child')]))
+        sid = await app.host.sessions.create('A')
+        task = asyncio.create_task(app.host.runs.start(sid, [('user', 'child')]))
         try:
             first = await next_approval(app, sid, queue)
             await submit(app, sid, first)
@@ -182,26 +182,26 @@ def test_runtime_disable_reenable_and_ttl_change_do_not_resurrect_disabled_owner
         app, _ = await make_mcp_app(monkeypatch, path,
             [call(NAME, {}), AIMessage(content='one'), call(NAME, {}), AIMessage(content='two')],
             server=selected, mode='BypassApprovals')
-        resources = app._sessions.mcp_resources
+        resources = app.host.sessions._sessions.mcp_resources
         now = clock(resources)
         try:
-            sid = await app.acreate_session('A')
-            await app.arun(sid, [('user', 'one')])
+            sid = await app.host.sessions.create('A')
+            await app.host.runs.start(sid, [('user', 'one')])
             old_key, (old_owner, _, deadline) = next(iter(resources._idle_handles.items()))
             changed = selected.model_copy(update={'idle_timeout_seconds': 20})
             write_config(config, {'local': changed})
-            report = await app.arefresh_mcp(config)
+            report = await app.host.mcp.refresh(config)
             assert report['servers'][0]['error'] == 'connection_configuration_changed'
             assert next(iter(resources._idle_handles.values()))[2] == deadline
             write_config(config, {'local': selected.model_copy(update={'enabled': False})})
-            await app.arefresh_mcp(config)
+            await app.host.mcp.refresh(config)
             assert not resources._idle_handles and not process_alive(calls(path)[0]['pid'])
             now[0] = 1000
             resources._expire_idle(old_key, old_owner, deadline)
             assert not resources._owners
             write_config(config, {'local': changed})
-            await app.arefresh_mcp(config)
-            await app.arun(sid, [('user', 'two')])
+            await app.host.mcp.refresh(config)
+            await app.host.runs.start(sid, [('user', 'two')])
             resources._expire_idle(old_key, old_owner, deadline)
             assert next(iter(resources._idle_handles.values()))[2] == 1020
             assert [r['count'] for r in calls(path)] == [1, 1]

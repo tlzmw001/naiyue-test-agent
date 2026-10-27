@@ -1,12 +1,14 @@
 """Explicit application ownership without duplicate session routes or hidden setup."""
+from naiyue_test_agent.application.sessions.session_execution import RunLifecycle
 
+from runtime_context_helpers import identity_for
 import asyncio
 
 import pytest
 
-from naiyue_test_agent.application import run_events
-from naiyue_test_agent.application.failure_policy import ApplicationErrorPolicy
-from naiyue_test_agent.application.session_service import SessionService
+from naiyue_test_agent.application.observability import run_events
+from naiyue_test_agent.application.observability.failure_policy import ApplicationErrorPolicy
+from naiyue_test_agent.application.sessions.session_service import SessionService
 from naiyue_test_agent.agent_runtime.errors import RuntimeErrorPolicy
 from naiyue_test_agent.model_access import ModelCatalog
 from test_async_application import StreamingToolModel, make_app
@@ -46,9 +48,9 @@ def test_control_text_validation_precedes_unknown_session_lookup(monkeypatch, me
         app = await make_app(monkeypatch, StreamingToolModel(replies=[]))
         try:
             with pytest.raises(ValueError, match='non-empty'):
-                getattr(app, method)('missing', value)
+                getattr(app.host.runs, method)('missing', value)
             with pytest.raises(KeyError):
-                getattr(app, method)('missing', 'valid')
+                getattr(app.host.runs, method)('missing', 'valid')
         finally:
             await app.aclose()
     asyncio.run(scenario())
@@ -65,13 +67,13 @@ def test_observation_accepts_complete_policies_without_constructing_defaults(mon
         runtime_errors=runtime, application_errors=application)
     assert observation.runtime_errors is runtime
     assert observation.application_errors is application
-    with observation.bind():
-        from naiyue_test_agent.agent_runtime.run_services import current_run_services
-        assert current_run_services().errors is runtime
+    with observation.bind(identity=identity_for(observation.publisher)):
+        from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
+        assert current_run_scope().errors is runtime
 
 
 def test_root_admission_supplies_policies_at_construction(monkeypatch):
-    from naiyue_test_agent.application import session_service
+    from naiyue_test_agent.application.sessions import session_service
     seen = []
     original = run_events.RunObservation
     def construct(*args, **kwargs):
@@ -111,8 +113,8 @@ def test_shared_tool_concurrency_rule_rejects_bool_and_keeps_valid_values():
 
 
 def test_session_execution_is_an_explicit_internal_collaboration():
-    from naiyue_test_agent.application.agent_session import AgentSession
-    assert callable(AgentSession.arun)
+    from naiyue_test_agent.application.sessions.agent_session import AgentSession
+    assert callable(RunLifecycle.arun) and not hasattr(AgentSession, 'arun')
     assert not hasattr(AgentSession, '_arun')
 
 
@@ -143,18 +145,18 @@ def test_compact_requires_successful_assembly_before_admission(monkeypatch, fail
 def test_application_owns_usage_close_without_reading_persistence_internals(monkeypatch, tmp_path):
     async def scenario():
         async with factory(monkeypatch, tmp_path / 'sessions.sqlite', StreamingToolModel(replies=[])) as app:
-            usage = app._usage
+            usage = app.host.observability._usage
             calls = []
             original = usage._close
             async def close():
                 calls.append('usage')
                 await original()
             monkeypatch.setattr(usage, '_close', close)
-            app._persistence._usage = None
+            app.host.sessions._persistence._usage = None
             await app.aclose()
             await app.aclose()
             assert calls == ['usage']
-            assert app._sessions._events._handlers == {}
+            assert app.host.sessions._sessions._events._handlers == {}
         assert calls == ['usage']
     asyncio.run(scenario())
 

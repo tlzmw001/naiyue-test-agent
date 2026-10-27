@@ -1,5 +1,6 @@
 """Observe the framework-side model request without recording its contents."""
 
+from runtime_context_helpers import RunIdentity, typed_context
 from naiyue_test_agent.agent_runtime.async_invocation import ainvoke_agent_run
 
 from native_application_helpers import async_test, build_application
@@ -57,10 +58,10 @@ async def test_each_model_call_observes_final_prompt_messages_tools_and_usage(
     app = await build_application(
         'synthetic.json', tools=[ToolSpec(read_probe, read_probe.args_schema, permissions=ToolPermission(default='allow'))], system_prompt='BASE', response_format=None,
     )
-    session_id = await app.acreate_workspace_session('A', tmp_path)
+    session_id = await app.host.sessions.create_workspace('A', tmp_path)
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        await app.arun(session_id, [('user', 'SECRET_REQUEST')])
+        await app.host.runs.start(session_id, [('user', 'SECRET_REQUEST')])
 
     first, second = _context_events(caplog)
     assert first['event'] == second['event'] == 'model_request_context'
@@ -132,7 +133,7 @@ async def test_failed_model_call_still_records_safe_request_and_propagates(caplo
 @async_test
 async def test_unserializable_schema_warns_without_blocking_model_call(caplog):
     request = SimpleNamespace(
-        runtime=SimpleNamespace(context={'session_id': 's1', 'run_id': 'r1'}),
+        runtime=SimpleNamespace(context=typed_context(identity=RunIdentity(session_id='s1', run_id='r1'))),
         messages=[HumanMessage(content='SECRET_REQUEST')],
         system_message=SystemMessage(content='BASE'),
         tools=[{'private': object()}],

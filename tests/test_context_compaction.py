@@ -86,12 +86,12 @@ async def test_complete_turn_compaction_switches_model_and_keeps_old_checkpoint(
                summaries=[AIMessage(content='first-summary'),
                           AIMessage(content='updated-summary')], model_id='B')
     app = await _app(monkeypatch, {'A': a, 'B': b})
-    session = await app.acreate_session('A')
-    await app.arun(session, [('user', 'FIRST_FACT_' + 'x' * 100)])
-    second = await app.arun(session, [('user', 'SECOND_FACT_' + 'y' * 100)])
-    await app.aselect_model(session, 'B')
+    session = await app.host.sessions.create('A')
+    await app.host.runs.start(session, [('user', 'FIRST_FACT_' + 'x' * 100)])
+    second = await app.host.runs.start(session, [('user', 'SECOND_FACT_' + 'y' * 100)])
+    await app.host.sessions.select_model(session, 'B')
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        third = await app.arun(session, [('user', 'third')])
+        third = await app.host.runs.start(session, [('user', 'third')])
     assert len(b.summary_inputs) == 1
     assert b.summary_options[0]['max_tokens'] == 8
     assert 'FIRST_FACT_' in b.summary_inputs[0][-1].content
@@ -103,8 +103,8 @@ async def test_complete_turn_compaction_switches_model_and_keeps_old_checkpoint(
     assert [m.content for m in second['messages'][:2]] == [
         'FIRST_FACT_' + 'x' * 100, 'A-one',
     ]
-    thread_id = app._sessions.require(session).get_thread_id()
-    history = [item async for item in app._agent.aget_state_history({'configurable': {'thread_id': thread_id}})]
+    thread_id = app.host.sessions._sessions.require(session).get_thread_id()
+    history = [item async for item in app.host.runs._agent.aget_state_history({'configurable': {'thread_id': thread_id}})]
     assert any(snapshot.values.get('messages') and
                snapshot.values['messages'][0].content.startswith('FIRST_FACT_')
                for snapshot in history)
@@ -124,7 +124,7 @@ async def test_complete_turn_compaction_switches_model_and_keeps_old_checkpoint(
                for event in events)
     assert 'FIRST_FACT_' not in caplog.text
 
-    fourth = await app.arun(session, [('user', 'fourth')])
+    fourth = await app.host.runs.start(session, [('user', 'fourth')])
     assert len(b.summary_inputs) == 2
     assert '<previous-summary>' in b.summary_inputs[1][-1].content
     assert 'first-summary' in b.summary_inputs[1][-1].content
@@ -146,11 +146,11 @@ async def test_compaction_never_splits_tool_call_from_result(monkeypatch):
                reserve=340,
                summaries=[AIMessage(content='summary-with-tool')], model_id='B')
     app = await _app(monkeypatch, {'A': a, 'B': b}, tools=[ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
-    session = await app.acreate_session('A')
-    await app.arun(session, [('user', 'FIRST_TOOL_TURN_' + 'x' * 110)])
-    await app.arun(session, [('user', 'SECOND_TURN_' + 'y' * 100)])
-    await app.aselect_model(session, 'B')
-    result = await app.arun(session, [('user', 'third')])
+    session = await app.host.sessions.create('A')
+    await app.host.runs.start(session, [('user', 'FIRST_TOOL_TURN_' + 'x' * 110)])
+    await app.host.runs.start(session, [('user', 'SECOND_TURN_' + 'y' * 100)])
+    await app.host.sessions.select_model(session, 'B')
+    result = await app.host.runs.start(session, [('user', 'third')])
     assert len(b.summary_inputs) == 1
     prompt = b.summary_inputs[0][-1].content
     assert 'call-1' in prompt and 'TOOL_RESULT' in prompt
@@ -175,20 +175,20 @@ async def test_summary_failure_keeps_original_messages_and_releases_run(
                reserve=250,
                summaries=[summary_result], model_id='B')
     app = await _app(monkeypatch, {'A': a, 'B': b})
-    session = await app.acreate_session('A')
-    await app.arun(session, [('user', 'FIRST_FACT_' + 'x' * 100)])
-    previous = await app.arun(session, [('user', 'SECOND_FACT_' + 'y' * 100)])
-    await app.aselect_model(session, 'B')
+    session = await app.host.sessions.create('A')
+    await app.host.runs.start(session, [('user', 'FIRST_FACT_' + 'x' * 100)])
+    previous = await app.host.runs.start(session, [('user', 'SECOND_FACT_' + 'y' * 100)])
+    await app.host.sessions.select_model(session, 'B')
     assert count_tokens_approximately([
         SystemMessage(content='BASE'), *previous['messages'], HumanMessage(content='third'),
     ]) > 300 - 220
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(ContextCompactionError, match=reason):
-            await app.arun(session, [('user', 'third')])
+            await app.host.runs.start(session, [('user', 'third')])
     assert b.normal_inputs == []
-    assert app._sessions.require(session).describe_session()['busy'] is False
-    thread_id = app._sessions.require(session).get_thread_id()
-    latest = await app._agent.aget_state({'configurable': {'thread_id': thread_id}})
+    assert app.host.sessions._sessions.require(session).describe_session()['busy'] is False
+    thread_id = app.host.sessions._sessions.require(session).get_thread_id()
+    latest = await app.host.runs._agent.aget_state({'configurable': {'thread_id': thread_id}})
     assert latest.values['messages'][0].content.startswith('FIRST_FACT_')
     assert latest.values['messages'][-1].content == 'third'
     assert not any(m.additional_kwargs.get('naiyue_compaction_summary')
@@ -203,12 +203,12 @@ async def test_summary_input_over_budget_fails_before_summary_model(monkeypatch)
     b = _model([AIMessage(content='unused')], window=100, output=20,
                summaries=[AIMessage(content='unused')], model_id='B')
     app = await _app(monkeypatch, {'A': a, 'B': b})
-    session = await app.acreate_session('A')
-    await app.arun(session, [('user', 'FIRST_FACT_' + 'x' * 1000)])
-    await app.arun(session, [('user', 'SECOND_FACT_' + 'y' * 100)])
-    await app.aselect_model(session, 'B')
+    session = await app.host.sessions.create('A')
+    await app.host.runs.start(session, [('user', 'FIRST_FACT_' + 'x' * 1000)])
+    await app.host.runs.start(session, [('user', 'SECOND_FACT_' + 'y' * 100)])
+    await app.host.sessions.select_model(session, 'B')
     with pytest.raises(ContextCompactionError, match='summary_input_exceeds_budget'):
-        await app.arun(session, [('user', 'third')])
+        await app.host.runs.start(session, [('user', 'third')])
     assert b.summary_inputs == []
     assert b.normal_inputs == []
 
@@ -223,21 +223,21 @@ async def test_summary_that_cannot_fit_preserved_turn_never_calls_normal_model(
                output=20, reserve=50, keep=30,
                summaries=[AIMessage(content='short summary')], model_id='B')
     app = await _app(monkeypatch, {'A': a, 'B': b})
-    session = await app.acreate_session('A')
-    await app.arun(session, [('user', 'OLD_FACT_' + 'x' * 320)])
-    await app.arun(session, [('user', 'LARGE_RECENT_TURN_' + 'y' * 3300)])
-    await app.aselect_model(session, 'B')
+    session = await app.host.sessions.create('A')
+    await app.host.runs.start(session, [('user', 'OLD_FACT_' + 'x' * 320)])
+    await app.host.runs.start(session, [('user', 'LARGE_RECENT_TURN_' + 'y' * 3300)])
+    await app.host.sessions.select_model(session, 'B')
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         with pytest.raises(ContextCompactionError,
                            match='compacted_request_over_budget'):
-            await app.arun(session, [('user', 'new question')])
+            await app.host.runs.start(session, [('user', 'new question')])
 
     assert len(b.summary_inputs) == 1
     assert b.normal_inputs == []
-    assert app._sessions.require(session).describe_session()['busy'] is False
-    thread_id = app._sessions.require(session).get_thread_id()
-    latest = await app._agent.aget_state({'configurable': {'thread_id': thread_id}})
+    assert app.host.sessions._sessions.require(session).describe_session()['busy'] is False
+    thread_id = app.host.sessions._sessions.require(session).get_thread_id()
+    latest = await app.host.runs._agent.aget_state({'configurable': {'thread_id': thread_id}})
     assert latest.values['messages'][0].content.startswith('OLD_FACT_')
     assert latest.values['messages'][-1].content == 'new question'
     assert not any(message.additional_kwargs.get('naiyue_compaction_summary')
@@ -259,8 +259,8 @@ async def test_restored_invalid_tool_call_and_later_correction_can_be_summarized
                    output=20, reserve=430, keep=10,
                    summaries=[AIMessage(content='old request was corrected')])
     app = await _app(monkeypatch, {'A': model})
-    session = await app.acreate_session('A')
-    result = await app.arun(session, [
+    session = await app.host.sessions.create('A')
+    result = await app.host.runs.start(session, [
         HumanMessage(content='OLD_REQUEST_' + 'x' * 280),
         AIMessage(content='', invalid_tool_calls=[
             {'id': 'bad-1', 'name': 'read', 'args': '{"path":"<&',
@@ -335,14 +335,14 @@ async def test_unsupported_multimodal_old_history_is_not_silently_summarized(mon
     b = _model([AIMessage(content='unused')], window=300, output=10,
                reserve=250, model_id='B')
     app = await _app(monkeypatch, {'A': a, 'B': b})
-    session = await app.acreate_session('A')
-    await app.arun(session, [HumanMessage(content=[
+    session = await app.host.sessions.create('A')
+    await app.host.runs.start(session, [HumanMessage(content=[
         {'type': 'audio', 'mime_type': 'audio/wav', 'base64': 'PRIVATE_AUDIO'},
     ])])
-    await app.arun(session, [('user', 'SECOND_FACT_' + 'y' * 100)])
-    await app.aselect_model(session, 'B')
+    await app.host.runs.start(session, [('user', 'SECOND_FACT_' + 'y' * 100)])
+    await app.host.sessions.select_model(session, 'B')
     with pytest.raises(ContextCompactionError, match='unsupported_summary_content'):
-        await app.arun(session, [('user', 'third')])
+        await app.host.runs.start(session, [('user', 'third')])
     assert b.summary_inputs == []
     assert b.normal_inputs == []
 
@@ -352,9 +352,9 @@ async def test_no_complete_old_turn_fails_without_replacing_messages(monkeypatch
     b = _model([AIMessage(content='B-one')], window=100, output=10,
                keep=1000, model_id='A')
     app = await _app(monkeypatch, {'A': b})
-    session = await app.acreate_session('A')
+    session = await app.host.sessions.create('A')
     with pytest.raises(ContextCompactionError, match='no_safe_cut'):
-        await app.arun(session, [('user', 'ONLY_TURN_' + 'x' * 400)])
+        await app.host.runs.start(session, [('user', 'ONLY_TURN_' + 'x' * 400)])
     assert b.summary_inputs == []
 
 
@@ -369,7 +369,7 @@ async def test_soft_threshold_skips_or_splits_at_a_safe_message_boundary(
                    output=20, reserve=60, keep=30, model_id='A',
                    summaries=[AIMessage(content='earlier request summary')])
     app = await _app(monkeypatch, {'A': model})
-    session = await app.acreate_session('A')
+    session = await app.host.sessions.create('A')
     messages = [
         HumanMessage(content='check ' + 'u' * 300),
         AIMessage(content='', tool_calls=[
@@ -387,11 +387,11 @@ async def test_soft_threshold_skips_or_splits_at_a_safe_message_boundary(
 
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
         if fits_send_budget:
-            result = await app.arun(session, messages)
+            result = await app.host.runs.start(session, messages)
             assert result['messages'][-1].content == 'continued'
             assert len(model.normal_inputs) == 1
         else:
-            result = await app.arun(session, messages)
+            result = await app.host.runs.start(session, messages)
             assert result['messages'][-1].content == 'continued'
             assert len(model.normal_inputs) == 1
             assert model.normal_inputs[0][2].tool_calls[0]['id'] == 'call-1'
@@ -402,7 +402,7 @@ async def test_soft_threshold_skips_or_splits_at_a_safe_message_boundary(
     assert any(event['event'] == 'context_compaction_skipped'
                and event['reason'] == 'no_safe_cut_within_send_budget'
                for event in events) is fits_send_budget
-    assert app._sessions.require(session).describe_session()['busy'] is False
+    assert app.host.sessions._sessions.require(session).describe_session()['busy'] is False
 
 
 @async_test
@@ -418,7 +418,7 @@ async def test_split_after_tool_result_summarizes_earlier_history_and_turn_prefi
         'synthetic.json', tools=[], system_prompt='S' * 1000,
         response_format=None,
     )
-    session = await app.acreate_session('A')
+    session = await app.host.sessions.create('A')
     messages = [
         HumanMessage(content='earlier request'), AIMessage(content='earlier answer'),
         HumanMessage(content='check ' + 'u' * 300),
@@ -430,7 +430,7 @@ async def test_split_after_tool_result_summarizes_earlier_history_and_turn_prefi
         HumanMessage(content='What next?'),
     ]
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
-        result = await app.arun(session, messages)
+        result = await app.host.runs.start(session, messages)
 
     assert len(model.summary_inputs) == 1
     prompt = model.summary_inputs[0][-1].content
@@ -463,8 +463,8 @@ async def test_split_before_assistant_tool_call_keeps_its_result_pair(monkeypatc
         'synthetic.json', tools=[], system_prompt='S' * 800,
         response_format=None,
     )
-    session = await app.acreate_session('A')
-    result = await app.arun(session, [
+    session = await app.host.sessions.create('A')
+    result = await app.host.runs.start(session, [
         HumanMessage(content='check ' + 'u' * 100),
         AIMessage(content='early analysis ' + 'a' * 1000),
         AIMessage(content='', tool_calls=[

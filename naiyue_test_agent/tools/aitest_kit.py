@@ -1,25 +1,22 @@
 """A direct argv wrapper; AITest and project Skills own the testing workflow."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 import json
 import re
-from pathlib import Path
-import shutil
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import StructuredTool, ToolException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .permissions import ToolPermission, execution_environment, require_tool_permit
-from .processes import HostProcessRunner, ProcessRequest
-from .process_execution import execute_process_request
+from .permissions import ToolPermission, require_tool_permit, require_process_system
 from .registry import ToolSpec
 from .schemas import ExecutionTimeout, build_tool_schemas
 from .settings import AITestSettings
-from .shell import build_environment
 
 
 class AITestPermission(ToolPermission):
     def prepare(self, args, context):
+        require_process_system(context).validate()
         subject = super().prepare(args, context)
         subject['target'] = 'aitest ' + json.dumps(args['args'], ensure_ascii=False)
         subject['cli_args'] = args['args']
@@ -50,25 +47,14 @@ def create_aitest_kit_tool(*, settings=None, process_settings=None, progress_set
     settings = settings or AITestSettings()
     public, execution = build_tool_schemas('AITestInput', _AITestInput,
         args=(list[str], Field(min_length=1, max_length=settings.max_args)))
-    runner = HostProcessRunner(process_settings)
 
-    async def execute(args: list[str], runtime: ToolRuntime[dict, dict], timeout: int | None = None):
+    async def execute(args: list[str], runtime: ToolRuntime[RuntimeContext], timeout: int | None = None):
         require_tool_permit(runtime)
-        root = runtime.context.get('workspace_root')
-        if not isinstance(root, Path) or not root.is_absolute() or not root.is_dir():
-            raise ToolException('aitest_kit requires a valid session workspace.')
+        port = require_process_system(runtime.context)
         if sum(len(value) for value in args) > settings.max_argument_chars:
             raise ToolException('aitest_kit arguments exceed the configured character budget.')
-        environment = build_environment(settings.environment)
-        path = next((value for key, value in environment.items() if key.casefold() == 'path'), '')
-        executable = shutil.which(settings.executable, path=path)
-        if executable is None:
-            raise ToolException('aitest executable is unavailable. Install aitest-kit in the selected environment or configure tools.aitest_kit.executable and prefix_args.')
-        request = ProcessRequest([executable, *settings.prefix_args, *args], root, environment,
-            timeout or None, merge_output=True, eof_policy='shell', execution_environment=execution_environment())
-        return await execute_process_request(request, runtime, name='aitest_kit', label='AITest',
-            settings=settings, runner=runner,
-            progress_settings=progress_settings)
+        return await port.argv(args, timeout, runtime, settings=settings,
+            process_settings=process_settings, progress_settings=progress_settings)
 
     item = StructuredTool.from_function(coroutine=execute, name='aitest_kit', args_schema=execution,
         description=('Run aitest CLI subcommands using a literal args array, without a shell. '

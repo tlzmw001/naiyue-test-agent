@@ -1,5 +1,6 @@
 """Name discovery does not grant permission to read or change the listed files."""
 
+from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
@@ -19,9 +20,9 @@ def test_hidden_target_has_operation_specific_default(tmp_path, operation, expec
     else:
         target.write_text('PRIVATE_BODY')
     permission = FilePermission(operation=operation)
-    subject = permission.prepare({'path': str(target)}, {'workspace_root': tmp_path})
+    subject = permission.prepare({'path': str(target)}, typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None)))
     assert permission.default_decision(subject) == expected
-    outside = permission.prepare({'path': str(tmp_path.parent / '.outside')}, {'workspace_root': tmp_path})
+    outside = permission.prepare({'path': str(tmp_path.parent / '.outside')}, typed_context(identity=RunIdentity(execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None, session_id=None)))
     assert permission.default_decision(outside) == 'ask'
 
 
@@ -41,12 +42,12 @@ async def test_listed_hidden_names_need_only_directory_scope(monkeypatch, tmp_pa
         'name': name, 'id': 'names', 'args': {**args, 'path': str(target)}}]), AIMessage(content='done')])
     app = await build(monkeypatch, model, [spec])
     try:
-        sid = await app.acreate_workspace_session('A', root)
-        result = await app.arun(sid, [('user', 'List the directory names.')])
+        sid = await app.host.sessions.create_workspace('A', root)
+        result = await app.host.runs.start(sid, [('user', 'List the directory names.')])
         if external:
             assert len(result['approval_requests']) == 1
             assert not any(isinstance(m, ToolMessage) for m in result['messages'])
-            result = await app.aresume_tool_approval(sid, ['approve'])
+            result = await app.host.runs.resume_approval(sid, ['approve'])
         else:
             assert not result.get('approval_requests')
         message, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
@@ -72,8 +73,8 @@ async def test_listing_a_name_does_not_authorize_its_content(monkeypatch, tmp_pa
     ])
     app = await build(monkeypatch, model, tools)
     try:
-        sid = await app.acreate_workspace_session('A', tmp_path)
-        result = await app.arun(sid, [('user', 'Inspect the project.')])
+        sid = await app.host.sessions.create_workspace('A', tmp_path)
+        result = await app.host.runs.start(sid, [('user', 'Inspect the project.')])
         message, = [m for m in result['messages'] if isinstance(m, ToolMessage)]
         assert message.status == 'success' and message.content == '.env'
         assert [r['tool_call_id'] for r in result['approval_requests']] == ['content']

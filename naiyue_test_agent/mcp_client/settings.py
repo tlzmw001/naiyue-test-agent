@@ -28,6 +28,7 @@ class MCPServerSettings(BaseModel):
     url: str | None = Field(default=None, repr=False)
     headers_env: dict[str, str] = Field(default_factory=dict, repr=False)
     allow_insecure_http: bool = False
+    allow_sandbox: bool = False
     allowed_tools: list[str] = Field(default_factory=list)
     connect_timeout_seconds: float = Field(default=15, gt=0)
     call_timeout_seconds: float = Field(default=0, ge=0)

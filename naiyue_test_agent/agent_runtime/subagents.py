@@ -1,5 +1,6 @@
 """Compile and execute an isolated child graph; application owns instances."""
 
+from dataclasses import replace
 from langchain.agents.middleware import AgentMiddleware, ModelCallLimitMiddleware
 from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
 from langchain_core.messages import AIMessage, HumanMessage
@@ -16,7 +17,7 @@ from .context_recovery import recover_input_overflow
 from .session_port import SessionPort
 from .errors import RuntimeErrorPolicy
 from .invocation_context import make_invocation_context
-from .run_services import bind_run_services, current_run_services
+from .run_scope import bind_run_scope, current_run_scope
 from naiyue_test_agent.contracts.failures import FailureDescription, attach_failure_description, safe_error_type
 from .tool_execution.toolset import ToolSetMiddleware
 from .async_message_observation import ainvoke_with_message_observation
@@ -46,8 +47,8 @@ class SubagentCheckpointSaver(BaseCheckpointSaver):
                                               operation, safe_error_type(error))
             feedback = ToolException('Subagent checkpoint could not be confirmed. The task has ended; '
                 'already completed tool effects were not rolled back. Do not retry automatically.')
-            services = current_run_services()
-            run_id = services.publisher.run_id if services is not None and services.publisher is not None else None
+            services = current_run_scope()
+            run_id = services.observation.publisher.run_id if services is not None and services.observation.publisher is not None else None
             attach_failure_description(feedback, FailureDescription('runtime', 'checkpoint_error',
                 'subagent_checkpoint_failed', 'ToolException'), run_id=run_id)
             raise feedback from error
@@ -64,7 +65,7 @@ class SubagentCheckpointSaver(BaseCheckpointSaver):
 
 class SubagentCallLimitMiddleware(ModelCallLimitMiddleware):
     async def abefore_agent(self, state, runtime):
-        if runtime.context.get('_subagent_new_delegation'):
+        if runtime.context.inputs.subagent_new_delegation:
             return {'thread_model_call_count': 0}
         return None
 
@@ -72,16 +73,16 @@ class SubagentCallLimitMiddleware(ModelCallLimitMiddleware):
 class SubagentModelFailureMiddleware(AgentMiddleware):
     async def awrap_model_call(self, request, handler):
         context = request.runtime.context
-        context.pop('_subagent_model_failure', None)
+        context.invocation.child_model_failure = None
         try:
             return await handler(request)
         except GraphBubbleUp:
             raise
         except Exception as error:
-            policy = context.get('_failure_policy') or RuntimeErrorPolicy()
-            description = policy.describe(error, source='model', model_id=context['_subagent_model_id'])
+            policy = context.scope.errors or RuntimeErrorPolicy()
+            description = policy.describe(error, source='model', model_id=context.inputs.subagent_model_id)
             if description.category != 'unknown':
-                context['_subagent_model_failure'] = (error, description.category, description.reason)
+                context.invocation.child_model_failure = (error, description.category, description.reason)
             raise
 
 
@@ -106,13 +107,13 @@ def build_subagent_runtime(spec, *, catalog, tool_registry, checkpointer, sessio
         resolve_request_configuration=session_port.resolve_request_configuration, compact_requests=True)
 
 
-async def ainvoke_subagent_step(agent, instance, *, services, resume=None, approval_grants=None):
-    with bind_run_services(services):
+async def ainvoke_subagent_step(agent, instance, *, scope, resume=None, approval_grants=None):
+    with bind_run_scope(scope):
         context = make_invocation_context(instance['session_id'], instance['run_id'], instance['workspace_root'],
             approval_grants, instance['read_resource_roots'], agent_path=instance['agent_path'])
-        context.update(parent_tool_call_id=instance['parent_tool_call_id'], parent_run_id=instance['parent_run_id'],
-                       root_run_id=instance['root_run_id'], _subagent_model_id=instance['model_id'],
-                       _human_review_messages=instance['human_messages'], _subagent_new_delegation=resume is None)
+        context = replace(context, inputs=replace(context.inputs,
+            subagent_model_id=instance['model_id'], human_review_messages=tuple(instance['human_messages']),
+            subagent_new_delegation=resume is None, max_concurrency=instance['max_concurrency']))
         if resume is None:
             seed = HumanMessage(content=instance['task'], id=instance['seed_id'],
                                 additional_kwargs={'naiyue_input_source': 'delegated_task', 'naiyue_reply_id': instance['seed_id'], 'naiyue_input_kind': 'delegated_task'})
@@ -125,12 +126,12 @@ async def ainvoke_subagent_step(agent, instance, *, services, resume=None, appro
         try:
             instance['input_started'] = True
             return await ainvoke_with_message_observation(agent, input, context=context, config=config,
-                publisher=services.publisher, durability='sync')
+                publisher=scope.observation.publisher, durability='sync')
         except ModelCallLimitExceededError as error:
             raise ToolException('Subagent model call limit reached. The task did not complete; '
                                 'already executed tools were not rolled back.') from error
         except Exception as error:
-            failure = context.get('_subagent_model_failure')
+            failure = context.invocation.child_model_failure
             if failure is not None and failure[0] is error:
                 feedback = ToolException(f'Subagent model request failed ({failure[1]}/{failure[2]}). '
                                          'No final report is available.')

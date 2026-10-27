@@ -9,7 +9,7 @@ from naiyue_test_agent.tools.permission_rules import validate_permission_rules
 from naiyue_test_agent.application.errors import (
     SessionBusyError, SessionPendingApprovalError, SessionManualReviewRequiredError, RunCapacityExceededError,
 )
-from naiyue_test_agent.application.session_service import SessionService
+from .sessions.session_service import SessionService
 
 
 def prepare_tool_registry(specs: list[ToolSpec]) -> ToolRegistry:

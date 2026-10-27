@@ -27,15 +27,15 @@ def test_modified_fixture_is_rejected_before_any_model_request(tmp_path):
 
 def test_saved_sources_have_real_human_tool_reply_and_controlled_time(tmp_path):
     from scripts.probe_memory_semantics import load_cases, seed_sources
-    from naiyue_test_agent.application.session_storage import SessionStorage
-    from naiyue_test_agent.application.memory_batches import build_batch
-    with SessionStorage(tmp_path / 'sessions.sqlite') as store:
-        store.bind_workspace(str(uuid4()), tmp_path)
-        store.create('s', dict(thread_id='s', model_id='A', workspace_root=tmp_path,
+    from naiyue_test_agent.storage.project_store import ProjectStore
+    from naiyue_test_agent.application.memory.memory_batches import build_batch
+    with ProjectStore(tmp_path / 'sessions.sqlite') as store:
+        store.sessions.bind_workspace(str(uuid4()), tmp_path)
+        store.sessions.create('s', dict(thread_id='s', model_id='A', workspace_root=tmp_path,
             active_tool_names=['memory'], permission_mode='Default'))
         cases, _ = load_cases()
         facts = seed_sources(store, 's', cases[3]['sources'], at=1000.)
-        batch = build_batch(store, session_id='s', thread_id='s', conversation_revision=0,
+        batch = build_batch(store.memory, session_id='s', thread_id='s', conversation_revision=0,
             start=(0, 0), upper=facts['upper'], token_budget=16000, source_chars=4000)
         sources = {r['message_id']: r for r in batch['sources']}
         assert set(sources) == {'e04-u', 'e04-t'}
@@ -43,38 +43,38 @@ def test_saved_sources_have_real_human_tool_reply_and_controlled_time(tmp_path):
         assert sources['e04-t']['tool_call_id'] == 'e04-call'
         assert sources['e04-t']['tool_status'] == 'success'
         assert sources['e04-t']['reply_id'] == sources['e04-u']['reply_id']
-        owner = store._read('SELECT reply_id FROM naiyue_chat_messages WHERE message_id=?', ('e04-t-owner',))[0]
+        owner = store.database.read_rows('SELECT reply_id FROM naiyue_chat_messages WHERE message_id=?', ('e04-t-owner',))[0]
         assert owner['reply_id'] == sources['e04-t']['reply_id']
         assert sources['e04-u']['occurred_at'] == 1000.
         assert sources['e04-t']['occurred_at'] > 1000.
-        row = store._read('SELECT body_json FROM naiyue_chat_messages WHERE message_id=?', ('e04-u',))[0]
+        row = store.database.read_rows('SELECT body_json FROM naiyue_chat_messages WHERE message_id=?', ('e04-u',))[0]
         assert json.loads(row['body_json'])['data']['additional_kwargs']['naiyue_human_input'] is True
-        assert store._read('SELECT * FROM naiyue_reply_boundaries')
+        assert store.database.read_rows('SELECT * FROM naiyue_reply_boundaries')
         assert 'expected' not in json.dumps(batch)
 
 
 def test_candidate_setup_is_finite_explicit_and_keeps_real_id_version(tmp_path):
     from scripts.probe_memory_semantics import seed_candidate, load_cases
-    from naiyue_test_agent.application.session_storage import SessionStorage
-    from naiyue_test_agent.application.memory_access import MemoryAccess
+    from naiyue_test_agent.storage.project_store import ProjectStore
+    from naiyue_test_agent.application.memory.memory_access import MemoryAccess
     from naiyue_test_agent.memory_settings import MemorySettings
-    with SessionStorage(tmp_path / 'sessions.sqlite') as store:
-        store.bind_workspace(str(uuid4()), tmp_path)
-        store.create('s', dict(thread_id='s', model_id='A', workspace_root=tmp_path,
+    with ProjectStore(tmp_path / 'sessions.sqlite') as store:
+        store.sessions.bind_workspace(str(uuid4()), tmp_path)
+        store.sessions.create('s', dict(thread_id='s', model_id='A', workspace_root=tmp_path,
             active_tool_names=['memory'], permission_mode='Default'))
         access = MemoryAccess(store, MemorySettings(auto_enabled=False), tmp_path / 'data')
         try:
             cases, _ = load_cases()
-            setup = seed_candidate(access, 's', tmp_path, cases, at=1000.)
+            setup = seed_candidate(access, 's', cases, at=1000.)
             assert len(setup['actual_memory_id']) == 32 and setup['version'] == 2
             assert setup['fixture_alias'] == 'candidate-e11'
-            row = store._read('SELECT * FROM naiyue_memories')[0]
+            row = store.database.read_rows('SELECT * FROM naiyue_memories')[0]
             assert row['status'] == 'candidate' and row['kind'] == 'procedure'
             assert row['scope'] == 'workspace'
             assert json.loads(row['gaps_json']) == ['缺持久选择']
             assert 'asset' not in row['body']  # Reuse original Chinese e05 wording.
             assert row['body'] == cases[4]['sources'][0]['text']
-            refs = store._read('SELECT * FROM naiyue_memory_sources WHERE memory_version=2')
+            refs = store.database.read_rows('SELECT * FROM naiyue_memory_sources WHERE memory_version=2')
             assert {r['role'] for r in refs} == {'ai'}
         finally:
             access.close()

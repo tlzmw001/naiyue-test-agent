@@ -1,5 +1,7 @@
 """One optional deadline covers search discovery, groups and record checks."""
 
+from dataclasses import replace
+from runtime_context_helpers import ExecutionRoot, RunIdentity, ToolAuthorization, typed_context
 import asyncio
 import json
 from types import SimpleNamespace
@@ -19,10 +21,8 @@ def runtime(root, name):
     operation = 'list' if name == 'find' else 'search'
     subject = prepare_file_subject('.', root, operation)
     subject.update(tool_name=name, args={'path': '.', 'pattern': 'HIT'}, path_field='path',
-                   execution_environment=execution_environment())
-    return SimpleNamespace(tool_call_id='s', context={'session_id': 'session', 'workspace_root': root,
-        '_permission_rules': PermissionSettings(), '_session_allow': [],
-        '_execution_permit': {'call_id': 's', 'session_id': 'session', 'agent_path': 'root', 'subject': subject}})
+                   execution_environment=execution_environment(typed_context(identity=RunIdentity(None, execution_root=ExecutionRoot(root)))))
+    return SimpleNamespace(tool_call_id='s', context=typed_context(identity=RunIdentity(session_id='session', execution_root=ExecutionRoot(root) if root is not None else None), authorization=ToolAuthorization(permission_rules=PermissionSettings(), session_allow=[], permit={'call_id': 's', 'session_id': 'session', 'agent_path': 'root', 'subject': subject})))
 
 
 def clock_modules(monkeypatch, clock):
@@ -74,7 +74,7 @@ def test_positive_timeout_preserves_authorized_partial_results_without_setting_g
         target.write_text('HIT\n')
         control = SimpleNamespace(requested=False)
         rt = runtime(tmp_path, name)
-        rt.context['_run_control'] = control
+        rt.context = replace(rt.context, scope=replace(rt.context.scope, control=control))
         requests = []
         class Runner:
             async def run(self, request, consume, passed_control=None):

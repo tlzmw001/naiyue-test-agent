@@ -1,5 +1,6 @@
 """Callback model and tool calls share application run metadata notifications."""
 
+from runtime_context_helpers import typed_scope
 from naiyue_test_agent.agent_runtime.async_invocation import ainvoke_agent_run
 
 from native_application_helpers import async_test
@@ -18,7 +19,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime import build_runtime_agent
 from naiyue_test_agent.agent_runtime.events import RunStartedData, RunFinishedData
-from naiyue_test_agent.application.run_events import ApplicationEventSubscriptions
+from naiyue_test_agent.application.observability.run_events import ApplicationEventSubscriptions
 from naiyue_test_agent.agent_runtime.errors import ModelResponseRejected
 from test_application_run_events import ToolModel, make_app
 
@@ -60,10 +61,10 @@ async def test_one_tool_loop_has_correlated_immutable_safe_events(monkeypatch, c
     ])
     app = await make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
-    app.subscribe_events(call_metadata_only(events.append))
-    session = await app.acreate_session('A')
+    app.host.observability.subscribe(call_metadata_only(events.append))
+    session = await app.host.sessions.create('A')
     with caplog.at_level('INFO'):
-        result = await app.arun(session, [('user', 'PRIVATE_PROMPT')])
+        result = await app.host.runs.start(session, [('user', 'PRIVATE_PROMPT')])
     assert [e.event_type for e in events] == [
         'run_started', 'model_call_started', 'model_call_finished',
         'tool_call_started', 'tool_call_finished',
@@ -115,10 +116,10 @@ async def test_model_failure_has_no_accepted_end_and_preserves_exception(monkeyp
                                                response_metadata={'finish_reason': 'content_filter'})]))
     app = await make_app(monkeypatch, model)
     events = []
-    app.subscribe_events(call_metadata_only(events.append))
+    app.host.observability.subscribe(call_metadata_only(events.append))
     expected = TimeoutError if kind == 'timeout' else ModelResponseRejected
     with caplog.at_level('INFO'), pytest.raises(expected) as caught:
-        await app.arun(await app.acreate_session('A'), [('user', 'PRIVATE_PROMPT')])
+        await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'PRIVATE_PROMPT')])
     if kind == 'timeout':
         assert caught.value is failure
     assert [e.event_type for e in events] == [
@@ -142,9 +143,9 @@ async def test_midrun_observer_failure_does_not_change_model_or_tool_result(monk
         if event.event_type == 'model_call_started':
             raise RuntimeError('PRIVATE_OBSERVER')
 
-    app.subscribe_events(call_metadata_only(broken))
-    app.subscribe_events(call_metadata_only(observed.append))
-    result = await app.arun(await app.acreate_session('A'), [('user', 'run')])
+    app.host.observability.subscribe(call_metadata_only(broken))
+    app.host.observability.subscribe(call_metadata_only(observed.append))
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'run')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
     assert broken_calls == ['run_started', 'model_call_started']
     assert observed[-1].data.status == 'completed' and len(observed) == 4
@@ -157,8 +158,8 @@ async def test_bounded_input_recovery_is_one_logical_model_call(monkeypatch):
     model = _configured_model([_status(), AIMessage(content='recovered')])
     app = await _app(monkeypatch, {'A': model})
     events = []
-    app.subscribe_events(events.append)
-    result = await app.arun(await app.acreate_session('A'), _history())
+    app.host.observability.subscribe(events.append)
+    result = await app.host.runs.start(await app.host.sessions.create('A'), _history())
     assert result['messages'][-1].content == 'recovered'
     assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == 1
     assert len(events_of(events, 'model_call_started')) == 3
@@ -168,7 +169,7 @@ async def test_bounded_input_recovery_is_one_logical_model_call(monkeypatch):
 
 @async_test
 async def test_legacy_and_mismatched_scope_do_not_invent_application_events():
-    from naiyue_test_agent.agent_runtime.run_services import RunServices, bind_run_services
+    from naiyue_test_agent.agent_runtime.run_scope import bind_run_scope
 
     model = ToolModel(responses=[AIMessage(content='done')])
     _runtime_registry_1 = prepare_tool_registry([])
@@ -177,22 +178,25 @@ async def test_legacy_and_mismatched_scope_do_not_invent_application_events():
         model, tool_registry=_runtime_registry_1, resolve_active_tool_names=lambda _sid, agent_path='root', names=_runtime_names_1: names, system_prompt='', response_format=None,
         resolve_model=lambda _id, agent_path='root': ('A', model),
     )
+    result = await ainvoke_agent_run(agent, [('user', 'run')], session_id='legacy-session',
+                                    thread_id='legacy-thread', run_id='legacy-run')
+    assert result['messages'][-1].content == 'done'
     events = []
     subscriptions = ApplicationEventSubscriptions()
     subscriptions.subscribe(events.append)
     publisher = subscriptions.publisher('outer-session', 'outer-run')
     publisher.publish('run_started', RunStartedData('message'))
-    with bind_run_services(RunServices(publisher=publisher)):
-        result = (await ainvoke_agent_run(agent, [('user', 'run')], session_id='legacy-session',
-                                  thread_id='legacy-thread', run_id='legacy-run'))
+    with bind_run_scope(typed_scope(publisher=publisher)):
+        with pytest.raises(ValueError, match='identity'):
+            await ainvoke_agent_run(agent, [('user', 'run')], session_id='legacy-session',
+                                    thread_id='legacy-thread', run_id='legacy-run')
     publisher.publish('run_finished', RunFinishedData('completed'))
-    assert result['messages'][-1].content == 'done'
     assert [e.event_type for e in events] == ['run_started', 'run_finished']
 
 
 @async_test
 async def test_failed_run_binding_is_reset_before_next_direct_invocation(monkeypatch):
-    from naiyue_test_agent.agent_runtime.run_services import current_run_services
+    from naiyue_test_agent.agent_runtime.run_scope import current_run_scope
 
     failure = TimeoutError('synthetic')
 
@@ -202,8 +206,8 @@ async def test_failed_run_binding_is_reset_before_next_direct_invocation(monkeyp
 
     app = await make_app(monkeypatch, FailingModel(responses=[AIMessage(content='unused')]))
     with pytest.raises(TimeoutError):
-        await app.arun(await app.acreate_session('A'), [('user', 'run')])
-    assert current_run_services() is None
+        await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'run')])
+    assert current_run_scope() is None
 
 
 @async_test
@@ -221,9 +225,9 @@ async def test_partial_invalid_tool_response_is_failed_before_dispatch(monkeypat
     ], invalid_tool_calls=[{'name': 'probe', 'args': '{', 'id': 'invalid', 'error': 'parse'}])])
     app = await make_app(monkeypatch, model, [ToolSpec(probe, probe.args_schema, permissions=ToolPermission(default='allow'))])
     events = []
-    app.subscribe_events(events.append)
+    app.host.observability.subscribe(events.append)
     with pytest.raises(ModelResponseRejected) as caught:
-        await app.arun(await app.acreate_session('A'), [('user', 'run')])
+        await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'run')])
     assert caught.value.reason == 'invalid_tool_calls' and called == []
     assert events_of(events, 'model_call_finished')[0].data.status == 'returned'
     assert events[-1].data.failure.reason == 'invalid_tool_calls'

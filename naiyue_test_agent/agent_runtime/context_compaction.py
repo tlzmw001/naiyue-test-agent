@@ -8,7 +8,7 @@ import logging
 import time
 from xml.sax.saxutils import escape, quoteattr
 
-from .errors import ContextCompactionError, RuntimeErrorPolicy
+from .errors import ContextCompactionError
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage,
@@ -171,7 +171,7 @@ def _compaction_steps(
     system_messages: list, tools: list, force: bool = False, trigger: str | None = None,
 ):
     """Share safe compaction between proactive and rejected-request paths."""
-    session_id = context.get('session_id')
+    session_id = context.scope.identity.session_id
     model_messages = prepare_model_messages(messages, model)
     metadata = getattr(model, 'metadata', None)
     if metadata is None:
@@ -200,7 +200,7 @@ def _compaction_steps(
         raise ValueError('Invalid compaction input budget')
     if missing:
         logger.warning('context_budget_unverified', extra={'context_preparation': {
-            'event': 'context_budget_unverified', 'session_id': session_id, 'run_id': context.get('run_id'),
+            'event': 'context_budget_unverified', 'session_id': session_id, 'run_id': context.scope.identity.run_id,
             'model_id': model_id, 'reason': 'missing_budget_metadata', 'force': force,
         }})
         if force:
@@ -217,7 +217,7 @@ def _compaction_steps(
         logger.warning('context_compaction_estimate_unavailable error_type=%s',
                        type(error).__name__)
         logger.warning('context_budget_unverified', extra={'context_preparation': {
-            'event': 'context_budget_unverified', 'session_id': session_id, 'run_id': context.get('run_id'),
+            'event': 'context_budget_unverified', 'session_id': session_id, 'run_id': context.scope.identity.run_id,
             'model_id': model_id, 'reason': 'initial_estimate_unavailable', 'force': force,
             'error_type': type(error).__name__,
         }})
@@ -229,7 +229,7 @@ def _compaction_steps(
         return None
 
     trigger = trigger or ('overflow' if force else 'threshold')
-    correlation = {'session_id': session_id, 'run_id': context.get('run_id'),
+    correlation = {'session_id': session_id, 'run_id': context.scope.identity.run_id,
                    'model_id': model_id}
     logger.info('context_compaction_started', extra={'context_compaction': {
         'event': 'context_compaction_started', **correlation,
@@ -237,7 +237,7 @@ def _compaction_steps(
         'original_message_count': len(messages),
         'trigger': trigger,
     }})
-    observer = context.get('_context_observer')
+    observer = context.scope.observation.context_operations
     operation_id = (observe(observer, observer.begin_compaction, model_id, trigger,
                                               estimated, len(messages)) if observer is not None else None)
     fallback_reason = None
@@ -339,9 +339,9 @@ def _compaction_steps(
             _record_summary_finished(correlation, observer, operation_id, summary_started, error=error)
             logger.error('context_summary_model_failed error_type=%s',
                          type(error).__name__)
-            policy = context.get('_failure_policy')
+            policy = context.scope.errors
             failure = (policy.describe(error, source='model', model_id=model_id)
-                       if isinstance(policy, RuntimeErrorPolicy) else describe_model_failure(error))
+                       if policy is not None else describe_model_failure(error))
             if failure.category == 'transient':
                 fallback_reason = f'summary_{failure.reason}'
             raise ContextCompactionError('summary_failed') from error

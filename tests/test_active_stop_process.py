@@ -6,38 +6,7 @@ import subprocess
 import sys
 
 
-CODE = '''
-import asyncio, json, sys
-from pathlib import Path
-sys.path.insert(0, str(Path.cwd() / 'tests'))
-from test_async_application import StreamingToolModel
-from langchain_core.messages import AIMessage
-from naiyue_test_agent import application
-from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
-
-async def main():
-    database, phase = sys.argv[1:3]
-    entered, release = asyncio.Event(), asyncio.Event()
-    chosen = StreamingToolModel(replies=[AIMessage(content='continued')],
-        entered=entered if phase == 'stop' else None, release=release)
-    application.load_model_catalog = lambda _: ModelCatalog('A', {'A': chosen})
-    async with open_async_persistent_application('unused', database_path=database,
-            tools=[], system_prompt='', response_format=None) as app:
-        if phase == 'stop':
-            session = await app.acreate_session('A')
-            task = asyncio.create_task(app.arun(session, [('user', 'stopped')]))
-            await asyncio.wait_for(entered.wait(), 5)
-            app.request_stop(session)
-            assert (await asyncio.wait_for(task, 5))['run_stopped']
-        else:
-            session = (await app.alist_sessions())[0]['session_id']
-            await app.arestore_session(session)
-            result = await app.arun(session, [('user', 'new')])
-            assert [m.content for m in result['messages']] == ['stopped', 'new', 'continued']
-        print(json.dumps((await app.alist_sessions())[0]))
-asyncio.run(main())
-'''
+CODE = "\nimport asyncio, json, sys\nfrom pathlib import Path\nsys.path.insert(0, str(Path.cwd() / 'tests'))\nfrom test_async_application import StreamingToolModel\nfrom langchain_core.messages import AIMessage\nfrom naiyue_test_agent import application\nfrom naiyue_test_agent.model_access import ModelCatalog\nfrom scripts.component_fixtures import open_component_application\n\nasync def main():\n    database, phase = sys.argv[1:3]\n    entered, release = asyncio.Event(), asyncio.Event()\n    chosen = StreamingToolModel(replies=[AIMessage(content='continued')],\n        entered=entered if phase == 'stop' else None, release=release)\n    application.load_model_catalog = lambda _: ModelCatalog('A', {'A': chosen})\n    async with open_component_application('unused', database_path=database,\n            tools=[], system_prompt='', response_format=None) as app:\n        if phase == 'stop':\n            session = await app.host.sessions.create('A')\n            task = asyncio.create_task(app.host.runs.start(session, [('user', 'stopped')]))\n            await asyncio.wait_for(entered.wait(), 5)\n            app.host.runs.stop(session)\n            assert (await asyncio.wait_for(task, 5))['run_stopped']\n        else:\n            session = (await app.host.sessions.list())[0]['session_id']\n            await app.host.sessions.restore(session)\n            result = await app.host.runs.start(session, [('user', 'new')])\n            assert [m.content for m in result['messages']] == ['stopped', 'new', 'continued']\n        print(json.dumps((await app.host.sessions.list())[0]))\nasyncio.run(main())\n"
 
 
 def test_two_processes_stop_then_restore(tmp_path):

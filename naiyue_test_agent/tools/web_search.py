@@ -1,5 +1,6 @@
 """Provider fallback precedes shared retries under one search deadline."""
 
+from naiyue_test_agent.contracts.run_context import RuntimeContext
 import json
 import logging
 import os
@@ -71,9 +72,9 @@ def create_web_search_tool(*, settings=None, network_settings=None, progress_set
         query=(str, Field(min_length=1, max_length=settings.max_query_chars)),
         max_results=(int | None, Field(default=None, ge=1, le=settings.max_results)))
 
-    async def search(query: str, runtime: ToolRuntime[dict, dict], max_results: int | None = None, timeout: int | None = None):
+    async def search(query: str, runtime: ToolRuntime[RuntimeContext], max_results: int | None = None, timeout: int | None = None):
         require_tool_permit(runtime)
-        control = runtime.context.get('_run_control')
+        control = runtime.context.scope.control
         progress = ToolProgress(runtime, progress_settings)
         count = max_results or settings.default_results
         seconds = settings.request_timeout_seconds if timeout is None else timeout

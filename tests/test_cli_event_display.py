@@ -7,7 +7,7 @@ from threading import Barrier, Thread
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from naiyue_test_agent.application.cli_display import CliEventDisplay
+from naiyue_test_agent.cli.cli_display import CliEventDisplay
 
 
 def event(event_type, sequence, **data):
@@ -206,7 +206,7 @@ def test_progress_is_immediate_escaped_and_closed_by_terminal(monkeypatch):
 
 
 def test_cli_coalesces_same_phase_and_flushes_latest_before_finished(monkeypatch):
-    import naiyue_test_agent.application.cli_display as module
+    import naiyue_test_agent.cli.cli_display as module
     clock = [0.0]
     monkeypatch.setattr(module, 'monotonic', lambda: clock[0])
     view, lines = display()

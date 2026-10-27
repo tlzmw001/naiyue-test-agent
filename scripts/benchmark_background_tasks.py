@@ -1,5 +1,7 @@
 """Disposable offline graph/process/HTTP measurements; no user config or providers."""
 
+from naiyue_test_agent.execution.host_files import HostFileSystem
+from dataclasses import replace
 import argparse
 import asyncio
 from contextlib import asynccontextmanager
@@ -21,12 +23,15 @@ from langchain_core.messages import AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk
 
 from naiyue_test_agent import application
-from naiyue_test_agent.application.async_persistent import open_async_persistent_application
+if __package__:
+    from .component_fixtures import open_component_application
+else:
+    from component_fixtures import open_component_application
 from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools.processes import HostProcessRunner, ProcessRequest, ProcessOutcome
 from naiyue_test_agent.tools.settings import BashSettings
-from naiyue_test_agent.web.app import create_web_app
+from scripts.web_probe_app import create_probe_app, command_headers, async_command_headers
 from naiyue_test_agent.web.settings import WebSettings
 from scripts.release_background_smoke import process_alive, wait_task
 
@@ -63,10 +68,13 @@ def process_request(root, script):
 
 
 async def load(app, root, sid, script, *, call='load', limit=67108864, runner=None):
-    return await app._sessions.background_tasks.submit(session_id=sid, workspace_root=root,
-        archive_root=app._sessions.session_archive_root(sid),
+    scope = app.sessions._sessions.require(sid).snapshot_for_context()
+    environment = HostFileSystem(scope['execution_root'], scope['project_id']).environment
+    return await app.sessions._sessions.background_tasks.submit(session_id=sid, workspace_root=root,
+        execution_root=scope['execution_root'], project_id=scope['project_id'], environment=environment,
+        archive_root=app.sessions._sessions.session_archive_root(sid),
         run_id='benchmark', tool_call_id=call, agent_path='root', command='benchmark disposable load', name='bash',
-        request=process_request(root, script), settings=BashSettings(max_archive_bytes=limit),
+        request=replace(process_request(root, script), execution_environment=environment.public()), settings=BashSettings(max_archive_bytes=limit),
         runner=runner or HostProcessRunner(), control=None)
 
 
@@ -81,12 +89,12 @@ async def environment(root):
     web_settings = WebSettings(config_path=root / 'unused', database_path=root / 'sessions.sqlite',
         frontend_dist=assets, workspace_root=root, runtime_settings=settings)
     def factory():
-        return open_async_persistent_application('unused', database_path=web_settings.database_path,
+        return open_component_application('unused', database_path=web_settings.database_path,
             tools=[], system_prompt='', response_format=None, settings=settings)
     with patch.object(application, 'load_model_catalog', lambda _: ModelCatalog('offline', {'offline': model})):
-        web = create_web_app(web_settings, application_factory=factory)
+        web = create_probe_app(web_settings, application_factory=factory)
         async with web.router.lifespan_context(web):
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=web), base_url=web_settings.origin,
+            async with httpx.AsyncClient(event_hooks={'request': [async_command_headers]}, transport=httpx.ASGITransport(app=web), base_url=web_settings.origin,
                 headers={'Authorization': 'Bearer ' + web_settings.access_token, 'Origin': web_settings.origin}) as client:
                 yield web.state.service.application, client, model
 
@@ -98,7 +106,7 @@ async def sample(root, case, options):
     pid, identity, cleanup, saved_bytes, observed, close_ms = None, None, True, 0, 0, 0
     interval = options.poll_seconds if case == 'management_stress' else 3
     async with environment(root) as (app, client, model):
-        sid = await app.acreate_workspace_session('offline', root)
+        sid = await app.sessions.create_workspace('offline', root)
         if case != 'baseline':
             script = "import os,threading,time;print(os.getpid(),flush=True)\n"
             if case in ('output', 'output_open', 'management_stress'):
@@ -111,16 +119,16 @@ async def sample(root, case, options):
             pid = int(ready['output'].splitlines()[0])
             (root / 'write-ready').touch()
         for _ in range(options.warmup):
-            await app.arun(sid, [('user', 'warmup')])
+            await app.runs.start(sid, [('user', 'warmup')])
         async def monitor():
             while not stop.is_set():
                 start = perf_counter()
-                response = await client.get('/api/background-tasks')
+                response = await client.get('/api/v1/scopes/chats/background-tasks')
                 assert response.status_code == 200, response.text
                 metadata.append((perf_counter() - start) * 1000)
                 if identity and case in ('output_open', 'management_stress'):
                     start = perf_counter()
-                    response = await client.get(f'/api/background-tasks/{identity}/output')
+                    response = await client.get(f'/api/v1/scopes/chats/background-tasks/{identity}/output')
                     assert response.status_code == 200, response.text
                     output.append((perf_counter() - start) * 1000)
                 try:
@@ -131,17 +139,17 @@ async def sample(root, case, options):
         try:
             for _ in range(options.turns):
                 start = perf_counter()
-                result = await app.arun(sid, [('user', 'fixed task')])
+                result = await app.runs.start(sid, [('user', 'fixed task')])
                 assert result['messages'][-1].content == 'fixed reply'
                 turns.append((perf_counter() - start) * 1000)
                 await asyncio.sleep(options.turn_gap_seconds)
             if identity:
-                before = await app.aget_background_task_output(identity)
+                before = await app.tasks.output(identity)
                 assert before['status'] == 'running', 'Output load ended before the measurement completed'
                 start = perf_counter()
-                ended = await app.astop_background_task(identity)
+                ended = await app.tasks.stop(identity)
                 stop_times.append((perf_counter() - start) * 1000)
-                view = await app.aget_background_task_output(identity)
+                view = await app.tasks.output(identity)
                 cleanup, saved_bytes, observed = ended['cleanup_confirmed'], view['archive_saved_bytes'], view['observed_raw_bytes']
                 assert cleanup and saved_bytes <= options.archive_bytes
             start = perf_counter()
@@ -163,17 +171,17 @@ async def history_and_flood(root, counts, repeats, archive_bytes):
             request.on_started()
             return ProcessOutcome(0, 'exited', True, True, True, True, 0)
     async with environment(root) as (app, client, _model):
-        sid = await app.acreate_workspace_session('offline', root)
+        sid = await app.sessions.create_workspace('offline', root)
         current = 0
         for count in sorted(counts):
             for i in range(current, count):
                 row = await load(app, root, sid, '', call=str(i), runner=FinishedRunner())
-                await app._sessions.background_tasks._entries[row['task_id']].worker
+                await app.sessions._sessions.background_tasks._entries[row['task_id']].worker
             current = count
             values = []
             for _ in range(repeats):
                 start = perf_counter()
-                response = await client.get('/api/background-tasks')
+                response = await client.get('/api/v1/scopes/chats/background-tasks')
                 assert response.status_code == 200 and len(response.json()['items']) == min(20, count)
                 values.append((perf_counter() - start) * 1000)
             samples.append(dict(records=count, metadata=distribution(values), fixture='synthetic terminal registry, no process load'))
@@ -189,14 +197,14 @@ async def history_and_flood(root, counts, repeats, archive_bytes):
 async def active_close(root):
     root = root.resolve()
     async with environment(root) as (app, _client, _model):
-        sid = await app.acreate_workspace_session('offline', root)
+        sid = await app.sessions.create_workspace('offline', root)
         row = await load(app, root, sid, 'import os,threading;print(os.getpid(),flush=True);threading.Event().wait()')
         ready = await wait_task(app, row['task_id'], lambda value: bool(value['output']))
         pid = int(ready['output'])
         start = perf_counter()
     elapsed = (perf_counter() - start) * 1000
     assert not process_alive(pid), 'Benchmark active process survived application close'
-    settled = await app._sessions.background_tasks.output(row['task_id'])
+    settled = await app.sessions._sessions.background_tasks.output(row['task_id'])
     assert settled['termination'] == 'app_close' and settled['cleanup_confirmed']
     return dict(close_ms=elapsed, cleanup_confirmed=True, termination=settled['termination'])
 

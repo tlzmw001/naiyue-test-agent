@@ -8,22 +8,22 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage, message_to_dict
 from langchain_core.messages.utils import count_tokens_approximately
 
-from naiyue_test_agent.application.chat_history import ChatUpdate
-from naiyue_test_agent.application.memory_queries import MemoryReadError
-from naiyue_test_agent.application.session_storage import SessionStorage
+from naiyue_test_agent.application.conversation.chat_history import ChatUpdate
+from naiyue_test_agent.contracts.memory import MemoryReadError
+from naiyue_test_agent.storage.project_store import ProjectStore
 
 
 @pytest.fixture
 def archive(tmp_path):
-    with SessionStorage(tmp_path / 'sessions.sqlite') as store:
-        store.bind_workspace('11111111111111111111111111111111', tmp_path)
-        store.create('session', dict(thread_id='root-thread', model_id='A', workspace_root=tmp_path,
+    with ProjectStore(tmp_path / 'sessions.sqlite') as store:
+        store.sessions.bind_workspace('11111111111111111111111111111111', tmp_path)
+        store.sessions.create('session', dict(thread_id='root-thread', model_id='A', workspace_root=tmp_path,
             active_tool_names=['memory'], permission_mode='Default'))
         yield store
 
 
 def save(store, messages, *, thread='root-thread', occurred_at=1000.):
-    head = next((h for h in store.chat_heads('session') if h['thread_id'] == thread), None)
+    head = next((h for h in store.conversation.chat_heads('session') if h['thread_id'] == thread), None)
     records = []
     for message in messages:
         body = json.dumps(message_to_dict(message), ensure_ascii=False)
@@ -31,13 +31,13 @@ def save(store, messages, *, thread='root-thread', occurred_at=1000.):
             kind='context_summary' if message.additional_kwargs.get('naiyue_compaction_summary') else 'message',
             source_checkpoint_id='checkpoint', message_type=message.type, parent_message_id=None,
             reply_id='reply', occurred_at=occurred_at))
-    store.save_chat_updates('session', [ChatUpdate(thread, '', 'root', head['revision'] if head else 0,
+    store.conversation.save_chat_updates('session', [ChatUpdate(thread, '', 'root', head['revision'] if head else 0,
         'checkpoint', tuple(records))])
 
 
 def batch(store, **changes):
-    from naiyue_test_agent.application.memory_batches import build_batch
-    return build_batch(store, **(dict(session_id='session', thread_id='root-thread', conversation_revision=0,
+    from naiyue_test_agent.application.memory.memory_batches import build_batch
+    return build_batch(store.memory, **(dict(session_id='session', thread_id='root-thread', conversation_revision=0,
         start=[0, 0], upper=100, token_budget=16000, source_chars=4096) | changes))
 
 
@@ -96,7 +96,7 @@ def test_long_source_is_split_by_actual_envelope_tokens_without_losing_text(arch
 
 
 def test_multiple_long_source_chunks_share_one_batch_and_sensitive_scan(archive, monkeypatch):
-    from naiyue_test_agent.application import memory_batches
+    from naiyue_test_agent.application.memory import memory_batches
     text = '测试🧪正文' * 4000
     save(archive, [HumanMessage(id='long', content=text)])
     original, checks = memory_batches.SECRET, []
@@ -165,22 +165,22 @@ def test_empty_tail_still_obeys_json_envelope_budget(archive):
 
 def test_batch_rejects_foreign_workspace_even_when_thread_matches(archive):
     save(archive, [HumanMessage(id='first', content='visible')])
-    with archive.connection:
-        archive.connection.execute('UPDATE naiyue_sessions SET workspace_root=? WHERE session_id=?',
-            ('/different-workspace', 'session'))
+    with archive.database.connection:
+        archive.database.connection.execute('UPDATE naiyue_sessions SET project_id=? WHERE session_id=?',
+            ('foreign-project', 'session'))
     with pytest.raises(MemoryReadError, match='memory_source_scope_mismatch'):
         batch(archive)
 
 
 def test_batch_sqlite_failure_is_diagnostic_and_not_empty(archive, caplog):
-    archive.connection.close()
+    archive.database.connection.close()
     with pytest.raises(MemoryReadError, match='memory_batch_read_failed'):
         batch(archive)
     assert 'memory_batch_read_failed' in caplog.text
 
 
 def test_parse_accepts_strict_empty_and_many_proposals_independently():
-    from naiyue_test_agent.application.memory_batches import parse_model_result, proposal_request
+    from naiyue_test_agent.application.memory.memory_batches import parse_model_result, proposal_request
     data = result(proposals=[proposed(), {'action': 'invented'}, proposed(scope='personal')])
     actual = parse_model_result(AIMessage(content=json.dumps(data), response_metadata={'finish_reason': 'stop'}), settings())
     assert actual == data
@@ -203,14 +203,14 @@ def test_parse_accepts_strict_empty_and_many_proposals_independently():
     json.dumps(result(overview=dict(goal=1, progress='', blockers='', next_step=''))),
     json.dumps(result(proposals=[{}] * 9)), json.dumps(result(overview=dict(goal='x' * 1201, progress='', blockers='', next_step='')))])
 def test_invalid_top_level_json_never_becomes_partial_authoritative_state(content):
-    from naiyue_test_agent.application.memory_batches import parse_model_result
+    from naiyue_test_agent.application.memory.memory_batches import parse_model_result
     with pytest.raises(MemoryReadError, match='memory_result_invalid'):
         parse_model_result(content, settings())
 
 
 @pytest.mark.parametrize('reason', ['length', 'max_tokens'])
 def test_valid_looking_json_from_truncated_response_is_rejected(reason):
-    from naiyue_test_agent.application.memory_batches import parse_model_result
+    from naiyue_test_agent.application.memory.memory_batches import parse_model_result
     response = AIMessage(content=json.dumps(result()), response_metadata={
         'finish_reason' if reason == 'length' else 'stop_reason': reason})
     with pytest.raises(MemoryReadError, match='memory_result_truncated'):
@@ -218,7 +218,7 @@ def test_valid_looking_json_from_truncated_response_is_rejected(reason):
 
 
 def test_parse_ignores_hidden_response_blocks_and_rejects_nonfinite_json():
-    from naiyue_test_agent.application.memory_batches import parse_model_result
+    from naiyue_test_agent.application.memory.memory_batches import parse_model_result
     response = AIMessage(content=[dict(type='reasoning', reasoning='HIDDEN-RESPONSE'),
         dict(type='text', text=json.dumps(result()))])
     assert parse_model_result(response, settings()) == result()
@@ -234,7 +234,7 @@ def test_parse_ignores_hidden_response_blocks_and_rejects_nonfinite_json():
     dict(action='record', memory_id='a' * 32), dict(action='update'),
     dict(body='x' * 801), dict(aliases=['a'] * 6)])
 def test_proposal_cannot_invent_source_identity_offsets_time_or_exceed_contract(change):
-    from naiyue_test_agent.application.memory_batches import proposal_request
+    from naiyue_test_agent.application.memory.memory_batches import proposal_request
     source = dict(source_key='1:0', session_id='s', thread_id='t', message_id='m', revision=1,
         conversation_revision=0, offset=30, text='unique quote', text_chars=99)
     with pytest.raises(MemoryReadError, match='memory_proposal_invalid'):
@@ -242,7 +242,7 @@ def test_proposal_cannot_invent_source_identity_offsets_time_or_exceed_contract(
 
 
 def test_update_reuses_expected_version_and_ambiguous_quote_is_refused():
-    from naiyue_test_agent.application.memory_batches import proposal_request
+    from naiyue_test_agent.application.memory.memory_batches import proposal_request
     source = dict(source_key='1:0', session_id='s', thread_id='t', message_id='m', revision=2,
         conversation_revision=3, offset=20, text='使用.venv', text_chars=50)
     snapshot = dict(memory_id='b' * 32, version=4, scope='workspace', kind='context', complete=True,

@@ -1,6 +1,8 @@
-# history：当前工作目录的会话历史查询
+# history：当前项目的会话历史查询
 
 从0.4.0提供，设计与验收见Spec127-01。history已加入CLI/Web共享内置工具，遵循现有会话及子角色的工具启停和权限策略，默认只读允许。已有会话保持自己保存的工具集合，需要按现有工具选择入口启用。
+
+Spec128-01之后，保存数据按project_id选择，当前执行目录用于准入和权限校验。来源会话的旧目录消失不影响已保存正文；当前调用会话必须属于所绑定项目且执行目录有效。`--no-session`不开放项目history。实际worktree创建/登记尚未实施，不能把数据范围拆分当成worktree功能已交付。
 
 模型可先列出其他会话，再按完整会话ID搜索、读取已保存的可见正文。这里不调用额外模型，也不恢复或继续执行目标会话。示意调用参数如下，session_id须使用列表返回的真实ID：
 
@@ -10,7 +12,7 @@
 {"action":"read","session_id":"列表返回的完整ID","limit":10}
 ```
 
-- `list_sessions`：仅当前工作目录、排除调用会话，按保存的活动时间排序。返回真实标题、ID、保存状态及时间，并附已生成概览/来源范围/版本/生成时间。没有概览时为`null`/`not_generated`；历史被改写后标`stale`，追加以`has_newer_messages`表示。保存状态不代表此刻实时运行情况。
+- `list_sessions`：仅当前项目UUID范围、排除调用会话，按保存的活动时间排序。返回真实标题、ID、保存状态及时间，并附已生成概览/来源范围/版本/生成时间。没有概览时为`null`/`not_generated`；历史被改写后标`stale`，追加以`has_newer_messages`表示。保存状态不代表此刻实时运行情况。
 - `search`：指定一个会话，查询中的空白分隔词须全部在同条可见正文出现，ASCII大小写不敏感。它是字面关键词检索；有`has_more=true`时，即使本页为空，也应携带同一query及`next_cursor`继续扫描。
 - `read`：指定会话读消息页，页内按时间正序。大正文返回`offset/next_offset/text_chars/complete`；继续读同一条时传回`sequence/revision/conversation_revision`和`offset=next_offset`。offset按可见正文的Unicode字符计数。
 

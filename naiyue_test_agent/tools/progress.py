@@ -21,10 +21,10 @@ class ToolProgress:
         self._stage = None
         try:
             context = getattr(runtime, 'context', None) or {}
-            permit = context.get('_execution_permit', {})
+            permit = (context.authorization.permit if context.authorization is not None else {})
             self._identity = {'batch_id': permit.get('batch_id'),
                 'tool_call_id': getattr(runtime, 'tool_call_id', None), 'tool_name': permit.get('tool_name')}
-            self._control = context.get('_run_control')
+            self._control = context.scope.control
             writer = getattr(runtime, 'stream_writer', None)
             if (self.settings.enabled and callable(writer)
                     and all(isinstance(v, str) and v for v in self._identity.values())):

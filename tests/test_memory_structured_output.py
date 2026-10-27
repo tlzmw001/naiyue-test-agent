@@ -9,8 +9,8 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from http_observation_helpers import sdk_catalog, sdk_response
-from naiyue_test_agent.application.memory_batches import parse_model_result
-from naiyue_test_agent.application.memory_queries import MemoryReadError
+from naiyue_test_agent.application.memory.memory_batches import parse_model_result
+from naiyue_test_agent.contracts.memory import MemoryReadError
 from test_memory_batches import archive, save, result
 from test_memory_flat_contract import flat
 from test_memory_job_runner import fixture
@@ -71,7 +71,7 @@ def wire_response(request, kind, mode, value):
 @pytest.mark.parametrize('kind', ['openai', 'responses', 'anthropic', 'ollama'])
 @pytest.mark.parametrize('mode', ['json_schema', 'function_calling'])
 def test_real_adapter_worker_keeps_partial_success_usage_and_single_request(archive, tmp_path, kind, mode):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='human', content='使用.venv', additional_kwargs={'naiyue_human_input': True})])
         sent = []
@@ -105,7 +105,7 @@ def test_real_adapter_worker_keeps_partial_success_usage_and_single_request(arch
 
 
 def test_schema_budget_fails_before_request_and_does_not_switch_protocol(archive, tmp_path):
-    from naiyue_test_agent.application.memory_job_runner import drive
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='human', content='使用.venv')])
         calls = []

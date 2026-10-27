@@ -33,17 +33,17 @@ async def test_stop_after_io_started_retains_actual_success_and_settles_before_r
     child = ChildModel(replies=[call('probe', {'value': 'committed'}, 'inner')])
     app, _ = await delegated_app(monkeypatch, child, tools=[spec])
     instances = record_instances(monkeypatch, app)
-    sid = await app.acreate_session('A')
-    task = asyncio.create_task(app.arun(sid, [('user', 'run')]))
+    sid = await app.host.sessions.create('A')
+    task = asyncio.create_task(app.host.runs.start(sid, [('user', 'run')]))
     try:
         assert await asyncio.to_thread(entered.wait, 5)
         instance, = instances
-        with pytest.raises(SessionBusyError): app.request_stop(sid, run_id='another', agent_path=instance['agent_path'])
-        app.request_stop(sid, agent_path=instance['agent_path'])
+        with pytest.raises(SessionBusyError): app.host.runs.stop(sid, run_id='another', agent_path=instance['agent_path'])
+        app.host.runs.stop(sid, agent_path=instance['agent_path'])
         assert not task.done() and effects == []
         release.set()
         result = await asyncio.wait_for(task, 5)
-        graph = app._sessions._subagents['tester']['agent']
+        graph = app.host.sessions._sessions._subagents['tester']['agent']
         saved = await graph.aget_state({'configurable': {'thread_id': instance['child_thread_id']}})
         message = next(m for m in saved.values['messages'] if isinstance(m, ToolMessage))
         assert message.status == 'success' and message.content == 'actual success' and effects == ['committed']
@@ -60,7 +60,7 @@ async def test_stop_during_final_checkpoint_confirmation_does_not_relabel_a_comp
     child = ChildModel(replies=[AIMessage(content='completed report')])
     app, _ = await delegated_app(monkeypatch, child)
     instances = record_instances(monkeypatch, app)
-    graph = app._sessions._subagents['tester']['agent']
+    graph = app.host.sessions._sessions._subagents['tester']['agent']
     read = graph.aget_state
     async def wait_final(config, *args, **kwargs):
         snapshot = await read(config, *args, **kwargs)
@@ -70,11 +70,11 @@ async def test_stop_during_final_checkpoint_confirmation_does_not_relabel_a_comp
             await release.wait()
         return snapshot
     monkeypatch.setattr(graph, 'aget_state', wait_final)
-    sid = await app.acreate_session('A')
-    task = asyncio.create_task(app.arun(sid, [('user', 'run')]))
+    sid = await app.host.sessions.create('A')
+    task = asyncio.create_task(app.host.runs.start(sid, [('user', 'run')]))
     try:
         await asyncio.wait_for(entered.wait(), 5)
-        app.request_stop(sid, agent_path=instances[0]['agent_path'])
+        app.host.runs.stop(sid, agent_path=instances[0]['agent_path'])
         release.set()
         result = await asyncio.wait_for(task, 5)
         assert instances[0]['status'] == 'completed' and instances[0]['settled']
@@ -87,17 +87,17 @@ async def test_stop_during_final_checkpoint_confirmation_does_not_relabel_a_comp
 
 @async_test
 async def test_finalize_rejects_late_stop_instead_of_changing_completed_report(monkeypatch):
-    from naiyue_test_agent.application import session_subagents
+    from naiyue_test_agent.application.subagents import session_subagents
     app, _ = await delegated_app(monkeypatch, ChildModel(replies=[AIMessage(content='report')]))
     finish = session_subagents._finish_subagent_result
     checked = []
     def check(result, instance, settings):
-        with pytest.raises(SessionBusyError): app.request_stop(instance['session_id'], agent_path=instance['agent_path'])
+        with pytest.raises(SessionBusyError): app.host.runs.stop(instance['session_id'], agent_path=instance['agent_path'])
         assert instance['phase'] == 'finalize' and not instance['control'].requested
         checked.append(instance['agent_path'])
         return finish(result, instance, settings)
     monkeypatch.setattr(session_subagents, '_finish_subagent_result', check)
-    result = await app.arun(await app.acreate_session('A'), [('user', 'run')])
+    result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'run')])
     assert len(checked) == 1 and result['messages'][-1].content == 'root done'
 
 
@@ -110,19 +110,19 @@ async def test_root_stop_invalidates_two_pending_children_before_any_tool_starts
     app, _ = await delegated_app(monkeypatch, child, root=root, tools=[definition(calls=effects, approved=True)])
     queue = approval_notifications(monkeypatch, app)
     instances = record_instances(monkeypatch, app)
-    sid = await app.acreate_session('A')
-    task = asyncio.create_task(app.arun(sid, [('user', 'run')]))
+    sid = await app.host.sessions.create('A')
+    task = asyncio.create_task(app.host.runs.start(sid, [('user', 'run')]))
     try:
         await next_approval(app, sid, queue)
         await asyncio.wait_for(queue.get(), 5)
         pending = [i['approval'] for i in instances]
         assert len(pending) == 2
-        app.request_stop(sid)
+        app.host.runs.stop(sid)
         result = await asyncio.wait_for(task, 5)
         assert result['run_stopped'] and effects == [] and len(root.seen) == 1
         assert all(p.status == 'invalidated' and p.future.done() for p in pending)
         assert all(i['status'] == 'stopped' and i['settled'] for i in instances)
-        assert app.pending_approval_batches(sid) == [] and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
+        assert app.host.runs.pending_approvals(sid) == [] and all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.host.sessions._sessions._sessions.values())
     finally:
         await cancel_run(task)
 
@@ -141,9 +141,9 @@ async def test_root_mechanism_failure_settles_sibling_approval_without_claiming_
     app, _ = await delegated_app(monkeypatch, child, root=root, tools=[definition(calls=effects, approved=True)])
     queue = approval_notifications(monkeypatch, app)
     instances = record_instances(monkeypatch, app)
-    app.subscribe_events(events.append)
-    sid = await app.acreate_session('A')
-    task = asyncio.create_task(app.arun(sid, [('user', 'run')]))
+    app.host.observability.subscribe(events.append)
+    sid = await app.host.sessions.create('A')
+    task = asyncio.create_task(app.host.runs.start(sid, [('user', 'run')]))
     try:
         await next_approval(app, sid, queue)
         b = next(i for i in instances if i['task'] == 'B')
@@ -152,9 +152,9 @@ async def test_root_mechanism_failure_settles_sibling_approval_without_claiming_
         with pytest.raises(ModelResponseRejected): await asyncio.wait_for(task, 5)
         assert effects == [] and b['control'].reason == 'failure' and b['status'] == 'stopped'
         assert pending.status == 'invalidated' and pending.future.done()
-        assert all(i['settled'] for i in instances) and all(not (owner._run.subagent_instances if owner._run else {}) for owner in app._sessions._sessions.values())
+        assert all(i['settled'] for i in instances) and all(not (owner._runtime.run.subagent_instances if owner._runtime.run else {}) for owner in app.host.sessions._sessions._sessions.values())
         assert not any(e.event_type == 'control_accepted' and e.data.kind == 'stop' for e in events)
-        assert not app._sessions.require(sid).describe_session()['busy']
+        assert not app.host.sessions._sessions.require(sid).describe_session()['busy']
     finally:
         release.set()
         await cancel_run(task)

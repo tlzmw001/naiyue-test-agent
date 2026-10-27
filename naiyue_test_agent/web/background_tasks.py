@@ -4,13 +4,14 @@ import logging
 
 from fastapi import APIRouter, Path, Query, Request
 
-from ..application.background_tasks import TaskQueryError
+from naiyue_test_agent.application.sessions.background_tasks import TaskQueryError
 from .errors import WebError
+from .dependencies import get_service
 from .serialization import encoded_size
 
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix='/api/background-tasks')
+router = APIRouter(prefix='/background-tasks')
 TASK_ID = r'^[0-9a-f]{32}$'
 
 
@@ -35,22 +36,22 @@ def _bounded(value, budget):
 
 
 async def _perform(request, action, *, session_id=None, task_id=None, limit=20, before=None):
-    service = request.app.state.service
+    service = await get_service(request)
     root = service.settings.workspace_root
-    if root is None:
+    if root is None and service.settings.workspace_id is None:
         if action != 'list':
             raise WebError('task_not_found', 404)
         return {'items': [], 'next_before': None, 'active_count': 0, 'terminal_revision': 0, 'revision': 'empty'}
     if session_id is not None:
         await service._session_status(session_id)
     try:
-        scope = {'session_id': session_id, 'workspace_root': root}
+        scope = {'session_id': session_id, 'workspace_root': None if service.settings.workspace_id is not None else root}
         if action == 'list':
-            value = await service.application.alist_background_tasks(**scope, limit=limit, before=before)
+            value = await service.application.tasks.list(**scope, limit=limit, before=before)
         elif action == 'output':
-            value = await service.application.aget_background_task_output(task_id, **scope)
+            value = await service.application.tasks.output(task_id, **scope)
         else:
-            value = await service.application.astop_background_task(task_id, **scope)
+            value = await service.application.tasks.stop(task_id, **scope)
             if not value['cleanup_confirmed']:
                 raise WebError('task_cleanup_unconfirmed')
         return _bounded(value, service.settings.max_frame_bytes)

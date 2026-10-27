@@ -1,5 +1,7 @@
 """Cooperative stops must leave actual files and owned resources consistent."""
 
+from dataclasses import replace
+from runtime_context_helpers import ExecutionRoot, RunIdentity, ToolAuthorization, typed_context
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
@@ -20,12 +22,11 @@ from naiyue_test_agent.tools.permissions import execution_environment
 def invoke_body(spec, root, args, control):
     """Enter the real tool body with a valid, already reviewed execution permit."""
     from naiyue_test_agent.tools.permission_rules import PermissionSettings
-    context = {'session_id': 'file-stop', 'workspace_root': root, '_run_control': control,
-               '_permission_rules': PermissionSettings(), '_session_allow': [], '_permission_mode': 'Default'}
+    context = typed_context(identity=RunIdentity(session_id='file-stop', execution_root=ExecutionRoot(root) if root is not None else None), authorization=ToolAuthorization(permission_rules=PermissionSettings(), session_allow=[], permission_mode='Default'), control=control)
     subject = spec.permissions.prepare(args, context)
-    subject.update(args=args, path_field='path', execution_environment=execution_environment())
-    context['_execution_permit'] = {'call_id': 'file', 'session_id': 'file-stop',
-                                  'agent_path': 'root', 'subject': subject}
+    subject.update(args=args, path_field='path', execution_environment=execution_environment(context))
+    context = replace(context, authorization=replace(context.authorization, permit={
+        'call_id': 'file', 'session_id': 'file-stop', 'agent_path': 'root', 'subject': subject}))
     runtime = SimpleNamespace(context=context, tool_call_id='file')
     validated = spec.validate_input(args)
     return spec.tool.func(**{key: getattr(validated, key) for key in args}, runtime=runtime)

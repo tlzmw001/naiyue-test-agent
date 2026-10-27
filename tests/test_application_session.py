@@ -153,8 +153,8 @@ async def test_same_session_busy_rejected_other_session_runs_and_failure_release
 
     class BlockingAgent:
         async def ainvoke(self, _input, *, context, config):
-            seen.append((context['session_id'], config['configurable']['thread_id']))
-            if context['session_id'] == first_session:
+            seen.append((context.scope.identity.session_id, config['configurable']['thread_id']))
+            if context.scope.identity.session_id == first_session:
                 started.set()
                 assert await asyncio.to_thread(release.wait, timeout=3)
                 raise failure
