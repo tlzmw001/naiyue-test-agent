@@ -183,21 +183,12 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
       <div className={styles.composerActions}>
         <ComposerControls sessionId={session?.session_id ?? null} options={options} mode={mode} tools={tools}
           sendScroll={sendScroll}
+          imageInputs={imageInputs} sending={sending}
           menu={menu} setMenu={setMenu} runCommand={runCommand} compactDisabled={compactDisabled}
           api={api} selectSkill={selectSkill} focusEditor={() => editor.current?.focus()}
           disabled={controlsDisabled} loading={loadingOptions} error={optionsError} reload={() => setReload(value => value + 1)}
           selectMode={selectMode} selectTools={selectTools} />
         <div className={styles.actionGroup}>
-          {imageInputs && <label className={styles.iconButton} title="添加图片">
-            <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" multiple hidden aria-label="添加图片"
-              disabled={sending || imageInputs.reading || !imageInputs.limits} onChange={event => {
-                if (event.target.files) void imageInputs.addFiles(Array.from(event.target.files));
-                event.target.value = '';
-              }} />
-            <span role="button" tabIndex={0} aria-label="选择图片" onKeyDown={event => {
-              if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); (event.currentTarget.previousElementSibling as HTMLInputElement).click(); }
-            }}><Icon name="image" /></span>
-          </label>}
           {pendingMode && !busy && <span className={styles.resendLabel}>重新发送</span>}
           {contextEntry}
           {showStop ? <button type="button" className={styles.stopButton} aria-label="停止运行" onClick={stop} disabled={stopping}>

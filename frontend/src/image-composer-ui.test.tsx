@@ -28,6 +28,21 @@ function Fixture({ supported = true, busy = false, sending = false, uncertain = 
     openContext={()=>{}} openAgents={()=>{}} imageInputs={inputs} imageSupported={supported} />;
 }
 function png(name='截图.png') { return new File(['test-pixels'],name,{type:'image/png'}); }
+it('opens the existing image picker from the plus menu without a trailing image action',async()=>{
+  render(<Fixture/>);
+  const input=screen.getByLabelText('添加图片') as HTMLInputElement;
+  await waitFor(()=>expect(input.disabled).toBe(false));
+  expect(screen.queryByRole('button',{name:'选择图片'})).toBeNull();
+  fireEvent.click(screen.getByRole('button',{name:'指令与功能'}));
+  const choose=screen.getByRole('menuitem',{name:'添加图片'});
+  const openPicker=vi.spyOn(input,'click');
+  fireEvent.click(choose);
+  expect(openPicker).toHaveBeenCalledOnce();
+  expect(screen.queryByRole('menu',{name:'指令与功能'})).toBeNull();
+  fireEvent.change(input,{target:{files:[png()]}});
+  await screen.findByRole('button',{name:'预览图片：截图.png'});
+  expect((screen.getByRole('button',{name:'发送消息'}) as HTMLButtonElement).disabled).toBe(false);
+});
 it('pastes image items, ignores same-event source text and enables image-only send',async()=>{
   render(<Fixture/>);
   await waitFor(()=>expect((screen.getByLabelText('添加图片') as HTMLInputElement).disabled).toBe(false));

@@ -52,7 +52,7 @@ it('places commands before the mode, keeps context beside send and puts models i
   expect(context.closest('form')).toBe(send.closest('form'));
   fireEvent.click(plus);
   expect(screen.getByRole('menuitem', { name: /压缩上下文.*compact/ })).toBeTruthy();
-  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['压缩上下文/compact', '技能/skills', '发送后滚动']);
+  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['添加图片', '压缩上下文/compact', '技能/skills', '发送后滚动']);
   expect(screen.getByRole('menuitem', { name: '发送后滚动' }).querySelector('[data-chevron="right"]')).not.toBeNull();
   fireEvent.keyDown(screen.getByRole('menu', { name: '指令与功能' }), { key: 'Escape' });
   expect(screen.queryByRole('menu')).toBeNull();

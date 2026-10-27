@@ -7,6 +7,7 @@ import { commands } from '../commands';
 import type { CommandName, ComposerMenu } from '../commands';
 import { Chevron, Icon } from './Icons';
 import { sendScrollOptions, type SendScroll } from '../useSendScroll';
+import type { ImageInputs } from './ImageAttachments';
 import styles from './ComposerControls.module.css';
 
 const modes: { name: PermissionMode; description: string }[] = [
@@ -17,8 +18,9 @@ const modes: { name: PermissionMode; description: string }[] = [
 ];
 
 export default function ComposerControls({ options, mode, tools, disabled, loading, error, reload, selectMode, selectTools, sessionId,
-  menu, setMenu, runCommand, compactDisabled, api, selectSkill, focusEditor, sendScroll }: {
+  menu, setMenu, runCommand, compactDisabled, api, selectSkill, focusEditor, sendScroll, imageInputs, sending = false }: {
   sendScroll?: { preference: SendScroll; select: (value: SendScroll) => void };
+  imageInputs?: ImageInputs; sending?: boolean;
   options: SessionControlOptions | null; mode?: PermissionMode; tools: string[]; disabled: boolean;
   loading: boolean; error: boolean; reload: () => void;
   selectMode: (mode: PermissionMode) => void; selectTools: (names: string[]) => void;
@@ -31,6 +33,7 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
   const setOpen = setMenu;
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
+  const imagePicker = useRef<HTMLInputElement>(null);
   const scrollTrigger = useRef<HTMLButtonElement>(null);
   const scrollMenu = useRef<HTMLElement>(null);
   const [scrollMenuMode, setScrollMenuMode] = useState<'pointer' | 'keyboard' | null>(null);
@@ -62,8 +65,9 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
       if (!root.current?.contains(event.target as Node)) setOpen(null);
     }
     document.addEventListener('pointerdown', outside);
-    const focus = root.current?.querySelector<HTMLInputElement>('input:checked:not(:disabled)') ??
-      root.current?.querySelector<HTMLElement>('input:not(:disabled), [role="menuitem"]:not(:disabled)');
+    const focus = open === 'commands' ? root.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)') :
+      root.current?.querySelector<HTMLInputElement>('input:checked:not(:disabled)') ??
+      root.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled), input:not([type="file"]):not(:disabled)');
     focus?.focus();
     return () => document.removeEventListener('pointerdown', outside);
   }, [open]);
@@ -92,6 +96,12 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
     <button type="button" className={`${styles.trigger} ${styles.plus}`} aria-label="指令与功能"
       aria-haspopup="menu" aria-expanded={open === 'commands'} disabled={disabled}
       onClick={event => toggle('commands', event.currentTarget)}><Icon name="plus" /></button>
+    {imageInputs && <input ref={imagePicker} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"
+      multiple hidden aria-label="添加图片" disabled={sending || imageInputs.reading || !imageInputs.limits}
+      onChange={event => {
+        if (event.target.files) void imageInputs.addFiles(Array.from(event.target.files));
+        event.target.value = '';
+      }} />}
     <button type="button" className={styles.trigger} aria-label={`权限模式：${mode ?? '加载中'}`}
       aria-expanded={open === 'modes'} aria-controls={open === 'modes' ? id : undefined}
       onClick={event => toggle('modes', event.currentTarget)} disabled={disabled} title="权限模式 · Shift + Tab 切换">
@@ -104,6 +114,9 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
     </button>
     {open === 'commands' && <section role="menu" aria-label="指令与功能" className={styles.popover}>
       <div className={styles.heading}>指令与功能</div>
+      {imageInputs && <button type="button" role="menuitem" className={styles.command}
+        disabled={sending || imageInputs.reading || !imageInputs.limits}
+        onClick={() => { imagePicker.current?.click(); setOpen(null); }}><span>添加图片</span></button>}
       {commands.filter(command => command.name === 'compact' || command.name === 'skills').map(command => <button key={command.name} type="button" role="menuitem" className={styles.command}
         disabled={command.name === 'compact' && compactDisabled}
         onClick={() => { setOpen(null); runCommand(command.name); }}>
@@ -127,7 +140,7 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
           </button>)}
         </section>}
       </div>}
-      <p className={styles.note}>可在输入框输入以上指令。压缩需先结束运行并处理审批。</p>
+      <p className={styles.note}>指令也可在输入框输入。压缩需先结束运行并处理审批。</p>
     </section>}
     {open === 'skills' && <SkillsMenu api={api} sessionId={sessionId} readEnabled={tools.includes('read')} className={styles.popover}
       select={selectSkill} close={() => { setOpen(null); focusEditor(); }} />}
