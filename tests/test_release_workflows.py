@@ -60,6 +60,8 @@ def test_publish_waits_for_shared_ci_and_uses_only_oidc():
     assert publish['permissions'] == {'contents': 'read', 'id-token': 'write'}
     assert len(publish['steps']) == 2
     assert publish['steps'][-1]['uses'] == 'pypa/gh-action-pypi-publish@release/v1'
+    assert publish['steps'][0]['with']['name'] == 'release-candidate'
+    assert publish['steps'][-1]['with']['packages-dir'] == 'dist/wheels/'
     assert 'secrets.' not in json.dumps(publish)
     assert workflow['jobs']['published-install']['needs'] == ['checks', 'publish']
 
@@ -68,14 +70,48 @@ def test_ci_checks_source_tests_and_all_wheels_before_upload_gate():
     workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)
     assert 'workflow_call' in workflow['on']
     test_steps = json.dumps(workflow['jobs']['test']['steps'])
-    assert 'python -m pytest tests -q' in test_steps
+    assert 'python -m scripts.ci_shards' in test_steps
+    assert '--count 2' in test_steps
+    assert workflow['jobs']['test']['strategy']['matrix']['shard'] == ['0', '1']
     wheel_steps = json.dumps(workflow['jobs']['wheels']['steps'])
     assert 'scripts.build_release' in wheel_steps and 'scripts.verify_wheel_install' in wheel_steps
     assert 'npm --prefix frontend test -- --run' in json.dumps(workflow['jobs']['frontend']['steps'])
     assert 'frontend' in workflow['jobs']['wheels']['needs']
     assert '--frontend-assets' in wheel_steps
-    assert set(workflow['jobs']['complete']['needs']) == {'test', 'wheels'}
-    assert '--complete-release' in json.dumps(workflow['jobs']['complete']['steps'])
+    assert set(workflow['jobs']['complete']['needs']) == {'targets', 'test', 'wheels'}
+    assert 'scripts.ci_release verify' in json.dumps(workflow['jobs']['complete']['steps'])
+
+
+def test_reuse_only_skips_expensive_jobs_after_tag_resolver_and_checks_manifest():
+    workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)
+    jobs = workflow['jobs']
+    reuse = next(s for s in jobs['targets']['steps'] if s.get('id') == 'reuse')
+    assert reuse['if'] == "github.ref_type == 'tag'"
+    assert reuse['run'] == 'python -m scripts.ci_release resolve'
+    assert workflow['permissions']['actions'] == 'read'
+    for job in ('test', 'frontend', 'wheels'):
+        assert jobs[job]['if'] == "needs.targets.outputs.reuse_run_id == ''"
+        assert 'targets' in jobs[job]['needs']
+    gate = jobs['complete']
+    assert "needs.targets.result == 'success'" in gate['if']
+    assert "needs.test.result == 'success' && needs.wheels.result == 'success'" in gate['if']
+    assert "needs.test.result == 'skipped' && needs.wheels.result == 'skipped'" in gate['if']
+    downloads = [s for s in gate['steps'] if s.get('uses') == 'actions/download-artifact@v4']
+    assert downloads[1]['with']['run-id'] == '${{ needs.targets.outputs.reuse_run_id }}'
+    assert downloads[1]['with']['name'] == 'release-candidate'
+    commands = [s.get('run', '') for s in gate['steps']]
+    assert 'python -m scripts.ci_release create' in commands
+    assert commands[-2] == 'python -m scripts.ci_release verify --run-id ${{ needs.targets.outputs.reuse_run_id || github.run_id }}'
+    assert gate['steps'][-1]['with']['name'] == 'release-candidate'
+
+
+def test_published_install_still_verifies_every_platform_against_public_pypi():
+    workflow = yaml.load((ROOT / '.github/workflows/publish.yml').read_text(), Loader=yaml.BaseLoader)
+    job = workflow['jobs']['published-install']
+    assert job['strategy']['matrix'] == '${{ fromJSON(needs.checks.outputs.matrix) }}'
+    step = next(s for s in job['steps'] if s.get('run', '').startswith('python -m scripts.ci_release install'))
+    assert '--target ${{ matrix.target }}' in step['run']
+    assert '--run-id ${{ needs.checks.outputs.candidate_run_id }}' in step['run']
 
 
 def test_backend_ci_budget_allows_the_complete_suite_to_finish():

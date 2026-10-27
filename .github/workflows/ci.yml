@@ -9,15 +9,20 @@ on:
       matrix:
         description: Validated release targets
         value: ${{ jobs.targets.outputs.matrix }}
+      candidate_run_id:
+        description: Run that originally validated the candidate
+        value: ${{ jobs.targets.outputs.reuse_run_id || github.run_id }}
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   targets:
     runs-on: ubuntu-22.04
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      reuse_run_id: ${{ steps.reuse.outputs.run_id }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,10 +43,21 @@ jobs:
           matrix = {'include': [{'target': name, 'runner': value['runner']} for name, value in load_config()['targets'].items()]}
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
               output.write('matrix=' + json.dumps(matrix) + '\n')
+      - id: reuse
+        if: github.ref_type == 'tag'
+        run: python -m scripts.ci_release resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   test:
+    needs: [targets]
+    if: needs.targets.outputs.reuse_run_id == ''
     runs-on: ubuntu-22.04
     timeout-minutes: 40
+    strategy:
+      fail-fast: true
+      matrix:
+        shard: [0, 1]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,10 +77,18 @@ jobs:
           from pathlib import Path
           with open(os.environ['GITHUB_PATH'], 'a', encoding='utf-8') as output:
               output.write(str(Path('build/test-assets/bin').resolve()) + '\n')
-      - run: python -m pytest tests -q
+      - run: python -m scripts.ci_shards --index ${{ matrix.shard }} --count 2 --output build/backend-${{ matrix.shard }}.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-${{ matrix.shard }}
+          path: build/backend-${{ matrix.shard }}.xml
+          if-no-files-found: warn
       - run: python -m pip check
 
   frontend:
+    needs: [targets]
+    if: needs.targets.outputs.reuse_run_id == ''
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
@@ -99,6 +123,7 @@ jobs:
 
   wheels:
     needs: [targets, frontend]
+    if: needs.targets.outputs.reuse_run_id == ''
     name: Install / ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
@@ -134,7 +159,11 @@ jobs:
           if-no-files-found: warn
 
   complete:
-    needs: [test, wheels]
+    needs: [targets, test, wheels]
+    if: >-
+      always() && needs.targets.result == 'success' &&
+      ((needs.targets.outputs.reuse_run_id != '' && needs.test.result == 'skipped' && needs.wheels.result == 'skipped') ||
+       (needs.test.result == 'success' && needs.wheels.result == 'success'))
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -144,8 +173,23 @@ jobs:
         with:
           python-version: '3.12'
       - uses: actions/download-artifact@v4
+        if: needs.targets.outputs.reuse_run_id == ''
         with:
           pattern: wheel-*
           merge-multiple: true
+          path: dist/wheels
+      - uses: actions/download-artifact@v4
+        if: needs.targets.outputs.reuse_run_id != ''
+        with:
+          name: release-candidate
           path: dist
-      - run: python -m scripts.release_artifacts --complete-release dist/*.whl
+          run-id: ${{ needs.targets.outputs.reuse_run_id }}
+          github-token: ${{ github.token }}
+      - if: needs.targets.outputs.reuse_run_id == ''
+        run: python -m scripts.ci_release create
+      - run: python -m scripts.ci_release verify --run-id ${{ needs.targets.outputs.reuse_run_id || github.run_id }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate
+          path: dist/
+          if-no-files-found: error

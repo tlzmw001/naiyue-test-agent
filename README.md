@@ -195,7 +195,7 @@ python -m pip install --upgrade naiyue-test-agent
 
 会话执行由 `RunLifecycle`、`ControlQueue`、`ApprovalBook`、`SubagentRegistry` 组合，借用同一份 `SessionRuntime` 状态、当前 run 和短锁；具体行为与失败边界见[会话协作对象](docs/specs/128-06-session-collaborators.md)。
 
-发布维护、四平台构建和 PyPI 首次授权步骤见 [发行指南](https://github.com/tlzmw001/naiyue-test-agent/blob/main/docs/releasing.md)。项目设计与开发记录保留在 GitHub 仓库，不进入 wheel。
+CI 的完整后端测试分两片并行执行，失败尽早结束并上传 JUnit；标签发布可复用同一提交已经通过 main CI 的四平台产物，校验失败阻断，没有候选则完整验证。发布维护、四平台构建和 PyPI 首次授权步骤见 [发行指南](https://github.com/tlzmw001/naiyue-test-agent/blob/main/docs/releasing.md)。项目设计与开发记录保留在 GitHub 仓库，不进入 wheel。
 
 ## 许可证
 
