@@ -185,3 +185,18 @@ def terminal_lifecycle(monkeypatch):
     monkeypatch.setattr(TerminalClient, 'watch', observe)
     monkeypatch.setattr(TerminalClient, 'close', finish)
     return facts
+
+
+def terminal_completed(monkeypatch, *, count=1):
+    """Wait for client-rendered completion, rather than the server-side event."""
+    from naiyue_test_agent.cli.cli_display import CliEventDisplay
+    rendered, completions = Event(), []
+    write = CliEventDisplay.write
+    def capture(display, text):
+        write(display, text)
+        if text == '本次运行完成':
+            completions.append(text)
+            if len(completions) == count:
+                rendered.set()
+    monkeypatch.setattr(CliEventDisplay, 'write', capture)
+    return rendered

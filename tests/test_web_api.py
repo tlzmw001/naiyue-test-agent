@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage
 from naiyue_test_agent import application
 from scripts.component_fixtures import open_component_application
 from naiyue_test_agent.model_access import ModelCatalog
+from naiyue_test_agent.image_input_settings import ImageInputSettings
 from test_async_application import StreamingToolModel
 from scripts.web_probe_app import create_probe_app
 from naiyue_test_agent.web.settings import WebSettings
@@ -49,7 +50,9 @@ def test_web_models_auth_and_validation_do_not_leak_data(monkeypatch, tmp_path):
             assert (await client.get('/api/v1/scopes/chats/models', headers={'Host': 'evil.example'})).status_code == 403
             response = await client.get('/api/v1/scopes/chats/models')
             assert response.json() == {'default_model_id': 'A', 'model_ids': ['A'],
-                'thinking_options': {'A': {'supported_levels': [], 'default_level': 'model_default'}}}
+                'thinking_options': {'A': {'supported_levels': [], 'default_level': 'model_default'}},
+                'capabilities': {'A': {'image_inputs': False}},
+                'image_input_limits': ImageInputSettings().model_dump()}
             assert (await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A'},
                                      headers={'Origin': 'https://evil.example'})).status_code == 403
             malformed = await client.post('/api/v1/scopes/chats/sessions', json={'model_id': 'A', 'api_key': 'PRIVATE_VALUE'})

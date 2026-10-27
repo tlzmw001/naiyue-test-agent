@@ -4,7 +4,7 @@
 
 `0.5.0` 接入多项目共享服务和可选 Docker 沙箱：Web/CLI 共用服务，项目独立会话与草稿，按会话选择环境模板，并显式审查、取回和交付沙箱结果；同时支持模型流式配置并修复 XML 用户消息空气泡。升级行为、配置及限制见 [0.5.0 版本说明](docs/releases/0.5.0.md)。
 
-- 本地 Web：流式 Markdown、工具执行过程、权限审批、会话管理和历史滚动加载；首任务自动标题、文件差异预览/patch 下载、可见思考和最后任务重新生成。
+- 本地 Web：流式 Markdown、工具执行过程、权限审批、会话管理和历史滚动加载；首任务自动标题、文件差异预览/patch 下载、可见思考和最后任务重新生成。 支持截图粘贴、拖入/选择图片、多图及仅图发送、图片引导/跟进、停止保留和历史预览，见[图片输入说明](docs/composer-images.md)。
 - 终端 CLI：多轮对话、恢复历史、审批、停止、Steering 和 Follow-up。
 - 模型接入：OpenAI、兼容 OpenAI 的接口、Anthropic、Ollama。
 - 工具：Read、Ls、Find、Grep、Write、Edit、Bash、PowerShell，以及一层前台子 Agent。

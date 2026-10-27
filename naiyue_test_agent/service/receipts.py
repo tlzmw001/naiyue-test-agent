@@ -15,7 +15,9 @@ def _error(code, status=409):
 
 
 class CommandReceipts:
-    def __init__(self, options):
+    def __init__(self, options, *, image_settings=None):
+        from .image_requests import ImageRequests
+        self.images = ImageRequests(image_settings)
         self.options = options
         self.entries = {}
         self.closing = False
@@ -38,7 +40,7 @@ class CommandReceipts:
         if tasks:
             await asyncio.gather(*tasks)
 
-    async def execute(self, key, fingerprint, operation, *, scope_id=None):
+    async def execute(self, key, fingerprint, operation, *, scope_id=None, image_lease=None):
         if self.closing:
             return 503, [], _error('service_closing', 503).body
         previous = self.entries.get(key)
@@ -50,12 +52,14 @@ class CommandReceipts:
                 or self.bytes + self.reserved + self.options.max_frame_bytes > self.options.receipt_cache_bytes):
             return 409, [], _error('request_window_full').body
         self.reserved += self.options.max_frame_bytes
-        task = asyncio.create_task(self._produce(key, operation))
+        if image_lease is not None:
+            image_lease.transferred = True
+        task = asyncio.create_task(self._produce(key, operation, image_lease))
         self.entries[key] = fingerprint, task
         self.scopes[key] = scope_id
         return await asyncio.shield(task)
 
-    async def _produce(self, key, operation):
+    async def _produce(self, key, operation, image_lease=None):
         try:
             status, headers, body = await operation()
             # Only a confirmed pre-execution rejection releases its command ID.
@@ -65,7 +69,9 @@ class CommandReceipts:
             except (ValueError, AttributeError):
                 code = None
             if code in ('invalid_request', 'stale_approval', 'stale_run', 'session_busy', 'run_capacity_exceeded',
-                        'env_busy','env_running_capacity','env_retained_capacity'):
+                        'env_busy','env_running_capacity','env_retained_capacity', 'image_input_invalid',
+                        'image_input_too_large', 'image_input_pixel_limit', 'image_input_format_unsupported', 'model_image_input_unsupported',
+                        'image_input_busy', 'pending_image_limit', 'pending_image_invalid'):
                 if self.entries.get(key, (None, None))[1] is asyncio.current_task():
                     del self.entries[key], self.scopes[key]
             else:
@@ -78,6 +84,8 @@ class CommandReceipts:
             return 500, [], body
         finally:
             self.reserved -= self.options.max_frame_bytes
+            if image_lease is not None:
+                image_lease.release()
 
 
 class IdempotentCommands:
@@ -97,7 +105,21 @@ class IdempotentCommands:
             authorize(Request(scope), self.owner.state.web_settings)
         except WebError as error:
             return await _error(error.code, error.status)(scope, receive, send)
+        lease = None
+        try:
+            lease = self.owner.state.receipts.images.reserve(scope)
+            return await self._command(scope, receive, send, lease)
+        except WebError as error:
+            return await _error(error.code, error.status)(scope, receive, send)
+        finally:
+            if lease is not None and not lease.transferred:
+                lease.release()
+
+    async def _command(self, scope, receive, send, lease):
+        from naiyue_test_agent.web.errors import WebError
         receipts = self.owner.state.receipts
+        path = scope['path']
+        limit = receipts.images.settings.max_request_bytes if lease else receipts.options.max_frame_bytes
         parts = path.split('/')
         scope_id = parts[4] if len(parts) > 4 and parts[3] == 'scopes' else None
         if scope_id is not None and scope_id.startswith('temp-'):
@@ -120,7 +142,7 @@ class IdempotentCommands:
                     return
                 part = message.get('body', b'')
                 size += len(part)
-                if size > receipts.options.max_frame_bytes:
+                if size > limit:
                     return await _error('request_too_large', 413)(scope, receive, send)
                 chunks.append(part)
                 if not message.get('more_body', False):
@@ -139,6 +161,10 @@ class IdempotentCommands:
             if isinstance(data, dict) and 'request_id' in data:
                 if not isinstance(data['request_id'], str) or str(UUID(data['request_id'])) != key:
                     raise ValueError('inconsistent_id')
+            if isinstance(data, dict) and data.get('images') and lease is None:
+                return await _error('image_request_header_required',422)(scope,receive,send)
+            if lease is not None and (not isinstance(data,dict) or not data.get('images')):
+                return await _error('invalid_image_request',422)(scope,receive,send)
             fingerprint = sha256(json.dumps([scope['method'], path,
                 scope.get('query_string', b'').decode('ascii'), data],
                 sort_keys=True, ensure_ascii=False, allow_nan=False).encode()).hexdigest()
@@ -189,7 +215,7 @@ class IdempotentCommands:
                     logger.info('service_receipt_scope_unavailable error_type=%s', type(error).__name__)
                     failure = public_error(error)
                     return await _error(failure.code, failure.status)(scope, receive, send)
-        status, result_headers, content = await receipts.execute(key, fingerprint, operation, scope_id=scope_id)
+        status, result_headers, content = await receipts.execute(key, fingerprint, operation, scope_id=scope_id, image_lease=lease)
         await send({'type': 'http.response.start', 'status': status, 'headers': [
             *result_headers, (b'content-type', b'application/json'),
             (b'content-length', str(len(content)).encode())]})

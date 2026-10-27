@@ -50,6 +50,9 @@ class DeferredModels:
     def model_ids(self):
         return self._require().model_ids
 
+    def image_capabilities(self):
+        return self._require().image_capabilities()
+
     def thinking_options(self, identity):
         return self._require().thinking_options(identity)
 

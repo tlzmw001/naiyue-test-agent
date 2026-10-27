@@ -13,6 +13,7 @@ from naiyue_test_agent import application
 from naiyue_test_agent.cli import chat as cli
 from naiyue_test_agent.application.sessions.project_instructions import BASE_SYSTEM_PROMPT
 from naiyue_test_agent.model_access import ModelCatalog, ModelConfigError
+from terminal_service_helpers import terminal_completed
 
 
 class RecordingFake(FakeMessagesListChatModel):
@@ -184,7 +185,8 @@ def test_cli_empty_final_text_has_no_fabricated_answer(monkeypatch, capsys):
 
 
 def test_tty_queues_steering_and_follow_up_during_model_call(monkeypatch, capsys):
-    entered, release, finished = Event(), Event(), Event()
+    entered, release = Event(), Event()
+    finished = terminal_completed(monkeypatch)
 
     class BlockingModel(RecordingFake):
         def _generate(self, messages, stop=None, run_manager=None, **kwargs):
@@ -200,9 +202,6 @@ def test_tty_queues_steering_and_follow_up_during_model_call(monkeypatch, capsys
     monkeypatch.setattr(application, 'load_model_catalog',
                         lambda _path: ModelCatalog('A', {'A': model}))
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
-    from terminal_service_helpers import capture_hosts
-    capture_hosts(monkeypatch, lambda host, _: host.observability.subscribe(
-        lambda event: finished.set() if event.event_type == 'run_finished' else None))
     entries = iter(['initial', 'private steering', ':follow private follow-up', ':quit'])
 
     def terminal_input(_prompt=''):
@@ -322,7 +321,8 @@ def test_cli_stop_when_idle_does_not_start_a_run(monkeypatch, capsys):
 
 
 def test_tty_stop_rejection_is_not_reported_as_accepted(monkeypatch, capsys):
-    entered, release, finished = Event(), Event(), Event()
+    entered, release = Event(), Event()
+    finished = terminal_completed(monkeypatch)
     class ClosingModel(RecordingFake):
         def _generate(self, messages, stop=None, run_manager=None, **kwargs):
             entered.set()
@@ -334,9 +334,6 @@ def test_tty_stop_rejection_is_not_reported_as_accepted(monkeypatch, capsys):
     def reject(*args, **kwargs):
         raise application.SessionBusyError('Window closed')
     monkeypatch.setattr(RunAPI, 'stop', reject)
-    from terminal_service_helpers import capture_hosts
-    capture_hosts(monkeypatch, lambda host, _: host.observability.subscribe(
-        lambda e: finished.set() if e.event_type == 'run_finished' else None))
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
     entries = iter(['initial', ':stop', ':quit'])
     def terminal_input(_prompt=''):
@@ -356,7 +353,8 @@ def test_tty_stop_rejection_is_not_reported_as_accepted(monkeypatch, capsys):
 
 
 def test_tty_input_after_acceptance_window_closes_starts_next_run(monkeypatch, capsys):
-    entered, release, second_entered, second_release, finished = (Event() for _ in range(5))
+    entered, release, second_entered, second_release = (Event() for _ in range(4))
+    finished = terminal_completed(monkeypatch, count=2)
     workers = []
     original_thread = cli.Thread
     def track_worker(*args, **kwargs):
@@ -384,9 +382,6 @@ def test_tty_input_after_acceptance_window_closes_starts_next_run(monkeypatch, c
         release.set()
         raise application.SessionBusyError('Window already closed')
     monkeypatch.setattr(RunAPI, 'steer', reject_steer)
-    from terminal_service_helpers import capture_hosts
-    capture_hosts(monkeypatch, lambda host, _: host.observability.subscribe(
-        lambda e: finished.set() if e.event_type == 'run_finished' and len(state.requests) == 2 else None))
     monkeypatch.setattr(sys, 'stdin', SimpleNamespace(isatty=lambda: True))
     entries = iter(['first', 'second', ':quit'])
     def terminal_input(_prompt=''):

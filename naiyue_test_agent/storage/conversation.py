@@ -44,6 +44,12 @@ class ConversationRepo:
             logger.error('history_tool_read_failed error_type=%s', type(error).__name__)
             raise SessionPersistenceError('history_read_failed') from error
 
+    def image_message(self, session_id, thread_id, message_id, max_bytes):
+        return self.database.read_rows("""SELECT body_hash,
+            CASE WHEN length(CAST(body_json AS BLOB))<=? THEN body_json END AS body_json
+            FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? AND checkpoint_ns='' AND message_id=? LIMIT 1""",
+            (max_bytes, session_id, thread_id, message_id))
+
     def read_chat_message(self, session_id, thread_id, sequence, **query):
         with self.database.transaction(write=False, error_code='session_read_failed') as connection:
             return chat_queries.read_message(connection, session_id, thread_id, sequence, **query)

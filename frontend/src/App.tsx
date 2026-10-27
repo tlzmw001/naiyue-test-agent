@@ -106,7 +106,8 @@ export default function App({ api: supplied, active = true, selection, scopeName
           <Icon name="sidebar" />{(background.notice || (background.activeCount ?? 0) > 0) && <i className={styles.activityDot} />}</button>
         <ThemeMenu theme={theme.theme} select={theme.selectTheme} /></div>
       </header>
-      <Conversation regenerate={() => void chat.regenerate()} lastReplyId={chat.session?.last_reply_id}
+      {chat.messages.some(row => row.images?.length) && !chat.imageInputs.supports(chat.model) && <p className={styles.compactionNote} role="status">当前模型不会接收历史图片像素，已保存图片仍可查看。</p>}
+      <Conversation loadImage={(id, image, signal) => api.messageImage(chat.session!.session_id, id, image, chat.session?.conversation_revision ?? 0, signal)} regenerate={() => void chat.regenerate()} lastReplyId={chat.session?.last_reply_id}
         scrollAfterSend={sendScroll.preference === 'latest'}
         lastSubmission={chat.lastSubmission?.session_id === chat.session?.session_id ? chat.lastSubmission : null}
         canRegenerate={!!chat.session?.can_run && !chat.submitting && !chat.selectingSession}
@@ -142,7 +143,7 @@ export default function App({ api: supplied, active = true, selection, scopeName
           stop={() => void chat.stopApproval(batch)}
           submit={(decisions, remember) => chat.approve(batch, decisions, remember)} />)}
       </div>}
-      <Composer sendScroll={sendScroll} draftControls={chat.creation.controls} workspaceEntry={<>
+      <Composer retryImageSubmission={() => void chat.retryImageSubmission()} imageInputs={chat.imageInputs} imageSupported={chat.imageInputs.supports(chat.model)} sendScroll={sendScroll} draftControls={chat.creation.controls} workspaceEntry={<>
         {projectEntry ? projectEntry(chat.session ? chat.session.workspace_root : scopePath) : scopeName ? <div className={projectStyles.scope} role="status" aria-label="当前项目"
           title={chat.session?.workspace_root ?? scopePath}><strong>{scopeName}</strong></div> : <WorkspaceLabel api={api} session={chat.session} />}
         {/^[0-9a-f-]{36}$/.test(api.scopeId)&&<ExecutionSelector api={api} session={chat.session}

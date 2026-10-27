@@ -68,7 +68,7 @@ def create_service_app(options, *, application_factory=None, shutdown=None):
                     factory = application_factory
                 async with factory() as application:
                     scopes = ScopeServices(application, settings, settings_path=options.settings_path)
-                    receipts = CommandReceipts(options)
+                    receipts = CommandReceipts(options, image_settings=runtime.image_inputs)
                     scopes.temporary = TemporaryScopes(scopes, receipts)
                     app.state.temporary = scopes.temporary
                     app.state.application, app.state.scopes = application, scopes

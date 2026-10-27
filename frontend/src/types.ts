@@ -76,6 +76,7 @@ export type ContentLoader = (row: MessageRow, signal: AbortSignal) => Promise<st
 export type ChangeLoader = (row: MessageRow, patch?: boolean) => Promise<FileChangeView | string>;
 
 export interface MessageRow {
+  images?: import('./imageTypes').ImageMetadata[];
   mcp_result?: McpResultView;
   file_change?: FileChangeView;
   reply_id?: string | null;

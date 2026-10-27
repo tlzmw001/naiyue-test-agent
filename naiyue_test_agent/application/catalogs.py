@@ -14,6 +14,10 @@ class ModelAPI:
     def ids(self):
         return self._catalog.model_ids
 
+    def capabilities(self):
+        self._owner.check_open()
+        return self._catalog.image_capabilities()
+
     def thinking_options(self):
         self._owner.check_open()
         return {identity: self._catalog.thinking_options(identity) for identity in self.ids}

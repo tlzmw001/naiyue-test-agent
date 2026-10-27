@@ -43,8 +43,11 @@ def read_page(connection, session_id, thread_id, *, limit, body_bytes, preview_c
         raise SessionPersistenceError('history_cursor_stale')
     records = read_rows(connection, '''SELECT message_id,sequence,revision,message_type,parent_message_id,reply_id,
         CASE WHEN length(CAST(body_json AS BLOB))<=? THEN body_json END AS body_json,
-        CASE WHEN json_type(body_json,'$.data.content')='text'
-            THEN substr(json_extract(body_json,'$.data.content'),1,?) ELSE '' END AS preview,
+        substr(CASE WHEN json_type(body_json,'$.data.content')='text'
+            THEN json_extract(body_json,'$.data.content') ELSE
+            (SELECT group_concat(json_extract(c.value,'$.text'),char(10)) FROM json_each(body_json,'$.data.content') c
+             WHERE c.type='object' AND json_extract(c.value,'$.type')='text'
+             AND COALESCE(json_extract(c.value,'$.extras.naiyue_image_description'),0)=0) END,1,?) AS preview,
         substr(COALESCE(json_extract(body_json,'$.data.additional_kwargs.reasoning_content'),
             (SELECT COALESCE(json_extract(c.value,'$.reasoning'),json_extract(c.value,'$.thinking'),
                 json_extract(c.value,'$.summary[0].text')) FROM json_each(body_json,'$.data.content') c
@@ -67,6 +70,14 @@ def read_page(connection, session_id, thread_id, *, limit, body_bytes, preview_c
         THEN json_remove(json_extract(body_json,'$.data.artifact'),'$.structured_content') END AS mcp_artifact_json,
         json_extract(body_json,'$.data.tool_call_id') AS tool_call_id,
         json_extract(body_json,'$.data.name') AS name,json_extract(body_json,'$.data.status') AS status,
+        body_hash,
+        (SELECT json_group_array(json_object('first_frame_only',json(CASE WHEN json_extract(c.value,'$.extras.source_format')='GIF' THEN 'true' ELSE 'false' END),'index',c.key,'name',json_extract(c.value,'$.extras.name'),
+            'mime_type',json_extract(c.value,'$.mime_type'),'width',json_extract(c.value,'$.extras.width'),
+            'height',json_extract(c.value,'$.extras.height'),'bytes',length(json_extract(c.value,'$.base64'))*3/4-
+                length(json_extract(c.value,'$.base64'))+length(rtrim(json_extract(c.value,'$.base64'),'=')),
+            'image_digest',json_extract(c.value,'$.extras.image_digest'),'source_revision',body_hash))
+            FROM json_each(body_json,'$.data.content') c WHERE c.type='object'
+            AND json_extract(c.value,'$.type')='image' AND json_extract(c.value,'$.extras.client_id') IS NOT NULL) AS images_json,
         kind FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? AND checkpoint_ns=? AND kind='message'
         AND sequence<=? AND sequence<? ORDER BY sequence DESC LIMIT ?''',
         (body_bytes, preview_chars, preview_chars, *scope, upper, before if before is not None else upper + 1, limit + 1))
@@ -86,10 +97,18 @@ def read_page(connection, session_id, thread_id, *, limit, body_bytes, preview_c
 
 
 def read_message(connection, session_id, thread_id, sequence, *, revision, offset, chars, conversation_revision=0):
-    records = read_rows(connection, '''SELECT revision,length(body_json) AS characters,substr(body_json,?,?) AS body_json_chunk,
+    records = read_rows(connection, '''WITH projected AS (
+        SELECT revision, CASE WHEN json_type(body_json,'$.data.content')='array' THEN
+            json_set(body_json,'$.data.content',json((SELECT json_group_array(json(CASE
+                WHEN c.type='object' AND json_extract(c.value,'$.type')='image' THEN json_remove(c.value,'$.base64')
+                WHEN c.type='object' THEN c.value ELSE json_quote(c.value) END))
+                FROM json_each(body_json,'$.data.content') c))) ELSE body_json END AS body_json,
+            session_id,thread_id,checkpoint_ns,sequence FROM naiyue_chat_messages
+        WHERE session_id=? AND thread_id=? AND checkpoint_ns='' AND sequence=?)
+        SELECT revision,length(body_json) AS characters,substr(body_json,?,?) AS body_json_chunk,
         (SELECT conversation_revision FROM naiyue_sessions WHERE session_id=?) AS conversation_revision
-        FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? AND checkpoint_ns='' AND sequence=?''',
-        (offset + 1, chars, session_id, session_id, thread_id, sequence))
+        FROM projected''',
+        (session_id, thread_id, sequence, offset + 1, chars, session_id))
     if not records:
         raise SessionPersistenceError('history_message_not_found')
     record = records[0]

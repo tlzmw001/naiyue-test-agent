@@ -1,3 +1,4 @@
+import type { ImageUpload, ImageConfiguration, ImageMetadata, PendingImageInput } from './imageTypes';
 import type { ExecutionOptions, ExecutionView, SessionCreation } from './types';
 import type { SandboxAction, SandboxManagement } from './sandboxManagementTypes';
 import type { ResultOptions, SandboxResult, ResultDiff } from './resultTypes';
@@ -86,6 +87,7 @@ export class WebApi {
     const response = await fetch((service ? '/api/v1' : `/api/v1/scopes/${encodeURIComponent(this.scopeId)}`) + path, { ...init, redirect: 'error', headers: {
       Authorization: 'Bearer ' + this.token, ...(init.body ? { 'Content-Type': 'application/json' } : {}),
       ...(requestId ? { 'X-Request-ID': requestId } : {}),
+      ...(Array.isArray(body?.images) && body.images.length ? { 'X-Image-Input': '1' } : {}),
       ...(this.instanceId ? { 'X-Service-Instance': this.instanceId } : {}),
       ...init.headers,
     } });
@@ -100,7 +102,7 @@ export class WebApi {
     return (await this.response(path, { method, ...(body ? { body: JSON.stringify(body) } : {}), ...(signal ? { signal } : {}) })).json();
   }
 
-  models() { return this.json<{ default_model_id: string; model_ids: string[]; thinking_options?: Record<string, ThinkingOptions> }>('/models'); }
+  models() { return this.json<{ default_model_id: string; model_ids: string[]; thinking_options?: Record<string, ThinkingOptions> } & ImageConfiguration>('/models'); }
   serviceInfo(signal?: AbortSignal) { return this.json<ServiceInfo>('/service', 'GET', undefined, signal); }
   backgroundTasks(before?: string, signal?: AbortSignal) {
     const query = before ? '?' + new URLSearchParams({ before }) : '';
@@ -115,11 +117,11 @@ export class WebApi {
   selectThinking(id: string, model_id: string, thinking_level: string) {
     return this.json<{ model_id: string; thinking_level: string }>(`/sessions/${encodeURIComponent(id)}/thinking`, 'PATCH', { model_id, thinking_level });
   }
-  regenerate(id: string, expected_reply_id: string, expected_conversation_revision: number, request_id = crypto.randomUUID()) {
+  regenerate(id: string, expected_reply_id: string, expected_conversation_revision: number, request_id: string = crypto.randomUUID()) {
     return this.json<{ run_id?: string; session_id: string; status?: string }>(`/sessions/${encodeURIComponent(id)}/regenerate`, 'POST',
       { request_id, expected_reply_id, expected_conversation_revision });
   }
-  compact(id: string, request_id = crypto.randomUUID()) {
+  compact(id: string, request_id: string = crypto.randomUUID()) {
     return this.json<{ run_id: string; session_id: string }>(`/sessions/${encodeURIComponent(id)}/compact`, 'POST', { request_id });
   }
   sessionControlOptions() { return this.json<SessionControlOptions>('/session-controls'); }
@@ -264,23 +266,40 @@ export class WebApi {
   select(id: string, model_id: string) {
     return this.json<{ model_id: string }>(`/sessions/${encodeURIComponent(id)}/model`, 'PATCH', { model_id });
   }
-  start(id: string, text: string, request_id = crypto.randomUUID(), expected_conversation_revision?: number) {
+  start(id: string, text: string, request_id: string = crypto.randomUUID(), expected_conversation_revision?: number, images: ImageUpload[] = [], pending_input_ids: string[] = []) {
     return this.json<{ run_id: string; session_id: string }>(`/sessions/${encodeURIComponent(id)}/runs`,
-      'POST', { text, request_id, expected_conversation_revision });
+      'POST', { text, request_id, expected_conversation_revision, ...(images.length ? { images, pending_input_ids } : {}) });
   }
-  control(id: string, kind: 'steering' | 'follow_up' | 'stop', text?: string, agent_path = 'root', agent_run_id?: string, approval_batch_id?: string) {
+  control(id: string, kind: 'steering' | 'follow_up' | 'stop', text?: string, agent_path = 'root', agent_run_id?: string, approval_batch_id?: string, images: ImageUpload[] = [], pending_input_ids: string[] = [], request_id: string = crypto.randomUUID()) {
     return this.json<{ accepted: boolean; retained: string[] }>(`/runs/${encodeURIComponent(id)}/controls`,
-      'POST', { kind, request_id: crypto.randomUUID(), ...(text === undefined ? {} : { text }),
+      'POST', { kind, request_id, ...(images.length ? { images, pending_input_ids } : {}), ...(text === undefined ? {} : { text }),
         ...(agent_path === 'root' ? {} : { agent_path }), ...(agent_run_id ? { agent_run_id } : {}), ...(approval_batch_id ? { approval_batch_id } : {}) });
+  }
+  pendingInputs(id: string) { return this.json<{ inputs: PendingImageInput[] }>(`/sessions/${encodeURIComponent(id)}/pending-inputs`); }
+  async pendingInputText(id: string, messageId: string) {
+    let offset=0, text='';
+    while (true) {
+      const page=await this.json<{text:string;next_offset:number;complete:boolean}>(`/sessions/${encodeURIComponent(id)}/pending-inputs/${encodeURIComponent(messageId)}/text?offset=${offset}`);
+      text+=page.text;
+      if (page.complete) return text;
+      if (page.next_offset<=offset) throw new ApiError('invalid_event');
+      offset=page.next_offset;
+    }
+  }
+  pendingImage(id: string, messageId: string, index: number) { return this.response(`/sessions/${encodeURIComponent(id)}/pending-inputs/${encodeURIComponent(messageId)}/images/${index}`).then(response => response.blob()); }
+  removePendingInput(id: string, messageId: string) { return this.json(`/sessions/${encodeURIComponent(id)}/pending-inputs/${encodeURIComponent(messageId)}`, 'DELETE', { request_id: crypto.randomUUID() }); }
+  messageImage(id: string, messageId: string, image: ImageMetadata, revision: number, signal?: AbortSignal) {
+    const params = new URLSearchParams({ source_revision: image.source_revision, conversation_revision: String(revision) });
+    return this.response(`/sessions/${encodeURIComponent(id)}/messages/${encodeURIComponent(messageId)}/images/${image.index}?${params}`, { signal }).then(response => response.blob());
   }
   run(id: string, signal?: AbortSignal) { return this.json<RunView>(`/runs/${encodeURIComponent(id)}`, 'GET', undefined, signal); }
 
-  approve(id: string, batch: ApprovalBatch, decisions: ToolDecision[], remember_approved: string[] = [], request_id = crypto.randomUUID()) {
+  approve(id: string, batch: ApprovalBatch, decisions: ToolDecision[], remember_approved: string[] = [], request_id: string = crypto.randomUUID()) {
     return this.json<{ run_id: string; session_id: string; kind?: 'live_child'; accepted?: boolean }>(`/sessions/${encodeURIComponent(id)}/approvals`,
       'POST', { request_id, origin_run_id: batch.origin_run_id, approval_batch_id: batch.approval_batch_id, decisions, remember_approved });
   }
 
-  stopApproval(id: string, batch: ApprovalBatch, request_id = crypto.randomUUID()) {
+  stopApproval(id: string, batch: ApprovalBatch, request_id: string = crypto.randomUUID()) {
     return this.json<{ run_id: string; session_id: string }>(`/sessions/${encodeURIComponent(id)}/approvals/stop`,
       'POST', { request_id, origin_run_id: batch.origin_run_id, approval_batch_id: batch.approval_batch_id });
   }
@@ -345,6 +364,18 @@ export function errorText(error: unknown): string {
     project_identity_conflict: '项目身份不一致，请核对目录与已有登记。',
     project_operation_not_found: '尚未找到这次登记记录，请核对后再用同一请求重试。',
     project_operation_failed: '项目登记未完成，请核对操作结果；已经创建的文件夹会保留。',
+    image_input_format_unsupported: '图片格式不受支持，请使用 PNG、JPEG、WebP、GIF 或 BMP。',
+    image_input_invalid: '图片无法解码或格式与声明不一致，请检查后重试。',
+    image_input_too_large: '图片大小超过配置上限，请缩小图片或减少附件。',
+    image_input_pixel_limit: '图片像素超过配置上限，请缩小后重试。',
+    image_input_busy: '正在处理其他图片，请稍后重试；输入已保留。',
+    pending_image_invalid: '保留输入的状态已变化，请刷新保留列表后重试。',
+    pending_image_limit: '这个会话保留的图片输入已达到额度，请先处理或移除保留项。',
+    model_image_input_unsupported: '当前模型不支持或尚未确认支持图片，请切换模型或移除图片。',
+    image_revision_changed: '图片所属消息版本已变化，请刷新会话后重试。',
+    image_not_ready: '图片尚未保存完成，请稍后点击重试。',
+    image_not_found: '图片不存在或不属于当前会话。',
+    image_request_header_required: '图片发送协议未匹配，请刷新页面后重试，输入已保留。',
     unauthorized: '访问链接已失效，请从启动终端重新打开。',
     invalid_host: '请使用启动时提供的本地地址。',
     invalid_origin: '请求来源不匹配，请从本地页面操作。',

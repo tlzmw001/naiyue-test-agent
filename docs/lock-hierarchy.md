@@ -226,3 +226,11 @@ envd 的 EOP1 在一次临界区内检查活跃操作/读者/未确认进程、�
 工作线程方向为 `delivery gate → SOP2(result_id) → {P1, DB(registry)}`；SOP1 仅计数，不在 IO 期间持条件锁。GitDeliveries 的状态/意图/核对/人工确认均短事务，discard 的完成与结果标志在同一事务。执行、只读核对均不取得 DKR2，不从 DB 反取 SOP2/G4/A1；不新增执行器、mutex、全局网络锁。关闭沿原接受门封口与 owner.operation/run_blocking 排空，不把交付 journal 当作 envd 进程停止。
 
 提交前归档保护补充：TaskAPI 的预览/清理将 guard 获取和文件操作一起放入 worker；A2 只建立本机任务预留后释放，再进入沙箱项目清理预留及 DB 查询。项目有活动、unknown、stale 或未采集完的 shell/argv 时拒绝清理；清理期间拒绝同项目新提交与采集。不同项目的预留互不阻塞，条件锁只保护内存计数，不跨 RPC/SQL/文件 IO。
+
+### Spec130 图片输入
+
+- `CommandReceipts.images.active` 是服务事件循环独占计数，无线程锁。认证后、读取图片正文前预留，拒绝时立即释放；创建receipt producer后归producer，HTTP断线不释放正在处理的名额。不在S3等同步锁内等待处理名额或执行Pillow/磁盘/网络IO。
+- `SessionRuntime.pending_images` 由既有S3状态锁保护，与引导/跟进队列一起原子入队、选择和保留。锁内只修改内存／复制已规范化内容，不做解码、归档和模型调用。
+- 仍遵守既有S3→ControlObserver记录锁顺序；observer.flush在S3外。必要保存及graph读取均在S3外，保存成功后重新获取S3释放已保存输入；图片下载先借内容副本再释放S3，之后解码。
+- 图片control在取得`RunDelivery.control_lock`之前完成规范化，取得后重新检查目标run和输入窗口；用户停止不等待图片worker。停止已完成后才返回的图片输入按未接受拒绝，worker及请求名额仍排空后释放。
+- pending列表先在S3内取得不可变输入引用和状态快照，再在锁外做元数据/文字投影。pending媒体以服务器唯一输入ID归属，不伪造canonical source_revision；历史图片仍校验canonical摘要。长保留文字使用既有frame/detail预算分块读取，回执不携带完整正文或legacy文字副本。

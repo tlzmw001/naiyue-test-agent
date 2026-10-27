@@ -8,6 +8,7 @@ class QueuedInput:
     message_id: str
     text: str
     kind: str
+    content: str | list | None = None
 
 
 def reply_identity(message):

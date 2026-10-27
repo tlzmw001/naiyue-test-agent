@@ -7,8 +7,9 @@ export function Chevron({ direction = 'down', className = '' }: { direction?: 'u
   </svg>;
 }
 
-export function Icon({ name }: { name: 'plus' | 'send' | 'stop' | 'menu' | 'close' | 'chat' | 'pin' | 'sidebar' | 'folder' | 'computer' | 'sandbox' | 'changes' | 'refresh' }) {
+export function Icon({ name }: { name: 'image' | 'plus' | 'send' | 'stop' | 'menu' | 'close' | 'chat' | 'pin' | 'sidebar' | 'folder' | 'computer' | 'sandbox' | 'changes' | 'refresh' }) {
   const paths = {
+    image: <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8" cy="8" r="1.5" /><path d="m3 17 5-5 4 4 4-7 5 8" /></>,
     plus: <path d="M12 5v14M5 12h14" />,
     send: <><path d="m6 11 6-6 6 6M12 5v14" /></>,
     stop: <rect x="7" y="7" width="10" height="10" rx="1" fill="currentColor" stroke="none" />,

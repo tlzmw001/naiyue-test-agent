@@ -20,7 +20,14 @@ class WebService:
     def models(self):
         models = self.application.models if self._models is None else self._models
         return {'default_model_id': models.default_id,
-                'model_ids': list(models.ids), 'thinking_options': models.thinking_options()}
+                'model_ids': list(models.ids), 'thinking_options': models.thinking_options(),
+                'capabilities': models.capabilities(),
+                'image_input_limits': self.image_limits().model_dump()}
+
+    def image_limits(self):
+        from naiyue_test_agent.image_input_settings import ImageInputSettings
+        runtime = self.settings.runtime_settings
+        return runtime.image_inputs if runtime else ImageInputSettings()
 
     def service_info(self):
         root = self.settings.workspace_root
@@ -296,8 +303,20 @@ class WebService:
 
     async def start(self, session_id, body):
         value = await self._session_status(session_id)
+        try:
+            if body.pending_input_ids:
+                if not body.images:
+                    raise WebError('invalid_request',422)
+                self.application.runs.validate_pending(session_id, body.pending_input_ids)
+            prepared_message = (await self.application.runs.prepare_input(session_id, body.text, body.images, message_id=body.request_id)
+                                if value['can_run'] else None)
+        except Exception as error:
+            raise public_error(error) from None
         # RunDelivery handles the duplicate receipt before checking busy.
-        return await self.delivery.start(session_id, body, [], can_run=value['can_run'], conversation_revision=value['conversation_revision'], execution_root_error=value.get('execution_root_error'))
+        result = await self.delivery.start(session_id, body, [], can_run=value['can_run'], conversation_revision=value['conversation_revision'], execution_root_error=value.get('execution_root_error'), prepared_message=prepared_message)
+        for identity in body.pending_input_ids:
+            self.application.runs.remove_pending(session_id, identity)
+        return result
 
     async def usage(self, session_id, *, after_model=None):
         await self._session_status(session_id)

@@ -17,7 +17,7 @@ from naiyue_test_agent.agent_runtime.errors import RuntimeErrorPolicy
 from naiyue_test_agent.agent_runtime.model_usage_observation import install_model_usage_callback
 from naiyue_test_agent.application.observability.failure_policy import ApplicationErrorPolicy
 from naiyue_test_agent.application.errors import SessionBusyError
-from .agent_session import AgentSession
+from .agent_session import AgentSession, build_session
 from .background_tasks import BackgroundProcessManager
 from .task_queries import TaskQueries
 from naiyue_test_agent.tools.subagent import subagent_selection
@@ -40,9 +40,11 @@ logger = logging.getLogger('naiyue_test_agent.application')
 class SessionService:
     """Locate sessions and coordinate admission; each session drives its run."""
 
-    def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None, max_active_runs=10, mcp_resources=None, http_attempt_limit=None, shell_task_settings=None, data_dir=None, project=None, admission=None, execution_authority=None, fixed_execution=False,environments=None):
+    def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None, max_active_runs=10, mcp_resources=None, http_attempt_limit=None, shell_task_settings=None, data_dir=None, project=None, admission=None, execution_authority=None, fixed_execution=False,environments=None,image_input_settings=None):
         if type(max_active_runs) is not int or max_active_runs <= 0:
             raise ValueError('Root run capacity must be a positive integer')
+        from naiyue_test_agent.image_input_settings import ImageInputSettings
+        self.image_input_settings = image_input_settings or ImageInputSettings()
         self._progress_settings = progress_settings
         from naiyue_test_agent.config_paths import get_data_dir, StorageSettings
         self._data_dir = (data_dir if data_dir is not None else get_data_dir(StorageSettings())).resolve()
@@ -332,13 +334,7 @@ class SessionService:
                 last_execution_path=str(workspace_root) if workspace_root is not None else None,
                 project_id=self._project.project_id if self._project else None, active_tool_names=self._initial_active_tools,
                 permission_mode=self._permission_settings.mode)
-            session = AgentSession(session_id, state, catalog=self._catalog,
-                tool_registry=self._tool_registry, permission_settings=self._permission_settings,
-                persistence=self._persistence, invoke_subagent=self.ainvoke_subagent, memory=self.memory,
-                registered_subagents=self.get_registered_subagents, progress_settings=self._progress_settings,
-                subagent_result_settings=getattr(self, '_subagent_result_settings', None),
-                mcp_resources=self.mcp_resources, process_tasks=self.background_tasks,
-                archive_root=self.session_archive_root(session_id))
+            session = build_session(self, session_id, state)
             self._sessions[session_id] = session
         try:
             if self._persistence is not None:
@@ -402,13 +398,7 @@ class SessionService:
                 execution_root=self.bind_execution_root(ExecutionRoot(workspace_root, execution_root_kind, binding=execution_binding or 'local')) if workspace_root is not None else None,
                 active_tool_names=tuple(active_tool_names), permission_mode=permission_mode,
                 pending_tool_approval=deepcopy(pending), conversation_revision=conversation_revision)
-            self._sessions[session_id] = AgentSession(session_id, state, catalog=self._catalog,
-                tool_registry=self._tool_registry, permission_settings=self._permission_settings,
-                persistence=self._persistence, invoke_subagent=self.ainvoke_subagent, memory=self.memory,
-                registered_subagents=self.get_registered_subagents, progress_settings=self._progress_settings,
-                subagent_result_settings=getattr(self, '_subagent_result_settings', None),
-                mcp_resources=self.mcp_resources, process_tasks=self.background_tasks,
-                archive_root=self.session_archive_root(session_id))
+            self._sessions[session_id] = build_session(self, session_id, state)
 
     @contextmanager
     def manage_environment(self,session_id):

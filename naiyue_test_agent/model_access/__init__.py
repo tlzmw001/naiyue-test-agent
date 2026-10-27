@@ -118,6 +118,10 @@ class ModelCatalog:
         return self._thinking_selections.get(
             model_id, ThinkingSelection(MODEL_DEFAULT, MODEL_DEFAULT, {}))
 
+    def image_capabilities(self):
+        return {identity: {'image_inputs': (getattr(model, 'profile', None) or {}).get('image_inputs') is True}
+                for identity, model in self._models.items()}
+
     def thinking_options(self, model_id):
         selection = self.thinking_selection(model_id)
         capability = self._thinking_capabilities.get(model_id, {})
