@@ -28,12 +28,31 @@ function setup(mode: 'projects' | 'select' | 'create' = 'select') {
   render(<ProjectPicker api={api} mode={mode} projects={[project]} currentScope="chats" close={close} added={added} select={select} />);
   return { api, close, added, select };
 }
+async function readyFolderButton(name = '选择此文件夹') {
+  const button = await screen.findByRole('button', { name });
+  await waitFor(() => expect(button.hasAttribute('disabled')).toBe(false));
+  return button;
+}
+it('keeps initial selection disabled until directory metadata arrives', async () => {
+  const api = new WebApi('synthetic', 'chats');
+  let finish!: (value: DirectoryPage) => void;
+  vi.spyOn(api, 'browseDirectories').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  render(<ProjectPicker api={api} mode="select" projects={[]} currentScope="chats"
+    close={vi.fn()} added={vi.fn()} select={vi.fn()} />);
+  const button = await screen.findByRole('button', { name: '选择此文件夹' });
+  expect(button.hasAttribute('disabled')).toBe(true);
+  fireEvent.click(button);
+  expect(screen.queryByRole('checkbox', { name: '我信任这个文件夹' })).toBeNull();
+  await act(async () => finish(page()));
+  fireEvent.click(await readyFolderButton());
+  expect(screen.getByRole('checkbox', { name: '我信任这个文件夹' })).toBeTruthy();
+});
 it('browses without writing, requires explicit trust, then sends the observed directory identity', async () => {
   const { api, added } = setup();
   fireEvent.click(await screen.findByRole('button', { name: '打开文件夹 chosen' }));
   await waitFor(() => expect((screen.getByRole('textbox', { name: '文件夹路径' }) as HTMLInputElement).value).toBe('/chosen'));
   expect(api.addLocalProject).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: '选择此文件夹' }));
+  fireEvent.click(await readyFolderButton());
   const confirm = screen.getByRole('button', { name: '信任并添加项目' });
   expect(confirm.hasAttribute('disabled')).toBe(true);
   fireEvent.click(screen.getByRole('checkbox', { name: '我信任这个文件夹' }));
@@ -52,7 +71,7 @@ it('creates under the selected parent with a single name and keeps confirmation 
   const { api, added } = setup('create');
   await screen.findByRole('textbox', { name: '新文件夹名称' });
   fireEvent.change(screen.getByRole('textbox', { name: '新文件夹名称' }), { target: { value: 'new-folder' } });
-  fireEvent.click(screen.getByRole('button', { name: '继续' }));
+  fireEvent.click(await readyFolderButton('继续'));
   expect(screen.getByText('/home/new-folder')).toBeTruthy();
   fireEvent.click(screen.getByRole('checkbox', { name: '我信任这个文件夹' }));
   fireEvent.click(screen.getByRole('button', { name: '创建并添加项目' }));
@@ -77,8 +96,7 @@ it('prevents confirming a typed path until its metadata has loaded and ignores l
 it('keeps the same request ID after an unknown result and can recover a recorded success by reading', async () => {
   const { api, added } = setup();
   vi.mocked(api.addLocalProject).mockRejectedValueOnce(new TypeError('network')).mockResolvedValue(project);
-  await screen.findByRole('button', { name: '选择此文件夹' });
-  fireEvent.click(screen.getByRole('button', { name: '选择此文件夹' }));
+  fireEvent.click(await readyFolderButton());
   fireEvent.click(screen.getByRole('checkbox', { name: '我信任这个文件夹' }));
   fireEvent.click(screen.getByRole('button', { name: '信任并添加项目' }));
   await screen.findByRole('button', { name: '核对操作结果' });
@@ -105,7 +123,7 @@ it('displays Windows target paths and makes direction-control characters explici
   await waitFor(() => expect(screen.getByRole('button', { name: '继续' }).hasAttribute('disabled')).toBe(true));
   await screen.findByText('这个文件夹中没有子文件夹');
   fireEvent.change(screen.getByRole('textbox', { name: '新文件夹名称' }), { target: { value: 'new' } });
-  fireEvent.click(screen.getByRole('button', { name: '继续' }));
+  fireEvent.click(await readyFolderButton('继续'));
   expect(screen.getByText(path.replace('\u202e', '\\u202e') + '\\new')).toBeTruthy();
 });
 
@@ -128,7 +146,7 @@ it('retains a failed creation for correction and never silently selects another 
   vi.mocked(api.createLocalProject).mockRejectedValue(new ApiError('project_directory_exists'));
   await screen.findByRole('textbox', { name: '新文件夹名称' });
   fireEvent.change(screen.getByRole('textbox', { name: '新文件夹名称' }), { target: { value: 'exists' } });
-  fireEvent.click(screen.getByRole('button', { name: '继续' }));
+  fireEvent.click(await readyFolderButton('继续'));
   fireEvent.click(screen.getByRole('checkbox', { name: '我信任这个文件夹' }));
   fireEvent.click(screen.getByRole('button', { name: '创建并添加项目' }));
   expect(await screen.findByText(/同名文件夹已经存在/)).toBeTruthy();
@@ -139,8 +157,7 @@ it('retains a failed creation for correction and never silently selects another 
 it('retries the same confirmation with the same ID, then reconciles only its recorded operation', async () => {
   const { api, added } = setup();
   vi.mocked(api.addLocalProject).mockRejectedValue(new TypeError('network'));
-  await screen.findByRole('button', { name: '选择此文件夹' });
-  fireEvent.click(screen.getByRole('button', { name: '选择此文件夹' }));
+  fireEvent.click(await readyFolderButton());
   fireEvent.click(screen.getByRole('checkbox', { name: '我信任这个文件夹' }));
   fireEvent.click(screen.getByRole('button', { name: '信任并添加项目' }));
   fireEvent.click(await screen.findByRole('button', { name: '重试添加项目' }));
@@ -189,7 +206,7 @@ it('creates a project from the composer entry while preserving the old scope dra
   fireEvent.change(draft, { target: { value: '普通对话草稿' } });
   fireEvent.click(screen.getByRole('button', { name: '项目与位置，当前：普通对话' }));
   fireEvent.click(screen.getByRole('button', { name: '选择已有文件夹' }));
-  fireEvent.click(await screen.findByRole('button', { name: '选择此文件夹' }));
+  fireEvent.click(await readyFolderButton());
   fireEvent.click(screen.getByRole('checkbox', { name: '我信任这个文件夹' }));
   fireEvent.click(screen.getByRole('button', { name: '信任并添加项目' }));
   await waitFor(() => expect(screen.getByRole('status', { name: '当前项目' }).textContent).toContain('我的项目'));
@@ -200,7 +217,7 @@ it('creates a project from the composer entry while preserving the old scope dra
 });
 
 it('keeps reverse Tab at the first control inside the modal', async () => {
-  setup(); await screen.findByRole('button', { name: '选择此文件夹' });
+  setup(); await readyFolderButton();
   const close = screen.getByRole('button', { name: '关闭项目选择' }); close.focus();
   fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
   expect(document.activeElement).toBe(screen.getByRole('button', { name: '选择此文件夹' }));
