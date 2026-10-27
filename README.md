@@ -84,6 +84,16 @@ nyt --help
 
 默认监听回环地址并自动选择端口。访问链接包含服务凭证，请妥善保管。关闭网页或启动器不会结束共享服务和持久任务；同一会话同一时间只接受一个运行。
 
+共享服务在后台运行。正常退出服务、查看服务端警告和错误日志：
+
+```bash
+nyt service stop
+nyt service logs
+nyt service logs --follow
+```
+
+`stop` 会请求当前配置对应的服务正常收尾；若未运行服务，不会为了退出而启动新服务。查看日志时按 Ctrl+C 只退出日志查看，不会停止服务。默认日志文件为 `~/.naiyue-test-agent/data/service/service.log`；若启动时使用了 `--settings` 或 `--config`，停服时也传入相同路径。日志命令使用相同的 `--settings` 定位对应数据目录的 `service/service.log`。浏览器自身的错误仍在浏览器开发者工具的 Console 中查看。
+
 ## 使用终端 CLI
 
 ```bash

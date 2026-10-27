@@ -41,11 +41,11 @@ def get_data_dir(settings: StorageSettings) -> Path:
     return settings.data_dir if settings.data_dir is not None else get_agent_dir() / 'data'
 
 
-def load_storage_settings() -> StorageSettings:
+def load_storage_settings(path: Path | None = None) -> StorageSettings:
     """Maintenance consumes only storage; no model or tool configuration."""
     try:
         try:
-            with (get_agent_dir() / 'settings.toml').open('rb') as stream:
+            with (path or get_agent_dir() / 'settings.toml').open('rb') as stream:
                 raw = tomllib.load(stream)
         except FileNotFoundError:
             return StorageSettings()
