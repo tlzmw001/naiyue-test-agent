@@ -1,6 +1,6 @@
 # Windows 经跳板机使用 Linux Docker
 
-0.5.1 使用本机 OpenSSH 直接执行远端 Docker 命令。Windows 不需要 Docker CLI、Docker Desktop 或 WSL；容器和卷位于 Linux 开发机，Agent、会话库、模型调用和结果审查仍在 Windows。这里的应用实现已接线，真实 Windows／公司跳板机／Tencent Docker 的端到端验收需要目标机器运行结果，不能由本机确定性测试代替。普通账户密码的后台交互属于 14B，当前要求已准备好两跳 key 或本机 ssh-agent。
+0.5.2 使用本机 OpenSSH 直接执行远端 Docker 命令。Windows 不需要 Docker CLI、Docker Desktop 或 WSL；容器和卷位于 Linux 开发机，Agent、会话库、模型调用和结果审查仍在 Windows。这里的应用实现已接线，真实 Windows／公司跳板机／Tencent Docker 的端到端验收需要目标机器运行结果，不能由本机确定性测试代替。普通账户密码的后台交互属于 14B，当前要求已准备好两跳 key 或本机 ssh-agent。
 
 ## 1. 现有机器与操作范围
 
@@ -28,7 +28,7 @@ Windows OpenSSH 默认读取 `%USERPROFILE%\.ssh\config`。使用原来 VS Code 
 
 ## 3. 准备兼容的 Linux x64 镜像
 
-目标机需要包含同版本 envd、Python、Git、fd/rg 和项目运行工具的 Linux x64 镜像；普通 Python/Node 镜像不能直接成为应用沙箱。当前使用独立的 `naiyue-test-agent-envd` 执行端wheel，不把完整Agent、模型供应商SDK、Web/CLI或聊天/记忆业务模块放入基础镜像。镜像由具备Docker构建条件的机器通过 `scripts.build_envd` 和既有 `sandbox/Dockerfile` 构建，再通过公司允许的仓库或离线导入送到目标daemon。执行端仍复用58个必要源文件及45个现有锁定依赖，包含当前工具实际需要的LangChain/LangGraph；不复制另一套文件/进程算法。
+目标机需要包含协议兼容的 envd、Python、Git、fd/rg 和项目运行工具的 Linux x64 镜像；普通 Python/Node 镜像不能直接成为应用沙箱。当前使用独立的 `naiyue-test-agent-envd` 执行端wheel，不把完整Agent、模型供应商SDK、Web/CLI或聊天/记忆业务模块放入基础镜像。镜像由具备Docker构建条件的机器通过 `scripts.build_envd` 和既有 `sandbox/Dockerfile` 构建，再通过公司允许的仓库或离线导入送到目标daemon。执行端仍复用58个必要源文件及45个现有锁定依赖，包含当前工具实际需要的LangChain/LangGraph；不复制另一套文件/进程算法。
 
 开发构建入口如下（在项目源码目录、有可用且已核对的本机Docker context的构建机执行；输出目录选择新的空目录）：
 
@@ -51,9 +51,11 @@ SSH 段不会进入容器的 `NYT_SANDBOX_POLICY`，envd 协议仍为 2，没有
 
 公司导入前核对归档 SHA-256、目标 Unix socket 和新镜像标签；导入后核对镜像 ID、`linux/amd64`、Python 版本、线程/子进程、SQLite/临时文件、Unix socket 和 envd。保留原镜像和全部既有服务，不修改宿主系统包、daemon 配置或安全规则。若出现 `operation not permitted` 等错误，保留完整失败阶段并定位；不以 `privileged`、关闭 seccomp 或取消应用安全策略作为通过手段。首次实际任务仍使用专用 Git 验收项目。
 
-### 3.2 0.5.1 Release 离线镜像附件
+### 3.2 历史 0.5.1 Release 离线镜像附件
 
-当前交付为[0.5.1 Release附件](https://github.com/tlzmw001/naiyue-test-agent/releases/download/v0.5.1/naiyue-envd-0.5.1-linux-amd64-offline.zip)：`naiyue-envd-0.5.1-linux-amd64-offline.zip`，114,655,266字节（109.34MiB），同页提供`.sha256`。ZIP的SHA-256为：
+本节保留上版的归档信息；新环境请使用下方 0.5.2 附件。
+
+历史交付为[0.5.1 Release附件](https://github.com/tlzmw001/naiyue-test-agent/releases/download/v0.5.1/naiyue-envd-0.5.1-linux-amd64-offline.zip)：`naiyue-envd-0.5.1-linux-amd64-offline.zip`，114,655,266字节（109.34MiB），同页提供`.sha256`。ZIP的SHA-256为：
 
 ```text
 9fd924ba0eb385807be2515b01ca1321ef7fc2b7892b8e8d6c495be44d7e1c2f
@@ -70,9 +72,15 @@ bash check.sh
 
 导入新增镜像并使用磁盘/I/O，不停止已有容器。check.sh先核对文件、平台和归档的两个确定镜像ID（旧Docker的config ID／新Docker的platform manifest ID），再创建一个1CPU/512MiB/64PID、非root、只读根、禁网、无宿主挂载/端口映射的临时容器；结束自动删除。程序核对7项能力、0.5.1元数据/58源哈希/45依赖及控制端缺失、Python和fd/rg。预期末尾JSON中`passed=true`、7项cases全为passed、`source_files=58`、`dependencies=45`、`controller_and_model_sdks_absent=true`。
 
-用户回传原机结果后再继续Windows安装：正常退出原服务后安装完整`naiyue-test-agent==0.5.1`，保持原模型/应用设置/数据目录。0.5.0正式版没有`nyt service`命令，不能把关闭网页当作旧服务已退出；退出方式不明确时先核对原进程，不强制中断活动写入。0.5.1支持`nyt service stop`。执行镜像和控制端保持同版本；旧会话仍冻结原镜像和连接，不因模板刷新换绑，不能通过覆盖旧镜像/删卷绕过版本不符。
+用户回传原机结果后再继续Windows安装：正常退出原服务后安装完整`naiyue-test-agent==0.5.1`，保持原模型/应用设置/数据目录。0.5.0正式版没有`nyt service`命令，不能把关闭网页当作旧服务已退出；退出方式不明确时先核对原进程，不强制中断活动写入。0.5.1支持`nyt service stop`。0.5.1 控制端当时要求执行镜像同版本；旧会话仍冻结原镜像和连接，不因模板刷新换绑，不能通过覆盖旧镜像/删卷绕过版本不符。
 
 同源执行包、默认与Docker19.03官方seccomp预检及发布构建/安装记录见[0.5.1说明](releases/0.5.1.md)和Actions。本机为kernel6.8/Docker29.5.2；公司kernel5.4/Docker19.03、Windows跳板机、实际网络策略仍需原机证明。基础包构成检查不限制业务镜像以后按需增加项目依赖。
+
+### 3.3 Agent 0.5.2 复用已发布的 0.5.1 镜像
+
+Windows `ctime` 误报发生在控制端准备 Git 输入快照时。Agent 0.5.2 在执行协议兼容的前提下复用上方的 `naiyue-envd:0.5.1-amd64`；本次无需重新导入或替换已核对的镜像，也不提供 0.5.2 镜像附件。若目标机尚未导入镜像，按 3.2 节的 ZIP 校验、导入及 `check.sh` 步骤操作。
+
+让旧服务的活动任务完成，使用 `nyt service stop` 正常退出，再在 Windows 现有环境安装 `naiyue-test-agent==0.5.2`。保留原模型、应用设置和数据目录，环境模板继续指向已验证的 0.5.1 镜像。已有会话仍冻结原镜像和连接。将来 Agent 若依赖旧 envd 没有的必需能力，须明确协商能力或升级执行协议和镜像；公司 Docker 19.03、两跳 SSH 与实际网络策略仍需原机验收。
 
 ## 4. 配置控制端
 
