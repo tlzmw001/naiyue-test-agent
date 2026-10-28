@@ -1,5 +1,15 @@
 # Naiyue Test Agent：当前开发学习交接
 
+**0.5.4 发布范围与会话并发确认（2026-10-28）**：用户已授权将确认的 PROGRAMDATA 最小补丁打标签发布0.5.4。生产逻辑只改控制端DockerCLI环境白名单，保留系统已有PROGRAMDATA；envd执行源/协议不变，已发布0.5.3镜像及AITest Kit0.6.0继续复用，不新增镜像附件。发布说明见 [0.5.4](releases/0.5.4.md)，最终CI/tag/PyPI证据保存在 `build/release-0.5.4/`，公开状态以Actions/Release/PyPI为准。 本机最终后端5755 passed（622.14s，1条预期ZIP重复元数据警告），前端554项及构建通过，Mac源码外安装、compileall/pip check/diff check通过。输入回收PermissionError仍为独立未修项。
+
+并发事实：正式沙箱会话固定一个binding和一个容器（数据库session_id UNIQUE），后续轮次/停启复用；同会话只允许一个Agent run，但根Agent可创建多个后台代码任务。envd max_active_operations默认16，统计starting/running的共同操作数，包含shell/argv/write/edit等；满额直接拒绝，不是等待队列。任务共享工作区及2CPU/2GiB/256 PID默认总限额，命令内部子进程不另算journal操作，但计资源。结果捕获与输入安装有独占门。用同一envd实例、两个真实Python进程及上限2做最小验证：两进程重叠running，第三项env_operation_capacity，前两项完成；证据 `concurrency-check.json`，不是Docker负载基准。**唯一下一步：完成0.5.4发布门禁与公开安装验证后，用户原机升级控制端复验沙箱准备/恢复/销毁，随后独立定位PermissionError。**
+
+
+**Windows SSH 255 已收敛至 PROGRAMDATA（2026-10-28）**：用户原机同参数四组只读Docker info对照：完整环境普通/隐藏均0，过滤环境普通/隐藏均255且无stderr；仅给诊断白名单补回PROGRAMDATA后四组全部0。该证据定位控制端DockerCLI环境过滤遗漏Windows OpenSSH系统变量；不是本次隐藏控制台条件导致。当前源码DockerCLI白名单仅补PROGRAMDATA，保留其余过滤、隐藏控制台及未知写入处理。新增3例先红后绿（本机替身真实子进程＋环境保留/无关变量过滤），SSH/设置/会话/恢复定向69 passed in 10.18s；Windows x64交叉构建与包内容检查通过，compileall/pip check/diff check通过。源码及证据在 `build/fix-ssh-programdata/`；未提交、未发布，正式0.5.3尚不含该补丁。DockerCLI不属envd执行清单，已验证envd0.5.3哈希仍一致，无需因此重做Linux镜像。
+
+同形检索：GitRepository的来源Git进程也有独立环境白名单，Windows GitSource→SSH分支需另行核对；当前复现及最小补丁限DockerCLI，不改共享envd源清单。Host Shell继承环境，不是同一缺失；MCP传输的SDK环境边界不在本片。用户日志另有input retirement PermissionError；裸rmtree删除Git只读pack是具体候选，但尚缺原机异常路径/winerror，不称已确定或已修复。**唯一下一步：原机使用含PROGRAMDATA补丁的控制端复验沙箱新建/恢复/销毁，再独立定位输入回收PermissionError；不把SSH探针成功当成完整链路通过。**
+
+
 **0.5.3 正式发行范围（2026-10-28）**：用户已授权提交、打 `v0.5.3` 标签发布 PyPI，并将包含 AITest Kit 0.6.0 的执行镜像放入 GitHub Release。控制端版本已升至0.5.3；本轮包括Windows子进程、Git批处理、Spec137跨平台安全及Spec138生命周期修复。执行端源码哈希与已验证镜像保持一致，独立envd版本0.5.3。离线ZIP、SHA256及镜像身份见 [发行说明](releases/0.5.3.md) 和 `release/offline/0.5.3-linux-amd64.json`；ZIP内同源check.sh已在本机实跑通过，控制端Mac源码外安装通过。正式发布须以最终提交main CI、tag Publish、四平台公开PyPI安装和附件下载回读校验为准，证据保存在 `build/release-0.5.3/`，公开状态以Release/Actions/PyPI为准。研究资料与真实配置保持；公司原机验收边界不变。下方“不发布/控制端0.5.2”为此前候选阶段记录。
 
 
