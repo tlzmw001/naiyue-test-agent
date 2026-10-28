@@ -1,6 +1,8 @@
 # Naiyue Test Agent：当前开发学习交接
 
-**0.5.5 发行准备（2026-10-28）**：用户已授权控制端提交、打标签并发布0.5.5；范围为输入回收诊断与[Spec139](specs/139-process-failure-diagnostics.md)，不改Windows删除策略、不增加手动清理。发布复核发现输入回收日志sink失败可能覆盖PermissionError，已先红后绿接入safe_log并保留原异常及单次删除。控制端版本与README／[发行说明](releases/0.5.5.md)已同步。完整后端两组2867＋2920及最终诊断40项逐ID核对，5788/5788通过、无缺失／失败／skip；前端554及TS/Vite通过，标准Mac控制端与Linux x64 envd构建、Twine、356份控制端源码逐字节核对、Mac源码外安装、compileall／pip／diff检查通过。证据保存在`build/release-0.5.5/`。远端继续现有envd0.5.3＋AITest Kit0.6.0，不制作或发布新镜像；本地独立envd构建清单0.5.4只供构建验证。研究资料、真实配置和用户数据保持。**唯一下一步：完成同一提交CI、标签发布及四平台公开安装验证。**
+**0.5.5 已正式发布并完成验收（2026-10-28）**：发行提交 `13cc27848c0e2cbd68f87954c36f74bdaacb526f` 已push main并打 `v0.5.5`，[GitHub Release](https://github.com/tlzmw001/naiyue-test-agent/releases/tag/v0.5.5)与[PyPI](https://pypi.org/project/naiyue-test-agent/0.5.5/)可用。[同一提交CI](https://github.com/tlzmw001/naiyue-test-agent/actions/runs/40698850799)后端2868＋2920＝5788、前端554及四平台构建／安装全部通过；[Publish与四平台公开安装](https://github.com/tlzmw001/naiyue-test-agent/actions/runs/40701349082)第2次验证全部通过，四个公开包SHA256与CI候选一致，供应商请求0。首轮Linux x64因PyPI索引传播未找到版本，macOS因GitHub托管runner容量不足在执行前取消；仅重跑未通过的安装任务，没有重上传包或移动标签。本机另完成Mac隔离公开安装；标准控制端／envd构建、Twine、356份源码核对、compileall／pip／diff检查通过。证据 `build/release-0.5.5/verification.json`。
+
+范围为输入回收诊断与[Spec139](specs/139-process-failure-diagnostics.md)，保留模型工具反馈、原异常、恢复与并发合同；发布复核补齐输入回收safe_log，故障注入先红后绿。**Windows输入删除PermissionError本身未修，手动清理入口延期**。远端继续原envd0.5.3＋AITest Kit0.6.0镜像；本次Release不新增镜像附件、仅链接0.5.3离线包。本地envd清单0.5.4用于独立构建，旧镜像不会获得新增envd内部日志。研究资料、真实配置和用户数据未改，无新增用户掌握证据。**唯一下一步：用户升级控制端0.5.5并重启共享服务，用原镜像复验沙箱准备／执行／恢复；仍失败时依据新增阶段／错误码继续定位。**
 
 **进程／沙箱诊断补齐（2026-10-28，本机验证，未提交／未发布）**：按 [Spec139](specs/139-process-failure-diagnostics.md) 补 Docker/SSH、Git、Host/后台进程、MCP、沙箱归档与 watcher、生命周期、结果交付和 envd worker 的安全诊断。记录已有身份、失败阶段、OS/SQLite码和有限 stderr 类别；默认文本 Formatter 保留安全事件字段。模型继续收到原命令输出及 ToolException，ProcessCleanupError、unknown/原ID恢复、持久诊断 wire/schema、锁及自动重试规则保持。日志发送和事实投影失败均不能覆盖原异常；envd二次保存失败有独立事件，原状态收尾问题未借本片改变。
 
