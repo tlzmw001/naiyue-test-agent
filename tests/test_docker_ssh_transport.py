@@ -65,6 +65,34 @@ def test_ssh_uses_real_native_binary_stdin_stdout_without_a_text_pipeline(tmp_pa
         os.fstat(calls[0].stdin_fd)
 
 
+@pytest.mark.parametrize('ssh', [False, True])
+def test_native_client_inherits_programdata_without_unrelated_environment(tmp_path, monkeypatch, ssh):
+    directory = str(tmp_path/'system-data')
+    monkeypatch.setenv('PROGRAMDATA', directory)
+    monkeypatch.setenv('NYT_PRIVATE_ENV_FIXTURE', 'must-not-reach-child')
+    calls, _ = intercept(monkeypatch)
+    if not ssh:
+        monkeypatch.setattr(docker_cli.shutil, 'which', lambda _: '/client/docker')
+    client = remote(tmp_path) if ssh else docker_cli.DockerCLI(SandboxSettings(), tmp_path)
+    client.run(['info'])
+    assert calls[0].env['PROGRAMDATA'] == directory
+    assert 'NYT_PRIVATE_ENV_FIXTURE' not in calls[0].env
+
+
+def test_ssh_child_requiring_programdata_does_not_silently_exit_255(tmp_path, monkeypatch):
+    monkeypatch.setenv('PROGRAMDATA', str(tmp_path/'system-data'))
+    monkeypatch.setattr(docker_cli.shutil, 'which', lambda _: sys.executable)
+    original = docker_cli.HostProcessRunner.run
+    async def native_client(self, request, consume, control):
+        native = replace(request, argv=[sys.executable, '-c',
+            'import os,sys; '
+            'sys.exit(255) if not os.environ.get("PROGRAMDATA") else None; '
+            'sys.stdout.buffer.write(b"programdata-ok")'])
+        return await original(self, native, consume, control)
+    monkeypatch.setattr(docker_cli.HostProcessRunner, 'run', native_client)
+    assert remote(tmp_path).run(['info']) == b'programdata-ok'
+
+
 def test_remote_daemon_does_not_inspect_any_local_context(tmp_path, monkeypatch):
     calls, _ = intercept(monkeypatch, json.dumps(dict(OSType='linux', ID='original')).encode())
     assert remote(tmp_path).daemon('original') == 'original'

@@ -32,8 +32,9 @@ class DockerCLI:
                 if len(output)+len(chunk)>self.settings.max_message_bytes:
                     raise SandboxError('env_message_too_large')
                 output.extend(chunk)
+        # Windows OpenSSH exits 255 without diagnostics if PROGRAMDATA is absent.
         environment={key:value for key,value in os.environ.items()
-            if key in ('PATH','HOME','USERPROFILE','SYSTEMROOT','TMPDIR','TEMP','TMP','SSH_AUTH_SOCK','DOCKER_CONFIG')}
+            if key in ('PATH','HOME','USERPROFILE','SYSTEMROOT','PROGRAMDATA','TMPDIR','TEMP','TMP','SSH_AUTH_SOCK','DOCKER_CONFIG')}
         if ssh is None:
             argv=[executable,'--context',self.settings.context,*args]
         else:
