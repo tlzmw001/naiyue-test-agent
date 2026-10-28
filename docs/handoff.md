@@ -1,5 +1,17 @@
 # Naiyue Test Agent：当前开发学习交接
 
+**0.5.5 发行准备（2026-10-28）**：用户已授权控制端提交、打标签并发布0.5.5；范围为输入回收诊断与[Spec139](specs/139-process-failure-diagnostics.md)，不改Windows删除策略、不增加手动清理。发布复核发现输入回收日志sink失败可能覆盖PermissionError，已先红后绿接入safe_log并保留原异常及单次删除。控制端版本与README／[发行说明](releases/0.5.5.md)已同步。完整后端两组2867＋2920及最终诊断40项逐ID核对，5788/5788通过、无缺失／失败／skip；前端554及TS/Vite通过，标准Mac控制端与Linux x64 envd构建、Twine、356份控制端源码逐字节核对、Mac源码外安装、compileall／pip／diff检查通过。证据保存在`build/release-0.5.5/`。远端继续现有envd0.5.3＋AITest Kit0.6.0，不制作或发布新镜像；本地独立envd构建清单0.5.4只供构建验证。研究资料、真实配置和用户数据保持。**唯一下一步：完成同一提交CI、标签发布及四平台公开安装验证。**
+
+**进程／沙箱诊断补齐（2026-10-28，本机验证，未提交／未发布）**：按 [Spec139](specs/139-process-failure-diagnostics.md) 补 Docker/SSH、Git、Host/后台进程、MCP、沙箱归档与 watcher、生命周期、结果交付和 envd worker 的安全诊断。记录已有身份、失败阶段、OS/SQLite码和有限 stderr 类别；默认文本 Formatter 保留安全事件字段。模型继续收到原命令输出及 ToolException，ProcessCleanupError、unknown/原ID恢复、持久诊断 wire/schema、锁及自动重试规则保持。日志发送和事实投影失败均不能覆盖原异常；envd二次保存失败有独立事件，原状态收尾问题未借本片改变。
+
+新增26项，既有回归增强未放宽；后端分组2826＋2920、门禁55（14项重叠）对最终收集逐项去重验证 **5787/5787通过，0缺失／失败／skip**；Git最后边界另164通过，前端554/TS/Vite、标准Mac ARM64控制端与Linux x64 envd wheel、Twine、源码逐字节核对、控制端源外安装、compileall/pip/diff及500行检查均通过。安全／合同复核关闭；证据 `build/process-diagnostics-20261028/verification.json`。上轮输入回收两份代码/测试的哈希保持，手动清理入口及Windows删除逻辑仍延期，无新增用户掌握证据。
+
+用户明确远端镜像不换：现有 **envd0.5.3＋AITest Kit0.6.0**继续使用；协议源码与v0.5.3相同、旧版hello握手通过，不代表公司端到端实测。获准更新本地构建清单为envd0.5.4/59源/哈希`08be1cd5eeca728cd3d47c378c231e70d727d05eaae67cefdd5e23573a76d64b`，未制作／部署新Docker镜像。控制端日志随后续控制端包生效，容器内部新增日志在旧镜像上不会生效。控制端源码版本仍0.5.4，本机wheel仅验证产物，不可覆盖已发布版本。**唯一下一步：用户审阅本轮差异后决定后续控制端版本与发布时间；远端继续原镜像。**
+
+**输入回收仅增强诊断（2026-10-28，未提交／未发布）**：用户确认本次只补日志，Windows 删除逻辑修复及用户手动回收入口延期。`InputService._remove_directory` 在原目录校验和 rmtree 边界记录 `git_input_directory_cleanup_failed`：项目／输入 ID、实际失败操作、异常类型、errno／winerror、限长并转义的缓存内相对路径、只读／重解析点／文件类型／链接数；读取属性失败仅记诊断错误码，保留原删除异常。越界路径不探测、不输出绝对路径或异常正文；rmtree 重复上报同一异常时保留第一次失败位置。原引用检查、锁、删除顺序、记录保留及上层日志事件保持，无权限修改、自动重试或新增清理入口。
+
+新增6项回归：5项先因缺少诊断事件失败后转绿，另以真实 rmtree＋unlink 故障注入验证原失败点和异常身份；覆盖属性读取失败、越界路径不探测、换行转义、无私密路径／正文、失败保留记录及显式重试。专项53 passed；本机后端 **5761 passed, 1 warning in 621.14s**（预期ZIP重复METADATA夹具）、前端554及TS/Vite、标准Mac ARM64控制端wheel构建、compileall／pip check／diff check通过。执行端wheel与当前源码清单复核一致，envd仍0.5.3、哈希75ae29d2…b255526，无需改镜像；证据 `build/input-cleanup-diagnostics-20261028/verification.json`。Windows原机PermissionError根因仍未确认，本片不声称修复；额度按数据库输入记录计数，直接删除文件夹不会释放额度，当前没有用户UI／CLI回收入口。**唯一下一步：将诊断补丁纳入后续获批控制端版本后，原机复现并依据新日志定位删除失败；手动清理入口留待另片。**
+
 **0.5.4 已正式发布（2026-10-28）**：发行提交 `b087651553e23c53c2f5e69c844c0bcd3c8ac643`，标签 `v0.5.4`；[main CI 40678313112](https://github.com/tlzmw001/naiyue-test-agent/actions/runs/40678313112)首次全绿，[Publish 40680083063](https://github.com/tlzmw001/naiyue-test-agent/actions/runs/40680083063)最终成功，[PyPI 0.5.4](https://pypi.org/project/naiyue-test-agent/0.5.4/)四平台公开安装报告通过、文件SHA与同提交候选逐一一致。[Release](https://github.com/tlzmw001/naiyue-test-agent/releases/tag/v0.5.4)无新镜像附件，链接0.5.3离线镜像；envd源码哈希75ae29d2…b255526保持，版本仍0.5.3、AITest Kit0.6.0。首次Linux ARM64公开安装早于Simple索引传播，仅重跑失败安装后通过，未重传包或移动标签。本机后端5755/前端554、构建与源外安装通过。最终证据 `build/release-0.5.4/verification.json`。本段为发行后的文档收尾，不修改已发布源码/标签。**唯一下一步：用户正常停止旧服务、升级Windows控制端到0.5.4，沿用当前镜像，复验沙箱新建/恢复/销毁；输入回收PermissionError尚未修复，另行定位。**
 
 
