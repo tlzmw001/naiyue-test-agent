@@ -236,6 +236,7 @@ def test_windows_taskkill_checks_result_and_closes_helper(monkeypatch, returncod
             seen.append((argv, kwargs))
             return SimpleNamespace(get_returncode=lambda: returncode, close=lambda: closed.append(True)), factory()
         monkeypatch.setattr(module, 'os', SimpleNamespace(name='nt'))
+        monkeypatch.setattr(module.subprocess, 'CREATE_NO_WINDOW', 0x08000000, raising=False)
         monkeypatch.setattr(asyncio.get_running_loop(), 'subprocess_exec', spawn)
         parent = SimpleNamespace(get_pid=lambda: 1234, get_returncode=lambda: parent_code)
         if raises:
@@ -245,5 +246,6 @@ def test_windows_taskkill_checks_result_and_closes_helper(monkeypatch, returncod
             await HostProcessRunner._terminate(parent)
         assert seen[0][0] == ('taskkill', '/PID', '1234', '/T', '/F')
         assert seen[0][1]['stdout'] == seen[0][1]['stderr'] == module.subprocess.DEVNULL
+        assert seen[0][1]['creationflags'] == 0x08000000
         assert closed == [True]
     asyncio.run(scenario())

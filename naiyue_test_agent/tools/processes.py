@@ -78,7 +78,7 @@ class HostProcessRunner:
             request.on_execution_started(origin)
         protocol = ProcessProtocol(self.settings.max_pending_output_bytes,
                                    merge_output=request.merge_output, on_exited=request.on_exited)
-        options = ({'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt'
+        options = ({'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW} if os.name == 'nt'
                    else {'start_new_session': True})
         spawn = asyncio.create_task(loop.subprocess_exec(lambda: protocol, *request.argv,
             cwd=request.cwd, env=request.env, stdin=request.stdin_fd if request.stdin_fd is not None else subprocess.DEVNULL,
@@ -250,7 +250,8 @@ class HostProcessRunner:
         protocol = ProcessProtocol(1, merge_output=True)
         killer, _ = await loop.subprocess_exec(lambda: protocol,
             'taskkill', '/PID', str(transport.get_pid()), '/T', '/F',
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW)
         try:
             while killer.get_returncode() is None:
                 protocol.changed.clear()

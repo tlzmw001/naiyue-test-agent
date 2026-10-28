@@ -24,6 +24,27 @@ def test_unlimited_request_runs_and_closes_real_process(tmp_path):
     asyncio.run(scenario())
 
 
+def test_windows_host_child_is_started_without_console_window(monkeypatch, tmp_path):
+    import naiyue_test_agent.tools.processes as module
+
+    async def scenario():
+        seen = []
+        async def rejected_spawn(*args, **kwargs):
+            seen.append(kwargs)
+            raise OSError('synthetic spawn refusal')
+        monkeypatch.setattr(module, 'os', SimpleNamespace(name='nt'))
+        monkeypatch.setattr(module.subprocess, 'CREATE_NEW_PROCESS_GROUP', 0x200, raising=False)
+        monkeypatch.setattr(module.subprocess, 'CREATE_NO_WINDOW', 0x08000000, raising=False)
+        monkeypatch.setattr(asyncio.get_running_loop(), 'subprocess_exec', rejected_spawn)
+        async def consume(*args):
+            pytest.fail('No process was started')
+        with pytest.raises(OSError, match='synthetic spawn refusal'):
+            await HostProcessRunner().run(request(tmp_path, 'print(1)'), consume)
+        assert len(seen) == 1
+        assert seen[0]['creationflags'] == 0x08000200
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize('finite', [False, True])
 def test_startup_user_stop_enters_cleanup_and_keeps_eventual_handle_owned(monkeypatch, tmp_path, finite):
     async def scenario():
