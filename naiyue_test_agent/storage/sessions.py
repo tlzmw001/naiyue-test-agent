@@ -118,6 +118,12 @@ class SessionRepo:
         with self.database.transaction(write=False, error_code='session_read_failed') as connection:
             return read_rows(connection, 'SELECT * FROM naiyue_sessions ORDER BY pinned DESC,sort_order ASC,created_at DESC,session_id ASC')
 
+    def references_input(self, project_id, input_id):
+        with self.database.transaction(write=False, error_code='session_read_failed') as connection:
+            return connection.execute("""SELECT 1 FROM naiyue_sessions WHERE project_id=?
+                AND execution_binding='sandbox' AND json_extract(execution_setup_json,'$.input_id')=? LIMIT 1""",
+                (project_id,input_id)).fetchone() is not None
+
     def list_workspace_sessions(self, workspace_root):
         with self.database.transaction(write=False, error_code='session_read_failed') as connection:
             root = str(workspace_root) if workspace_root is not None else None

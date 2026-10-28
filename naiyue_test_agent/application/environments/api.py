@@ -105,6 +105,27 @@ class EnvironmentAPI:
     async def input(self,project_id,input_id):
         with self._owner.operation():return await run_blocking(self._inputs.get,project_id,input_id)
 
+    async def retire_input(self,project_id,input_id):
+        from naiyue_test_agent.storage.project_store import ProjectStore
+        with self._owner.operation(),self._operations.accepting():
+            host=self._hosts._hosts.get(project_id)
+            if host is not None:
+                with host._lifetime.operation():
+                    return await run_blocking(self._inputs.retire,project_id,input_id,host.sessions._metadata)
+            async with self._hosts._scopes.serial(('host',project_id)):
+                project=await run_blocking(self._service.projects.get,project_id)
+                host=self._hosts._hosts.get(project_id)
+                if host is not None:
+                    with host._lifetime.operation():
+                        return await run_blocking(self._inputs.retire,project_id,input_id,host.sessions._metadata)
+                def retire():
+                    try:project.database_path.lstat()
+                    except FileNotFoundError:return self._inputs.retire(project_id,input_id,None)
+                    with ProjectStore(project.database_path,require_existing=True,runtime_profile=project_id,
+                            busy_timeout_ms=self._hosts.settings.storage.busy_timeout_ms) as store:
+                        return self._inputs.retire(project_id,input_id,store.sessions)
+                return await run_blocking(retire)
+
     async def options(self,project_id):
         with self._owner.operation():return await run_blocking(self._inputs.options,project_id)
 
@@ -112,10 +133,18 @@ class EnvironmentAPI:
         async with self.using(binding_id):return await run_blocking(self._inputs.install,binding_id,input_id)
 
     async def create(self,project_id,session_id):
-        with self._owner.operation():
+        from naiyue_test_agent.storage.errors import SessionPersistenceError
+        with self._owner.operation(),self._operations.accepting():
             rows=await self._hosts.list_sessions(project_id)
             if not any(row['session_id']==session_id for row in rows):raise SandboxError('env_session_mismatch')
-            return await run_blocking(self._service.create,project_id,session_id)
+            host=await self._hosts.open(project_id,history_only=True)
+            with host._lifetime.operation():
+                async with host.sessions._persistence.history_lock(session_id):
+                    try:await run_blocking(host.sessions._metadata.get,session_id)
+                    except SessionPersistenceError as error:
+                        if str(error)!='session_not_found':raise
+                        raise SandboxError('env_session_mismatch') from error
+                    return await run_blocking(self._service.create,project_id,session_id)
 
     async def list(self,project_id):
         with self._owner.operation():return await run_blocking(self._service.list,project_id)

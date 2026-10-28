@@ -10,6 +10,7 @@ from naiyue_test_agent.application.service_application import open_service_appli
 from naiyue_test_agent.application.environments.inputs import InputService
 from naiyue_test_agent.contracts.git_inputs import GitInputError
 from naiyue_test_agent.settings import AppSettings
+from naiyue_test_agent.sandbox_settings import GitInputSettings
 from naiyue_test_agent.storage.git_inputs import GitInputs
 from naiyue_test_agent.storage.project_registry import ProjectRegistry
 from git_input_helpers import git, repository
@@ -56,6 +57,48 @@ def test_record_failure_and_incomplete_preparation_are_not_silently_retried(tmp_
             with pytest.raises(GitInputError,match='git_input_sensitive'):
                 await app.environments.prepare_input(project.project_id,input_id='b'*32)
     asyncio.run(scenario())
+
+
+def test_failed_snapshot_cleans_partial_cache_and_new_id_can_retry(tmp_path):
+    settings=AppSettings.model_validate({'storage':{'data_dir':str(tmp_path/'data')}})
+    root=repository(tmp_path)
+    async def scenario():
+        async with open_service_application('missing-model',tools=(),system_prompt='',response_format=None,settings=settings) as app:
+            project=await app.projects.add_local(root,trusted=True,operation_id='P')
+            inputs=app.environments._inputs
+            with pytest.raises(GitInputError,match='git_input_budget'):
+                await app.environments.prepare_input(project.project_id,input_id='a'*32,
+                    git_settings=GitInputSettings(max_file_bytes=2))
+            assert not inputs.directory(project.project_id,'a'*32).exists()
+            with pytest.raises(GitInputError,match='git_input_budget'):
+                await app.environments.prepare_input(project.project_id,input_id='a'*32,
+                    git_settings=GitInputSettings())
+            ready=await app.environments.prepare_input(project.project_id,input_id='b'*32)
+            assert ready.state=='ready' and ready.snapshot is not None
+            assert inputs.get(project.project_id,'b'*32)==ready
+            assert await app.environments.retire_input(project.project_id,'b'*32) is True
+            with pytest.raises(GitInputError,match='git_input_not_found'):
+                inputs.get(project.project_id,'b'*32)
+    asyncio.run(scenario())
+
+
+def test_failed_snapshot_cleanup_refuses_symlink_and_preserves_source(tmp_path, caplog):
+    settings=AppSettings.model_validate({'storage':{'data_dir':str(tmp_path/'data')}})
+    root=repository(tmp_path)
+    outside=tmp_path/'outside';outside.mkdir();(outside/'keep').write_text('keep')
+    async def scenario():
+        async with open_service_application('missing-model',tools=(),system_prompt='',response_format=None,settings=settings) as app:
+            project=await app.projects.add_local(root,trusted=True,operation_id='P')
+            inputs=app.environments._inputs
+            directory=inputs.directory(project.project_id,'a'*32)
+            directory.parent.mkdir(parents=True)
+            directory.symlink_to(outside,target_is_directory=True)
+            with pytest.raises(GitInputError,match='git_input_io_failed'):
+                await app.environments.prepare_input(project.project_id,input_id='a'*32)
+            assert directory.is_symlink() and (outside/'keep').read_text()=='keep'
+            assert inputs.get(project.project_id,'a'*32).state=='failed'
+    asyncio.run(scenario())
+    assert 'git_input_partial_cleanup_failed' in caplog.text
 
 
 def test_revision_change_before_ready_and_required_save_failure_refuse_success(tmp_path,monkeypatch):

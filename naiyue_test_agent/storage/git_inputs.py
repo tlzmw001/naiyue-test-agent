@@ -46,3 +46,36 @@ class GitInputs:
             if changed.rowcount!=1:
                 raise GitInputError('git_input_not_found')
         return self.get(row.project_id,row.input_id)
+
+    @staticmethod
+    def _referenced(conn, project_id, ident):
+        if conn.execute("""SELECT 1 FROM execution_environments WHERE project_id=?
+                AND lifecycle!='destroyed' AND json_extract(record_json,'$.input_id')=? LIMIT 1""",
+                (project_id,ident)).fetchone():return True
+        if conn.execute("""SELECT 1 FROM sandbox_operations WHERE project_id=?
+                AND json_extract(record_json,'$.kind')='git_result'
+                AND (json_extract(record_json,'$.metadata.delivery.receipt.input_id')=?
+                    OR binding_id IN (SELECT binding_id FROM execution_environments
+                        WHERE project_id=? AND json_extract(record_json,'$.input_id')=?)) LIMIT 1""",
+                (project_id,ident,project_id,ident)).fetchone():return True
+        return conn.execute("""SELECT 1 FROM git_deliveries WHERE project_id=? AND binding_id IN (
+            SELECT binding_id FROM execution_environments
+            WHERE project_id=? AND json_extract(record_json,'$.input_id')=?) LIMIT 1""",
+            (project_id,project_id,ident)).fetchone() is not None
+
+    def can_retire(self, project_id, ident):
+        with self.database.transaction() as conn:
+            return not self._referenced(conn,project_id,ident)
+
+    def delete_unreferenced(self, project_id, ident):
+        input_id(ident)
+        with self.database.transaction(write=True) as conn:
+            stored = conn.execute('SELECT record_json FROM git_inputs WHERE input_id=? AND project_id=?',
+                (ident,project_id)).fetchone()
+            if stored is None:
+                return False
+            row = GitInputRecord.from_dict(json.loads(stored['record_json']))
+            if row.state not in ('preparing','ready','failed') or self._referenced(conn,project_id,ident):
+                return False
+            conn.execute('DELETE FROM git_inputs WHERE input_id=? AND project_id=?',(ident,project_id))
+            return True

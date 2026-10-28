@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage
 
 from naiyue_test_agent.application.service_application import open_service_application
 from naiyue_test_agent.contracts.sandbox import SandboxError
+from naiyue_test_agent.contracts.git_inputs import GitInputError
 from naiyue_test_agent.contracts.projects import ProjectError
 from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools import create_builtin_tools
@@ -161,6 +162,14 @@ def test_rejected_input_preserves_failed_session_without_hiding_other_tasks(tmp_
                 assert status['execution']['state']=='failed' and not status['can_run']
                 assert (await host.tasks.list())['items']==[]
                 assert transport.created==[]
+                input_id=status['execution']['input_id']
+                assert app.environments._inputs.get(project.project_id,input_id).state=='failed'
+                await host.sessions.delete(sid)
+                with pytest.raises(GitInputError,match='git_input_not_found'):
+                    app.environments._inputs.get(project.project_id,input_id)
+                (root/'.env.local').unlink()
+                next_sid=await host.sessions.create_sandbox('fake',request_id=str(uuid4()))
+                assert (await host.sessions.status(next_sid))['execution']['state']=='ready'
     asyncio.run(scenario())
 
 

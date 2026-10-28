@@ -28,7 +28,7 @@
 | P1 `ProjectService._lock` | `RLock`，项目注册服务的懒加载、操作预留／恢复、关闭 | [ProjectService](../naiyue_test_agent/application/projects/service.py) 的 list/get/add/create/rename/relocate/remove/import/reconcile/close | `P1 → DB(registry)`；项目建库、导入、移除还允许 `P1 → F3`。保留同线程 `get/reconcile` 重入；不在持有 P1 时反向获取 G1—G4。运行期 `RegisteredExecution` 直接读取 registry.execution_facts，只取得 DB(registry)，不反取 P1。 |
 | A1 `RunAdmission.lock` | `RLock`，全应用根运行的容量检查、准入提交与项目交付预留 | [SessionService._admit](../naiyue_test_agent/application/sessions/session_service.py)；[RunAdmission.available/manage_project/check_project/release](../naiyue_test_agent/application/sessions/run_admission.py)；available要求调用者已持有A1，release只在生命周期确认排空后调用 | `A1 → A2 → S3`；统计时逐个取得 A2，释放 A2 后读取对应 actor 的 S3，不同时锁多个 service。目录／注册 revision 验证在取得 A1 前完成。 |
 | A2 `SessionService._lock` | `Lock`，已加载 actor、子 Agent 角色、组装／关闭状态的注册表 | [SessionService](../naiyue_test_agent/application/sessions/session_service.py) 的注册／查找／快照／准入／删除 guard；`RunAdmission.available` | `A2 → {S3, B1, E1, M1}`：分别用于读 actor、检查清理、取订阅快照、冻结模型错误映射。不得反向获取 A1 或 S2。建图、创建会话的必要 SQL、运行及关闭等待在释放 A2 后执行。 |
-| S1 `SessionPersistence._history_locks[session_id]` | 异步锁，同会话准备、收尾、恢复、删除和记忆证据保存的协调 | [SessionPersistence](../naiyue_test_agent/application/sessions/session_persistence.py) 的 `aprepare/afinish/arecover/adelete`；[MemoryAPI.query](../naiyue_test_agent/application/memory/api.py) 的写入分支 | `S1 → {S2, D1, DB, D2}`。这是共同外层门闩，各分支分段获取内层锁；SQL 事务与 saver 调用不交叉持有。`arestore` 自己只用 S2 预留，`aprepare` 可在 S1 内调用它。 |
+| S1 `SessionPersistence._history_locks[session_id]` | 异步锁，同会话准备、收尾、恢复、删除和记忆证据保存的协调 | [SessionPersistence](../naiyue_test_agent/application/sessions/session_persistence.py) 的 `aprepare/afinish/arecover/adelete`；[MemoryAPI.query](../naiyue_test_agent/application/memory/api.py) 的写入分支 | `S1 → {S2, D1, DB, D2, GI2}`。这是共同外层门闩，各分支分段获取内层锁；删除失败输入记录通过 GI2，SQL 事务与 saver 调用不交叉持有。`arestore` 自己只用 S2 预留，`aprepare` 可在 S1 内调用它。 |
 | S2 `SessionPersistence._lock` | `Lock`，`_active/_recovering/_blocked` 的预留与短状态更新 | [SessionPersistence](../naiyue_test_agent/application/sessions/session_persistence.py)；[ProjectHost._check_idle](../naiyue_test_agent/application/projects/host.py) 只读取协调状态 | `S2 → A2 → S3`，用于 `_delete/_install_session` 等配对检查。预留后释放 S2 再做 SQL、saver 或 `await`；`start` 的 mark_running、afinish 的归档／裁剪都不持 S2 做 IO。 |
 | S3 `SessionRuntime.lock` | [SessionRuntime](../naiyue_test_agent/application/sessions/session_state.py) 的 `Lock`，同一 actor 的 SessionState、ActiveRun、控制队列、审批、存活子实例 | [AgentSession](../naiyue_test_agent/application/sessions/agent_session.py)、[RunLifecycle](../naiyue_test_agent/application/sessions/session_execution.py)、[ControlQueue](../naiyue_test_agent/application/sessions/session_controls.py)、[ApprovalBook](../naiyue_test_agent/application/sessions/session_approval.py)、[SubagentRegistry](../naiyue_test_agent/application/subagents/session_subagents.py)、[subagent_records.admit](../naiyue_test_agent/application/subagents/subagent_records.py) | `S3 → {C1, E2, E4}`，只做停止标记、控制记录、turn 保存／恢复。四个协作者共用这一个实例；调用者已持锁时使用不再次获取 S3 的内部 guard。不得反向获取 A2／S2；不得执行模型／工具／SQL、控制事件 flush 或等待子实例。 |
 | S4 `AgentSession._model_selection_lock` | `Lock`，模型／思考档位的落库与内存提交顺序 | [AgentSession.select_model/select_thinking](../naiyue_test_agent/application/sessions/agent_session.py) | `S4 → {DB(project), S3}`，SQL 返回释放 DB 后才修改 S3；思考档位先在 S3 下核对，释放后落库，再取 S3 提交。 |
@@ -189,7 +189,7 @@ DockerCLI 使用既有 HostProcessRunner，输入仅来自有界临时文件的 
 | 标识 | 保护对象与入口 | 顺序与禁止事项 |
 |---|---|---|
 | GI1 `InputService._guard` | input_id 到准备锁的字典，`_lock` 短查询/插入 | 叶锁；释放后才取得 GI2，无 IO、SQL、Git 或 RPC。 |
-| GI2 每 input_id 的 `RLock` | `prepare` 的预留/本机快照/必要保存；`_transfer` 首次生成对应 delta | `GI2 → DB(registry)` 的短事务；事务结束再 Git/磁盘 IO。delta 阶段允许 `DKR2 → GI2`；不得从 GI2 回取 DKR2 或 SOP2，不同时持有多个输入锁。 |
+| GI2 每 input_id 的 `RLock` | `prepare` 的预留/本机快照/必要保存；会话 setup 首次登记；安装 input_id 引用的必要保存；`_transfer` 首次生成对应 delta；`retire` 按全部引用回收输入 | `GI2 → {DB(registry), DB(project)}` 分段短事务；首次会话登记允许 `GI2 → A2 → S3`，释放短锁才保存项目库。不持 DB 做目录删除或 Git IO。安装引用登记与 delta 允许 `DKR2 → GI2`，会话删除允许 `S1 → GI2`；不得从 GI2 回取 DKR2、S1 或 SOP2，不同时持有多个输入锁。 |
 | GIR1 每 envd 的 `InputReceiver._lock` | begin/status/chunk/probe/cache/reserve_install/installation/install；接收状态和缓存对象 | `EOP1 → GIR1` 只用于安装前检查空目录、缓存标记与持久安装预留；预留阶段包含有限文件 IO/fsync。cache/install 可持 GIR1 做有界 Git/磁盘 IO，但不回取 EOP1/EOP2；worker 释放 GIR1 后才提交 journal，再释放 EOP2 后取得 EOP1 清活动项。 |
 
 输入生命周期扩展已有接受门：`prepare/install` 从开始到必要记录保存均计入 SOP1 的接受计数，实际工作不持 SOP1。关闭先封口，等接受计数归零；已经在传输的安装可完成对象接收，但若正式 submit 前已关闭，必须以 env_stopped 拒绝，不能越过封口开始检出。
@@ -200,12 +200,16 @@ envd 在同一个 EOP1 临界区内完成“活动操作/读取数检查 → jou
 
 本片新增三个显式锁构造位置（GI1、GI2 工厂、GIR1）；没有新增线程池、全应用项目锁或数据库事务内的远端等待。
 
+Spec138：显式 `EnvironmentAPI.retire_input` 对已加载项目直接借宿主 operation，不取得 host gate；会话删除仍持 S1，但不引入 S1 → G4 的反向依赖，公开 close 继续以活动 operation 拒绝关闭。冷项目先取得 G4、重新检查已加载宿主后借原项目库，未持 S1；保留 G4 至输入回收完成，阻止此间打开/关闭项目库。GI2 内依次查询会话 setup、未销毁环境、关联结果/交付记录后删除应用输入目录与输入记录，不跨两个数据库叠持事务。活动 prepare 先结算；安装在 DKR2 → GI2 内落地环境 input_id 后释放 GI2，后续提交才进入 SOP2。destroyed 环境的新结果提交在预留操作之前经 validate 拒绝，既存结果记录本身阻止输入回收。
+
 
 ## R1-12B 会话绑定与环境管理
 
 新会话预留、原输入/容器/安装准备、显式生命周期和删除共用原S1 `history_lock(session_id)`；同请求派生相同session/input/binding，不新增一套幂等锁。S1内可以分段进入GI2、DKR2与项目库锁，每段先释放短数据库事务，再执行Git/Docker；不从这些下游锁反取S1。整个新建准备从会话预留到返回均加入SOP1接受计数，封口后不再预留。
 
 生命周期在S1内，按既有全局准入锁→SessionService._lock→actor短状态锁原子检查busy，并设置`_environment_management`集合。随后释放所有线程锁才await Docker，finally仅回取SessionService短锁释放预留。新run/压缩/审批续跑在准备前和正式_admit复核管理事实，不能在异步status检查后插入执行。此集合是同一准入事实，没有轮询或额外线程锁；history_lock不代替准入锁。关闭宿主仍沿原_closing复核拒绝。
+
+Spec138：验收脚本仍使用的低层 EnvironmentAPI.create 先查询/打开所属宿主，释放 G4 后借宿主 operation 并取得原 S1，再次读取 session owner 后才创建；禁止持 G4 等待 S1。会话删除同样检查普通会话的直接环境关联，未销毁环境存在时拒绝删除。低层创建与正式沙箱会话均不新增独立 owner 锁。
 
 GitSource首次打开项目历史宿主复用项目操作日志/P1初始化项目库；无本机根，不做Git fetch。注册身份轻量读取仍只持DB(registry)短查询锁，工具校验不取ProjectService写操作锁。原SOP2查询/输出/停止按绑定查询，不在事务里执行容器IO。本片不改默认线程池和归档全局锁。
 

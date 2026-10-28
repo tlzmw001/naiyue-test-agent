@@ -200,6 +200,12 @@ class SessionPersistence:
             if self.sessions.mcp_resources is not None:
                 await self.sessions.mcp_resources.release_session(session_id)
             await run_blocking(self.storage.runs.delete, session_id, children)
+            if row.get('execution_binding') == 'sandbox' and self.sessions.environments is not None:
+                from .execution_binding import saved_setup
+                try:
+                    await self.sessions.environments.retire_input(row['project_id'],saved_setup(row).input_id)
+                except Exception as error:
+                    logger.error('session_input_retirement_failed error_type=%s', type(error).__name__)
             with self._lock:
                 self.sessions.remove_session(session_id)
                 self._blocked.discard(session_id)

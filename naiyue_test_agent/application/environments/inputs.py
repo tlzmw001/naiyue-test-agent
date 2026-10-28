@@ -4,6 +4,7 @@ import base64
 import hashlib
 import logging
 import os
+import shutil
 from threading import RLock
 import time
 
@@ -34,6 +35,34 @@ class InputService:
     def directory(self, project_id, ident):
         input_id(ident)
         return self.environments.projects.data_dir/'workspaces'/project_id/'git-inputs'/ident
+
+    def _remove_directory(self, project_id, ident):
+        directory = self.directory(project_id, ident)
+        if not directory.exists() and not directory.is_symlink():
+            return
+        check_store_directory(directory.parent)
+        check_store_directory(directory)
+        shutil.rmtree(directory)
+
+    def retire(self, project_id, ident, sessions):
+        input_id(ident)
+        with self._lock(ident):
+            records = self.records()
+            try:
+                row = records.get(project_id, ident)
+            except GitInputError as error:
+                if error.code == 'git_input_not_found':
+                    return False
+                raise
+            if row.state not in ('preparing','ready','failed'):
+                return False
+            if sessions is not None and sessions.references_input(project_id,ident):return False
+            if not records.can_retire(project_id,ident):return False
+            try:self._remove_directory(project_id, ident)
+            except OSError as error:
+                logger.error('git_input_retirement_failed error_type=%s',type(error).__name__)
+                raise
+            return records.delete_unreferenced(project_id, ident)
 
     def get(self, project_id, ident):
         return self.records().get(project_id,ident)
@@ -86,10 +115,16 @@ class InputService:
             except GitInputError as error:
                 logger.warning('git_input_preparation_rejected code=%s',error.code)
                 records.save(replace(row,state='failed',error_code=error.code,error_paths=error.paths))
+                try:self._remove_directory(project_id,input_id)
+                except OSError as cleanup_error:
+                    logger.error('git_input_partial_cleanup_failed error_type=%s',type(cleanup_error).__name__)
                 raise
             except OSError as error:
                 logger.error('git_input_preparation_io_failed error_type=%s',type(error).__name__)
                 records.save(replace(row,state='failed',error_code='git_input_io_failed'))
+                try:self._remove_directory(project_id,input_id)
+                except OSError as cleanup_error:
+                    logger.error('git_input_partial_cleanup_failed error_type=%s',type(cleanup_error).__name__)
                 raise GitInputError('git_input_io_failed') from error
 
     @staticmethod
@@ -148,18 +183,20 @@ class InputService:
         with self.operations.accepting(),self.environments._lock(binding):
             try:
                 row=self.environments.validate(binding,require_input=False)
-                record=self.get(row.project_id,ident)
-                project=self._project(row.project_id)
-                if project.revision!=record.project_revision:
-                    raise GitInputError('git_input_source_changed')
-                if record.state!='ready' or record.snapshot is None:
-                    raise GitInputError(record.error_code or 'git_input_unconfirmed',record.error_paths)
-                if row.input_id is not None and row.input_id!=ident:
-                    raise GitInputError('git_input_binding_conflict')
-                if row.input_snapshot is not None:return row
+                with self._lock(ident):
+                    record=self.get(row.project_id,ident)
+                    project=self._project(row.project_id)
+                    if project.revision!=record.project_revision:
+                        raise GitInputError('git_input_source_changed')
+                    if record.state!='ready' or record.snapshot is None:
+                        raise GitInputError(record.error_code or 'git_input_unconfirmed',record.error_paths)
+                    if row.input_id is not None and row.input_id!=ident:
+                        raise GitInputError('git_input_binding_conflict')
+                    if row.input_snapshot is not None:return row
+                    if row.input_operation_id is None:
+                        row=row.changed(input_id=ident)
+                        self.environments.records().save(row)
                 if row.input_operation_id is None:
-                    row=row.changed(input_id=ident)
-                    self.environments.records().save(row)
                     engine=self.environments._engine(row)
                     probe=engine.request(row,'input_probe',{'original_head':record.snapshot.original_head})
                     if (not isinstance(probe,dict) or set(probe)!={'original_head','has_base'}

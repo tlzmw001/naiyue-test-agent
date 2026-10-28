@@ -132,8 +132,11 @@ async def create_sandbox_session(sessions,model_id,request_id,include,*,profile_
                 if requested is not None and requested.revision!=selection.revision:
                     raise SandboxError('env_profile_changed')
                 setup=SandboxSessionSetup(**setup.model_dump(exclude={'selection'}),selection=selection)
-                await run_blocking(sessions._create_session,model_id,None,session_id=sid,
-                    execution_setup=setup.model_dump(mode='json'))
+                def create():
+                    with sessions.environments._inputs._lock(setup.input_id):
+                        return sessions._create_session(model_id,None,session_id=sid,
+                            execution_setup=setup.model_dump(mode='json'))
+                await run_blocking(create)
             else:
                 if (row['execution_binding']!='sandbox' or saved_setup(row).model_dump(exclude={'selection'})
                         !=setup.model_dump(exclude={'selection'})):
@@ -174,7 +177,12 @@ async def _prepare_sandbox_session(sessions,sid):
 
 async def check_environment_deletion(sessions,sid):
     row=await run_blocking(sessions._persistence.storage.sessions.get,sid)
-    if row['execution_binding']!='sandbox':return
+    if row['execution_binding']!='sandbox':
+        if sessions.environments is not None and row['project_id'] is not None:
+            records=await sessions.environments.list(row['project_id'])
+            if any(record.session_id==sid and record.lifecycle!='destroyed' for record in records):
+                raise SessionPersistenceError('session_environment_in_use')
+        return
     setup=saved_setup(row)
     try:record=await sessions.environments.get(setup.binding_id)
     except SandboxError as error:
