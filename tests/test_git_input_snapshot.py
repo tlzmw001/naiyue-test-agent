@@ -9,6 +9,7 @@ from naiyue_test_agent.contracts.git_inputs import GitInputError
 from naiyue_test_agent.contracts.projects import LocalSource, GitSource
 from naiyue_test_agent.execution.git_snapshot import SnapshotBuilder
 from naiyue_test_agent.execution import git_snapshot
+from naiyue_test_agent.execution.git_repository import GitRepository
 from naiyue_test_agent.sandbox_settings import GitInputSettings
 from git_input_helpers import git, repository
 
@@ -63,6 +64,41 @@ def test_partial_staging_and_user_git_objects_remain_unchanged(tmp_path):
     assert hashlib.sha256((tmp_path/'snapshot/input.bundle').read_bytes()).hexdigest()==snapshot.bundle_sha256
 
 
+def test_snapshot_uses_bounded_batch_git_commands(tmp_path, monkeypatch):
+    root=repository(tmp_path)
+    for number in range(5):
+        (root/f'extra-{number}.txt').write_text(f'content-{number}\n')
+    git(root,'add','.')
+    seen=[];original=GitRepository.run
+    def run(self,args,**kwargs):
+        seen.append(tuple(args))
+        return original(self,args,**kwargs)
+    monkeypatch.setattr(GitRepository,'run',run)
+    result=builder(tmp_path).prepare(LocalSource(root),'a'*32)
+    assert len(result.manifest)==7
+    assert sum(args[0]=='fast-import' for args in seen)==1
+    assert sum(args[:2]==('cat-file','--batch-check') for args in seen)==1
+    assert sum(args[:2]==('cat-file','--batch') for args in seen)==1
+    assert not any(args[0]=='hash-object' or args[:2]==('cat-file','-s') or
+        args[:2]==('cat-file','blob') for args in seen)
+
+
+def test_batch_validation_splits_large_output_without_changing_manifest(tmp_path,monkeypatch):
+    root=repository(tmp_path)
+    for number in range(3):
+        (root/f'extra-{number}.txt').write_bytes(bytes([65+number])*800)
+    git(root,'add','.')
+    seen=[];original=GitRepository.run
+    def run(self,args,**kwargs):
+        if args[:2]==['cat-file','--batch']:
+            seen.append(kwargs['output_limit'])
+        return original(self,args,**kwargs)
+    monkeypatch.setattr(GitRepository,'run',run)
+    snapshot=builder(tmp_path,max_command_bytes=1024).prepare(LocalSource(root),'a'*32)
+    assert len(snapshot.manifest)==5 and len(seen)>=3
+    assert all(size<=1700 for size in seen)
+
+
 def test_explicit_untracked_hidden_skill_and_tracked_delete(tmp_path):
     root=repository(tmp_path)
     skill=root/'.agents/skills/http/SKILL.md';skill.parent.mkdir(parents=True);skill.write_text('fixture skill\n')
@@ -106,6 +142,65 @@ def test_external_symlink_is_rejected_and_internal_relative_link_keeps_mode(tmp_
     (root/'link').unlink();(root/'link').symlink_to('app.txt')
     result=SnapshotBuilder(tmp_path/'safe-snapshot',GitInputSettings()).prepare(LocalSource(root),'b'*32)
     assert {item.path:item.mode for item in result.manifest}['link']=='120000'
+
+
+@pytest.mark.parametrize('scope',['local','global'])
+@pytest.mark.parametrize('enabled',[False,True])
+def test_snapshot_respects_effective_git_filemode_and_preserves_index(tmp_path,monkeypatch,scope,enabled):
+    root=repository(tmp_path)
+    home=tmp_path/'home';home.mkdir();monkeypatch.setenv('HOME',str(home))
+    target=root/'run.sh';target.write_text('echo fixture\n');target.chmod(0o644)
+    git(root,'add','run.sh');git(root,'update-index','--chmod=+x','run.sh');git(root,'commit','-qm','script')
+    if scope=='global':git(root,'config','--unset','core.filemode')
+    else:git(root,'config','--global','core.filemode',str(not enabled).lower())
+    git(root,'config','--'+scope,'core.filemode',str(enabled).lower())
+    index=(root/'.git/index').read_bytes();head=git(root,'rev-parse','HEAD')
+    snapshot=builder(tmp_path).prepare(LocalSource(root),'a'*32)
+    expected='100644' if enabled else '100755'
+    assert {item.path:item.mode for item in snapshot.manifest}['run.sh']==expected
+    assert (snapshot.input_snapshot==snapshot.original_head) is (not enabled)
+    assert (root/'.git/index').read_bytes()==index and git(root,'rev-parse','HEAD')==head
+
+
+def test_filemode_false_does_not_make_tracked_or_new_files_executable(tmp_path):
+    root=repository(tmp_path);git(root,'config','core.filemode','false')
+    (root/'app.txt').chmod(0o755)
+    (root/'new.sh').write_text('echo new\n');(root/'new.sh').chmod(0o755)
+    snapshot=builder(tmp_path).prepare(LocalSource(root),'a'*32,include_untracked=('new.sh',))
+    modes={item.path:item.mode for item in snapshot.manifest}
+    assert modes['app.txt']==modes['new.sh']=='100644'
+
+
+@pytest.mark.parametrize('scope',['local','global'])
+@pytest.mark.parametrize('enabled',[False,True])
+def test_snapshot_respects_git_symlinks_for_plain_file_checkout(tmp_path,monkeypatch,scope,enabled):
+    root=repository(tmp_path)
+    home=tmp_path/'home';home.mkdir();monkeypatch.setenv('HOME',str(home))
+    if scope=='global':
+        git(root,'config','--local','core.symlinks','true');git(root,'config','--unset','core.symlinks')
+    else:git(root,'config','--global','core.symlinks',str(not enabled).lower())
+    git(root,'config','--'+scope,'core.symlinks',str(enabled).lower())
+    (root/'link').write_bytes(b'app.txt')
+    oid=GitRepository(root,GitInputSettings()).run(['hash-object','-w','--stdin'],data=b'app.txt').decode().strip()
+    git(root,'update-index','--add','--cacheinfo','120000',oid,'link');git(root,'commit','-qm','link')
+    index=(root/'.git/index').read_bytes();head=git(root,'rev-parse','HEAD')
+    snapshot=builder(tmp_path).prepare(LocalSource(root),'a'*32)
+    assert {item.path:item.mode for item in snapshot.manifest}['link']==('100644' if enabled else '120000')
+    assert (snapshot.input_snapshot==snapshot.original_head) is (not enabled)
+    assert blob(tmp_path,'link')==b'app.txt'
+    assert (root/'.git/index').read_bytes()==index and git(root,'rev-parse','HEAD')==head
+
+
+@pytest.mark.parametrize('target',['../outside','A/../outside'])
+def test_plain_file_symlink_checkout_cannot_bypass_link_safety(tmp_path,target):
+    root=repository(tmp_path);git(root,'config','core.symlinks','false')
+    repo=GitRepository(root,GitInputSettings())
+    for name,content in [('a',b'.'),('link',target.encode())]:
+        (root/name).write_bytes(content)
+        oid=repo.run(['hash-object','-w','--stdin'],data=content).decode().strip()
+        git(root,'update-index','--add','--cacheinfo','120000',oid,name)
+    with pytest.raises(GitInputError,match='git_input_outside'):
+        builder(tmp_path).prepare(LocalSource(root),'a'*32)
 
 
 @pytest.mark.parametrize('feature',['lfs','filter','submodule'])

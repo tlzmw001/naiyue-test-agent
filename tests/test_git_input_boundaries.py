@@ -1,5 +1,6 @@
 """Reject malformed inputs and observable source races before accepting a snapshot."""
 import os
+import subprocess
 import pytest
 
 from naiyue_test_agent.contracts.git_inputs import GitInputError, input_path
@@ -18,6 +19,21 @@ def test_dot_is_not_a_file_path():
 def test_invalid_link_encoding_is_an_explicit_input_failure():
     with pytest.raises(GitInputError,match='git_input_invalid_path'):
         check_links({'link':('120000',b'\xff')})
+
+
+@pytest.mark.parametrize('name,alias', [('a','A'), ('é','e\u0301'), ('Dir/a','dir/a')])
+def test_equivalent_link_spelling_cannot_hide_a_parent_escape(name,alias):
+    with pytest.raises(GitInputError,match='git_input_outside'):
+        check_links({name:('120000',b'.'), 'escape':('120000',(alias+'/../outside').encode())})
+
+
+def test_link_directory_prefix_with_multiple_equivalent_spellings_is_rejected():
+    with pytest.raises(GitInputError,match='git_input_outside'):
+        check_links({'Dir/a':('120000',b'.'), 'dir/file':('100644',b'content')})
+
+
+def test_precisely_spelled_internal_link_chain_is_accepted():
+    check_links({'a':('120000',b'.'), 'b':('120000',b'a/inside'), 'inside':('100644',b'content')})
 
 
 def test_malformed_url_is_an_explicit_source_failure():
@@ -59,7 +75,7 @@ def test_same_size_file_change_during_snapshot_is_rejected(tmp_path,monkeypatch)
     def run(self,args,**kwargs):
         nonlocal changed
         result=original(self,args,**kwargs)
-        if args[0]=='hash-object' and kwargs.get('data')==b'base\n' and not changed:
+        if args[0]=='fast-import' and not changed:
             changed=True
             target=root/'app.txt'
             target.write_bytes(b'evil\n')
@@ -70,6 +86,40 @@ def test_same_size_file_change_during_snapshot_is_rejected(tmp_path,monkeypatch)
     with pytest.raises(GitInputError,match='git_input_source_changed'):
         SnapshotBuilder(tmp_path/'snapshot',GitInputSettings()).prepare(LocalSource(root),'a'*32)
     assert changed
+
+
+@pytest.mark.parametrize('command', ['fast-import','--batch-check','--batch'])
+def test_batch_git_output_mismatch_never_accepts_snapshot(tmp_path,monkeypatch,command):
+    root=repository(tmp_path)
+    original=GitRepository.run
+    seen=False
+    def run(self,args,**kwargs):
+        nonlocal seen
+        result=original(self,args,**kwargs)
+        if args[0]==command or command.startswith('--') and tuple(args[:2])==('cat-file',command):
+            seen=True
+            return b''
+        return result
+    monkeypatch.setattr(GitRepository,'run',run)
+    with pytest.raises(GitInputError,match='git_input_invalid_object'):
+        SnapshotBuilder(tmp_path/'snapshot',GitInputSettings()).prepare(LocalSource(root),'a'*32)
+    assert seen
+    result=subprocess.run(['git','show-ref','--verify','refs/naiyue/input/'+'a'*32],
+        cwd=tmp_path/'snapshot'/'objects.git',capture_output=True)
+    assert result.returncode!=0
+
+
+def test_fast_import_reordered_marks_are_rejected(tmp_path,monkeypatch):
+    root=repository(tmp_path)
+    original=GitRepository.run
+    def run(self,args,**kwargs):
+        result=original(self,args,**kwargs)
+        if args[0]=='fast-import':
+            return b'\n'.join(reversed(result.splitlines()))+b'\n'
+        return result
+    monkeypatch.setattr(GitRepository,'run',run)
+    with pytest.raises(GitInputError,match='git_input_invalid_object'):
+        SnapshotBuilder(tmp_path/'snapshot',GitInputSettings()).prepare(LocalSource(root),'a'*32)
 
 
 @pytest.mark.parametrize('scope',['global','local'])
@@ -109,3 +159,19 @@ def test_non_utf8_index_path_has_a_classified_error(tmp_path):
         input=b'100644 '+oid+b'\tnon_utf8_\xff\0',check=True)
     with pytest.raises(GitInputError,match='git_input_invalid_path'):
         SnapshotBuilder(tmp_path/'snapshot',GitInputSettings()).prepare(LocalSource(root),'a'*32)
+
+
+@pytest.mark.parametrize('key', ['core.filemode','core.symlinks'])
+def test_source_mode_configuration_change_during_snapshot_is_rejected(tmp_path,monkeypatch,key):
+    root=repository(tmp_path);git(root,'config',key,'true')
+    original=GitRepository.run;changed=False
+    def run(self,args,**kwargs):
+        nonlocal changed
+        result=original(self,args,**kwargs)
+        if args[0]=='fast-import' and not changed:
+            changed=True;git(root,'config',key,'false')
+        return result
+    monkeypatch.setattr(GitRepository,'run',run)
+    with pytest.raises(GitInputError,match='git_input_source_changed'):
+        SnapshotBuilder(tmp_path/'snapshot',GitInputSettings()).prepare(LocalSource(root),'a'*32)
+    assert changed

@@ -1,14 +1,17 @@
 """Snapshot selected working-copy bytes into an application-owned object database."""
 from contextlib import ExitStack
 from datetime import datetime, timezone
+import hashlib
 import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
+import tempfile
+import unicodedata
 from urllib.parse import urlsplit
 
 from naiyue_test_agent.contracts.git_inputs import (
-    GitInputError, InputFile, InputExclusion, InputSnapshot, input_id, input_path, git_path, check_content,
+    GitInputError, InputFile, InputExclusion, InputSnapshot, input_id, input_path, git_path, object_id, check_content,
 )
 from naiyue_test_agent.contracts.projects import LocalSource, GitSource
 from naiyue_test_agent.storage.files import check_store_directory, open_store_readonly
@@ -65,6 +68,14 @@ def check_links(contents):
         links = {path: data.decode('utf-8') for path, (mode, data) in contents.items() if mode == '120000'}
     except UnicodeError:
         raise GitInputError('git_input_invalid_path') from None
+    spellings = {}
+    if links:
+        for path in contents:
+            parts = PurePosixPath(path).parts
+            for length in range(1,len(parts)+1):
+                prefix = '/'.join(parts[:length])
+                key = unicodedata.normalize('NFD',prefix.casefold())
+                spellings.setdefault(key,set()).add(prefix)
     for path in links:
         pending, resolved, count = list(PurePosixPath(path).parts), [], 0
         while pending:
@@ -76,6 +87,10 @@ def check_links(contents):
                     raise GitInputError('git_input_outside', (path,))
                 resolved.pop(); continue
             current = '/'.join([*resolved, part])
+            # A portable link must not change meaning on a case/normalization-insensitive filesystem.
+            variants = spellings.get(unicodedata.normalize('NFD',current.casefold()))
+            if variants is not None and variants != {current}:
+                raise GitInputError('git_input_outside', (path,))
             if current in links:
                 count += 1
                 target = links[current]
@@ -90,15 +105,52 @@ def check_links(contents):
 
 def validate_tree(repository, ref):
     contents, manifest, total = {}, [], 0
-    for path, mode, oid in repository.tree(ref):
-        size = int(repository.run(['cat-file','-s',oid]))
+    entries = repository.tree(ref)
+    if entries:
+        listed = repository.run(['cat-file','--batch-check'],
+            data=b''.join(oid.encode()+b'\n' for _, _, oid in entries), output_limit=len(entries)*100)
+        rows = listed.splitlines()
+        if len(rows) != len(entries):
+            raise GitInputError('git_input_invalid_object')
+    else:
+        rows = []
+    sizes = []
+    for (path, mode, oid), row in zip(entries, rows, strict=True):
+        fields = row.split(b' ')
+        if (len(fields) != 3 or fields[0] != oid.encode() or fields[1] != b'blob'
+                or not fields[2].isdigit() or len(fields[2]) > 20):
+            raise GitInputError('git_input_invalid_object')
+        size = int(fields[2])
         total += size
         if size > repository.settings.max_file_bytes or total > repository.settings.max_input_bytes:
             raise GitInputError('git_input_budget', (path,))
-        data = repository.run(['cat-file','blob',oid],output_limit=repository.settings.max_file_bytes)
-        check_content(path, data)
-        contents[path] = (mode, data)
-        manifest.append(InputFile(path,mode,oid,size))
+        sizes.append(size)
+    groups, group, group_bytes = [], [], 0
+    for entry, size in zip(entries, sizes, strict=True):
+        if group and group_bytes + size > repository.settings.max_command_bytes:
+            groups.append(group); group=[]; group_bytes=0
+        group.append((entry,size)); group_bytes += size
+    if group:
+        groups.append(group)
+    for group in groups:
+        output = repository.run(['cat-file','--batch'],
+            data=b''.join(oid.encode()+b'\n' for (_, _, oid), _ in group),
+            output_limit=sum(size+100 for _, size in group))
+        offset = 0
+        for (path, mode, oid), size in group:
+            end = output.find(b'\n', offset)
+            if end < 0 or output[offset:end] != f'{oid} blob {size}'.encode():
+                raise GitInputError('git_input_invalid_object')
+            start = end+1; stop = start+size
+            if output[stop:stop+1] != b'\n':
+                raise GitInputError('git_input_invalid_object')
+            data = output[start:stop]
+            check_content(path, data)
+            contents[path] = (mode, data)
+            manifest.append(InputFile(path,mode,oid,size))
+            offset = stop+1
+        if offset != len(output):
+            raise GitInputError('git_input_invalid_object')
     check_links(contents)
     index = repository.path.parent / 'validation.index'
     env = {'GIT_INDEX_FILE':str(index.absolute())}
@@ -166,6 +218,9 @@ class SnapshotBuilder:
                 raise GitInputError('git_input_layout_unsupported')
             if source_git.run(['rev-parse','--show-object-format']).strip() != b'sha1':
                 raise GitInputError('git_input_unsupported')
+            source_modes = {name:source_git.run(['config','--bool','--default=true','--get','core.'+name],
+                source_config=True).strip() == b'true' for name in ('filemode','symlinks')}
+            index_modes = {}
             staged = source_git.run(['ls-files','--stage','-z'])
             for raw in staged.split(b'\0'):
                 if not raw:
@@ -175,6 +230,7 @@ class SnapshotBuilder:
                 path = git_path(raw_path)
                 if stage != '0' or mode not in ('100644','100755','120000'):
                     raise GitInputError('git_input_unsupported',(path,))
+                index_modes[path] = mode
                 entries.append(path)
             untracked = self._paths(source_git,['ls-files','--others','--exclude-standard','-z'])
             ignored = self._paths(source_git,['ls-files','--others','--ignored','--exclude-standard','-z'])
@@ -219,14 +275,42 @@ class SnapshotBuilder:
                     continue
                 except OSError:
                     raise GitInputError('git_input_outside',(path,)) from None
+                if mode != '120000':
+                    prior = index_modes.get(path)
+                    if prior == '120000' and not source_modes['symlinks']:
+                        mode = '120000'
+                    elif not source_modes['filemode']:
+                        mode = prior if prior in ('100644','100755') else '100644'
                 check_content(path,content)
                 total += len(content)
                 if total>self.settings.max_input_bytes:
                     raise GitInputError('git_input_budget',(path,))
                 contents[path]=(mode,content); before[path]=identity
-                oid = self.repository.run(['hash-object','--no-filters','-w','--stdin'],data=content).decode().strip()
-                lines.append(f'{mode} {oid}\t{path}'.encode()+b'\0')
             check_links(contents)
+            if contents:
+                with tempfile.TemporaryFile() as stream:
+                    stream.write(b'feature done\n')
+                    for number, (_, (_, content)) in enumerate(contents.items(), 1):
+                        stream.write(f'blob\nmark :{number}\ndata {len(content)}\n'.encode())
+                        stream.write(content)
+                        stream.write(b'\n')
+                    for number in range(1,len(contents)+1):
+                        stream.write(f'get-mark :{number}\n'.encode())
+                    stream.write(b'done\n')
+                    result = self.repository.run(['fast-import','--quiet','--done'], input_stream=stream,
+                        output_limit=len(contents)*41)
+                oids = result.splitlines()
+                if len(oids) != len(contents):
+                    raise GitInputError('git_input_invalid_object')
+                for (path, (mode, _)), raw_oid in zip(contents.items(), oids, strict=True):
+                    try:oid = object_id(raw_oid.decode('ascii'))
+                    except (UnicodeError,GitInputError):
+                        raise GitInputError('git_input_invalid_object') from None
+                    content = contents[path][1]
+                    expected = hashlib.sha1(b'blob '+str(len(content)).encode()+b'\0'+content).hexdigest()
+                    if oid != expected:
+                        raise GitInputError('git_input_invalid_object')
+                    lines.append(f'{mode} {oid}\t{path}'.encode()+b'\0')
             self.repository.run(['update-index','-z','--index-info'],data=b''.join(lines),extra_env=env)
             tree = self.repository.oid_from_index(env)
             if tree != self.repository.oid(original+'^{tree}'):
@@ -237,7 +321,9 @@ class SnapshotBuilder:
                 snapshot = self.repository.run(['commit-tree',tree,'-p',original],
                     data=('Naiyue input '+ident+'\n').encode(),extra_env=author).decode().strip()
             if (source_git.oid('HEAD^{commit}') != original or file_identity(root.stat())[:2] != root_identity
-                    or source_git.run(['ls-files','--stage','-z']) != staged):
+                    or source_git.run(['ls-files','--stage','-z']) != staged
+                    or any((source_git.run(['config','--bool','--default=true','--get','core.'+name],
+                        source_config=True).strip() == b'true') != enabled for name,enabled in source_modes.items())):
                 raise GitInputError('git_input_source_changed')
             for path, identity in before.items():
                 try:after = file_identity((root/path).lstat())

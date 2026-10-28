@@ -18,8 +18,10 @@ class GitRepository:
     def __init__(self, path, settings):
         self.path, self.settings = Path(path), settings
 
-    def run(self, args, *, cwd=None, data=None, extra_env=None, credentials=False, source_config=False,
-            check=True, control=None, output_limit=None):
+    def run(self, args, *, cwd=None, data=None, input_stream=None, extra_env=None, credentials=False,
+            source_config=False, check=True, control=None, output_limit=None):
+        if data is not None and input_stream is not None:
+            raise ValueError('Git command accepts one input source')
         executable = shutil.which(self.settings.executable)
         if executable is None:
             raise GitInputError('git_input_git_unavailable')
@@ -55,10 +57,12 @@ class GitRepository:
             target.extend(chunk)
 
         with ExitStack() as stack:
-            source = None
+            source = input_stream
             if data is not None:
                 source = stack.enter_context(tempfile.TemporaryFile())
                 source.write(data); source.seek(0)
+            elif source is not None:
+                source.seek(0)
             request = ProcessRequest([executable, *prefix, *args], Path(cwd or self.path), env,
                 self.settings.timeout_seconds, stdin_fd=source.fileno() if source else None)
             try:
