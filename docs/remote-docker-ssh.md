@@ -53,7 +53,7 @@ SSH 段不会进入容器的 `NYT_SANDBOX_POLICY`，envd 协议仍为 2，没有
 
 ### 3.2 历史 0.5.1 Release 离线镜像附件
 
-本节保留上版的归档信息；新环境请使用下方 0.5.2 附件。
+本节保留上版的归档信息；Agent 0.5.2 的兼容使用方式见 3.3 节。
 
 历史交付为[0.5.1 Release附件](https://github.com/tlzmw001/naiyue-test-agent/releases/download/v0.5.1/naiyue-envd-0.5.1-linux-amd64-offline.zip)：`naiyue-envd-0.5.1-linux-amd64-offline.zip`，114,655,266字节（109.34MiB），同页提供`.sha256`。ZIP的SHA-256为：
 
@@ -81,6 +81,14 @@ bash check.sh
 Windows `ctime` 误报发生在控制端准备 Git 输入快照时。Agent 0.5.2 在执行协议兼容的前提下复用上方的 `naiyue-envd:0.5.1-amd64`；本次无需重新导入或替换已核对的镜像，也不提供 0.5.2 镜像附件。若目标机尚未导入镜像，按 3.2 节的 ZIP 校验、导入及 `check.sh` 步骤操作。
 
 让旧服务的活动任务完成，使用 `nyt service stop` 正常退出，再在 Windows 现有环境安装 `naiyue-test-agent==0.5.2`。保留原模型、应用设置和数据目录，环境模板继续指向已验证的 0.5.1 镜像。已有会话仍冻结原镜像和连接。将来 Agent 若依赖旧 envd 没有的必需能力，须明确协商能力或升级执行协议和镜像；公司 Docker 19.03、两跳 SSH 与实际网络策略仍需原机验收。
+
+### 3.4 本机候选：envd 0.5.3 + AITest Kit 0.6.0
+
+针对 0.5.2 试用发现的三个问题，本机另构建了 `naiyue-envd:0.5.3-aitest-0.6.0-amd64`。镜像沿原执行端构建链安装 envd 0.5.3 wheel，同时安装经 SHA-256 校验的 PyPI `aitest-kit` 0.6.0 基础 wheel 及其 CLI 依赖；不包含测试工作区、凭据、Console 服务或完整 Agent。Agent 0.5.2 与 envd 0.5.3 均使用协议 2；现有 0.5.1 镜像和旧会话不被替换。
+
+本机 tar 位于 `build/fix-052-aitest-053/naiyue-envd-0.5.3-aitest-kit-0.6.0-linux-amd64.tar`，SHA-256 为 `277e323ac61924012a91877954d0da72fd316c6dfc309e3808f468b1aedf69ef`。这是本机候选产物，尚未作为 GitHub Release 附件发布。传到公司 Linux 新目录后，先核对 tar SHA、原 Docker socket 和新标签是否已有其他镜像，再执行 `docker --host unix:///var/run/docker.sock image load --input <tar文件>`；新建会话的模板可在原机验收通过后指向新标签，已有会话保持原绑定。镜像导入只新增镜像，不要求重新制作；公司 Docker 19.03/内核/SSH 原机能否正常运行仍须实测。
+
+本机验证命令与结果记录在 [Spec 136](specs/136-envd-image-aitest-kit.md) 和交接记录；导入后可用只读、禁网、可写 `/tmp` 的临时容器运行 `sandbox/check_runtime.py --aitest-version 0.6.0`，核对 envd、`aitest --help`、源码哈希和依赖。AITest 的真实接口用例需要用户自己的 workspace 和环境配置，本镜像构建未执行此类业务用例。
 
 ## 4. 配置控制端
 
@@ -132,3 +140,7 @@ sweep_seconds = 30
 先记录只读连接输出，再验证新建/文件/前后台命令/审批/取回/停启/服务重开原绑定，最后明确清理本轮自有资源。网络 external 必须从容器内验证公司允许和禁止的目标，不能由宿主联网推断；none 单独新建环境验证回环以外不可用。记录首次/增量输入与 SSH 调用耗时。
 
 本机确定性测试只证明配置、原始字节、错误分类、身份检查和保存恢复的接线；未完成公司原机矩阵前，不称 R1-14 远端整体验收完成。密码认证不通过关闭 BatchMode、写明文 password 或让模型输入凭证实现。
+
+## 0.5.3：含 AITest Kit 的新执行镜像
+
+[0.5.3 Release](https://github.com/tlzmw001/naiyue-test-agent/releases/tag/v0.5.3) 提供 envd 0.5.3 + AITest Kit 0.6.0 的 Linux/amd64 离线 ZIP 及外部 SHA256。按包内 README 核对原 daemon、内部 SHA 与镜像身份，导入后执行同包 check.sh。新标签为 `naiyue-envd:0.5.3-aitest-0.6.0-reviewed-amd64`，只用于明确选择它的新会话，旧环境绑定保持。控制端升级命令和本版修复见 [0.5.3说明](releases/0.5.3.md)；归档身份见 `release/offline/0.5.3-linux-amd64.json`。公司原机检查仍独立于本机验收。

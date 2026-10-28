@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "version": "0.5.2",
-  "execution_sha256": "2a0249fc9fba29bd6d39f6fea91f2cf577cd2d317f5d1a3c0cab04e8d9830219",
+  "version": "0.5.3",
+  "execution_sha256": "75ae29d2eb59b4d4b26801a4a16624ae43a908f482fa19498bd0a9289b255526",
   "dependencies_sha256": "7a308f133b0021670f4f1983b8cf9973eae798209933eb1b624943259a0ff084",
   "files": [
     "naiyue_test_agent/__init__.py",

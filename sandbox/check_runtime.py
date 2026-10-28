@@ -1,10 +1,12 @@
 """Standalone execution-only image probe; temporary writes and no network or credentials."""
+import argparse
 import asyncio
 import io
 import json
 import os
 from pathlib import Path
 import platform
+import shutil
 import socket
 import sqlite3
 import subprocess
@@ -12,6 +14,10 @@ import sys
 import tarfile
 import tempfile
 import threading
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--aitest-version')
+args = parser.parse_args()
 
 report = {
     'python': platform.python_version(),
@@ -92,6 +98,27 @@ def execution_runtime():
         name = canonicalize_name(requirement.name)
         assert requirement.specifier.contains(metadata.version(name)), pin
         expected[name] = str(requirement.specifier)
+    if args.aitest_version:
+        assert metadata.version('aitest-kit') == args.aitest_version
+        executable = shutil.which('aitest')
+        assert executable is not None
+        help_result = subprocess.run([executable, '--help'], capture_output=True, text=True,
+            check=True, timeout=20)
+        assert 'doctor' in help_result.stdout and 'run' in help_result.stdout
+        pending = ['aitest-kit']
+        while pending:
+            parent = pending.pop()
+            if parent in expected:
+                continue
+            expected[parent] = metadata.version(parent)
+            for text in metadata.requires(parent) or []:
+                dependency = Requirement(text)
+                if dependency.marker is not None and not dependency.marker.evaluate({'extra': ''}):
+                    continue
+                name = canonicalize_name(dependency.name)
+                assert dependency.specifier.contains(metadata.version(name)), text
+                pending.append(name)
+        report['aitest_kit'] = {'version': args.aitest_version, 'cli': executable}
     installed = {canonicalize_name(item.metadata['Name']) for item in metadata.distributions()}
     assert not installed - set(expected) - {'naiyue-test-agent-envd', 'pip', 'setuptools', 'wheel'}, installed - set(expected)
     import naiyue_test_agent.envd.operations

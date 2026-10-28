@@ -259,6 +259,10 @@ def test_sandbox_build_checks_real_linux_wheel_architecture(tmp_path, monkeypatc
     wheel = _wheel(tmp_path, target)
     assert runtime.inspect_envd_wheel(wheel)['target'] == target
     mutations = []
+    kit_bytes = b'fixture aitest 0.6.0 wheel'
+    kit_sha = hashlib.sha256(kit_bytes).hexdigest()
+    monkeypatch.setattr(build_sandbox_image, 'load_image_profile',
+        lambda: {'aitest_kit': {'version': '0.6.0', 'wheel_sha256': kit_sha}})
 
     def query(argv):
         assert argv[:3] == ['docker', '--context', 'fixture-context']
@@ -269,9 +273,12 @@ def test_sandbox_build_checks_real_linux_wheel_architecture(tmp_path, monkeypatc
 
     def mutate(argv, *, check):
         assert check is True
-        if argv[3] == 'build':
+        if argv[:4] == [sys.executable, '-m', 'pip', 'download']:
+            (Path(argv[argv.index('--dest') + 1]) / 'aitest_kit-0.6.0-py3-none-any.whl').write_bytes(kit_bytes)
+        elif argv[3] == 'build':
             stage = Path(argv[-1])
             assert (stage / 'envd.whl').read_bytes() == wheel.read_bytes()
+            assert (stage / 'aitest.whl').read_bytes() == kit_bytes
             assert (stage / 'Dockerfile').read_bytes() == (Path(build_sandbox_image.__file__).parents[1] / 'sandbox/Dockerfile').read_bytes()
         mutations.append(argv)
 
@@ -286,11 +293,77 @@ def test_sandbox_build_checks_real_linux_wheel_architecture(tmp_path, monkeypatc
         assert mutations == [] and not output.exists()
         return
     build_sandbox_image.main()
-    assert [argv[3] for argv in mutations] == ['pull', 'build']
+    assert [argv[3] for argv in mutations] == ['download', 'pull', 'build']
     report = json.loads(output.read_text())
     assert report['wheel']['target'] == target
     assert report['image_id'] == 'fixture-fixture:result'
     assert report['daemon_id'] == 'fixture-daemon'
+
+
+def test_sandbox_image_installs_pinned_aitest_kit_wheel(tmp_path, monkeypatch):
+    from scripts import build_sandbox_image
+    wheel = _wheel(tmp_path)
+    kit_name = 'aitest_kit-0.6.0-py3-none-any.whl'
+    kit_bytes = b'fixture aitest 0.6.0 wheel'
+    kit_sha = hashlib.sha256(kit_bytes).hexdigest()
+    monkeypatch.setattr(build_sandbox_image, 'load_image_profile',
+        lambda: {'aitest_kit': {'version': '0.6.0', 'wheel_sha256': kit_sha}})
+    commands = []
+
+    def query(argv):
+        if argv[3] == 'info':
+            return json.dumps({'Architecture': 'amd64', 'ID': 'fixture-daemon'}).encode()
+        return json.dumps([{'Id': 'fixture-image', 'RepoDigests': ['fixture@sha256:base']}]).encode()
+
+    def run(argv, *, check):
+        assert check is True
+        commands.append(argv)
+        if argv[:4] == [sys.executable, '-m', 'pip', 'download']:
+            (Path(argv[argv.index('--dest') + 1]) / kit_name).write_bytes(kit_bytes)
+        if argv[3:4] == ['build']:
+            stage = Path(argv[-1])
+            assert (stage / 'aitest.whl').read_bytes() == kit_bytes
+            assert 'aitest-kit' in (stage / 'Dockerfile').read_text()
+
+    monkeypatch.setattr(build_sandbox_image.subprocess, 'check_output', query)
+    monkeypatch.setattr(build_sandbox_image.subprocess, 'run', run)
+    output = tmp_path / 'image.json'
+    monkeypatch.setattr(sys, 'argv', ['build_sandbox_image', '--wheel-dir', str(tmp_path),
+        '--base-image', 'fixture:base', '--tag', 'fixture:result', '--context', 'fixture-context',
+        '--output', str(output)])
+    build_sandbox_image.main()
+    assert [argv[3] for argv in commands if argv[0] == 'docker'] == ['pull', 'build']
+    assert any(argv[:4] == [sys.executable, '-m', 'pip', 'download'] for argv in commands)
+    assert json.loads(output.read_text())['aitest_kit'] == {'version': '0.6.0', 'wheel_sha256': kit_sha}
+
+
+def test_sandbox_image_rejects_wrong_aitest_kit_hash_before_docker_pull(tmp_path, monkeypatch):
+    from scripts import build_sandbox_image
+    _wheel(tmp_path)
+    monkeypatch.setattr(build_sandbox_image, 'load_image_profile',
+        lambda: {'aitest_kit': {'version': '0.6.0', 'wheel_sha256': '0' * 64}})
+    docker_calls = []
+
+    def query(argv):
+        docker_calls.append(argv)
+        if argv[3] == 'info':
+            return json.dumps({'Architecture': 'amd64', 'ID': 'fixture-daemon'}).encode()
+        raise AssertionError('Docker image must not be accessed for a bad Kit wheel')
+
+    def run(argv, *, check):
+        if argv[:4] == [sys.executable, '-m', 'pip', 'download']:
+            (Path(argv[argv.index('--dest') + 1]) / 'aitest_kit-0.6.0-py3-none-any.whl').write_bytes(b'wrong wheel')
+            return
+        raise AssertionError('Docker pull/build must not run for a bad Kit wheel')
+
+    monkeypatch.setattr(build_sandbox_image.subprocess, 'check_output', query)
+    monkeypatch.setattr(build_sandbox_image.subprocess, 'run', run)
+    monkeypatch.setattr(sys, 'argv', ['build_sandbox_image', '--wheel-dir', str(tmp_path),
+        '--base-image', 'fixture:base', '--tag', 'fixture:result', '--context', 'fixture-context',
+        '--output', str(tmp_path / 'image.json')])
+    with pytest.raises(ValueError, match='AITest Kit wheel SHA-256'):
+        build_sandbox_image.main()
+    assert [argv[3] for argv in docker_calls] == ['info']
 
 
 def test_image_builder_rejects_the_full_agent_before_docker_io(tmp_path, monkeypatch):

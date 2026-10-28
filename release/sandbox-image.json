@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "aitest_kit": {
+    "version": "0.6.0",
+    "wheel_sha256": "419559056a1d16b695d9b1e91a7f0d15ddc389996a369207bd3dcf8afada2331"
+  }
+}

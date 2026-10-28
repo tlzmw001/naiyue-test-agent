@@ -92,7 +92,7 @@ MCP专项通过原安装worker的必经路径运行，复用离线模型与check
 
 执行端和完整Agent分别安装在容器/控制端的独立环境，不向同一site-packages混装。envd 构建版本来自 `release/envd.json` 的 `version`，独立于 Agent `__version__`；执行源码或锁定依赖变化时须更新该版本与哈希，只有Agent源码变化时保持不变。构建新执行端时使用 `scripts.build_envd --target linux-x86_64 --tag v执行端版本 --output 新目录`，再用 `scripts.build_sandbox_image` 选择已核对的构建context、基础镜像、独立tag和报告路径；镜像构建入口拒绝完整Agent wheel，不放宽主包门禁。只升级Agent且现有envd协议及所需能力兼容时，继续使用已发布镜像，不制作新附件。
 
-新执行端离线交付须从其已确定的发行源码构建，沿标准Dockerfile准备全部执行依赖。用构建机支持的 `docker image save --platform linux/amd64` 导出；核对legacy manifest.json、仅一平台、config身份和gzip层后重导入，并在非root/只读/禁网/限额容器运行版本化 `sandbox/check_runtime.py` 及正式Docker探针。新Docker或旧seccomp预检不能替代公司原机验收。
+新执行端离线交付须从其已确定的发行源码构建，沿标准Dockerfile准备全部执行依赖。镜像另按 `release/sandbox-image.json` 下载并校验固定的 AITest Kit 基础 wheel；这是镜像工具依赖，不加入 envd wheel 的依赖清单。用构建机支持的 `docker image save --platform linux/amd64` 导出；核对legacy manifest.json、仅一平台、config身份和gzip层后重导入，并在非root/只读/禁网/限额容器运行版本化 `sandbox/check_runtime.py --aitest-version 0.6.0` 及正式Docker探针。新Docker或旧seccomp预检不能替代公司原机验收。
 
 发布镜像ZIP放在build产物目录，仓库仅提交 `release/offline/版本-linux-amd64.json`、使用说明和下载链接，避免普通Git的单文件上限及历史体积增长。ZIP包括镜像tar、同源compatibility.py、限定原daemon/镜像身份的check.sh、manifest、SHA256SUMS与README；先验证ZIP和各文件SHA，再作为对应版本GitHub Release附件上传ZIP/外部SHA文件，下载回读比较SHA。不要覆盖未知旧附件或以旧版本镜像改名交付。
 
