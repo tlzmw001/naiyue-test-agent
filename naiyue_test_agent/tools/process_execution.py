@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 from dataclasses import dataclass
 from contextvars import Context
 from threading import RLock
@@ -155,7 +156,9 @@ async def execute_process_request(request, runtime, *, name, label, settings, ru
         progress.report(phase='capture_cleanup', activity='settling')
         progress.flush()
         if isinstance(error, OSError):
-            logger.warning('shell_process_failed shell=%s error_type=%s', name, type(error).__name__)
+            safe_log(logger.warning, 'shell_process_failed shell=%s error_type=%s diagnostic=%s', name, type(error).__name__,
+                diagnostic_text(error=error,phase='execute_or_capture',session_id=runtime.context.scope.identity.session_id,
+                    run_id=runtime.context.scope.identity.run_id,tool_call_id=runtime.tool_call_id))
             raise ToolException(f'{label} could not start or capture output. Check the configured shell; inspect any side effects before retrying.') from error
         raise
     archived = await capture.finish_owned(not outcome.output_complete)
@@ -201,5 +204,7 @@ async def execute_managed_foreground(port, scope, request, runtime, *, command, 
         return format_process_outcome(result.outcome, result.capture.output, result.archived,
             label=label, stop_reason=result.stop_reason)
     except OSError as error:
-        logger.warning('shell_process_failed shell=%s error_type=%s', name, type(error).__name__)
+        safe_log(logger.warning, 'shell_process_failed shell=%s error_type=%s diagnostic=%s', name, type(error).__name__,
+            diagnostic_text(error=error,phase='foreground',session_id=runtime.context.scope.identity.session_id,
+                run_id=runtime.context.scope.identity.run_id,tool_call_id=runtime.tool_call_id))
         raise ToolException(f'{label} could not start or capture output. Check the configured shell; inspect any side effects before retrying.') from error

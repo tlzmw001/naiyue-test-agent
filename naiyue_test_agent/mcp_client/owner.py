@@ -4,6 +4,7 @@ import asyncio
 from contextvars import Context
 from dataclasses import dataclass, field
 import logging
+from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 
 from ..agent_runtime.async_utils import await_settled
 
@@ -61,19 +62,24 @@ class ConnectionOwner:
     async def _own(self):
         from .connections import open_connection
         from .discovery import read_catalog
+        phase = 'connect'
         try:
             async with asyncio.timeout(self.settings.connect_timeout_seconds) as deadline:
                 async with open_connection(self.settings, self.network, environment=self.environment) as client:
+                    phase = 'catalog'
                     catalog = await read_catalog(self.server_id, self.settings, client.session)
                     deadline.reschedule(None)
                     self.ready.set_result(MCPLease(client, catalog, self.identity))
+                    phase = 'active'
                     await self.stop.wait()
+                    phase = 'close'
         except BaseException as error:
             self.failure = error
             expected_cancel = self.stopping and all(isinstance(e, asyncio.CancelledError)
                                                    for e in exception_leaves(error))
             if not expected_cancel:
-                logger.error('mcp_owner_failed server=%s error_type=%s', self.server_id, type(error).__name__)
+                safe_log(logger.error, 'mcp_owner_failed server=%s error_type=%s diagnostic=%s', self.server_id, type(error).__name__,
+                    diagnostic_text(error=error,phase=phase,server=self.server_id))
             if not self.ready.done():
                 self.startup_failed = True
                 code = 'mcp_connect_timeout' if isinstance(error, TimeoutError) else 'mcp_connect_failed'

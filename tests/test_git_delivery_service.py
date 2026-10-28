@@ -38,7 +38,7 @@ def test_formal_delivery_branch_merge_and_discard_keep_review(tmp_path,monkeypat
     asyncio.run(scenario())
 
 
-def test_required_save_failure_reconciles_merge_without_replaying(tmp_path,monkeypatch):
+def test_required_save_failure_reconciles_merge_without_replaying(tmp_path,monkeypatch,caplog):
     from naiyue_test_agent.storage.git_deliveries import GitDeliveries
     from naiyue_test_agent.contracts.git_delivery import GitDeliveryError
     root=repository(tmp_path)
@@ -53,6 +53,8 @@ def test_required_save_failure_reconciles_merge_without_replaying(tmp_path,monke
                 command=dict(operation_id='d'*32,action='merge')
                 with pytest.raises(GitDeliveryError,match='git_delivery_unconfirmed'):
                     await host.sessions.deliver(sid,'c'*32,command)
+                assert 'complete_save' in caplog.text and 'd'*32 in caplog.text and 'c'*32 in caplog.text
+                assert 'fixture required save failed' not in caplog.text
                 head=git(root,'rev-parse','HEAD')
                 monkeypatch.setattr(GitDeliveries,'complete',normal)
                 recovered=await host.sessions.deliver(sid,'c'*32,command)

@@ -153,3 +153,162 @@ def test_registry_v4_migration_keeps_existing_records_and_adds_input_repository(
         assert row.state=='preparing' and new
         assert records.get('P','a'*32)==row
         with pytest.raises(GitInputError,match='git_input_not_found'):records.get('another','a'*32)
+
+
+@pytest.mark.parametrize('case', ['readonly', 'occupied', 'metadata_denied', 'outside', 'escaped_name'])
+def test_cleanup_diagnostics_keep_original_failure_and_hide_private_paths(tmp_path, monkeypatch, caplog, case):
+    import errno
+    import os
+    from pathlib import Path
+    import stat
+    from types import SimpleNamespace
+
+    root = repository(tmp_path)
+    settings = AppSettings.model_validate({'storage': {'data_dir': str(tmp_path/'data')}})
+    failure = PermissionError(errno.EACCES, 'PRIVATE_EXCEPTION_BODY', str(tmp_path/'PRIVATE_FILENAME'))
+    failure.winerror = 32 if case in ('occupied', 'metadata_denied') else 5
+
+    async def scenario():
+        async with open_service_application('missing-model', tools=(), system_prompt='',
+                response_format=None, settings=settings) as app:
+            project = await app.projects.add_local(root, trusted=True, operation_id='P')
+            inputs = app.environments._inputs
+            ready = await app.environments.prepare_input(project.project_id, input_id='a'*32)
+            directory = inputs.directory(project.project_id, ready.input_id)
+            name = 'probe\nFORGED.pack' if case == 'escaped_name' else 'probe.pack'
+            target = directory/'objects.git'/'objects'/'pack'/'probe.pack'
+            target.parent.mkdir(exist_ok=True)
+            target.write_bytes(b'owned input fixture')
+            callback_path = tmp_path/'PRIVATE_OUTSIDE' if case == 'outside' else target.with_name(name)
+            original_stat = Path.lstat
+            attempts = []
+
+            def inspect(path, *args, **kwargs):
+                assert path != tmp_path/'PRIVATE_OUTSIDE', 'Diagnostic must not inspect paths outside the input'
+                info = original_stat(target if path == callback_path else path, *args, **kwargs)
+                if path != callback_path:
+                    return info
+                if case == 'metadata_denied':
+                    error = PermissionError(errno.EACCES, 'PRIVATE_STAT_BODY', str(target))
+                    error.winerror = 5
+                    raise error
+                return SimpleNamespace(st_mode=info.st_mode, st_nlink=info.st_nlink,
+                    st_file_attributes=stat.FILE_ATTRIBUTE_READONLY if case == 'readonly' else 0)
+
+            def refuse(path, **kwargs):
+                attempts.append(path)
+                if kwargs.get('onexc') is not None:
+                    kwargs['onexc'](os.unlink, str(callback_path), failure)
+                raise failure
+
+            with monkeypatch.context() as patch:
+                patch.setattr(Path, 'lstat', inspect)
+                patch.setattr('naiyue_test_agent.application.environments.inputs.shutil.rmtree', refuse)
+                with pytest.raises(PermissionError) as caught:
+                    await app.environments.retire_input(project.project_id, ready.input_id)
+                assert caught.value is failure
+                assert await app.environments.input(project.project_id, ready.input_id) == ready
+                assert attempts == [directory]
+                assert target.read_bytes() == b'owned input fixture'
+                assert (root/'app.txt').read_text() == 'base\n'
+
+            messages = [record.getMessage() for record in caplog.records
+                if record.getMessage().startswith('git_input_directory_cleanup_failed ')]
+            assert len(messages) == 1
+            message = messages[0]
+            assert f'project_id={project.project_id} input_id={ready.input_id}' in message
+            assert f'operation=unlink error_type=PermissionError errno={errno.EACCES} winerror={failure.winerror}' in message
+            assert 'PRIVATE_' not in caplog.text and str(tmp_path) not in caplog.text
+            assert '\n' not in message
+            if case == 'outside':
+                assert 'relative_path="<outside_input>"' in message
+                assert 'readonly=None' in message
+            else:
+                escaped = 'probe\\nFORGED.pack' if case == 'escaped_name' else 'probe.pack'
+                assert f'relative_path="objects.git/objects/pack/{escaped}"' in message
+                if case == 'metadata_denied':
+                    assert 'readonly=None' in message
+                    assert f'inspect_errno={errno.EACCES} inspect_winerror=5' in message
+                else:
+                    assert f'readonly={case == "readonly"}' in message
+                    assert 'file_kind=regular reparse_point=False links=1' in message
+            assert await app.environments.retire_input(project.project_id, ready.input_id) is True
+            assert sum(record.getMessage().startswith('git_input_directory_cleanup_failed ')
+                for record in caplog.records) == 1
+    asyncio.run(scenario())
+
+
+def test_real_directory_cleanup_reports_unlink_error_without_changing_it(tmp_path, monkeypatch, caplog):
+    import errno
+    from functools import wraps
+    import os
+    from pathlib import Path
+
+    root = repository(tmp_path)
+    settings = AppSettings.model_validate({'storage': {'data_dir': str(tmp_path/'data')}})
+    failure = PermissionError(errno.EACCES, 'PRIVATE_EXCEPTION_BODY')
+    failure.winerror = 32
+    unlink = os.unlink
+
+    @wraps(unlink)
+    def occupied(path, *args, **kwargs):
+        if Path(path).name == 'probe.bin':
+            raise failure
+        return unlink(path, *args, **kwargs)
+
+    async def scenario():
+        async with open_service_application('missing-model', tools=(), system_prompt='',
+                response_format=None, settings=settings) as app:
+            project = await app.projects.add_local(root, trusted=True, operation_id='P')
+            inputs = app.environments._inputs
+            ready, _ = inputs.records().reserve(project.project_id, project.revision, 'a'*32,
+                (), settings.sandbox.git)
+            directory = inputs.directory(project.project_id, ready.input_id)
+            directory.mkdir(parents=True)
+            target = directory/'probe.bin'
+            target.write_bytes(b'kept on failure')
+            with monkeypatch.context() as patch:
+                patch.setattr(os, 'unlink', occupied)
+                with pytest.raises(PermissionError) as caught:
+                    await app.environments.retire_input(project.project_id, ready.input_id)
+                assert caught.value is failure
+                assert await app.environments.input(project.project_id, ready.input_id) == ready
+                assert target.read_bytes() == b'kept on failure'
+            messages = [record.getMessage() for record in caplog.records
+                if record.getMessage().startswith('git_input_directory_cleanup_failed ')]
+            assert len(messages) == 1
+            assert 'operation=unlink error_type=PermissionError' in messages[0]
+            assert 'winerror=32 relative_path="probe.bin"' in messages[0]
+            assert 'file_kind=regular' in messages[0]
+            assert str(tmp_path) not in caplog.text and 'PRIVATE_' not in caplog.text
+            assert await app.environments.retire_input(project.project_id, ready.input_id) is True
+    asyncio.run(scenario())
+
+
+def test_input_cleanup_log_failure_preserves_original_error(tmp_path, monkeypatch, caplog):
+    import errno
+    from types import SimpleNamespace
+    from naiyue_test_agent.application.environments import inputs as module
+
+    service = module.InputService(SimpleNamespace(projects=SimpleNamespace(data_dir=tmp_path)), None)
+    directory = service.directory('project', 'a'*32)
+    directory.mkdir(parents=True)
+    original = PermissionError(errno.EACCES, 'PRIVATE_BODY')
+    attempts = []
+
+    def refuse(path, **kwargs):
+        attempts.append(path)
+        raise original
+
+    def log_failure(*args, **kwargs):
+        raise RuntimeError('PRIVATE_LOG_BODY')
+
+    monkeypatch.setattr(module.shutil, 'rmtree', refuse)
+    monkeypatch.setattr(module.logger, 'error', log_failure)
+    with pytest.raises(PermissionError) as caught:
+        service._remove_directory('project', 'a'*32)
+    assert caught.value is original
+    assert attempts == [directory]
+    assert directory.is_dir()
+    assert 'diagnostic_log_failed' in caplog.text
+    assert 'PRIVATE_' not in caplog.text

@@ -1,8 +1,12 @@
 """One Docker environment's immutable identity, policy and envd channel."""
 import json
+import logging
+from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 from uuid import uuid4
 from naiyue_test_agent.contracts.sandbox import SandboxError,PROTOCOL_VERSION,SANDBOX_ROOT,STATE_ROOT
 from naiyue_test_agent.envd.protocol import encode
+
+logger=logging.getLogger(__name__)
 
 TMPFS='rw,nosuid,nodev,size=67108864,uid=1000,gid=1000,mode=1777'
 
@@ -130,42 +134,51 @@ class DockerEnvironment:
         return row
 
     def request(self,row,operation,params,*,mutates=False):
-        self.validate(row)
         identity=uuid4().hex
-        request={'protocol':PROTOCOL_VERSION,'request_id':identity,'environment':row.environment.public(),
-                 'session_id':row.session_id,'operation':operation,'params':params}
-        raw=self.cli.run(['container','exec','-i',row.container_id,'python','-I','-m',
-            'naiyue_test_agent.envd','request','--max-bytes',str(row.settings['max_message_bytes'])],
-            input_bytes=encode(request,row.settings['max_message_bytes']),mutates=mutates)
-        try:response=json.loads(raw)
-        except (ValueError,UnicodeError) as error:
-            raise SandboxError('env_operation_unknown' if mutates else 'env_protocol_mismatch') from error
-        if (not isinstance(response,dict) or response.get('protocol')!=PROTOCOL_VERSION
-                or response.get('request_id')!=identity or response.get('environment')!=row.environment.public()
-                or response.get('session_id')!=row.session_id):
-            raise SandboxError('env_operation_unknown' if mutates else 'env_protocol_mismatch')
-        bad='env_operation_unknown' if mutates else 'env_protocol_mismatch'
-        if type(response.get('ok')) is not bool or response['ok'] and 'result' not in response:
-            raise SandboxError(bad)
-        if response.get('ok') is not True:
-            error=response.get('error',{})
-            from naiyue_test_agent.contracts.git_inputs import GIT_INPUT_CODES,GitInputError
-            from naiyue_test_agent.contracts.git_results import GIT_RESULT_CODES
-            if (isinstance(error,dict) and isinstance(error.get('code'),str)
-                    and isinstance(error.get('message'),str) and error['code'] in GIT_INPUT_CODES|GIT_RESULT_CODES):
-                raise GitInputError(error['code'])
-            allowed={'tool_error','env_binding_mismatch','env_message_too_large','env_operation_unsupported',
-                     'env_resource_outside','env_resource_unavailable','env_operation_unknown','env_protocol_mismatch',
-                     'env_operation_not_found','env_operation_conflict','env_journal_full','env_operation_capacity',
-                     'env_invalid_operation_id','env_stop_unconfirmed','env_stopped'}
-            if (not isinstance(error,dict) or not isinstance(error.get('code'),str) or error.get('code') not in allowed
-                    or not isinstance(error.get('message'),str)):
+        phase='validate'
+        try:
+            self.validate(row)
+            request={'protocol':PROTOCOL_VERSION,'request_id':identity,'environment':row.environment.public(),
+                     'session_id':row.session_id,'operation':operation,'params':params}
+            phase='rpc'
+            raw=self.cli.run(['container','exec','-i',row.container_id,'python','-I','-m',
+                'naiyue_test_agent.envd','request','--max-bytes',str(row.settings['max_message_bytes'])],
+                input_bytes=encode(request,row.settings['max_message_bytes']),mutates=mutates)
+            phase='decode'
+            try:response=json.loads(raw)
+            except (ValueError,UnicodeError) as error:
+                raise SandboxError('env_operation_unknown' if mutates else 'env_protocol_mismatch') from error
+            if (not isinstance(response,dict) or response.get('protocol')!=PROTOCOL_VERSION
+                    or response.get('request_id')!=identity or response.get('environment')!=row.environment.public()
+                    or response.get('session_id')!=row.session_id):
+                raise SandboxError('env_operation_unknown' if mutates else 'env_protocol_mismatch')
+            bad='env_operation_unknown' if mutates else 'env_protocol_mismatch'
+            if type(response.get('ok')) is not bool or response['ok'] and 'result' not in response:
                 raise SandboxError(bad)
-            if error.get('code')=='tool_error':
-                from langchain_core.tools import ToolException
-                raise ToolException(str(error.get('message','Sandbox file operation failed')))
-            raise SandboxError(str(error.get('code','env_protocol_mismatch')))
-        return response['result']
+            if response.get('ok') is not True:
+                error=response.get('error',{})
+                from naiyue_test_agent.contracts.git_inputs import GIT_INPUT_CODES,GitInputError
+                from naiyue_test_agent.contracts.git_results import GIT_RESULT_CODES
+                if (isinstance(error,dict) and isinstance(error.get('code'),str)
+                        and isinstance(error.get('message'),str) and error['code'] in GIT_INPUT_CODES|GIT_RESULT_CODES):
+                    raise GitInputError(error['code'])
+                allowed={'tool_error','env_binding_mismatch','env_message_too_large','env_operation_unsupported',
+                         'env_resource_outside','env_resource_unavailable','env_operation_unknown','env_protocol_mismatch',
+                         'env_operation_not_found','env_operation_conflict','env_journal_full','env_operation_capacity',
+                         'env_invalid_operation_id','env_stop_unconfirmed','env_stopped'}
+                if (not isinstance(error,dict) or not isinstance(error.get('code'),str) or error.get('code') not in allowed
+                        or not isinstance(error.get('message'),str)):
+                    raise SandboxError(bad)
+                if error.get('code')=='tool_error':
+                    from langchain_core.tools import ToolException
+                    raise ToolException(str(error.get('message','Sandbox file operation failed')))
+                raise SandboxError(str(error.get('code','env_protocol_mismatch')))
+            return response['result']
+        except Exception as error:
+            safe_log(logger.warning, 'sandbox_rpc_failed diagnostic=%s',diagnostic_text(error=error,phase=phase,
+                binding_id=row.binding_id,session_id=row.session_id,request_id=identity,operation=operation,
+                operation_id=params.get('operation_id'),code=getattr(error,'code',None),mutates=mutates))
+            raise
 
     def handshake(self,row):
         result=self.request(row,'hello',{})

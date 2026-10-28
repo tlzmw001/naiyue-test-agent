@@ -4,6 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 import logging
+from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 import os
 import threading
 from urllib.parse import urlsplit
@@ -75,7 +76,7 @@ async def _stdio_transport(settings, environment=None):
                     tail.extend(chunk)
                     del tail[:-4096]
         except OSError as error:
-            read_errors.append(type(error).__name__)
+            read_errors.append(diagnostic_text(error=error,phase='stderr_read'))
 
     # A real OS pipe works with SDK subprocesses on both POSIX and Windows;
     # a dedicated draining thread avoids platform-specific asyncio pipe APIs.
@@ -90,7 +91,9 @@ async def _stdio_transport(settings, environment=None):
         logger.debug('mcp_stdio_stderr bytes=%d retained_bytes=%d', count, len(tail))
         tail.clear()
         if thread.is_alive() or read_errors:
-            logger.error('mcp_stdio_diagnostic_drain_failed')
+            safe_log(logger.error, 'mcp_stdio_diagnostic_drain_failed diagnostic=%s read_error=%s',
+                diagnostic_text(phase='stderr_drain',thread_alive=thread.is_alive(),read_bytes=count),
+                read_errors[0] if read_errors else None)
             raise ValueError('mcp_stdio_diagnostic_drain_failed')
 
 

@@ -1,6 +1,7 @@
 """Capture once, resume immutable downloads, validate, then publish a fixed ref."""
 import base64
 import logging
+from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 import os
 import time
 
@@ -107,6 +108,8 @@ class ResultService:
                 row=self.operations.submit(binding,ident,'git_result',payload,metadata)
             if row['fingerprint']!=operation_fingerprint('git_result',payload):raise SandboxError('env_operation_conflict')
             if row['metadata'].get('delivery',{}).get('state')=='ready':return self._view(row)
+            phase='capture_status'
+            facts=dict(binding_id=binding,result_id=ident,operation_id=ident,project_id=environment.project_id)
             try:
                 if row['state'] not in ('completed','failed','stopped'):
                     row=self.operations.refresh(binding,ident)
@@ -121,8 +124,11 @@ class ResultService:
                 receipt=result_receipt(self.operations.value(row))
                 if receipt['result_id']!=ident:raise GitInputError('git_result_binding_mismatch')
                 directory=self.directory(environment.project_id,ident)
+                phase='download'
                 path=self._download(environment,receipt,directory)
+                phase='verifying_save'
                 row=self._save(row,state='verifying',receipt=receipt,error_code=None)
+                phase='verify'
                 importer=ResultImporter(directory,GitInputSettings.model_validate(record.settings))
                 expected=dict(binding_id=binding,project_id=environment.project_id,session_id=environment.session_id,
                     input_id=record.input_id,original_head=record.snapshot.original_head,input_snapshot=record.snapshot.input_snapshot)
@@ -131,16 +137,21 @@ class ResultService:
                 project=self.inputs._project(environment.project_id)
                 if project.revision!=row['metadata']['delivery']['project_revision']:
                     raise GitInputError('git_result_project_changed')
+                phase='publishing_save'
                 row=self._save(row,state='publishing')
+                phase='publish'
                 location=importer.publish(receipt,project.source)
+                phase='ready_save'
                 row=self._save(row,state='ready',import_location=location,**verified)
                 return self._view(row)
             except (GitInputError,SandboxError) as error:
-                logger.warning('git_result_delivery_unconfirmed code=%s',error.code)
+                safe_log(logger.warning, 'git_result_delivery_unconfirmed code=%s diagnostic=%s',error.code,
+                    diagnostic_text(error=error,phase=phase,**facts))
                 self._save(row,error_code=error.code)
                 raise
             except OSError as error:
-                logger.error('git_result_delivery_io_failed error_type=%s',type(error).__name__)
+                safe_log(logger.error, 'git_result_delivery_io_failed error_type=%s diagnostic=%s',type(error).__name__,
+                    diagnostic_text(error=error,phase=phase,**facts))
                 raise GitInputError('git_result_io_failed') from error
 
     def diff(self,binding,ident,path):

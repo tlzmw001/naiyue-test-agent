@@ -88,7 +88,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.new_workspace and (args.session_db is not None or args.project):
         parser.error('--new-workspace conflicts with --session-db/--project')
-    logging.basicConfig(level=logging.WARNING, format='%(levelname)s %(name)s %(message)s')
+    from naiyue_test_agent.diagnostics import SafeDiagnosticFormatter
+    handler = logging.StreamHandler()
+    handler.setFormatter(SafeDiagnosticFormatter())
+    logging.basicConfig(level=logging.WARNING, handlers=[handler])
     try:
         frontend = args.frontend_dist if args.frontend_dist is not None else frontend_directory()
         if not (frontend / 'index.html').is_file():

@@ -1,6 +1,7 @@
 """Envd retains process custody after the requesting client disconnects."""
 import base64
 import logging
+from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 from pathlib import Path
 from threading import Event,RLock,Thread
 from naiyue_test_agent.contracts.sandbox import SandboxError,PROTOCOL_VERSION,PROCESS_CLEANUP_ERROR_CODE
@@ -77,6 +78,8 @@ class EnvironmentOperations:
     def _execute(self,ident,kind,payload,control,done):
         from langchain_core.tools import ToolException
         from naiyue_test_agent.tools.write import WriteOutcomeUnknown
+        phase='execute'
+        facts=dict(binding_id=self.environment.binding_id,session_id=self.session_id,operation_id=ident,kind=kind)
         try:
             if kind=='git_input':
                 result=self.inputs.install(payload,control)
@@ -98,19 +101,26 @@ class EnvironmentOperations:
                     lambda:self.journal.finish(ident,'running'))
                 state='stopped' if result['termination']=='user_stop' else 'completed'
                 result['stop_reason']=control.stop_reason
+            phase='terminal_save'
             self.journal.finish(ident,state,dict(ok=True,value=result))
             if kind=='git_input':
                 with self._lock:self._input_pending=False
         except Exception as error:
-            logger.error('sandbox_operation_failed kind=%s error_type=%s',kind,type(error).__name__)
+            safe_log(logger.error, 'sandbox_operation_failed kind=%s error_type=%s diagnostic=%s',kind,type(error).__name__,
+                diagnostic_text(error=error,phase=phase,**facts))
             known=(isinstance(error,ToolException) and not isinstance(error,WriteOutcomeUnknown)
                 or kind in ('git_input','git_result') and isinstance(error,GitInputError))
-            self.journal.finish(ident,'failed' if known else 'unknown',dict(ok=False,error={
-                'code':error.code if kind in ('git_input','git_result') and isinstance(error,GitInputError) else
-                    PROCESS_CLEANUP_ERROR_CODE if isinstance(error,ProcessCleanupError) else
-                    'tool_error' if known else 'env_operation_unknown',
-                'message':'Process cleanup could not be confirmed.' if isinstance(error,ProcessCleanupError) else
-                    str(error)[:4096] if known else type(error).__name__}))
+            try:
+                self.journal.finish(ident,'failed' if known else 'unknown',dict(ok=False,error={
+                    'code':error.code if kind in ('git_input','git_result') and isinstance(error,GitInputError) else
+                        PROCESS_CLEANUP_ERROR_CODE if isinstance(error,ProcessCleanupError) else
+                        'tool_error' if known else 'env_operation_unknown',
+                    'message':'Process cleanup could not be confirmed.' if isinstance(error,ProcessCleanupError) else
+                        str(error)[:4096] if known else type(error).__name__}))
+            except Exception as secondary:
+                safe_log(logger.error, 'sandbox_operation_failure_save_unconfirmed diagnostic=%s',
+                    diagnostic_text(error=secondary,phase='failure_save',cause_type=type(error).__name__,**facts))
+                raise
         finally:
             with self._lock:
                 self._active.pop(ident,None)

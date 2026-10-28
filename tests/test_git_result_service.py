@@ -67,7 +67,7 @@ def test_delivery_retry_reads_original_capture_without_resubmitting(tmp_path,mon
     asyncio.run(scenario())
 
 
-def test_result_publication_save_failure_reconciles_same_ref(tmp_path,monkeypatch):
+def test_result_publication_save_failure_reconciles_same_ref(tmp_path,monkeypatch,caplog):
     from naiyue_test_agent.storage.sandbox_operations import SandboxOperations
     root=repository(tmp_path)
     async def scenario():
@@ -84,6 +84,8 @@ def test_result_publication_save_failure_reconciles_same_ref(tmp_path,monkeypatc
                 monkeypatch.setattr(SandboxOperations,'save',save)
                 with pytest.raises(GitInputError,match='git_result_io_failed'):
                     await host.sessions.capture_result(sid,result_id='c'*32,include_untracked=[])
+                assert 'ready_save' in caplog.text and 'c'*32 in caplog.text and binding in caplog.text
+                assert 'fixture disk error' not in caplog.text
                 imported=git(root,'rev-parse','refs/naiyue/tasks/'+'c'*32)
                 monkeypatch.setattr(SandboxOperations,'save',normal)
                 result=await host.sessions.capture_result(sid,result_id='c'*32,include_untracked=[])

@@ -2,6 +2,7 @@
 import asyncio
 from contextvars import Context
 import logging
+from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 import time
 
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking,await_settled
@@ -33,7 +34,8 @@ class EnvironmentLifecycle:
             self._wake.clear()
             if self._closing:break
             try:await self.api.sweep_idle()
-            except Exception as error:logger.error('sandbox_idle_sweep_failed error_type=%s',type(error).__name__)
+            except Exception as error:safe_log(logger.error, 'sandbox_idle_sweep_failed error_type=%s diagnostic=%s',type(error).__name__,
+                diagnostic_text(error=error,phase='idle_sweep'))
 
     def expired(self,row,now):
         seconds=self.service.configuration.lifecycle.idle_stop_seconds
@@ -58,9 +60,11 @@ class EnvironmentLifecycle:
                             self.service._perform_action(row.binding_id,'stop')
                     await run_blocking(stop_if_idle)
             except SandboxError as error:
-                if error.code!='env_busy':logger.warning('sandbox_idle_stop_unconfirmed code=%s',error.code)
+                if error.code!='env_busy':safe_log(logger.warning, 'sandbox_idle_stop_unconfirmed code=%s diagnostic=%s',error.code,
+                    diagnostic_text(error=error,binding_id=row.binding_id,session_id=row.session_id,phase='idle_stop'))
             except ProjectError as error:
-                logger.warning('sandbox_idle_project_unavailable code=%s',error.code)
+                safe_log(logger.warning, 'sandbox_idle_project_unavailable code=%s diagnostic=%s',error.code,
+                    diagnostic_text(error=error,binding_id=row.binding_id,session_id=row.session_id,phase='idle_project'))
 
     async def aclose(self):
         self._closing=True;self._wake.set()
@@ -76,7 +80,8 @@ class EnvironmentLifecycle:
                     with self.service.activity.manage(row.binding_id):
                         self.service._perform_action(row.binding_id,'stop',shutdown=True)
                 except Exception as error:
-                    logger.error('sandbox_shutdown_container_unconfirmed error_type=%s',type(error).__name__)
+                    safe_log(logger.error, 'sandbox_shutdown_container_unconfirmed error_type=%s diagnostic=%s',type(error).__name__,
+                        diagnostic_text(error=error,binding_id=row.binding_id,session_id=row.session_id,phase='shutdown_stop'))
                     if first is None:first=error
             if first is not None:raise first
         await run_blocking(stop_all)

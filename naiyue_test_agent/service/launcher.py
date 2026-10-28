@@ -1,6 +1,7 @@
 """Discover first; bounded concurrent startup leaves only one OS-lock owner."""
 import asyncio
 import logging
+from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 import os
 import subprocess
 import sys
@@ -19,7 +20,8 @@ def _reap(child):
     try:
         child.wait()
     except OSError as error:
-        logger.error('service_child_reap_failed error_type=%s', type(error).__name__)
+        safe_log(logger.error, 'service_child_reap_failed error_type=%s diagnostic=%s', type(error).__name__,
+            diagnostic_text(error=error,phase='reap',pid=child.pid))
 
 
 def _spawn(options):
@@ -61,7 +63,8 @@ async def ensure_service(options):
             try:
                 child = _spawn(options)
             except OSError as error:
-                logger.error('service_spawn_failed error_type=%s', type(error).__name__)
+                safe_log(logger.error, 'service_spawn_failed error_type=%s diagnostic=%s', type(error).__name__,
+                    diagnostic_text(error=error,phase='spawn'))
                 raise ServiceError('service_start_failed') from None
         elif child.poll() is not None:
             logger.error('service_start_failed exit_code=%s', child.returncode)

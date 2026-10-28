@@ -4,7 +4,9 @@ import logging
 import os
 import shlex
 import shutil
+from time import monotonic
 from pathlib import Path
+from naiyue_test_agent.diagnostics import safe_log, diagnostic_text, stderr_facts, command_kind
 from naiyue_test_agent.contracts.sandbox import SandboxError
 from naiyue_test_agent.tools.processes import HostProcessRunner,ProcessRequest,run_async_sync
 
@@ -22,11 +24,13 @@ class DockerCLI:
         executable=shutil.which(ssh.executable if ssh is not None else self.settings.docker_executable)
         if executable is None:raise SandboxError('env_ssh_unavailable' if ssh is not None else 'env_docker_unavailable')
         output=bytearray()
+        errors=bytearray()
         error_size=0
         async def consume(stream,chunk):
             nonlocal error_size
             if stream=='stderr':
                 error_size+=len(chunk)
+                errors.extend(chunk[:max(0,8192-len(errors))])
                 if error_size>65536:raise SandboxError('env_message_too_large')
             else:
                 if len(output)+len(chunk)>self.settings.max_message_bytes:
@@ -50,20 +54,30 @@ class DockerCLI:
                 source.write(input_bytes);source.seek(0)
             request=ProcessRequest(argv,self.cwd,environment,self.settings.rpc_timeout_seconds,
                 stdin_fd=source.fileno() if source is not None else None)
+            started=monotonic()
+            facts=dict(command=command_kind(args,'docker'),transport='ssh' if ssh is not None else 'local',
+                timeout_seconds=request.timeout_seconds,mutates=mutates)
             try:
                 result=run_async_sync(lambda:HostProcessRunner().run(request,consume,None))
             except Exception as error:
-                logger.warning('docker_request_failed error_type=%s',type(error).__name__)
+                safe_log(logger.warning, 'docker_request_failed error_type=%s diagnostic=%s',type(error).__name__,
+                    diagnostic_text(error=error,phase='execute',duration_ms=int((monotonic()-started)*1000),
+                        **facts,**stderr_facts(errors,error_size)))
                 if isinstance(error,SandboxError) and not mutates:raise
                 raise SandboxError('env_operation_unknown' if mutates else 'env_unreachable') from error
         if result.termination!='exited' or result.returncode!=0:
-            logger.warning('docker_request_failed termination=%s exit_code=%s',result.termination,result.returncode)
+            safe_log(logger.warning, 'docker_request_failed termination=%s exit_code=%s diagnostic=%s',result.termination,result.returncode,
+                diagnostic_text(phase='execute',duration_ms=int((monotonic()-started)*1000),
+                    **facts,**stderr_facts(errors,error_size)))
             raise SandboxError('env_operation_unknown' if mutates else 'env_unreachable')
         return bytes(output)
 
     def json(self,args):
         try:return json.loads(self.run(args))
-        except (ValueError,UnicodeError) as error:raise SandboxError('env_protocol_mismatch') from error
+        except (ValueError,UnicodeError) as error:
+            safe_log(logger.warning, 'docker_response_invalid diagnostic=%s',diagnostic_text(error=error,
+                phase='json_decode',command=command_kind(args,'docker')))
+            raise SandboxError('env_protocol_mismatch') from error
 
     def daemon(self,expected=None):
         if self.settings.ssh is None:

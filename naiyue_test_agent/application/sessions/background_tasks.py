@@ -7,6 +7,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import logging
+from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 import json
 import hashlib
 from pathlib import Path
@@ -246,6 +247,7 @@ class BackgroundProcessManager:
 
     async def _drive(self, item, runner):
         outcome = None
+        phase = 'execute_or_capture'
         async def consume(_stream, chunk):
             reason = await asyncio.to_thread(item.capture.record, chunk)
             if reason is not None:
@@ -264,6 +266,7 @@ class BackgroundProcessManager:
                 item.exit_code = outcome.returncode
                 item.output_complete = outcome.output_complete
                 item.termination = item.stop_reason if outcome.termination == 'user_stop' else outcome.termination
+            phase = 'archive_finish'
             item.archived = await item.capture.finish_owned(not outcome.output_complete)
             with self._lock:
                 item.cleanup_confirmed = (outcome.process_reaped and outcome.pipes_closed
@@ -271,7 +274,9 @@ class BackgroundProcessManager:
                 item.status = 'finished' if item.cleanup_confirmed else 'lost'
         except BaseException as error:
             item.error = error
-            logger.error('background_process_failed task_id=%s error_type=%s', item.task_id, type(error).__name__)
+            safe_log(logger.error, 'background_process_failed task_id=%s error_type=%s diagnostic=%s', item.task_id, type(error).__name__,
+                diagnostic_text(error=error,phase=phase,session_id=item.session_id,run_id=item.run_id,
+                    tool_call_id=item.call_id,task_id=item.task_id))
             uncertain = isinstance(error, (ProcessCleanupError, asyncio.CancelledError))
             if isinstance(error, ProcessCleanupError) and error.consumer_task is not None:
                 item.capture.defer_finish(error.consumer_task)

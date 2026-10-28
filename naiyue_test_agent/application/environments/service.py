@@ -1,5 +1,6 @@
 """Thread-owned Docker lifecycle; no database transaction crosses provider IO."""
 import logging
+from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 import time
 from threading import RLock
 from uuid import uuid4
@@ -84,13 +85,18 @@ class EnvironmentService:
         with self._lock(binding_id):
             records.reserve(row,limits=self.configuration.lifecycle)
             engine=DockerEnvironment(cli)
+            phase='create'
             try:
                 row=engine.create(row,records.save)
+                phase='handshake'
                 engine.handshake(row)
                 row=row.changed(lifecycle='running')
+                phase='ready_save'
                 records.save(row)
             except Exception as error:
-                logger.error('sandbox_creation_failed error_type=%s',type(error).__name__)
+                safe_log(logger.error, 'sandbox_creation_failed error_type=%s diagnostic=%s',type(error).__name__,
+                    diagnostic_text(error=error,phase=phase,binding_id=binding_id,project_id=project_id,
+                        session_id=session_id,code=getattr(error,'code',None)))
                 saved=records.get(binding_id)
                 records.save(saved.changed(lifecycle='unknown',error_code=getattr(error,'code','env_operation_unknown')))
                 raise
@@ -140,12 +146,17 @@ class EnvironmentService:
                 if row.lifecycle not in ('running','stopped'):raise SandboxError('env_operation_unknown')
                 row=self.records().reserve_start(binding_id,limits=self.configuration.lifecycle)
             engine=self._engine(row)
+            phase='action'
             try:
                 row=engine.action(row,action)
                 if action!='recover':row=row.changed(last_used_at=time.time())
+                phase='state_save'
                 self.records().save(row)
+                phase='state_read'
                 return self.get(binding_id)
             except Exception as error:
-                logger.error('sandbox_lifecycle_failed action=%s error_type=%s',action,type(error).__name__)
+                safe_log(logger.error, 'sandbox_lifecycle_failed action=%s error_type=%s diagnostic=%s',action,type(error).__name__,
+                    diagnostic_text(error=error,phase=phase,binding_id=binding_id,session_id=row.session_id,
+                        project_id=row.project_id,code=getattr(error,'code',None)))
                 self.records().save(row.changed(lifecycle='unknown',error_code=getattr(error,'code','env_operation_unknown')))
                 raise

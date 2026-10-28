@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import logging
+from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 import re
 
 from ..tools.json_schema import JsonInputContract
@@ -106,11 +107,15 @@ async def discover_server(server_id, settings, network=None):
     if not settings.enabled:
         raise MCPDiscoveryError('server_disabled')
     from .connections import open_connection
+    phase = 'connect'
     try:
         # Same task owns deadline, transport, SDK session and teardown.
         async with asyncio.timeout(settings.connect_timeout_seconds):
             async with open_connection(settings, network or NetworkSettings()) as client:
-                return await read_catalog(server_id, settings, client.session)
+                phase = 'catalog'
+                catalog = await read_catalog(server_id, settings, client.session)
+                phase = 'close'
+                return catalog
     except MCPDiscoveryError:
         logger.error('mcp_catalog_rejected server=%s', server_id)
         raise
@@ -128,6 +133,7 @@ async def discover_server(server_id, settings, network=None):
         if leaves and isinstance(leaves[0], MCPDiscoveryError) and all(item is leaves[0] for item in leaves):
             logger.error('mcp_catalog_rejected server=%s', server_id)
             raise leaves[0] from None
-        logger.error('mcp_connection_failed error_type=%s', type(error).__name__)
+        safe_log(logger.error, 'mcp_connection_failed error_type=%s diagnostic=%s', type(error).__name__,
+            diagnostic_text(error=error,server=server_id,phase=phase))
         code = 'discovery_timeout' if isinstance(error, TimeoutError) else 'connection_or_discovery_failed'
         raise MCPDiscoveryError(code) from None

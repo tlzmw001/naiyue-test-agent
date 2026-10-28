@@ -4,6 +4,7 @@ from contextvars import Context
 import asyncio
 import base64
 import logging
+from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 from threading import Condition,RLock
 import time
 from langchain_core.tools import ToolException
@@ -120,15 +121,20 @@ class SandboxOperationService:
             records=self.records();row=records.get(binding,ident)
             previously_finished=self.finished(row)
             with self._archive_activity(row['project_id']):
+                phase='status'
+                facts=dict(binding_id=binding,operation_id=ident,project_id=row['project_id'])
                 try:
                     remote=self._rpc(binding,'operation_status',dict(operation_id=ident))
                     row=self._merge(row,remote)
                     if row['kind'] in ('shell','argv'):
                         archive=self._archive(row)
+                        phase='archive_prepare'
                         metadata=archive.prepare(row['metadata'])
+                        phase='metadata_save'
                         if metadata!=row['metadata']:row=records.save(binding,ident,dict(metadata=metadata))
                         for _ in range(8):
                             if metadata['offset']>=row['observed_bytes']:break
+                            phase='output_fetch'
                             frame=self._rpc(binding,'operation_output',dict(operation_id=ident,offset=metadata['offset'],limit=65536))
                             if not isinstance(frame,dict) or set(frame)!={'offset','next_offset','observed_bytes','first_offset','gap','bytes_base64'}:
                                 raise SandboxError('env_protocol_mismatch')
@@ -141,19 +147,25 @@ class SandboxOperationService:
                                 raise SandboxError('env_protocol_mismatch')
                             if frame['next_offset']==metadata['offset'] and row['observed_bytes']>metadata['offset']:
                                 raise SandboxError('env_protocol_mismatch')
+                            phase='archive_append'
                             metadata=archive.append(metadata,frame)
+                            phase='metadata_save'
                             row=records.save(binding,ident,dict(metadata=metadata,observed_bytes=frame['observed_bytes']))
                     if self.finished(row) and not previously_finished:self.activity.touch(binding)
                     return row
                 except (SandboxError,ToolException,ProjectError) as error:
-                    logger.warning('sandbox_status_unavailable error_type=%s',type(error).__name__)
+                    safe_log(logger.warning, 'sandbox_status_unavailable error_type=%s diagnostic=%s',type(error).__name__,
+                        diagnostic_text(error=error,phase=phase,code=getattr(error,'code',None),**facts))
                     return records.save(binding,ident,dict(stale=True,error_code=getattr(error,'code','env_operation_unknown'),
                         state=row['state'] if row['state'] in TERMINAL else 'unknown'))
                 except OSError as error:
-                    logger.error('sandbox_archive_failed error_type=%s',type(error).__name__)
+                    safe_log(logger.error, 'sandbox_archive_failed error_type=%s diagnostic=%s',type(error).__name__,
+                        diagnostic_text(error=error,phase=phase,offset=row['metadata'].get('offset'),
+                            saved_bytes=row['metadata'].get('saved_bytes'),observed_bytes=row['observed_bytes'],**facts))
                     records.save(binding,ident,dict(state='unknown',stale=True,error_code='archive_error'))
                     try:self._rpc(binding,'operation_stop',dict(operation_id=ident),mutates=True)
-                    except Exception as stop_error:logger.error('sandbox_archive_stop_unconfirmed error_type=%s',type(stop_error).__name__)
+                    except Exception as stop_error:safe_log(logger.error, 'sandbox_archive_stop_unconfirmed error_type=%s diagnostic=%s',
+                        type(stop_error).__name__,diagnostic_text(error=stop_error,phase='stop',**facts))
                     raise ToolException('Sandbox archive failed; inspect the original operation before retrying.') from error
 
 
@@ -164,13 +176,15 @@ class SandboxOperationService:
                 remote=self._rpc(binding,'operation_stop',dict(operation_id=ident),mutates=True)
                 row=self._merge(row,remote)
             except (SandboxError,ToolException,ProjectError) as error:
-                logger.error('sandbox_stop_unconfirmed error_type=%s',type(error).__name__)
+                safe_log(logger.error, 'sandbox_stop_unconfirmed error_type=%s diagnostic=%s',type(error).__name__,
+                    diagnostic_text(error=error,binding_id=binding,operation_id=ident,phase='stop',code=getattr(error,'code',None)))
                 row=self.records().save(binding,ident,dict(state='unknown',stale=True,error_code='env_stop_unconfirmed'))
                 try:
                     remote=self._rpc(binding,'operation_status',dict(operation_id=ident))
                     row=self._merge(row,remote)
                 except (SandboxError,ToolException,ProjectError) as query_error:
-                    logger.warning('sandbox_stop_status_unavailable error_type=%s',type(query_error).__name__)
+                    safe_log(logger.warning, 'sandbox_stop_status_unavailable error_type=%s diagnostic=%s',type(query_error).__name__,
+                        diagnostic_text(error=query_error,binding_id=binding,operation_id=ident,phase='stop_status'))
                 self.raise_process_failure(row)
                 self.records().save(binding,ident,dict(state='unknown',stale=True,error_code='env_stop_unconfirmed'))
                 raise SandboxError('env_stop_unconfirmed') from error
@@ -269,7 +283,8 @@ class SandboxOperationService:
                     else:
                         if self.finished(row) or row['stale'] or row['state']=='unknown':return
                     await asyncio.sleep(poll_milliseconds/1000)
-            except Exception as error:logger.error('sandbox_output_collection_failed error_type=%s',type(error).__name__)
+            except Exception as error:safe_log(logger.error, 'sandbox_output_collection_failed error_type=%s diagnostic=%s',type(error).__name__,
+                diagnostic_text(error=error,binding_id=binding,operation_id=ident,phase='refresh',collector_stopped=True))
         task=asyncio.create_task(collect(),context=Context())
         self._watchers[key]=task
 

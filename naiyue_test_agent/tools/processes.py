@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 import math
 import os
 import signal
@@ -227,7 +228,8 @@ class HostProcessRunner:
                 'process_reaped': transport is not None and transport.get_returncode() is not None,
                 'pipes_closed': protocol.pipes_closed, 'consumer_settled': settled,
                 'transport_closed': protocol.closed}
-            logger.error('process_cleanup_unconfirmed facts=%s error_type=%s', facts, type(error).__name__)
+            safe_log(logger.error, 'process_cleanup_unconfirmed facts=%s error_type=%s diagnostic=%s', facts, type(error).__name__,
+                diagnostic_text(error=error,phase='cleanup',pid=transport.get_pid() if transport is not None else None))
             raise ProcessCleanupError(facts=facts, consumer_task=consumer if not settled else None) from error
 
     @staticmethod
@@ -258,6 +260,8 @@ class HostProcessRunner:
                 if killer.get_returncode() is None:
                     await protocol.changed.wait()
             if killer.get_returncode() != 0 and transport.get_returncode() is None:
+                safe_log(logger.error, 'process_tree_termination_failed pid=%s taskkill_exit_code=%s',
+                    transport.get_pid(), killer.get_returncode())
                 raise OSError('Process tree termination failed')
         finally:
             if killer.get_returncode() is None:

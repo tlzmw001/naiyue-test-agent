@@ -2,13 +2,17 @@
 from dataclasses import replace
 import base64
 import hashlib
+import json
 import logging
 import os
+from pathlib import Path
 import shutil
+import stat
 from threading import RLock
 import time
 
 from naiyue_test_agent.contracts.git_inputs import GitInputError, input_id
+from naiyue_test_agent.diagnostics import safe_log
 from naiyue_test_agent.contracts.projects import LocalSource
 from naiyue_test_agent.execution.git_snapshot import SnapshotBuilder
 from naiyue_test_agent.execution.git_repository import GitRepository, make_bundle, bundle_digest
@@ -38,11 +42,52 @@ class InputService:
 
     def _remove_directory(self, project_id, ident):
         directory = self.directory(project_id, ident)
-        if not directory.exists() and not directory.is_symlink():
-            return
-        check_store_directory(directory.parent)
-        check_store_directory(directory)
-        shutil.rmtree(directory)
+        failed_path, operation = directory, 'inspect_directory'
+        callback_error = None
+
+        def failed(function, path, error):
+            nonlocal failed_path, operation, callback_error
+            # rmtree may report the same exception again while unwinding.
+            if error is not callback_error:
+                failed_path, operation, callback_error = Path(path), function.__name__, error
+            raise error
+
+        try:
+            if not directory.exists() and not directory.is_symlink():
+                return
+            operation = 'validate_parent'
+            check_store_directory(directory.parent)
+            operation = 'validate_directory'
+            check_store_directory(directory)
+            operation = 'rmtree'
+            shutil.rmtree(directory, onexc=failed)
+        except OSError as error:
+            try:
+                relative = failed_path.absolute().relative_to(directory.absolute())
+                inside = '..' not in relative.parts
+            except ValueError:
+                inside = False
+            path_label = relative.as_posix() if inside else '<outside_input>'
+            readonly = reparse = links = inspect_errno = inspect_winerror = None
+            kind = 'unknown'
+            if inside:
+                try:
+                    info = failed_path.lstat()
+                    attributes = getattr(info, 'st_file_attributes', None)
+                    readonly = bool(attributes & stat.FILE_ATTRIBUTE_READONLY) if attributes is not None else None
+                    reparse = bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT) if attributes is not None else None
+                    links = info.st_nlink
+                    kind = ('regular' if stat.S_ISREG(info.st_mode) else 'directory' if stat.S_ISDIR(info.st_mode)
+                        else 'symlink' if stat.S_ISLNK(info.st_mode) else 'other')
+                except OSError as inspection_error:
+                    inspect_errno, inspect_winerror = inspection_error.errno, getattr(inspection_error, 'winerror', None)
+            safe_log(logger.error, 'git_input_directory_cleanup_failed project_id=%s input_id=%s operation=%s '
+                'error_type=%s errno=%s winerror=%s relative_path=%s readonly=%s '
+                'file_kind=%s reparse_point=%s links=%s inspect_errno=%s inspect_winerror=%s',
+                project_id, ident, operation, type(error).__name__, error.errno, getattr(error, 'winerror', None),
+                json.dumps(path_label[:256], ensure_ascii=True), readonly, kind, reparse, links,
+                inspect_errno, inspect_winerror)
+            raise
 
     def retire(self, project_id, ident, sessions):
         input_id(ident)

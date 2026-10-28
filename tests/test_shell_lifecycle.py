@@ -97,9 +97,10 @@ def test_spawn_fault_becomes_specific_tool_exception_after_finalize(monkeypatch,
         monkeypatch.setattr(ShellAdapter, 'probe_version', lambda *_: '5.2.0')
         tool = create_session_bash_tool()
         async def fail(*args):
-            raise OSError('PRIVATE_OS_DETAIL')
+            raise PermissionError(13, 'PRIVATE_OS_DETAIL')
         monkeypatch.setattr(HostProcessRunner, 'run', fail)
         with pytest.raises(ToolException, match='could not start or capture'):
             await tool.tool.coroutine('printf ok', runtime_for(tmp_path))
         assert 'PRIVATE_OS_DETAIL' not in caplog.text and 'shell_process_failed' in caplog.text
+        assert '"errno":13' in caplog.text and 'run_id' in caplog.text
     asyncio.run(scenario())

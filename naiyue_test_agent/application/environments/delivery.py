@@ -1,5 +1,6 @@
 """Host delivery ownership and necessary saves, independent of envd mutations."""
 import logging
+from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 from naiyue_test_agent.contracts.git_delivery import DeliveryCommand,GitDeliveryError
 from naiyue_test_agent.contracts.git_inputs import GitInputError
 from naiyue_test_agent.contracts.git_results import result_receipt
@@ -62,29 +63,43 @@ class DeliveryService:
             capture=self.results._row(binding,ident);project_id=capture['project_id'];records=self.records()
             row,new=records.reserve(project_id,binding,ident,command,self.settings)
             if row['state'] in ('completed','acknowledged','failed'):return self.view(row)
+            phase='prepare'
+            facts=dict(binding_id=binding,result_id=ident,operation_id=command.operation_id,project_id=project_id)
             try:
                 capture,project,driver=self._driver(binding,ident)
                 if row['state'] in ('executing','unknown'):
+                    phase='reconcile'
                     if row['plan']['project_revision']!=project.revision:raise GitDeliveryError('git_delivery_project_changed')
                     result=driver.reconcile(row['plan'])
+                    phase='reconcile_save'
                     if result['state']=='completed':return self.view(records.complete(project_id,binding,command.operation_id,result))
                     return self.view(records.save(project_id,binding,command.operation_id,dict(state='unknown',result=result,error_code='git_delivery_unconfirmed')))
                 if capture['metadata']['delivery'].get('discarded'):raise GitDeliveryError('git_delivery_discarded')
                 plan=driver.plan(command.action,branch=command.branch)
                 plan['project_revision']=project.revision
+                phase='plan_save'
                 row=records.save(project_id,binding,command.operation_id,dict(state='executing',plan=plan))
                 if self.results.inputs._project(project_id).revision!=project.revision:raise GitDeliveryError('git_delivery_project_changed')
-                def progress(oid):records.save(project_id,binding,command.operation_id,dict(last_commit=oid))
+                def progress(oid):
+                    nonlocal phase
+                    phase='progress_save'
+                    records.save(project_id,binding,command.operation_id,dict(last_commit=oid))
+                    phase='execute'
+                phase='execute'
                 result=driver.execute(plan,on_progress=progress)
+                phase='post_execute_check'
                 if self.results.inputs._project(project_id).revision!=project.revision:raise GitDeliveryError('git_delivery_project_changed')
                 if result['state']!='completed':raise GitDeliveryError('git_delivery_unconfirmed')
+                phase='complete_save'
                 return self.view(records.complete(project_id,binding,command.operation_id,result))
             except (GitDeliveryError,GitInputError,OSError) as error:
                 state='failed' if row['state']=='preparing' else 'unknown'
                 code=error.code if hasattr(error,'code') else 'git_delivery_unconfirmed'
-                logger.warning('git_delivery_failed action=%s state=%s code=%s',command.action,state,code)
+                safe_log(logger.warning, 'git_delivery_failed action=%s state=%s code=%s diagnostic=%s',command.action,state,code,
+                    diagnostic_text(error=error,phase=phase,**facts))
                 try:records.save(project_id,binding,command.operation_id,dict(state=state,error_code=code))
-                except Exception as secondary:logger.error('git_delivery_failure_save_unconfirmed error_type=%s',type(secondary).__name__)
+                except Exception as secondary:safe_log(logger.error, 'git_delivery_failure_save_unconfirmed error_type=%s diagnostic=%s',type(secondary).__name__,
+                    diagnostic_text(error=secondary,phase='failure_save',cause_type=type(error).__name__,**facts))
                 raise GitDeliveryError(code) from error
 
     def acknowledge(self,binding,ident,operation):

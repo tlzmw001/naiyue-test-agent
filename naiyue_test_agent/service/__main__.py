@@ -6,6 +6,7 @@ from pathlib import Path
 import socket
 
 import uvicorn
+from naiyue_test_agent.diagnostics import SafeDiagnosticFormatter
 
 from naiyue_test_agent.config_paths import get_agent_dir, get_data_dir, get_models_path
 from naiyue_test_agent.resources import frontend_directory
@@ -29,7 +30,9 @@ def main(argv=None):
     parser.add_argument('--max-frame-bytes', type=int, default=ServiceOptions.model_fields['max_frame_bytes'].default)
     parser.add_argument('--receipt-cache-bytes', type=int, default=ServiceOptions.model_fields['receipt_cache_bytes'].default)
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.WARNING, format='%(levelname)s %(name)s %(message)s')
+    handler = logging.StreamHandler()
+    handler.setFormatter(SafeDiagnosticFormatter())
+    logging.basicConfig(level=logging.WARNING, handlers=[handler])
     try:
         runtime = load_settings(args.settings)
         options = ServiceOptions(data_dir=args.data_dir or get_data_dir(runtime.storage),

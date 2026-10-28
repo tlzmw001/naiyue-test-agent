@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "version": "0.5.3",
-  "execution_sha256": "75ae29d2eb59b4d4b26801a4a16624ae43a908f482fa19498bd0a9289b255526",
+  "version": "0.5.4",
+  "execution_sha256": "08be1cd5eeca728cd3d47c378c231e70d727d05eaae67cefdd5e23573a76d64b",
   "dependencies_sha256": "7a308f133b0021670f4f1983b8cf9973eae798209933eb1b624943259a0ff084",
   "files": [
     "naiyue_test_agent/__init__.py",
@@ -15,6 +15,7 @@
     "naiyue_test_agent/contracts/run_observation_ports.py",
     "naiyue_test_agent/contracts/run_ports.py",
     "naiyue_test_agent/contracts/sandbox.py",
+    "naiyue_test_agent/diagnostics.py",
     "naiyue_test_agent/envd/__init__.py",
     "naiyue_test_agent/envd/__main__.py",
     "naiyue_test_agent/envd/dispatch.py",

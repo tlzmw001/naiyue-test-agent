@@ -139,7 +139,7 @@ def test_frozen_request_and_empty_worker_context(monkeypatch, tmp_path):
     asyncio.run(scenario())
 
 
-def test_configured_deadline_and_missing_executable_have_distinct_results(tmp_path):
+def test_configured_deadline_and_missing_executable_have_distinct_results(tmp_path,caplog):
     from naiyue_test_agent.application.sessions.background_tasks import BackgroundProcessManager
     async def scenario():
         manager = BackgroundProcessManager()
@@ -154,6 +154,8 @@ def test_configured_deadline_and_missing_executable_have_distinct_results(tmp_pa
             result = await wait_status(manager, row['task_id'], lambda r: r['status'] == 'finished')
             assert result['termination'] == 'start_failed' and result['exit_code'] is None
             assert result['cleanup_confirmed'] and result['error_type'] == 'FileNotFoundError'
+            assert row['task_id'] in caplog.text and '"errno":2' in caplog.text
+            assert 'run_id' in caplog.text and '/nonexistent/background-executable' not in caplog.text
         finally:
             await manager.aclose()
     asyncio.run(scenario())
