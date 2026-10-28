@@ -1,5 +1,8 @@
 # Naiyue Test Agent：当前开发学习交接
 
+**0.5.4 已正式发布（2026-10-28）**：发行提交 `b087651553e23c53c2f5e69c844c0bcd3c8ac643`，标签 `v0.5.4`；[main CI 40678313112](https://github.com/tlzmw001/naiyue-test-agent/actions/runs/40678313112)首次全绿，[Publish 40680083063](https://github.com/tlzmw001/naiyue-test-agent/actions/runs/40680083063)最终成功，[PyPI 0.5.4](https://pypi.org/project/naiyue-test-agent/0.5.4/)四平台公开安装报告通过、文件SHA与同提交候选逐一一致。[Release](https://github.com/tlzmw001/naiyue-test-agent/releases/tag/v0.5.4)无新镜像附件，链接0.5.3离线镜像；envd源码哈希75ae29d2…b255526保持，版本仍0.5.3、AITest Kit0.6.0。首次Linux ARM64公开安装早于Simple索引传播，仅重跑失败安装后通过，未重传包或移动标签。本机后端5755/前端554、构建与源外安装通过。最终证据 `build/release-0.5.4/verification.json`。本段为发行后的文档收尾，不修改已发布源码/标签。**唯一下一步：用户正常停止旧服务、升级Windows控制端到0.5.4，沿用当前镜像，复验沙箱新建/恢复/销毁；输入回收PermissionError尚未修复，另行定位。**
+
+
 **0.5.4 发布范围与会话并发确认（2026-10-28）**：用户已授权将确认的 PROGRAMDATA 最小补丁打标签发布0.5.4。生产逻辑只改控制端DockerCLI环境白名单，保留系统已有PROGRAMDATA；envd执行源/协议不变，已发布0.5.3镜像及AITest Kit0.6.0继续复用，不新增镜像附件。发布说明见 [0.5.4](releases/0.5.4.md)，最终CI/tag/PyPI证据保存在 `build/release-0.5.4/`，公开状态以Actions/Release/PyPI为准。 本机最终后端5755 passed（622.14s，1条预期ZIP重复元数据警告），前端554项及构建通过，Mac源码外安装、compileall/pip check/diff check通过。输入回收PermissionError仍为独立未修项。
 
 并发事实：正式沙箱会话固定一个binding和一个容器（数据库session_id UNIQUE），后续轮次/停启复用；同会话只允许一个Agent run，但根Agent可创建多个后台代码任务。envd max_active_operations默认16，统计starting/running的共同操作数，包含shell/argv/write/edit等；满额直接拒绝，不是等待队列。任务共享工作区及2CPU/2GiB/256 PID默认总限额，命令内部子进程不另算journal操作，但计资源。结果捕获与输入安装有独占门。用同一envd实例、两个真实Python进程及上限2做最小验证：两进程重叠running，第三项env_operation_capacity，前两项完成；证据 `concurrency-check.json`，不是Docker负载基准。**唯一下一步：完成0.5.4发布门禁与公开安装验证后，用户原机升级控制端复验沙箱准备/恢复/销毁，随后独立定位PermissionError。**
