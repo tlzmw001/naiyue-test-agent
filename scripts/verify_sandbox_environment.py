@@ -75,7 +75,7 @@ async def scenario(directory,context,image):
                 rules=PermissionSettings.model_validate({'deny':[{'tool':'grep','path':'${workspace}/denied.txt'}]})
                 result=await invoke(ports[0],'grep',{'pattern':'unique-denied-value'},rules=rules)
                 assert result.status=='success' and 'unique-denied-value' not in result.content,result.content
-                agents=await run_blocking(ports[0].read_resource,'/workspace/AGENTS.md',4096)
+                agents=await ports[0].read_resource('/workspace/AGENTS.md',4096)
                 assert agents==b'Keep project rules\n'
                 cli=DockerCLI(settings.sandbox,directory/'data')
                 row=await app.environments.get(bindings[0])
@@ -86,8 +86,8 @@ async def scenario(directory,context,image):
                 block=next(item for item in image_result.content if item.get('type')=='image')
                 assert block['mime_type']=='image/png' and base64.b64decode(block['base64']).startswith(b'\x89PNG')
                 report['image_read']='passed'
-                from naiyue_test_agent.application.sessions.skills import prepare_run_resources
-                resources=await run_blocking(prepare_run_resources,ports[0])
+                from naiyue_test_agent.application.sessions.run_resources import prepare_resources
+                resources=await prepare_resources(ports[0])
                 assert 'Keep project rules' in resources['project_instructions']
                 assert any(part.get('count')==1 for part in resources['prompt_parts'])
                 for value in ('/etc/passwd','/workspace/../etc/passwd'):

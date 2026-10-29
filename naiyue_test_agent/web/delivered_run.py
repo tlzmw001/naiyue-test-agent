@@ -37,6 +37,7 @@ class DeliveredRun:
         self.last_sequence = 0
         self.status = 'running'
         self.mode = 'message'
+        self.preparation_phase=None
         self.compaction_result = None
         self.manual_review_required = False
         self.failure = None
@@ -95,6 +96,9 @@ class DeliveredRun:
                 else:
                     if event.event_type == 'run_started':
                         self.mode = event.data.mode
+                    if event.event_type == 'run_preparation':self.preparation_phase=event.data.phase
+                    if event.event_type == 'model_call_started':self.preparation_phase='model'
+                    if event.event_type == 'tool_call_started':self.preparation_phase='tools'
                     if event.event_type == 'compaction_finished' and event.data.trigger == 'manual':
                         self.compaction_result = {'status': event.data.status, 'reason': event.data.reason}
                     self._observe_tool(payload)
@@ -168,7 +172,7 @@ class DeliveredRun:
             rows = recent_rows([row for row in self.projection.messages if not row.get('identity_only')], self.settings)
             batches = {row['id'] for row in rows if row['type'] == 'ai'} | {
                 row.get('parent_message_id') for row in rows if row['type'] == 'tool'}
-            value = {'session_id': self.session_id, 'conversation_revision': self.conversation_revision, 'run_id': self.run_id, 'status': self.status, 'mode': self.mode,
+            value = {'session_id': self.session_id, 'conversation_revision': self.conversation_revision, 'run_id': self.run_id, 'status': self.status, 'mode': self.mode,'preparation_phase':self.preparation_phase,
                 'messages': rows, 'last_sequence': self.last_sequence,
                 'incomplete': self.projection.incomplete, 'done': self.done,
                 'manual_review_required': self.manual_review_required, 'failure': self.failure,

@@ -57,7 +57,8 @@ async def test_tool_loop_publishes_all_content_once_and_default_logs_are_metadat
     assert rows(events)[1]['tool_calls'][0]['id'] == rows(events)[2]['tool_call_id'] == 'c1'
     assert [e.sequence for e in events] == list(range(1, len(events) + 1))
     kinds = [e.event_type for e in events]
-    assert kinds.index('model_call_finished') < kinds.index('message_completed', 3)
+    first_ai=next(i for i,event in enumerate(events) if event.event_type=='message_completed' and event.data.message_type=='ai')
+    assert kinds.index('model_call_finished') < first_ai
     assert kinds[-1] == 'run_finished' and events[-1].data.status == 'completed'
     records = [r.application_event for r in caplog.records if hasattr(r, 'application_event')]
     assert len(records) == len(events)

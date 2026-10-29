@@ -12,7 +12,8 @@ from langgraph.errors import GraphBubbleUp
 
 from naiyue_test_agent.agent_runtime.async_utils import await_settled, run_blocking
 from naiyue_test_agent.agent_runtime.async_invocation import ainvoke_agent_run
-from naiyue_test_agent.agent_runtime.observation import observe
+from naiyue_test_agent.agent_runtime.observation import observe,emit_event
+from naiyue_test_agent.contracts.session_events import RunPreparationData
 from naiyue_test_agent.agent_runtime.context_usage import compose_model_prompt
 from naiyue_test_agent.agent_runtime.manual_compaction import ManualCompactionCommitError, compact_checkpoint
 from naiyue_test_agent.agent_runtime.resource_invocation import (
@@ -22,7 +23,7 @@ from naiyue_test_agent.contracts.failures import safe_error_type
 from naiyue_test_agent.tools.processes import ProcessCleanupError
 from .session_approval import announce_approval, pending_tool_approval, prepare_resume, public_approvals, is_pre_tool_approval, root_approval_batch, validate_decisions, validate_remembered
 from .session_controls import mark_human_messages
-from .skills import prepare_run_resources
+from .run_resources import prepare_resources
 
 
 from .session_state import SessionRuntime, ActiveRun
@@ -56,7 +57,8 @@ class RunLifecycle:
         notices = (self._process_tasks.notice_snapshot(session_id=self.session_id,
             workspace_root=workspace_root, run_id=run.run_id)
             if include_background and self._process_tasks is not None else None)
-        resources = await run_blocking(prepare_run_resources, run.files,
+        emit_event(run.observation.publisher,'run_preparation',lambda:RunPreparationData('resources'))
+        resources = await prepare_resources(run.files,
                                       enable_skills='read' in self._tool_registry.names())
         if run.relocation_from is not None:
             import json
@@ -69,6 +71,7 @@ class RunLifecycle:
         # One bounded snapshot per logical turn; approval resumes never search again.
         resources['prompt_parts'].extend(deepcopy(self._memory_prompt_parts))
         self.freeze_run_resources(run, resources['prompt_parts'], resources['project_instructions'], notices)
+        emit_event(run.observation.publisher,'run_preparation',lambda:RunPreparationData('model_request'))
         return resources
 
     async def _on_failure(self, agent, run, error, *, require_review=False):

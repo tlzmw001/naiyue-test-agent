@@ -35,13 +35,13 @@ def test_cancellation_during_submit_stops_original_operation_before_handoff(back
     from naiyue_test_agent.contracts.sandbox import SandboxRecord
     from naiyue_test_agent.tools.settings import BashSettings
     async def scenario():
-        entered=asyncio.Event();release=Event();events=[];loop=asyncio.get_running_loop()
-        def submit(*_a):
-            events.append('submitted');loop.call_soon_threadsafe(entered.set)
-            assert release.wait(5)
+        entered=asyncio.Event();release=asyncio.Event();events=[]
+        async def submit(*_a):
+            events.append('submitted');entered.set()
+            await release.wait()
             return {'state':'running'}
-        def stop(*_a):events.append('stopped');return {'state':'stopped'}
-        coordinator=SimpleNamespace(submit=submit,stop=stop)
+        async def stop(*_a):events.append('stopped');return {'state':'stopped'}
+        coordinator=SimpleNamespace(asubmit=submit,astop=stop)
         row=SandboxRecord('B','P','S','running','D','c','v','i',{'poll_milliseconds':100})
         port=DockerProcesses(coordinator,row)
         scope=RunScope(RunIdentity('S','R',project_id='P'),environment=row.environment)
@@ -61,7 +61,7 @@ def test_pre_requested_stop_rejects_before_remote_submission():
     from naiyue_test_agent.tools.settings import BashSettings
     def forbidden(*_a):raise AssertionError('Stopped invocation must not submit')
     row=SandboxRecord('B','P','S','running','D','c','v','i',{})
-    port=DockerProcesses(SimpleNamespace(submit=forbidden),row)
+    port=DockerProcesses(SimpleNamespace(asubmit=forbidden),row)
     scope=RunScope(RunIdentity('S','R',project_id='P'),control=SimpleNamespace(requested=True),environment=row.environment)
     access=SimpleNamespace(context=RuntimeContext(scope),tool_call_id='C')
     with pytest.raises(ToolException,match='stopped'):
@@ -75,7 +75,7 @@ def test_task_stop_rejects_file_operation_before_any_remote_stop():
     from naiyue_test_agent.application.sessions.background_tasks import TaskQueryError
     calls=[]
     def stop(*_a):calls.append('file stopped');return {'kind':'write'}
-    coordinator=SimpleNamespace(records=lambda:SimpleNamespace(get=lambda *_a:{'kind':'write'}),stop=stop)
+    coordinator=SimpleNamespace(records=lambda:SimpleNamespace(get=lambda *_a:{'kind':'write'}),astop=stop)
     tasks=SandboxTasks(coordinator,SimpleNamespace(binding_id='B',session_id='S'),SimpleNamespace(operation=nullcontext))
     with pytest.raises(TaskQueryError,match='Shell task'):
         asyncio.run(tasks.stop('a'*32,session_id='S'))

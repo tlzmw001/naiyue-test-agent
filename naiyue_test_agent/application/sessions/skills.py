@@ -104,9 +104,9 @@ def _metadata(path, files) -> dict:
     return data
 
 
-def discover_project_skills(files) -> SkillCatalog:
+def skill_candidates(files):
     if files is None:
-        return SkillCatalog((), ())
+        return [], []
     files.validate()
     execution_path = files.environment.path(files.environment.root)
     entries, diagnostics = [], []
@@ -125,7 +125,6 @@ def discover_project_skills(files) -> SkillCatalog:
             reason = str(error) if isinstance(error, (_SkillError, ResourceBoundaryError)) else 'source_unavailable'
             _report(diagnostics, source, reason, error_type=type(error).__name__)
             continue
-        names = {}
         for candidate in candidates:
             if candidate.name.startswith('.'):
                 continue
@@ -144,27 +143,42 @@ def discover_project_skills(files) -> SkillCatalog:
                     raise _SkillError('outside_skill_directory') from error
                 if files.resource_info(str(path)).kind != 'file':
                     raise _SkillError('not_regular_file')
-                data = _metadata(path, files)
-                if data.get('disable-model-invocation') is True:
-                    continue
-                name = data['name']
-                if name in names:
-                    _report(diagnostics, source, 'name_collision',
-                            winner=str(names[name]), loser=str(path))
-                    continue
-                names[name] = path
-                entries.append(SkillEntry(source, name, data['description'].strip(), path, root))
-            except yaml.YAMLError as error:
-                _report(diagnostics, source, 'invalid_yaml', error_type=type(error).__name__)
+                entries.append((source,path,root))
             except (OSError, ValueError, UnicodeError, RuntimeError) as error:
                 reason = str(error) if isinstance(error, _SkillError) else 'skill_unavailable'
                 _report(diagnostics, source, reason, error_type=type(error).__name__)
+    return entries, diagnostics
+
+
+def skill_catalog(files, candidates, diagnostics):
+    entries, names = [], {}
+    for source,path,root in candidates:
+        try:
+            data = _metadata(path, files)
+            if data.get('disable-model-invocation') is True:
+                continue
+            name = data['name']
+            key = source,name
+            if key in names:
+                _report(diagnostics, source, 'name_collision',winner=str(names[key]),loser=str(path))
+                continue
+            names[key] = path
+            entries.append(SkillEntry(source,name,data['description'].strip(),path,root))
+        except yaml.YAMLError as error:
+            _report(diagnostics,source,'invalid_yaml',error_type=type(error).__name__)
+        except (OSError,ValueError,UnicodeError,RuntimeError) as error:
+            reason = str(error) if isinstance(error,_SkillError) else 'skill_unavailable'
+            _report(diagnostics,source,reason,error_type=type(error).__name__)
     catalog = SkillCatalog(tuple(entries), tuple(diagnostics))
     logger.info('skill_catalog_loaded', extra={'skill_discovery': {
         'event': 'skill_catalog_loaded', 'skill_count': len(entries),
         'default_source': catalog.default_source,
     }})
     return catalog
+
+
+def discover_project_skills(files) -> SkillCatalog:
+    return skill_catalog(files,*skill_candidates(files))
 
 
 def format_skill_catalog(catalog: SkillCatalog) -> str | None:
@@ -204,8 +218,12 @@ def prepare_run_resources(files, *, enable_skills=True):
     if files is not None:
         files.validate()
     part = load_project_instruction_part(files)
-    instructions = part['text'] if part else None
     catalog = discover_project_skills(files) if enable_skills else SkillCatalog((), ())
+    return assemble_resources(part,catalog)
+
+
+def assemble_resources(part,catalog):
+    instructions = part['text'] if part else None
     index = format_skill_catalog(catalog)
     parts = ([part] if part else []) + ([{'id': 'skills', 'text': index, 'count': len(catalog.entries)}] if index else [])
     return {'prompt_parts': parts,

@@ -79,6 +79,6 @@ def test_image_and_fuzzy_edit_have_specific_internal_stages(tmp_path):
         context = replace(context, authorization=ToolAuthorization( permit={'call_id': 'c', 'session_id': 's', 'agent_path': 'root', 'batch_id': 'b', 'tool_name': spec.tool.name, 'subject': subject}))
         runtime = SimpleNamespace(context=context, tool_call_id='c', stream_writer=reports.append)
         values = spec.validate_input(args)
-        spec.tool.func(**{key: getattr(values, key) for key in args}, runtime=runtime)
+        asyncio.run(spec.tool.coroutine(**{key: getattr(values, key) for key in args}, runtime=runtime))
         assert expected <= {p['phase'] for p in reports}
         assert all(not p['text'] for p in reports)

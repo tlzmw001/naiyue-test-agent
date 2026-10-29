@@ -177,7 +177,7 @@ class InputService:
         return dict(input_id=snapshot.input_id,original_head=snapshot.original_head,
             input_snapshot=snapshot.input_snapshot)
 
-    def _transfer(self, row, record, *, base):
+    def _transfer(self, row, record, *, base, progress=None):
         snapshot=record.snapshot
         directory=self.directory(record.project_id,record.input_id)
         check_store_directory(directory)
@@ -194,7 +194,8 @@ class InputService:
         transfer=hashlib.sha256((record.input_id+digest).encode()).hexdigest()[:32]
         engine=self.environments._engine(row)
         metadata=dict(transfer_id=transfer,**self._payload(snapshot),size=size,sha256=digest,base=base)
-        progress=engine.request(row,'input_begin',metadata,mutates=True)
+        if progress:progress.update('upload',completed=0,total=size)
+        acknowledgement=engine.request(row,'input_begin',metadata,mutates=True)
 
         def offset(value):
             if (not isinstance(value,dict) or set(value)!={'transfer_id','offset'}
@@ -203,9 +204,11 @@ class InputService:
                 raise GitInputError('git_input_invalid_transfer')
             return value['offset']
 
-        current=offset(progress)
+        current=offset(acknowledgement)
+        if progress:progress.update('upload',completed=current,total=size)
         with os.fdopen(open_store_readonly(path),'rb') as stream:
             while current<size:
+                if progress:progress.check()
                 stream.seek(current)
                 data=stream.read(min(1048576,row.settings['max_message_bytes']//4,size-current))
                 if not data:raise GitInputError('git_input_corrupt')
@@ -219,10 +222,12 @@ class InputService:
                 advanced=offset(result)
                 if advanced<current+len(data):raise GitInputError('git_input_install_unconfirmed')
                 current=advanced
+                if progress:progress.update('upload',completed=current,total=size)
+        if progress:progress.check()
         cached=engine.request(row,'input_cache',dict(transfer_id=transfer),mutates=True)
         if cached!=self._payload(snapshot):raise GitInputError('git_input_invalid_transfer')
 
-    def install(self, binding, ident):
+    def install(self, binding, ident, *, progress=None):
         input_id(ident)
         # The complete transfer/installation/save lifetime participates in the old close gate.
         with self.operations.accepting(),self.environments._lock(binding):
@@ -249,13 +254,14 @@ class InputService:
                         raise GitInputError('git_input_invalid_transfer')
                     base=record.snapshot.original_head if probe['has_base'] and (
                         record.snapshot.input_snapshot!=record.snapshot.original_head) else None
-                    try:self._transfer(row,record,base=base)
+                    try:self._transfer(row,record,base=base,progress=progress)
                     except GitInputError as error:
                         if base is None or error.code!='git_input_base_missing':raise
                         logger.warning('git_input_base_missing action=full_bundle')
-                        self._transfer(row,record,base=None)
+                        self._transfer(row,record,base=None,progress=progress)
                     if self._project(row.project_id).revision!=record.project_revision:
                         raise GitInputError('git_input_source_changed')
+                    if progress:progress.update('install')
                     operation=hashlib.sha256((binding+':git_input:'+ident).encode()).hexdigest()[:32]
                     row=row.changed(input_operation_id=operation)
                     self.environments.records().save(row)
@@ -267,6 +273,7 @@ class InputService:
                         raise GitInputError('git_input_install_unconfirmed') from error
                 deadline=time.monotonic()+record.settings['timeout_seconds']
                 while current['state'] not in ('completed','failed','stopped'):
+                    if progress:progress.check()
                     if current.get('stale') or current['state']=='unknown' or time.monotonic()>=deadline:
                         raise GitInputError('git_input_install_unconfirmed')
                     time.sleep(row.settings['poll_milliseconds']/1000)

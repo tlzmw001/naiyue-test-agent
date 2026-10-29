@@ -77,7 +77,7 @@ async def test_success_events_follow_cleanup_without_changing_result(monkeypatch
         result = await app.host.runs.start(session, [('user', 'PRIVATE_PROMPT')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
     assert [(e.event_type, e.sequence) for e in received] == [
-        ('run_started', 1), ('run_finished', 11),
+        ('run_started', 1), ('run_finished', 13),
     ]
     assert received[0].session_id == received[1].session_id == session
     assert received[0].run_id == received[1].run_id
@@ -165,9 +165,9 @@ async def test_approval_terminal_is_installed_before_notification_and_resume_is_
     assert result['messages'][-1].content == 'done'
     assert received[2].data.mode == 'approval_resume'
     assert received[0].run_id != received[2].run_id
-    # Native streaming adds one message_delta for the final reply.
+    # Resource preparation adds two typed phases; native streaming adds one message_delta for the final reply.
     # Resume adds queued/preparing and Read's detection/read/last-count reports.
-    assert [e.sequence for e in received] == [1, 11, 1, 23]
+    assert [e.sequence for e in received] == [1, 13, 1, 25]
     assert received[-1].data.status == 'completed' and pending_at_end[-1] == []
 
 
@@ -295,7 +295,7 @@ async def test_two_sessions_have_independent_sequences_and_no_fake_start(monkeyp
     assert len(outcomes) == 2 and all(isinstance(r, dict) for r in outcomes), outcomes
     for session in sessions:
         events = [e for e in received if e.session_id == session]
-        assert [e.sequence for e in events] == [1, 11]
+        assert [e.sequence for e in events] == [1, 13]
         assert len({e.run_id for e in events}) == 1
 
 

@@ -428,7 +428,8 @@ async def test_unexpected_read_only_failure_returns_safe_tool_message(tmp_path, 
     assert 'PRIVATE' not in str(result) + caplog.text
 
 
-def test_read_does_not_turn_graph_interrupt_into_tool_error(tmp_path, monkeypatch):
+@async_test
+async def test_read_does_not_turn_graph_interrupt_into_tool_error(tmp_path, monkeypatch):
     document = tmp_path / 'doc.md'
     document.write_text('content', encoding='utf-8')
     tool = create_session_read_tool()
@@ -448,5 +449,5 @@ def test_read_does_not_turn_graph_interrupt_into_tool_error(tmp_path, monkeypatc
     runtime = ToolRuntime(state={}, context=typed_context(identity=RunIdentity(session_id='s', execution_root=ExecutionRoot(tmp_path) if tmp_path is not None else None), authorization=ToolAuthorization(permit=permit)), config={},
                           stream_writer=lambda _: None, tool_call_id='call-1', store=None)
     with pytest.raises(GraphInterrupt):
-        tool.tool.invoke({'name': 'read', 'args': {'path': 'doc.md', 'runtime': runtime},
+        await tool.tool.ainvoke({'name': 'read', 'args': {'path': 'doc.md', 'runtime': runtime},
                      'id': 'call-1', 'type': 'tool_call'})

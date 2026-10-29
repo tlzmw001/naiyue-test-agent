@@ -1,6 +1,7 @@
 """Cooperative stops must leave actual files and owned resources consistent."""
 
 from dataclasses import replace
+import asyncio
 from runtime_context_helpers import ExecutionRoot, RunIdentity, ToolAuthorization, typed_context
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -29,7 +30,7 @@ def invoke_body(spec, root, args, control):
         'call_id': 'file', 'session_id': 'file-stop', 'agent_path': 'root', 'subject': subject}))
     runtime = SimpleNamespace(context=context, tool_call_id='file')
     validated = spec.validate_input(args)
-    return spec.tool.func(**{key: getattr(validated, key) for key in args}, runtime=runtime)
+    return asyncio.run(spec.tool.coroutine(**{key: getattr(validated, key) for key in args}, runtime=runtime))
 
 
 class ObservedStream:

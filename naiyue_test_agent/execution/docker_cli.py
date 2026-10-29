@@ -17,12 +17,34 @@ class DockerCLI:
     def __init__(self,settings,cwd):
         self.settings,self.cwd=settings,Path(cwd)
 
-    def run(self,args,*,input_bytes=None,mutates=False):
-        from contextlib import ExitStack
-        import tempfile
+    @staticmethod
+    def child_environment():
+        return {key:value for key,value in os.environ.items() if key in
+            ('PATH','HOME','USERPROFILE','SYSTEMROOT','PROGRAMDATA','TMPDIR','TEMP','TMP','SSH_AUTH_SOCK','DOCKER_CONFIG')}
+
+    def command(self,args):
         ssh=self.settings.ssh
         executable=shutil.which(ssh.executable if ssh is not None else self.settings.docker_executable)
         if executable is None:raise SandboxError('env_ssh_unavailable' if ssh is not None else 'env_docker_unavailable')
+        if ssh is None:return [executable,'--context',self.settings.context,*args]
+        command='exec '+shlex.join([ssh.docker_executable,'--host','unix://'+ssh.socket_path,*args])
+        return [executable,'-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes',
+            '-o','ForwardAgent=no','-o','ClearAllForwardings=yes',
+            '-o','ConnectTimeout='+str(ssh.connect_timeout_seconds),'--',ssh.host,command]
+
+    def run(self,args,*,input_bytes=None,mutates=False):
+        return self._run(self.command(args),args,input_bytes=input_bytes,mutates=mutates)
+
+    def run_script(self,script,*,mutates=False):
+        if self.settings.ssh is None:raise SandboxError('env_endpoint_unsupported')
+        argv=self.command([])
+        argv[-1]='exec '+shlex.join(['sh','-c',script])
+        return self._run(argv,['management','batch'],mutates=mutates)
+
+    def _run(self,argv,args,*,input_bytes=None,mutates=False):
+        from contextlib import ExitStack
+        import tempfile
+        ssh=self.settings.ssh
         output=bytearray()
         errors=bytearray()
         error_size=0
@@ -37,15 +59,7 @@ class DockerCLI:
                     raise SandboxError('env_message_too_large')
                 output.extend(chunk)
         # Windows OpenSSH exits 255 without diagnostics if PROGRAMDATA is absent.
-        environment={key:value for key,value in os.environ.items()
-            if key in ('PATH','HOME','USERPROFILE','SYSTEMROOT','PROGRAMDATA','TMPDIR','TEMP','TMP','SSH_AUTH_SOCK','DOCKER_CONFIG')}
-        if ssh is None:
-            argv=[executable,'--context',self.settings.context,*args]
-        else:
-            command='exec '+shlex.join([ssh.docker_executable,'--host','unix://'+ssh.socket_path,*args])
-            argv=[executable,'-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes',
-                  '-o','ForwardAgent=no','-o','ClearAllForwardings=yes',
-                  '-o','ConnectTimeout='+str(ssh.connect_timeout_seconds),'--',ssh.host,command]
+        environment=self.child_environment()
         with ExitStack() as stack:
             source=None
             if input_bytes is not None:
@@ -78,6 +92,12 @@ class DockerCLI:
             safe_log(logger.warning, 'docker_response_invalid diagnostic=%s',diagnostic_text(error=error,
                 phase='json_decode',command=command_kind(args,'docker')))
             raise SandboxError('env_protocol_mismatch') from error
+
+    def preflight(self,image):
+        if self.settings.ssh is not None:
+            from .docker_management import preflight
+            return preflight(self,image)
+        return self.daemon(),self.json(['image','inspect',image])[0]
 
     def daemon(self,expected=None):
         if self.settings.ssh is None:

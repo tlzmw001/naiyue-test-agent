@@ -155,7 +155,7 @@ async def test_approval_preparation_failure_is_discarded_not_submitted_or_applie
     def fail_prepare(*args, **kwargs):
         raise failure
 
-    monkeypatch.setattr(session_execution, 'prepare_run_resources', fail_prepare)
+    monkeypatch.setattr(session_execution, 'prepare_resources', fail_prepare)
     with pytest.raises(OSError) as caught:
         await app.host.runs.resume_approval(session, ['approve'])
     assert caught.value is failure

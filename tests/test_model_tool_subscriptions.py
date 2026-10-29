@@ -70,10 +70,11 @@ async def test_one_tool_loop_has_correlated_immutable_safe_events(monkeypatch, c
         'tool_call_started', 'tool_call_finished',
         'model_call_started', 'model_call_finished', 'run_finished',
     ]
+    # Resource preparation adds two phase events before model invocation.
     # Native streams report one message_delta for each text reply;
     # Registered dispatches report queued/preparing; each model input also emits
     # its prepared and returned context statistics, outside this metadata filter.
-    assert [e.sequence for e in events] == [1, 5, 6, 10, 13, 18, 19, 24]
+    assert [e.sequence for e in events] == [1, 7, 8, 12, 15, 20, 21, 26]
     assert all(e.session_id == session and e.run_id == events[0].run_id for e in events)
     starts = events_of(events, 'model_call_started')
     ends = events_of(events, 'model_call_finished')

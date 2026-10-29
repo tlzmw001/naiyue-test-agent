@@ -186,9 +186,10 @@ def require_source_url(url, ref):
 
 
 class SnapshotBuilder:
-    def __init__(self, directory, settings):
+    def __init__(self, directory, settings, *, source_runner=None):
         self.directory, self.settings = Path(directory).absolute(), settings
         self.repository = GitRepository(self.directory/'objects.git',settings)
+        self.source_runner = source_runner
 
     def prepare(self, source, ident, *, include_untracked=()):
         input_id(ident)
@@ -208,7 +209,7 @@ class SnapshotBuilder:
                 raise GitInputError('git_input_no_repository')
             if not (root/'.git').is_dir() or (root/'.git').is_symlink():
                 raise GitInputError('git_input_layout_unsupported')
-            source_git = GitRepository(root,self.settings)
+            source_git = GitRepository(root,self.settings,runner=self.source_runner)
             status, head = source_git.run(['rev-parse','--verify','HEAD^{commit}'],check=False)
             if status:
                 raise GitInputError('git_input_no_head')
@@ -252,8 +253,20 @@ class SnapshotBuilder:
         check_store_directory(self.directory)
         self.repository.run(['init','--bare','--quiet',str(self.repository.path)],cwd=self.directory)
         if local:
+            fetch_source = root
+            fetch_ref = original
+            if self.source_runner is not None:
+                # Never invoke upload-pack in a task-writable repository as the controller.
+                fetch_source = self.directory/'source.bundle'
+                with fetch_source.open('xb') as bundle:
+                    source_git.run(['bundle','create','-','HEAD'],output_stream=bundle,
+                                   output_limit=self.settings.max_bundle_bytes)
+                    bundle.flush();os.fsync(bundle.fileno())
+                fetch_ref = 'HEAD'
             self.repository.run(['fetch','--no-tags','--no-recurse-submodules','--no-write-fetch-head',
-                str(root),original+':refs/naiyue/source'])
+                str(fetch_source),fetch_ref+':refs/naiyue/source'])
+            if self.repository.oid('refs/naiyue/source^{commit}') != original:
+                raise GitInputError('git_input_source_changed')
         else:
             self.repository.run(['fetch','--no-tags','--no-recurse-submodules','--no-write-fetch-head',
                 source.url,source.ref+':refs/naiyue/source'],credentials=True)

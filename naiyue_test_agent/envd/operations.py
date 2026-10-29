@@ -1,6 +1,7 @@
 """Envd retains process custody after the requesting client disconnects."""
 import base64
 import logging
+from uuid import uuid4
 from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 from pathlib import Path
 from threading import Event,RLock,Thread
@@ -26,9 +27,10 @@ class OperationControl:
 class EnvironmentOperations:
     def __init__(self,environment,session_id,state_root,settings):
         self.environment,self.session_id,self.settings=environment,session_id,settings
+        self.generation=uuid4().hex
         self.journal=SandboxJournal(Path(state_root)/'journal.sqlite',
             dict(environment=environment.public(),session_id=session_id),settings)
-        self.files=FileDispatcher(environment,session_id)
+        self.files=FileDispatcher(environment,session_id,max_message_bytes=settings.max_message_bytes)
         self.inputs=InputReceiver(state_root,environment,settings)
         self.results=ResultExporter(state_root,environment,session_id,settings,self.inputs)
         self._lock=RLock();self._active={};self._closing=False;self._readers=0
@@ -141,8 +143,14 @@ class EnvironmentOperations:
         return row
 
     def dispatch(self,request):
+        if 'generation' in request:
+            request=dict(request)
+            if request.pop('generation')!=self.generation:raise SandboxError('env_binding_mismatch')
         check_request(request,self.environment,self.session_id)
         op,p=request['operation'],request['params']
+        if op=='transport_hello':
+            return dict(attach=1,protocol=PROTOCOL_VERSION,generation=self.generation,
+                environment=self.environment.public(),session_id=self.session_id)
         if op=='input_probe':return self.inputs.probe(p['original_head'])
         if op=='input_status':return self.inputs.status(p['transfer_id'])
         if op in ('input_begin','input_chunk','input_cache'):
@@ -154,6 +162,15 @@ class EnvironmentOperations:
             return self.inputs.cache(p['transfer_id'])
         if op=='operation_submit':return self.submit(p['operation_id'],p['kind'],p['payload'],p.get('metadata',{}))
         if op=='operation_status':return self.journal.get(p['operation_id'])
+        if op=='operation_poll':
+            row=self.journal.get(p['operation_id'])
+            output=None
+            if row['kind'] in ('shell','argv'):
+                if type(p['limit']) is not int or not 1<=p['limit']<=524288:
+                    raise SandboxError('env_protocol_mismatch')
+                output=self.journal.output(p['operation_id'],p['offset'],min(p['limit'],self.settings.max_message_bytes//8))
+                output['bytes_base64']=base64.b64encode(output.pop('data')).decode()
+            return {'operation':row,'output':output}
         if op=='result_chunk':
             row=self.journal.get(p['result_id'])
             if row['kind']!='git_result' or row['state']!='completed':raise GitInputError('git_result_unconfirmed')
@@ -194,6 +211,7 @@ class EnvironmentOperations:
                 errors.append(error);logger.error('envd_stop_unconfirmed error_type=%s',type(error).__name__)
         if errors:raise errors[0]
         self.journal.close()
+        self.files.files.workspace.close()
 
     def __enter__(self):return self
     def __exit__(self,*_args):self.close()

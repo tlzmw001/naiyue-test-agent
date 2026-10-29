@@ -184,23 +184,12 @@ def test_remote_connection_facts_are_not_sent_to_the_container_policy(tmp_path, 
     from naiyue_test_agent.execution.docker_environment import DockerEnvironment, labels
     settings = SandboxSettings.model_validate(dict(image='app:test', ssh=dict(host='private-control-host')))
     row = record().changed(settings=settings.model_dump(mode='json'))
-    calls = []
-    class CLI:
-        def daemon(self, expected):
-            assert expected == row.daemon_id
-        def volume(self, name):
-            return dict(Name=name, Labels=labels(row))
-        def run(self, args, **kwargs):
-            calls.append(args)
-            return row.container_id.encode() if args[:2] == ['container', 'create'] else b''
-    engine = DockerEnvironment(CLI())
-    validated = []
-    monkeypatch.setattr(engine, 'validate', lambda value, **kwargs: validated.append(value))
-    saved = []
-    assert engine.create(row, saved.append).container_id == row.container_id
-    command = next(args for args in calls if args[:2] == ['container', 'create'])
-    policy = json.loads(next(item for item in command if item.startswith('NYT_SANDBOX_POLICY=')).split('=', 1)[1])
-    assert policy == SandboxSettings(image='app:test').model_dump(mode='json')
+    from naiyue_test_agent.execution.docker_environment import create_arguments
+    command=create_arguments(row)
+    policy=json.loads(next(item for item in command if item.startswith('NYT_SANDBOX_POLICY=')).split('=',1)[1])
+    assert policy==SandboxSettings(image='app:test').model_dump(mode='json')
     assert 'private-control-host' not in json.dumps(command)
-    assert saved[0].settings['ssh']['host'] == 'private-control-host'
-    assert validated[0].settings == row.settings
+    # The batch creation lifecycle and identity save are covered by the real
+    # current entry in test_sandbox_management_batch, rather than the old CLI stub.
+    assert row.settings['ssh']['host']=='private-control-host'
+    assert command[:2]==['container','create']

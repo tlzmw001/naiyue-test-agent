@@ -66,7 +66,8 @@ def test_stage_uses_only_execution_sources_and_root_locked_dependencies(tmp_path
     target = tmp_path / 'stage'
     runtime.stage_envd(runtime.ROOT, target, 'linux-x86_64')
     profile = runtime.load_profile()
-    assert len(profile['files']) == 59
+    assert len(profile['files']) == 65
+    assert {'naiyue_test_agent/envd/'+name+'.py' for name in ('workspace','file_mutations','identity','attach','framing','resources')} <= set(profile['files'])
     assert 'naiyue_test_agent/diagnostics.py' in profile['files']
     files = {p.relative_to(target).as_posix() for p in (target / 'naiyue_test_agent').rglob('*.py')}
     assert files == set(profile['files'])

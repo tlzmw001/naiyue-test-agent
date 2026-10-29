@@ -69,6 +69,7 @@ class EnvironmentLifecycle:
     async def aclose(self):
         self._closing=True;self._wake.set()
         await await_settled(self._task)
+        await self.api._preparations.close()
         await self.api._operations.aclose()
 
     async def finish_close(self):
@@ -84,4 +85,11 @@ class EnvironmentLifecycle:
                         diagnostic_text(error=error,binding_id=row.binding_id,session_id=row.session_id,phase='shutdown_stop'))
                     if first is None:first=error
             if first is not None:raise first
-        await run_blocking(stop_all)
+        primary=None
+        try:await run_blocking(stop_all)
+        except BaseException as error:primary=error
+        try:await self.service.transport.aclose()
+        except BaseException as error:
+            logger.error('sandbox_transport_shutdown_failed error_type=%s',type(error).__name__)
+            if primary is None:raise
+        if primary is not None:raise primary

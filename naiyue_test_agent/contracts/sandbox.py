@@ -8,6 +8,9 @@ from .environment import EnvironmentRef
 PROTOCOL_VERSION = 2
 PROCESS_CLEANUP_ERROR_CODE = 'env_process_cleanup_unconfirmed'
 SANDBOX_ROOT = '/workspace'
+WORK_VOLUME_ROOT = '/work'
+TASK_UID = TASK_GID = 1000
+CONTROL_CAPABILITIES = ('SETUID','SETGID','KILL','DAC_OVERRIDE','CHOWN','FOWNER')
 STATE_ROOT = '/state'
 SOCKET_PATH = '/tmp/naiyue-envd.sock'
 

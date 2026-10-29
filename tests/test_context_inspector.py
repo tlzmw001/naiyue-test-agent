@@ -113,7 +113,7 @@ def test_preview_fault_does_not_change_checkpoint_or_start_model(monkeypatch, tm
             before = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json()
             def broken(*args, **kwargs):
                 raise OSError('SECRET_RESOURCE_PATH')
-            monkeypatch.setattr(session_context, 'prepare_run_resources', broken)
+            monkeypatch.setattr(session_context, 'prepare_resources', broken)
             value = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}/context')).json()
             assert value['current'] == {'basis': 'unavailable', 'estimate': None}
             assert (await client.get(f'/api/v1/scopes/chats/sessions/{sid}')).json() == before

@@ -28,7 +28,7 @@ class DockerProcesses:
     def owner_session_id(self):return self.record.session_id
 
     def validate(self):
-        row=self.coordinator.environments.validate(self.environment.binding_id)
+        row=self.coordinator.environments.check(self.environment.binding_id)
         if row.environment!=self.environment or row.session_id!=self.owner_session_id:
             raise ToolException('env_binding_mismatch')
 
@@ -62,7 +62,7 @@ class DockerProcesses:
             agent_path=access.context.scope.identity.agent_path,command_preview=payload.get('command',json.dumps(payload.get('args',[])))[:200])
         handed=False;row=None
         try:
-            row=await run_blocking(self.coordinator.submit,binding,ident,kind,payload,metadata)
+            row=await self.coordinator.asubmit(binding,ident,kind,payload,metadata)
             self.coordinator.raise_process_failure(row)
             check_tool_stop(access.context.scope.control,f'Sandbox process invocation was stopped before handoff; operation_id={ident}. Inspect side effects.')
             if background:
@@ -73,25 +73,21 @@ class DockerProcesses:
                 if row['state']=='unknown' or row['stale']:
                     raise ToolException(f'env_operation_unknown; operation_id={ident}')
                 if self.coordinator._closing or access.context.scope.control is not None and access.context.scope.control.requested:
-                    row=await run_blocking(self.coordinator.stop,binding,ident)
+                    row=await self.coordinator.astop(binding,ident)
                     break
                 elapsed=asyncio.get_running_loop().time()-began
                 if (promote_after is not None and elapsed>=promote_after and
                         (payload['timeout'] is None or payload['timeout']>max(promote_after,elapsed))):
-                    remote=await run_blocking(self.coordinator._rpc,binding,'operation_background',dict(operation_id=ident,output_limit=background_limit),mutates=True)
-                    row=await run_blocking(self.coordinator._merge,row,remote)
-                    self.coordinator.raise_process_failure(row)
-                    row['metadata'].update(background=True,max_archive_bytes=background_limit)
-                    await run_blocking(lambda:self.coordinator.records().save(binding,ident,dict(metadata=row['metadata'])))
+                    row=await self.coordinator.background(binding,ident,background_limit)
                     self.coordinator.watch(binding,ident,self.record.settings['poll_milliseconds']);handed=True
                     return json.dumps(self.receipt(row),ensure_ascii=False)
                 await asyncio.sleep(self.record.settings['poll_milliseconds']/1000)
-                row=await run_blocking(self.coordinator.refresh,binding,ident)
+                row=await self.coordinator.arefresh(binding,ident)
                 self.coordinator.raise_process_failure(row)
             return await run_blocking(self.format,row)
         except BaseException as error:
             if not handed and (row is None or row['state'] not in ('completed','failed','stopped')):
-                try:await await_settled(run_blocking(self.coordinator.stop,binding,ident))
+                try:await await_settled(self.coordinator.astop(binding,ident))
                 except Exception as stop_error:
                     import logging
                     logging.getLogger(__name__).error('sandbox_foreground_stop_unconfirmed error_type=%s',type(stop_error).__name__)

@@ -279,7 +279,7 @@ def create_session_edit_tool(*, settings: EditSettings | None = None, progress_s
         path=(str, Field(min_length=1, max_length=settings.max_path_chars)))
 
     @tool('edit', args_schema=execution_schema, response_format='content_and_artifact')
-    def edit(
+    async def edit(
         path: str, edits: list[EditReplacement], runtime: ToolRuntime[RuntimeContext],
     ) -> tuple[str, dict]:
         """Replace unique, non-overlapping text in one existing UTF-8 file.
@@ -290,6 +290,7 @@ def create_session_edit_tool(*, settings: EditSettings | None = None, progress_s
         This tool cannot create a file or missing parent directories.
         """
         context = runtime.context
+        from naiyue_test_agent.execution.file_calls import file_call
         require_file_target(runtime, path, operation='write')
         progress = ToolProgress(runtime, progress_settings)
         subject=context.authorization.permit['subject']
@@ -297,7 +298,7 @@ def create_session_edit_tool(*, settings: EditSettings | None = None, progress_s
             from naiyue_test_agent.contracts.sandbox import operation_id
             subject={**subject,'operation_id':operation_id(runtime)}
         try:
-            return context.scope.capabilities.files.edit(subject, edits,
+            return await file_call(context.scope.capabilities.files.edit,subject, edits,
                 settings=settings, control=context.scope.control, progress=progress)
         finally:
             progress.flush()

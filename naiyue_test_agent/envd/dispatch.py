@@ -11,8 +11,9 @@ from .protocol import check_request,pack
 
 
 class FileDispatcher:
-    def __init__(self,environment,session_id):
+    def __init__(self,environment,session_id,*,max_message_bytes=16777216):
         self.environment,self.session_id=environment,session_id
+        self.max_message_bytes=max_message_bytes
         self.files=EnvdFiles(environment,session_id)
 
     def runtime(self,params):
@@ -41,6 +42,9 @@ class FileDispatcher:
         if op=='resource_info':return pack(files.resource_info(p['path']))
         if op=='resolve_resource':return files.resolve_resource(p['path'])
         if op=='list_resources':return files.list_resources(p['path'])
+        if op in ('resource_index','resource_read_batch'):
+            from .resources import resource_index,resource_read_batch
+            return (resource_index if op=='resource_index' else resource_read_batch)(files,p,response_limit=self.max_message_bytes)
         if op=='read_resource':
             if type(p['max_bytes']) is not int or not 0<=p['max_bytes']<=16777216:
                 raise SandboxError('env_message_too_large')

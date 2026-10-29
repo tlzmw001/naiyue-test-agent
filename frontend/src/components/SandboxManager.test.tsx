@@ -66,3 +66,18 @@ it('restores focus to the dialog after an action disables its originating button
   await waitFor(()=>expect(screen.getByText('已停止')).toBeTruthy());
   await waitFor(()=>expect(screen.getByRole('dialog',{name:'管理沙箱'}).contains(document.activeElement)).toBe(true));
 });
+it('allows stopping busy sandboxes and another binding while the first action is pending',async()=>{
+  const other={...item,binding_id:'b'.repeat(32),session_id:'T',busy:true};
+  const {act:command,close}=setup([{...item,busy:true},other]);
+  let finish!:()=>void;
+  command.mockImplementationOnce(()=>new Promise(resolve=>{finish=()=>resolve({binding_id:item.binding_id,lifecycle:'stopped'});}));
+  await screen.findByText('2 / 2');
+  const rows=screen.getAllByRole('article');
+  fireEvent.click(within(rows[0]).getByRole('button',{name:'停止'}));
+  await waitFor(()=>expect(command).toHaveBeenCalledTimes(1));
+  expect(within(rows[0]).getByText('正在停止，等待确认…')).toBeTruthy();
+  fireEvent.click(within(rows[1]).getByRole('button',{name:'停止'}));
+  await waitFor(()=>expect(command).toHaveBeenCalledTimes(2));
+  fireEvent.click(screen.getByRole('button',{name:'关闭沙箱管理'}));expect(close).toHaveBeenCalledOnce();
+  finish();
+});

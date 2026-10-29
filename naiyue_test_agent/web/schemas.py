@@ -17,6 +17,7 @@ class ModelInput(BaseModel):
 
 class NewSession(ModelInput):
     execution: Literal['host','sandbox'] = 'host'
+    wait_for_ready: bool = True
     include_untracked: list[Annotated[str,Field(min_length=1,max_length=4096)]] = Field(default_factory=list,max_length=100000)
     profile_id: ProfileId | None = None
     expected_profile_revision: str | None = Field(default=None,pattern='^[0-9a-f]{64}$')

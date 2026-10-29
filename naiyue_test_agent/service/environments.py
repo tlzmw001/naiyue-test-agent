@@ -14,6 +14,7 @@ router = APIRouter(prefix='/api/v1/environments')
 class ManagementInput(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     confirm_destroy: bool = False
+    interrupt: bool = False
 
 
 @router.get('')
@@ -25,7 +26,7 @@ async def management(request: Request):
 async def manage(request: Request, action: Literal['start','stop','recover','destroy'],
                  binding_id: str = Path(pattern=r'^[0-9a-f]{32}$'), body: ManagementInput | None = None):
     return await request.app.state.application.environments.manage(binding_id,action,
-        confirm_destroy=body.confirm_destroy if body else False)
+        confirm_destroy=body.confirm_destroy if body else False,interrupt=body.interrupt if body else False)
 
 
 @router.post('/refresh')

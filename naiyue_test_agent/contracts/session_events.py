@@ -27,6 +27,14 @@ class RunStartedData:
 
 
 @dataclass(frozen=True)
+class RunPreparationData:
+    phase: Literal['resources','model_request']
+
+    def __post_init__(self):
+        if self.phase not in ('resources','model_request'):raise ValueError('Invalid preparation phase')
+
+
+@dataclass(frozen=True)
 class RunFinishedData:
     status: Literal['completed', 'stopped', 'interrupted', 'failed']
     stop_mode: Literal['active'] | None = None
@@ -132,7 +140,7 @@ class ApprovalRequestedData:
 
 
 SESSION_PAYLOADS = {
-    'run_started': RunStartedData, 'run_finished': RunFinishedData,
+    'run_started': RunStartedData, 'run_finished': RunFinishedData, 'run_preparation': RunPreparationData,
     'control_accepted': ControlData, 'control_delivery_started': ControlData,
     'control_delivered': ControlData, 'control_applied': ControlData,
     'control_discarded': ControlData, 'control_outcome_unknown': ControlData,

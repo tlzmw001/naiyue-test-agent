@@ -59,7 +59,9 @@ class DeliveryService:
 
     def execute(self,binding,ident,value):
         command=DeliveryCommand.model_validate(value)
-        with self.results.operations.accepting(),self.results.operations._lock(ident):
+        # EnvironmentAPI.deliver owns the existing per-project delivery gate.
+        # Captured results are immutable; this host-only path shares no envd lock.
+        with self.results.operations.accepting():
             capture=self.results._row(binding,ident);project_id=capture['project_id'];records=self.records()
             row,new=records.reserve(project_id,binding,ident,command,self.settings)
             if row['state'] in ('completed','acknowledged','failed'):return self.view(row)

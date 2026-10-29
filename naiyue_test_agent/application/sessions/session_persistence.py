@@ -429,7 +429,7 @@ class SessionPersistence:
                 try:access=await resolve_capabilities(self.sessions,row)
                 except SandboxError as error:
                     logger.warning('approval_environment_unavailable code=%s',error.code)
-            pending = await run_blocking(validate_saved_approval, self._permission_settings, self._tool_registry,
+            pending = await validate_saved_approval(self._permission_settings, self._tool_registry,
                 row, snapshot, names, execution_root=execution,execution_access=access)
             try:
                 updates = await await_settled(collect_chat_updates(agent, self.storage, session_id, snapshot=snapshot))

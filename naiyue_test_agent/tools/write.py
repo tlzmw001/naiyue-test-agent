@@ -270,12 +270,13 @@ def create_session_write_tool(*, settings: WriteSettings | None = None, progress
         path=(str, Field(min_length=1, max_length=settings.max_path_chars)))
 
     @tool('write', args_schema=execution_schema, response_format='content_and_artifact')
-    def write(path: str, content: str, runtime: ToolRuntime[RuntimeContext]) -> tuple:
+    async def write(path: str, content: str, runtime: ToolRuntime[RuntimeContext]) -> tuple:
         """Create or completely overwrite one authorized UTF-8 file.
 
         Missing parent directories are created after authorization. This tool cannot make partial edits.
         """
         context = runtime.context
+        from naiyue_test_agent.execution.file_calls import file_call
         check_tool_stop(context.scope.control, WRITE_STOPPED)
         require_file_target(runtime, path, operation='write')
         progress = ToolProgress(runtime, progress_settings)
@@ -284,7 +285,7 @@ def create_session_write_tool(*, settings: WriteSettings | None = None, progress
             from naiyue_test_agent.contracts.sandbox import operation_id
             subject={**subject,'operation_id':operation_id(runtime)}
         try:
-            return context.scope.capabilities.files.write(subject, content,
+            return await file_call(context.scope.capabilities.files.write,subject, content,
                 settings=settings, control=context.scope.control, progress=progress,
                 read_allowed=read_feedback_allowed(runtime, path))
         finally:

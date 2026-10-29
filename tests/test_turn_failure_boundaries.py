@@ -131,20 +131,20 @@ async def test_prepare_failure_preserves_waiting_turn_for_later_resume(monkeypat
 
     app, session, events = await make_approval(monkeypatch, tmp_path)
     saved = app.host.sessions._sessions._sessions[session].lifecycle.snapshot_for_run()['pending_turn']
-    original = session_execution.prepare_run_resources
+    original = session_execution.prepare_resources
     failure = OSError('PRIVATE_PREPARE')
 
     def fail_prepare(*args, **kwargs):
         raise failure
 
-    monkeypatch.setattr(session_execution, 'prepare_run_resources', fail_prepare)
+    monkeypatch.setattr(session_execution, 'prepare_resources', fail_prepare)
     old_count = len(events)
     with pytest.raises(OSError) as caught:
         await app.host.runs.resume_approval(session, ['approve'])
     assert caught.value is failure and turns(events[old_count:]) == []
     assert app.host.sessions._sessions._sessions[session].lifecycle.snapshot_for_run()['pending_turn'] == saved
     assert events[-1].data.failure.stage == 'prepare'
-    monkeypatch.setattr(session_execution, 'prepare_run_resources', original)
+    monkeypatch.setattr(session_execution, 'prepare_resources', original)
     await app.host.runs.resume_approval(session, ['reject'])
     assert turns(events, 'turn_resumed')[0].data.turn_id == saved['turn_id']
 
@@ -300,7 +300,7 @@ async def test_observer_failure_on_turn_event_does_not_change_business_result(mo
     app.host.observability.subscribe(broken)
     app.host.observability.subscribe(events.append)
     result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'run')])
-    assert calls == ['run_started', 'message_completed', 'turn_started']
+    assert calls == ['run_started', 'run_preparation', 'run_preparation', 'message_completed', 'turn_started']
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
     assert turns(events, 'turn_finished')[0].data.status == 'completed'
     assert 'event_observer_failed' in caplog.text and 'PRIVATE_' not in caplog.text

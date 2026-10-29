@@ -125,13 +125,13 @@ def test_snapshot_freezes_before_project_resource_io(monkeypatch, tmp_path):
     from naiyue_test_agent.application.sessions import session_execution
     async def scenario():
         entered, release = asyncio.Event(), Event()
-        original = session_execution.prepare_run_resources
+        original = session_execution.prepare_resources
         loop = asyncio.get_running_loop()
-        def blocked(*args, **kwargs):
-            loop.call_soon_threadsafe(entered.set)
-            assert release.wait(5)
-            return original(*args, **kwargs)
-        monkeypatch.setattr(session_execution, 'prepare_run_resources', blocked)
+        async def blocked(*args, **kwargs):
+            entered.set()
+            assert await asyncio.to_thread(release.wait,5)
+            return await original(*args, **kwargs)
+        monkeypatch.setattr(session_execution, 'prepare_resources', blocked)
         model = StreamingToolModel(replies=[AIMessage(content='first'), AIMessage(content='next')])
         async with background_app(monkeypatch, tmp_path, model) as app:
             sid = await app.host.sessions.create_workspace('A', tmp_path)

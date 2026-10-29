@@ -78,3 +78,10 @@ it('retains the draft label after closing and reopening the menu',async()=>{
   fireEvent.click(await screen.findByRole('button',{name:'Python tests'}));
   expect((screen.getByRole('checkbox',{name:'notes.txt'}) as HTMLInputElement).checked).toBe(true);
 });
+it('keeps management available while preparation or a run occupies the composer',async()=>{
+  const api=new WebApi('synthetic');
+  vi.spyOn(api,'sandboxManagement').mockResolvedValue({policy:{max_running:2,max_retained:10,idle_stop_seconds:0,sweep_seconds:30},usage:{running:0,retained:0},items:[]});
+  render(<ExecutionSelector api={api} session={null} disabled running create={vi.fn()} refresh={vi.fn()}/>);
+  fireEvent.click(screen.getByRole('button',{name:'管理沙箱'}));
+  expect(await screen.findByRole('dialog',{name:'管理沙箱'})).toBeTruthy();
+});

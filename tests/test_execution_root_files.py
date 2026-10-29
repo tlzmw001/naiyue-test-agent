@@ -1,6 +1,7 @@
 """A grant prepared before root loss still cannot perform actual file IO."""
 
 from dataclasses import replace
+import asyncio
 from runtime_context_helpers import ToolAuthorization
 from runtime_context_helpers import ExecutionRoot, RunIdentity, typed_context
 from types import SimpleNamespace
@@ -41,7 +42,7 @@ def test_prepared_file_tool_rechecks_execution_root_before_io(monkeypatch, tmp_p
     else:
         deny_execution_root(monkeypatch, root)
     with pytest.raises(ToolException, match=f'execution_root_unavailable.*{reason}'):
-        spec.tool.func(**{key: getattr(values, key) for key in args}, runtime=runtime)
+        asyncio.run(spec.tool.coroutine(**{key: getattr(values, key) for key in args}, runtime=runtime))
     assert target.read_text() == 'sentinel'
 
 

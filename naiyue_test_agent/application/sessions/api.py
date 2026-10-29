@@ -21,7 +21,8 @@ class SessionAPI:
                 from .execution_binding import resolve_capabilities
                 row=await run_blocking(self._metadata.get,session_id)
                 access=await resolve_capabilities(self._sessions,row)
-                return await run_blocking(discover_project_skills,access.files)
+                from .run_resources import discover_skills
+                return await discover_skills(access.files)
             def discover():
                 if workspace_root is None:
                     return discover_project_skills(None)
@@ -65,11 +66,11 @@ class SessionAPI:
         with self._owner.operation():
             return await run_blocking(self._sessions.create_session, model_id)
 
-    async def create_sandbox(self,model_id,*,request_id,include_untracked=(),profile_id=None,expected_profile_revision=None):
+    async def create_sandbox(self,model_id,*,request_id,include_untracked=(),profile_id=None,expected_profile_revision=None,wait_for_ready=True):
         from .execution_binding import create_sandbox_session
         with self._owner.operation():
             return await create_sandbox_session(self._sessions,model_id,request_id,include_untracked,
-                profile_id=profile_id,expected_profile_revision=expected_profile_revision)
+                owner=self._owner,profile_id=profile_id,expected_profile_revision=expected_profile_revision,wait_for_ready=wait_for_ready)
 
     async def result_options(self,session_id):
         from .result_api import result_call
@@ -111,7 +112,7 @@ class SessionAPI:
         from .execution_binding import prepare_sandbox_session
         with self._owner.operation():
             async with self._persistence.history_lock(session_id):
-                return await prepare_sandbox_session(self._sessions,session_id)
+                return await prepare_sandbox_session(self._sessions,session_id,owner=self._owner)
 
     async def environment_action(self,session_id,action):
         from .execution_binding import environment_action

@@ -24,3 +24,9 @@ htmlcov/
 # Frontend dependencies and local test output
 /frontend/node_modules/
 /frontend/coverage/
+
+# Local research snapshots (prior-art scout output and reference clones)
+research/
+
+# Frontend dev-server cache
+.vite/

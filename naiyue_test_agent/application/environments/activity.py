@@ -45,9 +45,9 @@ class EnvironmentActivity:
                     if not self._users[binding]:del self._users[binding]
 
     @contextmanager
-    def manage(self,binding):
+    def manage(self,binding,*,interrupt=False):
         with self._lock:
-            if self._users.get(binding,0) or binding in self._managed:raise SandboxError('env_busy')
+            if (self._users.get(binding,0) and not interrupt) or binding in self._managed:raise SandboxError('env_busy')
             self._managed.add(binding)
         try:yield
         finally:

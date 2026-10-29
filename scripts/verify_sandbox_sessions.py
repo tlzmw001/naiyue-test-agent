@@ -54,8 +54,8 @@ async def scenario(directory,context,image):
                 for value in values:feedback(value,'write')
                 files=await app.environments.files(binding,project_id=project.project_id,session_id=sid)
                 other_files=await app.environments.files(other_binding,project_id=project.project_id,session_id=other)
-                assert files.read_resource(str(files.environment.path(files.environment.root)/'same.txt'),1024)==b'one'
-                assert other_files.read_resource(str(other_files.environment.path(other_files.environment.root)/'same.txt'),1024)==b'two'
+                assert await files.read_resource(str(files.environment.path(files.environment.root)/'same.txt'),1024)==b'one'
+                assert await other_files.read_resource(str(other_files.environment.path(other_files.environment.root)/'same.txt'),1024)==b'two'
                 assert not (root/'same.txt').exists()
                 assert len((await host.sessions.skills(None,session_id=sid)).entries)==1
                 assert (await host.history.context(sid))['current']['basis']=='next_request'
@@ -84,7 +84,7 @@ async def scenario(directory,context,image):
                 await host.sessions.recover(sid,checkpoint_id=history['checkpoint_id'],action='restore_approval')
                 await host.runs.resume_approval(sid,['approve'])
                 files=await app.environments.files(binding,project_id=project.project_id,session_id=sid)
-                assert files.read_resource(str(files.environment.path(files.environment.root)/'.reviewed.txt'),1024)==b'approved'
+                assert await files.read_resource(str(files.environment.path(files.environment.root)/'.reviewed.txt'),1024)==b'approved'
                 await host.sessions.select_permission_mode(sid,'BypassApprovals')
                 plan(first,'subagent',dict(agent='worker',task='Read again',agent_id=agent_id),'D2')
                 child.i=0;child.responses=[AIMessage(content='continued')]

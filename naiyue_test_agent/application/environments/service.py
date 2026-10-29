@@ -23,6 +23,8 @@ class EnvironmentService:
         self._guard=RLock()
         self.operations=None
         self.activity=EnvironmentActivity(self.records)
+        from naiyue_test_agent.execution.sandbox_transport import SandboxTransport
+        self.transport=SandboxTransport(projects.data_dir,self.configuration)
 
     @property
     def settings(self):
@@ -40,7 +42,9 @@ class EnvironmentService:
         return self.projects.environment_records()
 
     def _engine(self,row):
-        return DockerEnvironment(DockerCLI(SandboxSettings.model_validate(row.settings),self.projects.data_dir))
+        engine=DockerEnvironment(DockerCLI(SandboxSettings.model_validate(row.settings),self.projects.data_dir))
+        engine.transport=self.transport
+        return engine
 
     def _project(self,project_id):
         facts=self.projects.registry.execution_facts(project_id)
@@ -74,8 +78,7 @@ class EnvironmentService:
         selection=selection or self.configuration.select()
         settings=selection.settings
         cli=DockerCLI(settings,self.projects.data_dir)
-        daemon=cli.daemon()
-        image=cli.json(['image','inspect',settings.image])[0]
+        daemon,image=cli.preflight(settings.image)
         if image.get('Os')!='linux':raise SandboxError('env_platform_unsupported')
         row=SandboxRecord(binding_id,project_id,session_id,'creating',daemon,
             'nyt-e-'+binding_id,'nyt-v-'+binding_id,image['Id'],settings.model_dump(mode='json'),
@@ -84,7 +87,7 @@ class EnvironmentService:
         records=self.records()
         with self._lock(binding_id):
             records.reserve(row,limits=self.configuration.lifecycle)
-            engine=DockerEnvironment(cli)
+            engine=self._engine(row)
             phase='create'
             try:
                 row=engine.create(row,records.save)
@@ -112,14 +115,26 @@ class EnvironmentService:
         return None
 
     def validate(self,binding_id,*,require_input=True):
+        row=self.check(binding_id,require_input=require_input)
+        self.transport.validate(row)
+        return row
+
+    def check(self,binding_id,*,require_input=True):
         row=self.get(binding_id)
         self._project(row.project_id)
         if row.lifecycle=='destroyed':raise SandboxError('env_expired')
         if row.lifecycle!='running':raise SandboxError('env_stopped' if row.lifecycle=='stopped' else 'env_operation_unknown')
         if require_input and row.input_id is not None and row.input_snapshot is None:
             raise SandboxError('git_input_install_unconfirmed')
-        self._engine(row).validate(row)
         return row
+
+    async def arequest(self,binding_id,operation,params,*,mutates=False,control=None):
+        from naiyue_test_agent.agent_runtime.async_utils import run_blocking
+        with self.activity.use(binding_id):
+            if mutates and self.operations is not None:
+                return await self.operations.afile_call(binding_id,operation,params,control)
+            row=await run_blocking(self.check,binding_id)
+            return await self.transport.arequest(row,operation,params,mutates=mutates)
 
     def request(self,binding_id,operation,params,*,mutates=False,control=None):
         with self.activity.use(binding_id):
@@ -148,6 +163,7 @@ class EnvironmentService:
             engine=self._engine(row)
             phase='action'
             try:
+                self.transport.invalidate(binding_id,wait=action in ('start','recover'))
                 row=engine.action(row,action)
                 if action!='recover':row=row.changed(last_used_at=time.time())
                 phase='state_save'

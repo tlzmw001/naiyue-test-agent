@@ -249,11 +249,11 @@ def test_cold_history_and_context_preview_resolve_current_project_position(monke
             host = await app.projects.open(project.project_id)
             assert not host.sessions.is_loaded(sid)
             observed = []
-            original = session_context.prepare_run_resources
-            def resources(root, **options):
+            original = session_context.prepare_resources
+            async def resources(root, **options):
                 observed.append(root.environment.root)
-                return original(root, **options)
-            monkeypatch.setattr(session_context, 'prepare_run_resources', resources)
+                return await original(root, **options)
+            monkeypatch.setattr(session_context, 'prepare_resources', resources)
             history = await host.history.session(sid)
             assert history['workspace_root'] == str(destination)
             await host.history.context(sid)

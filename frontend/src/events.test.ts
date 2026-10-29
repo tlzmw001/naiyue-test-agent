@@ -46,3 +46,12 @@ it('consumes invocation facts without replacing conversation or context usage', 
   expect(view.context_snapshot).toBe(original.context_snapshot);
   expect(view.status).toBe('running');
 });
+it('projects resource preparation and actual model invocation as different phases',()=>{
+  let view={messages:[],last_sequence:0,status:'running'} as any;
+  view=applyEvent(view,validateEvent(event(1,'run_preparation',{phase:'resources'})));
+  expect(view.preparation_phase).toBe('resources');
+  view=applyEvent(view,validateEvent(event(2,'run_preparation',{phase:'model_request'})));
+  expect(view.preparation_phase).toBe('model_request');
+  view=applyEvent(view,validateEvent(event(3,'model_call_started',{})));
+  expect(view.preparation_phase).toBe('model');
+});

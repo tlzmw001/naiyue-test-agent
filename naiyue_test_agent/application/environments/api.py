@@ -11,6 +11,7 @@ from .inputs import InputService
 from .results import ResultService
 from .delivery import DeliveryService
 from .lifecycle import EnvironmentLifecycle
+from .preparation import SandboxPreparations
 
 
 class EnvironmentAPI:
@@ -23,6 +24,7 @@ class EnvironmentAPI:
         self._inputs=InputService(self._service,self._operations)
         self._results=ResultService(self._service,self._operations,self._inputs)
         self._delivery=DeliveryService(self._results,hosts.settings.delivery)
+        self._preparations=SandboxPreparations(lambda:self._service.configuration.lifecycle.max_retained)
         self._lifecycle=EnvironmentLifecycle(self)
         owner.own_environments(self._lifecycle)
 
@@ -37,23 +39,14 @@ class EnvironmentAPI:
 
     async def management(self):
         with self._owner.operation():
-            def view():
-                rows=self._lifecycle.rows()
-                names={p.project_id:p.name for p in self._service.projects.registry.list()} if rows else {}
-                return dict(policy=self._service.configuration.lifecycle.model_dump(),
-                    usage=self._service.records().usage() if rows else dict(running=0,retained=0),
-                    items=[dict(binding_id=r.binding_id,project_id=r.project_id,session_id=r.session_id,
-                        project_name=names.get(r.project_id),profile_name=r.profile_name,lifecycle=r.lifecycle,
-                        last_used_at=r.last_used_at,error_code=r.error_code,
-                        busy=self._service.activity.busy(r.binding_id),unsettled=self._operations.unsettled(r.binding_id))
-                        for r in rows if r.lifecycle!='destroyed'])
-            return await run_blocking(view)
+            from .management import management_view
+            return await run_blocking(management_view,self)
 
-    async def manage(self,binding_id,action,*,confirm_destroy=False):
+    async def manage(self,binding_id,action,*,confirm_destroy=False,interrupt=False):
         if action=='destroy' and confirm_destroy is not True:raise SandboxError('env_confirmation_required')
-        with self._owner.operation(),self._operations.accepting(),self._service.activity.manage(binding_id):
-            row=await run_blocking(self._service._perform_action,binding_id,action)
-            return dict(binding_id=row.binding_id,lifecycle=row.lifecycle)
+        if interrupt and action not in ('stop','destroy'):raise SandboxError('env_operation_invalid')
+        from .management import manage_binding
+        return await manage_binding(self,binding_id,action,interrupt=interrupt)
 
     async def refresh(self,settings_path):
         with self._owner.operation():
@@ -129,8 +122,8 @@ class EnvironmentAPI:
     async def options(self,project_id):
         with self._owner.operation():return await run_blocking(self._inputs.options,project_id)
 
-    async def install_input(self,binding_id,input_id):
-        async with self.using(binding_id):return await run_blocking(self._inputs.install,binding_id,input_id)
+    async def install_input(self,binding_id,input_id,*,progress=None):
+        async with self.using(binding_id):return await run_blocking(self._inputs.install,binding_id,input_id,progress=progress)
 
     async def create(self,project_id,session_id):
         from naiyue_test_agent.storage.errors import SessionPersistenceError
@@ -187,7 +180,7 @@ class EnvironmentAPI:
 
     async def operation_status(self,binding_id,operation_id):
         with self._owner.operation():
-            row=await run_blocking(self._operations.refresh,binding_id,operation_id)
+            row=await self._operations.arefresh(binding_id,operation_id)
             if row['kind']=='git_input' and row['state']=='completed':
                 await run_blocking(self._inputs.confirm,binding_id,row)
             return row

@@ -243,7 +243,7 @@ def test_explicit_deny_overrides_bypass_allow_and_remembered_mcp_tool(monkeypatc
             sid = await app.host.sessions.create('A')
             spec, = app.host.tools.list()
             context = typed_context(identity=RunIdentity(session_id=sid, agent_path='root'))
-            prepared = prepare_permission_call({'id': 'first', 'name': NAME, 'args': {}}, spec, context, PermissionSettings(), [])
+            prepared = await prepare_permission_call({'id': 'first', 'name': NAME, 'args': {}}, spec, context, PermissionSettings(), [])
             remembered = remembered_rule(prepared['subject'])
             session = app.host.sessions._sessions.require(sid)
             session._runtime.state.session_allow.append(remembered)

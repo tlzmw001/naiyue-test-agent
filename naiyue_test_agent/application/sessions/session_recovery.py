@@ -126,7 +126,7 @@ def build_recovery_update(snapshot, record):
     return {'messages': additions, 'tool_execution': {}, 'run_stopped': False}
 
 
-def validate_saved_approval(settings, registry, row, snapshot, names, *, execution_root=None,execution_access=None):
+async def validate_saved_approval(settings, registry, row, snapshot, names, *, execution_root=None,execution_access=None):
     """Recheck local authority; never load file contents, review with AI or grant access."""
     from naiyue_test_agent.agent_runtime.tool_execution.permissions import prepare_permission_call
     try:
@@ -171,7 +171,7 @@ def validate_saved_approval(settings, registry, row, snapshot, names, *, executi
             project_id=row['project_id'], execution_root=root), capabilities=RunCapabilities(files=files, processes=processes),
             environment=files.environment if files is not None else None))
         for saved in batch['calls']:
-            current = prepare_permission_call(saved, specs[saved['name']], context, settings, [])
+            current = await prepare_permission_call(saved, specs[saved['name']], context, settings, [])
             if saved.get('validation') != 'valid' or current['validation'] != 'valid':
                 raise ValueError('Arguments or target changed')
             # Resource exemptions depend on Skill discovery. Do not resurrect

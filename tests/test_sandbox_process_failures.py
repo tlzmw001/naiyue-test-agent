@@ -25,6 +25,7 @@ from naiyue_test_agent.storage.project_registry import ProjectRegistry
 from naiyue_test_agent.tools import create_builtin_tools
 from naiyue_test_agent.tools.processes import ProcessCleanupError
 from test_agent_runtime import ToolCapableFake
+from sandbox_operation_helpers import sandbox_operation_factory
 
 
 @pytest.mark.parametrize('name,phase,background',[
@@ -32,7 +33,10 @@ from test_agent_runtime import ToolCapableFake
     ('aitest_kit','submit',False),('aitest_kit','poll',False),
     ('bash','promote',False),
 ])
-def test_remote_cleanup_failure_aborts_formal_graph_before_next_model_call(tmp_path,caplog,name,phase,background):
+def test_remote_cleanup_failure_aborts_formal_graph_before_next_model_call(tmp_path,caplog,monkeypatch,name,phase,background,sandbox_operation_factory):
+    # The dispatcher now pins a real workspace FD at startup, as a container does.
+    workspace=tmp_path/'workspace';workspace.mkdir()
+    monkeypatch.setattr('naiyue_test_agent.contracts.sandbox.SANDBOX_ROOT',str(workspace))
     async def scenario():
         policy=SandboxSettings(poll_milliseconds=20)
         record=SandboxRecord('B','P','S','running','D','c','v','i',policy.model_dump(mode='json'))
@@ -43,7 +47,7 @@ def test_remote_cleanup_failure_aborts_formal_graph_before_next_model_call(tmp_p
             class Engine:
                 def request(self,_row,operation,params,**_kwargs):
                     calls.append(operation)
-                    if (operation=='operation_status' and phase=='poll' and calls.count(operation)==2
+                    if (operation=='operation_poll' and phase=='poll' and calls.count(operation)==2
                             or operation=='operation_background' and phase=='promote'):
                         release.set();assert remote.wait(params['operation_id'],5)
                     value=remote.dispatch(dict(protocol=PROTOCOL_VERSION,request_id='Q',
@@ -54,7 +58,7 @@ def test_remote_cleanup_failure_aborts_formal_graph_before_next_model_call(tmp_p
                     return value
             service=SimpleNamespace(records=lambda:EnvironmentRegistry(registry.database),get=lambda _:record,
                 validate=lambda _:record,_engine=lambda _:Engine(),projects=SimpleNamespace(data_dir=tmp_path))
-            coordinator=SandboxOperationService(service,activity=EnvironmentActivity(service.records));port=DockerProcesses(coordinator,record)
+            coordinator=sandbox_operation_factory(service,activity=EnvironmentActivity(service.records));port=DockerProcesses(coordinator,record)
             spec=next(spec for spec in create_builtin_tools(AppSettings().tools,
                 shell_task_settings=ShellTaskSettings(foreground_wait_seconds=1)) if spec.tool.name==name)
             args={'args':['--help']} if name=='aitest_kit' else {'command':'never started','background':background}
@@ -102,7 +106,9 @@ def test_result_value_restores_only_the_fixed_process_failure_code():
         with pytest.raises(SandboxError,match='env_operation_unknown'):SandboxOperationService.value(row)
 
 
-def test_cleanup_failure_while_stopping_queries_original_id_and_preserves_mechanism_error(tmp_path):
+def test_cleanup_failure_while_stopping_queries_original_id_and_preserves_mechanism_error(tmp_path,monkeypatch,sandbox_operation_factory):
+    workspace=tmp_path/'workspace';workspace.mkdir()
+    monkeypatch.setattr('naiyue_test_agent.contracts.sandbox.SANDBOX_ROOT',str(workspace))
     async def scenario():
         from naiyue_test_agent.tools.settings import BashSettings
         policy=SandboxSettings();record=SandboxRecord('B','P','S','running','D','c','v','i',policy.model_dump(mode='json'))
@@ -116,7 +122,7 @@ def test_cleanup_failure_while_stopping_queries_original_id_and_preserves_mechan
                         environment=record.environment.public(),session_id='S',operation=operation,params=params))
             service=SimpleNamespace(records=lambda:EnvironmentRegistry(registry.database),get=lambda _:record,
                 validate=lambda _:record,_engine=lambda _:Engine(),projects=SimpleNamespace(data_dir=tmp_path))
-            coordinator=SandboxOperationService(service,activity=EnvironmentActivity(service.records));port=DockerProcesses(coordinator,record)
+            coordinator=sandbox_operation_factory(service,activity=EnvironmentActivity(service.records));port=DockerProcesses(coordinator,record)
             class Control:
                 checks=0
                 @property

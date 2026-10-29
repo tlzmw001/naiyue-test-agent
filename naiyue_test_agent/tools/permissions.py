@@ -1,6 +1,7 @@
 """Tool permission declarations, execution checks and one-use approval grants."""
 
 import json
+import inspect
 import sys
 from dataclasses import dataclass
 from pathlib import PurePath
@@ -125,6 +126,21 @@ class FilePermission:
             if message is not None:
                 raise ToolException(message) from error
             raise
+        if inspect.isawaitable(subject):
+            async def finish():
+                try:
+                    prepared = await subject
+                except ToolException as error:
+                    root = files.environment.path(files.environment.root)
+                    message = self.workspace_message if not root.is_absolute() else self.unavailable_message
+                    if message is not None:
+                        raise ToolException(message) from error
+                    raise
+                return self._resource_subject(prepared, context)
+            return finish()
+        return self._resource_subject(subject, context)
+
+    def _resource_subject(self, subject, context):
         subject['resource_roots'] = [str(root) for root in (context.inputs.read_resource_roots if context.inputs.read_resource_roots is not None else ())
                                      if isinstance(root, PurePath) and root.is_absolute()]
         if self.unavailable_message is not None:

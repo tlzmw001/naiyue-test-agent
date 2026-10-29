@@ -52,10 +52,13 @@ export function createConversationSubmit(context:Context) {
     let request: FrozenImageRequest | undefined = frozen;
     try {
       if (key === 'new') {
-        const value = await creation.prepare(model);
+        const value = await creation.prepare(model, progress => {
+          if (sid === 'new') {
+            sid = progress.session_id; imageInputs.move('new', sid); applySession(progress, true);
+          } else if (selected.current === sid) setSession(() => progress);
+        });
         sid = value.session_id;
-        imageInputs.move('new', sid);
-        applySession(value, true);
+        applySession(value);
         if (value.execution?.kind === 'sandbox' && (value.execution.state !== 'ready' || !value.can_run)) {
           setNotice('环境准备尚未完成，消息已保留。请在执行位置菜单核对原准备。'); await refreshSessions(); return;
         }

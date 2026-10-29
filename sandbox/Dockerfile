@@ -12,7 +12,9 @@ RUN python -m pip install --no-cache-dir -r /tmp/runtime.txt /tmp/${AITEST_WHEEL
 COPY envd.whl /tmp/envd.whl
 ARG WHEEL_NAME
 RUN mv /tmp/envd.whl /tmp/${WHEEL_NAME} && python -m pip install --no-deps /tmp/${WHEEL_NAME} && rm /tmp/${WHEEL_NAME} \
-    && mkdir -p /workspace /state && chown 1000:1000 /workspace /state
-USER 1000:1000
+    && mkdir -p /work/workspace /work/.envd-stage /state \
+    && chmod 0755 /work && chmod 0700 /work/.envd-stage /state \
+    && chown 1000:1000 /work/workspace && ln -s /work/workspace /workspace
+USER 0:0
 WORKDIR /workspace
 ENTRYPOINT ["python", "-I", "-m", "naiyue_test_agent.envd", "serve"]

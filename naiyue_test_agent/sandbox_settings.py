@@ -63,6 +63,21 @@ class GitInputSettings(BaseModel):
         return value
 
 
+class SandboxTransportSettings(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
+    io_requests: int = Field(default=8, ge=1, le=32)
+    control_requests: int = Field(default=2, ge=1, le=8)
+    frame_bytes: int = Field(default=65536, ge=1024, le=262144)
+    pending_requests: int = Field(default=64, ge=2, le=1024)
+    connecting: int = Field(default=2, ge=1, le=16)
+
+    @model_validator(mode='after')
+    def admission_budget(self):
+        if self.pending_requests < self.io_requests+self.control_requests:
+            raise ValueError('Pending requests must cover active slots')
+        return self
+
+
 class SandboxSettings(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
     docker_executable: str = 'docker'
@@ -82,6 +97,8 @@ class SandboxSettings(BaseModel):
     poll_milliseconds: int = Field(default=100, ge=20, le=10000)
     network: SandboxNetworkSettings = Field(default_factory=SandboxNetworkSettings)
     git: GitInputSettings = Field(default_factory=GitInputSettings)
+    transport: SandboxTransportSettings = Field(default_factory=SandboxTransportSettings,
+        exclude_if=lambda value: value == SandboxTransportSettings())
 
     @model_validator(mode='after')
     def one_connection(self):

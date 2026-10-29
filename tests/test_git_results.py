@@ -43,6 +43,23 @@ def capture(delivery,ident='c'*32,include=()):
     return row['result']['value'],payload
 
 
+def test_result_never_runs_privileged_git_in_task_repository(delivery,monkeypatch):
+    from naiyue_test_agent.execution.git_repository import GitRepository
+    from naiyue_test_agent.envd.identity import TaskProcessRunner
+    code=delivery[1]
+    original=GitRepository.run
+    seen=[]
+    def observed(self,args,**kwargs):
+        if self.path == code:
+            seen.append(isinstance(getattr(self,'runner',None),TaskProcessRunner))
+        if args[0] == 'fetch' and self.path != code:
+            assert str(code) not in args, 'trusted Git must import a bundle, not execute task upload-pack'
+        return original(self,args,**kwargs)
+    monkeypatch.setattr(GitRepository,'run',observed)
+    capture(delivery)
+    assert seen and all(seen)
+
+
 def test_result_snapshot_diff_uses_input_and_preserves_indexes(delivery,tmp_path):
     from naiyue_test_agent.execution.git_results import ResultImporter
     root,code,snapshot,operations,policy,before=delivery

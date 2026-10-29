@@ -273,7 +273,7 @@ async def test_message_consumer_failure_is_isolated_from_other_consumers_and_res
     app.host.observability.subscribe(events.append)
     result = await app.host.runs.start(await app.host.sessions.create('A'), [('user', 'run')])
     assert result['messages'][-1].content == 'PRIVATE_REPLY'
-    assert calls == ['run_started', 'message_completed']
+    assert calls == ['run_started', 'run_preparation', 'run_preparation', 'message_completed']
     assert [row['type'] for row in rows(events)] == ['human', 'ai']
     assert events[-1].data.status == 'completed'
     assert 'event_observer_failed' in caplog.text and 'PRIVATE_' not in caplog.text
@@ -325,9 +325,9 @@ def test_real_probe_guard_counts_model_requests_not_preflight_resolution(monkeyp
     with caplog.at_level(logging.CRITICAL):
         _worker(SimpleNamespace(config='synthetic.json', model_id='A', with_control=with_control))
     assert len(model_calls) == 2
-    expected = ('real_message_events=PASS events=27 messages=5 model_calls=2 '
+    expected = ('real_message_events=PASS events=29 messages=5 model_calls=2 '
                 'tool_calls=1 turns=2 controls=1 pairing=verified terminal=completed\n'
-                if with_control else 'real_message_events=PASS events=23 messages=4 model_calls=2 '
+                if with_control else 'real_message_events=PASS events=25 messages=4 model_calls=2 '
                 'tool_calls=1 turns=2 pairing=verified terminal=completed\n')
     assert capsys.readouterr().out == expected
 

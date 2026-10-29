@@ -36,6 +36,11 @@ export function applyEvent(view: RunView, event: RuntimeEvent): RunView {
   const data = event.data;
   if (event.event_type === 'run_started') {
     return { ...view, mode: data.mode as RunView['mode'], last_sequence: event.sequence };
+  } else if (event.event_type === 'run_preparation') {
+    if (!['resources','model_request'].includes(String(data.phase))) throw new Error('invalid_event');
+    return {...view,preparation_phase:data.phase as RunView['preparation_phase'],last_sequence:event.sequence};
+  } else if (event.event_type === 'model_call_started') {
+    return {...view,preparation_phase:'model',last_sequence:event.sequence};
   } else if (event.event_type === 'compaction_finished' && data.trigger === 'manual') {
     return { ...view, compaction_result: { status: String(data.status), reason: data.reason as string | null }, last_sequence: event.sequence };
   } else if (event.event_type === 'model_context_snapshot') {
@@ -73,6 +78,7 @@ export function applyEvent(view: RunView, event: RuntimeEvent): RunView {
   } else if (event.event_type === 'tool_call_started' || event.event_type === 'tool_call_finished') {
     if (typeof data.tool_call_id !== 'string' || typeof data.boundary !== 'string') throw new Error('invalid_event');
     if (view.status === 'running') {
+      if (event.event_type === 'tool_call_started') view={...view,preparation_phase:'tools'};
       const batch_id = [...messages].reverse().find(row => row.type === 'ai' &&
         row.tool_calls?.some(call => call.id === data.tool_call_id))?.id;
       const old = tool_states[data.tool_call_id];

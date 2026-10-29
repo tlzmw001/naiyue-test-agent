@@ -5,7 +5,7 @@ import logging
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking
 from naiyue_test_agent.agent_runtime.context_usage import SNAPSHOT_KEY, compose_model_prompt, estimate_context, read_snapshot
 from naiyue_test_agent.model_access.messages import prepare_model_messages
-from .skills import prepare_run_resources
+from .run_resources import prepare_resources
 from naiyue_test_agent.tools.subagent import subagent_request_tools
 
 
@@ -44,7 +44,7 @@ async def context_view(session_id, *, sessions, agent, catalog, tool_registry, s
             access=await resolve_capabilities(sessions,saved)
             files=access.files
             root=files.execution_root.path if files is not None and access.environment.kind=='host' else None
-            resources = await run_blocking(prepare_run_resources, files,
+            resources = await prepare_resources(files,
                 enable_skills='read' in tool_registry.names())
             specs = tool_registry.select_available(subagent_request_tools(row['active_tool_names'], tool_registry))
             roles = [(r.name, r.description) for r in sessions.get_registered_subagents()] if any(

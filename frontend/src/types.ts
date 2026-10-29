@@ -107,6 +107,7 @@ export interface MessageRow {
 }
 
 export interface RunView {
+  preparation_phase?: 'resources' | 'model_request' | 'model' | 'tools' | null;
   messages_location?: 'session';
   coverage?: { kind: 'window'; first_message_id: string | null };
   mode?: 'message' | 'approval_resume' | 'compact';
@@ -209,11 +210,16 @@ export interface SkillCatalogView {
   diagnostics: { source_id: string; reason: string }[]; read_registered: boolean;
 }
 
+export interface PreparationView {
+  state: 'preparing' | 'ready' | 'failed' | 'cancelled'; phase: string;
+  completed: number | null; total: number | null; error_code: string | null;
+}
 export interface ExecutionView {
   kind: 'host' | 'sandbox'; state: 'ready' | 'preparing' | 'unavailable' | 'failed';
   binding_id?: string; input_id?: string; root?: string | null;
   error?: { code: string; paths?: string[] } | null;
   profile_id?: string; profile_name?: string; profile_revision?: string;
+  preparation?: PreparationView;
 }
 export interface ExecutionOptions {
   host_available: boolean; sandbox_available: boolean; error_code: string | null;

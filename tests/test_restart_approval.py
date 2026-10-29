@@ -161,7 +161,7 @@ async def test_old_allow_must_be_proven_by_current_local_policy_without_auto(mon
         storage = app.host.sessions._persistence.storage
         sid = await app.host.sessions.create_workspace('A', root)
         if source == 'session_allow':
-            call = prepare_permission_call(request.tool_calls[0], app.host.tools._tool_registry.get('read'),
+            call = await prepare_permission_call(request.tool_calls[0], app.host.tools._tool_registry.get('read'),
                 typed_context(identity=RunIdentity(session_id=sid, execution_root=ExecutionRoot(root) if root is not None else None)), settings.permissions, [])
             owner, observation_run = app.host.sessions._sessions._admit(sid, 'allow-setup', 'message')
             run_id, observation = observation_run.run_id, observation_run.observation

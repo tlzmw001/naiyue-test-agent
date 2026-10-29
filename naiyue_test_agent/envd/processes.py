@@ -4,12 +4,13 @@ import os
 import shutil
 from langchain_core.tools import ToolException
 from naiyue_test_agent.execution.host_shell import BashAdapter,PowerShellAdapter,build_environment
-from naiyue_test_agent.tools.processes import HostProcessRunner,ProcessRequest,run_async_sync
+from naiyue_test_agent.tools.processes import ProcessRequest,run_async_sync
 from naiyue_test_agent.tools.settings import BashSettings,PowerShellSettings,AITestSettings,ProcessSettings
+from .identity import TaskProcessRunner
 
 
 def execute_process(payload,kind,root,consume,control,on_started):
-    runner=HostProcessRunner(ProcessSettings.model_validate(payload['process_settings']) if payload.get('process_settings') else None)
+    runner=TaskProcessRunner(ProcessSettings.model_validate(payload['process_settings']) if payload.get('process_settings') else None)
     if kind=='shell':
         name=payload['name']
         settings={'bash':BashSettings,'powershell':PowerShellSettings}[name].model_validate(payload['settings'])

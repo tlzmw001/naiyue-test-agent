@@ -50,7 +50,7 @@ class SandboxTasks:
             try:
                 existing=await run_blocking(lambda:self.coordinator.records().get(self.record.binding_id,ident))
                 if existing['kind'] not in ('shell','argv'):raise TaskQueryError('task_not_found','This operation is not a Shell task.')
-                row=await run_blocking(self.coordinator.stop if stop else self.coordinator.refresh,self.record.binding_id,ident)
+                row=await (self.coordinator.astop if stop else self.coordinator.arefresh)(self.record.binding_id,ident)
             except SandboxError as error:
                 if error.code=='env_operation_not_found':raise TaskQueryError('task_not_found','Task does not exist in this session.') from error
                 raise

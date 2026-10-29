@@ -34,6 +34,15 @@ def connect(app,project,tmp_path,monkeypatch,stack,count=1):
     engine=SimpleNamespace(request=request,validate=lambda *_a,**_k:None,
         action=lambda row,action:row.changed(lifecycle='stopped' if action=='stop' else 'running'))
     monkeypatch.setattr(app.environments._service,'_engine',lambda _:engine)
+    # Production validation/operations now acquire persistent channels. Keep the
+    # controlled dispatcher at that boundary, preserving fault injection below.
+    async def open_channel(row,lane):
+        class Channel:
+            failed=None
+            async def request(self,op,params,**kwargs):return await asyncio.to_thread(engine.request,row,op,params,**kwargs)
+            async def close(self):pass
+        return Channel()
+    monkeypatch.setattr(app.environments._service.transport.connections,'_factory',open_channel)
     return rows,roots,remotes,calls,engine
 
 

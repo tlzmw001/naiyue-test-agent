@@ -17,11 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 class GitRepository:
-    def __init__(self, path, settings):
+    def __init__(self, path, settings, *, runner=None):
         self.path, self.settings = Path(path), settings
+        self.runner = runner
 
     def run(self, args, *, cwd=None, data=None, input_stream=None, extra_env=None, credentials=False,
-            source_config=False, check=True, control=None, output_limit=None):
+            source_config=False, check=True, control=None, output_limit=None, output_stream=None):
         if data is not None and input_stream is not None:
             raise ValueError('Git command accepts one input source')
         executable = shutil.which(self.settings.executable)
@@ -50,17 +51,22 @@ class GitRepository:
         if not source_config:
             prefix.extend(['-c','core.excludesFile='+os.devnull])
         output, errors = bytearray(), bytearray()
-        error_size = 0
+        error_size = output_size = 0
 
         async def consume(stream, chunk):
-            nonlocal error_size
+            nonlocal error_size, output_size
             if stream == 'stderr':
                 error_size += len(chunk)
+            else:
+                output_size += len(chunk)
             target = errors if stream == 'stderr' else output
             limit = self.settings.max_command_bytes if stream == 'stderr' or output_limit is None else output_limit
-            if len(target)+len(chunk) > limit:
+            if (error_size if stream == 'stderr' else output_size) > limit:
                 raise GitInputError('git_input_budget')
-            target.extend(chunk)
+            if stream != 'stderr' and output_stream is not None:
+                output_stream.write(chunk)
+            else:
+                target.extend(chunk)
 
         with ExitStack() as stack:
             source = input_stream
@@ -74,7 +80,7 @@ class GitRepository:
             started = monotonic()
             facts = dict(command=command_kind(args, 'git'), timeout_seconds=request.timeout_seconds)
             try:
-                result = run_async_sync(lambda: HostProcessRunner().run(request, consume, control))
+                result = run_async_sync(lambda: (self.runner or HostProcessRunner()).run(request, consume, control))
             except Exception as error:
                 safe_log(logger.warning, 'git_input_command_failed error_type=%s diagnostic=%s', type(error).__name__,
                     diagnostic_text(error=error, phase='execute', duration_ms=int((monotonic()-started)*1000),

@@ -27,6 +27,7 @@ class SandboxTransport:
         class CLI:
             def __init__(self,*args):pass
             def daemon(self,*args):return 'D'
+            def preflight(self,*args):return 'D',dict(Os='linux',Id='image')
             def json(self,*args):return [dict(Os='linux',Id='image')]
         class Engine:
             def __init__(self,cli):self.cli=cli
@@ -57,3 +58,16 @@ class SandboxTransport:
                     environment=row.environment.public(),session_id=row.session_id,operation=op,params=params))
         monkeypatch.setattr('naiyue_test_agent.application.environments.service.DockerCLI',CLI)
         monkeypatch.setattr('naiyue_test_agent.application.environments.service.DockerEnvironment',Engine)
+        # The real controller now owns persistent connections; keep this daemon-free
+        # fixture at that transport boundary, retaining the real envd dispatcher.
+        async def open_channel(_owner,row,lane):
+            import asyncio
+            engine=Engine(CLI());engine.validate(row)
+            class Channel:
+                @property
+                def failed(self):return row.binding_id in transport.expired or row.binding_id in transport.stopped
+                async def request(self,operation,params,**kwargs):
+                    return await asyncio.to_thread(engine.request,row,operation,params,**kwargs)
+                async def close(self):return None
+            return Channel()
+        monkeypatch.setattr('naiyue_test_agent.execution.sandbox_transport.SandboxTransport._open',open_channel)

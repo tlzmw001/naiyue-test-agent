@@ -5,10 +5,11 @@ from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 from uuid import uuid4
 from naiyue_test_agent.contracts.sandbox import SandboxError,PROTOCOL_VERSION,SANDBOX_ROOT,STATE_ROOT
 from naiyue_test_agent.envd.protocol import encode
+from naiyue_test_agent.contracts.sandbox import WORK_VOLUME_ROOT, CONTROL_CAPABILITIES
 
 logger=logging.getLogger(__name__)
 
-TMPFS='rw,nosuid,nodev,size=67108864,uid=1000,gid=1000,mode=1777'
+TMPFS='rw,nosuid,nodev,size=67108864,uid=0,gid=0,mode=1777'
 
 
 def labels(row):
@@ -37,11 +38,13 @@ def verify_container(row,data):
     settings=row.settings
     expected_mode='none' if settings['network']['mode']=='none' else 'bridge'
     mounts=data.get('Mounts',[])
-    expected={SANDBOX_ROOT:row.volume_name,STATE_ROOT:state_volume(row)}
-    if (config.get('User')!='1000:1000' or not host.get('ReadonlyRootfs') or host.get('Privileged')
+    expected={WORK_VOLUME_ROOT:row.volume_name,STATE_ROOT:state_volume(row)}
+    if (config.get('User')!='0:0' or not host.get('ReadonlyRootfs') or host.get('Privileged') or host.get('PidMode')
             or host.get('NetworkMode')!=expected_mode or host.get('NanoCpus')!=int(settings['cpus']*1000000000)
             or host.get('Memory')!=settings['memory_bytes'] or host.get('PidsLimit')!=settings['pids_limit']
             or set(host.get('CapDrop') or ())!={'ALL'} or 'no-new-privileges' not in (host.get('SecurityOpt') or ())
+            or {str(value).removeprefix('CAP_') for value in host.get('CapAdd') or ()} != set(CONTROL_CAPABILITIES)
+            or any(value in ('apparmor=unconfined','seccomp=unconfined') for value in host.get('SecurityOpt') or ())
             or host.get('Tmpfs')!={'/tmp':TMPFS}
             or len(mounts)!=2 or {mount.get('Destination') for mount in mounts}!=set(expected)
             or any(mount.get('Type')!='volume' or mount.get('Name')!=expected.get(mount.get('Destination')) or not mount.get('RW') for mount in mounts)
@@ -56,8 +59,25 @@ def verify_container(row,data):
         raise SandboxError('env_binding_mismatch')
 
 
+def create_arguments(row):
+    policy={key:value for key,value in row.settings.items() if key!='ssh'}
+    args=['container','create','--name',row.container_name,'--user','0:0','--read-only',
+          '--cap-drop','ALL','--security-opt','no-new-privileges','--pids-limit',str(row.settings['pids_limit']),
+          '--cpus',str(row.settings['cpus']),'--memory',str(row.settings['memory_bytes']),
+          '--network','none' if row.settings['network']['mode']=='none' else 'bridge',
+          '--mount','type=volume,src='+row.volume_name+',dst='+WORK_VOLUME_ROOT,
+          '--mount','type=volume,src='+state_volume(row)+',dst='+STATE_ROOT,'--tmpfs','/tmp:'+TMPFS,
+          '--workdir',SANDBOX_ROOT,'--entrypoint','python',
+          '--env','NYT_ENVIRONMENT='+json.dumps(row.environment.public(),sort_keys=True),
+          '--env','NYT_SESSION_ID='+row.session_id,
+          '--env','NYT_SANDBOX_POLICY='+json.dumps(policy,sort_keys=True)]
+    for capability in CONTROL_CAPABILITIES:args.extend(['--cap-add',capability])
+    for key,value in labels(row).items():args.extend(['--label',key+'='+value])
+    return [*args,row.image_id,'-I','-m','naiyue_test_agent.envd','serve','--max-bytes',str(row.settings['max_message_bytes'])]
+
+
 class DockerEnvironment:
-    def __init__(self,cli):self.cli=cli
+    def __init__(self,cli):self.cli=cli;self.transport=None
 
     def action(self,row,action):
         self.cli.daemon(row.daemon_id)
@@ -97,6 +117,9 @@ class DockerEnvironment:
         return row.changed(lifecycle=state,error_code=None)
 
     def validate(self,row,*,running=True):
+        if row.settings.get('ssh') is not None:
+            from .docker_management import validation_snapshot,validate_snapshot
+            return validate_snapshot(row,validation_snapshot(self.cli,row),running=running)
         self.cli.daemon(row.daemon_id)
         data=self.cli.container(row.container_id) if row.container_id else None
         if data is None:raise SandboxError('env_expired')
@@ -107,26 +130,16 @@ class DockerEnvironment:
         return data
 
     def create(self,row,save):
+        if row.settings.get('ssh') is not None:
+            from .docker_management import create_remote
+            return create_remote(self.cli,row,create_arguments(row),save)
         self.cli.daemon(row.daemon_id)
-        policy={key:value for key,value in row.settings.items() if key!='ssh'}
         for name,is_state in ((row.volume_name,False),(state_volume(row),True)):
             args=['volume','create']
             for key,value in labels(row).items():args.extend(['--label',key+'='+value])
             self.cli.run([*args,name],mutates=True)
             verify_volume(row,self.cli.volume(name),state=is_state)
-        args=['container','create','--name',row.container_name,'--user','1000:1000','--read-only',
-              '--cap-drop','ALL','--security-opt','no-new-privileges','--pids-limit',str(row.settings['pids_limit']),
-              '--cpus',str(row.settings['cpus']),'--memory',str(row.settings['memory_bytes']),
-              '--network','none' if row.settings['network']['mode']=='none' else 'bridge',
-              '--mount','type=volume,src='+row.volume_name+',dst='+SANDBOX_ROOT,
-              '--mount','type=volume,src='+state_volume(row)+',dst='+STATE_ROOT,'--tmpfs','/tmp:'+TMPFS,
-              '--workdir',SANDBOX_ROOT,'--entrypoint','python',
-              '--env','NYT_ENVIRONMENT='+json.dumps(row.environment.public(),sort_keys=True),
-              '--env','NYT_SESSION_ID='+row.session_id,
-              '--env','NYT_SANDBOX_POLICY='+json.dumps(policy,sort_keys=True)]
-        for key,value in labels(row).items():args.extend(['--label',key+'='+value])
-        identity=self.cli.run([*args,row.image_id,'-I','-m','naiyue_test_agent.envd','serve',
-                              '--max-bytes',str(row.settings['max_message_bytes'])],mutates=True).decode().strip()
+        identity=self.cli.run(create_arguments(row),mutates=True).decode().strip()
         row=row.changed(container_id=identity)
         save(row)
         self.validate(row,running=False)
@@ -134,6 +147,7 @@ class DockerEnvironment:
         return row
 
     def request(self,row,operation,params,*,mutates=False):
+        if self.transport is not None:return self.transport.request(row,operation,params,mutates=mutates)
         identity=uuid4().hex
         phase='validate'
         try:

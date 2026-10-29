@@ -90,6 +90,7 @@ def test_destroy_cannot_finish_then_be_revived_by_pending_create(monkeypatch,tmp
     class CLI:
         def __init__(self,*args):pass
         def daemon(self,*args):return 'D'
+        def preflight(self,*args):return 'D',dict(Os='linux',Id='image')
         def json(self,*args):return [{'Os':'linux','Id':'image'}]
         def container(self,*args,**kwargs):return None
         def volume(self,*args):return None
@@ -154,11 +155,12 @@ def test_invalid_write_feedback_is_an_unknown_outcome(operation,result):
     from langchain_core.tools import ToolException
     from naiyue_test_agent.execution.docker_files import DockerFileSystem
     from naiyue_test_agent.tools.settings import WriteSettings,EditSettings
-    row=SandboxRecord('B','P','S','running','D','container','volume','image',{})
-    controller=SimpleNamespace(request=lambda *_a,**_k:result)
+    row=SandboxRecord('B','P','S','running','D','container','volume','image',SandboxSettings().model_dump(mode='json'))
+    async def request(*_args,**_kwargs):return result
+    controller=SimpleNamespace(arequest=request)
     files=DockerFileSystem(controller,row)
     with pytest.raises(ToolException,match='env_operation_unknown'):
         if operation=='write':
-            files.write({},'content',settings=WriteSettings(),control=None,progress=None,read_allowed=True)
+            asyncio.run(files.write({},'content',settings=WriteSettings(),control=None,progress=None,read_allowed=True))
         else:
-            files.edit({},[],settings=EditSettings(),control=None,progress=None)
+            asyncio.run(files.edit({},[],settings=EditSettings(),control=None,progress=None))

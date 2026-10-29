@@ -17,7 +17,7 @@ from naiyue_test_agent.contracts.model_events import (
 )
 from .turn_events import TurnStartedData, TurnFinishedData, TurnUnavailableData
 from naiyue_test_agent.contracts.session_events import (
-    RunStartedData, RunFinishedData, ControlData, ApprovalRequestedData, SESSION_PAYLOADS,
+    RunStartedData, RunFinishedData, RunPreparationData, ControlData, ApprovalRequestedData, SESSION_PAYLOADS,
 )
 from .context_events import ContextOperationStartedData, ContextOperationFinishedData
 from .stream_events import MessageDeltaData, MessageReasoningDeltaData, ToolProgressData
@@ -175,7 +175,7 @@ class MessageSnapshotUnavailableData:
             raise ValueError('Invalid observation error type')
 
 
-EventData = (RunStartedData | RunFinishedData
+EventData = (RunStartedData | RunFinishedData | RunPreparationData
              | ToolCallStartedData | ToolCallFinishedData | MessageSnapshotData
              | ContextMessagesChangedData | MessageSnapshotUnavailableData
              | TurnStartedData | TurnFinishedData | TurnUnavailableData | ControlData | ApprovalRequestedData

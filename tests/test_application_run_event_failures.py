@@ -21,7 +21,7 @@ async def test_stage_failure_keeps_original_exception_and_cleans(monkeypatch, st
     app.host.observability.subscribe(run_events_only(received.append))
     # Inject at the session execution owner, where the graph call is made.
     module = __import__('naiyue_test_agent.application.sessions.session_execution', fromlist=['RunLifecycle'])
-    function = {'prepare': 'prepare_run_resources', 'execute': 'ainvoke_agent_run',
+    function = {'prepare': 'prepare_resources', 'execute': 'ainvoke_agent_run',
                 'finalize': 'pending_tool_approval'}[stage]
     failure = RuntimeError('PRIVATE_ORIGINAL_ERROR')
 
@@ -66,7 +66,7 @@ async def test_cleanup_failure_is_reported_without_masking_primary(monkeypatch, 
 
     monkeypatch.setattr(app.host.sessions._sessions._sessions[session].lifecycle, '_cleanup_run', fail_cleanup)
     if has_primary:
-        monkeypatch.setattr(module, 'prepare_run_resources', fail_prepare)
+        monkeypatch.setattr(module, 'prepare_resources', fail_prepare)
     with pytest.raises(Exception) as caught:
         await app.host.runs.start(session, [('user', 'run')])
     assert caught.value is (primary if has_primary else secondary)

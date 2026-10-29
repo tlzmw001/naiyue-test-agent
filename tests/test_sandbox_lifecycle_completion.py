@@ -25,7 +25,10 @@ def test_background_completion_renews_idle_once(tmp_path,monkeypatch):
                     settings=BashSettings().model_dump(mode='json'),background=True)
                 row=ops.records().reserve(env.binding_id,project.project_id,sid,ident,'shell',{},metadata)
                 row=ops.records().save(env.binding_id,ident,dict(state='running',stale=False))
-                monkeypatch.setattr(ops,'_rpc',lambda *_a,**_k:dict(row,state='completed',observed_bytes=0))
+                async def poll(*_args,**_kwargs):
+                    return dict(operation=dict(row,state='completed',observed_bytes=0),
+                        output=dict(offset=0,next_offset=0,observed_bytes=0,gap=False,data=''))
+                monkeypatch.setattr(ops,'_rpc',poll)
                 with monkeypatch.context() as patch:
                     patch.setattr('naiyue_test_agent.application.environments.activity.time.time',lambda:1000.0)
                     assert ops.finished(await asyncio.to_thread(ops.refresh,env.binding_id,ident))

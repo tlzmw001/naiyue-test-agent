@@ -20,6 +20,7 @@ from naiyue_test_agent.tools.permission_rules import match_rules
 from naiyue_test_agent.tools.permissions import execution_environment, matches_session_allow, PermissionMechanismError
 from .toolset import batch_tool_specs
 from ..run_control import UserStop, native_async_model
+from ..async_utils import run_blocking
 from ..active_stop import finish_stopped_batch
 from ..stream_events import PERMISSION_REVIEW_TAG
 from ..call_observation import event_label
@@ -228,7 +229,7 @@ class AutoPermissionReviewer:
             steps.close()
 
 
-def prepare_permission_call(call, spec, context, settings, session_allow):
+async def prepare_permission_call(call, spec, context, settings, session_allow):
     prepared = {'id': call['id'], 'name': call['name'], 'args': call['args']}
     try:
         args = spec.validate_input(call['args']).model_dump(mode='json')
@@ -239,9 +240,9 @@ def prepare_permission_call(call, spec, context, settings, session_allow):
         return {**prepared, 'validation': 'invalid'}
     prepared['validation'] = 'valid'
     try:
-        subject = spec.permissions.prepare(args, context)
-        if inspect.iscoroutine(subject):
-            subject.close()
+        subject = await run_blocking(spec.permissions.prepare, args, context)
+        if inspect.isawaitable(subject):
+            subject = await subject
         if not isinstance(subject, dict):
             raise TypeError('Invalid permission subject')
         json.dumps(subject, allow_nan=False)
@@ -295,7 +296,7 @@ class PermissionMiddleware(AgentMiddleware):
         if settings.mode == 'Auto' and reviewer is None:
             raise ValueError('Auto permission reviewer is required')
 
-    def prepare_local_batch(self, state, runtime):
+    async def prepare_local_batch(self, state, runtime):
         message = next((item for item in reversed(state['messages']) if isinstance(item, AIMessage)), None)
         if message is None or not message.tool_calls:
             return None
@@ -316,7 +317,7 @@ class PermissionMiddleware(AgentMiddleware):
         if mode == 'Auto' and self.reviewer is None:
             raise PermissionMechanismError('Permission mode is unavailable')
         specs = {spec.tool.name: spec for spec in batch_tool_specs(self.registry, state, context)}
-        calls = [prepare_permission_call(call, specs[call['name']], context, self.settings, choice['session_allow'])
+        calls = [await prepare_permission_call(call, specs[call['name']], context, self.settings, choice['session_allow'])
                  for call in message.tool_calls if call['name'] in specs]
         return ({**view, 'batch_id': message.id, 'mode': mode,
                  'session_allow': choice['session_allow'], 'calls': calls}, choice.get('project_instructions'))
@@ -336,7 +337,7 @@ class PermissionMiddleware(AgentMiddleware):
     @hook_config(can_jump_to=['end'])
     async def aafter_model(self, state, runtime):
         from ..async_utils import run_blocking
-        prepared = await run_blocking(self.prepare_local_batch, state, runtime)
+        prepared = await self.prepare_local_batch(state, runtime)
         if prepared is None:
             return None
         batch, project = prepared

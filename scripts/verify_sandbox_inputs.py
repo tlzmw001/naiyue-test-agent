@@ -88,8 +88,8 @@ async def scenario(directory,context,image):
                 assert 'working input' in await invoke(files,processes,'read',{'path':'app.txt'})
                 result=await invoke(files,processes,'bash',{'command':'git rev-parse HEAD; git branch --show-current; printf agent-change > app.txt'})
                 assert snapshot.input_snapshot in result and 'naiyue-task/'+ident in result
-                from naiyue_test_agent.application.sessions.skills import prepare_run_resources
-                resources=await run_blocking(prepare_run_resources,files)
+                from naiyue_test_agent.application.sessions.run_resources import prepare_resources
+                resources=await prepare_resources(files)
                 assert 'Use the selected input' in resources['project_instructions']
                 assert any(part.get('count')==1 for part in resources['prompt_parts'])
                 original=DockerEnvironment.request;submissions=[]

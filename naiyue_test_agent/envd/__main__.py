@@ -18,11 +18,16 @@ def serve(environment,session_id,limit,*,settings=None,state_root=STATE_ROOT):
     from .operations import EnvironmentOperations
     from naiyue_test_agent.sandbox_settings import SandboxSettings
     settings=settings or SandboxSettings(max_message_bytes=limit)
+    from .identity import initialize_identity
+    initialize_identity(environment)
     dispatcher=EnvironmentOperations(environment,session_id,state_root,settings)
     class Handler(socketserver.StreamRequestHandler):
         def handle(self):
             request={}
             try:
+                import struct
+                _,uid,_=struct.unpack('3i',self.request.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
+                if uid != 0:raise SandboxError('env_binding_mismatch')
                 request=receive(self.rfile,limit)
                 result=dispatcher.dispatch(request)
                 response={'ok':True,'result':result}
@@ -36,7 +41,8 @@ def serve(environment,session_id,limit,*,settings=None,state_root=STATE_ROOT):
                     else 'env_operation_unknown' if request.get('operation') in ('write','edit') else 'env_protocol_mismatch')
                 response={'ok':False,'error':{'code':code,
                     'message':str(error)[:4096] if isinstance(error,ToolException) else type(error).__name__}}
-            response.update(protocol=PROTOCOL_VERSION,request_id=request.get('request_id'),environment=environment.public(),session_id=session_id)
+            response.update(protocol=PROTOCOL_VERSION,request_id=request.get('request_id'),environment=environment.public(),session_id=session_id,
+                generation=dispatcher.generation)
             try:
                 self.wfile.write(encode(response,limit))
             except SandboxError:
@@ -53,7 +59,8 @@ def serve(environment,session_id,limit,*,settings=None,state_root=STATE_ROOT):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode',choices=('serve','request'))
+    parser.add_argument('mode',choices=('serve','request','attach'))
+    parser.add_argument('--lane',choices=('main','bulk'),default='main')
     parser.add_argument('--max-bytes',type=int,default=16777216)
     parser.add_argument('--connect-timeout',type=int,default=10)
     args=parser.parse_args()
@@ -63,6 +70,14 @@ def main():
         settings=SandboxSettings.model_validate(json.loads(os.environ['NYT_SANDBOX_POLICY']))
         if settings.max_message_bytes!=args.max_bytes:raise ValueError('Protocol budget differs from recorded policy')
         serve(EnvironmentRef(**json.loads(os.environ['NYT_ENVIRONMENT'])),os.environ['NYT_SESSION_ID'],args.max_bytes,settings=settings)
+    elif args.mode=='attach':
+        import asyncio
+        from .attach import attach
+        from naiyue_test_agent.sandbox_settings import SandboxSettings
+        settings=SandboxSettings.model_validate(json.loads(os.environ['NYT_SANDBOX_POLICY']))
+        if settings.max_message_bytes!=args.max_bytes:raise ValueError('Protocol budget differs from recorded policy')
+        asyncio.run(attach(EnvironmentRef(**json.loads(os.environ['NYT_ENVIRONMENT'])),os.environ['NYT_SESSION_ID'],
+            settings,lane=args.lane))
     else:
         request=receive(sys.stdin.buffer,args.max_bytes)
         with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as channel:

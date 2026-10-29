@@ -93,7 +93,9 @@ class ResultService:
             raise GitInputError('git_result_invalid_selection')
         selected=sorted(input_path(p) for p in include)
         if len(set(selected))!=len(selected):raise GitInputError('git_result_invalid_selection')
-        with self.operations.accepting(),self.environments._lock(binding),self.operations._lock(ident):
+        # The binding lock owns capture/download publication. Operation state has
+        # its own async owner and does not share this thread lock over network IO.
+        with self.operations.accepting(),self.environments._lock(binding):
             environment=self.environments.get(binding)
             if environment.input_id is None or environment.input_snapshot is None:
                 raise GitInputError('git_result_binding_mismatch')

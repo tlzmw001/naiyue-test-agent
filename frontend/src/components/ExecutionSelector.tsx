@@ -4,6 +4,7 @@ import type { ExecutionDraft, ExecutionOptions, SessionView } from '../types';
 import { keepDialogFocus } from '../dialogFocus';
 import styles from './ExecutionSelector.module.css';
 import ResultReview from './ResultReview';
+import { preparationText } from '../sandboxProgress';
 import SandboxManager from './SandboxManager';
 import { Chevron, Icon } from './Icons';
 
@@ -73,10 +74,10 @@ export default function ExecutionSelector({ api, session, disabled, create, refr
       <Icon name={actual?.kind==='sandbox'?'sandbox':'computer'}/><span>{label}</span><Chevron direction={open?'up':'down'}/>
     </button>
     {actual?.kind==='sandbox'&&<>
-      <span className={styles.state} data-ready={actual.state==='ready'}>{({ready:'可用',preparing:'准备中',failed:'准备失败',unavailable:'不可用'})[actual.state]}</span>
+      <span className={styles.state} data-ready={actual.state==='ready'}>{actual.state==='preparing'?preparationText(actual.preparation):({ready:'可用',failed:'准备失败',unavailable:'不可用'})[actual.state]}</span>
       <button type="button" className={styles.results} disabled={disabled||busy} onClick={()=>setReview(true)}><Icon name="changes"/>查看改动</button>
     </>}
-    <button ref={managerTrigger} type="button" className={styles.results} disabled={disabled||busy}
+    <button ref={managerTrigger} type="button" className={styles.results}
       onClick={()=>{setOpen(false);setManaging(true);}}><Icon name="sandbox"/>管理沙箱</button>
     {open&&<div ref={panel} role="dialog" aria-label="选择执行位置" className={styles.panel} aria-busy={busy||refreshing}
       onKeyDown={event=>{keepDialogFocus(event,panel.current);if(event.key==='Escape')close();}}>

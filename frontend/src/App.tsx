@@ -77,7 +77,7 @@ export default function App({ api: supplied, active = true, selection, scopeName
   const controlsDisabled = chat.submitting || chat.changingControls || chat.changingModel || chat.selectingSession ||
     chat.recovering || !!chat.session?.recovery || !chat.models.length || (!chat.session && chat.creation.locked);
   const openModels = () => { setSidebarOpen(false); setModelMenu(true); };
-  const labels = { running: chat.stopping ? '正在停止' : '正在处理', completed: '本次运行完成', stopped: '已停止',
+  const labels = { running: chat.stopping ? '正在停止' : (({resources:'正在读取项目指令和 Skills',model_request:'正在准备模型请求',model:'正在请求模型',tools:'正在执行工具'} as Record<string,string>)[chat.run?.preparation_phase??'']??'正在处理'), completed: '本次运行完成', stopped: '已停止',
     interrupted: '等待审批', failed: '本次运行失败', unconfirmed: '执行结果未同步' };
 
   return <div className={styles.app}>

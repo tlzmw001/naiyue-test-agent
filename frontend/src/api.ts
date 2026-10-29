@@ -154,14 +154,14 @@ export class WebApi {
   }
   async manageSandbox(binding: string, action: SandboxAction, confirmDestroy = false, requestId: string = crypto.randomUUID()): Promise<{ binding_id: string; lifecycle: string }> {
     return (await this.response(`/environments/${encodeURIComponent(binding)}/${action}`, {
-      method:'POST', body:JSON.stringify({confirm_destroy:confirmDestroy}), headers:{'X-Request-ID':requestId},
+      method:'POST', body:JSON.stringify({confirm_destroy:confirmDestroy,interrupt:action==='stop'||action==='destroy'}), headers:{'X-Request-ID':requestId},
     }, true)).json();
   }
   trustGit(revision: number, requestId: string = crypto.randomUUID()) { return this.projectCommand(''+encodeURIComponent(this.scopeId)+'/trust',{expected_revision:revision,trusted:true},requestId); }
   createSelected(model_id: string, choice?: SessionCreation) {
     model_id=choice?.model_id??model_id;
     return !choice || choice.execution==='host' ? this.create(model_id,choice?.requestId) : this.response('/sessions', {
-      method:'POST',body:JSON.stringify({model_id,execution:'sandbox',include_untracked:choice.include_untracked,
+      method:'POST',body:JSON.stringify({model_id,execution:'sandbox',wait_for_ready:false,include_untracked:choice.include_untracked,
         profile_id:choice.profile_id,expected_profile_revision:choice.expected_profile_revision}),
       headers:{'X-Request-ID':choice.requestId},
     }).then(r=>r.json() as Promise<{session_id:string}>);
@@ -316,6 +316,8 @@ export function errorText(error: unknown): string {
   const messages: Record<string, string> = {
     env_ssh_unavailable: '未找到本机 OpenSSH 客户端，请检查 SSH 程序路径后继续原准备。',
     env_image_required: '尚未配置沙箱镜像，请在应用配置中设置后重试。',
+    env_attach_unavailable: '沙箱镜像未提供常驻连接入口，请使用与本次版本配套的 envd 镜像。',
+    env_preparation_cancelled: '沙箱准备已停止，消息已保留。可在管理中查看原资源。',
     env_profile_changed: '所选环境配置已变化，请刷新并重新选择环境；消息已保留。',
     env_profile_unavailable: '所选环境已移除，请刷新并重新选择环境。',
     env_configuration_invalid: '环境配置读取或校验失败，已保留上次可用列表。',

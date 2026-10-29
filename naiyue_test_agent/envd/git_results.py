@@ -9,18 +9,19 @@ from naiyue_test_agent.contracts.projects import LocalSource
 from naiyue_test_agent.execution.git_repository import GitRepository,bundle_digest,check_cache_budget
 from naiyue_test_agent.execution.git_snapshot import SnapshotBuilder
 from naiyue_test_agent.storage.files import open_store_readonly
+from .identity import TaskProcessRunner
 
 
 class ResultExporter:
     def __init__(self,state_root,environment,session_id,settings,inputs):
         self.root=Path(state_root)/'git-results'
         self.environment,self.session_id,self.settings,self.inputs=environment,session_id,settings,inputs
-        self.policy=settings.git.model_copy(update={'executable':settings.git.container_executable})
+        self.policy=inputs.policy
 
     def bundle_path(self,ident):return self.root/input_id(ident)/'result.bundle'
 
     def options(self):
-        repository=GitRepository(Path(self.environment.root),self.policy)
+        repository=GitRepository(Path(self.environment.root).resolve(),self.policy,runner=TaskProcessRunner())
         paths=sorted(git_path(p) for p in repository.run(['ls-files','--others','--exclude-standard','-z']).split(b'\0') if p)
         if len(paths)>self.policy.max_files:raise GitInputError('git_result_budget')
         return dict(untracked=paths,blocked=[p for p in paths if sensitive_path(p)])
@@ -33,7 +34,7 @@ class ResultExporter:
         if len(payload['include_untracked'])>self.policy.max_files:raise GitInputError('git_result_budget')
         check_cache_budget(self.root,self.policy.max_cache_bytes)
         directory=self.root/payload['result_id']
-        snapshot=SnapshotBuilder(directory,self.policy).prepare(LocalSource(Path(self.environment.root)),
+        snapshot=SnapshotBuilder(directory,self.policy,source_runner=TaskProcessRunner()).prepare(LocalSource(Path(self.environment.root).resolve()),
             payload['result_id'],include_untracked=payload['include_untracked'])
         repository=GitRepository(directory/'objects.git',self.policy)
         if (not repository.has(payload['input_snapshot']) or repository.run(

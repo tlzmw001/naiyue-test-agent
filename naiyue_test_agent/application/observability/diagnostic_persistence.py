@@ -12,13 +12,13 @@ from naiyue_test_agent.contracts.failures import safe_error_type
 
 
 logger = logging.getLogger(__name__)
-_KINDS = frozenset(('run_started', 'run_finished',
+_KINDS = frozenset(('run_started', 'run_finished', 'run_preparation',
     'model_http_attempt_started', 'model_http_attempt_finished',
     'model_call_started', 'model_call_finished', 'tool_call_started', 'tool_call_finished', 'approval_requested',
     'compaction_started', 'compaction_finished', 'context_recovery_started', 'context_recovery_finished',
     'control_accepted', 'control_delivered', 'control_applied', 'control_discarded', 'control_outcome_unknown',
     'message_completed', 'message_revised', 'message_snapshot_unavailable', 'turn_observation_unavailable'))
-_LABELS = ('mode', 'status', 'stop_mode', 'model_id', 'purpose', 'invocation_id', 'model_call_id',
+_LABELS = ('phase', 'mode', 'status', 'stop_mode', 'model_id', 'purpose', 'invocation_id', 'model_call_id',
     'tool_call_id', 'tool_name', 'boundary', 'outcome', 'reason', 'error_type', 'approval_batch_id',
     'control_id', 'kind', 'operation_id', 'operation', 'trigger', 'related_operation_id', 'origin_run_id',
     'message_id', 'message_type', 'visibility', 'attempt_id', 'http_capture_status')

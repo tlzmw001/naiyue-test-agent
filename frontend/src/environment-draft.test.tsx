@@ -185,3 +185,35 @@ it('confirms the latest permission after both the original save and a user overr
   expect(vi.mocked(api.selectPermissionMode).mock.calls).toEqual([['S', 'NoAsk'], ['S', 'Default'], ['S', 'Default'], ['S', 'Default']]);
   expect(api.start).toHaveBeenCalledTimes(1); expect(api.createSelected).toHaveBeenCalledTimes(1);
 });
+it('selects the saved session while preparation is pending and starts only after ready', async () => {
+  const { api, view, result } = await setup();
+  let release!: (value: SessionView) => void;
+  vi.mocked(api.session).mockResolvedValueOnce({ ...view, can_run: false,
+    execution: { ...view.execution!, state: 'preparing', preparation: { state: 'preparing', phase: 'upload', completed: 5, total: 10, error_code: null } } })
+    .mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+  await act(async () => { await result.current.newSession(choice); });
+  act(() => result.current.setDraft('pending task'));
+  let pending!: Promise<void>;
+  act(() => { pending = result.current.submit(false); });
+  await waitFor(() => expect(result.current.session?.execution?.state).toBe('preparing'));
+  expect(result.current.draft).toBe('pending task'); expect(api.start).not.toHaveBeenCalled();
+  await waitFor(() => expect(release).toBeTypeOf('function'));
+  await act(async () => { release(view); await pending; });
+  expect(api.start).toHaveBeenCalledTimes(1); expect(result.current.draft).toBe('');
+});
+it('retains selected settings after a preparation poll fails and unlocks future session drafts', async () => {
+  const { api, view, result } = await setup();
+  const permission=vi.spyOn(api,'selectPermissionMode').mockResolvedValue({permission_mode:'NoAsk'} as never);
+  vi.mocked(api.session).mockResolvedValueOnce({...view,can_run:false,execution:{...view.execution!,state:'preparing'}})
+    .mockRejectedValueOnce(new TypeError('poll failed'));
+  await act(async()=>{await result.current.newSession(choice);await result.current.selectPermissionMode('NoAsk');});
+  act(()=>result.current.setDraft('retained task'));
+  await act(async()=>{await result.current.submit(false);});
+  expect(result.current.session?.session_id).toBe('S');expect(api.start).not.toHaveBeenCalled();
+  expect(result.current.creation.locked).toBe(false);
+  await act(async()=>{await result.current.submit(false);});
+  expect(permission).toHaveBeenCalledWith('S','NoAsk');expect(api.start).toHaveBeenCalledTimes(1);
+  expect(permission.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(api.start).mock.invocationCallOrder[0]);
+  await act(async()=>{await result.current.newSession(choice);});
+  expect(result.current.creation.draft?.profile_id).toBe('python-tests');
+});

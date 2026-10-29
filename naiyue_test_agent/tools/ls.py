@@ -4,6 +4,7 @@ from naiyue_test_agent.contracts.run_context import RuntimeContext
 import json
 import logging
 import os
+import stat
 from pathlib import Path
 
 from langchain.tools import ToolRuntime, tool
@@ -39,7 +40,8 @@ class _LsInput(BaseModel):
     limit: int = Field(ge=1)
 
 
-def _list_directory(target: Path, limit: int, runtime, *, settings: LsSettings, progress=None) -> str:
+def _list_directory(target: Path, limit: int, runtime, *, settings: LsSettings, progress=None,
+                    directory_fd=None, entry_stat=None) -> str:
     control = runtime.context.scope.control
     progress = progress or ToolProgress(None)
     try:
@@ -47,7 +49,7 @@ def _list_directory(target: Path, limit: int, runtime, *, settings: LsSettings, 
             raise ToolException(LS_STOPPED)
         entries = []
         progress.report(phase='enumerate', completed=0, unit='entries')
-        with os.scandir(target) as scan:
+        with os.scandir(target if directory_fd is None else directory_fd) as scan:
             for entry in scan:
                 if control is not None and control.requested:
                     raise ToolException(LS_STOPPED)
@@ -66,12 +68,16 @@ def _list_directory(target: Path, limit: int, runtime, *, settings: LsSettings, 
                 stopped = True
                 break
             try:
-                allowed, reason = candidate_access(runtime, Path(entry.path), operation='list')
+                candidate = target/entry.name
+                allowed, reason = candidate_access(runtime, candidate, operation='list')
                 if not allowed:
                     skipped.append(f'{entry.name}: {reason}')
                     continue
-                is_directory = entry.is_dir(follow_symlinks=True)
-                entry.stat(follow_symlinks=True)
+                if entry_stat is None:
+                    is_directory = entry.is_dir(follow_symlinks=True)
+                    entry.stat(follow_symlinks=True)
+                else:
+                    is_directory = stat.S_ISDIR(entry_stat(candidate).st_mode)
             except OSError as error:
                 logger.warning('ls_entry_stat_failed error_type=%s', type(error).__name__)
                 reason = ('disappeared' if isinstance(error, FileNotFoundError) else
@@ -133,17 +139,18 @@ def create_session_ls_tool(*, settings: LsSettings | None = None, progress_setti
         limit=(int, Field(default=settings.default_limit, ge=1, le=settings.max_limit)))
 
     @tool('ls', args_schema=execution_schema)
-    def list_directory(runtime: ToolRuntime[RuntimeContext], path: str = '.',
+    async def list_directory(runtime: ToolRuntime[RuntimeContext], path: str = '.',
                        limit: int = settings.default_limit) -> str:
         """List directory entry names, including dotfiles, and report skipped targets.
 
         Listing a name does not authorize reading or changing its contents.
         """
         context = runtime.context
+        from naiyue_test_agent.execution.file_calls import file_call
         require_file_target(runtime, path, operation='list')
         progress = ToolProgress(runtime, progress_settings)
         try:
-            return context.scope.capabilities.files.list(context.authorization.permit['subject'], limit,
+            return await file_call(context.scope.capabilities.files.list,context.authorization.permit['subject'], limit,
                 runtime, settings=settings, progress=progress)
         finally:
             progress.flush()

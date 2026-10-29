@@ -2,6 +2,7 @@
 
 from naiyue_test_agent.contracts.run_context import RuntimeContext
 import codecs
+from contextlib import nullcontext
 import logging
 from pathlib import Path
 
@@ -68,11 +69,11 @@ def _decode_read_text(content: bytes, *, partial=False) -> str:
     return text
 
 
-def _read(target: Path, offset: int | None, limit: int | None, *, settings: ReadSettings, control=None, progress=None) -> str | list[dict]:
+def _read(target: Path, offset: int | None, limit: int | None, *, settings: ReadSettings, control=None, progress=None, source=None) -> str | list[dict]:
     check_tool_stop(control, READ_STOPPED)
     progress = progress or ToolProgress(None)
     try:
-        with target.open('rb') as source:
+        with (target.open('rb') if source is None else nullcontext(source)) as source:
             image = read_image(source, offset, limit, settings=settings.image, control=control, progress=progress)
             check_tool_stop(control, READ_STOPPED)
             if image is not None:
@@ -189,14 +190,15 @@ def create_session_read_tool(*, settings: ReadSettings | None = None, progress_s
         limit=(int | None, Field(default=None, ge=1, le=settings.max_limit)))
 
     @tool('read', args_schema=execution_schema)
-    def read(path: str, runtime: ToolRuntime[RuntimeContext],
+    async def read(path: str, runtime: ToolRuntime[RuntimeContext],
                   offset: int | None = None, limit: int | None = None) -> str | list[dict]:
         """Read UTF-8 text with 1-based pagination, or an image without offset/limit."""
         context = runtime.context
+        from naiyue_test_agent.execution.file_calls import file_call
         require_file_target(runtime, path, operation='read')
         progress = ToolProgress(runtime, progress_settings)
         try:
-            return context.scope.capabilities.files.read(context.authorization.permit['subject'], offset, limit,
+            return await file_call(context.scope.capabilities.files.read,context.authorization.permit['subject'], offset, limit,
                 settings=settings, control=context.scope.control, progress=progress)
         finally:
             progress.flush()

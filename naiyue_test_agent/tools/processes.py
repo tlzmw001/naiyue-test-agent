@@ -35,6 +35,7 @@ class ProcessRequest:
     on_execution_started: Callable[[float], None] | None = field(default=None, compare=False, repr=False)
     on_exited: Callable[[], None] | None = field(default=None, compare=False, repr=False)
     stdin_fd: int | None = field(default=None, compare=False, repr=False)
+    identity: tuple[int, int] | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,11 @@ class HostProcessRunner:
                                    merge_output=request.merge_output, on_exited=request.on_exited)
         options = ({'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW} if os.name == 'nt'
                    else {'start_new_session': True})
+        if request.identity is not None:
+            if os.name != 'posix' or len(request.identity) != 2 or any(type(x) is not int or x <= 0 for x in request.identity):
+                raise ValueError('Invalid process identity')
+            options.update(user=request.identity[0],group=request.identity[1],extra_groups=[],
+                           close_fds=True,umask=0o077)
         spawn = asyncio.create_task(loop.subprocess_exec(lambda: protocol, *request.argv,
             cwd=request.cwd, env=request.env, stdin=request.stdin_fd if request.stdin_fd is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,

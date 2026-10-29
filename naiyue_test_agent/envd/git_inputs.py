@@ -5,19 +5,24 @@ import json
 import os
 from pathlib import Path
 import re
+import tempfile
 from threading import RLock
 
 from naiyue_test_agent.contracts.git_inputs import GitInputError, input_id, object_id, input_payload
 from naiyue_test_agent.execution.git_repository import GitRepository, bundle_digest, check_cache_budget
 from naiyue_test_agent.execution.git_snapshot import validate_tree
 from naiyue_test_agent.storage.files import check_store_directory, open_store_file, open_store_readonly, sync_store_directory
+from .identity import TaskProcessRunner,check_private_directory,trusted_git_executable
+from naiyue_test_agent.contracts.sandbox import TASK_UID,TASK_GID
 
 
 class InputReceiver:
     def __init__(self, state_root, environment, settings):
         self.root = Path(state_root)/'git-inputs'
-        self.code, self.settings = Path(environment.root), settings
-        self.policy = settings.git.model_copy(update={'executable':settings.git.container_executable})
+        self.code, self.settings = Path(environment.root).resolve(strict=True), settings
+        executable=settings.git.container_executable
+        if os.geteuid()==0:executable=trusted_git_executable(executable)
+        self.policy = settings.git.model_copy(update={'executable':executable})
         self._lock = RLock()
         self.root.mkdir(mode=0o700,parents=True,exist_ok=True)
         check_store_directory(self.root)
@@ -178,12 +183,33 @@ class InputReceiver:
             validate_tree(repo,payload['input_snapshot'])
             if any(self.code.iterdir()):
                 raise GitInputError('git_input_workspace_not_empty')
-            target=GitRepository(self.code,self.policy)
-            target.run(['init','--quiet'],control=control)
-            branch='naiyue-task/'+payload['input_id']
-            target.run(['fetch','--no-tags','--no-recurse-submodules','--no-write-fetch-head',str(repo.path),
-                'refs/naiyue/input/'+payload['input_id']+':refs/heads/'+branch],control=control)
-            target.run(['checkout','--quiet',branch],control=control)
-            if target.oid('HEAD^{commit}')!=payload['input_snapshot']:
-                raise GitInputError('git_input_install_unconfirmed')
+            stage=self.code.parent/'.envd-stage'
+            stage.mkdir(mode=0o700,exist_ok=True);check_private_directory(stage)
+            with tempfile.TemporaryDirectory(dir=stage) as temporary:
+                directory=Path(temporary)
+                target=GitRepository(directory,self.policy)
+                target.run(['init','--quiet'],control=control)
+                branch='naiyue-task/'+payload['input_id']
+                target.run(['fetch','--no-tags','--no-recurse-submodules','--no-write-fetch-head',str(repo.path),
+                    'refs/naiyue/input/'+payload['input_id']+':refs/heads/'+branch],control=control)
+                target.run(['checkout','--quiet',branch],control=control)
+                if target.oid('HEAD^{commit}')!=payload['input_snapshot']:
+                    raise GitInputError('git_input_install_unconfirmed')
+                if os.geteuid()==0:
+                    for parent,dirs,files in os.walk(directory,followlinks=False):
+                        for name in [*dirs,*files]:
+                            os.chown(Path(parent)/name,TASK_UID,TASK_GID,follow_symlinks=False)
+                source_fd=os.open(directory,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+                try:
+                    destination_fd=os.open(self.code,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+                    try:
+                        if os.listdir(destination_fd):raise GitInputError('git_input_workspace_not_empty')
+                        for name in os.listdir(source_fd):
+                            if control.requested:raise GitInputError('git_input_cancelled')
+                            os.rename(name,name,src_dir_fd=source_fd,dst_dir_fd=destination_fd)
+                        os.fsync(destination_fd)
+                    finally:os.close(destination_fd)
+                finally:os.close(source_fd)
+            target=GitRepository(self.code,self.policy,runner=TaskProcessRunner())
+            if target.oid('HEAD^{commit}')!=payload['input_snapshot']:raise GitInputError('git_input_install_unconfirmed')
             return payload

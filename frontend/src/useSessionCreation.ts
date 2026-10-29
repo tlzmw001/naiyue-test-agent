@@ -50,7 +50,7 @@ export function useSessionCreation(api: WebApi) {
     }
     pendingControls.current.delete(sid); return confirmed;
   }
-  async function prepare(model: string) {
+  async function prepare(model: string, progress?: (view: SessionView) => void) {
     if (review.current) throw new ApiError(review.current);
     const selected = draftRef.current;
     const current = attempt.current ??= { request: { execution: selected?.execution ?? 'host', model_id: model,
@@ -66,10 +66,16 @@ export function useSessionCreation(api: WebApi) {
       }
       creating = true;
       if (!current.sessionId) current.sessionId = (await api.createSelected(current.request.model_id, current.request)).session_id;
-      const view = await api.session(current.sessionId);
+      let view = await api.session(current.sessionId);
       pendingControls.current.set(view.session_id, { model: current.request.model_id, controls: current.controls });
       controlDraft.current = {}; setControls({});
       attempt.current = null; draftRef.current = null; setDraft(null); setLocked(false);
+      progress?.(view);
+      while (view.execution?.state === 'preparing') {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        view = await api.session(current.sessionId);
+        progress?.(view);
+      }
       return view;
     } catch (error) {
       if (error instanceof ApiError && (['env_profile_changed', 'env_profile_unavailable', 'env_image_required',

@@ -12,7 +12,7 @@ it('refreshes only the fixed service configuration and sends explicit selection 
   expect(fetch.mock.calls[0][1].headers['X-Request-ID']).toBeTruthy();
   await api.createSelected('A', { execution: 'sandbox', model_id: 'A', include_untracked: [], requestId: 'original',
     profile_id: 'python-tests', expected_profile_revision: 'a'.repeat(64) });
-  expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ model_id: 'A', execution: 'sandbox', include_untracked: [],
+  expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ model_id: 'A', execution: 'sandbox', wait_for_ready: false, include_untracked: [],
     profile_id: 'python-tests', expected_profile_revision: 'a'.repeat(64) });
   expect(fetch.mock.calls[1][1].headers['X-Request-ID']).toBe('original');
 });

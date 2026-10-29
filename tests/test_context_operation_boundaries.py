@@ -19,12 +19,14 @@ from test_context_overflow_recovery import _configured_model, _history, _status
 def test_only_four_public_types_are_added_for_context_operations():
     registered = {name for name in _PAYLOADS if name.startswith(('compaction_', 'context_recovery_'))}
     from naiyue_test_agent.agent_runtime.stream_events import MessageDeltaData, ToolProgressData
-    assert registered == OP_TYPES and len(_PAYLOADS) == 32
+    assert registered == OP_TYPES and len(_PAYLOADS) == 33
     from naiyue_test_agent.agent_runtime.events import ModelInvocationStartedData, ModelInvocationFinishedData
     assert _PAYLOADS['model_call_started'] is ModelInvocationStartedData
     assert _PAYLOADS['model_call_finished'] is ModelInvocationFinishedData
     assert _PAYLOADS['message_delta'] is MessageDeltaData
     assert _PAYLOADS['tool_progress'] is ToolProgressData
+    from naiyue_test_agent.contracts.session_events import RunPreparationData
+    assert _PAYLOADS['run_preparation'] is RunPreparationData
     from naiyue_test_agent.agent_runtime.context_usage import ModelContextSnapshotData
     assert _PAYLOADS['model_context_snapshot'] is ModelContextSnapshotData
 
