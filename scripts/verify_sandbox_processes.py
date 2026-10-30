@@ -145,7 +145,7 @@ async def scenario(directory,context,image):
                 except SandboxError as error:assert error.code=='env_stop_unconfirmed'
                 else:raise AssertionError('Unknown process was falsely reported stopped')
                 report['envd_restart_unknown_no_replay']='passed'
-                await app.environments.destroy(binding)
+                await app.environments.destroy(binding,confirm_destroy=True)
                 result=await invoke(files,processes,tasks,'bash',{'command':'printf must-not-run'})
                 assert result.status=='error'
                 assert not (root/'hello.txt').exists()
@@ -153,7 +153,7 @@ async def scenario(directory,context,image):
         finally:
             if project is not None:
                 async with application() as cleanup:
-                    for row in await cleanup.environments.list(project.project_id):await cleanup.environments.destroy(row.binding_id)
+                    for row in await cleanup.environments.list(project.project_id):await cleanup.environments.destroy(row.binding_id,confirm_destroy=True)
     return report
 
 

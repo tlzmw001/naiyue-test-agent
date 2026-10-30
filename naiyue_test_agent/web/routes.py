@@ -6,7 +6,7 @@ from .dependencies import get_service
 from .errors import WebError
 from .schemas import (ActiveToolsInput, ApprovalInput, ApprovalStopInput, CompactInput,
     ControlInput, MessageInput, NewSession, PermissionModeInput, RecoveryInput,
-    RegenerateInput, SessionOrder, SessionPresentation, ThinkingInput, MCPRefreshInput)
+    RegenerateInput, SessionOrder, SessionPresentation, ThinkingInput, MCPRefreshInput,EnvironmentActionInput)
 from .background_tasks import router as background_task_router
 from .result_routes import router as result_router
 
@@ -63,8 +63,9 @@ def create_api_router():
         return await service.application.sessions.prepare_environment(session_id)
 
     @router.post('/sessions/{session_id}/environment/{action}')
-    async def environment_action(session_id:str,action:str,service=Depends(get_service)):
-        return await service.application.sessions.environment_action(session_id,action)
+    async def environment_action(session_id:str,action:str,body:EnvironmentActionInput|None=None,service=Depends(get_service)):
+        return await service.application.sessions.environment_action(session_id,action,
+            confirm_destroy=body.confirm_destroy if body is not None else False)
 
     @router.get('/sessions/{session_id}')
     async def session(session_id: str, service=Depends(get_service)):
@@ -182,6 +183,10 @@ def create_api_router():
     @router.post('/sessions/{session_id}/runs', status_code=202)
     async def start(session_id: str, body: MessageInput, service=Depends(get_service)):
         return await service.start(session_id, body)
+
+    @router.post('/sessions/{session_id}/submissions/{request_id}/stop')
+    async def stop_submission(session_id:str,request_id:str,service=Depends(get_service)):
+        return await service.stop_submission(session_id,request_id)
 
     @router.post('/sessions/{session_id}/approvals', status_code=202)
     async def approve(session_id: str, body: ApprovalInput, service=Depends(get_service)):

@@ -80,7 +80,8 @@ def test_archive_failure_keeps_unknown_and_stop_behavior_and_logs_phase(caplog):
         observed_bytes=10, metadata={'offset': 0, 'saved_bytes': 0})
     saved, calls = [], []
     service._operation_lock = lambda *_: nullcontext()
-    service.activity = SimpleNamespace(use=lambda *_,**__: nullcontext())
+    from naiyue_test_agent.application.environments.activity import EnvironmentActivity
+    service.activity = EnvironmentActivity(lambda:SimpleNamespace(touch=lambda *_:True))
     service._archive_activity = lambda _: nullcontext()
     service.records = lambda: SimpleNamespace(get=lambda *_: row, save=lambda *args: saved.append(args))
     service._merge = lambda current, remote: current
@@ -141,7 +142,8 @@ def test_shutdown_logs_the_failed_container_and_preserves_first_error(caplog):
 def test_stop_and_status_failure_keep_original_operation_and_safe_identity(caplog):
     from naiyue_test_agent.contracts.sandbox import SandboxError
     service = object.__new__(SandboxOperationService)
-    service.activity = SimpleNamespace(use=lambda _: nullcontext())
+    from naiyue_test_agent.application.environments.activity import EnvironmentActivity
+    service.activity = EnvironmentActivity(lambda:SimpleNamespace(touch=lambda *_:True))
     service._operation_lock = lambda *_: nullcontext()
     service._submissions = {}
     row = dict(state='running', kind='shell')
@@ -156,5 +158,5 @@ def test_stop_and_status_failure_keep_original_operation_and_safe_identity(caplo
     with pytest.raises(SandboxError, match='env_stop_unconfirmed'):
         asyncio.run(service._stop('binding-1', 'operation-1'))
     assert calls == [('binding-1','operation_stop','operation-1'), ('binding-1','operation_status','operation-1')]
-    assert row['state'] == 'unknown' and row['stale']
+    assert row['state'] == 'running' and row['stale']
     assert 'operation-1' in caplog.text and 'binding-1' in caplog.text and 'stop_status' in caplog.text

@@ -71,6 +71,14 @@ class RunAPI:
         self._owner.check_controls_open()
         self._sessions.require(session_id).controls.remove_pending(message_id)
 
+    def retain_input(self,session_id,message,replace_ids=()):
+        self._owner.check_open()
+        self._sessions.require(session_id).controls.retain_input(message,replace_ids)
+
+    def release_waiting_inputs(self,session_id,identities):
+        self._owner.check_open()
+        self._sessions.require(session_id).controls.release_waiting_inputs(identities)
+
     def stop(self, session_id, *, run_id=None, agent_path='root', agent_run_id=None, approval_batch_id=None):
         self._owner.check_controls_open()
         return self._sessions.require(session_id).controls.request_scope_stop(run_id=run_id, agent_path=agent_path, agent_run_id=agent_run_id, approval_batch_id=approval_batch_id)
@@ -110,7 +118,7 @@ class RunAPI:
             self._owner.check_admission_open()
             return actor.approvals.submit_subagent_approval(approval_batch_id=approval_batch_id, decisions=decisions, origin_run_id=origin_run_id, remember_approved=remember_approved)
 
-    async def _execute(self, session_id, value, resume, run_id, max_concurrency, *, remember_approved=None, stop=False, compact=False, expected_conversation_revision=None):
+    async def _execute(self, session_id, value, resume, run_id, max_concurrency, *, remember_approved=None, stop=False, compact=False, expected_conversation_revision=None,expected_settings=None,consume_pending_ids=()):
         with self._owner.operation():
             from naiyue_test_agent.agent_runtime.tool_execution.async_batch import validate_tool_concurrency
             validate_tool_concurrency(max_concurrency)
@@ -130,11 +138,18 @@ class RunAPI:
                 method = self._sessions.aresume_tool_approval if resume else self._sessions.arun
                 return await method(self._agent, session_id, value, run_id=run_id, max_concurrency=max_concurrency, prepared_admission=prepared,
                                     **({'remember_approved': remember_approved, 'stop': stop} if resume else
-                                       {'expected_conversation_revision': expected_conversation_revision}))
+                                       {'expected_conversation_revision': expected_conversation_revision,
+                                        **({'expected_settings':expected_settings,'consume_pending_ids':consume_pending_ids} if expected_settings is not None else {})}))
 
-    async def start(self, session_id, messages, *, max_concurrency=4, expected_conversation_revision=None):
+    async def start(self, session_id, messages, *, max_concurrency=4, expected_conversation_revision=None,wait_for_environment=None,run_id=None):
         with self._owner.operation():
-            return await self._execute(session_id, messages, False, None, max_concurrency, expected_conversation_revision=expected_conversation_revision)
+            if wait_for_environment is not None:
+                from .execution_binding import wait_for_submission_environment
+                async with wait_for_submission_environment(self._sessions,session_id,wait_for_environment):
+                    return await self._execute(session_id,messages,False,run_id,max_concurrency,
+                        expected_conversation_revision=expected_conversation_revision,expected_settings=wait_for_environment.get('settings',{}),
+                        consume_pending_ids=wait_for_environment.get('consume_pending_ids',()))
+            return await self._execute(session_id, messages, False, run_id, max_concurrency, expected_conversation_revision=expected_conversation_revision)
 
     async def compact(self, session_id):
         with self._owner.operation():

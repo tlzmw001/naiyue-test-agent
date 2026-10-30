@@ -1,6 +1,6 @@
 # Naiyue Test Agent：项目设计记录
 
-**Spec141B 当前状态（2026-10-29）**：常驻原生SSH/异步数据面、批量资源、准备/运行阶段与可中断管理完成本机验收；当前主链与证据见[Spec141B第9节](specs/141b-persistent-sandbox-execution.md#9-本机验收与当前主链2026-10-29)。后端5937/前端559及标准构建通过；真实本机两沙箱与200MiB并发门禁通过，候选含AITest0.6.0。公司现有Docker不升级，OpenSandbox服务迁移继续暂停；新envd镜像合同替代旧同UID/短连接热路径，尚未公司部署或发布。下一步只做公司Windows/两跳SSH/Docker19.03和实际业务延迟验收。以下保留历史时点。
+**Spec141B 当前状态（2026-10-30）**：可靠性修正本机验收通过（后端5985/前端563）；同源公司Windows x64/Linux amd64候选已构建，产物回归78通过，镜像含AITest0.6.0，legacy归档/重导入、默认/19.03 seccomp各7项与amd64 QEMU双沙箱8MiB门禁通过。证据见[Spec141B第10.12节](specs/141b-persistent-sandbox-execution.md#1012-公司平台候选本机制品验收结果2026-10-30)、build/spec141b-company-20261030/verification.json。未发布或公司部署；公司Docker不升级，OpenSandbox迁移暂停。下一步用户原机先做Linux镜像check.sh，再Windows候选安装/双沙箱门禁及专用新会话UI/真实业务验收；模拟机冷准备不视作公司SLO。以下保留历史时点。
 
 **Spec141A 当前实施状态（2026-10-29）**：用户已批准的“受保护envd直接IO + 任务UID1000”方案接入并通过本机验收，详见[第8节](specs/141a-envd-identity-boundary.md#8-第0节方案的本机实施与验收2026-10-29)及`build/spec141-identity/verification.json`。5875后端/554前端、真实身份/文件/Git/输出并发/恢复门禁与标准构建通过；独立envd0.5.5+AITest0.6.0本地候选，不是发布。新镜像隔离替代旧同UID方案，不自动迁移旧卷。公司原机与完整性能/UI迁移仍待验收，下一切片是Spec141正式常驻数据通道及控制端异步控制；不升级公司Docker、不部署OpenSandbox服务。下方保留历史记录。
 

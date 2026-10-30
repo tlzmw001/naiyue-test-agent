@@ -4,6 +4,7 @@ import logging
 from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 import os
 import time
+from langchain_core.tools import ToolException
 
 from naiyue_test_agent.contracts.git_inputs import GitInputError,input_id,input_path
 from naiyue_test_agent.contracts.git_results import result_receipt
@@ -146,10 +147,15 @@ class ResultService:
                 phase='ready_save'
                 row=self._save(row,state='ready',import_location=location,**verified)
                 return self._view(row)
-            except (GitInputError,SandboxError) as error:
-                safe_log(logger.warning, 'git_result_delivery_unconfirmed code=%s diagnostic=%s',error.code,
+            except (GitInputError,SandboxError,ToolException) as error:
+                code=getattr(error,'code','git_result_unconfirmed')
+                safe_log(logger.warning, 'git_result_delivery_unconfirmed code=%s diagnostic=%s',code,
                     diagnostic_text(error=error,phase=phase,**facts))
-                self._save(row,error_code=error.code)
+                try:self._save(row,error_code=code)
+                except Exception as secondary:
+                    safe_log(logger.error,'git_result_failure_save_unconfirmed error_type=%s diagnostic=%s',
+                        type(secondary).__name__,diagnostic_text(error=secondary,phase='failure_save',
+                            cause_type=type(error).__name__,**facts))
                 raise
             except OSError as error:
                 safe_log(logger.error, 'git_result_delivery_io_failed error_type=%s diagnostic=%s',type(error).__name__,

@@ -200,7 +200,9 @@ class WebService:
         read_only = 'recovery' in value
         batches = [] if read_only else self.application.runs.pending_approvals(session_id)
         latest = None if read_only else self.delivery.latest.get(session_id)
-        return {**value, 'approval_batches': batches, 'pending_approval': bool(batches),
+        pending=self.delivery.submission(session_id) if hasattr(self.delivery,'submission') else None
+        return {**value,**({'can_run':False,'busy':True} if pending and pending['status']=='waiting_environment' else {}),
+                'pending_submission':pending,'approval_batches': batches, 'pending_approval': bool(batches),
                 'active_run_id': value.get('run_id'), 'latest_run_id': latest}
 
     async def prepare(self, session_id):
@@ -303,20 +305,35 @@ class WebService:
 
     async def start(self, session_id, body):
         value = await self._session_status(session_id)
+        cached=self.delivery.start_receipt(session_id,body)
+        if cached is not None:return cached
+        environment_wait=None
+        execution=value.get('execution',{})
+        if body.wait_for_environment and execution.get('state')=='preparing' and execution.get('kind')=='sandbox':
+            if value.get('recovery') or value.get('manual_review_required') or value.get('pending_approval'):
+                raise WebError('session_recovery_blocked')
+            environment_wait=dict(binding_id=execution['binding_id'],settings={key:value.get(key) for key in
+                ('model_id','thinking_level','permission_mode','active_tools')})
         try:
             if body.pending_input_ids:
                 if not body.images:
                     raise WebError('invalid_request',422)
                 self.application.runs.validate_pending(session_id, body.pending_input_ids)
             prepared_message = (await self.application.runs.prepare_input(session_id, body.text, body.images, message_id=body.request_id)
-                                if value['can_run'] else None)
+                                if value['can_run'] or environment_wait is not None else None)
         except Exception as error:
             raise public_error(error) from None
         # RunDelivery handles the duplicate receipt before checking busy.
-        result = await self.delivery.start(session_id, body, [], can_run=value['can_run'], conversation_revision=value['conversation_revision'], execution_root_error=value.get('execution_root_error'), prepared_message=prepared_message)
-        for identity in body.pending_input_ids:
-            self.application.runs.remove_pending(session_id, identity)
+        result = await self.delivery.start(session_id, body, [], can_run=value['can_run'], conversation_revision=value['conversation_revision'], execution_root_error=value.get('execution_root_error'), prepared_message=prepared_message,
+            **({'environment_wait':environment_wait} if environment_wait is not None else {}))
+        if result.get('status')!='waiting_environment':
+            for identity in body.pending_input_ids:
+                self.application.runs.remove_pending(session_id, identity)
         return result
+
+    async def stop_submission(self,session_id,request_id):
+        await self._session_status(session_id)
+        return await self.delivery.stop_submission(session_id,request_id)
 
     async def usage(self, session_id, *, after_model=None):
         await self._session_status(session_id)

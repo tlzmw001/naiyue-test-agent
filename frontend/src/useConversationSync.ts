@@ -11,7 +11,7 @@ type Options = { api: WebApi; active: boolean; session: SessionView | null; canR
 function facts(value: SessionView) {
   return JSON.stringify([value.conversation_revision, value.busy, value.can_run, value.model_id,
     value.thinking_level, value.permission_mode, value.active_tools, value.live?.run_id,
-    value.live?.last_sequence, value.live?.done, value.pending_approval, value.execution_root_error]);
+    value.live?.last_sequence, value.live?.done, value.pending_approval, value.execution_root_error,value.execution,value.pending_submission]);
 }
 export function useConversationSync(options: Options) {
   const latest = useRef(options); latest.current = options;

@@ -30,6 +30,8 @@ class DockerCLI:
         command='exec '+shlex.join([ssh.docker_executable,'--host','unix://'+ssh.socket_path,*args])
         return [executable,'-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes',
             '-o','ForwardAgent=no','-o','ClearAllForwardings=yes',
+            '-o','ServerAliveInterval='+str(self.settings.transport.keepalive_interval_seconds),
+            '-o','ServerAliveCountMax='+str(self.settings.transport.keepalive_count),
             '-o','ConnectTimeout='+str(ssh.connect_timeout_seconds),'--',ssh.host,command]
 
     def run(self,args,*,input_bytes=None,mutates=False):

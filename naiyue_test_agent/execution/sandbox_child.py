@@ -16,32 +16,56 @@ def process_options():
 
 
 async def terminate_tree(process):
+    await asyncio.sleep(0)
     if os.name!='nt':
         try:os.killpg(process.pid,signal.SIGKILL)
         except ProcessLookupError:return
     else:
+        if process.returncode is not None:return
+        # Retaining Popen's original handle pins this process ID until cleanup.
+        if getattr(process,'_native_owner',None) is None:
+            raise SandboxError('env_connection_cleanup_unconfirmed')
         # Same native tree termination as HostProcessRunner; never kill every ssh.exe.
         killer=await asyncio.create_subprocess_exec('taskkill','/PID',str(process.pid),'/T','/F',
             stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NO_WINDOW)
+        process._cleanup_helpers=[helper for helper in getattr(process,'_cleanup_helpers',[]) if helper.returncode is None]+[killer]
         try:
-            async with asyncio.timeout(5):status=await killer.wait()
-            if status!=0:raise SandboxError('env_connection_cleanup_unconfirmed')
+            status=await killer.wait()
+            await asyncio.sleep(0)
+            if status!=0 and process.returncode is None:raise SandboxError('env_connection_cleanup_unconfirmed')
         finally:
-            if killer.returncode is None:killer.kill();await killer.wait()
+            if killer.returncode is None:killer.kill()
 
 
-async def close_child(process):
+async def close_child(process,*,timeout=10,attempts=2,readers=()):
     """Readers remain active until pipes drain; cleanup uncertainty stays observable."""
     try:
-        if process.stdin:process.stdin.close()
-        try:
-            async with asyncio.timeout(2):await process.wait()
-        except TimeoutError:
-            await terminate_tree(process)
-            async with asyncio.timeout(5):await process.wait()
-        finally:
-            if os.name!='nt':await terminate_tree(process)
+        async def settled():
+            await process.wait()
+            for helper in getattr(process,'_cleanup_helpers',[]):await helper.wait()
+            if readers:await asyncio.gather(*(asyncio.shield(task) for task in readers))
+        deadline=asyncio.get_running_loop().time()+timeout
+        async with asyncio.timeout_at(deadline):
+            if process.stdin:process.stdin.close()
+            try:
+                async with asyncio.timeout(min(2,timeout/3)):await settled()
+            except TimeoutError:pass
+            else:
+                process._native_owner=None;return
+            for attempt in range(attempts):
+                await asyncio.sleep(0)
+                if os.name!='nt' or process.returncode is None:
+                    try:await terminate_tree(process)
+                    except (OSError,SandboxError) as error:
+                        logger.warning('sandbox_termination_attempt_failed attempt=%s error_type=%s',attempt+1,type(error).__name__)
+                        continue
+                remaining=deadline-asyncio.get_running_loop().time()
+                try:
+                    async with asyncio.timeout(remaining/(attempts-attempt)):await settled()
+                except TimeoutError:continue
+                process._native_owner=None;return
+            raise SandboxError('env_connection_cleanup_unconfirmed')
     except (OSError,TimeoutError,SandboxError) as error:
         logger.error('sandbox_connection_cleanup_unconfirmed error_type=%s',type(error).__name__)
         raise SandboxError('env_connection_cleanup_unconfirmed') from error
@@ -51,11 +75,16 @@ async def spawn_child(argv,*,env,cwd,limit):
     from naiyue_test_agent.agent_runtime.async_utils import await_settled
     spawn=asyncio.create_task(asyncio.create_subprocess_exec(*argv,stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env,cwd=cwd,limit=limit,**process_options()))
-    try:return await asyncio.shield(spawn)
+    try:
+        process=await asyncio.shield(spawn)
+        # Keep the original native process object, never reopen it by PID.
+        process._native_owner=process._transport.get_extra_info('subprocess')
+        return process
     except asyncio.CancelledError:
         process=await await_settled(spawn)
+        process._native_owner=process._transport.get_extra_info('subprocess')
         drains=[asyncio.create_task(drain(stream)) for stream in (process.stdout,process.stderr)]
-        try:await await_settled(close_child(process))
+        try:await await_settled(close_child(process,readers=drains))
         finally:
             for task in drains:task.cancel()
             await asyncio.gather(*drains,return_exceptions=True)

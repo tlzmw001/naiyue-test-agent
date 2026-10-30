@@ -47,8 +47,8 @@ def test_one_cancelled_request_does_not_break_other_request():
         body="a=await frames.receive();b=await frames.receive()\n for ident,r in [b,a]:\n  r.update(ok=True,result=r['params']);await frames.send(ident,r)\n await frames.receive()"
         channel=await open_channel(body)
         first=asyncio.create_task(channel.request('read',{'x':1}))
-        # A public pending marker proves the request has entered channel custody.
-        while not channel.pending:await asyncio.sleep(0)
+        # Cancellation after transmission retains responsibility for the late reply.
+        while not channel.sent_count:await asyncio.sleep(0)
         first.cancel()
         with pytest.raises(asyncio.CancelledError):await first
         assert await channel.request('read',{'x':2})=={'x':2}
@@ -82,7 +82,8 @@ def test_deadline_reaps_child_and_stderr_is_never_retained():
     async def run():
         channel=await open_channel("sys.stderr.write('secret'*500);sys.stderr.flush()\n await frames.receive();await frames.receive()",timeout=.3)
         try:
-            with pytest.raises(SandboxError,match='env_unreachable'):await channel.request('read',{})
+            with pytest.raises(SandboxError,match='env_request_timeout'):await channel.request('read',{})
+            assert channel.failed is None and len(channel.retired)==1
         finally:await channel.close()
         assert channel.process.returncode is not None
         assert channel.stderr_bytes==3000 and not hasattr(channel,'stderr_text')

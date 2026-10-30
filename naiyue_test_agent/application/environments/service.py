@@ -130,18 +130,23 @@ class EnvironmentService:
 
     async def arequest(self,binding_id,operation,params,*,mutates=False,control=None):
         from naiyue_test_agent.agent_runtime.async_utils import run_blocking
-        with self.activity.use(binding_id):
+        async with self.activity.ause(binding_id):
             if mutates and self.operations is not None:
                 return await self.operations.afile_call(binding_id,operation,params,control)
             row=await run_blocking(self.check,binding_id)
+            if operation in ('find','grep') and control is not None:
+                import asyncio
+                from naiyue_test_agent.tools.control import check_tool_stop
+                request=asyncio.create_task(self.transport.arequest(row,operation,params,mutates=False))
+                try:
+                    while True:
+                        done,_=await asyncio.wait((request,),timeout=row.settings['poll_milliseconds']/1000)
+                        check_tool_stop(control,'Sandbox search was stopped; partial results were not returned.')
+                        if done:return request.result()
+                finally:
+                    if not request.done():request.cancel()
+                    await asyncio.gather(request,return_exceptions=True)
             return await self.transport.arequest(row,operation,params,mutates=mutates)
-
-    def request(self,binding_id,operation,params,*,mutates=False,control=None):
-        with self.activity.use(binding_id):
-            if mutates and self.operations is not None:
-                return self.operations.file_call(binding_id,operation,params,control)
-            row=self.validate(binding_id)
-            return self._engine(row).request(row,operation,params,mutates=mutates)
 
     def action(self,binding_id,action):
         with self.activity.manage(binding_id):return self._perform_action(binding_id,action)

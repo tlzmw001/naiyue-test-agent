@@ -14,6 +14,54 @@ from .protocol import receive,encode
 logger=logging.getLogger(__name__)
 
 
+class EnvdRequestHandler(socketserver.StreamRequestHandler):
+    def handle(self):
+        dispatcher=self.server.dispatcher
+        self.registration=None
+        try:self.respond()
+        finally:
+            if self.registration is not None:
+                try:dispatcher.dispatch(dict(self.registration,operation='request_release'))
+                except Exception as error:
+                    logger.error('envd_search_lease_release_failed error_type=%s',type(error).__name__)
+
+    def respond(self):
+        dispatcher=self.server.dispatcher;limit=self.server.limit
+        environment,session_id=dispatcher.environment,dispatcher.session_id
+        request={}
+        try:
+            import struct
+            _,uid,_=struct.unpack('3i',self.request.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
+            if uid != 0:raise SandboxError('env_binding_mismatch')
+            request=receive(self.rfile,limit)
+            result=dispatcher.dispatch(request)
+            if request.get('operation')=='request_register':self.registration=request
+            response={'ok':True,'result':result}
+        except Exception as error:
+            logger.warning('envd_file_request_failed error_type=%s',type(error).__name__)
+            from langchain_core.tools import ToolException
+            from naiyue_test_agent.contracts.git_inputs import GitInputError
+            code=(error.code if isinstance(error,(SandboxError,GitInputError)) else 'env_resource_outside' if isinstance(error,ResourceBoundaryError)
+                else 'env_resource_unavailable' if isinstance(error,OSError) and request.get('operation') in
+                ('resource_info','resolve_resource','list_resources','read_resource') else 'tool_error' if isinstance(error,ToolException)
+                else 'env_operation_unknown' if request.get('operation') in ('write','edit') else 'env_protocol_mismatch')
+            response={'ok':False,'error':{'code':code,
+                'message':str(error)[:4096] if isinstance(error,ToolException) else type(error).__name__}}
+        response.update(protocol=PROTOCOL_VERSION,request_id=request.get('request_id'),environment=environment.public(),session_id=session_id,
+            generation=dispatcher.generation)
+        try:
+            self.wfile.write(encode(response,limit))
+        except SandboxError:
+            logger.error('envd_response_too_large')
+            code='env_operation_unknown' if request.get('operation') in ('write','edit') else 'env_message_too_large'
+            self.wfile.write(encode({**response,'ok':False,'result':None,
+                'error':{'code':code,'message':'Response exceeds protocol budget'}},limit))
+        if self.registration is not None:
+            # This privileged UDS connection owns the ephemeral search control.
+            # EOF also handles attach crashes and registration replies lost in flight.
+            if self.rfile.read(1):raise SandboxError('env_protocol_mismatch')
+
+
 def serve(environment,session_id,limit,*,settings=None,state_root=STATE_ROOT):
     from .operations import EnvironmentOperations
     from naiyue_test_agent.sandbox_settings import SandboxSettings
@@ -21,38 +69,10 @@ def serve(environment,session_id,limit,*,settings=None,state_root=STATE_ROOT):
     from .identity import initialize_identity
     initialize_identity(environment)
     dispatcher=EnvironmentOperations(environment,session_id,state_root,settings)
-    class Handler(socketserver.StreamRequestHandler):
-        def handle(self):
-            request={}
-            try:
-                import struct
-                _,uid,_=struct.unpack('3i',self.request.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
-                if uid != 0:raise SandboxError('env_binding_mismatch')
-                request=receive(self.rfile,limit)
-                result=dispatcher.dispatch(request)
-                response={'ok':True,'result':result}
-            except Exception as error:
-                logger.warning('envd_file_request_failed error_type=%s',type(error).__name__)
-                from langchain_core.tools import ToolException
-                from naiyue_test_agent.contracts.git_inputs import GitInputError
-                code=(error.code if isinstance(error,(SandboxError,GitInputError)) else 'env_resource_outside' if isinstance(error,ResourceBoundaryError)
-                    else 'env_resource_unavailable' if isinstance(error,OSError) and request.get('operation') in
-                    ('resource_info','resolve_resource','list_resources','read_resource') else 'tool_error' if isinstance(error,ToolException)
-                    else 'env_operation_unknown' if request.get('operation') in ('write','edit') else 'env_protocol_mismatch')
-                response={'ok':False,'error':{'code':code,
-                    'message':str(error)[:4096] if isinstance(error,ToolException) else type(error).__name__}}
-            response.update(protocol=PROTOCOL_VERSION,request_id=request.get('request_id'),environment=environment.public(),session_id=session_id,
-                generation=dispatcher.generation)
-            try:
-                self.wfile.write(encode(response,limit))
-            except SandboxError:
-                logger.error('envd_response_too_large')
-                code='env_operation_unknown' if request.get('operation') in ('write','edit') else 'env_message_too_large'
-                self.wfile.write(encode({**response,'ok':False,'result':None,
-                    'error':{'code':code,'message':'Response exceeds protocol budget'}},limit))
     class Server(socketserver.ThreadingUnixStreamServer):
         daemon_threads=False
-    with dispatcher,Server(SOCKET_PATH,Handler) as server:
+    with dispatcher,Server(SOCKET_PATH,EnvdRequestHandler) as server:
+        server.dispatcher=dispatcher;server.limit=limit
         os.chmod(SOCKET_PATH,0o600)
         server.serve_forever()
 

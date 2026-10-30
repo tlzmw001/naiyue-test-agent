@@ -231,7 +231,7 @@ def test_environment_management_reserves_session_against_new_run(tmp_path,monkey
                     entered.set();await release.wait();return await original(binding)
                 monkeypatch.setattr(app.environments,'get',get)
                 # Use the real action gate; the controlled engine confirms resource removal.
-                task=asyncio.create_task(host.sessions.environment_action(sid,'destroy'))
+                task=asyncio.create_task(host.sessions.environment_action(sid,'destroy',confirm_destroy=True))
                 try:
                     await entered.wait()
                     with pytest.raises(SessionBusyError):await host.runs.start(sid,[('user','must not start')])

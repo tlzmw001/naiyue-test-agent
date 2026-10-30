@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import logging
+from uuid import uuid4
 
 from langchain_core.messages import HumanMessage
 
@@ -31,6 +32,7 @@ class RunDelivery:
         self.start_lock = asyncio.Lock()
         self.control_lock = asyncio.Lock()
         self.active_by_session = {}
+        self.submissions={}
         self._closing = False
 
     def get(self, run_id):
@@ -49,6 +51,7 @@ class RunDelivery:
                 if key[0] == session_id or key[0] in identities:
                     receipts.pop(key)
         self.active_by_session.pop(session_id, None)
+        self.submissions.pop(session_id,None)
 
     def _cached(self, scope, request_id, body):
         fingerprint = sha256(json.dumps(body, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
@@ -61,8 +64,16 @@ class RunDelivery:
             raise WebError('request_window_full')
         return key, fingerprint, deepcopy(old[1]) if old else None
 
-    async def start(self, session_id, body, rows, *, can_run=True, conversation_revision=0, execution_root_error=None, prepared_message=None):
-        return await self._launch(session_id, body, rows, can_run=can_run, conversation_revision=conversation_revision, execution_root_error=execution_root_error, prepared_message=prepared_message)
+    def start_receipt(self,session_id,body):
+        key,fingerprint,old=self._cached(session_id,body.request_id,{**body.model_dump(),'_operation':'message'})
+        if old is not None:return old
+        pending=self.pending_receipts.get(key)
+        if pending is not None:
+            if pending[0]!=fingerprint:raise WebError('request_id_conflict')
+            return deepcopy(pending[1].accepted_receipt)
+
+    async def start(self, session_id, body, rows, *, can_run=True, conversation_revision=0, execution_root_error=None, prepared_message=None,environment_wait=None):
+        return await self._launch(session_id, body, rows, can_run=can_run, conversation_revision=conversation_revision, execution_root_error=execution_root_error, prepared_message=prepared_message,environment_wait=environment_wait)
 
     async def regenerate(self, session_id, body, rows, *, can_run=True, execution_root_error=None):
         return await self._launch(session_id, body, rows, can_run=can_run, regenerate=True, execution_root_error=execution_root_error)
@@ -73,7 +84,7 @@ class RunDelivery:
     async def resume(self, session_id, body, check_current):
         return await self._launch(session_id, body, [], resume_check=check_current)
 
-    async def _launch(self, session_id, body, rows, *, can_run=True, resume_check=None, compact=False, regenerate=False, conversation_revision=0, execution_root_error=None, prepared_message=None):
+    async def _launch(self, session_id, body, rows, *, can_run=True, resume_check=None, compact=False, regenerate=False, conversation_revision=0, execution_root_error=None, prepared_message=None,environment_wait=None):
         async with self.start_lock:
             if self._closing:
                 raise WebError('session_unavailable', 503)
@@ -103,14 +114,14 @@ class RunDelivery:
                     return result
                 if active is not None and not active.task.done():
                     raise WebError('session_busy')
-                if not can_run:
+                if not can_run and environment_wait is None:
                     if execution_root_error is not None:
                         raise WebError('execution_root_unavailable', reason=execution_root_error['reason'])
                     raise WebError('session_recovery_blocked')
                 def register(job):
                     self.runs[job.run_id] = job
                     self.latest[session_id] = job.run_id
-                    self.receipts[key] = (fingerprint, {'session_id': session_id, 'run_id': job.run_id})
+                    self.receipts[key] = (fingerprint, job.accepted_receipt or {'session_id': session_id, 'run_id': job.run_id})
                     self.pending_receipts.pop(key, None)
                     self._prune()
 
@@ -122,6 +133,22 @@ class RunDelivery:
                     present = {row['id'] for row in rows}
                     rows = [*rows, *(row for row in prepared['messages'] if row['id'] not in present)]
                 job = DeliveredRun(session_id, rows, self.settings, register, progress_settings=self.progress_settings)
+                job.accepted_receipt=None;job.environment_wait=environment_wait;job.producing=asyncio.Event()
+                if environment_wait is not None:
+                    job.expected_run_id=uuid4().hex
+                    if body.images:
+                        from naiyue_test_agent.image_input_settings import ImageInputSettings
+                        limits=self.settings.runtime_settings.image_inputs if self.settings.runtime_settings else ImageInputSettings()
+                        if sum(bool(getattr(value,'waiting_images',False)) for value in self.active_by_session.values())>=limits.max_in_flight_requests:
+                            raise WebError('image_input_busy',429)
+                    job.waiting_images=bool(body.images)
+                    if body.images:
+                        self.application.runs.retain_input(session_id,prepared_message,body.pending_input_ids)
+                        environment_wait=dict(environment_wait,consume_pending_ids=(prepared_message.id,))
+                        job.environment_wait=environment_wait
+                    job.submission_id=body.request_id;job.submission_text=body.text
+                    job.accepted_receipt={'session_id':session_id,'request_id':body.request_id,'status':'waiting_environment'}
+                    self.submissions[session_id]=job
                 job.conversation_revision = (body.expected_conversation_revision + 1 if regenerate else
                     (prepared or {}).get('conversation_revision', conversation_revision))
                 job.tool_states = states
@@ -129,6 +156,7 @@ class RunDelivery:
                 self.pending_receipts[key] = (fingerprint, job)
                 self.active_by_session[session_id] = job
                 job.task = asyncio.create_task(self._produce(job, body.model_copy(update={'images': []}) if hasattr(body, 'images') else body, receipt_key=key, prepared=prepared, compact=compact, regenerate=regenerate, prepared_message=prepared_message))
+            if job.accepted_receipt is not None:return deepcopy(job.accepted_receipt)
         # Missing observations may keep this future pending for the whole run.
         # That must not hold the registration lock or cancel the producer.
         run_id = await asyncio.shield(job.started)
@@ -145,6 +173,7 @@ class RunDelivery:
                 self.latest.pop(old.session_id, None)
 
     async def _produce(self, job, body, *, receipt_key, prepared=None, compact=False, regenerate=False, prepared_message=None):
+        job.producing.set()
         try:
             if regenerate:
                 result = await self.application.runs.regenerate(job.session_id, **body.model_dump())
@@ -163,8 +192,10 @@ class RunDelivery:
             else:
                 result = await self.application.runs.start(job.session_id,
                     [prepared_message if prepared_message is not None else HumanMessage(content=body.text, id=body.request_id)],
+                    **({'wait_for_environment':job.environment_wait,'run_id':job.expected_run_id} if job.environment_wait is not None else {}),
                     **({'expected_conversation_revision': body.expected_conversation_revision}
-                       if body.expected_conversation_revision is not None else {}))
+                       if body.expected_conversation_revision is not None else
+                       {'expected_conversation_revision':job.conversation_revision} if job.environment_wait is not None else {}))
             if job.status == 'running':
                 with job.lock:
                     job.status = ('interrupted' if result.get('approval_requests') else
@@ -173,6 +204,12 @@ class RunDelivery:
                     job.projection.seed(job.session_id, [message_view(m) for m in result.get('messages', [])])
                     job._mark_tools_unconfirmed(datetime.now(timezone.utc).isoformat())
         except BaseException as error:
+            if job.environment_wait is not None and job.run_id is None:
+                job.submission_error='env_preparation_cancelled' if isinstance(error,asyncio.CancelledError) else public_error(error).code
+                if getattr(job,'waiting_images',False):
+                    try:self.application.runs.release_waiting_inputs(job.session_id,job.environment_wait['consume_pending_ids'])
+                    except Exception as secondary:
+                        logger.error('web_waiting_input_release_unconfirmed error_type=%s',type(secondary).__name__)
             rejected = isinstance(error, RunCapacityExceededError) and job.run_id is None
             if rejected:
                 pending = self.pending_receipts.get(receipt_key)
@@ -206,6 +243,32 @@ class RunDelivery:
             if self.active_by_session.get(job.session_id) is job:
                 self.active_by_session.pop(job.session_id)
             job.changed.set()
+
+    def submission(self,session_id):
+        job=self.submissions.get(session_id)
+        if job is None:return None
+        if job.run_id is not None:
+            return dict(request_id=job.submission_id,status='completed' if job.done else 'running',run_id=job.run_id)
+        status=('cancelled' if job.stop_requested else 'failed') if job.done else 'waiting_environment'
+        return dict(request_id=job.submission_id,status=status,error_code=getattr(job,'submission_error',None),
+            **({'text':job.submission_text} if job.done else {}),
+            **({'pending_input_ids':list(job.environment_wait.get('consume_pending_ids',()))} if getattr(job,'waiting_images',False) else {}))
+
+    async def stop_submission(self,session_id,request_id):
+        async with self.start_lock:
+            job=self.submissions.get(session_id)
+            if job is None or job.submission_id!=request_id:raise WebError('submission_not_found',404)
+            job.stop_requested=True
+        if job.run_id is not None:
+            self.application.runs.stop(session_id,run_id=job.run_id)
+            return dict(request_id=request_id,status='stopping')
+        if not job.done:
+            await job.producing.wait();job.task.cancel()
+            await await_settled(asyncio.gather(job.task,return_exceptions=True))
+        if job.run_id is not None:
+            self.application.runs.stop(session_id,run_id=job.run_id)
+            return dict(request_id=request_id,status='stopping')
+        return self.submission(session_id)
 
     async def control(self, run_id, body):
         prepared_message = None
@@ -270,6 +333,9 @@ class RunDelivery:
     async def seal(self):
         async with self.start_lock:
             self._closing = True
+        waiting=[(sid,job.submission_id) for sid,job in tuple(self.active_by_session.items())
+            if job.environment_wait is not None and job.run_id is None]
+        for sid,ident in waiting:await self.stop_submission(sid,ident)
 
     async def close(self, *, close_application=True):
         await self.seal()

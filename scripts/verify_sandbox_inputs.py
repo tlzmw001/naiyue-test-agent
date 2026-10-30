@@ -124,7 +124,7 @@ async def scenario(directory,context,image):
             async with application() as app:
                 rows=await app.environments.list(project.project_id) if project is not None else ()
                 for row in rows:
-                    try:await app.environments.destroy(row.binding_id)
+                    try:await app.environments.destroy(row.binding_id,confirm_destroy=True)
                     except Exception as error:
                         failures.append(error)
                         logging.getLogger(__name__).error('sandbox_input_gate_cleanup_failed error_type=%s',type(error).__name__)

@@ -71,11 +71,6 @@ export function useSessionCreation(api: WebApi) {
       controlDraft.current = {}; setControls({});
       attempt.current = null; draftRef.current = null; setDraft(null); setLocked(false);
       progress?.(view);
-      while (view.execution?.state === 'preparing') {
-        await new Promise(resolve => setTimeout(resolve, 500));
-        view = await api.session(current.sessionId);
-        progress?.(view);
-      }
       return view;
     } catch (error) {
       if (error instanceof ApiError && (['env_profile_changed', 'env_profile_unavailable', 'env_image_required',

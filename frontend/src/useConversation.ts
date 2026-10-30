@@ -42,6 +42,7 @@ export function useConversation(api: WebApi, active = true) {
   const imageInputs = useComposerImages(api, selected, draftState);
   const stoppedMode = useRef<Record<string, boolean>>({});
   const busySend = useRef(false);
+  const queuedSubmissions=useRef<Record<string,{requestId:string;text:string;images:string[]}>>({});
   const subscription = useRef<AbortController | null>(null);
   const pendingStop = useRef<string | null>(null);
 
@@ -128,6 +129,15 @@ export function useConversation(api: WebApi, active = true) {
 
   function applySession(value: SessionView, replace = false) {
     const id = value.session_id;
+    const queued=queuedSubmissions.current[id],submission=value.pending_submission;
+    if(queued&&submission?.request_id===queued.requestId&&submission.status!=='waiting_environment') {
+      if(['running','completed'].includes(submission.status)) {
+        if(draftRef.current[id]===queued.text)writeDraft('',id);
+        const sent=new Set(queued.images);
+        imageInputs.write((imageInputs.ref.current[id]??[]).filter(image=>!sent.has(image.client_id)),id);
+      }
+      delete queuedSubmissions.current[id];
+    }
     selected.current = id;
     setSession(value);
     setModel(models.includes(value.model_id) ? value.model_id : models[0] ?? '');
@@ -302,7 +312,7 @@ export function useConversation(api: WebApi, active = true) {
 
   const submit = createConversationSubmit({ busySend, selectionPending, model, session, selected, draftRef, pendingRef,
     currentRun, stoppedMode, writeDraft, writePending, setNotice, setSubmitting, setLastSubmission, setSession,
-    creation, imageInputs, api, applySession, display, watch, refreshSessions, refreshSession });
+    creation, imageInputs, api, applySession, display, watch, refreshSessions, refreshSession,queuedSubmissions });
 
   async function regenerate() {
     if (busySend.current || !session?.can_run || !session.last_reply_id || selectionPending.current) return;
@@ -347,6 +357,19 @@ export function useConversation(api: WebApi, active = true) {
   async function stop() {
     const live = currentRun.current;
     const sid = selected.current;
+    if(session?.pending_submission?.status==='waiting_environment') {
+      if(stopping)return;
+      setStopping(true);
+      try {
+        const receipt=await api.stopSubmission(sid,session.pending_submission.request_id);
+        if(selected.current===sid) {
+          setSession(previous=>previous?.session_id===sid?{...previous,pending_submission:receipt}:previous);
+          setNotice('已取消待发送消息，原输入已保留。');
+        }
+      }catch(error){if(selected.current===sid)setNotice(errorText(error));}
+      finally{if(selected.current===sid)setStopping(false);}
+      return;
+    }
     if (!live || live.status !== 'running' || stopping) return;
     setStopping(true);
     pendingStop.current = live.run_id;

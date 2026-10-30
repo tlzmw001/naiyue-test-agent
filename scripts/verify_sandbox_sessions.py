@@ -92,7 +92,7 @@ async def scenario(directory,context,image):
                 assert envelope['agent_id']==agent_id and envelope['report']=='continued',envelope
                 assert host.sessions._persistence.storage.subagents.get_subagent(sid,agent_id)['environment_binding_id']==binding
                 await host.sessions.prepare(other)
-                await host.sessions.environment_action(other,'destroy')
+                await host.sessions.environment_action(other,'destroy',confirm_destroy=True)
                 try:await host.runs.start(other,[('user','must refuse')])
                 except SandboxError as error:assert error.code=='env_expired',error.code
                 else:raise AssertionError('Destroyed sandbox executed a run')
@@ -104,7 +104,7 @@ async def scenario(directory,context,image):
             async with application() as app:
                 for row in await app.environments.list(project.project_id) if project else ():
                     if row.lifecycle=='destroyed':continue
-                    try:await app.environments.destroy(row.binding_id)
+                    try:await app.environments.destroy(row.binding_id,confirm_destroy=True)
                     except Exception as error:
                         failures.append(error);logging.getLogger(__name__).error('sandbox_session_gate_cleanup_failed error_type=%s',type(error).__name__)
             if failures and primary is None:raise failures[0]

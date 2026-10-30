@@ -2,6 +2,12 @@
 
 ## Spec141B 常驻传输（2026-10-29，实施中）
 
+复核后的修正约束见[Spec141B第10.5/10.6节](specs/141b-persistent-sandbox-execution.md#105-单请求结束后的迟到回复接收责任有界保留)：pending→retired迁移及其接收额度由原transport loop原子拥有；部分帧和缓存另有有限预算。binding清理为单批single-flight，默认策略最多2次终止/共享10秒总预算；失败记录与封锁分离，普通get不重新触发清理。显式恢复只能开启新的有限批次，原资源未确认退出不得开放任一lane。源码已按这些约束接线并经专项验证；完整构建与公司验收状态以Spec检查点为准。
+
+修正实施：EnvironmentActivity.ause在原短RLock保护的使用权标记之外await worker touch；touch版本登记和uncertain只在短锁内更新，不持锁做数据库IO。版本只保留每binding最新在途更新，旧更新结束不得覆盖较新失败。operation算法获取仓储句柄也交worker，不在transport loop等待P1；watcher完成回调由原owner loop按task身份删除登记。
+
+- EOP1同时保护有界_searches及原control/Event。request_register的UDS存活租约由请求handler持有；socket等EOF不持EOP1，finally回取EOP1取消/释放，搜索finally同锁退登记。不得在EOP1里等搜索/子进程结束。
+- Web待发送沿原W1登记producer及回执，锁外等待环境和执行。stop_submission在W1内标记取消，在锁外排空producer；精确expected_run_id先于W3投影绑定过滤。原RunAPI准入经S1/既有runtime锁，在RunLifecycle.admit_run同一临界区比较冻结设置、验证queued图片归属并消费；该段无网络/DB IO。失败/取消在原图片runtime锁下转retained，不新增锁或通用队列。
 - EnvironmentService 独占 SandboxTransport；其一个 SandboxRuntime 线程拥有所有 asyncio 流和连接表。调用方跨 loop 仅交付 coroutine/Future，不转移流、锁或连接对象。runtime 的 RLock 只保护启动/封口，实际网络和关闭在锁外；不得从 transport loop 同步回调 runtime.call。
 - 连接表由 transport loop 串行更新；键是 binding+lane，内容校验完整容器/daemon/session/冻结配置。建连任务是 single-flight，global connecting semaphore 仅限制建连；不同 binding 不持共享网络 mutex。binding 级 invalidating 标记同时封住 main/bulk；不能在旧通道关闭过程中开另一 lane。
 - 每通道普通/控制分别限制活动和排队；控制名额不被普通排队占用。FrameStream 一个有界优先队列、一个 writer；每条消息每次最多排一帧，writer 在实际首次 write 前设置发送责任。尚未发送的取消帧不写出；已发送请求保持回执托管。

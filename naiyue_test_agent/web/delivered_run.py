@@ -54,6 +54,8 @@ class DeliveredRun:
         self.wake_pending = False
         self.on_started = on_started
         self._registered = False
+        self.accepted_receipt=None;self.environment_wait=None;self.producing=asyncio.Event()
+        self.expected_run_id=None
 
     def _wake(self):
         with self.lock:
@@ -70,6 +72,7 @@ class DeliveredRun:
     def observe(self, event):
         if event.session_id != self.session_id:
             return
+        if self.expected_run_id is not None and event.run_id!=self.expected_run_id:return
         with self.lock:
             if self.run_id is None:
                 self.run_id = event.run_id

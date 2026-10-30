@@ -42,6 +42,7 @@ def test_ssh_never_looks_for_local_docker_and_preserves_remote_argv(tmp_path, mo
     request = calls[0]
     assert request.argv[:-1] == ['/client/ssh', '-T', '-o', 'BatchMode=yes', '-o',
         'StrictHostKeyChecking=yes', '-o', 'ForwardAgent=no', '-o', 'ClearAllForwardings=yes',
+        '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
         '-o', 'ConnectTimeout=15', '--', 'company-测试']
     assert shlex.split(request.argv[-1]) == [
         'exec', '/opt/Docker CLI/docker', '--host', 'unix:///var/run/docker.sock', *arguments]

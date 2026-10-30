@@ -83,7 +83,8 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
   }, [text]);
   const hasImages = !!imageInputs?.current.length;
   const canSupplement = busy && !pendingMode && !blocked && !stopping;
-  const showStop = busy && ((sending && (hasImages || !!imageInputs?.uncertain)) || imageInputs?.reading || (!text.trim() && !hasImages) || !canSupplement);
+  const waitingSubmission=session?.pending_submission?.status==='waiting_environment';
+  const showStop = waitingSubmission || busy && ((sending && (hasImages || !!imageInputs?.uncertain)) || imageInputs?.reading || (!text.trim() && !hasImages) || !canSupplement);
   const compactDisabled = !session || !session.can_run || busy || controlsDisabled;
   function runCommand(command: CommandName, typed = false) {
     setCommandNotice('');
@@ -191,7 +192,7 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
         <div className={styles.actionGroup}>
           {pendingMode && !busy && <span className={styles.resendLabel}>重新发送</span>}
           {contextEntry}
-          {showStop ? <button type="button" className={styles.stopButton} aria-label="停止运行" onClick={stop} disabled={stopping}>
+          {showStop ? <button type="button" className={styles.stopButton} aria-label={waitingSubmission?'取消待发送':'停止运行'} onClick={stop} disabled={stopping}>
             <Icon name="stop" /></button> :
             <button type="submit" className={styles.sendButton} aria-label={pendingMode && !busy ? '重新发送消息' : '发送消息'}
               disabled={sending || checkingSkill || blocked || !!imageInputs?.uncertain || imageInputs?.reading || (hasImages && !imageSupported) || (!text.trim() && !hasImages && !pending.some(value => value.trim()))}><Icon name="send" /></button>}

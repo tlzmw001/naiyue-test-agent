@@ -68,6 +68,6 @@ class SandboxTransport:
                 def failed(self):return row.binding_id in transport.expired or row.binding_id in transport.stopped
                 async def request(self,operation,params,**kwargs):
                     return await asyncio.to_thread(engine.request,row,operation,params,**kwargs)
-                async def close(self):return None
+                async def close(self,*,deadline=None):return None
             return Channel()
         monkeypatch.setattr('naiyue_test_agent.execution.sandbox_transport.SandboxTransport._open',open_channel)

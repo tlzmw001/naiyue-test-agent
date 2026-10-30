@@ -16,14 +16,14 @@ class FileDispatcher:
         self.max_message_bytes=max_message_bytes
         self.files=EnvdFiles(environment,session_id)
 
-    def runtime(self,params):
+    def runtime(self,params,control=None):
         auth=params['access']
         permit=auth['permit']
         if (permit.get('session_id')!=self.session_id or
                 permit.get('subject',{}).get('execution_environment')!=self.environment.public()):
             raise SandboxError('env_binding_mismatch')
         scope=RunScope(RunIdentity(self.session_id,agent_path=permit['agent_path'],project_id=self.environment.project_id),
-            capabilities=RunCapabilities(files=self.files),environment=self.environment)
+            capabilities=RunCapabilities(files=self.files),environment=self.environment,control=control)
         authorization=ToolAuthorization(permit,PermissionSettings.model_validate(auth['permission_rules']),
             tuple(auth['session_allow']),auth['permission_mode'])
         return SimpleNamespace(context=RuntimeContext(scope,authorization=authorization),tool_call_id=permit['call_id'])
@@ -38,7 +38,6 @@ class FileDispatcher:
             return {'protocol':PROTOCOL_VERSION,'package_version':__version__,
                     'environment':self.environment.public(),'session_id':self.session_id}
         if op=='prepare_target':return files.prepare_target(p['path'],p['operation'])
-        if op=='verify_target':return files.verify_target(p['subject'])
         if op=='resource_info':return pack(files.resource_info(p['path']))
         if op=='resolve_resource':return files.resolve_resource(p['path'])
         if op=='list_resources':return files.list_resources(p['path'])
@@ -58,7 +57,7 @@ class FileDispatcher:
         if op=='edit':
             edits=[EditReplacement.model_validate(item) for item in p['edits']]
             return files.edit(p['subject'],edits,**options)
-        runtime=self.runtime(p)
+        runtime=self.runtime(p,control)
         options.pop('control')
         if op=='list':return files.list(p['subject'],p['limit'],runtime,**options)
         options.update(process_settings=budgets.ProcessSettings.model_validate(p['process_settings']) if p['process_settings'] else None,

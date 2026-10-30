@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { ScopeSelection } from './projectTypes';
 import projectStyles from './components/ProjectNavigation.module.css';
-import { browserConnection, WebApi } from './api';
+import { ApiError, browserConnection, errorText, WebApi } from './api';
 import { useConversation } from './useConversation';
 import ExecutionSelector from './components/ExecutionSelector';
 import Sidebar from './components/Sidebar';
@@ -73,9 +73,10 @@ export default function App({ api: supplied, active = true, selection, scopeName
     if (chat.session) setAgentPanel({ sessionId: chat.session.session_id, agentId: path?.split('/').at(-1), revision: chat.session.conversation_revision ?? 0 });
   };
   const busy = chat.run?.status === 'running' && !chat.run.done;
+  const waitingSubmission=chat.session?.pending_submission?.status==='waiting_environment';
   const blocked = (!!busy && chat.run?.mode === 'compact') || (!busy && chat.session?.can_run === false) || chat.selectingSession || !chat.models.length || !!chat.run?.manual_review_required || !!chat.session?.manual_review_required || !!chat.session?.pending_approval;
   const controlsDisabled = chat.submitting || chat.changingControls || chat.changingModel || chat.selectingSession ||
-    chat.recovering || !!chat.session?.recovery || !chat.models.length || (!chat.session && chat.creation.locked);
+    chat.recovering || waitingSubmission || !!chat.session?.recovery || !chat.models.length || (!chat.session && chat.creation.locked);
   const openModels = () => { setSidebarOpen(false); setModelMenu(true); };
   const labels = { running: chat.stopping ? '正在停止' : (({resources:'正在读取项目指令和 Skills',model_request:'正在准备模型请求',model:'正在请求模型',tools:'正在执行工具'} as Record<string,string>)[chat.run?.preparation_phase??'']??'正在处理'), completed: '本次运行完成', stopped: '已停止',
     interrupted: '等待审批', failed: '本次运行失败', unconfirmed: '执行结果未同步' };
@@ -125,7 +126,11 @@ export default function App({ api: supplied, active = true, selection, scopeName
         stoppingRunId={chat.run?.status === 'running' && chat.run.stop_requested ? chat.run.run_id : undefined} />
       <div className={styles.feedback} aria-live="polite">
         {chat.creation.preparing&&<span role="status">正在准备环境，消息仍保留…</span>}
-        {chat.session?.execution?.kind==='sandbox'&&chat.session.execution.state!=='ready'&&<span className={styles.error}>沙箱尚不可执行。请在执行位置菜单核对原环境；历史仍可查看。</span>}
+        {waitingSubmission&&<span role="status">等待沙箱准备，完成后会自动发送。可以切换会话。</span>}
+        {chat.session?.pending_submission?.status==='failed'&&<span className={styles.error}>待发送未启动：{errorText(new ApiError(chat.session.pending_submission.error_code??'operation_failed'))}。原输入已保留。</span>}
+        {chat.session?.pending_submission?.text&&!chat.draft&&['failed','cancelled'].includes(chat.session.pending_submission.status)&&
+          <button className={styles.syncButton} onClick={()=>chat.setDraft(chat.session!.pending_submission!.text!)}>恢复待发送内容</button>}
+        {chat.session?.execution?.kind==='sandbox'&&['failed','unavailable'].includes(chat.session.execution.state)&&<span className={styles.error}>沙箱尚不可执行。请在执行位置菜单核对原环境；历史仍可查看。</span>}
         {chat.session?.execution_root_error && <span className={styles.error}>执行目录不可用：{{ missing: '目录不存在', not_directory: '路径不是目录', not_registered: '执行副本未登记', wrong_project: '项目身份不匹配', unreadable: '无法访问或检查执行目录' }[chat.session.execution_root_error.reason]}。历史仍可查看。</span>}
         {background.notice && <button className={styles.syncButton} onClick={() => openSidebar('tasks')}>{background.notice}</button>}
         {chat.run && chat.run.status !== 'completed' && <span className={`${styles.runStatus} ${busy ? styles.running : ''}`}><i />{busy && chat.run.mode === 'compact' ? '正在压缩上下文' : labels[chat.run.status]}</span>}

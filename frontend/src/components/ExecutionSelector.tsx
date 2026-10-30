@@ -64,7 +64,9 @@ export default function ExecutionSelector({ api, session, disabled, create, refr
   async function action(value:'prepare'|'start'|'stop'|'destroy'|'recover'){
     if(!session)return;
     setBusy(true);setError('');
-    try{if(value==='prepare')await api.prepareEnvironment(session.session_id);else await api.environmentAction(session.session_id,value);
+    try{if(value==='prepare')await api.prepareEnvironment(session.session_id);
+      else if(value==='destroy')await api.environmentAction(session.session_id,value,true);
+      else await api.environmentAction(session.session_id,value);
       await refresh();focusBack.current=true;setOpen(false);setDestroy(false);
     }catch(reason){setError(errorText(reason));}finally{setBusy(false);}
   }

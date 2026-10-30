@@ -39,7 +39,7 @@ def test_low_level_create_reserves_owner_until_creation_finishes(tmp_path, monke
                     environment = await task
                 with pytest.raises(SessionPersistenceError, match='session_environment_in_use'):
                     await host.sessions.delete(sid)
-                await app.environments.destroy(environment.binding_id)
+                await app.environments.destroy(environment.binding_id,confirm_destroy=True)
                 await host.sessions.delete(sid)
                 assert await host.sessions.list() == []
     asyncio.run(scenario())

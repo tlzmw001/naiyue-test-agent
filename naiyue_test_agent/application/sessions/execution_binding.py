@@ -195,6 +195,21 @@ async def _prepare_sandbox_session(sessions,sid,progress):
         return dict(kind='sandbox',state='ready',binding_id=setup.binding_id,root=checked.environment.root)
 
 
+@asynccontextmanager
+async def wait_for_submission_environment(sessions,sid,expected):
+    row=await run_blocking(sessions._persistence.storage.sessions.get,sid)
+    if row['execution_binding']!='sandbox' or saved_setup(row).binding_id!=expected['binding_id']:
+        raise SandboxError('env_binding_mismatch')
+    async with sessions.environments.using(expected['binding_id']):
+        progress=await sessions.environments._preparations.wait(expected['binding_id'])
+        status=await sessions._persistence.astatus(sid)
+        if any(status.get(key)!=value for key,value in expected.get('settings',{}).items()):
+            raise SandboxError('env_submission_changed')
+        progress.check()
+        if not status['can_run']:raise SandboxError('env_submission_unavailable')
+        yield
+
+
 async def check_environment_deletion(sessions,sid):
     row=await run_blocking(sessions._persistence.storage.sessions.get,sid)
     if row['execution_binding']!='sandbox':
@@ -214,12 +229,13 @@ async def check_environment_deletion(sessions,sid):
     if record.lifecycle!='destroyed':raise SessionPersistenceError('session_environment_in_use')
 
 
-async def environment_action(sessions,sid,action):
+async def environment_action(sessions,sid,action,*,confirm_destroy=False):
     if action not in ('start','stop','destroy','recover'):raise SandboxError('env_operation_invalid')
     row=await run_blocking(sessions._persistence.storage.sessions.get,sid)
     if row['execution_binding']!='sandbox':raise SandboxError('env_binding_mismatch')
     setup=saved_setup(row);api=sessions.environments
     record=await api.get(setup.binding_id)
     if record.project_id!=row['project_id'] or record.session_id!=sid:raise SandboxError('env_binding_mismatch')
-    await getattr(api,action)(setup.binding_id)
+    if action=='destroy':await api.destroy(setup.binding_id,confirm_destroy=confirm_destroy)
+    else:await getattr(api,action)(setup.binding_id)
     return await run_blocking(environment_status,sessions,row)

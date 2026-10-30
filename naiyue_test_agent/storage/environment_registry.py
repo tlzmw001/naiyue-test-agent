@@ -63,8 +63,9 @@ class EnvironmentRegistry:
 
     def touch(self, binding_id, now):
         with self.database.transaction(write=True) as connection:
-            return connection.execute("""UPDATE execution_environments SET record_json=json_set(record_json,'$.last_used_at',?)
-                WHERE binding_id=? AND lifecycle!='destroyed'""",(now,binding_id)).rowcount==1
+            return connection.execute("""UPDATE execution_environments SET record_json=json_set(record_json,'$.last_used_at',
+                max(coalesce(json_extract(record_json,'$.last_used_at'),?),?))
+                WHERE binding_id=? AND lifecycle!='destroyed'""",(now,now,binding_id)).rowcount==1
 
     def save(self, record):
         with self.database.transaction(write=True) as connection:

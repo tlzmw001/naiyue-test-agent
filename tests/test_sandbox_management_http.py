@@ -62,3 +62,41 @@ def test_management_auth_confirmation_replay_and_busy_retry(tmp_path,monkeypatch
                     assert (await client.get(prefix)).json()['items']==[]
                     assert (await host.history.session(sid))['session_id']==sid
     asyncio.run(scenario())
+
+
+def test_session_destroy_requires_explicit_confirmation_at_http_and_application_boundaries(tmp_path,monkeypatch):
+    import pytest
+    from naiyue_test_agent.contracts.sandbox import SandboxError
+    root=repository(tmp_path)
+    async def scenario():
+        with ExitStack() as stack:
+            transport=SandboxTransport(tmp_path,monkeypatch,stack)
+            config=options(tmp_path)
+            server=create_service_app(config,application_factory=lambda:application(tmp_path,{'image':'fixture:test'}))
+            async with server.router.lifespan_context(server):
+                discovery=read_discovery(config);app=server.state.application
+                project=await app.projects.add_local(root,trusted=True,operation_id='P')
+                host=await app.projects.open(project.project_id)
+                sid=await host.sessions.create_sandbox('fake',request_id=str(uuid4()))
+                binding=(await host.sessions.status(sid))['execution']['binding_id']
+                with pytest.raises(SandboxError,match='env_confirmation_required'):
+                    await app.environments.destroy(binding)
+                with pytest.raises(SandboxError,match='env_confirmation_required'):
+                    await host.sessions.environment_action(sid,'destroy')
+                assert transport.actions==[]
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server),base_url=discovery.origin,
+                    headers={'Authorization':'Bearer '+discovery.access_token,'X-Service-Instance':discovery.instance_id,
+                        'Origin':discovery.origin}) as client:
+                    url=f'/api/v1/scopes/{project.project_id}/sessions/{sid}/environment/destroy'
+                    for body,status in (({},409),({'confirm_destroy':False},409),({'confirm_destroy':'yes'},422)):
+                        response=await client.post(url,json=body,headers={'X-Request-ID':str(uuid4())})
+                        assert response.status_code==status,response.text
+                        assert transport.actions==[]
+                    key=str(uuid4())
+                    confirmed=await client.post(url,json={'confirm_destroy':True},headers={'X-Request-ID':key})
+                    assert confirmed.status_code==200,confirmed.text
+                    assert app.environments._service.get(binding).lifecycle=='destroyed'
+                    assert transport.actions==[(binding,'destroy')]
+                    replay=await client.post(url,json={'confirm_destroy':True},headers={'X-Request-ID':key})
+                    assert replay.json()==confirmed.json() and transport.actions==[(binding,'destroy')]
+    asyncio.run(scenario())

@@ -66,7 +66,7 @@ async def scenario(directory,context,image):
                 assert not (root/'added.txt').exists() and (root/'AGENTS.md').exists()
                 assert (await host.sessions.capture_result(sid,result_id=ident,
                     include_untracked=['added.txt','binary.bin','RENAMED.md']))['receipt']==receipt
-                await host.sessions.environment_action(sid,'destroy')
+                await host.sessions.environment_action(sid,'destroy',confirm_destroy=True)
                 assert '+agent new' in (await host.sessions.result_diff(sid,ident,'added.txt'))['patch']
                 report.update(active_process_refused='passed',snapshot_basis='passed',rename_binary_mode='passed',
                     source_head_index_worktree_preserved='passed',fixed_ref_import='passed',same_capture_retry='passed',
@@ -81,7 +81,7 @@ async def scenario(directory,context,image):
             async with application() as app:
                 for row in await app.environments.list(project.project_id) if project else ():
                     if row.lifecycle=='destroyed':continue
-                    try:await app.environments.destroy(row.binding_id)
+                    try:await app.environments.destroy(row.binding_id,confirm_destroy=True)
                     except Exception as error:
                         failures.append(error);logging.getLogger(__name__).error('sandbox_result_gate_cleanup_failed error_type=%s',type(error).__name__)
             if failures and primary is None:raise failures[0]

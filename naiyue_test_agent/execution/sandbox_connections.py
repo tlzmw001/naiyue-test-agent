@@ -17,11 +17,12 @@ class _Entry:
 
 
 class SandboxConnections:
-    def __init__(self,factory,*,max_bindings,max_connecting):
+    def __init__(self,factory,*,max_bindings,max_connecting,cleanup_timeout=10):
         if min(max_bindings,max_connecting)<1:raise ValueError('Invalid connection budget')
         self._factory=factory;self._max_bindings=max_bindings
         self._opening=asyncio.Semaphore(max_connecting)
         self._entries={};self._closing=False;self._invalidating={}
+        self._cleanup_timeout=cleanup_timeout
 
     @staticmethod
     def identity(row):
@@ -66,20 +67,23 @@ class SandboxConnections:
         if not task.cancelled() and task.exception() is not None:
             logger.warning('sandbox_connect_failed error_type=%s',type(task.exception()).__name__)
 
-    async def _remove(self,key,entry):
+    async def _remove(self,key,entry,*,deadline=None):
         entry.invalidated=True
         try:
             channel=await asyncio.shield(entry.task)
         except Exception as error:
             logger.debug('sandbox_connection_acquisition_released error_type=%s',type(error).__name__)
-            if isinstance(error,SandboxError) and error.code=='env_connection_cleanup_unconfirmed':raise
+            if isinstance(error,SandboxError) and error.code=='env_connection_cleanup_unconfirmed':
+                channel=getattr(error,'channel',None)
+                if channel is None:raise
+                await channel.close(deadline=deadline)
         else:
-            await channel.close()
+            await channel.close(deadline=deadline)
         if self._entries.get(key) is entry:self._entries.pop(key)
 
     async def invalidate(self,binding,*,wait=True):
         task=self._invalidating.get(binding)
-        if task is None:
+        if task is None or task.done() and (task.cancelled() or task.exception() is not None):
             task=asyncio.create_task(self._retire(binding))
             self._invalidating[binding]=task
             task.add_done_callback(self._observed)
@@ -88,7 +92,12 @@ class SandboxConnections:
     async def _retire(self,binding):
         entries=[(key,value) for key,value in self._entries.items() if key[0]==binding]
         for _,entry in entries:entry.invalidated=True
-        results=await asyncio.gather(*(self._remove(key,value) for key,value in entries),return_exceptions=True)
+        deadline=asyncio.get_running_loop().time()+self._cleanup_timeout
+        try:
+            async with asyncio.timeout_at(deadline):
+                results=await asyncio.gather(*(self._remove(key,value,deadline=deadline) for key,value in entries),return_exceptions=True)
+        except TimeoutError as error:
+            raise SandboxError('env_connection_cleanup_unconfirmed') from error
         for result in results:
             if isinstance(result,BaseException):raise result
         self._invalidating.pop(binding,None)

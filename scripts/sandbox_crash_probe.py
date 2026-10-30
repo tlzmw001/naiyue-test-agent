@@ -87,10 +87,10 @@ async def recover(directory,context,image):
             subject=await run_blocking(files.prepare_target,'count.txt','read')
             text=await run_blocking(files.read,subject,None,None,settings=ReadSettings(),control=None,progress=None)
             assert 'once' in text and 'onceonce' not in text
-            await app.environments.destroy(binding)
+            await app.environments.destroy(binding,confirm_destroy=True)
     finally:
         async with application(directory,context,image) as app:
-            for row in await app.environments.list(project):await app.environments.destroy(row.binding_id)
+            for row in await app.environments.list(project):await app.environments.destroy(row.binding_id,confirm_destroy=True)
 
 
 def verify_crash(directory,context,image):
@@ -101,7 +101,7 @@ def verify_crash(directory,context,image):
             async def cleanup():
                 manifest=json.loads((directory/'manifest.json').read_text())
                 async with application(directory,context,image) as app:
-                    for row in await app.environments.list(manifest['project_id']):await app.environments.destroy(row.binding_id)
+                    for row in await app.environments.list(manifest['project_id']):await app.environments.destroy(row.binding_id,confirm_destroy=True)
             asyncio.run(cleanup())
         raise RuntimeError('Disposable crash probe failed: '+result.stderr[-3000:])
     asyncio.run(recover(directory,context,image))

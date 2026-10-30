@@ -42,7 +42,7 @@ def test_deleted_session_returns_input_capacity_after_reopen(tmp_path, monkeypat
                         sid = (await host.sessions.list())[0]['session_id']
                     else:
                         sid = await host.sessions.create_sandbox('fake', request_id=str(uuid4()))
-                        await host.sessions.environment_action(sid, 'destroy')
+                        await host.sessions.environment_action(sid, 'destroy',confirm_destroy=True)
                 execution = (await host.sessions.status(sid))['execution']
                 ident = execution['input_id']
                 directory = app.environments._inputs.directory(project.project_id, ident)
@@ -69,7 +69,7 @@ def test_explicit_retirement_preserves_live_session_and_environment(tmp_path, mo
                 sid = await host.sessions.create_sandbox('fake', request_id=str(uuid4()))
                 ident = (await host.sessions.status(sid))['execution']['input_id']
                 assert await app.environments.retire_input(project.project_id, ident) is False
-                await host.sessions.environment_action(sid, 'destroy')
+                await host.sessions.environment_action(sid, 'destroy',confirm_destroy=True)
                 assert await app.environments.retire_input(project.project_id, ident) is False
                 assert (await app.environments.input(project.project_id, ident)).state == 'ready'
     asyncio.run(scenario())
@@ -128,7 +128,7 @@ def test_result_review_and_delivery_still_work_after_session_deletion(tmp_path, 
                 binding, ident = execution['binding_id'], execution['input_id']
                 (tmp_path/binding/'app.txt').write_text('retained result\n')
                 await host.sessions.capture_result(sid, result_id='c'*32, include_untracked=[])
-                await host.sessions.environment_action(sid, 'destroy')
+                await host.sessions.environment_action(sid, 'destroy',confirm_destroy=True)
                 await host.sessions.delete(sid)
                 assert await app.environments.retire_input(project.project_id, ident) is False
                 assert '+retained result' in (await app.environments.result_diff(binding, 'c'*32, 'app.txt'))['patch']
@@ -165,7 +165,7 @@ def test_registry_references_protect_input_without_a_session(tmp_path, monkeypat
                             session_id='another',lifecycle='destroyed',input_id=None))
                     app.environments._operations.records().reserve('another' if kind == 'receipt' else binding,
                         project.project_id, sid, 'c'*32, 'git_result', {}, metadata)
-                await host.sessions.environment_action(sid, 'destroy')
+                await host.sessions.environment_action(sid, 'destroy',confirm_destroy=True)
                 await host.sessions.delete(sid)
                 assert await app.environments.retire_input(project.project_id, ident) is False
                 assert (await app.environments.input(project.project_id, ident)).state == 'ready'
@@ -312,7 +312,7 @@ def test_session_delete_retirement_blocks_host_close_until_settled(tmp_path, mon
                 project = await app.projects.add_local(root, trusted=True, operation_id='P')
                 host = await app.projects.open(project.project_id)
                 sid = await host.sessions.create_sandbox('fake', request_id=str(uuid4()))
-                await host.sessions.environment_action(sid, 'destroy')
+                await host.sessions.environment_action(sid, 'destroy',confirm_destroy=True)
                 retiring, release = asyncio.Event(), asyncio.Event()
                 retire = app.environments.retire_input
                 async def paused_retire(*args):
@@ -344,7 +344,7 @@ def test_destroyed_capture_cannot_register_new_result_after_input_retirement(tmp
                 sid = await host.sessions.create_sandbox('fake', request_id=str(uuid4()))
                 execution = (await host.sessions.status(sid))['execution']
                 binding, ident = execution['binding_id'], execution['input_id']
-                await host.sessions.environment_action(sid, 'destroy')
+                await host.sessions.environment_action(sid, 'destroy',confirm_destroy=True)
                 entered, release = Event(), Event()
                 get = app.environments._inputs.get
                 def reading(*args):

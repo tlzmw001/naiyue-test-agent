@@ -35,6 +35,7 @@ class EnvironmentOperations:
         self.results=ResultExporter(state_root,environment,session_id,settings,self.inputs)
         self._lock=RLock();self._active={};self._closing=False;self._readers=0
         self._input_pending=False;self._result_pending=False
+        self._searches={}
         installation=self.inputs.installation()
         if installation is not None:
             try:self._input_pending=self.journal.get(installation['operation_id'])['state']!='completed'
@@ -151,6 +152,21 @@ class EnvironmentOperations:
         if op=='transport_hello':
             return dict(attach=1,protocol=PROTOCOL_VERSION,generation=self.generation,
                 environment=self.environment.public(),session_id=self.session_id)
+        if op in ('request_register','request_cancel','request_release'):
+            ident=p.get('request_id')
+            if not isinstance(ident,str) or not 1<=len(ident)<=64:raise SandboxError('env_protocol_mismatch')
+            with self._lock:
+                search=self._searches.get(ident)
+                if op=='request_register':
+                    if self._closing:raise SandboxError('env_stopped')
+                    if search is not None:raise SandboxError('env_operation_conflict')
+                    if len(self._searches)>=self.settings.transport.pending_requests:raise SandboxError('env_connection_capacity')
+                    self._searches[ident]=[OperationControl(),False,Event()]
+                    return {'registered':True}
+                if search is not None:
+                    search[0].event.set()
+                    if op=='request_release' and not search[1]:self._searches.pop(ident)
+                return {'cancelled':search is not None}
         if op=='input_probe':return self.inputs.probe(p['original_head'])
         if op=='input_status':return self.inputs.status(p['transfer_id'])
         if op in ('input_begin','input_chunk','input_cache'):
@@ -191,20 +207,41 @@ class EnvironmentOperations:
             value['bytes_base64']=base64.b64encode(value.pop('data')).decode()
             return value
         if op in ('write','edit'):raise SandboxError('env_operation_unsupported')
+        search=None
         with self._lock:
+            if self._closing:raise SandboxError('env_stopped')
             if self._input_pending and op!='hello':raise GitInputError('git_input_install_unconfirmed')
             if self._result_pending and op!='hello':raise GitInputError('git_result_busy')
+            if op in ('find','grep'):
+                search=self._searches.get(request['request_id'])
+                if search is None:
+                    if p.get('registered'):
+                        from langchain_core.tools import ToolException
+                        raise ToolException('Search was cancelled before execution')
+                    if len(self._searches)>=self.settings.transport.pending_requests:raise SandboxError('env_connection_capacity')
+                    search=[OperationControl(),False,Event()];self._searches[request['request_id']]=search
+                if search[1]:raise SandboxError('env_operation_conflict')
+                search[1]=True
             self._readers+=1
         try:
             if op=='result_options':return self.results.options()
-            return self.files.dispatch(request)
+            return self.files.dispatch(request,control=search[0] if search else None)
         finally:
-            with self._lock:self._readers-=1
+            with self._lock:
+                self._readers-=1
+                if search is not None:
+                    self._searches.pop(request['request_id'],None);search[2].set()
 
     def close(self):
         with self._lock:
             self._closing=True;active=tuple(self._active)
+            searches=tuple(self._searches.values())
+            for search in searches:search[0].event.set()
+            self._searches={key:value for key,value in self._searches.items() if value[1]}
         errors=[]
+        for search in searches:
+            if search[1] and not search[2].wait(self.settings.stop_timeout_seconds):
+                errors.append(SandboxError('env_stop_unconfirmed'))
         for ident in active:
             try:self.stop(ident)
             except Exception as error:

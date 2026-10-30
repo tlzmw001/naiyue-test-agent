@@ -86,6 +86,14 @@ def test_activity_excludes_management_and_readonly_observation_does_not_extend_i
         assert records.get('A').last_used_at == before
 
 
+def test_late_activity_timestamp_cannot_move_last_use_backwards(tmp_path):
+    with closing(ProjectRegistry(tmp_path/'projects.sqlite')) as registry:
+        records=EnvironmentRegistry(registry.database);records.reserve(row('A','running'))
+        assert records.touch('A',200.0)
+        assert records.touch('A',100.0)
+        assert records.get('A').last_used_at==200.0
+
+
 def test_activity_timestamp_failure_is_visible_and_disables_automatic_stopping(tmp_path, monkeypatch, caplog):
     from naiyue_test_agent.application.environments.activity import EnvironmentActivity
     with closing(ProjectRegistry(tmp_path/'projects.sqlite')) as registry:

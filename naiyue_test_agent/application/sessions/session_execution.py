@@ -321,10 +321,18 @@ class RunLifecycle:
             parts = self._runtime.run.prompt_parts if self._runtime.run else []
             return deepcopy([part for part in parts if agent_path == 'root' or part.get('id') != 'background_tasks'])
 
-    def admit_run(self, run_id, mode, observation, *, decisions=None, remember_approved=None, stop=False, capacity_available=True, expected_conversation_revision=None, execution_root=None,execution_access=None):
+    def admit_run(self, run_id, mode, observation, *, decisions=None, remember_approved=None, stop=False, capacity_available=True, expected_conversation_revision=None, execution_root=None,execution_access=None,expected_settings=None,consume_pending_ids=()):
         resuming = mode == 'approval_resume'
         with self._runtime.lock:
             row = self._runtime.state
+            if expected_settings is not None:
+                current=dict(model_id=row.model_id,thinking_level=row.thinking_level,permission_mode=row.permission_mode,
+                    active_tools=list(row.active_tool_names))
+                if any(current.get(key)!=value for key,value in expected_settings.items()):
+                    from naiyue_test_agent.contracts.sandbox import SandboxError
+                    raise SandboxError('env_submission_changed')
+            from .pending_images import validate_release
+            validate_release(self._runtime,consume_pending_ids,waiting=True)
             if expected_conversation_revision is not None and row.conversation_revision != expected_conversation_revision:
                 raise ValueError('conversation_stale')
             if row.manual_review_required:
@@ -374,6 +382,7 @@ class RunLifecycle:
                             stop_requested=stop)
             row.execution_root = selected
             self._runtime.run = run
+            for identity in consume_pending_ids:self._runtime.pending_images.pop(identity)
             if self._mcp_resources is not None:
                 self._mcp_resources.set_session_occupied(self.session_id, True)
             return run

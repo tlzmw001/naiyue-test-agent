@@ -15,7 +15,7 @@ def row(binding, *, container='container', host='jump'):
 class Channel:
     failed=None
     def __init__(self):self.closed=0
-    async def close(self):self.closed+=1
+    async def close(self,*,deadline=None):self.closed+=1
 
 
 def test_same_binding_connects_once_and_other_sandbox_is_independent():
@@ -114,7 +114,7 @@ def test_invalidate_propagates_cleanup_uncertainty_during_acquisition():
     async def run():
         entered=asyncio.Event();release=asyncio.Event()
         class Unconfirmed(Channel):
-            async def close(self):raise SandboxError('env_connection_cleanup_unconfirmed')
+            async def close(self,*,deadline=None):raise SandboxError('env_connection_cleanup_unconfirmed')
         async def factory(record,lane):entered.set();await release.wait();return Unconfirmed()
         pool=SandboxConnections(factory,max_bindings=1,max_connecting=1)
         opening=asyncio.create_task(pool.get(row('a')));await entered.wait()
@@ -130,7 +130,7 @@ def test_invalidation_blocks_new_bulk_lane_until_retirement_finishes():
     async def run():
         entered=asyncio.Event();release=asyncio.Event()
         class SlowClose(Channel):
-            async def close(self):entered.set();await release.wait();self.closed+=1
+            async def close(self,*,deadline=None):entered.set();await release.wait();self.closed+=1
         async def factory(record,lane):return SlowClose()
         pool=SandboxConnections(factory,max_bindings=1,max_connecting=1)
         await pool.get(row('a'))

@@ -40,7 +40,7 @@ def connect(app,project,tmp_path,monkeypatch,stack,count=1):
         class Channel:
             failed=None
             async def request(self,op,params,**kwargs):return await asyncio.to_thread(engine.request,row,op,params,**kwargs)
-            async def close(self):pass
+            async def close(self,*,deadline=None):pass
         return Channel()
     monkeypatch.setattr(app.environments._service.transport.connections,'_factory',open_channel)
     return rows,roots,remotes,calls,engine

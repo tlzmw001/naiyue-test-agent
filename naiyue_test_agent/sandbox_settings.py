@@ -70,6 +70,11 @@ class SandboxTransportSettings(BaseModel):
     frame_bytes: int = Field(default=65536, ge=1024, le=262144)
     pending_requests: int = Field(default=64, ge=2, le=1024)
     connecting: int = Field(default=2, ge=1, le=16)
+    cleanup_attempts: int = Field(default=2, ge=1, le=3)
+    cleanup_timeout_seconds: float = Field(default=10.0, gt=0, le=300)
+    keepalive_interval_seconds: int = Field(default=15, ge=1, le=3600)
+    keepalive_count: int = Field(default=3, ge=1, le=10)
+    heartbeat_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
 
     @model_validator(mode='after')
     def admission_budget(self):

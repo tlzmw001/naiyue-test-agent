@@ -7,7 +7,7 @@ import logging
 from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 from threading import Condition,RLock
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking
-from naiyue_test_agent.execution.sandbox_channel import SubmittedRequestCancelled
+from naiyue_test_agent.execution.sandbox_channel import SubmittedRequestCancelled,RequestNotSent
 from langchain_core.tools import ToolException
 from naiyue_test_agent.contracts.sandbox import SandboxError,SandboxRecord,PROCESS_CLEANUP_ERROR_CODE
 from naiyue_test_agent.contracts.projects import ProjectError
@@ -98,7 +98,8 @@ class SandboxOperationService:
         return await self.runtime.await_call(self._submit(binding,ident,kind,payload,metadata))
 
     async def _submit(self,binding,ident,kind,payload,metadata):
-        with self.accepting(),self.activity.use(binding):
+      async with self.activity.ause(binding):
+        with self.accepting():
           async with self._operation_lock(binding,ident):
             submitted=asyncio.Event();self._submissions[binding,ident]=submitted
             try:
@@ -111,24 +112,30 @@ class SandboxOperationService:
     async def _submit_once(self,binding,ident,kind,payload,metadata):
             env=await run_blocking(self.environments.check,binding,require_input=kind!='git_input')
             with self._archive_activity(env.project_id):
-                records=self.records()
+                records=await run_blocking(self.records)
                 row,new=await run_blocking(records.reserve,binding,env.project_id,env.session_id,ident,kind,payload,metadata)
+                if not new and self.finished(row) and not row['stale']:return row
                 if new:
                     try:
                         remote=await self._rpc(binding,'operation_submit',dict(operation_id=ident,kind=kind,payload=payload,
                             metadata={key:metadata[key] for key in ('agent_path',) if key in metadata}),mutates=True)
-                        await run_blocking(self._merge,row,remote)
+                        row=await run_blocking(self._merge,row,remote)
+                        if self.finished(row):return row
                     except SubmittedRequestCancelled as error:
                         if error.error is None:
                             try:await run_blocking(self._merge,row,error.result)
                             except Exception as save_error:
                                 logger.error('sandbox_cancelled_receipt_save_failed error_type=%s',type(save_error).__name__)
                                 await run_blocking(records.save,binding,ident,dict(state='unknown',stale=True,error_code='env_operation_unknown'))
+                        elif isinstance(error.error,(RequestNotSent,GitInputError)):
+                            code=error.error.code
+                            await run_blocking(records.save,binding,ident,dict(state='failed',stale=False,error_code=code,
+                                result=dict(ok=False,error={'code':code,'message':code})))
                         else:
                             logger.warning('sandbox_cancelled_submit_unconfirmed error_type=%s',type(error.error).__name__)
                             await run_blocking(records.save,binding,ident,dict(state='unknown',stale=True,error_code='env_operation_unknown'))
                         raise
-                    except GitInputError as error:
+                    except (RequestNotSent,GitInputError) as error:
                         logger.warning('sandbox_input_rejected code=%s',error.code)
                         return await run_blocking(records.save,binding,ident,dict(state='failed',stale=False,error_code=error.code,
                             result=dict(ok=False,error={'code':error.code,'message':error.code})))
@@ -144,8 +151,10 @@ class SandboxOperationService:
                 or type(remote.get('observed_bytes')) is not int
                 or remote['observed_bytes']<max(local['observed_bytes'],local['metadata'].get('offset',0))):
             raise SandboxError('env_protocol_mismatch')
-        return self.records().save(local['binding_id'],local['operation_id'],dict(state=remote['state'],
-            result=remote.get('result'),observed_bytes=remote['observed_bytes'],stale=False,error_code=None))
+        changes=dict(state=remote['state'],result=remote.get('result'),
+            observed_bytes=remote['observed_bytes'],stale=False,error_code=None)
+        if all(local.get(key)==value for key,value in changes.items()):return local
+        return self.records().save(local['binding_id'],local['operation_id'],changes)
 
     def _archive(self,row):
         root=self.environments.projects.data_dir/'workspaces'/row['project_id']/'artifacts'
@@ -169,17 +178,18 @@ class SandboxOperationService:
 
     async def _background(self,binding,ident,limit):
         async with self._operation_lock(binding,ident):
-            row=await run_blocking(self.records().get,binding,ident)
+            records=await run_blocking(self.records)
+            row=await run_blocking(records.get,binding,ident)
             remote=await self._rpc(binding,'operation_background',dict(operation_id=ident,output_limit=limit),mutates=True)
             row=await run_blocking(self._merge,row,remote)
             self.raise_process_failure(row)
             metadata={**row['metadata'],'background':True,'max_archive_bytes':limit}
-            return await run_blocking(self.records().save,binding,ident,dict(metadata=metadata))
+            return await run_blocking(records.save,binding,ident,dict(metadata=metadata))
 
     async def _refresh(self,binding,ident):
         with self.activity.use(binding,used=False):
           async with self._operation_lock(binding,ident):
-            records=self.records();row=await run_blocking(records.get,binding,ident)
+            records=await run_blocking(self.records);row=await run_blocking(records.get,binding,ident)
             previously_finished=self.finished(row)
             with self._archive_activity(row['project_id']):
                 phase='status'
@@ -217,8 +227,7 @@ class SandboxOperationService:
                 except (SandboxError,ToolException,ProjectError) as error:
                     safe_log(logger.warning, 'sandbox_status_unavailable error_type=%s diagnostic=%s',type(error).__name__,
                         diagnostic_text(error=error,phase=phase,code=getattr(error,'code',None),**facts))
-                    return await run_blocking(records.save,binding,ident,dict(stale=True,error_code=getattr(error,'code','env_operation_unknown'),
-                        state=row['state'] if row['state'] in TERMINAL else 'unknown'))
+                    return await run_blocking(records.save,binding,ident,dict(stale=True,error_code=getattr(error,'code','env_operation_unknown')))
                 except OSError as error:
                     safe_log(logger.error, 'sandbox_archive_failed error_type=%s diagnostic=%s',type(error).__name__,
                         diagnostic_text(error=error,phase=phase,offset=row['metadata'].get('offset'),
@@ -237,33 +246,49 @@ class SandboxOperationService:
         return await self.runtime.await_call(self._stop(binding,ident))
 
     async def _stop(self,binding,ident):
-        with self.activity.use(binding):
+        async with self.activity.ause(binding):
             submitted=self._submissions.get((binding,ident))
             if submitted is not None:await submitted.wait()
-            row=await run_blocking(self.records().get,binding,ident)
+            records=await run_blocking(self.records)
+            row=await run_blocking(records.get,binding,ident)
             try:
                 # The reserved control slot bypasses output/archive collection.
                 remote=await self._rpc(binding,'operation_stop',dict(operation_id=ident),mutates=True)
                 if not isinstance(remote,dict) or remote.get('state') not in TERMINAL:raise SandboxError('env_stop_unconfirmed')
+                async with self._operation_lock(binding,ident):
+                    row=await run_blocking(records.get,binding,ident)
+                    row=await run_blocking(self._merge,row,remote)
+            except SubmittedRequestCancelled as error:
+                async with self._operation_lock(binding,ident):
+                    row=await run_blocking(records.get,binding,ident)
+                    if error.error is None:
+                        await run_blocking(self._merge,row,error.result)
+                    else:
+                        logger.warning('sandbox_cancelled_stop_unconfirmed error_type=%s',type(error.error).__name__)
+                        await run_blocking(records.save,binding,ident,dict(error_code='env_stop_unconfirmed',
+                            stale=row['stale'] if isinstance(error.error,RequestNotSent) else True))
+                raise
             except (SandboxError,ToolException,ProjectError) as error:
                 safe_log(logger.error, 'sandbox_stop_unconfirmed error_type=%s diagnostic=%s',type(error).__name__,
                     diagnostic_text(error=error,binding_id=binding,operation_id=ident,phase='stop',code=getattr(error,'code',None)))
                 async with self._operation_lock(binding,ident):
-                    row=await run_blocking(self.records().save,binding,ident,dict(state='unknown',stale=True,error_code='env_stop_unconfirmed'))
+                    row=await run_blocking(records.get,binding,ident)
                     try:
                         remote=await self._rpc(binding,'operation_status',dict(operation_id=ident))
                         row=await run_blocking(self._merge,row,remote)
                     except (SandboxError,ToolException,ProjectError) as query_error:
                         safe_log(logger.warning, 'sandbox_stop_status_unavailable error_type=%s diagnostic=%s',type(query_error).__name__,
                             diagnostic_text(error=query_error,binding_id=binding,operation_id=ident,phase='stop_status'))
+                        row=await run_blocking(records.save,binding,ident,dict(stale=True,error_code='env_stop_unconfirmed'))
                     self.raise_process_failure(row)
-                    await run_blocking(self.records().save,binding,ident,dict(state='unknown',stale=True,error_code='env_stop_unconfirmed'))
-                    raise SandboxError('env_stop_unconfirmed') from error
+                    if row['state'] not in TERMINAL or row['stale']:
+                        await run_blocking(records.save,binding,ident,dict(error_code='env_stop_unconfirmed'))
+                        raise SandboxError('env_stop_unconfirmed') from error
             row=await self._refresh(binding,ident)
             while row['state'] in TERMINAL and not self.finished(row) and not row['stale']:
                 row=await self._refresh(binding,ident)
             if row['state'] not in TERMINAL:
-                await run_blocking(self.records().save,binding,ident,dict(state='unknown',stale=True,error_code='env_stop_unconfirmed'))
+                await run_blocking(records.save,binding,ident,dict(state='unknown',stale=True,error_code='env_stop_unconfirmed'))
                 raise SandboxError('env_stop_unconfirmed')
             return row
 
@@ -304,9 +329,6 @@ class SandboxOperationService:
         elif not isinstance(value,list) or len(value)!=2 or not isinstance(value[0],str) or not isinstance(value[1],dict):
             raise SandboxError('env_operation_unknown')
         return value
-
-    def file_call(self,binding,kind,payload,control=None):
-        return self.runtime.call(self._file_call(binding,kind,payload,control))
 
     async def afile_call(self,binding,kind,payload,control=None):
         return await self.runtime.await_call(self._file_call(binding,kind,payload,control))
@@ -351,18 +373,24 @@ class SandboxOperationService:
         if previous is not None and not previous.done():return
         async def collect():
             from naiyue_test_agent.agent_runtime.async_utils import run_blocking
+            failures=0
             try:
                 while not self._closing:
                     try:row=await self.arefresh(binding,ident)
                     except SandboxError as error:
                         if error.code!='env_busy':raise
                     else:
-                        if self.finished(row) or row['stale'] or row['state']=='unknown':return
-                    await asyncio.sleep(poll_milliseconds/1000)
+                        if not row['stale'] and (self.finished(row) or row['state']=='unknown'):return
+                        failures=failures+1 if row['stale'] else 0
+                        if not row['stale'] and row['metadata'].get('offset',0)<row['observed_bytes']:continue
+                    await asyncio.sleep(min(5,poll_milliseconds/1000*2**min(failures,6)))
             except Exception as error:safe_log(logger.error, 'sandbox_output_collection_failed error_type=%s diagnostic=%s',type(error).__name__,
                 diagnostic_text(error=error,binding_id=binding,operation_id=ident,phase='refresh',collector_stopped=True))
         task=asyncio.create_task(collect(),context=Context())
         self._watchers[key]=task
+        def retired(finished):
+            if self._watchers.get(key) is finished:self._watchers.pop(key)
+        task.add_done_callback(retired)
 
     async def aclose(self):
         from naiyue_test_agent.agent_runtime.async_utils import run_blocking,await_settled

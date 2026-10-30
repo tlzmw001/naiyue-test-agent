@@ -249,7 +249,7 @@ class SessionService:
                 raise ExecutionRootUnavailable('not_registered')
 
     def _admit(self, session_id, run_id, mode, *, decisions=None, remember_approved=None, stop=False,
-               expected_conversation_revision=None, prepared_admission=None):
+               expected_conversation_revision=None, prepared_admission=None,expected_settings=None,consume_pending_ids=()):
         with self._admission.lock:
             if not stop:self._admission.check_project(self._project.project_id if self._project else None)
             capacity_available = mode == 'approval_resume' and stop or self._admission.available()
@@ -272,17 +272,19 @@ class SessionService:
                 run = session.lifecycle.admit_run(run_id, mode, observation, decisions=decisions,
                                   remember_approved=remember_approved, stop=stop,
                                   capacity_available=capacity_available, expected_conversation_revision=expected_conversation_revision,
+                                  expected_settings=expected_settings,consume_pending_ids=consume_pending_ids,
                                   execution_root=prepared_admission[3] if prepared_admission is not None else None,
                                   execution_access=prepared_admission[4] if prepared_admission is not None else None)
         return session, run
 
 
-    async def arun(self, agent, session_id, messages, *, run_id=None, max_concurrency=4, expected_conversation_revision=None, prepared_admission=None):
+    async def arun(self, agent, session_id, messages, *, run_id=None, max_concurrency=4, expected_conversation_revision=None, prepared_admission=None,expected_settings=None,consume_pending_ids=()):
         validate_tool_concurrency(max_concurrency)
         if prepared_admission is None:
             prepared_admission = await self.prepare_admission(session_id)
             await self.confirm_admission(prepared_admission)
-        session, run = self._admit(session_id, run_id, 'message', expected_conversation_revision=expected_conversation_revision, prepared_admission=prepared_admission)
+        session, run = self._admit(session_id, run_id, 'message', expected_conversation_revision=expected_conversation_revision, prepared_admission=prepared_admission,
+            expected_settings=expected_settings,consume_pending_ids=consume_pending_ids)
         return await session.lifecycle.arun(agent, messages, run=run,
                                    max_concurrency=max_concurrency)
 

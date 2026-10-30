@@ -81,7 +81,8 @@ class DockerProcesses:
                     row=await self.coordinator.background(binding,ident,background_limit)
                     self.coordinator.watch(binding,ident,self.record.settings['poll_milliseconds']);handed=True
                     return json.dumps(self.receipt(row),ensure_ascii=False)
-                await asyncio.sleep(self.record.settings['poll_milliseconds']/1000)
+                if row['metadata'].get('offset',0)>=row['observed_bytes']:
+                    await asyncio.sleep(self.record.settings['poll_milliseconds']/1000)
                 row=await self.coordinator.arefresh(binding,ident)
                 self.coordinator.raise_process_failure(row)
             return await run_blocking(self.format,row)

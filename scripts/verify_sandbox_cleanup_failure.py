@@ -107,7 +107,7 @@ async def scenario(directory,context,image):
                 row['result']['error']['code']=='env_process_cleanup_unconfirmed' for row in rows)
             assert 'PRIVATE_' not in json.dumps(rows)
             report.update(persisted_fixed_error_code='passed',no_private_exception_body='passed',provider_requests=0)
-        finally:await app.environments.destroy(record.binding_id)
+        finally:await app.environments.destroy(record.binding_id,confirm_destroy=True)
     return report
 
 

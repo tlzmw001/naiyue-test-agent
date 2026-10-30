@@ -27,6 +27,7 @@ class PreparationProgress:
 
     def stop(self):
         with self.lock:
+            self.cancelled.set()
             if self.state=='preparing':self.phase='stopping';self.cancelled.set()
 
     def view(self):
@@ -73,6 +74,13 @@ class SandboxPreparations:
     def view(self,binding):
         with self._guard:item=self._jobs.get(binding)
         return item[0].view() if item is not None else None
+
+    async def wait(self,binding):
+        with self._guard:item=self._jobs.get(binding)
+        if item is None:raise SandboxError('env_preparation_unavailable')
+        await asyncio.shield(item[1])
+        item[0].check()
+        return item[0]
 
     def active(self):
         with self._guard:

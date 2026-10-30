@@ -108,11 +108,11 @@ async def scenario(directory,context,image):
                 await app.environments.start(bindings[0])
                 port=await app.environments.files(bindings[0],project_id=project.project_id,session_id=sessions[0])
                 assert 'updated' in (await expect(port,'read',{'path':'same.txt'})).content
-                await app.environments.destroy(bindings[0])
+                await app.environments.destroy(bindings[0],confirm_destroy=True)
                 result=await invoke(port,'read',{'path':'same.txt'})
                 assert result.status=='error' and 'env_expired' in result.content
                 assert (await app.environments.get(bindings[0])).lifecycle=='destroyed'
-                await app.environments.destroy(bindings[1])
+                await app.environments.destroy(bindings[1],confirm_destroy=True)
                 report.update(reopen='passed',destroy_no_fallback='passed',provider_requests=0)
             # Policy changes are exercised with a new application owner.
             from naiyue_test_agent.sandbox_settings import SandboxNetworkSettings
@@ -129,7 +129,7 @@ async def scenario(directory,context,image):
                 interfaces=await run_blocking(cli.run,['container','exec',external.container_id,'python','-I','-c',
                     'import os;assert any(name!="lo" for name in os.listdir("/sys/class/net"));print("external-interface")'])
                 assert b'external-interface' in interfaces
-                await configured.environments.destroy(external.binding_id)
+                await configured.environments.destroy(external.binding_id,confirm_destroy=True)
                 report['external_and_frozen_policy']='passed'
         finally:
             # Settle all records from this disposable registry, including a
@@ -140,7 +140,7 @@ async def scenario(directory,context,image):
             async with application() as app:
                 rows=await app.environments.list(project.project_id) if project is not None else ()
                 for row in rows:
-                    try:await app.environments.destroy(row.binding_id)
+                    try:await app.environments.destroy(row.binding_id,confirm_destroy=True)
                     except Exception as error:
                         failures.append(error)
                         logging.getLogger(__name__).error('sandbox_probe_cleanup_failed error_type=%s',type(error).__name__)

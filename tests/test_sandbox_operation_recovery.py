@@ -137,11 +137,15 @@ def test_background_collection_can_resume_after_a_stale_connection():
     from naiyue_test_agent.application.environments.operations import SandboxOperationService
     async def scenario():
         local=SandboxOperationService(SimpleNamespace(),activity=EnvironmentActivity(lambda:None));calls=[]
-        async def refresh(*_a):calls.append('query');return {'state':'unknown','stale':True}
+        async def refresh(*_a):
+            calls.append('query')
+            if len(calls)==1:return {'state':'running','stale':True}
+            return {'state':'completed','stale':False,'observed_bytes':0,'metadata':{}}
         local.arefresh=refresh
         local.watch('B','a'*32,20);await local._watchers[('B','a'*32)]
         local.watch('B','a'*32,20);await local._watchers[('B','a'*32)]
-        assert calls==['query','query']
+        assert calls==['query','query','query']
+        assert not local._watchers
     asyncio.run(scenario())
 
 

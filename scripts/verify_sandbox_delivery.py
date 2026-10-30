@@ -40,7 +40,7 @@ async def scenario(directory,context,image):
                 assert message.status=='success',message.content
                 ident=uuid4().hex;captured=await host.sessions.capture_result(sid,result_id=ident,include_untracked=['added.txt'])
                 assert captured['state']=='ready' and git(root,'rev-parse','HEAD')==original
-                await host.sessions.environment_action(sid,'destroy')
+                await host.sessions.environment_action(sid,'destroy',confirm_destroy=True)
                 branch=await host.sessions.deliver(sid,ident,dict(operation_id=uuid4().hex,action='branch',branch='review/result'))
                 assert branch['state']=='completed' and git(root,'rev-parse','HEAD')==original
                 assert not (root/'added.txt').exists()
@@ -63,7 +63,7 @@ async def scenario(directory,context,image):
             async with application() as app:
                 for row in await app.environments.list(project.project_id) if project else ():
                     if row.lifecycle=='destroyed':continue
-                    try:await app.environments.destroy(row.binding_id)
+                    try:await app.environments.destroy(row.binding_id,confirm_destroy=True)
                     except Exception as error:
                         failures.append(error);logging.getLogger(__name__).error('sandbox_delivery_cleanup_failed error_type=%s',type(error).__name__)
             if failures and primary is None:raise failures[0]

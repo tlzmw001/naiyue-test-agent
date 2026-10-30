@@ -141,6 +141,7 @@ export interface SessionRow {
 }
 
 export interface SessionView extends SessionRow {
+  pending_submission?: { request_id:string; status:'waiting_environment'|'running'|'completed'|'failed'|'cancelled'|'stopping'; error_code?:string|null; text?:string; run_id?:string } | null;
   execution?: ExecutionView;
   project_id?: string | null;
   execution_root_error?: { code: 'execution_root_unavailable'; reason: 'missing' | 'not_directory' | 'not_registered' | 'wrong_project' | 'unreadable' } | null;

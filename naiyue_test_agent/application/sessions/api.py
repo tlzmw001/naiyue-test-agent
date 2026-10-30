@@ -114,7 +114,7 @@ class SessionAPI:
             async with self._persistence.history_lock(session_id):
                 return await prepare_sandbox_session(self._sessions,session_id,owner=self._owner)
 
-    async def environment_action(self,session_id,action):
+    async def environment_action(self,session_id,action,*,confirm_destroy=False):
         from .execution_binding import environment_action
         with self._owner.operation():
             async with self._persistence.history_lock(session_id):
@@ -123,7 +123,7 @@ class SessionAPI:
                     from naiyue_test_agent.application.errors import SessionBusyError
                     raise SessionBusyError('Session is busy')
                 with self._sessions.manage_environment(session_id):
-                    return await environment_action(self._sessions,session_id,action)
+                    return await environment_action(self._sessions,session_id,action,confirm_destroy=confirm_destroy)
 
     async def create_workspace(self, model_id, workspace_root):
         with self._owner.operation():

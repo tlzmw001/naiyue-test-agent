@@ -229,6 +229,19 @@ class ControlQueue:
             records = tuple((key, dict(row)) for key, row in self._runtime.pending_images.items())
         return views(records)
 
+    def retain_input(self,message,replace_ids=()):
+        from .pending_images import retain
+        from naiyue_test_agent.contracts.image_content import input_text
+        with self._runtime.lock:
+            retain(self._runtime,QueuedInput(message.id,input_text(message.content),'ordinary',message.content),
+                self.image_settings,replace_ids)
+
+    def release_waiting_inputs(self,identities):
+        with self._runtime.lock:
+            for ident in identities:
+                row=self._runtime.pending_images.get(ident)
+                if row is not None and row['status']=='queued' and row['run_id'] is None:row['status']='retained'
+
     def pending_text(self, message_id):
         from naiyue_test_agent.contracts.image_content import input_text
         from naiyue_test_agent.contracts.image_inputs import ImageInputError

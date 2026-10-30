@@ -13,7 +13,7 @@ def test_warm_requests_do_not_revalidate_or_spawn_and_other_binding_survives(tmp
         failed=None
         def __init__(self):self.closed=False
         async def request(self,operation,params,**kwargs):return dict(operation=operation,params=params)
-        async def close(self):self.closed=True
+        async def close(self,*,deadline=None):self.closed=True
     async def open(*args,**kwargs):
         counts['opens']+=1;channel=Channel();channels.append(channel);return channel
     monkeypatch.setattr('naiyue_test_agent.execution.docker_environment.DockerEnvironment.validate',validate)

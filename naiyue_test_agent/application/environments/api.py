@@ -43,7 +43,7 @@ class EnvironmentAPI:
             return await run_blocking(management_view,self)
 
     async def manage(self,binding_id,action,*,confirm_destroy=False,interrupt=False):
-        if action=='destroy' and confirm_destroy is not True:raise SandboxError('env_confirmation_required')
+        if action=='destroy':self._confirm_destroy(confirm_destroy)
         if interrupt and action not in ('stop','destroy'):raise SandboxError('env_operation_invalid')
         from .management import manage_binding
         return await manage_binding(self,binding_id,action,interrupt=interrupt)
@@ -150,7 +150,13 @@ class EnvironmentAPI:
 
     async def start(self,binding_id):return await self._action(binding_id,'start')
     async def stop(self,binding_id):return await self._action(binding_id,'stop')
-    async def destroy(self,binding_id):return await self._action(binding_id,'destroy')
+    @staticmethod
+    def _confirm_destroy(value):
+        if value is not True:raise SandboxError('env_confirmation_required')
+
+    async def destroy(self,binding_id,*,confirm_destroy=False):
+        self._confirm_destroy(confirm_destroy)
+        return await self._action(binding_id,'destroy')
     async def recover(self,binding_id):return await self._action(binding_id,'recover')
 
     async def files(self,binding_id,*,project_id,session_id):

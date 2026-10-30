@@ -65,9 +65,6 @@ class SandboxSessionSetup(BaseModel):
     selection: SandboxProfileSelection | None = None
     requested_profile: SandboxProfileReference | None = None
 
-    def json_value(self):
-        return json.dumps(self.model_dump(mode='json'),sort_keys=True)
-
 
 def saved_setup(row):
     return SandboxSessionSetup.model_validate_json(row['execution_setup_json'])

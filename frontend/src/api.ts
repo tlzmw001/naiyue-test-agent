@@ -186,8 +186,9 @@ export class WebApi {
   acknowledgeDelivery(id:string,resultId:string,operationId:string) {
     return this.json<DeliveryOperation>(`/sessions/${encodeURIComponent(id)}/results/${encodeURIComponent(resultId)}/delivery/acknowledge`,'POST',{operation_id:operationId,confirmed:true});
   }
-  environmentAction(id: string, action: 'start'|'stop'|'destroy'|'recover') {
-    return this.json<ExecutionView>(`/sessions/${encodeURIComponent(id)}/environment/${action}`,'POST');
+  environmentAction(id: string, action: 'start'|'stop'|'destroy'|'recover', confirmDestroy = false) {
+    return this.json<ExecutionView>(`/sessions/${encodeURIComponent(id)}/environment/${action}`,'POST',
+      action === 'destroy' ? { confirm_destroy: confirmDestroy } : undefined);
   }
   private sessionView(value: SessionView) {
     if (value.live?.messages_location === 'session') value.live = { ...value.live, messages: value.messages };
@@ -266,9 +267,12 @@ export class WebApi {
   select(id: string, model_id: string) {
     return this.json<{ model_id: string }>(`/sessions/${encodeURIComponent(id)}/model`, 'PATCH', { model_id });
   }
-  start(id: string, text: string, request_id: string = crypto.randomUUID(), expected_conversation_revision?: number, images: ImageUpload[] = [], pending_input_ids: string[] = []) {
-    return this.json<{ run_id: string; session_id: string }>(`/sessions/${encodeURIComponent(id)}/runs`,
-      'POST', { text, request_id, expected_conversation_revision, ...(images.length ? { images, pending_input_ids } : {}) });
+  start(id: string, text: string, request_id: string = crypto.randomUUID(), expected_conversation_revision?: number, images: ImageUpload[] = [], pending_input_ids: string[] = [],wait_for_environment=false) {
+    return this.json<{ run_id?: string; session_id: string; request_id?:string; status?:'waiting_environment' }>(`/sessions/${encodeURIComponent(id)}/runs`,
+      'POST', { text, request_id, expected_conversation_revision, ...(images.length ? { images, pending_input_ids } : {}),...(wait_for_environment?{wait_for_environment:true}:{}) });
+  }
+  stopSubmission(id:string,requestId:string) {
+    return this.json<NonNullable<SessionView['pending_submission']>>(`/sessions/${encodeURIComponent(id)}/submissions/${encodeURIComponent(requestId)}/stop`,'POST',{});
   }
   control(id: string, kind: 'steering' | 'follow_up' | 'stop', text?: string, agent_path = 'root', agent_run_id?: string, approval_batch_id?: string, images: ImageUpload[] = [], pending_input_ids: string[] = [], request_id: string = crypto.randomUUID()) {
     return this.json<{ accepted: boolean; retained: string[] }>(`/runs/${encodeURIComponent(id)}/controls`,
@@ -318,6 +322,12 @@ export function errorText(error: unknown): string {
     env_image_required: '尚未配置沙箱镜像，请在应用配置中设置后重试。',
     env_attach_unavailable: '沙箱镜像未提供常驻连接入口，请使用与本次版本配套的 envd 镜像。',
     env_preparation_cancelled: '沙箱准备已停止，消息已保留。可在管理中查看原资源。',
+    env_request_timeout: '本次沙箱请求等待超时，其他请求仍可继续。请核对原操作状态。',
+    env_connection_capacity: '沙箱连接的请求名额已满，本次请求未执行。请稍后再试。',
+    env_connection_cleanup_unconfirmed: '原连接的进程回收尚未确认。请在管理沙箱中显式恢复并重新核实。',
+    env_preparation_unavailable: '原准备任务已不可用，请核对原沙箱后重新准备。',
+    env_submission_changed: '等待期间原会话设置已更改，本条消息未启动。请核对设置后重新发送。',
+    env_submission_unavailable: '原会话目前不能运行，本条消息未启动。请核对原会话状态。',
     env_profile_changed: '所选环境配置已变化，请刷新并重新选择环境；消息已保留。',
     env_profile_unavailable: '所选环境已移除，请刷新并重新选择环境。',
     env_configuration_invalid: '环境配置读取或校验失败，已保留上次可用列表。',

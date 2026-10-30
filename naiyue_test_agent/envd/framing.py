@@ -7,18 +7,27 @@ import logging
 from naiyue_test_agent.contracts.sandbox import SandboxError
 
 
+def message_text(value,limit):
+    raw=json.dumps(value,separators=(',',':'),ensure_ascii=False)
+    try:size=len(raw.encode('utf-8'))
+    except UnicodeEncodeError:
+        raw=json.dumps(value,separators=(',',':'),ensure_ascii=True);size=len(raw)
+    if size>limit:raise SandboxError('env_message_too_large')
+    return raw
+
+
 class FrameStream:
-    def __init__(self,reader,writer,*,generation,frame_bytes,message_bytes,max_pending,timeout=60):
+    def __init__(self,reader,writer,*,generation,frame_bytes,message_bytes,max_pending,timeout=60,buffer_bytes=None):
         if frame_bytes<1024 or message_bytes<1 or max_pending<1:raise ValueError('Invalid frame budget')
         self.reader,self.writer=reader,writer
         self.generation=generation;self.frame_bytes=frame_bytes;self.message_bytes=message_bytes
         self.max_pending=max_pending;self.timeout=timeout
+        self.buffer_bytes=buffer_bytes or message_bytes*max_pending;self._buffered=0
         self._partial={};self._queue=asyncio.PriorityQueue(maxsize=max_pending)
         self._sequence=itertools.count();self._writing=None;self._closed=False;self._failure=None
 
     async def send(self,ident,value,*,priority=1,on_first_write=None):
-        raw=json.dumps(value,separators=(',',':'),ensure_ascii=False)
-        if len(raw.encode('utf-8'))>self.message_bytes:raise SandboxError('env_message_too_large')
+        raw=message_text(value,self.message_bytes)
         if self._closed:raise SandboxError('env_unreachable')
         if self._failure:raise self._failure
         if self._writing is None:self._writing=asyncio.create_task(self._write())
@@ -81,11 +90,15 @@ class FrameStream:
                 self._partial[ident]=[[],0,0]
             parts,offset,length=self._partial[ident]
             if frame['offset']!=offset:raise SandboxError('env_protocol_mismatch')
-            piece=frame['data'];length+=len(piece.encode('utf-8'))
-            if length>self.message_bytes:raise SandboxError('env_message_too_large')
+            piece=frame['data']
+            try:size=len(piece.encode('utf-8'))
+            except UnicodeError as error:raise SandboxError('env_protocol_mismatch') from error
+            length+=size;self._buffered+=size
+            if length>self.message_bytes or self._buffered>self.buffer_bytes:raise SandboxError('env_message_too_large')
             parts.append(piece);self._partial[ident]=[parts,offset+len(piece),length]
             if frame['end']:
                 self._partial.pop(ident)
+                self._buffered-=length
                 try:value=json.loads(''.join(parts))
                 except (ValueError,UnicodeError) as error:raise SandboxError('env_protocol_mismatch') from error
                 if not isinstance(value,dict):raise SandboxError('env_protocol_mismatch')
@@ -97,3 +110,4 @@ class FrameStream:
             self._writing.cancel()
             await asyncio.gather(self._writing,return_exceptions=True)
         self._partial.clear()
+        self._buffered=0

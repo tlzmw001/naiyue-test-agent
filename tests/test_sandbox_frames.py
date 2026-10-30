@@ -68,6 +68,34 @@ def test_message_limit_checked_before_any_frame_is_sent():
     asyncio.run(run())
 
 
+def test_non_utf8_filename_roundtrips_without_changing_its_identity():
+    from naiyue_test_agent.envd.framing import FrameStream
+    async def scenario():
+        name='\udcd6\udcd0'
+        value={'path':'/workspace/'+name,'text':'中文'}
+        source=asyncio.StreamReader();sink=Sink()
+        stream=FrameStream(source,sink,generation='g',frame_bytes=1024,message_bytes=4096,max_pending=2)
+        try:
+            await stream.send('r',value)
+            for frame in sink.frames:source.feed_data(frame)
+            assert await stream.receive()==('r',value)
+            assert all(len(frame)<=1024 for frame in sink.frames)
+        finally:await stream.close()
+    asyncio.run(scenario())
+
+
+def test_invalid_unicode_in_frame_is_a_typed_protocol_error():
+    from naiyue_test_agent.envd.framing import FrameStream
+    async def scenario():
+        source=asyncio.StreamReader()
+        source.feed_data(json.dumps(dict(generation='g',request_id='r',offset=0,end=True,data='\udcff')).encode()+b'\n')
+        stream=FrameStream(source,Sink(),generation='g',frame_bytes=1024,message_bytes=4096,max_pending=2)
+        try:
+            with pytest.raises(SandboxError,match='env_protocol_mismatch'):await stream.receive()
+        finally:await stream.close()
+    asyncio.run(scenario())
+
+
 def test_cancel_before_first_write_drops_queued_frame():
     from naiyue_test_agent.envd.framing import FrameStream
     async def run():

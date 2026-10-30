@@ -10,6 +10,11 @@ class MCPRefreshInput(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
 
 
+class EnvironmentActionInput(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    confirm_destroy: bool = False
+
+
 class ModelInput(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     model_id: str = Field(min_length=1, max_length=128)
@@ -96,6 +101,7 @@ class MessageInput(BaseModel):
     text: str = Field(default='', max_length=32768)
     images: list[ImageUpload] = Field(default_factory=list)
     expected_conversation_revision: int | None = Field(default=None, ge=0)
+    wait_for_environment: bool = False
     pending_input_ids: list[Annotated[str,Field(min_length=1,max_length=128)]] = Field(default_factory=list,max_length=128)
 
     @model_validator(mode='after')
