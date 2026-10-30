@@ -19,7 +19,7 @@ from naiyue_test_agent.model_access import MODEL_LIMITS_METADATA_KEY, MODEL_ID_M
 from naiyue_test_agent.model_access.memory_output import prepare_memory_output
 from naiyue_test_agent.tools.memory import MemoryInput
 from .memory_batches import build_batch, model_batch, parse_model_result, proposal_request, response_schema
-from naiyue_test_agent.contracts.memory import MemoryReadError
+from naiyue_test_agent.contracts.memory import MemoryReadError, safe_memory_reason
 from .memory_sources import sensitive
 from naiyue_test_agent.application.observability.run_events import RunObservation
 
@@ -256,7 +256,9 @@ async def _commit(job, counter, call, *args, **kwargs):
 def _failure(job, diagnostic, error):
     job.failed += 1
     job.error_type = safe_error_type(error)
-    logger.error('%s task_id=%s error_type=%s', diagnostic, job.task_id, job.error_type)
+    reason = safe_memory_reason(error) if isinstance(error, MemoryReadError) else None
+    logger.error('%s task_id=%s error_type=%s%s', diagnostic, job.task_id, job.error_type,
+                 f' reason={reason}' if reason else '')
 
 
 async def _batch(service, job):

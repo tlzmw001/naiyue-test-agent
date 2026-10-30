@@ -93,8 +93,13 @@ def test_invalid_proposal_and_permission_failure_preserve_independent_success(ar
         try:
             await drive(service, job)
             assert job.result_status == 'partial' and job.overview_saved == 1 and job.saved == 0 and job.failed == 2
-            assert [e for e in events if e.event_type == 'run_finished'][0].data.status == 'failed'
+            finished = [e for e in events if e.event_type == 'run_finished'][0]
+            assert finished.data.status == 'failed'
+            assert finished.data.failure.category == 'memory_error'
+            assert finished.data.failure.reason == 'memory_task_incomplete'
+            assert finished.data.failure.error_type == 'MemoryReadError'
             assert 'SYNTHETIC_PRIVATE' not in caplog.text and 'memory_proposal_failed' in caplog.text
+            assert 'reason=memory_permission_denied' in caplog.text
         finally:
             service.memory.close()
     asyncio.run(scenario())
@@ -112,7 +117,10 @@ def test_json_failure_has_no_false_save_and_no_model_repair_loop(archive, tmp_pa
             assert job.overview_saved == job.saved == 0 and len(model.seen) == 1
             assert archive.memory.overview('session')['overview'] is None
             assert 'SYNTHETIC_PRIVATE' not in caplog.text
-            assert [e for e in events if e.event_type == 'run_finished'][0].data.status == 'failed'
+            finished = [e for e in events if e.event_type == 'run_finished'][0]
+            assert finished.data.status == 'failed'
+            assert finished.data.failure.category == 'memory_error'
+            assert finished.data.failure.reason == 'memory_result_invalid'
         finally:
             service.memory.close()
     asyncio.run(scenario())
@@ -150,7 +158,11 @@ def test_admission_failure_is_distinguished_from_an_uncompleted_root(archive, tm
         try:
             await drive(service, job)
             assert job.result_status == status and job.termination == termination and not model.seen
-            assert [e for e in events if e.event_type == 'run_finished'][0].data.status == status
+            finished = [e for e in events if e.event_type == 'run_finished'][0]
+            assert finished.data.status == status
+            if status == 'failed':
+                assert finished.data.failure.category == 'memory_error'
+                assert finished.data.failure.reason == 'memory_admission_failed'
         finally:
             service.memory.close()
     asyncio.run(scenario())

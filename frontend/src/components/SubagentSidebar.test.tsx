@@ -134,6 +134,32 @@ it('keeps the second instance selected when the first detail returns late', asyn
   expect(screen.getByText('SECOND_INSTANCE_ONLY')).toBeTruthy();
   expect(screen.queryByText('child explanation')).toBeNull();
 });
+it('clamps a long delegation task behind an expand toggle and resets on reselection', async () => {
+  const props = setup();
+  const longTask = '检查测试用例质量红线并逐条记录结论。'.repeat(20);
+  vi.mocked(props.api.subagents).mockResolvedValue([{ ...record, task: longTask }]);
+  vi.mocked(props.api.subagent).mockResolvedValue({ ...detail, task: longTask });
+  render(<TestSidebar {...props} sessionId="s" />);
+  fireEvent.click(await screen.findByRole('button', { name: '查看子智能体 tester · abcdef' }));
+  expect((await screen.findByText(longTask)).className).toContain('taskClamped');
+  const toggle = screen.getByRole('button', { name: '展开任务' });
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  fireEvent.click(toggle);
+  expect(screen.getByRole('button', { name: '收起任务' }).getAttribute('aria-expanded')).toBe('true');
+  expect(screen.getByText(longTask).className).not.toContain('taskClamped');
+  fireEvent.click(screen.getByRole('button', { name: '返回名称列表' }));
+  fireEvent.click(await screen.findByRole('button', { name: '查看子智能体 tester · abcdef' }));
+  expect(screen.getByRole('button', { name: '展开任务' }).getAttribute('aria-expanded')).toBe('false');
+  expect(screen.getByText(longTask).className).toContain('taskClamped');
+});
+
+it('keeps a short delegation task plain without a toggle', async () => {
+  const props = setup();
+  render(<TestSidebar {...props} sessionId="s" />);
+  fireEvent.click(await screen.findByRole('button', { name: '查看子智能体 tester · abcdef' }));
+  await screen.findByText('inspect permissions');
+  expect(screen.queryByRole('button', { name: '展开任务' })).toBeNull();
+});
 it('keeps detail progress text when a compact root snapshot contains only phase metadata', async () => {
   const props = setup();
   vi.mocked(props.api.subagent).mockResolvedValue({ ...detail, tool_states: { inner: {

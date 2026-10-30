@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 
 from naiyue_test_agent.contracts.failures import FailureDescription, normalize_classifiers, resolve_failure, safe_error_type
+from naiyue_test_agent.contracts.memory import MemoryReadError, safe_memory_reason
 from naiyue_test_agent.application.errors import SessionBusyError, SessionPendingApprovalError, SessionManualReviewRequiredError
 from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.application.sessions.project_instructions import ProjectInstructionsError
@@ -17,6 +18,8 @@ _PERSISTENCE_REASONS = frozenset((
 
 
 def _application_classification(error):
+    if isinstance(error, MemoryReadError):
+        return 'memory_error', safe_memory_reason(error) or 'memory_task_failed'
     if isinstance(error, SessionPersistenceError):
         reason = error.args[0] if error.args else None
         return 'persistence_error', reason if isinstance(reason, str) and reason in _PERSISTENCE_REASONS else 'session_unavailable'

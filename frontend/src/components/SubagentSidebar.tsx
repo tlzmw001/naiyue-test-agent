@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type { RunView } from '../types';
 import { WebApi } from '../api';
 import { useSubagents } from '../useSubagents';
@@ -5,6 +6,8 @@ import type { SubagentList } from '../useSubagentList';
 import Conversation from './Conversation';
 import styles from './SubagentSidebar.module.css';
 import { Chevron } from './Icons';
+
+const TASK_PREVIEW_CHARS = 200;
 
 const labels: Record<string, string> = { running: '运行中', awaiting_approval: '等待审批', interrupted: '等待审批',
   stopping: '正在收尾', completed: '已完成', stopped: '已停止', failed: '失败', unconfirmed: '状态未确认' };
@@ -19,6 +22,10 @@ export default function SubagentSidebar({ api, sessionId, conversationRevision =
   stopAgent: (path: string, originRunId: string, agentRunId?: string) => void; showApprovals: () => void;
 }) {
   const view = useSubagents(api, sessionId, list, run, initialAgentId);
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => { setExpanded(false); }, [view.selected]);
+  const task = view.record?.task;
+  const longTask = !!task && task.length > TASK_PREVIEW_CHARS;
   const status = view.live?.status ?? view.record?.status;
   const live = view.live;
   const active = live && ['running', 'awaiting_approval', 'stopping', 'interrupted'].includes(live.status) &&
@@ -30,7 +37,9 @@ export default function SubagentSidebar({ api, sessionId, conversationRevision =
       <div className={styles.selection}>
         <div className={styles.selectionTop}><button className={styles.back} onClick={() => view.select()}><Chevron direction="left" />返回名称列表</button>
           {status && <span className={styles.status}>{labels[status]}</span>}</div>
-        {view.record?.task && <p className={styles.task}>{view.record.task}</p>}
+        {task && <p className={longTask && !expanded ? `${styles.task} ${styles.taskClamped}` : styles.task}>{task}</p>}
+        {longTask && <button className={`${styles.textButton} ${styles.taskToggle}`} aria-expanded={expanded}
+          onClick={() => setExpanded(value => !value)}>{expanded ? '收起任务' : '展开任务'}</button>}
         {view.record?.resume_available === true && !active && <p className={styles.notice}>可由主智能体继续委派</p>}
         {view.record?.resume_available === false && !active && view.record.resume_reason &&
           <p className={styles.notice}>{resumeReasons[view.record.resume_reason] ?? '当前不可继续委派'}</p>}
