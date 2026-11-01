@@ -20,6 +20,13 @@ it('explains catalog failures and changed choices without showing raw codes', ()
   expect(errorText(new ApiError('env_profile_changed'))).toContain('重新选择');
   expect(errorText(new ApiError('env_configuration_invalid'))).toContain('保留');
 });
+it('explains an owned container start failure as a startup problem', () => {
+  const message = errorText(new ApiError('env_start_failed'));
+  expect(message).toContain('容器启动失败');
+  expect(message).toContain('原环境');
+  expect(message).not.toContain('协议');
+  expect(message).not.toContain('env_start_failed');
+});
 it('explains a missing local SSH client without suggesting local Docker installation', () => {
   const message = errorText(new ApiError('env_ssh_unavailable'));
   expect(message).toContain('OpenSSH');

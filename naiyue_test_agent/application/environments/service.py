@@ -50,12 +50,12 @@ class EnvironmentService:
         facts=self.projects.registry.execution_facts(project_id)
         if facts.lifecycle!='active' or not facts.trusted:raise SandboxError('env_project_unavailable')
 
-    def create(self,project_id,session_id,*,binding_id=None,selection=None):
+    def create(self,project_id,session_id,*,binding_id=None,selection=None,on_created=None):
         binding_id=binding_id or uuid4().hex
         with self.activity.use(binding_id):
-            return self._prepare_create(project_id,session_id,binding_id=binding_id,selection=selection)
+            return self._prepare_create(project_id,session_id,binding_id=binding_id,selection=selection,on_created=on_created)
 
-    def _prepare_create(self,project_id,session_id,*,binding_id,selection):
+    def _prepare_create(self,project_id,session_id,*,binding_id,selection,on_created=None):
         if binding_id is not None:
             from naiyue_test_agent.contracts.git_inputs import input_id
             input_id(binding_id)
@@ -71,9 +71,9 @@ class EnvironmentService:
                         except ValueError as error:raise SandboxError('env_binding_mismatch') from error
                         if not matches:raise SandboxError('env_binding_mismatch')
                     return existing
-                return self._create(project_id,session_id,binding_id,selection)
+                return self._create(project_id,session_id,binding_id,selection,on_created=on_created)
 
-    def _create(self,project_id,session_id,binding_id,selection):
+    def _create(self,project_id,session_id,binding_id,selection,*,on_created=None):
         self._project(project_id)
         selection=selection or self.configuration.select()
         settings=selection.settings
@@ -92,10 +92,12 @@ class EnvironmentService:
             try:
                 row=engine.create(row,records.save)
                 phase='handshake'
-                engine.handshake(row)
+                if settings.ssh is not None:engine.handshake(row,start=True)
+                else:engine.handshake(row)
                 row=row.changed(lifecycle='running')
                 phase='ready_save'
                 records.save(row)
+                if on_created is not None and getattr(engine,'fresh_resources',False) is True:on_created(row)
             except Exception as error:
                 safe_log(logger.error, 'sandbox_creation_failed error_type=%s diagnostic=%s',type(error).__name__,
                     diagnostic_text(error=error,phase=phase,binding_id=binding_id,project_id=project_id,

@@ -5,6 +5,14 @@ import ExecutionSelector from './ExecutionSelector';
 import userEvent from '@testing-library/user-event';
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+it('shows failed status observation without claiming the last phase is current or blocking management',()=>{
+  const api=new WebApi('synthetic');
+  render(<ExecutionSelector api={api} session={{session_id:'S',execution:{kind:'sandbox',state:'preparing',
+    preparation:{state:'preparing',phase:'snapshot',completed:null,total:null,error_code:null}}} as never}
+    statusSyncError="沙箱绑定不一致" disabled={false} create={vi.fn()} refresh={vi.fn()} />);
+  expect(screen.getByText('状态更新失败；最后已知：正在准备项目快照')).toBeTruthy();
+  expect(screen.getByRole('button',{name:'管理沙箱'}).hasAttribute('disabled')).toBe(false);
+});
 function setup() {
   const api = new WebApi('synthetic','11111111-1111-1111-1111-111111111111');
   vi.spyOn(api,'executionOptions').mockResolvedValue({host_available:true,sandbox_available:true,error_code:null,

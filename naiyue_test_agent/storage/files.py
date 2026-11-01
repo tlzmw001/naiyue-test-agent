@@ -28,7 +28,7 @@ def changed_store_fields(before, named_before, after, named_after):
     return tuple(sorted(differences))
 
 
-def _windows_open(path, exclusive_create, *, readonly=False):
+def _windows_open(path, exclusive_create, *, readonly=False, writable_attributes=False):
     import ctypes
     from ctypes import wintypes
     import msvcrt
@@ -48,7 +48,8 @@ def _windows_open(path, exclusive_create, *, readonly=False):
     kernel.GetFileInformationByHandle.restype = wintypes.BOOL
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel.CloseHandle.restype = wintypes.BOOL
-    handle = kernel.CreateFileW(str(path), 0x80000000 | (0 if readonly else 0x40000000), 0x1 | 0x2,
+    access = 0x80000000 | (0 if readonly else 0x40000000) | (0x100 if writable_attributes else 0)
+    handle = kernel.CreateFileW(str(path), access, 0x1 | 0x2,
                                 None, 3 if readonly else 1 if exclusive_create else 4, 0x00200000 | 0x80, None)
     if handle == wintypes.HANDLE(-1).value:
         raise ctypes.WinError(ctypes.get_last_error())
@@ -63,6 +64,42 @@ def _windows_open(path, exclusive_create, *, readonly=False):
         kernel.CloseHandle(handle)
         raise
     return fd  # CRT owns the Win32 handle from here.
+
+
+def clear_store_readonly(path):
+    """Clear only READONLY through a verified Windows handle, never through a link."""
+    if os.name != 'nt': return None
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+    path = Path(path)
+    check_store_directory(path.parent)
+    check_store_file(path)
+    if not getattr(path.lstat(), 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_READONLY: return None
+    fd = _windows_open(path, False, readonly=True, writable_attributes=True)
+    try:
+        opened, named = os.fstat(fd), path.lstat()
+        if not _regular(named) or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
+            raise OSError(errno.EINVAL, 'unsafe_store_file')
+        class BasicInformation(ctypes.Structure):
+            _fields_ = [('created', ctypes.c_longlong), ('accessed', ctypes.c_longlong),
+                ('written', ctypes.c_longlong), ('changed', ctypes.c_longlong), ('attributes', wintypes.DWORD)]
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        signature = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+        kernel.GetFileInformationByHandleEx.argtypes = signature
+        kernel.GetFileInformationByHandleEx.restype = wintypes.BOOL
+        kernel.SetFileInformationByHandle.argtypes = signature
+        kernel.SetFileInformationByHandle.restype = wintypes.BOOL
+        handle, info = msvcrt.get_osfhandle(fd), BasicInformation()
+        if not kernel.GetFileInformationByHandleEx(handle, 0, ctypes.byref(info), ctypes.sizeof(info)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if not info.attributes & stat.FILE_ATTRIBUTE_READONLY: return None
+        info.attributes = info.attributes & ~stat.FILE_ATTRIBUTE_READONLY or stat.FILE_ATTRIBUTE_NORMAL
+        if not kernel.SetFileInformationByHandle(handle, 0, ctypes.byref(info), ctypes.sizeof(info)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return opened.st_dev, opened.st_ino
+    finally:
+        os.close(fd)
 
 
 def open_store_file(path, *, exclusive_create=False):

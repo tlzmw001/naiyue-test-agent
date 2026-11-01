@@ -41,7 +41,7 @@ class SandboxChannel:
     @classmethod
     async def open(cls,argv,*,environment,session_id,env=None,cwd=None,timeout=60,
                    frame_bytes=65536,message_bytes=16777216,io_slots=8,control_slots=2,max_waiting=64,preamble_check=None,
-                   cleanup_timeout=10,cleanup_attempts=2,heartbeat_interval=15,heartbeat_timeout=5):
+                   cleanup_timeout=10,cleanup_attempts=2,heartbeat_interval=15,heartbeat_timeout=5,start_expected=False):
         process=await spawn_child(argv,env=env,cwd=cwd,limit=message_bytes if preamble_check is not None else frame_bytes)
         self=cls(process,environment,session_id,timeout=timeout,frame_bytes=frame_bytes,
             message_bytes=message_bytes,io_slots=io_slots,control_slots=control_slots,max_waiting=max_waiting)
@@ -56,7 +56,10 @@ class SandboxChannel:
                 process.stdin.write(b'NYT-ATTACH-OK\n')
                 async with asyncio.timeout(timeout):await process.stdin.drain()
             async with asyncio.timeout(timeout):raw=await process.stdout.readline()
-            if not raw and await process.wait()==2:raise SandboxError('env_attach_unavailable')
+            if not raw:
+                status=await process.wait()
+                if status==2:raise SandboxError('env_attach_unavailable')
+                if status==3 and start_expected:raise SandboxError('env_start_failed')
             ready=json.loads(raw)
             if (len(raw)>frame_bytes or not isinstance(ready,dict) or ready.get('attach')!=1
                     or ready.get('protocol')!=PROTOCOL_VERSION or ready.get('environment')!=environment

@@ -77,7 +77,7 @@ def create_arguments(row):
 
 
 class DockerEnvironment:
-    def __init__(self,cli):self.cli=cli;self.transport=None
+    def __init__(self,cli):self.cli=cli;self.transport=None;self.fresh_resources=False
 
     def action(self,row,action):
         self.cli.daemon(row.daemon_id)
@@ -132,8 +132,10 @@ class DockerEnvironment:
     def create(self,row,save):
         if row.settings.get('ssh') is not None:
             from .docker_management import create_remote
-            return create_remote(self.cli,row,create_arguments(row),save)
+            row,self.fresh_resources=create_remote(self.cli,row,create_arguments(row),save)
+            return row
         self.cli.daemon(row.daemon_id)
+        self.fresh_resources=all(self.cli.volume(name) is None for name in (row.volume_name,state_volume(row)))
         for name,is_state in ((row.volume_name,False),(state_volume(row),True)):
             args=['volume','create']
             for key,value in labels(row).items():args.extend(['--label',key+'='+value])
@@ -194,10 +196,61 @@ class DockerEnvironment:
                 operation_id=params.get('operation_id'),code=getattr(error,'code',None),mutates=mutates))
             raise
 
-    def handshake(self,row):
-        result=self.request(row,'hello',{})
+    def handshake(self,row,*,start=False):
+        try:
+            if start:
+                if self.transport is None:raise SandboxError('env_endpoint_unsupported')
+                self.transport.start_created(row)
+            result=self.request(row,'hello',{})
+        except SandboxError as error:
+            if error.code in ('env_stopped','env_attach_unavailable','env_unreachable','env_protocol_mismatch','env_start_failed'):
+                code=self._startup_failure(row)
+                if code is not None:raise SandboxError(code) from error
+            raise
         if (not isinstance(result,dict) or set(result)!={'protocol','package_version','environment','session_id'}
                 or result['protocol']!=PROTOCOL_VERSION or not isinstance(result['package_version'],str)
                 or not result['package_version'] or len(result['package_version'])>64
                 or result['environment']!=row.environment.public() or result['session_id']!=row.session_id):
             raise SandboxError('env_protocol_mismatch')
+
+    def _startup_failure(self,row):
+        from .docker_cli import DockerCLI
+        try:
+            settings=self.cli.settings.model_copy(update={
+                'rpc_timeout_seconds':min(self.cli.settings.rpc_timeout_seconds,
+                    self.cli.settings.transport.heartbeat_timeout_seconds),
+                'max_message_bytes':65536})
+            probe=DockerCLI(settings,self.cli.cwd)
+            raw=None
+            if settings.ssh is not None:
+                from .docker_management import startup_snapshot
+                snapshot,raw=startup_snapshot(probe,row)
+                daemon=snapshot['daemon']
+                if daemon.get('ID')!=row.daemon_id or daemon.get('OSType')!='linux':raise SandboxError('env_binding_mismatch')
+                if not isinstance(snapshot['containers'],list) or len(snapshot['containers'])!=1:raise SandboxError('env_binding_mismatch')
+                data=snapshot['containers'][0]
+            else:
+                probe.daemon(row.daemon_id)
+                data=probe.json(['container','inspect',row.container_id])[0]
+            verify_container_identity(row,data)
+            state=data.get('State',{})
+            if state.get('Running') is not False or state.get('Status')!='exited' or not state.get('ExitCode'):
+                return None
+            started=state.get('StartedAt')
+            if not isinstance(started,str) or not 1<=len(started)<=64:return None
+            if raw is None:raw=probe.container_logs(row.container_id,since=started)
+            if len(raw)>65536:return None
+            for line in reversed(raw.splitlines()):
+                if not line.startswith(b'NYT_ENVD_STARTUP '):continue
+                try:value=json.loads(line[len(b'NYT_ENVD_STARTUP '):])
+                except (ValueError,UnicodeError):return None
+                if (isinstance(value,dict) and set(value)=={'code'} and value['code'] in
+                        ('env_policy_mismatch','env_binding_mismatch','env_protocol_mismatch')):
+                    safe_log(logger.warning,'sandbox_startup_failed binding_id=%s code=%s exit_code=%s',
+                        row.binding_id,value['code'],state['ExitCode'])
+                    return value['code']
+                return None
+        except Exception as error:
+            safe_log(logger.warning,'sandbox_startup_diagnostic_failed binding_id=%s error_type=%s',
+                row.binding_id,type(error).__name__)
+        return None

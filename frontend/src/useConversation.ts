@@ -51,6 +51,7 @@ export function useConversation(api: WebApi, active = true) {
     const value = await (prepare ? api.prepare(sid, signal) : api.session(sid, signal));
     if (!signal?.aborted && selected.current === sid && generation === selectionGeneration.current) {
       if (approvals !== approvalRevision.current) return refreshSession(sid, signal, prepare);
+      statusSync.clear(sid);
       setSession(previous =>
       previous?.session_id === sid && revision !== controlsRevision.current ? {
         ...value, active_tools: previous.active_tools, permission_mode: previous.permission_mode,
@@ -61,7 +62,7 @@ export function useConversation(api: WebApi, active = true) {
     return value;
   }
 
-  useConversationSync({ api, active, session, applySession, refreshSessions,
+  const statusSync=useConversationSync({ api, active, session, applySession, refreshSessions,
     canRefresh: resuming => !busySend.current && !selectionPending.current && !changingControls && !changingModel && !recovering && !submitting && (resuming || !(currentRun.current && !currentRun.current.done)),
     revision: () => JSON.stringify([selectionGeneration.current, controlsRevision.current, approvalRevision.current]),
     onModels: config => { imageInputs.configure(config); setModels(config.model_ids); setModel(config.default_model_id); setThinkingOptions(config.thinking_options ?? {}); },
@@ -129,6 +130,7 @@ export function useConversation(api: WebApi, active = true) {
 
   function applySession(value: SessionView, replace = false) {
     const id = value.session_id;
+    statusSync.clear(id);
     const queued=queuedSubmissions.current[id],submission=value.pending_submission;
     if(queued&&submission?.request_id===queued.requestId&&submission.status!=='waiting_environment') {
       if(['running','completed'].includes(submission.status)) {
@@ -453,7 +455,8 @@ export function useConversation(api: WebApi, active = true) {
     finally { busySend.current = false; setSubmitting(false); }
   }
   const id = selected.current;
-  return { imageInputs, models, model, thinkingOptions, sessions, session, messages, run, notice, lastSubmission, listing, creation,
+  return { imageInputs, models, model, thinkingOptions, sessions, session, messages, run, notice:statusSync.error||notice,
+    statusSyncError:statusSync.error, lastSubmission, listing, creation,
     connection: connection?.session_id === id && connection.run_id === run?.run_id ? connection : null, submitting, stopping, changingModel, changingControls, selectingSession, recovering,
     history: { ...history.pagination, loadOlder: history.loadOlder, disabled: selectingSession },
     managingSessions: listing.managingSessions, updateSession: listing.updateSession, reorderSessions: listing.reorderSessions, deleteSession,

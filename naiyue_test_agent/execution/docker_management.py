@@ -1,5 +1,6 @@
 """Fixed management batches reduce SSH handshakes without remote dependencies."""
 import json
+import re
 import shlex
 
 from naiyue_test_agent.contracts.sandbox import SandboxError
@@ -11,11 +12,14 @@ def command(cli,args):
     return shlex.join([ssh.docker_executable,'--host','unix://'+ssh.socket_path,*args])
 
 
-def json_script(cli,requests):
+def json_script(cli,requests,*,fresh_volumes=False):
     lines=['set -e',"printf '%s' '{'"]
     for index,(key,args) in enumerate(requests):
         prefix=(',' if index else '')+json.dumps(key)+':'
         lines.extend(["printf '%s' "+shlex.quote(prefix),command(cli,args)])
+    if fresh_volumes:
+        lines.extend(["printf '%s' ',\"fresh_volumes\":'",
+            'if test -z "$nyt_existing_volumes"; then printf true; else printf false; fi'])
     lines.append("printf '%s' '}'")
     return '\n'.join(lines)
 
@@ -40,16 +44,49 @@ def validation_snapshot(cli,row):
     return json_batch(cli,validation_requests(row))
 
 
-def attach_command(cli,row,args):
-    # A fixed, read-only JSON preamble and attach share one SSH authentication.
+def attach_command(cli,row,args,*,start=False):
+    # Full policy is acknowledged before an explicitly permitted first start.
     snapshot=json_script(cli,validation_requests(row))
     script='set -e\nnyt_snapshot=$(\n'+snapshot+'\n)\n'
     script+="printf '%s' \"$nyt_snapshot\" | tr -d '\\n'\nprintf '\\n'\n"
     script+='nyt_ack=$(dd bs=1 count=14 2>/dev/null)\n'
     script+="test \"$nyt_ack\" = NYT-ATTACH-OK\n"
+    if start:script+=command(cli,['container','start',row.container_id])+' >/dev/null || exit 3\n'
     script+='exec '+command(cli,args)
     argv=cli.command([]);argv[-1]='exec '+shlex.join(['sh','-c',script])
     return argv
+
+
+def startup_snapshot(cli,row):
+    """One SSH; verify the frozen owner before reading this start's bounded log."""
+    from .docker_environment import labels
+    facts=json_script(cli,[('daemon',['info','--format','{{json .}}']),
+        ('containers',['container','inspect',row.container_id])])
+    identity=' '.join([row.container_id,row.image_id,'/'+row.container_name,
+        json.dumps(labels(row),sort_keys=True,separators=(',',':'))])
+    lines=['set -e','nyt_facts=$(\n'+facts+'\n)',
+        'nyt_daemon=$('+command(cli,['info','--format','{{.ID}} {{.OSType}}'])+')',
+        'test "$nyt_daemon" = '+shlex.quote(row.daemon_id+' linux'),
+        'nyt_identity=$('+command(cli,['container','inspect','--format',
+            '{{.Id}} {{.Image}} {{.Name}} {{json .Config.Labels}}',row.container_id])+')',
+        'test "$nyt_identity" = '+shlex.quote(identity),
+        'printf \'%s\' "$nyt_facts" | tr -d \'\\n\'','printf \'\\n\'',
+        'nyt_started=$('+command(cli,['container','inspect','--format',
+            '{{if and (not .State.Running) (eq .State.Status "exited") (ne .State.ExitCode 0)}}{{.State.StartedAt}}{{end}}',
+            row.container_id])+')',
+        'printf \'%s\\n\' "$nyt_started"',
+        'if test -n "$nyt_started"; then '+command(cli,['logs','--tail','100','--since'])+
+            ' "$nyt_started" '+shlex.quote(row.container_id)+' 2>&1; fi']
+    raw=cli.run_script('\n'.join(lines))
+    head,separator,body=raw.partition(b'\n')
+    if not separator or len(raw)>65536:raise SandboxError('env_protocol_mismatch')
+    value=json.loads(head)
+    if not isinstance(value,dict) or set(value)!={'daemon','containers'}:raise SandboxError('env_protocol_mismatch')
+    observed,separator,logs=body.partition(b'\n')
+    state=value['containers'][0]['State']
+    expected=state.get('StartedAt') if state.get('Running') is False and state.get('Status')=='exited' and state.get('ExitCode') else ''
+    if not separator or observed.decode('ascii')!=expected:raise SandboxError('env_protocol_mismatch')
+    return value,logs
 
 
 def validate_snapshot(row,value,*,running=True):
@@ -83,6 +120,8 @@ def create_remote(cli,row,args,save):
     # Verify pre-existing volume ownership before attaching either to a container.
     lines=['set -e','nyt_daemon=$('+command(cli,['info','--format','{{.ID}}'])+')',
         'test "$nyt_daemon" = '+shlex.quote(row.daemon_id)]
+    pattern='^('+re.escape(row.volume_name)+'|'+re.escape(state_volume(row))+')$'
+    lines.append('nyt_existing_volumes=$('+command(cli,['volume','ls','--filter','name='+pattern,'--format','{{.Name}}'])+')')
     expected=json.dumps(labels(row),sort_keys=True,separators=(',',':'))
     for name in (row.volume_name,state_volume(row)):
         create=['volume','create']
@@ -95,15 +134,13 @@ def create_remote(cli,row,args,save):
     queries=[('daemon',['info','--format','{{json .}}']),
         ('containers',['container','inspect',row.container_name]),
         ('volumes',['volume','inspect',row.volume_name,state_volume(row)])]
-    lines.append(json_script(cli,queries))
+    lines.append(json_script(cli,queries,fresh_volumes=True))
     raw=cli.run_script('\n'.join(lines),mutates=True)
     try:
         value=json.loads(raw);identity=value['containers'][0]['Id']
-        import re
         if not isinstance(identity,str) or not re.fullmatch('[0-9a-f]{64}',identity):raise ValueError()
     except (ValueError,UnicodeError,KeyError,IndexError,TypeError) as error:
         raise SandboxError('env_operation_unknown') from error
     row=row.changed(container_id=identity);save(row)
     validate_snapshot(row,value,running=False)
-    cli.run(['container','start',identity],mutates=True)
-    return row
+    return row,value.get('fresh_volumes') is True

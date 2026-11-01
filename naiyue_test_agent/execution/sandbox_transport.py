@@ -11,6 +11,7 @@ from .sandbox_runtime import SandboxRuntime
 class SandboxTransport:
     def __init__(self,cwd,configuration):
         self.cwd=cwd;self.runtime=SandboxRuntime()
+        self._starting=set()
         self.connections=SandboxConnections(self._open,max_bindings=configuration.lifecycle.max_retained,
             max_connecting=configuration.transport.connecting,cleanup_timeout=configuration.transport.cleanup_timeout_seconds)
 
@@ -20,11 +21,14 @@ class SandboxTransport:
         policy=settings.transport
         args=['container','exec','-i',row.container_id,'python','-I','-m',
             'naiyue_test_agent.envd','attach','--max-bytes',str(settings.max_message_bytes),'--lane',lane]
-        preamble_check=None
+        preamble_check=None;start=False
         if settings.ssh is not None:
             from .docker_management import attach_command,validate_snapshot
-            argv=attach_command(cli,row,args)
-            preamble_check=lambda value:validate_snapshot(row,value)
+            identity=self.connections.identity(row)
+            start=lane=='main' and identity in self._starting
+            if start:self._starting.remove(identity)
+            argv=attach_command(cli,row,args,start=start)
+            preamble_check=lambda value:validate_snapshot(row,value,running=not start)
         else:
             await asyncio.to_thread(DockerEnvironment(cli).validate,row)
             argv=cli.command(args)
@@ -34,8 +38,22 @@ class SandboxTransport:
             io_slots=1 if lane=='bulk' else policy.io_requests,control_slots=policy.control_requests,
             max_waiting=policy.pending_requests,preamble_check=preamble_check,
             cleanup_timeout=policy.cleanup_timeout_seconds,cleanup_attempts=policy.cleanup_attempts,
-            heartbeat_interval=policy.keepalive_interval_seconds,heartbeat_timeout=policy.heartbeat_timeout_seconds)
+            heartbeat_interval=policy.keepalive_interval_seconds,heartbeat_timeout=policy.heartbeat_timeout_seconds,
+            start_expected=start)
         return channel
+
+    def start_created(self,row):
+        return self.runtime.call(self._start_created(row))
+
+    async def _start_created(self,row):
+        from naiyue_test_agent.contracts.sandbox import SandboxError
+        if row.lifecycle!='creating' or row.container_id is None or row.settings.get('ssh') is None:
+            raise SandboxError('env_operation_unsupported')
+        identity=self.connections.identity(row)
+        if identity in self._starting:raise SandboxError('env_busy')
+        self._starting.add(identity)
+        try:return await self.connections.get(row)
+        finally:self._starting.discard(identity)
 
     async def _request(self,row,operation,params,mutates):
         lane='bulk' if operation=='result_chunk' else 'main'

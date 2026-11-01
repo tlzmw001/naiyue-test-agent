@@ -161,7 +161,12 @@ def test_rejected_input_preserves_failed_session_without_hiding_other_tasks(tmp_
                 status=await host.sessions.status(sid)
                 assert status['execution']['state']=='failed' and not status['can_run']
                 assert (await host.tasks.list())['items']==[]
-                assert transport.created==[]
+                assert all(binding in transport.expired for binding in transport.created)
+                for binding in transport.created:
+                    record=await app.environments.get(binding)
+                    assert record.lifecycle=='destroyed' and record.input_id is None
+                    assert record.input_operation_id is None and record.input_snapshot is None
+                    assert app.environments._operations.records().list(binding)==[]
                 input_id=status['execution']['input_id']
                 assert app.environments._inputs.get(project.project_id,input_id).state=='failed'
                 await host.sessions.delete(sid)

@@ -47,11 +47,14 @@ class SandboxTransport:
             def create(self,row,save):
                 transport.created.append(row.binding_id)
                 Path(row.environment.root).mkdir()
+                self.fresh_resources=True  # The fixture mkdir must create a new isolated workspace.
                 from naiyue_test_agent.sandbox_settings import SandboxSettings
                 transport.remotes[row.binding_id]=stack.enter_context(EnvironmentOperations(row.environment,row.session_id,
                     tmp_path/('state-'+row.binding_id),SandboxSettings.model_validate(row.settings)))
                 return row.changed(container_id=row.binding_id*2)
-            def handshake(self,row):self.request(row,'hello',{})
+            def handshake(self,row,*,start=False):
+                if start:assert row.lifecycle=='creating' and row.settings.get('ssh') is not None
+                self.request(row,'hello',{})
             def request(self,row,op,params,**kwargs):
                 self.validate(row)
                 return transport.remotes[row.binding_id].dispatch(dict(protocol=PROTOCOL_VERSION,request_id='request',

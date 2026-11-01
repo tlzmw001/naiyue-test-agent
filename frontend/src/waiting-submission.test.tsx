@@ -1,6 +1,6 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { WebApi } from './api';
+import { WebApi, ApiError } from './api';
 import { useConversation } from './useConversation';
 import type { SessionView } from './types';
 
@@ -60,4 +60,60 @@ it('discovers execution-only failure through normal synchronization',async()=>{
   views.A={...views.A,execution:{...views.A.execution!,state:'failed',error:{code:'git_input_changed'}}};
   await act(async()=>vi.advanceTimersByTimeAsync(3000));
   expect(result.current.session?.execution?.state).toBe('failed');
+});
+
+it('releases navigation after receipt even while the list observation is blocked',async()=>{
+  const {api,result}=setup();
+  await waitFor(()=>expect(result.current.model).toBe('model-A'));
+  await act(async()=>result.current.selectSession('A'));
+  act(()=>result.current.setDraft('original A'));
+  let release!:()=>void;
+  const blocked=new Promise<SessionView[]>(resolve=>{release=()=>resolve([]);});
+  vi.mocked(api.sessions).mockImplementationOnce(()=>blocked);
+  let submission!:Promise<void>;
+  try {
+    await act(async()=>{submission=result.current.submit(false);});
+    expect(result.current.session?.pending_submission?.status).toBe('waiting_environment');
+    expect(result.current.submitting).toBe(false);
+    await act(async()=>result.current.selectSession('B'));
+    expect(result.current.session?.session_id).toBe('B');
+    expect(api.start).toHaveBeenCalledTimes(1);
+  } finally { await act(async()=>{release();await submission;}); }
+});
+
+it('labels stale execution after discovery failure and clears it on unchanged success',async()=>{
+  vi.useFakeTimers();
+  const {api,result}=setup();
+  await act(async()=>{await vi.advanceTimersByTimeAsync(0);});
+  await act(async()=>result.current.selectSession('A'));
+  const original=vi.mocked(api.session).getMockImplementation()!;
+  vi.mocked(api.session).mockRejectedValueOnce(new ApiError('env_binding_mismatch'));
+  await act(async()=>vi.advanceTimersByTimeAsync(3000));
+  expect(result.current.session?.execution?.state).toBe('preparing');
+  expect(result.current.statusSyncError).toContain('沙箱绑定不一致');
+  await act(async()=>result.current.selectSession('B'));
+  expect(result.current.statusSyncError).toBe('');
+  await act(async()=>result.current.selectSession('A'));
+  expect(result.current.statusSyncError).toBe('');
+  vi.mocked(api.session).mockRejectedValueOnce(new ApiError('env_binding_mismatch'));
+  await act(async()=>vi.advanceTimersByTimeAsync(3000));
+  expect(result.current.statusSyncError).not.toBe('');
+  vi.mocked(api.session).mockImplementation(original);
+  await act(async()=>vi.advanceTimersByTimeAsync(3000));
+  expect(result.current.statusSyncError).toBe('');
+});
+
+it('does not change an accepted send into a submission failure when listing fails',async()=>{
+  const {api,result}=setup();
+  const log=vi.spyOn(console,'warn').mockImplementation(()=>{});
+  await waitFor(()=>expect(result.current.model).toBe('model-A'));
+  await act(async()=>result.current.selectSession('A'));
+  act(()=>result.current.setDraft('original A'));
+  vi.mocked(api.sessions).mockRejectedValueOnce(new ApiError('env_unreachable'));
+  await act(async()=>result.current.submit(false));
+  expect(result.current.session?.pending_submission?.status).toBe('waiting_environment');
+  expect(result.current.draft).toBe('original A');
+  expect(api.start).toHaveBeenCalledTimes(1);
+  expect(log.mock.calls.some(call=>call[0]==='conversation_submit_failed')).toBe(false);
+  expect(log.mock.calls.some(call=>call[0]==='submitted_session_list_refresh_failed')).toBe(true);
 });

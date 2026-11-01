@@ -102,7 +102,9 @@ export function createConversationSubmit(context:Context) {
       if(!waitingAccepted)imageInputs.write((imageInputs.ref.current[sid] ?? []).filter(image => !sent.has(image.client_id)), sid);
       void imageInputs.refreshPending();
       if (!waitingAccepted&&draftRef.current[sid] === text) writeDraft('', sid);
-      await refreshSessions();
+      void refreshSessions().catch(error=>{
+        console.warn('submitted_session_list_refresh_failed',error instanceof ApiError?error.code:error instanceof Error?error.name:'unknown');
+      });
     } catch (error) {
       if (request && error instanceof ApiError && (['invalid_request','image_input_invalid','image_input_format_unsupported','image_input_too_large','image_input_pixel_limit','model_image_input_unsupported','image_input_busy','pending_image_limit','pending_image_invalid','session_busy','stale_run','run_capacity_exceeded','request_too_large'].includes(error.code))) imageInputs.settle(sid,request.requestId);
       console.warn('conversation_submit_failed', error instanceof ApiError ? error.code : error instanceof Error ? error.name : 'unknown');

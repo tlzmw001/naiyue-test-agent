@@ -63,7 +63,7 @@ def test_remote_environment_validation_consumes_one_complete_snapshot(tmp_path,m
     assert calls==[row]
 
 
-def test_remote_creation_batches_metadata_before_start_and_keeps_unknown_identity(tmp_path,monkeypatch):
+def test_remote_creation_saves_and_verifies_identity_but_defers_start_to_attach(tmp_path,monkeypatch):
     from naiyue_test_agent.execution.docker_management import create_remote
     from naiyue_test_agent.execution import docker_environment
     row=record();created=row.changed(container_id='d'*64);events=[]
@@ -78,8 +78,8 @@ def test_remote_creation_batches_metadata_before_start_and_keeps_unknown_identit
             return json.dumps(dict(daemon=dict(OSType='linux',ID=row.daemon_id),containers=[{'Id':created.container_id}],volumes=volumes)).encode()
         def run(self,args,**kwargs):events.append(('start',args[-1]));return b''
     def save(value):events.append(('save',value.container_id))
-    assert create_remote(CLI(),row,['container','create','image'],save)==created
-    assert events==[('batch',True),('save',created.container_id),('verify',created.container_id),('start',created.container_id)]
+    assert create_remote(CLI(),row,['container','create','image'],save)==(created,False)
+    assert events==[('batch',True),('save',created.container_id),('verify',created.container_id)]
 
 
 def test_attach_requires_controller_ack_before_entering_container(tmp_path):

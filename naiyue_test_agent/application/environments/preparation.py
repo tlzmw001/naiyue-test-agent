@@ -16,6 +16,9 @@ class PreparationProgress:
         self.binding,self.project,self.session=binding,project,session
         self.cancelled=Event();self.lock=RLock()
         self.state='preparing';self.phase='queued';self.completed=None;self.total=None;self.error=None
+        self.install_started=False
+        self.created_here=False
+        self.resumed_here=False
 
     def check(self):
         if self.cancelled.is_set():raise SandboxError('env_preparation_cancelled')

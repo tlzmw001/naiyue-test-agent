@@ -58,7 +58,7 @@ def test_index_change_during_snapshot_is_rejected(tmp_path,monkeypatch):
     def run(self,args,**kwargs):
         nonlocal changed
         result=original(self,args,**kwargs)
-        if args[0]=='commit-tree' and not changed:
+        if args[0]=='fast-import' and not changed:
             changed=True
             git(root,'update-index','--chmod=+x','app.txt')
         return result

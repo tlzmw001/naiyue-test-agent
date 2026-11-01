@@ -1,6 +1,6 @@
 /** Read discovery only: opening/recovering/executing remains an explicit action. */
-import { useEffect, useRef } from 'react';
-import { ApiError, type WebApi } from './api';
+import { useEffect, useRef, useState } from 'react';
+import { ApiError, errorText, type WebApi } from './api';
 import type { SessionView } from './types';
 import { sessionSyncPollMs } from './uiSettings';
 
@@ -14,6 +14,7 @@ function facts(value: SessionView) {
     value.live?.last_sequence, value.live?.done, value.pending_approval, value.execution_root_error,value.execution,value.pending_submission]);
 }
 export function useConversationSync(options: Options) {
+  const [failure,setFailure]=useState<{sessionId:string;message:string}|null>(null);
   const latest = useRef(options); latest.current = options;
   const resume = useRef(false);
   const api = options.api, id = options.session?.session_id, active = options.active;
@@ -31,11 +32,15 @@ export function useConversationSync(options: Options) {
     let timer: ReturnType<typeof setTimeout>;
     const tick = async () => {
       let permanent = false;
+      let readingStatus = false;
       try {
         if (document.visibilityState === 'visible') {
           const revision = latest.current.revision();
           if (id && latest.current.canRefresh(resume.current)) {
+            readingStatus = true;
             const value = await api.session(id, controller.signal);
+            readingStatus = false;
+            if(!controller.signal.aborted)setFailure(null);
             const current = latest.current.session;
             if (!controller.signal.aborted && current?.session_id === id && latest.current.canRefresh(resume.current) &&
                 revision === latest.current.revision() &&
@@ -47,7 +52,12 @@ export function useConversationSync(options: Options) {
           if (!controller.signal.aborted) await latest.current.refreshSessions(controller.signal);
         }
       } catch (error) {
-        if (!controller.signal.aborted) latest.current.onError(error);
+        if (!controller.signal.aborted) {
+          if(readingStatus&&id){
+            setFailure({sessionId:id,message:errorText(error)});
+            console.warn('session_status_sync_failed',error instanceof ApiError?error.code:error instanceof Error?error.name:'unknown');
+          }else latest.current.onError(error);
+        }
         permanent = error instanceof ApiError && ['unauthorized', 'invalid_host', 'invalid_origin',
           'service_instance_mismatch', 'session_not_found'].includes(error.code);
       } finally {
@@ -58,4 +68,6 @@ export function useConversationSync(options: Options) {
     else timer = setTimeout(tick, sessionSyncPollMs);
     return () => { controller.abort(); clearTimeout(timer); };
   }, [api, id, active]);
+  return {error:failure&&failure.sessionId===id?failure.message:'',
+    clear:(sessionId:string)=>setFailure(current=>current?.sessionId===sessionId?null:current)};
 }

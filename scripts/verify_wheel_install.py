@@ -18,6 +18,7 @@ import venv
 from scripts.release_artifacts import inspect_wheel
 from scripts.release_subagent_smoke import verify_subagent_report
 from scripts.release_memory_smoke import verify_memory_report
+from scripts.release_sandbox_smoke import verify_sandbox_native_report
 
 
 def published_file(info, destination):
@@ -123,6 +124,7 @@ def main():
         report = {**info, 'install': json.loads(result.stdout.strip().splitlines()[-1])}
         verify_subagent_report(report['install'].get('subagent_continuation'))
         verify_memory_report(report['install'].get('memory'))
+        verify_sandbox_native_report(report['install'].get('sandbox_native'))
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')

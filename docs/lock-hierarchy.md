@@ -1,5 +1,37 @@
 # 锁层级与获取约定
 
+## Spec141F 空环境继续准备
+
+服务single-flight准备任务在activity.use之前处理原stopped空环境。先取activity.manage预留，再在worker
+读取scope/冻结selection/输入三标记/完整operation记录；仅明确空环境调用既有_perform_action(start)。
+manage是跨IO预留而非跨await持有的同步锁；DKR2和DB仍只在worker取得，不能在use内反向申请manage。
+start保存running后同一worker写本次resumed_here事实，run_blocking排空后才释放预留。
+再次取消/准备失败的空环境收尾重新取manage，只stop本次恢复的旧环境；created_here资格仍由原fresh回执决定。
+不新增互斥锁，不在owner loop执行DB/同步Docker，不在start worker中调用interrupt管理等待自身。
+
+## Spec141E 并行首次准备
+
+服务准备任务同时拥有snapshot与container两个分支，均经run_blocking在工作线程执行。
+snapshot仍持GI2(input)并分段取得DB；container仍持DKR2(binding)并分段取得DB及连接授权。
+两个分支不互取对方的同步锁，不持DB等另一分支；只由外层协程await_settled(gather)排空，
+完成后才进入原安装的DKR2→GI2路径。失败在释放activity使用预留后，先取得activity.manage预留，
+在worker读冻结记录与完整operation清单，再调用既有_perform_action进入DKR2；不持同步锁跨await。
+仅服务新建成功回执证明容器和双卷均本次新建、明确未安装、输入三字段全空、无任何操作、精确scope的running环境才可回滚；
+真实失败销毁本次空容器/双卷，取消仍沿stop语义，unknown/既有资源不动。不得调用interrupt管理等待自身。
+on_created回执仅在DKR2内保存running且确认fresh_resources后设置本次内存事实，不取其他锁/IO，调用方排空worker后才读取。
+
+SandboxTransport._starting是传输owner-loop独占的精确连接身份集合，无新增线程锁。
+只有已保存creating环境的service._create可登记；_open在第一次main尝试且无await的短段消耗，
+finally撤销未用许可；普通get/reconnect/recover不登记。允许DKR2→runtime.call，transport loop不回取DKR2/DB。
+Recorder仍为PRF1叶锁；并行阶段只记录时间区间，区间并集计算在锁外，不形成新锁嵌套。
+
+## Spec141D 独立准备计时脚本
+
+`scripts/profile_sandbox_preparation.py` 的 `Recorder._lock` 只用于该脚本进程内的当前轮次、
+有界事件追加和结束快照；不接入产品运行时。Git/管理方法可能在既有生产锁内完成，因此允许
+既有锁 → Recorder短锁；Recorder锁内没有日志、文件、数据库、网络、await或被观测方法调用，
+不存在Recorder → 生产锁的反向路径。汇总与JSON输出均在锁外；包装器在调用原方法前释放该锁。
+
 ## Spec141B 常驻传输（2026-10-29，实施中）
 
 复核后的修正约束见[Spec141B第10.5/10.6节](specs/141b-persistent-sandbox-execution.md#105-单请求结束后的迟到回复接收责任有界保留)：pending→retired迁移及其接收额度由原transport loop原子拥有；部分帧和缓存另有有限预算。binding清理为单批single-flight，默认策略最多2次终止/共享10秒总预算；失败记录与封锁分离，普通get不重新触发清理。显式恢复只能开启新的有限批次，原资源未确认退出不得开放任一lane。源码已按这些约束接线并经专项验证；完整构建与公司验收状态以Spec检查点为准。
@@ -38,6 +70,7 @@
 
 | 编号／锁 | 类型与保护对象 | 允许在哪里获取 | 和其他锁的顺序／持有边界 |
 | --- | --- | --- | --- |
+| PRF1 `Recorder._lock`（Spec141D独立脚本） | `Lock`，仅保护实验进程内的轮次与有界计时事件 | `begin/capture/invalidate/record/end`；生产运行时不注册 | 允许既有锁 → PRF1叶锁；锁内仅内存操作，调用原方法、汇总、日志和JSON IO均在锁外；无反向获取生产锁。 |
 | G1 `ScopeServices._scopes.serial(scope_id)` | 异步锁，每个 Web scope 的服务创建、关闭互斥 | [service/scopes.py](../naiyue_test_agent/service/scopes.py) 的 `get/_open/close_project`，通过 [ScopeTasks](../naiyue_test_agent/application/lifetime.py) | `G1 → G4`；创建时可间接进入项目服务。不同 scope 各自独立，不用它串行所有项目。 |
 | G2 `ScopeTasks.serial(('selection_root', root))` | 异步锁，旧入口按规范化根目录协调准备 | [ProjectSelection.prepare](../naiyue_test_agent/application/projects/selection.py) | `G2 → G3 → G4`，缺少某个 key 时跳过该层；期间可进入 P1 和旧 workspace 文件锁 F2。 |
 | G3 `ScopeTasks.serial(('selection_store', path))` | 异步锁，旧数据库路径的准备／导入互斥 | 同上；只在已确定旧库路径后获取 | `G3 → G4`；允许进入 P1／F3。不得从 G4 反向准备旧目录。 |
@@ -212,6 +245,10 @@ Spec141A的工作区根FD由EnvdFiles拥有：生产serve上下文先关闭Serve
 | GI1 `InputService._guard` | input_id 到准备锁的字典，`_lock` 短查询/插入 | 叶锁；释放后才取得 GI2，无 IO、SQL、Git 或 RPC。 |
 | GI2 每 input_id 的 `RLock` | `prepare` 的预留/本机快照/必要保存；会话 setup 首次登记；安装 input_id 引用的必要保存；`_transfer` 首次生成对应 delta；`retire` 按全部引用回收输入 | `GI2 → {DB(registry), DB(project)}` 分段短事务；首次会话登记允许 `GI2 → A2 → S3`，释放短锁才保存项目库。不持 DB 做目录删除或 Git IO。安装引用登记与 delta 允许 `DKR2 → GI2`，会话删除允许 `S1 → GI2`；不得从 GI2 回取 DKR2、S1 或 SOP2，不同时持有多个输入锁。 |
 | GIR1 每 envd 的 `InputReceiver._lock` | begin/status/chunk/probe/cache/reserve_install/installation/install；接收状态和缓存对象 | `EOP1 → GIR1` 只用于安装前检查空目录、缓存标记与持久安装预留；预留阶段包含有限文件 IO/fsync。cache/install 可持 GIR1 做有界 Git/磁盘 IO，但不回取 EOP1/EOP2；worker 释放 GIR1 后才提交 journal，再释放 EOP2 后取得 EOP1 清活动项。 |
+
+Spec141C：GI2 内的 Windows 只读输入删除重试使用已有安全文件打开器；句柄禁止 FILE_SHARE_DELETE，
+持有范围只覆盖普通单链接文件身份核对和 READONLY 属性清除，关闭后再核对目录链/文件身份并 unlink。
+该句柄不跨 SQL/RPC，不调用应用回调或取得上游锁；未新增线程锁或改变 GI2 的先后关系。
 
 输入生命周期扩展已有接受门：`prepare/install` 从开始到必要记录保存均计入 SOP1 的接受计数，实际工作不持 SOP1。关闭先封口，等接受计数归零；已经在传输的安装可完成对象接收，但若正式 submit 前已关闭，必须以 env_stopped 拒绝，不能越过封口开始检出。
 

@@ -19,7 +19,7 @@ from naiyue_test_agent.execution.git_repository import GitRepository, make_bundl
 from naiyue_test_agent.contracts.sandbox import SandboxError, operation_fingerprint
 from naiyue_test_agent.sandbox_settings import GitInputSettings
 from naiyue_test_agent.storage.git_inputs import GitInputs
-from naiyue_test_agent.storage.files import open_store_readonly, check_store_directory
+from naiyue_test_agent.storage.files import open_store_readonly, check_store_directory, check_store_file, clear_store_readonly
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,26 @@ class InputService:
             # rmtree may report the same exception again while unwinding.
             if error is not callback_error:
                 failed_path, operation, callback_error = Path(path), function.__name__, error
+            if isinstance(error, PermissionError) and getattr(error, 'winerror', None) == 5 and function is os.unlink:
+                target = Path(path).absolute()
+                if target.is_relative_to(directory.absolute()) and '..' not in target.relative_to(directory.absolute()).parts:
+                    try:
+                        check_store_directory(directory)
+                        check_store_directory(target.parent)
+                        check_store_file(target)
+                        identity = clear_store_readonly(target)
+                        if identity is not None:
+                            check_store_directory(target.parent)
+                            info = target.lstat()
+                            check_store_file(target)
+                            if identity != (info.st_dev, info.st_ino):
+                                raise OSError('input_file_changed')
+                            function(target)
+                            return
+                    except OSError as retry_error:
+                        safe_log(logger.warning, 'git_input_readonly_retry_failed error_type=%s errno=%s winerror=%s',
+                            type(retry_error).__name__, retry_error.errno, getattr(retry_error, 'winerror', None))
+                        raise error from retry_error
             raise error
 
         try:

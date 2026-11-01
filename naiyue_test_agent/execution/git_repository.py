@@ -100,9 +100,6 @@ class GitRepository:
     def oid(self, ref):
         return object_id(self.run(['rev-parse', '--verify', ref]).decode().strip())
 
-    def oid_from_index(self, env):
-        return object_id(self.run(['write-tree'],extra_env=env).decode().strip())
-
     def tree(self, ref):
         result = []
         for entry in self.run(['ls-tree', '-rz', '--full-tree', ref]).split(b'\0'):

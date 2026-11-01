@@ -37,13 +37,17 @@ class DockerCLI:
     def run(self,args,*,input_bytes=None,mutates=False):
         return self._run(self.command(args),args,input_bytes=input_bytes,mutates=mutates)
 
+    def container_logs(self,identity,*,since):
+        args=['container','logs','--since',since,'--tail','32',identity]
+        return self._run(self.command(args),args,merge_output=True)
+
     def run_script(self,script,*,mutates=False):
         if self.settings.ssh is None:raise SandboxError('env_endpoint_unsupported')
         argv=self.command([])
         argv[-1]='exec '+shlex.join(['sh','-c',script])
         return self._run(argv,['management','batch'],mutates=mutates)
 
-    def _run(self,argv,args,*,input_bytes=None,mutates=False):
+    def _run(self,argv,args,*,input_bytes=None,mutates=False,merge_output=False):
         from contextlib import ExitStack
         import tempfile
         ssh=self.settings.ssh
@@ -69,7 +73,7 @@ class DockerCLI:
                 source=stack.enter_context(tempfile.TemporaryFile())
                 source.write(input_bytes);source.seek(0)
             request=ProcessRequest(argv,self.cwd,environment,self.settings.rpc_timeout_seconds,
-                stdin_fd=source.fileno() if source is not None else None)
+                stdin_fd=source.fileno() if source is not None else None,merge_output=merge_output)
             started=monotonic()
             facts=dict(command=command_kind(args,'docker'),transport='ssh' if ssh is not None else 'local',
                 timeout_seconds=request.timeout_seconds,mutates=mutates)

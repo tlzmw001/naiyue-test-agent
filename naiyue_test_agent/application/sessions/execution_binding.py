@@ -6,7 +6,8 @@ import logging
 from contextlib import asynccontextmanager
 from uuid import UUID,uuid5,NAMESPACE_URL
 
-from naiyue_test_agent.agent_runtime.async_utils import run_blocking
+from naiyue_test_agent.agent_runtime.async_utils import run_blocking,await_settled
+from naiyue_test_agent.diagnostics import safe_log
 from naiyue_test_agent.contracts.sandbox import SandboxError
 from naiyue_test_agent.contracts.git_inputs import GitInputError,input_path
 from naiyue_test_agent.contracts.session_environment import SandboxSessionSetup,SandboxProfileSelection,SandboxProfileReference,saved_setup
@@ -161,11 +162,70 @@ async def prepare_sandbox_session(sessions,sid,*,owner,wait_for_ready=True):
     setup=saved_setup(row)
     async def prepare(progress):
         with owner.operation():
-            async with sessions.environments.using(setup.binding_id):
-                return await _prepare_sandbox_session(sessions,sid,progress)
+            try:
+                await _resume_empty_preparation(sessions.environments,setup,row,progress)
+                async with sessions.environments.using(setup.binding_id):
+                    return await _prepare_sandbox_session(sessions,sid,progress)
+            except BaseException as error:
+                if not progress.install_started:
+                    try:
+                        await await_settled(_cleanup_empty_preparation(sessions.environments,setup,row,
+                            created_here=progress.created_here,
+                            resumed_here=progress.resumed_here,
+                            cancelled=progress.cancelled.is_set() or isinstance(error,asyncio.CancelledError)))
+                    except BaseException as secondary:
+                        safe_log(logger.warning,'sandbox_preparation_cleanup_failed binding_id=%s error_type=%s',
+                            setup.binding_id,type(secondary).__name__)
+                raise
     task=sessions.environments._preparations.start(setup.binding_id,row['project_id'],sid,prepare)
     if wait_for_ready:return await asyncio.shield(task)
     return dict(kind='sandbox',state='preparing',binding_id=setup.binding_id)
+
+
+async def _resume_empty_preparation(api,setup,session,progress):
+    try:original=await api.get(setup.binding_id)
+    except SandboxError as error:
+        if error.code!='env_not_registered':raise
+        return
+    if original.lifecycle!='stopped':return
+    # Management cannot be entered from inside the preparation's use reservation.
+    with api._service.activity.manage(setup.binding_id):
+        record=await run_blocking(api._service.get,setup.binding_id)
+        if (record.binding_id!=setup.binding_id or record.project_id!=session['project_id']
+                or record.session_id!=session['session_id']):raise SandboxError('env_binding_mismatch')
+        if setup.selection is not None:
+            try:matches=SandboxProfileSelection.from_record(record)==setup.selection
+            except ValueError as error:raise SandboxError('env_binding_mismatch') from error
+            if not matches:raise SandboxError('env_binding_mismatch')
+        if (record.lifecycle!='stopped' or record.input_id is not None or record.input_operation_id is not None
+                or record.input_snapshot is not None):return
+        if await run_blocking(lambda:api._operations.records().list(setup.binding_id)):return
+        progress.update('container')
+        def start():
+            resumed=api._service._perform_action(setup.binding_id,'start')
+            if resumed.lifecycle!='running':raise SandboxError('env_operation_unknown')
+            # Record the confirmed side effect before a cancelled await can lose it.
+            progress.resumed_here=True
+        await run_blocking(start)
+        progress.check()
+
+
+async def _cleanup_empty_preparation(api,setup,session,*,created_here,cancelled,resumed_here=False):
+    if created_here is not True and resumed_here is not True:return
+    with api._service.activity.manage(setup.binding_id):
+        try:record=await run_blocking(api._service.get,setup.binding_id)
+        except SandboxError as error:
+            if error.code!='env_not_registered':raise
+            return
+        if (record.binding_id!=setup.binding_id or record.project_id!=session['project_id']
+                or record.session_id!=session['session_id']):raise SandboxError('env_binding_mismatch')
+        if (record.lifecycle!='running' or record.input_id is not None or record.input_operation_id is not None
+                or record.input_snapshot is not None):return
+        operations=await run_blocking(lambda:api._operations.records().list(setup.binding_id))
+        if operations:
+            safe_log(logger.info,'sandbox_preparation_cleanup_skipped binding_id=%s reason=operations_present',setup.binding_id)
+            return
+        await run_blocking(api._service._perform_action,setup.binding_id,'stop' if cancelled or resumed_here else 'destroy')
 
 
 async def _prepare_sandbox_session(sessions,sid,progress):
@@ -182,12 +242,29 @@ async def _prepare_sandbox_session(sessions,sid,progress):
             try:selection=SandboxProfileSelection.from_record(original)
             except ValueError as error:raise SandboxError('env_binding_mismatch') from error
         progress.update('snapshot')
-        await api.prepare_input(row['project_id'],input_id=setup.input_id,
-            include_untracked=setup.include_untracked,git_settings=selection.settings.git)
-        progress.update('container')
-        record=await run_blocking(api._service.create,row['project_id'],sid,
-            binding_id=setup.binding_id,selection=selection)
+        async def snapshot():
+            await api.prepare_input(row['project_id'],input_id=setup.input_id,
+                include_untracked=setup.include_untracked,git_settings=selection.settings.git)
+        def created(record):
+            if (record.binding_id!=setup.binding_id or record.project_id!=row['project_id']
+                    or record.session_id!=sid):raise SandboxError('env_binding_mismatch')
+            progress.created_here=True
+        async def container():
+            # A source failure before permission must not create an environment.
+            if snapshot_task.done():snapshot_task.result()
+            progress.update('container')
+            result=await run_blocking(api._service.create,row['project_id'],sid,
+                binding_id=setup.binding_id,selection=selection,on_created=created)
+            if not snapshot_task.done():progress.update('snapshot')
+            return result
+        snapshot_task=asyncio.create_task(snapshot())
+        results=await await_settled(asyncio.gather(snapshot_task,container(),return_exceptions=True))
+        for result in results:
+            if isinstance(result,BaseException):raise result
+        record=results[1]
         if record.lifecycle!='running':raise SandboxError('env_operation_unknown')
+        progress.check()
+        progress.install_started=True
         progress.update('connection')
         await api.install_input(setup.binding_id,setup.input_id,progress=progress)
         progress.check()

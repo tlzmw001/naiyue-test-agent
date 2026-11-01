@@ -321,6 +321,8 @@ export function errorText(error: unknown): string {
     env_ssh_unavailable: '未找到本机 OpenSSH 客户端，请检查 SSH 程序路径后继续原准备。',
     env_image_required: '尚未配置沙箱镜像，请在应用配置中设置后重试。',
     env_attach_unavailable: '沙箱镜像未提供常驻连接入口，请使用与本次版本配套的 envd 镜像。',
+    env_start_failed: '沙箱容器启动失败，请在管理沙箱中核对原环境和启动诊断后重试。',
+    env_policy_mismatch: '沙箱执行服务的权限或运行策略不符合要求，无法启动；请核对配套镜像和启动诊断。',
     env_preparation_cancelled: '沙箱准备已停止，消息已保留。可在管理中查看原资源。',
     env_request_timeout: '本次沙箱请求等待超时，其他请求仍可继续。请核对原操作状态。',
     env_connection_capacity: '沙箱连接的请求名额已满，本次请求未执行。请稍后再试。',

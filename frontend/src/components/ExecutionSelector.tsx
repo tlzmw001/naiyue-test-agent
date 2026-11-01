@@ -8,11 +8,12 @@ import { preparationText } from '../sandboxProgress';
 import SandboxManager from './SandboxManager';
 import { Chevron, Icon } from './Icons';
 
-export default function ExecutionSelector({ api, session, disabled, create, refresh, running = false, draft, locked = false }: {
+export default function ExecutionSelector({ api, session, disabled, create, refresh, running = false, draft, locked = false, statusSyncError = '' }: {
   api: WebApi; session: SessionView | null; disabled: boolean;
   create: (choice: ExecutionDraft) => Promise<void>; refresh: () => Promise<void>;
   draft?: ExecutionDraft | null; locked?: boolean;
   running?: boolean;
+  statusSyncError?: string;
 }) {
   const [open,setOpen]=useState(false),[sandbox,setSandbox]=useState(false),[busy,setBusy]=useState(false);
   const [options,setOptions]=useState<ExecutionOptions|null>(null),[error,setError]=useState('');
@@ -76,7 +77,7 @@ export default function ExecutionSelector({ api, session, disabled, create, refr
       <Icon name={actual?.kind==='sandbox'?'sandbox':'computer'}/><span>{label}</span><Chevron direction={open?'up':'down'}/>
     </button>
     {actual?.kind==='sandbox'&&<>
-      <span className={styles.state} data-ready={actual.state==='ready'}>{actual.state==='preparing'?preparationText(actual.preparation):({ready:'可用',failed:'准备失败',unavailable:'不可用'})[actual.state]}</span>
+      <span className={styles.state} title={statusSyncError||undefined} data-ready={!statusSyncError&&actual.state==='ready'}>{statusSyncError?'状态更新失败；最后已知：':''}{actual.state==='preparing'?preparationText(actual.preparation):({ready:'可用',failed:'准备失败',unavailable:'不可用'})[actual.state]}</span>
       <button type="button" className={styles.results} disabled={disabled||busy} onClick={()=>setReview(true)}><Icon name="changes"/>查看改动</button>
     </>}
     <button ref={managerTrigger} type="button" className={styles.results}

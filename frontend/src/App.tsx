@@ -152,6 +152,7 @@ export default function App({ api: supplied, active = true, selection, scopeName
         {projectEntry ? projectEntry(chat.session ? chat.session.workspace_root : scopePath) : scopeName ? <div className={projectStyles.scope} role="status" aria-label="当前项目"
           title={chat.session?.workspace_root ?? scopePath}><strong>{scopeName}</strong></div> : <WorkspaceLabel api={api} session={chat.session} />}
         {/^[0-9a-f-]{36}$/.test(api.scopeId)&&<ExecutionSelector api={api} session={chat.session}
+          statusSyncError={chat.statusSyncError}
           disabled={chat.submitting||chat.selectingSession} running={!!busy} create={chat.newSession}
           draft={chat.creation.draft} locked={!chat.session&&chat.creation.locked}
           refresh={async()=>{if(chat.session)await chat.selectSession(chat.session.session_id);}} />}

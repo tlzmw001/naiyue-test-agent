@@ -203,12 +203,14 @@ def main():
     from release_image_smoke import image_scenario
     images = asyncio.run(image_scenario(root, type(model)))
     cli = asyncio.run(cli_scenario(root, type(model)))
+    from release_sandbox_smoke import sandbox_native_scenario
+    sandbox_native = asyncio.run(sandbox_native_scenario(root))
     print(json.dumps({'target': native['target'], 'version': naiyue_test_agent.__version__,
         'installed_package': str(installed), 'native_tools': 'passed', 'frontend_api': 'passed',
         'find_grep': 'passed', 'read_edit_read': 'passed',
         'approval_resume': 'passed', 'sqlite_reopen': 'passed', 'cli': 'passed', 'cli_protocol': cli,
         'configuration': 'passed', **storage, 'mcp': mcp, 'background_tasks': background,
-        'subagent_continuation': subagents, 'memory': memory, 'user_images': images}))
+        'subagent_continuation': subagents, 'memory': memory, 'user_images': images, 'sandbox_native': sandbox_native}))
 
 
 if __name__ == '__main__':

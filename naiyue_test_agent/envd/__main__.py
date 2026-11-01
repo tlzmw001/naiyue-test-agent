@@ -87,9 +87,16 @@ def main():
     if not 65536<=args.max_bytes<=67108864:raise ValueError('Invalid protocol limit')
     if args.mode=='serve':
         from naiyue_test_agent.sandbox_settings import SandboxSettings
-        settings=SandboxSettings.model_validate(json.loads(os.environ['NYT_SANDBOX_POLICY']))
-        if settings.max_message_bytes!=args.max_bytes:raise ValueError('Protocol budget differs from recorded policy')
-        serve(EnvironmentRef(**json.loads(os.environ['NYT_ENVIRONMENT'])),os.environ['NYT_SESSION_ID'],args.max_bytes,settings=settings)
+        try:
+            settings=SandboxSettings.model_validate(json.loads(os.environ['NYT_SANDBOX_POLICY']))
+            if settings.max_message_bytes!=args.max_bytes:raise ValueError('Protocol budget differs from recorded policy')
+            serve(EnvironmentRef(**json.loads(os.environ['NYT_ENVIRONMENT'])),os.environ['NYT_SESSION_ID'],args.max_bytes,settings=settings)
+        except Exception as error:
+            from naiyue_test_agent.diagnostics import safe_log
+            code=error.code if isinstance(error,SandboxError) and error.code in (
+                'env_policy_mismatch','env_binding_mismatch','env_protocol_mismatch') else 'env_operation_unknown'
+            safe_log(logger.error,'NYT_ENVD_STARTUP %s',json.dumps({'code':code},sort_keys=True))
+            raise
     elif args.mode=='attach':
         import asyncio
         from .attach import attach

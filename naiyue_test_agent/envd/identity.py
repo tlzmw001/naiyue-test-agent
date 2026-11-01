@@ -1,5 +1,6 @@
 """Trusted container identity policy; task requests cannot select credentials."""
 from dataclasses import replace
+import logging
 import os
 from pathlib import Path
 import stat
@@ -10,6 +11,55 @@ from naiyue_test_agent.contracts.sandbox import (
     SandboxError, SANDBOX_ROOT, STATE_ROOT, WORK_VOLUME_ROOT, TASK_UID, TASK_GID,
 )
 from naiyue_test_agent.tools.processes import HostProcessRunner
+from naiyue_test_agent.diagnostics import safe_log
+
+logger = logging.getLogger(__name__)
+
+
+def _capability_status():
+    fields = dict(line.split(':', 1) for line in Path('/proc/self/status').read_text().splitlines() if ':' in line)
+    return {key: int(fields[key], 10 if key == 'NoNewPrivs' else 16)
+        for key in ('CapEff', 'CapPrm', 'CapBnd', 'CapInh', 'CapAmb', 'NoNewPrivs')}
+
+
+def _clear_inheritable():
+    import ctypes
+    class Header(ctypes.Structure):
+        _fields_ = [('version', ctypes.c_uint32), ('pid', ctypes.c_int)]
+    class Data(ctypes.Structure):
+        _fields_ = [('effective', ctypes.c_uint32), ('permitted', ctypes.c_uint32), ('inheritable', ctypes.c_uint32)]
+    library = ctypes.CDLL(None, use_errno=True)
+    header, data = Header(0x20080522, 0), (Data * 2)()
+    for name in ('capget', 'capset'):
+        function = getattr(library, name)
+        function.argtypes = [ctypes.POINTER(Header), ctypes.POINTER(Data)]
+        function.restype = ctypes.c_int
+    if library.capget(ctypes.byref(header), data) != 0:
+        raise OSError(ctypes.get_errno(), 'capget_failed')
+    for word in data: word.inheritable = 0
+    if library.capset(ctypes.byref(header), data) != 0:
+        raise OSError(ctypes.get_errno(), 'capset_failed')
+
+
+def initialize_capabilities():
+    expected = sum(1 << bit for bit in (0, 1, 3, 5, 6, 7))
+    phase, status = 'initial', {}
+    try:
+        status = _capability_status()
+        if (any(status[key] != expected for key in ('CapEff', 'CapPrm', 'CapBnd'))
+                or status['CapInh'] & ~expected or status['CapAmb'] or status['NoNewPrivs'] != 1):
+            raise SandboxError('env_policy_mismatch')
+        if status['CapInh']:
+            _clear_inheritable()
+        phase, status = 'normalized', _capability_status()
+        if (any(status[key] != expected for key in ('CapEff', 'CapPrm', 'CapBnd'))
+                or status['CapInh'] or status['CapAmb'] or status['NoNewPrivs'] != 1):
+            raise SandboxError('env_policy_mismatch')
+    except (OSError, ValueError, KeyError, AttributeError, SandboxError) as error:
+        safe_log(logger.error, 'envd_identity_rejected phase=%s capabilities=%s errno=%s error_type=%s',
+            phase, status, getattr(error, 'errno', None), type(error).__name__)
+        if isinstance(error, SandboxError): raise
+        raise SandboxError('env_policy_mismatch') from error
 
 
 class TaskProcessRunner(HostProcessRunner):
@@ -45,11 +95,7 @@ def check_private_directory(path):
 def initialize_identity(environment):
     if sys.platform != 'linux' or os.geteuid() != 0 or environment.root != SANDBOX_ROOT:
         raise SandboxError('env_policy_mismatch')
-    status = dict(line.split(':',1) for line in Path('/proc/self/status').read_text().splitlines() if ':' in line)
-    expected = sum(1 << bit for bit in (0,1,3,5,6,7))
-    if (any(int(status[key],16) != expected for key in ('CapEff','CapPrm','CapBnd')) or
-            any(int(status[key],16) for key in ('CapInh','CapAmb')) or int(status['NoNewPrivs']) != 1):
-        raise SandboxError('env_policy_mismatch')
+    initialize_capabilities()
     volume = Path(WORK_VOLUME_ROOT)
     info = volume.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o022:
