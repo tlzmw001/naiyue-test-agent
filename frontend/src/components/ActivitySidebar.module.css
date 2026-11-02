@@ -2,7 +2,7 @@
 .header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 0 22px; border-bottom: 1px solid var(--line); }
 .close { display: grid; place-items: center; flex-shrink: 0; width: 30px; height: 30px; background: transparent; border: 0; border-radius: var(--r-sm); color: var(--muted); }
 .close:hover { background: var(--surface-hover); }
-.tabs { display: flex; min-width: 0; gap: 18px; }
+.tabs { display: flex; min-width: 0; gap: 18px; overflow-x: auto; }
 .tabs button { padding: 18px 0; border: 0; border-bottom: 2px solid transparent; color: var(--muted); background: transparent; white-space: nowrap; font-size: var(--fs-meta); }
 .tabs button[aria-selected="true"] { border-bottom-color: var(--text); color: var(--text); }
 .tabs span { margin-left: 6px; font-size: var(--fs-caption); font-variant-numeric: tabular-nums; }

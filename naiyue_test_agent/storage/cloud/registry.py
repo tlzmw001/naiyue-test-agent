@@ -41,6 +41,13 @@ class CloudRegistry:
             raise CloudError('command_not_found', 404)
         return CommandReceipt.model_validate_json(row[0])
 
+    def result_commands(self,task_id,*,offset,limit):
+        with self.database.transaction() as db:
+            rows=db.execute("""SELECT record_json FROM commands WHERE resource_id=?
+                AND json_extract(record_json,'$.operation')=? ORDER BY json_extract(record_json,'$.created_at') DESC,command_id
+                LIMIT ? OFFSET ?""",(task_id,'result:capture',limit,offset)).fetchall()
+        return [CommandReceipt.model_validate_json(row[0]) for row in rows]
+
     def run_command(self,task_id,run_id):
         with self.database.transaction() as connection:
             rows=connection.execute('SELECT record_json FROM commands WHERE resource_id=?',(task_id,))

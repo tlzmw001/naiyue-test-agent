@@ -36,20 +36,20 @@ class LocalTaskCommands:
 
     def _draft(self,binding):
         return dict(binding_id=binding['binding_id'],local_session_id=binding['local_session_id'],
-            draft_revision=binding.get('draft_revision',0),**(binding.get('draft') or dict(text='',model_id=None)))
+            draft_revision=binding.get('draft_revision',0),**(dict(text='',model_id=None,thinking_level='model_default')| (binding.get('draft') or {})))
 
     def save_draft(self,bid,sid,request):
         with self.database.transaction(write=True,error_code='cloud_local_save_failed') as c:
             binding=self._binding(c,bid,sid)
             if not binding['retained']:raise CloudError('cloud_task_unavailable')
             if binding.get('draft_revision',0)!=request['expected_draft_revision']:raise CloudError('cloud_draft_conflict')
-            binding['draft']=dict(text=request['text'],model_id=request['model_id'])
+            binding['draft']=dict(text=request['text'],model_id=request['model_id'],thinking_level=request.get('thinking_level','model_default'))
             binding['draft_revision']=request['expected_draft_revision']+1
             c.execute('UPDATE naiyue_cloud_bindings SET body_json=? WHERE binding_id=?',(json.dumps(binding),bid))
             return self._draft(binding)
 
     def reserve(self,bid,sid,kind,request):
-        if kind not in ('message','stop','recover','start','release','delete'):raise CloudError('invalid_request',422)
+        if kind not in ('message','stop','recover','start','release','delete','result_retry','result_abandon'):raise CloudError('invalid_request',422)
         with self.database.transaction(write=True,error_code='cloud_local_save_failed') as c:
             session_row(c,sid);binding=self._binding(c,bid,sid)
             fingerprint=digest(dict(binding_id=bid,instance_id=binding['instance_id'],kind=kind,request=request))
@@ -64,7 +64,7 @@ class LocalTaskCommands:
             if kind=='message' and request.get('draft_revision') is not None:
                 draft=self._draft(binding)
                 if (draft['draft_revision']!=request['draft_revision'] or draft['text']!=request['text']
-                        or draft['model_id']!=request['model_id']):raise CloudError('cloud_draft_conflict')
+                        or draft['model_id']!=request['model_id'] or draft['thinking_level']!=request.get('thinking_level','model_default')):raise CloudError('cloud_draft_conflict')
             now=time.time()
             value=dict(command_id=request['command_id'],binding_id=bid,local_session_id=sid,kind=kind,request=request,
                 request_digest=fingerprint,instance_id=binding['instance_id'],task_id=binding['task_id'],phase='reserved',
@@ -192,7 +192,7 @@ class LocalTaskCommands:
         if request.get('draft_revision') is None:return
         draft=self._draft(binding)
         if (draft['draft_revision']==request['draft_revision'] and draft['text']==request['text']
-                and draft['model_id']==request['model_id']):
+                and draft['model_id']==request['model_id'] and draft['thinking_level']==request.get('thinking_level','model_default')):
             binding['draft']=None;binding['draft_revision']=draft['draft_revision']+1
             c.execute('UPDATE naiyue_cloud_bindings SET body_json=? WHERE binding_id=?',(json.dumps(binding),binding['binding_id']))
 

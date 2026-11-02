@@ -14,11 +14,13 @@ def validate(raw,op,step):
         receipt=CommandReceipt.model_validate(raw);item=op['steps'][step];payload=item['request']
         if (receipt.command_id!=item['command_id'] or receipt.resource_id!=op['task_id']
                 or receipt.operation!=item['operation'] or receipt.request_digest!=item['request_digest']
-                or receipt.expected_generation!=payload['expected_generation']):raise CloudError('cloud_receipt_mismatch',502)
+                or not item['operation'].startswith('result:') and receipt.expected_generation!=payload['expected_generation']):raise CloudError('cloud_receipt_mismatch',502)
+        if item['operation'].startswith('result:') and (receipt.result.get('result_id')!=op['request']['result_id']
+                or receipt.result.get('revision')!=payload['expected_revision']+1):raise CloudError('cloud_receipt_mismatch',502)
         if step=='primary' and op['kind']=='message':
             command=RunCommand.model_validate(receipt.result['command'])
             if (command.command_id!=receipt.command_id or command.message!=payload['message']
-                    or command.model_id!=payload['model_id']):raise CloudError('cloud_receipt_mismatch',502)
+                    or command.model_id!=payload['model_id'] or command.thinking_level!=payload.get('thinking_level','model_default')):raise CloudError('cloud_receipt_mismatch',502)
         if step=='primary' and op['kind'] in ('stop','recover'):
             command=RunnerActionCommand.model_validate(receipt.result['command'])
             if any(getattr(command,k)!=payload.get(k) for k in ('command_id','kind','run_id','checkpoint_id')):
@@ -39,6 +41,9 @@ def fresh(domain,client,op,*,timeout=None):
 def fixed(domain,op,step,body,operation):
     path='/tasks/'+op['task_id']+('/delete' if operation=='task:delete' else '/runs' if operation=='run:start' else '/control' if operation.startswith('control:') else '/commands')
     data=dict(task_id=op['task_id'],request=body)
+    if operation.startswith('result:'):
+        action=operation.split(':',1)[1];path='/tasks/'+op['task_id']+'/results/'+op['request']['result_id']+'/'+action
+        data=dict(task_id=op['task_id'],result_id=op['request']['result_id'],action=action,request=body)
     if operation.startswith('environment:'):data['idle_cutoff']=None
     return domain.repo.commands.fix(op['command_id'],op['local_session_id'],step,body,path,operation,digest(data))
 
@@ -48,15 +53,15 @@ def send(domain,client,op,step,*,explicit=False):
     try:raw=client.request('GET','/commands/'+item['command_id'])
     except CloudError as error:
         if error.code!='command_not_found' or error.status!=404:raise
-        if item['sent'] and not (explicit and item['operation'].startswith(('control:','task:delete'))):
+        if item['sent'] and not (explicit and item['operation'].startswith(('control:','task:delete','result:'))):
             if item.get('rejected'):raise CloudError(item['rejected']) from None
             raise CloudError('cloud_command_unknown') from None
         op=journal.dispatch(cid,sid,step);item=op['steps'][step]
         try:raw=client.request('POST',item['path'],json=item['request'])
         except CloudError as rejected:
-            if rejected.code in ('runner_not_ready','model_unavailable','task_revision_conflict','run_identity_mismatch',
+            if rejected.code in ('runner_not_ready','model_unavailable','unsupported_thinking_level','model_profile_changed','task_revision_conflict','run_identity_mismatch',
                     'task_busy','control_unavailable','request_too_large','invalid_request','environment_already_running',
-                    'command_capacity','environment_capacity','environment_retained_capacity',
+                    'command_capacity','result_output_conflict','result_capacity','result_busy','result_not_retryable','result_revision_conflict','environment_capacity','environment_retained_capacity',
                     'task_delete_requires_stop','task_delete_confirmation_changed','task_not_available',
                     'resource_disk_capacity','resource_disk_unknown'):
                 journal.reject(cid,sid,step,rejected.code)
@@ -98,6 +103,10 @@ def execute(domain,client,op,settings,*,explicit=False):
             expected_generation=request['expected_generation'],preview_digest=request['preview_digest'],
             acknowledge_unknown=request['acknowledge_unknown']).model_dump(mode='json')
         operation='task:delete'
+    elif kind in ('result_retry','result_abandon'):
+        from naiyue_test_agent.contracts.cloud_results import ResultAction
+        body=ResultAction(command_id=cid,expected_revision=request['expected_revision']).model_dump(mode='json')
+        operation='result:'+request['action']
     elif kind=='message':
         if task.environment_phase=='absent' or 'request' in op['steps']['environment']:
             if 'request' not in op['steps']['environment']:
@@ -122,7 +131,7 @@ def execute(domain,client,op,settings,*,explicit=False):
             raise CloudError('runner_not_ready')
         if request['model_id'] not in task.runner_model_ids:raise CloudError('model_unavailable')
         body=StartRun(command_id=cid,expected_revision=task.revision,expected_generation=task.generation,
-            message=request['text'],model_id=request['model_id']).model_dump(mode='json')
+            message=request['text'],model_id=request['model_id'],thinking_level=request.get('thinking_level','model_default')).model_dump(mode='json')
         operation='run:start'
     elif kind in ('stop','recover'):
         if kind=='recover':

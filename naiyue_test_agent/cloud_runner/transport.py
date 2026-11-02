@@ -109,6 +109,7 @@ class RunnerClient:
                 value={key:result[key] for key in ('command_id','status','terminal_seq','phase','quiescent','error_code','recovery')}
                 await self.send(dict(kind='control_finished',**value))
                 self.control_reported.add(command_id)
+        await self.kernel.results.publish(self)
 
     async def publisher(self):
         while True:

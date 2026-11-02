@@ -18,7 +18,8 @@ const modes: { name: PermissionMode; description: string }[] = [
 ];
 
 export default function ComposerControls({ options, mode, tools, disabled, loading, error, reload, selectMode, selectTools, sessionId,
-  menu, setMenu, runCommand, compactDisabled, api, selectSkill, focusEditor, sendScroll, imageInputs, sending = false }: {
+  menu, setMenu, runCommand, compactDisabled, api, selectSkill, focusEditor, sendScroll, imageInputs, sending = false, openCloud }: {
+  openCloud?: (trigger: HTMLButtonElement) => void;
   sendScroll?: { preference: SendScroll; select: (value: SendScroll) => void };
   imageInputs?: ImageInputs; sending?: boolean;
   options: SessionControlOptions | null; mode?: PermissionMode; tools: string[]; disabled: boolean;
@@ -94,7 +95,7 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
     }
   }}>
     <button type="button" className={`${styles.trigger} ${styles.plus}`} aria-label="指令与功能"
-      aria-haspopup="menu" aria-expanded={open === 'commands'} disabled={disabled}
+      aria-haspopup="menu" aria-expanded={open === 'commands'} disabled={disabled && !openCloud}
       onClick={event => toggle('commands', event.currentTarget)}><Icon name="plus" /></button>
     {imageInputs && <input ref={imagePicker} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"
       multiple hidden aria-label="添加图片" disabled={sending || imageInputs.reading || !imageInputs.limits}
@@ -114,6 +115,9 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
     </button>
     {open === 'commands' && <section role="menu" aria-label="指令与功能" className={styles.popover}>
       <div className={styles.heading}>指令与功能</div>
+      {openCloud && <button type="button" role="menuitem" className={styles.command} onClick={() => {
+        setOpen(null); if (trigger.current) openCloud(trigger.current);
+      }}><span>云端任务</span></button>}
       {imageInputs && <button type="button" role="menuitem" className={styles.command}
         disabled={sending || imageInputs.reading || !imageInputs.limits}
         onClick={() => { imagePicker.current?.click(); setOpen(null); }}><span>添加图片</span></button>}

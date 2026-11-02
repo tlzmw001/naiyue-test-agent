@@ -77,6 +77,7 @@ class CloudTask(CloudRecord):
     updated_at: float = Field(ge=0)
     last_error_code: Label | None = None
     result_ids: list[UUIDText] = Field(default_factory=list, max_length=1024)
+    pending_result_id:UUIDText|None=None
     last_quiescent_at: float | None = Field(default=None, ge=0)
     reclaim_blockers: list[Label] = Field(default_factory=list, max_length=128)
     environment_phase: Literal['absent', 'preparing', 'backend_ready', 'unknown'] = 'absent'

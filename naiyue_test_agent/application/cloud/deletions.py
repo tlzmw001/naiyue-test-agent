@@ -107,7 +107,7 @@ class CloudDeletions:
                     active_run_id=None, artifact_operation_id=None, control_operation_id=None,
                     reclaim_blockers=[], runner_connection_id=None, runner_phase='unconfigured')
             if complete:
-                changes.update(lifecycle='deleted', title='', result_ids=[], input_ready=False,
+                changes.update(lifecycle='deleted', title='', result_ids=[], pending_result_id=None, input_ready=False,
                     runner_recovery=None, runner_model_ids=[], runner_capabilities=[], model_profile_id=None)
                 tombstone = dict(instance_id=r.instance_id, task_id=operation.task_id,
                     delete_command_id=receipt.command_id, generation=operation.generation, deleted_at=now)

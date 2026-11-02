@@ -7,6 +7,16 @@ import type { SessionView } from './types';
 
 afterEach(cleanup);
 
+it('opens cloud observation from the candidate menu without creating a task or main run', async () => {
+  const { api } = client();
+  render(<App api={api} cloudCandidate />);
+  fireEvent.click(await screen.findByRole('button', { name: '指令与功能' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: '云端任务' }));
+  expect(screen.getByRole('tab', { name: '云端任务' }).getAttribute('aria-selected')).toBe('true');
+  expect(await screen.findByText('请先在已授权的本地项目中选择一个会话，再使用云端任务。')).toBeTruthy();
+  expect(api.create).not.toHaveBeenCalled(); expect(api.start).not.toHaveBeenCalled();
+});
+
 function client(scopeId?: string) {
   const api = new WebApi('synthetic-test-access', scopeId);
   vi.spyOn(api, 'backgroundTasks').mockResolvedValue({ items: [], active_count: 0, terminal_revision: 0, revision: 'empty', next_before: null });

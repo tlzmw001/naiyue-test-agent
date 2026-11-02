@@ -12,6 +12,9 @@ class CloudTaskSettings(CloudRecord):
     max_controls:int=Field(default=4,gt=0,le=32)
     runner_wait_seconds:float=Field(default=15.0,gt=0,le=60)
     runner_poll_seconds:float=Field(default=0.1,gt=0,le=5)
+    max_observers:int=Field(default=8,gt=0,le=64)
+    stream_seconds:float=Field(default=1800.0,gt=0,le=86400)
+    stream_send_timeout_seconds:float=Field(default=15.0,gt=0,le=300)
     input_limits:InputLimits=Field(default_factory=InputLimits)
 
     @field_validator('profiles_file',mode='before')

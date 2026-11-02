@@ -15,6 +15,7 @@ import SessionUsage from './components/SessionUsage';
 import SessionDiagnostics from './components/SessionDiagnostics';
 import BackgroundTasks from './components/BackgroundTasks';
 import ActivitySidebar, { type ActivityTab } from './components/ActivitySidebar';
+import CloudTasks from './components/CloudTasks';
 import { useBackgroundTasks } from './useBackgroundTasks';
 import WorkspaceLabel from './components/WorkspaceLabel';
 import ModelMenu from './components/ModelMenu';
@@ -27,7 +28,8 @@ import ThemeMenu from './components/ThemeMenu';
 import { useSendScroll } from './useSendScroll';
 import styles from './App.module.css';
 
-export default function App({ api: supplied, active = true, selection, scopeName, scopePath, navigation: projectNavigation, preferences, projectEntry }: {
+export default function App({ api: supplied, active = true, selection, scopeName, scopePath, navigation: projectNavigation, preferences, projectEntry, cloudCandidate = false }: {
+  cloudCandidate?: boolean;
   api?: WebApi; active?: boolean; selection?: ScopeSelection; scopeName?: string; scopePath?: string;
   navigation?: (current: ReactNode) => ReactNode;
   preferences?: { theme: ReturnType<typeof useTheme>; sendScroll: ReturnType<typeof useSendScroll> };
@@ -35,6 +37,7 @@ export default function App({ api: supplied, active = true, selection, scopeName
 }) {
   const api = useMemo(() => supplied ?? (() => { const c = browserConnection(); return new WebApi(c.token, c.scopeId, c.instanceId); })(), [supplied]);
   const chat = useConversation(api, active);
+  const cloudApi = useMemo(() => cloudCandidate ? api.cloudTasks() : undefined, [api, cloudCandidate]);
   const appliedSelection = useRef<number | undefined>(undefined);
   useEffect(() => {
     if (!active || !selection?.sessionId || appliedSelection.current === selection.revision ||
@@ -148,7 +151,8 @@ export default function App({ api: supplied, active = true, selection, scopeName
           stop={() => void chat.stopApproval(batch)}
           submit={(decisions, remember) => chat.approve(batch, decisions, remember)} />)}
       </div>}
-      <Composer retryImageSubmission={() => void chat.retryImageSubmission()} imageInputs={chat.imageInputs} imageSupported={chat.imageInputs.supports(chat.model)} sendScroll={sendScroll} draftControls={chat.creation.controls} workspaceEntry={<>
+      <Composer openCloud={cloudCandidate ? trigger => { openSidebar('cloud'); returnFocus.current = trigger; } : undefined}
+        retryImageSubmission={() => void chat.retryImageSubmission()} imageInputs={chat.imageInputs} imageSupported={chat.imageInputs.supports(chat.model)} sendScroll={sendScroll} draftControls={chat.creation.controls} workspaceEntry={<>
         {projectEntry ? projectEntry(chat.session ? chat.session.workspace_root : scopePath) : scopeName ? <div className={projectStyles.scope} role="status" aria-label="当前项目"
           title={chat.session?.workspace_root ?? scopePath}><strong>{scopeName}</strong></div> : <WorkspaceLabel api={api} session={chat.session} />}
         {/^[0-9a-f-]{36}$/.test(api.scopeId)&&<ExecutionSelector api={api} session={chat.session}
@@ -168,7 +172,9 @@ export default function App({ api: supplied, active = true, selection, scopeName
         selectTools={names => void chat.selectTools(names)} controlsDisabled={controlsDisabled} />
     </main>
     {active && sidebarOpen && <ActivitySidebar tab={sidebarTab} select={tab => { setSidebarTab(tab); if (tab === 'tasks') background.dismissNotice(); }}
-      activeCount={background.activeCount} close={closeSidebar}>{ {
+      activeCount={background.activeCount} cloudEnabled={cloudCandidate} close={closeSidebar}>{ {
+      cloud: cloudApi ? <CloudTasks key={`${api.scopeId}:${chat.session?.session_id ?? ''}`} api={cloudApi} sessionId={chat.session?.session_id}
+        active={active && sidebarTab === 'cloud'} /> : null,
       tasks: <BackgroundTasks state={background} />,
       context: chat.session ? <ContextPanel value={context.value} loading={context.loading} error={context.error}
         retry={context.retry} usageContent={<SessionUsage api={api} sessionId={chat.session.session_id} run={chat.run} />}

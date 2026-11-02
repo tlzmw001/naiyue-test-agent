@@ -3,7 +3,8 @@ import type { ThinkingOptions } from '../types';
 import styles from './ModelMenu.module.css';
 import { Icon } from './Icons';
 
-export default function ModelMenu({ models, model, level, options, open, disabled, toggle, close, selectModel, selectThinking }: {
+export default function ModelMenu({ models, model, level, options, open, disabled, toggle, close, selectModel, selectThinking, placement = 'below' }: {
+  placement?: 'above' | 'below';
   models: string[]; model: string; level: string; options?: ThinkingOptions; open: boolean; disabled: boolean;
   toggle: () => void; close: () => void; selectModel: (id: string) => void; selectThinking: (level: string) => void;
 }) {
@@ -27,7 +28,7 @@ export default function ModelMenu({ models, model, level, options, open, disable
       title={`${model || '加载模型…'} · ${label}`} aria-expanded={open} onClick={toggle} disabled={disabled}>
       <span className={styles.modelName}>{model || '加载模型…'}</span><span className={styles.level}>{label}</span>
     </button>
-    {open && <section role="dialog" aria-label="模型与推理强度" className={styles.popover}>
+    {open && <section role="dialog" aria-label="模型与推理强度" className={`${styles.popover} ${placement === 'above' ? styles.above : ''}`}>
       <div className={styles.heading}>模型与推理强度<button type="button" aria-label="关闭模型菜单" onClick={() => { close(); trigger.current?.focus(); }}><Icon name="close"/></button></div>
       <fieldset className={styles.group} disabled={disabled}><legend>模型</legend><div className={styles.options}>
         {(!models.includes(model) ? [model, ...models] : models).map(value => <label key={value} className={styles.option} title={value}>

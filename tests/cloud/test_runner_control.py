@@ -21,7 +21,8 @@ def prepared(runtime):
     runtime.replace_task(task.model_copy(update={'revision':task.revision+1,'environment_phase':'backend_ready',
         'input_ready':True,'sandbox_id':'fixture-sandbox','lifecycle':'starting'}),
         expected_revision=task.revision,expected_generation=task.generation)
-    return b
+    # Native Runner tests share the real validated input cache instead of a container /input mount.
+    return b.model_copy(update={'input_directory':str(runtime.inputs.root/'inputs'/record.input_id)})
 
 
 def hello(b,phase='ready'):

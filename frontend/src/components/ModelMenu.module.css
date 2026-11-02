@@ -18,4 +18,5 @@
 .option:hover, .option:has(:checked) { background: var(--surface-hover); color: var(--text); }
 .group:disabled .option { opacity: .5; cursor: default; }
 .popover p { margin: 10px 8px 4px; color: var(--muted); font-size: var(--fs-caption); line-height: var(--lh-relaxed); }
+.popover.above { top: auto; bottom: calc(100% + 12px); }
 @media (max-width: 600px) { .trigger { max-width: 170px; } .popover { left: 0; } }

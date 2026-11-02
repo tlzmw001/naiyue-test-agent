@@ -1,0 +1,101 @@
+"""Durable per-run plans drive result publication even while the local UI is offline."""
+import os,logging
+from pathlib import Path
+from pydantic import TypeAdapter
+from naiyue_test_agent.agent_runtime.async_utils import run_blocking,await_settled
+from naiyue_test_agent.contracts.cloud_results import ResultPlan,ResultRecord
+from naiyue_test_agent.contracts.cloud_tasks import CloudError,UUIDText
+from naiyue_test_agent.application.cloud.ownership import private_directory
+from .state import read_json,write_json
+from .result_snapshot import freeze_result,verify_spool
+from .http import task_request
+from .artifact_transport import upload_record
+
+logger=logging.getLogger(__name__)
+
+
+class RunnerResults:
+    def __init__(self,kernel,root,state):
+        self.kernel,self.root,self.state=kernel,root,state;self.freezing=False
+        self.directory=state/'result-plans';self.directory.mkdir(mode=0o700,exist_ok=True);private_directory(self.directory)
+        self.spools=state/'results';self.spools.mkdir(mode=0o700,exist_ok=True);private_directory(self.spools)
+
+    def path(self,rid):
+        TypeAdapter(UUIDText).validate_python(rid)
+        return self.directory/(rid+'.json')
+
+    def admit(self,command):
+        plan=command.result_plan
+        if plan is None:return
+        b=self.kernel.bootstrap
+        if (plan.source_command_id!=command.command_id or plan.source_run_id!=command.run_id
+                or any(getattr(plan,k)!=getattr(b,k) for k in ('task_id','project_id','input_id'))
+                or plan.source_generation>b.generation):raise CloudError('result_identity_conflict')
+        path=self.path(plan.result_id)
+        if os.path.lexists(path):
+            value=read_json(path)
+            if ResultPlan.model_validate(value['plan'])!=plan:raise CloudError('result_identity_conflict')
+            return
+        if len(list(self.directory.iterdir()))>=b.result_limits.max_results:raise CloudError('result_capacity')
+        write_json(path,dict(plan=plan.model_dump(mode='json'),done=False,started_attempt=None))
+
+    def pending(self):
+        files=sorted(self.directory.iterdir())
+        if len(files)>self.kernel.bootstrap.result_limits.max_results:raise CloudError('result_capacity')
+        result=[]
+        for path in files:
+            TypeAdapter(UUIDText).validate_python(path.stem);value=read_json(path)
+            plan=ResultPlan.model_validate(value['plan'])
+            if path!=self.path(plan.result_id):raise CloudError('result_identity_conflict')
+            if not value['done']:result.append(value)
+        return result
+
+    async def publish(self,client):
+        for local in await run_blocking(self.pending):
+            plan=ResultPlan.model_validate(local['plan']);b=client.bootstrap
+            journal=await run_blocking(self.kernel.journal.lookup,plan.source_command_id)
+            if journal is None or journal['status'] in ('running','unknown','interrupted') and journal['terminal_seq'] is None:continue
+            path='/internal/cloud/v1/tasks/'+b.task_id+'/results/'+plan.result_id
+            record=ResultRecord.model_validate(await task_request(client.http,b,'GET',path))
+            if record.plan!=plan:raise CloudError('result_identity_conflict')
+            if record.phase in ('available','abandoned'):
+                local['done']=True;await run_blocking(write_json,self.path(plan.result_id),local);continue
+            if record.phase in ('waiting_terminal','failed','unknown'):continue
+            if not self.kernel.session_quiet():continue
+            # Quiet facts need not wait for the next periodic heartbeat.
+            await client.send(dict(kind='heartbeat',quiescent=True,phase=self.kernel.phase,run_id=self.kernel.last_run_id,
+                recovery=self.kernel.recovery_info.model_dump() if self.kernel.recovery_info else None))
+            try:
+                record=ResultRecord.model_validate(await task_request(client.http,b,'POST',path+'/begin',value={}))
+            except CloudError as error:
+                if error.code in ('result_not_quiescent','result_busy'):continue
+                raise
+            if record.phase=='available':continue
+            if record.boundary and (record.boundary.epoch!=b.state_epoch or record.boundary.kind=='run'
+                    and (record.boundary.seq!=journal['terminal_seq'] or record.boundary.outcome!=journal['status'] and not (journal['status']=='recovered' and record.boundary.outcome in ('failed','interrupted')))):
+                raise CloudError('result_boundary_conflict')
+            if record.boundary is None or record.generation is None:raise CloudError('result_identity_conflict')
+            spool=self.spools/plan.result_id
+            try:
+                if not os.path.lexists(spool):
+                    if local.get('started_attempt')==record.attempt:raise CloudError('result_capture_unconfirmed')
+                    local['started_attempt']=record.attempt
+                    await run_blocking(write_json,self.path(plan.result_id),local)
+                self.freezing=True
+                try:
+                    await await_settled(run_blocking(freeze_result,self.root,Path(b.input_directory),spool,plan,
+                        record.boundary,record.generation,b.result_limits,b.input_limits))
+                finally:self.freezing=False
+                state=await run_blocking(verify_spool,spool,plan,record.boundary,b.result_limits)
+                received=ResultRecord.model_validate(await task_request(client.http,b,'POST',path+'/prepare',value=state.bundle.model_dump(mode='json')))
+                if received.bundle!=state.bundle:raise CloudError('result_identity_conflict')
+                for file in state.bundle.files:
+                    await upload_record(client,file.artifact,spool/'files'/file.artifact.artifact_id)
+                received=ResultRecord.model_validate(await task_request(client.http,b,'POST',path+'/commit',value={}))
+                if received.phase!='available' or received.bundle!=state.bundle:raise CloudError('result_identity_conflict')
+                local['done']=True;await run_blocking(write_json,self.path(plan.result_id),local)
+            except CloudError as error:
+                logger.warning('runner_result_capture_failed code=%s',error.code)
+                # Frozen bytes remain available for an explicit retry. A lost commit
+                # ACK cannot demote an already available Coordinator result.
+                await task_request(client.http,b,'POST',path+'/fail',value={'error_code':error.code})

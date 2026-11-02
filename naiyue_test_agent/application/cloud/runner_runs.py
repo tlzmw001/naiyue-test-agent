@@ -41,23 +41,27 @@ class RunnerRuns:
             if task.runner_phase=='waiting_model':raise CloudError('model_unavailable')
             if (task.lifecycle!='ready' or task.runner_phase!='ready' or not task.runner_connection_id
                     or task.runner_connection_id!=connection_id
-                    or task.environment_operation_id or task.control_operation_id or task.active_run_id or any(x!='background_commands' for x in task.reclaim_blockers)):raise CloudError('runner_not_ready')
+                    or task.environment_operation_id or task.control_operation_id or task.active_run_id or task.pending_result_id
+                    or any(x!='background_commands' for x in task.reclaim_blockers)):raise CloudError('runner_not_ready')
             if request.model_id not in task.runner_model_ids:raise CloudError('model_unavailable')
+            r.models.validate_thinking(task,request.model_id,request.thinking_level)
             try:r.credentials.authorize(raw,task_id,'control:connect')
             except CloudError:raise CloudError('runner_not_ready') from None
             now=time.time();run_id=uuid4().hex
-            command=RunCommand(command_id=request.command_id,run_id=run_id,message=request.message,model_id=request.model_id)
+            plan,result_receipt=r.results.reserve_run(task,request.command_id,run_id)
+            command=RunCommand(command_id=request.command_id,run_id=run_id,message=request.message,model_id=request.model_id,
+                thinking_level=request.thinking_level,result_plan=plan)
             frame=dict(kind='command',command=command.model_dump(),connection_id=connection_id,
                 generation=task.generation,boot_id=task.runner_boot_id,state_epoch=task.state_epoch)
             if len(canonical_json(frame).encode())>r.settings.max_frame_bytes:raise CloudError('request_too_large',413)
             candidate=CloudTask.model_validate(task.model_dump()|dict(active_run_id=run_id,last_run_id=run_id,
-                reclaim_blockers=['active_run','required_history'],last_quiescent_at=None,revision=task.revision+1,updated_at=now))
+                result_ids=[*task.result_ids,plan.result_id],reclaim_blockers=['active_run','required_history'],last_quiescent_at=None,revision=task.revision+1,updated_at=now))
             receipt=CommandReceipt(command_id=request.command_id,resource_id=task_id,operation='run:start',
                 expected_generation=task.generation,request_digest=fingerprint,status='running',http_status=202,
                 result=dict(phase='dispatched',command=command.model_dump(),connection_id=task.runner_connection_id),created_at=now,updated_at=now)
             # Reuse the existing atomic task+receipt CAS. Environment-only limits
             # in this repository apply solely to environment:start.
-            return self.repository.reserve(task,candidate,receipt,r.settings)
+            return self.repository.reserve(task,candidate,receipt,r.settings,related=(result_receipt,))
 
     async def _start(self,task_id,request,fingerprint):
         live=self.control.connections.get(task_id)
@@ -111,4 +115,5 @@ class RunnerRuns:
             receipt=receipt.model_copy(update={'status':'succeeded' if frame.status in ('completed','stopped') else 'failed',
                 'http_status':200,'error_code':None if frame.status in ('completed','stopped') else 'run_failed',
                 'result':receipt.result|dict(phase='finished',terminal_seq=frame.terminal_seq),'updated_at':now})
-            self.repository.finish(task,candidate,receipt)
+            candidate,related=r.results.terminal(candidate,receipt,dict(kind='run',epoch=event['epoch'],seq=frame.terminal_seq,outcome=frame.status))
+            self.repository.finish(task,candidate,receipt,related=related)

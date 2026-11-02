@@ -99,7 +99,8 @@ class RunnerControl:
                 await connection.send(dict(kind='query',command_id=command_id))
             if task.control_operation_id:
                 await connection.send(dict(kind='control_query',command_id=task.control_operation_id))
-            if task.artifact_operation_id:
+            if task.artifact_operation_id and (await cloud_work(self.runtime,
+                    lambda:self.runtime.registry.get_command(task.artifact_operation_id))).operation=='artifact:capture':
                 await connection.send(dict(kind='artifact_query',command_id=task.artifact_operation_id))
         except BaseException:
             await self.detach(connection)
@@ -168,7 +169,8 @@ class RunnerControl:
             command=await cloud_work(self.runtime,lambda:self.active_command(connection.task_id,active))
             await cloud_work(self.runtime,lambda:self.runs.unconfirmed(connection.task_id,command))
         if action:await cloud_work(self.runtime,lambda:self.actions.unconfirmed(connection.task_id,action))
-        if artifact:await cloud_work(self.runtime,lambda:self.runtime.artifacts.unconfirmed(connection.task_id,artifact))
+        if artifact and (await cloud_work(self.runtime,lambda:self.runtime.registry.get_command(artifact))).operation=='artifact:capture':
+            await cloud_work(self.runtime,lambda:self.runtime.artifacts.unconfirmed(connection.task_id,artifact))
 
     async def aclose(self):
         self.closing=True

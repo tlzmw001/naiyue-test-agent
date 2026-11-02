@@ -14,6 +14,7 @@ from naiyue_test_agent.contracts.cloud_models import ModelProxySettings
 from naiyue_test_agent.contracts.cloud_history import HistoryLimits
 from naiyue_test_agent.contracts.cloud_observation import ObservationLimits
 from naiyue_test_agent.contracts.cloud_resources import ResourceLimits
+from naiyue_test_agent.contracts.cloud_results import ResultLimits
 
 
 class BackendSettings(BaseModel):
@@ -69,6 +70,7 @@ class CloudSettings(BaseModel):
     subagents: tuple[SubAgentSpec,...]=()
     _roles=field_validator('subagents',mode='before')(parse_subagent_specs)
     artifact_limits:ArtifactLimits=Field(default_factory=ArtifactLimits)
+    result_limits:ResultLimits=Field(default_factory=ResultLimits)
     model_proxy:ModelProxySettings|None=None
 
     @field_validator('data_dir')

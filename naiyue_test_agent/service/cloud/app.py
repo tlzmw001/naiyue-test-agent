@@ -49,7 +49,7 @@ def create_cloud_apps(runtime):
         owner_authorize(request, runtime)
         return dict(instance_id=runtime.instance_id, protocol=1, version=__version__,
             capabilities=['projects:read', 'projects:create', 'commands:read', 'tasks:read', 'history:events','history:read','history:detail','history:threads',
-                'observations:snapshot','observations:stream','usage:read','inputs:import', 'tasks:create', 'runs:start','artifacts:capture','artifacts:download','capacity:read']
+                'observations:snapshot','observations:stream','usage:read','inputs:import', 'tasks:create', 'runs:start','artifacts:capture','artifacts:download','results:read','results:actions','artifacts:range','capacity:read']
                 + (['environment:commands', 'environment:reconcile', 'tasks:delete'] if runtime.lifecycle is not None else []))
 
     @owner.get('/api/cloud/v1/projects')
@@ -131,6 +131,8 @@ def create_cloud_apps(runtime):
     register_runner_routes(owner,task,runtime)
     from .artifact_routes import register_artifact_routes
     register_artifact_routes(owner,task,runtime)
+    from .result_routes import register_result_routes
+    register_result_routes(owner,task,runtime)
     from .model_routes import register_model_routes
     register_model_routes(task,runtime)
     from .history_routes import register_history_routes

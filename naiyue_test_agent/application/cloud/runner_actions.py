@@ -114,7 +114,7 @@ class RunnerActionCommands:
                     'result':original.result|dict(recovery_command_id=frame.command_id),'updated_at':now})]
                 active=None;blockers=[x for x in blockers if x not in ('active_run','required_history','unknown','runner_disconnected','recovery_required','background_commands')]
             elif frame.phase=='ready' and active is None and frame.status=='completed':
-                blockers=[x for x in blockers if x=='artifact_unknown']
+                blockers=[x for x in blockers if x in ('artifact_unknown','result_pending')]
             if frame.phase=='blocked' and 'recovery_required' not in blockers:blockers.append('recovery_required')
             now=time.time()
             candidate=task.model_copy(update={'revision':task.revision+1,'control_operation_id':None,'active_run_id':active,
@@ -122,6 +122,10 @@ class RunnerActionCommands:
                 'reclaim_blockers':blockers,'last_quiescent_at':now if frame.quiescent and not blockers and not active else None,'updated_at':now})
             updated=receipt.model_copy(update={'status':'succeeded' if frame.status=='completed' else 'failed','http_status':200,
                 'error_code':frame.error_code,'result':receipt.result|dict(phase='finished',terminal_seq=frame.terminal_seq),'updated_at':now})
+            if receipt.operation=='control:recover' and frame.status=='completed' and command['target_command_id']:
+                original=r.registry.get_command(command['target_command_id'])
+                candidate,result_related=r.results.terminal(candidate,original,dict(kind='recovery',epoch=event['epoch'],seq=frame.terminal_seq,outcome='unconfirmed'))
+                related=[*related,*result_related]
             self.repository.finish(task,candidate,updated,related=related)
 
     def activity(self,connection,frame):

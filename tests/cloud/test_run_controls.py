@@ -80,12 +80,12 @@ def test_background_completion_is_independent_of_root_finish_and_stale_activity(
             ws.send_json(dict(kind='finished',command_id=cid,run_id=run['run_id'],status='completed',terminal_seq=1,quiescent=False,**fence))
             ws.send_json(dict(kind='heartbeat',**fence));ws.receive_json()
             task=r.registry.get_task(b.task_id)
-            assert task.active_run_id is None and task.reclaim_blockers==['background_commands']
+            assert task.active_run_id is None and task.reclaim_blockers==['background_commands','result_pending']
             assert r.registry.get_command(cid).status=='succeeded'
             ws.send_json(dict(kind='heartbeat',phase='ready',quiescent=True,run_id=uuid4().hex,**fence));ws.receive_json()
-            assert r.registry.get_task(b.task_id).reclaim_blockers==['background_commands']
+            assert r.registry.get_task(b.task_id).reclaim_blockers==['background_commands','result_pending']
             ws.send_json(dict(kind='heartbeat',phase='ready',quiescent=True,run_id=run['run_id'],**fence));ws.receive_json()
-            assert r.registry.get_task(b.task_id).reclaim_blockers==[]
+            assert r.registry.get_task(b.task_id).reclaim_blockers==['result_pending']
 
 
 def test_control_reservation_blocks_run_and_normal_environment_stop(tmp_path):

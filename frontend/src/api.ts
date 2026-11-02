@@ -1,4 +1,5 @@
 import type { ImageUpload, ImageConfiguration, ImageMetadata, PendingImageInput } from './imageTypes';
+import { CloudApi } from './cloudApi';
 import type { ExecutionOptions, ExecutionView, SessionCreation } from './types';
 import type { SandboxAction, SandboxManagement } from './sandboxManagementTypes';
 import type { ResultOptions, SandboxResult, ResultDiff } from './resultTypes';
@@ -78,13 +79,13 @@ export class WebApi {
   }
   reconcileProject(operation_id: string) { return this.projectCommand<{ items: { operation_id: string; error: string | null }[] }>('reconcile', { operation_id }); }
 
-  private async response(path: string, init: RequestInit = {}, service = false) {
+  private async response(path: string, init: RequestInit = {}, service: boolean | 'client' = false) {
     if (!this.token || !this.scopeId) throw new ApiError('unauthorized');
     const method = (init.method ?? 'GET').toUpperCase();
     const command = !['GET', 'HEAD', 'OPTIONS'].includes(method);
     const body = init.body ? JSON.parse(String(init.body)) : undefined;
     const requestId = command ? body?.request_id ?? crypto.randomUUID() : undefined;
-    const response = await fetch((service ? '/api/v1' : `/api/v1/scopes/${encodeURIComponent(this.scopeId)}`) + path, { ...init, redirect: 'error', headers: {
+    const response = await fetch((service === 'client' ? '/api/client/v1' : service ? '/api/v1' : `/api/v1/scopes/${encodeURIComponent(this.scopeId)}`) + path, { ...init, redirect: 'error', headers: {
       Authorization: 'Bearer ' + this.token, ...(init.body ? { 'Content-Type': 'application/json' } : {}),
       ...(requestId ? { 'X-Request-ID': requestId } : {}),
       ...(Array.isArray(body?.images) && body.images.length ? { 'X-Image-Input': '1' } : {}),
@@ -103,6 +104,7 @@ export class WebApi {
   }
 
   models() { return this.json<{ default_model_id: string; model_ids: string[]; thinking_options?: Record<string, ThinkingOptions> } & ImageConfiguration>('/models'); }
+  cloudTasks() { return new CloudApi(this.scopeId, (path, init) => this.response(path, init, 'client')); }
   serviceInfo(signal?: AbortSignal) { return this.json<ServiceInfo>('/service', 'GET', undefined, signal); }
   backgroundTasks(before?: string, signal?: AbortSignal) {
     const query = before ? '?' + new URLSearchParams({ before }) : '';

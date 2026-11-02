@@ -15,14 +15,14 @@ class LifecycleRepository:
             return [CloudTask.model_validate_json(r[0]) for r in connection.execute(
                 'SELECT record_json FROM tasks WHERE task_id>? ORDER BY task_id LIMIT ?', (after, limit))]
 
-    def reserve(self, previous, candidate, receipt, settings):
+    def reserve(self, previous, candidate, receipt, settings, *, related=(), related_updates=()):
         with self.database.transaction(write=True) as connection:
             old = connection.execute('SELECT record_json FROM commands WHERE command_id=?', (receipt.command_id,)).fetchone()
             if old is not None:
                 found = CommandReceipt.model_validate_json(old[0])
                 if found.request_digest != receipt.request_digest: raise CloudError('command_id_conflict')
                 return found, False
-            if connection.execute('SELECT COUNT(*) FROM commands').fetchone()[0] >= settings.max_receipts:
+            if connection.execute('SELECT COUNT(*) FROM commands').fetchone()[0]+1+len(related) > settings.max_receipts:
                 raise CloudError('command_capacity')
             tasks = [CloudTask.model_validate_json(r[0]) for r in connection.execute('SELECT record_json FROM tasks')]
             starting = receipt.operation == 'environment:start'
@@ -39,6 +39,13 @@ class LifecycleRepository:
                     (candidate.updated_at, candidate.task_id))
             connection.execute('INSERT INTO commands(command_id,request_digest,resource_id,record_json) VALUES(?,?,?,?)',
                 (receipt.command_id, receipt.request_digest, receipt.resource_id, receipt.model_dump_json()))
+            for item in related:
+                connection.execute('INSERT INTO commands(command_id,request_digest,resource_id,record_json) VALUES(?,?,?,?)',
+                    (item.command_id,item.request_digest,item.resource_id,item.model_dump_json()))
+            for item in related_updates:
+                if connection.execute('UPDATE commands SET record_json=? WHERE command_id=? AND request_digest=?',
+                        (item.model_dump_json(),item.command_id,item.request_digest)).rowcount!=1:
+                    raise CloudError('command_state_conflict')
         return receipt, True
 
     def save_receipt(self, receipt):

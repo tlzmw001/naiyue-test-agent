@@ -18,6 +18,11 @@ logger=logging.getLogger(__name__)
 
 
 def register_runner_routes(owner,task,runtime):
+    @owner.get('/api/cloud/v1/tasks/{task_id}/models')
+    async def models(request:Request,task_id:str):
+        owner_authorize(request,runtime)
+        return await cloud_work(runtime,lambda:runtime.models.options(task_id))
+
     @owner.post('/api/cloud/v1/tasks/{task_id}/runs')
     async def start(request:Request,task_id:str):
         owner_authorize(request,runtime)

@@ -7,6 +7,7 @@
 | LC0 `ManualCloudTasks.admission` | 同一本机服务的短准入；`submit` 的独立 admit producer | LC0 → 本机会话 `SessionPersistence.history_lock` → 项目 DB。锁内只读私有配置和登记本机记录，不做 SSH/HTTP/上传；输入捕获在此锁外。父删除持 history_lock → DB，禁止 DB/父锁反向进入 LC0。 |
 | LC1 `operations/flights/slots`（事件循环预留） | submit/read/view/retry/cancel 的在途 Future、已托管准备和准入额度 | 同 loop 变更集合无 await；slot 在 DB reserve 前占用，准入与 retry 共用容量。请求等待取消须排空独立 admit，不能取消已经持久接管的准备。封口 → 等已受理操作 → 排空 flights → 关 HTTP/SSH，之后才由 Application 关闭 Host/DB。 |
 | LC2 `ProfileConnections.opening/connections/borrowed/retired`（同 loop） | 每 profile single-flight 建连、自有 SSH 和 HTTP client 借用 | 建连/握手在 worker，不持 LC0/会话锁/DB。返回客户端前登记借用；确认自有 SSH 已退出可退休并重开，旧 client 等最后借用归还才关闭。不触碰 external SSH；主服务关闭先排空 LC1。 |
+| LC4 `ManualCloudTasks.observers`（S06.4，同 loop） | 固定 binding 的有界只读 SSE reader；登记/容量判断无 await，无新增线程锁 | 持 manager/domain operation 生命周期预留，DB读取在worker短事务后借用LC2；不持LC0/DB跨SSE。封口→取消reader→显式关闭并排空上游iterator→归还LC2借用→移除LC4→排空LC1→关闭HTTP/SSH。发送/清理失败保留主异常，关闭观察不发远端stop/delete。 |
 | DB 云端关联准入／删除保护 | `LocalTaskRepo.reserve`、`RunUnitOfWork.delete`、项目 `deletion_guard`、离线 restore | 父存在检查和关联插入同一写事务；最终会话删除在其写事务重查。取消须等 producer 收束且确定未派发 task 才解除保护；未知或已受理始终保留。项目在登记 deleting 前预查，最终 registry removal 下仍持项目文件锁复查。离线 restore 持原实例文件锁，保留关联时拒绝整库回退。 |
 
 本片无跨 SQLite/网络长事务，不把本机进程退出解释为远端任务停止；来源冻结前后核对既有 execution authority，缓存字节复用既有 OS 文件锁。
@@ -353,3 +354,10 @@ Spec141B：工作线程方向为 `delivery gate → {P1, DB(registry)}`；唯一
 - 仍遵守既有S3→ControlObserver记录锁顺序；observer.flush在S3外。必要保存及graph读取均在S3外，保存成功后重新获取S3释放已保存输入；图片下载先借内容副本再释放S3，之后解码。
 - 图片control在取得`RunDelivery.control_lock`之前完成规范化，取得后重新检查目标run和输入窗口；用户停止不等待图片worker。停止已完成后才返回的图片输入按未接受拒绝，worker及请求名额仍排空后释放。
 - pending列表先在S3内取得不可变输入引用和状态快照，再在锁外做元数据/文字投影。pending媒体以服务器唯一输入ID归属，不伪造canonical source_revision；历史图片仍校验canonical摘要。长保留文字使用既有frame/detail预算分块读取，回执不携带完整正文或legacy文字副本。
+
+### S07.2 结果保存与下载
+
+- CR1（持久预留，非线程锁）：root/result准入在原CT1→registry事务中同时预留两条receipt；终局与result_pending同事务。等待静止不占artifact_operation_id，允许stop；begin才在TaskIO→CT1→registry短事务登记同result slot。扫描/解包/Git/网络均在Runner，不持Coordinator门跨IO；prepare只封存槽位，commit在TaskIO内短门读取引用、门外有界清单读取、短门CAS发布。列表SQL只在storage registry，未持事务等待页面。
+- CR2（Runner loop事实）：单publisher推进持久result计划；freezing只在实际文件冻结/排空期间为true，阻止新命令/静止宣告，不改变blocked/ready事实。扫描前attempt marker落盘；源读取worker取消先await_settled后解除freezing。冻结spool完整原子发布后才网络传输；已有spool不重扫，不新增Coordinator读任务DB。
+- CLD1（本机loop下载lease，非线程锁）：ManualCloudTasks.downloads持有DownloadLease，Queue(1) producer独占上游HTTP、binding连接借用及manager/domain operation；浏览器响应只消费有界队列。关闭先取消/排空producer及source，再归还connection/operation和移除lease；未开始producer的取消也显式移除。消费者同时观察队列与producer完成，不能在关闭后永久等待空队列。manager关闭先排空观察/下载，再等其他operation、命令和连接关闭；不停止云端任务。
+- 原ArtifactDownload.lock继续保护固定FD与读取worker排空，Range只调整同一FD offset/精确remaining；range解析失败/响应超时/取消均关闭lease，主异常不被次要close异常替换。删除仍按原TI1关闭下载、排空TaskIO后清理文件。没有新增线程锁或跨任务反向嵌套。

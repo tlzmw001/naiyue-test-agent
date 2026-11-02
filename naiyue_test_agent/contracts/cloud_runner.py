@@ -11,7 +11,9 @@ from naiyue_test_agent.tools.permission_rules import PermissionRule, PermissionS
 from naiyue_test_agent.tools.settings import EnvironmentSettings
 from naiyue_test_agent.tools.subagent import SubAgentSpec, parse_subagent_specs
 from .cloud_artifacts import ArtifactLimits,CaptureArtifact
-from .cloud_models import RunnerModelProfile
+from .cloud_models import RunnerModelProfile,ThinkingLevel
+from .cloud_results import ResultPlan,ResultLimits
+from .cloud_inputs import InputLimits
 from .cloud_history import HistoryLimits
 from .cloud_observation import ObservationLimits,ObservationBatch
 
@@ -62,6 +64,9 @@ class RunnerBootstrap(CloudRecord):
     models:RunnerModelProfile|None=None
     _roles=field_validator('subagents',mode='before')(parse_subagent_specs)
     artifact_limits:ArtifactLimits=Field(default_factory=ArtifactLimits)
+    result_limits:ResultLimits=Field(default_factory=ResultLimits)
+    input_limits:InputLimits=Field(default_factory=InputLimits)
+    input_directory:str='/input'
     history_limits:HistoryLimits=Field(default_factory=HistoryLimits)
     observation_limits:ObservationLimits=Field(default_factory=ObservationLimits)
 
@@ -84,6 +89,8 @@ class RunCommand(CloudRecord):
     run_id: TaskId
     message: str = Field(min_length=1, max_length=262144)
     model_id: Label
+    thinking_level: ThinkingLevel='model_default'
+    result_plan:ResultPlan|None=None
 
 
 class StartRun(CloudRecord):
@@ -92,6 +99,7 @@ class StartRun(CloudRecord):
     expected_generation: int = Field(ge=1)
     message: str = Field(min_length=1, max_length=262144)
     model_id: Label
+    thinking_level: ThinkingLevel='model_default'
 
 
 class RunnerRecovery(CloudRecord):

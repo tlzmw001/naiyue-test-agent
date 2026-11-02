@@ -125,24 +125,32 @@ async def delete_task(request:Request,binding_id:UUIDText,local_project_id:UUIDT
     return command_response(request,await manager.commands.submit(local,binding_id,'delete',value.model_dump(mode='json')),status_code=202)
 
 
-@router.get('/cloud-tasks/{binding_id}/{view}')
-async def observation(request:Request,binding_id:UUIDText,view:Literal['snapshot','usage'],
-        local_project_id:UUIDText,local_session_id:SessionId,thread_id:Identity|None=None,
-        after_model:Identity|None=None,limit:int=Query(default=50,ge=1,le=100)):
-    manager=access(request);_,local=await domain(request,local_project_id,local_session_id)
-    if view=='usage' and thread_id is not None or view=='snapshot' and after_model is not None:
-        raise CloudError('invalid_request',422)
-    params={'limit':limit}
-    if thread_id is not None:params['thread_id']=thread_id
-    if after_model is not None:params['after_model']=after_model
-    return await bounded_view(request,manager,local,binding_id,local_session_id,view,params)
-
-
 async def bounded_view(request,manager,local,binding_id,session_id,view,params):
     value=await manager.view(local,binding_id,session_id,view,params)
     from naiyue_test_agent.web.serialization import encoded_size
     if encoded_size(value)>request.app.state.web_settings.max_frame_bytes:raise CloudError('cloud_response_too_large',502)
     return value
+
+
+from .cloud_results import register as register_results
+register_results(router,access,domain,bounded_view,body,command_response)
+
+from .cloud_observation import register as register_observation
+register_observation(router,access,domain,bounded_view)
+
+
+
+@router.get('/cloud-tasks/{binding_id}/{view}')
+async def observation(request:Request,binding_id:UUIDText,view:Literal['snapshot','usage','models'],
+        local_project_id:UUIDText,local_session_id:SessionId,thread_id:Identity|None=None,
+        after_model:Identity|None=None,limit:int=Query(default=50,ge=1,le=100)):
+    manager=access(request);_,local=await domain(request,local_project_id,local_session_id)
+    if view in ('usage','models') and thread_id is not None or view in ('snapshot','models') and after_model is not None:
+        raise CloudError('invalid_request',422)
+    params={'limit':limit}
+    if thread_id is not None:params['thread_id']=thread_id
+    if after_model is not None:params['after_model']=after_model
+    return await bounded_view(request,manager,local,binding_id,local_session_id,view,params)
 
 
 @router.get('/cloud-tasks')

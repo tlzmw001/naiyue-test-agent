@@ -47,6 +47,8 @@ class CloudRuntime:
         self.control = RunnerControl(self)
         from .artifacts import CloudArtifacts
         self.artifacts=CloudArtifacts(self)
+        from .results import CloudResults
+        self.results=CloudResults(self)
         from .history import CloudArchive
         self.archive=CloudArchive(self)
         from .observations import CloudObservations

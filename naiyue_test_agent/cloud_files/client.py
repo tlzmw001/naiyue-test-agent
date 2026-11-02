@@ -66,6 +66,43 @@ class CloudClient:
             logger.warning('cloud_input_request_failed error_type=%s',type(error).__name__)
             raise CloudError('cloud_connection_failed',503) from None
 
+    async def observe(self,task_id,*,thread_id=None,last_event_id=None,max_frame_bytes=None):
+        from pydantic import TypeAdapter
+        from naiyue_test_agent.contracts.cloud_tasks import TaskId
+        TypeAdapter(TaskId).validate_python(task_id)
+        limit=self.settings.max_response_bytes if max_frame_bytes is None else max_frame_bytes
+        headers=dict(self.http.headers)
+        if last_event_id is not None:
+            if len(last_event_id)>16384:raise CloudError('invalid_observation_cursor',422)
+            headers['Last-Event-ID']=last_event_id
+        try:
+            async with httpx.AsyncClient(base_url=self.settings.endpoint,headers=headers,trust_env=False,
+                    follow_redirects=False,timeout=self.settings.timeout_seconds) as client:
+                async with client.stream('GET','/api/cloud/v1/tasks/'+task_id+'/stream',
+                        params={'thread_id':thread_id} if thread_id is not None else {}) as response:
+                    if response.is_error:
+                        body=bytearray()
+                        async for chunk in response.aiter_bytes(self.settings.io_bytes):
+                            body.extend(chunk)
+                            if len(body)>self.settings.max_response_bytes:raise CloudError('cloud_response_too_large',502)
+                        code=json.loads(body).get('error',{}).get('code','remote_error')
+                        if not isinstance(code,str) or not re.fullmatch('[a-z_]{1,128}',code):code='remote_error'
+                        raise CloudError(code,response.status_code)
+                    if response.status_code!=200 or response.headers.get('content-type','').split(';')[0]!='text/event-stream':
+                        raise CloudError('cloud_stream_invalid',502)
+                    buffer=b''
+                    async for chunk in response.aiter_bytes(self.settings.io_bytes):
+                        buffer=(buffer+chunk).replace(b'\r\n',b'\n')
+                        while b'\n\n' in buffer:
+                            frame,buffer=buffer.split(b'\n\n',1)
+                            if len(frame)>limit:raise CloudError('cloud_response_too_large',502)
+                            yield frame+b'\n\n'
+                        if len(buffer)>limit:raise CloudError('cloud_response_too_large',502)
+                    if buffer.strip():raise CloudError('cloud_stream_truncated',502)
+        except (httpx.HTTPError,ValueError) as error:
+            logger.warning('cloud_observation_request_failed error_type=%s',type(error).__name__)
+            raise CloudError('cloud_connection_failed',503) from None
+
     def upload(self,directory):
         directory=Path(directory).absolute();check_store_directory(directory)
         stack=ExitStack();primary=None

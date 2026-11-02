@@ -16,7 +16,8 @@ import composer from './Composer.module.css';
 
 export default function Composer({ text, pending, pendingMode, busy, stopping, sending, blocked,
   setText, setPending, send, stop, api, session, controlsDisabled, selectTools, selectMode, contextEntry,
-  openModel, compact, openContext, openAgents, sendScroll, workspaceEntry, draftControls, imageInputs, imageSupported = false, retryImageSubmission }: {
+  openModel, compact, openContext, openAgents, sendScroll, workspaceEntry, draftControls, imageInputs, imageSupported = false, retryImageSubmission, openCloud }: {
+  openCloud?: (trigger: HTMLButtonElement) => void;
   retryImageSubmission?: () => void;
   imageInputs?: ImageInputs; imageSupported?: boolean;
   draftControls?: DraftControls;
@@ -183,6 +184,7 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
         }} />
       <div className={styles.composerActions}>
         <ComposerControls sessionId={session?.session_id ?? null} options={options} mode={mode} tools={tools}
+          openCloud={openCloud}
           sendScroll={sendScroll}
           imageInputs={imageInputs} sending={sending}
           menu={menu} setMenu={setMenu} runCommand={runCommand} compactDisabled={compactDisabled}

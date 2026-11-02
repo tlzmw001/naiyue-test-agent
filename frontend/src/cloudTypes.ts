@@ -1,0 +1,41 @@
+import type { MessageRow, ToolState, AgentEventSource, ThinkingOptions } from './types';
+
+export interface CloudProfile { profile_id: string; template_ids: string[]; default_template: string; connection: string; tunnel: string }
+export interface CloudTask {
+  task_id: string; project_id: string; input_id: string; generation: number; revision: number; lifecycle: string;
+  runner_phase: string; environment_phase: string; sandbox_id: string | null; active_run_id: string | null;
+  last_run_id: string | null; last_error_code: string | null; last_quiescent_at: number | null;
+  environment_operation_id: string | null; control_operation_id: string | null; artifact_operation_id: string | null;
+  runner_model_ids: string[]; reclaim_blockers: string[];
+  runner_recovery?: { run_id: string; checkpoint_id?: string | null } | null;
+}
+export interface CloudBinding {
+  binding_id: string; local_session_id: string; profile_id: string; instance_id: string;
+  task_id: string | null; input_id: string; revision: number; preparation: string; retained: boolean;
+  create_command_id: string; cloud: CloudTask | null;
+}
+export interface CloudOperation {
+  command_id: string; binding_id: string; kind: string; phase: string; error_code?: string | null; run_id?: string | null;
+  steps: Record<string, { receipt?: { status: string; error_code?: string | null } }>;
+}
+export interface CloudDraft { draft_revision: number; text: string; model_id: string | null; thinking_level: string }
+export interface CloudModels { default_model_id: string | null; model_ids: string[]; thinking_options: Record<string, ThinkingOptions> }
+export interface CloudDetail { message_id: string; thread_id: string; revision: number }
+export type CloudMessage = Omit<MessageRow, 'detail'> & { detail?: CloudDetail; thread_id?: string; source?: AgentEventSource | null };
+export interface CloudArchive {
+  epoch: string; coverage_seq: number; messages: CloudMessage[]; next_cursor: string | null;
+  thread: { thread_id: string; role?: string } | null;
+}
+export interface CloudLive {
+  epoch: string; seq: number; replace: boolean; available: boolean; capture_incomplete: boolean;
+  messages: CloudMessage[]; tools: (Omit<ToolState, 'state'> & { state?: ToolState['state']; event_type?: string; source?: AgentEventSource | null; thread_id: string })[];
+  threads: { thread_id: string; source: AgentEventSource | null }[];
+}
+export interface CloudSnapshot { task: Pick<CloudTask, 'task_id' | 'generation' | 'revision' | 'lifecycle' | 'runner_phase' | 'active_run_id'>; archive: CloudArchive; live: CloudLive; cursor: string }
+export interface CloudThread { thread_id: string; role: string; source?: AgentEventSource | null; agent?: string | null }
+export interface DeletePreview {
+  instance_id: string; task_id: string; revision: number; generation: number; lifecycle: string;
+  scope: string[]; requires_stop: boolean; preview_digest: string;
+}
+export interface CloudDetailPage extends CloudDetail { field: string; text: string; offset: number; next_offset: number | null; body_sha256: string }
+export interface CloudUsage { recorded_calls: number; metrics?: Record<string, { known_sum: string | null; reported_calls: number; unknown_calls: number }>; capture: { capture_incomplete: boolean } }

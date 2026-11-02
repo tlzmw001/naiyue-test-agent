@@ -3,6 +3,7 @@ from typing import Literal,Annotated
 from pydantic import Field,ValidationError,model_validator,StringConstraints
 from .cloud_tasks import CloudRecord,CloudError,CloudTask,UUIDText,Label
 from .cloud_inputs import Selection,distinct_paths
+from .cloud_models import ThinkingLevel
 
 
 SessionId=Annotated[str,StringConstraints(pattern=r'^[a-zA-Z0-9_-]{1,128}$')]
@@ -49,6 +50,7 @@ class ManualMessage(CloudRecord):
     expected_binding_revision:int=Field(ge=1)
     text:str=Field(min_length=1,max_length=262144)
     model_id:Label
+    thinking_level:ThinkingLevel='model_default'
     draft_revision:int|None=Field(default=None,ge=0)
 
     @model_validator(mode='after')
@@ -91,6 +93,7 @@ class TaskDraft(CloudRecord):
     expected_draft_revision:int=Field(ge=0)
     text:str=Field(max_length=262144)
     model_id:Label|None=None
+    thinking_level:ThinkingLevel='model_default'
 
 
 class ManualDelete(CloudRecord):
@@ -107,6 +110,7 @@ def command_summary(op):
     value={k:op.get(k) for k in ('command_id','binding_id','local_session_id','kind','phase','request_digest',
         'run_id','error_code','created_at','updated_at')}
     value['model_id']=op['request'].get('model_id')
+    value['thinking_level']=op['request'].get('thinking_level','model_default')
     value['text_chars']=len(op['request'].get('text',''))
     value['steps']={}
     for name,step in op['steps'].items():
@@ -114,3 +118,12 @@ def command_summary(op):
         if 'receipt' in step:item['receipt']={k:step['receipt'].get(k) for k in ('status','http_status','error_code','updated_at')}
         value['steps'][name]=item
     return value
+
+
+class ManualResultAction(CloudRecord):
+    command_id:UUIDText
+    local_session_id:SessionId
+    expected_binding_revision:int=Field(ge=1)
+    result_id:UUIDText
+    expected_revision:int=Field(ge=1)
+    action:Literal['retry','abandon']

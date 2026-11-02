@@ -11,5 +11,10 @@ async def task_request(http,bootstrap,method,path,*,value=None,content=None,head
         async for chunk in response.aiter_bytes():
             if len(raw)+len(chunk)>bootstrap.max_frame_bytes:raise CloudError('task_response_too_large')
             raw.extend(chunk)
-        if response.status_code!=200:raise CloudError('task_request_unconfirmed',response.status_code)
-        return parse_object(raw,byte_limit=bootstrap.max_frame_bytes,depth_limit=bootstrap.json_depth_limit)
+        value=parse_object(raw,byte_limit=bootstrap.max_frame_bytes,depth_limit=bootstrap.json_depth_limit)
+        if response.status_code!=200:
+            import re
+            code=value.get('error',{}).get('code')
+            if not isinstance(code,str) or not re.fullmatch('[a-z_]{1,128}',code):code='task_request_unconfirmed'
+            raise CloudError(code,response.status_code)
+        return value

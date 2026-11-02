@@ -15,7 +15,7 @@ logger=logging.getLogger(__name__)
 class ArtifactDownload:
     def __init__(self,service,task_id):
         self.service=service;self.stream=None;self.record=None;self.identity=None
-        self.task_id=task_id
+        self.task_id=task_id;self.start=0;self.length=None;self.partial=False
         self.lock=asyncio.Lock();self.finished=asyncio.Event()
 
     def open(self,task_id,artifact_id):
@@ -25,14 +25,35 @@ class ArtifactDownload:
             self.stream=self.service.store.open(transfer)
             self.record=transfer.artifact;self.identity=transfer.blob_identity
 
+    def range(self,header,if_range):
+        import re
+        from starlette.exceptions import HTTPException
+        size=self.record.size;self.length=size
+        if header is None or if_range is not None and if_range!='"'+self.record.sha256+'"':return
+        match=re.fullmatch(r'bytes=([0-9]*)-([0-9]*)',header)
+        def invalid():raise HTTPException(416,detail='invalid_range',headers={'Content-Range':'bytes */'+str(size)})
+        if not match or not size:invalid()
+        left,right=match.groups()
+        if not left and not right or len(left)>20 or len(right)>20:invalid()
+        if left:
+            start=int(left);end=min(int(right),size-1) if right else size-1
+            if start>=size or end<start:invalid()
+        else:
+            suffix=int(right)
+            if suffix==0:invalid()
+            start=max(0,size-suffix);end=size-1
+        self.start=start;self.length=end-start+1;self.partial=True;self.stream.seek(start)
+
     async def chunks(self):
         size=0;sha=hashlib.sha256()
         while True:
             async with self.lock:
                 if self.finished.is_set():raise CloudError('task_not_available')
-                data=await cloud_work(self.service.runtime,lambda:self.stream.read(self.service.limits.io_bytes),drain_cancel=True)
+                remaining=(self.length if self.length is not None else self.record.size)-size
+                data=await cloud_work(self.service.runtime,lambda:self.stream.read(min(remaining,self.service.limits.io_bytes)) if remaining else b'',drain_cancel=True)
                 if not data:
-                    if ((size,sha.hexdigest())!=(self.record.size,self.record.sha256)
+                    if (size!=(self.length if self.length is not None else self.record.size)
+                            or not self.partial and sha.hexdigest()!=self.record.sha256
                             or file_identity(os.fstat(self.stream.fileno()))!=self.identity):raise CloudError('artifact_content_mismatch')
             if not data:break
             size+=len(data);sha.update(data)

@@ -11,12 +11,18 @@ from .http import task_request
 
 
 async def upload_artifact(client,value):
-    worker=client.kernel.artifacts;record=value.artifact;b=client.bootstrap
+    worker=client.kernel.artifacts
+    await upload_record(client,value.artifact,worker.blob(value.artifact.artifact_id))
+    return await run_blocking(worker.available,value)
+
+
+async def upload_record(client,record,blob):
+    b=client.bootstrap
     path='/internal/cloud/v1/tasks/'+b.task_id+'/artifacts/'+record.artifact_id
     transfer=ArtifactTransfer.model_validate(await task_request(client.http,client.bootstrap,'POST',path+'/prepare',value=record.model_dump()))
     if transfer.artifact!=record:raise CloudError('artifact_identity_conflict')
     if transfer.state not in ('uploaded','available'):
-        stream=await acquire_blocking(lambda:os.fdopen(open_store_readonly(worker.blob(record.artifact_id)),'rb'),
+        stream=await acquire_blocking(lambda:os.fdopen(open_store_readonly(blob),'rb'),
             lambda value:run_blocking(value.close))
         try:
             async def chunks():
@@ -32,7 +38,7 @@ async def upload_artifact(client,value):
         finally:await await_settled(run_blocking(stream.close))
     received=ArtifactRecord.model_validate(await task_request(client.http,client.bootstrap,'POST',path+'/commit',value={}))
     if received!=record:raise CloudError('artifact_identity_conflict')
-    return await run_blocking(worker.available,value)
+    return received
 
 
 async def publish_artifacts(client):

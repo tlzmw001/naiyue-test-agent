@@ -64,6 +64,7 @@ class ManualCloudTasks:
         self.flights={};self.closing=False
         self.admission=asyncio.Lock()
         self.operations={}
+        self.observers=set();self.downloads=set()
         self.slots=set()
         from .commands import ManualTaskCommands
         self.commands=ManualTaskCommands(self)
@@ -194,16 +195,43 @@ class ManualCloudTasks:
         if primary is not None:raise primary
 
     async def view(self,domain,binding_id,session_id,view,params):
-        if view not in ('history','snapshot','usage','history/threads'):raise CloudError('cloud_view_not_found',404)
+        if view not in ('history','snapshot','usage','models','history/threads','history/messages','results','result','result_changes','result_preview'):raise CloudError('cloud_view_not_found',404)
         with self.operation(),domain.owner.operation():
             binding=await run_blocking(domain.repo.binding,binding_id,session_id)
             if binding['task_id'] is None:raise CloudError('cloud_preparation_pending')
+            if view=='history/messages':
+                from urllib.parse import quote
+                from pydantic import TypeAdapter
+                from naiyue_test_agent.contracts.cloud_history import Identity
+                params=dict(params);message=TypeAdapter(Identity).validate_python(params.pop('message_id'))
+                view+='/'+quote(message,safe='')
+            if view.startswith('result') and view!='results':
+                from pydantic import TypeAdapter
+                from naiyue_test_agent.contracts.cloud_tasks import UUIDText
+                params=dict(params);rid=TypeAdapter(UUIDText).validate_python(params.pop('result_id'));tail=''
+                if view=='result_changes':tail='/changes'
+                if view=='result_preview':tail='/files/'+TypeAdapter(UUIDText).validate_python(params.pop('file_id'))+'/preview'
+                view='results/'+rid+tail
             async with self.connection(binding) as client:
                 return await run_blocking(client.request,'GET','/tasks/'+binding['task_id']+'/'+view,params=params)
 
     async def close(self):
         self.closing=True;primary=None
+        observers=tuple(job for job in self.observers if job is not asyncio.current_task())
+        for job in observers:job.cancel()
+        if observers:
+            results=await await_settled(asyncio.gather(*observers,return_exceptions=True))
+            for error in results:
+                if isinstance(error,BaseException) and not isinstance(error,asyncio.CancelledError):
+                    logger.warning('cloud_observer_shutdown_failed error_type=%s',type(error).__name__)
         try:
+            downloads=tuple(self.downloads)
+            if downloads:
+                results=await await_settled(asyncio.gather(*(lease.aclose() for lease in downloads),return_exceptions=True))
+                for error in results:
+                    if isinstance(error,BaseException):
+                        logger.error('cloud_download_shutdown_failed error_type=%s',type(error).__name__)
+                        if primary is None:primary=error
             if self.operations:await await_settled(asyncio.gather(*tuple(self.operations)))
             await self.drain()
         except BaseException as error:primary=error

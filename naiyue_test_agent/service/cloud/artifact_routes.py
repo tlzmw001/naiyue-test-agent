@@ -1,5 +1,7 @@
 """Explicit owner export/download and task-scoped raw-byte upload endpoints."""
 import asyncio
+import logging
+logger=logging.getLogger(__name__)
 from urllib.parse import quote
 from fastapi import Request
 from starlette.responses import JSONResponse,StreamingResponse
@@ -14,16 +16,24 @@ from .http import _body
 class ArtifactResponse(StreamingResponse):
     def __init__(self,lease):
         self.lease=lease;record=lease.record
-        super().__init__(lease.chunks(),media_type='application/octet-stream',headers={
-            'Content-Length':str(record.size),'ETag':'"'+record.sha256+'"','X-Content-Type-Options':'nosniff',
+        headers={}
+        if lease.partial:headers['Content-Range']=f'bytes {lease.start}-{lease.start+lease.length-1}/{record.size}'
+        super().__init__(lease.chunks(),status_code=206 if lease.partial else 200,media_type='application/octet-stream',headers=headers|{
+            'Accept-Ranges':'bytes','Content-Length':str(lease.length if lease.length is not None else record.size),'ETag':'"'+record.sha256+'"','X-Content-Type-Options':'nosniff',
             'Content-Disposition':"attachment; filename*=UTF-8''"+quote(record.relative_name.rsplit('/',1)[-1],safe=''),
             'Cache-Control':'private, no-store'})
 
     async def __call__(self,scope,receive,send):
+        primary=None
         try:
             async with asyncio.timeout(self.lease.service.limits.transfer_timeout_seconds):
                 await super().__call__(scope,receive,send)
-        finally:await await_settled(self.lease.aclose())
+        except BaseException as error:primary=error;raise
+        finally:
+            try:await await_settled(self.lease.aclose())
+            except BaseException as error:
+                logger.error('artifact_response_close_failed error_type=%s',type(error).__name__)
+                if primary is None:raise
 
 
 def register_artifact_routes(owner,task,runtime):
@@ -45,8 +55,7 @@ def register_artifact_routes(owner,task,runtime):
     @owner.get(owner_path+'/{artifact_id}/bytes')
     async def download(request:Request,task_id:str,artifact_id:str):
         owner_authorize(request,runtime)
-        if 'range' in request.headers:raise CloudError('range_not_supported',416)
-        return ArtifactResponse(await service.open_download(task_id,artifact_id))
+        return await download_response(request,service,task_id,artifact_id)
 
     async def authorize(request,task_id):
         raw=task_bearer(request,runtime)
@@ -70,3 +79,11 @@ def register_artifact_routes(owner,task,runtime):
         raw=await authorize(request,task_id)
         if await _body(request,runtime)!={}:raise CloudError('invalid_request',422)
         return await service.commit_owned(raw,task_id,artifact_id)
+
+
+async def download_response(request,service,task_id,artifact_id):
+    if any(len(request.headers.getlist(h))>1 for h in ('range','if-range')):raise CloudError('invalid_headers',400)
+    lease=await service.open_download(task_id,artifact_id)
+    try:lease.range(request.headers.get('range'),request.headers.get('if-range'));return ArtifactResponse(lease)
+    except BaseException:
+        await await_settled(lease.aclose());raise

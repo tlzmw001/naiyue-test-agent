@@ -74,6 +74,9 @@ def test_real_owner_message_stop_required_save_release_and_restart_original_work
                             events=[dict(seq=2,source_generation=b.generation,run_id=run['run_id'],kind='history_record',payload=dict(record='control_finished',**end))]))
                         await runtime.control.receive(control,RunnerFrame.validate_python(dict(kind='control_finished',terminal_seq=2,**end,**control.fence)))
                         assert (await manager.commands.reconcile(domain,stop['command_id'],sid))['phase']=='succeeded'
+                        pending=runtime.registry.get_task(tid).pending_result_id
+                        assert pending and runtime.results.get(tid,pending).phase=='pending'
+                        runtime.results.action(tid,pending,'abandon',dict(command_id=uid(),expected_revision=runtime.results.get(tid,pending).revision))
                         root=runtime.settings.data_dir/'tasks'/tid/'workspace/project';(root/'test.py').write_text('retained changes')
                         binding=await manager.read(domain,bid,sid)
                         release=await manager.commands.submit(domain,bid,'release',request(binding,action='release',acknowledge_unknown=False,expected_generation=None))

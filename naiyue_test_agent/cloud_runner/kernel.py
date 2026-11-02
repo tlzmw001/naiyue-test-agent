@@ -97,10 +97,16 @@ class RunnerKernel:
             return result
         if hasattr(self,'actions') and self.actions.busy:raise CloudError('runner_busy')
         if self.catalog is None:raise CloudError('model_unavailable')
+        if hasattr(self,'results') and self.results.freezing:raise CloudError('runner_busy')
         self.catalog.get(command.model_id)
+        if command.thinking_level!='model_default':
+            try:self.catalog.with_thinking(command.model_id,command.thinking_level)
+            except ValueError:raise CloudError('unsupported_thinking_level',422) from None
         if self.phase!='ready':raise CloudError('runner_busy')
         self.phase='blocked'
-        try:result,fresh=await run_blocking(self.journal.admit,command)
+        try:
+            if hasattr(self,'results'):await run_blocking(self.results.admit,command)
+            result,fresh=await run_blocking(self.journal.admit,command)
         except BaseException:
             self.phase='ready';raise
         if not fresh:
@@ -114,6 +120,7 @@ class RunnerKernel:
         return result
 
     def session_quiet(self):
+        if hasattr(self,'results') and self.results.freezing:return False
         if self.active_task is not None and not self.active_task.done():return False
         if hasattr(self,'actions') and self.actions.busy:return False
         return self._session_quiet()
@@ -131,6 +138,7 @@ class RunnerKernel:
         primary=None
         try:
             await run_blocking(self.sessions.require(self.bootstrap.task_id).select_model,command.model_id)
+            await run_blocking(self.sessions.require(self.bootstrap.task_id).select_thinking,command.model_id,command.thinking_level)
             await self.sessions.arun(self.agent,self.bootstrap.task_id,[('user',command.message)],run_id=command.run_id)
         except BaseException as error:
             primary=error
@@ -154,6 +162,8 @@ class RunnerKernel:
     async def assemble(self):
         b=self.bootstrap;registry=ToolRegistry()
         for spec in runner_tools(self.root,b.tool_environment,b.subagents):registry.register(spec)
+        from .result_tool import create_result_directory_tool
+        registry.register(create_result_directory_tool(b.result_limits))
         validate_permission_rules(self.permissions,registry.select(registry.names()))
         await run_blocking(self.store.sessions.bind_workspace,b.project_id,self.root)
         sessions=SessionService(self.catalog,registry,permission_settings=self.permissions,data_dir=self.owned.store.path.parent,
@@ -165,6 +175,8 @@ class RunnerKernel:
                 'Work within the assigned task workspace. Authorized task tools run without approval. '
                 'For extra Python dependencies explicitly create project .venv and install Kit/pytest there. '
                 'Shell and AITest use that environment; never modify the fixed Runner environment. '
+                'Use task_output_directory to find this run\'s reports/logs/handoff directory. '
+                'Put deliverables there, creating the directory with task tools if needed; keep code outside it. '
                 'Network is enforced by deployment. Root can manage background commands using task tools.'),response_format=None)
         self.sessions,self.persistence,self.agent=sessions,persistence,agent
 
@@ -224,6 +236,8 @@ async def open_runner(bootstrap,root,state,*,catalog=None,permissions=None):
             runner.actions=RunnerActions(runner)
             from .artifacts import RunnerArtifacts
             runner.artifacts=await run_blocking(RunnerArtifacts,runner,root,state)
+            from .results import RunnerResults
+            runner.results=await run_blocking(RunnerResults,runner,root,state)
             if any(v.status in ('capturing','captured','unknown') for v in await run_blocking(runner.artifacts.journal.list)):
                 runner.phase='blocked'
             try:yield runner

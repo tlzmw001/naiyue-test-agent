@@ -11,7 +11,7 @@ import { Chevron, Icon } from './components/Icons';
 import styles from './components/ProjectNavigation.module.css';
 
 /** Each visited scope retains its own fixed API and conversation controller. */
-export default function ProjectWorkspace({ api }: { api: WebApi }) {
+export default function ProjectWorkspace({ api, cloudCandidate = false }: { api: WebApi; cloudCandidate?: boolean }) {
   const theme = useTheme(), sendScroll = useSendScroll();
   const [selection, setSelection] = useState<ScopeSelection>({ scopeId: api.scopeId, revision: 0 });
   const [visited, setVisited] = useState([api.scopeId]);
@@ -49,7 +49,7 @@ export default function ProjectWorkspace({ api }: { api: WebApi }) {
     const scopeName = scopeId === 'chats' ? '普通对话' : project?.name ?? '项目';
     const active = selection.scopeId === scopeId;
     return <div key={scopeId} hidden={!active}>
-      <App api={client} active={active} selection={active ? selection : undefined} preferences={{ theme, sendScroll }}
+      <App api={client} cloudCandidate={cloudCandidate} active={active} selection={active ? selection : undefined} preferences={{ theme, sendScroll }}
         scopeName={scopeName}
         projectEntry={active ? path => <div className={styles.scope} role="status" aria-label="当前项目">
           <button type="button" className={styles.projectTrigger} title={path ? `${scopeName}\n${path}` : scopeName} aria-label={`项目与位置，当前：${scopeName}`}

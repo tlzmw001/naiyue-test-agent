@@ -63,7 +63,7 @@ class CommandRemote:
         if body['command_id'] in self.remote.commands:return self.remote.commands[body['command_id']]
         if path.endswith('/runs'):
             assert task['active_run_id'] is None
-            run=uuid4().hex;command=dict(command_id=body['command_id'],run_id=run,message=body['message'],model_id=body['model_id'])
+            run=uuid4().hex;command=dict(command_id=body['command_id'],run_id=run,message=body['message'],model_id=body['model_id'],thinking_level=body.get('thinking_level','model_default'))
             task.update(active_run_id=run,last_run_id=run,revision=task['revision']+1,reclaim_blockers=['active_run','required_history'])
             operation='run:start';status='running'
         else:

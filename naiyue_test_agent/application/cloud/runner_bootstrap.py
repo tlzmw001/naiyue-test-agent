@@ -51,7 +51,8 @@ class TaskBootstrap:
                     token=issued.token,expires_at=issued.expires_at,max_frame_bytes=r.settings.max_frame_bytes,
                     batch_events=r.settings.history_batch_events,json_depth_limit=r.settings.json_depth_limit,
                     permissions=r.settings.runner_permissions,tool_environment=r.settings.tool_environment,subagents=r.settings.subagents,
-                    artifact_limits=r.settings.artifact_limits,models=r.models.profile,history_limits=r.settings.history_limits,
+                    artifact_limits=r.settings.artifact_limits,result_limits=r.settings.result_limits,input_limits=r.settings.input_limits,
+                    models=r.models.profile,history_limits=r.settings.history_limits,
                     observation_limits=r.settings.observation_limits)
             updated=CloudTask.model_validate(task.model_dump()|dict(runner_boot_id=boot,state_epoch=epoch,
                 runner_connection_id=None,runner_phase='booting',runner_model_ids=[],runner_capabilities=[],revision=task.revision+1,

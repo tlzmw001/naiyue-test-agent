@@ -31,9 +31,13 @@ class ModelGrant:
 class CloudModels:
     def __init__(self,runtime):
         self.runtime=runtime;self.config=runtime.settings.model_proxy
-        self.profile=None;self.routes={};self.relay=None
+        self.profile=None;self.routes={};self.relay=None;self.thinking={};self.default_model_id=None
         if self.config is None:return
         parsed=read_model_configuration(self.config.config_path)
+        self.default_model_id=parsed.default_model_id
+        self.thinking={key:dict(default_level=selection.selected,
+            supported_levels=list(parsed.thinking_capabilities.get(key,{}).get('levels',())))
+            for key,selection in parsed.thinking_selections.items()}
         expected={v['provider_id'] for v in parsed.public_configuration['models'].values()
             if parsed.public_configuration['providers'][v['provider_id']]['kind'] in ('openai','anthropic')}
         if set(self.config.upstreams)!=expected:raise ValueError('model_upstream_configuration')
@@ -54,6 +58,23 @@ class CloudModels:
 
     @property
     def configured(self):return self.profile is not None
+
+    def options(self,task_id):
+        with self.runtime.gates.hold(task_id):
+            task=self.runtime.registry.get_task(task_id)
+            if task.lifecycle in ('deleting','deleted'):raise CloudError('task_not_available',409)
+            if task.model_profile_id is not None and self.profile is None:raise CloudError('model_unavailable',409)
+            if self.profile and task.model_profile_id!=self.profile.profile_id:raise CloudError('model_profile_changed',409)
+            ids=[key for key in task.runner_model_ids if not self.profile or key in self.thinking]
+            return dict(default_model_id=self.default_model_id if self.default_model_id in ids else next(iter(ids),None),
+                model_ids=ids,thinking_options={key:self.thinking.get(key,dict(default_level='model_default',supported_levels=[])) for key in ids})
+
+    def validate_thinking(self,task,model_id,level):
+        if task.model_profile_id is not None and self.profile is None:raise CloudError('model_unavailable',409)
+        if self.profile and task.model_profile_id!=self.profile.profile_id:raise CloudError('model_profile_changed',409)
+        if self.profile and model_id not in self.thinking:raise CloudError('model_unavailable',409)
+        if level=='model_default':return
+        if level not in self.thinking.get(model_id,{}).get('supported_levels',()):raise CloudError('unsupported_thinking_level',422)
 
     def admit(self,raw,task_id,model_key):
         r=self.runtime

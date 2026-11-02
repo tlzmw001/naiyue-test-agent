@@ -51,6 +51,8 @@ def test_formal_catalog_runs_tools_twice_with_history_and_renewal_without_rebuil
                                 assert response.status_code==202,response.text
                                 await until(lambda:r.registry.get_command(cid).status in ('succeeded','failed'))
                                 assert r.registry.get_command(cid).status=='succeeded'
+                                await until(lambda:r.registry.get_task(b.task_id).pending_result_id is None)
+                                assert r.results.list(b.task_id)[0]['phase']=='available'
                                 return cid
                             first=await run('write and verify')
                             assert (root/'result.txt').read_text()==(root/'verified.txt').read_text()=='fixture result'
@@ -111,6 +113,7 @@ def test_owner_stop_cancels_native_model_stream_and_upstream_then_next_input_run
                             assert r.registry.get_command(control_id).status=='succeeded'
                             await asyncio.wait_for(closed.wait(),5)
                             assert kernel.journal.lookup(run_id)['status']=='stopped' and not r.models.relay.leases
+                            await until(lambda:r.registry.get_task(b.task_id).pending_result_id is None)
                             row=r.registry.get_task(b.task_id);next_id=str(uuid4())
                             response=await client.post('/api/cloud/v1/tasks/'+b.task_id+'/runs',json=dict(command_id=next_id,
                                 expected_revision=row.revision,expected_generation=row.generation,message='continue',model_id='chat'))

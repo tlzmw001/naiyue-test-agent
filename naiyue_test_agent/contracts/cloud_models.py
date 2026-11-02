@@ -2,10 +2,13 @@
 import ipaddress
 from pathlib import Path
 from urllib.parse import urlsplit
+from typing import Literal
 
 from pydantic import BaseModel,ConfigDict,Field,TypeAdapter,field_validator
 
 from .cloud_tasks import CloudRecord,ContentId,Label
+
+ThinkingLevel=Literal['model_default','off','minimal','low','medium','high','xhigh','max']
 
 
 class ModelProxySettings(BaseModel):

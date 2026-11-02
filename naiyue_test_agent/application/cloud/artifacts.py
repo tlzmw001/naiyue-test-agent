@@ -93,7 +93,9 @@ class CloudArtifacts:
 
     def _authorize(self,raw,task_id,artifact_id,record):
         r=self.runtime;task=r.credentials.authorize(raw,task_id,'artifacts:write')
+        if record.artifact_id!=artifact_id:raise CloudError('artifact_identity_conflict')
         receipt=r.registry.get_command(record.command_id)
+        if receipt.operation=='result:capture':return r.results.authorize_artifact(task,record,receipt)
         if (record.task_id!=task_id or record.project_id!=task.project_id or record.input_id!=task.input_id
                 or record.artifact_id!=artifact_id or record.generation!=receipt.expected_generation
                 or record.generation>task.generation or receipt.operation!='artifact:capture' or receipt.resource_id!=task_id

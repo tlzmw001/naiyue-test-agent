@@ -80,6 +80,8 @@ def test_stop_control_disconnect_and_lost_ack_finish_once_then_next_run(tmp_path
                                 else:
                                     await asyncio.wait_for(failed.wait(),5)
                                     await asyncio.wait_for(recovery_visible.wait(),5)
+                                    from test_model_runner import until
+                                    await until(lambda:runtime.registry.get_task(b.task_id).pending_result_id is None)
                                 taskrow=runtime.registry.get_task(b.task_id);control_id=str(uuid4())
                                 value=dict(command_id=control_id,expected_revision=taskrow.revision,expected_generation=taskrow.generation,
                                     kind=operation,run_id=taskrow.active_run_id if operation=='stop' else taskrow.last_run_id)
@@ -97,7 +99,11 @@ def test_stop_control_disconnect_and_lost_ack_finish_once_then_next_run(tmp_path
                                 if operation=='recover':
                                     assert (root/'effect.txt').read_text()=='once'
                                     model.replies.append(AIMessage(content='new input only'))
-                                release.set();taskrow=runtime.registry.get_task(b.task_id);second_id=str(uuid4())
+                                release.set()
+                                from test_model_runner import until
+                                await until(lambda:runtime.registry.get_task(b.task_id).pending_result_id is None)
+                                assert runtime.results.list(b.task_id)[0]['phase']=='available'
+                                taskrow=runtime.registry.get_task(b.task_id);second_id=str(uuid4())
                                 response=await client.post('/api/cloud/v1/tasks/'+b.task_id+'/runs',json=dict(command_id=second_id,
                                     expected_revision=taskrow.revision,expected_generation=taskrow.generation,message='new',model_id='A'))
                                 assert response.status_code==202
