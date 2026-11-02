@@ -2,6 +2,7 @@
 
 from naiyue_test_agent.contracts.run_context import RuntimeContext
 import json
+import os
 import re
 
 from langchain.tools import ToolRuntime
@@ -43,7 +44,8 @@ class _AITestInput(BaseModel):
         return values
 
 
-def create_aitest_kit_tool(*, settings=None, process_settings=None, progress_settings=None):
+def create_aitest_kit_tool(*, settings=None, process_settings=None, progress_settings=None,
+                           project_environment=None):
     settings = settings or AITestSettings()
     public, execution = build_tool_schemas('AITestInput', _AITestInput,
         args=(list[str], Field(min_length=1, max_length=settings.max_args)))
@@ -53,7 +55,13 @@ def create_aitest_kit_tool(*, settings=None, process_settings=None, progress_set
         port = require_process_system(runtime.context)
         if sum(len(value) for value in args) > settings.max_argument_chars:
             raise ToolException('aitest_kit arguments exceed the configured character budget.')
-        return await port.argv(args, timeout, runtime, settings=settings,
+        selected=settings
+        if project_environment is not None and (project_environment.exists() or project_environment.is_symlink()):
+            python=project_environment/'bin/python'
+            if not python.is_file() or not os.access(python,os.X_OK):
+                raise ToolException('project_python_unavailable: repair the project .venv before running AITest.')
+            selected=settings.model_copy(update={'executable':str(python)})
+        return await port.argv(args, timeout, runtime, settings=selected,
             process_settings=process_settings, progress_settings=progress_settings)
 
     item = StructuredTool.from_function(coroutine=execute, name='aitest_kit', args_schema=execution,

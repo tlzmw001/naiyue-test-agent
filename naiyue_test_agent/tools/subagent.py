@@ -41,6 +41,27 @@ class SubAgentSpec:
             raise ValueError('Subagent max_model_calls must be a positive integer')
 
 
+def parse_subagent_specs(value):
+    if not isinstance(value, (list, tuple)):
+        raise ValueError('Subagent settings require a list of definitions')
+    specs = []
+    for item in value:
+        if isinstance(item, dict):
+            fields = dict(item)
+            if isinstance(fields.get('tool_names'), list):
+                fields['tool_names'] = tuple(fields['tool_names'])
+            try:
+                item = SubAgentSpec(**fields)
+            except TypeError as error:
+                raise ValueError('Invalid subagent definition fields') from error
+        if not isinstance(item, SubAgentSpec):
+            raise ValueError('Subagent settings require definitions')
+        specs.append(item)
+    if len({spec.name for spec in specs}) != len(specs):
+        raise ValueError('Duplicate subagent names in settings')
+    return tuple(specs)
+
+
 class SubAgentInput(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     agent: str = Field(min_length=1)

@@ -222,6 +222,8 @@ class ProjectService:
             if retry is not None:
                 return retry
             project = self._active(project_id)
+            from naiyue_test_agent.storage.project_databases import check_cloud_project_deletion
+            check_cloud_project_deletion(project)
             operation = self.registry.reserve(operation_id, 'remove', request, project,
                 lifecycle='deleting', facts={'database_path': str(project.database_path)})
             return resume(self.registry, operation, busy_timeout_ms=self.storage_settings.busy_timeout_ms)

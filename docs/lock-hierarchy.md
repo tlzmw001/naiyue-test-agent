@@ -1,5 +1,62 @@
 # 锁层级与获取约定
 
+## Spec143 S06.2a 本机手动委派
+
+| 锁／预留 | 保护对象和消费者 | 顺序与关闭 |
+| --- | --- | --- |
+| LC0 `ManualCloudTasks.admission` | 同一本机服务的短准入；`submit` 的独立 admit producer | LC0 → 本机会话 `SessionPersistence.history_lock` → 项目 DB。锁内只读私有配置和登记本机记录，不做 SSH/HTTP/上传；输入捕获在此锁外。父删除持 history_lock → DB，禁止 DB/父锁反向进入 LC0。 |
+| LC1 `operations/flights/slots`（事件循环预留） | submit/read/view/retry/cancel 的在途 Future、已托管准备和准入额度 | 同 loop 变更集合无 await；slot 在 DB reserve 前占用，准入与 retry 共用容量。请求等待取消须排空独立 admit，不能取消已经持久接管的准备。封口 → 等已受理操作 → 排空 flights → 关 HTTP/SSH，之后才由 Application 关闭 Host/DB。 |
+| LC2 `ProfileConnections.opening/connections/borrowed/retired`（同 loop） | 每 profile single-flight 建连、自有 SSH 和 HTTP client 借用 | 建连/握手在 worker，不持 LC0/会话锁/DB。返回客户端前登记借用；确认自有 SSH 已退出可退休并重开，旧 client 等最后借用归还才关闭。不触碰 external SSH；主服务关闭先排空 LC1。 |
+| DB 云端关联准入／删除保护 | `LocalTaskRepo.reserve`、`RunUnitOfWork.delete`、项目 `deletion_guard`、离线 restore | 父存在检查和关联插入同一写事务；最终会话删除在其写事务重查。取消须等 producer 收束且确定未派发 task 才解除保护；未知或已受理始终保留。项目在登记 deleting 前预查，最终 registry removal 下仍持项目文件锁复查。离线 restore 持原实例文件锁，保留关联时拒绝整库回退。 |
+
+本片无跨 SQLite/网络长事务，不把本机进程退出解释为远端任务停止；来源冻结前后核对既有 execution authority，缓存字节复用既有 OS 文件锁。
+
+### S06.2b 命令和草稿扩展
+
+| 预留／锁 | 保护对象与顺序 | 释放边界 |
+| --- | --- | --- |
+| LC0 新消费者 `ManualTaskCommands.submit` | 独立 admit producer 在既有 admission 下分配 command slot、同库固定请求身份；仅本机 DB，不做网络。DB 事务结束后 `_launch`，HTTP waiter 取消不取消已登记派发 | LC0 → DB；不反向获取，不持锁等模型/SSH。主会话删除仍由 retained binding 阻止，无伪造本机 run。 |
+| LC3 `commands.slots/flights`（同 loop） | message/start/release 与 stop/recover 分开计数；后者有独立控制名额，普通派发拥塞不耗尽停止能力。键为 project+command，原ID复用；同 binding 未决派发由台账检查，不靠网络长锁 | 持久登记/冻结/派发标志均先于IO；callback 移除 flight。受理回执到达即结束本机派发，不等待整个远端模型。 |
+| DB 命令／草稿 CAS | 原用户摘要、完整 owner 请求和receipt；草稿独立 revision。强制释放同时固定所见 cloud revision/generation/active_run，不能用fresh状态重基确认 | 每次短事务；必要历史终局来自owner回执。旧ACK仅清除匹配草稿版本，读取不重复推进未变化的binding revision。 |
+
+LC1 关闭仍先封口/排空在途读和admit，再排空全部创建/命令 flights；任一producer失败须等待其余producer完成后传播主异常，最后关闭连接/Host/DB。操作列表按ID逐条读且只输出摘要，终局台账不再访问远端；GET/重连不调POST或重放模型。
+
+## Spec143 S01/S02/S03/S04/S07.1 控制、输入、Runner与产物
+
+新增B仅使用显式新根，普通本机/A仍沿下方原表。B真实入口为`create_cloud_apps`，SQLite工作在`anyio.to_thread`线程中。
+
+| 编号／锁 | 保护对象与入口 | 获取顺序与边界 |
+| --- | --- | --- |
+| CO0 `CloudOwner.fd` | `ownership.py`的私有根OS文件锁，运行期独占同一B根，FD不可继承 | 非阻塞取得，第二实例拒绝；资源打开前取得、排空/关闭全部DB后释放。不依赖文件存在判断在线，不与A服务发现锁共用 |
+| CT0 `CloudRuntime._requests` | `runtime.py:operation/close`的Condition，封口与在途本地工作线程计数 | 仅短临界区更新计数；wait_for排空时释放锁。先释放CT0再进入CT1/DB，不跨IO持有，不在CT1/DB中反向获取。关闭由外部owner线程执行，不在已登记请求内调用 |
+| CG1 `TaskGates._guard` | `task_gates.py:hold`的Lock，注册任务gate的引用计数/移除 | registry存在性查询先结束DB事务，再取得CG1；先释放CG1再等CT1，先释放CT1再回CG1减引用。不允许CG1→CT1/DB嵌套 |
+| CT1 每task gate | `TaskGates.hold`；`TaskCredentials.issue/revoke`、runtime的`identity/append_events/history_page/replace_task` | 允许CT1→DB(cloud registry)或DB(本task history)，两库事务逐段且不同时持有；不反向DB→CT1。不跨网络/模型await，代际CAS不冒充后端物理停止确认 |
+| CT1 S02 生命周期使用方 | `CloudLifecycle._reserve/_update/finish` | 准入/阶段/终结在worker取得CT1→registry DB；`TaskDirectories.prepare`目录IO在CT1外、CO0独占期的worker中执行，持久操作预留阻止同task第二操作。不持CT1跨SDK await；活动额度检查与任务/回执写入同一DB事务，不用进程内计数替代 |
+| CR1 S06.3a资源计量缓存 | `CloudResources._lock`，`disk/ensure/capacity`保护逻辑用量缓存及一次扫描发布 | worker可独立取得，或环境/产物准入CT1→CR1；CR1内只有FD锚定的有界元数据扫描，不取得CT1/DB，不跨网络。capacity先结束registry短事务才取CR1；空闲磁盘statvfs在CR1释放后读取。首次/过期扫描按检查点核对预算，不能强制中断内核文件系统阻塞，可暂时阻塞同task准入；CR1无反向调用。server资源维护先按原CP1排空已派发命令，stopping逐task阻止后续派发，再退出维护，SDK/DB仍由原owner关闭 |
+| TI1 S06.3b任务IO计数 | `TaskIO.condition/active`，同步hold与异步use；环境_execute、产物prepare/upload/commit/capture、download.open | entry在worker先CT1→registry读准入，结束DB事务，再CT1→TI1加计数；两锁均释放后才实际IO/SDK await。finally仅TI1减计数/唤醒，不反取CT1/DB。异步entry通过CW0并drain取消，防worker已加计数但调用方丢失；drain在CT1/DB外取得TI1，wait_for释放Condition等待，超时保留deleting。普通历史/get短读只用CT1，无额外跨IO锁 |
+| CT1/CP6 S06.3b删除状态与producer | `CloudDeletions.reserve/stage`、`CommandProducers`与DeletionRepository | owner loop持producer身份，worker CT1→registry短事务固定预览/命令并封deleting；不持CT1/DB跨网络或TI1等待。先按task关闭下载CD1/模型流，再TI1排空旧环境/产物IO，证明物理停止后，CT1关/摘history缓存；固定FD递归清理在全部锁外。最后CT1→registry同事务墓碑/回执/索引/旧正文脱敏。backend关闭先封口并排空delete producer，再关原control/models/artifacts/lifecycle和SDK；本机核销与父删除共用原ProjectStore事务，成功回执后不再fresh读已可删除的父数据 |
+| CP1 S02 producer预留（非线程锁） | `CloudLifecycle.producers`（`CommandProducers.flights/closing`），只在同一owner事件循环调用 | `CommandProducers.submit`至注册task无await，原command ID合并等待；HTTP取消不取消producer。对账producer开始时重读持久回执。关闭封口→shield排空全部producer→清空runtime.lifecycle→关闭SDK transport→CT0排空/DB/CO0；预留期间可await网络，不能作为同步锁在worker访问 |
+| CF2 模板准备OS锁 | `prepare_template`的输出父目录`.template-prepare.lock` | 独立受信CLI持有；非阻塞取得、构建/完整预检/私有回执落盘后释放。与Coordinator/CT0/CT1/DB无调用嵌套；不继承到Docker子进程，不持有任何任务资源 |
+| CP2 输入操作预留（非线程锁） | `CloudInputs.busy/jobs/uploads/closing`，同一owner loop；`perform`及raw `receive` | commit/cancel producer持transfer键，再持input键；HTTP只shield等待，取消不释放实际producer的预留。不同transfer同I提交/取消互斥，不等锁而返回busy。raw流取消须排空正在执行的本地write/fsync/close后释放transfer键，不持SQLite事务跨await。shutdown先独立排空inputs，再排空lifecycle，任一失败仍关闭后续资源 |
+| CP2 S03.2 扩展 | 同一transfer的段PUT/status恢复/TTL取消，以及input键的commit对账 | 热路径先核身份；IO fsync/close后才CAS写段/offset/文件身份。状态GET如需恢复也由原perform producer持transfer→input预留，取消等待者不释放producer；活动PUT只读已确认offset。维护只在owner loop读busy并在worker重核updated_at/状态后原cancel；不在worker修改busy。Server维护协程收到stopping后结束，监听/维护排空后才关闭inputs/DB |
+| CF4 本地输入cache OS锁 | cloud_files.cache的私有cache.lock格式/容量及inputs/I发布 | 非阻塞，持有到本次捕获/必要回执/真实额度核对/rename发布完成；同cache串行，不跨SQLite/Coordinator锁，不继承给进程。来源选择在拿cache锁前完成，capture仅做本地事实复核。Windows锁字节初始化与签名分开处理，空/半签名只在受限私有初始化根恢复 |
+| CW0 本地IO工作（非线程锁） | `application/cloud/work.py:cloud_work` | worker登记CT0计数后释放CT0，才访问文件/DB。普通元数据请求保留S01取消立即返回语义；CP2生产者独立持预留，raw IO用drain_cancel等待真实worker结束，包括重复取消。失败可观察，必要状态不由HTTP等待者生死决定 |
+| CF3 输入捕获上传OS锁 | `InputClient.upload`的私有capture/upload.lock | 独立客户端非阻塞取得，持有到本次网络交互结束；锁FD不继承。instance绑定的上传command_id先fsync日志/父目录再发POST，ACK丢失后原ID重试。与远端CO0/CT1/DB无嵌套，不锁用户源目录 |
+| CF1 B数据库OS锁 | `Database.open_cloud → initialize_cloud`，每库`.lock` | 在CO0所有权内打开；history可在对应CT1内首次打开，非阻塞文件锁固定已验证管理目录。Database关闭后释放，无任务路径/其他库互相获取 |
+| DB(cloud registry/history) | 复用`Database.lock/transaction/close`，各库独立RLock | 叶锁，不同时持有两库事务，不调用应用回调；历史读按条数/字节预算短事务，响应/SSE不占事务。S06.1a在CT1内先分笔读取registry命令来源，再单history事务提交台账/分段/版本投影/ACK；投影仅做纯数据校验，不反调registry或Runner。分页/目录/详情带SQL进度与读截止检查，返回分离数据后才签cursor/构造HTTP响应；不持DB锁等待客户端或下一页 |
+| CP3 Runner连接/运行/控制producer预留（非线程锁） | `RunnerControl.attaching`、`RunnerRuns.producers`、`RunnerActionCommands.producers`，只在Coordinator owner loop写 | 同task attach在首次DB await前独占登记真实producer；调用方取消只取消shield等待，不释放仍在bind/发布的producer。运行/控制reserve、finish、activity在worker持CT1→registry或history DB短事务；控制回执与关联旧run回执在同一registry事务结算。关闭先封口，排空attach/run/control producer后关闭连接；不得用worker访问loop字典决定准入，命令显式传当前connection ID及凭证再核验 |
+| CS1 每连接异步发送门 | Coordinator `Connection.lock`、Runner `RunnerClient.send_lock`为不同进程/实例 | 仅串行本连接发送。Coordinator取得发送门后才worker重核凭证/fence和最终帧预算，再await发送；不持CT1/DB跨网络。连接替换及过期后的排队帧不能靠排队前校验放行 |
+| CP4 产物占用与producer（非线程锁） | `CloudArtifacts.producers/busy/uploads/downloads/closing`仅在owner loop写；reserve/unconfirmed/finish在worker取得CT1 | Capture在任务DB中持久artifact_operation_id，阻止run/环境准入；commit按task/artifact预留，HTTP只shield等待。PUT只在接收前鉴权取得固定长度/hash/超时租约，结束重核generation/原操作；新commit仍用当前token。关闭control先封口并排空capture/commit producer，再断WS；artifacts关闭排空PUT和有超时的响应lease后才CT0/关库。worker不读写loop预留集合 |
+| CD1 下载lease异步门 | `ArtifactDownload.lock`，单响应FD读与关闭 | 取得CD1后调用CW0并排空实际read/close；不从CT1/DB反取CD1。文件hash/身份在流末核对，响应超时/取消先drain正在读的worker再关同一FD；登记lease至finished期间阻止runtime提前关库 |
+| RP2 Runner产物占用（非线程锁） | `RunnerArtifacts.active_task`与Kernel.phase、私有capture journal | 根run和capture在持久admit的首次await前预留phase=blocked；同loop互斥，局部SQL事务短持DB。固定spool fsync/rename→journal captured→上传commit ACK→journal available/恢复phase→fenced finished；任何必要保存/未知边界保持占用，不重扫源文件；关闭排空本地capture再关闭Session/DB |
+| RS1 Runner私有DB/状态 | 复用`open_storage`的OS文件锁、ProjectStore DB RLock及独立saver连接；固定一个task | `RunUnitOfWork.finish_run`同一DB事务内先按旧归档判定历史差分并写journal，再写chat/状态，任一失败全部回滚；journal不反调应用锁。checkpoint仍为另一连接，不声称与该事务原子。Coordinator不获取此DB锁或打开此库 |
+| RP1 Runner根运行占用 | `RunnerKernel.phase/active_task`＋RunnerJournal持久command；仅Runner loop发起 | 在工具副作用前先持久命令。断线不取消active_task；关闭请求现有SessionService停止并等待必要保存/后台资源收束。静止检查使用既有background deletion_guard预留（其线程锁在yield前释放）再读会话状态，不持DB/线程锁await |
+| RP3 Runner停止/恢复占用（非线程锁） | `RunnerActions.task/command_id/closing`与Kernel.phase；固定一个task，只有Runner loop注册 | 持久准入首次await前先预留phase；WS接收取消须等真实准入及producer注册排空，原ID合并，不取消独立控制任务。根run/产物捕获/控制互斥；控制中仅stop可等待已登记根运行，根不反向等待控制。stop沿A2/S3/C1请求，释放线程锁后等待根子驱动及B1后台worker；recover封口旧SessionService后才重装配并进入S1/S2/DB/saver，DB与saver不叠持。关闭先排空控制，再产物/后台/DB；静止报告受last_run_id与持久操作/unknown阻塞保护 |
+| CP5 S05模型请求租约（非线程锁） | `ModelRelay.leases/closing/client`只在Coordinator owner loop操作；`CloudModels.admit/check`在worker持CT1 | admit在CT1→registry短事务核对任务凭证/用途/代际/profile/模型后产生不可变ModelGrant；释放CT1，再在loop无await预留并发额度，才读有界body。出站前worker再核grant的task/gen/profile/可执行状态，不重验已轮换token；新请求仍完整鉴权。不得从worker访问leases，不持CT1/DB跨HTTP。成功流及有界错误体的绝对deadline覆盖下游send，Response finally排空upstream.close并释放额度。生产服务先停监听并按请求绝对deadline有界排空，再close control、模型客户端、backend/runtime DB；ModelRelay.aclose另可封口/取消并排空活跃request owner/lease。同步runtime.close不代替async资源关闭，不承诺服务SIGTERM瞬时完成 |
+| RP4 S05模型当前凭证（无锁不可变引用） | `RunnerModels.bootstrap`的替换，只由Runner控制loop更新；请求hook每次取同一bootstrap引用 | 控制renewed或RO bootstrap身份核对后替换token/期限，SDK重试也在send前取当前值。同步SDK请求hook只读一次引用，不访问SQLite/loop预留。ModelCatalog/with_thinking副本共享同一受控HTTP客户端及hook；不在hook取会话/模型锁或调用控制面。固定内部endpoint，不走工具代理环境；关闭在根/子/后台收束之后，次要关闭失败不覆盖主异常 |
+| RO1 S06.1b Runner观察队列短锁 | `RunnerObservations._lock`保护有界deque/字节/序号/丢失计数 | 生产者沿既有运行publisher投递后进入RO1；只做有限入队/相邻delta合并或drain，不调用会话、DB、网络或反向publisher。订阅解除在RO1外；发送协程释放RO1才取CS1，观察send有绝对截止，网络失败不取消Agent根循环。恢复重装SessionService后重绑，Runner关闭始终解除订阅 |
+| CO1 S06.1b实时投影/订阅（owner-loop预留，非线程锁） | `CloudObservations.states/leases`、`LiveTask`与回放环 | 仅owner loop访问；worker在CT1→registry验证fence/run，释放后才单history库保存可选usage/查询确认内容。IO前后均核connection，旧连接不能写新视图；worker不访问loop集合。快照按观察版本有限重读；订阅在await快照后重核额度，再无await登记。SSE等待/发送不持CT1/DB，关闭先封口/唤醒leases，再排空监听与原控制/模型/数据库 |
+
 ## Spec141F 空环境继续准备
 
 服务single-flight准备任务在activity.use之前处理原stopped空环境。先取activity.manage预留，再在worker
@@ -86,7 +143,7 @@ Recorder仍为PRF1叶锁；并行阶段只记录时间区间，区间并集计�
 | S4 `AgentSession._model_selection_lock` | `Lock`，模型／思考档位的落库与内存提交顺序 | [AgentSession.select_model/select_thinking](../naiyue_test_agent/application/sessions/agent_session.py) | `S4 → {DB(project), S3}`，SQL 返回释放 DB 后才修改 S3；思考档位先在 S3 下核对，释放后落库，再取 S3 提交。 |
 | S5 `AgentSession._tool_selection_lock` | `Lock`，工具选择的落库与内存提交顺序 | [AgentSession.set_active_tools](../naiyue_test_agent/application/sessions/agent_session.py) | `S5 → {DB(project), S3}`，两把内层锁分段获取；registry 选择校验在 S5 前。S4/S5/S6 不互相嵌套。 |
 | S6 `AgentSession._permission_selection_lock` | `Lock`，权限模式的落库与内存提交顺序 | [AgentSession.set_permission_mode](../naiyue_test_agent/application/sessions/agent_session.py) | `S6 → {DB(project), S3}`，两把内层锁分段获取；不从 S3 回取选择锁。 |
-| B1 `BackgroundProcessManager._lock` | `RLock`，后台进程记录、调用去重、终局通知、删除／输出清理标记 | [background_tasks.py](../naiyue_test_agent/application/sessions/background_tasks.py) 的注册、短状态、查询、stop、guard、close | A2 可获取 B1；注册的目录、登记与环境核验先在线程完成（不持 B1），返回循环后在 B1 下复核关闭／删除／清理与去重，冻结 EnvironmentRef；读 `control.requested` 只查询 Event，不取得 C1 mutex。`stop/aclose` 同线程重入 B1；释放后等待 worker／读取 capture。不得在 B1 内等待进程、磁盘或取得 A2/S2。 |
+| B1 `BackgroundProcessManager._lock` | `RLock`，后台进程记录、调用去重、终局通知、删除／输出清理标记 | [background_tasks.py](../naiyue_test_agent/application/sessions/background_tasks.py) 的注册、短状态、查询、stop、stop_session、guard、close | A2 可获取 B1；注册的目录、登记与环境核验先在线程完成（不持 B1），返回循环后在 B1 下复核关闭／删除／清理与去重，冻结 EnvironmentRef；读 `control.requested` 只查询 Event，不取得 C1 mutex。`stop/stop_session/aclose` 同线程重入B1标记停止；释放后等待worker/核对输出关闭，stop_session不封口整个管理器。不得在B1内等待进程、磁盘或取得A2/S2。 |
 | D1 `PersonalMemory.lock`，亦为 `MemoryAccess._lock` | `RLock`，全应用共享个人库生命周期及各 MemoryAccess 查询／修改 | [PersonalMemory.repository/close](../naiyue_test_agent/application/memory/personal_memory.py)、[MemoryAccess.query/close](../naiyue_test_agent/application/memory/memory_access.py) | `D1 → DB(project) → DB(personal)`；个人写入先固定项目证据，再打开个人写事务。两个别名是同一把锁，允许同线程重入；当前锁内包含同步查询与 IO，跨项目也会竞争，本次未优化。 |
 | DB `Database.lock`（项目／chats／RAM／个人／注册各实例） | `RLock`，单连接、显式事务、读写和 close 的互斥 | [Database.transaction/read_rows/close](../naiyue_test_agent/storage/database.py)；各 Repo／[RunUnitOfWork](../naiyue_test_agent/storage/unit_of_work.py) 通过 transaction 进入 | 通常为叶锁；唯一明确的双库事务是 [MemoryRepo.edit_with_sources](../naiyue_test_agent/storage/memory.py) 的 `DB(project) → DB(personal)`。同库复用一个事务；即使 RLock 可重入，`transaction` 仍拒绝嵌套事务。禁止 DB 锁内反向调用应用、获取 D1 或进入 saver。 |
 | D2 `AsyncSqliteSaver.lock` | 框架 `asyncio.Lock`，第二条 SQLite 连接的 setup/read/write/history 游标 | [open_storage](../naiyue_test_agent/storage/resources.py) 创建；图的状态／运行 API，以及 [裁剪](../naiyue_test_agent/storage/checkpoint_retention.py) 的官方 `checkpointer.aget_tuple` | S1 可包住 saver 调用；应用不直接 acquire D2，不从 DB 临界区进入 saver。框架 `alist` 在 `yield` 期间仍持 D2，history 迭代体不得重新调用同 saver 或开启依赖它结束的数据库写事务。 |

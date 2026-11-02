@@ -1,5 +1,25 @@
 # Naiyue Test Agent：项目设计记录
 
+当前B实施进度以[143f](specs/143f-implementation-slices.md)为准：2026-11-02 S06.1a/b、S06.2a/b与S06.3a/b完成本机验证；现15单元完成6项、剩余9项。下一片S06.4加号入口与可操作候选侧栏。资源维护/软水位、固定预览/删除/原ID恢复、任务IO排空/物理停止证明/FD清理以及严格原回执本机关联核销，实际主链和6741后端/568前端/四目标构建证据见[143v](specs/143v-s063-resource-lifecycle.md)/[verification](../build/spec143-s063b-20261102/verification.json)，操作说明见[资源维护](cloud-resources.md)/[删除恢复](cloud-task-deletion.md)。连接/消息/控制见[143u](specs/143u-s062-manual-tasks.md)，档案/实时/用量见[143t](specs/143t-s061-history-and-observation.md)。[143s](specs/143s-local-session-cloud-delegation.md)产品合同保持：加号菜单→侧栏手动新增/选择→详情底部消息，本机主Agent/长期记忆保留，关联未删除任务阻止删除父会话，结果接收/分析草稿/受控代码应用分开。仅原成功回执/finished墓碑核验后核销，空列表不证明未知create终结；软水位不承诺硬磁盘配额。正式侧栏和结果接收[143w](specs/143w-s081-result-receive-and-analysis.md)待后片。正式切换/必要A清理仍S09.1，余留清理S09.2；真实公司/供应商/最终隔离与组合门禁另验。下方为历史时点。
+
+**2026-11-01 S04.1已实施**：[143m第9节](specs/143m-s041-runner.md#9-本机实施与验收2026-11-01)记录固定容器Runner、真实Agent/工具循环、同事务必要历史差分投递及主动控制/原ID对账。无全局Host/个人记忆装配、Coordinator不读任务SQLite；产品缺模型时waiting_model，S05前不临时注入根密钥。最终源码Linux镜像两轮write/Bash/保存/ACK、Coordinator即时重启、非root/Kit、SIGKILL unknown与正常结构化退出通过；6376后端/568前端、四目标wheel/Twine及Mac源外安装通过。首片仍不含S04.2完整根子/审批/后台/恢复，不切正式A入口；唯一下一片按顺序为S07.1单产物下载和内部CLI薄闭环，先核对当前传输与参考项目后实施。
+
+**2026-11-01 S03.1已实施**：[143l第8节](specs/143l-s031-input-import.md#8-实际实现与验证2026-11-01)记录显式manual捕获/完整流上传/原ID日志/安全commit、正式task及容器输入安装；同I复用与改动后重建已实证。新增47项，全量6355后端/568前端、四目标wheel/Twine及Mac源外安装通过；实际Linux ARM64执行pytest，Windows/x64仅交叉构建，原机步骤单独保留。取消所有权归实际producer，普通元数据保留S01原语义；A共用源码指纹恢复，B不依赖A快照提交主链，无新增依赖/配置修改。下一片S04.1沿143i装配线复用现有循环/工具，接必要历史/控制；S03.2完整来源/续传和S05真实模型边界保持，不自动提前实施。
+
+**2026-11-01 S02已实施**：[143k第8节](specs/143k-s02-lifecycle.md#8-实际接线与验证2026-11-01)记录显式cloud双监听、持久生命周期/unknown对账、冻结模板/目录、受信固定产物构建与Kit完整预检。实际Linux ARM64后端及最终源码镜像验证两任务、容量、停重建权限、ACK丢失接管、无TTL/服务重启与网络边界；Coordinator无socket。全量6308后端/568前端、三目标wheel/构建/Twine及Mac源外安装通过。S02不引入A/B开关，不提前删仍有消费者的A；清理随S09正式迁移。下一片S03.1先完成manifest/归档流式上传、安全commit/输入绑定及容器安装，沿用同一合同；完整续传/来源在S03.2，不自动开始。公司新增门禁、Runner/模型/业务与自动更新未被本机结果覆盖。
+
+**2026-11-01 S01已实施**：[143j第13节](specs/143j-s01-control-foundation.md#13-实际接线验证与限制2026-11-01)记录独立控制根/持久回执、两组API/任务凭证、代际CAS与历史台账；没有运行Agent或容器。SQL按现有storage边界接线，旧正式A入口不改；全量6274后端/568前端、标准Mac/Linux wheel及Mac源外安装通过。更新[锁表](lock-hierarchy.md)，清理应用原SQL路径，无双写/占位路由。下一片[S02](specs/143f-implementation-slices.md#s02容器生命周期与持久目录)复用该底座，补生命周期与含Kit模板；当前只讲方案，不自动实施或部署。目标盘/权限/网络/无TTL等新增实机项仍是相应消费者门禁，不由S01证明。
+
+**2026-11-01 S01方案与测试镜像合同补充（仅Spec）**：[143j](specs/143j-s01-control-foundation.md)定义首片控制底座/持久回执/任务凭证与最小事件台账，逐片确认、实施验证后再讲下一片；未启动产品编码。S01不依赖实机网络，新增后端/Runner/模型门禁随S02/04/05接线核对。[143c第1.1/2.1节](specs/143c-version-and-operations.md)补Kit固定版本/SHA、实际pytest解释器/报告预检与独立Updater权限和回执登记，S02起即包含Kit，S10共用更新链；不把镜像ID误作仓库manifest digest。原A数据/普通本机入口不改，正式A消费者按S09退出。
+
+**2026-11-01 B审阅后修订（仅Spec）**：[143总方案](specs/143-cloud-task-b.md)与A–H配套稿按现有A权限实现收束：管理域独占历史投影/所有者审批，不直接打开任务SQLite；持久任务显式无后端TTL，以静止/审批/必要保存/unknown保护停止；补控制连接、非root目录、独立Runner依赖、双监听与网络/模型出站门禁。保留同任务信任域的明确限制，不能把B声称为141A控制状态防篡改的等价迁移。文件交付优化不删除完整性/竞态保护。顺序改为最小内部CLI闭环先行、S08机器清单、S09真实业务门禁先于A退出，正式切换与余留工具文档分两个全绿提交。原S00用户报告与截图边界、新增差集门禁见[143h](specs/143h-s00-backend-gate.md)；S01尚未开始；[143i装配只读分析](specs/143i-runner-assembly-spike.md)已完成并有80项既有基线，新增实机门禁分项保留，不把它们当作原三段未通过或只读分析的前置阻塞；不自动实施产品或部署。
+
+**2026-11-01 S00本机实证**：用户批准只从S00开始，并选择先本机再Windows。专用Linux ARM64环境验证OpenSandbox1.2.0容器隔离、生命周期、持久目录及真实SSH的HTTP/gRPC unary/bidi在线/断开/恢复；41个新测试、连同原探针83项通过。源码/产物边界及Windows步骤见[143h](specs/143h-s00-backend-gate.md)和[复验手册](cloud-s00-local-and-windows.md)。仅新增探针/测试/文档，B产品与S01–S11未实施；Windows/公司网络、目标架构和实际业务仍待验，不以Mac结果替代。
+
+**2026-11-01 B阶段完整方案（待审阅，未实施）**：[Spec143](specs/143-cloud-task-b.md)及A–G配套稿将云端主链收束为常驻Coordinator＋每任务容器内Runner；archive/manifest一次导入持续复用、binary patch最终文件交付、报告独立下载。用户已确认不兼容旧A历史/记忆/协议，首版SSH私有访问；旧数据不删除，本机普通执行保留。模型根密钥留管理服务的受限转发为本稿建议，已对照OpenHands传入选定密钥/OpenSandbox Vault的不同路径。12个可验证切片含真实容器到Windows中转门禁、历史/共享记忆、自动预备更新、前端/CLI和A主链退出；不存在用户可选A/B双栈。Spec142行为方向保留，其旧A接线被143取代，分叉/辅助功能不并入B首版。以下设计记录为历史时点；B实现/部署须在Spec审阅及对应操作授权后推进。
+
+**2026-11-01 分叉与辅助对话设计**：[Spec142](specs/142-conversation-fork-and-side-chat.md)及A/B/C配套稿明确持久分叉、RAM辅助、稳定checkpoint/聊天档案的复制职责、工具/审批/关闭与前端复用。用户在云端调研后选定持久分叉复制当前工作区到独立沙箱；复用已有工作区捕获/下载/验证，生成目标私有输入，禁止向用户仓库publish结果ref或共享父binding。辅助按需环境及文件/审批细节仍属于待审阅稿，当前只写文档，非实施授权；历史编辑/版本选择/会话树暂不纳入。Python/create_agent路线、替换式重生成、沙箱身份和141F原机验收保持。
+
 **Spec141B 当前状态（2026-10-30）**：可靠性修正本机验收通过（后端5985/前端563）；同源公司Windows x64/Linux amd64候选已构建，产物回归78通过，镜像含AITest0.6.0，legacy归档/重导入、默认/19.03 seccomp各7项与amd64 QEMU双沙箱8MiB门禁通过。证据见[Spec141B第10.12节](specs/141b-persistent-sandbox-execution.md#1012-公司平台候选本机制品验收结果2026-10-30)、build/spec141b-company-20261030/verification.json。未发布或公司部署；公司Docker不升级，OpenSandbox迁移暂停。下一步用户原机先做Linux镜像check.sh，再Windows候选安装/双沙箱门禁及专用新会话UI/真实业务验收；模拟机冷准备不视作公司SLO。以下保留历史时点。
 
 **Spec141A 当前实施状态（2026-10-29）**：用户已批准的“受保护envd直接IO + 任务UID1000”方案接入并通过本机验收，详见[第8节](specs/141a-envd-identity-boundary.md#8-第0节方案的本机实施与验收2026-10-29)及`build/spec141-identity/verification.json`。5875后端/554前端、真实身份/文件/Git/输出并发/恢复门禁与标准构建通过；独立envd0.5.5+AITest0.6.0本地候选，不是发布。新镜像隔离替代旧同UID方案，不自动迁移旧卷。公司原机与完整性能/UI迁移仍待验收，下一切片是Spec141正式常驻数据通道及控制端异步控制；不升级公司Docker、不部署OpenSandbox服务。下方保留历史记录。

@@ -29,6 +29,12 @@ class StreamingMessageProjection:
             self._messages[(session_id, row['id'])] = {
                 **deepcopy(row), 'session_id': session_id, 'run_id': row.get('run_id')}
 
+    def retain(self,message_ids,run_ids):
+        """A bounded presentation owner can discard old drafts without touching history."""
+        self._messages={key:row for key,row in self._messages.items() if key[1] in message_ids}
+        self._sequences={key:value for key,value in self._sequences.items() if key in run_ids}
+        self.run_status={key:value for key,value in self.run_status.items() if key in run_ids}
+
     def __call__(self, event):
         previous = self._sequences.get(event.run_id, 0)
         if event.sequence <= previous:

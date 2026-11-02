@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 from naiyue_test_agent.web.dependencies import get_service
 from naiyue_test_agent.web.errors import WebError
-from naiyue_test_agent.web.serialization import message_view
+from naiyue_test_agent.agent_runtime.message_presentation import message_view
 
 router = APIRouter(prefix='/terminal')
 

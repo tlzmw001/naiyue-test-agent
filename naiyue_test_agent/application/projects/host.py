@@ -25,6 +25,8 @@ class ProjectHost:
         self.history = HistoryAPI(owner, sessions, persistence, agent, catalog, registry, system_prompt,
                                   storage.sessions, storage.conversation, storage.subagents)
         self.tasks = TaskAPI(owner, sessions, metadata=storage.sessions)
+        from naiyue_test_agent.application.cloud_local.tasks import LocalTaskDomain
+        self.cloud_tasks = LocalTaskDomain(owner,storage,self.project_id,sessions._execution_authority,persistence)
         self.observability = ObservationAPI(owner, sessions, storage.usage, storage.diagnostics,
                                              usage, diagnostics, metadata=storage.sessions)
         self.tools = ToolAPI(owner, sessions, registry)

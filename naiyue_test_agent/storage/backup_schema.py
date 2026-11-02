@@ -6,7 +6,7 @@ import sqlite3
 from uuid import UUID
 
 
-CURRENT_SCHEMA = 20
+CURRENT_SCHEMA = 21
 SUPPORTED_SCHEMAS = frozenset(range(4, CURRENT_SCHEMA + 1))
 
 
@@ -77,6 +77,9 @@ def check_snapshot(path):
         if version >= 20:
             required['naiyue_sessions'] += ' execution_setup_json'
             required['naiyue_project_identity'] = 'project_id source_kind'
+        if version >= 21:
+            from .cloud_local import REQUIRED as CLOUD_LOCAL
+            required.update(CLOUD_LOCAL)
         if version >= 18:
             required['naiyue_sessions'] += ' project_id execution_root_kind'
         if 'checkpoints' in tables or 'writes' in tables:

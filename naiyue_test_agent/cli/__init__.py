@@ -9,7 +9,7 @@ from naiyue_test_agent import __version__
 def main(argv=None):
     args = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(prog='nyt', description='Naiyue Test Agent',
-        usage='nyt [Web options] | nyt chat [CLI options] | nyt projects | nyt service {stop,logs} | nyt mcp list | nyt storage {backups,restore}',
+        usage='nyt [Web options] | nyt chat [CLI options] | nyt projects | nyt service {stop,logs} | nyt mcp list | nyt storage {backups,restore} | nyt cloud {serve,release}',
         epilog='Default: start local Web. Use nyt chat --help for terminal options. '
                'Web options: --config PATH, --workspace PATH, --host, --port, '
                '--session-db PATH, --new-workspace, --frontend-dist PATH.')
@@ -31,6 +31,9 @@ def main(argv=None):
     if args and args[0] == 'storage':
         from .storage import main as storage
         return storage(args[1:])
+    if args and args[0] == 'cloud':
+        from .cloud import main as cloud
+        return cloud(args[1:])
     if args and not args[0].startswith('-'):
         parser.error(f'unknown command: {args[0]}')
     from naiyue_test_agent.web.__main__ import main as web

@@ -14,7 +14,7 @@ from .http_observation import install_http_hooks, close_http_observation, client
 logger = logging.getLogger(__name__)
 
 
-def prepare_owned_clients(models, owned):
+def prepare_owned_clients(models, owned, *, http_options=None):
     seen = set()
     for model in models:
         if id(model) in seen:
@@ -39,6 +39,7 @@ def prepare_owned_clients(models, owned):
         options = {'timeout': sync.timeout}
         if proxy:
             options['proxy'] = proxy
+        if http_options:options.update(http_options)
         sync_http = transport_module.Client(**options)
         owned.append((sync_http, False))
         async_http = transport_module.AsyncClient(**options)

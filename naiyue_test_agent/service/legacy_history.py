@@ -6,7 +6,7 @@ from fastapi import APIRouter, Query, Request
 
 from naiyue_test_agent.application.conversation.legacy_history import legacy_history, legacy_sessions
 from naiyue_test_agent.web.errors import WebError
-from naiyue_test_agent.web.serialization import message_view
+from naiyue_test_agent.agent_runtime.message_presentation import message_view
 
 router = APIRouter(prefix='/api/v1/terminal/legacy')
 

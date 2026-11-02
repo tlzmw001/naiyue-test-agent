@@ -170,9 +170,27 @@ def bind_reserved_identity(store, project):
 def deletion_guard(project):
     with locked_project_reader(project.database_path) as connection:
         validate_runtime_connection(connection,project.project_id)
+        if read_schema_version(connection)>=21:
+            from .errors import SessionPersistenceError
+            from .cloud_local import check_deletion
+            try:check_deletion(connection)
+            except SessionPersistenceError as error:
+                raise ProjectError('project_cloud_tasks_retained') from error
         if connection.execute("SELECT 1 FROM naiyue_sessions WHERE state IN ('running','interrupted','review_required') LIMIT 1").fetchone():
             raise ProjectError('project_in_use')
         if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='naiyue_subagent_instances'").fetchone():
             if connection.execute("SELECT 1 FROM naiyue_subagent_instances WHERE state IN ('running','interrupted','pending_parent') LIMIT 1").fetchone():
                 raise ProjectError('project_in_use')
         yield
+
+
+def check_cloud_project_deletion(project):
+    """Reject known retained tasks before reserving the registry deletion."""
+    if not project.database_path.exists():return
+    with locked_project_reader(project.database_path) as connection:
+        validate_runtime_connection(connection,project.project_id)
+        if read_schema_version(connection)<21:return
+        from .errors import SessionPersistenceError
+        from .cloud_local import check_deletion
+        try:check_deletion(connection)
+        except SessionPersistenceError as error:raise ProjectError('project_cloud_tasks_retained') from error

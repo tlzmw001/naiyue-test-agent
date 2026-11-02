@@ -436,6 +436,15 @@ class BackgroundProcessManager:
         with self._lock:
             return root in self._cleaning
 
+    async def stop_session(self,session_id):
+        self._check_loop()
+        with self._lock:
+            entries=tuple(item for item in self._entries.values() if item.session_id==session_id)
+            for item in entries:self._request_stop(item,'user_stop')
+        for item in entries:await await_settled(item.worker)
+        if any(self._unsettled(item) for item in entries):
+            raise ProcessCleanupError('Background task cleanup could not be confirmed.')
+
     async def aclose(self):
         self._check_loop()
         with self._lock:

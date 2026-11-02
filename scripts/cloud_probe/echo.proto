@@ -1,0 +1,9 @@
+syntax = "proto3";
+package s00;
+
+message Value { string value = 1; }
+
+service Echo {
+  rpc Unary(Value) returns (Value);
+  rpc Bidi(stream Value) returns (stream Value);
+}

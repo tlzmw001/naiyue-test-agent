@@ -26,6 +26,8 @@ from naiyue_test_agent.web.settings import WebSettings
 from naiyue_test_agent.web.windows_disconnect import windows_disconnect_handler
 from .browser import BrowserBoundary, BrowserFiles
 from .ownership import ServiceOwner
+from .cloud_tasks import router as cloud_task_router
+from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from .projects import router as project_router
 from .environments import router as environment_router
 from .navigation import router as navigation_router
@@ -111,6 +113,10 @@ def create_service_app(options, *, application_factory=None, shutdown=None):
         return JSONResponse({'error': {'code': error.code,
             **({'reason': error.reason} if error.reason else {})}}, status_code=error.status)
 
+    @app.exception_handler(CloudError)
+    async def cloud_error(request,error):
+        return JSONResponse({'error':{'code':error.code}},status_code=error.status)
+
     @app.exception_handler(ServiceError)
     async def service_error(request, error):
         return JSONResponse({'error': {'code': error.code}}, status_code=409)
@@ -158,6 +164,7 @@ def create_service_app(options, *, application_factory=None, shutdown=None):
 
     app.include_router(create_api_router(), prefix='/api/v1/scopes/{scope_id}')
     app.include_router(terminal_session_router, prefix='/api/v1/scopes/{scope_id}')
+    app.include_router(cloud_task_router)
     app.include_router(project_router)
     app.include_router(environment_router)
     app.include_router(navigation_router)

@@ -42,6 +42,8 @@ class ProjectStore:
         self.diagnostics = DiagnosticRepo(self.database)
         self.memory = MemoryRepo(self.database)
         self.runs = RunUnitOfWork(self.database)
+        from .cloud_local import LocalTaskRepo
+        self.cloud_tasks = LocalTaskRepo(self.database)
 
     def close(self):
         self.database.close()

@@ -159,6 +159,25 @@ class Database:
             raise
         return database
 
+    @classmethod
+    def open_cloud(cls, path, *, profile, initialize=True):
+        from .cloud.schema import initialize_cloud
+        from naiyue_test_agent.contracts.cloud_tasks import CloudError
+        database = cls.__new__(cls)
+        database._initialize_owner(Path(path).expanduser().absolute())
+        try:
+            initialize_cloud(database, profile, initialize=initialize)
+        except BaseException as error:
+            logger.error('cloud_storage_open_failed error_type=%s', type(error).__name__)
+            try:
+                database.close()
+            except BaseException as secondary:
+                logger.error('cloud_storage_cleanup_failed error_type=%s', type(secondary).__name__)
+            if isinstance(error, (OSError, sqlite3.Error)):
+                raise CloudError('cloud_storage_unavailable', 503) from error
+            raise
+        return database
+
     @contextmanager
     def transaction(self, *, write=False, error_code=None):
         with self.lock:

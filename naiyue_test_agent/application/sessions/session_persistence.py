@@ -169,6 +169,11 @@ class SessionPersistence:
             raise
 
     async def adelete(self, session_id, agent):
+        from naiyue_test_agent.storage.cloud_local import check_deletion
+        def check_cloud():
+            with self.storage.database.transaction(write=False,error_code='session_read_failed') as connection:
+                check_deletion(connection,session_id)
+        await run_blocking(check_cloud)
         if self.history_lock(session_id).locked():
             raise SessionPersistenceError('session_recovery_blocked')
         try:

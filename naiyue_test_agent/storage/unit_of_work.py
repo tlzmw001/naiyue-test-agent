@@ -17,8 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 class RunUnitOfWork:
-    def __init__(self, database):
+    def __init__(self, database, *, history_journal=None):
         self.database = database
+        self.history_journal = history_journal
 
     def finish_run(self, session_id, state, checkpoint_id, checkpoint_ns, last_run_status, chat_updates=(), *, subagent_run_id=None, execution_path=None):
         with self.database.transaction(write=True, error_code='session_save_unconfirmed') as connection:
@@ -26,6 +27,10 @@ class RunUnitOfWork:
                 raise SessionPersistenceError('invalid_session_state')
             try:
                 session_row(connection, session_id)
+                if self.history_journal is not None:
+                    # Read the previous archive version before write_chat_updates;
+                    # both outbox and archive are still committed atomically.
+                    self.history_journal.finish(connection, session_id, subagent_run_id, state, last_run_status, chat_updates)
                 write_chat_updates(connection, session_id, chat_updates)
                 if subagent_run_id is not None:
                     if session_row(connection, session_id)['run_id'] != subagent_run_id:
@@ -46,6 +51,8 @@ class RunUnitOfWork:
         with self.database.transaction(write=True, error_code='session_delete_unconfirmed') as connection:
             try:
                 row = session_row(connection, session_id)
+                from .cloud_local import check_deletion
+                check_deletion(connection,session_id)
                 operations = reply_storage.all_actions(connection, session_id)
                 extra = {key for op in operations for key in (op['old_thread_id'], op['new_thread_id'], *json.loads(op['obsolete_children']))}
                 registered = read_rows(connection, 'SELECT child_thread_id FROM naiyue_subagent_instances WHERE session_id=?', (session_id,))
@@ -64,6 +71,8 @@ class RunUnitOfWork:
                 connection.execute('DELETE FROM naiyue_subagent_instances WHERE session_id=?', (session_id,))
                 from naiyue_test_agent.storage.memory_sql.memory_overview_store import purge
                 purge(connection,session_id)
+                from .cloud_local import purge as purge_cloud
+                purge_cloud(connection,session_id)
                 connection.execute('DELETE FROM naiyue_sessions WHERE session_id=?', (session_id,))
             except sqlite3.Error as error:
                 logger.error('session_delete_failed error_type=%s', type(error).__name__)

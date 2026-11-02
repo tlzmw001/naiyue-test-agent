@@ -1,6 +1,6 @@
 """Explicit offline whole-workspace restoration under the existing instance lock."""
 
-from contextlib import ExitStack
+from contextlib import ExitStack,closing
 import logging
 import os
 import sqlite3
@@ -13,7 +13,37 @@ from . import restore_record as records
 
 logger = logging.getLogger(__name__)
 REASONS = frozenset({'backup_invalid', 'backup_unbound', 'restore_cancelled', 'restore_conflict',
-    'restore_failed', 'storage_in_use', 'workspace_id_conflict', 'workspace_previous_root_unconfirmed'})
+    'restore_failed', 'storage_in_use', 'workspace_id_conflict', 'workspace_previous_root_unconfirmed',
+    'cloud_tasks_retained','cloud_tasks_reconciliation_required'})
+
+
+def _check_cloud_tasks(path):
+    from .files import check_store_file
+    from .cloud_local import check_deletion
+    from .errors import SessionPersistenceError
+    try:
+        check_store_file(path)
+        with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as connection:
+            connection.execute('PRAGMA trusted_schema=OFF')
+            tables={r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if 'naiyue_store_info' in tables:
+                from .backup_schema import read_schema_version
+                from .cloud_local import REQUIRED
+                if read_schema_version(connection)>=21 and not set(REQUIRED)<=tables:
+                    raise ValueError('cloud_tasks_reconciliation_required')
+                if read_schema_version(connection)>=21:
+                    for table,fields in REQUIRED.items():
+                        columns={r[0] for r in connection.execute('SELECT name FROM pragma_table_info(?)',(table,))}
+                        if not set(fields.split())<=columns:raise ValueError('cloud_tasks_reconciliation_required')
+            if 'naiyue_cloud_bindings' in tables:
+                try:check_deletion(connection)
+                except SessionPersistenceError:raise ValueError('cloud_tasks_retained') from None
+    except (FileNotFoundError,sqlite3.DatabaseError) as error:
+        # A corrupt/missing DB cannot disprove external tasks. A project which
+        # has imported cloud sources requires explicit operator reconciliation.
+        if (path.parent/'cloud-input-cache').exists():
+            raise ValueError('cloud_tasks_reconciliation_required') from error
+        logger.info('restore_cloud_guard_unavailable error_type=%s',type(error).__name__)
 
 
 def _selection(location, backup_id):
@@ -134,6 +164,7 @@ def restore_backup(location, backup_id, *, confirm):
             preview = {'backup_id': backup_id, 'source_schema': record['source_schema'],
                        'phase': record['phase'], 'operation_id': record['operation_id']}
         else:
+            _check_cloud_tasks(location.database_path)
             preview, _, _ = _selection(location, backup_id)
         stage = 'confirm'
         try:

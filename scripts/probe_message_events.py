@@ -108,7 +108,7 @@ async def _async_worker(args):
                 assert '工具 read_probe_value：处理完成' in displayed
             else:
                 result = await app.host.runs.start(session, [('user', prompt)])
-        from naiyue_test_agent.web.serialization import message_view
+        from naiyue_test_agent.agent_runtime.message_presentation import message_view
         messages = result['messages'] if with_cli else [message_view(m) for m in result['messages']]
         snapshots = [e.data for e in events if e.event_type == 'message_completed']
         rows = [json.loads(data.snapshot_json) for data in snapshots]

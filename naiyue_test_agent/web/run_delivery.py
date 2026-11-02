@@ -14,7 +14,7 @@ from langchain_core.messages import HumanMessage
 from naiyue_test_agent.application.errors import RunCapacityExceededError
 from naiyue_test_agent.agent_runtime.async_utils import await_settled
 from .errors import WebError, public_error
-from .serialization import message_view
+from naiyue_test_agent.agent_runtime.message_presentation import message_view
 from .delivered_run import DeliveredRun
 
 

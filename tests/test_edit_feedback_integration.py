@@ -19,7 +19,7 @@ from naiyue_test_agent.tools import create_session_edit_tool
 from naiyue_test_agent.settings import AppSettings
 from naiyue_test_agent.tools import edit as module
 from naiyue_test_agent.tools import edit_matching
-from naiyue_test_agent.web.serialization import message_view
+from naiyue_test_agent.agent_runtime.message_presentation import message_view
 from test_async_application import StreamingToolModel
 from test_edit_tool import RecordingFake
 from tool_feedback_helpers import invoke_tool_feedback

@@ -24,7 +24,7 @@ def test_git_identity_and_sandbox_setup_survive_reopen_and_backup_check(tmp_path
         row=store.sessions.get('S')
         assert root_from_row(row) is None
         assert json.loads(row['execution_setup_json'])==setup
-        assert CURRENT_SCHEMA==20
+        assert CURRENT_SCHEMA==21
     assert check_snapshot(path)['workspace_id']==project
     with closing(ProjectStore(path,runtime_profile=project)) as store:
         assert store.sessions.get('S')['execution_binding']=='sandbox'
@@ -52,7 +52,7 @@ def test_schema19_local_binding_migrates_without_changing_its_location(tmp_path)
         assert store.sessions.get_workspace_binding()==dict(workspace_id=project,root_path=str(tmp_path))
         assert store.database.read_rows('SELECT * FROM naiyue_project_identity')==[
             dict(project_id=project,source_kind='local')]
-        assert store.database.read_rows('SELECT version FROM naiyue_store_info')==[dict(version=20)]
+        assert store.database.read_rows('SELECT version FROM naiyue_store_info')==[dict(version=21)]
 
 
 @pytest.mark.parametrize('profile',['local','chats'])

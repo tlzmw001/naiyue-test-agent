@@ -9,7 +9,8 @@ from langchain_core.messages import messages_from_dict
 from naiyue_test_agent.model_access.messages import content_text
 
 from .errors import WebError
-from .serialization import encoded_size, message_view
+from .serialization import encoded_size
+from naiyue_test_agent.agent_runtime.message_presentation import message_view
 
 
 def cursor_token(settings, value):

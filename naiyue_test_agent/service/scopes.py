@@ -23,6 +23,8 @@ class ScopeServices:
         self.closing = False
         self._shutdown_task = None
         self.temporary = None
+        from naiyue_test_agent.application.cloud_local.tasks import ManualCloudTasks
+        self.cloud_tasks = ManualCloudTasks(settings.runtime_settings.cloud_tasks)
 
     async def get(self, scope_id):
         if self.closing:
@@ -103,7 +105,7 @@ class ScopeServices:
             for service in tuple(self.services.values()):
                 await service.delivery.seal()
         cleanups = ([self.temporary.shutdown] if self.temporary is not None else [])
-        for cleanup in (self._scopes.shutdown, *cleanups, seal_deliveries, self.application.aclose, self.drain, receipts.drain):
+        for cleanup in (self.cloud_tasks.close, self._scopes.shutdown, *cleanups, seal_deliveries, self.application.aclose, self.drain, receipts.drain):
             try:
                 await await_settled(cleanup())
             except BaseException as error:

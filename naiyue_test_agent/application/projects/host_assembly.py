@@ -12,7 +12,7 @@ from naiyue_test_agent.application.lifetime import _register_cleanup, _enter_res
 from naiyue_test_agent.application.memory.memory_access import MemoryAccess
 from naiyue_test_agent.application.observability.diagnostic_persistence import DiagnosticPersistence
 from naiyue_test_agent.application.observability.model_usage_persistence import ModelUsagePersistence
-from naiyue_test_agent.application.sessions.session_persistence import SessionPersistence
+from naiyue_test_agent.application.sessions.assembly import assemble_session_runtime
 from .host import ProjectHost
 
 logger = logging.getLogger(__name__)
@@ -77,12 +77,10 @@ async def assemble_host(*, catalog, parent, personal, admission, database_path, 
                 memory = None
         sessions.memory_jobs = jobs
         sessions.task_queries.memory = jobs
-        persistence = SessionPersistence(storage, sessions, catalog=catalog, tool_registry=registry,
-            permission_settings=settings.permissions, usage_persistence=usage,
+        persistence, agent = assemble_session_runtime(sessions, storage, owned.checkpointer,
+            catalog=catalog, registry=registry, permissions=settings.permissions, usage_persistence=usage,
             title_max_chars=settings.session_title_max_chars, checkpoint_settings=settings.checkpoint_retention,
-            memory_jobs=jobs)
-        sessions.bind_persistence(persistence)
-        agent = sessions.assemble_runtime(owned.checkpointer, system_prompt=system_prompt, response_format=response_format,
+            memory_jobs=jobs, system_prompt=system_prompt, response_format=response_format,
             subagents=settings.subagents, subagent_settings=settings.tools.subagent)
         return ProjectHost(catalog, sessions, agent, registry, system_prompt=system_prompt,
             persistence=persistence, storage=storage, usage=usage, diagnostics=diagnostics, resources=stack,

@@ -3,7 +3,7 @@
 from runtime_context_helpers import typed_context
 
 from langchain_core.messages import AIMessage, AIMessageChunk
-from naiyue_test_agent.web.serialization import message_view
+from naiyue_test_agent.agent_runtime.message_presentation import message_view
 
 
 def test_standard_reasoning_projection_excludes_signatures():
