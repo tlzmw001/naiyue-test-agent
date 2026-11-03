@@ -30,7 +30,7 @@
 
 ## 下一步：S09.1真实环境门禁
 
-保持当前正式A入口。Windows与Linux使用同一份候选代码/包，先按[验收矩阵](specs/143g-acceptance.md)和[143h新增公司差集](specs/143h-s00-backend-gate.md)验证Runner/管理网络、全部模型供应商出站、隧道断开/恢复、必要保存与真实结果取回；另补Windows路径/reparse、文件锁、CRLF、分支和partial恢复。原S00通过记录继续有效，不重复追认为未通过。
+逐步操作见[Windows＋Linux实机手册](cloud-s091-windows-and-linux.md)。保持当前正式A入口。Windows与Linux使用同一份候选代码/包，先按[验收矩阵](specs/143g-acceptance.md)和[143h新增公司差集](specs/143h-s00-backend-gate.md)验证Runner/管理网络、全部模型供应商出站、隧道断开/恢复、必要保存与真实结果取回；另补Windows路径/reparse、文件锁、CRLF、分支和partial恢复。原S00通过记录继续有效，不重复追认为未通过。
 
 门禁前后执行消费者核对：
 
