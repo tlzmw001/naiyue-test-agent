@@ -1,0 +1,8 @@
+.materials { min-width: 0; margin: 6px 0 10px; }
+.list { display: flex; flex-wrap: wrap; gap: 8px; }
+.item { display: flex; align-items: flex-start; min-width: 0; max-width: 100%; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-subtle); }
+.item > span { min-width: 0; padding: 6px 8px; font-size: var(--fs-caption); overflow-wrap: anywhere; }
+.item small { display: block; color: var(--muted); font-size: var(--fs-meta); }
+.item button { flex-shrink: 0; border: 0; padding: 6px; border-radius: var(--r-sm); color: var(--muted); background: transparent; }
+.item button:hover { background: var(--surface-hover); }
+.materials p { margin: 6px 0 0; color: var(--muted); font-size: var(--fs-caption); line-height: var(--lh-relaxed); }

@@ -319,7 +319,7 @@ class WebService:
                 if not body.images:
                     raise WebError('invalid_request',422)
                 self.application.runs.validate_pending(session_id, body.pending_input_ids)
-            prepared_message = (await self.application.runs.prepare_input(session_id, body.text, body.images, message_id=body.request_id)
+            prepared_message = (await self.application.runs.prepare_input(session_id, body.text, body.images, message_id=body.request_id, **({'material_refs':body.material_refs} if body.material_refs else {}))
                                 if value['can_run'] or environment_wait is not None else None)
         except Exception as error:
             raise public_error(error) from None

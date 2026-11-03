@@ -198,5 +198,6 @@ class ToolRegistry:
     def select_available(self, names, *, context=None):
         """Prepare new requests; saved batches must continue using select()."""
         from naiyue_test_agent.mcp_client.tools import MCPPermission
-        return tuple(spec for spec in self.select(names) if not isinstance(spec.permissions, MCPPermission)
-                     or spec.permissions.unavailable_reason(context) is None)
+        return tuple(spec for spec in self.select(names)
+            if (spec.tool.name!='cloud_result_read' or context is None or callable(context.scope.capabilities.cloud_materials))
+            and (not isinstance(spec.permissions,MCPPermission) or spec.permissions.unavailable_reason(context) is None))

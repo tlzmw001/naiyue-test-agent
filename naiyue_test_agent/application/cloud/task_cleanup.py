@@ -6,10 +6,12 @@ from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from .resource_disk import open_directory, mount_id
 
 
-def remove_task_data(root, task_id, limits):
+def remove_task_data(root, task_id, limits, *, artifact_ids=None):
     from pydantic import TypeAdapter
-    from naiyue_test_agent.contracts.cloud_tasks import TaskId
+    from naiyue_test_agent.contracts.cloud_tasks import TaskId,UUIDText
     TypeAdapter(TaskId).validate_python(task_id)
+    if artifact_ids is not None:
+        for value in artifact_ids:TypeAdapter(UUIDText).validate_python(value)
     deadline = time.monotonic() + limits.scan_timeout_seconds
     count = 0
 
@@ -50,13 +52,21 @@ def remove_task_data(root, task_id, limits):
     fd = open_directory(root)
     try:
         device, mount = os.fstat(fd).st_dev, mount_id(fd)
-        for kind in ('tasks', 'artifacts', 'artifact-transfers', 'history'):
+        for kind in (('artifacts','artifact-transfers') if artifact_ids is not None else ('tasks','artifacts','artifact-transfers','history')):
             try: base = open_directory(kind, dir_fd=fd)
             except FileNotFoundError: continue
             try:
                 verified(base, device, mount)
                 names = [task_id] if kind != 'history' else [task_id + '.sqlite' + suffix
                     for suffix in ('', '-wal', '-shm', '-journal', '.lock')]
-                for name in names: remove(base, name, device, mount, 0)
+                if artifact_ids is None:
+                    for name in names: remove(base, name, device, mount, 0)
+                else:
+                    try: owned=open_directory(task_id,dir_fd=base)
+                    except FileNotFoundError:continue
+                    try:
+                        verified(owned,device,mount)
+                        for name in artifact_ids:remove(owned,name,device,mount,0)
+                    finally:os.close(owned)
             finally: os.close(base)
     finally: os.close(fd)

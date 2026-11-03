@@ -12,16 +12,22 @@ class RunAPI:
         self._persistence = persistence
         self._metadata, self._conversation, self._replies = metadata, conversation, replies
 
-    async def prepare_input(self, session_id, text, images, *, message_id):
+    async def prepare_input(self, session_id, text, images, *, message_id, material_refs=()):
         from langchain_core.messages import HumanMessage
         from naiyue_test_agent.application.conversation.image_inputs import normalize_input
         with self._owner.operation():
+            refs=[]
+            if material_refs:
+                from naiyue_test_agent.contracts.cloud_tasks import CloudError
+                if self._sessions.cloud_materials is None:raise CloudError('cloud_materials_unavailable')
+                refs=await run_blocking(self._sessions.cloud_materials.validate_refs,session_id,list(material_refs))
+            extra={'naiyue_cloud_material_refs':[ref.model_dump(mode='json') for ref in refs]} if refs else {}
             if not images:
-                return HumanMessage(content=text,id=message_id)
+                return HumanMessage(content=text,id=message_id,additional_kwargs=extra)
             if images:
                 self._check_image_model(self._sessions.require(session_id))
             content = await run_blocking(normalize_input, text, images, self._sessions.image_input_settings)
-            return HumanMessage(content=content, id=message_id)
+            return HumanMessage(content=content, id=message_id,additional_kwargs=extra)
 
     def _check_image_model(self, actor):
         from naiyue_test_agent.contracts.image_inputs import ImageInputError

@@ -2,8 +2,7 @@
 import hashlib,json,os,shutil,tempfile,time
 from pathlib import Path
 from uuid import uuid4
-from naiyue_test_agent.cloud_files.archive import validate_package
-from naiyue_test_agent.cloud_files.paths import source_handle,identity
+from naiyue_test_agent.cloud_files.paths import identity
 from naiyue_test_agent.contracts.cloud_inputs import InputPackage
 from naiyue_test_agent.contracts.cloud_results import OutputManifest,ResultBundle,ResultFile,ResultRecord
 from naiyue_test_agent.contracts.cloud_artifacts import ArtifactRecord
@@ -11,6 +10,7 @@ from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from naiyue_test_agent.storage.files import open_store_readonly,sync_store_directory,check_store_directory
 from .result_scan import freeze_tree,verify
 from .result_git import ResultGit
+from .result_baseline import prepare
 from .state import read_json,write_json
 
 
@@ -40,25 +40,19 @@ def freeze_result(root,input_directory,destination,plan,boundary,generation,resu
         with os.fdopen(open_store_readonly(input_directory/'input.json'),'rb') as f:
             package=InputPackage.model_validate_json(f.read(input_limits.max_metadata_bytes*3+1))
         if package.input_id!=plan.input_id:raise CloudError('result_input_mismatch')
+        baseline=prepare(destination.parent,input_directory,package,result_limits,input_limits)
         with tempfile.TemporaryDirectory(prefix='.result-',dir=destination.parent) as temporary:
-            stage=Path(temporary);base=stage/'baseline';base.mkdir(mode=0o700)
-            manifest,selection=validate_package(input_directory/'archive',package.codec,input_limits,expected_id=plan.input_id,
-                destination=base,expected_archive_sha256=package.archive_sha256,expected_size=package.size)
-            if manifest!=package.manifest or selection!=package.selection:raise CloudError('result_input_mismatch')
-            original=stage/'original';original.mkdir(mode=0o700);old_blobs={}
-            for n,entry in enumerate(manifest.entries):
-                path=original/str(n)
-                with source_handle(base,entry.path,identity((base/entry.path).lstat())) as (stream,info),path.open('xb') as target:
-                    if info is None:target.write(stream)
-                    else:shutil.copyfileobj(stream,target,length=input_limits.io_bytes)
-                old_blobs[entry.path]=path
-            entries,blobs,proof=freeze_tree(root,stage/'output',input_limits,result_limits,package=package,output_directory=plan.output_directory)
-            output=OutputManifest(input_id=plan.input_id,policy_sha256=manifest.selection['policy_sha256'],entries=entries)
+            stage=Path(temporary)
+            entries,blobs,proof,oids=freeze_tree(root,stage/'output',input_limits,result_limits,package=package,
+                output_directory=plan.output_directory,known_content=baseline.known_content)
+            output=OutputManifest(input_id=plan.input_id,policy_sha256=package.manifest.selection['policy_sha256'],entries=entries)
             raw_manifest=output.canonical
             if len(raw_manifest)>result_limits.max_metadata_bytes:raise CloudError('result_metadata_budget')
-            git=ResultGit(stage/'compare',result_limits)
-            old=git.tree(manifest.entries,old_blobs,'old');new=git.tree(entries,blobs,'new')
-            patch=stage/'changes.patch';git.patch(old,new,patch,result_limits.max_patch_bytes)
+            git=ResultGit(stage/'compare',result_limits,alternate=baseline.directory/'objects.git/objects')
+            for path,oid in git.hashes(blobs).items():
+                if oids[path]!=oid:raise CloudError('result_source_changed')
+            new=git.tree_oids(entries,oids,known_objects=baseline.object_ids)
+            patch=stage/'changes.patch';git.patch(baseline.tree,new,patch,result_limits.max_patch_bytes)
             result=stage/'published';result.mkdir(mode=0o700);files_dir=result/'files';files_dir.mkdir(mode=0o700)
             captured=time.time();files=[];total=0
             def add(role,name,source=None,content=None):
@@ -79,7 +73,7 @@ def freeze_result(root,input_directory,destination,plan,boundary,generation,resu
             reports=root/plan.output_directory/plan.source_run_id
             report_proof=None
             if os.path.lexists(reports):
-                report_entries,report_blobs,report_proof=freeze_tree(reports,stage/'reports',input_limits,result_limits)
+                report_entries,report_blobs,report_proof,_=freeze_tree(reports,stage/'reports',input_limits,result_limits)
                 if len(report_entries)>result_limits.max_artifacts:raise CloudError('result_artifact_budget')
                 for entry in report_entries:
                     if entry.type!='file':raise CloudError('result_artifact_type')

@@ -42,7 +42,7 @@ class RunLifecycle:
 
     def __init__(self, runtime: SessionRuntime, *, controls: ControlQueue, approvals: ApprovalBook,
                  subagents: SubagentRegistry, tool_registry, persistence, registered_subagents,
-                 invoke_subagent, process_tasks, archive_root, mcp_resources, resolve_model, active_tools, memory=None):
+                 invoke_subagent, process_tasks, archive_root, mcp_resources, resolve_model, active_tools, memory=None, cloud_materials=None):
         self._runtime, self.session_id = runtime, runtime.session_id
         self._controls, self._approvals, self._subagents = controls, approvals, subagents
         self._tool_registry, self._persistence = tool_registry, persistence
@@ -50,6 +50,7 @@ class RunLifecycle:
         self._process_tasks, self._archive_root, self._mcp_resources = process_tasks, archive_root, mcp_resources
         self._resolve_model, self._active_tools = resolve_model, active_tools
         self._memory = memory
+        self._cloud_materials=cloud_materials;self._material_query=None;self._material_parts=[]
         self._memory_prompt_parts = []
 
     async def _prepare_resources(self, run, *, include_background=False, messages=()):
@@ -70,6 +71,12 @@ class RunLifecycle:
             self._memory_prompt_parts=await self._persistence.prepare_memory(self.session_id,workspace_root,messages,model)
         # One bounded snapshot per logical turn; approval resumes never search again.
         resources['prompt_parts'].extend(deepcopy(self._memory_prompt_parts))
+        self._material_query=(self._cloud_materials.query if self._cloud_materials is not None
+            and await run_blocking(self._cloud_materials.has_materials,self.session_id) else None)
+        if include_background:
+            from .material_inputs import prompt_parts
+            self._material_parts=prompt_parts(messages)
+        resources['prompt_parts'].extend(deepcopy(self._material_parts))
         self.freeze_run_resources(run, resources['prompt_parts'], resources['project_instructions'], notices)
         emit_event(run.observation.publisher,'run_preparation',lambda:RunPreparationData('model_request'))
         return resources
@@ -124,7 +131,7 @@ class RunLifecycle:
                         run_id=run_id, model_id=model_id, model=model, system_message=system,
                         tools=[spec.tool for spec in specs])
             elif run.files is not None:
-                with observation.bind(files=run.files, processes=run.processes, identity=RunIdentity(session_id, run_id, project_id=run.project_id, execution_root=run.execution_root), archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self._subagents.alist_subagents, process_tasks=self._process_tasks,
+                with observation.bind(files=run.files, processes=run.processes, identity=RunIdentity(session_id, run_id, project_id=run.project_id, execution_root=run.execution_root), archive_root=self._archive_root, cloud_materials=self._material_query, ainvoke_subagent=self._invoke_subagent, alist_subagents=self._subagents.alist_subagents, process_tasks=self._process_tasks,
                                       background_notices=run.background_notices,
                                       history_query=getattr(self._persistence, 'aquery_history', None) if run.project_id is not None else None,
                                       memory_query=self._memory.query if self._memory is not None and self._memory.available_for(run.project_id) else None,
@@ -133,7 +140,7 @@ class RunLifecycle:
                         session_id=session_id, thread_id=thread_id, run_id=run_id, workspace_root=workspace_root,
                         read_resource_roots=resources['read_resource_roots'], max_concurrency=max_concurrency, **options)
             else:
-                with observation.bind(files=run.files, processes=run.processes, identity=RunIdentity(session_id, run_id, project_id=run.project_id, execution_root=run.execution_root), archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self._subagents.alist_subagents, process_tasks=self._process_tasks,
+                with observation.bind(files=run.files, processes=run.processes, identity=RunIdentity(session_id, run_id, project_id=run.project_id, execution_root=run.execution_root), archive_root=self._archive_root, cloud_materials=self._material_query, ainvoke_subagent=self._invoke_subagent, alist_subagents=self._subagents.alist_subagents, process_tasks=self._process_tasks,
                                       background_notices=run.background_notices,
                                       history_query=getattr(self._persistence, 'aquery_history', None) if run.project_id is not None else None,
                                       memory_query=self._memory.query if self._memory is not None and self._memory.available_for(run.project_id) else None,
@@ -214,7 +221,7 @@ class RunLifecycle:
                 rejected_count=decisions.count('reject'),
             )
             observation.stage = 'execute'
-            with observation.bind(files=run.files, processes=run.processes, identity=RunIdentity(session_id, run_id, project_id=run.project_id, execution_root=run.execution_root), archive_root=self._archive_root, ainvoke_subagent=self._invoke_subagent, alist_subagents=self._subagents.alist_subagents, process_tasks=self._process_tasks,
+            with observation.bind(files=run.files, processes=run.processes, identity=RunIdentity(session_id, run_id, project_id=run.project_id, execution_root=run.execution_root), archive_root=self._archive_root, cloud_materials=self._material_query, ainvoke_subagent=self._invoke_subagent, alist_subagents=self._subagents.alist_subagents, process_tasks=self._process_tasks,
                                   history_query=getattr(self._persistence, 'aquery_history', None) if run.project_id is not None else None,
                                   memory_query=self._memory.query if self._memory is not None and self._memory.available_for(run.project_id) else None,
                                       task_queries=run.task_queries or (getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks)):

@@ -5,7 +5,49 @@ import { WebApi } from './api';
 import type { SseFrame } from './sse';
 import type { SessionView } from './types';
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); sessionStorage.clear(); });
+
+it('bridges a verified cloud result into the main draft and sends only after explicit confirmation', async () => {
+  const project = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; const { api } = client(project);
+  const row = { ...await api.session('s'), title: '本机主会话' };
+  vi.mocked(api.sessions).mockResolvedValue([row]);
+  vi.spyOn(api, 'sessionControlOptions').mockResolvedValue({ tools: [], default_active_tools: [], permission_modes: ['Default'], default_permission_mode: 'Default' });
+  vi.spyOn(api, 'context').mockResolvedValue({ session_id: 's', current: { basis: 'unavailable', estimate: null }, latest_request: null });
+  const task = { task_id: 'a'.repeat(32), project_id: project, input_id: 'b'.repeat(64), generation: 1, revision: 1, lifecycle: 'ready',
+    runner_phase: 'ready', environment_phase: 'backend_ready', active_run_id: null, artifact_operation_id: null, control_operation_id: null,
+    environment_operation_id: null, last_quiescent_at: 1, reclaim_blockers: [], runner_model_ids: ['A'] };
+  const binding = { binding_id: 'B', local_session_id: 's', task_id: task.task_id, input_id: task.input_id, revision: 1,
+    profile_id: 'work', instance_id: 'I', preparation: 'prepared', retained: true, cloud: task };
+  const material = { material_id: 'M', receive_id: '', task_id: task.task_id, result_id: 'R', input_id: task.input_id, title: 'report.json', role: 'artifact',
+    size: 12, sha256: 'c'.repeat(64), source_run_id: 'd'.repeat(32), outcome: 'failed', captured_at: 1, reported: true };
+  const cloud = { projectId: project, profiles: vi.fn().mockResolvedValue([]), list: vi.fn().mockResolvedValue([binding]), binding: vi.fn().mockResolvedValue(binding),
+    draft: vi.fn().mockResolvedValue({ text: '', model_id: 'A', draft_revision: 0 }), operations: vi.fn().mockResolvedValue([]),
+    models: vi.fn().mockResolvedValue({ model_ids: ['A'], default_model_id: 'A', thinking_options: {} }),
+    snapshot: vi.fn().mockResolvedValue({ task, cursor: 'C', archive: { epoch: 'E', messages: [], next_cursor: null }, live: { epoch: 'L', seq: 1, messages: [], tools: [], threads: [] } }),
+    usage: vi.fn().mockResolvedValue({ recorded_calls: 0, capture: { capture_incomplete: false } }), threads: vi.fn().mockResolvedValue({ threads: [], next_cursor: null }),
+    observe: vi.fn(async (_s, _b, _t, _c, signal: AbortSignal) => { await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true })); }),
+    results: vi.fn().mockResolvedValue([{ result_id: 'R', source_run_id: 'run12345', phase: 'available', revision: 1, outcome: 'failed' }]),
+    result: vi.fn().mockResolvedValue({ plan: { result_id: 'R', input_id: task.input_id }, phase: 'available', revision: 1, boundary: { outcome: 'failed' }, bundle: { files: [] } }),
+    changes: vi.fn().mockResolvedValue({ changes: [], total: 0, next_offset: null }),
+    receive: vi.fn(async (_s, _b, _r, body: { command_id: string }) => ({ receive_id: body.command_id, command_id: body.command_id, local_project_id: project,
+      local_session_id: 's', binding_id: 'B', result_id: 'R', input_id: task.input_id, phase: 'available', active: false, files: [] })),
+    analysisDraft: vi.fn(async (_s, id: string) => ({ local_project_id: project, local_session_id: 's', receive_id: id, text: '请分析云端报告', material_refs: [{ ...material, receive_id: id }] })) };
+  vi.spyOn(api, 'cloudTasks').mockReturnValue(cloud as unknown as ReturnType<typeof api.cloudTasks>);
+  render(<App api={api} cloudCandidate />);
+  const sessionButton = await screen.findByRole('button', { name: '本机主会话 A' });
+  await act(async () => { fireEvent.click(sessionButton); });
+  fireEvent.change(screen.getByRole('textbox', { name: '消息' }), { target: { value: '保留的本机请求' } });
+  fireEvent.click(screen.getByRole('button', { name: '指令与功能' })); fireEvent.click(screen.getByRole('menuitem', { name: '云端任务' }));
+  fireEvent.click(await screen.findByRole('button', { name: /任务 aaaaaaaa/ }));
+  fireEvent.click(await screen.findByRole('button', { name: /运行 run12345/ }));
+  fireEvent.click(await screen.findByRole('button', { name: '接收到本机' }));
+  fireEvent.click(await screen.findByRole('button', { name: '交给主会话分析' }));
+  await waitFor(() => expect(screen.getByRole('textbox', { name: '消息' })).toHaveProperty('value', '保留的本机请求\n\n请分析云端报告'));
+  expect(screen.getByRole('region', { name: '云端材料引用' })).toBeTruthy(); expect(api.start).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  await waitFor(() => expect(api.start).toHaveBeenCalledOnce());
+  expect(vi.mocked(api.start).mock.calls[0][7]).toEqual(['M']);
+});
 
 it('opens cloud observation from the candidate menu without creating a task or main run', async () => {
   const { api } = client();

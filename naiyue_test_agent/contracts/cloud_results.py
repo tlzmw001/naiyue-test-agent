@@ -23,6 +23,8 @@ class ResultLimits(CloudRecord):
     max_artifacts:int=Field(default=30,ge=0,le=126)
     max_result_bytes:int=Field(default=256*1024*1024,gt=0)
     max_results:int=Field(default=64,gt=0,le=1024)
+    result_lease_seconds:float=Field(default=300,gt=0,le=86400)
+    max_result_leases:int=Field(default=128,gt=0,le=1024)
     git_executable:str=Field(default='git',min_length=1)
     git_timeout_seconds:float=Field(default=30,gt=0,le=300)
     _directory=field_validator('output_directory')(input_path)
@@ -101,13 +103,15 @@ class ResultBundle(CloudRecord):
 
 class ResultRecord(CloudRecord):
     plan:ResultPlan
-    phase:Literal['waiting_terminal','pending','capturing','verifying','available','failed','unknown','abandoned']
+    phase:Literal['waiting_terminal','pending','capturing','verifying','available','failed','unknown','abandoned','superseded','deleting','deleted']
     revision:int=Field(default=1,ge=1)
     boundary:ResultBoundary|None=None
     bundle:ResultBundle|None=None
     error_code:Label|None=None
     attempt:int=Field(default=0,ge=0)
     generation:int|None=Field(default=None,ge=1)
+    superseded_by:TaskId|None=None
+    retired_phase:Literal['available','abandoned']|None=None
 
 
 class ResultAction(CloudRecord):

@@ -8,6 +8,7 @@ import ToolCall from './ToolCall';
 import ReasoningContent from './ReasoningContent';
 import CodeBlock from './CodeBlock';
 import styles from '../App.module.css';
+import materialStyles from './MaterialAttachments.module.css';
 
 function safeUrl(url: string) {
   return /^(https?:\/\/|\/[^/]|#)/i.test(url) ? url : '';
@@ -203,6 +204,11 @@ export default function Conversation({ messages: sourceMessages, compacted, tool
           {(row.type === 'tool' || row.provisional) && <div className={styles.speaker}>{row.type === 'tool' && '工具结果'}{row.provisional && <span>{row.state === 'unconfirmed' ? '未完成内容' : '正在生成'}</span>}</div>}
           {row.reasoning && <ReasoningContent row={row} loadReasoning={loadReasoning} />}
           {row.images?.length && loadImage ? <MessageImages messageId={row.id} images={row.images} load={loadImage} /> : null}
+          {row.type === 'human' && !!row.material_refs?.length && <div className={materialStyles.list} role="list" aria-label="已发送云端材料引用">
+            {row.material_refs.map(item => <div className={materialStyles.item} role="listitem" key={item.material_id}>
+              <span>云端材料 · {item.title} · {item.size.toLocaleString()} 字节</span>
+            </div>)}
+          </div>}
           <div className={styles.messageBody} data-message-id={row.type === 'tool' ? row.id : undefined}>
             {row.type === 'tool' || (row.provisional && row.type !== 'ai') ? <div className={styles.draftText}>{row.content}</div> :
               <MessageMarkdown content={row.content} prefix={`${markdownId}-${encodeURIComponent(row.id)}-`} literalHtml={row.type === 'human'} />}

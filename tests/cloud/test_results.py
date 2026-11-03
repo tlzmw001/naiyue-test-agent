@@ -24,7 +24,7 @@ def finish(r,b,c,ws,body,*,quiet=True):
     return command,fence
 
 
-def test_terminal_has_durable_unique_pending_result_and_blocks_new_run(tmp_path):
+def test_terminal_has_durable_unique_pending_result_and_explicit_abandon(tmp_path):
     with open_cloud_runtime(config(tmp_path)) as r:
         b=prepared(r)
         with client(r) as c,connect(c,r,b) as ws:
@@ -34,9 +34,8 @@ def test_terminal_has_durable_unique_pending_result_and_blocks_new_run(tmp_path)
             assert row.active_run_id is None and row.pending_result_id==rid and 'result_pending' in row.reclaim_blockers
             record=r.results.get(b.task_id,rid)
             assert record.phase=='pending' and record.boundary.seq==1 and record.plan.source_run_id==command['run_id']
-            rejected=c.post('/api/cloud/v1/tasks/'+b.task_id+'/runs',headers=owner_headers(r),json=run_body(row))
-            assert rejected.status_code==409
-            # Only an explicit result action releases this guard, never an observation ACK.
+            # Explicit abandon remains available even though a fresh pending result
+            # can also be superseded atomically by the next run (separate regression).
             dropped=r.results.action(b.task_id,rid,'abandon',dict(command_id=str(uuid4()),expected_revision=record.revision))
             assert dropped.status=='succeeded' and r.results.get(b.task_id,rid).phase=='abandoned'
             assert r.registry.get_task(b.task_id).pending_result_id is None

@@ -36,13 +36,13 @@ export function useConversation(api: WebApi, active = true) {
   const selectionPending = useRef(false);
   const selected = useRef<string>('new');
   const currentRun = useRef<RunView | null>(null);
-  const draftState = useConversationDrafts(selected);
+  const draftState = useConversationDrafts(selected, api.scopeId);
   const { drafts, pending, draftRef, pendingRef, writeDraft, writePending } = draftState;
   const creation = useSessionCreation(api);
   const imageInputs = useComposerImages(api, selected, draftState);
   const stoppedMode = useRef<Record<string, boolean>>({});
   const busySend = useRef(false);
-  const queuedSubmissions=useRef<Record<string,{requestId:string;text:string;images:string[]}>>({});
+  const queuedSubmissions=useRef<Record<string,{requestId:string;text:string;images:string[];materials?:string[]}>>({});
   const subscription = useRef<AbortController | null>(null);
   const pendingStop = useRef<string | null>(null);
 
@@ -137,6 +137,8 @@ export function useConversation(api: WebApi, active = true) {
         if(draftRef.current[id]===queued.text)writeDraft('',id);
         const sent=new Set(queued.images);
         imageInputs.write((imageInputs.ref.current[id]??[]).filter(image=>!sent.has(image.client_id)),id);
+        const materials = new Set(queued.materials ?? []);
+        draftState.writeMaterials((draftState.materialRef.current[id] ?? []).filter(item => !materials.has(item.material_id)), id);
       }
       delete queuedSubmissions.current[id];
     }
@@ -314,7 +316,7 @@ export function useConversation(api: WebApi, active = true) {
 
   const submit = createConversationSubmit({ busySend, selectionPending, model, session, selected, draftRef, pendingRef,
     currentRun, stoppedMode, writeDraft, writePending, setNotice, setSubmitting, setLastSubmission, setSession,
-    creation, imageInputs, api, applySession, display, watch, refreshSessions, refreshSession,queuedSubmissions });
+    creation, imageInputs, api, applySession, display, watch, refreshSessions, refreshSession,queuedSubmissions, draftState });
 
   async function regenerate() {
     if (busySend.current || !session?.can_run || !session.last_reply_id || selectionPending.current) return;
@@ -456,6 +458,9 @@ export function useConversation(api: WebApi, active = true) {
   }
   const id = selected.current;
   return { imageInputs, models, model, thinkingOptions, sessions, session, messages, run, notice:statusSync.error||notice,
+    materialInputs: { current: draftState.materialRef.current[id] ?? [], remove: (materialId: string) =>
+      draftState.writeMaterials((draftState.materialRef.current[id] ?? []).filter(item => item.material_id !== materialId), id) },
+    addAnalysisDraft: (value: import('./cloudReceiveTypes').AnalysisDraft) => activeRef.current && draftState.mergeAnalysisDraft(value),
     statusSyncError:statusSync.error, lastSubmission, listing, creation,
     connection: connection?.session_id === id && connection.run_id === run?.run_id ? connection : null, submitting, stopping, changingModel, changingControls, selectingSession, recovering,
     history: { ...history.pagination, loadOlder: history.loadOlder, disabled: selectingSession },

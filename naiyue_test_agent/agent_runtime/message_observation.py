@@ -22,6 +22,10 @@ def _snapshot(message, visibility, *, reply_id=None):
                and message.additional_kwargs.get('naiyue_compaction_summary') is True)
     row = {'type': message.type, 'id': message.id, 'content': message.content,
            'is_context_summary': summary}
+    if isinstance(message,HumanMessage):
+        from .message_presentation import material_refs_view
+        refs=material_refs_view(message.additional_kwargs.get('naiyue_cloud_material_refs'))
+        if refs:row['material_refs']=refs
     identity = reply_id or message.additional_kwargs.get('naiyue_reply_id')
     if identity:
         row['reply_id'] = identity

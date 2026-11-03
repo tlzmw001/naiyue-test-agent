@@ -6,8 +6,9 @@ import { backgroundTaskPollMs } from '../uiSettings';
 import CloudTaskCreate from './CloudTaskCreate';
 import CloudTaskDetail from './CloudTaskDetail';
 import styles from './CloudTasks.module.css';
+import type { AnalysisDraft } from '../cloudReceiveTypes';
 
-export default function CloudTasks({ api, sessionId, active }: { api: CloudApi; sessionId?: string; active: boolean }) {
+export default function CloudTasks({ api, sessionId, active, onAnalysisDraft }: { api: CloudApi; sessionId?: string; active: boolean; onAnalysisDraft?: (value: AnalysisDraft) => boolean | void }) {
   const [rows, setRows] = useState<CloudBinding[]>([]); const [profiles, setProfiles] = useState<CloudProfile[]>([]);
   const [selected, select] = useState<string>(); const [creating, create] = useState(false);
   const [loading, setLoading] = useState(true); const [error, setError] = useState('');
@@ -68,7 +69,7 @@ export default function CloudTasks({ api, sessionId, active }: { api: CloudApi; 
     setRows(old => [value, ...old.filter(row => row.binding_id !== value.binding_id)]); select(value.binding_id); create(false); update();
   }} />;
   if (binding?.task_id && binding.cloud) return <CloudTaskDetail key={binding.binding_id} api={api} sid={sessionId!}
-    binding={binding} metadataFresh={!stale.includes(binding.binding_id) && !error} active={active && visible} back={back} changed={update} />;
+    binding={binding} metadataFresh={!stale.includes(binding.binding_id) && !error} active={active && visible} back={back} changed={update} onAnalysisDraft={onAnalysisDraft} />;
   return <section className={styles.panel} aria-label="云端任务列表">
     <div className={styles.listHeader}><button ref={newButton} className={styles.primary} onClick={() => { select(undefined); create(true); }}>新增任务</button>
       <button onClick={update}>刷新</button></div>

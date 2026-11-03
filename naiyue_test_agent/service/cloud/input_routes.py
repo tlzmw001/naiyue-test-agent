@@ -45,6 +45,19 @@ def register_input_routes(owner,runtime):
         owner_authorize(request,runtime)
         return await cloud_work(runtime,lambda:runtime.inputs.get_input(ident))
 
+    @owner.get(prefix+'/inputs/{ident}/archive')
+    async def archive(request:Request,ident:str):
+        owner_authorize(request,runtime)
+        from naiyue_test_agent.agent_runtime.async_utils import await_settled
+        from .artifact_routes import ArtifactResponse
+        if any(len(request.headers.getlist(h))>1 for h in ('range','if-range')):raise CloudError('invalid_headers',400)
+        lease=await runtime.inputs.open_download(ident)
+        try:
+            lease.range(request.headers.get('range'),request.headers.get('if-range'))
+            return ArtifactResponse(lease,timeout_seconds=runtime.inputs.limits.upload_timeout_seconds)
+        except BaseException:
+            await await_settled(lease.aclose());raise
+
     @owner.post(prefix+'/tasks')
     async def create_task(request:Request):
         owner_authorize(request,runtime)

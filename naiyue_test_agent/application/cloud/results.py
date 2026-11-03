@@ -10,10 +10,11 @@ from naiyue_test_agent.storage.cloud.lifecycle import LifecycleRepository
 class CloudResults:
     def __init__(self,runtime):
         self.runtime=runtime;self.repository=LifecycleRepository(runtime.database);self.closing=False
+        from .result_retention import ResultRetention
+        self.retention=ResultRetention(self)
 
     def reserve_run(self,task,command_id,run_id):
-        if task.pending_result_id or len(task.result_ids)>=self.runtime.settings.result_limits.max_results:
-            raise CloudError('result_capacity')
+        self.retention.capacity(task)
         output=self.runtime.settings.result_limits.output_directory
         if any(e.path==output or e.path.startswith(output+'/') for e in self.runtime.inputs.get_input(task.input_id).manifest.entries):
             raise CloudError('result_output_conflict')
@@ -25,6 +26,18 @@ class CloudResults:
             expected_generation=task.generation,request_digest=digest(plan.model_dump()),status='accepted',http_status=202,
             result=record.model_dump(mode='json'),created_at=now,updated_at=now)
         return plan,receipt
+
+    def next_run(self,task,run_id):
+        if not task.pending_result_id:return task,()
+        receipt,record=self._read(task.task_id,task.pending_result_id)
+        if record.phase!='pending' or record.generation is not None or record.bundle is not None:
+            raise CloudError('runner_not_ready')
+        state=record.model_copy(update={'phase':'superseded','superseded_by':run_id,'revision':record.revision+1})
+        updated=receipt.model_copy(update={'status':'succeeded','http_status':200,'result':state.model_dump(mode='json'),
+            'error_code':None,'updated_at':time.time()})
+        task=task.model_copy(update={'pending_result_id':None,'result_ids':[v for v in task.result_ids if v!=record.plan.result_id],
+            'reclaim_blockers':[v for v in task.reclaim_blockers if v!='result_pending']})
+        return task,(updated,)
 
     def _read(self,task_id,result_id):
         self.runtime.available_task(task_id)
@@ -57,7 +70,8 @@ class CloudResults:
                 record=ResultRecord.model_validate(receipt.result)
                 result.append(dict(result_id=record.plan.result_id,source_run_id=record.plan.source_run_id,phase=record.phase,
                     revision=record.revision,outcome=record.boundary.outcome if record.boundary else None,error_code=record.error_code,
-                    captured_at=record.bundle.captured_at if record.bundle else None,files_count=len(record.bundle.files) if record.bundle else None))
+                    captured_at=record.bundle.captured_at if record.bundle else None,files_count=len(record.bundle.files) if record.bundle else None,
+                    superseded_by=record.superseded_by))
             return result
 
     def action(self,task_id,result_id,action,value):
@@ -77,9 +91,12 @@ class CloudResults:
             if action not in ('retry','abandon'):raise CloudError('invalid_request',422)
             now=time.time();record=record.model_copy(update={'phase':'abandoned' if action=='abandon' else 'pending',
                 'revision':record.revision+1,'attempt':record.attempt+(action=='retry'),'error_code':None})
+            blockers=[v for v in task.reclaim_blockers if v not in ('result_pending','result_failed','result_retry_pending')]
+            if action=='retry':blockers.append('result_retry_pending' if record.generation is not None else 'result_pending')
             candidate=task.model_copy(update={'revision':task.revision+1,'updated_at':now,
                 'pending_result_id':None if action=='abandon' else result_id,
-                'reclaim_blockers':[v for v in task.reclaim_blockers if v!='result_pending'] if action=='abandon' else task.reclaim_blockers})
+                'result_ids':[v for v in task.result_ids if v!=result_id] if action=='abandon' else task.result_ids,
+                'reclaim_blockers':blockers})
             if action=='abandon' and not candidate.reclaim_blockers and candidate.runner_phase=='ready':
                 candidate=candidate.model_copy(update={'last_quiescent_at':now})
             updated=receipt.model_copy(update={'status':'failed' if action=='abandon' else 'accepted','http_status':200,
@@ -98,7 +115,7 @@ class CloudResults:
             if record.phase in ('available','capturing','verifying'):return record
             if (record.phase!='pending' or task.pending_result_id!=result_id or task.active_run_id or task.environment_operation_id
                     or task.control_operation_id or task.artifact_operation_id
-                    or any(v not in ('result_pending','recovery_required') for v in task.reclaim_blockers)):
+                    or any(v not in ('result_pending','result_retry_pending','recovery_required') for v in task.reclaim_blockers)):
                 raise CloudError('result_not_quiescent')
             record=record.model_copy(update={'phase':'verifying' if record.bundle else 'capturing','revision':record.revision+1,
                 'generation':record.generation or task.generation,'error_code':None})
@@ -179,7 +196,7 @@ class CloudResults:
                 if state.phase=='available':return state
                 if state!=record or task.artifact_operation_id!=result_id or task.pending_result_id!=result_id:raise CloudError('result_identity_conflict')
                 state=state.model_copy(update={'phase':'available','revision':state.revision+1,'error_code':None})
-                blockers=[v for v in task.reclaim_blockers if v not in ('result_pending','result_capture','result_unknown')]
+                blockers=[v for v in task.reclaim_blockers if v not in ('result_pending','result_retry_pending','result_capture','result_unknown','result_failed')]
                 candidate=task.model_copy(update={'revision':task.revision+1,'pending_result_id':None,'artifact_operation_id':None,
                     'reclaim_blockers':blockers,'last_quiescent_at':time.time() if not blockers and task.runner_phase=='ready' else None})
                 self.repository.finish(task,candidate,current.model_copy(update={'status':'succeeded','http_status':200,
@@ -197,7 +214,7 @@ class CloudResults:
             if task.artifact_operation_id!=result_id or task.pending_result_id!=result_id:raise CloudError('result_identity_conflict')
             record=record.model_copy(update={'phase':'failed','revision':record.revision+1,'error_code':code})
             candidate=task.model_copy(update={'revision':task.revision+1,'artifact_operation_id':None,
-                'reclaim_blockers':[v for v in task.reclaim_blockers if v!='result_capture']})
+                'reclaim_blockers':list(dict.fromkeys([*[v for v in task.reclaim_blockers if v not in ('result_capture','result_pending','result_retry_pending')],'result_failed']))})
             self.repository.finish(task,candidate,receipt.model_copy(update={'status':'failed','http_status':200,
                 'result':record.model_dump(mode='json'),'error_code':code,'updated_at':time.time()}))
             return record

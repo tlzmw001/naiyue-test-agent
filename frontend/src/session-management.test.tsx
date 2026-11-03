@@ -114,6 +114,7 @@ it('requires deletion confirmation, then clears the selected session and its dra
 it.each([
   { code: 'session_delete_unconfirmed', notice: /删除未确认/ },
   { code: 'session_background_tasks_active', notice: /先停止后台任务/ },
+  { code: 'session_cloud_delivery_active', notice: /该会话仍在准备或执行代码交付，请等待结束后再删除/ },
 ])('keeps drafts and deletion intact for $code', async ({ code, notice }) => {
   const { api } = setup();
   fireEvent.click(await screen.findByRole('button', { name: '会话1 A' }));

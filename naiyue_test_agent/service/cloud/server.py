@@ -30,6 +30,7 @@ async def _maintain_inputs(runtime,stopping):
 async def _maintain_resources(runtime, stopping):
     while not stopping.is_set():
         try:
+            await cloud_work(runtime,runtime.results.retention.sweep)
             await runtime.lifecycle.sweep_idle(stopping=stopping)
             await cloud_work(runtime, lambda: runtime.resources.disk(refresh=True))
         except (CloudError, OSError, sqlite3.Error) as error:

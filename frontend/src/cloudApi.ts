@@ -3,6 +3,8 @@ import { decodeSSE, responseBytes } from './sse';
 import type { SseFrame } from './sse';
 
 import type { ResultSummary, CloudResult, ResultChanges, ResultPreview, ResultFile } from './cloudResultTypes';
+import type { AnalysisDraft, ReceiveRecord } from './cloudReceiveTypes';
+import type { DeliveryRecord, DeliveryRequest } from './cloudDeliveryTypes';
 
 type Request = (path: string, init?: RequestInit) => Promise<Response>;
 export class CloudApi {
@@ -44,6 +46,17 @@ export class CloudApi {
   changes(sid: string, bid: string, rid: string, offset = 0, signal?: AbortSignal) { return this.read<ResultChanges>(this.task(bid) + '/results/' + encodeURIComponent(rid) + '/changes' + this.query(sid, { offset, limit: 50 }), signal); }
   resultPreview(sid: string, bid: string, rid: string, fid: string, offset = 0, signal?: AbortSignal) { return this.read<ResultPreview>(this.task(bid) + '/results/' + encodeURIComponent(rid) + '/files/' + encodeURIComponent(fid) + '/preview' + this.query(sid, { offset, limit: 16384 }), signal); }
   resultAction(sid: string, bid: string, rid: string, body: object) { return this.write<CloudOperation>(this.task(bid) + '/results/' + encodeURIComponent(rid) + '/actions?local_project_id=' + encodeURIComponent(this.projectId), { local_session_id: sid, result_id: rid, ...body }); }
+  receive(sid: string, bid: string, rid: string, body: { command_id: string; artifact_ids: string[] }) {
+    return this.write<ReceiveRecord>(this.task(bid) + '/results/' + encodeURIComponent(rid) + '/receive?local_project_id=' + encodeURIComponent(this.projectId), { ...body, local_session_id: sid });
+  }
+  receiveStatus(sid: string, id: string, signal?: AbortSignal) { return this.read<ReceiveRecord>('/cloud-receives/' + encodeURIComponent(id) + this.query(sid), signal); }
+  retryReceive(sid: string, id: string) { return this.write<ReceiveRecord>('/cloud-receives/' + encodeURIComponent(id) + '/retry' + this.query(sid), {}); }
+  analysisDraft(sid: string, id: string) { return this.write<AnalysisDraft>('/cloud-receives/' + encodeURIComponent(id) + '/analysis-draft' + this.query(sid), {}); }
+  delivery(sid: string, body: Omit<DeliveryRequest, 'local_session_id'>) {
+    return this.write<DeliveryRecord>('/cloud-deliveries?local_project_id=' + encodeURIComponent(this.projectId), { ...body, local_session_id: sid });
+  }
+  deliveryStatus(sid: string, id: string, signal?: AbortSignal) { return this.read<DeliveryRecord>('/cloud-deliveries/' + encodeURIComponent(id) + this.query(sid), signal); }
+  executeDelivery(sid: string, id: string) { return this.write<DeliveryRecord>('/cloud-deliveries/' + encodeURIComponent(id) + '/execute' + this.query(sid), { confirm: true }); }
   async downloadResult(sid: string, bid: string, rid: string, file: ResultFile) {
     const a = file.artifact;
     const response = await this.request(this.task(bid) + '/results/' + encodeURIComponent(rid) + '/files/' + encodeURIComponent(a.artifact_id) + '/bytes' + this.query(sid));

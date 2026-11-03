@@ -20,7 +20,7 @@ available只证明所有必需字节、固定来源/槽位、规范清单和引�
 
 ## 3. 持久身份、终局和自主推进
 
-Owner Run准入同事务预留root命令及一个result命令（command_id=result_id），固定task/project/input/source_run/source_generation，quota需容纳两条，避免终局才无记录额度。RunCommand携带只读ResultPlan；直接内核测试/调用没有owner结果计划时无发布授权，不新增产品双模式或禁用开关。task.result_ids索引结果，pending_result_id在运行终局核验与原run回执同事务落盘，result_pending阻止新run/空闲释放。
+Owner Run准入同事务预留root命令及一个result命令（command_id=result_id），固定task/project/input/source_run/source_generation，quota需容纳两条，避免终局才无记录额度。RunCommand携带只读ResultPlan；直接内核测试/调用没有owner结果计划时无发布授权，不新增产品双模式或禁用开关。task.result_ids索引结果，pending_result_id在运行终局核验与原run回执同事务落盘，result_pending阻止空闲释放；仅未开始捕获的fresh pending允许新run同事务supersede，见143ab。
 
 结果源边界是可信run_finished(epoch,seq,status)。recover先于原finished时，使用已核验control_finished/recovery边界，source_run不变、outcome=unconfirmed，不能伪造原completed或产生第二份结果。Runs.finish、Actions.finish/activity、bind/detach/环境收尾保留pending；等待后台静止不占artifact_operation_id，可正常stop。真正只读捕获由固定result/boundary的begin原子预留artifact_operation_id；不许新run/控制/环境同时修改。
 
@@ -50,9 +50,9 @@ ArtifactDownload扩展单Range＋If-Range强ETag：206精确长度/Content-Range
 
 正常例子：本机绑定请求 → `command_dispatch.execute`冻结原run命令 → `RunnerRuns.reserve`原子预留root/result两条回执 → `RunCommand.result_plan` → `Kernel.accept`将计划写入Runner state/result-plans → Agent用`task_output_directory`取得本轮目录并按普通文件工具写入 → Runner journal必要保存/事件ACK → `RunnerRuns.finish`将原终局、result_pending、回执同事务提交 → 原publisher读固定结果、begin → `freeze_result`发布完整spool → prepare封存精确槽位 → 共用`upload_record`的原始字节通道 → commit检查I/O清单及所有产物available → 原子解除pending。侧栏的观察、预览、下载都不会再运行模型或写入主聊天/记忆。
 
-失败例子：结果prepare/PUT/commit响应丢失 → publisher查询同一result_id；已有完整spool只核对/重传同bundle，commit已成功则不降级。扫描前已持久started_attempt而重启后无完整spool → 本轮保存失败、保留result_pending；只有显式retry增加attempt后才允许重新读现场，不能声称还是原停止瞬间。原run经过recover时journal当前状态可能变recovered，已核验failed/interrupted终局seq与来源继续保留，不伪造completed。来源/目录变化、patch/产物/元数据预算失败均不发布部分结果；失败轮可先保存部分代码/报告，但业务失败与文件available分开。
+失败例子：结果prepare/PUT/commit响应丢失 → publisher查询同一result_id；已有完整spool只核对/重传同bundle，commit已成功则不降级。扫描前已持久started_attempt而重启后无完整spool → 本轮保存失败、保留result_failed保护；只有显式retry增加attempt后才允许重新读现场，不能声称还是原停止瞬间。原run经过recover时journal当前状态可能变recovered，已核验failed/interrupted终局seq与来源继续保留，不伪造completed。来源/目录变化、patch/产物/元数据预算失败均不发布部分结果；失败轮可先保存部分代码/报告，但业务失败与文件available分开。
 
-结果记录仍在可信commands表（operation=result:capture），分页SQL在CloudRegistry.result_commands；任务目录/SQLite不会被Coordinator打开。Runner state只由Runner打开；`state/results/{result_id}`是完整冻结文件，task的workspace/state在容器释放后保留。Coordinator的artifacts/artifact-transfers持有独立文件和身份；任务删除沿既有封口/TaskIO排空/固定身份清理/回执脱敏，无第二套回收目录。默认结果数量64、产物30/轮、patch64MiB、O总量256MiB等均由ResultLimits配置；ArtifactLimits的单文件/总空间/总数量更严格时继续生效，额度失败不会静默丢文件。
+结果记录仍在可信commands表（operation=result:capture），分页SQL在CloudRegistry.result_commands；任务目录/SQLite不会被Coordinator打开。Runner state只由Runner打开；`state/results/{result_id}`是完整冻结文件，task的workspace/state在容器释放后保留。Coordinator的artifacts/artifact-transfers持有独立文件和身份；任务删除沿既有封口/TaskIO排空/固定身份清理/回执脱敏，无第二套回收目录。默认保留结果数量64（最新available＋在途轮换允许一份重叠，非终身轮数上限）、产物30/轮、patch64MiB、O总量256MiB等均由ResultLimits配置；ArtifactLimits的单文件/总空间/总数量更严格时继续生效，额度失败不会静默丢文件。
 
 原I显式包含的安全缓存路径必须进入O；固定缓存排除只过滤新增。产物根与I原路径冲突在run准入明确拒绝。冻结全局ignore、仓库exclude、目录.gitignore按Git优先级重建在私有比较目录，当前工作区修改ignore不能反过来改变原输入policy。安全Linux代码路径保留，结果变化列表标明Windows是否可表达；报告文件沿既有artifact相对路径约束，非法名称明确失败。
 
@@ -69,3 +69,9 @@ ArtifactDownload扩展单Range＋If-Range强ETag：206精确长度/Content-Range
 真实本机SDK调用受控模型HTTP夹具：工具取得本轮输出目录、写代码/交接报告，Windows/UI无后续命令时自动available；受控Backend释放及Coordinator重开后固定结果仍能下载。桌面1440和375窄屏真实浏览器经过本机认证代理预览/下载，完整SHA/字节核对、HTML纯文本、主草稿保持、云端只读观察段0写命令和页面0错误。这里不声称真实Docker/Windows/公司业务或真实供应商通过。
 
 默认/候选TS/Vite构建、4目标标准wheel/Twine、Mac源码外新venv安装/产品自检、compileall/diff check通过；每包511生产Python源逐字节一致。独立架构/安全复核已闭合。完整命令/结果在[verification.json](../../build/spec143-s072-20261102/verification.json)、[review.md](../../build/spec143-s072-20261102/review.md)及同目录日志；未提交/push/部署/构建真实镜像，未改真实配置/用户数据，原S06.4改动和Spec142四稿保留。下一片仅S08.1，用户此前确认分析请求先入输入框、点击发送才启动本机Agent。
+
+## 7. 143ab修正后的执行边界
+
+正常续聊与捕获共用CT1/CAS：fresh pending在新run提交成功时转superseded并记录替代run；begin先成功则下一消息等待。失败/重试/unknown不自动抛弃已开始的快照。available之后Runner先持久cleanup proof，清本轮spool再清plan；未知/在途保留，清理失败不挡其他结果发布。Coordinator保留最新和短期接收引用，删除旧结果先deleting，字节删除成功后才deleted及释放额度；墓碑仍保留原执行结论。
+
+I只首次验证/建私有树；O每轮全内容SHA256/blob哈希，已知基线内容不再写副本，变化对象放临时ODB，最终发布文件才fsync。缓存不是结果信任边界，mtime/size不用于跳过O内容；同大小同mtime的变化仍必须被发现。详细成本、局限和本机测量见143ab。

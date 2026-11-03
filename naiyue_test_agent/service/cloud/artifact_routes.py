@@ -14,8 +14,9 @@ from .http import _body
 
 
 class ArtifactResponse(StreamingResponse):
-    def __init__(self,lease):
+    def __init__(self,lease,*,timeout_seconds=None):
         self.lease=lease;record=lease.record
+        self.timeout_seconds=timeout_seconds if timeout_seconds is not None else lease.service.limits.transfer_timeout_seconds
         headers={}
         if lease.partial:headers['Content-Range']=f'bytes {lease.start}-{lease.start+lease.length-1}/{record.size}'
         super().__init__(lease.chunks(),status_code=206 if lease.partial else 200,media_type='application/octet-stream',headers=headers|{
@@ -26,7 +27,7 @@ class ArtifactResponse(StreamingResponse):
     async def __call__(self,scope,receive,send):
         primary=None
         try:
-            async with asyncio.timeout(self.lease.service.limits.transfer_timeout_seconds):
+            async with asyncio.timeout(self.timeout_seconds):
                 await super().__call__(scope,receive,send)
         except BaseException as error:primary=error;raise
         finally:

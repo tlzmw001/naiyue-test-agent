@@ -13,6 +13,10 @@ class HistoryQuery(Protocol):
                        agent_path: str, request: dict, settings: 'HistorySettings') -> dict: ...
 
 
+class CloudMaterialsQuery(Protocol):
+    async def __call__(self, *, source_session_id: str, project_id: str | None, request: dict) -> dict: ...
+
+
 class MemoryQuery(Protocol):
     async def __call__(self, *, scope: 'RunScope', request: dict,
                        tool_call_id: str | None = None) -> dict: ...

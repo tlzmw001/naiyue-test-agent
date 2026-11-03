@@ -42,6 +42,8 @@ def initialize(connection):
 
 
 def check_deletion(connection,session_id=None):
+    from .cloud_delivery import check_deletion as check_delivery
+    check_delivery(connection,session_id)
     args=() if session_id is None else (session_id,)
     query=('SELECT 1 FROM naiyue_cloud_bindings WHERE retained=1 LIMIT 1' if session_id is None
         else 'SELECT 1 FROM naiyue_cloud_bindings WHERE retained=1 AND session_id=? LIMIT 1')
@@ -50,6 +52,10 @@ def check_deletion(connection,session_id=None):
 
 
 def purge(connection,session_id):
+    from .cloud_delivery import purge as purge_deliveries
+    purge_deliveries(connection,session_id)
+    from .cloud_receive import purge as purge_receives
+    purge_receives(connection,session_id)
     connection.execute('DELETE FROM naiyue_cloud_operations WHERE session_id=?',(session_id,))
     connection.execute('DELETE FROM naiyue_cloud_bindings WHERE session_id=?',(session_id,))
     connection.execute('DELETE FROM naiyue_cloud_sources WHERE session_id=?',(session_id,))

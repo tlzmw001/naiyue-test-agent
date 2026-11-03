@@ -5,6 +5,7 @@ import type { SessionView, RunView } from './types';
 import type { useSessionCreation } from './useSessionCreation';
 import type { useComposerImages } from './useComposerImages';
 import { wireImages, type FrozenImageRequest } from './imageTypes';
+import type { useConversationDrafts } from './useConversationDrafts';
 
 type Context = {
   busySend: RefObject<boolean>; selectionPending: RefObject<boolean>; model: string; session: SessionView | null;
@@ -18,26 +19,31 @@ type Context = {
   applySession:(value:SessionView, selected?:boolean)=>void;
   display:(value:RunView,id:string)=>void; watch:(run:string,id:string,initial?:RunView)=>Promise<void>;
   refreshSessions:()=>Promise<void>; refreshSession:(id:string)=>Promise<SessionView>;
-  queuedSubmissions:RefObject<Record<string,{requestId:string;text:string;images:string[]}>>;
+  queuedSubmissions:RefObject<Record<string,{requestId:string;text:string;images:string[];materials?:string[]}>>;
+  draftState: ReturnType<typeof useConversationDrafts>;
 };
 export function createConversationSubmit(context:Context) {
   const { busySend,selectionPending,model,session,selected,draftRef,pendingRef,currentRun,stoppedMode,
     writeDraft,writePending,setNotice,setSubmitting,setLastSubmission,setSession,creation,imageInputs,api,
-    applySession,display,watch,refreshSessions,refreshSession,queuedSubmissions } = context;
+    applySession,display,watch,refreshSessions,refreshSession,queuedSubmissions,draftState } = context;
   return async function submit(followUp: boolean, retryUncertain = false) {
     if (busySend.current || selectionPending.current || !model) return;
     if (session?.pending_submission?.status==='waiting_environment') return;
     if (session?.recovery) { setNotice('当前仅可查看已保存历史。'); return; }
     const key = selected.current;
     const frozen = retryUncertain ? imageInputs.uncertain : undefined;
-    if (imageInputs.uncertain && !retryUncertain) { setNotice('上次图片发送结果尚未确认，请先核对原请求。新输入已保留。'); return; }
+    if (imageInputs.uncertain && !retryUncertain) { setNotice('上次附件或材料发送结果尚未确认，请先核对原请求。新输入已保留。'); return; }
     if (retryUncertain && !frozen) return;
     const text = frozen?.draftText ?? draftRef.current[key] ?? '';
     const queued = pendingRef.current[key] ?? [];
     const attached = frozen?.images ?? imageInputs.ref.current[key] ?? [];
+    const materials = frozen?.materialRefs ?? draftState.materialRef.current[key] ?? [];
     if (imageInputs.reading) return;
     if (attached.length && !frozen && !imageInputs.supports(model)) { setNotice('当前模型不支持或尚未确认支持图片，请切换模型或移除图片。'); return; }
     const live = currentRun.current;
+    if (!frozen && materials.length && live?.status === 'running' && !live.done) {
+      setNotice('本轮正在执行，分析要求和材料已保留；结束后再发送下一轮。'); return;
+    }
     if (!frozen && stoppedMode.current[key] && live?.status === 'running') {
       if (attached.length) { setNotice('上一轮正在停止，图片已保留在输入框。'); return; }
       if (text.trim()) { writePending([...queued, text], key); writeDraft('', key); }
@@ -45,7 +51,7 @@ export function createConversationSubmit(context:Context) {
       return;
     }
     const combined = frozen ? frozen.text : stoppedMode.current[key] ? [...queued, text].filter(Boolean).join('\n\n') : text;
-    if (!combined.trim() && !attached.length) return;
+    if (!combined.trim() && !attached.length && !materials.length) return;
     if (combined.length > 32768) { setNotice('待发送内容过长，请编辑后分批提交。'); return; }
     busySend.current = true;
     setSubmitting(true);
@@ -69,23 +75,24 @@ export function createConversationSubmit(context:Context) {
       }
       const configured = await creation.configure(sid);
       if (configured) setSession(previous => previous?.session_id === sid ? { ...previous, ...configured } : previous);
-      if (attached.length && !request) request = imageInputs.freeze({ requestId: crypto.randomUUID(), sessionId: sid,
+      const waiting = request?.waitForEnvironment ?? target?.execution?.state === 'preparing';
+      if ((attached.length || materials.length) && !request) request = imageInputs.freeze({ requestId: crypto.randomUUID(), sessionId: sid,
         kind: live?.status === 'running' && !live.done ? followUp ? 'follow_up' : 'steering' : 'message',
         runId: live?.status === 'running' && !live.done ? live.run_id : undefined,
-        text: combined, draftText: text, images: attached, revision: session?.conversation_revision });
+        text: combined, draftText: text, images: attached, materialRefs: materials.map(item => ({ ...item })), revision: session?.conversation_revision, waitForEnvironment: waiting });
       if (request ? request.kind !== 'message' : live?.status === 'running' && !live.done) {
         if (request && request.kind !== 'message') await api.control(request.runId!, request.kind, request.text, 'root', undefined, undefined, wireImages(request.images), [...new Set(request.images.flatMap(image => image.pendingId ? [image.pendingId] : []))], request.requestId);
         else await api.control(live!.run_id, followUp ? 'follow_up' : 'steering', combined);
         setLastSubmission({ session_id: sid });
         setNotice(followUp ? 'Follow-up 已排队，将在自然结束后处理。' : '补充消息已排队。');
       } else {
-        const waiting=target?.execution?.state==='preparing';
-        const started = waiting ? await api.start(sid,combined,request?.requestId??crypto.randomUUID(),target?.conversation_revision,wireImages(attached),
+        const started = materials.length ? await api.start(sid,combined,request!.requestId,request!.revision,wireImages(attached),
+          [...new Set(attached.flatMap(image=>image.pendingId?[image.pendingId]:[]))],waiting,materials.map(item=>item.material_id)) : waiting ? await api.start(sid,combined,request?.requestId??crypto.randomUUID(),target?.conversation_revision,wireImages(attached),
           [...new Set(attached.flatMap(image=>image.pendingId?[image.pendingId]:[]))],true) : attached.length ? await api.start(sid, combined, request!.requestId, request!.revision, wireImages(attached), [...new Set(attached.flatMap(image => image.pendingId ? [image.pendingId] : []))]) : await api.start(sid, combined, undefined, session?.conversation_revision);
         setLastSubmission({ session_id: sid });
         if(started.status==='waiting_environment'&&started.request_id) {
           waitingAccepted=true;
-          queuedSubmissions.current[sid]={requestId:started.request_id,text,images:attached.map(image=>image.client_id)};
+          queuedSubmissions.current[sid]={requestId:started.request_id,text,images:attached.map(image=>image.client_id),materials:materials.map(item=>item.material_id)};
           setSession(previous=>previous?.session_id===sid?{...previous,can_run:false,pending_submission:{request_id:started.request_id!,status:'waiting_environment'}}:previous);
           if(selected.current===sid)setNotice('消息已受理，沙箱准备完成后会在此会话自动发送。可以切换会话或取消待发送。');
         } else if(started.run_id) {
@@ -100,13 +107,18 @@ export function createConversationSubmit(context:Context) {
       if (request) imageInputs.settle(sid,request.requestId);
       const sent = new Set(attached.map(image => image.client_id));
       if(!waitingAccepted)imageInputs.write((imageInputs.ref.current[sid] ?? []).filter(image => !sent.has(image.client_id)), sid);
+      if (!waitingAccepted && materials.length) {
+        const sentMaterials = new Set(materials.map(item => item.material_id));
+        draftState.writeMaterials((draftState.materialRef.current[sid] ?? []).filter(item => !sentMaterials.has(item.material_id)), sid);
+      }
       void imageInputs.refreshPending();
       if (!waitingAccepted&&draftRef.current[sid] === text) writeDraft('', sid);
       void refreshSessions().catch(error=>{
         console.warn('submitted_session_list_refresh_failed',error instanceof ApiError?error.code:error instanceof Error?error.name:'unknown');
       });
     } catch (error) {
-      if (request && error instanceof ApiError && (['invalid_request','image_input_invalid','image_input_format_unsupported','image_input_too_large','image_input_pixel_limit','model_image_input_unsupported','image_input_busy','pending_image_limit','pending_image_invalid','session_busy','stale_run','run_capacity_exceeded','request_too_large'].includes(error.code))) imageInputs.settle(sid,request.requestId);
+      if (request && error instanceof ApiError && (['invalid_request','image_input_invalid','image_input_format_unsupported','image_input_too_large','image_input_pixel_limit','model_image_input_unsupported','image_input_busy','pending_image_limit','pending_image_invalid','session_busy','stale_run','run_capacity_exceeded','request_too_large',
+        'cloud_material_not_found','cloud_material_unavailable','cloud_material_identity_mismatch','cloud_material_budget','cloud_material_binary','cloud_materials_unavailable'].includes(error.code))) imageInputs.settle(sid,request.requestId);
       console.warn('conversation_submit_failed', error instanceof ApiError ? error.code : error instanceof Error ? error.name : 'unknown');
       setNotice(errorText(error) + (creation.hasPending(sid) ? ' 设置尚未确认，再次发送将继续保存所选设置。' : ''));
       if (sid !== 'new') try { await refreshSession(sid); } catch { console.warn('submitted_session_refresh_failed'); }

@@ -54,7 +54,7 @@ class LifecycleRepository:
                 (receipt.model_dump_json(), receipt.command_id, receipt.request_digest)).rowcount
             if changed != 1: raise CloudError('command_state_conflict')
 
-    def finish(self, previous, candidate, receipt, *, related=()):
+    def finish(self, previous, candidate, receipt, *, related=(), retired_artifacts=()):
         with self.database.transaction(write=True) as connection:
             changed = connection.execute('''UPDATE tasks SET generation=?,revision=?,record_json=?
                 WHERE task_id=? AND revision=? AND generation=?''', (candidate.generation, candidate.revision,
@@ -67,3 +67,7 @@ class LifecycleRepository:
                 changed=connection.execute('UPDATE commands SET record_json=? WHERE command_id=? AND request_digest=?',
                     (item.model_dump_json(),item.command_id,item.request_digest)).rowcount
                 if changed!=1:raise CloudError('command_state_conflict')
+            for artifact_id in retired_artifacts:
+                connection.execute('DELETE FROM meta WHERE key=?',('artifact:'+candidate.task_id+':'+artifact_id,))
+            if receipt.operation=='result:capture' and receipt.result.get('phase')=='deleted':
+                connection.execute('DELETE FROM meta WHERE key LIKE ?',('result-lease:'+candidate.task_id+':'+receipt.command_id+':%',))

@@ -117,6 +117,7 @@ class SubagentRegistry:
                 model_id=spec.model_id or session.model_id, tool_names=spec.tool_names,
                 status='running', phase='execute', settled=False, task=task, workspace_root=run.execution_root.path if run.execution_root else None,
                 project_id=run.project_id, execution_root=run.execution_root, files=parent_context.scope.capabilities.files, processes=parent_context.scope.capabilities.processes,
+                cloud_materials=parent_context.scope.capabilities.cloud_materials,
                 environment_binding_id=run.files.environment.binding_id if run.files is not None and run.files.environment.kind=='sandbox' else None,
                 read_resource_roots=(parent_context.inputs.read_resource_roots if parent_context.inputs.read_resource_roots is not None else ()),
                 max_concurrency=(parent_context.inputs.max_concurrency if parent_context.inputs.max_concurrency is not None else 4), control=RunControl(),
@@ -200,6 +201,7 @@ class SubagentRegistry:
                 with observation.bind(files=instance['files'], processes=instance['processes'], identity=RunIdentity(self.session_id, instance['run_id'], instance['agent_path'],
                         project_id=instance['project_id'], execution_root=instance['execution_root'],
                         parent_tool_call_id=instance['parent_tool_call_id'], parent_run_id=instance['parent_run_id'], root_run_id=instance['root_run_id']), archive_root=self._archive_root,
+                                      cloud_materials=instance['cloud_materials'],
                                       history_query=getattr(self._persistence, 'aquery_history', None) if instance['project_id'] is not None else None,
                                       memory_query=self._memory.query if self._memory is not None and self._memory.available_for(instance['project_id']) else None):
                     result = await ainvoke_subagent_step(graph, instance, resume=resume,

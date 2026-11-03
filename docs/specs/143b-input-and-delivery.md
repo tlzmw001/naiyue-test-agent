@@ -1,6 +1,6 @@
 # Spec143B：文件导入、基线复用与结果交付
 
-状态：S03.1最小导入与S03.2完整Git来源/缓存/段续传已完成本机实施，见[143l](143l-s031-input-import.md)、[143o第7节](143o-s032-sources-cache-and-resume.md#7-本机实现与验收2026-11-01)；Windows原机待补证。S07.1单产物上传/下载已实现，见[143n](143n-s071-artifacts-and-cli.md)；完整S07.2结果/S08交付仍为拟实现合同。总入口[Spec143](143-cloud-task-b.md)，不保留远端提交历史。
+状态：S03.1最小导入与S03.2完整Git来源/缓存/段续传已完成本机实施，见[143l](143l-s031-input-import.md)、[143o第7节](143o-s032-sources-cache-and-resume.md#7-本机实现与验收2026-11-01)；Windows原机待补证。S07.1单产物上传/下载已实现，见[143n](143n-s071-artifacts-and-cli.md)；完整S07.2结果/S08交付已完成本机代码与验证，见143z/143w/143aa；后台续聊、保留和捕获成本修正见[143ab](143ab-result-continuation-retention-and-cost.md)。总入口[Spec143](143-cloud-task-b.md)，不保留远端提交历史。
 
 ## 1. 三种不同的数据
 
@@ -103,9 +103,13 @@ ResultReceipt {
 }
 ```
 
-内部分别把原始字节写入私有 Git object/index，生成 I/O tree，用 batch 输入避免每文件一个进程。禁用系统/用户 Git 配置、hooks、filters、autocrlf 和外部 diff，保留真正字节；不因源仓库 `.gitattributes` 改写内容。`git diff --binary --full-index --no-renames` 产生 patch，不生成提交/bundle，不向原仓库发布对象/ref。tree_id 是比较缓存，input_id/O manifest 才是内容权威。
+内部首次核验I归档并建立task私有、按input_id固定的Git基线树，后续复用；O每轮完整读受管内容，同时计算SHA-256与Git blob ID，只有I中未知内容另行冻结/写本轮临时对象，已知内容只引用基线对象。临时ODB以I为只读alternate，新增raw tree按Git协议生成并与原生Git测试对照，避免native write-tree freshen基线对象。只对最终发布manifest/patch/report及目录fsync；完整spool重传不重扫，临时对象随轮删除，不累计每轮O。用batch输入避免每文件一个进程。禁用系统/用户 Git 配置、hooks、filters、autocrlf 和外部 diff，保留真正字节；不因源仓库 `.gitattributes` 改写内容。`git diff --binary --full-index --no-renames` 产生 patch，不生成提交/bundle，不向原仓库发布对象/ref。tree_id 是比较缓存，input_id/O manifest 才是内容权威。
 
 rename 可表达为 delete＋add；不承诺保留远端 Git 提交、rename 历史、空目录或文件时间。结果扫描复用输入的类型/路径安全规则；Windows 不可表达的远端文件仍可在云端审查，但本机交付必须明确拒绝并列冲突，不能静默丢文件。
+
+捕获最坏仍需读全量受管O：O(总字节读取)＋O(变化内容冻结)，不采用A的mtime/size跳过内容核对。输入默认4096文件/128MiB，输出4096文件/256MiB，均可配置；超限明确失败，UI显示保存失败，可显式retry/abandon，不能长期伪装“正在保存”。不暗增默认上限，也不承诺GB工作区1秒完成。143g分别计量终局→可接收下一消息、终局→available，捕获/上传包含在端到端成本内；2CPU/不同文件与字节规模分档报告。
+
+保留策略见143ab：max_results是当前保留数量，默认保留最新available与活动接收/下载引用；旧无引用结果先deleting，物理清理成功后原子释放artifact索引/额度并保留deleted执行结论。superseded没有固定O；Runner确认终态后清spool与plan，保留命令和必要历史。捕获进行中不能新run/自动空闲停止；GC不删除workspace、I和历史。
 
 ## 7. 结果取回与本机交付
 

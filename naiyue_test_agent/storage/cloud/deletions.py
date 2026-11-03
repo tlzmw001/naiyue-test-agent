@@ -33,6 +33,7 @@ class DeletionRepository:
             if complete:
                 c.execute('DELETE FROM meta WHERE key=? OR key LIKE ?',
                     ('history:' + candidate.task_id, 'artifact:' + candidate.task_id + ':%'))
+                c.execute('DELETE FROM meta WHERE key LIKE ?',('result-lease:'+candidate.task_id+':%',))
                 c.execute('DELETE FROM task_credentials WHERE task_id=?', (candidate.task_id,))
                 for row in c.execute('SELECT record_json FROM commands WHERE resource_id=? AND command_id!=?',
                         (candidate.task_id, receipt.command_id)).fetchall():

@@ -57,6 +57,9 @@ def bounded_message(row, settings, budget):
     while encoded_size(value) > budget and value.get('tool_calls'):
         value['tool_calls'] = value['tool_calls'][:-1]
         value['tool_calls_truncated'] = True
+    while encoded_size(value) > budget and value.get('material_refs'):
+        value['material_refs'] = value['material_refs'][:-1]
+        value['material_refs_truncated'] = True
     if encoded_size(value) > budget:
         raise WebError('history_message_unavailable', 503)
     return value
@@ -126,6 +129,10 @@ def record_view(record):
         images = json.loads(record['images_json'])
         if images:
             value['images'] = images
+    if record.get('material_refs_json'):
+        from naiyue_test_agent.agent_runtime.message_presentation import material_refs_view
+        refs=material_refs_view(json.loads(record['material_refs_json']))
+        if refs:value['material_refs']=refs
     return {**value, 'reply_id': record.get('reply_id'), 'sequence': record['sequence'], 'revision': record['revision'],
             'parent_message_id': record['parent_message_id'],
             'detail': {'sequence': record['sequence'], 'revision': record['revision']}}

@@ -23,7 +23,11 @@ class CloudInputs:
     def __init__(self,runtime):
         self.runtime=runtime;self.repository=InputRepository(runtime.database)
         self.root=runtime.settings.data_dir;self.limits=runtime.settings.input_limits;self.busy=set()
-        self.jobs=set();self.uploads=set();self.closing=False
+        self.jobs=set();self.uploads=set();self.downloads=set();self.closing=False
+
+    async def open_download(self,ident):
+        from .input_download import open_download
+        return await open_download(self,ident)
 
     async def perform(self,ident,action):
         if self.closing:raise CloudError('cloud_closing',503)
@@ -45,6 +49,7 @@ class CloudInputs:
 
     async def aclose(self):
         self.closing=True
+        for lease in tuple(self.downloads):await lease.aclose()
         if self.uploads:await asyncio.gather(*(asyncio.shield(job) for job in list(self.uploads)),return_exceptions=True)
         if self.jobs:
             results=await asyncio.gather(*(asyncio.shield(job) for job in list(self.jobs)),return_exceptions=True)

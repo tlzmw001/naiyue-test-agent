@@ -32,6 +32,12 @@ def _check_cloud_tasks(path):
                 if read_schema_version(connection)>=21 and not set(REQUIRED)<=tables:
                     raise ValueError('cloud_tasks_reconciliation_required')
                 if read_schema_version(connection)>=21:
+                    if read_schema_version(connection)>=22:
+                        from .cloud_receive import REQUIRED as RECEIVE_REQUIRED
+                        REQUIRED=REQUIRED|RECEIVE_REQUIRED
+                    if read_schema_version(connection)>=23:
+                        from .cloud_delivery import REQUIRED as DELIVERY_REQUIRED
+                        REQUIRED=REQUIRED|DELIVERY_REQUIRED
                     for table,fields in REQUIRED.items():
                         columns={r[0] for r in connection.execute('SELECT name FROM pragma_table_info(?)',(table,))}
                         if not set(fields.split())<=columns:raise ValueError('cloud_tasks_reconciliation_required')

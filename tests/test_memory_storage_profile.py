@@ -18,13 +18,13 @@ def test_memory_database_never_enters_disk_guards(monkeypatch, tmp_path):
         assert database.path is None
         assert database.uri.startswith('file:/naiyue-') and database.uri.endswith('?vfs=memdb')
         assert database.connection.execute('PRAGMA journal_mode').fetchone()[0] == 'memory'
-        assert database.read_rows('SELECT version FROM naiyue_store_info') == [{'version': 21}]
+        assert database.read_rows('SELECT version FROM naiyue_store_info') == [{'version': 23}]
     assert list(tmp_path.iterdir()) == []
 
 
 def test_memory_store_uses_same_repo_types_and_is_isolated(tmp_path):
     with ProjectStore(tmp_path / 'disk.sqlite') as disk, ProjectStore.in_memory() as first, ProjectStore.in_memory() as second:
-        for name in ('sessions', 'conversation', 'replies', 'subagents', 'usage', 'diagnostics', 'memory', 'runs', 'cloud_tasks'):
+        for name in ('sessions', 'conversation', 'replies', 'subagents', 'usage', 'diagnostics', 'memory', 'runs', 'cloud_tasks', 'cloud_receives'):
             assert type(getattr(first, name)) is type(getattr(disk, name))
         assert first.path is second.path is None
         assert first.database.uri != second.database.uri

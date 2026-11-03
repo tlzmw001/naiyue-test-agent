@@ -14,7 +14,7 @@ from naiyue_test_agent.application.subagents.session_subagents import SubagentRe
 class AgentSession:
     def __init__(self, session_id, state: SessionState, *, catalog, tool_registry,
                  permission_settings, persistence=None, invoke_subagent=None, registered_subagents=None,
-                 progress_settings=None, subagent_result_settings=None, mcp_resources=None, process_tasks=None, archive_root=None, memory=None, image_input_settings=None):
+                 progress_settings=None, subagent_result_settings=None, mcp_resources=None, process_tasks=None, archive_root=None, memory=None, image_input_settings=None, cloud_materials=None):
         self.session_id = session_id
         self._runtime = SessionRuntime(session_id, state)
         self._catalog, self._tool_registry = catalog, tool_registry
@@ -33,7 +33,7 @@ class AgentSession:
             subagents=self.subagents, tool_registry=tool_registry, persistence=persistence,
             registered_subagents=registered_subagents, invoke_subagent=invoke_subagent,
             process_tasks=process_tasks, archive_root=archive_root, mcp_resources=mcp_resources,
-            resolve_model=self.resolve_model, active_tools=self.get_active_tools, memory=memory)
+            resolve_model=self.resolve_model, active_tools=self.get_active_tools, memory=memory, cloud_materials=cloud_materials)
         if mcp_resources is not None:
             mcp_resources.set_session_occupied(session_id, state.pending_tool_approval is not None)
 
@@ -189,7 +189,7 @@ def build_session(service, session_id, state):
     """New and restored actors receive the same host-owned settings/resources."""
     return AgentSession(session_id, state, catalog=service._catalog,
         tool_registry=service._tool_registry, permission_settings=service._permission_settings,
-        persistence=service._persistence, invoke_subagent=service.ainvoke_subagent, memory=service.memory,
+        persistence=service._persistence, invoke_subagent=service.ainvoke_subagent, memory=service.memory, cloud_materials=service.cloud_materials,
         registered_subagents=service.get_registered_subagents, progress_settings=service._progress_settings,
         image_input_settings=service.image_input_settings,
         subagent_result_settings=getattr(service, '_subagent_result_settings', None),

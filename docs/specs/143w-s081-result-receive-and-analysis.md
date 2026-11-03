@@ -1,6 +1,6 @@
 # Spec143W：S08.1 结果下载、分析草稿与记忆来源
 
-状态：2026-11-02用户已确认“先放入输入框，确认后发送”；待实施。代码/报告下载、主会话分析和代码应用是三个不同动作。本片复用S07.2固定结果；文件应用另归S08.2。
+状态：2026-11-02代码及接线已实现，与S08.2一起完成最终全量本机验证。用户已确认“先放入输入框，确认后发送”；代码/报告下载、主会话分析和代码应用是三个不同动作。本片复用S07.2固定结果；文件应用另归S08.2。当前停在S09实机门禁前。
 
 ## 1. 为什么需要单独合同
 
@@ -74,3 +74,26 @@ S07.2先提供不可变result_id、输入/输出清单、代码patch和独立产
 影响本机结果接收/关联存储、service输入/材料接口、Composer草稿/材料引用、只读工具/RunCapabilities/Host装配和来源保存；超过8文件，按本片固定职责实施，S08.2不与本片混为一次自动应用。
 
 拟测试`tests/cloud/test_result_receive.py`、`test_cloud_result_materials.py`、`test_result_analysis_draft.py`及现有memory/消息配对/必要保存回归。验证下载不改项目/不调模型/不写记忆，草稿不覆盖、切换和旧回包隔离、用户发送后真实工具读取、不能伪造人类来源、重复接收/发送各自幂等、离线读取、缓存丢失/远端删除、超限和保存故障。前端/实际Windows与最终全量构建分别记录，不能将文档或临时fixture称为功能已完成。
+
+## 8. S08.1实施接线合同（2026-11-02）
+
+用户已授权按既有顺序连续实现。当前S06.4/S07.2已本地提交95bf542；不修改真实配置/远端，不动Spec142四稿和独立handoff段落。本片正常链：结果侧栏选择真实报告 → 固定binding/result/command_id接收 → 本机项目库保留receipt＋管理目录分段下载/sha/清单核对 → available → 用户点分析 → 只生成text/material_refs草稿 → 用户发送普通主会话message携带材料ID → RunAPI核验归属并保存服务器材料描述 → 本机RunCapabilities注入只读查询 → 真实cloud_result_read ToolMessage进入既有必要保存/记忆来源链。失败链：段传输/本机fsync/发布/DB确认中断 → 原receive_id查询/显式retry及固定ETag/offset对账；不会重建远端任务、写用户项目或伪造聊天。
+
+公共DTO在contracts/cloud_receive.py。receive_id等于原command_id；接收强制包含manifest/patch，artifact_ids仅选择真实报告，大小/数量/并发由ReceiveLimits约束。缓存派生于本机项目管理数据根，文件按不透明ID存储；record不暴露绝对路径。I的InputPackage元数据同时保存，I归档及patch隔离apply交由S08.2；本片available只表示已核对所选字节/清单，不声称patch已重算O。active为本机真实producer事实，原receipt/已验证材料离线查询不要求重新连云端或retained远端任务。
+
+API补足POST /cloud-receives/{receive_id}/retry：空body、原ID/原选择/原metadata恢复，不在GET暗中发起下载。analysis-draft返回AnalysisDraft(text＋MaterialRef数组)，body为空且无模型副作用；工具查询offset从1开始按行、limit按行且仍受字节预算；二进制返回元信息。主消息仅接收material_refs不透明ID列表，服务端重新核验，不接受客户端的reported/角色/路径/来源字段。HumanMessage.additional_kwargs保存验证后的描述，不把正文拼成用户发言；系统资源只给材料身份和工具使用说明。普通补充/跟进不带材料，本机run仍在执行时材料草稿保留等待下一轮，不插入正在运行的模型。
+
+前端方法：receive(sid,bid,rid,{command_id,artifact_ids})、receiveStatus(sid,receive_id)、retryReceive(sid,receive_id)、analysisDraft(sid,receive_id)。草稿按project/session隔离，按material_id去重并保留已输入文本；迟到响应必须核对同scope/session/result。WebApi.start追加可选material_refs参数，空引用保持原调用行为；含引用的原request_id与正文/图片一并冻结，丢ACK只核对原请求。模型只读能力通过现有RunCapabilities/ToolSet与permission_binding接入，不增加ContextVar或新Agent循环。
+
+实施分工：接收/分段文件/材料repo与HTTP为一个独立写域；前端结果动作/草稿/提交为一个写域；主线负责DTO、主消息校验、RunCapabilities/工具/模型提示与真实来源保存、最终装配和组合验证。各域先写预期失败测试；迁移/备份表检查同步，现有行为断言保留。架构/锁表/交接在本片收束更新。
+
+普通`create_builtin_tools`集合不默认增加材料工具；正式service装配显式请求该能力，HostManager只给持久项目Host保留，普通聊天和临时Host在同一选项生产处过滤工具及初始选中列表。显式注入工具的组件测试不代表普通CLI改变默认集合。运行期没有有效材料查询端口时仍不可用；子代理只有角色明确允许该工具才继承父运行的同一窄查询能力，审批/permit不旁路。
+
+Human实时snapshot与持久档案都投影有界的material_id/title/role/size；正文过大触发历史预览时仍保留引用。不可仅补归档投影而让live覆盖丢掉材料标签。已有材料丢失显示不可用，用户再次明确接收可产生新receipt；未verified staging前缀丢失/截断只在显式原ID重试时清零，不在GET恢复。
+
+
+## 9. 本机验收结果（2026-11-02）
+
+S08.1与S08.2最终冻结源码全量3318＋3565＝6883后端，原6785项回归行为保留（版本派生参数归一化核对）、新增98，无失败/跳过；前端75文件613项、默认/候选构建、四目标wheel/Twine与Mac源外安装通过，532生产Python源逐包相同。证据：[verification.json](../../build/spec143-s082-20261102/verification.json)、[复核记录](../../build/spec143-s082-20261102/review.md)。
+
+专项包含真实主模型循环ToolMessage及子代理审批读取、未发送不读材料/不调模型、原ID段重试/缓存丢失、大小预算、主聊天实时/归档有界引用、服务默认工具装配与普通CLI/聊天隔离。真实浏览器验证1440/375视口、保留草稿、接收/分析无自动run、确认发送IDs-only及历史标签；全部临时服务已清理。模型与远端字节服务为明确受控fixture，不是公司或真实供应商证明。Windows＋Linux业务/网络/容器实机留S09。

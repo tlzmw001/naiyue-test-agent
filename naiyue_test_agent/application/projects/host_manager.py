@@ -165,7 +165,7 @@ class HostManager:
                 path = project.database_path
                 authority = RegisteredExecution(self.projects.registry, project_id)
                 options.update(registered_project=project, execution_authority=authority)
-            host = await assemble_host(database_path=path, **options, **await self._host_options())
+            host = await assemble_host(database_path=path, **options, **await self._host_options(cloud_materials=project_id is not None))
             if self.owner._closing:
                 await await_settled(host._lifetime.aclose())
                 raise RuntimeError('Async application must be open on its owning event loop')
@@ -194,8 +194,12 @@ class HostManager:
             except SessionBusyError as error:raise ProjectError('project_in_use') from error
             yield
 
-    async def _host_options(self):
+    async def _host_options(self,*,cloud_materials=True):
         options = dict(self._options)
+        if not cloud_materials:
+            options['tools']=[spec for spec in options['tools'] if spec.tool.name!='cloud_result_read']
+            if options['initial_active_tools'] is not None:
+                options['initial_active_tools']=[name for name in options['initial_active_tools'] if name!='cloud_result_read']
         options['environments']=getattr(self,'environments',None)
         if self._catalog_loader is not None:
             options['catalog'] = await self._catalog_loader()
@@ -208,7 +212,7 @@ class HostManager:
     async def _open_temporary(self, identity):
         with self.owner.operation():
             if identity not in self._temporary:
-                host = await assemble_host(database_path=None, **await self._host_options())
+                host = await assemble_host(database_path=None, **await self._host_options(cloud_materials=False))
                 if self.owner._closing:
                     await await_settled(host._lifetime.aclose())
                     raise RuntimeError('Cannot publish a host while its owner is closing')

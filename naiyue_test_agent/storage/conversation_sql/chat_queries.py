@@ -78,6 +78,10 @@ def read_page(connection, session_id, thread_id, *, limit, body_bytes, preview_c
             'image_digest',json_extract(c.value,'$.extras.image_digest'),'source_revision',body_hash))
             FROM json_each(body_json,'$.data.content') c WHERE c.type='object'
             AND json_extract(c.value,'$.type')='image' AND json_extract(c.value,'$.extras.client_id') IS NOT NULL) AS images_json,
+        (SELECT json_group_array(json_object('material_id',json_extract(r.value,'$.material_id'),
+            'title',substr(json_extract(r.value,'$.title'),1,96),'role',json_extract(r.value,'$.role'),
+            'size',json_extract(r.value,'$.size'))) FROM json_each(body_json,'$.data.additional_kwargs.naiyue_cloud_material_refs') r
+            WHERE message_type='human' AND r.type='object' AND CAST(r.key AS INTEGER)<128) AS material_refs_json,
         kind FROM naiyue_chat_messages WHERE session_id=? AND thread_id=? AND checkpoint_ns=? AND kind='message'
         AND sequence<=? AND sequence<? ORDER BY sequence DESC LIMIT ?''',
         (body_bytes, preview_chars, preview_chars, *scope, upper, before if before is not None else upper + 1, limit + 1))

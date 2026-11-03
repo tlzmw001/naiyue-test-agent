@@ -3,6 +3,8 @@ from pathlib import Path
 from pydantic import Field,field_validator
 from naiyue_test_agent.contracts.cloud_tasks import CloudRecord
 from naiyue_test_agent.contracts.cloud_inputs import InputLimits
+from naiyue_test_agent.contracts.cloud_receive import ReceiveLimits
+from naiyue_test_agent.contracts.cloud_results import ResultLimits
 
 
 class CloudTaskSettings(CloudRecord):
@@ -16,6 +18,8 @@ class CloudTaskSettings(CloudRecord):
     stream_seconds:float=Field(default=1800.0,gt=0,le=86400)
     stream_send_timeout_seconds:float=Field(default=15.0,gt=0,le=300)
     input_limits:InputLimits=Field(default_factory=InputLimits)
+    receive_limits:ReceiveLimits=Field(default_factory=ReceiveLimits)
+    result_limits:ResultLimits=Field(default_factory=ResultLimits)
 
     @field_validator('profiles_file',mode='before')
     @classmethod

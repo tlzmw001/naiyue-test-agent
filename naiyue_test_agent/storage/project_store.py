@@ -44,6 +44,10 @@ class ProjectStore:
         self.runs = RunUnitOfWork(self.database)
         from .cloud_local import LocalTaskRepo
         self.cloud_tasks = LocalTaskRepo(self.database)
+        from .cloud_receive import ReceiveRepository
+        self.cloud_receives = ReceiveRepository(self.database)
+        from .cloud_delivery import DeliveryRepository
+        self.cloud_deliveries = DeliveryRepository(self.database)
 
     def close(self):
         self.database.close()

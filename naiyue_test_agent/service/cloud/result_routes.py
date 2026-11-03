@@ -37,8 +37,10 @@ def register_result_routes(owner,task,runtime):
     @owner.post(op+'/{result_id}/{action}')
     async def action(request:Request,task_id:str,result_id:str,action:str):
         owner_authorize(request,runtime)
-        if action not in ('retry','abandon'):raise CloudError('invalid_request',422)
+        if action not in ('retry','abandon','lease','release'):raise CloudError('invalid_request',422)
         value=await _body(request,runtime)
+        if action in ('lease','release'):
+            return await cloud_work(runtime,lambda:getattr(service.retention,action)(task_id,result_id,value),drain_cancel=True)
         receipt=await cloud_work(runtime,lambda:service.action(task_id,result_id,action,value),drain_cancel=True)
         return JSONResponse(receipt.model_dump(mode='json'),status_code=receipt.http_status)
     async def authorize(request,task_id):
@@ -58,4 +60,6 @@ def register_result_routes(owner,task,runtime):
             if value!={}:raise CloudError('invalid_request',422)
             fn=lambda:service.begin(raw,task_id,result_id) if action=='begin' else service.commit(raw,task_id,result_id)
         else:raise CloudError('invalid_request',422)
-        return await cloud_work(runtime,fn,drain_cancel=True)
+        result=await cloud_work(runtime,fn,drain_cancel=True)
+        if action=='commit':await cloud_work(runtime,lambda:service.retention.collect(task_id),drain_cancel=True)
+        return result

@@ -16,11 +16,12 @@ class ArtifactDownload:
     def __init__(self,service,task_id):
         self.service=service;self.stream=None;self.record=None;self.identity=None
         self.task_id=task_id;self.start=0;self.length=None;self.partial=False
-        self.lock=asyncio.Lock();self.finished=asyncio.Event()
+        self.lock=asyncio.Lock();self.finished=asyncio.Event();self.reserved=False
 
     def open(self,task_id,artifact_id):
-        with self.service.runtime.task_io.hold(task_id):
-            self.service.get(task_id,artifact_id)
+        self.service.runtime.task_io._enter(task_id);self.reserved=True
+        self.service.get(task_id,artifact_id)
+        with self.service.runtime.gates.hold(task_id):
             transfer=self.service.repository.get(task_id,artifact_id)
             self.stream=self.service.store.open(transfer)
             self.record=transfer.artifact;self.identity=transfer.blob_identity
@@ -63,13 +64,17 @@ class ArtifactDownload:
     async def aclose(self):
         async with self.lock:
             if self.finished.is_set():return
+            closed=self.stream is None
             try:
                 if self.stream is not None:await cloud_work(self.service.runtime,self.stream.close,drain_cancel=True)
+                closed=True
             except BaseException as error:
                 logger.error('cloud_artifact_download_close_failed error_type=%s',type(error).__name__)
                 raise
             finally:
-                self.service.downloads.discard(self);self.finished.set()
+                if closed or getattr(self.stream,'closed',False):
+                    if self.reserved:self.service.runtime.task_io._leave(self.task_id);self.reserved=False
+                    self.service.downloads.discard(self);self.finished.set()
 
 
 async def open_download(service,task_id,artifact_id):

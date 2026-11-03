@@ -361,3 +361,18 @@ Spec141B：工作线程方向为 `delivery gate → {P1, DB(registry)}`；唯一
 - CR2（Runner loop事实）：单publisher推进持久result计划；freezing只在实际文件冻结/排空期间为true，阻止新命令/静止宣告，不改变blocked/ready事实。扫描前attempt marker落盘；源读取worker取消先await_settled后解除freezing。冻结spool完整原子发布后才网络传输；已有spool不重扫，不新增Coordinator读任务DB。
 - CLD1（本机loop下载lease，非线程锁）：ManualCloudTasks.downloads持有DownloadLease，Queue(1) producer独占上游HTTP、binding连接借用及manager/domain operation；浏览器响应只消费有界队列。关闭先取消/排空producer及source，再归还connection/operation和移除lease；未开始producer的取消也显式移除。消费者同时观察队列与producer完成，不能在关闭后永久等待空队列。manager关闭先排空观察/下载，再等其他operation、命令和连接关闭；不停止云端任务。
 - 原ArtifactDownload.lock继续保护固定FD与读取worker排空，Range只调整同一FD offset/精确remaining；range解析失败/响应超时/取消均关闭lease，主异常不被次要close异常替换。删除仍按原TI1关闭下载、排空TaskIO后清理文件。没有新增线程锁或跨任务反向嵌套。
+
+
+## Spec143 S08 本机材料与代码交付
+
+- `ReceiveFiles.publication`是每项目私有内容发布短同步锁：只保护no-clobber链接发布及容量扫描→接收槽位预留。调用顺序为publication→项目DB短事务；正文hash、网络传输和等待不持此锁，DB不反向申请publication。已有相同SHA只核对，不替换inode。
+- `ManualCloudTasks.admission`沿现有owner loop准入，登记接收/交付single-flight及额度，释放后才下载/解包/验证；不在worker申请该async锁。`LocalDeliveries.flights/writers`仅owner loop修改，writers限定每项目同一时刻一个写入交付，执行也受全局producer预算。它不锁住外部编辑器/普通本机Agent，不提供跨进程文件CAS。
+- 交付台账preparing/executing与`cloud_local.check_deletion`同项目DB事务互斥；先持久状态，再启动worker。worker文件IO不持DB锁，路径日志/备份先于副作用；每次必要台账保存取独立短事务，无文件父句柄→等待owner loop反向链。
+- `CloudInputs.busy[input:<id>]`及downloads lease沿现有owner loop预留；固定归档FD物理读取在worker，取消/关闭需等待物理读收束后归还预留。无新增线程锁，不持registry/DB事务跨HTTP发送。
+
+### Spec143AB 结果保留与接收保护
+
+- 沿用CT1 → registry DB短事务；next_run只生成superseded候选，旧结果更新与新root/result预留在同一事务提交，失败不留下部分替代。begin与该事务共用CT1；没有新增线程锁。
+- GC先借TI1/TaskIO计数，CT1内短取TI1.condition读取计数后立即释放condition，再做租约查询/删除意图DB事务；CT1阻止此间新TaskIO准入。禁止持condition跨DB/磁盘IO。只有自身一个IO预留且无活动租约/最新保护时可标deleting；释放CT1后清固定文件，再回CT1/CAS同时核销artifact/lease与保留索引。完整task删除封口并等待TI1排空，不能与GC并删。
+- ArtifactDownload.open持有TI1预留至FD物理关闭，读worker仍在原async lock中排空；close失败且FD未关闭时保留downloads登记/未完成状态，后续aclose可重试。open失败、Range失败和取消均走同一关闭路径。InputDownload没有task预留，仍用原input busy生命周期。
+- 本机接收用服务端owner短租约，元数据前申请、每个Range前续租、传输producer退出释放；不持本机publication/DB锁跨HTTP。TTL负责进程失联收敛，本机已完成材料不永久钉住云端副本；任务删除同事务移除自身租约。

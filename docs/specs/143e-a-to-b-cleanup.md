@@ -75,6 +75,8 @@ Spec142仍为未实施方案。B下它的“当前工作区复制、独立后续
 
 ## 6. 收束检查
 
+S08.2已建立[机器消费者清单](../../release/a-consumers-s08.json)与`python -m scripts.a_consumer_inventory check`，当前冻结900条，包含源码revision、实际字节hash、静态/相对/字面量动态导入、lazy exports、传递装配、CLI/API、前端、脚本/打包与行为测试。check拒绝漂移，不自动批准；经审阅后才能显式freeze。保留`GitRepository`和native `GitInputError/git_path/object_id`真实B消费者，不据此保留A bundle协议。当前正式A仍使用，删除必须在S09.1实机门禁之后按清单核销，不在本片伪称零A。
+
 最终从Windows Web/CLI分别跟踪：导入→任务→Runner→模型/工具→历史→结果→本机交付；失败跟踪断线后command_id对账、容器丢失、必要保存失败、patch冲突。所有已声明组件满足L1文件存在、L2实质实现、L3正式入口接线。
 
 除人工搜引用外，加入架构检查禁止B主链导入envd/sandbox_channel/DockerFiles/DockerProcesses与bundle合同；检查正式包内容和CLI帮助没有旧A入口。历史文档/研究资料保留引用可以列白名单，不能把生产残留放白名单掩盖双栈。

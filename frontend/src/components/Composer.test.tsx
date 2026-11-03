@@ -39,6 +39,21 @@ it('keeps ordinary sending in idle state without a send-mode selector', async ()
   expect(props.send).toHaveBeenCalledExactlyOnceWith(false);
 });
 
+it('shows removable cloud material references and keeps them out of busy-run controls', async () => {
+  const material = { material_id: 'M', receive_id: 'C', task_id: 'T', result_id: 'R', input_id: 'I', title: 'report.json',
+    role: 'artifact' as const, size: 12, sha256: 'h', source_run_id: 'run', outcome: 'failed' as const, captured_at: 1, reported: true as const };
+  const remove = vi.fn();
+  const { props, update } = await setup({ text: '分析材料', materialInputs: { current: [material], remove } });
+  expect(screen.getByRole('region', { name: '云端材料引用' })).toBeTruthy();
+  expect(screen.getByText(/report.json/)).toBeTruthy();
+  update({ busy: true });
+  expect(screen.queryByRole('combobox', { name: '发送方式' })).toBeNull();
+  fireEvent.keyDown(screen.getByRole('textbox', { name: '消息' }), { key: 'Enter' });
+  expect(props.send).not.toHaveBeenCalled();
+  expect(screen.getByText(/材料.*下一轮/)).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: '移除材料：report.json' })); expect(remove).toHaveBeenCalledWith('M');
+});
+
 it('shows only stop while a running task has no effective draft', async () => {
   const { props, update } = await setup({ busy: true });
   expect(screen.queryByRole('button', { name: '发送消息' })).toBeNull();

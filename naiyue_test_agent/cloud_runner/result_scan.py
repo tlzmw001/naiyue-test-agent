@@ -41,7 +41,29 @@ def verify(root,files,dirs):
         if identity(target.lstat())!=expected or sorted(os.listdir(target))!=members:raise CloudError('result_source_changed')
 
 
-def freeze_tree(root,destination,limits,result_limits,*,package=None,output_directory=''):
+def read_content(root,path,expected,limits,*,target=None):
+    """Hash raw bytes once; metadata is only a before/after change detector."""
+    digest=hashlib.sha256();size=0;tail=b''
+    with source_handle(root,path,expected) as (stream,info):
+        length=len(stream) if info is None else info.st_size
+        git=hashlib.sha1(b'blob '+str(length).encode()+b'\0')
+        if info is None:
+            if length>4096:raise CloudError('input_link_outside')
+            digest.update(stream);git.update(stream);size=length
+            if target is not None:target.write(stream)
+            entry=OutputEntry(path=path,type='symlink',size=size,sha256=digest.hexdigest(),mode=0o777,target=stream.decode())
+        else:
+            if length>limits.max_file_bytes:raise CloudError('result_file_budget')
+            while chunk:=stream.read(limits.io_bytes):
+                tail=check_input_content(tail,chunk,first=size==0);size+=len(chunk);digest.update(chunk);git.update(chunk)
+                if size>limits.max_file_bytes:raise CloudError('result_file_budget')
+                if target is not None:target.write(chunk)
+            if size!=length:raise CloudError('result_source_changed')
+            entry=OutputEntry(path=path,type='file',size=size,sha256=digest.hexdigest(),mode=0o755 if expected[2]&stat.S_IXUSR else 0o644)
+    return entry,git.hexdigest()
+
+
+def freeze_tree(root,destination,limits,result_limits,*,package=None,output_directory='',known_content=None):
     root=Path(root);destination.mkdir(mode=0o700)
     original={e.path for e in package.manifest.entries} if package else set()
     if output_directory and any(p==output_directory or p.startswith(output_directory+'/') for p in original):raise CloudError('result_output_conflict')
@@ -50,24 +72,22 @@ def freeze_tree(root,destination,limits,result_limits,*,package=None,output_dire
     ignored=ignored_paths(policy,sorted(files),destination.parent/'policy',result_limits) if policy else set()
     paths=[p for p in sorted(files) if p in original or p not in ignored and not (policy and any(p==v or p.startswith(v+'/') for v in policy.exclude))]
     if len(paths)>result_limits.max_files:raise CloudError('result_file_budget')
-    entries=[];blobs={};total=0
+    entries=[];blobs={};oids={};total=0
     for number,path in enumerate(paths):
-        digest=hashlib.sha256();size=0;blob=destination/str(number);tail=b''
-        with source_handle(root,path,files[path]) as (stream,info),blob.open('xb') as target:
-            if info is None:
-                content=stream
-                if len(content)>4096:raise CloudError('input_link_outside')
-                digest.update(content);size=len(content);target.write(content)
-                entry=OutputEntry(path=path,type='symlink',size=size,sha256=digest.hexdigest(),mode=0o777,target=content.decode())
-            else:
-                while chunk:=stream.read(limits.io_bytes):
-                    tail=check_input_content(tail,chunk,first=size==0);size+=len(chunk);digest.update(chunk)
-                    if size>limits.max_file_bytes:raise CloudError('result_file_budget')
-                    target.write(chunk)
-                entry=OutputEntry(path=path,type='file',size=size,sha256=digest.hexdigest(),mode=0o755 if files[path][2]&stat.S_IXUSR else 0o644)
-            target.flush();os.fsync(target.fileno())
-        total+=size
+        blob=destination/str(number)
+        if known_content is None:
+            with blob.open('xb') as target:entry,oid=read_content(root,path,files[path],limits,target=target)
+            blobs[path]=blob
+        else:
+            entry,oid=read_content(root,path,files[path],limits)
+            known=known_content.get((entry.size,entry.sha256))
+            if known is not None and known!=oid:raise CloudError('result_baseline_changed')
+            if known is None:
+                with blob.open('xb') as target:frozen,frozen_oid=read_content(root,path,files[path],limits,target=target)
+                if frozen!=entry or frozen_oid!=oid:raise CloudError('result_source_changed')
+                blobs[path]=blob
+        total+=entry.size
         if total>result_limits.max_result_bytes:raise CloudError('result_byte_budget')
-        entries.append(entry);blobs[path]=blob
+        entries.append(entry);oids[path]=oid
     check_links(entries);verify(root,{p:files[p] for p in paths},dirs)
-    return entries,blobs,({p:files[p] for p in paths},dirs)
+    return entries,blobs,({p:files[p] for p in paths},dirs),oids

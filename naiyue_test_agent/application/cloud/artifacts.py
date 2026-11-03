@@ -176,7 +176,11 @@ class CloudArtifacts:
 
     def get(self,task_id,artifact_id):
         TypeAdapter(TaskId).validate_python(task_id);TypeAdapter(UUIDText).validate_python(artifact_id)
-        with self.runtime.gates.hold(task_id):return self._get(task_id,artifact_id)
+        with self.runtime.gates.hold(task_id):
+            artifact=self.repository.get(task_id,artifact_id).artifact
+            receipt=self.runtime.registry.get_command(artifact.command_id)
+            if receipt.operation=='result:capture' and receipt.result['phase']!='available':raise CloudError('artifact_not_found',404)
+            return self._get(task_id,artifact_id)
 
     def _get(self,task_id,artifact_id):
         self.runtime.available_task(task_id)

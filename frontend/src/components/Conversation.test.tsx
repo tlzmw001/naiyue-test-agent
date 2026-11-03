@@ -1,7 +1,16 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import Conversation from './Conversation';
+
+it('shows a saved refs-only human message as escaped material identities without reading files', () => {
+  const load = vi.fn();
+  const { container } = render(<Conversation compacted={false} messages={[{ id: 'materials-only', type: 'human', content: '', provisional: false, state: 'complete',
+    material_refs: [{ material_id: 'M', title: '<script>report.json</script>', role: 'artifact', size: 12 }] }]} loadContent={load} />);
+  expect(screen.getByText('云端材料 · <script>report.json</script> · 12 字节')).toBeTruthy();
+  expect(screen.getByRole('list', { name: '已发送云端材料引用' })).toBeTruthy();
+  expect(container.querySelector('script')).toBeNull(); expect(load).not.toHaveBeenCalled();
+});
 
 afterEach(cleanup);
 it.each([

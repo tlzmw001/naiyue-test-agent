@@ -135,6 +135,11 @@ async def bounded_view(request,manager,local,binding_id,session_id,view,params):
 from .cloud_results import register as register_results
 register_results(router,access,domain,bounded_view,body,command_response)
 
+from .cloud_receives import register as register_receives
+from .cloud_deliveries import register as register_deliveries
+register_receives(router,access,domain,body,command_response)
+register_deliveries(router,access,domain,body,command_response)
+
 from .cloud_observation import register as register_observation
 register_observation(router,access,domain,bounded_view)
 

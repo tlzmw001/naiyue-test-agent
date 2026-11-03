@@ -52,6 +52,8 @@ CommandReceipt {
 
 S04.2b将根运行终局与任务静止分开：根completed/stopped且必要历史确认即可结算本轮；受管后台仍在时保留background_commands阻止回收，允许新一轮查询/停止后台。静止心跳绑定last_run_id，不能解除在途根/控制/捕获/环境操作或unknown保护。正常stopped可以继续新输入，不强制走恢复。
 
+[143ab](143ab-result-continuation-retention-and-cost.md)补齐结果与续聊边界：只有尚未开始捕获（generation/bundle为空）的pending结果可在新run准入同一事务转为superseded，superseded_by记录替代run；准入失败时旧结果不变。capturing/verifying/unknown/failed或显式重试均不能自动替代，仍需等待/核对/用户处理。后台服务仍阻止自动停止，但不迫使用户为续聊停止mock服务。
+
 停止/恢复走所有者control命令并保留独立回执、control_operation_id；以已确认control_finished历史结算，不以WS ACK结束。显式recover固定原run和Runner提供的checkpoint，只执行现有三阶段状态核对/配对，不重放模型或工具；控制重试沿原ID继续。任务上次Runner活动未确认时，同代重启不核销旧进程；显式acknowledge_unknown停止后，只有后端确认旧容器消失才允许新代启动，原run仍unknown直至显式恢复。完整合同、从未进入图的null checkpoint与提交后会话装配尾段见143q。
 
 旧 generation 未确认停止前禁止新 Runner 写同一 state/workspace。仅令牌吊销不足以停止本地文件写入，必须先通过后端确认旧容器终止/失去挂载，再启新代；无法确认则停在 reconciling。恢复不能覆盖主异常或将必要保存失败降级为提示。

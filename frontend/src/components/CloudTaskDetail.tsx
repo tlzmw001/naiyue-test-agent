@@ -11,9 +11,11 @@ import ModelMenu from './ModelMenu';
 import CloudResults from './CloudResults';
 import type { CloudAction } from './CloudTaskActions';
 import styles from './CloudTasks.module.css';
+import type { AnalysisDraft } from '../cloudReceiveTypes';
 
-export default function CloudTaskDetail({ api, sid, binding, active, metadataFresh = true, back, changed }: {
+export default function CloudTaskDetail({ api, sid, binding, active, metadataFresh = true, back, changed, onAnalysisDraft }: {
   api: CloudApi; sid: string; binding: CloudBinding; active: boolean; metadataFresh?: boolean; back: () => void; changed: () => void;
+  onAnalysisDraft?: (value: AnalysisDraft) => boolean | void;
 }) {
   const [thread, setThread] = useState<string>(); const [revision, setRevision] = useState(0);
   const [models, setModels] = useState<CloudModels>(); const [modelsError, setModelsError] = useState('');
@@ -118,7 +120,7 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
       {observation.error && <p role="status" className={styles.error}>{observation.error}<button className={styles.link} onClick={observation.reconnect}>重新连接</button></p>}
       {observation.snapshot?.live.capture_incomplete && <p role="status" className={styles.note}>实况存在缺口，以已保存档案为准。</p>}
     </div>
-    <CloudResults api={api} sid={sid} binding={binding} active={active} changed={changed} />
+    <CloudResults api={api} sid={sid} binding={binding} active={active} changed={changed} onAnalysisDraft={onAnalysisDraft} />
     <div className={styles.process}>
       {observation.loading && <p className={styles.note}>正在读取云端过程…</p>}
       {!observation.loading && !observation.rows.length && <p className={styles.note}>暂无已保存消息。准备完成后可在下方说明目标。</p>}

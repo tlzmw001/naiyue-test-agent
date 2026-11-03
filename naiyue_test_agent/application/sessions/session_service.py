@@ -61,6 +61,7 @@ class SessionService:
         self.background_tasks = BackgroundProcessManager(shell_task_settings)
         self.task_queries = TaskQueries(self.background_tasks)
         self.memory = None
+        self.cloud_materials = None
         self.memory_jobs = None
         self._tool_registry = tool_registry if tool_registry is not None else ToolRegistry()
         initial = self._tool_registry.names() if initial_active_tools is None else initial_active_tools

@@ -269,9 +269,9 @@ export class WebApi {
   select(id: string, model_id: string) {
     return this.json<{ model_id: string }>(`/sessions/${encodeURIComponent(id)}/model`, 'PATCH', { model_id });
   }
-  start(id: string, text: string, request_id: string = crypto.randomUUID(), expected_conversation_revision?: number, images: ImageUpload[] = [], pending_input_ids: string[] = [],wait_for_environment=false) {
+  start(id: string, text: string, request_id: string = crypto.randomUUID(), expected_conversation_revision?: number, images: ImageUpload[] = [], pending_input_ids: string[] = [],wait_for_environment=false, material_refs: string[] = []) {
     return this.json<{ run_id?: string; session_id: string; request_id?:string; status?:'waiting_environment' }>(`/sessions/${encodeURIComponent(id)}/runs`,
-      'POST', { text, request_id, expected_conversation_revision, ...(images.length ? { images, pending_input_ids } : {}),...(wait_for_environment?{wait_for_environment:true}:{}) });
+      'POST', { text, request_id, expected_conversation_revision, ...(images.length ? { images, pending_input_ids } : {}),...(wait_for_environment?{wait_for_environment:true}:{}), ...(material_refs.length ? { material_refs } : {}) });
   }
   stopSubmission(id:string,requestId:string) {
     return this.json<NonNullable<SessionView['pending_submission']>>(`/sessions/${encodeURIComponent(id)}/submissions/${encodeURIComponent(requestId)}/stop`,'POST',{});
@@ -320,6 +320,12 @@ export class WebApi {
 export function errorText(error: unknown): string {
   const code = error instanceof ApiError ? error.code : error instanceof Error ? error.message : '';
   const messages: Record<string, string> = {
+    cloud_material_not_found: '找不到已接收材料，请核对本机接收记录后重新发送。',
+    cloud_material_unavailable: '本机材料缺失、损坏或尚未完成校验，输入已保留，请先完成接收。',
+    cloud_material_identity_mismatch: '材料不属于当前项目或会话，输入已保留。',
+    cloud_material_budget: '材料引用数量或大小超过配置上限，请减少材料后重试。',
+    cloud_material_binary: '此材料为二进制文件，只能查看元信息或下载。',
+    cloud_materials_unavailable: '当前会话的材料读取能力尚未就绪，输入已保留。',
     env_ssh_unavailable: '未找到本机 OpenSSH 客户端，请检查 SSH 程序路径后继续原准备。',
     env_image_required: '尚未配置沙箱镜像，请在应用配置中设置后重试。',
     env_attach_unavailable: '沙箱镜像未提供常驻连接入口，请使用与本次版本配套的 envd 镜像。',
@@ -416,6 +422,7 @@ export function errorText(error: unknown): string {
     session_save_unconfirmed: '恢复保存未确认，请核对当前历史后再操作。',
     session_delete_unconfirmed: '删除未确认，会话内容已保留，请刷新核对后重试。',
     session_background_tasks_active: '该会话仍有后台命令或未确认的清理，请先停止后台任务后再删除。',
+    session_cloud_delivery_active: '该会话仍在准备或执行代码交付，请等待结束后再删除。',
     task_not_found: '后台任务不存在或不在当前工作区，请刷新列表。',
     task_cursor_invalid: '后台任务分页位置已失效，请刷新列表。',
     task_cleanup_unconfirmed: '进程清理尚未确认，请核对任务状态；任务记录仍保留。',

@@ -60,6 +60,8 @@ def create_service_app(options, *, application_factory=None, shutdown=None):
                     tools = create_builtin_tools(runtime.tools, process_settings=runtime.process,
                         shell_task_settings=runtime.shell_tasks, progress_settings=runtime.progress,
                         network_settings=runtime.network, retry_settings=runtime.tool_retry)
+                    from naiyue_test_agent.tools.cloud_materials import create_cloud_result_read_tool
+                    tools=[*tools,create_cloud_result_read_tool()]
                     initial = runtime.default_active_tools
                     if initial is None:
                         initial = [spec.tool.name for spec in tools if spec.tool.name not in ('bash', 'powershell', 'subagent_list')]

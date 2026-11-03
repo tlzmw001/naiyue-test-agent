@@ -9,7 +9,7 @@ from naiyue_test_agent.storage.conversation_sql import chat_queries, reply_stora
 from naiyue_test_agent.storage.observability_sql import model_usage_storage, diagnostic_storage
 from naiyue_test_agent.storage import subagent_sql as subagent_storage
 from naiyue_test_agent.storage.memory_sql import memory_schema, memory_lifecycle_schema, memory_overview_store
-from . import execution_storage, cloud_local
+from . import execution_storage, cloud_local, cloud_receive, cloud_delivery
 
 
 logger = logging.getLogger(__name__)
@@ -111,7 +111,7 @@ def initialize_store(connection, database_path, *, existing):
         (12, reply_storage.initialize_regeneration), (13, model_usage_storage.migrate_duration),
         (14, subagent_storage.initialize), (15, memory_schema.initialize_project), (16, memory_lifecycle_schema.initialize_project), (17, memory_overview_store.initialize_project), (18, execution_storage.initialize),
         (19, execution_storage.initialize_project_local), (20, execution_storage.initialize_environments),
-        (21, cloud_local.initialize))
+        (21, cloud_local.initialize),(22, cloud_receive.initialize),(23, cloud_delivery.initialize))
     for target, step in steps:
         current = None
         try:

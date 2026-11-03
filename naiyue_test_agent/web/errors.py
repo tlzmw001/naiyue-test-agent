@@ -17,6 +17,9 @@ class WebError(Exception):
 
 def public_error(error):
     from naiyue_test_agent.contracts.image_inputs import ImageInputError
+    from naiyue_test_agent.contracts.cloud_tasks import CloudError
+    if isinstance(error,CloudError) and error.code in {'cloud_material_not_found','cloud_material_unavailable','cloud_material_identity_mismatch','cloud_material_budget','cloud_materials_unavailable'}:
+        return WebError(error.code,error.status)
     if isinstance(error, ImageInputError):
         return WebError(error.code, error.status)
     from naiyue_test_agent.contracts.projects import ProjectError
@@ -48,7 +51,7 @@ def public_error(error):
         code = error.args[0] if error.args else ''
         if code in ('session_not_found', 'history_message_not_found'):
             return WebError(code, 404)
-        return WebError(code if code in ('storage_in_use', 'session_recovery_blocked', 'session_background_tasks_active','session_environment_in_use','session_cloud_tasks_retained', 'workspace_mismatch',
+        return WebError(code if code in ('storage_in_use', 'session_recovery_blocked', 'session_background_tasks_active','session_environment_in_use','session_cloud_tasks_retained','session_cloud_delivery_active', 'workspace_mismatch',
             'checkpoint_mismatch', 'session_save_unconfirmed', 'approval_restore_unavailable',
             'session_delete_unconfirmed', 'history_cursor_stale', 'history_invalid_offset') else
             'session_unavailable')

@@ -1,6 +1,6 @@
 # Naiyue Test Agent：项目设计记录
 
-当前B实施进度以[143f](specs/143f-implementation-slices.md)为准：2026-11-02 S07.2完整固定结果/自主捕获完成本机验证，15单元完成8项、剩余7项；唯一下一片S08.1受控本机接收/分析草稿，合同见[143w](specs/143w-s081-result-receive-and-analysis.md)。详细实现/正常失败主链及6785后端、588前端、默认/候选构建、四目标wheel证据见[143z](specs/143z-s072-fixed-results.md)。B底座至S06.3b已本地提交57a40bf，S06.4与S07.2改动尚未提交/部署；默认构建不切正式入口。浏览器下载仅保存附件；S08才建立本机结果目录/材料引用/分析草稿和受控代码交付，S09才正式切换并退出A消费者，S10接版本更新。未验证真实Docker/Windows/公司与供应商；下方旧进度为历史时点。
+当前B实施进度以[143f](specs/143f-implementation-slices.md)为准：2026-11-02 S08.1结果接收/引用/确认分析与S08.2受控代码交付/消费者冻结已完成本机验证，15单元完成10项、剩余5项。6883后端/613前端、默认与候选构建、四目标包/Twine/Mac源外安装及真实本机浏览器证据见[143aa](specs/143aa-s082-code-delivery.md)和[核验报告](../build/spec143-s082-20261102/verification.json)。原待提交代码已本地提交95bf542，S08新增改动尚未提交/部署。按用户最新边界停在S09.1 Windows＋Linux真实门禁前，正式A尚未退出；通过后执行S09.1/S09.2切换清理，随后S10.1/S10.2更新管理和S11组合收束。结果的接收、确认分析与确认应用分开，云端无长期记忆库；说明见[本机交付](cloud-result-delivery.md)。下方旧进度为历史时点。
 
 **2026-11-01 S04.1已实施**：[143m第9节](specs/143m-s041-runner.md#9-本机实施与验收2026-11-01)记录固定容器Runner、真实Agent/工具循环、同事务必要历史差分投递及主动控制/原ID对账。无全局Host/个人记忆装配、Coordinator不读任务SQLite；产品缺模型时waiting_model，S05前不临时注入根密钥。最终源码Linux镜像两轮write/Bash/保存/ACK、Coordinator即时重启、非root/Kit、SIGKILL unknown与正常结构化退出通过；6376后端/568前端、四目标wheel/Twine及Mac源外安装通过。首片仍不含S04.2完整根子/审批/后台/恢复，不切正式A入口；唯一下一片按顺序为S07.1单产物下载和内部CLI薄闭环，先核对当前传输与参考项目后实施。
 

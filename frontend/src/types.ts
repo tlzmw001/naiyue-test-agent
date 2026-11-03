@@ -77,6 +77,7 @@ export type ChangeLoader = (row: MessageRow, patch?: boolean) => Promise<FileCha
 
 export interface MessageRow {
   images?: import('./imageTypes').ImageMetadata[];
+  material_refs?: { material_id: string; title: string; role: 'manifest' | 'patch' | 'artifact'; size: number }[];
   mcp_result?: McpResultView;
   file_change?: FileChangeView;
   reply_id?: string | null;

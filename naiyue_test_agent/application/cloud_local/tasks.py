@@ -22,6 +22,9 @@ class LocalTaskDomain:
         self.project_id=project_id;self.cache=storage.path.parent/'cloud-input-cache' if storage.path else None
         self.authority=authority
         self.persistence=persistence
+        from .materials import LocalMaterials
+        self.materials=LocalMaterials(owner,storage,project_id)
+        self.deliveries=storage.cloud_deliveries
 
     async def session(self,session_id):
         row=await run_blocking(self.metadata.get,session_id)
@@ -68,6 +71,10 @@ class ManualCloudTasks:
         self.slots=set()
         from .commands import ManualTaskCommands
         self.commands=ManualTaskCommands(self)
+        from .receives import LocalReceives
+        self.receives=LocalReceives(self)
+        from .deliveries import LocalDeliveries
+        self.deliveries=LocalDeliveries(self)
 
     @contextmanager
     def operation(self):
@@ -187,9 +194,10 @@ class ManualCloudTasks:
 
     async def drain(self):
         primary=None
-        while self.flights or self.commands.flights:
+        while self.flights or self.commands.flights or self.receives.flights or self.deliveries.flights:
             results=await await_settled(asyncio.gather(*tuple(self.flights.values()),
-                *(v[1] for v in self.commands.flights.values()),return_exceptions=True))
+                *(v[1] for v in self.commands.flights.values()),*tuple(self.receives.flights.values()),
+                *tuple(self.deliveries.flights.values()),return_exceptions=True))
             for result in results:
                 if isinstance(result,BaseException) and primary is None:primary=result
         if primary is not None:raise primary
@@ -225,6 +233,8 @@ class ManualCloudTasks:
                 if isinstance(error,BaseException) and not isinstance(error,asyncio.CancelledError):
                     logger.warning('cloud_observer_shutdown_failed error_type=%s',type(error).__name__)
         try:
+            await self.deliveries.close()
+            await self.receives.close()
             downloads=tuple(self.downloads)
             if downloads:
                 results=await await_settled(asyncio.gather(*(lease.aclose() for lease in downloads),return_exceptions=True))

@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import CloudResults from './CloudResults';
 import type { CloudApi } from '../cloudApi';
 import type { CloudBinding } from '../cloudTypes';
-afterEach(cleanup);
+afterEach(() => { cleanup(); sessionStorage.clear(); });
 const binding = { binding_id: 'B', revision: 8, cloud: { artifact_operation_id: null } } as CloudBinding;
 const file = { role: 'artifact', artifact: { artifact_id: 'F', relative_name: 'report.html', size: 23, sha256: 'a'.repeat(64) } };
 function api(phase = 'available') {
@@ -50,4 +50,72 @@ it('ignores an old result page after selecting another result', async () => {
   const { act } = await import('@testing-library/react');
   await act(async () => oldPage({ changes: [{ path: 'old-A.py', kind: 'added', portable: true }], total: 2, next_offset: null }));
   expect(screen.getByText('新增 · B-only.py')).toBeTruthy(); expect(screen.queryByText(/old-A.py/)).toBeNull();
+});
+
+it('receives selected reports locally before preparing an analysis draft, without sending a chat message', async () => {
+  const cloud = api(); Object.assign(cloud, { projectId: 'P' });
+  const received = { receive_id: 'C', command_id: 'C', local_project_id: 'P', local_session_id: 'S', binding_id: 'B',
+    instance_id: 'I', task_id: 'T', result_id: 'R', input_id: 'i'.repeat(64), phase: 'available', files: [], error_code: null, active: false, created_at: 1, updated_at: 1 };
+  const draft = { local_project_id: 'P', local_session_id: 'S', receive_id: 'C', text: '分析任务报告', material_refs: [] };
+  const receive = vi.fn().mockImplementation(async (_s, _b, _r, body) => ({ ...received, receive_id: body.command_id, command_id: body.command_id }));
+  const analysisDraft = vi.fn().mockImplementation(async (_s, id) => ({ ...draft, receive_id: id }));
+  Object.assign(cloud, { receive, analysisDraft, receiveStatus: vi.fn().mockResolvedValue(received) });
+  const accept = vi.fn(); render(<CloudResults api={cloud} sid="S" binding={binding} active changed={vi.fn()} onAnalysisDraft={accept} />);
+  fireEvent.click(await screen.findByRole('button', { name: /运行 run12345/ }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: /report.html/ }));
+  fireEvent.click(screen.getByRole('button', { name: '接收到本机' }));
+  expect(await screen.findByText('本机材料已核对')).toBeTruthy();
+  expect(receive).toHaveBeenCalledWith('S', 'B', 'R', { command_id: expect.any(String), artifact_ids: ['F'] });
+  expect(accept).not.toHaveBeenCalled(); expect(analysisDraft).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: '交给主会话分析' }));
+  const { waitFor } = await import('@testing-library/react');
+  await waitFor(() => expect(accept).toHaveBeenCalledWith(expect.objectContaining({ text: '分析任务报告' })));
+});
+
+it('does not deliver a late analysis draft after changing the local session', async () => {
+  const cloud = api(); Object.assign(cloud, { projectId: 'P' });
+  let resolve!: (value: object) => void;
+  Object.assign(cloud, { receive: vi.fn().mockImplementation(async (_s, _b, _r, body) => ({ receive_id: body.command_id, command_id: body.command_id,
+    local_project_id: 'P', local_session_id: 'S', binding_id: 'B', result_id: 'R', input_id: 'i'.repeat(64), phase: 'available', files: [], active: false })),
+    analysisDraft: vi.fn().mockImplementation(() => new Promise(done => { resolve = done; })) });
+  const accept = vi.fn(); const view = render(<CloudResults api={cloud} sid="S" binding={binding} active changed={vi.fn()} onAnalysisDraft={accept} />);
+  fireEvent.click(await screen.findByRole('button', { name: /运行 run12345/ }));
+  fireEvent.click(await screen.findByRole('button', { name: '接收到本机' }));
+  fireEvent.click(await screen.findByRole('button', { name: '交给主会话分析' }));
+  view.rerender(<CloudResults api={cloud} sid="other" binding={binding} active changed={vi.fn()} onAnalysisDraft={accept} />);
+  const { act } = await import('@testing-library/react');
+  await act(async () => resolve({ local_project_id: 'P', local_session_id: 'S', receive_id: 'old', text: 'old response', material_refs: [] }));
+  expect(accept).not.toHaveBeenCalled();
+});
+
+it('shows the run which superseded an uncaptured result without inventing failed execution or files', async () => {
+  const cloud = api('superseded');
+  vi.mocked(cloud.results).mockResolvedValue([{ result_id: 'R', source_run_id: 'run12345', phase: 'superseded', revision: 3,
+    outcome: 'completed', error_code: null, captured_at: null, files_count: null, superseded_by: 'next87654321' }]);
+  vi.mocked(cloud.result).mockResolvedValue({ plan: { result_id: 'R', source_run_id: 'run12345', input_id: 'i'.repeat(64) },
+    phase: 'superseded', revision: 3, error_code: null, boundary: { outcome: 'completed' }, bundle: null, superseded_by: 'next87654321' });
+  render(<CloudResults api={cloud} sid="S" binding={binding} active changed={vi.fn()} />);
+  fireEvent.click(await screen.findByRole('button', { name: /运行 run12345 · 已由后续运行替代/ }));
+  expect(await screen.findByText(/未生成本轮固定文件/)).toBeTruthy();
+  expect(screen.getAllByText(/next8765/).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/执行已结束/).length).toBeGreaterThan(0);
+  expect(screen.queryByText(/执行失败/)).toBeNull();
+  expect(screen.queryByRole('button', { name: '接收到本机' })).toBeNull();
+  expect(screen.queryByRole('button', { name: '下载' })).toBeNull();
+  expect(cloud.changes).not.toHaveBeenCalled(); expect(cloud.resultAction).not.toHaveBeenCalled();
+});
+
+it.each([
+  { phase: 'deleting', label: '正在清理结果文件', detail: /暂不可下载或接收/ },
+  { phase: 'deleted', label: '结果文件已清理', detail: /执行结论仍保留/ },
+])('does not offer stale bundle files when the result is $phase', async value => {
+  const cloud = api(value.phase);
+  render(<CloudResults api={cloud} sid="S" binding={binding} active changed={vi.fn()} />);
+  fireEvent.click(await screen.findByRole('button', { name: new RegExp('运行 run12345 · ' + value.label) }));
+  expect(await screen.findByText(value.detail)).toBeTruthy();
+  expect(screen.getAllByText(/执行失败/).length).toBeGreaterThan(0);
+  expect(screen.queryByRole('button', { name: '接收到本机' })).toBeNull();
+  expect(screen.queryByRole('button', { name: '预览' })).toBeNull();
+  expect(screen.queryByRole('button', { name: '下载' })).toBeNull();
+  expect(cloud.changes).not.toHaveBeenCalled();
 });

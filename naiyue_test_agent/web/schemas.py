@@ -1,4 +1,5 @@
 """Untrusted browser requests have small, strict and explicit contracts."""
+from naiyue_test_agent.contracts.cloud_tasks import UUIDText
 
 from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -100,13 +101,15 @@ class MessageInput(BaseModel):
     request_id: str = Field(pattern=r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
     text: str = Field(default='', max_length=32768)
     images: list[ImageUpload] = Field(default_factory=list)
+    material_refs:list[UUIDText]=Field(default_factory=list,max_length=128)
     expected_conversation_revision: int | None = Field(default=None, ge=0)
     wait_for_environment: bool = False
     pending_input_ids: list[Annotated[str,Field(min_length=1,max_length=128)]] = Field(default_factory=list,max_length=128)
 
     @model_validator(mode='after')
     def meaningful_text(self):
-        if not self.text.strip() and not self.images:
+        if len(set(self.material_refs))!=len(self.material_refs):raise ValueError('duplicate_material_id')
+        if not self.text.strip() and not self.images and not self.material_refs:
             raise ValueError('Text must not be blank')
         return self
 

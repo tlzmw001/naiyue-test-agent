@@ -1,4 +1,5 @@
 import ImageAttachments, { type ImageInputs } from './ImageAttachments';
+import MaterialAttachments, { type MaterialInputs } from './MaterialAttachments';
 import RetainedImageInputs from './RetainedImageInputs';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -16,7 +17,8 @@ import composer from './Composer.module.css';
 
 export default function Composer({ text, pending, pendingMode, busy, stopping, sending, blocked,
   setText, setPending, send, stop, api, session, controlsDisabled, selectTools, selectMode, contextEntry,
-  openModel, compact, openContext, openAgents, sendScroll, workspaceEntry, draftControls, imageInputs, imageSupported = false, retryImageSubmission, openCloud }: {
+  openModel, compact, openContext, openAgents, sendScroll, workspaceEntry, draftControls, imageInputs, imageSupported = false, retryImageSubmission, openCloud, materialInputs }: {
+  materialInputs?: MaterialInputs;
   openCloud?: (trigger: HTMLButtonElement) => void;
   retryImageSubmission?: () => void;
   imageInputs?: ImageInputs; imageSupported?: boolean;
@@ -49,7 +51,7 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
   const pendingVersion = JSON.stringify(pending);
   // A confirmation belongs to this draft, session and send state, never a later render.
   const submissionVersion = useMemo(() => ({}), [text, session?.session_id, followUp, blocked, sending,
-    controlsDisabled, readEnabled, busy, pendingMode, pendingVersion, api]);
+    controlsDisabled, readEnabled, busy, pendingMode, pendingVersion, api, materialInputs?.current]);
   const submission = useRef(submissionVersion);
   submission.current = submissionVersion;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -83,9 +85,11 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
     return () => { window.removeEventListener('resize', resize); observer?.disconnect(); };
   }, [text]);
   const hasImages = !!imageInputs?.current.length;
-  const canSupplement = busy && !pendingMode && !blocked && !stopping;
+  const hasMaterials = !!materialInputs?.current.length;
+  const canSupplement = busy && !hasMaterials && !pendingMode && !blocked && !stopping;
   const waitingSubmission=session?.pending_submission?.status==='waiting_environment';
-  const showStop = waitingSubmission || busy && ((sending && (hasImages || !!imageInputs?.uncertain)) || imageInputs?.reading || (!text.trim() && !hasImages) || !canSupplement);
+  const showStop = waitingSubmission || busy && (hasMaterials || (sending && (hasImages || !!imageInputs?.uncertain)) || imageInputs?.reading || (!text.trim() && !hasImages) || !canSupplement);
+  const uncertainKind = imageInputs?.uncertain?.materialRefs?.length ? imageInputs.uncertain.images.length ? '附件与材料' : '材料' : '图片';
   const compactDisabled = !session || !session.can_run || busy || controlsDisabled;
   function runCommand(command: CommandName, typed = false) {
     setCommandNotice('');
@@ -111,8 +115,9 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
   }
   async function submit() {
     if (confirming.current || sending || blocked) return;
+    if (busy && hasMaterials) return;
     const match = /^\/([a-z0-9][a-z0-9_:-]*)(?:\s+([\s\S]*))?$/i.exec(text.trim());
-    if (hasImages || !match) { setCommandNotice(''); send(busy && followUp); return; }
+    if (hasImages || hasMaterials || !match) { setCommandNotice(''); send(busy && followUp); return; }
     const command = commands.find(item => item.name === match[1]);
     if (command) {
       if (match[2]) { setCommandNotice(`/${command.name} 暂不接受参数，请直接输入该指令。`); return; }
@@ -141,8 +146,8 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
   }, [api, reload]);
   return <div className={styles.composerArea}>
     {imageInputs?.uncertain && <div className={styles.pendingHint} role="status">
-      上次图片发送结果尚未确认，新输入已保留。同一请求重试不会重复执行已接受的任务；原请求未到达时可能开始执行。
-      <button type="button" disabled={sending} onClick={retryImageSubmission}>重试原图片发送</button>
+      上次{uncertainKind}发送结果尚未确认，新输入已保留。同一请求重试不会重复执行已接受的任务；原请求未到达时可能开始执行。
+      <button type="button" disabled={sending} onClick={retryImageSubmission}>重试原{uncertainKind}发送</button>
       <button type="button" disabled={sending} onClick={() => imageInputs.settle(imageInputs.uncertain!.sessionId,imageInputs.uncertain!.requestId)}>已人工核对，解除发送锁</button>
     </div>}
     {imageInputs && <RetainedImageInputs inputs={imageInputs} />}
@@ -163,6 +168,7 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
       }} onDragOver={event => { if (Array.from(event.dataTransfer.types).includes('Files')) event.preventDefault(); }}
       onDrop={event => { if (event.dataTransfer.files.length && imageInputs) { event.preventDefault(); void imageInputs.addFiles(Array.from(event.dataTransfer.files)); } }}>
       {imageInputs && <ImageAttachments inputs={imageInputs} supported={imageSupported} />}
+      {materialInputs && <MaterialAttachments inputs={materialInputs} busy={busy} />}
       {canSupplement && (text.trim() || hasImages) && <div className={composer.modeRow}>
         <select className={styles.sendMode} aria-label="发送方式" value={followUp ? 'follow_up' : 'steering'}
           disabled={sending || checkingSkill} onChange={event => setFollowUp(event.target.value === 'follow_up')}>
@@ -197,7 +203,7 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
           {showStop ? <button type="button" className={styles.stopButton} aria-label={waitingSubmission?'取消待发送':'停止运行'} onClick={stop} disabled={stopping}>
             <Icon name="stop" /></button> :
             <button type="submit" className={styles.sendButton} aria-label={pendingMode && !busy ? '重新发送消息' : '发送消息'}
-              disabled={sending || checkingSkill || blocked || !!imageInputs?.uncertain || imageInputs?.reading || (hasImages && !imageSupported) || (!text.trim() && !hasImages && !pending.some(value => value.trim()))}><Icon name="send" /></button>}
+              disabled={sending || checkingSkill || blocked || !!imageInputs?.uncertain || imageInputs?.reading || (hasImages && !imageSupported) || (!text.trim() && !hasImages && !hasMaterials && !pending.some(value => value.trim()))}><Icon name="send" /></button>}
         </div>
       </div>
       {pendingMode && <div className={styles.pendingHint}>{busy ? '停止期间仅保留输入' : '内容由你明确重新发送'}</div>}

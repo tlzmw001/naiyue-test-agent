@@ -41,13 +41,14 @@ class RunnerRuns:
             if task.runner_phase=='waiting_model':raise CloudError('model_unavailable')
             if (task.lifecycle!='ready' or task.runner_phase!='ready' or not task.runner_connection_id
                     or task.runner_connection_id!=connection_id
-                    or task.environment_operation_id or task.control_operation_id or task.active_run_id or task.pending_result_id
-                    or any(x!='background_commands' for x in task.reclaim_blockers)):raise CloudError('runner_not_ready')
+                    or task.environment_operation_id or task.control_operation_id or task.active_run_id
+                    or any(x not in ('background_commands','result_pending') for x in task.reclaim_blockers)):raise CloudError('runner_not_ready')
             if request.model_id not in task.runner_model_ids:raise CloudError('model_unavailable')
             r.models.validate_thinking(task,request.model_id,request.thinking_level)
             try:r.credentials.authorize(raw,task_id,'control:connect')
             except CloudError:raise CloudError('runner_not_ready') from None
             now=time.time();run_id=uuid4().hex
+            previous=task;task,updates=r.results.next_run(task,run_id)
             plan,result_receipt=r.results.reserve_run(task,request.command_id,run_id)
             command=RunCommand(command_id=request.command_id,run_id=run_id,message=request.message,model_id=request.model_id,
                 thinking_level=request.thinking_level,result_plan=plan)
@@ -61,7 +62,7 @@ class RunnerRuns:
                 result=dict(phase='dispatched',command=command.model_dump(),connection_id=task.runner_connection_id),created_at=now,updated_at=now)
             # Reuse the existing atomic task+receipt CAS. Environment-only limits
             # in this repository apply solely to environment:start.
-            return self.repository.reserve(task,candidate,receipt,r.settings,related=(result_receipt,))
+            return self.repository.reserve(previous,candidate,receipt,r.settings,related=(result_receipt,),related_updates=updates)
 
     async def _start(self,task_id,request,fingerprint):
         live=self.control.connections.get(task_id)
