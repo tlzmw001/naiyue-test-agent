@@ -1,6 +1,6 @@
 """Private durable update requests and process locks, independent of Coordinator."""
 from contextlib import contextmanager
-import json,os,time
+import errno,json,logging,os,time
 from pathlib import Path
 from uuid import UUID
 
@@ -9,6 +9,8 @@ from naiyue_test_agent.storage.files import (open_store_file,open_store_readonly
     acquire_store_lock,release_store_lock,sync_store_directory)
 from naiyue_test_agent.storage.cloud.schema import private_file
 from naiyue_test_agent.application.cloud.ownership import private_directory
+
+logger=logging.getLogger(__name__)
 
 
 def directory(path):
@@ -30,8 +32,16 @@ def write(path,value):
 
 
 def read(path,limit=1024*1024):
-    private_file(path)
-    with os.fdopen(open_store_readonly(path),'rb') as f:raw=f.read(limit+1)
+    for attempt in range(3):
+        private_file(path)
+        try:
+            with os.fdopen(open_store_readonly(path),'rb') as f:raw=f.read(limit+1)
+            break
+        except OSError as error:
+            # A writer may atomically replace this record between open and lstat.
+            # Retry the complete validation; never accept the rejected handle.
+            if attempt==2 or error.errno!=errno.EINVAL or error.strerror!='unsafe_store_file':raise
+            logger.warning('update_record_read_retry attempt=%s',attempt+1)
     if len(raw)>limit:raise CloudError('update_record_invalid')
     try:
         from naiyue_test_agent.contracts.cloud_json import parse_object
