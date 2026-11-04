@@ -13,11 +13,11 @@
 - **外部集成**：MCP、网页搜索与抓取、AITest 工具，以及项目 Skills。
 - **云端任务**：从主输入框加号菜单新建或续聊独立任务；云端Coordinator/Runner执行，本机可离线，结果可保存报告、应用代码或交给主Agent分析。
 
-0.5.6 的更新与升级说明见[版本说明](https://github.com/tlzmw001/naiyue-test-agent/blob/v0.5.6/docs/releases/0.5.6.md)。
+0.5.7 的更新与升级说明见[版本说明](https://github.com/tlzmw001/naiyue-test-agent/blob/v0.5.7/docs/releases/0.5.7.md)，两端启动及相对0.5.6的配置差异见[启动与迁移](docs/cloud-startup-and-configuration.md)。
 
-当前工作区已将正式云端入口切换为B任务链，普通主会话在本机运行。Windows通过预先配置的OpenSSH连接云端管理服务，无需本机Docker CLI；Linux侧使用独立Coordinator、OpenSandbox及受信Runner模板。准备和后续统一验收见[Windows＋Linux手册](docs/cloud-s091-windows-and-linux.md)，结果操作见[结果取回](docs/cloud-result-delivery.md)。
+0.5.7将正式云端入口切换为独立任务链，普通主会话在本机运行。Windows通过预先配置的OpenSSH连接云端管理服务，无需本机Docker CLI；Linux侧使用独立Coordinator、OpenSandbox及受信Runner模板。首次准备见[Windows＋Linux手册](docs/cloud-s091-windows-and-linux.md)，结果操作见[结果取回](docs/cloud-result-delivery.md)。
 
-本工作区更改尚未发布，当前版本号不能单独证明候选源码身份。旧A的环境配置、按会话Docker执行及旧sandbox会话已不再支持；程序不会迁移或清理旧数据、卷或镜像。已有配置中的`[sandbox]`/`[delivery]`需要用户手动移除，本机服务协议已升级为2，升级前应先用旧版CLI或旧服务原入口显式关闭旧服务，再启动新版；已升级时仍用旧服务原入口停服，新版不会兼容接管旧协议。
+旧环境配置、按会话Docker执行及旧sandbox会话已不再支持；程序不会迁移或清理旧数据、卷或镜像。已有配置中的`[sandbox]`/`[delivery]`及MCP的`allow_sandbox`需要用户手动移除，本机服务协议已升级为2，升级前应先用旧版CLI或旧服务原入口显式关闭旧服务，再启动新版；已升级时仍用旧服务原入口停服，新版不会兼容接管旧协议。旧S09/S11候选仍按各自SHA核验，不与正式0.5.7产物混用。
 
 显式云端更新、Windows通过SSH触发、维护和已有任务换代见[更新说明](docs/cloud-updates.md)。本机代码/受控进程验证与原机验收分别记录。
 
@@ -40,7 +40,7 @@ python -m pip install naiyue-test-agent
 nyt --version
 ```
 
-发行包已包含构建后的前端及 Find/Grep 使用的 `fd` / `rg`，使用时无需 Node.js、npm 或 Rust。纯本机使用无需 Docker；沙箱模式需另行准备可用的 Docker daemon 和兼容镜像。
+发行包已包含构建后的前端及 Find/Grep 使用的 `fd` / `rg`，使用时无需 Node.js、npm 或 Rust。纯本机使用无需 Docker；云端执行需要在开发机准备 Docker/OpenSandbox 后端及通过预检的Runner模板。
 
 ## 配置模型
 

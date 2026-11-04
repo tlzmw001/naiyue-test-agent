@@ -23,6 +23,11 @@ def sha(path):
     return value.hexdigest()
 
 
+def python_sha(data):
+    # Match the standard release inspector: only Python source line endings are normalized.
+    return hashlib.sha256(data.replace(b'\r\n',b'\n')).hexdigest()
+
+
 def verify(root,*,installed=False):
     root=Path(root).absolute()
     if root.is_symlink() or getattr(root,'is_junction',lambda:False)():raise ValueError('candidate_path_invalid')
@@ -41,7 +46,9 @@ def verify(root,*,installed=False):
         import naiyue_test_agent
         base=Path(naiyue_test_agent.__file__).parent
         for name,expected in manifest['installed_files'].items():
-            if sha(safe_file(base,name))!=expected:raise ValueError('candidate_installed_mismatch:'+name)
+            path=safe_file(base,name)
+            actual=python_sha(path.read_bytes()) if name.endswith('.py') and manifest.get('python_newlines')=='lf' else sha(path)
+            if actual!=expected:raise ValueError('candidate_installed_mismatch:'+name)
             checked+=1
     return dict(status='passed',candidate_id=manifest.get('candidate_id'),files=len(manifest['files']),installed_files=checked)
 

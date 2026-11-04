@@ -457,7 +457,7 @@ max_delete_bytes = 33554432    # 一次删除数据预算32 MiB；不强制VACUU
 # allowed_tools填服务端的原工具名，不接受*；[]只发现目录、不登记可调用工具。
 # 登记后名称为mcp__服务ID__原工具名；还须在根会话或子角色中选中，执行仍受审批。
 [mcp.servers.local]
-# 允许沙箱会话调用本机 stdio MCP；默认关闭，开启后该服务仍在本机执行。
+# 本机 stdio MCP；云端任务不通过此配置调用本机服务。
 enabled = false
 transport = "stdio"            # 本机子进程；不经Shell，不解释&&、管道或命令字符串。
 command = "python"             # 最好改成服务器环境中Python/程序的绝对路径。
@@ -500,6 +500,19 @@ Authorization = "MY_MCP_AUTHORIZATION"
 
 # 云端任务使用独立Coordinator及SSH连接配置；不再配置旧sandbox/delivery。
 # 连接与模板准备步骤见docs/cloud-s091-windows-and-linux.md。
+[cloud_tasks]
+# 启用云端时填写私有profile文件的绝对路径；省略则可继续纯本机使用。
+# profiles_file = 'C:/private/profiles.json'
+max_preparations = 4
+max_commands = 16
+max_controls = 4
+runner_wait_seconds = 15
+runner_poll_seconds = 0.1
+max_observers = 8
+stream_seconds = 1800
+stream_send_timeout_seconds = 15
+# input_limits/receive_limits/result_limits可按需覆盖；默认值与配置归属见
+# docs/cloud-startup-and-configuration.md，不要在这里填写Owner token或模型key。
 
 [image_inputs]
 max_images_per_message = 4

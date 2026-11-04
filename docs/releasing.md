@@ -1,5 +1,13 @@
 # PyPI 发行指南
 
+0.5.7起正式云端任务替代旧sandbox/envd链。本文末尾旧envd离线镜像段落保留历史发行边界，不作为0.5.7产物要求；本版使用同源Agent wheel、Kit、Runner模板构建材料与云端发行索引。
+
+## 云端附加包（0.5.7起）
+
+在已通过同提交CI的干净worktree中，用`scripts.build_cloud_acceptance`读取CI原始四平台wheel和锁定Kit，生成统一ZIP及校验。`scripts.cloud_release_manifest`使用同组wheel、Kit、锁文件与经核验的固定基础镜像digest生成发行JSON/index；它们及引用文件一起上传Release。不得把本机旧候选改名当作正式CI产物。
+
+CI的Windows wheel可含CRLF，其他平台为LF。附加包沿标准`inspect_release`合同，仅对Python源码比较统一换行符；manifest显式记录`python_newlines=lf`，安装核验按相同规则计算。wheel、ZIP及其他资产的原始字节SHA仍严格比较，不重写CI wheel。无此标记的历史候选仍按原始字节验证。跨平台差异可接受，任何实际代码变化仍拒绝。
+
 发行项目：`naiyue-test-agent`；安装命令：`nyt`；首版：`0.1.0`；许可证：MIT。
 
 ## 一次性配置 PyPI

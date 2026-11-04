@@ -2,9 +2,9 @@
 import argparse,hashlib,json,shutil,subprocess,zipfile
 from pathlib import Path
 from scripts.release_artifacts import inspect_release,release_source
-from scripts.verify_cloud_candidate import sha,verify
+from scripts.verify_cloud_candidate import sha,verify,python_sha
 
-DOCS=('cloud-final-windows-acceptance.md','cloud-acceptance-report-template.md','cloud-updates.md','cloud-result-delivery.md',
+DOCS=('cloud-final-windows-acceptance.md','cloud-acceptance-report-template.md','cloud-updates.md','cloud-result-delivery.md','cloud-startup-and-configuration.md',
     'cloud-s091-windows-and-linux.md','cloud-s00-local-and-windows.md','cloud-s00-ai-handoff.md',
     'specs/143g-acceptance.md','specs/143e-a-to-b-cleanup.md','specs/143ah-s102-operations.md','specs/143ai-s11-final-acceptance.md')
 SCRIPTS=('verify_cloud_candidate.py','verify_cloud_workflow.py','verify_cloud_backend.py',
@@ -24,11 +24,11 @@ def create(root,output,wheels,kit):
         if len(metadata)!=1:raise ValueError('candidate_kit_mismatch')
         value=BytesParser().parsebytes(archive.read(metadata[0]))
         if (value['Name'].lower().replace('_','-'),value['Version'])!=('aitest-kit',profile['version']):raise ValueError('candidate_kit_mismatch')
-    production={p.relative_to(root/'naiyue_test_agent').as_posix():sha(release_source(p,root)) for p in (root/'naiyue_test_agent').rglob('*.py')}
+    production={p.relative_to(root/'naiyue_test_agent').as_posix():python_sha(release_source(p,root).read_bytes()) for p in (root/'naiyue_test_agent').rglob('*.py')}
     installed=dict(production)
     for wheel in wheels:
         with zipfile.ZipFile(wheel) as z:
-            actual={n.removeprefix('naiyue_test_agent/'):hashlib.sha256(z.read(n)).hexdigest() for n in z.namelist()
+            actual={n.removeprefix('naiyue_test_agent/'):python_sha(z.read(n)) for n in z.namelist()
                 if n.startswith('naiyue_test_agent/') and n.endswith('.py')}
             if actual!=production:raise ValueError('candidate_source_mismatch')
             web={n.removeprefix('naiyue_test_agent/'):hashlib.sha256(z.read(n)).hexdigest() for n in z.namelist() if n.startswith('naiyue_test_agent/_assets/web/')}
@@ -50,7 +50,7 @@ def create(root,output,wheels,kit):
     # while HEAD is explicitly only the base for this uncommitted candidate.
     basis=dict(installed_files=installed,files=files)
     fingerprint=hashlib.sha256(json.dumps(basis,sort_keys=True,separators=(',',':')).encode()).hexdigest()
-    manifest=dict(schema=1,candidate_id='s11-'+fingerprint[:16],source_base_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),
+    manifest=dict(schema=1,python_newlines='lf',candidate_id='s11-'+fingerprint[:16],source_base_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),
         source_dirty=bool(subprocess.check_output(['git','status','--porcelain'],cwd=root)),source_sha256=fingerprint,version=__version__,
         files=files,installed_files=installed,targets=[r['target'] for r in records])
     (output/'candidate.json').write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8')
