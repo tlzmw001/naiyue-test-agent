@@ -33,6 +33,7 @@ def main(argv=None):
     handler = logging.StreamHandler()
     handler.setFormatter(SafeDiagnosticFormatter())
     logging.basicConfig(level=logging.WARNING, handlers=[handler])
+    logging.getLogger('naiyue_test_agent.application.memory.memory_job_runner').setLevel(logging.INFO)
     try:
         runtime = load_settings(args.settings)
         options = ServiceOptions(data_dir=args.data_dir or get_data_dir(runtime.storage),

@@ -225,16 +225,20 @@ def response_schema():
 
 
 def proposal_request(proposal, sources, related=()):
+    diagnostic = 'fields_invalid'
     try:
         item = _Proposal.model_validate(proposal)
         old = None
         if item.memory_id is not None:
+            diagnostic = 'update_target_unavailable'
             matches = [row for row in related if row['memory_id'] == item.memory_id]
             if len(matches) != 1 or matches[0].get('complete') is not True:
                 raise ValueError('Update requires one complete record actually sent to the model')
             old = matches[0]
+            diagnostic = 'update_scope_or_kind'
             if item.kind != old['kind'] or item.scope is not None and item.scope != old['scope']:
                 raise ValueError('Update cannot change scope or kind')
+        diagnostic = 'fields_invalid'
         scope = old['scope'] if old else item.scope or 'workspace'
         values = item.model_dump(exclude={'scope', 'memory_id', 'sources'}, exclude_none=True)
         if old:
@@ -247,19 +251,30 @@ def proposal_request(proposal, sources, related=()):
             values.setdefault('title', item.subject)
             values.setdefault('reason', f'Background proposal: {item.basis}/{item.intent}; source and lifecycle gates apply.')
         payload = MemoryProposal.model_validate(values)
+        diagnostic = 'source_key_ambiguous'
         by_key = {source['source_key']: source for source in sources}
         if len(by_key) != len(sources):
             raise ValueError('Ambiguous batch source identity')
         references = []
         for reference in item.sources:
+            diagnostic = 'source_key_missing'
             source = by_key[reference.source_key]
+            diagnostic = 'quote_not_found'
             offset = source['text'].find(reference.quote)
-            if offset < 0 or source['text'].find(reference.quote, offset + 1) >= 0:
+            if offset < 0:
+                raise ValueError('Quote must match a current batch source')
+            diagnostic = 'quote_ambiguous'
+            if source['text'].find(reference.quote, offset + 1) >= 0:
                 raise ValueError('Quote must uniquely match a current batch source')
+            diagnostic = 'source_metadata_invalid'
             references.append({key: source[key] for key in ('session_id', 'thread_id', 'message_id',
                 'revision', 'conversation_revision')} | dict(quote=reference.quote, offset=source['offset'] + offset))
+        diagnostic = 'write_request_invalid'
         return MemoryInput(action='update' if old else 'record', scope=scope, proposal=payload,
             sources=references, memory_id=item.memory_id,
             expected_version=old['version'] if old else None).model_dump(mode='json')
     except (ValueError, KeyError, TypeError, AttributeError) as error:
-        raise MemoryReadError('memory_proposal_invalid') from error
+        failure = MemoryReadError('memory_proposal_invalid')
+        # Internal diagnostic only: preserve the public error type/code and never copy model input.
+        failure._diagnostic_reason = diagnostic
+        raise failure from error

@@ -20,6 +20,7 @@ from naiyue_test_agent.model_access.memory_output import prepare_memory_output
 from naiyue_test_agent.tools.memory import MemoryInput
 from .memory_batches import build_batch, model_batch, parse_model_result, proposal_request, response_schema
 from naiyue_test_agent.contracts.memory import MemoryReadError, safe_memory_reason
+from naiyue_test_agent.diagnostics import safe_log
 from .memory_sources import sensitive
 from naiyue_test_agent.application.observability.run_events import RunObservation
 
@@ -253,12 +254,13 @@ async def _commit(job, counter, call, *args, **kwargs):
             setattr(job, counter, getattr(job, counter) + 1)
 
 
-def _failure(job, diagnostic, error):
+def _failure(job, diagnostic, error, *, stage='job', proposal_index=0):
     job.failed += 1
     job.error_type = safe_error_type(error)
     reason = safe_memory_reason(error) if isinstance(error, MemoryReadError) else None
-    logger.error('%s task_id=%s error_type=%s%s', diagnostic, job.task_id, job.error_type,
-                 f' reason={reason}' if reason else '')
+    detail = getattr(error, '_diagnostic_reason', None) if reason == 'memory_proposal_invalid' else None
+    safe_log(logger.error, '%s task_id=%s batch=%s stage=%s proposal_index=%s error_type=%s reason=%s detail=%s',
+        diagnostic, job.task_id, job.batches, stage, proposal_index, job.error_type, reason, detail)
 
 
 async def _batch(service, job):
@@ -266,6 +268,7 @@ async def _batch(service, job):
         _check(job)
         job.status = 'running'
         job.started_at = job.started_at or datetime.now(timezone.utc).isoformat()
+        stage = 'prepare'
         try:
             lower, upper = job.start, job.upper
             batch, messages, bound, previous_coverage, related, output_mode = await _prepare(service, job, upper)
@@ -277,11 +280,13 @@ async def _batch(service, job):
                 return
             config = dict(tags=[MEMORY_TAG], metadata={MODEL_ID_METADATA_KEY: job.model_id,
                 'memory_task_id': job.task_id, 'memory_batch': job.batches})
+            stage = 'model'
             if native_async_model(job.model):
                 response = await job.control.await_model(lambda: bound.ainvoke(messages, config=config))
             else:
                 response = await run_blocking(bound.invoke, messages, config=config)
             _check(job)
+            stage = 'model_output'
             if output_mode != 'text':
                 response = response['raw']
             parsed = parse_model_result(response, service.settings, output_mode=output_mode)
@@ -316,6 +321,7 @@ async def _batch(service, job):
             if next_offset and (previous_end is None or current_end > previous_end):
                 skipped.append(f'partial_source:{next_sequence}:{next_offset}')
             skipped = _bounded_notes(skipped)
+            stage = 'overview_save'
             try:
                 sensitive(parsed['overview'])
                 await _commit(job, 'overview_saved', service.storage.memory.save_overview, session_id=job.target_session_id, thread_id=job.thread_id,
@@ -324,17 +330,24 @@ async def _batch(service, job):
                     origin_run_id=job.origin_run_id, batch=job.batches, skipped=skipped,
                     expected_history_version=batch['history_version'])
             except Exception as error:
-                _failure(job, 'memory_overview_save_failed', error)
-            for proposal in parsed['proposals']:
+                _failure(job, 'memory_overview_save_failed', error, stage=stage)
+            for proposal_index, proposal in enumerate(parsed['proposals'], 1):
                 _check(job)
+                stage = 'proposal_validation'
                 try:
                     request = proposal_request(proposal, batch['sources'], related)
                     if not service.allowed(request):
                         raise MemoryReadError('memory_permission_denied')
+                    stage = 'proposal_save'
                     await _commit(job, 'saved', service.memory.query, job.target_session_id, job.project_id, request)
                 except Exception as error:
-                    _failure(job, 'memory_proposal_failed', error)
+                    _failure(job, 'memory_proposal_failed', error, stage=stage, proposal_index=proposal_index)
             job.start = tuple(batch['next_position'])
+        except (Exception, asyncio.CancelledError) as error:
+            safe_log(logger.error, 'memory_batch_failed task_id=%s batch=%s stage=%s error_type=%s reason=%s',
+                job.task_id, job.batches, stage, safe_error_type(error),
+                safe_memory_reason(error) if isinstance(error, MemoryReadError) else None)
+            raise
         finally:
             if job.status == 'running':job.status = 'starting'
 
@@ -396,4 +409,7 @@ async def drive(service, job):
         if termination not in ('completed', 'user_stop', 'application_close', 'root_not_completed'):
             job.skipped.append(f'unprocessed:{job.start[0]}:{job.start[1]}:{job.upper}')
         service._terminal(job, result, termination)
+        safe_log(logger.info, 'memory_job_finished task_id=%s result_status=%s termination=%s batches=%s '
+            'overview_saved=%s memory_saved=%s failed=%s skipped_count=%s', job.task_id, result,
+            termination, job.batches, job.overview_saved, job.saved, job.failed, len(job.skipped))
         observation.finish(False)

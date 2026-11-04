@@ -134,7 +134,7 @@ it('keeps a delayed stop failure attached to its task after selection changes', 
   expect(result.current.stopError).toMatch(/进程清理尚未确认/);
 });
 
-it('shows memory completion and literal summary without process or archive fields', async () => {
+it('shows a simple memory result without raw output, process or archive fields', async () => {
   const api = client();
   const memory = { ...task, kind: 'memory' as const, shell: 'memory', command_preview: '更新概览',
     status: 'finished' as const, result_status: 'partial' as const, cleanup_confirmed: true };
@@ -145,7 +145,9 @@ it('shows memory completion and literal summary without process or archive field
   function Panel() { const state = useBackgroundTasks(api, true); return <BackgroundTasks state={state} />; }
   const view = render(<Panel />);
   fireEvent.click(await screen.findByRole('button', { name: /更新概览/ }));
-  await screen.findByText(detail.output);
+  await screen.findByText('已保存部分整理结果，其余内容未完成。');
+  await waitFor(() => expect(api.backgroundTaskOutput).toHaveBeenCalled());
+  expect(screen.queryByText(detail.output)).toBeNull();
   expect(screen.getAllByText('记忆整理').length).toBeGreaterThan(0);
   expect(screen.getAllByText('部分完成').length).toBeGreaterThan(0);
   expect(screen.queryByText('退出码')).toBeNull();
@@ -162,10 +164,41 @@ it('labels an unconfirmed memory task as memory cleanup and keeps stop available
   function Panel() { const state = useBackgroundTasks(api, true); return <BackgroundTasks state={state} />; }
   render(<Panel />);
   fireEvent.click(await screen.findByRole('button', { name: /整理记忆/ }));
-  await screen.findByText(detail.output);
+  await screen.findByText('正在整理会话概览与记忆。');
   expect(screen.getByRole('button', { name: '停止此后台任务' })).toBeTruthy();
   vi.mocked(api.backgroundTaskOutput).mockResolvedValue({ ...detail, ...memory, status: 'lost' });
   fireEvent.click(screen.getByRole('button', { name: '刷新' }));
-  await screen.findByText('记忆整理收尾未确认，请人工核对。');
+  await screen.findByText('暂时无法确认本次整理结果。');
   expect(screen.queryByText('进程或输出收尾未确认，请人工核对。')).toBeNull();
+});
+
+it.each([
+  ['finished', 'completed', 'completed', '本次记忆整理已完成。', null],
+  ['finished', 'partial', 'completed', '已保存部分整理结果，其余内容未完成。', '部分内容未能保存。'],
+  ['finished', 'partial', 'batch_limit', '已保存部分整理结果，其余内容未完成。', '已达到本次整理上限。'],
+  ['finished', 'failed', 'timeout', '本次整理未完成。', '已达到本次整理上限。'],
+  ['finished', 'failed', 'source_changed', '本次整理未完成。', '会话内容已变化，本次整理已结束。'],
+  ['finished', 'stopped', 'user_stop', '本次整理已停止，停止前已保存的结果保留。', '已停止整理。'],
+  ['finished', 'stopped', 'application_close', '本次整理已停止，停止前已保存的结果保留。', '已停止整理。'],
+  ['finished', 'failed', 'provider_private_detail', '本次整理未完成。', '整理过程中出现异常。'],
+  ['lost', 'completed', 'completed', '暂时无法确认本次整理结果。', null],
+  ['starting', undefined, null, '等待整理会话概览与记忆。', null],
+] as const)('explains memory %s/%s/%s without technical details', async (status, result_status, termination, description, reason) => {
+  const api = client();
+  const memory: BackgroundTask = { ...task, kind: 'memory', status, result_status, termination,
+    command_preview: '整理记忆', error_type: 'PRIVATE_EXCEPTION' };
+  vi.mocked(api.backgroundTasks).mockResolvedValue(page([memory]));
+  vi.mocked(api.backgroundTaskOutput).mockResolvedValue({ ...detail, ...memory, output: '{"memory_saved":0,"failed":2}' });
+  function Panel() { const state = useBackgroundTasks(api, true); return <BackgroundTasks state={state} />; }
+  const view = render(<Panel />);
+  fireEvent.click(await screen.findByRole('button', { name: /整理记忆/ }));
+  await screen.findByText(description);
+  if (reason)expect(screen.getByText(reason)).toBeTruthy();
+  else expect(screen.queryByText('结束原因')).toBeNull();
+  expect(screen.getByText(memory.task_id)).toBeTruthy();
+  expect(view.container.textContent).not.toContain('memory_saved');
+  expect(view.container.textContent).not.toContain('PRIVATE_EXCEPTION');
+  expect(view.container.textContent).not.toContain('provider_private_detail');
+  expect(view.container.textContent).not.toContain('batch_limit');
+  expect(view.container.textContent).not.toContain('completed');
 });
