@@ -129,9 +129,9 @@ def test_backend_ci_installs_declared_cloud_dependencies_before_tests(tmp_path):
     from unittest.mock import patch
     with patch('subprocess.check_call', side_effect=calls.append):
         exec(install['run'], {'__name__': '__main__'})
-    cloud = tomllib.loads((ROOT / 'pyproject.toml').read_text())['project']['optional-dependencies']['cloud']
+    extras = tomllib.loads((ROOT / 'pyproject.toml').read_text())['project']['optional-dependencies']
     assert calls == [[sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt',
-                      '-r', 'requirements-web.txt', *cloud]]
+                      '-r', 'requirements-web.txt', *extras['cloud'], *extras['dev']]]
     assert steps.index(install) < next(i for i, step in enumerate(steps)
                                       if 'scripts.ci_shards' in step.get('run', ''))
 
