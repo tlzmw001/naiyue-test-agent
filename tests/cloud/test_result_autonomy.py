@@ -15,8 +15,18 @@ from naiyue_test_agent.cloud_runner.kernel import open_runner
 from naiyue_test_agent.cloud_runner.transport import RunnerClient
 
 
-def test_current_run_output_tool_and_offline_result_delivery(tmp_path):
+def test_current_run_output_tool_and_offline_result_delivery(tmp_path,monkeypatch):
     async def scenario():
+        from naiyue_test_agent.cloud_runner import results as result_module
+        committed=asyncio.Event();release=asyncio.Event()
+        request=result_module.task_request
+        async def delayed_commit(*args,**kwargs):
+            value=await request(*args,**kwargs)
+            if args[2]=='POST' and args[3].endswith('/commit'):
+                committed.set()
+                await release.wait()
+            return value
+        monkeypatch.setattr(result_module,'task_request',delayed_commit)
         upstream=FastAPI();seen=[]
         @upstream.post('/v1/chat/completions')
         async def serve(request:Request):
@@ -51,7 +61,11 @@ def test_current_run_output_tool_and_offline_result_delivery(tmp_path):
                             path='/api/cloud/v1/tasks/'+b.task_id+'/results/'+rid
                             assert (await client.get(path+'/files/'+report.artifact_id+'/bytes')).content==b'fixture handoff report'
                             assert 'generated.py' in {row['path'] for row in (await client.get(path+'/changes')).json()['changes']}
+                            await asyncio.wait_for(committed.wait(),8)
+                            assert kernel.results.pending()!=[]
+                            release.set()
+                            await until(lambda:kernel.results.pending()==[])
                             assert kernel.results.pending()==[] and r.registry.get_task(b.task_id).pending_result_id is None
                             assert kernel.journal.lookup(cid)['status']=='completed'
-                        finally:stop.set();await asyncio.wait_for(job,8)
+                        finally:release.set();stop.set();await asyncio.wait_for(job,8)
     asyncio.run(scenario())
