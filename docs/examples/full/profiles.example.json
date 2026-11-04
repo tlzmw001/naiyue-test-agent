@@ -7,13 +7,16 @@
         "python-tests"
       ],
       "default_template": "python-tests",
-      "tunnel": "external",
+      "tunnel": "owned",
       "ssh_executable": "ssh",
       "connect_timeout_seconds": 15.0,
       "keepalive_seconds": 15,
       "keepalive_count": 3,
       "poll_seconds": 0.1,
-      "shutdown_seconds": 5.0
+      "shutdown_seconds": 5.0,
+      "ssh_host": "nyt-dev",
+      "network_id": "alice",
+      "reconnect_seconds": 5.0
     }
   ]
 }

@@ -27,6 +27,9 @@ class LifecycleRepository:
                 require_available(connection)
             if connection.execute('SELECT COUNT(*) FROM commands').fetchone()[0]+1+len(related) > settings.max_receipts:
                 raise CloudError('command_capacity')
+            if receipt.operation=='run:start' and previous.network_id:
+                from .networks import require_network
+                require_network(connection,previous.network_id,receipt.result['command']['services']['revision'])
             if receipt.operation == 'environment:start':
                 retained, occupied = connection.execute('''SELECT
                     COALESCE(SUM(json_extract(record_json,'$.lifecycle')!='deleted'),0),

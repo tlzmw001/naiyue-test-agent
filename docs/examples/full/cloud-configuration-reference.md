@@ -1,4 +1,4 @@
-# 0.5.7 全量配置参考与逐项说明
+# 0.5.8 全量配置参考与逐项说明
 
 这些是示意配置，不是可直接连接公司环境的部署材料。所有端口、bridge、路径、UID/GID、实例ID与凭证都须替换。JSON严格不支持注释；本说明与JSON并列提供，不能往JSON加 _comment 字段。真实配置请放仓库外私有目录；Linux文件0600、目录0700，Windows限制ACL。无真实密钥。
 
@@ -42,7 +42,7 @@
 | `instance_id` (instance_id) | 现有Coordinator实例UUID；从真实实例获得，不随意重生成。 |
 | `timeout_seconds` (timeout_seconds) | 请求或远程调用超时秒数，不代表后台操作停止。 |
 | `io_bytes` (io_bytes) | 每次IO块字节数。 |
-| `max_response_bytes` (max_response_bytes) | 单次响应字节上限。 |
+| `max_response_bytes` (max_response_bytes) | 单次 Owner JSON 响应上限，默认 64 MiB；容纳输入包的 manifest + selection（各自最多 16 MiB）及 JSON 封装开销。旧连接文件显式写入的 4 MiB 不会被新默认覆盖，升级时需同步。它不改变模型转发或 WebSocket 帧预算。 |
 
 ## cloud.example.json
 
@@ -181,7 +181,7 @@
 | 字段 | 用途 |
 | --- | --- |
 | `work_dir` (work_dir) | 更新器持久日志、发行下载缓存根，需私有权限。 |
-| `index` (index) | 可信索引HTTPS URL或绝对文件路径；示例固定0.5.7且需发布后可用。 |
+| `index` (index) | 可信索引HTTPS URL或绝对文件路径；示例固定0.5.8且需发布后可用。 |
 | `trusted_prefixes` (trusted_prefixes) | 下载URL及重定向前缀白名单；仅保留实际可信资产来源。 |
 | `platform` (platform) | 目标开发机架构linux-x86_64或linux-arm64，不填本地Windows架构。 |
 | `build` (build) | 开发机模板构建参数。 |
@@ -251,3 +251,19 @@
 | `expected_runner_protocol` (expected_runner_protocol) | template-build中的数量或结构限制；示例值为当前模型默认值，调整会影响该子系统的拒绝/截断边界。 |
 | `expected_state_schema` (expected_state_schema) | template-build中的数量或结构限制；示例值为当前模型默认值，调整会影响该子系统的拒绝/截断边界。 |
 | `resume_existing` (resume_existing) | 仅显式恢复已有构建时启用，不猜测成功。 |
+
+## 143AN 大项目与服务隧道配置增量
+
+本节为0.5.8相对0.5.7的增量；本机、Coordinator及新Runner模板统一更新到0.5.8。旧配置显式写入的数值优先，不会被新版默认值覆盖。
+
+- `input_limits`：未压缩总量/单文件均为2 GiB；归档2.5 GiB；32768文件、16 MiB元数据；本机缓存16 GiB；上传1800秒；发现500000目录项。仍逐块IO，不一次读2 GiB。缓存会保留历史输入，16 GiB不是自动清理目标，也不是磁盘预分配。
+- 连接配置`max_response_bytes`默认64 MiB，覆盖完整输入包清单响应；仍使用有界流式读取。旧connection.json显式4 MiB需同步调整，见connection.example.json。Runner的input_wait_seconds默认1800秒。
+- `result_limits`：结果工作区（包括未改动输入）总量3 GiB、65536文件、16 MiB元数据，避免旧256 MiB阻止大项目结束。代码patch仍64 MiB，报告/接收预算不随项目输入无限增大。修改一个巨大二进制文件仍可能触发补丁上限，应缩小修改或单独保存报告。
+- `network_id`：profiles条目新增可选字段，指向Coordinator `networks`中的管理员分配项。省略时不绑定网络，不启动反向转发。不是用户认证字段。
+- `ssh_host`：owned控制连接或配置network_id时必填，使用Windows用户SSH配置中的Host别名，不接受任意SSH命令。
+- `reconnect_seconds`：连接异常后的后台检查间隔，默认5秒。SSH保活仍由keepalive_seconds/count控制。关闭网页不关连接，停止本机服务才回收受管SSH进程。
+- `networks`：Coordinator新增可选映射，默认空；示例含alice/bob两个分配。每项`bind_host`为容器可达的私有IPv4桥地址，`http_port`/`grpc_port`为此用户的两端口，全部端点不得重复。禁止0.0.0.0、loopback、公网地址。它只是允许的转发分配，不替代SSH服务端授权和防火墙。
+- 本机页面设置保存到profiles文件同目录的`<profiles文件名去扩展名>.networks.json`。保存已选目标、启停意图及原切换操作；不修改profiles.json、connection.json或settings.toml。文件由程序私有写入，不建议手工编辑；有未完成切换时用页面取消或重试。
+- Coordinator在registry.meta保存切换状态；运行准入同事务检查。切换断线不会自动解锁，避免旧地址仍被使用。网络元信息随每轮命令更新，旧任务容器无需重建。
+
+详细管理员/Windows操作、TLS使用及验收见[服务隧道手册](../../cloud-service-tunnels.md)。

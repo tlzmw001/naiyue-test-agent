@@ -57,7 +57,7 @@ class RunnerBootstrap(CloudRecord):
     json_depth_limit: int = Field(default=32, ge=1, le=128)
     retry_seconds: float = Field(default=1.0, gt=0, le=60)
     heartbeat_seconds: float = Field(default=15.0, gt=0, le=60)
-    input_wait_seconds: float = Field(default=300.0, gt=0, le=3600)
+    input_wait_seconds: float = Field(default=1800.0, gt=0, le=3600)
     permissions: PermissionSettings = Field(default_factory=task_permissions)
     tool_environment: RunnerToolEnvironment = Field(default_factory=RunnerToolEnvironment)
     subagents: tuple[SubAgentSpec,...] = ()
@@ -85,6 +85,7 @@ class RunnerBootstrap(CloudRecord):
 
 
 class RunCommand(CloudRecord):
+    services:dict|None=Field(default=None,exclude_if=lambda value:value is None)
     command_id: UUIDText
     run_id: TaskId
     message: str = Field(min_length=1, max_length=262144)

@@ -1,4 +1,4 @@
-# 0.5.7当前源码的全量参考：每个配置项都是真实字段，注释只解释用途。
+# 0.5.8当前源码的全量参考：每个配置项都是真实字段，注释只解释用途。
 # 本例展示Auto、带认证代理、子Agent、两种MCP及云端任务；占位值须替换后使用。
 # 数值通常采用代码默认值；Auto/代理/显式模型/路径/工具名单属于本例选择，不是默认启用行为。
 # 默认配置位置是用户目录下的 .naiyue-test-agent/settings.toml；与启动项目目录无关。
@@ -326,23 +326,23 @@ stream_seconds = 1800.0 # 单次观察流最长秒数，到期需重连同步。
 stream_send_timeout_seconds = 15.0 # 单次流发送超时，秒。
 
 [cloud_tasks.input_limits]
-max_file_bytes = 67108864 # 单个文件字节上限。
-max_input_bytes = 134217728 # 一次输入所有文件合计字节上限。
-max_archive_bytes = 167772160 # 输入归档字节上限。
-max_files = 4096 # 清单文件数量上限；接收指材料文件数，结果指变更文件数。
-max_metadata_bytes = 1048576 # 结构化元数据字节预算。
+max_file_bytes = 2147483648 # 单个文件字节上限。
+max_input_bytes = 2147483648 # 一次输入所有文件合计字节上限。
+max_archive_bytes = 2684354560 # 输入归档字节上限。
+max_files = 32768 # 一次输入完整清单中的文件数上限；选择目录会展开计数。
+max_metadata_bytes = 16777216 # 结构化元数据字节预算。
 io_bytes = 262144 # 每次IO块字节数。
 max_pending = 8 # 待处理输入数量上限。
-max_cache_bytes = 536870912 # 受管缓存字节预算，不是用户保存目录配额。
+max_cache_bytes = 17179869184 # 受管缓存字节预算，不是用户保存目录配额。
 gzip_level = 3 # gzip压缩等级0..9，越高越耗CPU。
-upload_timeout_seconds = 120.0 # 上传请求超时秒数。
+upload_timeout_seconds = 1800.0 # 上传请求超时秒数。
 chunk_bytes = 8388608 # 上传块字节数。
 max_segments = 4096 # 分段数量上限。
 staging_ttl_seconds = 86400.0 # 临时输入过期秒数。
 sweep_interval_seconds = 60.0 # 清扫检查间隔秒数。
 git_executable = "git" # Git可执行文件路径或PATH中的名称。
 git_timeout_seconds = 30.0 # 单次Git子进程超时秒数。
-max_discovery_entries = 100000 # 输入发现最多遍历的目录项数量。
+max_discovery_entries = 500000 # 输入发现最多遍历的目录项数量。
 
 [cloud_tasks.receive_limits]
 max_results = 128 # 保留结果/接收记录数量预算。
@@ -358,12 +358,25 @@ max_read_lines = 2000 # 主Agent读取材料每次最大行数。
 [cloud_tasks.result_limits]
 output_directory = ".nyt-output" # 报告产物目录，相对项目根；源码变更另外归入代码取回。
 max_patch_bytes = 67108864 # 代码补丁字节预算。
-max_metadata_bytes = 1048576 # 结构化元数据字节预算。
-max_files = 4096 # 清单文件数量上限；接收指材料文件数，结果指变更文件数。
+max_metadata_bytes = 16777216 # 结构化元数据字节预算。
+max_files = 65536 # 结果工作区完整清单文件数上限，包含未修改的输入文件。
 max_artifacts = 30 # 一次结果最多报告产物数量。
-max_result_bytes = 268435456 # 一次结果字节总预算。
+max_result_bytes = 3221225472 # 结果工作区总量3GiB，包含未修改输入；不是允许下载3GiB报告。
 max_results = 64 # 保留结果/接收记录数量预算。
-result_lease_seconds = 300.0 # 结果读取租约有效秒数。
+result_lease_seconds = 300 # 结果读取租约有效秒数。
 max_result_leases = 128 # 同时结果读取租约数量上限。
 git_executable = "git" # Git可执行文件路径或PATH中的名称。
-git_timeout_seconds = 30.0 # 单次Git子进程超时秒数。
+git_timeout_seconds = 30 # 单次Git子进程超时秒数。
+
+# 143AN 输入与隧道说明（0.5.8生效）：
+# cloud_tasks.input_limits.max_input_bytes 是未压缩总量2GiB，不是最终压缩包大小；
+# 单文件也允许2GiB，归档2.5GiB，缓存16GiB给冻结副本/压缩包及历史输入留空间。
+# 实际磁盘峰值包括用户源码、输入缓存、云端输入、工作区和Git结果对象，并非仅2GiB。
+# 本机和Coordinator的input_limits需要一起调整；Runner从Coordinator取得限制。
+# result_limits.max_result_bytes包括未改动的整个工作区，默认3GiB；代码补丁仍64MiB。
+# 服务隧道不在这里填目标地址：在profiles JSON配置network_id/ssh_host/reconnect_seconds，
+# Coordinator JSON配置networks的bind_host/http_port/grpc_port，再到云端任务页“服务连接”编辑目标。
+# 页面状态独立保存在profiles同目录的*.networks.json，关闭网页保持，停止本机服务关闭SSH。
+# 示例与步骤：docs/cloud-service-tunnels.md、docs/examples/full/profiles.example.json。
+
+# connection.json的max_response_bytes默认64MiB，容纳大项目完整元数据响应；旧显式4MiB需要同步修改。

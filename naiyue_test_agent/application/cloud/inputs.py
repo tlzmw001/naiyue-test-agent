@@ -206,7 +206,9 @@ class CloudInputs:
             raise
         template=self.runtime.settings.templates.get(request.template_id)
         if template is None:raise CloudError('template_unavailable')
-        now=time.time();task=CloudTask(task_id=uuid4().hex,project_id=request.project_id,title=request.title,input_id=request.input_id,
+        if request.network_id is not None and request.network_id not in self.runtime.settings.networks:
+            raise CloudError('cloud_network_not_configured',422)
+        now=time.time();task=CloudTask(network_id=request.network_id,task_id=uuid4().hex,project_id=request.project_id,title=request.title,input_id=request.input_id,
             template_id=template.template_id,runner_release_id=template.runner_release_id,state_schema=STATE_SCHEMA,generation=1,revision=1,
             lifecycle='creating',created_at=now,updated_at=now,template_snapshot=template,template_digest=template.fingerprint)
         receipt=CommandReceipt(command_id=request.command_id,resource_id=task.task_id,operation='task:create',request_digest=fingerprint,

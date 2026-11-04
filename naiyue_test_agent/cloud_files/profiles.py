@@ -1,6 +1,7 @@
 """Private SSH profile ownership, bounded handshake and no cloud task shutdown."""
 import asyncio
 import logging
+import os
 from pathlib import Path
 import re
 import socket
@@ -19,6 +20,8 @@ REQUIRED={'projects:create','commands:read','tasks:create','tasks:read','inputs:
 
 
 class CloudProfile(CloudRecord):
+    network_id:str|None=Field(default=None,pattern=r'^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$')
+    reconnect_seconds:float=Field(default=5.0,gt=0,le=300)
     profile_id:str=Field(pattern=r'^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$')
     connection_file:Path
     template_ids:list[str]=Field(min_length=1,max_length=64)
@@ -46,7 +49,7 @@ class CloudProfile(CloudRecord):
             raise ValueError('invalid_profile_templates')
         if self.ssh_host is not None and not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}',self.ssh_host):
             raise ValueError('invalid_ssh_alias')
-        if self.tunnel=='owned' and self.ssh_host is None:raise ValueError('ssh_alias_required')
+        if (self.tunnel=='owned' or self.network_id) and self.ssh_host is None:raise ValueError('ssh_alias_required')
         return self
 
 
@@ -68,7 +71,7 @@ class ProfileBook(CloudRecord):
 
     def public(self):
         return [dict(profile_id=p.profile_id,template_ids=p.template_ids,default_template=p.default_template,
-            tunnel=p.tunnel,connection='not_connected') for p in self.profiles]
+            tunnel=p.tunnel,network_id=p.network_id,connection='not_connected') for p in self.profiles]
 
 
 def ssh_argv(profile,connection):
@@ -97,7 +100,8 @@ class ConnectedProfile:
                     try:probe.bind((endpoint.hostname,endpoint.port))
                     except OSError:raise CloudError('cloud_ssh_port_in_use',409) from None
                 try:value.process=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,close_fds=True)
+                    stderr=subprocess.DEVNULL,close_fds=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
                 except OSError as error:
                     logger.warning('cloud_ssh_start_failed error_type=%s',type(error).__name__)
                     raise CloudError('cloud_ssh_start_failed',503) from None

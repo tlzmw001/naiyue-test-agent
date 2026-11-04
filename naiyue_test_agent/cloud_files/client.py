@@ -24,7 +24,7 @@ class CloudConnection(CloudRecord):
     instance_id:UUIDText
     timeout_seconds:float=Field(default=60.0,gt=0,le=3600)
     io_bytes:int=Field(default=256*1024,gt=0,le=1024*1024)
-    max_response_bytes:int=Field(default=4*1024*1024,gt=0)
+    max_response_bytes:int=Field(default=64*1024*1024,gt=0)
 
     @model_validator(mode='after')
     def private_connection(self):

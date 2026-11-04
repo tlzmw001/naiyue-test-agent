@@ -31,7 +31,7 @@ class LocalTaskDomain:
         if self.project_id is None or row['project_id']!=self.project_id:raise CloudError('cloud_project_required',409)
         return row
 
-    async def capture(self,session_id,root,selection,limits,*,git=False,include=(),exclude=(),validate=None):
+    async def capture(self,session_id,root,selection,limits,*,git=False,include=(),exclude=(),paths=None,validate=None):
         with self.owner.operation():
             await self.session(session_id)
             if self.cache is None:raise CloudError('cloud_project_required')
@@ -44,13 +44,19 @@ class LocalTaskDomain:
                 if validate is not None:validate()
             def freeze():
                 check_source()
+                receipt=None
                 plan=None
-                if git:
+                if paths is not None:
+                    from naiyue_test_agent.cloud_files.source_scope import plan_scope
+                    selected,receipt=plan_scope(root,limits,mode='git' if git else 'selection',paths=paths,include=include,exclude=exclude)
+                elif git:
                     from naiyue_test_agent.cloud_files.sources import select_git
                     plan=select_git(root,limits,include=include,exclude=exclude)
-                selected=Selection.model_validate(plan.selection if plan else selection)
+                if paths is None:
+                    selected=Selection.model_validate(plan.selection if plan else selection)
+                    receipt=plan.receipt if plan else None
                 if not git and selected.policy is not None:raise CloudError('cloud_source_plan_required',422)
-                value=capture_cached(root,selected,self.cache,limits,source_receipt=plan.receipt if plan else None)
+                value=capture_cached(root,selected,self.cache,limits,source_receipt=receipt)
                 check_source()
                 return self.repo.add_source(session_id,self.project_id,value.model_dump(mode='json'))
             value=await run_blocking(freeze);captured=value['captured']
@@ -69,6 +75,8 @@ class ManualCloudTasks:
         self.operations={}
         self.observers=set();self.downloads=set()
         self.slots=set()
+        from .networks import ServiceNetworks
+        self.networks=ServiceNetworks(self)
         from .commands import ManualTaskCommands
         self.commands=ManualTaskCommands(self)
         from .receives import LocalReceives
@@ -121,7 +129,7 @@ class ManualCloudTasks:
                 parent=domain.persistence.history_lock(request['local_session_id']) if domain.persistence else nullcontext()
                 async with parent:
                     result=await run_blocking(domain.repo.reserve,domain.project_id,request,
-                        dict(instance_id=config.instance_id,project_name=project_name))
+                        dict(instance_id=config.instance_id,project_name=project_name,network_id=profile.network_id))
                 self._launch(domain,result['operation'])
                 return result
             finally:
@@ -237,6 +245,10 @@ class ManualCloudTasks:
 
     async def close(self):
         self.closing=True;primary=None
+        try:await self.networks.close()
+        except BaseException as error:
+            logger.error('cloud_network_shutdown_failed error_type=%s',type(error).__name__)
+            primary=error
         observers=tuple(job for job in self.observers if job is not asyncio.current_task())
         for job in observers:job.cancel()
         if observers:

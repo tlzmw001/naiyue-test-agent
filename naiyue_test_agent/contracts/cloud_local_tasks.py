@@ -21,11 +21,17 @@ class LocalSourceRequest(CloudRecord):
     local_session_id:SessionId
     mode:Literal['selection','git']='selection'
     selection:dict|None=None
+    paths:list[str]|None=Field(default=None,max_length=4096)
     include:list[str]=Field(default_factory=list,max_length=4096)
     exclude:list[str]=Field(default_factory=list,max_length=4096)
 
     @model_validator(mode='after')
     def selected(self):
+        if self.paths is not None:
+            if self.selection is not None:raise ValueError('selection_scope_conflict')
+            if self.mode=='selection' and (not self.paths or self.include):raise ValueError('selection_required')
+            distinct_paths(self.include);distinct_paths(self.exclude)
+            return self
         if self.mode=='selection':
             if self.selection is None or self.include or self.exclude:raise ValueError('selection_required')
             value=Selection.model_validate(self.selection)
@@ -38,7 +44,7 @@ class LocalSourceRequest(CloudRecord):
 def checked_task(raw,binding):
     try:task=CloudTask.model_validate(raw)
     except ValidationError:raise CloudError('cloud_task_invalid',502) from None
-    if (task.project_id!=binding['cloud_project_id'] or task.input_id!=binding['input_id']
+    if (task.network_id!=binding.get('network_id') or task.project_id!=binding['cloud_project_id'] or task.input_id!=binding['input_id']
             or task.template_id!=binding['template_id'] or binding['task_id'] is not None and task.task_id!=binding['task_id']):
         raise CloudError('cloud_task_identity_mismatch',502)
     return task

@@ -1,3 +1,4 @@
+import CloudNetworks from './CloudNetworks';
 import { useEffect, useRef, useState } from 'react';
 import type { CloudApi } from '../cloudApi';
 import type { CloudBinding, CloudProfile } from '../cloudTypes';
@@ -11,6 +12,7 @@ import { Icon } from './Icons';
 import type { AnalysisDraft } from '../cloudReceiveTypes';
 
 export default function CloudTasks({ api, sessionId, active, onAnalysisDraft }: { api: CloudApi; sessionId?: string; active: boolean; onAnalysisDraft?: (value: AnalysisDraft) => boolean | void }) {
+  const [networks, showNetworks] = useState(false);
   const [rows, setRows] = useState<CloudBinding[]>([]); const [profiles, setProfiles] = useState<CloudProfile[]>([]);
   const [selected, select] = useState<string>(); const [creating, create] = useState(false);
   const [loading, setLoading] = useState(true); const [error, setError] = useState('');
@@ -74,7 +76,8 @@ export default function CloudTasks({ api, sessionId, active, onAnalysisDraft }: 
     binding={binding} metadataFresh={!stale.includes(binding.binding_id) && !error} active={active && visible} back={back} changed={update} onAnalysisDraft={onAnalysisDraft} />;
   return <section className={styles.panel} aria-label="云端任务列表">
     <div className={styles.listHeader}><button ref={newButton} className={`${mainStyles.newChat} ${styles.newTask}`} onClick={() => { select(undefined); create(true); }}><Icon name="plus" /><span>新增任务</span></button>
-      <button onClick={update}>刷新</button></div>
+      <button onClick={() => showNetworks(true)}>服务连接</button><button onClick={update}>刷新</button></div>
+    {networks && <CloudNetworks api={api} profiles={profiles} close={() => showNetworks(false)} />}
     {error && <p role="alert" className={styles.error}>{error}</p>}
     {loading && !rows.length && <p role="status" className={styles.note}>正在读取任务…</p>}
     {!loading && !rows.length && !error && <p className={styles.note}>还没有云端任务</p>}

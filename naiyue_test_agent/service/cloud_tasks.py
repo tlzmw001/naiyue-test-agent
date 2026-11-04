@@ -69,7 +69,7 @@ async def source(request:Request,local_project_id:UUIDText):
     if not project.trusted:raise CloudError('cloud_project_trust_required',403)
     if not isinstance(project.source,LocalSource):raise CloudError('cloud_local_source_required')
     result=await local.capture(value.local_session_id,project.source.path,value.selection,manager.settings.input_limits,
-        git=value.mode=='git',include=value.include,exclude=value.exclude)
+        git=value.mode=='git',include=value.include,exclude=value.exclude,paths=value.paths)
     return JSONResponse(result,status_code=201)
 
 
@@ -208,3 +208,8 @@ async def environment(request:Request,binding_id:UUIDText,local_project_id:UUIDT
     manager=access(request);value=await body(request,ManualEnvironment)
     _,local=await domain(request,local_project_id,value.local_session_id)
     return command_response(request,await manager.commands.submit(local,binding_id,value.action,value.model_dump(mode='json')),status_code=202)
+
+from .cloud_source_routes import register as register_sources
+register_sources(router,access,domain,body)
+from .cloud_network_routes import register as register_networks
+register_networks(router,access,body)

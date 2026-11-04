@@ -1,7 +1,7 @@
 {
   "template_id": "python-tests",
   "backend_id": "development",
-  "image_tag": "nyt-runner:0.5.7",
+  "image_tag": "nyt-runner:0.5.8",
   "docker_host": "unix:///var/run/docker.sock",
   "docker_executable": "docker",
   "package_index": "https://pypi.org/simple/",
@@ -9,15 +9,15 @@
   "gid": 1000,
   "build_timeout_seconds": 900.0,
   "build_proxy_env": {},
-  "wheel": "/srv/nyt/release/naiyue_test_agent-0.5.7-py3-none-manylinux_2_17_x86_64.whl",
+  "wheel": "/srv/nyt/release/naiyue_test_agent-0.5.8-py3-none-manylinux_2_17_x86_64.whl",
   "wheel_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
   "kit_wheel": "/srv/nyt/release/aitest_kit-0.6.0-py3-none-any.whl",
   "kit_profile": "/srv/nyt/release/cloud-test-toolchain.json",
   "test_lock": "/srv/nyt/release/cloud-test-requirements.txt",
   "base_image": "python@sha256:0000000000000000000000000000000000000000000000000000000000000000",
   "output": "/srv/nyt/receipts/python-tests.json",
-  "expected_runner_version": null,
-  "expected_runner_protocol": null,
-  "expected_state_schema": null,
+  "expected_runner_version": "0.5.8",
+  "expected_runner_protocol": 1,
+  "expected_state_schema": 1,
   "resume_existing": false
 }

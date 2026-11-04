@@ -126,11 +126,11 @@ class LocalTaskRepo:
             mapping=json.loads(row[0]) if row else dict(command_id=str(uuid4()),name=target['project_name'])
             if row is None:c.execute('INSERT INTO naiyue_cloud_targets VALUES(?,?,?)',(profile,instance,json.dumps(mapping)))
             now=time.time();bid=str(uuid4())
-            binding=dict(binding_id=bid,local_project_id=project_id,local_session_id=sid,profile_id=profile,
+            binding=dict(network_id=target.get('network_id'),binding_id=bid,local_project_id=project_id,local_session_id=sid,profile_id=profile,
                 instance_id=instance,cloud_project_id=None,task_id=None,input_id=source['captured']['input_id'],
                 create_command_id=command_id,template_id=request['template_id'],created_at=now,revision=1,preparation='reserved',cloud=None,retained=True)
             op=dict(command_id=command_id,binding_id=bid,local_session_id=sid,kind='create',request=request,
-                request_digest=fingerprint,phase='reserved',steps={'project':mapping,'task':{'command_id':str(uuid4())},
+                request_digest=fingerprint,phase='reserved',steps={'project':mapping,'task':{'command_id':str(uuid4()),'network_id':target.get('network_id')},
                     'environment':{'command_id':str(uuid4())}},may_have_task=False,cancel_requested=False,
                 created_at=now,updated_at=now,error_code=None)
             c.execute('INSERT INTO naiyue_cloud_bindings VALUES(?,?,?,?,?)',(bid,sid,project_id,1,json.dumps(binding)))

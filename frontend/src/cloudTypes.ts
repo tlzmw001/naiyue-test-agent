@@ -1,6 +1,6 @@
 import type { MessageRow, ToolState, AgentEventSource, ThinkingOptions } from './types';
 
-export interface CloudProfile { profile_id: string; template_ids: string[]; default_template: string; connection: string; tunnel: string }
+export interface CloudProfile { network_id?: string | null; profile_id: string; template_ids: string[]; default_template: string; connection: string; tunnel: string }
 export interface CloudTask {
   task_id: string; project_id: string; input_id: string; generation: number; revision: number; lifecycle: string;
   title?: string; created_at?: number; updated_at?: number;

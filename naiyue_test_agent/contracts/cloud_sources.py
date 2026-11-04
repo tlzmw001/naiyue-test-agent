@@ -23,6 +23,7 @@ class SourcePolicy(CloudRecord):
     safety_version:Literal[1]=1
     include:list[str]=Field(default_factory=list)
     exclude:list[str]=Field(default_factory=list)
+    scope:list[str]=Field(default_factory=list,exclude_if=lambda v:not v)
     rules:list[SourceRule]=Field(default_factory=list)
 
 

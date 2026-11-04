@@ -59,23 +59,23 @@ def distinct_paths(paths):
 
 
 class InputLimits(CloudRecord):
-    max_file_bytes:int=Field(default=64*1024*1024,gt=0)
-    max_input_bytes:int=Field(default=128*1024*1024,gt=0)
-    max_archive_bytes:int=Field(default=160*1024*1024,gt=0)
-    max_files:int=Field(default=4096,gt=0)
-    max_metadata_bytes:int=Field(default=1024*1024,gt=0)
+    max_file_bytes:int=Field(default=2*1024**3,gt=0)
+    max_input_bytes:int=Field(default=2*1024**3,gt=0)
+    max_archive_bytes:int=Field(default=5*1024**3//2,gt=0)
+    max_files:int=Field(default=32768,gt=0)
+    max_metadata_bytes:int=Field(default=16*1024**2,gt=0)
     io_bytes:int=Field(default=256*1024,gt=0,le=1024*1024)
     max_pending:int=Field(default=8,gt=0)
-    max_cache_bytes:int=Field(default=512*1024*1024,gt=0)
+    max_cache_bytes:int=Field(default=16*1024**3,gt=0)
     gzip_level:int=Field(default=3,ge=0,le=9)
-    upload_timeout_seconds:float=Field(default=120.0,gt=0,le=3600)
+    upload_timeout_seconds:float=Field(default=1800.0,gt=0,le=3600)
     chunk_bytes:int=Field(default=8*1024*1024,gt=0,le=64*1024*1024)
     max_segments:int=Field(default=4096,gt=0,le=4096)
     staging_ttl_seconds:float=Field(default=86400.0,gt=0)
     sweep_interval_seconds:float=Field(default=60.0,gt=0,le=3600)
     git_executable:str=Field(default='git',min_length=1)
     git_timeout_seconds:float=Field(default=30.0,gt=0,le=300)
-    max_discovery_entries:int=Field(default=100000,gt=0)
+    max_discovery_entries:int=Field(default=500000,gt=0)
 
 
 class Selection(CloudRecord):
@@ -96,6 +96,7 @@ class Selection(CloudRecord):
         if self.policy is not None:
             distinct_paths(self.policy.include)
             distinct_paths(self.policy.exclude)
+            distinct_paths(self.policy.scope)
         return self
 
     @property
@@ -186,6 +187,7 @@ class InputPackage(CloudRecord):
 
 
 class CreateTask(CloudRecord):
+    network_id:str|None=Field(default=None,pattern=r'^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$',exclude_if=lambda v:v is None)
     command_id:UUIDText
     project_id:UUIDText
     input_id:ContentId

@@ -45,6 +45,8 @@ def _app():
 
 def create_cloud_apps(runtime):
     owner, task = _app(), _app()
+    from .network_routes import register as register_networks
+    register_networks(owner,runtime)
 
     @owner.get('/api/cloud/v1/instance')
     async def instance(request: Request):

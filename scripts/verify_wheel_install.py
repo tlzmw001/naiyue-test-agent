@@ -18,6 +18,7 @@ import venv
 from scripts.release_artifacts import inspect_wheel
 from scripts.release_subagent_smoke import verify_subagent_report
 from scripts.release_memory_smoke import verify_memory_report
+from scripts.release_network_smoke import verify_network_report
 
 
 def published_file(info, destination):
@@ -99,6 +100,8 @@ def main():
         shell = (shutil.which('pwsh') or shutil.which('powershell.exe')) if os.name == 'nt' else shutil.which('bash')
         if shell is None:
             raise RuntimeError('Installed background verification requires a host Shell')
+        git = shutil.which('git')
+        if git: env['NYT_SMOKE_GIT'] = git
         env['NYT_SMOKE_SHELL'] = shell  # The native-tool gate keeps PATH restricted.
         outside = root / 'outside-checkout'
         outside.mkdir()
@@ -123,6 +126,7 @@ def main():
         report = {**info, 'install': json.loads(result.stdout.strip().splitlines()[-1])}
         verify_subagent_report(report['install'].get('subagent_continuation'))
         verify_memory_report(report['install'].get('memory'))
+        verify_network_report(report['install'].get('service_network'))
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')

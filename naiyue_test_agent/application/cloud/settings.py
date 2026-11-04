@@ -1,3 +1,4 @@
+from naiyue_test_agent.contracts.cloud_networks import NetworkEndpoints
 """Explicit B configuration; no automatic .env/settings discovery."""
 import ipaddress
 from pathlib import Path
@@ -39,6 +40,7 @@ class BackendSettings(BaseModel):
 
 class CloudSettings(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True)
+    networks: dict[str,NetworkEndpoints] = Field(default_factory=dict,max_length=64)
     data_dir: Path
     protected_roots: tuple[Path, ...] = ()
     owner_listen: str
@@ -98,6 +100,19 @@ class CloudSettings(BaseModel):
                     or address.is_unspecified or address.is_multicast
                     or (not address.is_loopback if owner else address.is_loopback or not address.is_private)):
                 raise ValueError('cloud_invalid_listener')
+        return self
+
+    @model_validator(mode='after')
+    def network_ports(self):
+        import re
+        ports=set()
+        for ident,value in self.networks.items():
+            if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}',ident):raise ValueError('invalid_network_id')
+            for port in (value.http_port,value.grpc_port):
+                key=(value.bind_host,port)
+                if key in ports or f'{value.bind_host}:{port}' in (self.owner_listen,self.task_listen):
+                    raise ValueError('duplicate_network_endpoint')
+                ports.add(key)
         return self
 
     @property

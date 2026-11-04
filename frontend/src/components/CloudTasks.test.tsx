@@ -24,6 +24,8 @@ const snapshot: CloudSnapshot = { task, cursor: 'cursor', archive: { epoch: 'his
   live: { epoch: 'live', seq: 1, replace: true, available: true, capture_incomplete: false, messages: [], tools: [], threads: [] } };
 function api(rows: CloudBinding[] = []) {
   return { projectId: project, profiles: vi.fn().mockResolvedValue([{ profile_id: 'work', template_ids: ['python'], default_template: 'python' }]),
+    sourceTree: vi.fn().mockResolvedValue({ git: true, git_error: null, path: '', entries: [], next_offset: null, excluded_count: 0 }),
+    sourcePreview: vi.fn().mockResolvedValue({ file_count: 1, total_bytes: 1, issues: [], limits: { max_input_bytes: 2147483648 } }),
     list: vi.fn().mockResolvedValue(rows), binding: vi.fn().mockImplementation((_sid, bid) => Promise.resolve(rows.find(r => r.binding_id === bid))),
     snapshot: vi.fn().mockResolvedValue(snapshot), threads: vi.fn().mockResolvedValue({ threads: [], next_cursor: null }),
     usage: vi.fn().mockResolvedValue({ recorded_calls: 0, capture: { capture_incomplete: false } }),
@@ -98,6 +100,9 @@ it('reuses the frozen source and command after a lost creation response', async 
   vi.mocked(cloud.source).mockResolvedValue({ source_handle: 'H', input_id: task.input_id, size: 1 });
   vi.mocked(cloud.create).mockRejectedValueOnce(new Error('offline')).mockResolvedValue({ binding, operation: { command_id: 'C' } } as never);
   render(<CloudTaskCreate api={cloud} sessionId="S" profiles={[{ profile_id: 'work', template_ids: ['python'], default_template: 'python', connection: 'ssh', tunnel: 'private' }]} back={vi.fn()} created={created} />);
+  await waitFor(() => expect(screen.getByRole('button', { name: '预览导入范围' })).not.toHaveProperty('disabled', true));
+  fireEvent.click(screen.getByRole('button', { name: '预览导入范围' }));
+  await screen.findByText(/1 个文件/);
   fireEvent.click(screen.getByRole('button', { name: '导入并准备任务' }));
   fireEvent.click(await screen.findByRole('button', { name: '重试原准备操作' }));
   await waitFor(() => expect(created).toHaveBeenCalledWith(binding));
@@ -165,6 +170,9 @@ it('selects the first available profile when profiles arrive after the create fo
   const cloud = api(); const props = { api: cloud, sessionId: 'S', back: vi.fn(), created: vi.fn() };
   const { rerender } = render(<CloudTaskCreate {...props} profiles={[]} />);
   rerender(<CloudTaskCreate {...props} profiles={[{ profile_id: 'work', template_ids: ['python'], default_template: 'python', connection: 'ssh', tunnel: 'private' }]} />);
+  await waitFor(() => expect(screen.getByRole('button', { name: '预览导入范围' })).not.toHaveProperty('disabled', true));
+  fireEvent.click(screen.getByRole('button', { name: '预览导入范围' }));
+  await screen.findByText(/1 个文件/);
   expect(screen.getByRole('button', { name: '导入并准备任务' })).not.toHaveProperty('disabled', true);
 });
 it('offers a live child before its durable thread has been archived', async () => {

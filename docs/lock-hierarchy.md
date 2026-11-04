@@ -269,3 +269,9 @@ BackgroundProcessManager.submit/foreground 的 `_validate_binding` 在取得 B1 
 ### Spec143AK 本机缓存清理
 
 `ReceiveFiles.publication`另保护users计数/cleaning标记，`use()`仅登记与退出持短锁；预留跨IO/await但线程锁不跨。接收submit/retry、交付prepare/recheck/execute借use至登记flight；材料验证/读取借use至FD关闭。cleanup在owner admission内核对该项目无接收/交付flight并取得独占预留，释放admission后读取项目DB引用，再以既有固定父句柄执行孤儿清理；取消等待worker完成后才释放预留。标记检查不进入DB，DB不反向取publication；同任务并发仍沿已有owner/store生命周期，不增加跨进程承诺。
+
+## Spec143AN 输入范围与服务隧道
+
+- `ServiceNetworks.lock` 是本机async操作锁，串行保护目标状态JSON、原切换意图与SSH进程表；change/cancel/supervisor/close为唯一入口。锁内可await文件/网络/进程IO，不持线程锁或项目DB锁。锁内只向ProfileConnections借用连接，不进入LC0、会话历史锁或项目DB；ProfileConnections不回调ServiceNetworks。关闭先停supervisor、排空接受的切换并回收反向SSH，再关闭控制连接。状态写入使用已有私有原子JSON，不改用户配置。
+- Coordinator网络切换的持久标记保存在registry.meta。begin在单个registry DB写事务内SQL检查所有绑定该network_id的任务静止性并设置switching；不获取多个CT1任务锁。RunnerRuns保持CT1→registry DB，reserve在相同写事务检查switching及命令携带的network revision。begin/finish/cancel均不持DB跨网络，SSH副作用在本机执行，断线保留原标记。禁止DB持锁时反取CT1，也不按墙钟超时自动释放switching。
+- 范围预览/捕获复用owner.operation和既有执行根校验、输入缓存OS锁；未增加新的跨进程文件锁。预览不预留输入身份，捕获重新校验。

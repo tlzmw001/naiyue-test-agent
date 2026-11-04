@@ -64,3 +64,21 @@
 .pendingMessage p { margin: 0 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .pendingMessage small { color: var(--muted); font-size: var(--fs-caption); }
 @media (max-width: 480px) { .resultsDialog { width: calc(100vw - 20px); max-height: calc(100dvh - 24px); }.resultsDialog > header, .resultsDialog .results { padding: 14px; }.resultsEntry { padding-left: 14px; } }
+.sourcePicker { display: flex; flex-direction: column; gap: 10px; min-width: 0; border: 1px solid var(--line); border-radius: var(--r-md); padding: 12px; }
+.scopeFiles { max-height: 260px; overflow: auto; }
+.scopeFile, .scopeNavigation { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.scopeFile label { display: flex; flex-direction: row; align-items: center; gap: 6px; overflow-wrap: anywhere; min-width: 0; }
+.scopeFile input { width: auto; flex: none; }
+.scopeFile button { flex: none; max-width: 45%; overflow-wrap: anywhere; }
+
+.networkDialog { width: min(620px, calc(100% - 32px)); max-height: calc(100dvh - 40px); overflow: auto; }
+.networkDialog label { display: flex; flex-direction: column; gap: 6px; }
+.networkDialog input, .networkDialog select { width: 100%; box-sizing: border-box; }
+.networkDialog .sourcePicker { margin-top: 16px; }
+.networkDialog .actions { flex-wrap: wrap; }
+.networkDialog { font-size: var(--fs-ui); }
+.networkDialog label { font-size: var(--fs-meta); color: var(--text-secondary); }
+.networkDialog input, .networkDialog select { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-sm); min-width: 0; padding: 8px; }
+.networkDialog .sourcePicker { gap: 6px; }
+.networkDialog .sourcePicker p { margin: 2px 0; }
+.networkDialog .sourcePicker .actions { margin-top: 8px; }

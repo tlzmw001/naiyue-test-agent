@@ -64,3 +64,19 @@ def test_cli_capture_is_real_and_invalid_selection_does_not_echo_content(tmp_pat
     with pytest.raises(SystemExit):main(['cloud','input','capture','--source',str(root),'--selection',str(selection),'--output',str(tmp_path/'bad')])
     output=capsys.readouterr()
     assert 'PRIVATE_SYNTHETIC_VALUE' not in output.err
+
+
+@pytest.mark.parametrize('method,path',[('POST','/transfers/test/commit'),('GET','/inputs/test')])
+def test_default_client_accepts_large_input_package_metadata(method,path):
+    from naiyue_test_agent.contracts.cloud_inputs import InputLimits,InputManifest,InputPackage,Selection
+    limits=InputLimits();selection=Selection(paths=[f'src/file-{i:05}.py' for i in range(limits.max_files)])
+    manifest=InputManifest(selection={'policy_sha256':hashlib.sha256(selection.canonical).hexdigest()},entries=[
+        dict(path=p,type='file',size=0,sha256=hashlib.sha256(b'').hexdigest(),mode=420) for p in selection.paths])
+    package=InputPackage(input_id=manifest.input_id,archive_sha256='0'*64,size=1,codec='tar',manifest=manifest,selection=selection)
+    body=package.model_dump_json().encode()
+    assert len(manifest.canonical)<limits.max_metadata_bytes and len(body)>4*1024**2
+    settings=CloudConnection(endpoint='http://127.0.0.1:28281',owner_authority='127.0.0.1:28101',owner_token='synthetic-owner',instance_id=str(uuid4()))
+    client=CloudClient(settings,transport=httpx.MockTransport(lambda request:httpx.Response(200,content=body)))
+    try:received=InputPackage.model_validate(client.request(method,path))
+    finally:client.close()
+    assert len(received.manifest.entries)==limits.max_files

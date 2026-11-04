@@ -13,6 +13,8 @@
 - **外部集成**：MCP、网页搜索与抓取、AITest 工具，以及项目 Skills。
 - **云端任务**：从主输入框加号菜单新建或续聊独立任务；云端Coordinator/Runner执行，本机可离线，结果可保存报告、应用代码或交给主Agent分析。
 
+0.5.8新增2GiB项目输入、目录选择与个人服务隧道。Linux/Windows升级及页面操作见[0.5.8指南](docs/cloud-143an-upgrade.md)，详细网络说明见[服务隧道](docs/cloud-service-tunnels.md)。
+
 0.5.7 的更新与升级说明见[版本说明](https://github.com/tlzmw001/naiyue-test-agent/blob/v0.5.7/docs/releases/0.5.7.md)，两端启动及相对0.5.6的配置差异见[启动与迁移](docs/cloud-startup-and-configuration.md)。
 
 0.5.7将正式云端入口切换为独立任务链，普通主会话在本机运行。Windows通过预先配置的OpenSSH连接云端管理服务，无需本机Docker CLI；Linux侧使用独立Coordinator、OpenSandbox及受信Runner模板。首次准备见[Windows＋Linux手册](docs/cloud-s091-windows-and-linux.md)，结果操作见[结果取回](docs/cloud-result-delivery.md)。

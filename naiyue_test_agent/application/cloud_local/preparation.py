@@ -31,6 +31,7 @@ def reconcile_created(domain,client,binding,session_id):
     if not op['may_have_task']:return binding
     request=dict(command_id=op['steps']['task']['command_id'],project_id=binding['cloud_project_id'],
         input_id=binding['input_id'],template_id=binding['template_id'],title='')
+    if op['steps']['task'].get('network_id'):request['network_id']=op['steps']['task']['network_id']
     value=receipt(client,'/tasks',request,'task:create',digest({'operation':'task:create',
         'instance_id':binding['instance_id'],'request':{k:v for k,v in request.items() if k!='command_id'}}),dispatch=False)
     task=checked_task(value.result.get('task'),binding)
@@ -61,6 +62,7 @@ def prepare(domain,client,command_id,session_id):
     # Cancellation and the first potentially side-effectful task dispatch are atomic.
     task_request=steps['task'].get('request') or dict(command_id=steps['task']['command_id'],project_id=project.project_id,
         input_id=binding['input_id'],template_id=binding['template_id'],title='')
+    if steps['task'].get('network_id'):task_request['network_id']=steps['task']['network_id']
     steps['task']['request']=task_request
     save(phase='task',steps=steps,dispatch_task=True)
     try:

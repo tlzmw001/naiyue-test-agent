@@ -1,5 +1,6 @@
 """Freeze Git's file/ignore metadata without Git commits, checkout or source writes."""
 import os
+from os.path import normcase
 from pathlib import Path
 import stat
 
@@ -11,11 +12,14 @@ from .git_source import SourceGit
 from .source_facts import fact,directory,verify
 
 
-def select_git(root,limits,*,include=(),exclude=()):
+def select_git(root,limits,*,include=(),exclude=(),scope=()):
     root=Path(root).absolute();check_store_directory(root)
+    scope=distinct_paths(list(scope))
     include=distinct_paths(list(include));exclude=distinct_paths([p.rstrip('/') for p in exclude])
-    def excluded(path):return any(path==p or path.startswith(p+'/') for p in exclude)
+    def excluded(path):return any(normcase(path)==normcase(p) or normcase(path).startswith(normcase(p+'/')) for p in exclude)
     git=SourceGit(root,limits)
+    from .source_scope import require_git
+    require_git(root,limits)
     roots=git.run(['rev-parse','--show-toplevel','--absolute-git-dir','--git-common-dir']).decode().splitlines()
     if len(roots)!=3 or Path(roots[0]).absolute()!=root:raise CloudError('input_git_root_required')
     gitdir=Path(roots[1]);common=Path(roots[2]);common=common if common.is_absolute() else root/common
@@ -85,6 +89,8 @@ def select_git(root,limits,*,include=(),exclude=()):
         except ValueError:
             if path in include:raise CloudError('input_path_invalid') from None
             omitted.append(path);continue
+        if scope and not any(normcase(path)==normcase(p) or normcase(path).startswith(normcase(p+'/')) for p in scope):
+            omitted.append(path);continue
         in_submodule=any(path==p or path.startswith(p+'/') for p in submodules)
         if in_submodule and path in include:raise CloudError('input_submodule_unsupported')
         if in_submodule or excluded(path):omitted.append(path);continue
@@ -100,7 +106,7 @@ def select_git(root,limits,*,include=(),exclude=()):
     source_modes={p:(root/p).lstat().st_mode for p in paths if p not in modes}
     selection=Selection(schema=2,paths=paths,executables=[p for p in paths if modes.get(p)=='100755'
         or p in source_modes and os.name!='nt' and source_modes[p] & stat.S_IXUSR],
-        policy=SourcePolicy(kind='git',include=include,exclude=exclude,rules=sorted(rules,key=lambda r:r.name)))
+        policy=SourcePolicy(kind='git',include=include,exclude=exclude,scope=scope,rules=sorted(rules,key=lambda r:r.name)))
     receipt=SourceReceipt(root=root,head=head,config=config,attributes=attributes,deleted=deleted,
         submodules=submodules,excluded=omitted,facts=list(facts.values()),directories=directories,git_commands=git.commands,
         source_modes=source_modes)

@@ -1,3 +1,4 @@
+import type { NetworkView, ServiceTarget } from './components/CloudNetworks';
 import type { CloudArchive, CloudBinding, CloudDetail, CloudDetailPage, CloudDraft, CloudModels, CloudOperation, CloudProfile, CloudSnapshot, CloudThread, CloudUsage, DeletePreview } from './cloudTypes';
 import { decodeSSE, responseBytes } from './sse';
 import type { SseFrame } from './sse';
@@ -25,10 +26,16 @@ export class CloudApi {
     return (await this.request(path, { method, body: JSON.stringify(body) })).json();
   }
   private task(bid: string) { return '/cloud-tasks/' + encodeURIComponent(bid); }
+  network(profile: string, signal?: AbortSignal) { return this.read<NetworkView>('/cloud-networks/' + encodeURIComponent(profile), signal); }
+  changeNetwork(profile: string, slot: 'http' | 'grpc', target: ServiceTarget, expected_revision: number) { return this.write<NetworkView>('/cloud-networks/' + encodeURIComponent(profile) + '/' + slot, { target, expected_revision }); }
+  testNetwork(profile: string, target: ServiceTarget) { return this.write<{tcp_reachable: boolean}>('/cloud-networks/' + encodeURIComponent(profile) + '/test', target); }
+  cancelNetwork(profile: string) { return this.write<NetworkView>('/cloud-networks/' + encodeURIComponent(profile) + '/cancel', {}); }
   profiles(signal?: AbortSignal) { return this.read<CloudProfile[]>('/cloud-profiles', signal); }
   list(sid: string, offset = 0, signal?: AbortSignal) { return this.read<CloudBinding[]>('/cloud-tasks' + this.query(sid, { offset, limit: 50 }), signal); }
   binding(sid: string, bid: string, signal?: AbortSignal) { return this.read<CloudBinding>(this.task(bid) + this.query(sid), signal); }
   source(sid: string, value: object) { return this.write<{ source_handle: string; input_id: string; size: number }>('/cloud-sources?local_project_id=' + encodeURIComponent(this.projectId), { local_session_id: sid, ...value }); }
+  sourceTree(sid: string, path = '', offset = 0, signal?: AbortSignal) { return this.read<SourceTree>('/cloud-source-tree' + this.query(sid, { path, offset }), signal); }
+  sourcePreview(sid: string, value: SourceScope) { return this.write<SourcePreview>('/cloud-source-preview?local_project_id=' + encodeURIComponent(this.projectId), { local_session_id: sid, ...value }); }
   create(body: object) { return this.write<{ binding: CloudBinding; operation: CloudOperation }>('/cloud-tasks?local_project_id=' + encodeURIComponent(this.projectId), body); }
   snapshot(sid: string, bid: string, thread?: string, signal?: AbortSignal) { return this.read<CloudSnapshot>(this.task(bid) + '/snapshot' + this.query(sid, { thread_id: thread }), signal); }
   history(sid: string, bid: string, thread?: string, cursor?: string, signal?: AbortSignal) { return this.read<CloudArchive>(this.task(bid) + '/history' + this.query(sid, { thread_id: thread, cursor, limit: 30 }), signal); }
@@ -70,3 +77,4 @@ export class CloudApi {
     for await (const frame of decodeSSE(responseBytes(response.body))) { if (signal.aborted) return; accept(frame); }
   }
 }
+import type { SourceScope, SourceTree, SourcePreview } from './components/CloudSourcePicker';

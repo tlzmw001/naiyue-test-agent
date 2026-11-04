@@ -73,3 +73,30 @@ def test_manual_create_is_wired_and_parent_delete_is_blocked(monkeypatch,tmp_pat
             assert deleted.status_code==409 and deleted.json()['error']['code']=='session_cloud_tasks_retained'
             assert model.seen==[] and not any('/runs' in p for p,b in remote.posts)
     asyncio.run(scenario())
+
+
+def test_source_tree_preview_and_directory_capture_share_project_authority(monkeypatch,tmp_path):
+    async def scenario():
+        model=StreamingToolModel(replies=[])
+        async with service_clients(monkeypatch,tmp_path,model) as (client,_,app,_):
+            (project,host),(other,_)=await projects(app.state.application,tmp_path)
+            sid=await host.sessions.create('A');root=tmp_path/'a';(root/'src').mkdir();(root/'src'/'app.py').write_text('hello')
+            headers={'X-Service-Instance':app.state.owner.record.instance_id}
+            query={'local_project_id':project.project_id,'local_session_id':sid}
+            base='/api/client/v1'
+            assert (await client.get(base+'/cloud-source-tree',params=query)).status_code==409
+            response=await client.get(base+'/cloud-source-tree',params=query,headers=headers)
+            assert response.status_code==200,response.text
+            assert response.json()['git_error']=='input_git_required'
+            assert any(e['path']=='src' and e['kind']=='directory' for e in response.json()['entries'])
+            preview=await client.post(base+'/cloud-source-preview',params={'local_project_id':project.project_id},headers=headers,
+                json={'local_session_id':sid,'mode':'selection','paths':['src']})
+            assert preview.status_code==200 and preview.json()['total_bytes']==5
+            response=await client.post(base+'/cloud-sources',params={'local_project_id':project.project_id},headers=headers,
+                json={'local_session_id':sid,'mode':'selection','paths':['src']})
+            assert response.status_code==201,response.text
+            rejected=await client.post(base+'/cloud-sources',params={'local_project_id':project.project_id},headers=headers,
+                json={'local_session_id':sid,'mode':'git','paths':[]})
+            assert rejected.status_code==422 and rejected.json()['error']['code']=='input_git_required'
+            assert (await client.get(base+'/cloud-tasks',params=query,headers=headers)).json()==[]
+    asyncio.run(scenario())

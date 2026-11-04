@@ -1,15 +1,15 @@
 {
   "work_dir": "/srv/nyt/updates",
-  "index": "https://github.com/tlzmw001/naiyue-test-agent/releases/download/v0.5.7/index.json",
+  "index": "https://github.com/tlzmw001/naiyue-test-agent/releases/download/v0.5.8/index.json",
   "trusted_prefixes": [
-    "https://github.com/tlzmw001/naiyue-test-agent/releases/download/v0.5.7/",
+    "https://github.com/tlzmw001/naiyue-test-agent/releases/download/v0.5.8/",
     "https://release-assets.githubusercontent.com/"
   ],
   "platform": "linux-x86_64",
   "build": {
     "template_id": "python-tests",
     "backend_id": "development",
-    "image_tag": "nyt-runner:0.5.7",
+    "image_tag": "nyt-runner:0.5.8",
     "docker_host": "unix:///var/run/docker.sock",
     "docker_executable": "docker",
     "package_index": "https://pypi.org/simple/",

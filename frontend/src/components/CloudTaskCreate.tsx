@@ -3,6 +3,7 @@ import type { CloudApi } from '../cloudApi';
 import type { CloudBinding, CloudProfile } from '../cloudTypes';
 import { cloudError } from '../cloudPresentation';
 import styles from './CloudTasks.module.css';
+import CloudSourcePicker, { type SourceScope } from './CloudSourcePicker';
 
 export default function CloudTaskCreate({ api, sessionId, profiles, created, back }: {
   api: CloudApi; sessionId: string; profiles: CloudProfile[]; created: (value: CloudBinding) => void; back: () => void;
@@ -10,7 +11,7 @@ export default function CloudTaskCreate({ api, sessionId, profiles, created, bac
   const [profileId, setProfile] = useState(profiles[0]?.profile_id ?? '');
   const profile = profiles.find(p => p.profile_id === profileId);
   const [template, setTemplate] = useState(profile?.default_template ?? '');
-  const [mode, setMode] = useState('git'); const [paths, setPaths] = useState('');
+  const [scope, setScope] = useState<SourceScope | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const frozen = useRef<object | undefined>(undefined); const source = useRef<{ source_handle: string; size: number } | undefined>(undefined);
   const alive = useRef(true); const pending = useRef(false);
@@ -25,9 +26,8 @@ export default function CloudTaskCreate({ api, sessionId, profiles, created, bac
     pending.current = true; setBusy(true); setError('');
     try {
       if (!source.current) {
-        const selected = paths.split('\n').map(s => s.trim()).filter(Boolean);
-        if (mode === 'selection' && !selected.length) { setError('请填写需要导入的项目相对路径'); return; }
-        source.current = await api.source(sessionId, mode === 'git' ? { mode: 'git' } : { mode: 'selection', selection: { paths: selected } });
+        if (!scope) return;
+        source.current = await api.source(sessionId, scope);
       }
       if (!frozen.current) frozen.current = { command_id: crypto.randomUUID(), local_session_id: sessionId,
         profile_id: profileId, template_id: template, source_handle: source.current.source_handle };
@@ -47,13 +47,9 @@ export default function CloudTaskCreate({ api, sessionId, profiles, created, bac
     <label>环境模板<select value={template} disabled={busy || !!frozen.current} onChange={e => setTemplate(e.target.value)}>
       {(profile?.template_ids ?? []).map(id => <option key={id} value={id}>{id}</option>)}
     </select></label>
-    <label>代码来源<select value={mode} disabled={busy || !!source.current} onChange={e => setMode(e.target.value)}>
-      <option value="git">项目当前 Git 状态（含未提交改动）</option><option value="selection">指定项目相对路径</option>
-    </select></label>
-    {mode === 'selection' && <label>导入路径，每行一项<textarea value={paths} rows={4} disabled={busy || !!source.current}
-      onChange={e => setPaths(e.target.value)} /></label>}
+    <CloudSourcePicker api={api} sid={sessionId} disabled={busy || !!source.current} onChange={setScope} />
     {error && <p role="alert" className={styles.error}>{error}{frozen.current ? '；再次点击会复用原准备操作。' : ''}</p>}
-    <button className={styles.primary} disabled={busy || !profile || !template} onClick={() => void prepare()}>
+    <button className={styles.primary} disabled={busy || !profile || !template || (!scope && !source.current)} onClick={() => void prepare()}>
       {busy ? '正在导入并准备…' : frozen.current ? '重试原准备操作' : '导入并准备任务'}</button>
   </section>;
 }

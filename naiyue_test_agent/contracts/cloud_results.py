@@ -18,10 +18,10 @@ def result_path(value):
 class ResultLimits(CloudRecord):
     output_directory:str='.nyt-output'
     max_patch_bytes:int=Field(default=64*1024*1024,gt=0)
-    max_metadata_bytes:int=Field(default=1024*1024,gt=0)
-    max_files:int=Field(default=4096,gt=0)
+    max_metadata_bytes:int=Field(default=16*1024*1024,gt=0)
+    max_files:int=Field(default=65536,gt=0)
     max_artifacts:int=Field(default=30,ge=0,le=126)
-    max_result_bytes:int=Field(default=256*1024*1024,gt=0)
+    max_result_bytes:int=Field(default=3*1024**3,gt=0)
     max_results:int=Field(default=64,gt=0,le=1024)
     result_lease_seconds:float=Field(default=300,gt=0,le=86400)
     max_result_leases:int=Field(default=128,gt=0,le=1024)

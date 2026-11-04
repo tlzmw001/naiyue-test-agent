@@ -76,6 +76,7 @@ def create_service_app(options, *, application_factory=None, shutdown=None):
                     app.state.application, app.state.scopes = application, scopes
                     app.state.receipts, app.state.web_settings = receipts, settings
                     app.state.owner = owner
+                    scopes.cloud_tasks.networks.start()
                     owner.publish()
                     primary = None
                     try:

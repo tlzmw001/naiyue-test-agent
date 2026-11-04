@@ -51,7 +51,14 @@ class RunnerRuns:
             now=time.time();run_id=uuid4().hex
             previous=task;task,updates=r.results.next_run(task,run_id)
             plan,result_receipt=r.results.reserve_run(task,request.command_id,run_id)
-            command=RunCommand(command_id=request.command_id,run_id=run_id,message=request.message,model_id=request.model_id,
+            services=None
+            if task.network_id:
+                from naiyue_test_agent.storage.cloud.networks import NetworkRepository
+                from naiyue_test_agent.contracts.cloud_networks import service_context
+                endpoint=r.settings.networks.get(task.network_id)
+                if endpoint is None:raise CloudError('cloud_network_not_configured',409)
+                services=service_context(NetworkRepository(r.database).read(task.network_id),endpoint)
+            command=RunCommand(services=services,command_id=request.command_id,run_id=run_id,message=request.message,model_id=request.model_id,
                 thinking_level=request.thinking_level,result_plan=plan)
             frame=dict(kind='command',command=command.model_dump(),connection_id=connection_id,
                 generation=task.generation,boot_id=task.runner_boot_id,state_epoch=task.state_epoch)

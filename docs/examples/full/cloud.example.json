@@ -73,23 +73,23 @@
   "task_cpu": 2,
   "task_memory": "2Gi",
   "input_limits": {
-    "max_file_bytes": 67108864,
-    "max_input_bytes": 134217728,
-    "max_archive_bytes": 167772160,
-    "max_files": 4096,
-    "max_metadata_bytes": 1048576,
+    "max_file_bytes": 2147483648,
+    "max_input_bytes": 2147483648,
+    "max_archive_bytes": 2684354560,
+    "max_files": 32768,
+    "max_metadata_bytes": 16777216,
     "io_bytes": 262144,
     "max_pending": 8,
-    "max_cache_bytes": 536870912,
+    "max_cache_bytes": 17179869184,
     "gzip_level": 3,
-    "upload_timeout_seconds": 120.0,
+    "upload_timeout_seconds": 1800.0,
     "chunk_bytes": 8388608,
     "max_segments": 4096,
     "staging_ttl_seconds": 86400.0,
     "sweep_interval_seconds": 60.0,
     "git_executable": "git",
     "git_timeout_seconds": 30.0,
-    "max_discovery_entries": 100000
+    "max_discovery_entries": 500000
   },
   "control_io_timeout_seconds": 15.0,
   "control_receive_timeout_seconds": 60.0,
@@ -119,15 +119,15 @@
   "result_limits": {
     "output_directory": ".nyt-output",
     "max_patch_bytes": 67108864,
-    "max_metadata_bytes": 1048576,
-    "max_files": 4096,
+    "max_metadata_bytes": 16777216,
+    "max_files": 65536,
     "max_artifacts": 30,
-    "max_result_bytes": 268435456,
+    "max_result_bytes": 3221225472,
     "max_results": 64,
-    "result_lease_seconds": 300.0,
+    "result_lease_seconds": 300,
     "max_result_leases": 128,
     "git_executable": "git",
-    "git_timeout_seconds": 30.0
+    "git_timeout_seconds": 30
   },
   "model_proxy": {
     "config_path": "/srv/nyt/private/models.json",
@@ -140,5 +140,17 @@
     "total": 16,
     "body_timeout_seconds": 30.0,
     "max_duration_seconds": 3600.0
+  },
+  "networks": {
+    "alice": {
+      "bind_host": "172.18.0.1",
+      "http_port": 21001,
+      "grpc_port": 21002
+    },
+    "bob": {
+      "bind_host": "172.18.0.1",
+      "http_port": 21003,
+      "grpc_port": 21004
+    }
   }
 }

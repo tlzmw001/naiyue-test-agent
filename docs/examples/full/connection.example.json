@@ -5,5 +5,5 @@
   "instance_id": "00000000-0000-0000-0000-000000000001",
   "timeout_seconds": 60.0,
   "io_bytes": 262144,
-  "max_response_bytes": 4194304
+  "max_response_bytes": 67108864
 }

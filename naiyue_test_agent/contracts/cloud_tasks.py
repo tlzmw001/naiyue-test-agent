@@ -61,6 +61,7 @@ class TemplateReceipt(CloudRecord):
 
 
 class CloudTask(CloudRecord):
+    network_id: Label | None = Field(default=None,exclude_if=lambda value:value is None)
     task_id: TaskId
     project_id: UUIDText
     title: str = Field(max_length=1024)
