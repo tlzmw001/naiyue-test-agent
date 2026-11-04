@@ -1,0 +1,7 @@
+{
+  "ssh_host": "development",
+  "ssh_executable": "ssh",
+  "remote_python": "/srv/nyt/venv/bin/python",
+  "remote_settings": "/srv/nyt/private/update.json",
+  "timeout_seconds": 60.0
+}

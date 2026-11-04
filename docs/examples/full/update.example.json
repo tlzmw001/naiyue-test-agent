@@ -1,0 +1,41 @@
+{
+  "work_dir": "/srv/nyt/updates",
+  "index": "https://github.com/tlzmw001/naiyue-test-agent/releases/download/v0.5.7/index.json",
+  "trusted_prefixes": [
+    "https://github.com/tlzmw001/naiyue-test-agent/releases/download/v0.5.7/",
+    "https://release-assets.githubusercontent.com/"
+  ],
+  "platform": "linux-x86_64",
+  "build": {
+    "template_id": "python-tests",
+    "backend_id": "development",
+    "image_tag": "nyt-runner:0.5.7",
+    "docker_host": "unix:///var/run/docker.sock",
+    "docker_executable": "docker",
+    "package_index": "https://pypi.org/simple/",
+    "uid": 1000,
+    "gid": 1000,
+    "build_timeout_seconds": 900.0,
+    "build_proxy_env": {}
+  },
+  "connection_file": "/srv/nyt/private/connection.json",
+  "task_data_dir": "/srv/nyt/data",
+  "cloud_settings_file": "/srv/nyt/private/cloud.json",
+  "recovery_dir": "/srv/nyt/recovery",
+  "channel": "stable",
+  "auto_activate": true,
+  "max_cache_bytes": 2147483648,
+  "min_free_bytes": 268435456,
+  "keep_backups": 3,
+  "gc_max_resources": 256,
+  "gc_backup_verify_bytes": 8589934592,
+  "max_artifact_bytes": 268435456,
+  "max_index_bytes": 1048576,
+  "request_timeout_seconds": 60.0,
+  "io_bytes": 262144,
+  "backup_max_bytes": 4294967296,
+  "backup_memory": "512m",
+  "backup_cpus": 1.0,
+  "backup_pids": 64,
+  "backup_max_files": 100000
+}

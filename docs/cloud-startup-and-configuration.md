@@ -2,6 +2,8 @@
 
 对比基准是正式标签v0.5.6。已经运行S11 R4候选的用户，直接看第1—3节和第5节；R4到0.5.7没有新增必填配置。下面变量必须填写实际路径/端口，不自动修改真实文件。发布包不包含凭证或完整依赖wheelhouse。
 
+完整场景配置与逐项注释见 [settings.full.toml](examples/full/settings.full.toml) 和 [独立JSON配置参考](examples/full/cloud-configuration-reference.md)。这些示例须替换部署参数，不能覆盖真实配置直接运行。
+
 ## 1. 升级前区分两种部署
 
 - 正式0.5.6旧sandbox：先用旧CLI正常停止本地共享服务，再升级；旧sandbox会话/配置不兼容。云端Coordinator、Runner模板与连接文件是新链路，首次准备见[首次部署手册](cloud-s091-windows-and-linux.md)第2—5节。保留旧数据、镜像、卷，不自动转换或删除。

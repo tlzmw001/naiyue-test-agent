@@ -1,0 +1,369 @@
+# 0.5.7当前源码的全量参考：每个配置项都是真实字段，注释只解释用途。
+# 本例展示Auto、带认证代理、子Agent、两种MCP及云端任务；占位值须替换后使用。
+# 数值通常采用代码默认值；Auto/代理/显式模型/路径/工具名单属于本例选择，不是默认启用行为。
+# 默认配置位置是用户目录下的 .naiyue-test-agent/settings.toml；与启动项目目录无关。
+# 普通修改须正常停止共享服务再启动；MCP有显式刷新入口，刷新不代表全文件热更新。
+# 路径中的~仅在明确支持的字段展开；这里的数据根和项目默认位置支持展开。
+# 秒/毫秒/字节/token/字符/行数是不同单位；0只有字段明确支持时才表示关闭或不限。
+
+session_title_max_chars = 40 # 首条任务自动生成标题的字符上限，1..120；不调用标题模型，不覆盖手工标题。
+max_active_runs = 10 # 同一应用同时占用的根运行额度，正整数；根审批恢复和手动压缩计入，子任务不另占，满额立即拒绝。
+web_event_cache_bytes = 4194304 # 单根运行含子Agent的Web重播事件预算，UTF-8 JSON字节；同时受256条限制，淘汰后客户端重新同步。
+default_active_tools = [ # 新根会话的初始工具选择，不是权限白名单；旧会话保留原选择，空数组表示无工具。
+  "read", "ls", "find", "grep", "write", "edit", "bash", "powershell",
+  "web_search", "web_fetch", "aitest_kit", "history", "memory", "subagent",
+  "task_list", "task_output", "task_stop"
+]
+
+[storage]
+data_dir = '~/.naiyue-test-agent/data' # 会话/项目注册表/记忆/受管归档的数据根；须为绝对路径或可展开~的路径，换位置不会搬迁旧数据。
+busy_timeout_ms = 5000 # 项目/普通对话/临时库SQLite锁等待，0..30000毫秒；0立即报锁冲突，不是SQL执行总时限。
+[projects]
+default_parent_dir = '~/NaiyueProjects' # 新建项目时的默认父位置；不限制选择其他目录，加载配置不创建目录，也不移动已有项目。
+[image_inputs]
+max_images_per_message = 4 # 用户单条附图消息最多图片张数，正整数；与Read工具图片预算分开，前端读取此额度。
+max_input_bytes = 10485760 # 用户单张原始图片文件字节上限，默认10MiB；不是base64长度，且不得超过原图合计预算。
+max_total_input_bytes = 20971520 # 一条消息全部原图文件的合计预算，20MiB；原图只在请求期间处理，不另行持久化。
+max_pixels = 40000000 # 每张原图解码前宽×高的像素上限；与压缩后体积无关，Pillow保护仍有效。
+max_dimension = 4096 # 处理后图片最长边像素，按比例缩小并修正方向；保存实际送给模型的版本。
+max_base64_bytes = 4718592 # 处理后单张图片base64载荷字节上限，4.5MiB；不等于原图文件预算。
+max_total_base64_bytes = 12582912 # 一条消息所有处理后图片的base64合计预算，12MiB；单张合格仍可能总量超限。
+max_request_bytes = 29360128 # 指定附图路由的请求体上限，28MiB；须容纳原图合计预算的base64膨胀及有界元数据，不扩大普通文字/SSE上限。
+max_in_flight_requests = 2 # 服务级同时处理附图请求数；名额覆盖正文读取至生产者处理完成，满额立即拒绝，HTTP断线不提前释放。
+max_pending_image_messages = 16 # 单会话应用持有的待处理图片消息数，队列/保留记录合计；不是图片张数，应用关闭不承诺恢复未发送记录。
+max_pending_image_bytes = 33554432 # 单会话上述图片消息的base64载荷合计预算，32MiB；不是全服务所有会话的总图片配额。
+[permissions]
+mode = "Auto" # Default交人工、NoAsk拒绝Ask、Auto先模型审查、BypassApprovals放行Ask；四种模式均服从显式Deny。
+deny = [ # 规则间OR，单条的tool/path/args条件AND；任何Deny优先，路径按实际执行环境匹配。
+  { tool = "read", path = "${workspace}/private/**" }
+]
+allow = [ # 只放行精确匹配的操作；示例路径支持组件*、?及跨目录**，不会自动授权隐藏/敏感子目标。
+  { tool = "read", path = "${workspace}/docs/**" },
+  { tool = "bash", args = { command = "python -m pytest -q" } }
+]
+[permissions.auto]
+fast_model_id = "main" # 快审使用models.json中的模型ID；不是远端模型名称，模型本身的超时/重试/思考设置继续适用。
+detailed_model_id = "main" # 快审有效返回Ask时进入详审；可以与快审共用同一模型，审查失败/非法结果按合同交人工。
+max_reason_chars = 512 # 审查理由允许的字符数，正整数；超限视为无效结果，不截断后继续放行。
+
+# 只供网页工具和HTTP MCP消费；模型SDK、Shell/Git及容器网络不自动采用本节路由。
+[network]
+mode = "proxy" # auto使用系统环境代理，direct直连，proxy使用此处手动代理；显式直连名单优先，auto不采用手动代理地址。
+proxy = "http://proxy.example.invalid:8080" # HTTP(S)代理URL；填写代理服务协议/主机/端口，本例不在URL中嵌入账号。
+proxy_username = "REPLACE_WITH_PROXY_USERNAME" # 原始代理用户名；与密码配套提供，程序负责编码特殊字符，不自动展开环境变量占位符。
+proxy_password = 'REPLACE_WITH_PROXY_PASSWORD' # 原始代理密码；单引号保留反斜杠等字符，可显式空密码，无认证时同时移除两个认证字段。
+no_proxy = ["localhost", "127.0.0.1", "::1", ".corp.example", "*.internal.example", "10.0.0.0/8", "192.168.1.*", "fd00::/8"] # 主机/IP/CIDR或IPv4尾部整段通配；不写协议、端口、路径；点前缀含自身及子域，星点前缀仅子域。
+
+[tool_retry]
+tools = ["web_fetch", "web_search", "mcp__*"] # 可重试的外部工具选择：网页工具、精确MCP名或服务通配；不控制模型请求、Shell和AITest。
+max_retries = 2 # 初试之外最多追加几次，非负整数；0禁止追加重试，业务错误不会因增加次数变成可重试。
+attempt_timeout_seconds = 30 # 每次网络尝试的秒数上限，必须大于0；仍受原工具整次截止时间约束。
+initial_delay_seconds = 1 # 首次退避上界的基数秒数，允许0；实际Full Jitter等待在0和该轮上界之间随机取值。
+backoff_factor = 2 # 指数退避倍率，至少1；每轮上界按倍率增长，再被最大退避秒数截断。
+max_delay_seconds = 10 # 单次退避等待的上界秒数，允许0；不是整次工具或任务时限。
+replay_safe_tools = [] # 仅列业务已确认只读/幂等/有可靠去重的完整MCP工具名；不接受通配，未列入的未知副作用不重放。
+
+[memory]
+enabled = true # 整体记忆开关；关闭后停止本模块相关查询、维护与注入，不删除已经保存的记录。
+auto_enabled = true # 是否按新增正常用户轮/正文阈值触发整理；关闭后仍可显式请求整理，不等于关闭整个记忆模块。
+trigger_turns = 8 # 自上次整理后新增完整且正常保存的用户轮数，正整数；与字符阈值任一满足即可登记任务。
+trigger_chars = 20000 # 新增可见用户/助手正文字符阈值，正整数；不是token数，也不是整库历史长度。
+model_id = "main" # 记忆整理模型ID；显式指定后固定用该模型，省略时沿触发任务的模型选择。
+max_input_tokens = 16000 # 单批整理的估算输入token预算，512..128000；超长历史按批处理，不表示读取整个项目的所有文件。
+max_output_tokens = 4096 # 单批整理的模型输出上限，1..32000；与普通根模型输出上限分开，仍需供应商实际支持。
+overview_chars = 1200 # 保存会话概览的字符上限，1..1200；与模型输出token预算及记忆条数不同。
+max_proposals = 8 # 单批最多提出的记忆候选条数，0..8；0仍允许整理概览，不新增该批候选。
+max_batches = 3 # 一次整理任务最多处理的批数，1..10；剩余历史留待后续整理，不等同于模型重试次数。
+task_timeout_seconds = 300 # 一整个记忆任务的总预算秒数，1..3600；含登记后的等待、相关读取和多批，不随模型HTTP超时增加而变长。
+max_pending_tasks = 32 # 每项目宿主待启动整理任务的数量预算，1..256；不是整个服务的根Agent或Shell后台任务数。
+max_active_tasks = 1 # 每项目宿主同时运行的记忆整理任务数，1..4；不是跨项目共用的全局并发池。
+injection_tokens = 2000 # 新用户轮自动记忆索引的总估算token预算，0..8000；0关闭此预算下的自动注入，不删除记忆。
+preference_limit = 3 # 自动注入偏好条目数，0..10；条数仍受自动注入总token预算限制。
+related_limit = 8 # 自动注入相关记忆条目数，0..50；不会自动把每条记忆完整正文都塞入提示词。
+directory_limit = 8 # 首次提供的近期可见会话索引条数，0..50；需要原文时再调用history。
+default_limit = 10 # memory工具未传limit时的结果条数，1..50；须不大于最大返回条数。
+max_limit = 50 # memory工具单次允许返回的最大条数，1..50；须不大于检索候选数。
+candidate_limit = 100 # 每路词项检索取回的候选数，1..500；影响候选召回成本，不直接等于返回模型的条数。
+field_weights = [1.0, 1.0, 1.0] # FTS/BM25三个正权重依次对应标题、别名、正文；影响词项排序，不是语义相似度阈值。
+fallback_coverage = 0.5 # 回退词项匹配所需的覆盖比例，范围大于0且不大于1；不承诺同义词或跨语言语义命中。
+rrf_k = 60 # 多路排名融合的正整数平滑常数，分数按1/(k+名次)累计；越大越弱化前几名的差距。
+max_query_chars = 2000 # memory查询输入字符上限，1..2000；不限制记忆正文文件大小。
+max_query_terms = 128 # 查询分词后的复杂度预算，1..256；超过会明确拒绝，不能仅靠减少返回条数解决。
+preview_chars = 300 # 列表/搜索每条正文预览的字符数，正整数；不是read完整正文分块大小。
+read_chunk_chars = 4096 # 读取记忆正文时每块字符数，正整数；可继续分页，仍受单次完整JSON字节预算约束。
+max_output_bytes = 16384 # memory工具单次完整JSON响应的UTF-8预算，至少4096字节；含元数据和分页信息。
+source_limit = 3 # 每条记忆随结果提供的来源数量上限，1..8；不限制存储中已有的所有来源。
+busy_timeout_ms = 2500 # 个人记忆SQLite锁等待，0..30000毫秒；项目库锁等待由storage节控制，0立即失败。
+[memory.candidate_ttl_days]
+user = 30 # 用户偏好类候选保留天数，1..36500；是尚未转正的候选期限。
+rule = 30 # 规则类候选保留天数；候选阶段与正式记录的生命周期分别处理。
+decision = 30 # 决策类候选保留天数；过期候选不再作为有效候选使用。
+context = 30 # 临时上下文类候选保留天数；不改变会话原文保留。
+procedure = 30 # 操作流程类候选保留天数；不自动执行记录中的流程。
+experience = 30 # 经验类候选保留天数；不是模型训练或缓存期限。
+reference = 30 # 参考资料类候选保留天数；不删除来源文件。
+[memory.active_ttl_days]
+context = 30 # 正式临时上下文的有效天数，1..36500；候选转正后采用正式期限规则。
+procedure = 180 # 正式操作流程的有效天数；到期处理不等于删除聊天记录。
+experience = 365 # 正式经验记录的有效天数；与检索排序权重无关。
+reference = 90 # 正式参考资料记录的有效天数；user/rule/decision没有本表可配置的正式TTL字段。
+
+[tools.history]
+default_limit = 10 # history列表/搜索默认返回条数，1..50；目标是已保存可见会话，不恢复目标会话执行。
+max_limit = 50 # 单次最大返回条数，1..50；须不小于默认条数。
+search_batch_messages = 200 # 历史搜索每次扫描的消息批量，1..10000；是内部读取批量，不是给模型的返回条数。
+preview_chars = 300 # 搜索/列表每项预览字符数，正整数；与正文分块读取分别限制。
+read_chunk_chars = 4096 # history正文每块字符数，正整数；用于继续读取长历史，不是token数。
+max_output_bytes = 16384 # 单次完整history JSON响应预算，至少4096字节；条目和分页元数据都计入。
+max_query_chars = 2000 # history查询字符串字符上限，1..2000；查询不会调用模型或恢复历史工具操作。
+
+[tools.read]
+default_limit = 2000 # 未传limit时的文本行数，正整数；不得超过最大行数。
+max_limit = 2000 # 单次模型可请求的最大文本行数，正整数；与文件总行数无关。
+max_output_bytes = 65536 # 返回正文UTF-8字节预算；超长首行可能只返回字符前缀，按行offset无法续读同一行的后半段。
+max_path_chars = 4096 # 输入路径的字符预算，正整数；操作系统自己的路径限制仍适用。
+[tools.read.image]
+max_input_bytes = 33554432 # 编码图片源文件大小上限，32MiB；在完整读入/解码前检查，不与文本预算共用。
+max_pixels = 40000000 # 解码前宽×高的像素上限；Pillow自身的图片安全限制仍有效。
+max_dimension = 2000 # 输出图片最长边像素数；等比例缩小并处理EXIF方向，不放大小图。
+max_base64_bytes = 4718592 # 输出base64载荷字节预算；有限缩小后仍超过则报错，模型还须声明支持图片输入。
+[tools.ls]
+default_limit = 500 # 单层目录列出的默认条目数，正整数；须不大于最大条目数。
+max_limit = 2000 # 模型单次可请求的最大条目数；子目录内容不会因为提高此值而自动递归列出。
+max_output_bytes = 51200 # 列表正文UTF-8字节预算，50KiB；与条目数任一触限即说明截断/不完整。
+max_path_chars = 4096 # 输入目录路径字符上限；不改变操作系统路径能力。
+[tools.write]
+max_input_bytes = 1048576 # 模型传入content的UTF-8字节上限，1MiB；不是原文件大小上限。
+max_path_chars = 4096 # 输入文件路径字符预算；授权执行后才创建缺失父目录。
+max_diff_input_bytes = 1048576 # 为生成修改反馈而读取旧正文的预算；无读取授权时可省略反馈，不自动拒绝已授权写入。
+max_diff_bytes = 65536 # 返回模型的差异正文预算，64KiB；超限会明确省略/截断反馈。
+max_preview_bytes = 65536 # 修改后预览的字节预算；不控制实际写入的文件大小。
+max_patch_bytes = 1048576 # 完整patch反馈的字节预算；与输入大小及局部预览分别限制。
+[tools.edit]
+max_input_bytes = 1048576 # 本次所有oldText与newText的UTF-8总预算；不限制原文件或修改后文件总大小。
+max_path_chars = 4096 # 输入文件路径字符上限；不替代文件内容冲突检测。
+max_normalization_buffer_bytes = 1048576 # 归一化匹配的文本/坐标缓冲预算；超限仍可执行全部精确且唯一的编辑。
+max_affected_line_bytes = 1048576 # 归一化和差异收集中的单行字节预算；超长精确编辑可执行，但对应反馈可能省略。
+max_diff_bytes = 65536 # 给模型的局部diff字节预算；截断时给出明确提示。
+max_preview_bytes = 65536 # 修改后局部预览的字节预算；不改变实际编辑内容。
+max_patch_bytes = 1048576 # 完整unified patch及变化区收集预算；超过可能省略整份patch，不回滚已成功编辑。
+[tools.grep]
+default_limit = 100 # 未指定时最多返回多少匹配行；前后上下文不占匹配名额，但占字节预算。
+max_limit = 1000 # 模型可请求的最大匹配行数；不得小于默认值。
+default_context_lines = 0 # 默认每处匹配前后附带的上下文行数，允许0。
+max_context_lines = 10 # 模型可请求的最大前后上下文行数，允许0；须不小于默认值。
+max_line_chars = 2000 # 单行展示片段的字符上限；超长源行可裁片并说明，不限制被扫描文件大小。
+max_output_bytes = 51200 # 匹配和上下文正文UTF-8字节预算；达到条数之前也可能先触及此限制。
+max_pattern_chars = 4096 # 查询pattern输入字符上限；不是正则执行时间限制。
+max_path_chars = 4096 # 搜索根路径输入字符上限。
+max_glob_chars = 4096 # glob筛选输入字符上限；不代表候选文件数量。
+max_record_bytes = 1048576 # 原生rg单条协议记录的字节预算；过长记录丢弃并标不完整，与展示片段长度不同。
+max_diagnostic_bytes = 8192 # 仅保留的原生stderr诊断尾部预算；不会把原诊断正文写入应用日志。
+max_argument_bytes = 16384 # 每组原生命令argv的编码预算；Windows按实际UTF-16命令行计，不是全局搜索输出预算。
+[tools.find]
+default_limit = 1000 # 文件/目录结果默认条目数；先做权限过滤，再计入结果名额。
+max_limit = 2000 # 模型单次可请求的最大条目数；须不小于默认值。
+max_output_bytes = 51200 # 返回路径正文UTF-8预算；不限制搜索扫描过程的所有文件总量。
+max_pattern_chars = 4096 # 查找pattern输入字符数上限。
+max_path_chars = 4096 # 搜索根path输入字符数上限；发行包继续使用包内fd。
+max_record_bytes = 65536 # 单条NUL路径协议记录的字节预算；与输入path字符数是不同限制。
+max_diagnostic_bytes = 8192 # 原生fd错误输出保留尾部的字节预算；过长/失败会反馈不完整，不冒充空结果。
+
+[process]
+cleanup_timeout_seconds = 5 # 执行结束/失败后的总收尾秒数，各清理步骤共用；不增加正常执行期限。
+shell_exit_quiet_milliseconds = 100 # Shell父进程退出但后代仍持管道时，最后输出后的静默等候毫秒数；主动关流会标输出不完整。
+max_pending_output_bytes = 1048576 # IO读取与消费者之间待处理字节高水位；达到后背压暂停读取，不是完整输出缓存或归档上限。
+[shell_tasks]
+max_execution_seconds = 0 # Bash/PowerShell总执行上限，非负整数秒，0不设应用上限；模型正timeout只能缩短此期限。
+foreground_wait_seconds = 120 # 主Agent前台等待多久转后台，正整数秒；不是杀进程期限，转后台不重置总计时，子Agent不支持转后台。
+max_background_archive_bytes = 67108864 # 每个后台任务raw/text归档合计预算，64MiB；到达后停止该任务，与单次前台归档预算不同。
+max_notice_items = 20 # 下一次用户输入时最多提示的后台终态条目数；不是保留任务总数。
+max_notice_bytes = 8192 # 完整后台状态提示段UTF-8字节预算；放不下整条时保留待提示并记录诊断。
+[tools.bash]
+executable = "bash" # 显式Bash可执行程序或路径；本例依赖PATH，省略本字段可走原生Bash/Git Bash自动发现。
+max_command_chars = 8192 # 模型command字符串字符预算；操作系统命令行长度仍可能更严格。
+probe_timeout_seconds = 5 # 初始化解释器版本探测的秒数预算；超时报告版本unknown，不执行模型脚本。
+max_output_lines = 2000 # stdout/stderr合并后返回模型的尾部行数；早期输出可能仅在归档中保留。
+max_output_bytes = 65536 # 同一返回尾部的UTF-8字节预算；与尾部行数同时约束，不是整个命令输出上限。
+max_archive_bytes = 16777216 # 单次前台调用实际raw/text归档合计预算，16MiB；达到后不因此自动杀命令，完整性会明确标注。
+output_encoding = "utf-8" # 原始输出解码编码；不会自动识别所有外部程序的编码，需与实际程序匹配。
+[tools.bash.environment]
+unset_env = ["BASH_ENV", "NAIYUE_WEB_TOKEN"] # 从继承环境最后移除的变量；防止非交互Bash启动脚本/服务令牌被传给工具，其余变量正常继承。
+path_prepend = [] # 加在最终PATH前面的目录列表；每项是一个目录，不是完整PATH字符串。
+values = { TEST_ENV = "staging" } # 显式新增/覆盖的字符串环境变量；Shell环境值不自动做MCP式变量引用展开。
+[tools.powershell]
+executable = "pwsh" # 显式选择PowerShell7可执行程序；省略本字段时自动发现，Windows可回退自带的powershell.exe5.1。
+max_command_chars = 8192 # 模型PowerShell脚本字符串字符预算；与Bash分别配置。
+probe_timeout_seconds = 5 # PowerShell版本探测的秒数预算；不限制之后执行的用户脚本。
+max_output_lines = 2000 # 合并输出返回模型的末尾行数；不是全部输出行数或进程寿命。
+max_output_bytes = 65536 # 返回尾部的UTF-8字节预算；与行数任一触限会截断展示。
+max_archive_bytes = 16777216 # 单次前台调用raw/text合计落盘预算；不同于后台任务归档限制。
+output_encoding = "utf-8" # 预期解码编码；外部原生程序若输出GBK等编码，需按实际环境调整。
+execution_policy = "inherit" # inherit沿用现有策略，bypass只影响本次Windows子进程；不修改用户/机器策略，企业策略仍有效。
+[tools.powershell.environment]
+unset_env = ["NAIYUE_WEB_TOKEN"] # 启动PowerShell时明确移除的变量名；不会按KEY/TOKEN关键字批量删除用户凭据。
+path_prepend = [] # 加在PATH前的工具目录列表；可用于用户独立测试虚拟环境。
+values = { TEST_ENV = "staging" } # 明确覆盖的非敏感字符串环境；与Bash独立，不自动相互同步。
+[tools.aitest_kit]
+executable = "aitest" # AITest外部CLI可执行程序；由用户安装到测试环境，Agent包不自动替所有项目安装它。
+prefix_args = [] # 可信启动前缀参数数组；直接传argv，不进行Shell管道/重定向解析。
+max_args = 128 # 模型传入args数组的最大元素数；不含可信启动前缀参数。
+max_argument_chars = 8192 # 模型args各元素字符数的总预算；不是单个参数的字节预算。
+max_output_lines = 2000 # 合并输出给模型的尾部行数上限。
+max_output_bytes = 65536 # 同一尾部正文的UTF-8字节上限；不等于完整报告文件大小。
+max_archive_bytes = 16777216 # 单次AITest调用raw/text完整归档的合计预算；不设置全项目累计磁盘配额。
+output_encoding = "utf-8" # AITest子进程输出的解码编码；须与实际工具环境一致。
+[tools.aitest_kit.environment]
+unset_env = ["NAIYUE_WEB_TOKEN"] # 子进程环境中明确移除的变量；其他现有测试环境变量继续继承。
+path_prepend = [] # 指向用户测试环境的工具目录列表；不修改机器级PATH。
+values = { TEST_ENV = "staging" } # AITest调用时明确覆盖的非敏感环境变量，不向共享示例写真实凭据。
+
+[tools.web_search]
+provider_order = ["baidu", "tavily"] # 搜索供应商按序初试，再按策略处理临时失败；列表须非空、唯一，只支持这两个ID。
+request_timeout_seconds = 30 # 整次搜索含供应商切换、重试、退避的总秒数预算；0不限，调用timeout可以覆盖。
+default_results = 5 # 模型未传max_results时返回的默认结果条数，1..20。
+max_results = 10 # 模型可请求的最多结果条数，1..20；须不小于默认条数。
+max_query_chars = 2000 # 搜索查询文本的字符预算；不是搜索结果正文限制。
+max_response_bytes = 2097152 # 单家供应商响应体的下载预算，2MiB；不是所有供应商合计结果或总进程内存。
+max_output_bytes = 65536 # 最终返回模型的搜索结果正文UTF-8预算，64KiB。
+[tools.web_search.baidu]
+endpoint = "https://qianfan.baidubce.com/v2/ai_search/web_search" # 百度搜索HTTPS端点；须匹配实际服务协议，URL中不放凭据。
+api_key_env = "BAIDU_SEARCH_API_KEY" # 保存百度搜索Key的环境变量名；不是Key值，也不是模型供应商凭据。
+[tools.web_search.tavily]
+endpoint = "https://api.tavily.com/search" # Tavily搜索HTTPS端点；当前调用使用已有固定搜索模式，不自动切换付费高级模式。
+api_key_env = "TAVILY_API_KEY" # 保存TavilyKey的环境变量名；须由共享服务启动时的环境提供。
+[tools.web_fetch]
+request_timeout_seconds = 30 # 一次网页读取含全部尝试、重定向和退避的总秒数；0不限，与模型HTTP超时无关。
+max_url_chars = 8192 # 输入和重定向URL的字符上限；每跳仍重新检查目标和权限。
+max_response_bytes = 2097152 # 最大下载字节，2MiB；只支持既有HTML/文本/JSON读取，不提供PDF或JS浏览器渲染。
+max_output_bytes = 65536 # 返回给模型的可见正文UTF-8预算；超长内容截断并明确提示。
+max_redirects = 5 # 最大重定向跳数，允许0；私有新目标可能需要重新审批，不沿用旧目标授权。
+
+[tools.subagent]
+max_result_lines = 2000 # 每次子Agent最终报告的最大正文行数；不是子Agent总调用轮数。
+max_result_bytes = 65536 # 同一报告正文的UTF-8预算；与行数同时限制，完整会话历史仍保存。
+max_list_items = 20 # 子实例查询每页最多多少项；启用subagent自动配套开放subagent_list。
+max_list_bytes = 8192 # 一页子实例JSON的完整字节预算，含分页信息；不是全部子会话历史大小。
+task_preview_chars = 160 # 子实例列表中每项委派任务预览的字符数；不会改写实际任务。
+[[subagents]]
+name = "tester" # 唯一角色名，仅字母/数字/下划线/点/短横线；父模型委派时用此名选择角色。
+description = "检查改动并运行相关测试，报告证据和未验证范围。" # 父模型选择角色时看到的职责说明；不授予权限。
+tool_names = ["read", "ls", "find", "grep", "bash", "powershell"] # 角色可选工具；空数组表示无工具，不能包含subagent/subagent_list再委派。
+model_id = "main" # 子实例使用的模型ID；省略才继承父模型，已有ID须与models.json一致。
+max_model_calls = 12 # 每次委派子图主模型的调用轮数，正整数；审批恢复沿用本次额度，后续新委派重新计数，省略才不加此额外上限。
+system_prompt = "先核对任务范围，读取相关代码，运行必要测试；报告实际结果与未验证内容，不把未执行的检查说成通过。" # 子角色工作要求；提示词不绕过权限或扩展工具能力。
+
+[progress]
+enabled = true # 是否产生工具进度事件；不控制工具执行、结果保存、审批或停止。
+min_interval_milliseconds = 200 # 同阶段更新最小间隔毫秒，0每次真实活动均可发送；阶段变化即时报告，不制造心跳。
+max_text_bytes = 8192 # 单条进度附带最新文本尾部的UTF-8预算；文件工具不借此发送文件正文或图片。
+[usage_persistence]
+max_pending_events = 1024 # 每宿主用量统计待写事实条数，含在途IO；超额标统计缺口，不限制模型调用数量。
+max_pending_bytes = 4194304 # 每宿主上述待写事实UTF-8 JSON预算，4MiB；不是全服务内存或SQLite文件大小上限。
+[diagnostics]
+max_pending_events = 1024 # 每宿主诊断队列和根捕获状态的有限数量预算；超限丢新细节并标缺口，不中断Agent主任务。
+max_pending_bytes = 4194304 # 每宿主待写诊断载荷预算，含在途IO；不保存完整消息、图片、命令参数或工具输出。
+max_run_bytes = 1048576 # 单根运行包含子Agent的诊断载荷上限，1MiB；不是模型/工具输入输出预算。
+summary_reserve_bytes = 4096 # 从单根预算预留给终态摘要的字节，至少2048且小于单根上限；防止细节挤掉终局信息。
+max_workspace_bytes = 268435456 # 工作区有效诊断载荷预算，256MiB且不小于单根上限；不等于SQLite物理文件上限。
+retention_days = 30 # 非活动根诊断保留天数；清理不删除聊天、用量或checkpoint。
+cleanup_batch_runs = 32 # 每次启动/收尾/将超预算时最多清理多少根，1..1024；小批短事务，不另起定时清理线程。
+[checkpoint_retention]
+enabled = true # 必要保存成功后是否考虑安全修剪旧执行快照；保留聊天原文和恢复锚点，不是定时备份。
+trigger_checkpoints = 128 # 单线程快照数触发阈值，至少2；达到阈值也只删满足安全条件的旧快照。
+max_delete_checkpoints = 128 # 每次最多删除的快照数，1..4096；不表示需要保留的固定条数。
+max_delete_bytes = 33554432 # 每次删除数据的字节预算，32MiB；不强制VACUUM，也不保证物理数据库立刻缩小。
+
+[mcp.servers.local]
+enabled = false # 是否启用本服务；示例程序和工具名须替换，禁用仍保留完整配置供审阅。
+transport = "stdio" # 本机子进程协议，直接传command/args，不经Shell，不解释管道、&&或重定向。
+command = "python" # MCP服务运行程序，建议使用其虚拟环境的绝对路径；不自动安装服务器依赖。
+args = ["/absolute/path/to/mcp_server.py"] # 服务启动参数数组；每项是一个argv元素，不是整段Shell命令。
+cwd = "/absolute/path/to/mcp-server" # MCP子进程工作目录；须替换实际存在目录，省略则沿服务进程工作目录。
+allowed_tools = ["lookup"] # 服务端真实原始工具名白名单，不接受星号；空数组只发现不登记，登记后会话还须选中。
+allow_insecure_http = false # stdio不得开启此HTTP选项；保持false，不把本机进程伪装成HTTP服务。
+connect_timeout_seconds = 15 # 建连、协商与目录发现的总秒数，必须大于0；不是单次工具调用总时限。
+call_timeout_seconds = 0 # 单次工具总秒数，含等待连接、重试、退避；0不限，不覆盖外部工具每次尝试预算。
+read_timeout_seconds = 0 # MCP协议读取超时秒数；0采用SDK不限时读取，不等于模型数据块超时。
+idle_timeout_seconds = 0 # 无在途调用后的连接空闲回收秒数；0不回收，不会给正在执行的工具计时杀连接。
+max_tools = 64 # 服务目录所有分页累计工具数量预算；超限明确拒绝发现，不仅截取白名单条数。
+max_schema_bytes = 65536 # 单工具输入/输出Schema合计JSON字节预算；不是工具响应正文大小。
+max_response_bytes = 1048576 # MCP响应预算及超长结果单次归档上限，1MiB；不是进程RSS硬上限。
+max_result_bytes = 65536 # 返回模型的MCP正文UTF-8预算，64KiB；超长正文说明截断，已知远端结果不因此重做。
+max_concurrency = 1 # 每宿主内同一MCP服务同时借用的调用数，正整数；等待计入调用期限，不是跨项目全局池。
+[mcp.servers.local.env]
+SERVER_API_KEY = "${MY_MCP_SERVER_KEY}" # 左侧为子进程变量名，右侧为完整父环境变量引用；不能直接填Key或拼接其他文字。
+[mcp.servers.remote]
+enabled = false # 远程服务启停开关；需替换URL/实际工具名/环境认证值后再启用。
+transport = "streamable_http" # 远程Streamable HTTP协议；不能把旧SSE地址当作独立transport使用。
+url = "https://mcp.example.invalid/mcp" # 远程服务URL；不在URL中写用户名、密码或片段标记。
+allow_insecure_http = false # 非回环明文HTTP必须显式许可；所有明文HTTP均禁止认证头，HTTPS无需开启。
+allowed_tools = ["lookup"] # 服务端原始工具名，不是mcp__前缀名字；空数组仍可发现目录，但不开放工具执行。
+connect_timeout_seconds = 15 # 远程建连/协商/发现总时限秒数。
+call_timeout_seconds = 0 # 单次远程工具调用总秒数，含重试等待；0不限。
+read_timeout_seconds = 0 # 协议读取超时秒数；0沿SDK不限时读取，独立于调用总时限。
+idle_timeout_seconds = 0 # 无在途调用的空闲连接回收秒数；0关闭自动回收。
+max_tools = 64 # 分页发现累计工具数预算。
+max_schema_bytes = 65536 # 单工具输入/输出Schema合计JSON字节预算。
+max_response_bytes = 1048576 # 远程响应和单次超长归档预算；达到上限不等于远端副作用没有发生。
+max_result_bytes = 65536 # 返回模型的正文预算；不限制远端服务内部生成的总数据量。
+max_concurrency = 1 # 每宿主到此远程服务允许并发借用的调用数；不同项目各自拥有资源管理器。
+[mcp.servers.remote.headers_env]
+Authorization = "MY_MCP_AUTHORIZATION" # 值为父环境变量名，变量内容须含服务要求的完整认证头值；此处不写美元花括号或Token。
+
+# 0.5.7移除整个 sandbox/delivery 和 MCP allow_sandbox；旧会话不兼容。
+# 云端凭证放独立私有JSON，见 cloud-configuration-reference.md；不配置profiles_file只运行本机。
+
+[cloud_tasks]
+# profiles_file = "/absolute/private/profiles.json" # 云端配置簿绝对路径；Windows使用 C:/private/profiles.json；取消注释并替换后启用。
+max_preparations = 4 # 同时准备输入/任务的本机额度，满额拒绝。
+max_commands = 16 # 本机同时提交普通命令的额度。
+max_controls = 4 # 停止/控制命令独立额度。
+runner_wait_seconds = 15.0 # 等待Runner就绪的最长秒数；超时不意味着云端已停止。
+runner_poll_seconds = 0.1 # 就绪状态轮询间隔，秒。
+max_observers = 8 # 本机同时观察任务的额度。
+stream_seconds = 1800.0 # 单次观察流最长秒数，到期需重连同步。
+stream_send_timeout_seconds = 15.0 # 单次流发送超时，秒。
+
+[cloud_tasks.input_limits]
+max_file_bytes = 67108864 # 单个文件字节上限。
+max_input_bytes = 134217728 # 一次输入所有文件合计字节上限。
+max_archive_bytes = 167772160 # 输入归档字节上限。
+max_files = 4096 # 清单文件数量上限；接收指材料文件数，结果指变更文件数。
+max_metadata_bytes = 1048576 # 结构化元数据字节预算。
+io_bytes = 262144 # 每次IO块字节数。
+max_pending = 8 # 待处理输入数量上限。
+max_cache_bytes = 536870912 # 受管缓存字节预算，不是用户保存目录配额。
+gzip_level = 3 # gzip压缩等级0..9，越高越耗CPU。
+upload_timeout_seconds = 120.0 # 上传请求超时秒数。
+chunk_bytes = 8388608 # 上传块字节数。
+max_segments = 4096 # 分段数量上限。
+staging_ttl_seconds = 86400.0 # 临时输入过期秒数。
+sweep_interval_seconds = 60.0 # 清扫检查间隔秒数。
+git_executable = "git" # Git可执行文件路径或PATH中的名称。
+git_timeout_seconds = 30.0 # 单次Git子进程超时秒数。
+max_discovery_entries = 100000 # 输入发现最多遍历的目录项数量。
+
+[cloud_tasks.receive_limits]
+max_results = 128 # 保留结果/接收记录数量预算。
+max_active = 4 # 并行材料接收数量。
+max_cache_bytes = 536870912 # 受管缓存字节预算，不是用户保存目录配额。
+max_file_bytes = 67108864 # 单个文件字节上限。
+max_files = 32 # 清单文件数量上限；接收指材料文件数，结果指变更文件数。
+segment_bytes = 4194304 # 接收分段字节数。
+transfer_timeout_seconds = 120.0 # 材料传输超时秒数。
+max_read_bytes = 65536 # 主Agent读取材料每次最大字节数。
+max_read_lines = 2000 # 主Agent读取材料每次最大行数。
+
+[cloud_tasks.result_limits]
+output_directory = ".nyt-output" # 报告产物目录，相对项目根；源码变更另外归入代码取回。
+max_patch_bytes = 67108864 # 代码补丁字节预算。
+max_metadata_bytes = 1048576 # 结构化元数据字节预算。
+max_files = 4096 # 清单文件数量上限；接收指材料文件数，结果指变更文件数。
+max_artifacts = 30 # 一次结果最多报告产物数量。
+max_result_bytes = 268435456 # 一次结果字节总预算。
+max_results = 64 # 保留结果/接收记录数量预算。
+result_lease_seconds = 300.0 # 结果读取租约有效秒数。
+max_result_leases = 128 # 同时结果读取租约数量上限。
+git_executable = "git" # Git可执行文件路径或PATH中的名称。
+git_timeout_seconds = 30.0 # 单次Git子进程超时秒数。

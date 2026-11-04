@@ -1,0 +1,144 @@
+{
+  "data_dir": "/srv/nyt/data",
+  "protected_roots": [
+    "/srv/nyt/private"
+  ],
+  "owner_listen": "127.0.0.1:18701",
+  "task_listen": "172.18.0.1:18702",
+  "owner_token": "REPLACE_WITH_PRIVATE_OWNER_TOKEN",
+  "task_token_ttl_seconds": 3600,
+  "max_frame_bytes": 1048576,
+  "max_receipts": 4096,
+  "history_batch_events": 128,
+  "json_depth_limit": 32,
+  "history_page_limit": 100,
+  "history_read_timeout_seconds": 5.0,
+  "history_limits": {
+    "max_message_bytes": 16777216,
+    "max_pending_bytes": 33554432,
+    "max_pending_messages": 16,
+    "max_parts": 16384,
+    "preview_chars": 512,
+    "detail_chars": 16384,
+    "cursor_seconds": 3600,
+    "body_depth": 64
+  },
+  "observation_limits": {
+    "queue_records": 256,
+    "queue_bytes": 524288,
+    "record_bytes": 32768,
+    "batch_records": 64,
+    "flush_seconds": 0.05,
+    "text_chars": 2048,
+    "live_messages": 64,
+    "live_threads": 32,
+    "live_tools": 64,
+    "state_bytes": 524288,
+    "cached_tasks": 64,
+    "replay_events": 128,
+    "replay_bytes": 1048576,
+    "subscribers": 64,
+    "task_subscribers": 8,
+    "heartbeat_seconds": 10.0,
+    "send_timeout_seconds": 15.0,
+    "stream_seconds": 1800.0,
+    "snapshot_attempts": 3,
+    "snapshot_messages": 10,
+    "cursor_seconds": 3600
+  },
+  "backend": {
+    "endpoint": "http://127.0.0.1:8080",
+    "backend_id": "development",
+    "api_key": "REPLACE_WITH_BACKEND_KEY",
+    "request_timeout_seconds": 30.0,
+    "ready_timeout_seconds": 30.0,
+    "page_size": 100,
+    "max_pages": 100
+  },
+  "templates": {},
+  "max_active_environments": 2,
+  "max_retained_environments": 10,
+  "idle_stop_seconds": 1800.0,
+  "resource_limits": {
+    "maintenance_interval_seconds": 30.0,
+    "task_batch_size": 100,
+    "scan_max_entries": 100000,
+    "scan_max_depth": 64,
+    "scan_timeout_seconds": 2.0,
+    "cleanup_timeout_seconds": 30.0,
+    "scan_cache_seconds": 5.0,
+    "min_free_bytes": 268435456
+  },
+  "delete_drain_timeout_seconds": 30.0,
+  "task_cpu": 2,
+  "task_memory": "2Gi",
+  "input_limits": {
+    "max_file_bytes": 67108864,
+    "max_input_bytes": 134217728,
+    "max_archive_bytes": 167772160,
+    "max_files": 4096,
+    "max_metadata_bytes": 1048576,
+    "io_bytes": 262144,
+    "max_pending": 8,
+    "max_cache_bytes": 536870912,
+    "gzip_level": 3,
+    "upload_timeout_seconds": 120.0,
+    "chunk_bytes": 8388608,
+    "max_segments": 4096,
+    "staging_ttl_seconds": 86400.0,
+    "sweep_interval_seconds": 60.0,
+    "git_executable": "git",
+    "git_timeout_seconds": 30.0,
+    "max_discovery_entries": 100000
+  },
+  "control_io_timeout_seconds": 15.0,
+  "control_receive_timeout_seconds": 60.0,
+  "runner_permissions": {
+    "mode": "NoAsk",
+    "deny": [],
+    "allow": [
+      {
+        "tool": "*",
+        "args": {}
+      }
+    ]
+  },
+  "tool_environment": {
+    "values": {},
+    "path_prepend": [],
+    "unset_env": []
+  },
+  "subagents": [],
+  "artifact_limits": {
+    "max_file_bytes": 67108864,
+    "max_cache_bytes": 536870912,
+    "max_artifacts": 128,
+    "io_bytes": 262144,
+    "transfer_timeout_seconds": 120.0
+  },
+  "result_limits": {
+    "output_directory": ".nyt-output",
+    "max_patch_bytes": 67108864,
+    "max_metadata_bytes": 1048576,
+    "max_files": 4096,
+    "max_artifacts": 30,
+    "max_result_bytes": 268435456,
+    "max_results": 64,
+    "result_lease_seconds": 300.0,
+    "max_result_leases": 128,
+    "git_executable": "git",
+    "git_timeout_seconds": 30.0
+  },
+  "model_proxy": {
+    "config_path": "/srv/nyt/private/models.json",
+    "upstreams": {},
+    "max_request_bytes": 33554432,
+    "max_response_bytes": 134217728,
+    "error_bytes": 65536,
+    "chunk_bytes": 65536,
+    "per_task": 4,
+    "total": 16,
+    "body_timeout_seconds": 30.0,
+    "max_duration_seconds": 3600.0
+  }
+}
