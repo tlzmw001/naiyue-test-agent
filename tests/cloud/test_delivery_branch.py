@@ -46,6 +46,23 @@ def source_state(source):
         objects=sorted(p.relative_to(source/'.git/objects').as_posix() for p in (source/'.git/objects').rglob('*') if p.is_file()))
 
 
+def test_branch_never_runs_user_hooks_or_signing_and_preserves_checkout(tmp_path):
+    from naiyue_test_agent.cloud_files.delivery_branch import branch_delivery
+    source,captured,verified=branch_fixture(tmp_path)
+    marker=tmp_path/'executed'
+    script=f'#!/bin/sh\ntouch "{marker}"\nexit 1\n'
+    for name in ('reference-transaction','post-checkout','post-commit','pre-commit','post-rewrite'):
+        hook=source/'.git/hooks'/name;hook.write_text(script);hook.chmod(0o700)
+    signer=tmp_path/'gpg';signer.write_text(script);signer.chmod(0o700)
+    git(source,'config','commit.gpgSign','true');git(source,'config','gpg.program',str(signer))
+    before=source_state(source)
+    value=branch_delivery(verified,captured.source_receipt,source,'cloud/no-hooks',ResultLimits(),journal=tmp_path/'branch.json')
+    assert value['branch_head']==git(source,'rev-parse','cloud/no-hooks').decode().strip()
+    assert not marker.exists()
+    after=source_state(source)
+    assert {k:v for k,v in after.items() if k!='objects'}=={k:v for k,v in before.items() if k!='objects'}
+
+
 def test_branch_preserves_wip_initial_deletes_unmanaged_gitlinks_and_frozen_attrs(tmp_path):
     from naiyue_test_agent.cloud_files.delivery_branch import branch_delivery,branch_preflight
     source,captured,verified=branch_fixture(tmp_path)

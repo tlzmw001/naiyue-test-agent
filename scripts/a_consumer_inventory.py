@@ -1,4 +1,4 @@
-"""Freeze reviewed A consumers before S09; checking never approves drift or deletes code."""
+"""Reject retired A modules, imports, UI and build tools after the formal B switch."""
 import argparse
 import ast
 import hashlib
@@ -30,16 +30,22 @@ A_RULES={
     'storage.sandbox_journal':'A operation journal; replace with task/Runner records',
     'storage.git_inputs':'A input repository; replace with cloud content repository',
     'storage.git_deliveries':'A delivery repository; replace with local cloud delivery records',
-    'sandbox_settings':'A configuration; reject unsupported A settings at formal switch',
+    'sandbox_settings':'retired A configuration',
+    'sandbox_profiles':'retired A profiles',
+    'delivery_settings':'retired A delivery configuration',
+    'contracts.session_environment':'retired A session DTO',
+    'service.environments':'retired A environment API',
+    'web.result_routes':'retired A result API',
+    'application.sessions.result_api':'retired A result dispatcher',
 }
 SHARED={
-    'execution.git_repository':'shared: bounded Git process/ref/path helpers now serve B delivery_branch; native Git errors and validation from contracts.git_inputs remain required; remove only A-only functions after consumer review',
-    'contracts.git_inputs':'shared subset: GitInputError/git_path/object_id still serve GitRepository and B native Git operations; A snapshot DTO and bundle fields are not B wire compatibility and leave only after S09 consumer review',
-    'storage.registry_database':'shared: project registry and local historical schema must stay; remove active A repositories without DROP',
+    'execution.git_repository':'shared: native Git operations used by B result and branch delivery',
+    'storage.registry_database':'shared: ordinary project registration and historical schema, no active A repository',
 }
+
 FRONTEND=('SandboxManager','SandboxResults','executionOptions','refreshEnvironments','sandboxManagement',
     'manageSandbox','createSelected','prepareEnvironment')
-SCRIPT_MARKERS=('build_envd','envd_artifacts','build_sandbox_image','verify_sandbox','release_sandbox_smoke','sandbox_crash_probe')
+SCRIPT_MARKERS=('build_envd','envd_artifacts','build_sandbox_image','verify_sandbox','release_sandbox_smoke','sandbox_crash_probe','sandbox_probe','profile_sandbox','profile_git_process_cost')
 
 
 def _sha(raw):return hashlib.sha256(raw).hexdigest()
@@ -69,6 +75,8 @@ def _module(path):
 
 
 def _rule(module):
+    if module.startswith('scripts.') and any(module.split('.')[1].startswith(marker) for marker in SCRIPT_MARKERS):
+        return 'retired A tooling'
     relative=module.removeprefix(PACKAGE+'.')
     if relative==module:return None
     for prefix,reason in A_RULES.items():
@@ -194,50 +202,31 @@ def scan(root):
         references=sorted(refs[name],key=lambda value:(value['line'],value['kind'],value['target']))) for name in sorted(retained)]
 
 
-def _revision(root):
-    result=subprocess.run(['git','rev-parse','HEAD'],cwd=root,capture_output=True,text=True,check=False)
-    return result.stdout.strip() if result.returncode==0 else None
 
-
-def freeze(root,snapshot,*,review):
-    if not isinstance(review,str) or not review.strip():raise ValueError('explicit review reason required')
-    value=dict(schema=1,source_sha=_revision(root),scanner_sha256=_sha(Path(__file__).read_bytes()),
-        review=review,records=scan(root))
-    snapshot=Path(snapshot);snapshot.parent.mkdir(parents=True,exist_ok=True)
-    staging=snapshot.with_name(snapshot.name+'.tmp')
-    staging.write_text(json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(',',':'))+'\n',encoding='utf-8')
-    os.replace(staging,snapshot)
-    return value
-
-
-def check(root,snapshot):
-    value=json.loads(Path(snapshot).read_text(encoding='utf-8'))
-    if value.get('schema')!=1 or not value.get('review'):raise ValueError('invalid reviewed inventory')
-    errors=[]
-    if value.get('scanner_sha256')!=_sha(Path(__file__).read_bytes()):errors.append('scanner_drift')
-    before={row['path']:row for row in value['records']};after={row['path']:row for row in scan(root)}
-    if len(before)!=len(value['records']):raise ValueError('duplicate inventory path')
-    errors.extend('new_consumer:'+name for name in sorted(after.keys()-before.keys()))
-    errors.extend('removed_consumer:'+name for name in sorted(before.keys()-after.keys()))
-    for name in sorted(before.keys()&after.keys()):
-        if before[name]['sha256']!=after[name]['sha256']:errors.append('hash_drift:'+name)
-        elif before[name]!=after[name]:errors.append('consumer_drift:'+name)
-    return errors
+def check(root):
+    root=Path(root);errors=[]
+    for row in scan(root):
+        name=row['path'];path=Path(name)
+        if path.suffix=='.py' and _rule(_module(path)):
+            errors.append('retired_module:'+name)
+        for ref in row['references']:
+            if _rule(ref['target']) or ref['kind'] in ('frontend_symbol','script_entrypoint'):
+                errors.append('retired_reference:'+name+':'+str(ref['line'])+':'+ref['target'])
+    for path in _files(root):
+        relative=path.relative_to(root)
+        if relative.parts[0]=='scripts' and ('sandbox_probe' in relative.parts or any(path.stem.startswith(marker) for marker in SCRIPT_MARKERS)):
+            errors.append('retired_tool:'+relative.as_posix())
+    if (root/'release/envd.json').exists():errors.append('retired_release:release/envd.json')
+    return sorted(set(errors))
 
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action',choices=('freeze','check'))
+    parser.add_argument('action',choices=('check',))
     parser.add_argument('--root',type=Path,default=Path(__file__).resolve().parents[1])
-    parser.add_argument('--snapshot',type=Path)
-    parser.add_argument('--review')
-    args=parser.parse_args();snapshot=args.snapshot or args.root/'release/a-consumers-s08.json'
-    if args.action=='freeze':
-        value=freeze(args.root,snapshot,review=args.review)
-        print(json.dumps(dict(status='frozen',source_sha=value['source_sha'],consumers=len(value['records']))))
-    else:
-        errors=check(args.root,snapshot);print(json.dumps(dict(status='drift' if errors else 'unchanged',errors=errors)))
-        if errors:raise SystemExit(1)
+    args=parser.parse_args();errors=check(args.root)
+    print(json.dumps(dict(status='violation' if errors else 'retired',errors=errors)))
+    if errors:raise SystemExit(1)
 
 
 if __name__=='__main__':main()

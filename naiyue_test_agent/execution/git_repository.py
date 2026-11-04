@@ -1,6 +1,5 @@
 """Bounded native Git commands; no hooks, filters, prompts or source credentials exported."""
 from contextlib import ExitStack
-import hashlib
 import logging
 import os
 from pathlib import Path
@@ -9,9 +8,8 @@ import tempfile
 from time import monotonic
 from naiyue_test_agent.diagnostics import safe_log, diagnostic_text, stderr_facts, command_kind
 
-from naiyue_test_agent.contracts.git_inputs import GitInputError, git_path, object_id
+from naiyue_test_agent.contracts.git_native import GitInputError
 from naiyue_test_agent.tools.processes import HostProcessRunner, ProcessRequest, run_async_sync
-from naiyue_test_agent.storage.files import open_store_readonly
 
 logger = logging.getLogger(__name__)
 
@@ -96,63 +94,3 @@ class GitRepository:
                 diagnostic_text(phase='execute', duration_ms=int((monotonic()-started)*1000), **facts, **stderr_facts(errors, error_size)))
             raise GitInputError('git_input_git_failed')
         return bytes(output) if check else (result.returncode, bytes(output))
-
-    def oid(self, ref):
-        return object_id(self.run(['rev-parse', '--verify', ref]).decode().strip())
-
-    def tree(self, ref):
-        result = []
-        for entry in self.run(['ls-tree', '-rz', '--full-tree', ref]).split(b'\0'):
-            if not entry:
-                continue
-            metadata, raw_path = entry.split(b'\t', 1)
-            mode, kind, oid = metadata.decode('ascii').split(' ')
-            path = git_path(raw_path)
-            if kind != 'blob' or mode not in ('100644', '100755', '120000'):
-                raise GitInputError('git_input_unsupported', (path,))
-            result.append((path, mode, object_id(oid)))
-        if len(result) > self.settings.max_files:
-            raise GitInputError('git_input_budget')
-        return result
-
-    def has(self, oid):
-        object_id(oid)
-        return self.run(['cat-file', '-e', oid+'^{commit}'], check=False)[0] == 0
-
-
-def bundle_digest(path, limit):
-    size, digest = 0, hashlib.sha256()
-    with os.fdopen(open_store_readonly(path), 'rb') as stream:
-        while chunk := stream.read(1024*1024):
-            size += len(chunk)
-            if size > limit:
-                raise GitInputError('git_input_budget')
-            digest.update(chunk)
-    return size, digest.hexdigest()
-
-
-def check_cache_budget(directory, limit):
-    if limit < 0:
-        raise GitInputError('git_input_budget')
-    total = 0
-    for root, directories, files in os.walk(directory, followlinks=False):
-        for name in [*directories, *files]:
-            path = Path(root)/name
-            if path.is_symlink():
-                raise GitInputError('git_input_cache_unavailable')
-        for name in files:
-            total += (Path(root)/name).stat().st_size
-            if total > limit:
-                raise GitInputError('git_input_budget')
-    return total
-
-
-def make_bundle(repository, path, ident, *, base=None):
-    from naiyue_test_agent.contracts.git_inputs import input_id
-    ref = 'refs/naiyue/input/'+input_id(ident)
-    args = ['bundle', 'create', str(Path(path).absolute()), ref]
-    if base is not None:
-        object_id(base)
-        args.append('^'+base)
-    repository.run(args)
-    return bundle_digest(path, repository.settings.max_bundle_bytes)

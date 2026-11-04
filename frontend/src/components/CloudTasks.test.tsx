@@ -1,6 +1,8 @@
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import CloudTasks from './CloudTasks';
+import CloudTaskDetail from './CloudTaskDetail';
+import { installDialogMock } from '../testDialogs';
 import type { CloudApi } from '../cloudApi';
 import type { CloudBinding, CloudSnapshot, CloudTask } from '../cloudTypes';
 import { useCloudObservation } from '../useCloudObservation';
@@ -35,9 +37,12 @@ function api(rows: CloudBinding[] = []) {
 it('opens an empty real list without creating a task or calling a model', async () => {
   const cloud = api(); render(<CloudTasks api={cloud} sessionId="S" active />);
   await screen.findByText('还没有云端任务');
+  expect(screen.queryByText('每个任务使用独立沙箱。打开和切换只查看，不创建环境。')).toBeNull();
   expect(cloud.create).not.toHaveBeenCalled(); expect(cloud.source).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: '新增任务' }));
   expect(await screen.findByRole('button', { name: '导入并准备任务' })).toBeTruthy();
+  expect(screen.queryByText(/只导入项目文件并准备沙箱/)).toBeNull();
+  expect(screen.queryByText(/后续消息复用云端工作区/)).toBeNull();
   expect(cloud.source).not.toHaveBeenCalled();
 });
 it('reuses the main model menu and saves the cloud thinking selection independently', async () => {
@@ -59,6 +64,7 @@ it('shows a retained task history and a separate target composer', async () => {
   const cloud = api([binding]); render(<CloudTasks api={cloud} sessionId="S" active />);
   fireEvent.click(await screen.findByRole('button', { name: /任务 aaaaaaaa/ }));
   expect(await screen.findByText('云端正在检查测试')).toBeTruthy();
+  expect(screen.queryByText(/保存草稿到本机/)).toBeNull();
   expect(screen.getByRole('textbox', { name: '发给此云端任务' })).toBeTruthy();
   expect(cloud.create).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: '返回任务列表' }));
@@ -171,10 +177,7 @@ it('offers a live child before its durable thread has been archived', async () =
 });
 it('requires explicit confirmation before releasing a disconnected environment', async () => {
   // JSDOM lacks native dialog methods; only emulate their open/close state here.
-  const show = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal');
-  const close = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'close');
-  Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value() { this.setAttribute('open', ''); } });
-  Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.removeAttribute('open'); } });
+  const restoreDialog = installDialogMock();
   try {
     const execute = vi.fn().mockResolvedValue(undefined); const cloud = api([binding]);
     const uncertain = { ...binding, cloud: { ...task, runner_phase: 'disconnected', last_quiescent_at: null, reclaim_blockers: ['runner_disconnected'] } };
@@ -186,7 +189,101 @@ it('requires explicit confirmation before releasing a disconnected environment',
     fireEvent.click(screen.getByRole('button', { name: '确认释放此环境' }));
     await waitFor(() => expect(execute).toHaveBeenCalledWith('environment', { action: 'release', expected_binding_revision: 1, expected_generation: 1, acknowledge_unknown: true }));
   } finally {
-    if (show) Object.defineProperty(HTMLDialogElement.prototype, 'showModal', show); else Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal');
-    if (close) Object.defineProperty(HTMLDialogElement.prototype, 'close', close); else Reflect.deleteProperty(HTMLDialogElement.prototype, 'close');
+    restoreDialog();
   }
+});
+it('names background-only stopping by the actual affected work', () => {
+  render(<CloudTaskActions api={api()} sid="S" binding={{ ...binding, cloud: { ...task, reclaim_blockers: ['background_commands'] } }} busy={false} execute={vi.fn()} />);
+  expect(screen.getByRole('button', { name: '停止后台任务' })).not.toHaveProperty('disabled', true);
+  expect(screen.queryByRole('button', { name: '停止本轮' })).toBeNull();
+});
+it('makes a rejected command an alert and preserves the submitted draft', async () => {
+  const cloud = api([binding]);
+  vi.mocked(cloud.message).mockImplementation(async (_sid, _bid, body) => ({ command_id: String((body as { command_id: string }).command_id), binding_id: 'B', kind: 'message', phase: 'rejected', error_code: 'task_revision_conflict', steps: {} }));
+  render(<CloudTasks api={cloud} sessionId="S" active />);
+  fireEvent.click(await screen.findByRole('button', { name: /任务 aaaaaaaa/ }));
+  const box = await screen.findByRole('textbox', { name: '发给此云端任务' });
+  fireEvent.change(box, { target: { value: '请继续' } });
+  fireEvent.click(screen.getByRole('button', { name: '发送到云端' }));
+  expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('云端状态已变化'));
+  expect(box).toHaveProperty('value', '请继续');
+});
+it('shows submitted text immediately while the request is awaiting confirmation', async () => {
+  const cloud = api([binding]); vi.mocked(cloud.message).mockImplementation(() => new Promise(() => {}));
+  render(<CloudTasks api={cloud} sessionId="S" active />);
+  fireEvent.click(await screen.findByRole('button', { name: /任务 aaaaaaaa/ }));
+  fireEvent.change(await screen.findByRole('textbox', { name: '发给此云端任务' }), { target: { value: '立即显示的消息' } });
+  fireEvent.click(screen.getByRole('button', { name: '发送到云端' }));
+  expect(await screen.findByText('立即显示的消息', { selector: 'p' })).toBeTruthy();
+  expect(screen.getByText('正在提交，等待云端确认')).toBeTruthy();
+});
+it('keeps an accepted message visible until its saved human row arrives', async () => {
+  const cloud = api([binding]); let accepted = false;
+  const op = { command_id: 'sent', binding_id: 'B', kind: 'message', phase: 'accepted', run_id: 'r1', steps: {} };
+  vi.mocked(cloud.message).mockImplementation(async (_sid, _bid, body) => { accepted = true; op.command_id = (body as { command_id: string }).command_id; return op; });
+  vi.mocked(cloud.operations).mockImplementation(async () => accepted ? [op] : []);
+  render(<CloudTasks api={cloud} sessionId="S" active />);
+  fireEvent.click(await screen.findByRole('button', { name: /任务 aaaaaaaa/ }));
+  const box = await screen.findByRole('textbox', { name: '发给此云端任务' });
+  fireEvent.change(box, { target: { value: '等待历史同步的消息' } }); fireEvent.click(screen.getByRole('button', { name: '发送到云端' }));
+  expect(await screen.findByText('云端已受理，等待消息同步')).toBeTruthy();
+  expect(screen.getByText('等待历史同步的消息', { selector: 'p' })).toBeTruthy();
+});
+
+it('confirms background stopping and cancels without dispatch', async () => {
+  const restore = installDialogMock();
+  try {
+    const execute = vi.fn().mockResolvedValue(true);
+    render(<CloudTaskActions api={api()} sid="S" binding={{ ...binding, cloud: { ...task, last_run_id: 'old-run', reclaim_blockers: ['background_commands'] } }} busy={false} execute={execute} />);
+    fireEvent.click(screen.getByRole('button', { name: '停止后台任务' }));
+    expect(execute).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: '停止此任务的后台服务？' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    expect(execute).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '停止后台任务' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认停止后台任务' }));
+    await waitFor(() => expect(execute).toHaveBeenCalledExactlyOnceWith('control', { expected_binding_revision: 1, kind: 'stop', run_id: 'old-run', checkpoint_id: null }));
+  } finally { restore(); }
+});
+
+it('settles a lost message response by original ID without retaining retry intent', async () => {
+  const cloud = api([binding]); let sentId = '';
+  vi.mocked(cloud.message).mockImplementation(async (_sid, _bid, body) => {
+    sentId = String((body as { command_id: string }).command_id);
+    throw new ApiError('cloud_connection_failed');
+  });
+  const props = { api: cloud, sid: 'S', binding, active: true, back: vi.fn(), changed: vi.fn() };
+  const view = render(<CloudTaskDetail {...props} />);
+  const input = await screen.findByRole('textbox', { name: '发给此云端任务' });
+  await waitFor(() => expect(input).not.toHaveProperty('disabled', true));
+  fireEvent.change(input, { target: { value: '原消息' } });
+  fireEvent.click(screen.getByRole('button', { name: '发送到云端' }));
+  await waitFor(() => expect(cloud.message).toHaveBeenCalledTimes(1));
+  await screen.findByRole('button', { name: '核对并重试原请求' });
+  fireEvent.change(input, { target: { value: '后续草稿' } });
+  vi.mocked(cloud.operations).mockResolvedValue([{ command_id: sentId, binding_id: 'B', kind: 'message', phase: 'accepted', steps: {}, run_id: 'run' }]);
+  vi.mocked(cloud.draft).mockResolvedValue({ text: '', model_id: 'A', draft_revision: 2, thinking_level: 'low' });
+  view.rerender(<CloudTaskDetail {...props} active={false} />);
+  view.rerender(<CloudTaskDetail {...props} />);
+  await screen.findByText('云端已受理，等待消息同步');
+  expect(input).toHaveProperty('value', '后续草稿');
+  expect(screen.queryByRole('button', { name: '核对并重试原请求' })).toBeNull();
+  expect(cloud.message).toHaveBeenCalledTimes(1);
+});
+
+it('invalidates background stop confirmation when task revision changes', () => {
+  const restore = installDialogMock();
+  try {
+    const execute = vi.fn(); const value = { ...binding, cloud: { ...task, last_run_id: 'old-run', reclaim_blockers: ['background_commands'] } };
+    const view = render(<CloudTaskActions api={api()} sid="S" binding={value} busy={false} execute={execute} />);
+    fireEvent.click(screen.getByRole('button', { name: '停止后台任务' }));
+    view.rerender(<CloudTaskActions api={api()} sid="S" binding={{ ...value, revision: 2 }} busy={false} execute={execute} />);
+    expect(screen.getByRole('button', { name: '确认停止后台任务' })).toHaveProperty('disabled', true);
+    expect(execute).not.toHaveBeenCalled();
+  } finally { restore(); }
+});
+
+it('uses the persisted readable task title in the conversation header', async () => {
+  render(<CloudTaskDetail api={api()} sid="S" binding={{ ...binding, cloud: { ...task, title: '检查接口与报告' } }} active back={vi.fn()} changed={vi.fn()} />);
+  expect(await screen.findByText('检查接口与报告')).toBeTruthy();
 });

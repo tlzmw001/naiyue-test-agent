@@ -1,5 +1,6 @@
 """Visible boundary checks; SSH and listener separation do not replace auth."""
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
+from naiyue_test_agent.contracts.cloud_versions import OWNER_PROTOCOL
 from naiyue_test_agent.web.auth import authorize
 from naiyue_test_agent.web.errors import WebError
 
@@ -19,8 +20,8 @@ def owner_authorize(request, runtime, *, query_fields=()):
     if instance is not None and instance != runtime.instance_id:
         raise CloudError('cloud_instance_mismatch')
     protocol = request.headers.get('x-cloud-protocol')
-    if ((protocol is not None and protocol != '1')
-            or (request.method not in ('GET', 'HEAD') and protocol != '1')):
+    if ((protocol is not None and protocol != str(OWNER_PROTOCOL))
+            or (request.method not in ('GET', 'HEAD') and protocol != str(OWNER_PROTOCOL))):
         raise CloudError('cloud_protocol_mismatch')
 
 

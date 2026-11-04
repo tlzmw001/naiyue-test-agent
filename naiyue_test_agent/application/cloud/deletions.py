@@ -60,6 +60,8 @@ class CloudDeletions:
                 or task.artifact_operation_id or task.control_operation_id
                 or task.sandbox_id and task.last_quiescent_at is None)
             if blocked and not request.acknowledge_unknown: raise CloudError('task_delete_requires_stop')
+            if task.environment_operation_id and r.registry.get_command(task.environment_operation_id).operation=='release:upgrade':
+                raise CloudError('task_upgrade_pending')
             environment = (EnvironmentOperation.model_validate(r.registry.get_command(task.environment_operation_id).result)
                 if task.environment_operation_id else None)
             # Force only discards an explicitly confirmed uncertain boundary; it

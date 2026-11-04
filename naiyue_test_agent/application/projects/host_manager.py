@@ -161,7 +161,7 @@ class HostManager:
                 if not project.trusted and not history_only:
                     raise ProjectError('project_trust_required')
                 if not isinstance(project.source, LocalSource):
-                    await run_blocking(self.projects.ensure_git_store,project_id)
+                    raise ProjectError('project_execution_unavailable')
                 path = project.database_path
                 authority = RegisteredExecution(self.projects.registry, project_id)
                 options.update(registered_project=project, execution_authority=authority)
@@ -177,21 +177,11 @@ class HostManager:
     def _is_open(self, project_id):
         return project_id in self._hosts
 
-    @asynccontextmanager
-    async def reserve_delivery(self,project_id):
-        async with self._scopes.serial(('delivery',project_id)):
-            with ExitStack() as guards:
-                async with self._scopes.serial(('host',project_id)):
-                    self.owner.check_open()
-                    guards.enter_context(self._options['admission'].manage_project(project_id))
-                yield
 
     @asynccontextmanager
     async def project_change(self,project_id):
         async with self._scopes.serial(('host',project_id)):
             self.owner.check_open()
-            try:self._options['admission'].check_project(project_id)
-            except SessionBusyError as error:raise ProjectError('project_in_use') from error
             yield
 
     async def _host_options(self,*,cloud_materials=True):
@@ -200,7 +190,6 @@ class HostManager:
             options['tools']=[spec for spec in options['tools'] if spec.tool.name!='cloud_result_read']
             if options['initial_active_tools'] is not None:
                 options['initial_active_tools']=[name for name in options['initial_active_tools'] if name!='cloud_result_read']
-        options['environments']=getattr(self,'environments',None)
         if self._catalog_loader is not None:
             options['catalog'] = await self._catalog_loader()
         return options
@@ -257,9 +246,6 @@ class HostManager:
             self.owner.check_open()
             if self._is_open(project_id):
                 raise ProjectError('project_in_use')
-            if getattr(self,'environments',None) is not None:
-                rows=await self.environments.list(project_id)
-                if any(row.lifecycle!='destroyed' for row in rows):raise ProjectError('project_in_use')
             return await run_blocking(self.projects.remove, project_id, operation_id=operation_id)
 
     async def relocate(self, project_id, **request):

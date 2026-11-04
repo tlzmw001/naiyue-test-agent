@@ -17,7 +17,7 @@ def test_state_contains_only_session_facts_and_run_has_independent_defaults():
     assert {field.name for field in fields(SessionState)} == {
         'thread_id', 'model_id', 'project_id', 'execution_root', 'active_tool_names', 'permission_mode',
         'thinking_level', 'session_allow', 'pending_tool_approval', 'pending_turn',
-        'manual_review_required', 'conversation_revision', 'last_execution_path', 'execution_binding','execution_setup'}
+        'manual_review_required', 'conversation_revision', 'last_execution_path', 'execution_binding'}
     a, b = ActiveRun('same', None), ActiveRun('same', None)
     from naiyue_test_agent.contracts.replies import QueuedInput
     a.steering_queue.append(QueuedInput('m', 'first', 'steering'))

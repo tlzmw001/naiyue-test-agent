@@ -39,11 +39,10 @@ async def context_view(session_id, *, sessions, agent, catalog, tool_registry, s
     if available:
         try:
             model = catalog.get(row['model_id'])
-            from .execution_binding import resolve_capabilities
+            from .local_execution import resolve_files
             saved=await run_blocking(sessions._persistence.storage.sessions.get,session_id)
-            access=await resolve_capabilities(sessions,saved)
-            files=access.files
-            root=files.execution_root.path if files is not None and access.environment.kind=='host' else None
+            files=await resolve_files(sessions,saved)
+            root=files.execution_root.path if files is not None else None
             resources = await prepare_resources(files,
                 enable_skills='read' in tool_registry.names())
             specs = tool_registry.select_available(subagent_request_tools(row['active_tool_names'], tool_registry))

@@ -4,11 +4,10 @@ from ...contracts.image_content import image_metadata, input_text
 from ...contracts.image_inputs import ImageInputError
 
 
-def validate_release(runtime, identities,*,waiting=False):
+def validate_release(runtime, identities):
     for key in identities:
         row = runtime.pending_images.get(key)
-        allowed=(row is not None and row['status']=='queued' and row['run_id'] is None) if waiting else (
-            row is not None and row['status'] in ('retained','uncertain'))
+        allowed=row is not None and row['status'] in ('retained','uncertain')
         if not allowed:
             raise ImageInputError('pending_image_invalid', status=409)
 

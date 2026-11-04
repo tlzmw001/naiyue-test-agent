@@ -1,5 +1,6 @@
 """Opaque private paths and verified content-addressed local blobs."""
 import hashlib,os,stat
+from uuid import uuid4
 from contextlib import contextmanager,ExitStack
 from threading import Lock
 from pydantic import TypeAdapter
@@ -15,6 +16,20 @@ class ReceiveFiles:
     def __init__(self,storage):
         self.root=storage.path.parent/'cloud-results' if storage.path else None
         self.publication=Lock()
+        self.users=0;self.cleaning=False
+
+    @contextmanager
+    def use(self,*,cleanup=False):
+        # Only the counters are locked; no mutex is held across IO or await.
+        with self.publication:
+            if self.cleaning or cleanup and self.users:raise CloudError('cloud_receive_busy',409)
+            if cleanup:self.cleaning=True
+            else:self.users+=1
+        try:yield
+        finally:
+            with self.publication:
+                if cleanup:self.cleaning=False
+                else:self.users-=1
 
     def directory(self,*parts):
         if self.root is None:raise CloudError('cloud_material_unavailable')
@@ -36,7 +51,7 @@ class ReceiveFiles:
     @contextmanager
     def verified(self,path,size,sha,expected=None):
         check_store_directory(path.parent)
-        with os.fdopen(open_store_readonly(path),'rb') as stream:
+        with self.use(),os.fdopen(open_store_readonly(path),'rb') as stream:
             before=identity(os.fstat(stream.fileno()));actual=hashlib.sha256();count=0
             while chunk:=stream.read(256*1024):
                 count+=len(chunk)
@@ -94,3 +109,18 @@ class ReceiveFiles:
                 else:raise CloudError('cloud_receive_cache_unavailable',503)
                 if total>limits.max_cache_bytes:raise CloudError('cloud_receive_capacity',429)
         return total
+
+    def prepare_refresh(self,record):
+        for item in record.files:
+            artifact=item.artifact;path=self.blob(artifact.sha256)
+            if not os.path.lexists(path):continue
+            before=path.lstat()
+            if not stat.S_ISREG(before.st_mode) or before.st_nlink!=1 or getattr(before,'st_file_attributes',0)&0x400:
+                raise CloudError('cloud_receive_source_changed')
+            try:self.inspect(path,artifact.size,artifact.sha256)
+            except CloudError:
+                quarantine=self.directory('staging',record.receive_id)/('quarantine-'+uuid4().hex)
+                with self.publication:
+                    if identity(path.lstat())!=identity(before):raise CloudError('cloud_receive_source_changed')
+                    os.rename(path,quarantine)
+                    sync_store_directory(path.parent);sync_store_directory(quarantine.parent)

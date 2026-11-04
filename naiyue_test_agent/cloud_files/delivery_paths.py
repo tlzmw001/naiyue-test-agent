@@ -18,6 +18,14 @@ def component(name):
     return name
 
 
+def portable_conflicts(paths):
+    conflicts=[]
+    for path in paths:
+        try:input_path(path)
+        except ValueError:conflicts.append(path)
+    return conflicts
+
+
 def directory_identity(path):
     from naiyue_test_agent.application.projects.locations import directory_facts
     check_store_directory(path)

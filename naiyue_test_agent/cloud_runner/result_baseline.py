@@ -12,7 +12,7 @@ from naiyue_test_agent.cloud_files.archive import validate_package
 from naiyue_test_agent.cloud_files.delivery_paths import rename_new
 from naiyue_test_agent.cloud_files.paths import identity,source_handle
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
-from naiyue_test_agent.storage.files import check_store_directory,open_store_readonly,sync_store_directory
+from naiyue_test_agent.storage.files import check_store_directory,open_store_readonly,open_store_file,clear_store_readonly,sync_store_directory
 from .result_git import ResultGit
 from .state import read_json,write_json
 
@@ -42,7 +42,16 @@ def cache_files(directory,limits,*,durable=False):
             if stat.S_ISDIR(info.st_mode):pending.append(path)
             elif stat.S_ISREG(info.st_mode) and info.st_nlink==1:
                 if durable:
-                    with os.fdopen(open_store_readonly(path),'rb') as stream:os.fsync(stream.fileno())
+                    # Native Git creates read-only objects. Only the unpublished
+                    # private cache is made writable, before recording its identity.
+                    if os.name=='nt':clear_store_readonly(path)
+                    else:
+                        with os.fdopen(open_store_readonly(path),'rb') as stream:os.fchmod(stream.fileno(),0o600)
+                    with os.fdopen(open_store_file(path),'r+b') as stream:
+                        opened=os.fstat(stream.fileno())
+                        if (opened.st_dev,opened.st_ino)!=(info.st_dev,info.st_ino):raise CloudError('result_baseline_changed')
+                        os.fsync(stream.fileno());info=path.lstat()
+                        if (opened.st_dev,opened.st_ino)!=(info.st_dev,info.st_ino):raise CloudError('result_baseline_changed')
                 files[path.relative_to(directory).as_posix()]=list(identity(info))
             else:raise CloudError('result_baseline_changed')
     if durable:

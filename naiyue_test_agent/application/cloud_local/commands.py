@@ -81,10 +81,18 @@ class ManualTaskCommands:
     async def list(self,domain,bid,sid,*,offset=0,limit=50):
         with self.manager.operation(),domain.owner.operation():
             values=await run_blocking(domain.repo.commands.index,bid,sid,offset=offset,limit=limit)
-            result=[]
+            result=[];disconnected=False
             for cid in values:
                 value=await run_blocking(domain.repo.operation,cid,sid)
-                result.append(command_summary(await self._observe(domain,value)))
+                try:
+                    if not disconnected:value=await self._observe(domain,value)
+                except CloudError as error:
+                    if error.code!='cloud_connection_failed':raise
+                    disconnected=True
+                    logger.warning('cloud_command_observation_failed code=%s',error.code)
+                    # A transport failure cannot erase a previously verified receipt.
+                    value=await run_blocking(domain.repo.operation,cid,sid)
+                result.append(command_summary(value))
             return result
 
     async def delete_preview(self,domain,bid,sid):

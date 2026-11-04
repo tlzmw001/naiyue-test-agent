@@ -149,12 +149,3 @@ def test_relocate_keeps_old_session_roots_and_delete_retains_data(tmp_path):
         assert projects.list() == ()
         assert projects.import_legacy() == ()
     assert old.is_dir() and new.is_dir() and project.database_path.is_file()
-
-
-def test_git_source_records_no_fake_local_root_or_execution_database(tmp_path):
-    with service(tmp_path) as projects:
-        project = projects.add_git('https://example.invalid/repository.git', ref='main',
-            name='remote', operation_id='git')
-        assert project.source.url == 'https://example.invalid/repository.git'
-        assert project.source.ref == 'main' and project.availability is None
-        assert not project.database_path.exists()

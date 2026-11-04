@@ -30,13 +30,9 @@ class MCPPermission(ToolPermission):
     config_identity: str = ''
     catalog_fingerprint: str = ''
     transport: str = ''
-    allow_sandbox: bool = False
     resources: object = field(default=None, repr=False, compare=False)
 
     def unavailable_reason(self, context=None):
-        if (self.transport == 'stdio' and not self.allow_sandbox and context is not None
-                and context.scope.environment is not None and context.scope.environment.kind == 'sandbox'):
-            return 'stdio_not_allowed_for_environment'
         return (self.resources.tool_unavailable(self.server_id, self.remote_tool, self.config_identity,
                 self.catalog_fingerprint) if self.resources is not None else None)
 
@@ -54,7 +50,7 @@ class MCPPermission(ToolPermission):
 
 def create_mcp_tool(borrow_mcp, server, identity, catalog, tool, *, resources=None):
     permission = MCPPermission(server_id=catalog.server_id, remote_tool=tool.remote_name,
-        config_identity=identity, catalog_fingerprint=catalog.fingerprint, transport=server.transport, allow_sandbox=server.allow_sandbox, resources=resources)
+        config_identity=identity, catalog_fingerprint=catalog.fingerprint, transport=server.transport, resources=resources)
 
     async def execute(runtime: ToolRuntime[RuntimeContext], **arguments):
         permit = require_tool_permit(runtime)

@@ -5,7 +5,7 @@ import time
 from uuid import uuid4
 
 from naiyue_test_agent.contracts.cloud_tasks import CloudError,CloudTask
-from naiyue_test_agent.contracts.cloud_events import canonical_json
+from naiyue_test_agent.contracts.cloud_events import canonical_json,digest
 from .runner_bootstrap import TaskBootstrap
 from .runner_runs import RunnerRuns
 from .runner_actions import RunnerActionCommands
@@ -115,7 +115,9 @@ class RunnerControl:
         if frame.kind=='observations':
             await self.runtime.observations.receive(connection,frame)
             return
-        if frame.kind=='renew':
+        if frame.kind=='admission_rejected':
+            await cloud_work(self.runtime,lambda:self.reject(connection,frame))
+        elif frame.kind=='renew':
             b=await cloud_work(self.runtime,lambda:self.bootstrap.renew(connection))
             await connection.send(dict(kind='renewed',token=b.token.get_secret_value(),expires_at=b.expires_at))
         elif frame.kind=='finished':
@@ -146,6 +148,32 @@ class RunnerControl:
             if frame.status in ('unknown','not_found','interrupted'):
                 await cloud_work(self.runtime,lambda:self.runs.unconfirmed(connection.task_id,frame.command_id))
         self._live_notice(self.runtime.observations.changed,connection.task_id)
+
+    def reject(self,connection,frame):
+        r=self.runtime
+        with r.gates.hold(connection.task_id):
+            task=self.verify(connection,frame);receipt=r.registry.get_command(frame.command_id)
+            command=receipt.result.get('command')
+            if (receipt.resource_id!=task.task_id or receipt.operation!=frame.operation or not command
+                    or digest(command)!=frame.request_digest):raise CloudError('command_id_conflict')
+            if receipt.status in ('succeeded','failed'):return
+            run=frame.operation=='run:start'
+            if (run and task.active_run_id!=command['run_id']
+                    or not run and task.artifact_operation_id!=frame.command_id):raise CloudError('command_state_conflict')
+            if not run and frame.error_code!='artifact_busy':raise CloudError('artifact_identity_conflict')
+            if run and frame.error_code=='artifact_busy':raise CloudError('run_identity_mismatch')
+            removed=('active_run','required_history','unknown') if run else ('artifact_capture','artifact_unknown')
+            blockers=[x for x in task.reclaim_blockers if x not in removed]
+            if not frame.quiescent and 'background_commands' not in blockers:blockers.append('background_commands')
+            now=time.time();changes=dict(revision=task.revision+1,updated_at=now,runner_phase=frame.phase,
+                reclaim_blockers=blockers,last_quiescent_at=now if frame.quiescent and not blockers else None)
+            if run:changes.update(active_run_id=None,last_run_id=receipt.result.get('previous_run_id'))
+            else:changes.update(artifact_operation_id=None)
+            candidate=task.model_copy(update=changes);related=()
+            if run:candidate,related=r.results.rejected(candidate,receipt)
+            receipt=receipt.model_copy(update={'status':'failed','http_status':200,'error_code':frame.error_code,
+                'result':receipt.result|dict(phase='rejected'),'updated_at':now})
+            self.runs.repository.finish(task,candidate,receipt,related=related)
 
     async def detach(self,connection):
         if self.connections.get(connection.task_id) is not connection:return

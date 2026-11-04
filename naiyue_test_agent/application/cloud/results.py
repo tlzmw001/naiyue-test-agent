@@ -60,6 +60,24 @@ class CloudResults:
             'reclaim_blockers':list(dict.fromkeys([*candidate.reclaim_blockers,'result_pending']))})
         return candidate,(receipt,)
 
+    def rejected(self,candidate,run_receipt):
+        plan=ResultPlan.model_validate(run_receipt.result['command']['result_plan'])
+        receipt,record=self._read(candidate.task_id,plan.result_id)
+        if record.plan!=plan or record.phase!='waiting_terminal':raise CloudError('result_identity_conflict')
+        record=record.model_copy(update={'phase':'abandoned','error_code':'run_not_started','revision':record.revision+1})
+        related=[receipt.model_copy(update={'status':'failed','http_status':200,'error_code':'run_not_started',
+            'result':record.model_dump(mode='json'),'updated_at':time.time()})]
+        candidate=candidate.model_copy(update={'result_ids':[v for v in candidate.result_ids if v!=plan.result_id]})
+        previous=run_receipt.result.get('previous_pending_result_id')
+        if previous:
+            old,state=self._read(candidate.task_id,previous)
+            if state.phase!='superseded' or state.superseded_by!=plan.source_run_id:raise CloudError('result_identity_conflict')
+            state=state.model_copy(update={'phase':'pending','superseded_by':None,'revision':state.revision+1})
+            related.append(old.model_copy(update={'status':'accepted','http_status':202,'result':state.model_dump(mode='json'),'updated_at':time.time()}))
+            candidate=candidate.model_copy(update={'pending_result_id':previous,'result_ids':[*candidate.result_ids,previous],
+                'last_quiescent_at':None,'reclaim_blockers':[*candidate.reclaim_blockers,'result_pending']})
+        return candidate,related
+
     def list(self,task_id,*,offset=0,limit=20):
         if not 0<=offset<=1000000 or not 1<=limit<=100:raise CloudError('invalid_result_page',422)
         with self.runtime.gates.hold(task_id):
@@ -68,7 +86,7 @@ class CloudResults:
             result=[]
             for receipt in rows:
                 record=ResultRecord.model_validate(receipt.result)
-                result.append(dict(result_id=record.plan.result_id,source_run_id=record.plan.source_run_id,phase=record.phase,
+                result.append(dict(result_id=record.plan.result_id,task_id=record.plan.task_id,created_at=receipt.created_at,source_run_id=record.plan.source_run_id,phase=record.phase,
                     revision=record.revision,outcome=record.boundary.outcome if record.boundary else None,error_code=record.error_code,
                     captured_at=record.bundle.captured_at if record.bundle else None,files_count=len(record.bundle.files) if record.bundle else None,
                     superseded_by=record.superseded_by))

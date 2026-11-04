@@ -1,7 +1,6 @@
 """One application owns resources; callers explicitly select project/chat hosts."""
 from .catalogs import ModelAPI
 from .projects.api import ProjectAPI
-from .environments.api import EnvironmentAPI
 
 
 class Application:
@@ -11,8 +10,6 @@ class Application:
         self.chats = hosts.chats
         self.temporary = hosts.temporary
         self.models = ModelAPI(owner, catalog)
-        self.environments = EnvironmentAPI(owner, hosts)
-        hosts.environments=self.environments
 
     async def aclose(self):
         await self._lifetime.aclose()

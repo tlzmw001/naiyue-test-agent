@@ -59,13 +59,6 @@ async def admit(graph, instance, spec, *, runtime, catalog, sessions, subagents,
         raise ToolException('Subagent result budget cannot hold its instance metadata.')
     previous = await _get(subagents, runtime.session_id, instance['agent_id'])
     environment=instance['files'].environment if instance.get('files') is not None else None
-    if environment is not None and environment.kind=='sandbox':
-        if (environment.project_id!=instance['project_id'] or instance['files'].owner_session_id!=runtime.session_id
-                or previous is not None and (previous['execution_binding']!='sandbox'
-                    or previous['environment_binding_id']!=environment.binding_id
-                    or previous['project_id']!=environment.project_id or previous['session_id']!=runtime.session_id)):
-            raise ToolException('Subagent execution binding changed; the saved instance was not rebound.')
-        await run_blocking(instance['files'].validate)
     from naiyue_test_agent.tools.permissions import require_execution_directory
     from naiyue_test_agent.storage.execution_storage import root_from_row
     saved_root = root_from_row(previous, child=True) if previous is not None else instance['execution_root']
@@ -77,8 +70,7 @@ async def admit(graph, instance, spec, *, runtime, catalog, sessions, subagents,
     elif saved_root is not None and instance['execution_root'] is not None:
         from dataclasses import replace
         saved_root = replace(saved_root, authority=instance['execution_root'].authority)
-    if environment is None or environment.kind=='host':
-        await run_blocking(require_execution_directory, saved_root, saved_project)
+    await run_blocking(require_execution_directory, saved_root, saved_project)
     if saved_root != instance['execution_root'] or saved_project != instance['project_id']:
         raise ToolException('Subagent execution binding changed; the saved instance was not rebound.')
     if instance['continuing']:
@@ -118,8 +110,7 @@ async def admit(graph, instance, spec, *, runtime, catalog, sessions, subagents,
         model_id=instance['model_id'], last_task=instance['task'], state='running',
         project_id=saved_project, execution_root=str(saved_root.path) if saved_root else None,
         execution_root_kind=saved_root.kind if saved_root else None,
-        execution_binding='sandbox' if environment is not None and environment.kind=='sandbox' else saved_root.binding if saved_root else None,
-        environment_binding_id=environment.binding_id if environment is not None and environment.kind=='sandbox' else None,
+        execution_binding=saved_root.binding if saved_root else None,
         last_execution_path=str(saved_root.path) if saved_root else None,
         version=previous['version'] + 1 if previous else 1,
         checkpoint_ns=previous['checkpoint_ns'] if previous else '', checkpoint_id=previous['checkpoint_id'] if previous else None,

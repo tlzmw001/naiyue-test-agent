@@ -71,7 +71,7 @@ class CloudArchive:
         messages=[]
         for item in raw:
             messages.append(item['preview']|dict(revision=item['revision'],sequence=item['position'],
-                parent_message_id=item['parent_message_id'],reply_id=item['reply_id'],owner_input=item['owner_input'],
+                parent_message_id=item['parent_message_id'],reply_id=item['reply_id'],owner_input=item['owner_input'],run_id=item['run_id'],
                 body_sha256=item['body_hash'],occurred_at=item['occurred_at'],boundary=item['boundary'],
                 detail=dict(message_id=item['message_id'],thread_id=thread,revision=item['revision'])))
         result.update(messages=messages,next_cursor=self._cursor(task_id,'messages',thread,result,before) if before is not None else None)

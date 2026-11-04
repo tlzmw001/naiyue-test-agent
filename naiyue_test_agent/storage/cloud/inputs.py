@@ -1,4 +1,5 @@
 """Input and transfer indexes in the trusted registry, with atomic receipts."""
+from .releases import require_available,active_template
 from naiyue_test_agent.contracts.cloud_inputs import InputPackage,InputTransfer
 from naiyue_test_agent.contracts.cloud_tasks import CloudError,CommandReceipt,CloudTask
 
@@ -28,6 +29,7 @@ class InputRepository:
                 previous=CommandReceipt.model_validate_json(old[0])
                 if previous.request_digest!=receipt.request_digest:raise CloudError('command_id_conflict')
                 return previous
+            require_available(c)
             if c.execute('SELECT COUNT(*) FROM commands').fetchone()[0]>=max_receipts:raise CloudError('command_capacity')
             existing=c.execute('SELECT value FROM meta WHERE key=?',('input:'+transfer.input_id,)).fetchone()
             if existing is not None:
@@ -69,6 +71,13 @@ class InputRepository:
                 return previous
             if c.execute('SELECT 1 FROM projects WHERE project_id=?',(task.project_id,)).fetchone() is None:raise CloudError('project_not_found',404)
             if c.execute('SELECT 1 FROM meta WHERE key=?',('input:'+task.input_id,)).fetchone() is None:raise CloudError('input_not_ready')
+            require_available(c)
+            selected=active_template(c,task.template_id)
+            if selected is not None:
+                from naiyue_test_agent.contracts.cloud_tasks import TemplateReceipt
+                t=TemplateReceipt.model_validate(selected)
+                task=CloudTask.model_validate(task.model_dump()|dict(runner_release_id=t.runner_release_id,template_snapshot=t,template_digest=t.fingerprint))
+                receipt=receipt.model_copy(update={'result':{'task':task.model_dump()}})
             if c.execute('SELECT COUNT(*) FROM commands').fetchone()[0]>=max_receipts:raise CloudError('command_capacity')
             tasks=[CloudTask.model_validate_json(r[0]) for r in c.execute('SELECT record_json FROM tasks')]
             if sum(t.lifecycle!='deleted' for t in tasks)>=max_tasks:raise CloudError('environment_retained_capacity')

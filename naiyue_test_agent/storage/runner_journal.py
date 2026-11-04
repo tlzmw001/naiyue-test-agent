@@ -38,6 +38,31 @@ class RunnerJournal:
             row=c.execute('SELECT record_json FROM nyt_runner_commands WHERE command_id=?',(command_id,)).fetchone()
             return json.loads(row[0]) if row else None
 
+    def rejection(self,command_id):
+        with self.database.transaction() as c:
+            row=c.execute('SELECT value FROM nyt_runner_meta WHERE key=?',('rejected:'+command_id,)).fetchone()
+            return json.loads(row[0]) if row else None
+
+    def admitted_run(self,run_id):
+        with self.database.transaction() as c:
+            return c.execute('SELECT 1 FROM nyt_runner_commands WHERE run_id=?',(run_id,)).fetchone() is not None
+
+    def reject(self,command,operation,error_code):
+        value=dict(command_id=command.command_id,operation=operation,request_digest=digest(command.model_dump()),error_code=error_code)
+        with self.database.transaction(write=True) as c:
+            key='rejected:'+command.command_id
+            old=c.execute('SELECT value FROM nyt_runner_meta WHERE key=?',(key,)).fetchone()
+            if old:
+                previous=json.loads(old[0])
+                if any(previous[k]!=value[k] for k in ('operation','request_digest')):raise CloudError('command_id_conflict')
+                return previous
+            if c.execute('SELECT 1 FROM nyt_runner_commands WHERE command_id=?',(command.command_id,)).fetchone():
+                raise CloudError('command_state_conflict')
+            if c.execute('SELECT 1 FROM nyt_runner_controls WHERE command_id=?',(command.command_id,)).fetchone():
+                raise CloudError('command_id_conflict')
+            c.execute('INSERT INTO nyt_runner_meta VALUES(?,?)',(key,canonical_json(value)))
+        return value
+
     def has_unsettled(self):
         with self.database.transaction() as c:
             return any(json.loads(r[0])['status'] in ('running','unknown','interrupted')
@@ -47,6 +72,11 @@ class RunnerJournal:
     def admit(self,command):
         fingerprint=digest(command.model_dump())
         with self.database.transaction(write=True) as c:
+            rejected=c.execute('SELECT value FROM nyt_runner_meta WHERE key=?',('rejected:'+command.command_id,)).fetchone()
+            if rejected:
+                value=json.loads(rejected[0])
+                if value['operation']!='run:start' or value['request_digest']!=fingerprint:raise CloudError('command_id_conflict')
+                raise CloudError(value['error_code'])
             row=c.execute('SELECT digest,record_json FROM nyt_runner_commands WHERE command_id=?',(command.command_id,)).fetchone()
             if row:
                 if row['digest']!=fingerprint:raise CloudError('command_id_conflict')

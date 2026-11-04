@@ -182,3 +182,15 @@ def test_two_project_graphs_run_concurrently_without_mixing_histories(monkeypatc
             finally:
                 await drain(runs, model)
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('operation', ['list', 'output', 'stop'])
+def test_task_api_rejects_session_from_another_project_before_query(monkeypatch, tmp_path, operation):
+    async def scenario():
+        async with multi_app(monkeypatch, tmp_path, StreamingToolModel(replies=[])) as (app, _):
+            (_, a), (_, b) = await projects(app, tmp_path)
+            sid = await a.sessions.create('A')
+            args = (sid,) if operation == 'list' else ('unknown-task', sid)
+            with pytest.raises(SessionPersistenceError, match='session_not_found'):
+                await getattr(b.tasks, operation)(*args)
+    asyncio.run(scenario())

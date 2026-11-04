@@ -92,12 +92,7 @@ class ProjectSelection:
         async with self.hosts._scopes.serial(('host', project.project_id)):
             project = await run_blocking(service.get, project.project_id)
             if isinstance(project.source,GitSource):
-                if not resume and not project.trusted:
-                    if not trusted:return {'status':'trust_required','root':None,'sessions':[],'source_kind':'git'}
-                    project=await run_blocking(service.trust_git,project.project_id,
-                        expected_revision=project.revision,operation_id=operation_id+':trust')
-                sessions=await self.hosts._session_rows(project)
-                return {'status':'ready','scope_id':project.project_id,'root':None,'sessions':sessions,'source_kind':'git'}
+                raise ProjectError('project_execution_unavailable')
             if root is not None and root != project.source.path:
                 raise ProjectError('project_location_changed')
             if not project.trusted and project.availability == 'available':

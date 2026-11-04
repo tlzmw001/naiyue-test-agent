@@ -1,9 +1,5 @@
 import type { ImageUpload, ImageConfiguration, ImageMetadata, PendingImageInput } from './imageTypes';
 import { CloudApi } from './cloudApi';
-import type { ExecutionOptions, ExecutionView, SessionCreation } from './types';
-import type { SandboxAction, SandboxManagement } from './sandboxManagementTypes';
-import type { ResultOptions, SandboxResult, ResultDiff } from './resultTypes';
-import type {DeliveryCommand,DeliveryOperation,DeliveryOptions} from './deliveryTypes';
 import type { ContextView } from './contextTypes';
 import type { BackgroundTask, BackgroundTaskOutput, BackgroundTaskPage } from './backgroundTaskTypes';
 import type { McpRefreshResult } from './types';
@@ -104,7 +100,7 @@ export class WebApi {
   }
 
   models() { return this.json<{ default_model_id: string; model_ids: string[]; thinking_options?: Record<string, ThinkingOptions> } & ImageConfiguration>('/models'); }
-  cloudTasks() { return new CloudApi(this.scopeId, (path, init) => this.response(path, init, 'client')); }
+  cloudTasks() { return new CloudApi(this.scopeId, (path, init) => this.response(path, init, 'client'), (options, signal) => this.browseDirectories(options, signal)); }
   serviceInfo(signal?: AbortSignal) { return this.json<ServiceInfo>('/service', 'GET', undefined, signal); }
   backgroundTasks(before?: string, signal?: AbortSignal) {
     const query = before ? '?' + new URLSearchParams({ before }) : '';
@@ -144,53 +140,6 @@ export class WebApi {
   create(model_id: string, requestId?: string) {
     return this.response('/sessions', { method: 'POST', body: JSON.stringify({ model_id }),
       ...(requestId ? { headers: { 'X-Request-ID': requestId } } : {}) }).then(r => r.json() as Promise<{ session_id: string }>);
-  }
-  executionOptions(): Promise<ExecutionOptions> {
-    return this.response('/projects/'+encodeURIComponent(this.scopeId)+'/execution-options',{},true).then(r=>r.json());
-  }
-  refreshEnvironments() {
-    return this.response('/environments/refresh', { method: 'POST', body: JSON.stringify({}) }, true).then(r => r.json());
-  }
-  async sandboxManagement(): Promise<SandboxManagement> {
-    return (await this.response('/environments', {}, true)).json();
-  }
-  async manageSandbox(binding: string, action: SandboxAction, confirmDestroy = false, requestId: string = crypto.randomUUID()): Promise<{ binding_id: string; lifecycle: string }> {
-    return (await this.response(`/environments/${encodeURIComponent(binding)}/${action}`, {
-      method:'POST', body:JSON.stringify({confirm_destroy:confirmDestroy,interrupt:action==='stop'||action==='destroy'}), headers:{'X-Request-ID':requestId},
-    }, true)).json();
-  }
-  trustGit(revision: number, requestId: string = crypto.randomUUID()) { return this.projectCommand(''+encodeURIComponent(this.scopeId)+'/trust',{expected_revision:revision,trusted:true},requestId); }
-  createSelected(model_id: string, choice?: SessionCreation) {
-    model_id=choice?.model_id??model_id;
-    return !choice || choice.execution==='host' ? this.create(model_id,choice?.requestId) : this.response('/sessions', {
-      method:'POST',body:JSON.stringify({model_id,execution:'sandbox',wait_for_ready:false,include_untracked:choice.include_untracked,
-        profile_id:choice.profile_id,expected_profile_revision:choice.expected_profile_revision}),
-      headers:{'X-Request-ID':choice.requestId},
-    }).then(r=>r.json() as Promise<{session_id:string}>);
-  }
-  prepareEnvironment(id: string) { return this.json<ExecutionView>(`/sessions/${encodeURIComponent(id)}/environment/prepare`,'POST'); }
-  resultOptions(id: string) { return this.json<ResultOptions>(`/sessions/${encodeURIComponent(id)}/results/options`); }
-  results(id: string) { return this.json<{items:SandboxResult[]}>(`/sessions/${encodeURIComponent(id)}/results`); }
-  result(id: string, resultId: string) { return this.json<SandboxResult>(`/sessions/${encodeURIComponent(id)}/results/${encodeURIComponent(resultId)}`); }
-  async captureResult(id: string, resultId: string, include_untracked: string[]) {
-    await this.json<{result_id:string;state:string}>(`/sessions/${encodeURIComponent(id)}/results`,'POST',{result_id:resultId,include_untracked});
-    return this.result(id,resultId);
-  }
-  resultDiff(id: string, resultId: string, path: string) {
-    return this.json<ResultDiff>(`/sessions/${encodeURIComponent(id)}/results/${encodeURIComponent(resultId)}/diff?`+new URLSearchParams({path}));
-  }
-  deliveryOptions(id:string,resultId:string) {
-    return this.json<DeliveryOptions>(`/sessions/${encodeURIComponent(id)}/results/${encodeURIComponent(resultId)}/delivery`);
-  }
-  deliver(id:string,resultId:string,command:DeliveryCommand) {
-    return this.json<DeliveryOperation>(`/sessions/${encodeURIComponent(id)}/results/${encodeURIComponent(resultId)}/delivery`,'POST',command);
-  }
-  acknowledgeDelivery(id:string,resultId:string,operationId:string) {
-    return this.json<DeliveryOperation>(`/sessions/${encodeURIComponent(id)}/results/${encodeURIComponent(resultId)}/delivery/acknowledge`,'POST',{operation_id:operationId,confirmed:true});
-  }
-  environmentAction(id: string, action: 'start'|'stop'|'destroy'|'recover', confirmDestroy = false) {
-    return this.json<ExecutionView>(`/sessions/${encodeURIComponent(id)}/environment/${action}`,'POST',
-      action === 'destroy' ? { confirm_destroy: confirmDestroy } : undefined);
   }
   private sessionView(value: SessionView) {
     if (value.live?.messages_location === 'session') value.live = { ...value.live, messages: value.messages };
@@ -269,12 +218,9 @@ export class WebApi {
   select(id: string, model_id: string) {
     return this.json<{ model_id: string }>(`/sessions/${encodeURIComponent(id)}/model`, 'PATCH', { model_id });
   }
-  start(id: string, text: string, request_id: string = crypto.randomUUID(), expected_conversation_revision?: number, images: ImageUpload[] = [], pending_input_ids: string[] = [],wait_for_environment=false, material_refs: string[] = []) {
-    return this.json<{ run_id?: string; session_id: string; request_id?:string; status?:'waiting_environment' }>(`/sessions/${encodeURIComponent(id)}/runs`,
-      'POST', { text, request_id, expected_conversation_revision, ...(images.length ? { images, pending_input_ids } : {}),...(wait_for_environment?{wait_for_environment:true}:{}), ...(material_refs.length ? { material_refs } : {}) });
-  }
-  stopSubmission(id:string,requestId:string) {
-    return this.json<NonNullable<SessionView['pending_submission']>>(`/sessions/${encodeURIComponent(id)}/submissions/${encodeURIComponent(requestId)}/stop`,'POST',{});
+  start(id: string, text: string, request_id: string = crypto.randomUUID(), expected_conversation_revision?: number, images: ImageUpload[] = [], pending_input_ids: string[] = [], material_refs: string[] = []) {
+    return this.json<{ run_id: string; session_id: string }>(`/sessions/${encodeURIComponent(id)}/runs`,
+      'POST', { text, request_id, expected_conversation_revision, ...(images.length ? { images, pending_input_ids } : {}), ...(material_refs.length ? { material_refs } : {}) });
   }
   control(id: string, kind: 'steering' | 'follow_up' | 'stop', text?: string, agent_path = 'root', agent_run_id?: string, approval_batch_id?: string, images: ImageUpload[] = [], pending_input_ids: string[] = [], request_id: string = crypto.randomUUID()) {
     return this.json<{ accepted: boolean; retained: string[] }>(`/runs/${encodeURIComponent(id)}/controls`,
@@ -326,49 +272,8 @@ export function errorText(error: unknown): string {
     cloud_material_budget: '材料引用数量或大小超过配置上限，请减少材料后重试。',
     cloud_material_binary: '此材料为二进制文件，只能查看元信息或下载。',
     cloud_materials_unavailable: '当前会话的材料读取能力尚未就绪，输入已保留。',
-    env_ssh_unavailable: '未找到本机 OpenSSH 客户端，请检查 SSH 程序路径后继续原准备。',
-    env_image_required: '尚未配置沙箱镜像，请在应用配置中设置后重试。',
-    env_attach_unavailable: '沙箱镜像未提供常驻连接入口，请使用与本次版本配套的 envd 镜像。',
-    env_start_failed: '沙箱容器启动失败，请在管理沙箱中核对原环境和启动诊断后重试。',
-    env_policy_mismatch: '沙箱执行服务的权限或运行策略不符合要求，无法启动；请核对配套镜像和启动诊断。',
-    env_preparation_cancelled: '沙箱准备已停止，消息已保留。可在管理中查看原资源。',
-    env_request_timeout: '本次沙箱请求等待超时，其他请求仍可继续。请核对原操作状态。',
-    env_connection_capacity: '沙箱连接的请求名额已满，本次请求未执行。请稍后再试。',
-    env_connection_cleanup_unconfirmed: '原连接的进程回收尚未确认。请在管理沙箱中显式恢复并重新核实。',
-    env_preparation_unavailable: '原准备任务已不可用，请核对原沙箱后重新准备。',
-    env_submission_changed: '等待期间原会话设置已更改，本条消息未启动。请核对设置后重新发送。',
-    env_submission_unavailable: '原会话目前不能运行，本条消息未启动。请核对原会话状态。',
-    env_profile_changed: '所选环境配置已变化，请刷新并重新选择环境；消息已保留。',
-    env_profile_unavailable: '所选环境已移除，请刷新并重新选择环境。',
-    env_configuration_invalid: '环境配置读取或校验失败，已保留上次可用列表。',
-    env_running_capacity: '运行中的沙箱已达上限，请在管理沙箱中停止空闲环境，再核对并继续原准备。',
-    env_retained_capacity: '保留的沙箱已达上限，请先保存结果并明确销毁不需要的沙箱，再核对并继续原准备。',
-    env_busy: '沙箱正在使用，或仍有未结束的后台操作。请等待任务结束或先停止后台任务。',
-    env_confirmation_required: '销毁沙箱和文件需要明确确认。',
-    env_profile_selection_invalid: '环境选择不完整，请重新选择环境。',
-    env_expired: '原沙箱已失效；会话历史保留，请新建沙箱会话。',
-    env_not_running: '原沙箱没有运行，请先启动原环境。',
-    env_not_registered: '原沙箱尚未登记，请核对准备状态。',
-    env_binding_mismatch: '沙箱绑定不一致，当前不能执行。',
-    env_operation_unknown: '原操作结果尚未确认，请核对原环境，不要重复新建。',
-    session_environment_in_use: '请先保留沙箱产物并显式销毁沙箱，然后删除会话。',
-    git_input_sensitive: '输入包含凭据文件，请先移除这些文件再创建新会话。',
-    git_input_no_repository: '该文件夹不是 Git 仓库，当前不能准备沙箱输入。',
-    git_input_no_head: '仓库还没有提交，请先创建一次提交。',
-    git_input_unsupported: '该仓库包含当前尚不支持的 Git 特性。',
-    git_input_unconfirmed: '原输入未确认，不能继续。请查看准备结果或新建会话。',
-    git_input_unavailable: '原输入不可用，请新建会话。',
-    git_result_busy: '沙箱仍有活动操作或未确认的进程，请先停止并核对，再发起新的取回。',
-    git_result_unconfirmed: '原取回结果尚未确认。请核对同一请求，不要重复捕获。',
-    git_result_not_descendant: '沙箱历史已偏离原输入，拒绝取回此结果。',
-    git_result_binding_mismatch: '结果与当前会话或原输入不一致，已拒绝导入。',
-    git_result_corrupt: '结果文件的大小或校验值不一致，已拒绝导入。',
-    git_result_invalid_bundle: '结果包含不允许的 Git 引用，已拒绝导入。',
-    git_result_ref_conflict: '本机任务引用已变化，请核对原引用；工作文件未修改。',
-    git_result_project_changed: '项目登记在取回后发生变化，已暂停导入，请核对项目位置。',
-    git_result_io_failed: '结果保存未确认，请核对原取回请求；工作文件未修改。',
-    git_result_layout_changed: '本机仓库布局已变化，结果保留在应用缓存中，未写入项目引用。',
-    git_result_budget: '结果超出文件、大小或缓存预算，未完成取回。',
+    unsupported_execution_binding: '旧版沙箱会话不再支持，请新建云端任务。',
+    session_creation_unconfirmed: '会话创建结果尚未确认，请重试原请求。',
     service_instance_mismatch: '服务已重启，请从启动终端的新链接重新打开；当前输入已保留。',
     service_closing: '服务正在关闭，请稍后重新启动并打开访问链接。',
     project_trust_required: '项目尚未信任，当前不能执行。',
@@ -403,16 +308,6 @@ export function errorText(error: unknown): string {
     invalid_host: '请使用启动时提供的本地地址。',
     invalid_origin: '请求来源不匹配，请从本地页面操作。',
     session_busy: '当前会话仍在运行或收尾，输入内容已保留。',
-    git_delivery_dirty: '本机有未提交改动，请先在本机处理，原内容保留。',
-    git_delivery_head_changed: '本机分支已变化，请重新审查目标；本次不会自动合入。',
-    git_delivery_branch_exists: '该本机分支已存在，请选择新的分支名称。',
-    git_delivery_pending: '这个项目有尚未确认的交付，请先打开对应结果核对原操作。',
-    git_delivery_unconfirmed: '交付结果尚未确认，可能已产生部分改动，请核对原交付，避免重复操作。',
-    git_delivery_project_changed: '项目登记信息已变化，请先在本机核对原交付及目标位置。',
-    git_delivery_discarded: '应用任务引用已丢弃，已保存的差异和用户分支仍保留。',
-    git_delivery_result_ref_changed: '应用任务引用已变化，请在本机核对后处理。',
-    git_delivery_local_attributes: '本机配置了独立 Git 属性，为避免触发自定义处理，请在本机完成合入。',
-    git_delivery_capacity: '项目交付记录已达配置上限，请调整配置后重启，不会自动删除旧记录。',
     run_capacity_exceeded: '应用运行名额已满，请等待其他任务结束后重试；输入和审批选择已保留。',
     stale_run: '这次运行已结束，请刷新状态后操作。',
     stale_approval: '审批批次已变化，请重新同步后核对当前调用。',

@@ -14,6 +14,8 @@ class DeletionRepository:
                 return found,False
             # One delete per retained task; bounded management headroom keeps cleanup
             # possible when ordinary receipts are full.
+            from .releases import require_available
+            require_available(c)
             if c.execute('SELECT COUNT(*) FROM commands').fetchone()[0] >= settings.max_receipts + settings.max_retained_environments:
                 raise CloudError('command_capacity')
             changed = c.execute('UPDATE tasks SET revision=?,record_json=? WHERE task_id=? AND revision=? AND generation=?',

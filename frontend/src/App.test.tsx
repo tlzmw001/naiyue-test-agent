@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import App from './App';
+import { installDialogMock } from './testDialogs';
 import { WebApi } from './api';
 import type { SseFrame } from './sse';
 import type { SessionView } from './types';
@@ -33,25 +34,33 @@ it('bridges a verified cloud result into the main draft and sends only after exp
       local_session_id: 's', binding_id: 'B', result_id: 'R', input_id: task.input_id, phase: 'available', active: false, files: [] })),
     analysisDraft: vi.fn(async (_s, id: string) => ({ local_project_id: project, local_session_id: 's', receive_id: id, text: '请分析云端报告', material_refs: [{ ...material, receive_id: id }] })) };
   vi.spyOn(api, 'cloudTasks').mockReturnValue(cloud as unknown as ReturnType<typeof api.cloudTasks>);
-  render(<App api={api} cloudCandidate />);
+  render(<App api={api} />);
   const sessionButton = await screen.findByRole('button', { name: '本机主会话 A' });
   await act(async () => { fireEvent.click(sessionButton); });
   fireEvent.change(screen.getByRole('textbox', { name: '消息' }), { target: { value: '保留的本机请求' } });
   fireEvent.click(screen.getByRole('button', { name: '指令与功能' })); fireEvent.click(screen.getByRole('menuitem', { name: '云端任务' }));
   fireEvent.click(await screen.findByRole('button', { name: /任务 aaaaaaaa/ }));
+  const restoreDialog = installDialogMock();
+  try {
+  fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
+  const resultDialog = await screen.findByRole('dialog', { name: /结果与产物/ });
+  fireEvent.keyDown(document.body, { key: 'Escape' });
+  expect(screen.getByRole('complementary', { name: '辅助侧栏' })).toBeTruthy();
+  fireEvent(resultDialog, new Event('cancel', { cancelable: true }));
+  fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
   fireEvent.click(await screen.findByRole('button', { name: /运行 run12345/ }));
-  fireEvent.click(await screen.findByRole('button', { name: '接收到本机' }));
-  fireEvent.click(await screen.findByRole('button', { name: '交给主会话分析' }));
+  fireEvent.click(await screen.findByRole('button', { name: '交给主 Agent 分析' }));
   await waitFor(() => expect(screen.getByRole('textbox', { name: '消息' })).toHaveProperty('value', '保留的本机请求\n\n请分析云端报告'));
   expect(screen.getByRole('region', { name: '云端材料引用' })).toBeTruthy(); expect(api.start).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
   await waitFor(() => expect(api.start).toHaveBeenCalledOnce());
-  expect(vi.mocked(api.start).mock.calls[0][7]).toEqual(['M']);
+  expect(vi.mocked(api.start).mock.calls[0][6]).toEqual(['M']);
+  } finally { restoreDialog(); }
 });
 
 it('opens cloud observation from the candidate menu without creating a task or main run', async () => {
   const { api } = client();
-  render(<App api={api} cloudCandidate />);
+  render(<App api={api} />);
   fireEvent.click(await screen.findByRole('button', { name: '指令与功能' }));
   fireEvent.click(screen.getByRole('menuitem', { name: '云端任务' }));
   expect(screen.getByRole('tab', { name: '云端任务' }).getAttribute('aria-selected')).toBe('true');
@@ -117,7 +126,7 @@ it('opens the shared sidebar, selects tasks, and retains it when creating a chat
   expect(api.start).not.toHaveBeenCalled();
 });
 
-it('uses one icon and three keyboard tabs, then returns focus when collapsed', async () => {
+it('uses one icon and four keyboard tabs, then returns focus when collapsed', async () => {
   const { api } = client();
   render(<App api={api} />);
   const trigger = await screen.findByRole('button', { name: '打开辅助侧栏' });
@@ -134,7 +143,7 @@ it('uses one icon and three keyboard tabs, then returns focus when collapsed', a
   fireEvent.keyDown(agents, { key: 'ArrowRight' });
   expect(screen.getByRole('tab', { name: /后台任务/ }).getAttribute('aria-selected')).toBe('true');
   fireEvent.keyDown(document.activeElement!, { key: 'End' });
-  expect(screen.getByRole('tab', { name: '上下文' }).getAttribute('aria-selected')).toBe('true');
+  expect(screen.getByRole('tab', { name: '云端任务' }).getAttribute('aria-selected')).toBe('true');
   fireEvent.keyDown(screen.getByRole('complementary', { name: '辅助侧栏' }), { key: 'Escape' });
   expect(screen.queryByRole('complementary', { name: '辅助侧栏' })).toBeNull();
   expect(document.activeElement).toBe(trigger);
@@ -222,18 +231,15 @@ it('retains input during stop, without automatically starting another run', asyn
   expect(api.start).toHaveBeenCalledTimes(1);
 });
 
-it('puts project and execution selection immediately above the message in the composer', async () => {
+it('puts project selection above the message without the retired execution menu', async () => {
   const { api } = client('11111111-1111-1111-1111-111111111111');
-  const options = vi.spyOn(api, 'executionOptions');
   render(<App api={api} projectEntry={() => <button>项目选择入口</button>} />);
   const context = await screen.findByRole('region', { name: '项目与执行位置' });
   const project = within(context).getByRole('button', { name: '项目选择入口' });
-  const execution = within(context).getByRole('button', { name: '执行位置：此计算机' });
+  expect(within(context).queryByRole('button', { name: /执行位置/ })).toBeNull();
   expect(project.closest('header')).toBeNull();
-  expect(execution.closest('header')).toBeNull();
   expect(context.parentElement?.contains(screen.getByRole('textbox', { name: '消息' }))).toBe(true);
   expect(context.compareDocumentPosition(screen.getByRole('textbox', { name: '消息' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(options).not.toHaveBeenCalled();
 });
 
 it('keeps the model selector in the header without a product title', async () => {

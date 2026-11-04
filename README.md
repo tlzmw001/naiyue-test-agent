@@ -11,11 +11,15 @@
 - **子 Agent**：委派任务，并按需沿已有子实例的上下文继续工作。
 - **历史与记忆**：查询项目会话历史，维护项目和个人记忆；支持会话保存、迁移前备份与显式还原。
 - **外部集成**：MCP、网页搜索与抓取、AITest 工具，以及项目 Skills。
-- **可选 Docker 沙箱**：按会话选择环境模板，隔离文件和进程执行；取回结果、审查差异后再确认交付到本机。
+- **云端任务**：从主输入框加号菜单新建或续聊独立任务；云端Coordinator/Runner执行，本机可离线，结果可保存报告、应用代码或交给主Agent分析。
 
 0.5.6 的更新与升级说明见[版本说明](https://github.com/tlzmw001/naiyue-test-agent/blob/v0.5.6/docs/releases/0.5.6.md)。
 
-远端沙箱支持直接 SSH 连接 Linux Docker，Windows 可复用 OpenSSH 和跳板机配置，无需安装 Docker CLI。当前使用预先准备的 key/ssh-agent；公司原机验收及普通密码后台认证尚未完成，准备步骤见[远端 SSH 使用说明](docs/remote-docker-ssh.md)。Agent 0.5.6 的常驻通道与权限隔离需要配套新镜像，请从 [0.5.6 Release](https://github.com/tlzmw001/naiyue-test-agent/releases/tag/v0.5.6) 下载 Linux x64 离线镜像，包含 envd 0.5.5 与 AITest Kit 0.6.0；旧会话不自动迁移。
+当前工作区已将正式云端入口切换为B任务链，普通主会话在本机运行。Windows通过预先配置的OpenSSH连接云端管理服务，无需本机Docker CLI；Linux侧使用独立Coordinator、OpenSandbox及受信Runner模板。准备和后续统一验收见[Windows＋Linux手册](docs/cloud-s091-windows-and-linux.md)，结果操作见[结果取回](docs/cloud-result-delivery.md)。
+
+本工作区更改尚未发布，当前版本号不能单独证明候选源码身份。旧A的环境配置、按会话Docker执行及旧sandbox会话已不再支持；程序不会迁移或清理旧数据、卷或镜像。已有配置中的`[sandbox]`/`[delivery]`需要用户手动移除，本机服务协议已升级为2，升级前应先用旧版CLI或旧服务原入口显式关闭旧服务，再启动新版；已升级时仍用旧服务原入口停服，新版不会兼容接管旧协议。
+
+显式云端更新、Windows通过SSH触发、维护和已有任务换代见[更新说明](docs/cloud-updates.md)。本机代码/受控进程验证与原机验收分别记录。
 
 ## 安装
 

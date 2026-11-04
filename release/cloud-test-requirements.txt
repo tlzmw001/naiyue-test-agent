@@ -1,4 +1,4 @@
-# Resolved for the initial Python 3.12 B test template; Kit wheel SHA is in sandbox-image.json.
+# Resolved for the initial Python 3.12 B test template; Kit wheel SHA is in cloud-test-toolchain.json.
 PyYAML==6.0.3
 Pygments==2.21.0
 aitest-kit==0.6.0

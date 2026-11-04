@@ -27,7 +27,7 @@ class LocalMaterials:
     def validate_refs(self,session_id,ids):
         if self.project_id is None or self.files.root is None:raise CloudError('cloud_materials_unavailable')
         if len(ids)>self.limits.max_files or len(set(ids))!=len(ids):raise CloudError('cloud_material_budget',413)
-        return [self._get(session_id,mid) for mid in ids]
+        with self.files.use():return [self._get(session_id,mid) for mid in ids]
 
     def has_materials(self,session_id):
         return self.project_id is not None and self.files.root is not None and self.repo.has_materials(session_id,self.project_id)
@@ -39,7 +39,7 @@ class LocalMaterials:
         if limit is None:limit=min(200,self.limits.max_read_lines)
         if type(offset) is not int or offset<1 or type(limit) is not int or not 1<=limit<=self.limits.max_read_lines:
             raise CloudError('cloud_material_budget',413)
-        with self.owner.operation():
+        with self.owner.operation(),self.files.use():
             return await run_blocking(self._read,source_session_id,request['material_id'],offset,limit)
 
     def _read(self,sid,mid,offset,limit):

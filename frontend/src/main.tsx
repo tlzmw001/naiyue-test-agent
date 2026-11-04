@@ -9,4 +9,4 @@ import './global.css';
 const connection = browserConnection();
 const api = new WebApi(connection.token, connection.scopeId, connection.instanceId);
 createRoot(document.getElementById('root')!).render(<StrictMode>{connection.scopeId === 'legacy'
-  ? <LegacyHistory connection={connection} /> : <ProjectWorkspace api={api} cloudCandidate={import.meta.env.MODE === 'cloud-candidate'} />}</StrictMode>);
+  ? <LegacyHistory connection={connection} /> : <ProjectWorkspace api={api} />}</StrictMode>);

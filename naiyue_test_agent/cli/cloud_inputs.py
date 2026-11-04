@@ -20,7 +20,7 @@ def execute(args):
         plan=select_git(args.source,limits,include=args.include,exclude=args.exclude)
         output=args.output.expanduser().absolute();check_store_directory(output.parent)
         if output.is_relative_to(args.source.absolute()):raise CloudError('input_capture_overlap')
-        with os.fdopen(open_store_file(output,exclusive_create=True),'w') as stream:
+        with os.fdopen(open_store_file(output,exclusive_create=True),'w',encoding='utf-8') as stream:
             stream.write(plan.model_dump_json());stream.flush();os.fsync(stream.fileno())
         sync_store_directory(output.parent)
         return dict(plan=str(output),files=len(plan.selection['paths']),excluded=len(plan.receipt.excluded),

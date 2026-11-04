@@ -1,5 +1,19 @@
 # 锁层级与获取约定
 
+## Spec143 S10.1/S10.2 显式更新、维护与离线运维
+
+| 锁／预留 | 当前消费者 | 顺序、IO与恢复 |
+| --- | --- | --- |
+| UP1 `UpdateStore` per-command OS锁 | create/execute、CLI cancel、status/launch探测；私有jobs/UUID.lock | worker按UP1→UP2取得，FD不可继承；新job登记在UP1下短取UP2核对GC fence，先放UP2再放UP1。CLI GC确认/恢复启用只推进原job意图，launch探测后释放再spawn，子worker不继承父锁。status读取原子JSON并探测是否仍有producer，不靠PID判定完成。 |
+| UP2 jobs/build.lock | 同一部署目录的下载/构建/预检/登记/升级备份、完整备份/恢复/GC | 只在独立Updater进程持有，可跨其HTTP/Docker IO。在线更新按UP1→UP2→prepare锁→Owner API，不直接进入Owner DB；Coordinator不回调Updater。离线按UP1→UP2→CO0→registry DB，恢复启用的两个CO0按绝对路径排序且非阻塞；先独占原根并物理确认无task/helper writer，再打开管理DB。不得从CO0/DB反取UP1/UP2，离线释放后才重新启动Coordinator。 |
+| registry DB发行/维护CAS | ready/active、全局manifest身份、maintenance、新任务选定snapshot | 同一短事务登记指针与回执；task创建最终事务解析logical template active并固定。新run/start/capture/delete/transfer在真实预留事务检查maintenance，原命令重复先查旧回执。 |
+| CT1→registry DB 升级预留 | UpgradeRepository reserve/verified/commit/cancel | 环境占用字段阻止并发start/delete/replace；release:upgrade不进入EnvironmentOperation解析。backend find、Docker raw备份、容器kill/rm/身份复核均在CT1/DB外；提交与取消重查原op/代际/摘要。 |
+| MI1 持久纯IO租约 | 输入/产物下载、结果GC | DB事务中maintenance检查与lease登记原子；lease是跨IO预留，不持DB锁跨IO。已经deleting的GC可按原command续接；租约与deleting状态持续计入draining。CO0独占启动且接受新IO前退休旧进程纯IO lease，未决业务command/任务unknown保留。 |
+
+物理备份容器由固定name与instance/task/command/reservation/image身份共同约束；worker中断/超时/取消先确认原容器退出。未确认保留任务预留，不释放为可重启。单个job日志与请求只在UP1下推进，网络等待取消不产生第二个激活。
+
+恢复/GC在CO0下先持久registry格式2，再root格式2，再写guard，旧读者即使拿锁前缓存root1也会被DB格式拒绝。restore先封旧根再开新根；GC deleting跨进程标记阻止Coordinator和新job准入，finalizing只收束标记，不重复物理删除。两个不同work_dir仍由同一CO0/原guard互斥。S11验收脚本仅持独立输出probe.lock，任务线程各写独立journal，不嵌套产品锁或共享HTTP client；不得并发复用同一输出目录。
+
 ## Spec143 S06.2a 本机手动委派
 
 | 锁／预留 | 保护对象和消费者 | 顺序与关闭 |
@@ -58,58 +72,11 @@ LC1 关闭仍先封口/排空在途读和admit，再排空全部创建/命令 fl
 | RO1 S06.1b Runner观察队列短锁 | `RunnerObservations._lock`保护有界deque/字节/序号/丢失计数 | 生产者沿既有运行publisher投递后进入RO1；只做有限入队/相邻delta合并或drain，不调用会话、DB、网络或反向publisher。订阅解除在RO1外；发送协程释放RO1才取CS1，观察send有绝对截止，网络失败不取消Agent根循环。恢复重装SessionService后重绑，Runner关闭始终解除订阅 |
 | CO1 S06.1b实时投影/订阅（owner-loop预留，非线程锁） | `CloudObservations.states/leases`、`LiveTask`与回放环 | 仅owner loop访问；worker在CT1→registry验证fence/run，释放后才单history库保存可选usage/查询确认内容。IO前后均核connection，旧连接不能写新视图；worker不访问loop集合。快照按观察版本有限重读；订阅在await快照后重核额度，再无await登记。SSE等待/发送不持CT1/DB，关闭先封口/唤醒leases，再排空监听与原控制/模型/数据库 |
 
-## Spec141F 空环境继续准备
+## S09旧A锁退出
 
-服务single-flight准备任务在activity.use之前处理原stopped空环境。先取activity.manage预留，再在worker
-读取scope/冻结selection/输入三标记/完整operation记录；仅明确空环境调用既有_perform_action(start)。
-manage是跨IO预留而非跨await持有的同步锁；DKR2和DB仍只在worker取得，不能在use内反向申请manage。
-start保存running后同一worker写本次resumed_here事实，run_blocking排空后才释放预留。
-再次取消/准备失败的空环境收尾重新取manage，只stop本次恢复的旧环境；created_here资格仍由原fresh回执决定。
-不新增互斥锁，不在owner loop执行DB/同步Docker，不在start worker中调用interrupt管理等待自身。
+2026-11-03：A环境/传输/准备/操作/输入/结果/交付锁与准备计时脚本已退出；记录见[A阶段历史锁说明](history/lock-hierarchy-a.md)。当前本机运行与B任务遵循下方仍有消费者的锁表；不再获取A管理预留或等待环境发送的门闩。
 
-## Spec141E 并行首次准备
-
-服务准备任务同时拥有snapshot与container两个分支，均经run_blocking在工作线程执行。
-snapshot仍持GI2(input)并分段取得DB；container仍持DKR2(binding)并分段取得DB及连接授权。
-两个分支不互取对方的同步锁，不持DB等另一分支；只由外层协程await_settled(gather)排空，
-完成后才进入原安装的DKR2→GI2路径。失败在释放activity使用预留后，先取得activity.manage预留，
-在worker读冻结记录与完整operation清单，再调用既有_perform_action进入DKR2；不持同步锁跨await。
-仅服务新建成功回执证明容器和双卷均本次新建、明确未安装、输入三字段全空、无任何操作、精确scope的running环境才可回滚；
-真实失败销毁本次空容器/双卷，取消仍沿stop语义，unknown/既有资源不动。不得调用interrupt管理等待自身。
-on_created回执仅在DKR2内保存running且确认fresh_resources后设置本次内存事实，不取其他锁/IO，调用方排空worker后才读取。
-
-SandboxTransport._starting是传输owner-loop独占的精确连接身份集合，无新增线程锁。
-只有已保存creating环境的service._create可登记；_open在第一次main尝试且无await的短段消耗，
-finally撤销未用许可；普通get/reconnect/recover不登记。允许DKR2→runtime.call，transport loop不回取DKR2/DB。
-Recorder仍为PRF1叶锁；并行阶段只记录时间区间，区间并集计算在锁外，不形成新锁嵌套。
-
-## Spec141D 独立准备计时脚本
-
-`scripts/profile_sandbox_preparation.py` 的 `Recorder._lock` 只用于该脚本进程内的当前轮次、
-有界事件追加和结束快照；不接入产品运行时。Git/管理方法可能在既有生产锁内完成，因此允许
-既有锁 → Recorder短锁；Recorder锁内没有日志、文件、数据库、网络、await或被观测方法调用，
-不存在Recorder → 生产锁的反向路径。汇总与JSON输出均在锁外；包装器在调用原方法前释放该锁。
-
-## Spec141B 常驻传输（2026-10-29，实施中）
-
-复核后的修正约束见[Spec141B第10.5/10.6节](specs/141b-persistent-sandbox-execution.md#105-单请求结束后的迟到回复接收责任有界保留)：pending→retired迁移及其接收额度由原transport loop原子拥有；部分帧和缓存另有有限预算。binding清理为单批single-flight，默认策略最多2次终止/共享10秒总预算；失败记录与封锁分离，普通get不重新触发清理。显式恢复只能开启新的有限批次，原资源未确认退出不得开放任一lane。源码已按这些约束接线并经专项验证；完整构建与公司验收状态以Spec检查点为准。
-
-修正实施：EnvironmentActivity.ause在原短RLock保护的使用权标记之外await worker touch；touch版本登记和uncertain只在短锁内更新，不持锁做数据库IO。版本只保留每binding最新在途更新，旧更新结束不得覆盖较新失败。operation算法获取仓储句柄也交worker，不在transport loop等待P1；watcher完成回调由原owner loop按task身份删除登记。
-
-- EOP1同时保护有界_searches及原control/Event。request_register的UDS存活租约由请求handler持有；socket等EOF不持EOP1，finally回取EOP1取消/释放，搜索finally同锁退登记。不得在EOP1里等搜索/子进程结束。
-- Web待发送沿原W1登记producer及回执，锁外等待环境和执行。stop_submission在W1内标记取消，在锁外排空producer；精确expected_run_id先于W3投影绑定过滤。原RunAPI准入经S1/既有runtime锁，在RunLifecycle.admit_run同一临界区比较冻结设置、验证queued图片归属并消费；该段无网络/DB IO。失败/取消在原图片runtime锁下转retained，不新增锁或通用队列。
-- EnvironmentService 独占 SandboxTransport；其一个 SandboxRuntime 线程拥有所有 asyncio 流和连接表。调用方跨 loop 仅交付 coroutine/Future，不转移流、锁或连接对象。runtime 的 RLock 只保护启动/封口，实际网络和关闭在锁外；不得从 transport loop 同步回调 runtime.call。
-- 连接表由 transport loop 串行更新；键是 binding+lane，内容校验完整容器/daemon/session/冻结配置。建连任务是 single-flight，global connecting semaphore 仅限制建连；不同 binding 不持共享网络 mutex。binding 级 invalidating 标记同时封住 main/bulk；不能在旧通道关闭过程中开另一 lane。
-- 每通道普通/控制分别限制活动和排队；控制名额不被普通排队占用。FrameStream 一个有界优先队列、一个 writer；每条消息每次最多排一帧，writer 在实际首次 write 前设置发送责任。尚未发送的取消帧不写出；已发送请求保持回执托管。
-- stop/destroy 在 DKR2 下仅封口并启动异步连接退休，不等待尚在核验的旧建连，再走独立管理命令。start/recover 等退休完成后重建。连接退休失败保留标记并传播/诊断，不能当作未获得资源吞掉。
-- envd 每次启动生成 generation，UDS请求先检查代际再分派副作用；attach TaskGroup 中任一致命协议错误取消主读取和其他桥接任务，不停止 envd 已托管的任务。工作负载停止仍由原 EOP1/journal 合同处理。
-- 控制端 operation 算法同属 SandboxRuntime loop。原 SOP2 线程 RLock 改为按 `(binding,operation_id)` 的 asyncio.Lock；等待者计数归零即移除，不随历史任务无限增长。submit/refresh/background 的状态与归档更新串行；stop 先走控制槽，再进入同一 operation 锁核对最终状态，不等待输出下载才发送。锁内本地 DB/归档 IO 委托有界工作线程，不同步回调 runtime.call。
-- 同步 Git输入、Git结果、服务关闭仍通过 submit/refresh/stop 的明确跨 loop 桥接进入同一套算法。ResultService.capture 只保留 DKR2 负责结果下载/发布，移除其对旧 operation RLock 的嵌套；操作状态只按字段保存，不能覆盖交付 metadata。
-- 同 operation 的 submission Event 仅覆盖本地 reserve、一次远端提交和必要回执保存；取消等待者不能提前释放。stop 先等此事件，避免控制帧超越未发送完整的提交，再绕过输出锁发控制请求。事件在所有提交终局移除，身份为 binding+operation_id。
-
-以下领域表的 SOP/准备/交付入口已按141B迁移同步；其余历史版本说明仅作背景。
-
-核对日期：2026-10-26。适用代码：`codex/project-execution-root` 工作树的 R1-13D-04 当前实现（包含尚未提交的 R1 变更），不是仅凭分支 HEAD 判断的历史版本。主目录尚未合入该实现；合并后沿用本表。
+核对日期：2026-11-03。当前适用主工作区S09正式接线实现；旧A专用锁已移至历史记录，普通本机及B当前锁继续维护。
 
 本表是修改并发代码时的维护合同，记录保护对象、允许获取的入口和当前嵌套关系；不宣称已经形式化证明无死锁，也不新增运行时锁检查。核对范围是 `naiyue_test_agent/` 生产代码中的显式锁、条件变量、信号量、文件占用锁，以及应用直接使用的 saver 锁。测试里的同步对象、SDK/SQLite/日志库内部锁不逐个列入。
 
@@ -128,17 +95,15 @@ Recorder仍为PRF1叶锁；并行阶段只记录时间区间，区间并集计�
 
 | 编号／锁 | 类型与保护对象 | 允许在哪里获取 | 和其他锁的顺序／持有边界 |
 | --- | --- | --- | --- |
-| PRF1 `Recorder._lock`（Spec141D独立脚本） | `Lock`，仅保护实验进程内的轮次与有界计时事件 | `begin/capture/invalidate/record/end`；生产运行时不注册 | 允许既有锁 → PRF1叶锁；锁内仅内存操作，调用原方法、汇总、日志和JSON IO均在锁外；无反向获取生产锁。 |
 | G1 `ScopeServices._scopes.serial(scope_id)` | 异步锁，每个 Web scope 的服务创建、关闭互斥 | [service/scopes.py](../naiyue_test_agent/service/scopes.py) 的 `get/_open/close_project`，通过 [ScopeTasks](../naiyue_test_agent/application/lifetime.py) | `G1 → G4`；创建时可间接进入项目服务。不同 scope 各自独立，不用它串行所有项目。 |
 | G2 `ScopeTasks.serial(('selection_root', root))` | 异步锁，旧入口按规范化根目录协调准备 | [ProjectSelection.prepare](../naiyue_test_agent/application/projects/selection.py) | `G2 → G3 → G4`，缺少某个 key 时跳过该层；期间可进入 P1 和旧 workspace 文件锁 F2。 |
 | G3 `ScopeTasks.serial(('selection_store', path))` | 异步锁，旧数据库路径的准备／导入互斥 | 同上；只在已确定旧库路径后获取 | `G3 → G4`；允许进入 P1／F3。不得从 G4 反向准备旧目录。 |
 | G4 `HostManager._scopes.serial(('host', id))`／`('temporary', id)` | 异步锁，同一 project/chats/临时 host 的打开、列历史、关闭、移除、定位互斥 | [HostManager](../naiyue_test_agent/application/projects/host_manager.py) 的 `_scopes.open/serial`；`ProjectSelection._prepare` 的最终检查 | `G4 → {P1, G5, A1}`；host 打开／关闭期间也会进入本 host 的会话、资源和数据库入口。同 key 不可重入；跨项目不叠持 G4。冷打开共用 task，不再持全局打开锁。 |
 | G5 `DeferredModels._lock` | 异步锁，模型目录首次构造／准备的单次发布 | [DeferredModels.get](../naiyue_test_agent/application/service_application.py) | 可在 G4 内获取；模型准备可涉及自身的模型／HTTP 局部锁。不得在加载回调中反向打开 host 或获取 G4。 |
-| G6 `EnvironmentAPI._refresh_lock` | 异步锁，只串行环境配置的读取、校验与发布 | [EnvironmentAPI.refresh](../naiyue_test_agent/application/environments/api.py) | 持锁等待读取线程排空；取消不发布候选，下一次刷新须等原线程结束。发布在owner loop一次替换不可变目录；不获取G1—G5、项目／会话锁、数据库锁或Docker锁，不保护run、历史、停止和普通选项读取。 |
 | P1 `ProjectService._lock` | `RLock`，项目注册服务的懒加载、操作预留／恢复、关闭 | [ProjectService](../naiyue_test_agent/application/projects/service.py) 的 list/get/add/create/rename/relocate/remove/import/reconcile/close | `P1 → DB(registry)`；项目建库、导入、移除还允许 `P1 → F3`。保留同线程 `get/reconcile` 重入；不在持有 P1 时反向获取 G1—G4。运行期 `RegisteredExecution` 直接读取 registry.execution_facts，只取得 DB(registry)，不反取 P1。 |
-| A1 `RunAdmission.lock` | `RLock`，全应用根运行的容量检查、准入提交与项目交付预留 | [SessionService._admit](../naiyue_test_agent/application/sessions/session_service.py)；[RunAdmission.available/manage_project/check_project/release](../naiyue_test_agent/application/sessions/run_admission.py)；available要求调用者已持有A1，release只在生命周期确认排空后调用 | `A1 → A2 → S3`；统计时逐个取得 A2，释放 A2 后读取对应 actor 的 S3，不同时锁多个 service。目录／注册 revision 验证在取得 A1 前完成。 |
+| A1 `RunAdmission.lock` | `RLock`，全应用根运行的容量检查与准入提交 | [SessionService._admit](../naiyue_test_agent/application/sessions/session_service.py)；[RunAdmission.available/release](../naiyue_test_agent/application/sessions/run_admission.py)；available要求调用者已持有A1，release只在生命周期确认排空后调用 | `A1 → A2 → S3`；统计时逐个取得 A2，释放 A2 后读取对应 actor 的 S3，不同时锁多个 service。目录／注册 revision 验证在取得 A1 前完成。 |
 | A2 `SessionService._lock` | `Lock`，已加载 actor、子 Agent 角色、组装／关闭状态的注册表 | [SessionService](../naiyue_test_agent/application/sessions/session_service.py) 的注册／查找／快照／准入／删除 guard；`RunAdmission.available` | `A2 → {S3, B1, E1, M1}`：分别用于读 actor、检查清理、取订阅快照、冻结模型错误映射。不得反向获取 A1 或 S2。建图、创建会话的必要 SQL、运行及关闭等待在释放 A2 后执行。 |
-| S1 `SessionPersistence._history_locks[session_id]` | 异步锁，同会话准备、收尾、恢复、删除和记忆证据保存的协调 | [SessionPersistence](../naiyue_test_agent/application/sessions/session_persistence.py) 的 `aprepare/afinish/arecover/adelete`；[MemoryAPI.query](../naiyue_test_agent/application/memory/api.py) 的写入分支 | `S1 → {S2, D1, DB, D2, GI2}`。这是共同外层门闩，各分支分段获取内层锁；删除失败输入记录通过 GI2，SQL 事务与 saver 调用不交叉持有。`arestore` 自己只用 S2 预留，`aprepare` 可在 S1 内调用它。 |
+| S1 `SessionPersistence._history_locks[session_id]` | 异步锁，同会话准备、收尾、恢复、删除和记忆证据保存的协调 | [SessionPersistence](../naiyue_test_agent/application/sessions/session_persistence.py) 的 `aprepare/afinish/arecover/adelete`；[MemoryAPI.query](../naiyue_test_agent/application/memory/api.py) 的写入分支 | `S1 → {S2, D1, DB, D2}`。这是共同外层门闩，各分支分段获取内层锁；SQL 事务与 saver 调用不交叉持有。`arestore` 自己只用 S2 预留，`aprepare` 可在 S1 内调用它。 |
 | S2 `SessionPersistence._lock` | `Lock`，`_active/_recovering/_blocked` 的预留与短状态更新 | [SessionPersistence](../naiyue_test_agent/application/sessions/session_persistence.py)；[ProjectHost._check_idle](../naiyue_test_agent/application/projects/host.py) 只读取协调状态 | `S2 → A2 → S3`，用于 `_delete/_install_session` 等配对检查。预留后释放 S2 再做 SQL、saver 或 `await`；`start` 的 mark_running、afinish 的归档／裁剪都不持 S2 做 IO。 |
 | S3 `SessionRuntime.lock` | [SessionRuntime](../naiyue_test_agent/application/sessions/session_state.py) 的 `Lock`，同一 actor 的 SessionState、ActiveRun、控制队列、审批、存活子实例 | [AgentSession](../naiyue_test_agent/application/sessions/agent_session.py)、[RunLifecycle](../naiyue_test_agent/application/sessions/session_execution.py)、[ControlQueue](../naiyue_test_agent/application/sessions/session_controls.py)、[ApprovalBook](../naiyue_test_agent/application/sessions/session_approval.py)、[SubagentRegistry](../naiyue_test_agent/application/subagents/session_subagents.py)、[subagent_records.admit](../naiyue_test_agent/application/subagents/subagent_records.py) | `S3 → {C1, E2, E4}`，只做停止标记、控制记录、turn 保存／恢复。四个协作者共用这一个实例；调用者已持锁时使用不再次获取 S3 的内部 guard。不得反向获取 A2／S2；不得执行模型／工具／SQL、控制事件 flush 或等待子实例。 |
 | S4 `AgentSession._model_selection_lock` | `Lock`，模型／思考档位的落库与内存提交顺序 | [AgentSession.select_model/select_thinking](../naiyue_test_agent/application/sessions/agent_session.py) | `S4 → {DB(project), S3}`，SQL 返回释放 DB 后才修改 S3；思考档位先在 S3 下核对，释放后落库，再取 S3 提交。 |
@@ -156,7 +121,7 @@ Recorder仍为PRF1叶锁；并行阶段只记录时间区间，区间并集计�
 | T4 `MCPSessionResources._slots[server_id]` | 异步信号量，每服务器借用并发数；构造／刷新新增服务器时创建 | [MCPSessionResources.borrow](../naiyue_test_agent/mcp_client/resources.py)；[refresh.py](../naiyue_test_agent/mcp_client/refresh.py) 只创建新增槽 | 保持至借用及必要收尾完成；不在该槽内调用 refresh 或再借同服务器。MCP owner 结构由事件循环管理，不额外假设有一把连接 mutex。 |
 | T5 `ToolRegistry._lock` | `Lock`，工具定义注册、MCP 原子发布、名称快照／选择 | [ToolRegistry](../naiyue_test_agent/tools/registry.py) 的 register/get/publish/select/names | 叶锁；规则校验不执行工具／审批／MCP IO。工具可用性判断在 `select` 返回、释放锁后执行。 |
 | T6 `OneUseApprovalGrants._lock` | `Lock`，精确审批授权的一次性消费 | [OneUseApprovalGrants.consume](../naiyue_test_agent/tools/permissions.py) | 叶锁；校验 subject 与删除在同一临界区；释放后执行工具，不包住工具副作用。 |
-| T7 `tools.write._active_targets_lock` | 模块 `Lock`，write/edit 共用的规范化绝对目标忙碌集合 | [write._reserve_target](../naiyue_test_agent/tools/write.py)，文件后端复用该入口 | 叶锁；只检查／增删集合，`yield` 前释放；保留目标预留期间执行文件 IO，不等于持有 T7。不同目标独立，重复目标立即报忙。Spec141A的`envd.file_mutations.mutate`先预留公开目标，再由既有write/edit算法预留独立私有暂存目标；两次均不叠持T7，暂存路径每操作独立且无反向调用。预留不能阻止任务直接写文件，提交仍需FD/身份/内容检查。 |
+| T7 `tools.write._active_targets_lock` | 模块 `Lock`，write/edit 共用的规范化绝对目标忙碌集合 | [write._reserve_target](../naiyue_test_agent/tools/write.py)，文件后端复用该入口 | 叶锁；只检查／增删集合，`yield` 前释放；保留目标预留期间执行文件 IO，不等于持有 T7。不同目标独立，重复目标立即报忙。预留不能阻止任务直接写文件，提交仍需FD/身份/内容检查。 |
 | O1 `ProcessCapture._lock` | `RLock`，一个进程的输出累积、前后台切换、capture 收尾快照 | [ProcessCapture.record/promote/finish/snapshot](../naiyue_test_agent/tools/process_execution.py) | `O1 → O2 → O3`。输出 worker 可获取；不在内部回调 B1、会话或 Web 控制。 |
 | O2 `ShellOutputArchive._lock` | `Lock`，一个归档的 prefix/handles/paths/bytes/关闭事实 | [ShellOutputArchive](../naiyue_test_agent/tools/output.py) 的 record/promote/activate/finish/snapshot/available/mark_incomplete 等 | `O2 → O3`；`_activate/_write` 为已持 O2 的内部入口，不重复获取 O2。当前可能持锁读写磁盘。 |
 | O3 `tools.output._GLOBAL_LOCK` | 模块 `Lock`，当前所有 Shell 归档目录校验、文件创建／写入与预览／清理 | [preview_shell_outputs/clear_shell_outputs](../naiyue_test_agent/tools/output.py)、`ShellOutputArchive._write/available` | 叶锁；禁止 `O3 → O2/O1/B1`。当前是进程级全局锁，跨项目也会竞争；未实现按归档根拆分。 |
@@ -265,88 +230,6 @@ HostProcesses 在 RunLifecycle.admit_run 的短锁内只保存同一 HostFileSys
 
 BackgroundProcessManager.submit/foreground 的 `_validate_binding` 在取得 B1 前完成执行目录、项目登记/revision、请求环境与归档根检查，数据库短锁在返回循环前释放；随后 `_register` 仍在 B1 内只作内存注册和 worker 所有权交接。关闭可以发生在这两个阶段之间，第二阶段必须拒绝；此间不构成 DB → B1 嵌套。O1 → O2 → O3 的捕获／归档关系及现有优化暂缓决定保持。
 
-## R1-10 环境生命周期与 envd
-
-| 标识 | 保护对象与入口 | 顺序与禁止事项 |
-|---|---|---|
-| DKR1 `EnvironmentService._guard` | 已知 binding ID 到生命周期锁的字典；仅 `_lock` 短查询/插入 | 在 worker 中使用，释放后才取得 DKR2；不在此锁内访问仓储、Docker、文件或回调。 |
-| DKR2 每 binding 的 `RLock` | create（包含最初 reserve）、start/stop/destroy/recover；全部从 EnvironmentAPI 的 run_blocking 进入 | `DKR2 → DB(registry)` 只做短记录提交/读取，事务释放后再 Docker IO。禁止持 DB 等待 DKR2。不同 binding 不互相等待；事件循环不取得它。文件 RPC 不持 DKR2，仍允许容器内原 Write/Edit 目标锁发现同文件冲突。 |
-
-创建 UUID 在本地确定后，先预留绑定活动使用权，再取得 DKR2 并公开 creating 记录；默认并发 destroy 报 env_busy；显式 interrupt 先封活动准入、请求准备检查点取消并排空已发创建，才进入 DKR2 销毁，不会先返回 destroyed 后被 create 复活。查找字典锁 DKR1 不与 DKR2 同时持有。ProjectService.environment_records 只在 worker 用原项目写锁获取/初始化仓储句柄，离开该锁和数据库事务才连接 Docker；轻量 execution_facts 不取得项目写锁。
-
-R1-13D-04 的 EnvironmentActivity._lock 是叶级短内存 RLock，只保护使用计数、管理标记和时间保存不确定集合。use/manage 上下文保留的是标记，不持该锁跨 await、SQL、绑定锁或 Docker IO。run/审批恢复/压缩/重生成、输入安装和结果捕获全程持使用权，管理独占标记与使用权互斥；Worker 的单次 RPC 和观察刷新也取得使用权。只读刷新不更新时间，本地 env_busy 不写 unknown/stale，后台采集稍后重试。空闲检查在管理前后核对 journal，避免因扫描而打断健康观察。首次执行终局且输出结算才更新时间。
-
-额度通过 DB(registry) 同一短写事务读取计数并预留 creating/starting，释放数据库锁后才连接 Docker；不新增配额锁。常驻根生命周期停止检查器并封操作入口，排空进程、run 和子宿主后，才停止全部未销毁原容器（包括上次登记 stopped 的资源），不持会话/线程锁等待 Docker，不删除卷。失败尝试剩余容器，保留首异常。
-
-envd 的 Unix socketserver 在每个容器中处理请求，其框架线程管理不是应用线程锁；容器内复用原 `_active_targets_lock` 与目标占用表、进程输出/归档锁，实例不跨容器共享。协议不携带锁、publisher 或运行中的 Python 对象。R1-11 的 Shell/argv 通过登记操作入口执行；原生 fd/rg 仍在该容器内搜索。Find/Grep 的控制端 async 入口已用 asyncio.to_thread 执行只读 require_file_target，不能在 owner loop 等待同步 Docker 校验，也不反向导入运行时层。
-
-DockerCLI 使用既有 HostProcessRunner，输入仅来自有界临时文件的 stdin_fd；临时文件持有到原有 spawn/IO/进程组结算结束，没有另建 Timer、管道读线程或另一套超时回收器。Shell/AITest 默认 DEVNULL 不变，后台管理器显式拒绝借用该传输 FD。关闭应用不自动删除/停止容器；R1-11 在注册表关闭前确认停止所属活动进程。
-
-## R1-11 操作日志、归档和关闭
-
-| 标识 | 保护对象与入口 | 顺序与禁止事项 |
-|---|---|---|
-| SOP1 `SandboxOperationService._condition` 内部 `RLock` | 接受门、提交中计数及按项目的归档清理/写入预留；`accepting/close/output_guard/_archive_activity` | 仅短内存操作；释放后才取得 SOP2、查询注册表或执行 RPC。`close.wait_for` 等待时释放条件锁；不持条件锁扫描/停止操作。归档清理在释放条件锁后查询操作事实；标记保留至清理结束，submit/refresh 在 SOP2 下短取 SOP1，释放后执行 RPC/归档 IO。不得持 SOP1 等 SOP2/DB/O3。所有同步入口在 worker 执行。 |
-| SOP2 `(binding,operation_id)` 的 `asyncio.Lock` | SandboxRuntime loop 的 submit/refresh/background 状态及归档单飞；计数归零删除 | 锁内可 await 原生 RPC，并将必要 DB/归档 IO 交有界 worker；worker 不同步回取 SOP2。stop 先等 submission Event，然后绕过输出锁发控制，最后通过独立 refresh 取锁。不同 ID 不叠持，无重入。同步 Git/关闭入口由 runtime.call 进入同一算法。 |
-| EOP1 `EnvironmentOperations._lock` | envd 活跃控制对象及关闭标记；submit/stop/background/close | `EOP1 → EOP2`，预留 journal 提交后才启动 worker；原生进程等待、stop 的 done.wait 在释放 EOP1 后执行。worker 先完成 EOP2 写入并释放，再取得 EOP1 清活跃项。不得持 EOP2 等 EOP1。 |
-| EOP2 `SandboxJournal.lock` | 容器内单连接 SQLite 的预留、状态、有界输出和 close | 短同步数据库事务；不跨 Shell/文件执行、线程完成等待或 Docker IO。journal 在进程输出回调中被取得，但内部不回调原生 capture/控制对象。 |
-| F4 `/state/journal.lock` | envd journal 的 OS 排他文件锁 | 非阻塞，初始化取得至 journal 关闭；只允许该状态卷一个 envd owner。重启将旧活动行标 unknown，不采用 PID 或重放。文件锁不代替 EOP2；Spec141A由不同UID和受保护父目录阻止任务访问journal，旧同UID镜像不具备该边界。 |
-
-采集 task 的 `_watchers` 字典只由所属事件循环读写，无线程锁；task 使用空 Context。已退出的 task 可由新查询重启。归档的 offset/文件身份以本机库为准，必须在 SOP2 下先 fsync 再提交进度；首次创建文件与必要身份保存由同一个 run_blocking 托管，取消也排空，避免留下无身份归档；不会把数据库锁跨过 RPC 或 fsync。现有 O3 全局输出锁未拆分，线程池和记忆锁优化仍按用户约定暂缓。
-
-Spec141A的工作区根FD由EnvdFiles拥有：生产serve上下文先关闭Server并等待非daemon请求线程完成，再执行EnvironmentOperations.close停止/等待活动操作、关闭journal，最后关闭根FD。不能颠倒为先关FD再等待读者，也不能在EOP1内join请求线程。未新增锁或请求线程池。
-
-## R1-12A 输入快照、接收与安装
-
-| 标识 | 保护对象与入口 | 顺序与禁止事项 |
-|---|---|---|
-| GI1 `InputService._guard` | input_id 到准备锁的字典，`_lock` 短查询/插入 | 叶锁；释放后才取得 GI2，无 IO、SQL、Git 或 RPC。 |
-| GI2 每 input_id 的 `RLock` | `prepare` 的预留/本机快照/必要保存；会话 setup 首次登记；安装 input_id 引用的必要保存；`_transfer` 首次生成对应 delta；`retire` 按全部引用回收输入 | `GI2 → {DB(registry), DB(project)}` 分段短事务；首次会话登记允许 `GI2 → A2 → S3`，释放短锁才保存项目库。不持 DB 做目录删除或 Git IO。安装引用登记与 delta 允许 `DKR2 → GI2`，会话删除允许 `S1 → GI2`；不得从 GI2 回取 DKR2、S1 或 SOP2，不同时持有多个输入锁。 |
-| GIR1 每 envd 的 `InputReceiver._lock` | begin/status/chunk/probe/cache/reserve_install/installation/install；接收状态和缓存对象 | `EOP1 → GIR1` 只用于安装前检查空目录、缓存标记与持久安装预留；预留阶段包含有限文件 IO/fsync。cache/install 可持 GIR1 做有界 Git/磁盘 IO，但不回取 EOP1/EOP2；worker 释放 GIR1 后才提交 journal，再释放 EOP2 后取得 EOP1 清活动项。 |
-
-Spec141C：GI2 内的 Windows 只读输入删除重试使用已有安全文件打开器；句柄禁止 FILE_SHARE_DELETE，
-持有范围只覆盖普通单链接文件身份核对和 READONLY 属性清除，关闭后再核对目录链/文件身份并 unlink。
-该句柄不跨 SQL/RPC，不调用应用回调或取得上游锁；未新增线程锁或改变 GI2 的先后关系。
-
-输入生命周期扩展已有接受门：`prepare/install` 从开始到必要记录保存均计入 SOP1 的接受计数，实际工作不持 SOP1。关闭先封口，等接受计数归零；已经在传输的安装可完成对象接收，但若正式 submit 前已关闭，必须以 env_stopped 拒绝，不能越过封口开始检出。
-
-同 binding 安装复用 DKR2，允许 `DKR2 → {GI2, SOP2, DB(registry)}`，各阶段分段进入。操作仓储的懒加载可能短暂进入 P1，再进入 DB(registry)，不持 DB 反取任一上层锁。`operation_status` 在 SOP2 下取回原结果并释放后，才经 `confirm` 进入 DKR2 做必要保存；禁止 SOP2 → DKR2 的嵌套。安装内部同线程重入 DKR2 只用于 confirm；不跨 binding 叠持。
-
-envd 在同一个 EOP1 临界区内完成“活动操作/读取数检查 → journal 预留 → installation 标记 → _input_pending”，文件只读调用在 EOP1 下增加读取计数后释放锁，再执行文件操作，结束后回取 EOP1 减计数。因而安装不能与已进入的读取或进程交错，新读取/提交也不能看到半份检出；hello、原操作状态/输出/停止仍可用于核对。失败/unknown 安装在 envd 重启后继续封住新执行；成功 journal 之后，控制端仍必须保存 binding.input_snapshot，未确认绑定的普通文件/进程入口拒绝，输入管理和原操作查询保留。
-
-本片新增三个显式锁构造位置（GI1、GI2 工厂、GIR1）；没有新增线程池、全应用项目锁或数据库事务内的远端等待。
-
-Spec138：显式 `EnvironmentAPI.retire_input` 对已加载项目直接借宿主 operation，不取得 host gate；会话删除仍持 S1，但不引入 S1 → G4 的反向依赖，公开 close 继续以活动 operation 拒绝关闭。冷项目先取得 G4、重新检查已加载宿主后借原项目库，未持 S1；保留 G4 至输入回收完成，阻止此间打开/关闭项目库。GI2 内依次查询会话 setup、未销毁环境、关联结果/交付记录后删除应用输入目录与输入记录，不跨两个数据库叠持事务。活动 prepare 先结算；安装在 DKR2 → GI2 内落地环境 input_id 后释放 GI2，后续提交才进入 SOP2。destroyed 环境的新结果提交在预留操作之前经 validate 拒绝，既存结果记录本身阻止输入回收。
-
-
-## R1-12B 会话绑定与环境管理
-
-Spec141B：S1 `history_lock(session_id)` 仍串行会话身份预留/删除及显式会话动作，同请求派生同一 session/input/binding。后台准备由服务内有界 single-flight task 持原 host owner.operation 与 environment 使用权，允许释放首个 HTTP 请求；删除门禁在环境尚未登记时也检查该 binding 的活跃准备。准备与管理只留预留标记，不在短线程锁里 await。准备进度 RLock 只保护阶段/计数/取消标记，释放后做 IO；其父 registry RLock 仅查询/快照/有界登记，不跨 IO。服务关闭先请求准备取消并排空，再关闭 operations/host/transport。
-
-生命周期在S1内，按既有全局准入锁→SessionService._lock→actor短状态锁原子检查busy，并设置`_environment_management`集合。随后释放所有线程锁才await Docker，finally仅回取SessionService短锁释放预留。新run/压缩/审批续跑在准备前和正式_admit复核管理事实，不能在异步status检查后插入执行。此集合是同一准入事实，没有轮询或额外线程锁；history_lock不代替准入锁。关闭宿主仍沿原_closing复核拒绝。
-
-Spec138：验收脚本仍使用的低层 EnvironmentAPI.create 先查询/打开所属宿主，释放 G4 后借宿主 operation 并取得原 S1，再次读取 session owner 后才创建；禁止持 G4 等待 S1。会话删除同样检查普通会话的直接环境关联，未销毁环境存在时拒绝删除。低层创建与正式沙箱会话均不新增独立 owner 锁。
-
-GitSource首次打开项目历史宿主复用项目操作日志/P1初始化项目库；无本机根，不做Git fetch。注册身份轻量读取仍只持DB(registry)短查询锁，工具校验不取ProjectService写操作锁。原SOP2查询/输出/停止按绑定查询，不在事务里执行容器IO。本片不改默认线程池和归档全局锁。
-
-## R1-13A 结果捕获与导入
-
-SessionAPI 的结果捕获在原 S1/history_lock 内使用原 manage_environment 准入预留；管理预留只在短锁内设置，覆盖捕获、传输、校验、本机引用发布及必要保存。新 run/环境生命周期/删除不能在捕获中插入。只读结果列表和差异不获取管理预留，也不依赖容器运行。
-
-Spec141B：ResultService 保留 `DKR2(binding)` 保护捕获/下载/本机发布；同步 submit/refresh 经 runtime.call 进入独立 SOP2，不再持线程 RLock 重入网络算法。每个短数据库事务结束后才执行 RPC/Git/fsync。整个捕获与保存加入 SOP1 接受计数，关闭先封口、排空，再扫描原操作；无 DB → DKR2/SOP2 反向嵌套。同 ID 的不可变结果只下载/校验一次，不同绑定不串行。
-
-envd 的 EOP1 在一次临界区内检查活跃操作/读者/未确认进程、持久预留 git_result 并设置 `_result_pending`；释放后 worker 做独立索引快照和有界 Git。新执行/文件读取在 EOP1 中检查 pending 并拒绝；hello、原状态/输出/停止保留。worker 先完成 EOP2 journal 写入，释放后才回取 EOP1 清预留；不持 EOP2 等 Git/线程完成。结果 chunk 只读 completed 的原文件，不新增互斥锁。捕获未知不会重放，也不把未知进程视为已停止。
-
-## R1-13B 本机受控交付
-
-复用 ScopeTasks 的新 key `('delivery',project_id)` 串行同项目交付。它可短暂进入 G4(host)→A1→A2→{S3,B1}，检查本项目运行/环境管理和所有已加载会话的后台清理，设置 A1 下的项目交付标记。B1 deletion_guard 在 yield 前释放自身锁；G4/A1/A2 也在进入工作线程前释放。交付标记保留至整个动作和必要保存结束，不把Git等待放入任何线程锁。同项目只读历史仍可取得 G4，其他项目不受影响。
-
-项目 rename/trust/relocate/remove/close 共用 G4 的 project_change，取得 G4 后短查 A1 标记；交付也在 G4 内预留，因此冷项目的根 EnvironmentAPI 路径同样与位置变更双向互斥。准备和正式运行准入分别短查 A1，不从 A2 回取 A1。生命周期只有在 accepted operations、runs、进程清理全部结算成功后才在 A1 下注销 SessionService；关闭失败保留阻断事实，不依赖 WeakSet 的垃圾回收时机。
-
-Spec141B：工作线程方向为 `delivery gate → {P1, DB(registry)}`；唯一生产 execute/acknowledge 写入口由 EnvironmentAPI 持已有每项目 delivery gate 和 RunAdmission 预留，移除无消费者的旧同步 SOP2。固定本机结果不与远端进程锁共享职责；SOP1 仅计数，不在 IO 期间持条件锁。GitDeliveries 的状态/意图/核对/人工确认均短事务，discard 的完成与结果标志在同一事务。执行、只读核对均不取得 DKR2，不从 DB 反取 SOP2/G4/A1；不新增执行器、mutex、全局网络锁。关闭沿原接受门封口与 owner.operation/run_blocking 排空，不把交付 journal 当作 envd 进程停止。
-
-提交前归档保护补充：TaskAPI 的预览/清理将 guard 获取和文件操作一起放入 worker；A2 只建立本机任务预留后释放，再进入沙箱项目清理预留及 DB 查询。项目有活动、unknown、stale 或未采集完的 shell/argv 时拒绝清理；清理期间拒绝同项目新提交与采集。不同项目的预留互不阻塞，条件锁只保护内存计数，不跨 RPC/SQL/文件 IO。
-
 ### Spec130 图片输入
 
 - `CommandReceipts.images.active` 是服务事件循环独占计数，无线程锁。认证后、读取图片正文前预留，拒绝时立即释放；创建receipt producer后归producer，HTTP断线不释放正在处理的名额。不在S3等同步锁内等待处理名额或执行Pillow/磁盘/网络IO。
@@ -376,3 +259,13 @@ Spec141B：工作线程方向为 `delivery gate → {P1, DB(registry)}`；唯一
 - GC先借TI1/TaskIO计数，CT1内短取TI1.condition读取计数后立即释放condition，再做租约查询/删除意图DB事务；CT1阻止此间新TaskIO准入。禁止持condition跨DB/磁盘IO。只有自身一个IO预留且无活动租约/最新保护时可标deleting；释放CT1后清固定文件，再回CT1/CAS同时核销artifact/lease与保留索引。完整task删除封口并等待TI1排空，不能与GC并删。
 - ArtifactDownload.open持有TI1预留至FD物理关闭，读worker仍在原async lock中排空；close失败且FD未关闭时保留downloads登记/未完成状态，后续aclose可重试。open失败、Range失败和取消均走同一关闭路径。InputDownload没有task预留，仍用原input busy生命周期。
 - 本机接收用服务端owner短租约，元数据前申请、每个Range前续租、传输producer退出释放；不持本机publication/DB锁跨HTTP。TTL负责进程失联收敛，本机已完成材料不永久钉住云端副本；任务删除同事务移除自身租约。
+
+### Spec143AE 验收修复与目录保存
+
+沿用ManualCloudTasks.admission，LocalDeliveries.writers保留项目预留，并增加destinations根及父链目录身份预留；根身份落在另一预留的父链时拒绝，因此同路径、嵌套和大小写别名均互斥，兄弟目录不因共同祖先互斥。有界本机目录事实在admission内await worker获取，owner loop内比较/登记后释放；网络、解包和用户目录写入不持该async锁，worker不回取admission。producer finally释放预留；不持DB事务跨文件IO，不增加线程锁。
+
+显式材料refresh沿原receive single-flight，先在短项目DB事务读原材料身份；完整hash在publication锁外。损坏普通blob仅在publication内复核已观察身份并移至私有隔离位置，后续仍用原no-clobber发布。最后项目DB短事务核对原MaterialRef与旧identity CAS，提交新identity与available；不持publication进入这次最终事务，普通GET/retry/工具读不触发刷新。应用completed及基线元数据同一项目DB事务，prepare/read不推进基线；没有新增DB→admission或DB→publication反向链。
+
+### Spec143AK 本机缓存清理
+
+`ReceiveFiles.publication`另保护users计数/cleaning标记，`use()`仅登记与退出持短锁；预留跨IO/await但线程锁不跨。接收submit/retry、交付prepare/recheck/execute借use至登记flight；材料验证/读取借use至FD关闭。cleanup在owner admission内核对该项目无接收/交付flight并取得独占预留，释放admission后读取项目DB引用，再以既有固定父句柄执行孤儿清理；取消等待worker完成后才释放预留。标记检查不进入DB，DB不反向取publication；同任务并发仍沿已有owner/store生命周期，不增加跨进程承诺。

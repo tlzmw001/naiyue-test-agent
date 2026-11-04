@@ -15,6 +15,7 @@ Coordinator启动后拥有独立资源维护协程，退出时先停止接受新
 | scan_max_entries | 100000 | 元数据扫描条目上限 |
 | scan_max_depth | 64 | 相对数据根递归深度上限 |
 | scan_timeout_seconds | 2.0 | 扫描检查点截止预算，不能中断内核阻塞的文件系统调用 |
+| cleanup_timeout_seconds | 30.0 | 删除工作区/产物的独立检查点预算，允许范围(0,3600]秒；保留fsync、条目/深度上限，不能中断内核阻塞IO；超限沿原删除操作reconcile |
 | scan_cache_seconds | 5.0 | 逻辑用量缓存有效期；周期维护强制刷新 |
 | min_free_bytes | 268435456 | 新分配后保留的最小可用空间 |
 | max_logical_bytes | null | 可选托管目录逻辑字节软上限 |

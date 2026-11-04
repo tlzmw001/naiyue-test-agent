@@ -3,7 +3,7 @@ import hashlib,json,zlib
 from pathlib import Path
 from types import SimpleNamespace
 from naiyue_test_agent.execution.git_repository import GitRepository
-from naiyue_test_agent.contracts.git_inputs import GitInputError
+from naiyue_test_agent.contracts.git_native import GitInputError
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 
 
@@ -97,7 +97,7 @@ def ignored_paths(policy,paths,directory,limits):
         elif rule.name.startswith('worktree/') and rule.name.endswith('.gitignore'):
             target=work/rule.name.removeprefix('worktree/')
         else:continue
-        target.parent.mkdir(mode=0o700,parents=True,exist_ok=True);target.write_text(rule.content)
+        target.parent.mkdir(mode=0o700,parents=True,exist_ok=True);target.write_text(rule.content,encoding='utf-8',newline='')
     raw=git.run(['-c','core.excludesFile='+str(global_ignore),'--work-tree='+str(work),'check-ignore','--no-index','-z','--stdin'],
         data=b''.join(p.encode()+b'\0' for p in paths),check=False)
     status,body=raw

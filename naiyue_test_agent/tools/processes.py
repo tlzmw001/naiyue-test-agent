@@ -281,8 +281,10 @@ class HostProcessRunner:
 def run_async_sync(async_call):
     """A per-call bridge, including synchronous graphs invoked inside an event loop."""
     try:
-        asyncio.get_running_loop()
+        loop = asyncio.get_running_loop()
     except RuntimeError:
+        loop = None
+    if loop is None:
         return asyncio.run(async_call())
     result = Future()
     def execute():

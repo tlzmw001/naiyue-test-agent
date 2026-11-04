@@ -36,7 +36,10 @@ def test_new_and_restored_states_use_one_dataclass_and_isolate_mutable_defaults(
     configuration.pop('workspace_root')
     first_state, second_state = (SessionState(**configuration, execution_root=None) for _ in range(2))
     assert is_dataclass(first_state) and type(first_state) is type(second_state)
-    assert len(fields(first_state)) == 15
+    assert {item.name for item in fields(first_state)} == {
+        'thread_id', 'model_id', 'execution_root', 'active_tool_names', 'permission_mode',
+        'project_id', 'thinking_level', 'conversation_revision', 'session_allow', 'pending_tool_approval',
+        'pending_turn', 'manual_review_required', 'last_execution_path', 'execution_binding'}
     assert first_state.last_execution_path is None
     assert not hasattr(first_state, '__getitem__')
     for name in ('session_allow',):
@@ -63,7 +66,7 @@ def test_purpose_snapshots_are_bounded_and_do_not_expose_live_state():
     assert sessions.require(sid).describe_session()['manual_review_required'] is False
     view = sessions.require(sid).snapshot_for_context()
     assert set(view) == {'thread_id', 'model_id', 'workspace_root', 'active_tool_names',
-                         'busy', 'pending_approval', 'manual_review_required', 'project_id', 'execution_root', 'last_execution_path', 'execution_binding','execution_setup'}
+                         'busy', 'pending_approval', 'manual_review_required', 'project_id', 'execution_root', 'last_execution_path', 'execution_binding'}
     assert view['last_execution_path'] is None
     assert isinstance(view['active_tool_names'], tuple)
     assert sessions.context_snapshot_is_current(sid, view)

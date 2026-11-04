@@ -10,6 +10,8 @@ from starlette.responses import JSONResponse
 from naiyue_test_agent import __version__
 from naiyue_test_agent.contracts.cloud_events import EventBatch
 from naiyue_test_agent.contracts.cloud_tasks import CloudError, CreateProject
+from naiyue_test_agent.contracts.cloud_capabilities import owner_capabilities
+from naiyue_test_agent.contracts.cloud_versions import OWNER_PROTOCOL
 from .auth import owner_authorize, task_bearer
 from .http import _body
 from naiyue_test_agent.application.cloud.work import cloud_work
@@ -47,10 +49,8 @@ def create_cloud_apps(runtime):
     @owner.get('/api/cloud/v1/instance')
     async def instance(request: Request):
         owner_authorize(request, runtime)
-        return dict(instance_id=runtime.instance_id, protocol=1, version=__version__,
-            capabilities=['projects:read', 'projects:create', 'commands:read', 'tasks:read', 'history:events','history:read','history:detail','history:threads',
-                'observations:snapshot','observations:stream','usage:read','inputs:import', 'tasks:create', 'runs:start','artifacts:capture','artifacts:download','results:read','results:actions','artifacts:range','capacity:read']
-                + (['environment:commands', 'environment:reconcile', 'tasks:delete'] if runtime.lifecycle is not None else []))
+        return dict(instance_id=runtime.instance_id, protocol=OWNER_PROTOCOL, version=__version__,
+            capabilities=owner_capabilities(runtime.lifecycle is not None))
 
     @owner.get('/api/cloud/v1/projects')
     async def projects(request: Request):
@@ -118,6 +118,7 @@ def create_cloud_apps(runtime):
             if runtime.lifecycle is None: raise CloudError('cloud_backend_not_configured', 503)
             if await _body(request, runtime) != {}: raise CloudError('invalid_request', 422)
             current = await cloud_work(runtime, lambda: runtime.registry.get_command(command_id))
+            if current.operation=='release:upgrade':raise CloudError('command_not_environment',422)
             service = runtime.deletions if current.operation == 'task:delete' else runtime.lifecycle
             receipt = await service.reconcile(command_id)
             return JSONResponse(receipt.model_dump(), status_code=receipt.http_status)
@@ -139,4 +140,6 @@ def create_cloud_apps(runtime):
     register_history_routes(owner,runtime)
     from .observation_routes import register_observation_routes
     register_observation_routes(owner,runtime)
+    from .release_routes import register_release_routes
+    register_release_routes(owner,runtime)
     return owner, task

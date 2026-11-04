@@ -99,12 +99,12 @@ def capture(source,selection,output,limits,*,codec='gzip',source_receipt=None):
                 source_receipt=output/'source.json' if source_receipt is not None else None)
             description=InputPackage(input_id=result.input_id,archive_sha256=result.archive_sha256,size=size,
                 codec=codec,manifest=manifest,selection=selection)
-            (bundle/'input.json').write_text(description.model_dump_json(by_alias=True))
-            (bundle/'receipt.json').write_text(result.model_dump_json())
-            if source_receipt is not None:(bundle/'source.json').write_text(source_receipt.model_dump_json())
+            (bundle/'input.json').write_text(description.model_dump_json(by_alias=True),encoding='utf-8')
+            (bundle/'receipt.json').write_text(result.model_dump_json(),encoding='utf-8')
+            if source_receipt is not None:(bundle/'source.json').write_text(source_receipt.model_dump_json(),encoding='utf-8')
             for file in bundle.iterdir():
                 file.chmod(0o600)
-                with file.open('rb') as stream:os.fsync(stream.fileno())
+                with file.open('r+b') as stream:os.fsync(stream.fileno())
             sync_store_directory(bundle);os.rename(bundle,output);sync_store_directory(output.parent)
             return result
     except (OSError,UnicodeError,ValueError) as error:

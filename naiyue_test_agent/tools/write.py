@@ -281,9 +281,6 @@ def create_session_write_tool(*, settings: WriteSettings | None = None, progress
         require_file_target(runtime, path, operation='write')
         progress = ToolProgress(runtime, progress_settings)
         subject=context.authorization.permit['subject']
-        if context.scope.environment.kind=='sandbox':
-            from naiyue_test_agent.contracts.sandbox import operation_id
-            subject={**subject,'operation_id':operation_id(runtime)}
         try:
             return await file_call(context.scope.capabilities.files.write,subject, content,
                 settings=settings, control=context.scope.control, progress=progress,

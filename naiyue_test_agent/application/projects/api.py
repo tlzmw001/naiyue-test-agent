@@ -72,9 +72,6 @@ class ProjectAPI:
             return await run_blocking(self._require().create_local, folder_name=folder_name,
                 trusted=trusted, operation_id=operation_id, parent=parent, name=name, git_init=git_init, expected_directory=expected_directory)
 
-    async def add_git(self, url: str, *, ref: str, name: str, operation_id: str) -> RegisteredProject:
-        with self._owner.operation():
-            return await run_blocking(self._require().add_git, url, ref=ref, name=name, operation_id=operation_id)
 
     async def import_legacy(self, paths: list[Path] | None = None) -> tuple[dict, ...]:
         with self._owner.operation():
@@ -85,11 +82,6 @@ class ProjectAPI:
             async with self._hosts.project_change(project_id):
                 return await run_blocking(self._require().rename, project_id, name, operation_id=operation_id)
 
-    async def trust_git(self,project_id,*,expected_revision,operation_id):
-        with self._owner.operation():
-            async with self._hosts.project_change(project_id):
-                return await run_blocking(self._require().trust_git,project_id,
-                    expected_revision=expected_revision,operation_id=operation_id)
 
     async def relocate(self, project_id: str, *, expected_root: str | Path, root: str | Path,
                        trusted: bool, operation_id: str) -> RegisteredProject:

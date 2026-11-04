@@ -97,21 +97,10 @@ def prepare_terminal(args, settings):
             return client, sid, next(row for row in prepared['sessions'] if row['session_id'] == sid)
         models = client.request('GET', '/models')
         body={'model_id':models['default_model_id']}
-        if getattr(args,'execution',None)=='sandbox':
-            body.update(execution='sandbox',include_untracked=args.include_untracked)
-            if getattr(args,'environment',None) is not None:
-                choices=client.request('GET',f'/api/v1/projects/{prepared["scope_id"]}/execution-options')
-                selected=next((p for p in choices['profiles'] if p['profile_id']==args.environment),None)
-                if selected is None:raise ServiceError('env_profile_unavailable')
-                body.update(profile_id=selected['profile_id'],expected_profile_revision=selected['revision'])
-        elif prepared.get('source_kind')=='git':
+        if prepared.get('source_kind')=='git':
             raise ServiceError('project_execution_unavailable')
         sid=client.request('POST','/sessions',json=body)['session_id']
         status=client.request('GET',f'/sessions/{sid}')
-        execution=status.get('execution',{})
-        print('执行位置：'+('Docker 沙箱' if execution.get('kind')=='sandbox' else '此计算机'))
-        if execution.get('state')!='ready':
-            print('执行位置不可用；会话历史保留。原因='+str((execution.get('error') or {}).get('code','unavailable')))
         return client,sid,None
     except BaseException:
         try:

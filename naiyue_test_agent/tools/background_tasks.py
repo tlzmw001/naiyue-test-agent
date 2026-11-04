@@ -44,9 +44,8 @@ def task_context(runtime, *, query=False):
         raise ToolException('Background tasks are available only to the root agent.')
     sid, root = context.scope.identity.session_id, context.scope.identity.execution_path
     port = context.scope.capabilities.task_queries if query else context.scope.capabilities.process_tasks
-    sandbox_query=query and context.scope.environment is not None and context.scope.environment.kind=='sandbox'
     if (not isinstance(sid, str) or not sid or port is None or
-            not sandbox_query and (not isinstance(root, Path) or not root.is_absolute())):
+            (not isinstance(root, Path) or not root.is_absolute())):
         raise ToolException('Application background task scope is unavailable.')
     scope = {'session_id': sid, 'workspace_root': root}
     if not query:

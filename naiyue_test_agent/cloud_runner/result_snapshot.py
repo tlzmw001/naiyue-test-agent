@@ -61,7 +61,7 @@ def freeze_result(root,input_directory,destination,plan,boundary,generation,resu
                 if content is not None:path.write_bytes(content)
                 else:shutil.copyfile(source,path)
                 path.chmod(0o600);sha=hashlib.sha256();size=0
-                with path.open('rb') as stream:
+                with path.open('r+b') as stream:
                     while chunk:=stream.read(input_limits.io_bytes):size+=len(chunk);sha.update(chunk)
                     os.fsync(stream.fileno())
                 total+=size

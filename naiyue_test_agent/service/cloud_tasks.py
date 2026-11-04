@@ -152,7 +152,7 @@ async def observation(request:Request,binding_id:UUIDText,view:Literal['snapshot
     manager=access(request);_,local=await domain(request,local_project_id,local_session_id)
     if view in ('usage','models') and thread_id is not None or view in ('snapshot','models') and after_model is not None:
         raise CloudError('invalid_request',422)
-    params={'limit':limit}
+    params={} if view=='models' else {'limit':limit}
     if thread_id is not None:params['thread_id']=thread_id
     if after_model is not None:params['after_model']=after_model
     return await bounded_view(request,manager,local,binding_id,local_session_id,view,params)

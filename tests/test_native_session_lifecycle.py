@@ -31,10 +31,10 @@ def test_lifecycle_is_direct_async_with_no_generator_transport(module_name, name
         if isinstance(function, ast.AsyncFunctionDef):
             assert not any(isinstance(node, (ast.Yield, ast.YieldFrom)) for node in ast.walk(function))
     guards = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
-              and node.name in ('deletion_guard','manage_environment')]
+              and node.name in ('deletion_guard',)]
     expected_yields = set()
     if module_name == 'sessions.session_service':
-        assert {guard.name for guard in guards} == {'deletion_guard','manage_environment'}
+        assert {guard.name for guard in guards} == {'deletion_guard'}
         for guard in guards:
             assert any(isinstance(item,ast.Name) and item.id=='contextmanager' for item in guard.decorator_list)
             assert sum(isinstance(node,ast.Yield) for node in ast.walk(guard))==1

@@ -70,13 +70,13 @@ it('clicking the current project name folds and reopens its sessions without cha
 
 it('shows saved pin markers while browsing another scope without opening its host', async () => {
   const { root, apis } = fixture();
-  vi.mocked(root.directory).mockResolvedValue([{ session_id: 'pinned', title: '已保存的任务', pinned: true, model_id: 'A', execution_binding: 'sandbox',
+  vi.mocked(root.directory).mockResolvedValue([{ session_id: 'pinned', title: '已保存的任务', pinned: true, model_id: 'A', execution_binding: 'project_local',
     workspace_root: '/projects/A', state: 'ready', updated_at: '2026-10-25T10:00:00Z', last_run_status: 'completed' }]);
   render(<ProjectWorkspace api={root} />);
   fireEvent.click(await screen.findByRole('button', { name: '展开项目 A' }));
   const row = await screen.findByRole('button', { name: '已保存的任务 A' });
   expect(within(row).getByRole('img', { name: '已置顶' })).toBeTruthy();
-  expect(within(row).getByLabelText('执行位置：Docker 沙箱')).toBeTruthy();
+  expect(within(row).getByLabelText('执行位置：此计算机')).toBeTruthy();
   expect(within(row).getByLabelText('任务状态：已完成')).toBeTruthy();
   expect([...apis.keys()]).toEqual(['chats']);
 });
@@ -130,25 +130,18 @@ it.each(['chats', a])('keeps pinning and manual order on the selected %s client'
   expect(client.prepare).not.toHaveBeenCalled(); expect(client.session).not.toHaveBeenCalled();
 });
 
-it('uses the same decorative chevron for project, execution and permission controls and follows open state', async () => {
+it('uses the same decorative chevron for project and permission controls and follows open state', async () => {
   const { root, api } = fixture(), project = api(a);
   vi.spyOn(project, 'sessionControlOptions').mockResolvedValue({ tools: [], permission_modes: ['Default'], default_permission_mode: 'Default', default_active_tools: [] });
-  vi.spyOn(project, 'executionOptions').mockResolvedValue({ host_available: true, sandbox_available: true, error_code: null,
-    requires_trust: false, project_revision: 1, network: 'none', untracked: [], blocked: [] });
-  const create = vi.spyOn(project, 'createSelected');
+  const create = vi.spyOn(project, 'create');
   render(<ProjectWorkspace api={root} />);
   fireEvent.click(await screen.findByRole('button', { name: '进入项目 A' }));
   const permission = await screen.findByRole('button', { name: '权限模式：Default' });
   const projectButton = screen.getByRole('button', { name: '项目与位置，当前：项目 A' });
-  const execution = screen.getByRole('button', { name: '执行位置：此计算机' });
-  const arrows = [projectButton, execution, permission].map(button => button.querySelector('svg[data-chevron]'));
+  const arrows = [projectButton, permission].map(button => button.querySelector('svg[data-chevron]'));
   expect(arrows.every(arrow => arrow !== null)).toBe(true);
   expect(new Set(arrows.map(arrow => arrow?.outerHTML)).size).toBe(1);
   expect(arrows.every(arrow => arrow?.getAttribute('aria-hidden') === 'true')).toBe(true);
-  fireEvent.click(execution);
-  expect(execution.querySelector('[data-chevron="up"]')).not.toBeNull();
-  fireEvent.keyDown(screen.getByRole('dialog', { name: '选择执行位置' }), { key: 'Escape' });
-  expect(execution.querySelector('[data-chevron="down"]')).not.toBeNull();
   fireEvent.click(permission);
   expect(permission.querySelector('[data-chevron="up"]')).not.toBeNull();
   fireEvent.keyDown(screen.getByRole('dialog', { name: '权限模式' }), { key: 'Escape' });

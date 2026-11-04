@@ -1,9 +1,12 @@
 """An SSE subscriber owns a cursor, not a private unbounded queue or DB transaction."""
 import asyncio
+import logging
 from copy import deepcopy
 
 from naiyue_test_agent.contracts.cloud_events import canonical_json
 
+
+logger=logging.getLogger(__name__)
 
 def encode_sse(event):
     value=('id: '+event['id']+'\n' if 'id' in event else '')+'event: '+event['event']+'\n'
@@ -26,11 +29,24 @@ class ObservationLease:
 
     async def _resync(self,reason):
         from naiyue_test_agent.contracts.cloud_tasks import CloudError
-        try:snapshot=await self.service.snapshot(self.task_id,thread_id=self.thread_id)
-        except CloudError:
-            if not self.deleting:raise
-            self.deleting=False;await self.aclose()
-            return dict(event='task_deleting',data={'task_id':self.task_id})
+        while not self.closed and not self.service.closing:
+            remaining=self.deadline-asyncio.get_running_loop().time()
+            if remaining<=0:
+                await self.aclose();raise StopAsyncIteration
+            self.state.wake.clear()
+            try:
+                snapshot=await self.service.snapshot(self.task_id,thread_id=self.thread_id)
+                break
+            except CloudError as error:
+                if self.deleting:
+                    self.deleting=False;await self.aclose()
+                    return dict(event='task_deleting',data={'task_id':self.task_id})
+                if error.code!='snapshot_busy':raise
+                logger.warning('cloud_snapshot_busy')
+                remaining=max(0,self.deadline-asyncio.get_running_loop().time())
+                try:await asyncio.wait_for(self.state.wake.wait(),min(remaining,self.service.limits.heartbeat_seconds))
+                except TimeoutError:pass  # Recheck on the existing heartbeat budget.
+        else:raise StopAsyncIteration
         self.position=snapshot['live']['seq'];self.epoch=self.state.epoch
         self.pending.append(dict(event='snapshot',data=snapshot,id=snapshot['cursor']))
         return dict(event='resync',data={'reason':reason})

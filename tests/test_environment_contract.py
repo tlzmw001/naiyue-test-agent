@@ -13,7 +13,7 @@ from test_storage_dependency_direction import imports, PACKAGE
     ('windows', 'C:relative'), ('windows', 'C:\\a\\..\\b')])
 def test_environment_root_must_be_absolute_and_canonical(platform, root):
     with pytest.raises(ValueError, match='environment'):
-        EnvironmentRef('binding', 'sandbox', 'project', root, platform)
+        EnvironmentRef('binding', 'host', 'project', root, platform)
 
 
 def test_environment_descriptor_round_trips_without_live_capabilities():
@@ -31,3 +31,8 @@ def test_file_provider_and_environment_contract_do_not_import_application():
     names = imports((PACKAGE / 'contracts/environment.py').read_text(), 'naiyue_test_agent.contracts')
     assert not any(name.startswith(('naiyue_test_agent.execution.', 'naiyue_test_agent.tools.',
         'naiyue_test_agent.application.')) for name in names)
+
+
+def test_retired_remote_environment_kind_is_not_a_current_capability():
+    with pytest.raises(ValueError, match='environment'):
+        EnvironmentRef('old', 'sandbox', None, '/project', 'linux')

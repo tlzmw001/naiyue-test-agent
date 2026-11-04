@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 def resume(registry, operation, *, busy_timeout_ms=DEFAULT_BUSY_TIMEOUT_MS):
+    if operation.action in ('add_git','trust_git','initialize_git'):
+        raise ProjectError('project_operation_unsupported')
     if operation.stage == 'done':
         return operation.result
     try:
@@ -57,7 +59,7 @@ def _resume(registry, operation, *, busy_timeout_ms):
     elif action in ('add_local', 'relocate', 'select_existing'):
         target = Path(request['root'])
         require_same_directory(target, facts['directory'])
-    if action in ('add_local', 'create_local','initialize_git'):
+    if action in ('add_local', 'create_local'):
         with initialize_reserved_store(project, expected_file=facts.get('database_file'),
                                        busy_timeout_ms=busy_timeout_ms) as (store, receipt):
             facts = {**facts, 'database_file': receipt}
@@ -69,8 +71,6 @@ def _resume(registry, operation, *, busy_timeout_ms):
     elif action == 'rename':
         project = replace(project, name=request['name'])
     elif action == 'select_existing':
-        project = replace(project, trusted=True)
-    elif action == 'trust_git':
         project = replace(project, trusted=True)
     elif action == 'import_legacy':
         with legacy_guard(project.database_path) as (identity, root):

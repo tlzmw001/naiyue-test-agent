@@ -35,6 +35,52 @@ def test_capture_identity_preserves_bytes_and_archive_validates(tmp_path):
     assert again.input_id == result.input_id and again.archive_sha256 != result.archive_sha256
 
 
+@pytest.mark.parametrize('mode',['selection','git'])
+@pytest.mark.parametrize('codec',['gzip','tar'])
+def test_capture_durability_uses_writable_handles_without_changing_source(tmp_path,monkeypatch,mode,codec):
+    import errno,os
+    from pathlib import Path
+    from test_git_source_plan import repository
+    from naiyue_test_agent.cloud_files.sources import select_git
+    source=repository(tmp_path)
+    before={p.name:p.read_bytes() for p in source.iterdir() if p.is_file()}
+    plan=select_git(source,InputLimits()) if mode=='git' else None
+    selection=plan.selection if plan else Selection(paths=['api.proto','readme.txt'])
+    handles={};synced=set();original_open=Path.open;original_sync=os.fsync
+    def opened(path,*args,**kwargs):
+        stream=original_open(path,*args,**kwargs);handles[stream.fileno()]=(path,stream);return stream
+    def windows_sync(fd):
+        item=handles.get(fd)
+        if item and not item[1].closed:
+            if not item[1].writable():raise OSError(errno.EBADF,'read-only Windows flush handle')
+            if item[0].parent.name=='result':synced.add(item[0].name)
+        original_sync(fd)
+    monkeypatch.setattr(Path,'open',opened);monkeypatch.setattr(os,'fsync',windows_sync)
+    result=capture(source,selection,tmp_path/'capture',InputLimits(),codec=codec,source_receipt=plan.receipt if plan else None)
+    expected={'archive','manifest.json','selection.json','input.json','receipt.json'}|({'source.json'} if plan else set())
+    assert synced==expected
+    assert {p.name:p.read_bytes() for p in source.iterdir() if p.is_file()}==before
+    assert validate_package(result.directory/'archive',codec,InputLimits(),expected_id=result.input_id)[0].input_id==result.input_id
+
+
+def test_capture_flush_failure_never_publishes_input(tmp_path,monkeypatch,caplog):
+    import errno,os
+    from pathlib import Path
+    source=tmp_path/'source';source.mkdir();(source/'a').write_bytes(b'unchanged')
+    original_open=Path.open;original_sync=os.fsync;handles={}
+    def opened(path,*args,**kwargs):
+        stream=original_open(path,*args,**kwargs);handles[stream.fileno()]=(path,stream);return stream
+    def failed_sync(fd):
+        item=handles.get(fd)
+        if item and not item[1].closed and item[0].parent.name=='result':raise OSError(errno.EIO,'controlled flush failure')
+        original_sync(fd)
+    monkeypatch.setattr(Path,'open',opened);monkeypatch.setattr(os,'fsync',failed_sync)
+    with pytest.raises(CloudError,match='input_source_unavailable'):
+        capture(source,Selection(paths=['a']),tmp_path/'capture',InputLimits())
+    assert not (tmp_path/'capture').exists() and (source/'a').read_bytes()==b'unchanged'
+    assert 'cloud_input_capture_failed' in caplog.text
+
+
 @pytest.mark.parametrize('path', ['../escape','/abs','AUX.txt','x:y','a\\b','a.','a//b','.git/config','.env','a?b','a*b','a"b','a<b','a>b','a|b'])
 def test_selection_rejects_nonportable_or_excluded_paths(path):
     with pytest.raises(ValueError): Selection(paths=[path])

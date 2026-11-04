@@ -41,13 +41,19 @@ def archive_page(database,*,thread_id=None,limit,read_timeout,upper=None,before=
         row=c.execute('SELECT record_json FROM history_threads WHERE thread_id=? AND seq<=? ORDER BY seq DESC LIMIT 1',
             (thread_id,upper)).fetchone()
         result.update(thread=json.loads(row[0]) if row else None,messages=[],next_before=None)
-        rows=c.execute('''SELECT message_id,revision,seq,position,record_json,preview_json,owner_input FROM history_messages AS m
+        rows=c.execute('''SELECT message_id,revision,seq,position,record_json,preview_json,owner_input,run_id FROM history_messages AS m
             WHERE thread_id=? AND seq<=? AND (? IS NULL OR position<?)
             AND NOT EXISTS(SELECT 1 FROM history_messages AS n WHERE n.thread_id=m.thread_id
                 AND n.message_id=m.message_id AND n.seq<=? AND n.revision>m.revision)
             ORDER BY position DESC LIMIT ?''',(thread_id,upper,before,before,upper,limit+1)).fetchall()
         for row in rows[:limit]:
-            item=json.loads(row['record_json'])|dict(preview=json.loads(row['preview_json']),seq=row['seq'],owner_input=bool(row['owner_input']))
+            item=json.loads(row['record_json'])|dict(preview=json.loads(row['preview_json']),seq=row['seq'],run_id=row['run_id'],owner_input=bool(row['owner_input']))
+            if item['preview']['type']=='ai' and 'tool_calls' not in item['preview']:
+                saved=c.execute('SELECT body_json FROM history_messages WHERE thread_id=? AND message_id=? AND revision=?',
+                    (thread_id,row['message_id'],row['revision'])).fetchone()
+                calls=json.loads(saved[0])['data'].get('tool_calls',[])
+                item['preview'].update(tool_calls=[dict(id=call['id'],name=call['name'],args={}) for call in calls[:128]],
+                    tool_calls_truncated=len(calls)>128,arguments_truncated=any(call.get('args') for call in calls))
             reply=c.execute('''SELECT record_json FROM history_replies WHERE thread_id=? AND reply_id=? AND seq<=?
                 ORDER BY seq DESC LIMIT 1''',(thread_id,item['reply_id'],upper)).fetchone()
             item['boundary']=json.loads(reply[0]) if reply else None

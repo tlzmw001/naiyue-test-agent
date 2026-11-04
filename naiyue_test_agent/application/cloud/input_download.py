@@ -24,6 +24,7 @@ class InputDownload(ArtifactDownload):
         self.input_id=ident;self.key='input:'+ident
 
     def open(self):
+        self.maintenance_lease=self.service.runtime.releases.enter_io()
         package=self.service.get_input(self.input_id)
         self.record=InputArchive(package.archive_sha256,package.size,
             self.input_id+('.tar.gz' if package.codec=='gzip' else '.tar'))

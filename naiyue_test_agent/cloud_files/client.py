@@ -9,6 +9,7 @@ import re
 from urllib.parse import urlsplit
 
 import httpx
+from naiyue_test_agent.contracts.cloud_versions import OWNER_PROTOCOL
 from pydantic import Field,SecretStr,model_validator
 from naiyue_test_agent.contracts.cloud_tasks import CloudRecord,CloudError,UUIDText
 from naiyue_test_agent.storage.files import check_store_directory,open_store_readonly,open_store_file,acquire_store_lock,release_store_lock,sync_store_directory
@@ -41,7 +42,7 @@ class CloudClient:
         self.settings=settings
         self.http=httpx.Client(base_url=settings.endpoint.rstrip('/'),transport=transport,trust_env=False,follow_redirects=False,
             timeout=settings.timeout_seconds,headers={'Host':settings.owner_authority,'Origin':'http://'+settings.owner_authority,
-                'Authorization':'Bearer '+settings.owner_token.get_secret_value(),'X-Service-Instance':settings.instance_id,'X-Cloud-Protocol':'1'})
+                'Authorization':'Bearer '+settings.owner_token.get_secret_value(),'X-Service-Instance':settings.instance_id,'X-Cloud-Protocol':str(OWNER_PROTOCOL)})
 
     def close(self):self.http.close()
 

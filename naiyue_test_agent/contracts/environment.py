@@ -16,7 +16,7 @@ class ResourceBoundaryError(ValueError):
 @dataclass(frozen=True)
 class EnvironmentRef:
     binding_id: str
-    kind: Literal['host', 'sandbox']
+    kind: Literal['host']
     project_id: str | None
     root: str
     platform: Literal['windows', 'macos', 'linux']
@@ -24,7 +24,7 @@ class EnvironmentRef:
 
     def __post_init__(self):
         if (not isinstance(self.binding_id, str) or not self.binding_id
-                or self.kind not in ('host', 'sandbox') or self.platform not in ('windows', 'macos', 'linux')
+                or self.kind != 'host' or self.platform not in ('windows', 'macos', 'linux')
                 or not isinstance(self.root, str) or not self.root or '\0' in self.root
                 or self.project_id is not None and (not isinstance(self.project_id, str) or not self.project_id)
                 or self.project_revision is not None and (type(self.project_revision) is not int or self.project_revision < 1)):
@@ -47,13 +47,6 @@ class FileResource:
     kind: Literal['file', 'directory', 'missing', 'other']
 
 
-@dataclass(frozen=True)
-class PreparedExecution:
-    environment: EnvironmentRef | None = None
-    files: 'FileSystemPort | None' = None
-    processes: 'ProcessPort | None' = None
-    task_queries: 'TaskQueries | None' = None
-    project_revision: int | None = None
 
 
 class FileAccess(Protocol):

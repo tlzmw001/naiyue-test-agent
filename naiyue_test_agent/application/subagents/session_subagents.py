@@ -118,7 +118,6 @@ class SubagentRegistry:
                 status='running', phase='execute', settled=False, task=task, workspace_root=run.execution_root.path if run.execution_root else None,
                 project_id=run.project_id, execution_root=run.execution_root, files=parent_context.scope.capabilities.files, processes=parent_context.scope.capabilities.processes,
                 cloud_materials=parent_context.scope.capabilities.cloud_materials,
-                environment_binding_id=run.files.environment.binding_id if run.files is not None and run.files.environment.kind=='sandbox' else None,
                 read_resource_roots=(parent_context.inputs.read_resource_roots if parent_context.inputs.read_resource_roots is not None else ()),
                 max_concurrency=(parent_context.inputs.max_concurrency if parent_context.inputs.max_concurrency is not None else 4), control=RunControl(),
                 publisher=parent_context.scope.observation.publisher, pending_turn=None,

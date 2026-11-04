@@ -10,6 +10,7 @@ from pydantic import TypeAdapter
 from naiyue_test_agent.contracts.cloud_inputs import CreateTransfer,InputTransfer,InputPackage,CreateTask
 from naiyue_test_agent.contracts.cloud_tasks import CloudError,CommandReceipt,CloudTask,ContentId,UUIDText
 from naiyue_test_agent.contracts.cloud_events import digest
+from naiyue_test_agent.contracts.cloud_versions import STATE_SCHEMA
 from naiyue_test_agent.storage.cloud.inputs import InputRepository
 from naiyue_test_agent.storage.files import open_store_readonly,open_store_file,sync_store_directory
 from .ownership import private_directory
@@ -206,7 +207,7 @@ class CloudInputs:
         template=self.runtime.settings.templates.get(request.template_id)
         if template is None:raise CloudError('template_unavailable')
         now=time.time();task=CloudTask(task_id=uuid4().hex,project_id=request.project_id,title=request.title,input_id=request.input_id,
-            template_id=template.template_id,runner_release_id=template.runner_release_id,state_schema=1,generation=1,revision=1,
+            template_id=template.template_id,runner_release_id=template.runner_release_id,state_schema=STATE_SCHEMA,generation=1,revision=1,
             lifecycle='creating',created_at=now,updated_at=now,template_snapshot=template,template_digest=template.fingerprint)
         receipt=CommandReceipt(command_id=request.command_id,resource_id=task.task_id,operation='task:create',request_digest=fingerprint,
             status='succeeded',http_status=201,result={'task':task.model_dump()},created_at=now,updated_at=now)

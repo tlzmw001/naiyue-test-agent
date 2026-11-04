@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CloudApi } from '../cloudApi';
 import type { CloudBinding, CloudProfile } from '../cloudTypes';
-import { cloudError, taskLabel } from '../cloudPresentation';
+import { cloudError, taskLabel, cloudTime } from '../cloudPresentation';
 import { backgroundTaskPollMs } from '../uiSettings';
 import CloudTaskCreate from './CloudTaskCreate';
 import CloudTaskDetail from './CloudTaskDetail';
 import styles from './CloudTasks.module.css';
+import mainStyles from '../App.module.css';
+import { Icon } from './Icons';
 import type { AnalysisDraft } from '../cloudReceiveTypes';
 
 export default function CloudTasks({ api, sessionId, active, onAnalysisDraft }: { api: CloudApi; sessionId?: string; active: boolean; onAnalysisDraft?: (value: AnalysisDraft) => boolean | void }) {
@@ -71,15 +73,14 @@ export default function CloudTasks({ api, sessionId, active, onAnalysisDraft }: 
   if (binding?.task_id && binding.cloud) return <CloudTaskDetail key={binding.binding_id} api={api} sid={sessionId!}
     binding={binding} metadataFresh={!stale.includes(binding.binding_id) && !error} active={active && visible} back={back} changed={update} onAnalysisDraft={onAnalysisDraft} />;
   return <section className={styles.panel} aria-label="云端任务列表">
-    <div className={styles.listHeader}><button ref={newButton} className={styles.primary} onClick={() => { select(undefined); create(true); }}>新增任务</button>
+    <div className={styles.listHeader}><button ref={newButton} className={`${mainStyles.newChat} ${styles.newTask}`} onClick={() => { select(undefined); create(true); }}><Icon name="plus" /><span>新增任务</span></button>
       <button onClick={update}>刷新</button></div>
-    <p className={styles.note}>每个任务使用独立沙箱。打开和切换只查看，不创建环境。</p>
     {error && <p role="alert" className={styles.error}>{error}</p>}
     {loading && !rows.length && <p role="status" className={styles.note}>正在读取任务…</p>}
     {!loading && !rows.length && !error && <p className={styles.note}>还没有云端任务</p>}
     <div className={styles.list}>{rows.map(row => <button key={row.binding_id} ref={el => { if (el) rowButtons.current.set(row.binding_id, el); else rowButtons.current.delete(row.binding_id); }} className={styles.row} aria-label={`任务 ${row.task_id?.slice(0, 8) ?? '准备中'} · ${taskLabel(row)}`}
-      onClick={() => select(row.binding_id)}><strong>任务 {row.task_id?.slice(0, 8) ?? '准备中'}</strong>
-      <span>{stale.includes(row.binding_id) ? '任务状态尚未确认' : taskLabel(row)}</span><small>{row.profile_id} · 实例 {row.instance_id.slice(0, 8)}</small></button>)}</div>
+      onClick={() => select(row.binding_id)}><strong>{row.cloud?.title || `任务 ${row.task_id?.slice(0, 8) ?? '准备中'}`}</strong>
+      <span>{stale.includes(row.binding_id) ? '任务状态尚未确认' : taskLabel(row)}</span><small>{cloudTime(row.cloud?.created_at ?? row.created_at)}{(row.cloud?.created_at ?? row.created_at) !== undefined && ' · '}{row.profile_id} · 实例 {row.instance_id.slice(0, 8)}</small></button>)}</div>
     {binding && !binding.cloud && <div className={styles.notice} role="status">任务仍在准备，尚未调用模型。
       <button onClick={() => void api.retry(sessionId!, binding.create_command_id).then(update).catch(e => setError(cloudError(e)))}>核对原准备操作</button></div>}
     {hasMore && <button disabled={loading} onClick={() => setPages(v => v + 1)}>加载更多任务</button>}

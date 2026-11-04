@@ -255,10 +255,20 @@ class ArtifactFinished(Fenced):
     error_code:Label|None=None
 
 
+class AdmissionRejected(Fenced):
+    kind:Literal['admission_rejected']
+    command_id:UUIDText
+    operation:Literal['run:start','artifact:capture']
+    request_digest:ContentId
+    error_code:Literal['runner_busy','model_unavailable','unsupported_thinking_level','result_capacity','artifact_busy']
+    phase:Literal['ready','waiting_model','blocked']
+    quiescent:bool
+
+
 class Observations(Fenced):
     kind:Literal['observations']
     batch:ObservationBatch
 
 
-RunnerFrame=TypeAdapter(Annotated[Hello|State|Finished|Heartbeat|ArtifactState|ArtifactFinished|ControlState|ControlFinished|Observations,Field(discriminator='kind')])
+RunnerFrame=TypeAdapter(Annotated[Hello|State|Finished|Heartbeat|ArtifactState|ArtifactFinished|ControlState|ControlFinished|AdmissionRejected|Observations,Field(discriminator='kind')])
 CoordinatorFrame=TypeAdapter(Annotated[Welcome|Dispatch|Query|Renewed|ArtifactDispatch|ArtifactQuery|ControlDispatch|ControlQuery,Field(discriminator='kind')])

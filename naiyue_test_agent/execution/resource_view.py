@@ -15,7 +15,7 @@ class ResourceView:
 
     def validate(self):
         # This is immutable in-memory evidence for the already checked binding;
-        # actual content acquisition rechecks the opened descriptor in envd.
+        # actual content acquisition rechecks the opened descriptor in the file provider.
         if not self.environment.binding_id:raise ValueError('Missing resource binding')
 
     @staticmethod

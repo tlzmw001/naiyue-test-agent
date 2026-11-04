@@ -5,12 +5,12 @@ import { Chevron, Icon } from './Icons';
 import { displayProjectPath } from '../projectPaths';
 import styles from './ProjectPicker.module.css';
 
-export default function DirectoryBrowser({ api, mode, initialPath, initialName = '', choose, close }: {
-  api: WebApi; mode: 'select' | 'create'; initialPath?: string; initialName?: string;
+export default function DirectoryBrowser({ api, mode, initialPath, initialName = '', purpose = 'project', choose, close }: {
+  api: Pick<WebApi, 'browseDirectories'>; purpose?: 'project' | 'save'; mode: 'select' | 'create'; initialPath?: string; initialName?: string;
   choose: (value: FolderChoice) => void; close: () => void;
 }) {
   const [request, setRequest] = useState({ path: initialPath, hidden: false, revision: 0 });
-  const [input, setInput] = useState(initialPath ?? '');
+  const [input, setInput] = useState(initialPath ?? ''); const inputVersion = useRef(0);
   const [name, setName] = useState(initialName);
   const [page, setPage] = useState<DirectoryPage>();
   const [positions, setPositions] = useState<DirectoryPage['positions']>([]);
@@ -19,10 +19,10 @@ export default function DirectoryBrowser({ api, mode, initialPath, initialName =
   const [failure, setFailure] = useState('');
   const more = useRef<AbortController | undefined>(undefined);
   useEffect(() => {
-    const controller = new AbortController(); setLoading(true); setPage(undefined); setFailure('');
+    const controller = new AbortController(); const version = inputVersion.current; setLoading(true); setPage(undefined); setFailure('');
     api.browseDirectories({ path: request.path, show_hidden: request.hidden }, controller.signal).then(value => {
       if (!controller.signal.aborted) {
-        setPage(value); setInput(value.path); setPositions(value.positions); setDefaultError(value.default_error ?? '');
+        setPage(value); if (inputVersion.current === version) setInput(value.path); setPositions(value.positions); setDefaultError(value.default_error ?? '');
       }
     }).catch(error => {
       if (!controller.signal.aborted) { console.warn('directory_browser_read_failed'); setFailure(errorText(error)); }
@@ -30,7 +30,7 @@ export default function DirectoryBrowser({ api, mode, initialPath, initialName =
     return () => { controller.abort(); more.current?.abort(); more.current = undefined; };
   }, [api, request]);
   function navigate(path: string) {
-    setInput(path); setPage(undefined); setLoading(true); setMoreLoading(false);
+    inputVersion.current++; setInput(path); setPage(undefined); setLoading(true); setMoreLoading(false);
     setRequest(value => ({ ...value, path, revision: value.revision + 1 }));
   }
   async function loadMore() {
@@ -47,13 +47,14 @@ export default function DirectoryBrowser({ api, mode, initialPath, initialName =
       if (!controller.signal.aborted) { console.warn('directory_browser_page_failed'); setFailure(errorText(error)); }
     } finally { if (more.current === controller) { more.current = undefined; setMoreLoading(false); } }
   }
-  const validName = !!name.trim() && name.length <= 255 && !['.', '..'].includes(name) && !/[\\/:\0]/.test(name) && !/[. ]$/.test(name);
+  const maxNameLength = purpose === 'save' ? 128 : 255;
+  const validName = !!name.trim() && name.length <= maxNameLength && !['.', '..'].includes(name) && !/[\\/:\0]/.test(name) && !/[. ]$/.test(name);
   const ready = !!page && !loading && !failure && input === page.path;
   return <>
     <form className={styles.pathBar} onSubmit={event => { event.preventDefault(); if (input.trim()) navigate(input); }}>
       <button type="button" aria-label="返回上级文件夹" title="返回上级文件夹" disabled={!page?.parent || loading}
         onClick={() => page?.parent && navigate(page.parent)}>↑</button>
-      <input aria-label="文件夹路径" value={input} onChange={event => setInput(event.target.value)} placeholder="输入文件夹路径" autoComplete="off" />
+      <input aria-label="文件夹路径" value={input} onChange={event => { inputVersion.current++; setInput(event.target.value); }} placeholder="输入文件夹路径" autoComplete="off" />
       <button type="submit" disabled={!input.trim()}>前往</button>
     </form>
     {defaultError && <p className={styles.hint} role="status">默认位置不可用，可选择其他位置。{errorText(new ApiError(defaultError))}</p>}
@@ -78,8 +79,8 @@ export default function DirectoryBrowser({ api, mode, initialPath, initialName =
       </section>
     </div>
     <div className={styles.folderFooter}>
-      {mode === 'create' ? <label>新文件夹名称<input aria-label="新文件夹名称" value={name} maxLength={255} onChange={event => setName(event.target.value)} placeholder="输入名称" /></label> :
-        <p className={styles.hint}>进入文件夹后，选择当前文件夹作为项目。</p>}
+      {mode === 'create' ? <label>新文件夹名称<input aria-label="新文件夹名称" value={name} maxLength={maxNameLength} onChange={event => setName(event.target.value)} placeholder="输入名称" /></label> :
+        <p className={styles.hint}>{purpose === 'save' ? '选择报告保存的位置。' : '进入文件夹后，选择当前文件夹作为项目。'}</p>}
       <div className={styles.currentPath} title={page?.path} dir="ltr">{page ? `当前文件夹：${displayProjectPath(page.path)}` : '请先读取要使用的文件夹'}</div>
       <div className={styles.actions}><button type="button" onClick={close}>取消</button><button type="button" className={styles.primary}
         disabled={!ready || (mode === 'create' && !validName)} onClick={() => {

@@ -55,7 +55,7 @@ it('freezes the material IDs, text and request identity through lost ACK and pre
   await act(async () => result.current.retryImageSubmission());
   expect(start).toHaveBeenCalledTimes(2);
   expect(start.mock.calls[1]).toEqual(start.mock.calls[0]);
-  expect(start.mock.calls[1][7]).toEqual([material.material_id]);
+  expect(start.mock.calls[1][6]).toEqual([material.material_id]);
   expect(result.current.draft).toBe('新编辑'); expect(result.current.materialInputs.current).toEqual([]);
 });
 it('keeps materials and text for the next root run instead of steering or following up a busy run', async () => {
@@ -66,18 +66,4 @@ it('keeps materials and text for the next root run instead of steering or follow
   await act(async () => result.current.submit(true));
   expect(start).not.toHaveBeenCalled(); expect(control).not.toHaveBeenCalled();
   expect(result.current.draft).toBe(draft.text); expect(result.current.materialInputs.current).toEqual([material]);
-});
-
-it('preserves wait-for-environment in a frozen material request when its environment becomes ready', async () => {
-  const { api, start } = setup(); start.mockRejectedValueOnce(new TypeError('lost preparation ACK'));
-  const row = await api.session('s');
-  vi.mocked(api.prepare).mockResolvedValue({ ...row, execution: { kind: 'sandbox', state: 'preparing' } });
-  const { result } = renderHook(() => useConversation(api));
-  await waitFor(() => expect(result.current.model).toBe('A'));
-  await act(async () => result.current.selectSession('s'));
-  act(() => result.current.addAnalysisDraft(draft));
-  await act(async () => result.current.submit(false));
-  expect(start.mock.calls[0][6]).toBe(true);
-  await act(async () => result.current.retryImageSubmission());
-  expect(start.mock.calls[1]).toEqual(start.mock.calls[0]);
 });

@@ -113,3 +113,26 @@ def test_invalid_projection_is_atomic_with_cursor(tmp_path,damage):
         if damage=='thread':payload['thread']['thread_id']='different'
         with pytest.raises(CloudError):append(store,[payload])
         assert page(store)['coverage_seq']==0 and page(store)['messages']==[]
+
+
+def test_saved_tool_preview_keeps_bounded_pairing_without_large_arguments(tmp_path):
+    with Database.open_cloud(tmp_path/'history.sqlite',profile='history',initialize=True) as db:
+        store=CloudHistory(db,'b'*32,initialize=True)
+        ai=record(AIMessage(id='call',content='',tool_calls=[dict(id='tool1',name='read',args={'large':'x'*20000})]))
+        tool=record(ToolMessage(id='tool',content='ok',tool_call_id='tool1'),position=2,parent='call')
+        append(store,[ai,tool])
+        preview=page(store)['messages'][0]['preview']
+        assert preview['tool_calls']==[dict(id='tool1',name='read',args={})]
+        assert preview['arguments_truncated'] is True
+        assert len(json.dumps(preview))<2000
+
+
+def test_older_saved_preview_reconstructs_pairing_without_rewriting_archive(tmp_path):
+    with Database.open_cloud(tmp_path/'history.sqlite',profile='history',initialize=True) as db:
+        store=CloudHistory(db,'b'*32,initialize=True)
+        append(store,[record(AIMessage(id='call',content='',tool_calls=[dict(id='c',name='read',args={'path':'large'})]))])
+        with db.transaction() as c:
+            c.execute("UPDATE history_messages SET preview_json=json_remove(preview_json,'$.tool_calls','$.arguments_truncated','$.tool_calls_truncated')")
+        preview=page(store)['messages'][0]['preview']
+        assert preview['tool_calls']==[dict(id='c',name='read',args={})] and preview['arguments_truncated']
+        assert page(store)['coverage_seq']==1

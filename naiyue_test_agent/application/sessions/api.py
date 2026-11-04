@@ -18,11 +18,11 @@ class SessionAPI:
             from naiyue_test_agent.execution_roots import ExecutionRoot, ExecutionRootUnavailable
             from naiyue_test_agent.tools.read import resolve_workspace_root
             if session_id is not None:
-                from .execution_binding import resolve_capabilities
+                from .local_execution import resolve_files
                 row=await run_blocking(self._metadata.get,session_id)
-                access=await resolve_capabilities(self._sessions,row)
+                files=await resolve_files(self._sessions,row)
                 from .run_resources import discover_skills
-                return await discover_skills(access.files)
+                return await discover_skills(files)
             def discover():
                 if workspace_root is None:
                     return discover_project_skills(None)
@@ -66,64 +66,17 @@ class SessionAPI:
         with self._owner.operation():
             return await run_blocking(self._sessions.create_session, model_id)
 
-    async def create_sandbox(self,model_id,*,request_id,include_untracked=(),profile_id=None,expected_profile_revision=None,wait_for_ready=True):
-        from .execution_binding import create_sandbox_session
-        with self._owner.operation():
-            return await create_sandbox_session(self._sessions,model_id,request_id,include_untracked,
-                owner=self._owner,profile_id=profile_id,expected_profile_revision=expected_profile_revision,wait_for_ready=wait_for_ready)
 
-    async def result_options(self,session_id):
-        from .result_api import result_call
-        return await result_call(self,session_id,'result_options')
 
-    async def capture_result(self,session_id,*,result_id,include_untracked):
-        from .result_api import result_call
-        return await result_call(self,session_id,'capture_result',result_id=result_id,include_untracked=include_untracked)
 
-    async def results(self,session_id):
-        from .result_api import result_call
-        return await result_call(self,session_id,'results')
 
-    async def result(self,session_id,result_id):
-        from .result_api import result_call
-        return await result_call(self,session_id,'result',result_id)
 
-    async def result_diff(self,session_id,result_id,path):
-        from .result_api import result_call
-        return await result_call(self,session_id,'result_diff',result_id,path)
 
-    async def delivery_options(self,session_id,result_id):
-        from .result_api import result_call
-        return await result_call(self,session_id,'delivery_options',result_id)
 
-    async def deliver(self,session_id,result_id,command):
-        from .result_api import result_call
-        return await result_call(self,session_id,'deliver',result_id,command)
 
-    async def delivery_operations(self,session_id,result_id):
-        from .result_api import result_call
-        return await result_call(self,session_id,'delivery_operations',result_id)
 
-    async def acknowledge_delivery(self,session_id,result_id,operation_id):
-        from .result_api import result_call
-        return await result_call(self,session_id,'acknowledge_delivery',result_id,operation_id)
 
-    async def prepare_environment(self,session_id):
-        from .execution_binding import prepare_sandbox_session
-        with self._owner.operation():
-            async with self._persistence.history_lock(session_id):
-                return await prepare_sandbox_session(self._sessions,session_id,owner=self._owner)
 
-    async def environment_action(self,session_id,action,*,confirm_destroy=False):
-        from .execution_binding import environment_action
-        with self._owner.operation():
-            async with self._persistence.history_lock(session_id):
-                status=await self.status(session_id)
-                if status['state']=='running':
-                    from naiyue_test_agent.application.errors import SessionBusyError
-                    raise SessionBusyError('Session is busy')
-                with self._sessions.manage_environment(session_id):
-                    return await environment_action(self._sessions,session_id,action,confirm_destroy=confirm_destroy)
 
     async def create_workspace(self, model_id, workspace_root):
         with self._owner.operation():

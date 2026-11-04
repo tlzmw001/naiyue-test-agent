@@ -135,7 +135,7 @@ class RunLifecycle:
                                       background_notices=run.background_notices,
                                       history_query=getattr(self._persistence, 'aquery_history', None) if run.project_id is not None else None,
                                       memory_query=self._memory.query if self._memory is not None and self._memory.available_for(run.project_id) else None,
-                                      task_queries=run.task_queries or (getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks)):
+                                      task_queries=(getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks)):
                     result = await ainvoke_agent_run_with_resources(agent, messages,
                         session_id=session_id, thread_id=thread_id, run_id=run_id, workspace_root=workspace_root,
                         read_resource_roots=resources['read_resource_roots'], max_concurrency=max_concurrency, **options)
@@ -144,7 +144,7 @@ class RunLifecycle:
                                       background_notices=run.background_notices,
                                       history_query=getattr(self._persistence, 'aquery_history', None) if run.project_id is not None else None,
                                       memory_query=self._memory.query if self._memory is not None and self._memory.available_for(run.project_id) else None,
-                                      task_queries=run.task_queries or (getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks)):
+                                      task_queries=(getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks)):
                     result = await ainvoke_agent_run(agent, messages, session_id=session_id,
                         thread_id=thread_id, run_id=run_id, max_concurrency=max_concurrency, **options)
             observation.stage = 'finalize'
@@ -224,7 +224,7 @@ class RunLifecycle:
             with observation.bind(files=run.files, processes=run.processes, identity=RunIdentity(session_id, run_id, project_id=run.project_id, execution_root=run.execution_root), archive_root=self._archive_root, cloud_materials=self._material_query, ainvoke_subagent=self._invoke_subagent, alist_subagents=self._subagents.alist_subagents, process_tasks=self._process_tasks,
                                   history_query=getattr(self._persistence, 'aquery_history', None) if run.project_id is not None else None,
                                   memory_query=self._memory.query if self._memory is not None and self._memory.available_for(run.project_id) else None,
-                                      task_queries=run.task_queries or (getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks)):
+                                      task_queries=(getattr(self._persistence.sessions,'task_queries',None) if self._persistence is not None else self._process_tasks)):
                 result = await aresume_agent_run_with_resources(agent, session_id=session_id,
                     thread_id=thread_id, run_id=run_id, workspace_root=workspace_root, decisions=decisions,
                     approval_grants=grants, read_resource_roots=resources['read_resource_roots'],
@@ -328,18 +328,10 @@ class RunLifecycle:
             parts = self._runtime.run.prompt_parts if self._runtime.run else []
             return deepcopy([part for part in parts if agent_path == 'root' or part.get('id') != 'background_tasks'])
 
-    def admit_run(self, run_id, mode, observation, *, decisions=None, remember_approved=None, stop=False, capacity_available=True, expected_conversation_revision=None, execution_root=None,execution_access=None,expected_settings=None,consume_pending_ids=()):
+    def admit_run(self, run_id, mode, observation, *, decisions=None, remember_approved=None, stop=False, capacity_available=True, expected_conversation_revision=None, execution_root=None):
         resuming = mode == 'approval_resume'
         with self._runtime.lock:
             row = self._runtime.state
-            if expected_settings is not None:
-                current=dict(model_id=row.model_id,thinking_level=row.thinking_level,permission_mode=row.permission_mode,
-                    active_tools=list(row.active_tool_names))
-                if any(current.get(key)!=value for key,value in expected_settings.items()):
-                    from naiyue_test_agent.contracts.sandbox import SandboxError
-                    raise SandboxError('env_submission_changed')
-            from .pending_images import validate_release
-            validate_release(self._runtime,consume_pending_ids,waiting=True)
             if expected_conversation_revision is not None and row.conversation_revision != expected_conversation_revision:
                 raise ValueError('conversation_stale')
             if row.manual_review_required:
@@ -356,11 +348,6 @@ class RunLifecycle:
                 if pending.get('execution_expired'):
                     from naiyue_test_agent.application.errors import SessionApprovalExpiredError
                     raise SessionApprovalExpiredError('approval_expired: cancel the pending call and request a fresh review')
-                if execution_access is not None:
-                    from naiyue_test_agent.application.errors import SessionApprovalExpiredError
-                    if any(item['prepared']['subject'].get('execution_environment')!=execution_access.environment.public()
-                           for item in pending['items']):
-                        raise SessionApprovalExpiredError('approval_expired: execution environment changed')
                 if execution_root is not None and execution_root.project_revision is not None:
                     from naiyue_test_agent.application.errors import SessionApprovalExpiredError
                     if any(item['prepared']['subject'].get('project_revision') != execution_root.project_revision
@@ -382,14 +369,13 @@ class RunLifecycle:
             selected = execution_root if execution_root is not None else row.execution_root
             moved = (row.last_execution_path if selected is not None and selected.binding == 'project_local'
                      and row.last_execution_path is not None and row.last_execution_path != str(selected.path) else None)
-            files = execution_access.files if execution_access is not None else HostFileSystem(selected, row.project_id, session_id=self.session_id) if selected is not None and not stop else None
-            processes=execution_access.processes if execution_access is not None else HostProcesses(files) if files is not None else None
+            files = HostFileSystem(selected, row.project_id, session_id=self.session_id) if selected is not None and not stop else None
+            processes=HostProcesses(files) if files is not None else None
             run = ActiveRun(run_id, observation, project_id=row.project_id, execution_root=selected, files=files, processes=processes,
-                            task_queries=execution_access.task_queries if execution_access is not None else None,relocation_from=moved, steering_open=mode != 'compact' and not stop,
+                            relocation_from=moved, steering_open=mode != 'compact' and not stop,
                             stop_requested=stop)
             row.execution_root = selected
             self._runtime.run = run
-            for identity in consume_pending_ids:self._runtime.pending_images.pop(identity)
             if self._mcp_resources is not None:
                 self._mcp_resources.set_session_occupied(self.session_id, True)
             return run

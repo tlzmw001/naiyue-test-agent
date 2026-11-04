@@ -105,7 +105,7 @@ def test_recursive_candidates_keep_deny_and_hidden_rules(monkeypatch, name, expe
     parent = subject(r'\\?\C:\work', tool='grep')
     parent.update(operation='search', path_field='path')
     child = subject(r'\\?\C:\work' + '/' + name, tool='grep')
-    environment = EnvironmentRef('windows-policy', 'sandbox', None, 'C:/work', 'windows')
+    environment = EnvironmentRef('windows-policy', 'host', None, 'C:/work', 'windows')
     parent['execution_environment'] = environment.public()
     files = SimpleNamespace(environment=environment, inspect_candidate=lambda *a: dict(child))
     context = typed_context(identity=RunIdentity(session_id='S'), capabilities=RunCapabilities(files=files), authorization=ToolAuthorization(permission_rules=PermissionSettings(deny=(PermissionRule(tool='grep', path='C:/work/private.txt'),)), session_allow=[], permit={'call_id': 'call', 'session_id': 'S', 'agent_path': 'root', 'subject': parent}))

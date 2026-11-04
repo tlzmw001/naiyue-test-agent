@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from naiyue_test_agent.contracts.environment import EnvironmentRef
+from naiyue_test_agent.execution_roots import ExecutionRoot
 from naiyue_test_agent.contracts.run_context import RunIdentity, RunScope, RunCapabilities, RuntimeContext, ToolAuthorization
 from naiyue_test_agent.tools import create_builtin_tools
 from naiyue_test_agent.settings import AppSettings
@@ -14,10 +14,13 @@ from naiyue_test_agent.tools.permission_rules import PermissionSettings
 
 
 class RecordingFiles:
-    environment = EnvironmentRef('sandbox:one', 'sandbox', 'project', '/virtual/project', 'linux')
     owner_session_id = 'S'
 
-    def __init__(self): self.operations = []
+    def __init__(self, root):
+        from naiyue_test_agent.execution.host_files import HostFileSystem
+        from naiyue_test_agent.execution_roots import ExecutionRoot
+        self.environment=HostFileSystem(ExecutionRoot(root),None,session_id='S').environment
+        self.operations=[]
     def validate(self): self.operations.append('validate')
     def prepare_target(self, path, operation):
         target = str(self.environment.path(self.environment.root) / path)
@@ -37,10 +40,10 @@ class RecordingFiles:
     ('read', {'path': 'doc.txt'}), ('write', {'path': 'doc.txt', 'content': 'content'}),
     ('edit', {'path': 'doc.txt', 'edits': [{'oldText': 'before', 'newText': 'after'}]}),
     ('ls', {}), ('find', {'pattern': '*.txt'}), ('grep', {'pattern': 'content'})])
-def test_six_tools_use_provider_without_host_io(name, args):
+def test_six_tools_use_provider_without_host_io(tmp_path, name, args):
     spec = next(tool for tool in create_builtin_tools(AppSettings().tools) if tool.tool.name == name)
-    files = RecordingFiles()
-    context = RuntimeContext(RunScope(RunIdentity('S', 'R', project_id='project'),
+    files = RecordingFiles(tmp_path)
+    context = RuntimeContext(RunScope(RunIdentity('S', 'R', execution_root=ExecutionRoot(tmp_path)),
         capabilities=RunCapabilities(files=files), environment=files.environment))
     values = spec.validate_input(args)
     prepared_args = values.model_dump()
@@ -57,19 +60,17 @@ def test_six_tools_use_provider_without_host_io(name, args):
     assert result == expected
     assert name in files.operations and 'validate' in files.operations and 'verify' in files.operations
     if name in ('write','edit'):
-        from naiyue_test_agent.contracts.sandbox import operation_id
-        assert files.subject['operation_id']==operation_id(runtime)
-        assert 'operation_id' not in subject
+        assert files.subject == subject
 
 
-def test_reviewed_target_cannot_use_another_environment_root():
+def test_reviewed_target_cannot_use_another_environment_root(tmp_path):
     from naiyue_test_agent.tools.permissions import require_file_target
-    files = RecordingFiles()
+    files = RecordingFiles(tmp_path)
     subject = dict(workspace='/another/project', operation='read', args={'path': 'doc.txt'}, path_field='path',
         execution_environment=files.environment.public())
-    context = RuntimeContext(RunScope(RunIdentity('S', project_id='project'), capabilities=RunCapabilities(files=files),
+    context = RuntimeContext(RunScope(RunIdentity('S', execution_root=ExecutionRoot(tmp_path)), capabilities=RunCapabilities(files=files),
         environment=files.environment), authorization=ToolAuthorization(permit=dict(call_id='C', session_id='S',
         agent_path='root', subject=subject)))
-    with pytest.raises(PermissionMechanismError, match='does not match'):
+    with pytest.raises(PermissionMechanismError, match='^Tool execution directory differs from its reviewed subject$'):
         require_file_target(SimpleNamespace(context=context, tool_call_id='C'), 'doc.txt', operation='read')
     assert 'verify' not in files.operations

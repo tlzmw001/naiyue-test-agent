@@ -4,11 +4,10 @@ from fastapi.responses import Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from .dependencies import get_service
 from .errors import WebError
-from .schemas import (ActiveToolsInput, ApprovalInput, ApprovalStopInput, CompactInput,
-    ControlInput, MessageInput, NewSession, PermissionModeInput, RecoveryInput,
-    RegenerateInput, SessionOrder, SessionPresentation, ThinkingInput, MCPRefreshInput,EnvironmentActionInput)
+from .schemas import (ModelInput, ActiveToolsInput, ApprovalInput, ApprovalStopInput, CompactInput,
+    ControlInput, MessageInput, PermissionModeInput, RecoveryInput,
+    RegenerateInput, SessionOrder, SessionPresentation, ThinkingInput, MCPRefreshInput)
 from .background_tasks import router as background_task_router
-from .result_routes import router as result_router
 
 
 def create_api_router():
@@ -50,22 +49,10 @@ def create_api_router():
         return await service.delete_session(session_id)
 
     @router.post('/sessions', status_code=201)
-    async def create(body: NewSession, request: Request, service=Depends(get_service)):
-        if body.execution=='sandbox':
-            sid=await service.application.sessions.create_sandbox(body.model_id,
-                request_id=request.headers['x-request-id'],include_untracked=body.include_untracked,
-                profile_id=body.profile_id,expected_profile_revision=body.expected_profile_revision,wait_for_ready=body.wait_for_ready)
-            return {'session_id':sid}
+    async def create(body: ModelInput, request: Request, service=Depends(get_service)):
         return await service.create_session(body.model_id)
 
-    @router.post('/sessions/{session_id}/environment/prepare')
-    async def prepare_environment(session_id:str,service=Depends(get_service)):
-        return await service.application.sessions.prepare_environment(session_id)
 
-    @router.post('/sessions/{session_id}/environment/{action}')
-    async def environment_action(session_id:str,action:str,body:EnvironmentActionInput|None=None,service=Depends(get_service)):
-        return await service.application.sessions.environment_action(session_id,action,
-            confirm_destroy=body.confirm_destroy if body is not None else False)
 
     @router.get('/sessions/{session_id}')
     async def session(session_id: str, service=Depends(get_service)):
@@ -161,7 +148,7 @@ def create_api_router():
         return await service.subagent(session_id, agent_id)
 
     @router.patch('/sessions/{session_id}/model')
-    async def select(session_id: str, body: NewSession, service=Depends(get_service)):
+    async def select(session_id: str, body: ModelInput, service=Depends(get_service)):
         return await service.select_model(session_id, body.model_id)
 
     @router.patch('/sessions/{session_id}/thinking')
@@ -184,9 +171,6 @@ def create_api_router():
     async def start(session_id: str, body: MessageInput, service=Depends(get_service)):
         return await service.start(session_id, body)
 
-    @router.post('/sessions/{session_id}/submissions/{request_id}/stop')
-    async def stop_submission(session_id:str,request_id:str,service=Depends(get_service)):
-        return await service.stop_submission(session_id,request_id)
 
     @router.post('/sessions/{session_id}/approvals', status_code=202)
     async def approve(session_id: str, body: ApprovalInput, service=Depends(get_service)):
@@ -220,7 +204,6 @@ def create_api_router():
         return await service.delivery.control(run_id, body)
 
     router.include_router(background_task_router)
-    router.include_router(result_router)
     from .image_queue_routes import router as image_queue_router
     router.include_router(image_queue_router)
     return router

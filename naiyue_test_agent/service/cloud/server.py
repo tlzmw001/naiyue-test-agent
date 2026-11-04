@@ -4,7 +4,6 @@ from contextlib import ExitStack, contextmanager
 import logging
 import signal
 import socket
-import sqlite3
 from urllib.parse import urlsplit
 
 import uvicorn
@@ -21,7 +20,7 @@ logger=logging.getLogger(__name__)
 async def _maintain_inputs(runtime,stopping):
     while not stopping.is_set():
         try:await runtime.inputs.sweep_expired()
-        except (CloudError,OSError,sqlite3.Error) as error:
+        except Exception as error:
             logger.error('cloud_input_maintenance_failed error_type=%s',type(error).__name__)
         try:await asyncio.wait_for(stopping.wait(),runtime.settings.input_limits.sweep_interval_seconds)
         except TimeoutError:pass
@@ -33,7 +32,7 @@ async def _maintain_resources(runtime, stopping):
             await cloud_work(runtime,runtime.results.retention.sweep)
             await runtime.lifecycle.sweep_idle(stopping=stopping)
             await cloud_work(runtime, lambda: runtime.resources.disk(refresh=True))
-        except (CloudError, OSError, sqlite3.Error) as error:
+        except Exception as error:
             logger.error('cloud_resource_maintenance_failed error_type=%s', type(error).__name__)
         try:
             await asyncio.wait_for(stopping.wait(), runtime.settings.resource_limits.maintenance_interval_seconds)

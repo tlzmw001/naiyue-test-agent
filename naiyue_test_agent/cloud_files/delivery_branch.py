@@ -4,7 +4,7 @@ from pathlib import Path
 from uuid import uuid4
 from pydantic import ValidationError
 from naiyue_test_agent.contracts.cloud_sources import SourceReceipt
-from naiyue_test_agent.contracts.git_inputs import GitInputError
+from naiyue_test_agent.contracts.git_native import GitInputError
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from naiyue_test_agent.storage.files import check_store_directory,check_store_file,open_store_readonly,open_store_file,sync_store_directory
 from .archive import strict_json
@@ -163,6 +163,9 @@ def _journal(path,plan,limits):
 
 
 def branch_preflight(verified,receipt_path,source_root,name,limits):
+    from .delivery_paths import portable_conflicts
+    invalid=portable_conflicts(e.path for e in verified.output_manifest.entries)
+    if invalid:return invalid
     try:
         with tempfile.TemporaryDirectory(prefix='branch-',dir=verified.directory.parent) as temporary:
             _,repository,plan=_prepare(verified,receipt_path,source_root,name,limits,Path(temporary))
@@ -174,6 +177,8 @@ def branch_preflight(verified,receipt_path,source_root,name,limits):
 
 
 def branch_delivery(verified,receipt_path,source_root,name,limits,*,journal=None):
+    from .delivery_paths import portable_conflicts
+    if portable_conflicts(e.path for e in verified.output_manifest.entries):raise CloudError('cloud_delivery_path_unsupported',422)
     try:
         with tempfile.TemporaryDirectory(prefix='branch-',dir=verified.directory.parent) as temporary:
             stage=Path(temporary);git,repository,plan=_prepare(verified,receipt_path,source_root,name,limits,stage)

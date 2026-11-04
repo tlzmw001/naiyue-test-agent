@@ -1,5 +1,7 @@
 # 后续开发与补充清单
 
+2026-11-03 S10.2与S11代码/本机验证/验收准备完成：可信channel发现复用Updater原ID；完整静止备份、独立新根恢复与唯一启用、引用GC预览/确认/故障续接已接线。补齐目录别名/真实history与报告恢复/权限及源根身份/删除升级回执/有效备份保留回归；管理root2/DB2阻止旧读者忽略guard，Runner state schema仍1。最终6283后端（0失败/错误/跳过）、72文件594前端、标准构建、四目标wheel/Twine、513生产Python及4Web逐字节对包、Mac源外全新依赖安装、真实6产物manifest往返与无A消费者门禁通过，架构/安全复核收口。见[143ah](specs/143ah-s102-operations.md)、[143ai](specs/143ai-s11-final-acceptance.md)、[验证](../build/spec143-s102-s11-20261103/report.md)。15个后续单元代码/验收准备交付完成；S11实机Windows/Linux/Docker、公司HTTP/proto RPC/provider、完整目标性能和照片1–10（尤其5/10）仍pending，由用户统一执行。双任务20轮工具、候选核验、[最终手册](cloud-final-windows-acceptance.md)与[回传模板](cloud-acceptance-report-template.md)已提供；不兼容旧sandbox，原dirty/4份Spec142/真实配置数据资源保持，未提交/push/发布/部署，无新增掌握证据。唯一下一步：用户按最终手册核对候选与两端安装，再进行原机验收并回传脱敏失败/原ID；不另开新功能。 以下为历史时点。
+
 2026-11-02当前唯一下一步：S09.1 Windows＋Linux实机门禁。用户本轮要求先完成验收前代码并停止；S08.1/S08.2已完成本机验证（6883后端/613前端、构建/包/浏览器通过），见[143aa](specs/143aa-s082-code-delivery.md)与[交付说明](cloud-result-delivery.md)。15单元完成10项、剩余S09.1/S09.2/S10.1/S10.2/S11五项。900条A消费者已机器冻结，正式A在真实门禁前保留；通过后才切入口、核销A，再做更新管理与最终性能/组合验收。真实Windows文件系统/公司业务/供应商和远端部署未因本机通过而追认为已验。下方相冲突安排为历史时点。
 
 2026-11-01当前唯一下一步：讲解并确认[S04.1最小Runner/必要历史/控制](specs/143f-implementation-slices.md#s04任务runner历史投递与运行控制)，不自动跨片。S03.1最小manual输入导入/提交/正式task/容器安装已完成，证据见[143l第8节](specs/143l-s031-input-import.md#8-实际实现与验证2026-11-01)：6355后端/568前端、四目标wheel、Mac源外安装与真实Linux模板项目pytest；S03.2完整Git来源/续传和Windows原机仍待后续。正式A仍按S09切换退出，数据不删除，不恢复A/B双模式。

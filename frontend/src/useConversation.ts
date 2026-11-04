@@ -1,6 +1,5 @@
 import { createConversationSubmit } from './conversationSubmit';
 import { useComposerImages } from './useComposerImages';
-import type { ExecutionDraft } from './types';
 import { useConversationDrafts } from './useConversationDrafts';
 import { useSessionCreation } from './useSessionCreation';
 import { useEffect, useRef, useState } from 'react';import { errorText, WebApi } from './api';
@@ -42,7 +41,6 @@ export function useConversation(api: WebApi, active = true) {
   const imageInputs = useComposerImages(api, selected, draftState);
   const stoppedMode = useRef<Record<string, boolean>>({});
   const busySend = useRef(false);
-  const queuedSubmissions=useRef<Record<string,{requestId:string;text:string;images:string[];materials?:string[]}>>({});
   const subscription = useRef<AbortController | null>(null);
   const pendingStop = useRef<string | null>(null);
 
@@ -131,17 +129,6 @@ export function useConversation(api: WebApi, active = true) {
   function applySession(value: SessionView, replace = false) {
     const id = value.session_id;
     statusSync.clear(id);
-    const queued=queuedSubmissions.current[id],submission=value.pending_submission;
-    if(queued&&submission?.request_id===queued.requestId&&submission.status!=='waiting_environment') {
-      if(['running','completed'].includes(submission.status)) {
-        if(draftRef.current[id]===queued.text)writeDraft('',id);
-        const sent=new Set(queued.images);
-        imageInputs.write((imageInputs.ref.current[id]??[]).filter(image=>!sent.has(image.client_id)),id);
-        const materials = new Set(queued.materials ?? []);
-        draftState.writeMaterials((draftState.materialRef.current[id] ?? []).filter(item => !materials.has(item.material_id)), id);
-      }
-      delete queuedSubmissions.current[id];
-    }
     selected.current = id;
     setSession(value);
     setModel(models.includes(value.model_id) ? value.model_id : models[0] ?? '');
@@ -180,16 +167,15 @@ export function useConversation(api: WebApi, active = true) {
     }
   }
 
-  async function newSession(choice?: ExecutionDraft) {
-    if (busySend.current || selectionPending.current || !model) return;
+  async function newSession() {
+    if (busySend.current || selectionPending.current || creation.locked || !model) return;
     setNotice('');
     try {
-      creation.choose(choice);
       if (selected.current !== 'new' && !draftRef.current.new) writeDraft(draftRef.current[selected.current] ?? '', 'new');
       subscription.current?.abort(); history.reset(); selectionGeneration.current++; controlsRevision.current++;
       selected.current = 'new'; currentRun.current = null; setSession(null); setRun(null); setConnection(null); setStopping(false);
       await refreshSessions();
-    } catch (error) { setNotice(errorText(error)); if(choice) throw error; }
+    } catch (error) { setNotice(errorText(error));  }
   }
 
   async function deleteSession(sid: string) {
@@ -316,7 +302,7 @@ export function useConversation(api: WebApi, active = true) {
 
   const submit = createConversationSubmit({ busySend, selectionPending, model, session, selected, draftRef, pendingRef,
     currentRun, stoppedMode, writeDraft, writePending, setNotice, setSubmitting, setLastSubmission, setSession,
-    creation, imageInputs, api, applySession, display, watch, refreshSessions, refreshSession,queuedSubmissions, draftState });
+    creation, imageInputs, api, applySession, display, watch, refreshSessions, refreshSession, draftState });
 
   async function regenerate() {
     if (busySend.current || !session?.can_run || !session.last_reply_id || selectionPending.current) return;
@@ -361,19 +347,7 @@ export function useConversation(api: WebApi, active = true) {
   async function stop() {
     const live = currentRun.current;
     const sid = selected.current;
-    if(session?.pending_submission?.status==='waiting_environment') {
-      if(stopping)return;
-      setStopping(true);
-      try {
-        const receipt=await api.stopSubmission(sid,session.pending_submission.request_id);
-        if(selected.current===sid) {
-          setSession(previous=>previous?.session_id===sid?{...previous,pending_submission:receipt}:previous);
-          setNotice('已取消待发送消息，原输入已保留。');
-        }
-      }catch(error){if(selected.current===sid)setNotice(errorText(error));}
-      finally{if(selected.current===sid)setStopping(false);}
-      return;
-    }
+
     if (!live || live.status !== 'running' || stopping) return;
     setStopping(true);
     pendingStop.current = live.run_id;

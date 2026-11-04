@@ -1,90 +1,70 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CloudApi } from '../cloudApi';
-import type { AnalysisDraft, ReceiveRecord } from '../cloudReceiveTypes';
+import type { AnalysisDraft } from '../cloudReceiveTypes';
 import type { ResultFile } from '../cloudResultTypes';
 import { cloudError } from '../cloudPresentation';
-import { backgroundTaskPollMs } from '../uiSettings';
+import { useCloudReceive } from '../useCloudReceive';
 import styles from './CloudTasks.module.css';
 import CloudCodeDelivery from './CloudCodeDelivery';
+import CloudFilesDelivery from './CloudFilesDelivery';
 
-type Intent = { command_id: string; artifact_ids: string[] };
-const phases: Record<ReceiveRecord['phase'], string> = { reserved: '本机接收已登记', downloading: '正在接收到本机', verifying: '正在核对本机材料',
-  available: '本机材料已核对', failed: '本机接收失败', unknown: '本机接收状态待核对' };
-export default function CloudResultReceive({ api, sid, bid, rid, inputId, files, active, onAnalysisDraft }: {
-  api: CloudApi; sid: string; bid: string; rid: string; inputId: string; files: ResultFile[]; active: boolean;
+export default function CloudResultReceive({ api, sid, bid, rid, inputId, files, active, branchAvailable = false, onAnalysisDraft }: {
+  api: CloudApi; sid: string; bid: string; rid: string; inputId: string; files: ResultFile[]; active: boolean; branchAvailable?: boolean;
   onAnalysisDraft?: (value: AnalysisDraft) => boolean | void;
 }) {
-  const key = `naiyue.cloud-receive.${api.projectId}.${sid}.${bid}.${rid}`;
-  const [intent, setIntent] = useState<Intent | undefined>(() => {
-    try { const value = JSON.parse(sessionStorage.getItem(key) ?? 'null');
-      if (value && typeof value.command_id === 'string' && Array.isArray(value.artifact_ids) && value.artifact_ids.every((v: unknown) => typeof v === 'string')) return value;
-    } catch { console.warn('cloud_receive_draft_read_failed'); }
-  });
-  const [selected, setSelected] = useState<string[]>(intent?.artifact_ids ?? []);
-  const [record, setRecord] = useState<ReceiveRecord>(); const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(''); const [notice, setNotice] = useState('');
+  const selectionKey = `naiyue.cloud-report-selection.${api.projectId}.${sid}.${bid}.${rid}`;
+  const [selected, setSelected] = useState<string[]>(() => {
+    try { const saved: unknown = JSON.parse(sessionStorage.getItem(selectionKey) ?? '[]');
+      return Array.isArray(saved) ? saved.filter((id): id is string => typeof id === 'string' && files.some(file => file.role === 'artifact' && file.artifact.artifact_id === id)) : [];
+    } catch { console.warn('cloud_report_selection_read_failed'); return []; }
+  }); const [error, setError] = useState(''); const [notice, setNotice] = useState('');
+  const [selectionLocked, setSelectionLocked] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false); const materials = useCloudReceive(api, sid, bid, rid, inputId);
   const current = useRef({ alive: true, active }); current.current.active = active;
   useEffect(() => { current.current.alive = true; return () => { current.current.alive = false; }; }, []);
-  const live = () => current.current.alive;
-  function checked(value: ReceiveRecord, id: string) {
-    if (value.receive_id !== id || value.command_id !== id || value.local_project_id !== api.projectId || value.local_session_id !== sid ||
-      value.binding_id !== bid || value.result_id !== rid || value.input_id !== inputId) throw new Error('cloud_receive_identity_mismatch');
-    return value;
-  }
-  useEffect(() => {
-    if (!active || !intent || busy || record && !record.active && ['available', 'failed', 'unknown'].includes(record.phase)) return;
-    const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>;
-    async function read() {
-      try { const value = checked(await api.receiveStatus(sid, intent!.command_id, controller.signal), intent!.command_id);
-        if (!controller.signal.aborted) { setRecord(value); setError(''); if (value.active) timer = setTimeout(() => void read(), backgroundTaskPollMs); }
-      } catch (failure) { if (!controller.signal.aborted) setError(cloudError(failure)); }
-    }
-    void read(); return () => { controller.abort(); clearTimeout(timer); };
-  }, [api, sid, bid, rid, active, intent?.command_id, busy, record?.phase, record?.active]);
-  async function receive() {
-    if (busy || record?.active) return;
-    const same = intent && record?.phase !== 'available' && JSON.stringify(intent.artifact_ids) === JSON.stringify(selected);
-    const request = same ? intent : { command_id: crypto.randomUUID(), artifact_ids: [...selected] };
-    setBusy(true); setError(''); setNotice(''); setIntent(request);
-    if (!same) setRecord(undefined);
+  async function cleanupCache() {
+    if (!active || cleaning || materials.busy || analyzing || selectionLocked) return;
+    setCleaning(true); setError(''); setNotice('');
     try {
-      sessionStorage.setItem(key, JSON.stringify(request));
-      const value = checked(await api.receive(sid, bid, rid, request), request.command_id);
-      if (live()) setRecord(value);
-    } catch (failure) { if (live()) setError(cloudError(failure)); }
-    finally { if (live()) setBusy(false); }
-  }
-  async function retry() {
-    if (!intent || busy) return; setBusy(true); setError('');
-    try { const value = checked(await api.retryReceive(sid, intent.command_id), intent.command_id); if (live()) setRecord(value); }
-    catch (failure) { if (live()) setError(cloudError(failure)); } finally { if (live()) setBusy(false); }
+      const result = await api.cleanupReceiveCache(sid);
+      if (current.current.alive && current.current.active) setNotice(result.removed_files
+        ? `已清理 ${result.removed_files} 个缓存文件，释放 ${result.freed_bytes} 字节。`
+        : '没有可清理的未引用缓存；仍被引用的材料及交付日志已保留。');
+    } catch (failure) { if (current.current.alive) { console.warn('cloud_cache_cleanup_failed'); setError(cloudError(failure)); } }
+    finally { if (current.current.alive) setCleaning(false); }
   }
   async function analyze() {
-    if (!record || record.phase !== 'available' || busy || !current.current.active) return;
-    const id = record.receive_id; setBusy(true); setError(''); setNotice('');
+    if (materials.busy || analyzing || cleaning || !active) return;
+    setAnalyzing(true); setError(''); setNotice('');
     try {
-      const value = await api.analysisDraft(sid, id);
-      if (value.local_project_id !== api.projectId || value.local_session_id !== sid || value.receive_id !== id ||
-        value.material_refs.some(item => item.receive_id !== id || item.result_id !== rid)) throw new Error('cloud_receive_identity_mismatch');
-      if (live() && current.current.active) {
+      const record = await materials.ensure(true, selected);
+      const value = await api.analysisDraft(sid, record.receive_id);
+      if (value.local_project_id !== api.projectId || value.local_session_id !== sid || value.receive_id !== record.receive_id ||
+        value.material_refs.some(item => item.receive_id !== record.receive_id || item.result_id !== rid)) throw new Error('cloud_receive_identity_mismatch');
+      if (current.current.alive && current.current.active) {
         const accepted = onAnalysisDraft?.(value);
         setNotice(accepted === false ? '主会话已变化，请回到来源会话后重新加入。' : '已放入主会话输入框，请确认后发送。');
       }
-    } catch (failure) { if (live()) setError(cloudError(failure)); } finally { if (live()) setBusy(false); }
+    } catch (failure) { if (current.current.alive) { console.warn('cloud_analysis_prepare_failed'); setError(cloudError(failure)); } }
+    finally { if (current.current.alive) setAnalyzing(false); }
   }
-  const locked = busy || record?.active === true;
-  return <section aria-label="本机接收材料">
-    <p className={styles.note}>输出清单和代码补丁会一并接收。选择需要分析的报告或交接材料，文件保存在本机管理目录。</p>
+  return <section aria-label="结果取回">
+    <strong>报告与产物</strong>
+    {!files.some(item => item.role === 'artifact') && <p className={styles.note}>此结果没有报告等产物。</p>}
     {files.filter(item => item.role === 'artifact').map(item => <label key={item.artifact.artifact_id} className={styles.check}>
-      <input type="checkbox" disabled={locked || !!intent && !record} checked={selected.includes(item.artifact.artifact_id)} onChange={event => {
-        const id = item.artifact.artifact_id; setSelected(old => event.target.checked ? [...old, id] : old.filter(value => value !== id));
+      <input type="checkbox" disabled={materials.busy || analyzing || selectionLocked || cleaning} checked={selected.includes(item.artifact.artifact_id)} onChange={event => {
+        const id = item.artifact.artifact_id; const next = event.target.checked ? [...selected, id] : selected.filter(value => value !== id);
+        setSelected(next); try { sessionStorage.setItem(selectionKey, JSON.stringify(next)); } catch { console.warn('cloud_report_selection_save_failed'); setError('报告勾选未能缓存，请保持当前窗口并及时保存。'); }
       }} />{item.artifact.relative_name} · {item.artifact.size} 字节</label>)}
-    <div className={styles.actions}><button disabled={locked} onClick={() => void receive()}>接收到本机</button>
-      {record && !record.active && record.phase !== 'available' && <button disabled={busy} onClick={() => void retry()}>继续原接收</button>}
-      {record?.phase === 'available' && onAnalysisDraft && <button disabled={busy || !active} onClick={() => void analyze()}>交给主会话分析</button>}</div>
-    {record && <p className={styles.note} role="status">{phases[record.phase]}{record.files.length > 0 && ` · ${record.files.reduce((n, f) => n + f.offset, 0)} / ${record.files.reduce((n, f) => n + f.artifact.size, 0)} 字节`}</p>}
-    {notice && <p className={styles.note} role="status">{notice}</p>}{error && <p role="alert" className={styles.error}>{error}</p>}
-    {record?.error_code && <p className={styles.error}>{cloudError({ code: record.error_code })}</p>}
-    {record?.phase === 'available' && <CloudCodeDelivery key={record.receive_id} api={api} sid={sid} receiveId={record.receive_id} resultKey={`${bid}.${rid}`} active={active} />}
+    <CloudFilesDelivery api={api} sid={sid} resultKey={`${bid}.${rid}`} active={active && !materials.busy && !analyzing && !cleaning}
+      selected={selected} onSelectionLock={setSelectionLocked} prepareMaterials={(refresh, id) => materials.ensure(false, selected, refresh, id)} />
+    {onAnalysisDraft && <div className={styles.actions}><button disabled={!active || materials.busy || analyzing || cleaning} onClick={() => void analyze()}>交给主 Agent 分析</button></div>}
+    <div className={styles.actions}><button disabled={!active || materials.busy || analyzing || selectionLocked || cleaning} onClick={() => void cleanupCache()}>{cleaning ? '正在清理缓存…' : '清理未引用缓存'}</button></div>
+    {materials.busy && <p role="status" className={styles.note}>正在准备并核对固定材料{materials.record && ` · ${materials.record.files.reduce((n, f) => n + f.offset, 0)} 字节`}</p>}
+    {(error || materials.error) && <div className={styles.actions}><button disabled={materials.busy || analyzing || cleaning || !active} onClick={() => { void materials.ensure(true, selected, true).then(() => { setError(''); setNotice('材料已重新核对，可再次交给主 Agent 分析。'); }).catch(failure => { console.warn('cloud_material_refresh_failed'); setError(cloudError(failure)); }); }}>重新核对分析材料</button></div>}
+    {notice && <p role="status" className={styles.note}>{notice}</p>}{(error || materials.error) && <p role="alert" className={styles.error}>{error || materials.error}</p>}
+    <CloudCodeDelivery api={api} sid={sid} resultKey={`${bid}.${rid}`} active={active && !materials.busy && !analyzing && !cleaning}
+      branchAvailable={branchAvailable} prepareMaterials={(refresh, id) => materials.ensure(true, [], refresh, id)} />
   </section>;
 }

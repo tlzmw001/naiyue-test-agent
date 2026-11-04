@@ -12,7 +12,7 @@ def remove_task_data(root, task_id, limits, *, artifact_ids=None):
     TypeAdapter(TaskId).validate_python(task_id)
     if artifact_ids is not None:
         for value in artifact_ids:TypeAdapter(UUIDText).validate_python(value)
-    deadline = time.monotonic() + limits.scan_timeout_seconds
+    deadline = time.monotonic() + limits.cleanup_timeout_seconds
     count = 0
 
     def check(depth):

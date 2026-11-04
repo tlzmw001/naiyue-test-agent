@@ -135,7 +135,7 @@ class RunnerActionCommands:
             task=self.control.verify(connection,frame)
             if frame.run_id!=task.last_run_id:return
             if task.active_run_id or task.control_operation_id or task.artifact_operation_id or task.environment_operation_id:
-                if frame.recovery:
+                if frame.recovery and frame.recovery.model_dump()!=task.runner_recovery:
                     now=time.time()
                     r.registry.save_task_cas(task.model_copy(update={'revision':task.revision+1,'runner_recovery':frame.recovery.model_dump()}),
                         expected_revision=task.revision,expected_generation=task.generation,revoked_at=now)
@@ -143,7 +143,9 @@ class RunnerActionCommands:
             blockers=[x for x in task.reclaim_blockers if x!='background_commands']
             if not frame.quiescent:blockers.append('background_commands')
             now=time.time()
-            r.registry.save_task_cas(task.model_copy(update={'revision':task.revision+1,'reclaim_blockers':blockers,
+            changes={'reclaim_blockers':blockers,
                 'runner_phase':frame.phase or task.runner_phase,'runner_recovery':frame.recovery.model_dump() if frame.recovery else None,
-                'last_quiescent_at':now if frame.quiescent and not blockers else None,'updated_at':now}),
+                'last_quiescent_at':(task.last_quiescent_at or now) if frame.quiescent and not blockers else None}
+            if all(getattr(task,key)==value for key,value in changes.items()):return
+            r.registry.save_task_cas(task.model_copy(update=changes|{'revision':task.revision+1,'updated_at':now}),
                 expected_revision=task.revision,expected_generation=task.generation,revoked_at=now)

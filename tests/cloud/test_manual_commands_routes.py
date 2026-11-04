@@ -1,5 +1,7 @@
 """Real local HTTP entry, parent ownership and bounded command/draft views."""
 import asyncio
+import httpx
+import pytest
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from test_service_protocol import service_clients
@@ -81,4 +83,53 @@ def test_long_prompt_uses_bounded_summaries_and_stale_draft_is_rejected(monkeypa
             assert result.status_code==200
             stale=await t.client.put(path+'/draft',params=t.query,headers=t.headers,json=dict(expected_draft_revision=0,text='stale',model_id='A'))
             assert stale.status_code==409 and stale.json()['error']['code']=='cloud_draft_conflict'
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('local_limit',[None,7])
+def test_model_options_proxy_matches_real_strict_owner_route(monkeypatch,tmp_path,local_limit):
+    from contextlib import nullcontext
+    from fastapi import FastAPI
+    from starlette.responses import JSONResponse
+    from cloud_helpers import settings
+    from naiyue_test_agent.cloud_files.client import CloudClient,CloudConnection
+    from naiyue_test_agent.contracts.cloud_tasks import CloudError
+    from naiyue_test_agent.service.cloud.runner_routes import register_runner_routes
+    async def scenario():
+        async with configured(monkeypatch,tmp_path) as t:
+            owner_settings=settings(tmp_path/'owner')
+            cfg=CloudConnection(endpoint=owner_settings.origin,owner_authority=owner_settings.authority,
+                owner_token=owner_settings.owner_token,instance_id=t.adapter.settings.instance_id)
+            seen=[];options=dict(default_model_id='A',model_ids=['A'],thinking_options={
+                'A':dict(default_level='low',supported_levels=['low','high'])})
+            runtime=SimpleNamespace(operation=nullcontext,instance_id=cfg.instance_id,
+                settings=SimpleNamespace(authority=cfg.owner_authority,origin='http://'+cfg.owner_authority,access_token=cfg.owner_token.get_secret_value()),
+                models=SimpleNamespace(options=lambda task_id:options if task_id==t.remote.task['task_id'] else None))
+            owner=FastAPI();register_runner_routes(owner,FastAPI(),runtime)
+            @owner.exception_handler(CloudError)
+            async def rejected(request,error):return JSONResponse({'error':{'code':error.code}},status_code=error.status)
+            async def upstream(request):
+                seen.append(dict(request.url.params))
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=owner)) as client:
+                    response=await client.request(request.method,str(request.url),headers=dict(request.headers))
+                return httpx.Response(response.status_code,json=response.json())
+            client=CloudClient(cfg,transport=httpx.MockTransport(lambda request:asyncio.run(upstream(request))))
+            t.manager.connections.client=client
+            try:
+                # Exercise the production owner router and client, rather than a permissive adapter.
+                path=t.base+'/cloud-tasks/'+t.bid+'/models'
+                before=len(seen)
+                for extra in ({'thread_id':'child'},{'after_model':'call'},{'limit':0}):
+                    response=await t.client.get(path,params=t.query|extra,headers=t.headers)
+                    assert response.status_code==422
+                denied=await t.client.get(path,params=t.query,headers=t.headers|{'Authorization':''})
+                assert denied.status_code==401 and len(seen)==before
+                query=t.query if local_limit is None else t.query|{'limit':local_limit}
+                response=await t.client.get(path,params=query,headers=t.headers)
+                assert response.status_code==200,response.text
+                assert response.json()==options and seen==[{}]
+                with pytest.raises(CloudError,match='invalid_request'):
+                    await asyncio.to_thread(client.request,'GET','/tasks/'+t.remote.task['task_id']+'/models',params={'limit':50})
+                assert seen==[{}, {'limit':'50'}] and t.model.seen==[]
+            finally:client.close()
     asyncio.run(scenario())

@@ -31,8 +31,7 @@ class SessionState:
     pending_turn: dict | None = None
     manual_review_required: bool = False
     last_execution_path: str | None = None
-    execution_binding: Literal['local', 'project_local','sandbox'] | None = None
-    execution_setup: dict | None = None
+    execution_binding: Literal['local', 'project_local'] | None = None
 
     @property
     def execution_path(self):
@@ -61,7 +60,6 @@ class ActiveRun:
     subagent_calls: set[str] = field(default_factory=set)
     processes: 'ProcessPort | None' = None
     files: 'FileSystemPort | None' = None
-    task_queries: object = None
 
 
 @dataclass

@@ -87,7 +87,7 @@ class ServiceOptions(BaseModel):
 
     @property
     def identity(self):
-        return ServiceIdentity(product_version=__version__, protocol_version=1,
+        return ServiceIdentity(product_version=__version__, protocol_version=2,
             user_id=user_identity(), data_dir=str(self.data_dir),
             config_paths={'models': str(self.config_path), 'settings': str(self.settings_path)})
 

@@ -19,16 +19,14 @@ type Context = {
   applySession:(value:SessionView, selected?:boolean)=>void;
   display:(value:RunView,id:string)=>void; watch:(run:string,id:string,initial?:RunView)=>Promise<void>;
   refreshSessions:()=>Promise<void>; refreshSession:(id:string)=>Promise<SessionView>;
-  queuedSubmissions:RefObject<Record<string,{requestId:string;text:string;images:string[];materials?:string[]}>>;
   draftState: ReturnType<typeof useConversationDrafts>;
 };
 export function createConversationSubmit(context:Context) {
   const { busySend,selectionPending,model,session,selected,draftRef,pendingRef,currentRun,stoppedMode,
     writeDraft,writePending,setNotice,setSubmitting,setLastSubmission,setSession,creation,imageInputs,api,
-    applySession,display,watch,refreshSessions,refreshSession,queuedSubmissions,draftState } = context;
+    applySession,display,watch,refreshSessions,refreshSession,draftState } = context;
   return async function submit(followUp: boolean, retryUncertain = false) {
     if (busySend.current || selectionPending.current || !model) return;
-    if (session?.pending_submission?.status==='waiting_environment') return;
     if (session?.recovery) { setNotice('当前仅可查看已保存历史。'); return; }
     const key = selected.current;
     const frozen = retryUncertain ? imageInputs.uncertain : undefined;
@@ -58,7 +56,6 @@ export function createConversationSubmit(context:Context) {
     setNotice('');
     let sid = key;
     let request: FrozenImageRequest | undefined = frozen;
-    let target=session,waitingAccepted=false;
     try {
       if (key === 'new') {
         const value = await creation.prepare(model, progress => {
@@ -67,35 +64,25 @@ export function createConversationSubmit(context:Context) {
           } else if (selected.current === sid) setSession(() => progress);
         });
         sid = value.session_id;
-        target=value;
         if(selected.current===sid)applySession(value);
-        if (value.execution?.kind === 'sandbox' && value.execution.state!=='preparing' && (value.execution.state !== 'ready' || !value.can_run)) {
-          setNotice('环境准备尚未完成，消息已保留。请在执行位置菜单核对原准备。'); await refreshSessions(); return;
-        }
+
       }
       const configured = await creation.configure(sid);
       if (configured) setSession(previous => previous?.session_id === sid ? { ...previous, ...configured } : previous);
-      const waiting = request?.waitForEnvironment ?? target?.execution?.state === 'preparing';
       if ((attached.length || materials.length) && !request) request = imageInputs.freeze({ requestId: crypto.randomUUID(), sessionId: sid,
         kind: live?.status === 'running' && !live.done ? followUp ? 'follow_up' : 'steering' : 'message',
         runId: live?.status === 'running' && !live.done ? live.run_id : undefined,
-        text: combined, draftText: text, images: attached, materialRefs: materials.map(item => ({ ...item })), revision: session?.conversation_revision, waitForEnvironment: waiting });
+        text: combined, draftText: text, images: attached, materialRefs: materials.map(item => ({ ...item })), revision: session?.conversation_revision });
       if (request ? request.kind !== 'message' : live?.status === 'running' && !live.done) {
         if (request && request.kind !== 'message') await api.control(request.runId!, request.kind, request.text, 'root', undefined, undefined, wireImages(request.images), [...new Set(request.images.flatMap(image => image.pendingId ? [image.pendingId] : []))], request.requestId);
         else await api.control(live!.run_id, followUp ? 'follow_up' : 'steering', combined);
         setLastSubmission({ session_id: sid });
         setNotice(followUp ? 'Follow-up 已排队，将在自然结束后处理。' : '补充消息已排队。');
       } else {
-        const started = materials.length ? await api.start(sid,combined,request!.requestId,request!.revision,wireImages(attached),
-          [...new Set(attached.flatMap(image=>image.pendingId?[image.pendingId]:[]))],waiting,materials.map(item=>item.material_id)) : waiting ? await api.start(sid,combined,request?.requestId??crypto.randomUUID(),target?.conversation_revision,wireImages(attached),
-          [...new Set(attached.flatMap(image=>image.pendingId?[image.pendingId]:[]))],true) : attached.length ? await api.start(sid, combined, request!.requestId, request!.revision, wireImages(attached), [...new Set(attached.flatMap(image => image.pendingId ? [image.pendingId] : []))]) : await api.start(sid, combined, undefined, session?.conversation_revision);
+        const started = materials.length ? await api.start(sid, combined, request!.requestId, request!.revision, wireImages(attached),
+          [...new Set(attached.flatMap(image => image.pendingId ? [image.pendingId] : []))], materials.map(item => item.material_id)) : attached.length ? await api.start(sid, combined, request!.requestId, request!.revision, wireImages(attached), [...new Set(attached.flatMap(image => image.pendingId ? [image.pendingId] : []))]) : await api.start(sid, combined, undefined, session?.conversation_revision);
         setLastSubmission({ session_id: sid });
-        if(started.status==='waiting_environment'&&started.request_id) {
-          waitingAccepted=true;
-          queuedSubmissions.current[sid]={requestId:started.request_id,text,images:attached.map(image=>image.client_id),materials:materials.map(item=>item.material_id)};
-          setSession(previous=>previous?.session_id===sid?{...previous,can_run:false,pending_submission:{request_id:started.request_id!,status:'waiting_environment'}}:previous);
-          if(selected.current===sid)setNotice('消息已受理，沙箱准备完成后会在此会话自动发送。可以切换会话或取消待发送。');
-        } else if(started.run_id) {
+        if (started.run_id) {
           const value = await api.run(started.run_id);
           if(selected.current===sid)currentRun.current = value;
           display(value, sid);
@@ -106,13 +93,13 @@ export function createConversationSubmit(context:Context) {
       }
       if (request) imageInputs.settle(sid,request.requestId);
       const sent = new Set(attached.map(image => image.client_id));
-      if(!waitingAccepted)imageInputs.write((imageInputs.ref.current[sid] ?? []).filter(image => !sent.has(image.client_id)), sid);
-      if (!waitingAccepted && materials.length) {
+      imageInputs.write((imageInputs.ref.current[sid] ?? []).filter(image => !sent.has(image.client_id)), sid);
+      if (materials.length) {
         const sentMaterials = new Set(materials.map(item => item.material_id));
         draftState.writeMaterials((draftState.materialRef.current[sid] ?? []).filter(item => !sentMaterials.has(item.material_id)), sid);
       }
       void imageInputs.refreshPending();
-      if (!waitingAccepted&&draftRef.current[sid] === text) writeDraft('', sid);
+      if (draftRef.current[sid] === text) writeDraft('', sid);
       void refreshSessions().catch(error=>{
         console.warn('submitted_session_list_refresh_failed',error instanceof ApiError?error.code:error instanceof Error?error.name:'unknown');
       });

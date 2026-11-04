@@ -22,22 +22,25 @@ def test_path_without_process_capability_cannot_execute(tmp_path):
 
 
 @pytest.mark.parametrize('name', ['bash', 'aitest_kit'])
-def test_tool_factory_and_dispatch_use_provider_without_host_io(monkeypatch, name):
+def test_tool_factory_and_dispatch_use_provider_without_host_io(monkeypatch, tmp_path, name):
     import shutil
     from naiyue_test_agent.tools.processes import HostProcessRunner
     def forbidden(*args, **kwargs): raise AssertionError('Tool accessed host execution')
     monkeypatch.setattr(shutil, 'which', forbidden)
     monkeypatch.setattr(HostProcessRunner, '__init__', forbidden)
     calls = []
+    from naiyue_test_agent.execution.host_files import HostFileSystem
+    from naiyue_test_agent.execution_roots import ExecutionRoot
+    root=ExecutionRoot(tmp_path)
     class Processes:
-        environment = EnvironmentRef('sandbox:B', 'sandbox', 'P', '/project', 'linux')
+        environment = HostFileSystem(root,None,session_id='S').environment
         owner_session_id = 'S'
         def validate(self): calls.append('validate')
         async def shell(self, *args, **kwargs): calls.append('shell'); return 'PROVIDER_SHELL'
         async def argv(self, *args, **kwargs): calls.append('argv'); return 'PROVIDER_ARGV'
     async def scenario():
         processes = Processes()
-        scope = RunScope(RunIdentity('S', project_id='P'), capabilities=RunCapabilities(processes=processes),
+        scope = RunScope(RunIdentity('S', execution_root=root), capabilities=RunCapabilities(processes=processes),
                          environment=processes.environment)
         tool = create_session_bash_tool() if name == 'bash' else create_aitest_kit_tool()
         args = {'command': 'printf x'} if name == 'bash' else {'args': ['doctor']}

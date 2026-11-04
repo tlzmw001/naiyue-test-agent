@@ -63,7 +63,7 @@ def test_project_resources_use_file_port_without_local_path_io():
         root + '/.agents/skills/check/SKILL.md': b'---\nname: check\ndescription: inspect code\n---\nbody'}
     directories = {root, root + '/.agents', root + '/.agents/skills', root + '/.agents/skills/check'}
     class Files:
-        environment = EnvironmentRef('virtual-binding', 'sandbox', None, root, 'linux')
+        environment = EnvironmentRef('virtual-binding', 'host', None, root, 'linux')
         checks = 0
         def validate(self): self.checks += 1
         def resource_info(self, path):

@@ -1,4 +1,7 @@
 .delivery { display: grid; gap: 8px; padding-top: 12px; margin-top: 10px; border-top: 1px solid var(--line); min-width: 0; }
+.delivery > label { margin: 0; }
 .field { display: grid; gap: 6px; color: var(--text-secondary); font-size: var(--fs-meta); }
-.delivery select, .delivery input:not([type='checkbox']) { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; padding: 8px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); color: var(--text); background: var(--surface); font: inherit; }
+.delivery select, .delivery input:not([type='checkbox']) { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; padding: 8px; border: 1px solid var(--line); border-radius: var(--r-sm); color: var(--text-secondary); background: transparent; font: inherit; }
 .paths { margin: 0; padding-left: 20px; max-height: 180px; overflow-y: auto; color: var(--text-secondary); font-size: var(--fs-meta); line-height: var(--lh-ui); }
+.browser { margin: 12px 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-sm); }
+.browser input { font: inherit; color: var(--text); background: var(--surface); }

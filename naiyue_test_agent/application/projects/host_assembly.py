@@ -22,7 +22,7 @@ async def assemble_host(*, catalog, parent, personal, admission, database_path, 
                         system_prompt, response_format, settings, initial_active_tools=None,
                         registered_project=None,
                         execution_authority=None, chats=False, storage_resources=None,
-                        storage_stack=None, prepared_tools=None,environments=None):
+                        storage_stack=None, prepared_tools=None):
     registry, initial = prepared_tools or prepare_tools(tools, settings, initial_active_tools)
     stack, resources, jobs = storage_stack or AsyncExitStack(), None, None
     try:
@@ -60,7 +60,7 @@ async def assemble_host(*, catalog, parent, personal, admission, database_path, 
             http_attempt_limit=settings.diagnostics.max_pending_events, shell_task_settings=settings.shell_tasks,
             data_dir=get_data_dir(settings.storage), project=project, admission=admission,
             execution_authority=execution_authority, fixed_execution=chats or registered_project is not None,
-            environments=environments, image_input_settings=settings.image_inputs)
+            image_input_settings=settings.image_inputs)
         usage = await _enter_resource(stack, 'usage', ModelUsagePersistence(storage, sessions.subscribe_events, settings.usage_persistence))
         diagnostics = await _enter_resource(stack, 'diagnostic', DiagnosticPersistence(storage, sessions.subscribe_events, settings.diagnostics))
         jobs = None

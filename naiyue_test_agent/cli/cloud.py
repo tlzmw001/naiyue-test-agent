@@ -21,6 +21,8 @@ def main(argv=None):
     prepare = releases.add_parser('prepare', help='prepare from verified local release artifacts')
     prepare.add_argument('release_id')
     prepare.add_argument('--settings', type=Path, required=True)
+    from .cloud_release import register as register_releases
+    register_releases(releases)
     inputs=commands.add_parser('input',help='capture or upload one explicitly selected input')
     input_commands=inputs.add_subparsers(dest='input_command',required=True)
     capture=input_commands.add_parser('capture')
@@ -45,15 +47,20 @@ def main(argv=None):
     register(commands)
     args = parser.parse_args(argv)
     try:
+        if args.command=='release' and args.release_command!='prepare':
+            import json
+            from .cloud_release import execute
+            value=execute(args);print(json.dumps(value,ensure_ascii=True))
+            return 0 if value.get('compatible',True) else 2
         if args.command=='input':
             import json
             from .cloud_inputs import execute
-            print(json.dumps(execute(args),ensure_ascii=False))
+            print(json.dumps(execute(args),ensure_ascii=True))
             return 0
         if args.command in ('project','task','run','control','command','history','artifact','snapshot','usage'):
             import json
             from .cloud_tasks import execute
-            print(json.dumps(execute(args),ensure_ascii=False))
+            print(json.dumps(execute(args),ensure_ascii=True))
             return 0
         if args.command == 'serve':
             from naiyue_test_agent.application.cloud.settings import CloudSettings

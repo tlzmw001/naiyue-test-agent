@@ -19,7 +19,7 @@ def input_path(value):
     for part in parts:
         stem=part.split('.')[0].upper()
         if (part in ('','.','..') or part[-1:] in ('.',' ') or ':' in part
-                or stem in {'CON','PRN','AUX','NUL',*(f'COM{i}' for i in range(1,10)),*(f'LPT{i}' for i in range(1,10))}
+                or stem in {'CON','PRN','AUX','NUL',*(f'COM{i}' for i in '123456789¹²³'),*(f'LPT{i}' for i in '123456789¹²³')}
                 or part.casefold() in {'.git','.venv','node_modules','__pycache__','.pytest_cache','.ssh','.aws','id_rsa','id_ed25519','id_dsa','id_ecdsa','.netrc','_netrc'}
                 or any(c in '<>"|?*' for c in part) or part.casefold().endswith(('.p12','.pfx'))
                 or part.casefold().startswith('.env')):

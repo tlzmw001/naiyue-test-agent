@@ -13,8 +13,6 @@ def _check_resources(workspace_root, read_resource_roots):
     if workspace_root is None:
         from .run_scope import current_run_scope
         scope=current_run_scope()
-        if scope is not None and scope.environment is not None and scope.environment.kind=='sandbox':
-            workspace_root=scope.environment.path(scope.environment.root)
     if (not isinstance(workspace_root, PurePath) or not workspace_root.is_absolute()
             or '..' in workspace_root.parts):
         raise ValueError('A canonical workspace_root is required')

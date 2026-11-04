@@ -65,6 +65,8 @@ class ContainerCheck(CloudRecord):
     runner_readonly: bool
     runner_version: Label
     kit_version: Label
+    runner_protocol: int | None = None
+    state_schema: int | None = None
     toolchain_sha256: ContentId | None = None
     checks: dict[str, str] = Field(default_factory=dict)
 

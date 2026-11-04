@@ -28,6 +28,7 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
   const message = useRef<{ id: string; version: number } | undefined>(undefined);
   const intent = useRef<{ kind: string; body: Record<string, unknown> } | undefined>(undefined);
   const [unconfirmed, setUnconfirmed] = useState(false);
+  const [submitted, setSubmitted] = useState<{ text: string; run?: string; accepted?: boolean }>();
   const acknowledgement = useRef(draft.acknowledged); acknowledgement.current = draft.acknowledged;
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
@@ -47,8 +48,11 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
         setOperations(values);
         const sent = values.find(op => op.command_id === message.current?.id);
         if (sent && ['accepted', 'succeeded', 'failed', 'rejected'].includes(sent.phase)) {
-          if (['accepted', 'succeeded'].includes(sent.phase)) void acknowledgement.current(message.current!.version);
-          message.current = undefined; setSending(false); changed();
+          if (['accepted', 'succeeded'].includes(sent.phase)) { void acknowledgement.current(message.current!.version); setSubmitted(old => old && { ...old, accepted: true, run: sent.run_id ?? undefined }); }
+          else { setSubmitted(undefined); setError(cloudError({ code: sent.error_code ?? 'cloud_command_unknown' })); }
+          message.current = undefined; intent.current = undefined; setUnconfirmed(false); setSending(false);
+          if (['accepted', 'succeeded'].includes(sent.phase)) setError('');
+          changed();
         }
         if (values.some(op => op.kind === 'delete' && op.phase === 'succeeded')) { changed(); back(); return; }
       } catch (failure) { if (!controller.signal.aborted) { console.warn('cloud_commands_read_failed'); setError(cloudError(failure)); } }
@@ -57,7 +61,7 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
     void read(); return () => { controller.abort(); clearTimeout(timer); };
   }, [api, sid, binding.binding_id, active, revision]);
   async function dispatch(kind: string, body: Record<string, unknown>) {
-    if (pending.current) return;
+    if (pending.current) return false;
     pending.current = true; setBusy(true); setError(''); intent.current = { kind, body };
     try {
       const op = kind === 'message' ? await api.message(sid, binding.binding_id, body) :
@@ -65,24 +69,29 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
       if (!alive.current) return;
       setOperations(old => [op, ...old.filter(v => v.command_id !== op.command_id)]); setUnconfirmed(false);
       setRevision(v => v + 1); changed();
+      if (['failed', 'rejected'].includes(op.phase)) {
+        setError(cloudError({ code: op.error_code ?? 'cloud_command_unknown' })); setSending(false); setSubmitted(undefined);
+        message.current = undefined; intent.current = undefined; return false;
+      }
+      return true;
     } catch (failure) { if (alive.current) {
       console.warn('cloud_command_submit_failed'); setError(cloudError(failure));
       const code = (failure as { code?: string })?.code;
       const rejected = ['cloud_binding_conflict', 'cloud_draft_conflict', 'cloud_command_capacity', 'cloud_preparation_pending'].includes(code ?? '');
       setUnconfirmed(!rejected);
-      if (rejected) { intent.current = undefined; message.current = undefined; setSending(false); changed(); }
-    } }
+      if (rejected) { intent.current = undefined; message.current = undefined; setSending(false); setSubmitted(undefined); changed(); }
+    } return false; }
     finally { pending.current = false; if (alive.current) setBusy(false); }
   }
-  const execute: CloudAction = async (kind, body) => { if (metadataFresh) await dispatch(kind, { command_id: crypto.randomUUID(), ...body }); };
+  const execute: CloudAction = async (kind, body) => { if (metadataFresh) return await dispatch(kind, { command_id: crypto.randomUUID(), ...body }); };
   async function send() {
     if (!metadataFresh || !canSend(binding.cloud) || sending || !draft.text.trim() || !draft.model_id) return;
-    setSending(true);
+    setSending(true); setSubmitted({ text: draft.text });
     try {
       const saved = await draft.save(); const id = crypto.randomUUID(); message.current = { id, version: saved.version };
       await dispatch('message', { command_id: id, expected_binding_revision: binding.revision,
         text: saved.text, model_id: saved.model_id, thinking_level: saved.thinking_level, draft_revision: saved.draft_revision });
-    } catch (failure) { if (alive.current) { setError(cloudError(failure)); setSending(false); } }
+    } catch (failure) { if (alive.current) { setError(cloudError(failure)); setSending(false); setSubmitted(undefined); } }
   }
   async function retryIntent() {
     const fixed = intent.current; if (!fixed) return;
@@ -97,20 +106,21 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
   const raw = new Map(observation.rows.map(row => [row.id, row]));
   return <section className={styles.detail} aria-label="云端任务详情">
     <header className={styles.detailHeader}><button className={styles.link} onClick={back}>返回任务列表</button>
-      <strong>任务 {binding.task_id?.slice(0, 8)}</strong><span>{taskLabel(binding)}</span>
+      <strong>{binding.cloud?.title || `任务 ${binding.task_id?.slice(0, 8)}`}</strong><span>{taskLabel(binding)}</span>
       <small>{binding.profile_id} · 实例 {binding.instance_id.slice(0, 8)}</small></header>
     <div className={styles.controlArea}>
       {!metadataFresh && <p role="status" className={styles.error}>任务状态尚未确认，保留上次内容；恢复连接后再操作。</p>}
       <CloudTaskActions api={api} sid={sid} binding={binding} busy={busy || !metadataFresh} execute={execute}
         forceReleaseAllowed={!operations.some(op => op.kind !== 'create' && ['reserved', 'unknown', 'waiting_runner'].includes(op.phase))} />
       {binding.cloud?.last_error_code && <p role="status" className={styles.error}>上次执行需要检查：{cloudError({ code: binding.cloud.last_error_code })}</p>}
-      {operations.slice(0, 4).map(op => <p key={op.command_id} className={styles.note}>
-        {op.kind === 'message' && op.phase === 'accepted' ? '云端已接管执行；业务中转仍需 Windows 在线。' :
-          ({ reserved: '操作已在本机记录，等待云端确认', accepted: '云端已受理', succeeded: '操作已完成', failed: '操作失败', rejected: '操作未受理', unknown: '原操作结果需核对', waiting_runner: '等待执行端连接' } as Record<string, string>)[op.phase] ?? '正在处理原操作'}
+      {operations[0] && operations[0].kind !== 'message' && ['reserved', 'accepted', 'waiting_runner', 'unknown'].includes(operations[0].phase) && <p role="status" className={styles.note}>{operations[0].kind === 'delete' ? '删除请求已登记，等待云端确认；完成后任务才会移除。' : '操作尚未完成，请等待状态确认或核对原操作。'}</p>}
+      <details><summary>操作记录{operations.length ? ` · ${operations.length}` : ''}</summary>{operations.slice(0, 4).map(op => <p key={op.command_id} className={styles.note}>
+        {({ reserved: '操作已在本机记录，等待云端确认', accepted: '云端已受理', succeeded: '操作已完成', failed: '操作失败', rejected: '操作未受理', unknown: '原操作结果需核对', waiting_runner: '等待执行端连接' } as Record<string, string>)[op.phase] ?? '正在处理原操作'}
         {op.error_code && <span> · {cloudError({ code: op.error_code })}</span>}
         {['unknown', 'waiting_runner'].includes(op.phase) && <button className={styles.link} onClick={() => {
           void api.retry(sid, op.command_id).then(() => { setRevision(v => v + 1); changed(); }).catch(e => setError(cloudError(e)));
-        }}>继续核对原操作</button>}</p>)}
+        }}>继续核对原操作</button>}</p>)}</details>
+      {operations[0] && ['failed', 'rejected'].includes(operations[0].phase) && !error && <p role="alert" className={styles.error}>{cloudError({ code: operations[0].error_code ?? 'cloud_command_unknown' })}</p>}
       {error && <p role="alert" className={styles.error}>{error}</p>}
       {unconfirmed && <button onClick={() => void retryIntent()}>核对并重试原请求</button>}
       <label className={styles.thread}>查看过程<select aria-label="查看云端根子线程" value={thread ?? ''} onChange={e => setThread(e.target.value || undefined)}>
@@ -122,8 +132,9 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
     </div>
     <CloudResults api={api} sid={sid} binding={binding} active={active} changed={changed} onAnalysisDraft={onAnalysisDraft} />
     <div className={styles.process}>
+      {submitted && !observation.rows.some(row => row.type === 'human' && row.run_id === submitted.run && !!submitted.run) && <div className={styles.pendingMessage} role="status"><p>{submitted.text}</p><small>{submitted.accepted ? '云端已受理，等待消息同步' : '正在提交，等待云端确认'}</small></div>}
       {observation.loading && <p className={styles.note}>正在读取云端过程…</p>}
-      {!observation.loading && !observation.rows.length && <p className={styles.note}>暂无已保存消息。准备完成后可在下方说明目标。</p>}
+      {!observation.loading && !observation.rows.length && <p className={styles.note}>暂无已保存消息。</p>}
       <Conversation messages={observation.rows.map(messageRow)} compacted={false} toolStates={liveTools(observation.snapshot?.live)}
         contentScope={`${api.projectId}:${sid}:${binding.binding_id}:${thread ?? ''}`}
         loadContent={(row, signal) => observation.content(raw.get(row.id) as CloudMessage, 'content', signal)}
@@ -145,7 +156,6 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
           onClick={() => void send()}>发送到云端</button></div>
       {draft.error && <p role="status" className={styles.error}>{draft.error}</p>}
       {modelsError && <p role="status" className={styles.error}>云端模型选项读取失败：{modelsError}<button className={styles.link} onClick={() => setRevision(v => v + 1)}>重试读取</button></p>}
-      <small className={styles.note}>保存草稿到本机；未保存内容仅缓存在当前标签页。</small>
       {draft.conflict && <p role="status" className={styles.error}>草稿版本已变化，本页文本保留。<button className={styles.link} onClick={draft.reload}>重新载入已保存草稿</button></p>}
       {observation.usage && <small className={styles.note}>已记录 {observation.usage.recorded_calls} 次模型调用{observation.usage.capture.capture_incomplete ? ' · 用量记录不完整' : ''}</small>}
     </footer>

@@ -40,7 +40,7 @@ logger = logging.getLogger('naiyue_test_agent.application')
 class SessionService:
     """Locate sessions and coordinate admission; each session drives its run."""
 
-    def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None, max_active_runs=10, mcp_resources=None, http_attempt_limit=None, shell_task_settings=None, data_dir=None, project=None, admission=None, execution_authority=None, fixed_execution=False,environments=None,image_input_settings=None):
+    def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None, max_active_runs=10, mcp_resources=None, http_attempt_limit=None, shell_task_settings=None, data_dir=None, project=None, admission=None, execution_authority=None, fixed_execution=False,image_input_settings=None):
         if type(max_active_runs) is not int or max_active_runs <= 0:
             raise ValueError('Root run capacity must be a positive integer')
         from naiyue_test_agent.image_input_settings import ImageInputSettings
@@ -49,7 +49,6 @@ class SessionService:
         from naiyue_test_agent.config_paths import get_data_dir, StorageSettings
         self._data_dir = (data_dir if data_dir is not None else get_data_dir(StorageSettings())).resolve()
         self._project = project
-        self.environments=environments
         from .run_admission import RunAdmission
         self._admission = admission if admission is not None else RunAdmission(max_active_runs)
         self._execution_authority, self._fixed_execution = execution_authority, fixed_execution
@@ -75,7 +74,6 @@ class SessionService:
         self._assembled = False
         self._runtime_ready = False
         self._closing = False
-        self._environment_management=set()
         self._system_prompt = None
         self._runtime_classifiers = ()
         self._application_classifiers = ()
@@ -175,11 +173,6 @@ class SessionService:
                    for session in self._sessions.values()):
                 raise ValueError('Workspace has an active run')
             stack.enter_context(self.background_tasks.output_guard(root))
-        if self.environments is not None and self._project is not None:
-            try:stack.enter_context(self.environments._operations.output_guard(self._project.project_id))
-            except BaseException:
-                stack.close()
-                raise
         return stack
     def configure_error_classifiers(self, *, model_id=None, model=None, runtime=None, application=None):
         runtime = normalize_classifiers(runtime) if runtime is not None else None
@@ -213,36 +206,21 @@ class SessionService:
 
     async def prepare_admission(self, session_id, *, stop=False):
         from naiyue_test_agent.execution_roots import validate_execution_root
-        if not stop:self._admission.check_project(self._project.project_id if self._project else None)
-        with self._lock:
-            if session_id in self._environment_management:raise SessionBusyError('Session environment is being managed')
-            owner = self._sessions[session_id]
-        scope = owner.snapshot_for_context()
-        facts = None
-        root = scope['execution_root']
-        access=None
-        if not stop and scope['execution_binding']=='sandbox':
-            from .execution_binding import resolve_capabilities
-            row=await run_blocking(self._persistence.storage.sessions.get,session_id)
-            access=await resolve_capabilities(self,row)
-        elif not stop:
-            root = await run_blocking(self.resolve_execution_root, root, scope['project_id'], scope['execution_binding'])
+        with self._lock:owner=self._sessions[session_id]
+        scope=owner.snapshot_for_context()
+        if scope['execution_binding'] not in (None,'local','project_local'):
+            raise SessionPersistenceError('unsupported_execution_binding')
+        root=scope['execution_root'];facts=None
+        if not stop:
+            root=await run_blocking(self.resolve_execution_root,root,scope['project_id'],scope['execution_binding'])
             if root is None and scope['project_id'] is not None:
                 from naiyue_test_agent.execution_roots import ExecutionRootUnavailable
                 raise ExecutionRootUnavailable('not_registered')
-            facts = await run_blocking(validate_execution_root, root, scope['project_id'])
-        return owner, scope, facts, root, access
+            facts=await run_blocking(validate_execution_root,root,scope['project_id'])
+        return owner,scope,facts,root
 
     async def confirm_admission(self, prepared):
-        owner, scope, facts, root, access = prepared
-        if access is not None:
-            from .execution_binding import check_sandbox
-            row=await run_blocking(self._persistence.storage.sessions.get,owner.session_id)
-            current=await run_blocking(check_sandbox,self,row)
-            revision=await run_blocking(self.environments._service.projects.registry.execution_facts,scope['project_id'])
-            if current.environment!=access.environment or revision.revision!=access.project_revision:
-                from naiyue_test_agent.contracts.sandbox import SandboxError
-                raise SandboxError('env_binding_mismatch')
+        owner, scope, facts, root = prepared
         if facts is not None:
             current = await run_blocking(root.authority.validate, root, scope['project_id'])
             if current.revision != facts.revision:
@@ -250,17 +228,15 @@ class SessionService:
                 raise ExecutionRootUnavailable('not_registered')
 
     def _admit(self, session_id, run_id, mode, *, decisions=None, remember_approved=None, stop=False,
-               expected_conversation_revision=None, prepared_admission=None,expected_settings=None,consume_pending_ids=()):
+               expected_conversation_revision=None, prepared_admission=None):
         with self._admission.lock:
-            if not stop:self._admission.check_project(self._project.project_id if self._project else None)
             capacity_available = mode == 'approval_resume' and stop or self._admission.available()
             with self._lock:
                 if self._closing:
                     raise RuntimeError('Cannot start a run while its host is closing')
-                if session_id in self._environment_management:raise SessionBusyError('Session environment is being managed')
                 session = self._sessions[session_id]
                 if prepared_admission is not None:
-                    owner, scope, facts, root, access = prepared_admission
+                    owner, scope, facts, root = prepared_admission
                     if session is not owner or session.snapshot_for_context() != scope:
                         raise SessionBusyError('Session changed during execution admission')
                 if self.background_tasks.is_cleaning(session._archive_root):
@@ -273,19 +249,16 @@ class SessionService:
                 run = session.lifecycle.admit_run(run_id, mode, observation, decisions=decisions,
                                   remember_approved=remember_approved, stop=stop,
                                   capacity_available=capacity_available, expected_conversation_revision=expected_conversation_revision,
-                                  expected_settings=expected_settings,consume_pending_ids=consume_pending_ids,
-                                  execution_root=prepared_admission[3] if prepared_admission is not None else None,
-                                  execution_access=prepared_admission[4] if prepared_admission is not None else None)
+                                  execution_root=prepared_admission[3] if prepared_admission is not None else None)
         return session, run
 
 
-    async def arun(self, agent, session_id, messages, *, run_id=None, max_concurrency=4, expected_conversation_revision=None, prepared_admission=None,expected_settings=None,consume_pending_ids=()):
+    async def arun(self, agent, session_id, messages, *, run_id=None, max_concurrency=4, expected_conversation_revision=None, prepared_admission=None):
         validate_tool_concurrency(max_concurrency)
         if prepared_admission is None:
             prepared_admission = await self.prepare_admission(session_id)
             await self.confirm_admission(prepared_admission)
-        session, run = self._admit(session_id, run_id, 'message', expected_conversation_revision=expected_conversation_revision, prepared_admission=prepared_admission,
-            expected_settings=expected_settings,consume_pending_ids=consume_pending_ids)
+        session, run = self._admit(session_id, run_id, 'message', expected_conversation_revision=expected_conversation_revision, prepared_admission=prepared_admission)
         return await session.lifecycle.arun(agent, messages, run=run,
                                    max_concurrency=max_concurrency)
 
@@ -320,8 +293,8 @@ class SessionService:
     def create_workspace_session(self, model_id: str, workspace_root: str | Path) -> str:
         return self._create_session(model_id, resolve_workspace_root(workspace_root))
 
-    def _create_session(self, model_id: str, workspace_root: Path | None,*,session_id=None,execution_setup=None) -> str:
-        if self._fixed_execution and execution_setup is None:
+    def _create_session(self, model_id: str, workspace_root: Path | None,*,session_id=None) -> str:
+        if self._fixed_execution:
             from naiyue_test_agent.contracts.projects import ProjectError
             expected = self._project.canonical_root if self._project else None
             if workspace_root != expected:
@@ -330,9 +303,9 @@ class SessionService:
         with self._lock:
             session_id = session_id or uuid4().hex
             if session_id in self._sessions:raise SessionPersistenceError('session_already_loaded')
-            binding = 'sandbox' if execution_setup is not None else ('project_local' if self._execution_authority is not None else 'local') if workspace_root is not None else None
+            binding = ('project_local' if self._execution_authority is not None else 'local') if workspace_root is not None else None
             state = SessionState(thread_id=uuid4().hex, model_id=model_id,
-                execution_binding=binding,execution_setup=execution_setup,
+                execution_binding=binding,
                 execution_root=self.bind_execution_root(ExecutionRoot(workspace_root, binding=binding)) if workspace_root is not None else None,
                 last_execution_path=str(workspace_root) if workspace_root is not None else None,
                 project_id=self._project.project_id if self._project else None, active_tool_names=self._initial_active_tools,
@@ -345,7 +318,6 @@ class SessionService:
                     'thread_id': session.get_thread_id(), 'model_id': model_id,
                     'workspace_root': workspace_root, 'project_id': state.project_id,
                     'execution_binding': state.execution_binding,
-                    'execution_setup':execution_setup,
                     'execution_root_kind': state.execution_root.kind if state.execution_root else None, 'active_tool_names': session.get_active_tools(),
                     'permission_mode': session.get_permission_mode()})
         except BaseException:
@@ -382,6 +354,8 @@ class SessionService:
         return self.bind_execution_root(root)
 
     def resolve_execution_root(self, root, project_id, binding=None):
+        if binding not in (None,'local','project_local'):
+            raise SessionPersistenceError('unsupported_execution_binding')
         if binding == 'project_local' or root is not None and root.binding == 'project_local':
             if self._execution_authority is None or project_id is None:
                 from naiyue_test_agent.execution_roots import ExecutionRootUnavailable
@@ -390,31 +364,19 @@ class SessionService:
         return root
 
     def install_restored_session(self, session_id, *, thread_id, model_id, thinking_level,
-                                 workspace_root, active_tool_names, permission_mode, pending=None, conversation_revision=0, project_id=None, execution_root_kind=None, last_execution_path=None, execution_binding=None,execution_setup=None):
+                                 workspace_root, active_tool_names, permission_mode, pending=None, conversation_revision=0, project_id=None, execution_root_kind=None, last_execution_path=None, execution_binding=None):
         with self._lock:
             if session_id in self._sessions:
                 raise SessionPersistenceError('session_already_loaded')
             state = SessionState(thread_id=thread_id, model_id=model_id,
                 thinking_level=thinking_level, project_id=project_id,
                 last_execution_path=last_execution_path,
-                execution_binding=execution_binding,execution_setup=execution_setup,
+                execution_binding=execution_binding,
                 execution_root=self.bind_execution_root(ExecutionRoot(workspace_root, execution_root_kind, binding=execution_binding or 'local')) if workspace_root is not None else None,
                 active_tool_names=tuple(active_tool_names), permission_mode=permission_mode,
                 pending_tool_approval=deepcopy(pending), conversation_revision=conversation_revision)
             self._sessions[session_id] = build_session(self, session_id, state)
 
-    @contextmanager
-    def manage_environment(self,session_id):
-        with self._admission.lock:
-            self._admission.check_project(self._project.project_id if self._project else None)
-            with self._lock:
-                actor=self._sessions.get(session_id)
-                if self._closing or session_id in self._environment_management or actor is not None and actor.is_busy():
-                    raise SessionBusyError('Session environment is busy')
-                self._environment_management.add(session_id)
-        try:yield
-        finally:
-            with self._lock:self._environment_management.discard(session_id)
 
     @contextmanager
     def deletion_guard(self, session_id):

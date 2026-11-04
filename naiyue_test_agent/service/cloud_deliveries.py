@@ -26,7 +26,14 @@ def register(router,access,domain,body,command_response):
 
     @router.post('/cloud-deliveries/{command_id}/execute')
     async def execute(request:Request,command_id:UUIDText,local_project_id:UUIDText,local_session_id:SessionId):
-        manager=access(request);await body(request,DeliveryConfirm)
+        manager=access(request);confirmation=await body(request,DeliveryConfirm)
         project,local=await domain(request,local_project_id,local_session_id);trusted(project)
-        record=await manager.deliveries.execute(local,command_id,local_session_id)
+        record=await manager.deliveries.execute(local,command_id,local_session_id,force=confirmation.force)
+        return command_response(request,record.model_dump(mode='json'),status_code=202)
+
+    @router.post('/cloud-deliveries/{command_id}/recheck')
+    async def recheck(request:Request,command_id:UUIDText,local_project_id:UUIDText,local_session_id:SessionId):
+        manager=access(request)
+        project,local=await domain(request,local_project_id,local_session_id);trusted(project)
+        record=await manager.deliveries.recheck(local,command_id,local_session_id)
         return command_response(request,record.model_dump(mode='json'),status_code=202)

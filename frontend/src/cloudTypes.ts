@@ -3,6 +3,7 @@ import type { MessageRow, ToolState, AgentEventSource, ThinkingOptions } from '.
 export interface CloudProfile { profile_id: string; template_ids: string[]; default_template: string; connection: string; tunnel: string }
 export interface CloudTask {
   task_id: string; project_id: string; input_id: string; generation: number; revision: number; lifecycle: string;
+  title?: string; created_at?: number; updated_at?: number;
   runner_phase: string; environment_phase: string; sandbox_id: string | null; active_run_id: string | null;
   last_run_id: string | null; last_error_code: string | null; last_quiescent_at: number | null;
   environment_operation_id: string | null; control_operation_id: string | null; artifact_operation_id: string | null;
@@ -10,6 +11,7 @@ export interface CloudTask {
   runner_recovery?: { run_id: string; checkpoint_id?: string | null } | null;
 }
 export interface CloudBinding {
+  created_at?: number;
   binding_id: string; local_session_id: string; profile_id: string; instance_id: string;
   task_id: string | null; input_id: string; revision: number; preparation: string; retained: boolean;
   create_command_id: string; cloud: CloudTask | null;
@@ -21,7 +23,7 @@ export interface CloudOperation {
 export interface CloudDraft { draft_revision: number; text: string; model_id: string | null; thinking_level: string }
 export interface CloudModels { default_model_id: string | null; model_ids: string[]; thinking_options: Record<string, ThinkingOptions> }
 export interface CloudDetail { message_id: string; thread_id: string; revision: number }
-export type CloudMessage = Omit<MessageRow, 'detail'> & { detail?: CloudDetail; thread_id?: string; source?: AgentEventSource | null };
+export type CloudMessage = Omit<MessageRow, 'detail'> & { detail?: CloudDetail; thread_id?: string; run_id?: string; source?: AgentEventSource | null };
 export interface CloudArchive {
   epoch: string; coverage_seq: number; messages: CloudMessage[]; next_cursor: string | null;
   thread: { thread_id: string; role?: string } | null;

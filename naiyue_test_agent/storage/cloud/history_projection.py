@@ -84,6 +84,10 @@ def _message(c,event,payload,limits):
             and (not claimed or claimed[0]==m.message_id))
     preview={k:public[k] for k in ('id','type','is_context_summary','reply_id','provisional','state')}
     preview['reply_id']=m.reply_id
+    if m.message_type=='ai':
+        calls=public.get('tool_calls',[])
+        preview.update(tool_calls=[dict(id=call['id'],name=call['name'],args={}) for call in calls[:128]],
+            tool_calls_truncated=len(calls)>128,arguments_truncated=any(call.get('args') for call in calls))
     if m.message_type=='tool':preview.update({k:public[k] for k in ('tool_call_id','status','name')})
     preview.update(content=public['content'][:limits.preview_chars],
         content_truncated=len(public['content'])>limits.preview_chars,

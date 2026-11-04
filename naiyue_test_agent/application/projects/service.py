@@ -2,10 +2,9 @@
 from dataclasses import replace
 import os
 from threading import RLock
-from urllib.parse import urlsplit
 from uuid import uuid4
 
-from naiyue_test_agent.contracts.projects import GitSource, LocalSource, ProjectError, RegisteredProject
+from naiyue_test_agent.contracts.projects import LocalSource, ProjectError, RegisteredProject
 from naiyue_test_agent.config_paths import StorageSettings
 from naiyue_test_agent.storage.project_registry import ProjectRegistry
 from .locations import availability, canonical, directory_facts, directory_identity, display_name, folder_name as validate_folder
@@ -33,10 +32,6 @@ class ProjectService:
             if self._repo is not None:
                 self._repo.close()
 
-    def environment_records(self):
-        from naiyue_test_agent.storage.environment_registry import EnvironmentRegistry
-        with self._lock:
-            return EnvironmentRegistry(self.registry.database)
 
     def __enter__(self):
         return self
@@ -145,25 +140,6 @@ class ProjectService:
             return self._finish(self.registry.reserve(operation_id, 'create_local', request, project,
                 new=True, facts={'parent': facts}))
 
-    def add_git(self, url, *, ref, name, operation_id):
-        with self._lock:
-            if (not isinstance(url, str) or not url.strip() or '\0' in url
-                    or not isinstance(ref, str) or not ref.strip() or '\0' in ref):
-                raise ProjectError('project_invalid_source')
-            try:
-                parsed = urlsplit(url)
-                if parsed.password is not None or parsed.fragment or parsed.scheme in ('http', 'https') and (parsed.username or parsed.query):
-                    raise ValueError('embedded_credentials')
-            except ValueError as error:
-                raise ProjectError('project_invalid_source') from error
-            request = {'url': url, 'ref': ref, 'name': display_name(name)}
-            retry = self._retry(operation_id, 'add_git', request)
-            if retry is not None:
-                return self.get(retry['project_id'])
-            identity = str(uuid4())
-            project = RegisteredProject(identity, request['name'], GitSource(url, ref),
-                self.data_dir / 'workspaces' / identity / 'sessions.sqlite')
-            return self._finish(self.registry.reserve(operation_id, 'add_git', request, project, new=True))
 
     def rename(self, project_id, name, *, operation_id):
         with self._lock:
@@ -174,26 +150,7 @@ class ProjectService:
             project = self._active(project_id)
             return self._finish(self.registry.reserve(operation_id, 'rename', request, project))
 
-    def ensure_git_store(self,project_id):
-        with self._lock:
-            project=self._active(project_id)
-            if not isinstance(project.source,GitSource):
-                raise ProjectError('project_invalid_source')
-            identity='initialize_git:'+project_id
-            request={'project_id':project_id}
-            if self._retry(identity,'initialize_git',request) is None:
-                self._finish(self.registry.reserve(identity,'initialize_git',request,project))
 
-    def trust_git(self,project_id,*,expected_revision,operation_id):
-        with self._lock:
-            request={'project_id':project_id,'expected_revision':expected_revision}
-            retry=self._retry(operation_id,'trust_git',request)
-            if retry is not None:return self.get(project_id)
-            project=self._active(project_id)
-            if not isinstance(project.source,GitSource):raise ProjectError('project_invalid_source')
-            if type(expected_revision) is not int or project.revision!=expected_revision:
-                raise ProjectError('project_location_changed')
-            return self._finish(self.registry.reserve(operation_id,'trust_git',request,project))
 
     def relocate(self, project_id, *, expected_root, root, trusted, operation_id):
         with self._lock:

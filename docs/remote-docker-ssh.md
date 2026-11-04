@@ -1,5 +1,7 @@
 # Windows 经跳板机使用 Linux Docker
 
+> 版本边界：本页保留旧版本/阶段性验收记录。2026-11-03 S09之后的当前入口以[云端任务手册](cloud-s091-windows-and-linux.md)和[Spec143AF](specs/143af-s09-formal-switch-and-cleanup.md)为准；旧A Docker/envd步骤不再是当前产品入口，旧候选附件不包含最新切换改动。
+
 0.5.2 使用本机 OpenSSH 直接执行远端 Docker 命令。Windows 不需要 Docker CLI、Docker Desktop 或 WSL；容器和卷位于 Linux 开发机，Agent、会话库、模型调用和结果审查仍在 Windows。这里的应用实现已接线，真实 Windows／公司跳板机／Tencent Docker 的端到端验收需要目标机器运行结果，不能由本机确定性测试代替。普通账户密码的后台交互属于 14B，当前要求已准备好两跳 key 或本机 ssh-agent。
 
 ## 1. 现有机器与操作范围

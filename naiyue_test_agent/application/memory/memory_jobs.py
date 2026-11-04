@@ -93,7 +93,7 @@ class MemoryJobs:
             'memory' in json.loads(row['active_tool_names_json']) and self.allowed(dict(action='list')))
 
     def _execution_path(self,row):
-        if row['execution_binding']=='sandbox':return None
+        if row['execution_binding']=='sandbox':raise SessionPersistenceError('unsupported_execution_binding')
         if row['execution_binding']=='project_local':
             value=self.storage.sessions.execution_location
         elif row['execution_binding']=='local':

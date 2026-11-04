@@ -2,13 +2,18 @@ import type { CloudArchive, CloudBinding, CloudDetail, CloudDetailPage, CloudDra
 import { decodeSSE, responseBytes } from './sse';
 import type { SseFrame } from './sse';
 
-import type { ResultSummary, CloudResult, ResultChanges, ResultPreview, ResultFile } from './cloudResultTypes';
+import type { ResultSummary, CloudResult, ResultChanges, ResultPreview } from './cloudResultTypes';
 import type { AnalysisDraft, ReceiveRecord } from './cloudReceiveTypes';
+import type { DirectoryPage } from './projectTypes';
 import type { DeliveryRecord, DeliveryRequest } from './cloudDeliveryTypes';
 
 type Request = (path: string, init?: RequestInit) => Promise<Response>;
 export class CloudApi {
-  constructor(readonly projectId: string, private request: Request) {}
+  constructor(readonly projectId: string, private request: Request, private directories?: (options: { path?: string; show_hidden?: boolean; offset?: number }, signal?: AbortSignal) => Promise<DirectoryPage>) {}
+  browseDirectories(options: { path?: string; show_hidden?: boolean; offset?: number } = {}, signal?: AbortSignal) {
+    if (!this.directories) return Promise.reject(new Error('directory_browser_unavailable'));
+    return this.directories(options, signal);
+  }
   private query(sessionId?: string, values: Record<string, string | number | undefined> = {}) {
     const params = new URLSearchParams();
     if (sessionId) { params.set('local_project_id', this.projectId); params.set('local_session_id', sessionId); }
@@ -46,27 +51,19 @@ export class CloudApi {
   changes(sid: string, bid: string, rid: string, offset = 0, signal?: AbortSignal) { return this.read<ResultChanges>(this.task(bid) + '/results/' + encodeURIComponent(rid) + '/changes' + this.query(sid, { offset, limit: 50 }), signal); }
   resultPreview(sid: string, bid: string, rid: string, fid: string, offset = 0, signal?: AbortSignal) { return this.read<ResultPreview>(this.task(bid) + '/results/' + encodeURIComponent(rid) + '/files/' + encodeURIComponent(fid) + '/preview' + this.query(sid, { offset, limit: 16384 }), signal); }
   resultAction(sid: string, bid: string, rid: string, body: object) { return this.write<CloudOperation>(this.task(bid) + '/results/' + encodeURIComponent(rid) + '/actions?local_project_id=' + encodeURIComponent(this.projectId), { local_session_id: sid, result_id: rid, ...body }); }
-  receive(sid: string, bid: string, rid: string, body: { command_id: string; artifact_ids: string[] }) {
+  receive(sid: string, bid: string, rid: string, body: { command_id: string; artifact_ids: string[]; include_code?: boolean }) {
     return this.write<ReceiveRecord>(this.task(bid) + '/results/' + encodeURIComponent(rid) + '/receive?local_project_id=' + encodeURIComponent(this.projectId), { ...body, local_session_id: sid });
   }
   receiveStatus(sid: string, id: string, signal?: AbortSignal) { return this.read<ReceiveRecord>('/cloud-receives/' + encodeURIComponent(id) + this.query(sid), signal); }
-  retryReceive(sid: string, id: string) { return this.write<ReceiveRecord>('/cloud-receives/' + encodeURIComponent(id) + '/retry' + this.query(sid), {}); }
+  cleanupReceiveCache(sid: string) { return this.write<{ removed_files: number; freed_bytes: number }>('/cloud-receive-cache/cleanup' + this.query(sid), {}); }
+  retryReceive(sid: string, id: string, refresh = false) { return this.write<ReceiveRecord>('/cloud-receives/' + encodeURIComponent(id) + '/retry' + this.query(sid), refresh ? { refresh: true } : {}); }
   analysisDraft(sid: string, id: string) { return this.write<AnalysisDraft>('/cloud-receives/' + encodeURIComponent(id) + '/analysis-draft' + this.query(sid), {}); }
   delivery(sid: string, body: Omit<DeliveryRequest, 'local_session_id'>) {
     return this.write<DeliveryRecord>('/cloud-deliveries?local_project_id=' + encodeURIComponent(this.projectId), { ...body, local_session_id: sid });
   }
   deliveryStatus(sid: string, id: string, signal?: AbortSignal) { return this.read<DeliveryRecord>('/cloud-deliveries/' + encodeURIComponent(id) + this.query(sid), signal); }
-  executeDelivery(sid: string, id: string) { return this.write<DeliveryRecord>('/cloud-deliveries/' + encodeURIComponent(id) + '/execute' + this.query(sid), { confirm: true }); }
-  async downloadResult(sid: string, bid: string, rid: string, file: ResultFile) {
-    const a = file.artifact;
-    const response = await this.request(this.task(bid) + '/results/' + encodeURIComponent(rid) + '/files/' + encodeURIComponent(a.artifact_id) + '/bytes' + this.query(sid));
-    if (response.headers.get('etag') !== '"' + a.sha256 + '"' || Number(response.headers.get('content-length')) !== a.size) throw new Error('result_identity_conflict');
-    const data = await response.blob();
-    const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await data.arrayBuffer()))].map(v => v.toString(16).padStart(2, '0')).join('');
-    if (data.size !== a.size || sha !== a.sha256) throw new Error('artifact_content_mismatch');
-    const url = URL.createObjectURL(data); const link = document.createElement('a'); link.href = url; link.download = a.relative_name.split('/').pop()!;
-    document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
+  executeDelivery(sid: string, id: string, force = false) { return this.write<DeliveryRecord>('/cloud-deliveries/' + encodeURIComponent(id) + '/execute' + this.query(sid), { confirm: true, ...(force ? { force: true } : {}) }); }
+  recheckDelivery(sid: string, id: string) { return this.write<DeliveryRecord>('/cloud-deliveries/' + encodeURIComponent(id) + '/recheck' + this.query(sid), {}); }
   async observe(sid: string, bid: string, thread: string | undefined, cursor: string | undefined, signal: AbortSignal, accept: (value: SseFrame) => void) {
     const response = await this.request(this.task(bid) + '/stream' + this.query(sid, { thread_id: thread }), { signal, headers: cursor ? { 'Last-Event-ID': cursor } : {} });
     if (!response.body) throw new Error('cloud_stream_unavailable');

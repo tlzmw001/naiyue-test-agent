@@ -1,7 +1,7 @@
 """Durable local delivery intent and private continuation metadata."""
 import json
 from naiyue_test_agent.contracts.cloud_events import digest
-from naiyue_test_agent.contracts.cloud_delivery import DeliveryRecord
+from naiyue_test_agent.contracts.cloud_delivery import DeliveryRecord,DeliveryRequest
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from .queries import session_row
 from .errors import SessionPersistenceError
@@ -47,8 +47,10 @@ class DeliveryRepository:
             if session_row(c,record.local_session_id)['project_id']!=record.local_project_id:raise CloudError('cloud_project_mismatch',403)
             old=c.execute('SELECT request_digest,session_id FROM naiyue_cloud_deliveries WHERE command_id=?',(record.command_id,)).fetchone()
             if old:
-                if old[0]!=fingerprint or old[1]!=record.local_session_id:raise CloudError('cloud_delivery_request_conflict')
-                return self._read(c,record.command_id,record.local_session_id)[0]
+                current,meta=self._read(c,record.command_id,record.local_session_id)
+                same=DeliveryRequest.model_validate(meta['request'])==request
+                if old[1]!=record.local_session_id or old[0]!=fingerprint and not same:raise CloudError('cloud_delivery_request_conflict')
+                return current
             if c.execute('SELECT COUNT(*) FROM naiyue_cloud_deliveries').fetchone()[0]>=maximum:raise CloudError('cloud_delivery_capacity',429)
             metadata=metadata|dict(request=request.model_dump(mode='json'))
             c.execute('INSERT INTO naiyue_cloud_deliveries VALUES(?,?,?,?,?,?)',(record.command_id,record.local_session_id,
@@ -61,4 +63,28 @@ class DeliveryRepository:
             c.execute('UPDATE naiyue_cloud_deliveries SET body_json=? WHERE command_id=?',(record.model_dump_json(),record.command_id))
             if metadata is not None:c.execute('UPDATE naiyue_cloud_deliveries SET metadata_json=? WHERE command_id=?',
                 (json.dumps(metadata),record.command_id))
+        return record
+
+    def _baseline(self,c,key):
+        row=c.execute("""SELECT command_id,metadata_json FROM naiyue_cloud_deliveries
+            WHERE json_extract(body_json,'$.phase')='completed' AND json_extract(body_json,'$.action')='apply'
+            AND json_extract(metadata_json,'$.baseline_key')=?
+            ORDER BY CAST(json_extract(metadata_json,'$.applied_order') AS INTEGER) DESC LIMIT 1""",(key,)).fetchone()
+        return (row[0],json.loads(row[1])) if row else (None,{})
+
+    def baseline(self,key):
+        with self.database.transaction(write=False,error_code='cloud_delivery_storage_failed') as c:return self._baseline(c,key)
+
+    def complete(self,record,metadata):
+        # Receipt and the next baseline become visible together, or neither does.
+        with self.database.transaction(write=True,error_code='cloud_delivery_storage_failed') as c:
+            current,_=self._read(c,record.command_id,record.local_session_id)
+            if current.phase=='completed':return current
+            if record.action=='apply':
+                latest,_=self._baseline(c,metadata['baseline_key'])
+                if latest!=metadata.get('base_command_id'):raise CloudError('cloud_delivery_baseline_changed')
+                order=c.execute("SELECT COALESCE(MAX(CAST(json_extract(metadata_json,'$.applied_order') AS INTEGER)),0)+1 FROM naiyue_cloud_deliveries").fetchone()[0]
+                metadata=metadata|dict(applied_order=order)
+            c.execute('UPDATE naiyue_cloud_deliveries SET body_json=?,metadata_json=? WHERE command_id=?',
+                (record.model_dump_json(),json.dumps(metadata),record.command_id))
         return record

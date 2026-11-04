@@ -77,10 +77,7 @@ class SessionRepo:
                 if binding is None or session.get('project_id') != project_id or kind != 'local':
                     raise SessionPersistenceError('invalid_execution_identity')
             elif execution_binding == 'sandbox':
-                candidate=dict(project_id=project_id,execution_binding='sandbox',execution_root_kind=kind,
-                    workspace_root=session['workspace_root'],execution_setup_json=json.dumps(session.get('execution_setup')))
-                from .execution_storage import root_from_row
-                root_from_row(candidate)
+                raise SessionPersistenceError('unsupported_execution_binding')
             elif execution_binding not in (None, 'local'):
                 raise SessionPersistenceError('invalid_execution_identity')
             elif kind != ('local' if session['workspace_root'] is not None else None):
@@ -100,9 +97,9 @@ class SessionRepo:
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)''', (session_id, session['thread_id'], session['model_id'],
                 str(session['workspace_root']) if session['workspace_root'] is not None else None,
                 'ready', now, now, json.dumps(session['active_tool_names']), session['permission_mode'], project_id, kind, order))
-            connection.execute('UPDATE naiyue_sessions SET execution_binding=?,last_execution_path=?,execution_setup_json=? WHERE session_id=?',
+            connection.execute('UPDATE naiyue_sessions SET execution_binding=?,last_execution_path=? WHERE session_id=?',
                 (execution_binding, session.get('last_execution_path', str(session['workspace_root']) if session['workspace_root'] is not None else None),
-                 json.dumps(session['execution_setup'],sort_keys=True) if session.get('execution_setup') is not None else None,session_id))
+                 session_id))
 
     def get(self, session_id):
         with self.database.transaction(write=False, error_code='session_read_failed') as connection:
@@ -118,11 +115,6 @@ class SessionRepo:
         with self.database.transaction(write=False, error_code='session_read_failed') as connection:
             return read_rows(connection, 'SELECT * FROM naiyue_sessions ORDER BY pinned DESC,sort_order ASC,created_at DESC,session_id ASC')
 
-    def references_input(self, project_id, input_id):
-        with self.database.transaction(write=False, error_code='session_read_failed') as connection:
-            return connection.execute("""SELECT 1 FROM naiyue_sessions WHERE project_id=?
-                AND execution_binding='sandbox' AND json_extract(execution_setup_json,'$.input_id')=? LIMIT 1""",
-                (project_id,input_id)).fetchone() is not None
 
     def list_workspace_sessions(self, workspace_root):
         with self.database.transaction(write=False, error_code='session_read_failed') as connection:

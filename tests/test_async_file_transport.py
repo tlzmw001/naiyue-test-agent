@@ -5,7 +5,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from test_docker_environment import record
 
 
 @pytest.mark.parametrize('name',['read','write','edit','ls'])
@@ -16,17 +15,6 @@ def test_file_tools_register_native_async_body(name):
     assert inspect.iscoroutinefunction(tool.coroutine)
 
 
-def test_remote_read_uses_async_request_and_keeps_subject_verification_in_envd():
-    from naiyue_test_agent.execution.docker_files import DockerFileSystem
-    from naiyue_test_agent.tools.settings import ReadSettings
-    calls=[]
-    async def request(binding,operation,params,**kwargs):calls.append((binding,operation,params));return 'content'
-    files=DockerFileSystem(SimpleNamespace(arequest=request),record())
-    subject={'requested':'/workspace/file','resolved':'/workspace/file'}
-    async def run():
-        return await files.read(subject,None,None,settings=ReadSettings(),control=None,progress=None)
-    assert asyncio.run(run())=='content'
-    assert len(calls)==1 and calls[0][1]=='read' and calls[0][2]['subject']==subject
 
 
 def test_permission_preparation_awaits_remote_path_before_deciding(tmp_path,monkeypatch):

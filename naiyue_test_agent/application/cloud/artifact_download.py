@@ -16,9 +16,10 @@ class ArtifactDownload:
     def __init__(self,service,task_id):
         self.service=service;self.stream=None;self.record=None;self.identity=None
         self.task_id=task_id;self.start=0;self.length=None;self.partial=False
-        self.lock=asyncio.Lock();self.finished=asyncio.Event();self.reserved=False
+        self.lock=asyncio.Lock();self.finished=asyncio.Event();self.reserved=False;self.maintenance_lease=None
 
     def open(self,task_id,artifact_id):
+        self.maintenance_lease=self.service.runtime.releases.enter_io()
         self.service.runtime.task_io._enter(task_id);self.reserved=True
         self.service.get(task_id,artifact_id)
         with self.service.runtime.gates.hold(task_id):
@@ -74,6 +75,8 @@ class ArtifactDownload:
             finally:
                 if closed or getattr(self.stream,'closed',False):
                     if self.reserved:self.service.runtime.task_io._leave(self.task_id);self.reserved=False
+                    if self.maintenance_lease is not None:
+                        self.service.runtime.releases.leave_io(self.maintenance_lease);self.maintenance_lease=None
                     self.service.downloads.discard(self);self.finished.set()
 
 

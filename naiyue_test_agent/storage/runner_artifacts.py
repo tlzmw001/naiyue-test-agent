@@ -1,6 +1,8 @@
 """Runner-owned capture identities, separate from Agent run completion/outbox."""
 from naiyue_test_agent.contracts.cloud_artifacts import ArtifactCaptureState
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
+from naiyue_test_agent.contracts.cloud_events import digest
+import json
 
 
 class RunnerArtifactJournal:
@@ -25,6 +27,11 @@ class RunnerArtifactJournal:
 
     def admit(self,command,*,rejection=None):
         with self.database.transaction(write=True) as c:
+            rejected=c.execute('SELECT value FROM nyt_runner_meta WHERE key=?',('rejected:'+command.command_id,)).fetchone()
+            if rejected:
+                value=json.loads(rejected[0])
+                if value['operation']!='artifact:capture' or value['request_digest']!=digest(command.model_dump()):raise CloudError('command_id_conflict')
+                raise CloudError(value['error_code'])
             old=c.execute('SELECT record_json FROM nyt_runner_artifacts WHERE command_id=?',(command.command_id,)).fetchone()
             if old:
                 value=ArtifactCaptureState.model_validate_json(old[0])

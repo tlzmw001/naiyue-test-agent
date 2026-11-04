@@ -305,3 +305,16 @@ def test_retry_finishes_fully_downloaded_local_material_without_remote_lease(tmp
             assert len(requests)==before
         finally:await manager.close();remote.http.close();store.close()
     asyncio.run(run())
+
+
+def test_report_only_receive_omits_code_transport(tmp_path):
+    async def run():
+        manager,domain,store,sid,remote,binding,rid,files,data,requests=await receiving(tmp_path)
+        try:
+            first=await manager.receives.submit(domain,binding['binding_id'],rid,dict(command_id=str(uuid4()),
+                local_session_id=sid,artifact_ids=[files[2]['artifact']['artifact_id']],include_code=False))
+            await manager.drain();ready=await manager.receives.read(domain,first.receive_id,sid)
+            assert ready.phase=='available' and [f.role for f in ready.files]==['artifact']
+            assert {fid for fid,_ in requests}=={files[2]['artifact']['artifact_id']}
+        finally:await manager.close();remote.http.close();store.close()
+    asyncio.run(run())

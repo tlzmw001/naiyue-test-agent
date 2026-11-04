@@ -127,7 +127,7 @@ def execute(domain,client,op,settings,*,explicit=False):
         if task.runner_phase=='waiting_model':raise CloudError('model_unavailable')
         if (task.lifecycle!='ready' or task.runner_phase!='ready' or task.active_run_id
                 or task.control_operation_id or task.environment_operation_id or task.artifact_operation_id
-                or any(x!='background_commands' for x in task.reclaim_blockers)):
+                or any(x not in ('background_commands','result_pending') for x in task.reclaim_blockers)):
             raise CloudError('runner_not_ready')
         if request['model_id'] not in task.runner_model_ids:raise CloudError('model_unavailable')
         body=StartRun(command_id=cid,expected_revision=task.revision,expected_generation=task.generation,

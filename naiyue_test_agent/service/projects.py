@@ -22,11 +22,6 @@ class CreateInput(BaseModel):
     git_init: bool = False
 
 
-class GitInput(BaseModel):
-    model_config = ConfigDict(strict=True, extra='forbid')
-    url: str = Field(min_length=1, max_length=4096)
-    ref: str = Field(min_length=1, max_length=1024)
-    name: str = Field(min_length=1, max_length=120)
 
 
 class RenameInput(BaseModel):
@@ -34,10 +29,6 @@ class RenameInput(BaseModel):
     name: str = Field(min_length=1, max_length=120)
 
 
-class TrustInput(BaseModel):
-    model_config=ConfigDict(strict=True,extra='forbid')
-    expected_revision: int = Field(ge=1)
-    trusted: bool
 
 
 class RelocateInput(BaseModel):
@@ -83,10 +74,6 @@ async def create_local(body: CreateInput, request: Request):
         **body.model_dump(), operation_id=request.headers['x-request-id']))
 
 
-@router.post('/git', status_code=201)
-async def add_git(body: GitInput, request: Request):
-    return jsonable_encoder(await request.app.state.application.projects.add_git(
-        **body.model_dump(), operation_id=request.headers['x-request-id']))
 
 
 @router.get('/{project_id}')
@@ -94,17 +81,8 @@ async def project(project_id: str, request: Request):
     return jsonable_encoder(await request.app.state.application.projects.get(project_id))
 
 
-@router.get('/{project_id}/execution-options')
-async def execution_options(project_id:str,request:Request):
-    return await request.app.state.application.environments.options(project_id)
 
 
-@router.post('/{project_id}/trust')
-async def trust_git(project_id:str,body:TrustInput,request:Request):
-    from naiyue_test_agent.contracts.projects import ProjectError
-    if body.trusted is not True:raise ProjectError('project_trust_required')
-    return jsonable_encoder(await request.app.state.application.projects.trust_git(project_id,
-        expected_revision=body.expected_revision,operation_id=request.headers['x-request-id']))
 
 
 @router.patch('/{project_id}')

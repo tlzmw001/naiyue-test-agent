@@ -19,12 +19,7 @@ class ApplicationLifetime:
         self._opening_tasks = set()
         self._close_task = None
         self._closed = self._closing = False
-        self._environments = None
 
-    def own_environments(self,environments):
-        self.check_open()
-        if self._environments is not None:raise RuntimeError('Environment owner is already attached')
-        self._environments=environments
 
     def check_open(self):
         task = asyncio.current_task()
@@ -126,11 +121,6 @@ class ApplicationLifetime:
             await asyncio.gather(*opening, return_exceptions=True)
             for child in self._children:
                 child._sessions.stop_loaded_sessions()
-            if self._environments is not None:
-                try:await self._environments.aclose()
-                except BaseException as error:
-                    if primary is None:primary=error
-                    else:logger.error('environment_cleanup_secondary_failed error_type=%s',safe_error_type(error))
             await asyncio.gather(*tuple(self._operations))
             results = await asyncio.gather(*(child._close_runtime() for child in tuple(self._children)),
                                            return_exceptions=True)
@@ -140,11 +130,6 @@ class ApplicationLifetime:
                         primary = result
                     else:
                         logger.error('host_cleanup_secondary_failed error_type=%s', safe_error_type(result))
-            if self._environments is not None:
-                try:await self._environments.finish_close()
-                except BaseException as error:
-                    if primary is None:primary=error
-                    else:logger.error('container_cleanup_secondary_failed error_type=%s',safe_error_type(error))
             if primary is not None:
                 raise primary
         except BaseException as error:

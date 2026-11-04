@@ -209,7 +209,10 @@ class LocalTaskRepo:
         checked=checked_task(task,value).model_dump(mode='json')
         old=value['cloud']
         if old is not None and (checked['generation'],checked['revision'])<(old['generation'],old['revision']):return value
-        if old==checked:return value
+        recovered=(value['preparation'] in ('failed','unknown') and checked['lifecycle']=='ready'
+            and checked['environment_phase']=='backend_ready' and checked['runner_phase'] in ('ready','waiting_model'))
+        if old==checked and not recovered:return value
+        if recovered:value['preparation']='prepared'
         value.update(task_id=checked['task_id'],cloud=checked,revision=value['revision']+1)
         c.execute('UPDATE naiyue_cloud_bindings SET body_json=? WHERE binding_id=?',(json.dumps(value),binding_id))
         return value

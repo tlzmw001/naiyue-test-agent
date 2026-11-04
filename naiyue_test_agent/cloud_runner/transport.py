@@ -9,7 +9,7 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking,await_settled
-from naiyue_test_agent.contracts.cloud_events import EventBatch,canonical_json
+from naiyue_test_agent.contracts.cloud_events import EventBatch,canonical_json,digest
 from naiyue_test_agent.contracts.cloud_json import parse_object
 from naiyue_test_agent.contracts.cloud_runner import Hello,CoordinatorFrame,RunnerBootstrap
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
@@ -52,10 +52,15 @@ class RunnerClient:
             frame=await self.receive()
             if frame.kind=='command':
                 if self.bootstrap.expires_at<=time.time():raise CloudError('runner_credential_expired')
-                result=await await_settled(self.kernel.accept(frame.command))
+                if await self.rejected(frame.command.command_id,frame.command,'run:start'):continue
+                try:result=await await_settled(self.kernel.accept(frame.command))
+                except CloudError as error:
+                    if error.code not in ('runner_busy','model_unavailable','unsupported_thinking_level','result_capacity'):raise
+                    await await_settled(self.reject(frame.command,'run:start',error));continue
                 self.commands.add(frame.command.command_id)
                 await self.send({'kind':'accepted'}|result)
             elif frame.kind=='query':
+                if await self.rejected(frame.command_id,operation='run:start'):continue
                 self.commands.add(frame.command_id);self.reported.discard(frame.command_id)
                 result=await run_blocking(self.kernel.journal.lookup,frame.command_id)
                 await self.send({'kind':'state'}|(result or dict(command_id=frame.command_id,status='not_found')))
@@ -74,14 +79,33 @@ class RunnerClient:
                 if self.kernel.remote_models:self.kernel.remote_models.renew(frame.token,frame.expires_at)
             elif frame.kind=='artifact_capture':
                 if self.bootstrap.expires_at<=time.time():raise CloudError('runner_credential_expired')
-                value=await await_settled(self.kernel.artifacts.accept(frame.command))
+                if await self.rejected(frame.command.command_id,frame.command,'artifact:capture'):continue
+                try:value=await await_settled(self.kernel.artifacts.accept(frame.command))
+                except CloudError as error:
+                    if error.code!='artifact_busy':raise
+                    await await_settled(self.reject(frame.command,'artifact:capture',error));continue
                 await self.send(dict(kind='artifact_state',command_id=value.command.command_id,
                     artifact_id=value.command.artifact_id,status=value.status))
             elif frame.kind=='artifact_query':
+                if await self.rejected(frame.command_id,operation='artifact:capture'):continue
                 self.artifact_reported.discard(frame.command_id)
                 value=await run_blocking(self.kernel.artifacts.journal.get,frame.command_id)
                 await self.send(dict(kind='artifact_state',command_id=frame.command_id,
                     artifact_id=value.command.artifact_id if value else None,status=value.status if value else 'not_found'))
+
+    async def rejected(self,command_id,command=None,operation=None):
+        value=await run_blocking(self.kernel.journal.rejection,command_id)
+        if value is None:return False
+        if value['operation']!=operation or command is not None and value['request_digest']!=digest(command.model_dump()):
+            raise CloudError('command_id_conflict')
+        await self.send(dict(kind='admission_rejected',phase=self.kernel.phase,quiescent=self.kernel.session_quiet())|value)
+        return True
+
+    async def reject(self,command,operation,error):
+        if operation=='artifact:capture' and await run_blocking(self.kernel.artifacts.journal.get,command.command_id) is not None:
+            raise CloudError('command_state_conflict')
+        await run_blocking(self.kernel.journal.reject,command,operation,error.code)
+        await self.rejected(command.command_id,command,operation)
 
     async def publish(self):
         b=self.bootstrap

@@ -3,18 +3,18 @@ import type { ReactNode } from 'react';
 import { Icon } from './Icons';
 import styles from './ActivitySidebar.module.css';
 
-const tabs = [{ id: 'agents', label: '子智能体' }, { id: 'tasks', label: '后台任务' }, { id: 'context', label: '上下文' }] as const;
-export type ActivityTab = (typeof tabs)[number]['id'] | 'cloud';
+const tabs = [{ id: 'agents', label: '子智能体' }, { id: 'tasks', label: '后台任务' }, { id: 'context', label: '上下文' }, { id: 'cloud', label: '云端任务' }] as const;
+export type ActivityTab = (typeof tabs)[number]['id'];
 
-export default function ActivitySidebar({ tab, select, close, activeCount, children, cloudEnabled = false }: {
+export default function ActivitySidebar({ tab, select, close, activeCount, children }: {
   tab: ActivityTab; select: (tab: ActivityTab) => void; close: () => void;
-  activeCount?: number; cloudEnabled?: boolean; children: Record<Exclude<ActivityTab, 'cloud'>, ReactNode> & { cloud?: ReactNode };
+  activeCount?: number; children: Record<ActivityTab, ReactNode>;
 }) {
-  const visibleTabs = cloudEnabled ? [...tabs, { id: 'cloud' as const, label: '云端任务' }] : tabs;
+  const visibleTabs = tabs;
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { closeButton.current?.focus(); }, []);
   useEffect(() => {
-    const key = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) close(); };
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented && !document.querySelector('dialog[open]')) close(); };
     document.addEventListener('keydown', key);
     return () => document.removeEventListener('keydown', key);
   }, [close]);

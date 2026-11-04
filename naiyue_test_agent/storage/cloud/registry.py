@@ -81,6 +81,8 @@ class CloudRegistry:
                 if previous.request_digest != receipt.request_digest:
                     raise CloudError('command_id_conflict')
                 return previous
+            from .releases import require_available
+            require_available(connection)
             if connection.execute('SELECT COUNT(*) FROM commands').fetchone()[0] >= max_receipts:
                 raise CloudError('command_capacity')
             connection.execute('INSERT INTO projects(project_id,record_json) VALUES(?,?)',

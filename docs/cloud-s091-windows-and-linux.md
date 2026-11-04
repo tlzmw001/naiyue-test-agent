@@ -1,8 +1,10 @@
 # S09.1 Windows＋Linux 实机验收手册
 
-产品源码基线：`de5f76aa87b54274fc4edffdc5423ca74382aac1`。本次只跑正式切换前的公司实机门禁。运行对象是随手册提供、按源码提交和SHA固定的候选；版本字符串仍可能是0.5.6，不能用`pip install -U naiyue-test-agent`替代候选安装。原S00 Linux/Windows三段通过继续有效，不重装Docker，不从头重跑S00。
+2026-11-03 S11最终候选优先使用[最终验收手册](cloud-final-windows-acceptance.md)。本页第2–5节保留首次后端准备/连接步骤，包布局已同步为wheels平铺、scripts/release公开材料及新校验入口；不再需要source.zip。已有B部署只补最终手册要求的升级/复验，不重装整套后端。下方R1/R2/原基线补记保留历史边界。
 
-候选界面已构建为`cloud-candidate`。门禁通过后，才由开发侧继续S09.1正式入口切换和必要A清理。本手册不会替用户删除旧A、更新全局配置或部署自动升级服务。
+当前工作区已按2026-11-03用户指令先接正式B入口并退出A，再统一实机验收。使用包含S09改动的同源候选执行本手册；旧R1/R2附件与原基线de5f76a仅是历史验证对象，不能代表当前源码。仍须核对包SHA和实际源码身份，不能仅凭0.5.6版本字符串或pip升级判定。原S00已验证证据继续有效，只补受影响项；本手册不授权重装Docker、改变现有公司服务或自动清理旧资源。
+
+正式构建使用默认模式，无需cloud-candidate。旧sandbox会话、旧环境/结果API及旧[sandbox]/[delivery]配置不再支持；本机协议2会拒绝复用旧服务，更新前先用旧版CLI或旧服务原入口显式关闭旧服务，再启动新版；已更新时仍使用旧服务原入口停服。Linux/Windows仍需登记同源候选与各自环境指纹，实机未验项目明确标pending。
 
 ## 0. 两台机器的分工及执行边界
 
@@ -20,7 +22,7 @@
 
 ## 1. 取得候选并核对身份
 
-候选包含`candidate.json`、`SHA256SUMS`、`source.zip`、`wheels/windows-x86_64/`、`wheels/linux-x86_64/`、Kit wheel、候选核验脚本、本手册和一份待填验收汇总模板。`candidate.json.code_commit`是本次产品源码提交；手册提交可比它更新，但不能混用其他候选wheel/旧镜像。包内无真实key、代理凭证、owner token或SSH私钥。
+最终候选包含candidate.json、SHA256SUMS、wheels/下的四目标应用wheel和Kit、scripts/、release/及docs/。source_base_commit仅为未提交候选的基础HEAD；candidate_id与实际字节SHA共同确定本次产物，不能混用旧wheel/镜像。没有真实key、代理凭证、owner token或SSH私钥。
 
 Windows PowerShell中，将解压根目录和已有SSH别名填成实际值。Windows路径使用你真正的盘符，示例不能原样带占位文字执行：
 
@@ -65,12 +67,12 @@ ss -ltn
 umask 077
 mkdir -m 700 "$S09_ROOT"
 mkdir -m 700 "$S09_ROOT/private" "$S09_ROOT/reports" "$S09_ROOT/backend-runtime" "$S09_ROOT/cloud-data" "$S09_ROOT/src"
-unzip "$BUNDLE/source.zip" -d "$S09_ROOT/src"
+cp -R "$BUNDLE/scripts" "$BUNDLE/release" "$S09_ROOT/src/"
 "$PY312" -m venv "$S09_ROOT/venv"
 export PY="$S09_ROOT/venv/bin/python"
-"$PY" -m pip install "$BUNDLE"/wheels/linux-x86_64/*.whl
+"$PY" -m pip install "$BUNDLE"/wheels/*manylinux_2_17_x86_64.whl
 "$PY" -m pip install 'opensandbox==1.2.0' 'httpx-sse==0.4.3' 'python-dateutil==2.9.0.post0' 'six==1.17.0'
-"$PY" "$BUNDLE/verify-candidate.py" --manifest "$BUNDLE/candidate.json"
+(cd "$BUNDLE" && "$PY" -m scripts.verify_cloud_candidate --root "$BUNDLE" --installed)
 export BACKEND_ID=$(sudo docker info --format '{{.ID}}')
 export TASK_UID=$(id -u)
 export TASK_GID=$(id -g)
@@ -92,16 +94,17 @@ chmod 700 "$S09_ROOT/private/docker-build"
 export DOCKER_EXECUTABLE="$S09_ROOT/private/docker-build"
 export TEMPLATE_ID='s091-test'
 export IMAGE_TAG="nyt-s091:实际候选短SHA"
+export S09_RELEASE_ID='本轮同源候选release标识'
 cd "$S09_ROOT/src"
 "$PY" - <<'PY'
 import hashlib,json,os
 from pathlib import Path
 from naiyue_test_agent.cloud_install.template import TemplateBuildSettings
 root=Path(os.environ['S09_ROOT']); bundle=Path(os.environ['BUNDLE'])
-wheel=next((bundle/'wheels/linux-x86_64').glob('*.whl'))
-kit=next((bundle/'kit').glob('aitest_kit-*.whl'))
+wheel=next((bundle/'wheels').glob('*manylinux_2_17_x86_64.whl'))
+kit=next((bundle/'wheels').glob('aitest_kit-*.whl'))
 v=dict(wheel=str(wheel),wheel_sha256=hashlib.sha256(wheel.read_bytes()).hexdigest(),kit_wheel=str(kit),
- kit_profile=str(Path.cwd()/'release/sandbox-image.json'),test_lock=str(Path.cwd()/'release/cloud-test-requirements.txt'),
+ kit_profile=str(Path.cwd()/'release/cloud-test-toolchain.json'),test_lock=str(Path.cwd()/'release/cloud-test-requirements.txt'),
  base_image=os.environ['BASE_IMAGE'],template_id=os.environ['TEMPLATE_ID'],backend_id=os.environ['BACKEND_ID'],
  image_tag=os.environ['IMAGE_TAG'],docker_host='unix:///var/run/docker.sock',docker_executable=os.environ['DOCKER_EXECUTABLE'],
  package_index=os.environ['PACKAGE_INDEX'],uid=int(os.environ['TASK_UID']),gid=int(os.environ['TASK_GID']),
@@ -109,13 +112,17 @@ v=dict(wheel=str(wheel),wheel_sha256=hashlib.sha256(wheel.read_bytes()).hexdiges
 TemplateBuildSettings.model_validate(v)
 with (root/'private/template-build.json').open('x') as f:json.dump(v,f)
 PY
-"$S09_ROOT/venv/bin/nyt" cloud release prepare 'de5f76aa87b54274fc4edffdc5423ca74382aac1' \
+"$S09_ROOT/venv/bin/nyt" cloud release prepare "$S09_RELEASE_ID" \
   --settings "$S09_ROOT/private/template-build.json" > "$S09_ROOT/reports/template-build.json"
 ```
 
+`S09_RELEASE_ID`须填写本轮同源候选的release标识，与所选wheel/源码指纹一起登记；不要沿用旧de5f76a标识为新包出回执。
+
 `prepare`会校验wheel/Kit SHA、Docker backend ID、镜像架构，构建后以非root/无网络/无cap/no-new-privileges执行完整preflight，Kit CLI、doctor、pytest、本地报告、pip check及rg/fd均须通过；生成的TemplateReceipt才可登记模板，不能手写成功回执。
 
-注意当前构建器使用host构建网络并显式清空代理build args，**不会继承S00那次容器代理修正**。apt和允许包源在该路径不可达时，保存安全错误类型并停止；先确认公司网络/CA/允许镜像源，不私改构建器、关闭TLS或把代理认证写镜像。构建tag/receipt已存在也不要覆盖，换本轮新身份并记录。
+原`de5f76a`候选默认使用host构建网络并强制清空代理，遇到公司代理出口时会在apt/pip失败。已有`docker_executable`可指向本轮私有wrapper：仅对build子命令替换代理build args，info/inspect/pull/run等保持原参数、backend及预检。用户已通过此路径报告正式prepare退出0并生成真实回执；**这属于旧de5f76a轮次的通过记录；新S09正式包须核对新wheel/Runner/镜像与回执指纹，不能直接把旧镜像视为本轮同源候选**。最终汇总保留wrapper脱敏正文/哈希、原始回执、构建与镜像检查证据；截图尚不替代这些原始材料核对。
+
+另一条本机候选修正增加显式`build_proxy_env`，合同见[143c第1.2节](specs/143c-version-and-operations.md#12-s091受控构建代理修正2026-11-02)。该字段只在修复后的构建器可用，旧候选直接填字段会被拒绝；默认仍不继承S00/宿主代理。只有选择此路径且尚未通过私有wrapper时，才按文末更换构建器。使用无认证代理根地址，认证代理不能塞入argv或镜像。构建tag/receipt已存在不覆盖；任务运行代理仍由独立tool_environment配置。
 
 ## 4. 新OpenSandbox控制实例与Coordinator
 
@@ -178,9 +185,11 @@ Windows创建全新venv/私有数据目录，Python要求同上。不要覆盖�
 py -3.12 -m venv "$Root\venv"
 $Py = "$Root\venv\Scripts\python.exe"
 $Nyt = "$Root\venv\Scripts\nyt.exe"
-$Wheel = Get-ChildItem "$Root\wheels\windows-x86_64\*.whl" | Select-Object -ExpandProperty FullName
+$Wheel = Get-ChildItem "$Root\wheels\*win_amd64.whl" | Select-Object -ExpandProperty FullName
 & $Py -m pip install $Wheel
-& $Py "$Root\verify-candidate.py" --manifest "$Root\candidate.json"
+Push-Location $Root
+& $Py -m scripts.verify_cloud_candidate --root $Root --installed
+Pop-Location
 New-Item -ItemType Directory "$Root\private", "$Root\local-data", "$Root\fixture", "$Root\reports" -ErrorAction Stop
 ```
 
@@ -281,7 +290,7 @@ CLI与Web应显示同一任务/历史。准入409先刷新task；提交回执丢
 | 后台续聊 B31 | 在工具内起受管mock服务，本轮结束后保持后台，追加消息继续使用同服务；fresh pending可superseded且旧轮无独立快照，捕获中则等待，不停止mock腾准入。 |
 | 本机离线 B23 | 用无Windows业务依赖的任务做30秒纯本地工作；输入就绪且运行已持久受理后停止本轮Windows服务/正向隧道。Linux独立完成并自主保存。重开原数据/连接能看到原任务/结果，无重复run。Windows关机后依赖Windows中转的业务请求不保证继续成功。 |
 | 文件结果 B09/B10/B27 | 修改/新增/删除/二进制/执行位按实际平台生成固定结果；预览不执行报告HTML；接收前后SHA一致。接收到主输入框仅放说明和引用，原草稿保持，不自动发起主模型。用户点击发送后模型真实读取本机材料，侧栏过程不进入主聊天/长期记忆。 |
-| Windows交付 B11 | 先导出新目录；再独立验证创建分支与apply。未提交初始改动可带入分支，范围外文件、HEAD/index保持；CRLF、文件锁、reparse/路径冲突明确拒绝；partial沿原操作继续，不覆盖后来本机改动。 |
+| Windows交付 B11 | 报告选择已有目录/新建文件夹保存；代码独立验证创建分支与apply，以及非Git应用。未提交初始改动可带入分支，范围外文件、HEAD/index保持；CRLF、文件锁、reparse/路径冲突明确拒绝；partial沿原操作继续，不覆盖后来本机改动。 |
 | 删除后离线交付 | 完整接收且本机I缓存存在后，明确确认删除本轮任务，再断云端连接；从本机已接收材料的受控交付入口验证导出/分支/apply，不依赖已脱敏的创建请求。CLI/API或当前UI不能进入的动作如实记入口限制，不伪报完成。 |
 | 停止/释放/删除 B18/B26 | 停止本轮需保存且不删除任务；释放环境需确认容器已移除、workspace/state保留，重建新generation继续；删除只对本轮已确认task做预览/确认，墓碑与关联核销正确，其他任务及本机材料保持。 |
 | 真容器故障 B19/B24 | 仅对已登记的本轮测试容器注入Runner退出/kill，核对旧容器和后代物理退出；无回执保持unknown/占额、不重放副作用，确认旧写入者消失后才能新代恢复。不得注入旧A或不属于本轮的容器。 |
@@ -341,3 +350,71 @@ Linux新终端先重新设置实际S09_ROOT、PY、NET，并用`sudo docker netw
 
 
 当前代码/命令依据：`cli/cloud.py`、`cli/cloud_tasks.py`、`cloud_install/template.py`、`application/cloud/settings.py`、`cloud_files/profiles.py`、`web/__main__.py`及143g验收矩阵。文档静态/配置结构验证不代表公司命令已执行；真实结果由Windows和开发机回传。
+
+
+## 历史补记：旧de5f76a轮次第3步网络失败接续
+
+本节只记录旧de5f76a轮次的接续方式，不作为新S09正式包操作指引；新轮次按上文同源包/新release标识执行。原说明：本节仅用于选择本机build_proxy_env修复包且构建仍未通过的情况。**若已通过私有docker_executable wrapper生成真实模板回执，跳过本节，保留原候选/镜像并继续第4节。**
+
+截图中的640权限问题已修复，原阻断是apt/pip直连出网。先保存原报告与私有配置；不重跑S00、不重装Docker、不删原候选/镜像/任务。旧候选本身没有build_proxy_env支持，选择此路径须先在新的解压目录取得本轮修复包并检查SHA。修复包candidate.json记录原基线＋源码补丁指纹，不能当作已发布正式版本。
+
+Linux新终端重新设置实际路径：
+
+```bash
+umask 077
+export S09_ROOT="$HOME/naiyue-s091-de5f76a"
+export FIX_BUNDLE='/本轮修复包解压绝对路径'
+export PY="$S09_ROOT/venv/bin/python"
+cd "$S09_ROOT"
+# 从已核准的宿主环境选择代理，不打印URL，不把公司地址写进项目代码。
+export NYT_BUILD_HTTP_PROXY="${http_proxy:-${HTTP_PROXY:-${https_proxy:-${HTTPS_PROXY:-}}}}"
+export NYT_BUILD_HTTPS_PROXY="${https_proxy:-${HTTPS_PROXY:-$NYT_BUILD_HTTP_PROXY}}"
+export NYT_BUILD_NO_PROXY='localhost,127.0.0.1,::1'
+: "${NYT_BUILD_HTTP_PROXY:?请先在本窗口设置已批准的代理环境}"
+"$PY" - <<'PYCODE'
+import os
+from urllib.parse import urlsplit
+for name in ('NYT_BUILD_HTTP_PROXY','NYT_BUILD_HTTPS_PROXY'):
+ p=urlsplit(os.environ[name]);assert p.scheme in ('http','https') and p.hostname
+ assert p.username is None and p.password is None and not p.query and not p.fragment, '首版不接受认证代理URL'
+print('Selected explicit build proxy references; values withheld')
+PYCODE
+curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30   --proxy "$NYT_BUILD_HTTP_PROXY" --noproxy '' http://deb.debian.org/debian/ -o /dev/null
+curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30   --proxy "$NYT_BUILD_HTTPS_PROXY" --noproxy '' https://pypi.org/simple/attrs/ -o /dev/null
+```
+
+curl失败先按代理路由/白名单/认证/CA排查，不加-k/--trusted-host。上述仅证明两个目标HTTP通路；apt全部仓库和pip文件下载仍由正式构建复验。缺少包源/CA权限应让当地管理员确认允许范围，不能修改任务隔离来解决构建出网。
+
+确认两项连接后更新本轮Linux独立venv的候选，保留依赖版本；不碰系统Python或Windows环境。进入S09_ROOT而不是旧src，避免从旧checkout导入旧构建器：
+
+```bash
+"$PY" -m pip install --force-reinstall --no-deps "$FIX_BUNDLE"/wheels/linux-x86_64/*.whl
+"$PY" "$FIX_BUNDLE/verify-candidate.py" --manifest "$FIX_BUNDLE/candidate.json"
+"$PY" - <<'PYCODE'
+import hashlib,json,os
+from pathlib import Path
+root=Path(os.environ['S09_ROOT']);bundle=Path(os.environ['FIX_BUNDLE'])
+path=root/'private/template-build.json';raw=path.read_bytes();v=json.loads(raw)
+assert not Path(v['output']).exists(),'已有回执时停止，不覆盖'
+backup=root/'private/template-build.before-build-proxy.json'
+with backup.open('xb') as f:f.write(raw)
+wheel=next((bundle/'wheels/linux-x86_64').glob('*.whl'))
+v.update(wheel=str(wheel),wheel_sha256=hashlib.sha256(wheel.read_bytes()).hexdigest(),
+ image_tag=v['image_tag']+'-proxy-r1',build_proxy_env={
+ 'HTTP_PROXY':'NYT_BUILD_HTTP_PROXY','HTTPS_PROXY':'NYT_BUILD_HTTPS_PROXY','NO_PROXY':'NYT_BUILD_NO_PROXY'})
+# 仅写原本本轮明确使用的私有模板配置，保留原基础镜像/Kit/UID/backend/包源。
+with path.open('w') as f:json.dump(v,f)
+path.chmod(0o600)
+print('Updated explicit build proxy references; proxy values withheld')
+PYCODE
+# 使用修复包的完整补丁身份，不伪装成Git commit。
+RELEASE_ID=$("$PY" -c 'import json,os;from pathlib import Path;print(json.loads((Path(os.environ["FIX_BUNDLE"])/"candidate.json").read_text())["source_identity"])')
+"$S09_ROOT/venv/bin/nyt" cloud release prepare "$RELEASE_ID" \
+  --settings "$S09_ROOT/private/template-build.json" > "$S09_ROOT/reports/template-build-proxy-r1.json"
+# 成功后使用新目录中的配套脚本接第4节，不覆盖原src。
+mkdir -m 700 "$S09_ROOT/src-build-proxy-r1"
+unzip "$FIX_BUNDLE/source.zip" -d "$S09_ROOT/src-build-proxy-r1"
+cd "$S09_ROOT/src-build-proxy-r1"
+```
+
+配置只存宿主变量名。构建器在进入受控Docker命令前取值并校验，大小写预定义参数成对显式传递，兼容sudo wrapper清空环境。Dockerfile不增加代理ARG/ENV，不改全局Docker配置；最终preflight继续无网络/非root/无cap。成功取得真实template-receipt.json后再接第4节，不手写成功回执。真实代理通路和最终镜像需开发机验收；本机参数测试不代表公司构建已通过。

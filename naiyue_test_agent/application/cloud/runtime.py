@@ -27,6 +27,11 @@ class CloudRuntime:
         self.registry = CloudRegistry(database)
         self.registry.bind_instance(self.instance_id, initialize=owner.record['status'] == 'initializing')
         self.commands = CloudCommands(self.registry, settings, self.instance_id)
+        from .releases import CloudReleases
+        self.releases = CloudReleases(self)
+        # The exclusive CloudOwner proves previous in-process leases are gone.
+        self.releases.repository.retire_process_io()
+        self.releases.validate_active()
         self.gates = TaskGates(self.registry)
         self.credentials = TaskCredentials(self.registry, self.gates, settings)
         self._histories = {}
@@ -179,6 +184,8 @@ def open_cloud_runtime(settings):
     stack, primary = ExitStack(), None
     try:
         owner = stack.enter_context(CloudOwner(settings))
+        from naiyue_test_agent.storage.cloud.guards import check_guards
+        check_guards(settings.data_dir)
         if owner.record['status'] == 'ready' and not (settings.data_dir / 'cloud.sqlite').exists():
             raise CloudError('cloud_registry_missing', 503)
         database = Database.open_cloud(settings.data_dir / 'cloud.sqlite', profile='registry',

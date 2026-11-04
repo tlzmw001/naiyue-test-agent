@@ -77,6 +77,41 @@ def test_export_reconciles_publication_before_receipt_without_overwriting(tmp_pa
     assert (root/'exported/b').read_bytes()==b'\0binary'
 
 
+@pytest.mark.parametrize('fault',['none','flush_error','swapped_handle'])
+def test_export_flush_uses_writable_identity_checked_handles(tmp_path,monkeypatch,fault):
+    import errno,os
+    from contextlib import contextmanager
+    from naiyue_test_agent.cloud_files import delivery_apply as module
+    root,verified=output(tmp_path);outside=tmp_path/'unrelated';outside.write_bytes(b'keep')
+    original_handle=module.source_handle;original_open=Path.open;original_sync=os.fsync;handles={};synced=set()
+    @contextmanager
+    def pinned(directory,path,*args):
+        with original_handle(directory,path,*args) as value:
+            if value[1] is not None:handles[value[0].fileno()]=(directory/path,value[0])
+            yield value
+    def opened(path,*args,**kwargs):
+        if fault=='swapped_handle' and path.name=='a' and path.parent.name.startswith('.nyt-export-') and args==('r+b',):
+            stream=original_open(outside,'r+b')
+        else:stream=original_open(path,*args,**kwargs)
+        handles[stream.fileno()]=(path,stream);return stream
+    def windows_sync(fd):
+        item=handles.get(fd)
+        if item and not item[1].closed and item[0].parent.name.startswith('.nyt-export-'):
+            if fault=='flush_error':raise OSError(errno.EIO,'controlled flush failure')
+            if not item[1].writable():raise OSError(errno.EBADF,'read-only Windows flush handle')
+            synced.add(item[0].name)
+        original_sync(fd)
+    monkeypatch.setattr(module,'source_handle',pinned);monkeypatch.setattr(Path,'open',opened);monkeypatch.setattr(os,'fsync',windows_sync)
+    if fault=='none':
+        assert module.export_tree(root,'exported',verified,tmp_path/'export-journal')=={'name':'exported'}
+        assert synced=={'a','b'} and (root/'exported/a').read_bytes()==b'new\r\n'
+    else:
+        expected=OSError if fault=='flush_error' else CloudError
+        with pytest.raises(expected):module.export_tree(root,'exported',verified,tmp_path/'export-journal')
+        assert not (root/'exported').exists()
+    assert outside.read_bytes()==b'keep' and (root/'a').read_bytes()==b'old\r\n'
+
+
 def test_interrupted_backup_can_continue_without_any_project_effect(tmp_path,monkeypatch):
     from naiyue_test_agent.cloud_files import delivery_apply as module
     root,verified=output(tmp_path);original=module.write_json;failed=False

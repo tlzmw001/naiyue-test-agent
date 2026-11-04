@@ -38,6 +38,7 @@ class RunnerRuns:
                 return old,False
             task=r.registry.get_task(task_id)
             if task.revision!=request.expected_revision or task.generation!=request.expected_generation:raise CloudError('task_revision_conflict')
+            if task.template_snapshot is not None:r.releases.validate_template(task.template_snapshot)
             if task.runner_phase=='waiting_model':raise CloudError('model_unavailable')
             if (task.lifecycle!='ready' or task.runner_phase!='ready' or not task.runner_connection_id
                     or task.runner_connection_id!=connection_id
@@ -56,10 +57,12 @@ class RunnerRuns:
                 generation=task.generation,boot_id=task.runner_boot_id,state_epoch=task.state_epoch)
             if len(canonical_json(frame).encode())>r.settings.max_frame_bytes:raise CloudError('request_too_large',413)
             candidate=CloudTask.model_validate(task.model_dump()|dict(active_run_id=run_id,last_run_id=run_id,
+                title=task.title or ' '.join(request.message.split())[:80],
                 result_ids=[*task.result_ids,plan.result_id],reclaim_blockers=['active_run','required_history'],last_quiescent_at=None,revision=task.revision+1,updated_at=now))
             receipt=CommandReceipt(command_id=request.command_id,resource_id=task_id,operation='run:start',
                 expected_generation=task.generation,request_digest=fingerprint,status='running',http_status=202,
-                result=dict(phase='dispatched',command=command.model_dump(),connection_id=task.runner_connection_id),created_at=now,updated_at=now)
+                result=dict(phase='dispatched',command=command.model_dump(),connection_id=task.runner_connection_id,
+                    previous_run_id=previous.last_run_id,previous_pending_result_id=previous.pending_result_id),created_at=now,updated_at=now)
             # Reuse the existing atomic task+receipt CAS. Environment-only limits
             # in this repository apply solely to environment:start.
             return self.repository.reserve(previous,candidate,receipt,r.settings,related=(result_receipt,),related_updates=updates)

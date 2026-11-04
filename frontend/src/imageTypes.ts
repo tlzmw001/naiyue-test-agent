@@ -6,4 +6,4 @@ export interface ImageLimits { max_images_per_message: number; max_input_bytes: 
 export interface ImageConfiguration { capabilities?: Record<string, { image_inputs: boolean }>; image_input_limits?: ImageLimits }
 export function wireImages(images: DraftImage[]): ImageUpload[] { return images.map(({ client_id, name, mime_type, base64 }) => ({ client_id, name, mime_type, base64 })); }
 
-export interface FrozenImageRequest { requestId: string; sessionId: string; runId?: string; kind: 'message' | 'steering' | 'follow_up'; text: string; draftText: string; images: DraftImage[]; materialRefs?: import('./cloudReceiveTypes').MaterialRef[]; revision?: number; waitForEnvironment?: boolean }
+export interface FrozenImageRequest { requestId: string; sessionId: string; runId?: string; kind: 'message' | 'steering' | 'follow_up'; text: string; draftText: string; images: DraftImage[]; materialRefs?: import('./cloudReceiveTypes').MaterialRef[]; revision?: number }

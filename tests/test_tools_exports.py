@@ -10,7 +10,8 @@ import pytest
 def test_execution_import_does_not_load_unrelated_tool_factories():
     program = '''
 import sys
-import naiyue_test_agent.envd.operations
+import naiyue_test_agent.execution.host_files
+import naiyue_test_agent.execution.git_repository
 for name in ('builtin', 'subagent', 'history', 'memory', 'web_search', 'web_fetch'):
     assert 'naiyue_test_agent.tools.' + name not in sys.modules, name
 '''

@@ -34,10 +34,7 @@ class MemoryAPI:
                 raise ToolException('memory_scope_mismatch: the calling session or role is unavailable.') from error
             origin_run_id = session.validate_memory_scope(scope)
             identity = scope.identity
-            if scope.environment is not None and scope.environment.kind=='sandbox':
-                await run_blocking(scope.capabilities.files.validate)
-            else:
-                require_execution_directory(identity.execution_root, identity.project_id)
+            require_execution_directory(identity.execution_root, identity.project_id)
             try:
                 request = MemoryInput.model_validate(request).model_dump(mode='json')
             except ValidationError as error:

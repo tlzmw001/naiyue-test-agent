@@ -55,7 +55,9 @@ class CloudOwner:
                 acquire_store_lock(self.fd)
             except BlockingIOError:
                 raise CloudError('cloud_in_use', 503) from None
-            if not marker.exists():
+            if marker.exists():
+                self.record = self._read_marker()
+            else:
                 self._write_marker(marker, exclusive=True)
             # Only Coordinator management paths; never recurse through task data.
             history = root / 'history'
@@ -77,7 +79,7 @@ class CloudOwner:
         try:
             value = json.loads(content)
             if (len(content) > 4096 or set(value) != {'format', 'schema', 'instance_id', 'status'}
-                    or value['format'] != ROOT_FORMAT or type(value['schema']) is not int or value['schema'] != 1
+                    or value['format'] != ROOT_FORMAT or type(value['schema']) is not int or value['schema'] not in (1,2)
                     or value['status'] not in ('initializing', 'ready')
                     or str(__import__('uuid').UUID(value['instance_id'])) != value['instance_id']):
                 raise ValueError('invalid_root_marker')
@@ -103,6 +105,15 @@ class CloudOwner:
             private_file(temporary)
         self._write_marker(temporary)
         os.replace(temporary, self.root / 'cloud-root.json')
+        sync_store_directory(self.root)
+
+    def enable_guards(self):
+        if self.record['schema']==2:return
+        self.record=self.record|dict(schema=2)
+        temporary=self.root/'.cloud-root.next'
+        if temporary.exists():private_file(temporary)
+        self._write_marker(temporary)
+        os.replace(temporary,self.root/'cloud-root.json')
         sync_store_directory(self.root)
 
     def __exit__(self, kind, error, traceback):

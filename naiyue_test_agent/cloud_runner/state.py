@@ -18,7 +18,7 @@ def read_json(path,limit=65536):
 def write_json(path,value):
     temporary=path.with_name(path.name+'.next')
     fd=open_store_file(temporary)
-    with os.fdopen(fd,'w') as f:
+    with os.fdopen(fd,'w',encoding='utf-8') as f:
         f.write(json.dumps(value,ensure_ascii=False,allow_nan=False));f.truncate();f.flush();os.fsync(f.fileno())
     os.replace(temporary,path)
     sync_store_directory(path.parent)

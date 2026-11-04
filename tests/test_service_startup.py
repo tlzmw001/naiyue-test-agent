@@ -129,3 +129,21 @@ def test_independent_data_profiles_run_at_the_same_time(tmp_path):
                     pytest.fail('independent services did not release their locks')
                 await asyncio.sleep(0.05)
     asyncio.run(scenario())
+
+
+def test_windows_spawn_explicitly_suppresses_console(monkeypatch,tmp_path):
+    from types import SimpleNamespace
+    from naiyue_test_agent.service import launcher
+    actual=launcher.os
+    monkeypatch.setattr(launcher,'os',SimpleNamespace(name='nt',lseek=actual.lseek,SEEK_END=actual.SEEK_END,fdopen=actual.fdopen,close=actual.close))
+    monkeypatch.setattr(launcher.subprocess,'CREATE_NEW_PROCESS_GROUP',0x200,raising=False)
+    monkeypatch.setattr(launcher.subprocess,'CREATE_NO_WINDOW',0x8000000,raising=False)
+    monkeypatch.setattr(launcher.subprocess,'DETACHED_PROCESS',0x8,raising=False)
+    called={}
+    class Child:
+        def wait(self):return 0
+    def popen(args,**kwargs):called.update(kwargs);return Child()
+    monkeypatch.setattr(launcher.subprocess,'Popen',popen)
+    launcher._spawn(launch_options(tmp_path))
+    assert called['creationflags']==0x8000200
+    assert called['stdin']==subprocess.DEVNULL and called['stdout'] is called['stderr']

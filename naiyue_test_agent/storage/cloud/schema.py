@@ -42,7 +42,7 @@ def _validate(connection, profile):
     if profile=='history' and version in (2,3):expected.update(PROJECTION_SCHEMA)
     if profile=='history' and version==3:expected.update(USAGE_SCHEMA)
     if (connection.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_IDS[profile]
-            or version not in ((1,2,3) if profile=='history' else (1,))
+            or version not in ((1,2,3) if profile=='history' else (1,2))
             or actual != expected):
         raise CloudError('cloud_invalid_format', 503)
 

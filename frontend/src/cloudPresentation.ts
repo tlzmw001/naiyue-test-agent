@@ -2,6 +2,11 @@ import { ApiError, errorText } from './api';
 import type { CloudBinding, CloudMessage, CloudLive, CloudTask } from './cloudTypes';
 import type { MessageRow, ToolState } from './types';
 const errors: Record<string, string> = {
+  cloud_result_identity_mismatch: '结果与当前任务不一致，已停止展示，请刷新当前任务核对',
+  cloud_delivery_preflight_changed: '预检后本机文件已变化，已停止本次写入，请重新预检',
+  cloud_delivery_baseline_changed: '应用基线已由另一项操作更新，请重新预检当前结果',
+  cloud_delivery_destination_busy: '目标目录有另一项取回正在写入，请等待其完成后核对',
+  cloud_delivery_path_unsafe: '目标路径不是可替换的普通文件或安全链接，请处理路径后重新预检',
   cloud_delivery_name_invalid: '请填写有效的新目录名；目录名不能包含路径分隔符', cloud_delivery_destination_forbidden: '交付目标不属于当前已授权项目',
   cloud_delivery_not_found: '尚未找到原交付回执，请使用原操作核对预检', cloud_delivery_request_conflict: '原交付参数已固定，请核对同一操作',
   cloud_delivery_receive_unavailable: '本机接收记录尚不可用，请先核对材料', cloud_delivery_not_prepared: '代码交付尚未完成有效预检，请先核对原预检',
@@ -13,7 +18,9 @@ const errors: Record<string, string> = {
   cloud_delivery_identity_mismatch: '交付回执或材料身份与当前会话不一致', cloud_delivery_input_changed: '原输入文件发生变化，请核对固定输入',
   cloud_delivery_postcheck_failed: '写入后核对未完成，请保留原操作并检查当前文件', cloud_delivery_export_unknown: '导出是否完成尚未确认，请查询原操作',
   cloud_receive_not_found: '尚未找到原接收回执，请继续原接收以核对同一请求', cloud_receive_conflict: '原接收身份已固定，请核对原请求',
-  cloud_receive_capacity: '本机接收额度已满，请等待正在接收的材料完成', cloud_receive_selection_invalid: '所选报告不属于此固定结果，请重新核对',
+  cloud_receive_capacity: '本机接收额度已满。可先清理未引用缓存；仍被引用的材料会保留，正在接收时请等待完成后重试。', cloud_receive_selection_invalid: '所选报告不属于此固定结果，请重新核对',
+  cloud_receive_busy: '本机材料正在接收、交付、读取或清理，请完成后重试。',
+  cloud_delivery_path_unsupported: '结果包含本机不支持的文件名，请在云端重命名列出的文件后重新生成结果；不能强制覆盖。',
   cloud_receive_identity_mismatch: '接收回执与当前会话或结果不一致，已保留原输入', cloud_receive_input_mismatch: '接收结果的输入身份不一致',
   cloud_receive_manifest_mismatch: '结果清单校验失败，请核对原结果', cloud_receive_source_changed: '本机接收文件发生变化，请继续原接收核对',
   cloud_receive_offset_unconfirmed: '本机接收进度尚未确认，请继续原接收核对', cloud_receive_size_mismatch: '接收字节长度与固定结果不一致',
@@ -39,7 +46,7 @@ const errors: Record<string, string> = {
   resource_disk_unknown: '云端磁盘状态未确认，已阻止新增分配', sandbox_create_unconfirmed: '创建是否结束尚未确认，任务继续保留占额',
 };
 export function cloudError(error: unknown) {
-  const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+  const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : error instanceof Error && errors[error.message] ? error.message : undefined;
   return code ? errors[code] ?? errorText(error instanceof ApiError ? error : new ApiError(code)) : errorText(error);
 }
 export function taskLabel(binding: CloudBinding) {
@@ -72,3 +79,5 @@ export function liveTools(live?: CloudLive): Record<string, ToolState> {
     return [item.tool_call_id, { ...item, state: item.state ?? (type?.endsWith('finished') ? 'finished' : 'running') }];
   }));
 }
+
+export function cloudTime(value?: number | null) { return value === undefined || value === null ? '' : new Date(value * 1000).toLocaleString(); }

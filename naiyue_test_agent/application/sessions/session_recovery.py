@@ -126,7 +126,7 @@ def build_recovery_update(snapshot, record):
     return {'messages': additions, 'tool_execution': {}, 'run_stopped': False}
 
 
-async def validate_saved_approval(settings, registry, row, snapshot, names, *, execution_root=None,execution_access=None):
+async def validate_saved_approval(settings, registry, row, snapshot, names, *, execution_root=None):
     """Recheck local authority; never load file contents, review with AI or grant access."""
     from naiyue_test_agent.agent_runtime.tool_execution.permissions import prepare_permission_call
     try:
@@ -146,11 +146,6 @@ async def validate_saved_approval(settings, registry, row, snapshot, names, *, e
         if not isinstance(selected, list) or not set(selected).issubset(subagent_request_tools(names, registry)):
             raise ValueError('Saved tools are unavailable')
         specs = {spec.tool.name: spec for spec in registry.select(selected)}
-        if row.get('execution_binding')=='sandbox' and execution_access is None:
-            for call in batch['calls']:specs[call['name']].validate_input(call['args'])
-            pending=pending_tool_approval({**snapshot.values,'__interrupt__':snapshot.tasks[0].interrupts})
-            pending.update(requested_run_id=row['run_id'],execution_expired=True)
-            return pending
         if execution_root is not None and execution_root.project_revision is not None and any(
                 call.get('subject', {}).get('project_revision') != execution_root.project_revision
                 for call in batch['calls']):
@@ -165,8 +160,8 @@ async def validate_saved_approval(settings, registry, row, snapshot, names, *, e
         from naiyue_test_agent.execution.host_files import HostFileSystem
         from naiyue_test_agent.execution.host_processes import HostProcesses
         root = execution_root if execution_root is not None else root_from_row(row)
-        files = execution_access.files if execution_access is not None else HostFileSystem(root, row['project_id'], session_id=row['session_id']) if root is not None else None
-        processes=execution_access.processes if execution_access is not None else HostProcesses(files) if files is not None else None
+        files = HostFileSystem(root, row['project_id'], session_id=row['session_id']) if root is not None else None
+        processes=HostProcesses(files) if files is not None else None
         context = RuntimeContext(RunScope(RunIdentity(row['session_id'],
             project_id=row['project_id'], execution_root=root), capabilities=RunCapabilities(files=files, processes=processes),
             environment=files.environment if files is not None else None))

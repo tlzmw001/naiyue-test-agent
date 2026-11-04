@@ -32,22 +32,9 @@ def initialize(connection):
 
 def root_from_row(row, *, child=False):
     binding = row.get('execution_binding')
-    kind = row['execution_root_kind']
     if binding == 'sandbox':
-        try:
-            from naiyue_test_agent.contracts.session_environment import saved_setup
-            from naiyue_test_agent.contracts.git_inputs import input_id
-            if row['project_id'] is None or kind is not None:
-                raise ValueError('invalid_binding')
-            if child:
-                input_id(row['environment_binding_id'])
-            else:
-                saved_setup(row)
-            if row['execution_root' if child else 'workspace_root'] is not None:
-                raise ValueError('invalid_binding')
-        except (ValueError,TypeError,KeyError) as error:
-            raise SessionPersistenceError('invalid_execution_identity') from error
-        return None
+        raise SessionPersistenceError('unsupported_execution_binding')
+    kind = row['execution_root_kind']
     if binding not in (None, 'local', 'project_local'):
         raise SessionPersistenceError('invalid_execution_identity')
     if 'execution_binding' in row and binding is None and kind is not None:

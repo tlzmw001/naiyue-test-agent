@@ -1,7 +1,7 @@
 """Project-owned local receipts/materials; publication joins one SQLite transaction."""
 import json,time
 from naiyue_test_agent.contracts.cloud_events import digest
-from naiyue_test_agent.contracts.cloud_receive import ReceiveRecord,MaterialRef
+from naiyue_test_agent.contracts.cloud_receive import ReceiveRecord,MaterialRef,ReceiveRequest
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from .queries import session_row
 
@@ -45,10 +45,13 @@ class ReceiveRepository:
         fingerprint=digest(dict(binding_id=binding['binding_id'],result_id=result_id,request=request))
         with self.database.transaction(write=True,error_code='cloud_receive_storage_failed') as c:
             if session_row(c,sid)['project_id']!=project:raise CloudError('cloud_project_mismatch',403)
-            old=c.execute('SELECT request_digest,session_id FROM naiyue_cloud_receives WHERE receive_id=?',(rid,)).fetchone()
+            old=c.execute('SELECT request_digest,session_id,request_json FROM naiyue_cloud_receives WHERE receive_id=?',(rid,)).fetchone()
             if old:
-                if old[0]!=fingerprint or old[1]!=sid:raise CloudError('cloud_receive_conflict')
-                return self._read(c,rid,sid)
+                current=self._read(c,rid,sid)
+                same=(current.binding_id==binding['binding_id'] and current.result_id==result_id
+                    and ReceiveRequest.model_validate_json(old[2])==ReceiveRequest.model_validate(request))
+                if old[1]!=sid or old[0]!=fingerprint and not same:raise CloudError('cloud_receive_conflict')
+                return current
             if c.execute('SELECT COUNT(*) FROM naiyue_cloud_receives').fetchone()[0]>=limits.max_results:raise CloudError('cloud_receive_capacity',429)
             if not binding['task_id'] or not binding['retained']:raise CloudError('cloud_task_unavailable')
             from .cloud_local import _read
@@ -88,14 +91,17 @@ class ReceiveRepository:
             c.execute('UPDATE naiyue_cloud_receives SET body_json=? WHERE receive_id=?',(value.model_dump_json(),value.receive_id))
             return value
 
-    def publish(self,value,materials):
+    def publish(self,value,materials,refresh_identities=None):
         ready=value.model_copy(update={'phase':'available','active':False,'error_code':None,'updated_at':time.time()})
         with self.database.transaction(write=True,error_code='cloud_receive_storage_failed') as c:
             self._read(c,value.receive_id,value.local_session_id)
             for ref,identity in materials:
                 old=c.execute('SELECT body_json,identity_json FROM naiyue_cloud_materials WHERE material_id=?',(ref.material_id,)).fetchone()
                 encoded=json.dumps(identity)
-                if old and (MaterialRef.model_validate_json(old[0])!=ref or json.loads(old[1])!=identity):raise CloudError('cloud_material_identity_mismatch',403)
+                if old and MaterialRef.model_validate_json(old[0])!=ref:raise CloudError('cloud_material_identity_mismatch',403)
+                if old and json.loads(old[1])!=identity:
+                    if refresh_identities is None or refresh_identities.get(ref.material_id)!=json.loads(old[1]):raise CloudError('cloud_material_identity_mismatch',403)
+                    c.execute('UPDATE naiyue_cloud_materials SET identity_json=? WHERE material_id=?',(encoded,ref.material_id))
                 if not old:c.execute('INSERT INTO naiyue_cloud_materials VALUES(?,?,?,?,?,?)',
                     (ref.material_id,ready.receive_id,ready.local_session_id,ready.local_project_id,ref.model_dump_json(),encoded))
             c.execute('UPDATE naiyue_cloud_receives SET body_json=? WHERE receive_id=?',(ready.model_dump_json(),ready.receive_id))
@@ -117,3 +123,18 @@ class ReceiveRepository:
             self._read(c,rid,sid)
             return [MaterialRef.model_validate_json(r[0]) for r in c.execute(
                 'SELECT body_json FROM naiyue_cloud_materials WHERE receive_id=? AND session_id=? AND project_id=? ORDER BY rowid',(rid,sid,project))]
+
+    def identities(self,rid,sid,project):
+        with self.database.transaction(write=False,error_code='cloud_receive_storage_failed') as c:
+            self._read(c,rid,sid)
+            return {row[0]:json.loads(row[1]) for row in c.execute(
+                'SELECT material_id,identity_json FROM naiyue_cloud_materials WHERE receive_id=? AND session_id=? AND project_id=?',
+                (rid,sid,project))}
+
+    def cache_references(self):
+        with self.database.transaction(write=False,error_code='cloud_receive_storage_failed') as c:
+            records=[ReceiveRecord.model_validate_json(row[0]) for row in c.execute('SELECT body_json FROM naiyue_cloud_receives')]
+            hashes={item.artifact.sha256 for record in records for item in record.files}
+            hashes.update(MaterialRef.model_validate_json(row[0]).sha256 for row in c.execute('SELECT body_json FROM naiyue_cloud_materials'))
+            stages={record.receive_id:{item.artifact.artifact_id for item in record.files if not item.verified} for record in records}
+        return hashes,stages

@@ -221,7 +221,19 @@ class ManualCloudTasks:
                 if view=='result_preview':tail='/files/'+TypeAdapter(UUIDText).validate_python(params.pop('file_id'))+'/preview'
                 view='results/'+rid+tail
             async with self.connection(binding) as client:
-                return await run_blocking(client.request,'GET','/tasks/'+binding['task_id']+'/'+view,params=params)
+                value=await run_blocking(client.request,'GET','/tasks/'+binding['task_id']+'/'+view,params=params)
+                if view=='results':
+                    if any(row.get('task_id',binding['task_id'])!=binding['task_id'] for row in value):raise CloudError('cloud_result_identity_mismatch',502)
+                elif view.startswith('results/') and view.count('/')==1:
+                    plan=value.get('plan',{})
+                    if any(plan.get(key)!=binding[key] for key in ('task_id','input_id')) or plan.get('result_id')!=rid:
+                        raise CloudError('cloud_result_identity_mismatch',502)
+                    operation=await run_blocking(domain.repo.operation,binding['create_command_id'],session_id)
+                    source_handle=operation['request'].get('source_handle')
+                    if not source_handle:raise CloudError('cloud_task_unavailable',409)
+                    source=await run_blocking(domain.repo.source,source_handle,session_id)
+                    value=value|dict(code_branch_available=bool(source['captured'].get('source_receipt')))
+                return value
 
     async def close(self):
         self.closing=True;primary=None

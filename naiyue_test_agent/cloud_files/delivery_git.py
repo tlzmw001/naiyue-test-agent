@@ -3,7 +3,7 @@ import json,os,re
 from pathlib import Path
 from types import SimpleNamespace
 from naiyue_test_agent.execution.git_repository import GitRepository
-from naiyue_test_agent.contracts.git_inputs import GitInputError
+from naiyue_test_agent.contracts.git_native import GitInputError
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 
 

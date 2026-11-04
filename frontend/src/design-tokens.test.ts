@@ -45,3 +45,20 @@ describe('design tokens', () => {
     expect(Number(caption?.[1])).toBeGreaterThanOrEqual(12);
   });
 });
+
+it('lets the delivery grid control checkbox spacing without adding dialog margins', () => {
+  const style = document.createElement('style');
+  style.textContent = sheets['./components/CloudTasks.module.css'] + sheets['./components/CloudCodeDelivery.module.css'];
+  const container = document.createElement('div');
+  container.innerHTML = '<section class="delivery"><label class="check"><input type="checkbox">覆盖同名文件</label><label class="check"><input type="checkbox">核对保存位置</label></section><label class="check">其他对话框</label>';
+  document.head.append(style); document.body.append(container);
+  try {
+    const grid = container.querySelector('.delivery')!;
+    expect(getComputedStyle(grid).gap).toBe('8px');
+    for (const label of grid.querySelectorAll('label')) {
+      expect(getComputedStyle(label).marginTop).toBe('0px');
+      expect(getComputedStyle(label).marginBottom).toBe('0px');
+    }
+    expect(getComputedStyle(container.lastElementChild!).marginTop).toBe('16px');
+  } finally { style.remove(); container.remove(); }
+});

@@ -10,7 +10,7 @@ from threading import Lock
 from contextlib import nullcontext
 
 from naiyue_test_agent.storage.errors import SessionPersistenceError
-from .execution_binding import resolve_saved_execution, saved_execution_status
+from .local_execution import resolve_saved_execution, saved_execution_status
 from naiyue_test_agent.application.sessions.session_recovery import _classification, _identity_matches, _message_facts, classify_recovery, build_recovery_update, validate_saved_approval
 from naiyue_test_agent.storage.recovery_records import recovery_record
 from .session_approval import is_pre_tool_approval
@@ -68,9 +68,6 @@ class SessionPersistence:
         value['execution_root_kind'] = row['execution_root_kind']
         value['execution_root_error'] = error
         value['can_run'] = value['can_run'] and value['execution_root_error'] is None
-        from .execution_binding import environment_status
-        value['execution']=await run_blocking(environment_status,self.sessions,row)
-        value['can_run']=value['can_run'] and value['execution']['state']=='ready'
         value.pop('approval_run_id', None)
         from naiyue_test_agent.storage.conversation_sql.reply_storage import latest
         boundary = await run_blocking(self.storage.replies.latest, session_id)
@@ -85,10 +82,7 @@ class SessionPersistence:
             raise ToolException('history_scope_mismatch: the calling session or role is unavailable.')
         from naiyue_test_agent.tools.permissions import require_execution_directory
         facts = session.lifecycle.snapshot_for_run()
-        if facts['files'] is not None and facts['files'].environment.kind=='sandbox':
-            await run_blocking(facts['files'].validate)
-        else:
-            require_execution_directory(facts['execution_root'], facts['project_id'])
+        require_execution_directory(facts['execution_root'], facts['project_id'])
         try:
             return await run_blocking(self.storage.conversation.read_history_tool, source_session_id, current['project_id'], request, settings)
         except SessionPersistenceError as error:
@@ -180,8 +174,6 @@ class SessionPersistence:
             memory_guard=self._memory_jobs.deletion_guard(session_id) if self._memory_jobs else nullcontext()
             with self.sessions.background_tasks.deletion_guard(session_id),memory_guard:
                 async with self.history_lock(session_id):
-                    from .execution_binding import check_environment_deletion
-                    await check_environment_deletion(self.sessions,session_id)
                     result = await self._delete(session_id, agent)
                     self.sessions.background_tasks.forget_session(session_id)
                     if self._memory_jobs:self._memory_jobs.forget_session(session_id)
@@ -205,12 +197,6 @@ class SessionPersistence:
             if self.sessions.mcp_resources is not None:
                 await self.sessions.mcp_resources.release_session(session_id)
             await run_blocking(self.storage.runs.delete, session_id, children)
-            if row.get('execution_binding') == 'sandbox' and self.sessions.environments is not None:
-                from .execution_binding import saved_setup
-                try:
-                    await self.sessions.environments.retire_input(row['project_id'],saved_setup(row).input_id)
-                except Exception as error:
-                    logger.error('session_input_retirement_failed error_type=%s', type(error).__name__)
             with self._lock:
                 self.sessions.remove_session(session_id)
                 self._blocked.discard(session_id)
@@ -347,8 +333,7 @@ class SessionPersistence:
             self.sessions.install_restored_session(session_id, thread_id=row['thread_id'],
                 model_id=row['model_id'], thinking_level=row['thinking_level'], workspace_root=root,
                 active_tool_names=names, permission_mode=row['permission_mode'], pending=pending, conversation_revision=row['conversation_revision'],
-                project_id=row['project_id'], execution_root_kind=row['execution_root_kind'], last_execution_path=row['last_execution_path'], execution_binding=row['execution_binding'],
-                execution_setup=json.loads(row['execution_setup_json']) if row.get('execution_setup_json') else None)
+                project_id=row['project_id'], execution_root_kind=row['execution_root_kind'], last_execution_path=row['last_execution_path'], execution_binding=row['execution_binding'])
 
     async def _read_history(self, session_id, agent, *, snapshot=None, include_messages=True):
         row = await run_blocking(self.storage.sessions.get, session_id)
@@ -427,15 +412,8 @@ class SessionPersistence:
             if classification['kind'] != 'pending_approval':
                 raise SessionPersistenceError('session_recovery_blocked')
             execution = await run_blocking(resolve_saved_execution, self.sessions, row)
-            access=None
-            if row['execution_binding']=='sandbox':
-                from .execution_binding import resolve_capabilities
-                from naiyue_test_agent.contracts.sandbox import SandboxError
-                try:access=await resolve_capabilities(self.sessions,row)
-                except SandboxError as error:
-                    logger.warning('approval_environment_unavailable code=%s',error.code)
             pending = await validate_saved_approval(self._permission_settings, self._tool_registry,
-                row, snapshot, names, execution_root=execution,execution_access=access)
+                row, snapshot, names, execution_root=execution)
             try:
                 updates = await await_settled(collect_chat_updates(agent, self.storage, session_id, snapshot=snapshot))
                 await run_blocking(self.storage.runs.finish_run, session_id, 'interrupted', actual, '', 'interrupted', updates)

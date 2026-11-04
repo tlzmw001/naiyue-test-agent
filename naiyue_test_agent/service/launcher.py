@@ -32,7 +32,7 @@ def _spawn(options):
         '--frontend-dist', str(options.frontend_dist), '--host', options.host, '--port', str(options.port),
         '--max-receipts', str(options.max_receipts), '--max-frame-bytes', str(options.max_frame_bytes),
         '--receipt-cache-bytes', str(options.receipt_cache_bytes)]
-    flags = ({'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS}
+    flags = ({'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW}
              if os.name == 'nt' else {'start_new_session': True})
     try:
         os.lseek(fd, 0, os.SEEK_END)

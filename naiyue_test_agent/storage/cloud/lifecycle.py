@@ -22,14 +22,22 @@ class LifecycleRepository:
                 found = CommandReceipt.model_validate_json(old[0])
                 if found.request_digest != receipt.request_digest: raise CloudError('command_id_conflict')
                 return found, False
+            if receipt.operation in ('run:start','environment:start','artifact:capture'):
+                from .releases import require_available
+                require_available(connection)
             if connection.execute('SELECT COUNT(*) FROM commands').fetchone()[0]+1+len(related) > settings.max_receipts:
                 raise CloudError('command_capacity')
-            tasks = [CloudTask.model_validate_json(r[0]) for r in connection.execute('SELECT record_json FROM tasks')]
-            starting = receipt.operation == 'environment:start'
-            if starting and len([t for t in tasks if t.lifecycle != 'deleted']) > settings.max_retained_environments:
-                raise CloudError('environment_retained_capacity')
-            if starting and not active(previous) and sum(active(t) for t in tasks) >= settings.max_active_environments:
-                raise CloudError('environment_capacity')
+            if receipt.operation == 'environment:start':
+                retained, occupied = connection.execute('''SELECT
+                    COALESCE(SUM(json_extract(record_json,'$.lifecycle')!='deleted'),0),
+                    COALESCE(SUM(json_extract(record_json,'$.sandbox_id') IS NOT NULL
+                        OR json_extract(record_json,'$.environment_operation_id') IS NOT NULL
+                        OR json_extract(record_json,'$.environment_phase')='unknown'),0)
+                    FROM tasks''').fetchone()
+                if retained > settings.max_retained_environments:
+                    raise CloudError('environment_retained_capacity')
+                if not active(previous) and occupied >= settings.max_active_environments:
+                    raise CloudError('environment_capacity')
             changed = connection.execute('''UPDATE tasks SET generation=?,revision=?,record_json=?
                 WHERE task_id=? AND revision=? AND generation=?''', (candidate.generation, candidate.revision,
                 candidate.model_dump_json(), previous.task_id, previous.revision, previous.generation)).rowcount

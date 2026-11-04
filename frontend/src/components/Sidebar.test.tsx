@@ -20,32 +20,32 @@ function setup(overrides: Partial<ComponentProps<typeof Sidebar>> = {}) {
   return { props, ...view };
 }
 
-it('identifies sandbox and host bindings without guessing from a missing directory', () => {
+it('identifies local and project bindings without guessing from a missing directory', () => {
   const { container } = setup({ rows: [
-    { ...rows[0], execution_binding: 'sandbox' },
+    { ...rows[0], execution_binding: 'local' },
     { ...rows[1], execution_binding: 'project_local' },
     { ...rows[0], session_id: 'chat', pinned: false, title: '普通对话', execution_binding: null },
   ] });
-  const sandbox = screen.getByRole('button', { name: '接口回归 model-a' });
-  expect(within(sandbox).getByLabelText('执行位置：Docker 沙箱')).toBeTruthy();
-  expect(within(sandbox).getByRole('img', { name: '已置顶' })).toBeTruthy();
+  const local = screen.getByRole('button', { name: '接口回归 model-a' });
+  expect(within(local).getByLabelText('执行位置：此计算机')).toBeTruthy();
+  expect(within(local).getByRole('img', { name: '已置顶' })).toBeTruthy();
   expect(within(screen.getByRole('button', { name: '支付检查 model-b' })).getByLabelText('执行位置：此计算机')).toBeTruthy();
   expect(within(screen.getByRole('button', { name: '普通对话 model-a' })).queryByLabelText(/执行位置/)).toBeNull();
-  expect(container.querySelectorAll('[aria-label="执行位置：Docker 沙箱"]')).toHaveLength(1);
-  expect(document.getElementById(sandbox.getAttribute('aria-describedby')!)?.textContent).toContain('已完成');
+  expect(container.querySelectorAll('[aria-label="执行位置：此计算机"]')).toHaveLength(2);
+  expect(document.getElementById(local.getAttribute('aria-describedby')!)?.textContent).toContain('已完成');
 });
 
 it.each([
   ['running', 'completed', '运行中'], ['ready', 'completed', '已完成'], ['ready', 'stopped', '已停止'],
   ['failed', 'completed', '失败'], ['interrupted', 'completed', '待继续'], ['review_required', 'completed', '待核对'],
 ])('shows saved %s status without promoting an old %s result', (state, last_run_status, label) => {
-  setup({ rows: [{ ...rows[0], state, last_run_status, execution_binding: 'sandbox' }] });
+  setup({ rows: [{ ...rows[0], state, last_run_status, execution_binding: 'local' }] });
   expect(screen.getByLabelText(`任务状态：${label}`)).toBeTruthy();
   if (label !== '已完成') expect(screen.queryByLabelText('任务状态：已完成')).toBeNull();
 });
 
 it('updates live run and approval facts immediately and ignores another session with a stale result', () => {
-  const current = { ...rows[0], pending_approval: false, execution: { kind: 'sandbox', state: 'ready' } } as SessionView;
+  const current = { ...rows[0], pending_approval: false } as SessionView;
   const run: RunView = { run_id: 'r', session_id: rows[0].session_id, status: 'running', messages: [], done: false,
     last_sequence: 1, incomplete: false, manual_review_required: false };
   const { props, rerender } = setup({ rows: [rows[0]], currentSession: current, currentRun: run });
@@ -56,14 +56,14 @@ it('updates live run and approval facts immediately and ignores another session 
     currentRun={{ ...run, session_id: 'foreign' }} />);
   expect(screen.getByLabelText('任务状态：已完成')).toBeTruthy();
   expect(screen.queryByLabelText('任务状态：等待审批')).toBeNull();
-  expect(screen.queryByLabelText('执行位置：Docker 沙箱')).toBeNull();
+  expect(screen.queryByLabelText('执行位置：此计算机')).toBeNull();
   rerender(<Sidebar {...props} currentRun={undefined} currentSession={{ ...current, live: { ...run, session_id: 'foreign' } }} />);
   expect(screen.getByLabelText('任务状态：已完成')).toBeTruthy();
   expect(screen.queryByLabelText('任务状态：运行中')).toBeNull();
 });
 
-it('keeps completed history complete when its sandbox is unavailable and leaves unknown facts blank', () => {
-  const current = { ...rows[0], execution: { kind: 'sandbox', state: 'unavailable' } } as SessionView;
+it('keeps completed history complete when its execution root is unavailable and leaves unknown facts blank', () => {
+  const current = { ...rows[0], execution_root_error: { code: 'execution_root_unavailable', reason: 'missing' } } as SessionView;
   const { props, rerender } = setup({ rows: [rows[0]], currentSession: current });
   expect(screen.getByLabelText('任务状态：已完成')).toBeTruthy();
   rerender(<Sidebar {...props} rows={[{ ...rows[0], state: 'unknown', last_run_status: 'unknown' }]} currentSession={undefined} />);

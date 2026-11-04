@@ -33,3 +33,15 @@ it('disables selection while controls are changing', () => {
   for (const input of screen.getAllByRole('radio')) expect(input.matches(':disabled')).toBe(true);
   expect(selectModel).not.toHaveBeenCalled(); expect(selectThinking).not.toHaveBeenCalled();
 });
+it('never offers a loading placeholder as a model when the saved selection is empty', () => {
+  render(<ModelMenu models={['A', 'B']} model="" level="model_default" open disabled={false}
+    toggle={vi.fn()} close={vi.fn()} selectModel={vi.fn()} selectThinking={vi.fn()} />);
+  const choices = within(screen.getByRole('group', { name: '模型' })).getAllByRole('radio');
+  expect(choices.map(input => (input as HTMLInputElement).value)).toEqual(['A', 'B']);
+});
+it('distinguishes a saved model missing from the current catalog from available choices', () => {
+  render(<ModelMenu models={['A']} model="retired" level="model_default" open disabled={false}
+    toggle={vi.fn()} close={vi.fn()} selectModel={vi.fn()} selectThinking={vi.fn()} />);
+  expect(screen.getByRole('radio', { name: 'retired（当前不可用）' })).toHaveProperty('disabled', true);
+  expect(screen.getByRole('radio', { name: 'A' })).toHaveProperty('disabled', false);
+});

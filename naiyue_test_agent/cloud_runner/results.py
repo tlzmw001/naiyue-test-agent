@@ -85,12 +85,17 @@ class RunnerResults:
         for local in await run_blocking(self.pending):
             plan=ResultPlan.model_validate(local['plan']);b=client.bootstrap
             journal=await run_blocking(self.kernel.journal.lookup,plan.source_command_id)
-            if journal is None or journal['status'] in ('running','unknown','interrupted') and journal['terminal_seq'] is None:continue
+            rejected=await run_blocking(self.kernel.journal.rejection,plan.source_command_id) if journal is None else None
+            if journal is None and rejected is None:continue
+            if journal and journal['status'] in ('running','unknown','interrupted') and journal['terminal_seq'] is None:continue
             path='/internal/cloud/v1/tasks/'+b.task_id+'/results/'+plan.result_id
             record=ResultRecord.model_validate(await task_request(client.http,b,'GET',path))
             if record.plan!=plan:raise CloudError('result_identity_conflict')
+            if (record.phase=='superseded' and record.superseded_by
+                    and not await run_blocking(self.kernel.journal.admitted_run,record.superseded_by)):continue
             if record.phase in ('available','abandoned','superseded','deleted'):
                 await run_blocking(self.retire,local);continue
+            if rejected is not None:continue
             if record.phase in ('waiting_terminal','failed','unknown','deleting'):continue
             if not self.kernel.session_quiet():continue
             # Quiet facts need not wait for the next periodic heartbeat.

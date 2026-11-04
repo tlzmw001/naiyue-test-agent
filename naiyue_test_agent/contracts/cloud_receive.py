@@ -24,12 +24,17 @@ class ReceiveLimits(CloudRecord):
 class ReceiveRequest(CloudRecord):
     command_id:UUIDText
     local_session_id:SessionId
+    include_code:bool=True
     artifact_ids:list[UUIDText]=Field(default_factory=list,max_length=126)
 
     @model_validator(mode='after')
     def unique(self):
         if len(set(self.artifact_ids))!=len(self.artifact_ids):raise ValueError('duplicate_artifact_id')
         return self
+
+
+class ReceiveRetry(CloudRecord):
+    refresh:bool=False
 
 
 class ReceiveFile(CloudRecord):
@@ -56,6 +61,7 @@ class ReceiveRecord(CloudRecord):
     result:ResultRecord|None=None
     input_package:InputPackage|None=None
     error_code:Label|None=None
+    branch_available:bool=False
     active:bool=False
     created_at:float=Field(default_factory=time.time)
     updated_at:float=Field(default_factory=time.time)

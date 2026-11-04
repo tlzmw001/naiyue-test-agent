@@ -39,8 +39,7 @@ export default function CloudTaskCreate({ api, sessionId, profiles, created, bac
   }
   return <section className={styles.form} aria-label="新增云端任务">
     <button className={styles.link} onClick={back}>返回任务列表</button>
-    <h3>准备独立云端任务</h3>
-    <p className={styles.note}>只导入项目文件并准备沙箱。首次发送目标后才启动 Agent，不复制主聊天。</p>
+    <h3>新增任务</h3>
     {!profiles.length && <p role="status">尚未配置云端连接，请先配置连接并重新读取。</p>}
     <label>云端连接<select value={profileId} disabled={busy || !!frozen.current} onChange={e => {
       setProfile(e.target.value); setTemplate(profiles.find(p => p.profile_id === e.target.value)?.default_template ?? '');
@@ -53,7 +52,6 @@ export default function CloudTaskCreate({ api, sessionId, profiles, created, bac
     </select></label>
     {mode === 'selection' && <label>导入路径，每行一项<textarea value={paths} rows={4} disabled={busy || !!source.current}
       onChange={e => setPaths(e.target.value)} /></label>}
-    <p className={styles.note}>后续消息复用云端工作区。依赖 Windows 中转的服务仍需要 Windows 在线。</p>
     {error && <p role="alert" className={styles.error}>{error}{frozen.current ? '；再次点击会复用原准备操作。' : ''}</p>}
     <button className={styles.primary} disabled={busy || !profile || !template} onClick={() => void prepare()}>
       {busy ? '正在导入并准备…' : frozen.current ? '重试原准备操作' : '导入并准备任务'}</button>

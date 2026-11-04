@@ -4,6 +4,8 @@
 
 状态：2026-11-01审阅后修订的拟实现合同；总入口见 [Spec143](143-cloud-task-b.md)。本轮不修改真实配置、Docker或SSH；当前产物能力与新增实机门禁分开记录在143h。
 
+2026-11-03实现状态：S10.1已接线并完成本机验证，严格字段、实际入口/数据流和结果以[143ag](143ag-s101-explicit-updates.md)及[操作说明](../cloud-updates.md)为准；下方发行字段示意保留设计背景，实际DTO不使用runner_build等草图嵌套。S10.2自动发现/完整备份恢复管理/引用回收尚未实现；真实Docker及Windows/Linux原机保留统一验收。
+
 ## 1. 不可变发行单元
 
 沿用当前标准 wheel/frontend/native-assets 构建链，不建立另一份手工复制源码的发布体系。B 的发行清单绑定源提交、包 SHA、Runner 镜像及协议；PyPI/GitHub 可下载是已确认机器条件，不代表任意 latest 都可以直接替换。
@@ -35,11 +37,21 @@ Runner解释器、venv、程序及全部父目录位于镜像内任务用户不�
 
 标准测试模板必须预装`aitest-kit`及其完整依赖、pytest、Python、Git、Bash和Agent需要的rg/fd；HTTP/RPC模板还须包含所选测试客户端依赖。Python distribution名`aitest-kit`、导入名`aitest_kit`、命令`aitest`和Agent工具`aitest_kit`是四个不同检查对象，不能只在工具列表注册一个名字便声称镜像具备能力。
 
-初始版本沿用当前受控来源`release/sandbox-image.json.aitest_kit`：0.6.0及wheel SHA-256 `419559056a1d16b695d9b1e91a7f0d15ddc389996a369207bd3dcf8afada2331`；该值是当前发行清单事实，不是永久协议常量或升级latest的许可。B构建读取唯一清单并写入template/release回执，不复制A的envd入口/root/cap/旧布局。Agent和Kit可分别固定版本；更新Agent不会自动升级Kit，变更Kit必须更新同一清单并回归。
+初始版本沿用当前受控来源`release/cloud-test-toolchain.json.aitest_kit`：0.6.0及wheel SHA-256 `419559056a1d16b695d9b1e91a7f0d15ddc389996a369207bd3dcf8afada2331`；该值是当前发行清单事实，不是永久协议常量或升级latest的许可。B构建读取唯一清单并写入template/release回执，不复制A的envd入口/root/cap/旧布局。Agent和Kit可分别固定版本；更新Agent不会自动升级Kit，变更Kit必须更新同一清单并回归。
 
 Runner venv与测试执行venv分开，均不依靠工作区同名模块导入。模板明确AITestSettings.executable及实际测试Python；Kit通过自己的解释器执行pytest，因此Kit/pytest和项目所需依赖必须位于选定测试环境，不能只给Runner venv装Kit再让另一Python运行测试。显式创建项目venv时须按依赖清单安装Kit/pytest；AITest通过所选python -I -m aitest_kit.cli调用，Shell环境同步，缺包保留真实错误，不修改Windows全局工具设置。
 
 S02首次模板准入即验Kit，S04再经实际HostProcesses/aitest_kit工具复验，S10每次更新预检重复核对：包版本/import、`aitest --help`、`aitest doctor`，以及无业务凭证的本地HTTP或纯本地测试工作区完成实际pytest/报告生成；若测试模板承担代码生成，再覆盖固定Markdown/proto样本的生成/收集。命令不支持的version开关用包metadata验证，不凭空要求`aitest --version`。无命令/解释器不匹配/依赖冲突/非零退出均使模板unavailable，不等真实任务才发现。每个venv运行pip check，记录工具版本、解释器和报告hash，不宣称本地样本证明真实预发布通过。
+
+### 1.2 S09.1受控构建代理修正（2026-11-02）
+
+实机证据：公司开发机只能经已批准代理出网，构建首个apt-get update直连Errno101，pip直连同样失败。原prepare_template同时过滤父进程代理环境、显式传入空代理build args，host构建网络不能改变路由/公司出口策略。该限制是构建入口缺少受控代理配置，不要求修改任务bridge/权限。
+
+TemplateBuildSettings新增可选build_proxy_env映射，key仅HTTP_PROXY/HTTPS_PROXY/NO_PROXY，value为宿主环境变量名，不是代理明文值。默认空映射仍屏蔽宿主/客户端隐式代理；显式选择时解析并校验值，缺失/无效在任何Docker调用前可见失败。HTTP/HTTPS代理首版限不含认证、query或片段的HTTP(S)代理根地址，认证代理需另经BuildKit secret设计，不把user:password送argv。真实模型key不进入构建。
+
+构建时仅将选定的值传给Docker预定义代理参数，大小写成对一致；未选HTTP/HTTPS/FTP/ALL/NO_PROXY全部清空。采用显式--build-arg NAME=value，适配S09私有sudo wrapper的env_reset；不要求sudo -E或修改全局sudoers。Dockerfile不声明代理ARG/ENV，不写代理配置文件，不记录原始代理值、完整Docker命令或构建stderr；普通info/inspect/run/preflight不传这些值。参数仅用于可信构建，不进入任务bootstrap/tool_environment或模板回执。最终镜像与实际执行任务仍按原身份、网络和完整预检验证。
+
+验证复用现有模板输入/受控subprocess：未配置时宿主代理仍隔离、显式配置命中apt/pip所用参数且不靠子进程环境、错误映射/认证URL/缺变量拒绝、源wheel/Kit/lock和Dockerfile/回执不含代理值、preflight无网络/非root保持。命令超时只记录phase并返回template_build_timeout，隐藏含argv/stderr的原始TimeoutExpired上下文。公司网络及真实镜像构建由开发机复验，本机确定性测试不冒称公司通过。修改仅template.py、对应测试、本文、S09手册及handoff，不升级依赖或改真实配置。
 
 ## 2. 简单更新路径
 
@@ -49,7 +61,7 @@ S10先以显式更新命令完成相同下载/校验/预备/激活链，再接�
 
 ### 2.1 构建权限与登记链
 
-镜像准备由开发机上部署时授权的独立更新命令执行，不由普通Coordinator进程或任务容器持有Docker socket。拟开发机本地入口`nyt cloud release prepare <release_id> --settings <cloud-settings-path>`：更新进程读取可信渠道/模板清单、取得发布锁，下载校验wheel/Kit/锁定依赖，在专用上下文构建与预检，再向loopback所有者API提交准备回执；此settings是开发机的云端服务配置，不是Windows SSH连接profile。只接受发行ID/允许模板，不接收任务提供的Dockerfile、路径、shell或下载URL；不建立新的网络构建服务。
+镜像准备由开发机上部署时授权的独立更新命令执行，不由普通Coordinator进程或任务容器持有Docker socket。S10.1开发机更新入口`nyt cloud release update <release_id> --command-id UUID --settings <update-settings-path>`（原`prepare`保留仅本地构建输入）：更新进程读取可信渠道/模板清单、取得发布锁，下载校验wheel/Kit/锁定依赖，在专用上下文构建与预检，再向loopback所有者API提交准备回执；此settings是开发机的云端服务配置，不是Windows SSH连接profile。只接受发行ID/允许模板，不接收任务提供的Dockerfile、路径、shell或下载URL；不建立新的网络构建服务。
 
 Updater可使用Docker构建/inspect权限，该权限只授予受信安装账号或预先授权的受控运维作业；OpenSandbox管理进程仍负责容器，Coordinator只持其管理API。自动模式由部署时配置的受控调度作业调用同一更新命令，固定渠道、命令和权限，Coordinator仅展示进度/接收回执，不通过任意subprocess参数调用特权Docker。启用调度/安装账号/防火墙属于明确部署操作，不由聊天请求自动授权。
 

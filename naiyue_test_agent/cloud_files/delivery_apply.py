@@ -10,7 +10,7 @@ from uuid import uuid4
 from naiyue_test_agent.cloud_runner.state import read_json,write_json
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from naiyue_test_agent.storage.files import sync_store_directory,open_store_file
-from .delivery_paths import parent,lstat,replace_entry,directory_identity,rename_new,component
+from .delivery_paths import parent,lstat,replace_entry,directory_identity,rename_new,component,portable_conflicts
 from .paths import source_handle,identity
 
 logger=logging.getLogger(__name__)
@@ -38,6 +38,8 @@ def matches(root,path,entry):
 
 
 def preflight(root,verified):
+    invalid=portable_conflicts(c['path'] for c in verified.changes)
+    if invalid:return invalid
     conflicts=[]
     for change in verified.changes:
         try:
@@ -97,6 +99,7 @@ def apply_changes(root,verified,journal,checkpoint):
 
 
 def export_tree(root,name,verified,journal):
+    if portable_conflicts(e.path for e in verified.output_manifest.entries):raise CloudError('cloud_delivery_path_unsupported',422)
     component(name);root=Path(root);journal=Path(journal);journal.mkdir(mode=0o700,exist_ok=True)
     marker=journal/'export.json'
     state=None
@@ -133,7 +136,10 @@ def export_tree(root,name,verified,journal):
                 file=Path(directory)/filename;info=file.lstat()
                 if stat.S_ISLNK(info.st_mode):continue
                 if not stat.S_ISREG(info.st_mode):raise CloudError('cloud_delivery_postcheck_failed')
-                with source_handle(staging,file.relative_to(staging).as_posix(),identity(info)) as (stream,_):os.fsync(stream.fileno())
+                with source_handle(staging,file.relative_to(staging).as_posix(),identity(info)) as (pinned,_),file.open('r+b') as stream:
+                    if identity(os.fstat(stream.fileno()))!=identity(os.fstat(pinned.fileno())):
+                        raise CloudError('cloud_delivery_identity_changed')
+                    os.fsync(stream.fileno())
             sync_store_directory(Path(directory))
         if not _matches_output(staging,verified):raise CloudError('cloud_delivery_postcheck_failed')
         state.update(phase='publishing',staging_identity=directory_identity(staging));write_json(marker,state)
@@ -178,14 +184,18 @@ def _resume_export(directory,verified):
             descriptor=os.open(name if fd is not None else where/name,flags,**({'dir_fd':fd} if fd is not None else {}))
             with os.fdopen(descriptor,'r+b') as current,(verified.directory/path).open('rb') as source:
                 before=os.fstat(current.fileno())
-                if identity(before)!=identity(info):raise CloudError('cloud_delivery_export_conflict')
+                # Windows path ctime can be birth time while the handle reports
+                # change time. Compare each clock only with its own later sample.
+                if ((before.st_dev,before.st_ino,before.st_size)!=(info.st_dev,info.st_ino,info.st_size)
+                        or identity(lstat(fd,where,name))!=identity(info)):raise CloudError('cloud_delivery_export_conflict')
                 remaining=before.st_size
                 while remaining:
                     count=min(remaining,262144);old=current.read(count);wanted=source.read(count)
                     if old!=wanted or not old:raise CloudError('cloud_delivery_export_conflict')
                     remaining-=len(old)
                 # Only extend an exact prefix. Existing user bytes are never overwritten.
-                if identity(os.fstat(current.fileno()))!=identity(before):raise CloudError('cloud_delivery_export_conflict')
+                if (identity(os.fstat(current.fileno()))!=identity(before)
+                        or identity(lstat(fd,where,name))!=identity(info)):raise CloudError('cloud_delivery_export_conflict')
                 while chunk:=source.read(262144):current.write(chunk)
                 current.flush();os.fsync(current.fileno())
                 if fd is not None:os.fchmod(current.fileno(),entry.mode)

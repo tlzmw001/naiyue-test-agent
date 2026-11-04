@@ -2,7 +2,34 @@
 
 2026-11-01用户确认的任务自动授权、外部网络开关与项目依赖合同见[143p](143p-s042a-task-capabilities.md)；该合同替代此前B逐工具审批计划，本机普通模式审批保留。
 
-状态：2026-11-02。原S00本机已有证据，用户报告目标Linux和Windows三段通过；截图可见范围及新增门禁见[143h](143h-s00-backend-gate.md)。S01/S02/S03/S04/S05/S07.1本机范围以143j–143r为准，最新模型合同/证据见[143r](143r-s05-model-relay.md)；S06及其余切片仍待实施；本轮按143f细化为14个剩余单元、143t/u/v/w补齐接口/来源/回收合同。按143s手动管理任务，取消云端长期记忆；候选侧栏提前到S06.4。不能把确定性协议夹具记成真实供应商/业务验收。切片见[143f](143f-implementation-slices.md)。
+状态：2026-11-03。S01–S09代码进度与本机验证以[143f](143f-implementation-slices.md)/[143af](143af-s09-formal-switch-and-cleanup.md)为准。用户要求9.1/9.2先完成再统一验收，正式入口已切B并退出A；本表的公司/供应商/性能证据仍逐项核对，不因切换而自动通过。原S00本机及用户报告的目标Linux/Windows三段保留有效，新增差集见[143h](143h-s00-backend-gate.md)。原文“门禁后才能删A”的实施顺序被此次用户指令替代，其验收要求本身未取消。
+
+2026-11-03后续：用户继续授权完成所有剩余实现及验收准备，S10.2见[143ah](143ah-s102-operations.md)，S11见[143ai](143ai-s11-final-acceptance.md)。最终原机操作、候选核验、照片1–10和性能/故障回传统一入口为[最终手册](../cloud-final-windows-acceptance.md)。下面门禁未因工具交付被标通过；普通UI已按143AE收敛为报告保存/代码apply或branch/主Agent分析，export仅保留明确API合同。
+
+### 当前可复查入口索引
+
+本机测试路径均相对于仓库；命令`.venv/bin/python -m pytest -q tests/cloud/<文件名>`。测试包含确定性夹具和真实loopback/native子进程，不冒充公司Docker/provider。原机步骤编号指最终手册章节。
+
+| 矩阵项 | 当前本机主要入口（tests/cloud） | 原机补证 |
+| --- | --- | --- |
+| B01/B17/B21/B22 | test_lifecycle.py、test_offline_operations.py、test_maintenance_template.py、test_probe_runtime.py、test_runner_kernel.py | 第3/6节，真实UID/挂载/权限/网络/Kit/execd |
+| B02/B20 | test_probe_relay.py、test_model_providers.py、test_model_streaming.py | 第6节，真实中转HTTP/proto RPC、逐provider出站 |
+| B03/B19/B24 | test_runner_control.py、test_control_transport.py、test_recovery_environment.py、test_runner_kernel.py | 第6节，根子/后台/停止/旧代退出和未知副作用 |
+| B04 | test_lifecycle_recovery.py、test_update_process.py、test_offline_process.py、test_workflow_probe.py | 第6–8节，断SSH/重开沿原ID |
+| B05/B06 | test_input_import.py、test_input_segments.py、test_input_resume_client.py、test_input_install.py、test_integrity.py | 第5–7/9节，Windows路径、分段/二进制原机 |
+| B07 | test_model_providers.py、test_model_runner.py、test_model_streaming.py | 第6节，真实供应商原生协议/工具/错误/取消 |
+| B08/B25 | test_history_ingress.py、test_history_projection.py、test_observation_transport.py、test_material_tool.py | 第5–6节，侧栏/主会话材料来源与离线 |
+| B09/B10 | test_result_snapshot.py、test_result_api.py、test_artifact_ranges.py、test_result_autonomy.py | 第5–6节，固定结果/断线/容器释放后可读 |
+| B11 | test_delivery_rounds.py、test_delivery_review.py、test_delivery_apply.py、test_delivery_branch.py | 第5节，Git/非Git、强制/分支、多轮基线 |
+| B12 | test_manual_task_routes.py、test_manual_task_restart.py、test_manual_commands_integration.py；frontend/src已有CloudTasks/交付组件测试 | 第4–6节，照片全部、桌面/窄屏/CLI同任务 |
+| B13 | test_update_discovery.py、test_release_updates.py、test_release_gc.py、test_update_process.py | 第8节，真实两产物模板/同schema换代 |
+| B14/B16 | test_instance_backup.py、test_instance_restore.py、test_restore_task.py、test_recovery_guards.py、test_offline_process.py | 第8节，真实停写、完整备份/恢复/再次运行 |
+| B15 | scripts.a_consumer_inventory、标准wheel检查、源外安装与test_cloud_formal_switch.py | 第2–3节，安装同源候选及普通历史 |
+| B18/B26 | test_resource_maintenance.py、test_resource_admission.py、test_task_delete.py、test_manual_task_delete.py | 第6/8节，空闲/unknown/删除及关联 |
+| B23 | test_result_autonomy.py、test_result_continuation.py、test_workflow_scenario.py | 第6–7节，关闭Windows后独立运行、中转断开负向 |
+| B27/B31 | test_result_analysis_draft.py、test_material_message.py、test_result_retention.py、test_receive_refresh.py | 第5–6节，主Agent真实读取/后台/fresh pending/保留与重启 |
+
+性能入口：verify_cloud_workflow记录真实任务多轮与阶段墙钟；profile_result_capture记录600/4000文件冻结组件。两者不测纯热环境准入、UI负载额外延迟或raw SSH吞吐；这些及50工具对照/供应商增量仍按第3节独立原机采样。未取得原始20轮和机器条件的项保持未测，不能用Mac组件数字关闭2CPU目标门禁。
 
 ## 1. 证据分级
 

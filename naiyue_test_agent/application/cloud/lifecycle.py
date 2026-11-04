@@ -58,6 +58,7 @@ class CloudLifecycle:
             if template.backend_id != self.backend.backend_id: raise CloudError('backend_identity_mismatch')
             if task.template_digest is not None and task.template_digest != template.fingerprint:
                 raise CloudError('template_pin_mismatch')
+            if request.kind in ('start','refresh'):self.runtime.releases.validate_template(template)
             if request.kind == 'start' and task.sandbox_id:
                 raise CloudError('environment_already_running')
             if request.kind == 'start' and (task.active_run_id or task.reclaim_blockers) and not (request.acknowledge_unknown and task.lifecycle=='stopped' and task.environment_phase=='absent'):
@@ -109,6 +110,8 @@ class CloudLifecycle:
             operation = EnvironmentOperation.model_validate(receipt.result)
             try:
                 if operation.backend_id != self.backend.backend_id: raise BackendFailure('backend_identity_mismatch')
+                if operation.kind in ('start','refresh'):
+                    await self.local(lambda:self.runtime.releases.validate_template(operation.template))
                 if operation.kind == 'start':
                     return await lifecycle_actions.start(self, receipt, operation, reconcile=reconcile)
                 if operation.kind == 'refresh':
