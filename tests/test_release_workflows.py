@@ -119,6 +119,23 @@ def test_backend_ci_budget_allows_the_complete_suite_to_finish():
     assert int(workflow['jobs']['test']['timeout-minutes']) >= 40
 
 
+def test_backend_ci_installs_declared_cloud_dependencies_before_tests(tmp_path):
+    workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)
+    steps = workflow['jobs']['test']['steps']
+    install = next(step for step in steps if 'pip' in step.get('run', '') and 'install' in step['run'])
+    assert install.get('shell') == 'python'
+    calls = []
+    import tomllib
+    from unittest.mock import patch
+    with patch('subprocess.check_call', side_effect=calls.append):
+        exec(install['run'], {'__name__': '__main__'})
+    cloud = tomllib.loads((ROOT / 'pyproject.toml').read_text())['project']['optional-dependencies']['cloud']
+    assert calls == [[sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt',
+                      '-r', 'requirements-web.txt', *cloud]]
+    assert steps.index(install) < next(i for i, step in enumerate(steps)
+                                      if 'scripts.ci_shards' in step.get('run', ''))
+
+
 def test_complete_release_rejects_missing_and_duplicate_targets(monkeypatch):
     from scripts import release_artifacts
     targets = json.loads((ROOT / 'release/native-tools.json').read_text())['targets']
