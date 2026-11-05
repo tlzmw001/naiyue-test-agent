@@ -132,3 +132,63 @@ def test_shutdown_attempts_both_tunnels_when_one_close_fails(tmp_path):
         assert closed==['http','grpc']
         assert list(service.processes)==[('work','http')]
     asyncio.run(scenario())
+
+
+def test_control_failure_marks_known_connections_unconfirmed_without_stopping_them(tmp_path):
+    profile=CloudProfile(profile_id='work',network_id='alice',ssh_host='shared',tunnel='owned',connection_file=tmp_path/'connection.json',template_ids=['test'],default_template='test')
+    async def scenario():
+        async def disconnected(*args):
+            service.stopping.set()
+            raise CloudError('cloud_connection_failed',503)
+        manager=SimpleNamespace(settings=CloudTaskSettings(profiles_file=tmp_path/'profiles.json'),
+            book=ProfileBook(profiles=[profile]),connections=SimpleNamespace(get=disconnected))
+        service=ServiceNetworks(manager)
+        service.status={('work','http'):'connected',('work','grpc'):'connecting',('work','off'):'disconnected',
+            ('work','failed'):'cloud_target_unreachable',('other','http'):'connected'}
+        process=object();service.processes[('work','http')]=process
+        await service._maintain()
+        assert service.status=={('work','http'):'reconnecting',('work','grpc'):'reconnecting',('work','off'):'disconnected',
+            ('work','failed'):'cloud_target_unreachable',('other','http'):'connected'}
+        assert service.processes[('work','http')] is process
+    asyncio.run(scenario())
+
+
+def test_recovered_control_rechecks_live_reverse_tunnel_without_restarting(tmp_path):
+    profile=CloudProfile(profile_id='work',network_id='alice',ssh_host='shared',connection_file=tmp_path/'connection.json',template_ids=['test'],default_template='test')
+    manager=SimpleNamespace(settings=CloudTaskSettings(profiles_file=tmp_path/'profiles.json'),book=ProfileBook(profiles=[profile]))
+    async def scenario():
+        service=ServiceNetworks(manager);key=('work','http');calls=[]
+        def unexpected_close():raise AssertionError("Healthy reverse tunnel must not restart after control recovery")
+        process=SimpleNamespace(ready=True,alive=True,close=unexpected_close)
+        service.processes[key]=process;service.status[key]='reconnecting'
+        async def request(profile,method,suffix,**kwargs):
+            calls.append((method,suffix));return {'tcp_reachable':True}
+        service.request=request
+        await service._connect(profile,'http',ServiceTarget(address='http://example.test'),NetworkEndpoints(bind_host='172.18.0.1',ports={'http':21001}))
+        assert service.processes[key] is process and service.status[key]=='connected'
+        assert calls==[('POST','/probe/http')]
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('code',['cloud_connection_failed','cloud_network_unreachable'])
+def test_recovery_probe_failure_stays_unconfirmed_and_preserves_live_process(tmp_path,code):
+    profile=CloudProfile(profile_id='work',network_id='alice',ssh_host='shared',connection_file=tmp_path/'connection.json',template_ids=['test'],default_template='test')
+    manager=SimpleNamespace(settings=CloudTaskSettings(profiles_file=tmp_path/'profiles.json'),book=ProfileBook(profiles=[profile]))
+    async def scenario():
+        service=ServiceNetworks(manager);key=('work','http');calls=[]
+        def unexpected_close():raise AssertionError('Live tunnel must survive an unconfirmed probe')
+        process=SimpleNamespace(ready=True,alive=True,close=unexpected_close)
+        service.processes[key]=process;service.status[key]='reconnecting'
+        async def request(*args,**kwargs):
+            calls.append(args)
+            if len(calls)==1:raise CloudError(code,503)
+            return {'tcp_reachable':True}
+        service.request=request
+        endpoints=NetworkEndpoints(bind_host='172.18.0.1',ports={'http':21001})
+        with pytest.raises(CloudError,match=code) as caught:
+            await service._connect(profile,'http',ServiceTarget(address='http://example.test'),endpoints)
+        service._failed(profile,'http',caught.value)
+        assert service.status[key]=='reconnecting' and service.processes[key] is process
+        await service._connect(profile,'http',ServiceTarget(address='http://example.test'),endpoints)
+        assert service.status[key]=='connected' and len(calls)==2
+    asyncio.run(scenario())

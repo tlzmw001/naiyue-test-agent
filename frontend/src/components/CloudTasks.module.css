@@ -87,3 +87,19 @@
 .attachmentRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: 100%; }
 .attachmentRow label { display: flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
 .attachmentRow input { width: auto; }
+
+.networkDialog { width: min(690px, calc(100vw - 24px)); overflow: hidden; }
+.networkDialog > header { flex: none; }
+.networkDialog > header h3 { margin: 0; }
+.networkBody { overflow: auto; min-height: 0; padding: 12px 22px 22px; }
+.networkBody > p { line-height: var(--lh-relaxed); color: var(--text-secondary); }
+.networkFields { display: grid; grid-template-columns: 2fr 1fr auto; align-items: end; gap: 10px; margin-top: 8px; }
+.networkFields > label:last-child { grid-column: 1 / -1; }
+.networkFields .networkTls { display: flex; flex-direction: row; align-items: center; min-height: 36px; }
+.networkFields .networkTls input { width: auto; }
+.networkFeedback:not(:empty) { margin-top: 6px; padding: 8px 10px; background: var(--surface-subtle); border-radius: var(--r-sm); overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  .networkBody { padding-inline: 12px; }
+  .networkFields { grid-template-columns: 1fr 1fr; }
+  .networkFields .networkTls { grid-column: 1 / -1; min-height: 24px; }
+}

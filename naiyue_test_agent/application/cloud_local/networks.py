@@ -129,7 +129,12 @@ class ServiceNetworks:
 
     async def _connect(self,profile,slot,target,endpoints):
         key=(profile.profile_id,slot);process=self.processes.get(key)
-        if process and process.ready and target.enabled and self.status.get(key)=='connected':return
+        if process and process.ready and target.enabled and self.status.get(key) in ('connected','reconnecting'):
+            if self.status[key]=='reconnecting':
+                await self.request(profile,'POST','/probe/'+slot,json={})
+                if not process.alive:raise CloudError('cloud_ssh_exited',503)
+                self.status[key]='connected'
+            return
         if process:await self._stop(key)
         if not target.enabled:self.status[key]='disconnected';return
         self.status[key]='connecting'
@@ -204,14 +209,15 @@ class ServiceNetworks:
                     logger.warning('cloud_network_supervisor_failed code=%s error_type=%s',code,type(error).__name__)
                     for owner,slot in tuple(self.status):
                         if owner!=profile.profile_id:continue
-                        if self.status.get((profile.profile_id,slot))=='connecting':self.status[profile.profile_id,slot]=code
+                        if self.status.get((profile.profile_id,slot)) in ('connected','connecting'):
+                            self.status[profile.profile_id,slot]='reconnecting'
             delay=min((p.reconnect_seconds for p in self.manager.book.profiles),default=5)
             try:await asyncio.wait_for(self.stopping.wait(),delay)
             except TimeoutError:pass
 
     def _failed(self,profile,slot,error):
         code=error.code if isinstance(error,CloudError) else 'cloud_network_failed'
-        self.status[profile.profile_id,slot]=code
+        if self.status.get((profile.profile_id,slot))!='reconnecting':self.status[profile.profile_id,slot]=code
         logger.warning('cloud_network_slot_failed slot=%s code=%s error_type=%s',slot,code,type(error).__name__)
 
     async def close(self):
