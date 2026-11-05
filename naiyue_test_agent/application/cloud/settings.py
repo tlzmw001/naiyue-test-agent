@@ -108,7 +108,7 @@ class CloudSettings(BaseModel):
         ports=set()
         for ident,value in self.networks.items():
             if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}',ident):raise ValueError('invalid_network_id')
-            for port in (value.http_port,value.grpc_port):
+            for port in value.ports.values():
                 key=(value.bind_host,port)
                 if key in ports or f'{value.bind_host}:{port}' in (self.owner_listen,self.task_listen):
                     raise ValueError('duplicate_network_endpoint')

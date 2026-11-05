@@ -27,7 +27,7 @@ export class CloudApi {
   }
   private task(bid: string) { return '/cloud-tasks/' + encodeURIComponent(bid); }
   network(profile: string, signal?: AbortSignal) { return this.read<NetworkView>('/cloud-networks/' + encodeURIComponent(profile), signal); }
-  changeNetwork(profile: string, slot: 'http' | 'grpc', target: ServiceTarget, expected_revision: number) { return this.write<NetworkView>('/cloud-networks/' + encodeURIComponent(profile) + '/' + slot, { target, expected_revision }); }
+  changeNetwork(profile: string, slot: string, target: ServiceTarget, expected_revision: number) { return this.write<NetworkView>('/cloud-networks/' + encodeURIComponent(profile) + '/entries/' + encodeURIComponent(slot), { target, expected_revision }); }
   testNetwork(profile: string, target: ServiceTarget) { return this.write<{tcp_reachable: boolean}>('/cloud-networks/' + encodeURIComponent(profile) + '/test', target); }
   cancelNetwork(profile: string) { return this.write<NetworkView>('/cloud-networks/' + encodeURIComponent(profile) + '/cancel', {}); }
   profiles(signal?: AbortSignal) { return this.read<CloudProfile[]>('/cloud-profiles', signal); }

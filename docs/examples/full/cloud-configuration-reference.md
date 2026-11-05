@@ -1,4 +1,6 @@
-# 0.5.8 全量配置参考与逐项说明
+# 全量配置参考与逐项说明（当前开发分支）
+
+本目录已包含143AO通用服务入口，尚未随新版本发布；已安装0.5.8请使用[对应标签的配置例子](https://github.com/tlzmw001/naiyue-test-agent/tree/v0.5.8/docs/examples/full)。通用入口迁移见末节及服务隧道手册。
 
 这些是示意配置，不是可直接连接公司环境的部署材料。所有端口、bridge、路径、UID/GID、实例ID与凭证都须替换。JSON严格不支持注释；本说明与JSON并列提供，不能往JSON加 _comment 字段。真实配置请放仓库外私有目录；Linux文件0600、目录0700，Windows限制ACL。无真实密钥。
 
@@ -262,8 +264,14 @@
 - `network_id`：profiles条目新增可选字段，指向Coordinator `networks`中的管理员分配项。省略时不绑定网络，不启动反向转发。不是用户认证字段。
 - `ssh_host`：owned控制连接或配置network_id时必填，使用Windows用户SSH配置中的Host别名，不接受任意SSH命令。
 - `reconnect_seconds`：连接异常后的后台检查间隔，默认5秒。SSH保活仍由keepalive_seconds/count控制。关闭网页不关连接，停止本机服务才回收受管SSH进程。
-- `networks`：Coordinator新增可选映射，默认空；示例含alice/bob两个分配。每项`bind_host`为容器可达的私有IPv4桥地址，`http_port`/`grpc_port`为此用户的两端口，全部端点不得重复。禁止0.0.0.0、loopback、公网地址。它只是允许的转发分配，不替代SSH服务端授权和防火墙。
+- `networks`：Coordinator新增可选映射，默认空；示例含alice/bob两个分配（本节通用入口属于143AO开发版，0.5.8仍为固定两项）。每项`bind_host`为容器可达的私有IPv4桥地址，`ports`为入口ID到端口的映射（1–64项），每个端口均可用于任意TCP协议，全部端点不得重复。禁止0.0.0.0、loopback、公网地址。它只是允许的转发分配，不替代SSH服务端授权和防火墙。
 - 本机页面设置保存到profiles文件同目录的`<profiles文件名去扩展名>.networks.json`。保存已选目标、启停意图及原切换操作；不修改profiles.json、connection.json或settings.toml。文件由程序私有写入，不建议手工编辑；有未完成切换时用页面取消或重试。
 - Coordinator在registry.meta保存切换状态；运行准入同事务检查。切换断线不会自动解锁，避免旧地址仍被使用。网络元信息随每轮命令更新，旧任务容器无需重建。
 
 详细管理员/Windows操作、TLS使用及验收见[服务隧道手册](../../cloud-service-tunnels.md)。
+
+### 通用服务入口（143AO）
+
+Windows继续使用profiles中的network_id，不增加全局网络列表。页面和本机后端只允许本机配置的profile；管理员须给不同Windows分配不重复network_id。这是配置级可见性，不是Owner凭证级租户隔离。一个人可配置多个profile；owned控制连接须使用不同本机endpoint端口。
+
+每个ports键为稳定入口ID（1–64字符，字母数字开头，其余允许点、下划线、横线），值为1024–65535整数；端口不能重复，空集合或超过64项拒绝。页面可填写入口name（可选，最多80字符）和address；支持http/https/grpc/grpcs/tcp/tls，tcp/tls必须显式端口，不接受路径、凭证、查询参数。旧http_port/grpc_port会读取为ports.http/ports.grpc，新旧字段不能混用。完整升级步骤见[服务隧道](../../cloud-service-tunnels.md#8-从058升级通用入口)。

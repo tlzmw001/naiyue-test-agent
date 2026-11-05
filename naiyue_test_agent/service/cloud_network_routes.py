@@ -1,5 +1,4 @@
 """Page-owned service targets; profile/ports stay administrator controlled."""
-from typing import Literal
 from fastapi import Request
 from pydantic import Field
 from naiyue_test_agent.contracts.cloud_tasks import CloudRecord
@@ -28,6 +27,7 @@ def register(router,access,body):
         with manager.operation():return await manager.networks.cancel(profile_id)
 
     @router.post('/cloud-networks/{profile_id}/{slot}')
-    async def change(request:Request,profile_id:str,slot:Literal['http','grpc']):
+    @router.post('/cloud-networks/{profile_id}/entries/{slot}')
+    async def change(request:Request,profile_id:str,slot:str):
         manager=access(request);value=await body(request,ChangeTarget)
         with manager.operation():return await manager.networks.change(profile_id,slot,value.target,value.expected_revision)

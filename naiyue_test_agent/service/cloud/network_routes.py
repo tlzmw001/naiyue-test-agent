@@ -28,13 +28,18 @@ def register(owner,runtime):
     async def prepare(request:Request,ident:str):
         owner_authorize(request,runtime);endpoint(ident)
         value=NetworkChange.model_validate(await _body(request,runtime))
+        endpoint(ident).port(value.slot)
         return await cloud_work(runtime,lambda:repo.begin(ident,value))
 
     @owner.post('/api/cloud/v1/networks/{ident}/finish')
     async def finish(request:Request,ident:str):
         owner_authorize(request,runtime);endpoint(ident)
         value=NetworkFinish.model_validate(await _body(request,runtime))
-        return await cloud_work(runtime,lambda:repo.finish(ident,value.command_id))
+        def finish_current():
+            pending=repo.read(ident)['switching']
+            if pending:endpoint(ident).port(pending['slot'])
+            return repo.finish(ident,value.command_id)
+        return await cloud_work(runtime,finish_current)
 
     @owner.post('/api/cloud/v1/networks/{ident}/cancel')
     async def cancel(request:Request,ident:str):
@@ -45,10 +50,10 @@ def register(owner,runtime):
     @owner.post('/api/cloud/v1/networks/{ident}/probe/{slot}')
     async def probe(request:Request,ident:str,slot:str):
         owner_authorize(request,runtime);config=endpoint(ident)
-        if slot not in ('http','grpc'):raise CloudError('invalid_request',422)
+        port=config.port(slot)
         if await _body(request,runtime)!={}:raise CloudError('invalid_request',422)
         try:
-            _,writer=await asyncio.wait_for(asyncio.open_connection(config.bind_host,getattr(config,slot+'_port')),
+            _,writer=await asyncio.wait_for(asyncio.open_connection(config.bind_host,port),
                 timeout=min(5,runtime.settings.control_io_timeout_seconds))
             writer.close();await writer.wait_closed()
         except (OSError,TimeoutError) as error:

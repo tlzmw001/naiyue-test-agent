@@ -24,6 +24,8 @@ class ServiceNetworks:
             # Schema and identities are checked again against current profiles before use.
             if self.state.get('schema',1)!=1:raise CloudError('cloud_network_state_invalid')
             self.state=self.state.get('profiles',{})
+            for local in self.state.values():
+                local['endpoints']=NetworkEndpoints.model_validate(local['endpoints']).model_dump()
 
     def start(self):
         if self.worker is None:self.worker=asyncio.create_task(self._maintain())
@@ -49,8 +51,10 @@ class ServiceNetworks:
     async def read(self,ident):
         profile=self.profile(ident);self.start()
         remote=await self.request(profile,'GET')
+        endpoints=NetworkEndpoints.model_validate(remote['endpoints'])
+        remote['endpoints']=endpoints.model_dump()
         local=self.state.get(ident,{})
-        return dict(**remote,local=local,status={slot:self.status.get((ident,slot),'disconnected') for slot in ('http','grpc')})
+        return dict(**remote,local=local,status={slot:self.status.get((ident,slot),'disconnected') for slot in endpoints.ports})
 
     async def test(self,ident,target):
         profile=self.profile(ident)
@@ -61,6 +65,10 @@ class ServiceNetworks:
         async def apply():
             async with self.lock:
                 remote=await self.request(profile,'GET');local=self.state.get(ident,{})
+                endpoints=NetworkEndpoints.model_validate(remote['endpoints']);endpoints.port(slot)
+                remote['endpoints']=endpoints.model_dump()
+                if local and not endpoints.extends(NetworkEndpoints.model_validate(local['endpoints'])):
+                    raise CloudError('cloud_network_identity_changed',409)
                 if local and local.get('network_id')!=profile.network_id:raise CloudError('cloud_network_identity_changed',409)
                 pending=local.get('pending')
                 if pending is None:
@@ -144,7 +152,7 @@ class ServiceNetworks:
         pending=local['pending'];key=(profile.profile_id,pending['slot'])
         try:
             remote=await self.request(profile,'GET')
-            if remote['endpoints']!=local['endpoints']:raise CloudError('cloud_network_identity_changed',409)
+            if not NetworkEndpoints.model_validate(remote['endpoints']).extends(NetworkEndpoints.model_validate(local['endpoints'])):raise CloudError('cloud_network_identity_changed',409)
             state=await self.request(profile,'POST','/prepare',json=pending)
             if state['switching'] is None:
                 # Commit ACK lost: do not retarget or repeat the cloud mutation.
@@ -175,7 +183,7 @@ class ServiceNetworks:
                         if not local:continue
                         if local.get('network_id')!=profile.network_id:raise CloudError('cloud_network_identity_changed',409)
                         remote=await self.request(profile,'GET')
-                        if remote['endpoints']!=local['endpoints']:raise CloudError('cloud_network_identity_changed',409)
+                        if not NetworkEndpoints.model_validate(remote['endpoints']).extends(NetworkEndpoints.model_validate(local['endpoints'])):raise CloudError('cloud_network_identity_changed',409)
                         if local.get('pending'):
                             pending_slot=local['pending']['slot']
                             try:
@@ -189,7 +197,8 @@ class ServiceNetworks:
                 except Exception as error:
                     code=error.code if isinstance(error,CloudError) else 'cloud_network_failed'
                     logger.warning('cloud_network_supervisor_failed code=%s error_type=%s',code,type(error).__name__)
-                    for slot in ('http','grpc'):
+                    for owner,slot in tuple(self.status):
+                        if owner!=profile.profile_id:continue
                         if self.status.get((profile.profile_id,slot))=='connecting':self.status[profile.profile_id,slot]=code
             delay=min((p.reconnect_seconds for p in self.manager.book.profiles),default=5)
             try:await asyncio.wait_for(self.stopping.wait(),delay)

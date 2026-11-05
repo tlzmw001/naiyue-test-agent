@@ -12,7 +12,8 @@ from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from naiyue_test_agent.contracts.cloud_networks import ServiceTarget,NetworkEndpoints
 
 
-def test_lost_finish_ack_retries_original_and_disabled_intent_survives_restart(monkeypatch,tmp_path):
+@pytest.mark.parametrize('slot',['http','extra'])
+def test_lost_finish_ack_retries_original_and_disabled_intent_survives_restart(monkeypatch,tmp_path,slot):
     from naiyue_test_agent.application.cloud_local import networks as module
     events=[]
     class Process:
@@ -22,7 +23,7 @@ def test_lost_finish_ack_retries_original_and_disabled_intent_survives_restart(m
     monkeypatch.setattr(module,'probe_target',lambda *a:{'tcp_reachable':True})
     with open_cloud_runtime(config(tmp_path)) as runtime:
         repo=NetworkRepository(runtime.database)
-        endpoints=dict(bind_host='172.18.0.1',http_port=21001,grpc_port=21002)
+        endpoints=dict(bind_host='172.18.0.1',ports={'http':21001,'grpc':21002,'extra':21003})
         class Network(ServiceNetworks):
             lose=True
             def start(self):pass
@@ -38,18 +39,18 @@ def test_lost_finish_ack_retries_original_and_disabled_intent_survives_restart(m
         profile=CloudProfile(profile_id='work',network_id='alice',ssh_host='shared',connection_file=tmp_path/'connection.json',template_ids=['test'],default_template='test')
         manager=SimpleNamespace(settings=CloudTaskSettings(profiles_file=tmp_path/'profiles.json'),book=ProfileBook(profiles=[profile]))
         async def scenario():
-            service=Network(manager);target=ServiceTarget(address='https://service.test')
-            with pytest.raises(CloudError,match='cloud_connection_failed'):await service.change('work','http',target,0)
+            service=Network(manager);target=ServiceTarget(address='https://service.test' if slot=='http' else 'tcp://cache.test:6379',name='' if slot=='http' else '缓存')
+            with pytest.raises(CloudError,match='cloud_connection_failed'):await service.change('work',slot,target,0)
             pending=service.state['work']['pending'];assert pending
-            await service.change('work','http',target,0)
+            await service.change('work',slot,target,0)
             assert repo.read('alice')['revision']==1
             assert len([v for v in events if v[0]=='start'])==1
             assert service.state['work']['pending'] is None
-            await service.change('work','http',target.model_copy(update={'enabled':False}),1)
+            await service.change('work',slot,target.model_copy(update={'enabled':False}),1)
             await service.close()
             restarted=Network(manager)
-            assert not restarted.state['work']['slots']['http']['enabled']
-            await restarted._connect(profile,'http',target.model_copy(update={'enabled':False}),NetworkEndpoints(**endpoints))
+            assert not restarted.state['work']['slots'][slot]['enabled']
+            await restarted._connect(profile,slot,target.model_copy(update={'enabled':False}),NetworkEndpoints(**endpoints))
             assert not restarted.processes
             await restarted.close()
         asyncio.run(scenario())
@@ -106,7 +107,7 @@ def test_failed_intent_save_never_publishes_new_operation(tmp_path,operation):
         before=deepcopy(service.state)
         async def request(profile,method,*a,**kw):
             calls.append(method)
-            return dict(state={'switching':None},endpoints={})
+            return dict(state={'switching':None},endpoints={'bind_host':'172.18.0.1','ports':{'http':21001}})
         async def fail_save():raise OSError('disk_full')
         service.request=request;service.save=fail_save
         with pytest.raises(OSError,match='disk_full'):

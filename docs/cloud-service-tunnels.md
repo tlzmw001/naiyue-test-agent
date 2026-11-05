@@ -1,17 +1,17 @@
-# Windows 大项目导入与两个服务隧道
+# Windows 大项目导入与通用服务隧道
 
-适用：0.5.8及后续版本；0.5.7不含本功能。已有部署先看[两端升级与点击指南](cloud-143an-upgrade.md)。管理员配置开发机一次，用户平时在页面改地址。本手册中的地址、用户名和端口都是示例，必须替换为实际分配值。
+适用：143AO通用入口开发版，尚未发布。0.5.8使用固定两个入口，升级见第8节；0.5.7不含服务隧道。已有部署先看[两端升级与点击指南](cloud-143an-upgrade.md)。管理员配置开发机一次，用户平时在页面改地址。本手册中的地址、用户名和端口都是示例，必须替换为实际分配值。
 
 ## 1. 工作方式
 
-每台Windows分配一个network_id和两个开发机端口：HTTP/HTTPS、gRPC。共享SSH账号和Coordinator可用；network_id负责选对路由，不提供对恶意共享账号的安全隔离。任务仍从本机项目/会话关联查询。容器池由现有任务创建和资源管理负责，无需用户SSH进容器。
+每台Windows分配自己的network_id和1–64个开发机TCP端口；端口不绑定HTTP/gRPC类型。共享SSH账号和Coordinator可用；network_id负责选对路由，不提供对恶意共享账号的安全隔离。任务仍从本机项目/会话关联查询。容器池由现有任务创建和资源管理负责，无需用户SSH进容器。
 
 ```
 本机Agent控制请求 → 本机受管SSH -L → 开发机Coordinator
 任务容器 → 个人桥接端口 → 受管SSH -R → 本人Windows → 待测服务
 ```
 
-同一入口切换会影响所有绑定该network_id的任务，包括其他本机项目里的任务。两端口同时支持一套HTTP目标、一套gRPC目标；不能同时让旧任务访问旧HTTP服务、新任务访问另一HTTP服务。HTTPS和TLS gRPC字节透传，保留原证书验证。
+同一入口切换会影响所有绑定该network_id的任务，包括其他本机项目里的任务。每个入口对应一个当前目标；多个HTTP/gRPC/其他TCP目标可以同时启用。若要同时访问新旧服务，应使用不同入口。HTTPS和TLS gRPC字节透传，保留原证书验证。
 
 ## 2. 管理员一次配置
 
@@ -20,8 +20,8 @@
 
 ```json
 "networks": {
-  "alice": {"bind_host":"172.18.0.1","http_port":21001,"grpc_port":21002},
-  "bob": {"bind_host":"172.18.0.1","http_port":21003,"grpc_port":21004}
+  "alice": {"bind_host":"172.18.0.1","ports":{"orders":21001,"users":21002,"rpc":21003,"cache":21004}},
+  "bob": {"bind_host":"172.18.0.1","ports":{"service1":21005,"service2":21006}}
 }
 ```
 
@@ -31,7 +31,7 @@
 Match User nyt-shared
     AllowTcpForwarding yes
     GatewayPorts clientspecified
-    PermitListen 172.18.0.1:21001 172.18.0.1:21002 172.18.0.1:21003 172.18.0.1:21004
+    PermitListen 172.18.0.1:21001 172.18.0.1:21002 172.18.0.1:21003 172.18.0.1:21004 172.18.0.1:21005 172.18.0.1:21006
     PermitOpen 127.0.0.1:18701
 ```
 
@@ -82,7 +82,7 @@ ssh -o BatchMode=yes -o StrictHostKeyChecking=yes nyt-dev exit
 }
 ```
 
-connection.json沿用现有endpoint、owner_authority、owner_token、instance_id配置；若显式设置max_response_bytes=4194304，改为67108864（64MiB），以容纳大文件清单，参见[完整参考](examples/full/cloud-configuration-reference.md)。tunnel=owned时不要再手动创建占用同一本机端口的`ssh -L`；程序负责控制连接和两个独立反向进程。共用SSH账号不代表每个人使用同一个network_id或相同开发机业务端口。
+connection.json沿用现有endpoint、owner_authority、owner_token、instance_id配置；若显式设置max_response_bytes=4194304，改为67108864（64MiB），以容纳大文件清单，参见[完整参考](examples/full/cloud-configuration-reference.md)。tunnel=owned时不要再手动创建占用同一本机端口的`ssh -L`；程序负责控制连接和每个启用入口的独立反向进程。共用SSH账号不代表每个人使用同一个network_id或相同开发机业务端口。
 
 在settings.toml中的`cloud_tasks.profiles_file`指向此profiles文件。随后正常启动：
 
@@ -94,10 +94,12 @@ nyt --settings C:/nyt/private/settings.toml
 
 云端任务列表 → **服务连接** → 选择云端连接：
 
-- HTTP输入完整`http://域名:端口`或`https://域名:端口/基础路径`。
+- 每行可以填写名称；入口ID和监听端口由管理员分配，不可在页面改动。
+- 每个入口均可使用任一受支持地址，不按入口ID限制协议。HTTP输入完整`http://域名:端口`或`https://域名:端口/基础路径`。
 - gRPC输入`grpc://域名:端口`；使用TLS时填写`grpcs://域名:端口`。
+- 其他TCP服务填`tcp://主机:端口`，TLS-over-TCP填`tls://主机:端口`；不支持UDP/QUIC，不代表Agent已有相应业务客户端。
 - “测试端口”只验证Windows到目标的TCP连接；不冒充业务API、TLS或gRPC握手成功。地址不含用户名、密码、token、查询串或fragment；请求凭证通过现有测试项目自己的授权配置提供。
-- “应用配置”由云端检查关联任务静止性，取得切换预留，再切换SSH并提交。两个入口独立切换，HTTP切换不关闭gRPC或控制连接。
+- “应用配置”由云端检查关联任务静止性，取得切换预留，再切换SSH并提交。各入口独立切换，只重建修改的入口，不关闭其他入口或控制连接。
 - 有运行中测试、后台命令或状态待核对时会拒绝；先处理相应任务，不会自动杀后台服务。
 - 断线后自动重连；关闭网页保持连接。主动“断开”持久保持，不会被后台重连重新启用。
 - 切换失败会保留原操作并重试；可以“取消切换”恢复之前的配置。回执丢失时先核对成功事实，不重复切换。等待状态不会按固定时间自动当作成功。
@@ -141,3 +143,15 @@ curl --connect-to api.example.invalid:443:172.18.0.1:21001 https://api.example.i
 8. 重复读写3轮、重连和换目标，检查service.log安全错误码；生产地址、密钥及token不进入代码/提交/报告。
 
 自动化测试和本机2GiB探针不替代以上Windows、公司SSH、容器网络与TLS/gRPC原机证据。
+
+## 8. 从0.5.8升级通用入口
+
+先处理完或取消页面内未完成切换，停止关联运行和后台服务，正常关闭Windows本机服务；按现有维护流程更新Coordinator与本机到包含143AO的版本（本说明不代表已经发布新版本）。0.5.8页面不支持新的入口列表响应，两端应同步升级后使用。
+
+原cloud.json中的http_port/grpc_port仍可读取，自动规范成ports中的http/grpc；原profiles.networks.json中的端点快照同样只在读取时规范化，下次保存写新结构。入口ID、旧目标、禁用状态、revision和原pending command_id保持，不自动清理数据。新旧配置字段不能同时填写。
+
+扩容时保留原入口ID/端口和bind_host，例如ports中保留http、grpc再增加cache。管理员同步允许新端口并重启Coordinator，本机重新打开“服务连接”可看到新增入口；只有填写目标并应用后才启动新隧道。原入口不因新增入口而重新绑定。新增入口仍需管理员配置，不在页面随机分配端口。
+
+删除或改变已有端口/桥地址会触发identity_changed，不能直接手改侧车文件绕过。确需重排时，先在原配置下完成/取消pending并断开入口，然后为新分配使用新的network_id和本机profile，再创建绑定新组的任务；旧任务保留原网络身份，按既有任务流程收尾。
+
+Windows只配置自己的profile/network_id；多个profile的owned连接必须使用不同本机endpoint监听端口，远端Owner可以相同。管理员保证不同电脑不重复分配network_id；误配同一ID仍会争用入口，本轮不增加占用租约或服务端租户鉴权。

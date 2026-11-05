@@ -20,7 +20,7 @@ def reverse_argv(profile,endpoint,slot,target):
         '-o','LogLevel=DEBUG1','-o','ForwardAgent=no','-o','ForwardX11=no',
         '-o',f'ConnectTimeout={max(1,int(profile.connect_timeout_seconds))}',
         '-o',f'ServerAliveInterval={profile.keepalive_seconds}','-o',f'ServerAliveCountMax={profile.keepalive_count}',
-        '-R',f'{endpoint.bind_host}:{getattr(endpoint,slot+"_port")}:{host}:{target.port}',profile.ssh_host]
+        '-R',f'{endpoint.bind_host}:{endpoint.port(slot)}:{host}:{target.port}',profile.ssh_host]
 
 
 def probe_target(target,timeout):

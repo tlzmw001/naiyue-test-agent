@@ -37,6 +37,7 @@ const errors: Record<string, string> = {
   cloud_network_busy: '有关联任务正在运行、保留后台服务或等待核对，请处理后再切换',
   cloud_network_switching: '服务入口正在切换，请等待原操作完成或取消原切换',
   cloud_network_changed: '服务配置已变化，请刷新后重试', cloud_network_unavailable: '服务入口尚未启用，请先连接待测服务',
+  cloud_network_endpoint_missing: '该服务入口未分配或已移除，请核对管理员端口配置',
   cloud_network_identity_changed: '网络 ID 或端口配置已变化，请核对原连接配置',
   cloud_network_unreachable: '开发机上的隧道入口尚不可达，请检查 SSH 转发权限和桥接地址',
   cloud_target_unreachable: '本机无法连接目标端口，请检查地址、VPN 和待测服务',
