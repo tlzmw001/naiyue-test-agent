@@ -166,6 +166,35 @@ def test_same_hash_publications_keep_the_first_blob_identity(tmp_path):
     assert all(not stage.exists() for stage in stages)
 
 
+def test_read_request_sizes_stay_bounded_by_the_verified_artifact(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    from naiyue_test_agent.application.cloud_local import receive_files
+    from naiyue_test_agent.application.cloud_local.receive_files import ReceiveFiles
+    files=ReceiveFiles(SimpleNamespace(path=tmp_path/'sessions.sqlite'))
+    content=b'{"schema_version": 1, "entries": []}\n'
+    artifact=SimpleNamespace(size=len(content),sha256=hashlib.sha256(content).hexdigest())
+    stage=files.stage(str(uuid4()),str(uuid4()));stage.write_bytes(content);stage.chmod(0o600)
+    files.publish(stage,artifact)
+    requests=[]
+    class SpyStream:
+        def __init__(self,stream):self._stream=stream
+        def read(self,size=-1):requests.append(size);return self._stream.read(size)
+        def __enter__(self):return self
+        def __exit__(self,*exc):return self._stream.__exit__(*exc)
+        def __getattr__(self,name):return getattr(self._stream,name)
+    real_fdopen=receive_files.os.fdopen
+    def spying_fdopen(fd,mode='r',*args,**kwargs):
+        stream=real_fdopen(fd,mode,*args,**kwargs)
+        return SpyStream(stream) if 'b' in mode else stream
+    monkeypatch.setattr(receive_files.os,'fdopen',spying_fdopen)
+    huge=20*1024**3
+    assert files.read(artifact,huge)==content
+    assert files.read(artifact,len(content))==content
+    with pytest.raises(CloudError) as over:files.read(artifact,len(content)-1)
+    assert over.value.code=='cloud_material_budget'
+    assert max(requests)<=max(artifact.size,256*1024)+1
+
+
 def test_published_receipt_ack_loss_does_not_demote_available(tmp_path,monkeypatch):
     async def run():
         manager,domain,store,sid,remote,binding,rid,files,data,requests=await receiving(tmp_path)

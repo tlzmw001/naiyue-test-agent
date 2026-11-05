@@ -91,8 +91,10 @@ class ReceiveFiles:
 
     def read(self,artifact,limit):
         path=self.blob(artifact.sha256);self.inspect(path,artifact.size,artifact.sha256)
+        # inspect() above proved the blob is exactly artifact.size bytes, so capping the
+        # request keeps CPython from preallocating limit+1 bytes for GiB-scale budgets.
         with os.fdopen(open_store_readonly(path),'rb') as stream:
-            data=stream.read(limit+1)
+            data=stream.read(min(artifact.size,limit)+1)
         if len(data)>limit:raise CloudError('cloud_material_budget',413)
         return data
 

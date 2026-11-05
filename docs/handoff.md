@@ -1,6 +1,6 @@
 # Naiyue Test Agent：当前开发学习交接
 
-**2026-11-05 发布0.5.9（云输入与连接重构）**：用户授权后由本会话执行发布。143AQ工作区改动与版本号0.5.9、[发布说明](releases/0.5.9.md)、README/两份手册版本声明合并为发布提交，连同11-04的143AO`8ab7925`、143AP`1473afd`、docs`7a1523e`一并push main，打`v0.5.9`触发Publish（CI复用→OIDC PyPI→四平台公开安装）。发布前本机复跑：后端6540项、前端76文件633项通过。**唯一下一步：Publish全绿后在GitHub Release记录验证证据；用户按手册执行Windows原机及公司链路验收。** 下方为历史时点。
+**2026-11-05 发布0.5.9（云输入与连接重构）**：用户授权后由本会话执行发布。143AQ工作区改动与版本号0.5.9、[发布说明](releases/0.5.9.md)、README/两份手册版本声明合并为发布提交，连同11-04的143AO`8ab7925`、143AP`1473afd`、docs`7a1523e`一并push main，打`v0.5.9`触发Publish（CI复用→OIDC PyPI→四平台公开安装）。首轮标签CI两分片分别在`test_cloud_result_materials`与`test_delivery_legacy_intents` OOM：`receive_files.read()`按20GiB预算`read(limit+1)`触发CPython预分配，macOS惰性分配侥幸通过、Linux runner必OOM；已按先红后绿修复为按已验证`artifact.size`封顶并新增读取请求上限回归（本机后端6541项、前端76文件633项通过），PyPI尚未发布，移动标签至修复提交重触发。**唯一下一步：Publish全绿后在GitHub Release记录验证证据；用户按手册执行Windows原机及公司链路验收。** 下方为历史时点。
 
 **2026-11-05 Spec143AQ七片完成本机实现与验证**：空任务→对话追加附件→下一轮持久消息→output直接下载/保存/主Agent分析已接线；默认单文件/每批20GiB，Windows单一connections配置及Linux更新器派生连接同步。旧Git范围前端退出，新任务不生成diff；已发布CLI与旧冻结结果按实际消费者保留。队列固定命令/CAS/未知状态暂停、共享输入读者关闭、展开容量预检、恢复安装回执及普通隐藏产物保存均补回归。最终后端6540项、前端76文件633项全部通过，TS/Vite与标准Mac wheel/Twine通过；证据见[本机报告](../build/spec143aq/report.md)，合同见[Spec](specs/143aq-cloud-files-and-connections.md)，配置/点击/Windows步骤见[手册](cloud-files-and-connections.md)。真实配置、用户数据及四份Spec142草稿未改，未提交/push/发布/部署；无新增用户掌握证据。Playwright扩展未连接，未完成视觉实测；Windows、公司SSH/TLS/gRPC、真实20GiB传输待验。共享输入未新增自动GC，本机下载链接不是公开分享链接。**唯一下一步：用户复核本轮变更后决定提交/发布，再按手册执行Windows及公司链路验收。** 下方为历史时点。
 
