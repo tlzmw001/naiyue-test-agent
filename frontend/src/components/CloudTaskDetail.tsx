@@ -25,6 +25,7 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
   const observation = useCloudObservation(api, sid, binding.binding_id, binding.task_id!, active, thread);
   const draft = useCloudDraft(api, sid, binding.binding_id);
   const files = useCloudFiles(api, sid, binding.binding_id, active);
+  const registeredModels = JSON.stringify(binding.cloud?.runner_model_ids ?? []);
   const running = !!binding.cloud?.active_run_id;
   const queued = files.queue && !['sent', 'cancelled'].includes(files.queue.phase);
   const attachmentsReady = draft.attachment_ids.every(id => files.attachments.some(row => row.attachment_id === id && ['ready', 'attached'].includes(row.phase)));
@@ -43,7 +44,7 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
     void api.models(sid, binding.binding_id, controller.signal).then(value => { if (!controller.signal.aborted) setModels(value); })
       .catch(failure => { if (!controller.signal.aborted) { console.warn('cloud_models_read_failed'); setModels(undefined); setModelsError(cloudError(failure)); } });
     return () => controller.abort();
-  }, [api, sid, binding.binding_id, binding.cloud?.generation, active, closeModels, revision]);
+  }, [api, sid, binding.binding_id, binding.task_id, binding.cloud?.generation, binding.cloud?.runner_phase, registeredModels, active, closeModels, revision]);
   useEffect(() => {
     if (!active) return;
     const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>;

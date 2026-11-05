@@ -312,3 +312,14 @@ it('queues one next prompt with uploading attachments without starting another r
   expect(cloud.message).not.toHaveBeenCalled();
   expect(screen.getByRole('textbox', { name: '发给此云端任务' })).toHaveProperty('value', '');
 });
+
+it('loads models after the new runner registers them in the same generation', async () => {
+  const cloud = api();
+  const available = await cloud.models('S', 'B');
+  vi.mocked(cloud.models).mockClear().mockResolvedValueOnce({ default_model_id: null, model_ids: [], thinking_options: {} }).mockResolvedValue(available);
+  const props = { api: cloud, sid: 'S', active: true, back: vi.fn(), changed: vi.fn() };
+  const { rerender } = render(<CloudTaskDetail {...props} binding={{ ...binding, cloud: { ...task, runner_model_ids: [] } }} />);
+  await waitFor(() => expect(cloud.models).toHaveBeenCalledTimes(1));
+  rerender(<CloudTaskDetail {...props} binding={binding} />);
+  expect(await screen.findByRole('button', { name: '模型与推理强度：A · low' })).toBeTruthy();
+});
