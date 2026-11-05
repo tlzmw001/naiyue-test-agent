@@ -13,6 +13,10 @@
 - **外部集成**：MCP、网页搜索与抓取、AITest 工具，以及项目 Skills。
 - **云端任务**：从主输入框加号菜单新建或续聊独立任务；云端Coordinator/Runner执行，本机可离线，结果可保存报告、应用代码或交给主Agent分析。
 
+当前开发分支已将服务入口扩展为通用TCP列表，尚未发布；配置与迁移见[服务隧道手册](docs/cloud-service-tunnels.md)。
+
+当前开发分支也提供项目侧栏的“移除”按钮：确认后从列表移除登记，保留磁盘文件、本地历史数据库和归档；缺失目录也可移除。有运行、审批、恢复、后台工作或仍保留的云端任务关联时，会提示先处理。请求结果不确定时可核对原操作。移除后的历史不会继续显示在列表，重新添加目录不承诺自动恢复旧历史。
+
 0.5.8新增2GiB项目输入、目录选择与个人服务隧道。Linux/Windows升级及页面操作见[0.5.8指南](docs/cloud-143an-upgrade.md)，详细网络说明见[服务隧道](docs/cloud-service-tunnels.md)。
 
 0.5.7 的更新与升级说明见[版本说明](https://github.com/tlzmw001/naiyue-test-agent/blob/v0.5.7/docs/releases/0.5.7.md)，两端启动及相对0.5.6的配置差异见[启动与迁移](docs/cloud-startup-and-configuration.md)。

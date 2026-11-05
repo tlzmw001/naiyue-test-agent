@@ -1,5 +1,11 @@
 # Naiyue Test Agent：项目设计记录
 
+2026-11-04 143AO/AP分别本地提交`8ab7925`/`1473afd`，未push或发布。新提出的云端文件上传/下载收缩方案处于讨论阶段，20GiB、目录选择及产物下载边界尚待确认，不作为已实现能力。
+
+2026-11-04 [143AP](specs/143ap-project-removal-ui.md)项目列表移除已接线：只删除登记，源码/历史保留；缺失目录、空闲自动关闭、活动及云关联保护、原操作恢复、草稿与当前scope切换均覆盖。6478后端/627前端、构建和Mac新环境安装通过；尚未提交发布，Windows原机验收待交付。
+
+2026-11-04 [143AO](specs/143ao-general-service-ports.md)已完成本机实现和验证：143AN固定双端口扩展为每network_id 1–64个协议无关TCP入口，Windows复用本机profiles限定可见ID；保留SSH保活、静止热切换与原ID恢复，不增加租户权限或占用租约。已发布配置边界兼容，新增端口保持原映射；完整后端6467/前端615、构建和Mac安装通过。配置示例、迁移和原机验收见[手册](cloud-service-tunnels.md)，证据见[交接](handoff.md)。本轮尚未提交或发布，正式0.5.8仍为固定双入口版本。以下为历史时点。
+
 2026-11-04 [143AN](specs/143an-input-scope-and-service-tunnels.md)五片完成本机验证：大项目输入默认2GiB、Git/非Git范围选择、每台Windows两个管理员分配服务端口、本机受管SSH长期连接与静止热切换、任务持久绑定network_id并逐轮获取当前路由。沿用共享Coordinator/SSH账号和现有任务关联，不引入租户鉴权或全局代理。真实Windows/公司SSH与HTTPS/gRPC验收单列，见[操作手册](cloud-service-tunnels.md)；测试/构建证据见[交接](handoff.md)。已按正式标签流程发布[0.5.8](https://github.com/tlzmw001/naiyue-test-agent/releases/tag/v0.5.8)，同提交CI、PyPI四平台公开安装与17附件哈希核验通过；补齐Windows兼容回归、安装门禁与[两端升级指南](cloud-143an-upgrade.md)。下一步仅公司原机配置对齐与SSH/双用户/TLS链路验收。以下为历史时点。
 
 2026-11-03 S10.2与S11代码/本机验证/验收准备完成：可信channel发现复用Updater原ID；完整静止备份、独立新根恢复与唯一启用、引用GC预览/确认/故障续接已接线。补齐目录别名/真实history与报告恢复/权限及源根身份/删除升级回执/有效备份保留回归；管理root2/DB2阻止旧读者忽略guard，Runner state schema仍1。最终6283后端（0失败/错误/跳过）、72文件594前端、标准构建、四目标wheel/Twine、513生产Python及4Web逐字节对包、Mac源外全新依赖安装、真实6产物manifest往返与无A消费者门禁通过，架构/安全复核收口。见[143ah](specs/143ah-s102-operations.md)、[143ai](specs/143ai-s11-final-acceptance.md)、[验证](../build/spec143-s102-s11-20261103/report.md)。15个后续单元代码/验收准备交付完成；S11实机Windows/Linux/Docker、公司HTTP/proto RPC/provider、完整目标性能和照片1–10（尤其5/10）仍pending，由用户统一执行。双任务20轮工具、候选核验、[最终手册](cloud-final-windows-acceptance.md)与[回传模板](cloud-acceptance-report-template.md)已提供；不兼容旧sandbox，原dirty/4份Spec142/真实配置数据资源保持，未提交/push/发布/部署，无新增掌握证据。唯一下一步：用户按最终手册核对候选与两端安装，再进行原机验收并回传脱敏失败/原ID；不另开新功能。 以下为历史时点。
