@@ -6,7 +6,7 @@ import { displayProjectPath } from '../projectPaths';
 import styles from './ProjectPicker.module.css';
 
 export default function DirectoryBrowser({ api, mode, initialPath, initialName = '', purpose = 'project', choose, close }: {
-  api: Pick<WebApi, 'browseDirectories'>; purpose?: 'project' | 'save'; mode: 'select' | 'create'; initialPath?: string; initialName?: string;
+  api: Pick<WebApi, 'browseDirectories'>; purpose?: 'project' | 'save' | 'upload'; mode: 'select' | 'create'; initialPath?: string; initialName?: string;
   choose: (value: FolderChoice) => void; close: () => void;
 }) {
   const [request, setRequest] = useState({ path: initialPath, hidden: false, revision: 0 });
@@ -80,7 +80,7 @@ export default function DirectoryBrowser({ api, mode, initialPath, initialName =
     </div>
     <div className={styles.folderFooter}>
       {mode === 'create' ? <label>新文件夹名称<input aria-label="新文件夹名称" value={name} maxLength={maxNameLength} onChange={event => setName(event.target.value)} placeholder="输入名称" /></label> :
-        <p className={styles.hint}>{purpose === 'save' ? '选择报告保存的位置。' : '进入文件夹后，选择当前文件夹作为项目。'}</p>}
+        <p className={styles.hint}>{purpose === 'save' ? '选择报告保存的位置。' : purpose === 'upload' ? '选择要浏览的文件夹。' : '进入文件夹后，选择当前文件夹作为项目。'}</p>}
       <div className={styles.currentPath} title={page?.path} dir="ltr">{page ? `当前文件夹：${displayProjectPath(page.path)}` : '请先读取要使用的文件夹'}</div>
       <div className={styles.actions}><button type="button" onClick={close}>取消</button><button type="button" className={styles.primary}
         disabled={!ready || (mode === 'create' && !validName)} onClick={() => {

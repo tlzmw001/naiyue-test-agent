@@ -34,9 +34,9 @@ export class CloudApi {
   profiles(signal?: AbortSignal) { return this.read<CloudProfile[]>('/cloud-profiles', signal); }
   list(sid: string, offset = 0, signal?: AbortSignal) { return this.read<CloudBinding[]>('/cloud-tasks' + this.query(sid, { offset, limit: 50 }), signal); }
   binding(sid: string, bid: string, signal?: AbortSignal) { return this.read<CloudBinding>(this.task(bid) + this.query(sid), signal); }
-  files(sid: string, path = '', offset = 0, signal?: AbortSignal) { return this.read<CloudFileTree>('/cloud-files' + this.query(sid, { path, offset }), signal); }
+  files(sid: string, path = '', offset = 0, signal?: AbortSignal, location?: { path: string; identity: string }) { return this.read<CloudFileTree>('/cloud-files' + this.query(sid, { path, offset, directory: location?.path, directory_identity: location?.identity }), signal); }
   attachments(sid: string, bid: string, signal?: AbortSignal) { return this.read<CloudAttachment[]>(this.task(bid) + '/attachments' + this.query(sid), signal); }
-  uploadFiles(sid: string, bid: string, value: { attachment_id: string; display_name: string; paths: string[] }) { return this.write<CloudAttachment>(this.task(bid) + '/attachments?local_project_id=' + encodeURIComponent(this.projectId), { ...value, local_session_id: sid }); }
+  uploadFiles(sid: string, bid: string, value: { attachment_id: string; display_name: string; paths: string[]; directory?: string; directory_identity?: string }) { return this.write<CloudAttachment>(this.task(bid) + '/attachments?local_project_id=' + encodeURIComponent(this.projectId), { ...value, local_session_id: sid }); }
   attachmentAction(sid: string, bid: string, id: string, action: 'cancel' | 'retry') { return this.write<CloudAttachment>(this.task(bid) + '/attachments/' + encodeURIComponent(id) + '/' + action + this.query(sid), {}); }
   queuedMessage(sid: string, bid: string, signal?: AbortSignal) { return this.read<CloudQueuedMessage | null>(this.task(bid) + '/queued-message' + this.query(sid), signal); }
   queueMessage(sid: string, bid: string, value: object) { return this.write<CloudQueuedMessage>(this.task(bid) + '/queued-message?local_project_id=' + encodeURIComponent(this.projectId), { ...value, local_session_id: sid }); }

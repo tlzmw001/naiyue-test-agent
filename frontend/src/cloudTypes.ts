@@ -42,7 +42,7 @@ export interface DeletePreview {
 export interface CloudDetailPage extends CloudDetail { field: string; text: string; offset: number; next_offset: number | null; body_sha256: string }
 export interface CloudUsage { recorded_calls: number; metrics?: Record<string, { known_sum: string | null; reported_calls: number; unknown_calls: number }>; capture: { capture_incomplete: boolean } }
 
-export interface CloudAttachment { attachment_id: string; binding_id: string; display_name: string; input_id: string | null; size: number; phase: string; error_code: string | null; created_at: number }
+export interface CloudAttachment { uploaded_bytes?: number | null; transfer_bytes?: number | null; attachment_id: string; binding_id: string; display_name: string; input_id: string | null; size: number; phase: string; error_code: string | null; created_at: number }
 export interface CloudQueuedMessage { command_id: string; message_command_id: string; phase: string; error_code: string | null; request: { text: string; attachment_ids?: string[] }; dispatch_request?: object }
 
 export interface CloudFileTree { path: string; entries: { path: string; name: string; kind: string; size: number }[]; next_offset: number | null }

@@ -104,7 +104,7 @@ class CloudClient:
             logger.warning('cloud_observation_request_failed error_type=%s',type(error).__name__)
             raise CloudError('cloud_connection_failed',503) from None
 
-    def upload(self,directory,*,upload_id=None,check_cancel=None):
+    def upload(self,directory,*,upload_id=None,check_cancel=None,on_progress=None):
         directory=Path(directory).absolute();check_store_directory(directory)
         stack=ExitStack();primary=None
         try:
@@ -115,7 +115,7 @@ class CloudClient:
             except BlockingIOError:raise CloudError('input_capture_busy') from None
             stack.callback(release_store_lock,fd)
             from .input_upload import upload
-            return upload(self,directory,upload_id=upload_id,check_cancel=check_cancel)
+            return upload(self,directory,upload_id=upload_id,check_cancel=check_cancel,on_progress=on_progress)
         except BaseException as error:
             primary=error;raise
         finally:

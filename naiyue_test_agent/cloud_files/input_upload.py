@@ -10,7 +10,7 @@ from naiyue_test_agent.storage.files import open_store_readonly,open_store_file,
 from .paths import identity
 
 
-def upload(client,directory,*,upload_id=None,check_cancel=None):
+def upload(client,directory,*,upload_id=None,check_cancel=None,on_progress=None):
     if check_cancel is not None:check_cancel()
     with os.fdopen(open_store_readonly(directory/'receipt.json'),'rb') as stream:
         captured=CapturedInput.model_validate_json(stream.read(8193))
@@ -20,6 +20,7 @@ def upload(client,directory,*,upload_id=None,check_cancel=None):
         if error.code!='input_not_found' or error.status!=404:raise
     else:
         if package.input_id!=captured.input_id:raise CloudError('input_capture_identity')
+        if on_progress is not None:on_progress(captured.size,captured.size)
         return {'input_id':captured.input_id,'uploaded_bytes':0,'cache_hit':True}
     facts=dict(purpose='input',input_id=captured.input_id,size=captured.size,
         archive_sha256=captured.archive_sha256,codec=captured.codec)
@@ -44,6 +45,7 @@ def upload(client,directory,*,upload_id=None,check_cancel=None):
             raise CloudError('input_upload_identity')
         return transfer
     transfer=checked(client.request('GET',path));sent=0
+    if on_progress is not None:on_progress(transfer.offset,captured.size)
     if not transfer.cache_hit and transfer.state not in ('uploaded','committed'):
         with os.fdopen(open_store_readonly(directory/'archive'),'rb') as stream:
             before=identity(os.fstat(stream.fileno()));sha=hashlib.sha256()
@@ -70,6 +72,7 @@ def upload(client,directory,*,upload_id=None,check_cancel=None):
                     'X-Content-SHA256':part.hexdigest()}))
                 if transfer.offset!=start+length:raise CloudError('transfer_ack_invalid')
                 sent+=length
+                if on_progress is not None:on_progress(transfer.offset,captured.size)
             if identity(os.fstat(stream.fileno()))!=before:raise CloudError('input_capture_changed')
     client.request('POST',path+'/commit',json={})
     return {'input_id':captured.input_id,'uploaded_bytes':sent,'cache_hit':transfer.cache_hit}

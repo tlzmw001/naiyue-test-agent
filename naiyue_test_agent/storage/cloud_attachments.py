@@ -6,7 +6,7 @@ from .cloud_local import _read
 
 
 def public(value):
-    return {key:value.get(key) for key in ('attachment_id','binding_id','display_name','input_id','size','phase','error_code','created_at')}
+    return {key:value.get(key) for key in ('attachment_id','binding_id','display_name','input_id','size','phase','error_code','created_at','uploaded_bytes','transfer_bytes')}
 
 
 class AttachmentRepository:

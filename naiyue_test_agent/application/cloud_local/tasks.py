@@ -31,12 +31,14 @@ class LocalTaskDomain:
         if self.project_id is None or row['project_id']!=self.project_id:raise CloudError('cloud_project_required',409)
         return row
 
-    async def capture(self,session_id,root,selection,limits,*,git=False,include=(),exclude=(),paths=None,validate=None):
+    async def capture(self,session_id,root,selection,limits,*,git=False,include=(),exclude=(),paths=None,validate=None,attachment_directory=False):
         with self.owner.operation():
             await self.session(session_id)
             if self.cache is None:raise CloudError('cloud_project_required')
             execution=await run_blocking(self.authority.resolve,self.project_id) if self.authority else None
-            if execution is not None and execution.path!=Path(root):raise CloudError('cloud_source_identity_changed')
+            if attachment_directory and (validate is None or git or paths is not None):
+                raise CloudError('input_path_invalid',422)
+            if not attachment_directory and execution is not None and execution.path!=Path(root):raise CloudError('cloud_source_identity_changed')
             def check_source():
                 if execution is not None:
                     from naiyue_test_agent.execution_roots import validate_execution_root
@@ -55,6 +57,7 @@ class LocalTaskDomain:
                 if paths is None:
                     selected=Selection.model_validate(plan.selection if plan else selection)
                     receipt=plan.receipt if plan else None
+                if attachment_directory and selected.schema_version!=3:raise CloudError('input_path_invalid',422)
                 if not git and selected.policy is not None:raise CloudError('cloud_source_plan_required',422)
                 value=capture_cached(root,selected,self.cache,limits,source_receipt=receipt)
                 check_source()

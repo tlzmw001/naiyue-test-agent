@@ -6,7 +6,8 @@ from naiyue_test_agent.contracts.cloud_tasks import CloudError
 import pytest
 
 
-def test_upload_during_run_is_ready_only_and_duplicate_does_not_reupload(tmp_path):
+@pytest.mark.parametrize('external',[False,True])
+def test_upload_during_run_is_ready_only_and_duplicate_does_not_reupload(tmp_path,external):
     async def scenario():
         manager,domain,store,project,sid,remote=setup(tmp_path)
         try:
@@ -24,21 +25,32 @@ def test_upload_during_run_is_ready_only_and_duplicate_does_not_reupload(tmp_pat
                 return original(method,path,**kwargs)
             remote.request=request
             original_upload=remote.upload
-            def upload(path,*,upload_id,check_cancel):
-                assert upload_id==body['attachment_id'];check_cancel();return original_upload(path)
+            def upload(path,*,upload_id,check_cancel,on_progress):
+                assert upload_id==body['attachment_id'];check_cancel()
+                on_progress(3, 10)
+                from naiyue_test_agent.storage.cloud_attachments import AttachmentRepository
+                row=AttachmentRepository(domain.repo.database).read(bid,sid,upload_id)
+                assert (row['uploaded_bytes'],row['transfer_bytes'])==(3,10)
+                return original_upload(path)
             remote.upload=upload
-            (tmp_path/'source'/'.env').write_text('chosen')
+            root=tmp_path/'source'
             body=dict(attachment_id=str(uuid4()),paths=['.env'],display_name='files')
-            pending=await manager.attachments.submit(domain,bid,sid,tmp_path/'source',body)
+            if external:
+                from naiyue_test_agent.application.projects.locations import directory_facts, directory_identity
+                root=tmp_path.resolve()/'downloads'
+                root.mkdir()
+                body['directory_identity']=directory_identity(root,directory_facts(root))
+            (root/'.env').write_text('chosen')
+            pending=await manager.attachments.submit(domain,bid,sid,root,body)
             assert pending['phase']=='uploading'
             await manager.drain()
             rows=await manager.attachments.list(domain,bid,sid)
             assert len(rows)==1 and rows[0]['phase']=='ready' and rows[0]['input_id']==grants[0]['input_id']
             assert remote.task['active_run_id']=='a'*32 and not any('/runs' in path for path,_ in remote.posts)
-            assert await manager.attachments.submit(domain,bid,sid,tmp_path/'source',body)==rows[0]
+            assert await manager.attachments.submit(domain,bid,sid,root,body)==rows[0]
             await manager.drain();assert len(remote.uploads)==1
             with pytest.raises(CloudError,match='attachment_identity_conflict'):
-                await manager.attachments.submit(domain,bid,sid,tmp_path/'source',body|{'paths':['another']})
+                await manager.attachments.submit(domain,bid,sid,root,body|{'paths':['another']})
         finally:await manager.close();store.close()
     asyncio.run(scenario())
 
@@ -78,3 +90,14 @@ def test_interrupted_upload_has_explicit_retry_state_after_service_restart(tmp_p
             assert manager.attachments.flights=={}
         finally:await manager.close();store.close()
     asyncio.run(scenario())
+
+
+def test_explicit_external_directory_requires_matching_observation(tmp_path):
+    from naiyue_test_agent.application.cloud_local.attachments import checked_attachment_directory
+    from naiyue_test_agent.application.projects.locations import directory_facts, directory_identity
+    folder = tmp_path.resolve() / 'downloads'
+    folder.mkdir()
+    expected = directory_identity(folder, directory_facts(folder))
+    assert checked_attachment_directory(folder, expected) == folder
+    with pytest.raises(CloudError, match='cloud_source_identity_changed'):
+        checked_attachment_directory(folder, '0' * 64)
