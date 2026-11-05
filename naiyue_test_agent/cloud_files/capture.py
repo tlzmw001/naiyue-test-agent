@@ -10,6 +10,7 @@ from pathlib import Path
 import stat
 import tarfile
 import tempfile
+from time import monotonic, sleep
 
 from naiyue_test_agent.contracts.cloud_inputs import CapturedInput,InputEntry,InputManifest,Selection,InputPackage,check_input_content
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
@@ -17,6 +18,33 @@ from naiyue_test_agent.storage.files import check_store_directory,sync_store_dir
 from .paths import source_handle,identity,check_links
 
 logger=logging.getLogger(__name__)
+
+
+def publish_capture_directory(source, destination):
+    """Allow Windows scanners to release the completed archive before publication."""
+    deadline = monotonic() + 30
+    delay = 0.25
+    retries = 0
+    while True:
+        try:
+            os.rename(source, destination)
+        except OSError as error:
+            winerror = getattr(error, 'winerror', None)
+            if winerror not in (5, 32):
+                raise
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                logger.warning('cloud_input_publish_blocked winerror=%s retries=%s', winerror, retries)
+                raise CloudError('input_publish_blocked', 409) from error
+            if retries == 0:
+                logger.info('cloud_input_publish_waiting winerror=%s', winerror)
+            sleep(min(delay, remaining))
+            retries += 1
+            delay = min(delay * 2, 2)
+        else:
+            if retries:
+                logger.info('cloud_input_publish_recovered retries=%s', retries)
+            return
 
 
 def capture(source,selection,output,limits,*,codec='gzip',source_receipt=None):
@@ -106,7 +134,9 @@ def capture(source,selection,output,limits,*,codec='gzip',source_receipt=None):
             for file in bundle.iterdir():
                 file.chmod(0o600)
                 with file.open('r+b') as stream:os.fsync(stream.fileno())
-            sync_store_directory(bundle);os.rename(bundle,output);sync_store_directory(output.parent)
+            sync_store_directory(bundle)
+            publish_capture_directory(bundle,output)
+            sync_store_directory(output.parent)
             return result
     except (OSError,UnicodeError,ValueError) as error:
         logger.warning('cloud_input_capture_failed error_type=%s',type(error).__name__)

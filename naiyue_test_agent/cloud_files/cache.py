@@ -14,7 +14,7 @@ from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from naiyue_test_agent.storage.files import open_store_file,acquire_store_lock,release_store_lock,sync_store_directory
 from naiyue_test_agent.storage.files import open_store_readonly,check_store_directory
 from naiyue_test_agent.storage.cloud.schema import private_file
-from .capture import capture
+from .capture import capture, publish_capture_directory
 from .archive import validate_package
 
 
@@ -87,7 +87,9 @@ def capture_cached(source,selection,cache,limits,*,codec='gzip',source_receipt=N
             # All final bytes exist before the quota decision. Subsequent publication only renames.
             if _used(cache)>limits.max_cache_bytes:raise CloudError('input_cache_capacity')
             if result.directory==target and not target.exists():
-                sync_store_directory(captured.directory);os.rename(captured.directory,target);sync_store_directory(target.parent)
+                sync_store_directory(captured.directory)
+                publish_capture_directory(captured.directory,target)
+                sync_store_directory(target.parent)
             if receipt is not None:
                 os.rename(local/'import.json',receipt);sync_store_directory(receipt.parent)
                 result=result.model_copy(update={'source_receipt':receipt})

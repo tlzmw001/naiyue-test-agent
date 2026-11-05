@@ -177,3 +177,57 @@ def test_lfs_pointer_is_refused_even_across_small_read_chunks(tmp_path,io_bytes)
     root=tmp_path/'source';root.mkdir();(root/'asset.bin').write_bytes(b'version https://git-lfs.github.com/spec/v1\noid sha256:fixture\n')
     with pytest.raises(CloudError,match='input_lfs_pointer_unsupported'):
         capture(root,Selection(paths=['asset.bin']),tmp_path/'capture',InputLimits(io_bytes=io_bytes))
+
+
+@pytest.mark.parametrize('publication', ['input', 'cache'])
+def test_windows_input_publication_retries_same_archive_after_transient_lock(tmp_path, monkeypatch, publication):
+    import importlib
+    module = importlib.import_module('naiyue_test_agent.cloud_files.capture')
+    from naiyue_test_agent.cloud_files.cache import capture_cached
+    source = tmp_path/'source'
+    source.mkdir()
+    content = b'PK\0selected zip bytes'
+    (source/'report.zip').write_bytes(content)
+    clock = [0.]
+    monkeypatch.setattr(module, 'monotonic', lambda: clock[0], raising=False)
+    monkeypatch.setattr(module, 'sleep', lambda seconds: clock.__setitem__(0, clock[0]+seconds), raising=False)
+    original = module.os.rename
+    attempts = []
+    def rename(old, new):
+        if (Path(new).name == 'input' if publication == 'input' else Path(new).parent.name == 'inputs'):
+            attempts.append((old, new, (Path(old)/'archive').stat().st_ino))
+            if clock[0] < 14:
+                error = PermissionError('simulated scanner lock')
+                error.winerror = 5
+                raise error
+        return original(old,new)
+    monkeypatch.setattr(module.os, 'rename', rename)
+    limits = InputLimits()
+    captured = capture_cached(source, {'schema':3,'paths':['report.zip']}, tmp_path/'cache', limits)
+    expanded = tmp_path/'expanded'
+    expanded.mkdir()
+    validate_package(captured.directory/'archive',captured.codec,limits,destination=expanded,expected_id=captured.input_id)
+    assert (expanded/'report.zip').read_bytes() == content
+    assert 14 <= clock[0] < 17 and len(attempts) > 1 and len(set(attempts)) == 1
+
+
+@pytest.mark.parametrize('winerror', [5, 32, None])
+def test_input_publication_does_not_publish_on_persistent_error(tmp_path, monkeypatch, winerror):
+    import importlib
+    module = importlib.import_module('naiyue_test_agent.cloud_files.capture')
+    source = tmp_path/'source'
+    source.mkdir()
+    (source/'report.zip').write_bytes(b'PK\0opaque file')
+    output = tmp_path/'output'
+    clock = [0.]
+    monkeypatch.setattr(module, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(module, 'sleep', lambda seconds: clock.__setitem__(0, clock[0]+seconds))
+    def rename(old, new):
+        error = PermissionError('simulated permanent failure')
+        if winerror is not None:
+            error.winerror = winerror
+        raise error
+    monkeypatch.setattr(module.os, 'rename', rename)
+    with pytest.raises(CloudError, match='input_publish_blocked' if winerror else 'input_source_unavailable'):
+        capture(source, {'schema':3,'paths':['report.zip']}, output, InputLimits())
+    assert not output.exists() and clock[0] == (30 if winerror else 0)
