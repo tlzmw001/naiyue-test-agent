@@ -48,6 +48,19 @@ class RunnerRuns:
             r.models.validate_thinking(task,request.model_id,request.thinking_level)
             try:r.credentials.authorize(raw,task_id,'control:connect')
             except CloudError:raise CloudError('runner_not_ready') from None
+            attachments=[]
+            if request.attachment_ids:
+                if task.template_snapshot is None or task.template_snapshot.file_transfer_version!=1:raise CloudError('template_files_update_required')
+                if len(set(request.attachment_ids))!=len(request.attachment_ids):raise CloudError('invalid_request',422)
+                for aid in request.attachment_ids:
+                    if aid not in task.attachments:raise CloudError('attachment_not_found',404)
+                    attachments.append(task.attachments[aid])
+            if attachments:
+                additional=0
+                for item in attachments:
+                    package=r.inputs.get_input(item.input_id)
+                    additional+=package.size+sum(entry.size for entry in package.manifest.entries)
+                r.resources.ensure(additional_bytes=additional)
             now=time.time();run_id=uuid4().hex
             previous=task;task,updates=r.results.next_run(task,run_id)
             plan,result_receipt=r.results.reserve_run(task,request.command_id,run_id)
@@ -58,7 +71,7 @@ class RunnerRuns:
                 endpoint=r.settings.networks.get(task.network_id)
                 if endpoint is None:raise CloudError('cloud_network_not_configured',409)
                 services=service_context(NetworkRepository(r.database).read(task.network_id),endpoint)
-            command=RunCommand(services=services,command_id=request.command_id,run_id=run_id,message=request.message,model_id=request.model_id,
+            command=RunCommand(attachments=attachments,services=services,command_id=request.command_id,run_id=run_id,message=request.message,model_id=request.model_id,
                 thinking_level=request.thinking_level,result_plan=plan)
             frame=dict(kind='command',command=command.model_dump(),connection_id=connection_id,
                 generation=task.generation,boot_id=task.runner_boot_id,state_epoch=task.state_epoch)

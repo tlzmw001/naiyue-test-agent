@@ -70,7 +70,7 @@ class InputRepository:
                 if previous.request_digest!=receipt.request_digest:raise CloudError('command_id_conflict')
                 return previous
             if c.execute('SELECT 1 FROM projects WHERE project_id=?',(task.project_id,)).fetchone() is None:raise CloudError('project_not_found',404)
-            if c.execute('SELECT 1 FROM meta WHERE key=?',('input:'+task.input_id,)).fetchone() is None:raise CloudError('input_not_ready')
+            if task.input_id is not None and c.execute('SELECT 1 FROM meta WHERE key=?',('input:'+task.input_id,)).fetchone() is None:raise CloudError('input_not_ready')
             require_available(c)
             selected=active_template(c,task.template_id)
             if selected is not None:
@@ -78,6 +78,8 @@ class InputRepository:
                 t=TemplateReceipt.model_validate(selected)
                 task=CloudTask.model_validate(task.model_dump()|dict(runner_release_id=t.runner_release_id,template_snapshot=t,template_digest=t.fingerprint))
                 receipt=receipt.model_copy(update={'result':{'task':task.model_dump()}})
+            if task.input_id is None and (task.template_snapshot is None or task.template_snapshot.file_transfer_version!=1):
+                raise CloudError('template_files_update_required')
             if c.execute('SELECT COUNT(*) FROM commands').fetchone()[0]>=max_receipts:raise CloudError('command_capacity')
             tasks=[CloudTask.model_validate_json(r[0]) for r in c.execute('SELECT record_json FROM tasks')]
             if sum(t.lifecycle!='deleted' for t in tasks)>=max_tasks:raise CloudError('environment_retained_capacity')
@@ -86,3 +88,30 @@ class InputRepository:
             c.execute('INSERT INTO commands(command_id,request_digest,resource_id,record_json) VALUES(?,?,?,?)',
                 (receipt.command_id,receipt.request_digest,receipt.resource_id,receipt.model_dump_json()))
         return receipt
+
+    def attach(self,task_id,request):
+        from naiyue_test_agent.contracts.cloud_tasks import TaskAttachment
+        import time
+        with self.database.transaction(write=True) as c:
+            require_available(c)
+            row=c.execute('SELECT record_json FROM tasks WHERE task_id=?',(task_id,)).fetchone()
+            if row is None:raise CloudError('task_not_found',404)
+            task=CloudTask.model_validate_json(row[0])
+            if task.lifecycle in ('deleted','deleting'):raise CloudError('task_not_available')
+            if task.template_snapshot is None or task.template_snapshot.file_transfer_version!=1:
+                raise CloudError('template_files_update_required')
+            package=c.execute('SELECT value FROM meta WHERE key=?',('input:'+request.input_id,)).fetchone()
+            if package is None:raise CloudError('input_not_found',404)
+            package=InputPackage.model_validate_json(package[0])
+            if package.manifest.schema_version!=3:raise CloudError('attachment_format_required',422)
+            value=TaskAttachment(**request.model_dump(),size=package.size)
+            old=task.attachments.get(request.attachment_id)
+            if old is not None:
+                if old!=value:raise CloudError('attachment_identity_conflict')
+                return old
+            if len(task.attachments)>=1024:raise CloudError('attachment_capacity')
+            updated=CloudTask.model_validate(task.model_dump()|dict(attachments=task.attachments|{value.attachment_id:value},
+                revision=task.revision+1,updated_at=time.time()))
+            c.execute('UPDATE tasks SET revision=?,record_json=? WHERE task_id=?',
+                (updated.revision,updated.model_dump_json(),task_id))
+            return value

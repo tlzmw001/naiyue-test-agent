@@ -3,7 +3,7 @@ from pathlib import Path,PurePosixPath
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field,field_validator,SecretStr
+from pydantic import Field,field_validator,model_validator,SecretStr
 from naiyue_test_agent.contracts.cloud_tasks import CloudRecord
 from .template import TemplateOperatorSettings
 
@@ -14,7 +14,7 @@ class UpdateSettings(CloudRecord):
     trusted_prefixes: list[str] = Field(min_length=1,max_length=16)
     platform: Literal['linux-arm64','linux-x86_64']
     build: TemplateOperatorSettings
-    connection_file: Path
+    connection_file: Path|None = None
     task_data_dir: Path|None = None
     cloud_settings_file: Path|None = None
     recovery_dir: Path|None = None
@@ -36,6 +36,11 @@ class UpdateSettings(CloudRecord):
     backup_cpus: float = Field(default=1.0,gt=0,le=8)
     backup_pids: int = Field(default=64,gt=0,le=512)
     backup_max_files: int = Field(default=100000,gt=0)
+
+    @model_validator(mode='after')
+    def connection_source(self):
+        if self.connection_file is None and self.cloud_settings_file is None:raise ValueError('cloud_settings_required')
+        return self
 
     @field_validator('download_proxy')
     @classmethod

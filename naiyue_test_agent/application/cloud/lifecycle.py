@@ -59,6 +59,8 @@ class CloudLifecycle:
             if task.template_digest is not None and task.template_digest != template.fingerprint:
                 raise CloudError('template_pin_mismatch')
             if request.kind in ('start','refresh'):self.runtime.releases.validate_template(template)
+            if request.kind in ('start','refresh') and task.input_id is None and template.file_transfer_version!=1:
+                raise CloudError('template_files_update_required')
             if request.kind == 'start' and task.sandbox_id:
                 raise CloudError('environment_already_running')
             if request.kind == 'start' and (task.active_run_id or task.reclaim_blockers) and not (request.acknowledge_unknown and task.lifecycle=='stopped' and task.environment_phase=='absent'):

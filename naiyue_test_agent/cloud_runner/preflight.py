@@ -30,7 +30,7 @@ def check(*, full=False):
     kit = _run([TEST_PYTHON, '-I', '-c',
         'import aitest_kit,importlib.metadata;print(importlib.metadata.version("aitest-kit"))']).strip()
     from naiyue_test_agent.contracts.cloud_versions import RUNNER_PROTOCOL,STATE_SCHEMA
-    result = dict(runner_protocol=RUNNER_PROTOCOL,state_schema=STATE_SCHEMA,schema_version=1, uid=os.getuid(), euid=os.geteuid(), gid=os.getgid(), egid=os.getegid(),
+    result = dict(file_transfer_version=1,runner_protocol=RUNNER_PROTOCOL,state_schema=STATE_SCHEMA,schema_version=1, uid=os.getuid(), euid=os.geteuid(), gid=os.getgid(), egid=os.getegid(),
         groups=os.getgroups(), no_new_privs=int(status['NoNewPrivs']),
         caps={k:int(status[k],16) for k in ('CapEff','CapPrm','CapInh','CapAmb','CapBnd')},
         runner_readonly=readonly, runner_version=importlib.metadata.version('naiyue-test-agent'),

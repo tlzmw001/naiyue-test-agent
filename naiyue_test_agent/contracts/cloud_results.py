@@ -18,10 +18,10 @@ def result_path(value):
 class ResultLimits(CloudRecord):
     output_directory:str='.nyt-output'
     max_patch_bytes:int=Field(default=64*1024*1024,gt=0)
-    max_metadata_bytes:int=Field(default=16*1024*1024,gt=0)
-    max_files:int=Field(default=65536,gt=0)
-    max_artifacts:int=Field(default=30,ge=0,le=126)
-    max_result_bytes:int=Field(default=3*1024**3,gt=0)
+    max_metadata_bytes:int=Field(default=32*1024*1024,gt=0)
+    max_files:int=Field(default=100000,gt=0)
+    max_artifacts:int=Field(default=1000,ge=0,le=1000)
+    max_result_bytes:int=Field(default=20*1024**3,gt=0)
     max_results:int=Field(default=64,gt=0,le=1024)
     result_lease_seconds:float=Field(default=300,gt=0,le=86400)
     max_result_leases:int=Field(default=128,gt=0,le=1024)
@@ -36,7 +36,7 @@ class ResultPlan(CloudRecord):
     source_run_id:TaskId
     task_id:TaskId
     project_id:UUIDText
-    input_id:ContentId
+    input_id:ContentId|None
     source_generation:int=Field(ge=1)
     output_directory:str
     _directory=field_validator('output_directory')(input_path)
@@ -85,11 +85,13 @@ class ResultBundle(CloudRecord):
     boundary:ResultBoundary
     generation:int=Field(ge=1)
     captured_at:float=Field(ge=0)
-    files:list[ResultFile]=Field(min_length=2,max_length=128)
+    files:list[ResultFile]=Field(max_length=1002)
 
     @model_validator(mode='after')
     def slots(self):
-        if [f.role for f in self.files].count('manifest')!=1 or [f.role for f in self.files].count('patch')!=1:
+        if self.plan.input_id is None:
+            if any(f.role!='artifact' for f in self.files):raise ValueError('result_required_slots')
+        elif [f.role for f in self.files].count('manifest')!=1 or [f.role for f in self.files].count('patch')!=1:
             raise ValueError('result_required_slots')
         ids=[f.artifact.artifact_id for f in self.files];names=[(f.role,f.artifact.relative_name) for f in self.files]
         if len(set(ids))!=len(ids) or len(set(names))!=len(names):raise ValueError('result_slot_collision')

@@ -10,7 +10,7 @@ from pydantic import SecretStr
 from naiyue_test_agent.contracts.cloud_tasks import CloudError, StoredTaskCredential
 from naiyue_test_agent.storage.cloud.credentials import CredentialRepository
 
-SCOPES = frozenset({'identity:read', 'events:append', 'control:connect','artifacts:write','models:invoke'})
+SCOPES = frozenset({'identity:read', 'events:append', 'control:connect','artifacts:write','models:invoke','inputs:read'})
 
 
 @dataclass(frozen=True)

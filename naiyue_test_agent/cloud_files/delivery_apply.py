@@ -16,9 +16,9 @@ from .paths import source_handle,identity
 logger=logging.getLogger(__name__)
 
 
-def matches(root,path,entry):
+def matches(root,path,entry,*,ordinary=False):
     try:
-        with parent(root,path) as (fd,directory,name):
+        with parent(root,path,ordinary=ordinary) as (fd,directory,name):
             try:info=lstat(fd,directory,name)
             except FileNotFoundError:return entry is None
             if entry is None:return False
@@ -38,16 +38,16 @@ def matches(root,path,entry):
 
 
 def preflight(root,verified):
-    invalid=portable_conflicts(c['path'] for c in verified.changes)
+    invalid=portable_conflicts((c['path'] for c in verified.changes),ordinary=verified.ordinary)
     if invalid:return invalid
     conflicts=[]
     for change in verified.changes:
         try:
             # An absent file below an unsafe parent is not a safe add.
-            with parent(root,change['path']):pass
+            with parent(root,change['path'],ordinary=verified.ordinary):pass
         except FileNotFoundError:pass
         except (OSError,CloudError):conflicts.append(change['path']);continue
-        if not matches(root,change['path'],change['old']):conflicts.append(change['path'])
+        if not matches(root,change['path'],change['old'],ordinary=verified.ordinary):conflicts.append(change['path'])
     return conflicts
 
 
@@ -79,27 +79,27 @@ def apply_changes(root,verified,journal,checkpoint):
     # Validate the entire continuation before adding further side effects.
     for c in verified.changes:
         if c['path'] in state['done']:
-            if not matches(root,c['path'],c['new']):raise CloudError('cloud_delivery_conflict')
-        elif not matches(root,c['path'],c['old']) and not matches(root,c['path'],c['new']):raise CloudError('cloud_delivery_conflict')
+            if not matches(root,c['path'],c['new'],ordinary=verified.ordinary):raise CloudError('cloud_delivery_conflict')
+        elif not matches(root,c['path'],c['old'],ordinary=verified.ordinary) and not matches(root,c['path'],c['new'],ordinary=verified.ordinary):raise CloudError('cloud_delivery_conflict')
     ordered=sorted(verified.changes,key=lambda c:(c['new'] is not None,-c['path'].count('/') if c['new'] is None else c['path'].count('/'),c['path']))
     for c in ordered:
         name=c['path']
         if name in state['done']:continue
-        if not matches(root,name,c['new']):
-            with parent(root,name,create=c['new'] is not None) as (fd,directory,base):
-                if not matches(root,name,c['old']):raise CloudError('cloud_delivery_conflict')
+        if not matches(root,name,c['new'],ordinary=verified.ordinary):
+            with parent(root,name,create=c['new'] is not None,ordinary=verified.ordinary) as (fd,directory,base):
+                if not matches(root,name,c['old'],ordinary=verified.ordinary):raise CloudError('cloud_delivery_conflict')
                 if c['new'] is None:
                     if fd is not None:os.unlink(base,dir_fd=fd);os.fsync(fd)
                     else:os.unlink(directory/base)
                 else:replace_entry(fd,directory,base,verified.directory/name,c['new'],
-                    validate=lambda:matches(root,name,c['old']),create=c['old'] is None)
-        if not matches(root,name,c['new']):raise CloudError('cloud_delivery_postcheck_failed')
+                    validate=lambda:matches(root,name,c['old'],ordinary=verified.ordinary),create=c['old'] is None)
+        if not matches(root,name,c['new'],ordinary=verified.ordinary):raise CloudError('cloud_delivery_postcheck_failed')
         state['done'].append(name);write_json(path,state);checkpoint(state)
     return dict(done=state['done'])
 
 
 def export_tree(root,name,verified,journal):
-    if portable_conflicts(e.path for e in verified.output_manifest.entries):raise CloudError('cloud_delivery_path_unsupported',422)
+    if portable_conflicts((e.path for e in verified.output_manifest.entries),ordinary=verified.ordinary):raise CloudError('cloud_delivery_path_unsupported',422)
     component(name);root=Path(root);journal=Path(journal);journal.mkdir(mode=0o700,exist_ok=True)
     marker=journal/'export.json'
     state=None
@@ -160,7 +160,7 @@ def _matches_output(directory,verified):
             elif stat.S_ISDIR(mode):
                 if not any(p.startswith(relative+'/') for p in expected):return False
             else:return False
-    return actual==set(expected) and all(matches(directory,path,e) for path,e in expected.items())
+    return actual==set(expected) and all(matches(directory,path,e,ordinary=verified.ordinary) for path,e in expected.items())
 
 
 def _resume_export(directory,verified):
@@ -172,11 +172,11 @@ def _resume_export(directory,verified):
                 if relative not in expected:raise CloudError('cloud_delivery_export_conflict')
             elif not any(p.startswith(relative+'/') for p in expected):raise CloudError('cloud_delivery_export_conflict')
     for path,entry in expected.items():
-        if matches(directory,path,entry):continue
-        with parent(directory,path,create=True) as (fd,where,name):
+        if matches(directory,path,entry,ordinary=verified.ordinary):continue
+        with parent(directory,path,create=True,ordinary=verified.ordinary) as (fd,where,name):
             try:info=lstat(fd,where,name)
             except FileNotFoundError:
-                replace_entry(fd,where,name,verified.directory/path,entry,validate=lambda:matches(directory,path,None),create=True)
+                replace_entry(fd,where,name,verified.directory/path,entry,validate=lambda:matches(directory,path,None,ordinary=verified.ordinary),create=True)
                 continue
             if (entry.type!='file' or not stat.S_ISREG(info.st_mode) or info.st_nlink!=1 or info.st_size>entry.size
                     or getattr(info,'st_file_attributes',0)&0x400):raise CloudError('cloud_delivery_export_conflict')
@@ -200,4 +200,4 @@ def _resume_export(directory,verified):
                 current.flush();os.fsync(current.fileno())
                 if fd is not None:os.fchmod(current.fileno(),entry.mode)
                 else:os.chmod(where/name,entry.mode)
-        if not matches(directory,path,entry):raise CloudError('cloud_delivery_export_conflict')
+        if not matches(directory,path,entry,ordinary=verified.ordinary):raise CloudError('cloud_delivery_export_conflict')

@@ -55,10 +55,11 @@ def prepare(domain,client,command_id,session_id):
     if project_receipt.resource_id!=project.project_id:raise CloudError('cloud_project_invalid',502)
     steps['project']['receipt']=project_receipt.model_dump(mode='json')
     result=save(phase='upload',steps=steps,binding={'cloud_project_id':project.project_id});binding=result['binding']
-    source=repo.source(op['request']['source_handle'],session_id)
-    from pathlib import Path
-    uploaded=client.upload(Path(source['captured']['directory']))
-    if uploaded.get('input_id')!=binding['input_id']:raise CloudError('cloud_input_identity_mismatch',502)
+    if op['request'].get('source_handle'):
+        source=repo.source(op['request']['source_handle'],session_id)
+        from pathlib import Path
+        uploaded=client.upload(Path(source['captured']['directory']))
+        if uploaded.get('input_id')!=binding['input_id']:raise CloudError('cloud_input_identity_mismatch',502)
     # Cancellation and the first potentially side-effectful task dispatch are atomic.
     task_request=steps['task'].get('request') or dict(command_id=steps['task']['command_id'],project_id=project.project_id,
         input_id=binding['input_id'],template_id=binding['template_id'],title='')

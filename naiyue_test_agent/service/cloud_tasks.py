@@ -58,7 +58,7 @@ async def domain(request,project_id,session_id):
 async def profiles(request:Request):
     manager=access(request);values=manager.book.public()
     for value in values:
-        if value['profile_id'] in manager.connections.connections:value['connection']='connected'
+        if (value.get('connection_id') or value['profile_id']) in manager.connections.connections:value['connection']='connected'
     return values
 
 
@@ -131,6 +131,11 @@ async def bounded_view(request,manager,local,binding_id,session_id,view,params):
     if encoded_size(value)>request.app.state.web_settings.max_frame_bytes:raise CloudError('cloud_response_too_large',502)
     return value
 
+
+from .cloud_attachment_routes import register as register_attachments
+register_attachments(router,access,domain,body)
+from .cloud_attachment_routes import register_queue
+register_queue(router,access,domain,body)
 
 from .cloud_results import register as register_results
 register_results(router,access,domain,bounded_view,body,command_response)
@@ -213,3 +218,6 @@ from .cloud_source_routes import register as register_sources
 register_sources(router,access,domain,body)
 from .cloud_network_routes import register as register_networks
 register_networks(router,access,body)
+
+from .cloud_downloads import register as register_downloads
+register_downloads(router,access,domain)

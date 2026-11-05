@@ -73,6 +73,7 @@ def validate_package(path,codec,limits,*,expected_id=None,destination=None,expec
                     raise CloudError('input_metadata_invalid')
                 metadata.append(tar.extractfile(member).read(limits.max_metadata_bytes+1))
             manifest=InputManifest.model_validate(strict_json(metadata[0]));selection=Selection.model_validate(strict_json(metadata[1]))
+            if (manifest.schema_version==3)!=(selection.schema_version==3):raise CloudError('input_manifest_mismatch')
             if metadata!=[manifest.canonical,selection.canonical]:raise CloudError('input_metadata_not_canonical')
             if (manifest.selection['policy_sha256']!=hashlib.sha256(selection.canonical).hexdigest()
                     or [e.path for e in manifest.entries]!=selection.paths or len(manifest.entries)>limits.max_files
@@ -83,7 +84,7 @@ def validate_package(path,codec,limits,*,expected_id=None,destination=None,expec
                 if (member is None or member.name!='data/'+entry.path or member.mode!=entry.mode
                         or member.uid!=0 or member.gid!=0):raise CloudError('input_member_mismatch')
                 target=destination/entry.path if destination is not None else None
-                if target is not None:target.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
+                if target is not None and manifest.schema_version!=3:target.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
                 if entry.type=='symlink':
                     content=entry.target.encode('utf-8')
                     if (not member.issym() or member.linkname!=entry.target or member.size!=0
@@ -95,9 +96,18 @@ def validate_package(path,codec,limits,*,expected_id=None,destination=None,expec
                     sha=hashlib.sha256();count=0;prefix=b'';tail=b''
                     with ExitStack() as files:
                         stream=files.enter_context(tar.extractfile(member))
-                        out=files.enter_context(target.open('xb')) if target is not None else None
+                        out=None
+                        if target is not None:
+                            if manifest.schema_version==3:
+                                from .delivery_paths import parent
+                                fd,directory,name=files.enter_context(parent(destination,entry.path,create=True,ordinary=True))
+                                flags=os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,'O_NOFOLLOW',0)
+                                descriptor=os.open(name,flags,entry.mode,dir_fd=fd) if fd is not None else os.open(directory/name,flags,entry.mode)
+                                out=files.enter_context(os.fdopen(descriptor,'wb'))
+                                if os.name!='nt':os.fchmod(out.fileno(),entry.mode)
+                            else:out=files.enter_context(target.open('xb'))
                         while chunk:=stream.read(limits.io_bytes):
-                            tail=check_input_content(tail,chunk,first=count<128)
+                            if manifest.schema_version!=3:tail=check_input_content(tail,chunk,first=count<128)
                             count+=len(chunk);total+=len(chunk)
                             if total>limits.max_input_bytes:raise CloudError('input_budget')
                             prefix=(prefix+chunk)[:512] if len(prefix)<512 else prefix
@@ -105,8 +115,8 @@ def validate_package(path,codec,limits,*,expected_id=None,destination=None,expec
                             if out is not None:out.write(chunk)
                         if out is not None:out.flush();os.fsync(out.fileno())
                     if count!=entry.size or sha.hexdigest()!=entry.sha256:raise CloudError('input_file_hash_mismatch')
-                    if entry.mode==493 and prefix.startswith(b'#!') and b'\r' in prefix.split(b'\n',1)[0]:raise CloudError('input_crlf_executable')
-                    if target is not None:target.chmod(entry.mode)
+                    if manifest.schema_version!=3 and entry.mode==493 and prefix.startswith(b'#!') and b'\r' in prefix.split(b'\n',1)[0]:raise CloudError('input_crlf_executable')
+                    if target is not None and manifest.schema_version!=3:target.chmod(entry.mode)
                 if total>limits.max_input_bytes:raise CloudError('input_budget')
             if tar.next() is not None:raise CloudError('input_extra_member')
             # Include the tar stream's own read-ahead buffer, not only raw gzip.

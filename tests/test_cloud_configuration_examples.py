@@ -4,6 +4,7 @@ from pathlib import Path
 import tomllib
 from naiyue_test_agent.settings import load_settings
 from naiyue_test_agent.cloud_files.profiles import ProfileBook
+from naiyue_test_agent.cloud_files.connections import ConnectionBook
 from naiyue_test_agent.cloud_files.client import CloudConnection
 from naiyue_test_agent.application.cloud.settings import CloudSettings
 from naiyue_test_agent.cloud_install.template import TemplateBuildSettings
@@ -19,7 +20,7 @@ def test_full_settings_loads_without_retired_configuration():
     assert load_settings(path).cloud_tasks.result_limits.max_results==64
 
 def test_cloud_examples_use_real_configuration_contracts():
-    for name,model in [('template-build',TemplateBuildSettings),('profiles',ProfileBook),('connection',CloudConnection),('cloud',CloudSettings),('update',UpdateSettings),('remote-update',RemoteUpdateSettings)]:
+    for name,model in [('connections',ConnectionBook),('template-build',TemplateBuildSettings),('profiles',ProfileBook),('connection',CloudConnection),('cloud',CloudSettings),('update',UpdateSettings),('remote-update',RemoteUpdateSettings)]:
         value=json.loads((ROOT/(name+'.example.json')).read_text())
         parsed=model.model_validate_json(json.dumps(value))
         assert parsed is not None

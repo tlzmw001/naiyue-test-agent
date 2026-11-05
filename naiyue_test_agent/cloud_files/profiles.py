@@ -23,7 +23,9 @@ class CloudProfile(CloudRecord):
     network_id:str|None=Field(default=None,pattern=r'^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$')
     reconnect_seconds:float=Field(default=5.0,gt=0,le=300)
     profile_id:str=Field(pattern=r'^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$')
-    connection_file:Path
+    connection_file:Path|None=None
+    connection:CloudConnection|None=Field(default=None,repr=False,exclude=True)
+    connection_id:str|None=Field(default=None,pattern=r'^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$')
     template_ids:list[str]=Field(min_length=1,max_length=64)
     default_template:str=Field(min_length=1,max_length=128)
     tunnel:Literal['external','owned']='external'
@@ -38,11 +40,12 @@ class CloudProfile(CloudRecord):
     @field_validator('connection_file')
     @classmethod
     def private_path(cls,value):
-        if not value.is_absolute():raise ValueError('absolute_connection_file_required')
+        if value is not None and not value.is_absolute():raise ValueError('absolute_connection_file_required')
         return value
 
     @model_validator(mode='after')
     def check(self):
+        if (self.connection is None)==(self.connection_file is None):raise ValueError('one_connection_source_required')
         if self.default_template not in self.template_ids or len(set(self.template_ids))!=len(self.template_ids):
             raise ValueError('invalid_profile_templates')
         if any(not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}',v) for v in self.template_ids):
@@ -52,6 +55,9 @@ class CloudProfile(CloudRecord):
         if (self.tunnel=='owned' or self.network_id) and self.ssh_host is None:raise ValueError('ssh_alias_required')
         return self
 
+    def connection_settings(self):
+        return self.connection if self.connection is not None else read_settings(self.connection_file,CloudConnection)
+
 
 class ProfileBook(CloudRecord):
     profiles:list[CloudProfile]=Field(default_factory=list,max_length=64)
@@ -59,6 +65,14 @@ class ProfileBook(CloudRecord):
     @model_validator(mode='after')
     def unique(self):
         if len({p.profile_id for p in self.profiles})!=len(self.profiles):raise ValueError('duplicate_cloud_profile')
+        shared={}
+        for profile in self.profiles:
+            key=profile.connection_id or profile.profile_id
+            fields=('connection_file','connection','tunnel','ssh_host','ssh_executable','connect_timeout_seconds',
+                'keepalive_seconds','keepalive_count','poll_seconds','shutdown_seconds','reconnect_seconds')
+            signature=tuple(getattr(profile,name) for name in fields)
+            if key in shared and shared[key]!=signature:raise ValueError('cloud_shared_connection_conflict')
+            shared[key]=signature
         return self
 
     @classmethod
@@ -71,7 +85,8 @@ class ProfileBook(CloudRecord):
 
     def public(self):
         return [dict(profile_id=p.profile_id,template_ids=p.template_ids,default_template=p.default_template,
-            tunnel=p.tunnel,network_id=p.network_id,connection='not_connected') for p in self.profiles]
+            tunnel=p.tunnel,network_id=p.network_id,connection='not_connected',
+            **({'connection_id':p.connection_id} if p.connection_id else {})) for p in self.profiles]
 
 
 def ssh_argv(profile,connection):
@@ -91,7 +106,7 @@ class ConnectedProfile:
 
     @classmethod
     def open(cls,profile,*,transport=None):
-        connection=read_settings(profile.connection_file,CloudConnection)
+        connection=profile.connection_settings()
         value=cls(profile,CloudClient(connection,transport=transport))
         try:
             if profile.tunnel=='owned':
@@ -149,27 +164,28 @@ class ProfileConnections:
     async def get(self,profile_id,expected_instance=None):
         if self.closing:raise CloudError('cloud_client_closing',503)
         profile=self.book.require(profile_id)
-        previous=self.connections.get(profile_id)
+        key=profile.connection_id or profile_id
+        previous=self.connections.get(key)
         if previous is not None and previous.process is not None and previous.process.poll() is not None:
             logger.warning('cloud_ssh_retired returncode=%s',previous.process.poll())
             # Other accepted readers may still own the HTTP client. Retire it at
             # shutdown rather than closing their shared resource underneath them.
-            self.retired.append(self.connections.pop(profile_id))
+            self.retired.append(self.connections.pop(key))
             if not self.borrowed.get(previous):
                 self.retired.remove(previous);await run_blocking(previous.close)
-        if profile_id not in self.connections:
-            if profile_id not in self.opening:
+        if key not in self.connections:
+            if key not in self.opening:
                 async def open_one():
                     async def dispose(value):await run_blocking(value.close)
                     value=await acquire_blocking(ConnectedProfile.open,dispose,profile)
-                    self.connections[profile_id]=value
+                    self.connections[key]=value
                     return value
-                self.opening[profile_id]=asyncio.create_task(open_one())
-            flight=self.opening[profile_id]
+                self.opening[key]=asyncio.create_task(open_one())
+            flight=self.opening[key]
             try:await await_settled(flight)
             finally:
-                if flight.done() and self.opening.get(profile_id) is flight:del self.opening[profile_id]
-        value=self.connections[profile_id]
+                if flight.done() and self.opening.get(key) is flight:del self.opening[key]
+        value=self.connections[key]
         self.borrowed[value]=self.borrowed.get(value,0)+1
         try:await run_blocking(value.check,expected_instance)
         except BaseException:

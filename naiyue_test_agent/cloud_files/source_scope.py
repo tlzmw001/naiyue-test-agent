@@ -3,7 +3,7 @@ import logging
 import os
 from pathlib import Path
 import stat
-from naiyue_test_agent.contracts.cloud_inputs import input_path,Selection
+from naiyue_test_agent.contracts.cloud_inputs import input_path,file_path,Selection
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from naiyue_test_agent.storage.files import check_store_directory
 from .git_source import SourceGit
@@ -34,29 +34,35 @@ def capabilities(root,limits):
     return dict(git=True,git_error=None)
 
 
-def _entries(root,path,limits):
+def _entries(root,path,limits,*,ordinary=False):
     rows=[];ignored=0
-    with pinned_parent(root,(Path(path)/'scope-entry').as_posix()) as (fd,directory,_), os.scandir(fd if fd is not None else directory) as listing:
+    with pinned_parent(root,(Path(path)/'scope-entry').as_posix(),ordinary=ordinary) as (fd,directory,_), os.scandir(fd if fd is not None else directory) as listing:
         for number,item in enumerate(listing):
             if number>=limits.max_discovery_entries:raise CloudError('input_discovery_budget')
             relative=(Path(path)/item.name).as_posix()
-            try:input_path(relative)
-            except ValueError:ignored+=1;continue
+            try:(file_path if ordinary else input_path)(relative)
+            except ValueError:
+                if ordinary:rows.append(dict(path=relative,name=item.name,kind='unsupported',size=0))
+                else:ignored+=1
+                continue
             info=lstat(fd,directory,item.name)
             kind='directory' if stat.S_ISDIR(info.st_mode) else 'file' if stat.S_ISREG(info.st_mode) else 'symlink' if stat.S_ISLNK(info.st_mode) else None
-            if kind is None:ignored+=1;continue
+            if ordinary and getattr(info,'st_file_attributes',0)&0x400:kind='symlink'
+            if kind is None:
+                if ordinary:kind='unsupported'
+                else:ignored+=1;continue
             rows.append(dict(path=relative,name=item.name,kind=kind,size=info.st_size if kind!='directory' else 0))
     return sorted(rows,key=lambda r:(r['kind']!='directory',r['name'])),ignored
 
 
-def tree(root,limits,*,path='',offset=0,limit=200):
+def tree(root,limits,*,path='',offset=0,limit=200,ordinary=False):
     root=Path(root).absolute()
-    if path:path=paths_normalized([path])[0]
-    try:rows,ignored=_entries(root,path,limits)
+    if path:path=file_path(path) if ordinary else paths_normalized([path])[0]
+    try:rows,ignored=_entries(root,path,limits,ordinary=ordinary)
     except OSError as error:
         logger.warning('cloud_source_tree_failed error_type=%s',type(error).__name__)
         raise CloudError('input_source_unavailable') from None
-    return dict(**capabilities(root,limits),path=path,entries=rows[offset:offset+limit],
+    return dict(**(dict(git=False,git_error=None) if ordinary else capabilities(root,limits)),path=path,entries=rows[offset:offset+limit],
         next_offset=offset+limit if offset+limit<len(rows) else None,excluded_count=ignored,limits=limits.model_dump())
 
 
@@ -100,3 +106,28 @@ def preview_scope(root,limits,**kwargs):
         raise CloudError('input_source_unavailable') from None
     if total>limits.max_input_bytes:issues.append(dict(code='input_byte_budget',actual=total,limit=limits.max_input_bytes))
     return dict(file_count=len(selected.paths),total_bytes=total,issues=issues[:100],limits=limits.model_dump())
+
+
+def select_files(root,limits,paths):
+    """Expand exactly selected ordinary files/directories; no ignore policies."""
+    root=Path(root).absolute();check_store_directory(root)
+    selected=set();pending=list(dict.fromkeys(file_path(p) for p in paths));seen=0
+    try:
+        while pending:
+            path=pending.pop();seen+=1
+            if seen>limits.max_discovery_entries:raise CloudError('input_discovery_budget')
+            with pinned_parent(root,path,ordinary=True) as (fd,directory,name):info=lstat(fd,directory,name)
+            if getattr(info,'st_file_attributes',0)&0x400:raise CloudError('attachment_regular_files_only')
+            if stat.S_ISDIR(info.st_mode):
+                rows,_=_entries(root,path,limits,ordinary=True)
+                if any(row['kind'] not in ('file','directory') for row in rows):raise CloudError('attachment_regular_files_only')
+                pending.extend(row['path'] for row in rows)
+            elif stat.S_ISREG(info.st_mode):
+                selected.add(path)
+                if len(selected)>limits.max_files:raise CloudError('input_file_count_budget')
+            else:raise CloudError('attachment_regular_files_only')
+    except OSError as error:
+        logger.warning('cloud_attachment_selection_failed error_type=%s',type(error).__name__)
+        raise CloudError('input_source_unavailable') from None
+    if not selected:raise CloudError('input_selection_required',422)
+    return Selection(schema=3,paths=sorted(selected))

@@ -34,7 +34,7 @@ class TaskBootstrap:
             if (existing is None and task.runner_boot_id is not None
                     and task.model_profile_id!=(profile.profile_id if profile else None)):
                 raise CloudError('model_profile_changed')
-        issued=r.credentials.issue(task_id,scopes=('identity:read','events:append','control:connect','artifacts:write')
+        issued=r.credentials.issue(task_id,scopes=('identity:read','events:append','control:connect','artifacts:write','inputs:read')
             + (('models:invoke',) if profile else ()))
         with r.gates.hold(task_id):
             task=r.available_task(task_id)
@@ -68,7 +68,7 @@ class TaskBootstrap:
         with r.gates.hold(task_id):
             task=r.credentials.authorize(old,task_id,'control:connect')
             frozen=RunnerBootstrap.model_validate(read_json(self.directory(task)/'bootstrap.json'))
-        issued=r.credentials.issue(task_id,scopes=('identity:read','events:append','control:connect','artifacts:write')
+        issued=r.credentials.issue(task_id,scopes=('identity:read','events:append','control:connect','artifacts:write','inputs:read')
             + (('models:invoke',) if frozen.models else ()))
         with r.gates.hold(task_id):
             task=r.credentials.authorize(old,task_id,'control:connect')

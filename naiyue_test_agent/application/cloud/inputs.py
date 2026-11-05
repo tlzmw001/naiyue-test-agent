@@ -26,9 +26,9 @@ class CloudInputs:
         self.root=runtime.settings.data_dir;self.limits=runtime.settings.input_limits;self.busy=set()
         self.jobs=set();self.uploads=set();self.downloads=set();self.closing=False
 
-    async def open_download(self,ident):
+    async def open_download(self,ident,*,task_id=None):
         from .input_download import open_download
-        return await open_download(self,ident)
+        return await open_download(self,ident,task_id=task_id)
 
     async def perform(self,ident,action):
         if self.closing:raise CloudError('cloud_closing',503)
@@ -200,10 +200,11 @@ class CloudInputs:
             if old.request_digest!=fingerprint:raise CloudError('command_id_conflict')
             return old
         self.runtime.resources.ensure()
-        try:self.get_input(request.input_id)
-        except CloudError as error:
-            if error.code=='input_not_found':raise CloudError('input_not_ready') from None
-            raise
+        if request.input_id is not None:
+            try:self.get_input(request.input_id)
+            except CloudError as error:
+                if error.code=='input_not_found':raise CloudError('input_not_ready') from None
+                raise
         template=self.runtime.settings.templates.get(request.template_id)
         if template is None:raise CloudError('template_unavailable')
         if request.network_id is not None and request.network_id not in self.runtime.settings.networks:

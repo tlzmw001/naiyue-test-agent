@@ -144,3 +144,14 @@ it('handles Escape in the result dialog without closing its surrounding sidebar'
     expect(sidebarClosed).not.toHaveBeenCalled(); expect(screen.queryByRole('dialog')).toBeNull(); expect(document.activeElement).toBe(open);
   } finally { window.removeEventListener('keydown', sidebar); }
 });
+
+it('renders an output-only task without reading or formatting a Git baseline', async () => {
+  const cloud = api();
+  vi.mocked(cloud.result).mockResolvedValue({ plan: { result_id: 'R', source_run_id: 'run12345', input_id: null }, phase: 'available', revision: 2, error_code: null, boundary: { outcome: 'completed' }, bundle: { captured_at: 1, files: [] } });
+  render(<CloudResults api={cloud} sid="S" binding={binding} active changed={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
+  fireEvent.click(await screen.findByRole('button', { name: /运行 run12345/ }));
+  expect(await screen.findByText('结果 R')).toBeTruthy();
+  expect(cloud.changes).not.toHaveBeenCalled();
+  expect(screen.queryByText(/代码变化/)).toBeNull();
+});

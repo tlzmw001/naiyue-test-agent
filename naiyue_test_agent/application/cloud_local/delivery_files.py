@@ -6,9 +6,8 @@ import shutil
 import tempfile
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from naiyue_test_agent.contracts.cloud_inputs import InputEntry,distinct_paths
-from naiyue_test_agent.contracts.cloud_results import OutputManifest
 from naiyue_test_agent.contracts.cloud_delivery import DeliveryChange
-from naiyue_test_agent.cloud_files.delivery_verify import VerifiedOutput
+from naiyue_test_agent.cloud_files.delivery_verify import VerifiedOutput,FileListing
 from naiyue_test_agent.cloud_files.delivery_apply import apply_changes,export_tree
 from naiyue_test_agent.cloud_files.delivery_review import review,approved
 
@@ -18,7 +17,7 @@ def deliver_files(deliveries,domain,record,receive,work,execute):
     root=deliveries._check_root(domain,meta);limits=deliveries.manager.settings.receive_limits
     reports=[f for f in receive.files if f.role=='artifact']
     if not reports or any(f.role!='artifact' for f in receive.files):raise CloudError('cloud_receive_selection_invalid',422)
-    distinct_paths([f.artifact.relative_name for f in reports])
+    distinct_paths([f.artifact.relative_name for f in reports],ordinary=True)
     required=sum(f.artifact.size for f in reports)*3
     if domain.materials.files.used_bytes(limits)+required>limits.max_cache_bytes:raise CloudError('cloud_delivery_capacity',413)
     with tempfile.TemporaryDirectory(prefix='nyt-reports-') as temporary:
@@ -36,9 +35,7 @@ def deliver_files(deliveries,domain,record,receive,work,execute):
             target.chmod(0o644)
             entries.append(InputEntry(path=a.relative_name,type='file',size=a.size,sha256=a.sha256,mode=0o644))
         entries.sort(key=lambda e:e.path)
-        manifest=OutputManifest(input_id=receive.input_id,policy_sha256=receive.input_package.manifest.selection['policy_sha256'],
-            entries=[e.model_dump() for e in entries])
-        verified=VerifiedOutput(directory,None,manifest,[dict(path=e.path,old=None,new=e) for e in entries],None)
+        verified=VerifiedOutput(directory,None,FileListing(entries),[dict(path=e.path,old=None,new=e) for e in entries],None,ordinary=True)
         changes=[DeliveryChange(path=e.path,operation='add') for e in entries]
         if not execute:
             if record.name:

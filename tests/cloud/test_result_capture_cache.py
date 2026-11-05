@@ -134,8 +134,8 @@ def test_source_change_between_hash_and_changed_file_freeze_is_rejected(tmp_path
     freeze_result(root,inputs,spools/'first',plan,boundary,1,ResultLimits(),limits)
     (root/'change.bin').write_bytes(b'new content')
     original=result_scan.read_content
-    def change_after_hash(source,path,expected,lim,*,target=None):
-        value=original(source,path,expected,lim,target=target)
+    def change_after_hash(source,path,expected,lim,*,target=None,ordinary=False):
+        value=original(source,path,expected,lim,target=target,ordinary=ordinary)
         if path=='change.bin' and target is None:(root/path).write_bytes(b'other bytes')
         return value
     monkeypatch.setattr(result_scan,'read_content',change_after_hash)

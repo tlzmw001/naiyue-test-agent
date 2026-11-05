@@ -5,7 +5,7 @@ import { cloudError } from './cloudPresentation';
 import { backgroundTaskPollMs } from './uiSettings';
 
 type Intent = { command_id: string; artifact_ids: string[]; include_code: boolean };
-export function useCloudReceive(api: CloudApi, sid: string, bid: string, rid: string, inputId: string) {
+export function useCloudReceive(api: CloudApi, sid: string, bid: string, rid: string, inputId: string | null) {
   const key = `naiyue.cloud-materials.${api.projectId}.${sid}.${bid}.${rid}`;
   const alive = useRef(true); const flight = useRef(false); const controller = useRef<AbortController | undefined>(undefined);
   const [record, setRecord] = useState<ReceiveRecord>(); const [busy, setBusy] = useState(false); const [error, setError] = useState('');

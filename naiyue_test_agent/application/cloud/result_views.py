@@ -28,6 +28,7 @@ def changes(service,task_id,result_id,offset,limit):
     with r.task_io.hold(task_id):
         record=service.get(task_id,result_id)
         if record.phase!='available' or record.bundle is None:raise CloudError('result_not_available',404)
+        if record.plan.input_id is None:return dict(changes=[],total=0,next_offset=None)
         manifest_slot=next(f.artifact for f in record.bundle.files if f.role=='manifest')
         _,data=read_bytes(service,task_id,result_id,manifest_slot.artifact_id,r.settings.result_limits.max_metadata_bytes+1)
         if len(data)>r.settings.result_limits.max_metadata_bytes:raise CloudError('result_metadata_budget')

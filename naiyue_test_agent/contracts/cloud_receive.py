@@ -12,10 +12,10 @@ from .cloud_inputs import InputPackage
 class ReceiveLimits(CloudRecord):
     max_results:int=Field(default=128,gt=0,le=4096)
     max_active:int=Field(default=4,gt=0,le=32)
-    max_cache_bytes:int=Field(default=512*1024*1024,gt=0)
-    max_file_bytes:int=Field(default=64*1024*1024,gt=0)
-    max_files:int=Field(default=32,ge=2,le=128)
-    segment_bytes:int=Field(default=4*1024*1024,gt=0,le=64*1024*1024)
+    max_cache_bytes:int=Field(default=128*1024**3,gt=0)
+    max_file_bytes:int=Field(default=20*1024**3,gt=0)
+    max_files:int=Field(default=1000,ge=2,le=1002)
+    segment_bytes:int=Field(default=8*1024*1024,gt=0,le=64*1024*1024)
     transfer_timeout_seconds:float=Field(default=120,gt=0,le=3600)
     max_read_bytes:int=Field(default=65536,gt=0,le=1024*1024)
     max_read_lines:int=Field(default=2000,gt=0,le=10000)
@@ -25,7 +25,7 @@ class ReceiveRequest(CloudRecord):
     command_id:UUIDText
     local_session_id:SessionId
     include_code:bool=True
-    artifact_ids:list[UUIDText]=Field(default_factory=list,max_length=126)
+    artifact_ids:list[UUIDText]=Field(default_factory=list,max_length=1000)
 
     @model_validator(mode='after')
     def unique(self):
@@ -51,11 +51,11 @@ class ReceiveRecord(CloudRecord):
     local_project_id:UUIDText
     local_session_id:SessionId
     binding_id:UUIDText
-    source_handle:UUIDText
+    source_handle:UUIDText|None
     instance_id:UUIDText
     task_id:TaskId
     result_id:UUIDText
-    input_id:ContentId
+    input_id:ContentId|None
     phase:Literal['reserved','downloading','verifying','available','failed','unknown']
     files:list[ReceiveFile]=Field(default_factory=list)
     result:ResultRecord|None=None
@@ -72,7 +72,7 @@ class MaterialRef(CloudRecord):
     receive_id:UUIDText
     task_id:TaskId
     result_id:UUIDText
-    input_id:ContentId
+    input_id:ContentId|None
     title:str=Field(min_length=1,max_length=1024)
     role:Literal['manifest','patch','artifact']
     size:int=Field(ge=0)
@@ -88,4 +88,4 @@ class AnalysisDraft(CloudRecord):
     local_session_id:SessionId
     receive_id:UUIDText
     text:str=Field(min_length=1,max_length=4096)
-    material_refs:list[MaterialRef]=Field(min_length=1,max_length=128)
+    material_refs:list[MaterialRef]=Field(min_length=1,max_length=1000)

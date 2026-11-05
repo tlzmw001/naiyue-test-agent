@@ -10,7 +10,8 @@ from naiyue_test_agent.storage.files import open_store_readonly,open_store_file,
 from .paths import identity
 
 
-def upload(client,directory):
+def upload(client,directory,*,upload_id=None,check_cancel=None):
+    if check_cancel is not None:check_cancel()
     with os.fdopen(open_store_readonly(directory/'receipt.json'),'rb') as stream:
         captured=CapturedInput.model_validate_json(stream.read(8193))
     if captured.directory!=directory:raise CloudError('input_capture_identity')
@@ -22,7 +23,7 @@ def upload(client,directory):
         return {'input_id':captured.input_id,'uploaded_bytes':0,'cache_hit':True}
     facts=dict(purpose='input',input_id=captured.input_id,size=captured.size,
         archive_sha256=captured.archive_sha256,codec=captured.codec)
-    journal=directory/('upload-'+client.settings.instance_id+'.json')
+    journal=directory/('upload-'+client.settings.instance_id+('-'+upload_id if upload_id else '')+'.json')
     if journal.exists() or journal.is_symlink():
         with os.fdopen(open_store_readonly(journal),'rb') as stream:value=json.loads(stream.read(8193))
         value=CreateTransfer.model_validate(value).model_dump()
@@ -49,6 +50,7 @@ def upload(client,directory):
             while chunk:=stream.read(client.settings.io_bytes):sha.update(chunk)
             if stream.tell()!=captured.size or sha.hexdigest()!=captured.archive_sha256:raise CloudError('input_capture_changed')
             while transfer.offset<captured.size:
+                if check_cancel is not None:check_cancel()
                 start=transfer.offset;length=min(transfer.chunk_bytes,captured.size-start);stream.seek(start)
                 remaining=length;part=hashlib.sha256()
                 while remaining:
@@ -59,6 +61,7 @@ def upload(client,directory):
                 def chunks():
                     remaining=length
                     while remaining:
+                        if check_cancel is not None:check_cancel()
                         chunk=stream.read(min(remaining,client.settings.io_bytes))
                         if not chunk:raise CloudError('input_capture_changed')
                         remaining-=len(chunk);yield chunk

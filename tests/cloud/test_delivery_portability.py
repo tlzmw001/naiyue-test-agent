@@ -14,7 +14,7 @@ from test_result_receive import receiving
 @pytest.mark.parametrize('path',['report:notes','CON','sub/LPT¹.txt'])
 def test_all_delivery_modes_reject_nonportable_output_before_materializing(tmp_path,path):
     entry=OutputEntry(path=path,type='file',size=0,sha256='a'*64,mode=0o644)
-    verified=SimpleNamespace(output_manifest=SimpleNamespace(entries=[entry]),changes=[dict(path=path,old=None,new=entry)])
+    verified=SimpleNamespace(ordinary=False,output_manifest=SimpleNamespace(entries=[entry]),changes=[dict(path=path,old=None,new=entry)])
     assert preflight(tmp_path,verified)==[path]
     assert branch_preflight(verified,tmp_path/'unused-receipt',tmp_path,'new-code',None)==[path]
     with pytest.raises(CloudError,match='cloud_delivery_path_unsupported'):

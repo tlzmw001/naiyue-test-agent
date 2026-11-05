@@ -1,7 +1,9 @@
 """Raw-byte delivery with persistent progress and conflict-preserving continuation."""
 import hashlib
 from pathlib import Path
+from dataclasses import replace
 from types import SimpleNamespace
+from naiyue_test_agent.cloud_files.delivery_verify import VerifiedOutput,FileListing
 import pytest
 from naiyue_test_agent.contracts.cloud_inputs import InputEntry
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
@@ -16,7 +18,7 @@ def output(tmp_path):
     tree=tmp_path/'verified';tree.mkdir();(tree/'a').write_bytes(b'new\r\n');(tree/'b').write_bytes(b'\0binary')
     changes=[dict(path='a',old=entry('a',b'old\r\n'),new=entry('a',b'new\r\n')),
         dict(path='b',old=None,new=entry('b',b'\0binary'))]
-    verified=SimpleNamespace(directory=tree,changes=changes,output_manifest=SimpleNamespace(entries=[c['new'] for c in changes]))
+    verified=VerifiedOutput(tree,None,FileListing([c['new'] for c in changes]),changes,None)
     return root,verified
 
 
@@ -56,7 +58,7 @@ def test_apply_partial_then_concurrent_edit_is_not_overwritten(tmp_path):
 def test_parent_link_swap_and_export_existing_directory_are_rejected(tmp_path):
     from naiyue_test_agent.cloud_files.delivery_apply import preflight,export_tree
     root,verified=output(tmp_path);outside=tmp_path/'outside';outside.mkdir();(root/'linked').symlink_to(outside,target_is_directory=True)
-    verified.changes=[dict(path='linked/pwn',old=None,new=entry('linked/pwn',b'x'))]
+    verified=replace(verified,changes=[dict(path='linked/pwn',old=None,new=entry('linked/pwn',b'x'))])
     assert preflight(root,verified)==['linked/pwn']
     (root/'destination').mkdir()
     with pytest.raises(CloudError):export_tree(root,'destination',verified,tmp_path/'export-journal')

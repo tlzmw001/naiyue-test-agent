@@ -135,22 +135,43 @@ class CloudArtifacts:
                             with self.runtime.gates.hold(task_id):
                                 previous=self.repository.get(task_id,artifact_id)
                                 authorized=self._authorize(raw,task_id,artifact_id,previous.artifact)
-                                upload_headers(request,previous.artifact.size,previous.artifact.sha256)
+                                segmented=request.headers.get('x-upload-segmented')=='1'
+                                offset=0;size=previous.artifact.size;sha=previous.artifact.sha256
+                                if segmented:
+                                    from pydantic import TypeAdapter
+                                    from naiyue_test_agent.contracts.cloud_tasks import ContentId
+                                    try:
+                                        offset=int(request.headers.get('upload-offset',''));size=int(request.headers.get('content-length',''))
+                                        sha=TypeAdapter(ContentId).validate_python(request.headers.get('x-content-sha256'))
+                                    except (ValueError,TypeError):raise CloudError('transfer_headers_mismatch') from None
+                                    if (offset<0 or size<0 or size>self.limits.segment_bytes or offset+size>previous.artifact.size
+                                            or size==0 and previous.artifact.size!=0):raise CloudError('transfer_headers_mismatch')
+                                upload_headers(request,size,sha,offset=offset)
                                 if previous.state not in ('pending','uploading','uploaded'):raise CloudError('artifact_not_writable')
                                 replay=previous.state=='uploaded'
+                                if segmented:
+                                    replay=any((part.offset,part.size,part.sha256)==(offset,size,sha) for part in previous.segments)
+                                    if not replay and (offset!=previous.offset or previous.state=='uploaded'):raise CloudError('transfer_offset_conflict')
+                                    if not replay and len(previous.segments)>=4096:raise CloudError('artifact_segment_budget')
+                                elif previous.offset:raise CloudError('transfer_offset_conflict')
                                 if not replay:self.runtime.resources.ensure(additional_bytes=previous.artifact.size)
                                 value=previous if replay else self.repository.save(previous,previous.model_copy(update={'state':'uploading'}))
-                                return value,replay,authorized.generation
-                        transfer,replay,generation=await cloud_work(self.runtime,begin,drain_cancel=True)
+                                return value,replay,authorized.generation,offset,size,sha,segmented
+                        transfer,replay,generation,offset,size,sha,segmented=await cloud_work(self.runtime,begin,drain_cancel=True)
                         path=await cloud_work(self.runtime,lambda:self.store.staging(transfer.artifact)/'bytes',drain_cancel=True)
-                        await receive_bytes(self.runtime,request,path=path,size=transfer.artifact.size,sha256=transfer.artifact.sha256,
-                            io_bytes=self.limits.io_bytes,replay=replay)
+                        await receive_bytes(self.runtime,request,path=path,size=size,sha256=sha,
+                            io_bytes=self.limits.io_bytes,replay=replay,offset=offset)
                         def finish():
                             with self.runtime.gates.hold(task_id):
                                 task=self.runtime.registry.get_task(task_id)
                                 if (task.generation!=generation or task.artifact_operation_id!=transfer.artifact.command_id
                                         or task.lifecycle in ('deleted','deleting')):raise CloudError('artifact_identity_conflict')
-                                return transfer if replay else self.repository.save(transfer,transfer.model_copy(update={'state':'uploaded'}))
+                                if replay:return transfer
+                                changes={'state':'uploaded' if offset+size==transfer.artifact.size else 'uploading'}
+                                if segmented:
+                                    from naiyue_test_agent.contracts.cloud_artifacts import ArtifactSegment
+                                    changes.update(offset=offset+size,segments=[*transfer.segments,ArtifactSegment(offset=offset,size=size,sha256=sha)])
+                                return self.repository.save(transfer,transfer.model_copy(update=changes))
                         return await cloud_work(self.runtime,finish,drain_cancel=True)
             except TimeoutError:raise CloudError('transfer_timeout',408) from None
             finally:self.uploads.remove(current)

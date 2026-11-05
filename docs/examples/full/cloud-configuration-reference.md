@@ -1,5 +1,28 @@
 # 全量配置参考与逐项说明（当前开发分支）
 
+## 143AQ统一连接配置（开发分支，未发布）
+
+当前文件上传/下载操作、预算和Windows验收见[文件与连接指南](../../cloud-files-and-connections.md)。新任务不需要Git基线，创建后在对话加号添加文件；本轮output作为普通产物下载。
+
+Windows新增 `connections.example.json`，复制到私有目录为connections.json。它取代新配置中的profiles.json、connection.json和remote-update.json；旧格式仍仅在读取边界支持，执行主链相同。不要把示例占位凭证或实例ID用于真实环境。
+
+| 字段 | 说明 |
+| --- | --- |
+| `connections` | 全部开发机条目，1–64条。同文件每个connection_id和每个profile_id唯一。 |
+| `connection_id` | 开发机连接身份。同条目profiles共享一个正向SSH及HTTP客户端，避免本机端口冲突。 |
+| `connection` | 原connection.json内容，endpoint是Windows本机转发地址，owner_authority是Linux原Owner地址；instance_id沿用现有实例。凭证仅在私有文件中填写。 |
+| `ssh` | 原profile中的tunnel、ssh_host、ssh_executable、connect_timeout_seconds、keepalive_seconds/count、reconnect_seconds、poll_seconds、shutdown_seconds。字段含义与下方原profile表相同；tunnel省略仍为external，应用管理连接须填owned。 |
+| `profiles` | 每条含profile_id、network_id、template_ids、default_template。同连接多个network分别一项，只需配置自己获分配的ID；无反向入口可省略network_id。保留已有profile_id。 |
+| `remote_update` | 可选；需要从Windows触发更新才填写remote_python、remote_settings（Linux绝对路径）和timeout_seconds；SSH别名复用ssh，不再重复写。 |
+
+本机settings的 `[cloud_tasks]` 使用 `connections_file` 绝对路径。不能同时填写旧 `profiles_file`。升级时可填写 `network_state_file` 指向原profiles.networks.json；不指定则使用connections文件同目录的connections.networks.json。程序不自动移动/覆盖旧状态。
+
+CLI统一用 `--settings C:/private/connections.json --profile development`，例如 `nyt cloud project list`；多profile不指定会明确拒绝，单profile可省略。CLI复用本机服务已建立的SSH连接，运行CLI前保持本机服务或外部隧道在线。
+
+远程更新例：`nyt cloud release discover --remote C:/private/connections.json --profile development`。Linux的update.json只保留cloud_settings_file，不再需要connection_file；从cloud.json读取地址和凭证，从已存在且ready的cloud-root.json读取实例ID，不初始化新实例。旧版显式connection_file仍可读取，若同时配置cloud_settings_file，地址/实例必须一致；旧凭证字段仍以显式文件为准。
+
+下面profiles/connection/remote-update独立文件说明供0.5.8迁移核对，不是新版本要求额外准备的文件。
+
 本目录已包含143AO通用服务入口，尚未随新版本发布；已安装0.5.8请使用[对应标签的配置例子](https://github.com/tlzmw001/naiyue-test-agent/tree/v0.5.8/docs/examples/full)。通用入口迁移见末节及服务隧道手册。
 
 这些是示意配置，不是可直接连接公司环境的部署材料。所有端口、bridge、路径、UID/GID、实例ID与凭证都须替换。JSON严格不支持注释；本说明与JSON并列提供，不能往JSON加 _comment 字段。真实配置请放仓库外私有目录；Linux文件0600、目录0700，Windows限制ACL。无真实密钥。
@@ -9,9 +32,9 @@
 1. 本地settings.full.toml是从旧0.5.0参考迁移的完整场景示例，保留原逐项注释；其中Auto、代理、MCP和子Agent为示例选择，并非默认启用。先按需删去这些场景设置，再配置cloud_tasks。
 2. 开发机准备已有OpenSandbox、非root身份、bridge；cloud.example.json复制为私有cloud.json。templates为空不是通过预检的模板，按 ../../cloud-s091-windows-and-linux.md 产生真实回执再登记。
 3. 开发机models.json沿 ../models.example.json；新版本不改变模型配置格式，不把key放到Runner。
-4. 将实际Owner身份填入connection；Windows的profiles.connection_file改为C:/private/connection.json，settings中的profiles_file也须是本机绝对路径。开发机更新器使用另一份开发机路径的connection。
+4. 将实际Owner身份填入connections.json对应条目的connection；Windows的settings只设置connections_file绝对路径。Linux更新器从cloud_settings_file引用的cloud.json读取连接，不再要求另一份connection文件。
 5. external模式自行开SSH转发；owned添加ssh_host并预先配置SSH认证，不并行占用同一端口。
-6. 只有需要更新/备份时才配置update和remote-update；普通启动不要求这两个文件。Coordinator程序先独立升级，Runner更新不会重启Coordinator。维护标记跨重启保留，验证后显式leave。
+6. 只有需要更新/备份时才配置Linux update.json，并在Windows connections条目中填写可选remote_update；无需单独remote-update.json。Coordinator程序先独立升级，Runner更新不会重启Coordinator。维护标记跨重启保留，验证后显式leave。
 
 旧settings删除整个sandbox（含git/ssh/network/lifecycle/profiles）、delivery和mcp.allow_sandbox。旧会话不兼容，旧数据不自动迁移。S11 R4到0.5.7没有新增必填字段。JSON里省略的可选值：profiles.ssh_host默认null（owned必填）、update.maintenance_receipt默认null（需时填真实预检回执路径）、download_proxy默认null（需时填私有代理，不提交）；resource_limits.max_logical_bytes默认null（未设逻辑字节上限）。
 
@@ -44,7 +67,7 @@
 | `instance_id` (instance_id) | 现有Coordinator实例UUID；从真实实例获得，不随意重生成。 |
 | `timeout_seconds` (timeout_seconds) | 请求或远程调用超时秒数，不代表后台操作停止。 |
 | `io_bytes` (io_bytes) | 每次IO块字节数。 |
-| `max_response_bytes` (max_response_bytes) | 单次 Owner JSON 响应上限，默认 64 MiB；容纳输入包的 manifest + selection（各自最多 16 MiB）及 JSON 封装开销。旧连接文件显式写入的 4 MiB 不会被新默认覆盖，升级时需同步。它不改变模型转发或 WebSocket 帧预算。 |
+| `max_response_bytes` (max_response_bytes) | 单次Owner JSON响应上限，默认64MiB；manifest/selection预算已提高到32MiB，极端长路径清单可显式提高为128MiB。旧显式4MiB不会自动修改。此项不改变模型转发或WebSocket帧预算；文件正文走分段流。 |
 
 ## cloud.example.json
 
@@ -275,3 +298,13 @@
 Windows继续使用profiles中的network_id，不增加全局网络列表。页面和本机后端只允许本机配置的profile；管理员须给不同Windows分配不重复network_id。这是配置级可见性，不是Owner凭证级租户隔离。一个人可配置多个profile；owned控制连接须使用不同本机endpoint端口。
 
 每个ports键为稳定入口ID（1–64字符，字母数字开头，其余允许点、下划线、横线），值为1024–65535整数；端口不能重复，空集合或超过64项拒绝。页面可填写入口name（可选，最多80字符）和address；支持http/https/grpc/grpcs/tcp/tls，tcp/tls必须显式端口，不接受路径、凭证、查询参数。旧http_port/grpc_port会读取为ports.http/ports.grpc，新旧字段不能混用。完整升级步骤见[服务隧道](../../cloud-service-tunnels.md#8-从058升级通用入口)。
+
+## 143AQ预算与新字段（取代上面的0.5.8历史预算）
+
+- Windows `cloud_tasks.input_limits` 和 Linux `input_limits`：单文件/每批20GiB、归档22GiB、100000文件、元数据32MiB、缓存64GiB。`max_downloads=64`限制共享不可变输入并发读，`min_free_bytes=268435456`为Runner展开文件后的保留空间。
+- Linux `artifact_limits`：单文件20GiB、缓存64GiB、最多4096份、`segment_bytes=8388608`；`transfer_timeout_seconds`按一段上传计算，不限制整个大文件总时长。
+- 两端 `result_limits`：每轮output总量20GiB、最多1000产物，新任务不扫描工作区，不生成patch；旧patch/Git字段只服务已有基线结果及仍使用的CLI接口。
+- Windows `receive_limits`：单文件20GiB、1000文件、8MiB分段、缓存/交付保守预算128GiB；目标目录不是缓存目录。`transfer_timeout_seconds=120`按一段下载计。
+- Windows `cloud_tasks.queue_poll_seconds=1.0`：单条待发送消息核对间隔。`download_link_seconds=300`：本机单文件浏览器授权寿命；`max_download_links=64`：有效链接数量上限。全部设置均有边界校验。
+- Linux新Runner模板预检会生成 `file_transfer_version=1`。不要编辑旧回执的数字；必须真实构建并预检同源模板。旧0.5.8模板不接受新空任务。
+- workflow验收JSON的connection_file现在可指向同一connections.json，多profile时增加profile_id；仍兼容原单connection文件。此脚本原有基线回归与新附件场景是不同验收，不把旧基线探针当作附件端到端证明。

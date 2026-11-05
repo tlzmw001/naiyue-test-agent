@@ -312,10 +312,18 @@ max_concurrency = 1 # 每宿主到此远程服务允许并发借用的调用数�
 Authorization = "MY_MCP_AUTHORIZATION" # 值为父环境变量名，变量内容须含服务要求的完整认证头值；此处不写美元花括号或Token。
 
 # 0.5.7移除整个 sandbox/delivery 和 MCP allow_sandbox；旧会话不兼容。
-# 云端凭证放独立私有JSON，见 cloud-configuration-reference.md；不配置profiles_file只运行本机。
+# 云端连接统一放私有 connections.json，见 cloud-configuration-reference.md；不配置则只运行本机。
 
 [cloud_tasks]
-# profiles_file = "/absolute/private/profiles.json" # 云端配置簿绝对路径；Windows使用 C:/private/profiles.json；取消注释并替换后启用。
+# connections_file = "/absolute/private/connections.json" # 所有开发机连接共用一份文件；Windows用 C:/private/connections.json。
+# network_state_file = "/absolute/private/profiles.networks.json" # 可选。0.5.8升级时指向原网络状态文件，保留页面填写的目标与启停意图。
+# 未指定network_state_file时，状态位于connections文件同目录，名为connections.networks.json；由程序维护，不手改。
+# profiles_file为0.5.8读取兼容字段，不能与connections_file同时配置；新配置无需profiles.json或connection.json。
+# connections.json的connection写地址/凭证/实例，ssh写连接保活，profiles只写模板和本人network_id。
+# profile_id应沿用旧值，已有任务通过它查找连接。切换配置前停止本机服务，修改后重启。
+queue_poll_seconds = 1.0 # 单条待发送消息检查间隔；只在上一轮正常结束、结果保存且附件就绪后发送。
+download_link_seconds = 300 # 浏览器单文件下载链接与HttpOnly Cookie有效秒数，服务重启失效；已开始的流不因到期截断。
+max_download_links = 64 # 本机同时有效下载链接数量，防止无界占用。
 max_preparations = 4 # 同时准备输入/任务的本机额度，满额拒绝。
 max_commands = 16 # 本机同时提交普通命令的额度。
 max_controls = 4 # 停止/控制命令独立额度。
@@ -326,14 +334,16 @@ stream_seconds = 1800.0 # 单次观察流最长秒数，到期需重连同步。
 stream_send_timeout_seconds = 15.0 # 单次流发送超时，秒。
 
 [cloud_tasks.input_limits]
-max_file_bytes = 2147483648 # 单个文件字节上限。
-max_input_bytes = 2147483648 # 一次输入所有文件合计字节上限。
-max_archive_bytes = 2684354560 # 输入归档字节上限。
-max_files = 32768 # 一次输入完整清单中的文件数上限；选择目录会展开计数。
-max_metadata_bytes = 16777216 # 结构化元数据字节预算。
+max_file_bytes = 21474836480 # 单个文件字节上限。
+max_input_bytes = 21474836480 # 一次输入所有文件合计字节上限。
+max_archive_bytes = 23622320128 # 输入归档字节上限。
+max_files = 100000 # 一次输入完整清单中的文件数上限；选择目录会展开计数。
+max_metadata_bytes = 33554432 # 结构化元数据字节预算。
 io_bytes = 262144 # 每次IO块字节数。
+min_free_bytes = 268435456 # Runner解包前要求在展开后的文件之外保留256MiB空间。
+max_downloads = 64 # Coordinator共享不可变输入包的并发下载上限。
 max_pending = 8 # 待处理输入数量上限。
-max_cache_bytes = 17179869184 # 受管缓存字节预算，不是用户保存目录配额。
+max_cache_bytes = 68719476736 # 受管缓存字节预算，不是用户保存目录配额。
 gzip_level = 3 # gzip压缩等级0..9，越高越耗CPU。
 upload_timeout_seconds = 1800.0 # 上传请求超时秒数。
 chunk_bytes = 8388608 # 上传块字节数。
@@ -347,36 +357,37 @@ max_discovery_entries = 500000 # 输入发现最多遍历的目录项数量。
 [cloud_tasks.receive_limits]
 max_results = 128 # 保留结果/接收记录数量预算。
 max_active = 4 # 并行材料接收数量。
-max_cache_bytes = 536870912 # 受管缓存字节预算，不是用户保存目录配额。
-max_file_bytes = 67108864 # 单个文件字节上限。
-max_files = 32 # 清单文件数量上限；接收指材料文件数，结果指变更文件数。
-segment_bytes = 4194304 # 接收分段字节数。
-transfer_timeout_seconds = 120.0 # 材料传输超时秒数。
+max_cache_bytes = 137438953472 # 受管缓存字节预算，不是用户保存目录配额。
+max_file_bytes = 21474836480 # 单个文件字节上限。
+max_files = 1000 # 清单文件数量上限；接收指材料文件数，结果指变更文件数。
+segment_bytes = 8388608 # 接收分段字节数。
+transfer_timeout_seconds = 120 # 每段材料下载超时秒数；总文件传输不受120秒整体限制。
 max_read_bytes = 65536 # 主Agent读取材料每次最大字节数。
 max_read_lines = 2000 # 主Agent读取材料每次最大行数。
 
 [cloud_tasks.result_limits]
-output_directory = ".nyt-output" # 报告产物目录，相对项目根；源码变更另外归入代码取回。
-max_patch_bytes = 67108864 # 代码补丁字节预算。
-max_metadata_bytes = 16777216 # 结构化元数据字节预算。
-max_files = 65536 # 结果工作区完整清单文件数上限，包含未修改的输入文件。
-max_artifacts = 30 # 一次结果最多报告产物数量。
-max_result_bytes = 3221225472 # 结果工作区总量3GiB，包含未修改输入；不是允许下载3GiB报告。
+output_directory = ".nyt-output" # 本轮交付目录，相对项目根；仅此目录的普通文件/压缩包供下载，不生成源码差集。
+max_patch_bytes = 67108864 # 旧结果读取路径的补丁预算，新空任务不产生补丁。
+max_metadata_bytes = 33554432 # 结构化元数据字节预算。
+max_files = 100000 # 历史工作区清单上限；新产物数由max_artifacts控制。
+max_artifacts = 1000 # 单轮普通文件/压缩包产物数量上限。
+max_result_bytes = 21474836480 # 本轮output文件总量20GiB；与云端artifact_limits单文件限制共同生效。
 max_results = 64 # 保留结果/接收记录数量预算。
 result_lease_seconds = 300 # 结果读取租约有效秒数。
 max_result_leases = 128 # 同时结果读取租约数量上限。
 git_executable = "git" # Git可执行文件路径或PATH中的名称。
 git_timeout_seconds = 30 # 单次Git子进程超时秒数。
 
-# 143AN 输入与隧道说明（0.5.8生效）：
-# cloud_tasks.input_limits.max_input_bytes 是未压缩总量2GiB，不是最终压缩包大小；
-# 单文件也允许2GiB，归档2.5GiB，缓存16GiB给冻结副本/压缩包及历史输入留空间。
-# 实际磁盘峰值包括用户源码、输入缓存、云端输入、工作区和Git结果对象，并非仅2GiB。
-# 本机和Coordinator的input_limits需要一起调整；Runner从Coordinator取得限制。
-# result_limits.max_result_bytes包括未改动的整个工作区，默认3GiB；代码补丁仍64MiB。
-# 服务隧道不在这里填目标地址：在profiles JSON配置network_id/ssh_host/reconnect_seconds，
-# Coordinator JSON配置networks的bind_host/http_port/grpc_port，再到云端任务页“服务连接”编辑目标。
-# 页面状态独立保存在profiles同目录的*.networks.json，关闭网页保持，停止本机服务关闭SSH。
-# 示例与步骤：docs/cloud-service-tunnels.md、docs/examples/full/profiles.example.json。
-
-# connection.json的max_response_bytes默认64MiB，容纳大项目完整元数据响应；旧显式4MiB需要同步修改。
+# 143AQ 文件与隧道说明（待发布，本地实现不能替代Windows和公司网络实测）：
+# 新任务只准备环境；进入云端对话后点击加号，选择项目内任意普通文件/目录。
+# 包含隐藏文件、.env、Git目录和压缩包；只传用户明确选择的范围，拒绝链接/特殊文件。
+# input_limits允许单文件/单批未压缩20GiB、归档22GiB；缓存64GiB包括冻结副本和归档。
+# Coordinator的input_limits和artifact_limits需同步调整；Runner从Coordinator接收限制。
+# 浏览器关闭不会取消上传/排队；本机服务停止期间不工作。崩溃后中断上传需点击“重试上传”，按确认偏移续传。
+# 每任务仅一条待发送消息；上一轮停止/失败/未知时暂停，取消后可重新编辑。
+# 主Agent分析只读取选中产物，文本/材料加入主会话输入框后仍由用户点击发送。
+# 服务隧道目标在页面“服务连接”编辑；connections.json管理SSH、profile/network_id和模板。
+# Linux cloud.json管理networks.entries；每个network可有多个任意TCP用途端口。
+# 页面状态自动写入*.networks.json；不属于用户需要维护的额外连接配置。
+# connections.json内connection.max_response_bytes默认64MiB，旧显式4MiB应按文件清单大小同步调整。
+# 文件保存目录不是缓存预算；同名异内容仍需明确覆盖确认。

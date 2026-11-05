@@ -318,3 +318,50 @@ def test_report_only_receive_omits_code_transport(tmp_path):
             assert {fid for fid,_ in requests}=={files[2]['artifact']['artifact_id']}
         finally:await manager.close();remote.http.close();store.close()
     asyncio.run(run())
+
+
+def test_empty_task_receives_selected_files_and_prepares_analysis_without_source(tmp_path):
+    from test_manual_task_preparation import setup
+    async def scenario():
+        manager,domain,store,project,sid,remote=setup(tmp_path)
+        try:
+            created=await manager.submit(domain,'project',dict(command_id=str(uuid4()),local_session_id=sid,profile_id='work',template_id='test'))
+            await manager.drain();binding=store.cloud_tasks.binding(created['binding']['binding_id'],sid)
+            rid=str(uuid4());fid=str(uuid4());data=b'plain output';run=uuid4().hex
+            plan=dict(result_id=rid,source_command_id=str(uuid4()),source_run_id=run,task_id=binding['task_id'],project_id=binding['cloud_project_id'],input_id=None,source_generation=1,output_directory='.nyt-output')
+            boundary=dict(kind='run',epoch=str(uuid4()),seq=1,outcome='completed')
+            artifact=dict(command_id=rid,artifact_id=fid,relative_name='.env',task_id=binding['task_id'],project_id=binding['cloud_project_id'],input_id=None,generation=1,captured_at=1.0,size=len(data),sha256=hashlib.sha256(data).hexdigest())
+            result=dict(plan=plan,phase='available',boundary=boundary,bundle=dict(plan=plan,boundary=boundary,generation=1,captured_at=1.0,files=[dict(role='artifact',artifact=artifact)]))
+            original=remote.request
+            def request(method,path,**kw):
+                assert not path.startswith('/inputs/')
+                if path.endswith('/lease') or path.endswith('/release'):return dict(result_id=rid,lease_id=kw['json']['lease_id'],expires_at=__import__('time').time()+300,released=path.endswith('/release'))
+                if path.endswith('/results/'+rid):return result
+                return original(method,path,**kw)
+            remote.request=request
+            def forward(req):
+                start,end=map(int,req.headers['range'][6:].split('-'))
+                return httpx.Response(206,content=data[start:end+1],headers={'content-length':str(end-start+1),'content-range':f'bytes {start}-{end}/{len(data)}','etag':'"'+artifact['sha256']+'"'})
+            remote.http=httpx.Client(transport=httpx.MockTransport(forward),base_url='http://127.0.0.1:32101')
+            rec=await manager.receives.submit(domain,binding['binding_id'],rid,dict(command_id=str(uuid4()),local_session_id=sid,include_code=False,artifact_ids=[fid]))
+            await manager.drain();rec=await manager.receives.read(domain,rec.receive_id,sid)
+            assert rec.phase=='available' and rec.input_package is None and rec.source_handle is None
+            draft=await manager.receives.analysis(domain,rec.receive_id,sid)
+            assert len(draft.material_refs)==1 and draft.material_refs[0].input_id is None
+            assert domain.materials.files.blob(artifact['sha256']).read_bytes()==data
+            from naiyue_test_agent.application.projects.locations import directory_facts,directory_identity
+            domain.authority=object()  # Files delivery authorizes the observed destination, not an execution root.
+            destination=tmp_path/'saved';destination.mkdir();(destination/'.env').write_text('local')
+            command=str(uuid4())
+            await manager.deliveries.prepare(domain,dict(command_id=command,local_session_id=sid,receive_id=rec.receive_id,
+                action='files',destination_handle=domain.project_id,destination_path=str(destination),
+                expected_directory=directory_identity(destination,directory_facts(destination))))
+            await manager.drain();delivery=await manager.deliveries.read(domain,command,sid)
+            assert delivery.phase=='prepared' and delivery.conflicts==['.env']
+            with pytest.raises(CloudError):await manager.deliveries.execute(domain,command,sid)
+            await manager.deliveries.execute(domain,command,sid,force=True);await manager.drain()
+            assert (await manager.deliveries.read(domain,command,sid)).phase=='completed'
+            assert (destination/'.env').read_bytes()==data
+
+        finally:await manager.close();store.close()
+    asyncio.run(scenario())

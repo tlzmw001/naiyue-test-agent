@@ -257,7 +257,8 @@ BackgroundProcessManager.submit/foreground 的 `_validate_binding` 在取得 B1 
 
 - 沿用CT1 → registry DB短事务；next_run只生成superseded候选，旧结果更新与新root/result预留在同一事务提交，失败不留下部分替代。begin与该事务共用CT1；没有新增线程锁。
 - GC先借TI1/TaskIO计数，CT1内短取TI1.condition读取计数后立即释放condition，再做租约查询/删除意图DB事务；CT1阻止此间新TaskIO准入。禁止持condition跨DB/磁盘IO。只有自身一个IO预留且无活动租约/最新保护时可标deleting；释放CT1后清固定文件，再回CT1/CAS同时核销artifact/lease与保留索引。完整task删除封口并等待TI1排空，不能与GC并删。
-- ArtifactDownload.open持有TI1预留至FD物理关闭，读worker仍在原async lock中排空；close失败且FD未关闭时保留downloads登记/未完成状态，后续aclose可重试。open失败、Range失败和取消均走同一关闭路径。InputDownload没有task预留，仍用原input busy生命周期。
+- ArtifactDownload.open持有TI1预留至FD物理关闭，读worker仍在原async lock中排空；close失败且FD未关闭时保留downloads登记/未完成状态，后续aclose可重试。open失败、Range失败和取消均走同一关闭路径。Owner InputDownload没有task预留，仍用原input busy生命周期；任务附件下载在open先登记TI1，lease带task_id，删除同任务时与产物lease一起close/drain，防止鉴权与开流间删除绕过。
+- Spec143AQ附件登记沿CT1→registry DB，在写事务核对任务/模板/包并更新attachments；消息准入沿原CT1→registry事务冻结引用。附件下载先短门鉴权并核对已受理command，开FD之前TI1重核任务可用；不在门内跨await。
 - 本机接收用服务端owner短租约，元数据前申请、每个Range前续租、传输producer退出释放；不持本机publication/DB锁跨HTTP。TTL负责进程失联收敛，本机已完成材料不永久钉住云端副本；任务删除同事务移除自身租约。
 
 ### Spec143AE 验收修复与目录保存
@@ -279,3 +280,10 @@ BackgroundProcessManager.submit/foreground 的 `_validate_binding` 在取得 B1 
 ## Spec143AP 项目移除
 
 `ScopeServices.remove_project`复用G1覆盖本次关闭与移除，顺序仍是G1 → G4 → 项目资源/P1/F3/DB；不获取另一项目的G1/G4。`_removing`是owner-loop短预留集合，G1内登记、finally释放，get/_open在返回缓存或新建前拒绝同scope请求；无新线程锁。已有CLI并发打开若在close/remove间进入，HostManager.remove原G4检查拒绝，不越过存储所有权。显式reconcile只续接已持久remove，沿P1/F3和原deletion_guard复核；不新增DB→G1/G4反向路径。
+
+### Spec143AQ shared attachment readers
+
+- InputDownload leases share `busy[input:<id>]` on the owner loop. Each lease releases its membership once, after its pinned FD physically closes; only the last reader clears the shared marker. A repeated close must never clear a later writer's marker. max_downloads is checked before awaiting open.
+- Attachment install pins project and batch parents, then publishes from private staging on the same workspace mount. Only verified isolated restore may rebind installed directory identities; normal retry keeps strict identity checks.
+- RunnerRuns uses the existing CT1/resource disk lock order for attachment metadata and conservative space admission; it holds no DB transaction or mutex across await.
+- Queued intents use the existing local SQLite CAS and command journal. Workers resume only a proven unsent original command; sent/unknown commands are reconciled. Browser download tickets use a bounded owner-loop TTL map and borrow existing domain/connection/download leases per GET.

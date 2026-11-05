@@ -11,6 +11,7 @@ from naiyue_test_agent.storage.files import open_store_file,sync_store_directory
 from naiyue_test_agent.contracts.cloud_sources import SourcePlan
 from naiyue_test_agent.contracts.cloud_tasks import CloudError,UUIDText
 from naiyue_test_agent.cloud_files.configuration import read_settings
+from naiyue_test_agent.cloud_files.connections import read_connection
 
 
 def execute(args):
@@ -41,7 +42,7 @@ def execute(args):
         else:result=capture(args.source,selection,args.output,limits,codec=args.codec,source_receipt=receipt)
         return result.model_dump(mode='json')
     if args.input_command=='transfer':TypeAdapter(UUIDText).validate_python(args.transfer_id)
-    client=CloudClient(read_settings(args.settings,CloudConnection))
+    client=CloudClient(read_connection(args.settings,getattr(args,'profile',None)))
     try:
         if args.input_command=='transfer':return client.request('GET' if args.transfer_action=='show' else 'DELETE','/transfers/'+args.transfer_id)
         return client.upload(args.directory)

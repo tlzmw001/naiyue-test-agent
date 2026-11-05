@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import hashlib,logging,os,shutil,tempfile
 from pathlib import Path
 from pydantic import ValidationError
-from naiyue_test_agent.contracts.cloud_inputs import InputManifest,Selection,distinct_paths
+from naiyue_test_agent.contracts.cloud_inputs import InputEntry,InputManifest,Selection,distinct_paths
 from naiyue_test_agent.contracts.cloud_results import OutputManifest
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from naiyue_test_agent.application.cloud.ownership import private_directory
@@ -17,12 +17,18 @@ logger=logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
+class FileListing:
+    entries:list[InputEntry]
+
+
+@dataclass(frozen=True)
 class VerifiedOutput:
     directory:Path
-    input_manifest:InputManifest
-    output_manifest:OutputManifest
+    input_manifest:InputManifest|None
+    output_manifest:OutputManifest|FileListing
     changes:list[dict]
-    selection:Selection
+    selection:Selection|None
+    ordinary:bool=False
 
 
 def _copy_patch(source,target,limit):

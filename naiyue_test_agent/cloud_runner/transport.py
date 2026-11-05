@@ -32,6 +32,7 @@ class RunnerClient:
         b=self.bootstrap
         return Hello(kind='hello',phase=self.kernel.phase,capabilities=['artifacts:capture','control:stop','control:recover','background:tasks','observations:send'],recovery=self.kernel.recovery_info,
             model_ids=list(self.kernel.catalog.model_ids) if self.kernel.catalog else [],
+            **({'file_transfer_version':1} if b.input_id is None else {}),
             **{k:getattr(b,k) for k in ('task_id','project_id','input_id','instance_id','generation','boot_id','state_epoch','release_id')})
 
     async def send(self,value):
@@ -76,6 +77,7 @@ class RunnerClient:
                 await self.send(dict(kind='control_state',command_id=frame.command_id,status=result['status'] if result else 'not_found'))
             elif frame.kind=='renewed':
                 self.bootstrap=self.bootstrap.model_copy(update={'token':frame.token,'expires_at':frame.expires_at})
+                self.kernel.bootstrap=self.bootstrap
                 if self.kernel.remote_models:self.kernel.remote_models.renew(frame.token,frame.expires_at)
             elif frame.kind=='artifact_capture':
                 if self.bootstrap.expires_at<=time.time():raise CloudError('runner_credential_expired')

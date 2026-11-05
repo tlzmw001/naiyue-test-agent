@@ -1,8 +1,8 @@
 import type { MessageRow, ToolState, AgentEventSource, ThinkingOptions } from './types';
 
-export interface CloudProfile { network_id?: string | null; profile_id: string; template_ids: string[]; default_template: string; connection: string; tunnel: string }
+export interface CloudProfile { connection_id?: string; network_id?: string | null; profile_id: string; template_ids: string[]; default_template: string; connection: string; tunnel: string }
 export interface CloudTask {
-  task_id: string; project_id: string; input_id: string; generation: number; revision: number; lifecycle: string;
+  task_id: string; project_id: string; input_id: string | null; generation: number; revision: number; lifecycle: string;
   title?: string; created_at?: number; updated_at?: number;
   runner_phase: string; environment_phase: string; sandbox_id: string | null; active_run_id: string | null;
   last_run_id: string | null; last_error_code: string | null; last_quiescent_at: number | null;
@@ -13,14 +13,14 @@ export interface CloudTask {
 export interface CloudBinding {
   created_at?: number;
   binding_id: string; local_session_id: string; profile_id: string; instance_id: string;
-  task_id: string | null; input_id: string; revision: number; preparation: string; retained: boolean;
+  task_id: string | null; input_id: string | null; revision: number; preparation: string; retained: boolean;
   create_command_id: string; cloud: CloudTask | null;
 }
 export interface CloudOperation {
   command_id: string; binding_id: string; kind: string; phase: string; error_code?: string | null; run_id?: string | null;
   steps: Record<string, { receipt?: { status: string; error_code?: string | null } }>;
 }
-export interface CloudDraft { draft_revision: number; text: string; model_id: string | null; thinking_level: string }
+export interface CloudDraft { attachment_ids?: string[]; draft_revision: number; text: string; model_id: string | null; thinking_level: string }
 export interface CloudModels { default_model_id: string | null; model_ids: string[]; thinking_options: Record<string, ThinkingOptions> }
 export interface CloudDetail { message_id: string; thread_id: string; revision: number }
 export type CloudMessage = Omit<MessageRow, 'detail'> & { detail?: CloudDetail; thread_id?: string; run_id?: string; source?: AgentEventSource | null };
@@ -41,3 +41,8 @@ export interface DeletePreview {
 }
 export interface CloudDetailPage extends CloudDetail { field: string; text: string; offset: number; next_offset: number | null; body_sha256: string }
 export interface CloudUsage { recorded_calls: number; metrics?: Record<string, { known_sum: string | null; reported_calls: number; unknown_calls: number }>; capture: { capture_incomplete: boolean } }
+
+export interface CloudAttachment { attachment_id: string; binding_id: string; display_name: string; input_id: string | null; size: number; phase: string; error_code: string | null; created_at: number }
+export interface CloudQueuedMessage { command_id: string; message_command_id: string; phase: string; error_code: string | null; request: { text: string; attachment_ids?: string[] }; dispatch_request?: object }
+
+export interface CloudFileTree { path: string; entries: { path: string; name: string; kind: string; size: number }[]; next_offset: number | null }

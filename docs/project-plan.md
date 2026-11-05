@@ -1,5 +1,7 @@
 # Naiyue Test Agent：项目设计记录
 
+2026-11-05 [Spec143AQ](specs/143aq-cloud-files-and-connections.md) S1–S7完成本机实现与验证：新云端任务无需Git/上传基线，对话中添加文件，默认20GiB，附件随提示词提交；运行中可登记一条下一轮消息，失败/停止/未知暂停。仅output产物下载、指定目录保存和主Agent分析，不生成新任务diff。Windows单一connections配置，Linux更新器引用cloud.json派生连接。6540后端、633前端及构建通过；[配置与原机验收](cloud-files-and-connections.md)。未提交/发布/部署，Windows与公司真实链路仍待验。以下为历史时点。
+
 2026-11-04 143AO/AP分别本地提交`8ab7925`/`1473afd`，未push或发布。新提出的云端文件上传/下载收缩方案处于讨论阶段，20GiB、目录选择及产物下载边界尚待确认，不作为已实现能力。
 
 2026-11-04 [143AP](specs/143ap-project-removal-ui.md)项目列表移除已接线：只删除登记，源码/历史保留；缺失目录、空闲自动关闭、活动及云关联保护、原操作恢复、草稿与当前scope切换均覆盖。6478后端/627前端、构建和Mac新环境安装通过；尚未提交发布，Windows原机验收待交付。

@@ -7,6 +7,7 @@ from naiyue_test_agent.contracts.cloud_tasks import CloudError,TemplateReceipt
 from naiyue_test_agent.cloud_files.configuration import read_settings
 from naiyue_test_agent.cloud_files.client import CloudClient,CloudConnection
 from .settings import UpdateSettings
+from .connection import update_connection
 from naiyue_test_agent.contracts.cloud_versions import OWNER_PROTOCOL,RUNNER_PROTOCOL,STATE_SCHEMA
 from .source import load_release,artifact_file,ensure_capacity
 from .store import UpdateStore,directory,write,read
@@ -50,7 +51,7 @@ def execute(settings,ident,*,client=None):
                 from .operations import execute_operation
                 return execute_operation(settings,ident,store)
             with store.lock('build'):
-                if owned:client=CloudClient(read_settings(settings.connection_file,CloudConnection))
+                if owned:client=CloudClient(update_connection(settings))
                 if value.get('task_id'):
                     from .upgrade import execute_upgrade
                     return execute_upgrade(settings,ident,store,client)

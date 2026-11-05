@@ -130,6 +130,8 @@ def create_cloud_apps(runtime):
 
     from .input_routes import register_input_routes
     register_input_routes(owner, runtime)
+    from .attachment_routes import register as register_attachments
+    register_attachments(owner,task,runtime)
     from .runner_routes import register_runner_routes
     register_runner_routes(owner,task,runtime)
     from .artifact_routes import register_artifact_routes

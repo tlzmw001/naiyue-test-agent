@@ -16,14 +16,19 @@ class ServiceNetworks:
     def __init__(self,manager):
         self.manager=manager;self.state={};self.processes={};self.status={};self.lock=asyncio.Lock()
         self.stopping=asyncio.Event();self.worker=None
-        path=manager.settings.profiles_file
-        self.path=path.with_name(path.stem+'.networks.json') if path else None
+        path=manager.settings.connections_file or manager.settings.profiles_file
+        self.path=manager.settings.network_state_file or (path.with_name(path.stem+'.networks.json') if path else None)
         if self.path:
-            try:self.state=read_json(self.path,1024*1024)
-            except FileNotFoundError:pass
+            for source in [path,*(profile.connection_file for profile in manager.book.profiles)]:
+                if source is not None and str(source.resolve()).casefold()==str(self.path.resolve()).casefold():
+                    raise CloudError('cloud_network_state_config_conflict',422)
+            try:raw=read_json(self.path,1024*1024)
+            except FileNotFoundError:raw={'schema':1,'profiles':{}}
             # Schema and identities are checked again against current profiles before use.
-            if self.state.get('schema',1)!=1:raise CloudError('cloud_network_state_invalid')
-            self.state=self.state.get('profiles',{})
+            if (not isinstance(raw,dict) or set(raw)!={'schema','profiles'} or type(raw['schema']) is not int
+                    or raw['schema']!=1 or not isinstance(raw['profiles'],dict)):
+                raise CloudError('cloud_network_state_invalid')
+            self.state=raw['profiles']
             for local in self.state.values():
                 local['endpoints']=NetworkEndpoints.model_validate(local['endpoints']).model_dump()
 

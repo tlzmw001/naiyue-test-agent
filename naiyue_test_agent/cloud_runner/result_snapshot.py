@@ -37,6 +37,9 @@ def freeze_result(root,input_directory,destination,plan,boundary,generation,resu
     if os.path.lexists(destination):verify_spool(destination,plan,boundary,result_limits);return destination
     destination.parent.mkdir(mode=0o700,parents=True,exist_ok=True);check_store_directory(destination.parent)
     try:
+        if plan.input_id is None:
+            from .output_snapshot import freeze_outputs
+            return freeze_outputs(root,destination,plan,boundary,generation,result_limits,input_limits)
         with os.fdopen(open_store_readonly(input_directory/'input.json'),'rb') as f:
             package=InputPackage.model_validate_json(f.read(input_limits.max_metadata_bytes*3+1))
         if package.input_id!=plan.input_id:raise CloudError('result_input_mismatch')

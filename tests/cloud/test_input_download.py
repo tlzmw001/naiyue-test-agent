@@ -83,3 +83,66 @@ def test_input_archive_lease_pins_identity_and_close_drains_cancelled_read(tmp_p
             assert closed==[True] and lease.finished.is_set() and not runtime.inputs.downloads
             assert 'input:'+captured.input_id not in runtime.inputs.busy
         asyncio.run(scenario())
+
+
+def test_task_scoped_input_lease_is_closed_by_deletion(tmp_path):
+    from lifecycle_helpers import config,register,Backend
+    from test_task_delete import request
+    from naiyue_test_agent.application.cloud.backend_runtime import open_cloud_backend
+    from naiyue_test_agent.contracts.cloud_tasks import TaskAttachment
+    from uuid import uuid4
+    with open_cloud_runtime(config(tmp_path)) as runtime:
+        async def scenario():
+            async with open_cloud_backend(runtime,backend=Backend()):
+                task=register(runtime);aid=str(uuid4())
+                attachment=TaskAttachment(attachment_id=aid,input_id=task.input_id,display_name='files',size=1)
+                updated=task.model_copy(update={'attachments':{aid:attachment},'revision':task.revision+1})
+                runtime.replace_task(updated,expected_revision=task.revision,expected_generation=task.generation)
+                lease=await runtime.inputs.open_download(task.input_id,task_id=task.task_id)
+                assert runtime.task_io.active=={task.task_id:1}
+                result=await runtime.deletions.command(task.task_id,request(runtime,task.task_id))
+                assert result.status=='succeeded'
+                assert lease.finished.is_set() and lease.stream.closed
+                assert not runtime.task_io.active and not runtime.registry.get_task(task.task_id).attachments
+                with pytest.raises(CloudError,match='task_not_available'):
+                    await runtime.inputs.open_download(task.input_id,task_id=task.task_id)
+                owner=await runtime.inputs.open_download(task.input_id)
+                assert owner.task_id is None
+                await owner.aclose()
+        asyncio.run(scenario())
+
+
+def test_same_immutable_input_supports_parallel_read_leases_and_keeps_writer_exclusion(tmp_path):
+    captured,_,_=package(tmp_path)
+    with open_cloud_runtime(settings(tmp_path)) as runtime:
+        value=uploaded(runtime,captured);runtime.inputs.commit(value.transfer_id)
+        async def scenario():
+            first=await runtime.inputs.open_download(captured.input_id)
+            second=None
+            try:
+                second=await runtime.inputs.open_download(captured.input_id)
+                assert first.stream.fileno()!=second.stream.fileno()
+                await first.aclose()
+                with pytest.raises(CloudError,match='transfer_busy'):
+                    with runtime.inputs.exclusive('input:'+captured.input_id):pass
+                assert b''.join([part async for part in second.chunks()])
+            finally:
+                await first.aclose()
+                if second is not None:await second.aclose()
+            assert 'input:'+captured.input_id not in runtime.inputs.busy
+        asyncio.run(scenario())
+
+
+def test_repeated_reader_close_cannot_release_a_later_writer(tmp_path):
+    captured,_,_=package(tmp_path)
+    with open_cloud_runtime(settings(tmp_path)) as runtime:
+        transfer=uploaded(runtime,captured);runtime.inputs.commit(transfer.transfer_id)
+        async def scenario():
+            lease=await runtime.inputs.open_download(captured.input_id);await lease.aclose()
+            key='input:'+captured.input_id
+            with runtime.inputs.exclusive(key):
+                await asyncio.gather(lease.aclose(),lease.aclose())
+                assert key in runtime.inputs.busy
+                with pytest.raises(CloudError,match='transfer_busy'):await runtime.inputs.open_download(captured.input_id)
+            assert key not in runtime.inputs.busy
+        asyncio.run(scenario())

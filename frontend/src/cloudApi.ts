@@ -1,5 +1,5 @@
 import type { NetworkView, ServiceTarget } from './components/CloudNetworks';
-import type { CloudArchive, CloudBinding, CloudDetail, CloudDetailPage, CloudDraft, CloudModels, CloudOperation, CloudProfile, CloudSnapshot, CloudThread, CloudUsage, DeletePreview } from './cloudTypes';
+import type { CloudFileTree, CloudArchive, CloudAttachment, CloudQueuedMessage, CloudBinding, CloudDetail, CloudDetailPage, CloudDraft, CloudModels, CloudOperation, CloudProfile, CloudSnapshot, CloudThread, CloudUsage, DeletePreview } from './cloudTypes';
 import { decodeSSE, responseBytes } from './sse';
 import type { SseFrame } from './sse';
 
@@ -26,6 +26,7 @@ export class CloudApi {
     return (await this.request(path, { method, body: JSON.stringify(body) })).json();
   }
   private task(bid: string) { return '/cloud-tasks/' + encodeURIComponent(bid); }
+  downloadLink(sid: string, bid: string, rid: string, fid: string) { return this.write<{ url: string; expires_in: number }>(this.task(bid) + '/results/' + encodeURIComponent(rid) + '/files/' + encodeURIComponent(fid) + '/download-link' + this.query(sid), {}); }
   network(profile: string, signal?: AbortSignal) { return this.read<NetworkView>('/cloud-networks/' + encodeURIComponent(profile), signal); }
   changeNetwork(profile: string, slot: string, target: ServiceTarget, expected_revision: number) { return this.write<NetworkView>('/cloud-networks/' + encodeURIComponent(profile) + '/entries/' + encodeURIComponent(slot), { target, expected_revision }); }
   testNetwork(profile: string, target: ServiceTarget) { return this.write<{tcp_reachable: boolean}>('/cloud-networks/' + encodeURIComponent(profile) + '/test', target); }
@@ -33,9 +34,13 @@ export class CloudApi {
   profiles(signal?: AbortSignal) { return this.read<CloudProfile[]>('/cloud-profiles', signal); }
   list(sid: string, offset = 0, signal?: AbortSignal) { return this.read<CloudBinding[]>('/cloud-tasks' + this.query(sid, { offset, limit: 50 }), signal); }
   binding(sid: string, bid: string, signal?: AbortSignal) { return this.read<CloudBinding>(this.task(bid) + this.query(sid), signal); }
-  source(sid: string, value: object) { return this.write<{ source_handle: string; input_id: string; size: number }>('/cloud-sources?local_project_id=' + encodeURIComponent(this.projectId), { local_session_id: sid, ...value }); }
-  sourceTree(sid: string, path = '', offset = 0, signal?: AbortSignal) { return this.read<SourceTree>('/cloud-source-tree' + this.query(sid, { path, offset }), signal); }
-  sourcePreview(sid: string, value: SourceScope) { return this.write<SourcePreview>('/cloud-source-preview?local_project_id=' + encodeURIComponent(this.projectId), { local_session_id: sid, ...value }); }
+  files(sid: string, path = '', offset = 0, signal?: AbortSignal) { return this.read<CloudFileTree>('/cloud-files' + this.query(sid, { path, offset }), signal); }
+  attachments(sid: string, bid: string, signal?: AbortSignal) { return this.read<CloudAttachment[]>(this.task(bid) + '/attachments' + this.query(sid), signal); }
+  uploadFiles(sid: string, bid: string, value: { attachment_id: string; display_name: string; paths: string[] }) { return this.write<CloudAttachment>(this.task(bid) + '/attachments?local_project_id=' + encodeURIComponent(this.projectId), { ...value, local_session_id: sid }); }
+  attachmentAction(sid: string, bid: string, id: string, action: 'cancel' | 'retry') { return this.write<CloudAttachment>(this.task(bid) + '/attachments/' + encodeURIComponent(id) + '/' + action + this.query(sid), {}); }
+  queuedMessage(sid: string, bid: string, signal?: AbortSignal) { return this.read<CloudQueuedMessage | null>(this.task(bid) + '/queued-message' + this.query(sid), signal); }
+  queueMessage(sid: string, bid: string, value: object) { return this.write<CloudQueuedMessage>(this.task(bid) + '/queued-message?local_project_id=' + encodeURIComponent(this.projectId), { ...value, local_session_id: sid }); }
+  cancelQueuedMessage(sid: string, bid: string, id: string) { return this.write<CloudQueuedMessage>(this.task(bid) + '/queued-message/' + encodeURIComponent(id) + '/cancel' + this.query(sid), {}); }
   create(body: object) { return this.write<{ binding: CloudBinding; operation: CloudOperation }>('/cloud-tasks?local_project_id=' + encodeURIComponent(this.projectId), body); }
   snapshot(sid: string, bid: string, thread?: string, signal?: AbortSignal) { return this.read<CloudSnapshot>(this.task(bid) + '/snapshot' + this.query(sid, { thread_id: thread }), signal); }
   history(sid: string, bid: string, thread?: string, cursor?: string, signal?: AbortSignal) { return this.read<CloudArchive>(this.task(bid) + '/history' + this.query(sid, { thread_id: thread, cursor, limit: 30 }), signal); }
@@ -46,7 +51,7 @@ export class CloudApi {
     return this.read<CloudDetailPage>(this.task(bid) + '/history/messages/' + encodeURIComponent(row.message_id) + this.query(sid, { thread_id: row.thread_id, revision: row.revision, field, offset }), signal);
   }
   draft(sid: string, bid: string, signal?: AbortSignal) { return this.read<CloudDraft>(this.task(bid) + '/draft' + this.query(sid), signal); }
-  saveDraft(sid: string, bid: string, draft: { text: string; model_id: string | null; thinking_level?: string; expected_draft_revision: number }) { return this.write<CloudDraft>(this.task(bid) + '/draft' + this.query(sid), draft, 'PUT'); }
+  saveDraft(sid: string, bid: string, draft: { text: string; model_id: string | null; thinking_level?: string; attachment_ids?: string[]; expected_draft_revision: number }) { return this.write<CloudDraft>(this.task(bid) + '/draft' + this.query(sid), draft, 'PUT'); }
   message(sid: string, bid: string, body: object) { return this.write<CloudOperation>(this.task(bid) + '/messages?local_project_id=' + encodeURIComponent(this.projectId), { local_session_id: sid, ...body }); }
   command(sid: string, bid: string, kind: 'control' | 'environment' | 'delete', body: object) { return this.write<CloudOperation>(this.task(bid) + '/' + kind + '?local_project_id=' + encodeURIComponent(this.projectId), { local_session_id: sid, ...body }); }
   operations(sid: string, bid: string, signal?: AbortSignal) { return this.read<CloudOperation[]>(this.task(bid) + '/operations' + this.query(sid), signal); }
@@ -77,4 +82,3 @@ export class CloudApi {
     for await (const frame of decodeSSE(responseBytes(response.body))) { if (signal.aborted) return; accept(frame); }
   }
 }
-import type { SourceScope, SourceTree, SourcePreview } from './components/CloudSourcePicker';

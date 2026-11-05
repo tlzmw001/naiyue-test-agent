@@ -87,15 +87,42 @@ def install_input(package,workspace,state,input_id,limits):
         raise CloudError('input_install_failed') from None
 
 
+def install_empty(workspace,state):
+    workspace,state=map(Path,(workspace,state));project=workspace/'project';marker=state/'input-install.json'
+    try:
+        for directory in (workspace,state):check_store_directory(directory)
+        if os.path.lexists(marker):
+            with os.fdopen(open_store_readonly(marker),'rb') as stream:value=strict_json(stream.read(4097))
+            if set(value)!={'input_id','status'} or value['input_id'] is not None or value['status'] not in ('installing','installed'):
+                raise CloudError('input_install_identity')
+            if value['status']=='installed':
+                check_store_directory(project);return value
+        else:
+            if any(workspace.iterdir()):raise CloudError('input_workspace_not_empty')
+            _write(marker,{'input_id':None,'status':'installing'})
+        project.mkdir(mode=0o700,exist_ok=True);check_store_directory(project)
+        if any(project.iterdir()):raise CloudError('input_workspace_not_empty')
+        sync_store_directory(workspace)
+        value={'input_id':None,'status':'installed'};_write(marker,value);return value
+    except OSError as error:
+        logger.warning('cloud_empty_install_failed error_type=%s',type(error).__name__)
+        raise CloudError('input_install_failed') from None
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--input-id',required=True);parser.add_argument('--limits-json',required=True)
+    mode=parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--input-id');mode.add_argument('--empty',action='store_true')
+    parser.add_argument('--limits-json',required=True)
     args=parser.parse_args()
     try:
         from naiyue_test_agent.contracts.cloud_tasks import ContentId
         from pydantic import TypeAdapter
-        ident=TypeAdapter(ContentId).validate_python(args.input_id)
-        result=install_input(Path('/input'),Path('/workspace'),Path('/state'),ident,InputLimits.model_validate_json(args.limits_json))
+        limits=InputLimits.model_validate_json(args.limits_json)
+        if args.empty:result=install_empty(Path('/workspace'),Path('/state'))
+        else:
+            ident=TypeAdapter(ContentId).validate_python(args.input_id)
+            result=install_input(Path('/input'),Path('/workspace'),Path('/state'),ident,limits)
         print(json.dumps(result));return 0
     except CloudError as error:
         print(json.dumps({'status':'failed','code':error.code}));return 1

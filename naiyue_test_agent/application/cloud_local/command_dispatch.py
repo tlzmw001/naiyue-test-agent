@@ -20,7 +20,8 @@ def validate(raw,op,step):
         if step=='primary' and op['kind']=='message':
             command=RunCommand.model_validate(receipt.result['command'])
             if (command.command_id!=receipt.command_id or command.message!=payload['message']
-                    or command.model_id!=payload['model_id'] or command.thinking_level!=payload.get('thinking_level','model_default')):raise CloudError('cloud_receipt_mismatch',502)
+                    or command.model_id!=payload['model_id'] or command.thinking_level!=payload.get('thinking_level','model_default')
+                    or [v.model_dump() for v in command.attachments]!=op.get('attachments',[])):raise CloudError('cloud_receipt_mismatch',502)
         if step=='primary' and op['kind'] in ('stop','recover'):
             command=RunnerActionCommand.model_validate(receipt.result['command'])
             if any(getattr(command,k)!=payload.get(k) for k in ('command_id','kind','run_id','checkpoint_id')):
@@ -131,7 +132,8 @@ def execute(domain,client,op,settings,*,explicit=False):
             raise CloudError('runner_not_ready')
         if request['model_id'] not in task.runner_model_ids:raise CloudError('model_unavailable')
         body=StartRun(command_id=cid,expected_revision=task.revision,expected_generation=task.generation,
-            message=request['text'],model_id=request['model_id'],thinking_level=request.get('thinking_level','model_default')).model_dump(mode='json')
+            message=request['text'],model_id=request['model_id'],thinking_level=request.get('thinking_level','model_default'),
+            attachment_ids=request.get('attachment_ids',[])).model_dump(mode='json')
         operation='run:start'
     elif kind in ('stop','recover'):
         if kind=='recover':

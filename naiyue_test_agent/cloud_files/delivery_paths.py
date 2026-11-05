@@ -6,7 +6,7 @@ from pathlib import Path,PurePosixPath
 import stat
 import sys
 from uuid import uuid4
-from naiyue_test_agent.contracts.cloud_inputs import input_path
+from naiyue_test_agent.contracts.cloud_inputs import input_path,file_path
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from naiyue_test_agent.storage.files import check_store_directory
 
@@ -18,10 +18,10 @@ def component(name):
     return name
 
 
-def portable_conflicts(paths):
+def portable_conflicts(paths,*,ordinary=False):
     conflicts=[]
     for path in paths:
-        try:input_path(path)
+        try:(file_path if ordinary else input_path)(path)
         except ValueError:conflicts.append(path)
     return conflicts
 
@@ -33,9 +33,9 @@ def directory_identity(path):
 
 
 @contextmanager
-def parent(root,path,*,create=False):
+def parent(root,path,*,create=False,ordinary=False):
     """Keep every ancestor pinned; Windows handles deny directory replacement."""
-    input_path(path);root=Path(root);before=directory_identity(root)
+    (file_path if ordinary else input_path)(path);root=Path(root);before=directory_identity(root)
     with ExitStack() as stack:
         if os.name=='nt':
             from naiyue_test_agent.application.projects.windows_directory import directory_handle,signature,mkdir_relative
@@ -62,7 +62,7 @@ def lstat(fd,directory,name):
     return os.stat(name,dir_fd=fd,follow_symlinks=False) if fd is not None else (directory/name).lstat()
 
 
-def rename_new(source,destination,*,dir_fd=None):
+def rename_new(source,destination,*,dir_fd=None,src_dir_fd=None,dst_dir_fd=None):
     """Atomic exclusive rename, including an existing empty directory."""
     if os.name=='nt':
         kernel=ctypes.WinDLL('kernel32',use_last_error=True)
@@ -71,13 +71,15 @@ def rename_new(source,destination,*,dir_fd=None):
     elif sys.platform=='darwin':
         libc=ctypes.CDLL(None,use_errno=True)
         libc.renameatx_np.argtypes=[ctypes.c_int,ctypes.c_char_p,ctypes.c_int,ctypes.c_char_p,ctypes.c_uint]
-        descriptor=dir_fd if dir_fd is not None else -2
-        if libc.renameatx_np(descriptor,os.fsencode(source),descriptor,os.fsencode(destination),4):raise OSError(ctypes.get_errno(),'exclusive rename failed')
+        source_fd=src_dir_fd if src_dir_fd is not None else dir_fd if dir_fd is not None else -2
+        target_fd=dst_dir_fd if dst_dir_fd is not None else dir_fd if dir_fd is not None else -2
+        if libc.renameatx_np(source_fd,os.fsencode(source),target_fd,os.fsencode(destination),4):raise OSError(ctypes.get_errno(),'exclusive rename failed')
     else:
         libc=ctypes.CDLL(None,use_errno=True)
         libc.renameat2.argtypes=[ctypes.c_int,ctypes.c_char_p,ctypes.c_int,ctypes.c_char_p,ctypes.c_uint]
-        descriptor=dir_fd if dir_fd is not None else -100
-        if libc.renameat2(descriptor,os.fsencode(source),descriptor,os.fsencode(destination),1):raise OSError(ctypes.get_errno(),'exclusive rename failed')
+        source_fd=src_dir_fd if src_dir_fd is not None else dir_fd if dir_fd is not None else -100
+        target_fd=dst_dir_fd if dst_dir_fd is not None else dir_fd if dir_fd is not None else -100
+        if libc.renameat2(source_fd,os.fsencode(source),target_fd,os.fsencode(destination),1):raise OSError(ctypes.get_errno(),'exclusive rename failed')
 
 
 def replace_entry(fd,directory,name,source,entry,*,validate,create):

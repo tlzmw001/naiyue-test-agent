@@ -151,7 +151,7 @@ class OpenSandboxBackend:
         sandbox = await self._request(Sandbox.connect(sandbox_id, connection_config=self.config,
             connect_timeout=timedelta(seconds=self.settings.ready_timeout_seconds)))
         result = await self._request(sandbox.commands.run(shlex.join(['/opt/nyt/runner/bin/python', '-I',
-            '-m', 'naiyue_test_agent.cloud_runner.input_install', '--input-id', input_id,
+            '-m', 'naiyue_test_agent.cloud_runner.input_install', *(['--empty'] if input_id is None else ['--input-id',input_id]),
             '--limits-json', limits.model_dump_json()]), opts=RunCommandOpts(
                 timeout=timedelta(seconds=self.settings.request_timeout_seconds))))
         raw = ''.join(line.text for line in result.logs.stdout)

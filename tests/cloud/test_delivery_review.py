@@ -64,9 +64,9 @@ def test_approval_uses_the_same_platform_mode_equivalence_as_preflight(tmp_path,
     changes=[dict(c) for c in verified.changes]
     changes[0]['old']=changes[0]['old'].model_copy(update={'mode':0o755})
     verified=replace(verified,changes=changes)
-    ordinary=delivery_review.matches
-    def platform_matches(root,path,value):
-        return ordinary(root,path,value.model_copy(update={'mode':0o644}) if value else None)
+    original=delivery_review.matches
+    def platform_matches(root,path,value,*,ordinary=False):
+        return original(root,path,value.model_copy(update={'mode':0o644}) if value else None,ordinary=ordinary)
     monkeypatch.setattr(delivery_review,'matches',platform_matches)
     observed,conflicts=delivery_review.review(root,verified,1024)
     assert conflicts==[]

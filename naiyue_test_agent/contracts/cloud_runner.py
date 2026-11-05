@@ -6,7 +6,7 @@ import json
 
 from pydantic import Field, SecretStr, TypeAdapter, model_validator, field_validator
 
-from .cloud_tasks import CloudRecord, TaskId, UUIDText, ContentId, Label
+from .cloud_tasks import CloudRecord, TaskId, UUIDText, ContentId, Label,TaskAttachment
 from naiyue_test_agent.tools.permission_rules import PermissionRule, PermissionSettings
 from naiyue_test_agent.tools.settings import EnvironmentSettings
 from naiyue_test_agent.tools.subagent import SubAgentSpec, parse_subagent_specs
@@ -43,7 +43,7 @@ class RunnerToolEnvironment(EnvironmentSettings):
 class RunnerBootstrap(CloudRecord):
     task_id: TaskId
     project_id: UUIDText
-    input_id: ContentId
+    input_id: ContentId|None
     instance_id: UUIDText
     generation: int = Field(ge=1)
     boot_id: UUIDText
@@ -85,6 +85,7 @@ class RunnerBootstrap(CloudRecord):
 
 
 class RunCommand(CloudRecord):
+    attachments:list[TaskAttachment]=Field(default_factory=list,max_length=128,exclude_if=lambda v:not v)
     services:dict|None=Field(default=None,exclude_if=lambda value:value is None)
     command_id: UUIDText
     run_id: TaskId
@@ -95,6 +96,7 @@ class RunCommand(CloudRecord):
 
 
 class StartRun(CloudRecord):
+    attachment_ids:list[UUIDText]=Field(default_factory=list,max_length=128,exclude_if=lambda v:not v)
     command_id: UUIDText
     expected_revision: int = Field(ge=1)
     expected_generation: int = Field(ge=1)
@@ -137,10 +139,11 @@ class TaskControl(CloudRecord):
 
 
 class Hello(CloudRecord):
+    file_transfer_version:int=Field(default=0,ge=0,le=1,exclude_if=lambda v:v==0)
     kind: Literal['hello']
     task_id: TaskId
     project_id: UUIDText
-    input_id: ContentId
+    input_id: ContentId|None
     instance_id: UUIDText
     generation: int = Field(ge=1)
     boot_id: UUIDText

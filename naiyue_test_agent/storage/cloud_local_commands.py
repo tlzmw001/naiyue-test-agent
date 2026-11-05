@@ -36,14 +36,14 @@ class LocalTaskCommands:
 
     def _draft(self,binding):
         return dict(binding_id=binding['binding_id'],local_session_id=binding['local_session_id'],
-            draft_revision=binding.get('draft_revision',0),**(dict(text='',model_id=None,thinking_level='model_default')| (binding.get('draft') or {})))
+            draft_revision=binding.get('draft_revision',0),**(dict(text='',model_id=None,thinking_level='model_default',attachment_ids=[])| (binding.get('draft') or {})))
 
     def save_draft(self,bid,sid,request):
         with self.database.transaction(write=True,error_code='cloud_local_save_failed') as c:
             binding=self._binding(c,bid,sid)
             if not binding['retained']:raise CloudError('cloud_task_unavailable')
             if binding.get('draft_revision',0)!=request['expected_draft_revision']:raise CloudError('cloud_draft_conflict')
-            binding['draft']=dict(text=request['text'],model_id=request['model_id'],thinking_level=request.get('thinking_level','model_default'))
+            binding['draft']=dict(text=request['text'],model_id=request['model_id'],thinking_level=request.get('thinking_level','model_default'),attachment_ids=request.get('attachment_ids',[]))
             binding['draft_revision']=request['expected_draft_revision']+1
             c.execute('UPDATE naiyue_cloud_bindings SET body_json=? WHERE binding_id=?',(json.dumps(binding),bid))
             return self._draft(binding)
@@ -64,12 +64,26 @@ class LocalTaskCommands:
             if kind=='message' and request.get('draft_revision') is not None:
                 draft=self._draft(binding)
                 if (draft['draft_revision']!=request['draft_revision'] or draft['text']!=request['text']
-                        or draft['model_id']!=request['model_id'] or draft['thinking_level']!=request.get('thinking_level','model_default')):raise CloudError('cloud_draft_conflict')
+                        or draft['model_id']!=request['model_id'] or draft['thinking_level']!=request.get('thinking_level','model_default')
+                        or draft['attachment_ids']!=request.get('attachment_ids',[])):raise CloudError('cloud_draft_conflict')
+            attachments=[]
+            if kind=='message':
+                ids=request.get('attachment_ids',[])
+                if len(set(ids))!=len(ids):raise CloudError('invalid_request',422)
+                for aid in ids:
+                    item=binding.get('local_attachments',{}).get(aid)
+                    if item is None:raise CloudError('attachment_not_found',404)
+                    if item['phase'] not in ('ready','attached'):raise CloudError('attachment_not_ready')
+                    attachments.append({key:item[key] for key in ('attachment_id','input_id','display_name','size')})
+                for aid in ids:binding['local_attachments'][aid]['phase']='attached'
+                if ids:c.execute('UPDATE naiyue_cloud_bindings SET body_json=? WHERE binding_id=?',(json.dumps(binding),bid))
             now=time.time()
             value=dict(command_id=request['command_id'],binding_id=bid,local_session_id=sid,kind=kind,request=request,
                 request_digest=fingerprint,instance_id=binding['instance_id'],task_id=binding['task_id'],phase='reserved',
                 steps={'primary':{'command_id':request['command_id']}},error_code=None,run_id=None,created_at=now,updated_at=now)
-            if kind=='message':value['steps']['environment']={'command_id':str(uuid4())}
+            if kind=='message':
+                value['steps']['environment']={'command_id':str(uuid4())}
+                if attachments:value['attachments']=attachments
             if kind=='release' and request['acknowledge_unknown']:
                 cloud=binding['cloud']
                 if cloud is None:raise CloudError('cloud_confirmation_changed')
@@ -83,7 +97,7 @@ class LocalTaskCommands:
         rows=c.execute('SELECT body_json FROM naiyue_cloud_operations WHERE binding_id=? AND session_id=?',(bid,sid)).fetchall()
         for row in rows:
             old=json.loads(row[0])
-            if old['kind']=='create' or old['phase'] in TERMINAL:continue
+            if old['kind'] in ('create','queued_message') or old['phase'] in TERMINAL:continue
             pending=old['phase']!='accepted'
             if kind in ('stop','recover'):
                 if old['kind']=='message' and request.get('run_id') is not None:continue
@@ -146,7 +160,7 @@ class LocalTaskCommands:
                 or receipt.get('expected_generation')!=expected['generation']
                 or receipt.get('result',{}).get('phase')!='finished'):
             raise CloudError('cloud_delete_receipt_mismatch',502)
-        binding.update(retained=False,deletion=tombstone,cloud=None,draft=None,
+        binding.update(retained=False,deletion=tombstone,cloud=None,draft=None,local_attachments={},queued_command_id=None,
             draft_revision=binding.get('draft_revision',0)+1,revision=binding['revision']+1)
         c.execute('UPDATE naiyue_cloud_bindings SET retained=0,body_json=? WHERE binding_id=?',
             (json.dumps(binding),binding['binding_id']))
@@ -155,6 +169,7 @@ class LocalTaskCommands:
             old=json.loads(row[0])
             old.update(phase='cancelled' if old['kind']=='create' else 'failed',error_code='cloud_task_deleted',
                 request={'command_id':old['command_id']},steps={},updated_at=time.time())
+            old.pop('dispatch_request',None);old.pop('attachments',None)
             if old['kind']=='create':old.update(cancel_requested=True,may_have_task=False)
             c.execute('UPDATE naiyue_cloud_operations SET body_json=? WHERE command_id=?',(json.dumps(old),old['command_id']))
 
@@ -192,7 +207,8 @@ class LocalTaskCommands:
         if request.get('draft_revision') is None:return
         draft=self._draft(binding)
         if (draft['draft_revision']==request['draft_revision'] and draft['text']==request['text']
-                and draft['model_id']==request['model_id'] and draft['thinking_level']==request.get('thinking_level','model_default')):
+                and draft['model_id']==request['model_id'] and draft['thinking_level']==request.get('thinking_level','model_default')
+                and draft['attachment_ids']==request.get('attachment_ids',[])):
             binding['draft']=None;binding['draft_revision']=draft['draft_revision']+1
             c.execute('UPDATE naiyue_cloud_bindings SET body_json=? WHERE binding_id=?',(json.dumps(binding),binding['binding_id']))
 

@@ -40,6 +40,7 @@ class UpgradeRepository:
             target=meta(db,'release:'+request.release_id+':'+task.template_id)
             if target is None:raise CloudError('release_not_ready')
             if target['release']['state_schema']!=task.state_schema:raise CloudError('upgrade_schema_incompatible')
+            if task.input_id is None and target['template'].get('file_transfer_version',0)!=1:raise CloudError('template_files_update_required')
             source=task.template_snapshot or self.templates.get(task.template_id)
             if source is None:raise CloudError('template_unavailable')
             reservation=dict(command_id=request.command_id,task_id=task_id,generation=task.generation,instance_id=self.instance_id,
@@ -79,6 +80,7 @@ class UpgradeRepository:
             if target is None or digest(target)!=reservation['target_digest']:raise CloudError('release_identity_conflict')
             from naiyue_test_agent.contracts.cloud_tasks import TemplateReceipt
             template=TemplateReceipt.model_validate(target['template']);now=time.time()
+            if task.input_id is None and template.file_transfer_version!=1:raise CloudError('template_files_update_required')
             candidate=CloudTask.model_validate(task.model_dump()|dict(runner_release_id=template.runner_release_id,
                 template_snapshot=template,template_digest=template.fingerprint,environment_operation_id=None,
                 runner_boot_id=None,runner_connection_id=None,runner_phase='unconfigured',runner_model_ids=[],runner_capabilities=[],

@@ -54,6 +54,7 @@ class MountSpec(CloudRecord):
 
 
 class ContainerCheck(CloudRecord):
+    file_transfer_version:int=Field(default=0,ge=0,le=1,exclude_if=lambda v:v==0)
     schema_version: int
     uid: int
     euid: int

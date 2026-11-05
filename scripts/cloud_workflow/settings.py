@@ -7,6 +7,7 @@ from naiyue_test_agent.contracts.cloud_inputs import InputLimits,input_path
 
 class WorkflowSettings(CloudRecord):
     connection_file:Path
+    profile_id:str|None=None
     source:Path
     selection_file:Path
     template_id:str=Field(min_length=1,max_length=128)

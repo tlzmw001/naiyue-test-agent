@@ -3,7 +3,7 @@ import argparse,hashlib,json,logging,os,platform
 from pathlib import Path
 from uuid import uuid4
 from naiyue_test_agent import __version__
-from naiyue_test_agent.cloud_files.client import CloudConnection
+from naiyue_test_agent.cloud_files.connections import read_connection
 from naiyue_test_agent.cloud_files.configuration import read_settings
 from naiyue_test_agent.cloud_files.delivery_review import directory_scope
 from naiyue_test_agent.cloud_install.store import directory,write
@@ -39,7 +39,7 @@ def run(settings,output,*,confirm_runs,resume=False):
             target_2cpu_2gb='operator_must_verify',raw_ssh_throughput='not_measured',ui_acceptance='pending')
         write(output/'report.json',report)
         try:
-            connection=read_settings(settings.connection_file,CloudConnection)
+            connection=read_connection(settings.connection_file,settings.profile_id)
             report.update(scenario(settings,connection,output,journal));report['status']='passed'
         except Exception as error:
             report.update(status='failed',error_type=type(error).__name__)

@@ -13,7 +13,7 @@ class ManualCreate(CloudRecord):
     command_id:UUIDText
     local_session_id:SessionId
     profile_id:str=Field(pattern=r'^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$')
-    source_handle:UUIDText
+    source_handle:UUIDText|None=Field(default=None,exclude_if=lambda v:v is None)
     template_id:Label
 
 
@@ -51,6 +51,7 @@ def checked_task(raw,binding):
 
 
 class ManualMessage(CloudRecord):
+    attachment_ids:list[UUIDText]=Field(default_factory=list,max_length=128,exclude_if=lambda v:not v)
     command_id:UUIDText
     local_session_id:SessionId
     expected_binding_revision:int=Field(ge=1)
@@ -96,6 +97,7 @@ class ManualEnvironment(CloudRecord):
 
 
 class TaskDraft(CloudRecord):
+    attachment_ids:list[UUIDText]=Field(default_factory=list,max_length=128)
     expected_draft_revision:int=Field(ge=0)
     text:str=Field(max_length=262144)
     model_id:Label|None=None

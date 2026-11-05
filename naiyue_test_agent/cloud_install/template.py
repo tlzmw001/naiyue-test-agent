@@ -245,7 +245,7 @@ def _prepare_template(settings, release_id):
         image_id=image, base_image=settings.base_image, wheel_sha256=settings.wheel_sha256,
         kit_version=expected['version'], kit_wheel_sha256=expected['wheel_sha256'], uid=settings.uid,
         gid=settings.gid, backend_id=settings.backend_id, toolchain_sha256=check.toolchain_sha256,
-        preflight_sha256=digest(check.model_dump()))
+        preflight_sha256=digest(check.model_dump()),file_transfer_version=check.file_transfer_version)
     if existing is not None:
         if existing.fingerprint!=receipt.fingerprint:raise CloudError('template_cached_identity_mismatch')
         return existing

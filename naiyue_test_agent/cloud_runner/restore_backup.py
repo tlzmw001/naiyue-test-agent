@@ -9,7 +9,7 @@ from naiyue_test_agent.contracts.cloud_results import ResultPlan
 from naiyue_test_agent.contracts.cloud_events import digest
 from naiyue_test_agent.storage.raw_tree import copy_roots,verify_tree,restore_modes,remove_tree
 from .upgrade_backup import _verified_existing
-from .state import read_json
+from .state import read_json,write_json
 
 
 def restore(source,workspace,state,value,*,max_bytes,max_files):
@@ -24,6 +24,20 @@ def restore(source,workspace,state,value,*,max_bytes,max_files):
     expected={e['path']:{k:v for k,v in e.items() if k!='mode'} for e in manifest['entries']}
     if {e['path']:{k:v for k,v in e.items() if k!='mode'} for e in records}!=expected:raise CloudError('backup_invalid')
     restore_modes({'workspace':workspace,'state':state},manifest['entries'])
+    # Only a fully verified isolated restore may rebind physical directory identities.
+    installs=state/'attachment-installs'
+    if installs.exists():
+        from naiyue_test_agent.cloud_files.delivery_paths import directory_identity
+        from naiyue_test_agent.storage.files import check_store_directory
+        check_store_directory(installs)
+        project=workspace/'project';check_store_directory(project)
+        check_store_directory(project/'.nyt-input')
+        for marker in sorted(installs.iterdir()):
+            if marker.name.endswith('.json.next'):continue
+            item=read_json(marker);aid=TypeAdapter(UUIDText).validate_python(item.get('attachment_id'))
+            if marker.name!=aid+'.json' or item.get('phase')!='installed':raise CloudError('restore_attachment_unconfirmed')
+            target=project/'.nyt-input'/aid;check_store_directory(target)
+            write_json(marker,item|dict(project=directory_identity(project),batch=directory_identity(target)))
     retired=value.get('retired_results',{})
     for ident,sha in retired.items():
         TypeAdapter(UUIDText).validate_python(ident)

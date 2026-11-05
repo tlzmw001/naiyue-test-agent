@@ -82,3 +82,8 @@
 .networkDialog .sourcePicker { gap: 6px; }
 .networkDialog .sourcePicker p { margin: 2px 0; }
 .networkDialog .sourcePicker .actions { margin-top: 8px; }
+
+.attachments { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.attachmentRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: 100%; }
+.attachmentRow label { display: flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
+.attachmentRow input { width: auto; }

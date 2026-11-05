@@ -25,7 +25,8 @@ def transfer(client,files,record,index,repo,limits,deadline,explicit_retry=False
                 record=repo.save(record.model_copy(update={'files':values}))
             offset=item.offset
             while offset<artifact.size:
-                remaining=deadline-time.monotonic()
+                segment_deadline=deadline if deadline is not None else time.monotonic()+limits.transfer_timeout_seconds
+                remaining=segment_deadline-time.monotonic()
                 if remaining<=0:raise CloudError('cloud_receive_timeout',408)
                 renew(client,record)
                 end=min(artifact.size,offset+limits.segment_bytes)-1
@@ -39,7 +40,7 @@ def transfer(client,files,record,index,repo,limits,deadline,explicit_retry=False
                         raise CloudError('cloud_receive_identity_mismatch',502)
                     count=0
                     for chunk in response.iter_bytes(min(limits.segment_bytes,256*1024)):
-                        if time.monotonic()>=deadline:raise CloudError('cloud_receive_timeout',408)
+                        if time.monotonic()>=segment_deadline:raise CloudError('cloud_receive_timeout',408)
                         count+=len(chunk)
                         if count>end-offset+1:raise CloudError('cloud_receive_size_mismatch',502)
                         output.write(chunk)

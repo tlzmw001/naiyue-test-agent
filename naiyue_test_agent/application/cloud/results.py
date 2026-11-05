@@ -16,7 +16,7 @@ class CloudResults:
     def reserve_run(self,task,command_id,run_id):
         self.retention.capacity(task)
         output=self.runtime.settings.result_limits.output_directory
-        if any(e.path==output or e.path.startswith(output+'/') for e in self.runtime.inputs.get_input(task.input_id).manifest.entries):
+        if task.input_id is not None and any(e.path==output or e.path.startswith(output+'/') for e in self.runtime.inputs.get_input(task.input_id).manifest.entries):
             raise CloudError('result_output_conflict')
         plan=ResultPlan(result_id=str(uuid4()),source_command_id=command_id,source_run_id=run_id,task_id=task.task_id,
             project_id=task.project_id,input_id=task.input_id,source_generation=task.generation,
@@ -197,18 +197,21 @@ class CloudResults:
                 if record.phase=='available':return record
                 if record.phase!='verifying' or record.bundle is None or task.artifact_operation_id!=result_id:raise CloudError('result_not_uploaded')
                 for file in record.bundle.files:r.artifacts._get(task_id,file.artifact.artifact_id)
-                manifest_file=next(f.artifact for f in record.bundle.files if f.role=='manifest')
-                transfer=r.artifacts.repository.get(task_id,manifest_file.artifact_id)
-            with r.artifacts.store.open(transfer) as stream:
-                data=stream.read(r.settings.result_limits.max_metadata_bytes+1)
-            if len(data)>r.settings.result_limits.max_metadata_bytes:raise CloudError('result_metadata_budget')
-            manifest=OutputManifest.model_validate(strict_json(data))
-            original=r.inputs.get_input(record.plan.input_id)
-            if (manifest.canonical!=data or manifest.input_id!=record.plan.input_id
-                    or manifest.policy_sha256!=original.manifest.selection['policy_sha256']):raise CloudError('result_manifest_mismatch')
-            if (len(manifest.entries)>r.settings.result_limits.max_files
-                    or sum(e.size for e in manifest.entries)>r.settings.result_limits.max_result_bytes):raise CloudError('result_byte_budget')
-            check_links(manifest.entries)
+                transfer=None
+                if record.plan.input_id is not None:
+                    manifest_file=next(f.artifact for f in record.bundle.files if f.role=='manifest')
+                    transfer=r.artifacts.repository.get(task_id,manifest_file.artifact_id)
+            if transfer is not None:
+                with r.artifacts.store.open(transfer) as stream:
+                    data=stream.read(r.settings.result_limits.max_metadata_bytes+1)
+                if len(data)>r.settings.result_limits.max_metadata_bytes:raise CloudError('result_metadata_budget')
+                manifest=OutputManifest.model_validate(strict_json(data))
+                original=r.inputs.get_input(record.plan.input_id)
+                if (manifest.canonical!=data or manifest.input_id!=record.plan.input_id
+                        or manifest.policy_sha256!=original.manifest.selection['policy_sha256']):raise CloudError('result_manifest_mismatch')
+                if (len(manifest.entries)>r.settings.result_limits.max_files
+                        or sum(e.size for e in manifest.entries)>r.settings.result_limits.max_result_bytes):raise CloudError('result_byte_budget')
+                check_links(manifest.entries)
             with r.gates.hold(task_id):
                 task=r.credentials.authorize(raw,task_id,'artifacts:write');current,state=self._read(task_id,result_id)
                 if state.phase=='available':return state

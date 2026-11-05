@@ -153,3 +153,24 @@ def test_connected_inactive_runner_cannot_start_new_work_after_downgrade(tmp_pat
             assert r.registry.get_task(b.task_id)==task
             ws.send_json(dict(kind='heartbeat',**fence))
             assert ws.receive_json()['kind']=='welcome'
+
+
+@pytest.mark.parametrize('stage',['reserve','commit'])
+def test_empty_task_upgrade_refuses_template_without_files_capability(tmp_path,stage):
+    from naiyue_test_agent.application.cloud.upgrades import reserve_upgrade,commit_upgrade
+    async def scenario():
+        with open_cloud_runtime(config(tmp_path)) as r:
+            async with open_cloud_backend(r,backend=Backend()):
+                old=prepare(r)
+                # Commit also fences a reservation made before this task acquired the new contract.
+                request=dict(command_id=str(uuid4()),release_id='r2',expected_revision=old.revision,expected_generation=old.generation)
+                reserved=await reserve_upgrade(r,old.task_id,request) if stage=='commit' else None
+                current=r.registry.get_task(old.task_id)
+                empty=current.model_copy(update={'input_id':None})
+                r.registry.save_task_cas(empty,expected_revision=current.revision,expected_generation=current.generation,revoked_at=0)
+                with pytest.raises(CloudError,match='template_files_update_required'):
+                    if stage=='reserve':await reserve_upgrade(r,old.task_id,request)
+                    else:commit_upgrade(r,old.task_id,dict(command_id=request['command_id'],task_id=old.task_id,generation=old.generation,
+                        reservation_sha256=digest(reserved['reservation']),manifest_sha256='b'*64,files=2,bytes=30))
+                assert r.registry.get_task(old.task_id)==empty
+    asyncio.run(scenario())

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { CloudApi } from '../cloudApi';
 import type { CloudProfile } from '../cloudTypes';
 import { cloudError } from '../cloudPresentation';
+import { targetAddress, targetForm, type TargetForm } from '../cloudTargetForm';
 import styles from './CloudTasks.module.css';
 export interface ServiceTarget { address: string; enabled: boolean; name?: string }
 export interface NetworkView {
@@ -15,7 +16,7 @@ function own<T>(values: Record<string, T> | undefined, key: string): T | undefin
 }
 export default function CloudNetworks({ api, profiles, close }: { api: CloudApi; profiles: CloudProfile[]; close: () => void }) {
   const available = profiles.filter(p => p.network_id); const [profile, setProfile] = useState(available[0]?.profile_id ?? '');
-  const [value, setValue] = useState<NetworkView>(); const [drafts, setDrafts] = useState<Record<string, ServiceTarget>>({});
+  const [value, setValue] = useState<NetworkView>(); const [drafts, setDrafts] = useState<Record<string, ServiceTarget & TargetForm>>({});
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [message, setMessage] = useState('');
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { dialog.current?.showModal(); }, []);
@@ -25,7 +26,7 @@ export default function CloudNetworks({ api, profiles, close }: { api: CloudApi;
     setValue(undefined); setDrafts({}); setError(''); setMessage('');
     async function read() {
       try { const result = await api.network(profile, abort.signal); if (abort.signal.aborted) return;
-        setValue(result); if (first) { setDrafts(result.state.slots); first = false; }
+        setValue(result); if (first) { setDrafts(Object.fromEntries(Object.entries(result.state.slots).map(([key, target]) => [key, { ...target, ...targetForm(target.address) }]))); first = false; }
       } catch (e) { if (!abort.signal.aborted) { console.warn('cloud_network_read_failed'); setError(cloudError(e)); } }
       finally { if (!abort.signal.aborted) timer = setTimeout(read, 5000); }
     }
@@ -44,8 +45,14 @@ export default function CloudNetworks({ api, profiles, close }: { api: CloudApi;
     finally { setBusy(false); }
   }
   const pending = value?.local.pending;
-  function edit(slot: string, field: 'name' | 'address', text: string) {
-    setDrafts(previous => ({ ...previous, [slot]: { ...(own(previous, slot) ?? { address: '', enabled: true }), enabled: true, [field]: text } }));
+  function edit(slot: string, fields: Partial<ServiceTarget & TargetForm>) {
+    setDrafts(previous => ({ ...previous, [slot]: { ...targetForm(''), ...(own(previous, slot) ?? { enabled: true }), ...fields, enabled: true } }));
+  }
+  function submit(slot: string, draft: ServiceTarget & TargetForm, testing: boolean) {
+    try {
+      const target = { address: targetAddress(draft), enabled: true, ...(draft.name ? { name: draft.name } : {}) };
+      if (testing) void test(target); else void apply(slot, target, value!.state.revision);
+    } catch (failure) { setError((failure as Error).message); }
   }
   return <dialog ref={dialog} className={`${styles.dialog} ${styles.networkDialog}`} aria-labelledby="cloud-network-title" onCancel={e => { e.preventDefault(); close(); }}>
     <h3 id="cloud-network-title">服务连接</h3>
@@ -55,17 +62,19 @@ export default function CloudNetworks({ api, profiles, close }: { api: CloudApi;
       <p>修改一个入口会影响使用它的所有任务。请先停止运行中的测试和后台服务；切换可能中断已有连接。</p>
       {!value && <p role="status">正在读取服务入口</p>}
       {Object.entries(value?.endpoints.ports ?? {}).map(([slot, port]) => {
-        const draft = own(drafts, slot) ?? { address: '', enabled: true }; const title = draft.name || slot; const status = own(value?.status, slot);
-        const target: ServiceTarget = { address: draft.address, enabled: true, ...(draft.name ? { name: draft.name } : {}) };
+        const draft = own(drafts, slot) ?? { ...targetForm(''), enabled: true }; const title = draft.name || slot; const status = own(value?.status, slot);
         return <fieldset key={slot} disabled={busy || !value || !!pending} className={styles.sourcePicker}>
           <legend>{title}</legend>
           <p>容器入口：{value!.endpoints.bind_host}:{port}</p>
           <p role="status">{status === 'connected' ? '隧道已建立' : status === 'connecting' ? '正在连接' : status === 'disconnected' ? '未连接' : status ? cloudError({ code: status }) : '正在读取'}</p>
-          <label>名称<input aria-label={`${slot} 名称`} maxLength={80} value={draft.name ?? ''} onChange={e => edit(slot, 'name', e.target.value)} /></label>
-          <label>目标地址<input aria-label={`${slot} 目标地址`} value={draft.address} onChange={e => edit(slot, 'address', e.target.value)} placeholder="https://域名:端口 或 tcp://主机:端口" /></label>
-          <p className={styles.note}>支持 HTTP、HTTPS、gRPC、gRPC TLS、TCP 和 TLS over TCP（http / https / grpc / grpcs / tcp / tls）。端口不限定用途；地址中不要填写密码、令牌或查询参数。</p>
-          <div className={styles.actions}><button disabled={!draft.address} onClick={() => void test(target)}>测试 {title} 端口</button>
-            <button disabled={!draft.address} onClick={() => void apply(slot, target, value!.state.revision)}>应用 {title} 配置</button>
+          <label>名称<input aria-label={`${slot} 名称`} maxLength={80} value={draft.name ?? ''} onChange={e => edit(slot, { name: e.target.value })} /></label>
+          <label>类型<select aria-label={`${slot} 类型`} value={draft.type} onChange={e => edit(slot, { type: e.target.value as TargetForm['type'] })}>
+            <option value="http">HTTP</option><option value="grpc">gRPC</option><option value="tcp">TCP</option></select></label>
+          <label><input type="checkbox" aria-label={`${slot} TLS`} checked={draft.tls} onChange={e => edit(slot, { tls: e.target.checked })} />使用 TLS 加密</label>
+          <label>目标地址<input aria-label={`${slot} 目标地址`} value={draft.address} onChange={e => edit(slot, e.target.value.includes('://') ? targetForm(e.target.value) : { address: e.target.value })} placeholder="域名 或 10.75.192.3:5000" /></label>
+          <p className={styles.note}>可直接粘贴完整 URL，类型和 TLS 会自动填写。gRPC、TCP 请填写端口；地址中不要填写密码、令牌或查询参数。</p>
+          <div className={styles.actions}><button disabled={!draft.address} onClick={() => submit(slot, draft, true)}>测试 {title} 端口</button>
+            <button disabled={!draft.address} onClick={() => submit(slot, draft, false)}>应用 {title} 配置</button>
             <button disabled={!own(value?.state.slots, slot)?.enabled} onClick={() => void apply(slot, { ...own(value!.state.slots, slot)!, enabled: false }, value!.state.revision)}>断开 {title}</button></div>
         </fieldset>;
       })}

@@ -40,9 +40,11 @@ def main(argv=None):
     upload=input_commands.add_parser('upload')
     upload.add_argument('directory',type=Path)
     upload.add_argument('--settings',type=Path,required=True)
+    upload.add_argument('--profile')
     transfer=input_commands.add_parser('transfer');actions=transfer.add_subparsers(dest='transfer_action',required=True)
     for action in ('show','cancel'):
         item=actions.add_parser(action);item.add_argument('transfer_id');item.add_argument('--settings',type=Path,required=True)
+        item.add_argument('--profile')
     from .cloud_tasks import register
     register(commands)
     args = parser.parse_args(argv)

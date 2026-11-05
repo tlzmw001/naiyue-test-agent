@@ -11,11 +11,10 @@ def verify_facts(operation, facts):
 
 async def start(service, receipt, operation, *, reconcile=False):
     # Also applied after restart, before adopting/preflighting an old start.
-    package = await service.local(lambda: service.runtime.inputs.get_input(
-        service.runtime.registry.get_task(operation.task_id).input_id))
     task = await service.local(lambda: service.runtime.registry.get_task(operation.task_id))
+    package = await service.local(lambda: service.runtime.inputs.get_input(task.input_id)) if task.input_id is not None else None
     await service.local(lambda: service.runtime.resources.ensure(
-        additional_bytes=0 if task.input_ready else sum(entry.size for entry in package.manifest.entries)))
+        additional_bytes=0 if task.input_ready or package is None else sum(entry.size for entry in package.manifest.entries)))
     if reconcile and operation.phase != 'reserved':
         matches = await service.backend.find(operation.metadata)
         if len(matches) != 1: raise BackendFailure('sandbox_reconcile_ambiguous')
@@ -64,9 +63,9 @@ async def refresh(service, receipt, operation):
         if facts.state.lower() != 'running' or facts.expires_at is not None:
             raise BackendFailure('sandbox_state_mismatch')
         task = await service.local(lambda: service.runtime.registry.get_task(operation.task_id))
-        package = await service.local(lambda: service.runtime.inputs.get_input(task.input_id))
+        package = await service.local(lambda: service.runtime.inputs.get_input(task.input_id)) if task.input_id is not None else None
         await service.local(lambda: service.runtime.resources.ensure(
-            additional_bytes=0 if task.input_ready else sum(entry.size for entry in package.manifest.entries)))
+            additional_bytes=0 if task.input_ready or package is None else sum(entry.size for entry in package.manifest.entries)))
         await service.local(lambda: service.runtime.control.prepare(operation.task_id))
         await service.backend.preflight(facts.sandbox_id, operation.template)
         task = await service.local(lambda: service.runtime.registry.get_task(operation.task_id))

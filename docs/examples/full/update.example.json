@@ -18,7 +18,6 @@
     "build_timeout_seconds": 900.0,
     "build_proxy_env": {}
   },
-  "connection_file": "/srv/nyt/private/connection.json",
   "task_data_dir": "/srv/nyt/data",
   "cloud_settings_file": "/srv/nyt/private/cloud.json",
   "recovery_dir": "/srv/nyt/recovery",

@@ -151,3 +151,23 @@ def test_accepted_bounded_upload_survives_token_rotation_but_new_commit_requires
                 value=await r.artifacts.commit_owned(new[0].token.get_secret_value(),b.task_id,record['artifact_id'])
                 assert value.sha256==record['sha256']
             asyncio.run(scenario())
+
+
+def test_segmented_artifact_upload_resumes_and_rejects_different_replay(tmp_path):
+    with open_cloud_runtime(config(tmp_path)) as r:
+        b=prepared(r)
+        with client(r) as c,connect(c,r,b) as ws:
+            command,_=accept(r,c,ws,b);data=b'firstsecond';record=metadata(b,command,data)
+            path=prepare(c,r,b,record)
+            def part(offset,body):
+                return c.put(path+'/bytes',headers=task_headers(r,b)|{'Content-Type':'application/octet-stream',
+                    'Content-Length':str(len(body)),'X-Content-SHA256':hashlib.sha256(body).hexdigest(),
+                    'Upload-Offset':str(offset),'X-Upload-Segmented':'1'},content=body)
+            first=part(0,data[:5]);assert first.status_code==200,first.text
+            assert first.json()['offset']==5
+            assert part(0,b'other').status_code==409
+            assert part(0,data[:5]).json()['offset']==5
+            assert c.post(path+'/prepare',headers=task_headers(r,b),json=record).json()['offset']==5
+            assert part(5,data[5:]).json()['state']=='uploaded'
+            assert c.post(path+'/commit',headers=task_headers(r,b),json={}).status_code==200
+            assert c.get('/api/cloud/v1/tasks/'+b.task_id+'/artifacts/'+record['artifact_id']+'/bytes',headers=owner_headers(r)).content==data

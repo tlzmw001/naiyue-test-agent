@@ -7,7 +7,7 @@ import json,os
 from naiyue_test_agent.application.cloud.settings import CloudSettings
 from naiyue_test_agent.application.cloud.ownership import CloudOwner
 from naiyue_test_agent.cloud_files.configuration import read_settings
-from naiyue_test_agent.cloud_files.client import CloudConnection
+from .connection import update_connection
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from naiyue_test_agent.storage.database import Database
 from naiyue_test_agent.storage.cloud.operations import OperationRepository
@@ -32,7 +32,7 @@ def configuration(settings):
     if settings.cloud_settings_file is None or settings.task_data_dir is None:raise CloudError('offline_settings_required')
     cloud=read_settings(settings.cloud_settings_file,CloudSettings)
     if cloud.data_dir!=settings.task_data_dir:raise CloudError('cloud_instance_mismatch')
-    connection=read_settings(settings.connection_file,CloudConnection)
+    connection=update_connection(settings)
     separate_roots(cloud,settings)
     return cloud,connection
 

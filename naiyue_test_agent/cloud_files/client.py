@@ -104,16 +104,18 @@ class CloudClient:
             logger.warning('cloud_observation_request_failed error_type=%s',type(error).__name__)
             raise CloudError('cloud_connection_failed',503) from None
 
-    def upload(self,directory):
+    def upload(self,directory,*,upload_id=None,check_cancel=None):
         directory=Path(directory).absolute();check_store_directory(directory)
         stack=ExitStack();primary=None
         try:
-            fd=open_store_file(directory/'upload.lock');stack.callback(os.close,fd)
+            from pydantic import TypeAdapter
+            if upload_id is not None:TypeAdapter(UUIDText).validate_python(upload_id)
+            fd=open_store_file(directory/('upload-'+upload_id+'.lock' if upload_id else 'upload.lock'));stack.callback(os.close,fd)
             try:acquire_store_lock(fd)
             except BlockingIOError:raise CloudError('input_capture_busy') from None
             stack.callback(release_store_lock,fd)
             from .input_upload import upload
-            return upload(self,directory)
+            return upload(self,directory,upload_id=upload_id,check_cancel=check_cancel)
         except BaseException as error:
             primary=error;raise
         finally:

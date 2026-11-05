@@ -9,6 +9,8 @@ import Conversation from './Conversation';
 import CloudTaskActions from './CloudTaskActions';
 import ModelMenu from './ModelMenu';
 import CloudResults from './CloudResults';
+import CloudAttachments from './CloudAttachments';
+import { useCloudFiles } from '../useCloudFiles';
 import type { CloudAction } from './CloudTaskActions';
 import styles from './CloudTasks.module.css';
 import type { AnalysisDraft } from '../cloudReceiveTypes';
@@ -22,6 +24,10 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
   const [modelMenu, setModelMenu] = useState(false); const closeModels = useCallback(() => setModelMenu(false), []);
   const observation = useCloudObservation(api, sid, binding.binding_id, binding.task_id!, active, thread);
   const draft = useCloudDraft(api, sid, binding.binding_id);
+  const files = useCloudFiles(api, sid, binding.binding_id, active);
+  const running = !!binding.cloud?.active_run_id;
+  const queued = files.queue && !['sent', 'cancelled'].includes(files.queue.phase);
+  const attachmentsReady = draft.attachment_ids.every(id => files.attachments.some(row => row.attachment_id === id && ['ready', 'attached'].includes(row.phase)));
   const [operations, setOperations] = useState<CloudOperation[]>([]); const [error, setError] = useState('');
   const [busy, setBusy] = useState(false); const [sending, setSending] = useState(false);
   const pending = useRef(false); const alive = useRef(true);
@@ -45,7 +51,7 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
       try {
         const values = await api.operations(sid, binding.binding_id, controller.signal);
         if (controller.signal.aborted) return;
-        setOperations(values);
+        setOperations(values.filter(op => op.kind !== 'queued_message'));
         const sent = values.find(op => op.command_id === message.current?.id);
         if (sent && ['accepted', 'succeeded', 'failed', 'rejected'].includes(sent.phase)) {
           if (['accepted', 'succeeded'].includes(sent.phase)) { void acknowledgement.current(message.current!.version); setSubmitted(old => old && { ...old, accepted: true, run: sent.run_id ?? undefined }); }
@@ -64,6 +70,11 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
     if (pending.current) return false;
     pending.current = true; setBusy(true); setError(''); intent.current = { kind, body };
     try {
+      if (kind === 'queue') {
+        await api.queueMessage(sid, binding.binding_id, body);
+        if (message.current) await acknowledgement.current(message.current.version);
+        message.current = undefined; intent.current = undefined; setSending(false); setUnconfirmed(false); files.refresh(); return true;
+      }
       const op = kind === 'message' ? await api.message(sid, binding.binding_id, body) :
         await api.command(sid, binding.binding_id, kind as 'control' | 'environment' | 'delete', body);
       if (!alive.current) return;
@@ -85,16 +96,17 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
   }
   const execute: CloudAction = async (kind, body) => { if (metadataFresh) return await dispatch(kind, { command_id: crypto.randomUUID(), ...body }); };
   async function send() {
-    if (!metadataFresh || !canSend(binding.cloud) || sending || !draft.text.trim() || !draft.model_id) return;
-    setSending(true); setSubmitted({ text: draft.text });
+    if (!metadataFresh || !files.ready || queued || (!running && (!canSend(binding.cloud) || !attachmentsReady)) || sending || !draft.text.trim() || !draft.model_id) return;
+    setSending(true); if (!running) setSubmitted({ text: draft.text });
     try {
       const saved = await draft.save(); const id = crypto.randomUUID(); message.current = { id, version: saved.version };
-      await dispatch('message', { command_id: id, expected_binding_revision: binding.revision,
-        text: saved.text, model_id: saved.model_id, thinking_level: saved.thinking_level, draft_revision: saved.draft_revision });
+      await dispatch(running ? 'queue' : 'message', { command_id: id, expected_binding_revision: binding.revision,
+        text: saved.text, model_id: saved.model_id, thinking_level: saved.thinking_level, attachment_ids: saved.attachment_ids, draft_revision: saved.draft_revision });
     } catch (failure) { if (alive.current) { setError(cloudError(failure)); setSending(false); setSubmitted(undefined); } }
   }
   async function retryIntent() {
     const fixed = intent.current; if (!fixed) return;
+    if (fixed.kind === 'queue') { await dispatch('queue', fixed.body); return; }
     try {
       const op = await api.operation(sid, String(fixed.body.command_id));
       await api.retry(sid, op.command_id); setUnconfirmed(false); setRevision(v => v + 1); changed();
@@ -143,6 +155,11 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
         history={{ enabled: true, hasMore: observation.hasMore, loading: observation.more, error: '', loadOlder: observation.loadOlder }} />
     </div>
     <footer className={styles.composer}>
+      {queued && <div className={styles.pendingMessage} role="status"><p>{files.queue!.request.text}</p><small>{({ waiting: '等待本轮正常结束和附件就绪', dispatching: '正在发送下一条消息', paused: '待发送消息已暂停，请核对任务状态' } as Record<string, string>)[files.queue!.phase]}</small>
+        {files.queue!.phase !== 'dispatching' && !files.queue!.dispatch_request && <button onClick={() => { void api.cancelQueuedMessage(sid, binding.binding_id, files.queue!.command_id).then(() => { draft.setText(files.queue!.request.text); draft.setAttachments(files.queue!.request.attachment_ids ?? []); files.refresh(); }).catch(e => setError(cloudError(e))); }}>取消排队并编辑</button>}
+      </div>}
+      <CloudAttachments api={api} sid={sid} bid={binding.binding_id} rows={files.attachments} selected={draft.attachment_ids} select={draft.setAttachments} changed={files.refresh} />
+      {files.error && <p role="status" className={styles.error}>{files.error}</p>}
       <label>发给此云端任务<textarea aria-label="发给此云端任务" value={draft.text} rows={3} disabled={!draft.ready}
         onChange={e => draft.setText(e.target.value)} placeholder="目标、必要背景与验收条件" /></label>
       <div className={styles.actions}><div className={styles.modelSelection}>
@@ -152,8 +169,8 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
           selectModel={draft.setModel} selectThinking={draft.setThinking} />
       </div>
         <button disabled={!draft.ready || draft.saving || draft.conflict} onClick={() => void draft.save().catch(() => console.warn('cloud_draft_save_failed'))}>保存草稿</button>
-        <button className={styles.primary} disabled={!metadataFresh || !draft.ready || draft.conflict || draft.saving || busy || sending || !canSend(binding.cloud) || !draft.text.trim() || !draft.model_id}
-          onClick={() => void send()}>发送到云端</button></div>
+        <button className={styles.primary} disabled={!metadataFresh || !draft.ready || draft.conflict || draft.saving || busy || sending || !files.ready || !!queued || (!running && (!canSend(binding.cloud) || !attachmentsReady)) || !draft.text.trim() || !draft.model_id}
+          onClick={() => void send()}>{running ? '本轮结束后发送' : '发送到云端'}</button></div>
       {draft.error && <p role="status" className={styles.error}>{draft.error}</p>}
       {modelsError && <p role="status" className={styles.error}>云端模型选项读取失败：{modelsError}<button className={styles.link} onClick={() => setRevision(v => v + 1)}>重试读取</button></p>}
       {draft.conflict && <p role="status" className={styles.error}>草稿版本已变化，本页文本保留。<button className={styles.link} onClick={draft.reload}>重新载入已保存草稿</button></p>}

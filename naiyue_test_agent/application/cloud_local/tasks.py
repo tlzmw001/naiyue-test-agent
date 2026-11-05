@@ -68,7 +68,10 @@ class LocalTaskDomain:
 
 class ManualCloudTasks:
     def __init__(self,settings,*,book=None,connections=None):
-        self.settings=settings;self.book=book if book is not None else ProfileBook.read(settings.profiles_file)
+        from naiyue_test_agent.cloud_files.connections import ConnectionBook
+        self.settings=settings
+        self.book=book if book is not None else (ConnectionBook.read(settings.connections_file).profile_book()
+            if settings.connections_file else ProfileBook.read(settings.profiles_file))
         self.connections=connections if connections is not None else ProfileConnections(self.book)
         self.flights={};self.closing=False
         self.admission=asyncio.Lock()
@@ -83,6 +86,10 @@ class ManualCloudTasks:
         self.receives=LocalReceives(self)
         from .deliveries import LocalDeliveries
         self.deliveries=LocalDeliveries(self)
+        from .attachments import LocalAttachments
+        self.attachments=LocalAttachments(self)
+        from .message_queue import MessageQueue
+        self.queue=MessageQueue(self)
 
     @contextmanager
     def operation(self):
@@ -91,7 +98,7 @@ class ManualCloudTasks:
         try:yield
         finally:self.operations.pop(done);done.set_result(None)
 
-    def connection_settings(self,profile):return read_settings(profile.connection_file,CloudConnection)
+    def connection_settings(self,profile):return profile.connection_settings()
 
     @asynccontextmanager
     async def connection(self,binding):
@@ -202,10 +209,10 @@ class ManualCloudTasks:
 
     async def drain(self):
         primary=None
-        while self.flights or self.commands.flights or self.receives.flights or self.deliveries.flights:
+        while self.flights or self.commands.flights or self.receives.flights or self.deliveries.flights or self.attachments.flights:
             results=await await_settled(asyncio.gather(*tuple(self.flights.values()),
                 *(v[1] for v in self.commands.flights.values()),*tuple(self.receives.flights.values()),
-                *tuple(self.deliveries.flights.values()),return_exceptions=True))
+                *tuple(self.deliveries.flights.values()),*tuple(self.attachments.flights.values()),return_exceptions=True))
             for result in results:
                 if isinstance(result,BaseException) and primary is None:primary=result
         if primary is not None:raise primary
@@ -236,6 +243,7 @@ class ManualCloudTasks:
                     plan=value.get('plan',{})
                     if any(plan.get(key)!=binding[key] for key in ('task_id','input_id')) or plan.get('result_id')!=rid:
                         raise CloudError('cloud_result_identity_mismatch',502)
+                    if binding['input_id'] is None:return value|dict(code_branch_available=False)
                     operation=await run_blocking(domain.repo.operation,binding['create_command_id'],session_id)
                     source_handle=operation['request'].get('source_handle')
                     if not source_handle:raise CloudError('cloud_task_unavailable',409)
@@ -245,6 +253,7 @@ class ManualCloudTasks:
 
     async def close(self):
         self.closing=True;primary=None
+        await self.queue.close()
         try:await self.networks.close()
         except BaseException as error:
             logger.error('cloud_network_shutdown_failed error_type=%s',type(error).__name__)

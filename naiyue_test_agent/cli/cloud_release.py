@@ -10,6 +10,8 @@ from naiyue_test_agent.cloud_install.settings import UpdateSettings,RemoteUpdate
 from naiyue_test_agent.cloud_install.remote import RemoteRequest,execute_remote
 from naiyue_test_agent.cloud_install.worker import check_update,launch
 from naiyue_test_agent.cloud_install.store import UpdateStore
+from naiyue_test_agent.cloud_install.connection import update_connection
+from naiyue_test_agent.cloud_files.connections import read_remote
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 
 
@@ -30,11 +32,12 @@ def register(commands):
         elif action=='gc':p.add_argument('--confirm')
         target=p.add_mutually_exclusive_group(required=True)
         target.add_argument('--settings',type=Path);target.add_argument('--remote',type=Path)
+        p.add_argument('--profile',help='profile ID in the unified connections file')
 
 
 def execute(args):
     request=RemoteRequest.model_validate({key:getattr(args,key) for key in ('command_id','release_id','task_id','expected_revision','template_id','maintenance','backup_id','confirm') if hasattr(args,key)}|dict(action=args.release_command))
-    if args.remote is not None:return execute_remote(read_settings(args.remote,RemoteUpdateSettings),request)
+    if args.remote is not None:return execute_remote(read_remote(args.remote,getattr(args,'profile',None)),request)
     if os.name=='nt':raise CloudError('update_requires_remote')
     settings=read_settings(args.settings,UpdateSettings)
     if request.action=='backups':
@@ -64,7 +67,7 @@ def execute(args):
     if request.action in ('update','upgrade','resume','status','cancel'):
         store=UpdateStore(settings)
         if request.action=='cancel':
-            client=CloudClient(read_settings(settings.connection_file,CloudConnection))
+            client=CloudClient(update_connection(settings))
             try:
                 from naiyue_test_agent.cloud_install.upgrade import cancel_pending
                 with store.lock(request.command_id):return cancel_pending(settings,request.command_id,store,client)
@@ -79,7 +82,7 @@ def execute(args):
             return value
         if request.action!='resume':store.create(request.command_id,request.release_id,task_id=request.task_id)
         return launch(args.settings.absolute(),request.command_id)
-    with_client=CloudClient(read_settings(settings.connection_file,CloudConnection))
+    with_client=CloudClient(update_connection(settings))
     try:
         if request.action=='discover':
             from naiyue_test_agent.cloud_install.discovery import discover

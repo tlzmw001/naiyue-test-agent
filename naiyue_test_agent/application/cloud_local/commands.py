@@ -73,7 +73,7 @@ class ManualTaskCommands:
             return await self._observe(domain,op)
 
     async def _observe(self,domain,op):
-        if op['kind']=='create' or op['phase'] in ('succeeded','failed','rejected','cancelled'):return op
+        if op['kind'] in ('create','queued_message') or op['phase'] in ('succeeded','failed','rejected','cancelled'):return op
         binding=await run_blocking(domain.repo.binding,op['binding_id'],op['local_session_id'])
         async with self.manager.connection(binding) as client:
             return await run_blocking(command_dispatch.observe,domain,client,op)

@@ -57,6 +57,7 @@ class RunnerControl:
             expected=dict(project_id=task.project_id,input_id=task.input_id,instance_id=r.instance_id,
                 generation=task.generation,boot_id=task.runner_boot_id,state_epoch=task.state_epoch,release_id=task.runner_release_id)
             if any(getattr(hello,k)!=v for k,v in expected.items()):raise CloudError('runner_identity_mismatch')
+            if task.input_id is None and hello.file_transfer_version!=1:raise CloudError('template_files_update_required')
             ready=hello.phase=='ready' and task.environment_phase=='backend_ready' and task.input_ready and not task.environment_operation_id
             blockers=[item for item in task.reclaim_blockers if item!='runner_disconnected']
             candidate=CloudTask.model_validate(task.model_dump()|dict(runner_phase=hello.phase,

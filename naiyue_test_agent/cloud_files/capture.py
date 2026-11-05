@@ -44,6 +44,7 @@ def capture(source,selection,output,limits,*,codec='gzip',source_receipt=None):
                 with source_handle(source,path,before[path]) as (stream,info):
                     sha=hashlib.sha256();size=0
                     if info is None:
+                        if selection.schema_version==3:raise CloudError('attachment_regular_files_only')
                         content=stream
                         if len(content)>4096:raise CloudError('input_link_outside')
                         total+=len(content)
@@ -56,14 +57,14 @@ def capture(source,selection,output,limits,*,codec='gzip',source_receipt=None):
                         prefix=b'';tail=b''
                         with (frozen/str(number)).open('xb') as out:
                             while chunk:=stream.read(limits.io_bytes):
-                                tail=check_input_content(tail,chunk,first=size<128)
+                                if selection.schema_version!=3:tail=check_input_content(tail,chunk,first=size<128)
                                 size+=len(chunk);total+=len(chunk)
                                 if size>limits.max_file_bytes or total>limits.max_input_bytes:raise CloudError('input_budget')
                                 if len(prefix)<512:prefix=(prefix+chunk)[:512]
                                 sha.update(chunk);out.write(chunk)
                             out.flush();os.fsync(out.fileno())
                         if size!=info.st_size:raise CloudError('input_source_changed')
-                        if mode==493 and prefix.startswith(b'#!') and b'\r' in prefix.split(b'\n',1)[0]:raise CloudError('input_crlf_executable')
+                        if selection.schema_version!=3 and mode==493 and prefix.startswith(b'#!') and b'\r' in prefix.split(b'\n',1)[0]:raise CloudError('input_crlf_executable')
                         entry=InputEntry(path=path,type='file',mode=mode,size=size,sha256=sha.hexdigest())
                     entries.append(entry)
             check_links(entries)
@@ -74,7 +75,7 @@ def capture(source,selection,output,limits,*,codec='gzip',source_receipt=None):
                 check_store_directory(directory)
                 if (identity(directory.lstat())[:2],sorted(os.listdir(directory)))!=fact:raise CloudError('input_source_changed')
             if selection.policy is not None:verify(source,source_receipt,limits)
-            manifest=InputManifest(selection={'policy_sha256':hashlib.sha256(selection.canonical).hexdigest()},entries=entries)
+            manifest=InputManifest(schema=3 if selection.schema_version==3 else 1,selection={'policy_sha256':hashlib.sha256(selection.canonical).hexdigest()},entries=entries)
             if len(manifest.canonical)>limits.max_metadata_bytes:raise CloudError('input_budget')
             bundle=staging/'result';bundle.mkdir(mode=0o700)
             (bundle/'manifest.json').write_bytes(manifest.canonical);(bundle/'selection.json').write_bytes(selection.canonical)

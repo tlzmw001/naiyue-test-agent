@@ -120,14 +120,14 @@ class LocalTaskRepo:
                 operation=json.loads(old[0])
                 if operation['request_digest']!=fingerprint:raise CloudError('cloud_command_conflict')
                 return {'operation':operation,'binding':_read(c,'naiyue_cloud_bindings',operation['binding_id'],sid,'cloud_binding_not_found')}
-            source=_read(c,'naiyue_cloud_sources',request['source_handle'],sid,'cloud_source_not_found')
+            source=_read(c,'naiyue_cloud_sources',request['source_handle'],sid,'cloud_source_not_found') if request.get('source_handle') else None
             profile=request['profile_id'];instance=target['instance_id']
             row=c.execute('SELECT body_json FROM naiyue_cloud_targets WHERE profile_id=? AND instance_id=?',(profile,instance)).fetchone()
             mapping=json.loads(row[0]) if row else dict(command_id=str(uuid4()),name=target['project_name'])
             if row is None:c.execute('INSERT INTO naiyue_cloud_targets VALUES(?,?,?)',(profile,instance,json.dumps(mapping)))
             now=time.time();bid=str(uuid4())
             binding=dict(network_id=target.get('network_id'),binding_id=bid,local_project_id=project_id,local_session_id=sid,profile_id=profile,
-                instance_id=instance,cloud_project_id=None,task_id=None,input_id=source['captured']['input_id'],
+                instance_id=instance,cloud_project_id=None,task_id=None,input_id=source['captured']['input_id'] if source else None,
                 create_command_id=command_id,template_id=request['template_id'],created_at=now,revision=1,preparation='reserved',cloud=None,retained=True)
             op=dict(command_id=command_id,binding_id=bid,local_session_id=sid,kind='create',request=request,
                 request_digest=fingerprint,phase='reserved',steps={'project':mapping,'task':{'command_id':str(uuid4()),'network_id':target.get('network_id')},

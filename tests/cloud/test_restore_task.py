@@ -65,3 +65,20 @@ def test_real_frozen_input_can_capture_again_after_raw_new_root_restore(tmp_path
         second,boundary,1,ResultLimits(),limits)
     assert b'after restore' in artifact(result,'patch')
     assert (out/'state/results/.baseline-cache'/plan.input_id).is_dir()
+
+
+def test_restored_attachment_can_be_reused_without_overwriting_agent_changes(tmp_path):
+    from test_attachment_install import fixture
+    from naiyue_test_agent.cloud_runner.attachment_install import install
+    from naiyue_test_agent.cloud_runner.upgrade_backup import backup
+    from naiyue_test_agent.cloud_runner.restore_backup import restore
+    from naiyue_test_agent.contracts.cloud_inputs import InputLimits
+    package,root,state=fixture(tmp_path);aid=str(uuid4());limits=InputLimits()
+    relative=install(package.directory,root,state,aid,package.input_id,limits)
+    (root/relative/'.env').write_text('agent modified')
+    request=dict(command_id=str(uuid4()),task_id='a'*32,generation=1,reservation_sha256='b'*64)
+    source=tmp_path/'backup';receipt=backup(root.parent,state,source,request,max_bytes=10**7,max_files=1000)
+    out=tmp_path/'new';out.mkdir();(out/'workspace').mkdir();(out/'state').mkdir()
+    restore(source,out/'workspace',out/'state',dict(backup=receipt,retired_results={}),max_bytes=10**7,max_files=1000)
+    assert install(package.directory,out/'workspace/project',out/'state',aid,package.input_id,limits)==relative
+    assert (out/'workspace/project'/relative/'.env').read_text()=='agent modified'

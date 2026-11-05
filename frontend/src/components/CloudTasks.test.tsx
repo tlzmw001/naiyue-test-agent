@@ -32,6 +32,7 @@ function api(rows: CloudBinding[] = []) {
     models: vi.fn().mockResolvedValue({ default_model_id: 'A', model_ids: ['A', 'B'], thinking_options: {
       A: { default_level: 'low', supported_levels: ['low', 'high'] }, B: { default_level: 'model_default', supported_levels: [] } } }),
     draft: vi.fn().mockResolvedValue({ text: '', model_id: 'A', draft_revision: 0 }), saveDraft: vi.fn().mockImplementation((_sid, _bid, d) => Promise.resolve({ ...d, draft_revision: 1 })),
+    attachments: vi.fn().mockResolvedValue([]), queuedMessage: vi.fn().mockResolvedValue(null), queueMessage: vi.fn().mockResolvedValue({phase: 'waiting'}),
     results: vi.fn().mockResolvedValue([]), operations: vi.fn().mockResolvedValue([]), source: vi.fn(), create: vi.fn(), message: vi.fn(), command: vi.fn(),
     observe: vi.fn().mockImplementation(async (_sid, _bid, _thread, _cursor, signal: AbortSignal) => new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))),
   } as unknown as CloudApi;
@@ -40,12 +41,12 @@ it('opens an empty real list without creating a task or calling a model', async 
   const cloud = api(); render(<CloudTasks api={cloud} sessionId="S" active />);
   await screen.findByText('还没有云端任务');
   expect(screen.queryByText('每个任务使用独立沙箱。打开和切换只查看，不创建环境。')).toBeNull();
-  expect(cloud.create).not.toHaveBeenCalled(); expect(cloud.source).not.toHaveBeenCalled();
+  expect(cloud.create).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: '新增任务' }));
-  expect(await screen.findByRole('button', { name: '导入并准备任务' })).toBeTruthy();
+  expect(await screen.findByRole('button', { name: '创建并准备任务' })).toBeTruthy();
   expect(screen.queryByText(/只导入项目文件并准备沙箱/)).toBeNull();
   expect(screen.queryByText(/后续消息复用云端工作区/)).toBeNull();
-  expect(cloud.source).not.toHaveBeenCalled();
+
 });
 it('reuses the main model menu and saves the cloud thinking selection independently', async () => {
   const cloud = api([binding]); render(<CloudTasks api={cloud} sessionId="S" active />);
@@ -80,7 +81,7 @@ it('keeps cloud drafts isolated on task switches and never sends while a run is 
   fireEvent.click(screen.getByRole('button', { name: '返回任务列表' }));
   fireEvent.click(await screen.findByRole('button', { name: /任务 cccccccc/ }));
   expect(await screen.findByRole('textbox', { name: '发给此云端任务' })).toHaveProperty('value', '');
-  expect(screen.getByRole('button', { name: '发送到云端' })).toHaveProperty('disabled', true);
+  expect(screen.getByRole('button', { name: '本轮结束后发送' })).toHaveProperty('disabled', true);
   fireEvent.click(screen.getByRole('button', { name: '返回任务列表' }));
   fireEvent.click(await screen.findByRole('button', { name: /任务 aaaaaaaa/ }));
   await waitFor(() => expect(screen.getByRole('textbox', { name: '发给此云端任务' })).toHaveProperty('value', '仅第一个任务的提示'));
@@ -95,18 +96,16 @@ it('marks cached metadata stale and prevents controls until owner metadata can b
   expect(screen.getByRole('button', { name: '发送到云端' })).toHaveProperty('disabled', true);
   expect(screen.getByRole('button', { name: '释放环境' })).toHaveProperty('disabled', true);
 });
-it('reuses the frozen source and command after a lost creation response', async () => {
+it('creates without files and reuses the command after a lost creation response', async () => {
   const cloud = api(); const created = vi.fn();
-  vi.mocked(cloud.source).mockResolvedValue({ source_handle: 'H', input_id: task.input_id, size: 1 });
   vi.mocked(cloud.create).mockRejectedValueOnce(new Error('offline')).mockResolvedValue({ binding, operation: { command_id: 'C' } } as never);
   render(<CloudTaskCreate api={cloud} sessionId="S" profiles={[{ profile_id: 'work', template_ids: ['python'], default_template: 'python', connection: 'ssh', tunnel: 'private' }]} back={vi.fn()} created={created} />);
-  await waitFor(() => expect(screen.getByRole('button', { name: '预览导入范围' })).not.toHaveProperty('disabled', true));
-  fireEvent.click(screen.getByRole('button', { name: '预览导入范围' }));
-  await screen.findByText(/1 个文件/);
-  fireEvent.click(screen.getByRole('button', { name: '导入并准备任务' }));
+  expect(screen.queryByRole('button', { name: '预览导入范围' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: '创建并准备任务' }));
   fireEvent.click(await screen.findByRole('button', { name: '重试原准备操作' }));
   await waitFor(() => expect(created).toHaveBeenCalledWith(binding));
-  expect(cloud.source).toHaveBeenCalledTimes(1);
+
+  expect(vi.mocked(cloud.create).mock.calls[0][0]).not.toHaveProperty('source_handle');
   expect(vi.mocked(cloud.create).mock.calls[1][0]).toEqual(vi.mocked(cloud.create).mock.calls[0][0]);
 });
 it('paginates threads and preserves the oldest archive cursor when a snapshot replaces live data', async () => {
@@ -170,10 +169,7 @@ it('selects the first available profile when profiles arrive after the create fo
   const cloud = api(); const props = { api: cloud, sessionId: 'S', back: vi.fn(), created: vi.fn() };
   const { rerender } = render(<CloudTaskCreate {...props} profiles={[]} />);
   rerender(<CloudTaskCreate {...props} profiles={[{ profile_id: 'work', template_ids: ['python'], default_template: 'python', connection: 'ssh', tunnel: 'private' }]} />);
-  await waitFor(() => expect(screen.getByRole('button', { name: '预览导入范围' })).not.toHaveProperty('disabled', true));
-  fireEvent.click(screen.getByRole('button', { name: '预览导入范围' }));
-  await screen.findByText(/1 个文件/);
-  expect(screen.getByRole('button', { name: '导入并准备任务' })).not.toHaveProperty('disabled', true);
+  await waitFor(() => expect(screen.getByRole('button', { name: '创建并准备任务' })).not.toHaveProperty('disabled', true));
 });
 it('offers a live child before its durable thread has been archived', async () => {
   const cloud = api([binding]);
@@ -294,4 +290,25 @@ it('invalidates background stop confirmation when task revision changes', () => 
 it('uses the persisted readable task title in the conversation header', async () => {
   render(<CloudTaskDetail api={api()} sid="S" binding={{ ...binding, cloud: { ...task, title: '检查接口与报告' } }} active back={vi.fn()} changed={vi.fn()} />);
   expect(await screen.findByText('检查接口与报告')).toBeTruthy();
+});
+
+it('queues one next prompt with uploading attachments without starting another run', async () => {
+  const running = { ...binding, cloud: { ...task, active_run_id: 'current' } };
+  const cloud = api([running]);
+  vi.mocked(cloud.draft).mockResolvedValue({ text: '', model_id: 'A', draft_revision: 0, thinking_level: 'model_default', attachment_ids: ['batch'] });
+  vi.mocked(cloud.attachments).mockResolvedValue([{ attachment_id: 'batch', binding_id: 'B', display_name: 'archive.zip', input_id: null, size: 0, phase: 'uploading', error_code: null, created_at: 1 }]);
+  vi.mocked(cloud.queueMessage).mockImplementation(async (_sid, _bid, body) => {
+    const request = body as Record<string, unknown>;
+    const row = { command_id: String(request.command_id), message_command_id: 'next', phase: 'waiting', error_code: null, request: { text: String(request.text), attachment_ids: ['batch'] } };
+    vi.mocked(cloud.queuedMessage).mockResolvedValue(row); return row;
+  });
+  render(<CloudTaskDetail api={cloud} sid="S" binding={running} active back={vi.fn()} changed={vi.fn()} />);
+  await waitFor(() => expect(screen.getByRole('textbox', { name: '发给此云端任务' })).toHaveProperty('disabled', false));
+  fireEvent.change(screen.getByRole('textbox', { name: '发给此云端任务' }), { target: { value: '下一轮检查附件' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: '本轮结束后发送' })).toHaveProperty('disabled', false));
+  fireEvent.click(screen.getByRole('button', { name: '本轮结束后发送' }));
+  await screen.findByText('等待本轮正常结束和附件就绪');
+  expect(cloud.queueMessage).toHaveBeenCalledWith('S', 'B', expect.objectContaining({ text: '下一轮检查附件', attachment_ids: ['batch'] }));
+  expect(cloud.message).not.toHaveBeenCalled();
+  expect(screen.getByRole('textbox', { name: '发给此云端任务' })).toHaveProperty('value', '');
 });

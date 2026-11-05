@@ -109,7 +109,7 @@ class CloudDeletions:
                     active_run_id=None, artifact_operation_id=None, control_operation_id=None,
                     reclaim_blockers=[], runner_connection_id=None, runner_phase='unconfigured')
             if complete:
-                changes.update(lifecycle='deleted', title='', result_ids=[], pending_result_id=None, input_ready=False,
+                changes.update(lifecycle='deleted', title='', attachments={}, result_ids=[], pending_result_id=None, input_ready=False,
                     runner_recovery=None, runner_model_ids=[], runner_capabilities=[], model_profile_id=None)
                 tombstone = dict(instance_id=r.instance_id, task_id=operation.task_id,
                     delete_command_id=receipt.command_id, generation=operation.generation, deleted_at=now)
@@ -135,7 +135,7 @@ class CloudDeletions:
                 except (OSError, RuntimeError, TimeoutError) as error:
                     logger.warning('cloud_deleted_connection_close_failed error_type=%s', type(error).__name__)
             if r.models.relay is not None: await r.models.relay.close_task(operation.task_id)
-            for lease in tuple(r.artifacts.downloads):
+            for lease in (*tuple(r.artifacts.downloads),*tuple(r.inputs.downloads)):
                 if lease.task_id == operation.task_id: await lease.aclose()
             await cloud_work(r, lambda: r.task_io.drain(operation.task_id), drain_cancel=True)
             if operation.phase == 'reserved':

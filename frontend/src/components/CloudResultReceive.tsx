@@ -9,7 +9,7 @@ import CloudCodeDelivery from './CloudCodeDelivery';
 import CloudFilesDelivery from './CloudFilesDelivery';
 
 export default function CloudResultReceive({ api, sid, bid, rid, inputId, files, active, branchAvailable = false, onAnalysisDraft }: {
-  api: CloudApi; sid: string; bid: string; rid: string; inputId: string; files: ResultFile[]; active: boolean; branchAvailable?: boolean;
+  api: CloudApi; sid: string; bid: string; rid: string; inputId: string | null; files: ResultFile[]; active: boolean; branchAvailable?: boolean;
   onAnalysisDraft?: (value: AnalysisDraft) => boolean | void;
 }) {
   const selectionKey = `naiyue.cloud-report-selection.${api.projectId}.${sid}.${bid}.${rid}`;
@@ -38,7 +38,7 @@ export default function CloudResultReceive({ api, sid, bid, rid, inputId, files,
     if (materials.busy || analyzing || cleaning || !active) return;
     setAnalyzing(true); setError(''); setNotice('');
     try {
-      const record = await materials.ensure(true, selected);
+      const record = await materials.ensure(inputId !== null, selected);
       const value = await api.analysisDraft(sid, record.receive_id);
       if (value.local_project_id !== api.projectId || value.local_session_id !== sid || value.receive_id !== record.receive_id ||
         value.material_refs.some(item => item.receive_id !== record.receive_id || item.result_id !== rid)) throw new Error('cloud_receive_identity_mismatch');
@@ -59,12 +59,12 @@ export default function CloudResultReceive({ api, sid, bid, rid, inputId, files,
       }} />{item.artifact.relative_name} · {item.artifact.size} 字节</label>)}
     <CloudFilesDelivery api={api} sid={sid} resultKey={`${bid}.${rid}`} active={active && !materials.busy && !analyzing && !cleaning}
       selected={selected} onSelectionLock={setSelectionLocked} prepareMaterials={(refresh, id) => materials.ensure(false, selected, refresh, id)} />
-    {onAnalysisDraft && <div className={styles.actions}><button disabled={!active || materials.busy || analyzing || cleaning} onClick={() => void analyze()}>交给主 Agent 分析</button></div>}
+    {onAnalysisDraft && <div className={styles.actions}><button disabled={!active || materials.busy || analyzing || cleaning || inputId === null && !selected.length} onClick={() => void analyze()}>交给主 Agent 分析</button></div>}
     <div className={styles.actions}><button disabled={!active || materials.busy || analyzing || selectionLocked || cleaning} onClick={() => void cleanupCache()}>{cleaning ? '正在清理缓存…' : '清理未引用缓存'}</button></div>
     {materials.busy && <p role="status" className={styles.note}>正在准备并核对固定材料{materials.record && ` · ${materials.record.files.reduce((n, f) => n + f.offset, 0)} 字节`}</p>}
-    {(error || materials.error) && <div className={styles.actions}><button disabled={materials.busy || analyzing || cleaning || !active} onClick={() => { void materials.ensure(true, selected, true).then(() => { setError(''); setNotice('材料已重新核对，可再次交给主 Agent 分析。'); }).catch(failure => { console.warn('cloud_material_refresh_failed'); setError(cloudError(failure)); }); }}>重新核对分析材料</button></div>}
+    {(error || materials.error) && <div className={styles.actions}><button disabled={materials.busy || analyzing || cleaning || !active} onClick={() => { void materials.ensure(inputId !== null, selected, true).then(() => { setError(''); setNotice('材料已重新核对，可再次交给主 Agent 分析。'); }).catch(failure => { console.warn('cloud_material_refresh_failed'); setError(cloudError(failure)); }); }}>重新核对分析材料</button></div>}
     {notice && <p role="status" className={styles.note}>{notice}</p>}{(error || materials.error) && <p role="alert" className={styles.error}>{error || materials.error}</p>}
-    <CloudCodeDelivery api={api} sid={sid} resultKey={`${bid}.${rid}`} active={active && !materials.busy && !analyzing && !cleaning}
-      branchAvailable={branchAvailable} prepareMaterials={(refresh, id) => materials.ensure(true, [], refresh, id)} />
+    {inputId !== null && <CloudCodeDelivery api={api} sid={sid} resultKey={`${bid}.${rid}`} active={active && !materials.busy && !analyzing && !cleaning}
+      branchAvailable={branchAvailable} prepareMaterials={(refresh, id) => materials.ensure(true, [], refresh, id)} />}
   </section>;
 }

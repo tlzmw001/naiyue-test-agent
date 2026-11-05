@@ -16,8 +16,8 @@ class TaskDirectories:
     def prepare(self, task, template):
         if os.name == 'nt' or os.getuid() != template.uid or os.getgid() != template.gid:
             raise CloudError('task_directory_identity_mismatch')
-        inputs = self.root / 'inputs' / task.input_id
-        private_directory(inputs)
+        inputs = self.root / 'inputs' / task.input_id if task.input_id is not None else None
+        if inputs is not None:private_directory(inputs)
         base = self.root / 'tasks'
         base.mkdir(mode=0o700, exist_ok=True)
         private_directory(base)
@@ -55,7 +55,7 @@ class TaskDirectories:
             if initializing: path.mkdir(mode=0o700, exist_ok=True)
             private_directory(path)
             mounts.append(MountSpec(source=str(path), destination='/' + name, read_only=False))
-        mounts.append(MountSpec(source=str(inputs), destination='/input', read_only=True))
+        if inputs is not None:mounts.append(MountSpec(source=str(inputs), destination='/input', read_only=True))
         if initializing:
             temporary = parent / 'environment.next'
             if temporary.exists(): private_file(temporary)

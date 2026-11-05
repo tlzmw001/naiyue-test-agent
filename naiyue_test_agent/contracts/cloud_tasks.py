@@ -40,6 +40,7 @@ class CloudProject(CloudRecord):
 
 
 class TemplateReceipt(CloudRecord):
+    file_transfer_version:int=Field(default=0,ge=0,le=1,exclude_if=lambda v:v==0)
     template_id: Label
     runner_release_id: Label
     image_id: str = Field(pattern=r'^sha256:[0-9a-f]{64}$')
@@ -60,12 +61,20 @@ class TemplateReceipt(CloudRecord):
         return digest(self.model_dump(exclude={'preflight_sha256'}))
 
 
+class TaskAttachment(CloudRecord):
+    attachment_id:UUIDText
+    input_id:ContentId
+    display_name:str=Field(min_length=1,max_length=255)
+    size:int=Field(gt=0)
+
+
 class CloudTask(CloudRecord):
+    attachments:dict[UUIDText,TaskAttachment]=Field(default_factory=dict,max_length=1024,exclude_if=lambda v:not v)
     network_id: Label | None = Field(default=None,exclude_if=lambda value:value is None)
     task_id: TaskId
     project_id: UUIDText
     title: str = Field(max_length=1024)
-    input_id: ContentId
+    input_id: ContentId|None
     template_id: Label
     runner_release_id: Label
     state_schema: int = Field(ge=1)
@@ -120,6 +129,6 @@ class StoredTaskCredential(CloudRecord):
     task_id: TaskId
     project_id: UUIDText
     generation: int = Field(ge=1)
-    scopes: list[Literal['identity:read', 'events:append', 'control:connect','artifacts:write','models:invoke']]
+    scopes: list[Literal['identity:read', 'events:append', 'control:connect','artifacts:write','models:invoke','inputs:read']]
     expires_at: float = Field(gt=0)
     revoked_at: float | None = None

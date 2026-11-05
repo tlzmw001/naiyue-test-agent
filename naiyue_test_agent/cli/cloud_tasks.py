@@ -14,6 +14,7 @@ from naiyue_test_agent.contracts.cloud_runner import StartRun,TaskControl
 from naiyue_test_agent.contracts.cloud_artifacts import CaptureRequest
 from naiyue_test_agent.storage.files import check_store_directory,open_store_readonly
 from naiyue_test_agent.cloud_files.configuration import read_settings
+from naiyue_test_agent.cloud_files.connections import read_connection
 
 
 def register(commands):
@@ -22,12 +23,14 @@ def register(commands):
         group=commands.add_parser(name);sub=group.add_subparsers(dest='action',required=True)
         for action in actions:
             p=sub.add_parser(action);p.add_argument('--settings',type=Path,required=True)
+            p.add_argument('--profile')
             if name in ('task','run','control','artifact') and action!='create':p.add_argument('task_id')
             if name=='command':p.add_argument('command_id')
             if name=='artifact' and action in ('show','download'):p.add_argument('artifact_id')
             if action in ('create','start','stop','recover','refresh','send','capture'):p.add_argument('--request',type=Path,required=True)
             if action=='download':p.add_argument('--output',type=Path,required=True)
     p=commands.add_parser('history');p.add_argument('task_id');p.add_argument('--settings',type=Path,required=True)
+    p.add_argument('--profile')
     p.add_argument('--after-seq',type=int,default=0);p.add_argument('--epoch');p.add_argument('--limit',type=int)
     p.add_argument('--view',choices=('events','messages','threads','detail'),default='events')
     p.add_argument('--thread');p.add_argument('--cursor');p.add_argument('--message-id');p.add_argument('--revision',type=int)
@@ -35,6 +38,7 @@ def register(commands):
     p.add_argument('--field',choices=('content','reasoning','tool_calls','file_change','mcp_result'),default='content')
     for name in ('snapshot','usage'):
         p=commands.add_parser(name);p.add_argument('task_id');p.add_argument('--settings',type=Path,required=True)
+        p.add_argument('--profile')
         p.add_argument('--limit',type=int)
         p.add_argument('--thread' if name=='snapshot' else '--after-model')
 
@@ -66,7 +70,7 @@ def execute(args):
         from naiyue_test_agent.contracts.cloud_history import Identity
         value=args.thread if args.command=='snapshot' else args.after_model
         if value is not None:TypeAdapter(Identity).validate_python(value)
-    client=CloudClient(read_settings(args.settings,CloudConnection))
+    client=CloudClient(read_connection(args.settings,getattr(args,'profile',None)))
     try:
         if args.command=='project':return client.request('POST','/projects',json=body) if action=='create' else client.request('GET','/projects')
         if args.command=='command':return client.request('GET','/commands/'+args.command_id)

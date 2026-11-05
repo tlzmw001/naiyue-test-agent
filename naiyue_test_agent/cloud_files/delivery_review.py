@@ -11,11 +11,12 @@ from .delivery_paths import parent,lstat,directory_identity
 from .paths import source_handle,identity
 
 
-def observed_entry(root,path,maximum):
+def observed_entry(root,path,maximum,*,ordinary=False):
     try:
-        with parent(root,path) as (fd,directory,name):
+        with parent(root,path,ordinary=ordinary) as (fd,directory,name):
             try:info=lstat(fd,directory,name)
             except FileNotFoundError:return None
+            if ordinary and (not stat.S_ISREG(info.st_mode) or getattr(info,'st_file_attributes',0)&0x400):raise CloudError('cloud_delivery_path_unsafe')
             if not (stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)):
                 raise CloudError('cloud_delivery_path_unsafe')
             if info.st_size>maximum:raise CloudError('cloud_delivery_capacity',413)
@@ -37,9 +38,9 @@ def observed_entry(root,path,maximum):
 def review(root,verified,maximum):
     observed={};conflicts=[]
     for change in verified.changes:
-        entry=observed_entry(root,change['path'],maximum)
+        entry=observed_entry(root,change['path'],maximum,ordinary=verified.ordinary)
         observed[change['path']]=entry.model_dump() if entry else None
-        if not matches(root,change['path'],change['old']) and not matches(root,change['path'],change['new']):
+        if not matches(root,change['path'],change['old'],ordinary=verified.ordinary) and not matches(root,change['path'],change['new'],ordinary=verified.ordinary):
             conflicts.append(change['path'])
     return observed,conflicts
 
@@ -49,8 +50,8 @@ def approved(root,verified,observed,force,*,continuing=False):
     if set(observed)!={c['path'] for c in verified.changes}:raise CloudError('cloud_delivery_not_prepared')
     for change in verified.changes:
         raw=observed[change['path']];old=InputEntry.model_validate(raw) if raw else None
-        if not continuing and not matches(root,change['path'],old):raise CloudError('cloud_delivery_preflight_changed')
-        if not force and not matches(root,change['path'],change['old']) and not matches(root,change['path'],change['new']):raise CloudError('cloud_delivery_conflict')
+        if not continuing and not matches(root,change['path'],old,ordinary=verified.ordinary):raise CloudError('cloud_delivery_preflight_changed')
+        if not force and not matches(root,change['path'],change['old'],ordinary=verified.ordinary) and not matches(root,change['path'],change['new'],ordinary=verified.ordinary):raise CloudError('cloud_delivery_conflict')
         changes.append(change|dict(old=old))
     return replace(verified,changes=changes)
 

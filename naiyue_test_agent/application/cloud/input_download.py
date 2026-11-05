@@ -19,12 +19,14 @@ class InputArchive:
 
 
 class InputDownload(ArtifactDownload):
-    def __init__(self,service,ident):
-        super().__init__(service,None)
-        self.input_id=ident;self.key='input:'+ident
+    def __init__(self,service,ident,task_id=None):
+        super().__init__(service,task_id)
+        self.input_id=ident;self.key='input:'+ident;self.key_released=False
 
     def open(self):
         self.maintenance_lease=self.service.runtime.releases.enter_io()
+        if self.task_id is not None:
+            self.service.runtime.task_io._enter(self.task_id);self.reserved=True
         package=self.service.get_input(self.input_id)
         self.record=InputArchive(package.archive_sha256,package.size,
             self.input_id+('.tar.gz' if package.codec=='gzip' else '.tar'))
@@ -36,15 +38,18 @@ class InputDownload(ArtifactDownload):
     async def aclose(self):
         try:await super().aclose()
         finally:
-            if self.finished.is_set():self.service.busy.discard(self.key)
+            if self.finished.is_set() and not self.key_released:
+                self.key_released=True
+                if not any(lease.input_id==self.input_id for lease in self.service.downloads):self.service.busy.discard(self.key)
 
 
-async def open_download(service,ident):
+async def open_download(service,ident,*,task_id=None):
     ident=TypeAdapter(ContentId).validate_python(ident)
     if service.closing:raise CloudError('cloud_closing',503)
     key='input:'+ident
-    if key in service.busy:raise CloudError('transfer_busy')
-    lease=InputDownload(service,ident);service.busy.add(key);service.downloads.add(lease)
+    if key in service.busy and not any(lease.input_id==ident for lease in service.downloads):raise CloudError('transfer_busy')
+    if len(service.downloads)>=service.limits.max_downloads:raise CloudError('input_download_capacity',429)
+    lease=InputDownload(service,ident,task_id);service.busy.add(key);service.downloads.add(lease)
     try:
         async with lease.lock:
             await cloud_work(service.runtime,lease.open,drain_cancel=True)

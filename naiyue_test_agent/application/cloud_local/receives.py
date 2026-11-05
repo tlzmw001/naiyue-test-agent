@@ -75,8 +75,7 @@ class LocalReceives:
         async def produce():
             with domain.owner.operation():
                 try:
-                    async with asyncio.timeout(self.manager.settings.receive_limits.transfer_timeout_seconds):
-                        await self._receive(domain,record,selection,explicit_retry,refresh)
+                    await self._receive(domain,record,selection,explicit_retry,refresh)
                 except (CloudError,OSError,httpx.HTTPError,ValidationError,TimeoutError) as error:
                     code=error.code if isinstance(error,CloudError) else 'cloud_receive_failed'
                     logger.warning('cloud_receive_failed code=%s error_type=%s',code,type(error).__name__)
@@ -100,12 +99,14 @@ class LocalReceives:
         include_code=domain.materials.repo.request(record.receive_id,record.local_session_id).get('include_code',True)
         selected=[f for f in result.bundle.files if include_code and f.role in ('manifest','patch') or f.artifact.artifact_id in wanted]
         if len(selected)>limits.max_files or any(f.artifact.size>limits.max_file_bytes for f in selected):raise CloudError('cloud_material_budget',413)
-        package=InputPackage.model_validate(client.request('GET','/inputs/'+record.input_id))
-        if (package.input_id!=record.input_id or package.manifest.input_id!=record.input_id
-                or package.manifest.selection['policy_sha256']!=hashlib.sha256(package.selection.canonical).hexdigest()):
-            raise CloudError('cloud_receive_input_mismatch',502)
-        source=domain.repo.source(record.source_handle,record.local_session_id)
-        branch_available=bool(source['captured'].get('source_receipt'))
+        package=None;branch_available=False
+        if record.input_id is not None:
+            package=InputPackage.model_validate(client.request('GET','/inputs/'+record.input_id))
+            if (package.input_id!=record.input_id or package.manifest.input_id!=record.input_id
+                    or package.manifest.selection['policy_sha256']!=hashlib.sha256(package.selection.canonical).hexdigest()):
+                raise CloudError('cloud_receive_input_mismatch',502)
+            source=domain.repo.source(record.source_handle,record.local_session_id)
+            branch_available=bool(source['captured'].get('source_receipt'))
         files=[ReceiveFile(material_id=str(uuid4()),role=f.role,artifact=f.artifact) for f in selected]
         with domain.materials.files.publication:
             used=domain.materials.files.used_bytes(limits)
@@ -121,11 +122,11 @@ class LocalReceives:
             await run_blocking(domain.materials.files.prepare_refresh,record)
             record=await run_blocking(domain.materials.repo.save,record.model_copy(update={'phase':'downloading','error_code':None,
                 'files':[f.model_copy(update={'offset':0,'verified':False}) for f in record.files]}))
-        if record.result is not None and record.input_package is not None and record.files and all(f.verified for f in record.files):
+        if record.result is not None and (record.input_id is None or record.input_package is not None) and record.files and all(f.verified for f in record.files):
             record=await run_blocking(domain.materials.repo.save,record.model_copy(update={'phase':'verifying','error_code':None}))
             await run_blocking(self._publish,domain,record,identities)
             return
-        deadline=time.monotonic()+self.manager.settings.receive_limits.transfer_timeout_seconds
+        deadline=None  # Each bounded segment owns its timeout; a large file has no whole-transfer deadline.
         binding=await run_blocking(domain.repo.binding,record.binding_id,record.local_session_id)
         async with self.manager.connection(binding) as client:
             from .result_lease import renew,release

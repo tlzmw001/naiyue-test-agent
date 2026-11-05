@@ -99,3 +99,24 @@ def test_missing_model_and_lost_or_wrong_state_fail_closed(tmp_path):
         with pytest.raises(CloudError,match='runner_state_missing'):
             async with open_runner(b,root,state):pass
     asyncio.run(scenario())
+
+
+def test_attached_files_are_installed_before_model_and_paths_enter_context(tmp_path,monkeypatch):
+    from naiyue_test_agent.cloud_runner.kernel import open_runner
+    from naiyue_test_agent.contracts.cloud_tasks import TaskAttachment
+    import naiyue_test_agent.cloud_runner.attachment_download as module
+    aid=str(uuid4());installed=[]
+    async def receive(kernel,command):
+        assert not model.seen
+        installed.append(command.command_id)
+        return [dict(attachment_id=aid,display_name='report',path='.nyt-input/'+aid)]
+    monkeypatch.setattr(module,'receive',receive)
+    model=StreamingToolModel(replies=[AIMessage(content='read selected files')])
+    async def scenario():
+        root=tmp_path/'project';root.mkdir();state=tmp_path/'state';state.mkdir(mode=0o700)
+        cmd=request(attachments=[TaskAttachment(attachment_id=aid,input_id='c'*64,display_name='report',size=100)])
+        async with open_runner(bootstrap(),root,state,catalog=ModelCatalog('A',{'A':model})) as runner:
+            result=await runner.execute(cmd)
+            assert result['status']=='completed' and installed==[cmd.command_id]
+            assert any('.nyt-input/'+aid in str(message.content) for message in model.seen[0])
+    asyncio.run(scenario())

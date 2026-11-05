@@ -45,7 +45,7 @@ export default function CloudResults({ api, sid, binding, active, changed, onAna
       if (controller.signal.aborted) return;
       if (value.plan.result_id !== selected || binding.task_id && value.plan.task_id && value.plan.task_id !== binding.task_id) throw new Error('cloud_result_identity_mismatch');
       setRecord(value);
-      if (value.phase === 'available') { const rows = await api.changes(sid, binding.binding_id, selected, 0, controller.signal); if (!controller.signal.aborted) setChanges(rows); }
+      if (value.phase === 'available' && value.plan.input_id !== null) { const rows = await api.changes(sid, binding.binding_id, selected, 0, controller.signal); if (!controller.signal.aborted) setChanges(rows); }
     }).catch(e => { if (!controller.signal.aborted) setError(cloudError(e)); });
     return () => controller.abort();
   }, [api, sid, binding.binding_id, selected, active, refresh, rows.find(r => r.result_id === selected)?.revision]);
@@ -69,7 +69,7 @@ export default function CloudResults({ api, sid, binding, active, changed, onAna
       {row.phase === 'superseded' && row.superseded_by && <small title={row.superseded_by}>由运行 {row.superseded_by.slice(0, 8)} 替代</small>}</li>)}</ul>
     <div className={styles.actions}>{offset > 0 && <button onClick={() => setOffset(v => Math.max(0, v - 20))}>上一页结果</button>}{rows.length === 20 && <button onClick={() => setOffset(v => v + 20)}>下一页结果</button>}</div>
     {record && record.plan.result_id === selected && <div className={styles.resultRecord}><p>{phases[record.phase]} · {outcomes[record.boundary?.outcome ?? ''] ?? '执行中'}</p>
-      <details><summary>结果标识</summary><small>结果 {record.plan.result_id} · 输入 {record.plan.input_id.slice(0, 12)}</small></details>
+      <details><summary>结果标识</summary><small>结果 {record.plan.result_id}{record.plan.input_id && <> · 输入 {record.plan.input_id.slice(0, 12)}</>}</small></details>
       {record.phase === 'superseded' && <p className={styles.note}>未生成本轮固定文件{record.superseded_by ? <>，已由运行 <span title={record.superseded_by}>{record.superseded_by.slice(0, 8)}</span> 替代</> : ''}。</p>}
       {record.phase === 'deleting' && <p className={styles.note}>正在清理结果文件，暂不可下载或接收；执行结论仍保留。</p>}
       {record.phase === 'deleted' && <p className={styles.note}>结果文件已清理，执行结论仍保留。</p>}
@@ -82,7 +82,12 @@ export default function CloudResults({ api, sid, binding, active, changed, onAna
         {changes && <><strong>代码变化 · {changes.total}</strong><ul>{changes.changes.map(row => <li key={row.path}>{({ added: '新增', deleted: '删除', modified: '修改' } as Record<string, string>)[row.kind]} · {row.path}{!row.portable && '（Windows 路径不兼容）'}</li>)}</ul>
           {changes.next_offset !== null && <button disabled={busy} onClick={() => { setBusy(true); void api.changes(sid, binding.binding_id, record.plan.result_id, changes.next_offset!).then(next => { if (valid(record.plan.result_id)) setChanges({ ...next, changes: [...changes.changes, ...next.changes] }); }).catch(e => { if (valid(record.plan.result_id)) setError(cloudError(e)); }).finally(() => { if (valid(record.plan.result_id)) setBusy(false); }); }}>加载更多代码变化</button>}</>}
         <ul className={styles.resultList}>{record.bundle?.files.filter(item => item.role === 'artifact').map(item => <li key={item.artifact.artifact_id}><span>{item.artifact.relative_name} · {item.artifact.size} 字节</span>
-          <div className={styles.actions}><button disabled={busy} onClick={() => void show(item)}>预览</button></div></li>)}</ul>
+          <div className={styles.actions}><button disabled={busy} onClick={() => void show(item)}>预览</button><button disabled={busy} onClick={() => {
+            setBusy(true); void api.downloadLink(sid, binding.binding_id, record.plan.result_id, item.artifact.artifact_id).then(link => {
+              if (!/^\/api\/client\/v1\/cloud-downloads\/[0-9a-f-]{36}$/.test(link.url)) throw new Error('cloud_download_invalid');
+              const anchor = document.createElement('a'); anchor.href = link.url; anchor.download = item.artifact.relative_name.split('/').at(-1)!; document.body.append(anchor); anchor.click(); anchor.remove();
+            }).catch(e => setError(cloudError(e))).finally(() => setBusy(false));
+          }}>浏览器下载</button></div></li>)}</ul>
       </>}
       {record.phase === 'available' && file && preview && <div><strong>{file.artifact.relative_name}</strong>{preview.binary ? <p>二进制内容，保存到文件夹后查看。</p> : <pre className={styles.resultPreview}>{preview.text}</pre>}
         {!preview.binary && !preview.complete && <button disabled={busy} onClick={() => { setBusy(true); const ticket = previewTicket.current; void api.resultPreview(sid, binding.binding_id, record.plan.result_id, file.artifact.artifact_id, preview.next_offset).then(next => { if (valid(record.plan.result_id) && ticket === previewTicket.current) setPreview({ ...next, text: preview.text + next.text }); }).catch(e => { if (valid(record.plan.result_id) && ticket === previewTicket.current) setError(cloudError(e)); }).finally(() => { if (valid(record.plan.result_id) && ticket === previewTicket.current) setBusy(false); }); }}>继续预览</button>}</div>}

@@ -11,7 +11,7 @@ from .cloud_events import canonical_json
 from .cloud_sources import SourcePolicy
 
 
-def input_path(value):
+def file_path(value):
     if (not value or len(value.encode('utf-8')) > 1024 or unicodedata.normalize('NFC',value)!=value
             or '\\' in value or any(ord(c)<32 or ord(c)==127 for c in value)):
         raise ValueError('invalid_input_path')
@@ -20,9 +20,16 @@ def input_path(value):
         stem=part.split('.')[0].upper()
         if (part in ('','.','..') or part[-1:] in ('.',' ') or ':' in part
                 or stem in {'CON','PRN','AUX','NUL',*(f'COM{i}' for i in '123456789¹²³'),*(f'LPT{i}' for i in '123456789¹²³')}
-                or part.casefold() in {'.git','.venv','node_modules','__pycache__','.pytest_cache','.ssh','.aws','id_rsa','id_ed25519','id_dsa','id_ecdsa','.netrc','_netrc'}
-                or any(c in '<>"|?*' for c in part) or part.casefold().endswith(('.p12','.pfx'))
-                or part.casefold().startswith('.env')):
+                or any(c in '<>"|?*' for c in part)):
+            raise ValueError('invalid_input_path')
+    return value
+
+
+def input_path(value):
+    file_path(value)
+    for part in value.split('/'):
+        if (part.casefold() in {'.git','.venv','node_modules','__pycache__','.pytest_cache','.ssh','.aws','id_rsa','id_ed25519','id_dsa','id_ecdsa','.netrc','_netrc'}
+                or part.casefold().endswith(('.p12','.pfx')) or part.casefold().startswith('.env')):
             raise ValueError('invalid_input_path')
     return value
 
@@ -38,10 +45,10 @@ def check_input_content(tail,chunk,*,first):
     return content[-128:]
 
 
-def distinct_paths(paths):
+def distinct_paths(paths,*,ordinary=False):
     seen=set()
     for path in paths:
-        input_path(path)
+        (file_path if ordinary else input_path)(path)
         key=unicodedata.normalize('NFD',path).casefold()
         if key in seen:raise ValueError('input_path_collision')
         seen.add(key)
@@ -59,14 +66,16 @@ def distinct_paths(paths):
 
 
 class InputLimits(CloudRecord):
-    max_file_bytes:int=Field(default=2*1024**3,gt=0)
-    max_input_bytes:int=Field(default=2*1024**3,gt=0)
-    max_archive_bytes:int=Field(default=5*1024**3//2,gt=0)
-    max_files:int=Field(default=32768,gt=0)
-    max_metadata_bytes:int=Field(default=16*1024**2,gt=0)
+    max_file_bytes:int=Field(default=20*1024**3,gt=0)
+    max_input_bytes:int=Field(default=20*1024**3,gt=0)
+    max_archive_bytes:int=Field(default=22*1024**3,gt=0)
+    max_files:int=Field(default=100000,gt=0)
+    max_metadata_bytes:int=Field(default=32*1024**2,gt=0)
     io_bytes:int=Field(default=256*1024,gt=0,le=1024*1024)
+    min_free_bytes:int=Field(default=256*1024*1024,ge=0)
+    max_downloads:int=Field(default=64,gt=0,le=1024)
     max_pending:int=Field(default=8,gt=0)
-    max_cache_bytes:int=Field(default=16*1024**3,gt=0)
+    max_cache_bytes:int=Field(default=64*1024**3,gt=0)
     gzip_level:int=Field(default=3,ge=0,le=9)
     upload_timeout_seconds:float=Field(default=1800.0,gt=0,le=3600)
     chunk_bytes:int=Field(default=8*1024*1024,gt=0,le=64*1024*1024)
@@ -80,14 +89,14 @@ class InputLimits(CloudRecord):
 
 class Selection(CloudRecord):
     model_config=ConfigDict(validate_by_name=True)
-    schema_version:Literal[1,2]=Field(default=1,alias='schema')
+    schema_version:Literal[1,2,3]=Field(default=1,alias='schema')
     paths:list[str]=Field(min_length=1)
     executables:list[str]=Field(default_factory=list)
     policy:SourcePolicy|None=None
 
     @field_validator('paths','executables')
     @classmethod
-    def paths_valid(cls,value):return distinct_paths(value)
+    def paths_valid(cls,value,info):return distinct_paths(value,ordinary=info.data.get('schema_version')==3)
 
     @model_validator(mode='after')
     def executable_subset(self):
@@ -113,7 +122,7 @@ class InputEntry(CloudRecord):
 
     @field_validator('path')
     @classmethod
-    def path_valid(cls,value):return input_path(value)
+    def path_valid(cls,value):return file_path(value)
 
     @model_validator(mode='after')
     def kind_fields(self):
@@ -125,14 +134,15 @@ class InputEntry(CloudRecord):
 
 class InputManifest(CloudRecord):
     model_config=ConfigDict(validate_by_name=True)
-    schema_version:Literal[1]=Field(default=1,alias='schema')
+    schema_version:Literal[1,3]=Field(default=1,alias='schema')
     selection:dict[Literal['policy_sha256'],ContentId]
     entries:list[InputEntry]
 
     @model_validator(mode='after')
     def ordered(self):
         names=[e.path for e in self.entries]
-        if set(self.selection)!={'policy_sha256'} or distinct_paths(names)!=names:raise ValueError('invalid_manifest')
+        if set(self.selection)!={'policy_sha256'} or distinct_paths(names,ordinary=self.schema_version==3)!=names:raise ValueError('invalid_manifest')
+        if self.schema_version==3 and any(e.type!='file' for e in self.entries):raise ValueError('attachment_regular_files_only')
         return self
 
     @property
@@ -190,6 +200,12 @@ class CreateTask(CloudRecord):
     network_id:str|None=Field(default=None,pattern=r'^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$',exclude_if=lambda v:v is None)
     command_id:UUIDText
     project_id:UUIDText
-    input_id:ContentId
+    input_id:ContentId|None=None
     template_id:str=Field(min_length=1,max_length=128)
     title:str=Field(default='',max_length=1024)
+
+
+class AttachInput(CloudRecord):
+    attachment_id:UUIDText
+    input_id:ContentId
+    display_name:str=Field(min_length=1,max_length=255)

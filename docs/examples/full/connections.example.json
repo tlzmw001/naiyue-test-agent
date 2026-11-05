@@ -1,0 +1,46 @@
+{
+  "connections": [
+    {
+      "connection_id": "development",
+      "connection": {
+        "endpoint": "http://127.0.0.1:18701",
+        "owner_authority": "127.0.0.1:18701",
+        "owner_token": "REPLACE_WITH_PRIVATE_OWNER_TOKEN",
+        "instance_id": "00000000-0000-0000-0000-000000000001",
+        "timeout_seconds": 60,
+        "io_bytes": 262144,
+        "max_response_bytes": 67108864
+      },
+      "ssh": {
+        "tunnel": "owned",
+        "ssh_host": "nyt-dev",
+        "ssh_executable": "ssh",
+        "connect_timeout_seconds": 15,
+        "keepalive_seconds": 15,
+        "keepalive_count": 3,
+        "reconnect_seconds": 5,
+        "poll_seconds": 0.1,
+        "shutdown_seconds": 5
+      },
+      "profiles": [
+        {
+          "profile_id": "development",
+          "network_id": "alice",
+          "template_ids": ["python-tests"],
+          "default_template": "python-tests"
+        },
+        {
+          "profile_id": "development-extra",
+          "network_id": "alice-extra",
+          "template_ids": ["python-tests"],
+          "default_template": "python-tests"
+        }
+      ],
+      "remote_update": {
+        "remote_python": "/srv/nyt/venv/bin/python",
+        "remote_settings": "/srv/nyt/private/update.json",
+        "timeout_seconds": 60
+      }
+    }
+  ]
+}

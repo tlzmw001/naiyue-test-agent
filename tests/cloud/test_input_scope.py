@@ -5,14 +5,14 @@ from naiyue_test_agent.contracts.cloud_inputs import InputLimits
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 
 
-def test_two_gib_defaults_and_staging_headroom():
+def test_twenty_gib_defaults_and_staging_headroom():
     v=InputLimits()
-    assert v.max_input_bytes==2*1024**3
+    assert v.max_input_bytes==20*1024**3
     assert v.max_file_bytes==v.max_input_bytes
     assert v.max_archive_bytes>=v.max_input_bytes+v.max_files*8192+v.max_metadata_bytes*2
     assert v.max_cache_bytes>v.max_input_bytes*2+v.max_files*8192+v.max_metadata_bytes*2
     assert v.max_archive_bytes<=v.chunk_bytes*v.max_segments
-    assert v.max_files>=32768
+    assert v.max_files==100000
 
 
 def test_non_git_detected_before_capture(tmp_path):
@@ -59,12 +59,13 @@ def test_directory_symlink_cannot_escape(tmp_path):
     with pytest.raises(CloudError):plan_scope(root,InputLimits(),mode='selection',paths=['escape/secret'])
 
 
-def test_large_input_workspace_fits_result_inventory_defaults():
+def test_output_only_budget_is_independent_of_uploaded_workspace():
     from naiyue_test_agent.contracts.cloud_results import ResultLimits
     inputs=InputLimits();results=ResultLimits()
-    assert results.max_result_bytes>inputs.max_input_bytes
-    assert results.max_files>=inputs.max_files
-    assert results.max_metadata_bytes>=inputs.max_metadata_bytes
+    # New tasks capture output only; uploaded bytes are not duplicated as a diff baseline.
+    assert results.max_result_bytes==20*1024**3
+    assert results.max_artifacts==1000
+    assert inputs.max_input_bytes==20*1024**3
 
 
 def test_directory_selection_can_exclude_child_before_budget_walk(tmp_path):
