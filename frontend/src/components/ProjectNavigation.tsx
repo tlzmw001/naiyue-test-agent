@@ -49,11 +49,11 @@ function Directory({ api, scopeId, select, refresh }: { api: WebApi; scopeId: st
     </span>
   </button>)}</div>;
 }
-export default function ProjectNavigation({ api, projects, failure, retry, scopeId, select, children, expanded, expand, revision }: {
+export default function ProjectNavigation({ api, projects, failure, retry, scopeId, select, children, expanded, expand, revision, remove }: {
   api: WebApi; projects?: ProjectRow[]; failure: string; retry: () => void; scopeId: string;
   select: (scopeId: string, sessionId?: string) => void; children: ReactNode;
   expanded: Record<string, boolean>; expand: (id: string, open: boolean) => void;
-  revision: number;
+  revision: number; remove: (project: ProjectRow) => void;
 }) {
   const group = (id: string, name: string, project?: ProjectRow) => {
     const open = expanded[id] ?? id === scopeId;
@@ -71,6 +71,8 @@ export default function ProjectNavigation({ api, projects, failure, retry, scope
           }}>
           <Icon name={id === 'chats' ? 'chat' : 'folder'} /><span>{name}</span>
         </button>
+        {project && <button type="button" className={styles.remove} aria-label={`移除${name}`} title="移除项目"
+          onClick={() => remove(project)}>移除</button>}
       </div>
       {project && status(project) && <p className={styles.status}>{status(project)}</p>}
       {open && <div className={styles.children}>{id === scopeId ? children : <Directory api={api} scopeId={id} select={select} refresh={revision} />}</div>}

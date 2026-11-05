@@ -105,5 +105,5 @@ async def close(project_id: str, request: Request):
 
 @router.delete('/{project_id}')
 async def remove(project_id: str, request: Request):
-    return await request.app.state.application.projects.remove(
+    return await request.app.state.scopes.remove_project(
         project_id, operation_id=request.headers['x-request-id'])

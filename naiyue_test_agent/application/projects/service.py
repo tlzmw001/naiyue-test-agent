@@ -50,7 +50,8 @@ class ProjectService:
 
     def list(self):
         with self._lock:
-            return tuple(self._view(project) for project in self.registry.list())
+            return tuple(self._view(project) for project in self.registry.list(all_states=True)
+                         if project.lifecycle in ('active', 'deleting'))
 
     def get(self, project_id):
         with self._lock:
@@ -199,7 +200,7 @@ class ProjectService:
                 operation = self.registry.operation(operation_id)
                 if operation is None:
                     raise ProjectError('project_operation_not_found')
-                if operation.action not in ('add_local', 'create_local', 'select_existing'):
+                if operation.action not in ('add_local', 'create_local', 'select_existing', 'remove'):
                     raise ProjectError('project_invalid_operation')
                 operations = (operation,)
             for operation in operations:

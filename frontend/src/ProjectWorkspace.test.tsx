@@ -23,6 +23,7 @@ function fixture() {
     vi.spyOn(value, 'forScope').mockImplementation(api);
     vi.spyOn(value, 'projects').mockResolvedValue({ items: [a, b].map((id, index) => ({ project_id: id, name: `项目 ${index ? 'B' : 'A'}`,
       source: { path: `/projects/${id}` }, trusted: true, revision: 1, lifecycle: 'active', availability: 'available' })), default_parent_dir: null });
+    vi.spyOn(value, 'projectOperations').mockResolvedValue({ items: [] });
     vi.spyOn(value, 'directory').mockImplementation(async scopeId => scopeId === 'chats' ? [] : [{ ...view, title: `会话 ${scopeId === a ? 'A' : 'B'}` }]);
     vi.spyOn(value, 'models').mockResolvedValue({ default_model_id: 'A', model_ids: ['A'] });
     vi.spyOn(value, 'sessions').mockResolvedValue(scope === 'chats' ? [] : [view]);
@@ -274,4 +275,67 @@ it('does not poll conversation or background tasks for a hidden scope', async ()
     expect(api(a).backgroundTasks).toHaveBeenCalledTimes(count);
     expect(api(a).session).not.toHaveBeenCalled();
   } finally { vi.useRealTimers(); }
+});
+
+it('confirms removal of the current project, keeps files, and returns to ordinary chats', async () => {
+  const { root } = fixture(); render(<ProjectWorkspace api={root} />);
+  fireEvent.click(await screen.findByRole('button', { name: '进入项目 A' }));
+  fireEvent.click(await screen.findByRole('button', { name: '移除项目 A' }));
+  const dialog = await screen.findByRole('dialog', { name: '移除项目' });
+  expect(within(dialog).getByText(`/projects/${a}`)).toBeTruthy();
+  expect(within(dialog).getByText(/磁盘文件和本地历史数据将保留/)).toBeTruthy();
+  const remove = vi.spyOn(root, 'removeProject').mockResolvedValue({ project_id: a, data_retained: true });
+  fireEvent.click(within(dialog).getByRole('button', { name: '确认移除' }));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '移除项目' })).toBeNull());
+  expect(remove).toHaveBeenCalledWith(a, expect.any(String));
+  expect(screen.getByRole('button', { name: '项目与位置，当前：普通对话' })).toBeTruthy();
+  // The mocked catalog deliberately continues returning the removed row.
+  expect(screen.queryByRole('button', { name: '进入项目 A' })).toBeNull();
+  expect(screen.getByRole('button', { name: '进入项目 B' })).toBeTruthy();
+});
+
+it('canceling missing-project removal leaves the project visible and sends no command', async () => {
+  const { root } = fixture();
+  const result = await root.projects(); result.items[0].availability = 'missing';
+  vi.mocked(root.projects).mockResolvedValue(result);
+  render(<ProjectWorkspace api={root} />);
+  fireEvent.click(await screen.findByRole('button', { name: '移除项目 A' }));
+  const remove = vi.spyOn(root, 'removeProject');
+  fireEvent.click(within(await screen.findByRole('dialog', { name: '移除项目' })).getByRole('button', { name: '取消' }));
+  expect(screen.getByText('目录不存在')).toBeTruthy();
+  expect(screen.getByRole('button', { name: '进入项目 A' })).toBeTruthy();
+  expect(remove).not.toHaveBeenCalled();
+});
+
+it('removing another project keeps the active project and its unsent draft', async () => {
+  const { root } = fixture(); render(<ProjectWorkspace api={root} />);
+  fireEvent.click(await screen.findByRole('button', { name: '进入项目 B' }));
+  fireEvent.change(await screen.findByRole('textbox', { name: '消息' }), { target: { value: '保留 B 草稿' } });
+  vi.spyOn(root, 'removeProject').mockResolvedValue({ project_id: a, data_retained: true });
+  fireEvent.click(screen.getByRole('button', { name: '移除项目 A' }));
+  fireEvent.click(within(await screen.findByRole('dialog', { name: '移除项目' })).getByRole('button', { name: '确认移除' }));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '移除项目' })).toBeNull());
+  expect(screen.getByRole('button', { name: '项目与位置，当前：项目 B' })).toBeTruthy();
+  expect((screen.getByRole('textbox', { name: '消息' }) as HTMLTextAreaElement).value).toBe('保留 B 草稿');
+});
+
+it('a removal rejection retains the current project and draft', async () => {
+  const { ApiError } = await import('./api');
+  const { root } = fixture(); render(<ProjectWorkspace api={root} />);
+  fireEvent.click(await screen.findByRole('button', { name: '进入项目 A' }));
+  fireEvent.change(await screen.findByRole('textbox', { name: '消息' }), { target: { value: '保留 A 草稿' } });
+  vi.spyOn(root, 'removeProject').mockRejectedValue(new ApiError('project_in_use'));
+  fireEvent.click(screen.getByRole('button', { name: '移除项目 A' }));
+  fireEvent.click(within(await screen.findByRole('dialog', { name: '移除项目' })).getByRole('button', { name: '确认移除' }));
+  await screen.findByText(/项目中还有运行/);
+  fireEvent.click(screen.getByRole('button', { name: '取消' }));
+  expect(screen.getByRole('button', { name: '项目与位置，当前：项目 A' })).toBeTruthy();
+  expect((screen.getByRole('textbox', { name: '消息' }) as HTMLTextAreaElement).value).toBe('保留 A 草稿');
+});
+
+it('reopening a removed initial scope falls back to ordinary chats', async () => {
+  const { api } = fixture(), root = api(a);
+  vi.mocked(root.projects).mockResolvedValue({ items: [], default_parent_dir: null });
+  render(<ProjectWorkspace api={root} />);
+  expect(await screen.findByRole('button', { name: '项目与位置，当前：普通对话' })).toBeTruthy();
 });

@@ -95,7 +95,7 @@ LC1 关闭仍先封口/排空在途读和admit，再排空全部创建/命令 fl
 
 | 编号／锁 | 类型与保护对象 | 允许在哪里获取 | 和其他锁的顺序／持有边界 |
 | --- | --- | --- | --- |
-| G1 `ScopeServices._scopes.serial(scope_id)` | 异步锁，每个 Web scope 的服务创建、关闭互斥 | [service/scopes.py](../naiyue_test_agent/service/scopes.py) 的 `get/_open/close_project`，通过 [ScopeTasks](../naiyue_test_agent/application/lifetime.py) | `G1 → G4`；创建时可间接进入项目服务。不同 scope 各自独立，不用它串行所有项目。 |
+| G1 `ScopeServices._scopes.serial(scope_id)` | 异步锁，每个 Web scope 的服务创建、关闭互斥 | [service/scopes.py](../naiyue_test_agent/service/scopes.py) 的 `get/_open/close_project/remove_project`，通过 [ScopeTasks](../naiyue_test_agent/application/lifetime.py) | `G1 → G4`；创建时可间接进入项目服务。不同 scope 各自独立，不用它串行所有项目。 |
 | G2 `ScopeTasks.serial(('selection_root', root))` | 异步锁，旧入口按规范化根目录协调准备 | [ProjectSelection.prepare](../naiyue_test_agent/application/projects/selection.py) | `G2 → G3 → G4`，缺少某个 key 时跳过该层；期间可进入 P1 和旧 workspace 文件锁 F2。 |
 | G3 `ScopeTasks.serial(('selection_store', path))` | 异步锁，旧数据库路径的准备／导入互斥 | 同上；只在已确定旧库路径后获取 | `G3 → G4`；允许进入 P1／F3。不得从 G4 反向准备旧目录。 |
 | G4 `HostManager._scopes.serial(('host', id))`／`('temporary', id)` | 异步锁，同一 project/chats/临时 host 的打开、列历史、关闭、移除、定位互斥 | [HostManager](../naiyue_test_agent/application/projects/host_manager.py) 的 `_scopes.open/serial`；`ProjectSelection._prepare` 的最终检查 | `G4 → {P1, G5, A1}`；host 打开／关闭期间也会进入本 host 的会话、资源和数据库入口。同 key 不可重入；跨项目不叠持 G4。冷打开共用 task，不再持全局打开锁。 |
@@ -275,3 +275,7 @@ BackgroundProcessManager.submit/foreground 的 `_validate_binding` 在取得 B1 
 - `ServiceNetworks.lock` 是本机async操作锁，串行保护目标状态JSON、原切换意图与SSH进程表；change/cancel/supervisor/close为唯一入口。锁内可await文件/网络/进程IO，不持线程锁或项目DB锁。锁内只向ProfileConnections借用连接，不进入LC0、会话历史锁或项目DB；ProfileConnections不回调ServiceNetworks。关闭先停supervisor、排空接受的切换并回收反向SSH，再关闭控制连接。状态写入使用已有私有原子JSON，不改用户配置。
 - Coordinator网络切换的持久标记保存在registry.meta。begin在单个registry DB写事务内SQL检查所有绑定该network_id的任务静止性并设置switching；不获取多个CT1任务锁。RunnerRuns保持CT1→registry DB，reserve在相同写事务检查switching及命令携带的network revision。begin/finish/cancel均不持DB跨网络，SSH副作用在本机执行，断线保留原标记。禁止DB持锁时反取CT1，也不按墙钟超时自动释放switching。
 - 范围预览/捕获复用owner.operation和既有执行根校验、输入缓存OS锁；未增加新的跨进程文件锁。预览不预留输入身份，捕获重新校验。
+
+## Spec143AP 项目移除
+
+`ScopeServices.remove_project`复用G1覆盖本次关闭与移除，顺序仍是G1 → G4 → 项目资源/P1/F3/DB；不获取另一项目的G1/G4。`_removing`是owner-loop短预留集合，G1内登记、finally释放，get/_open在返回缓存或新建前拒绝同scope请求；无新线程锁。已有CLI并发打开若在close/remove间进入，HostManager.remove原G4检查拒绝，不越过存储所有权。显式reconcile只续接已持久remove，沿P1/F3和原deletion_guard复核；不新增DB→G1/G4反向路径。

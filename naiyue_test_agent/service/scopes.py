@@ -18,6 +18,7 @@ class ScopeServices:
         self.application, self.settings = application, settings
         self.settings_path = settings_path
         self.services = {}
+        self._removing = set()
         self.output_plans = {}
         self._scopes = ScopeTasks()
         self.closing = False
@@ -29,6 +30,8 @@ class ScopeServices:
     async def get(self, scope_id):
         if self.closing:
             raise WebError('service_closing', 503)
+        if scope_id in self._removing:
+            raise ProjectError('project_in_use')
         if scope_id.startswith('temp-'):
             self.temporary.require(scope_id, active=True)
         if scope_id in self.services:
@@ -38,6 +41,8 @@ class ScopeServices:
     async def _open(self, scope_id):
         if self.closing:
             raise WebError('service_closing', 503)
+        if scope_id in self._removing:
+            raise ProjectError('project_in_use')
         if scope_id.startswith('temp-'):
             self.temporary.require(scope_id, active=True)
         if scope_id in self.services:
@@ -79,6 +84,36 @@ class ScopeServices:
 
     async def cancel_open(self, scope_id):
         await self._scopes.cancel(scope_id)
+
+    async def remove_project(self, project_id, *, operation_id):
+        try:
+            if str(UUID(project_id)) != project_id:
+                raise ValueError('invalid_id')
+        except ValueError:
+            raise ProjectError('project_not_found') from None
+        async with self._scopes.serial(project_id):
+            self._removing.add(project_id)
+            try:
+                close_error = None
+                try:
+                    await self.application.projects.close(project_id)
+                except BaseException as error:
+                    if not isinstance(error, ProjectError) or error.code != 'project_not_open':
+                        close_error = error
+                        raise
+                finally:
+                    service = self.services.get(project_id)
+                    if service is not None and service.application._lifetime._closed:
+                        self.services.pop(project_id)
+                        try:
+                            await service.delivery.close(close_application=False)
+                        except BaseException as error:
+                            if close_error is None:
+                                raise
+                            logger.error('project_removal_delivery_cleanup_failed error_type=%s', type(error).__name__)
+                return await self.application.projects.remove(project_id, operation_id=operation_id)
+            finally:
+                self._removing.discard(project_id)
 
     async def drain(self):
         results = await asyncio.gather(*(service.delivery.close(close_application=False)

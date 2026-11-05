@@ -16,4 +16,7 @@ export interface DirectoryPage {
 }
 export type ProjectPickerMode = 'projects' | 'select' | 'create';
 export interface FolderChoice { mode: 'select' | 'create'; path: string; identity: string; target: string; folderName?: string }
-export interface RegistrationOperation { operation_id: string; project_id: string; stage: string; error_code: string | null }
+export interface RegistrationOperation {
+  operation_id: string; project_id: string; stage: string; error_code: string | null;
+  action?: string; result?: { project_id: string; data_retained?: boolean } | null;
+}

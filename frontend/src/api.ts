@@ -63,6 +63,11 @@ export class WebApi {
     return (await this.response('/directories?' + query, { signal }, true)).json();
   }
   async getProject(id: string): Promise<ProjectRow> { return (await this.response('/projects/' + encodeURIComponent(id), {}, true)).json(); }
+  async removeProject(id: string, requestId: string): Promise<{ project_id: string; data_retained: boolean }> {
+    return (await this.response('/projects/' + encodeURIComponent(id), {
+      method: 'DELETE', headers: { 'X-Request-ID': requestId },
+    }, true)).json();
+  }
   async projectOperations(): Promise<{ items: RegistrationOperation[] }> { return (await this.response('/projects/operations', {}, true)).json(); }
   private async projectCommand<T>(path: string, body: object, requestId: string = crypto.randomUUID()): Promise<T> {
     return (await this.response('/projects/' + path, { method: 'POST', body: JSON.stringify(body), headers: { 'X-Request-ID': requestId } }, true)).json();
@@ -280,6 +285,8 @@ export function errorText(error: unknown): string {
     project_execution_unavailable: '项目执行目录不可用，历史仍可查看。',
     project_history_unavailable: '会话目录读取失败，请核对项目存储后重试。',
     project_not_found: '项目已移除或不在当前服务中，请刷新项目目录。',
+    project_in_use: '项目中还有运行、审批、恢复或后台工作，请先处理完成，再移除项目。',
+    project_cloud_tasks_retained: '项目仍关联云端任务或未完成的结果交付，请先处理这些任务，再移除项目。',
     project_operation_pending: '项目正在处理其他操作，请稍后刷新。',
     project_invalid_path: '请输入有效的本机绝对路径，也可以使用 ~ 表示主文件夹。',
     project_directory_missing: '文件夹不存在，请选择其他位置或刷新后重试。',
