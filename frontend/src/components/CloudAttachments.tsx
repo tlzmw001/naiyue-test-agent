@@ -10,7 +10,7 @@ import { Icon } from './Icons';
 import composer from './ComposerControls.module.css';
 import styles from './CloudTasks.module.css';
 
-const labels: Record<string, string> = { uploading: '上传中', ready: '待发送', attached: '已提交', failed: '需处理', cancelled: '已取消' };
+const labels: Record<string, string> = { uploading: '上传中', ready: '待发送', attached: '已提交', failed: '上传失败', cancelled: '已取消' };
 export default function CloudAttachments({ api, sid, bid, rows, selected, select, changed }: {
   api: CloudApi; sid: string; bid: string; rows: CloudAttachment[]; selected: string[];
   select: (ids: string[]) => void; changed: () => void;
@@ -60,7 +60,12 @@ export default function CloudAttachments({ api, sid, bid, rows, selected, select
         <small>{!row.transfer_bytes ? '正在准备文件' : (row.uploaded_bytes ?? 0) >= row.transfer_bytes ? '正在校验并登记' :
           `已确认 ${Math.floor((row.uploaded_bytes ?? 0) / row.transfer_bytes * 100)}%`}</small>
       </div> : <small>{labels[row.phase] ?? '处理中'}</small>}
-      {row.phase === 'failed' && <button onClick={() => void action(row.attachment_id, 'retry')}>重试上传</button>}
+      {row.phase === 'failed' && <>
+        <p role="alert" className={`${styles.error} ${styles.attachmentError}`}>
+          {cloudError({ code: row.error_code ?? 'attachment_upload_failed' })}
+        </p>
+        <button onClick={() => void action(row.attachment_id, 'retry')}>重试上传</button>
+      </>}
       {['uploading', 'ready', 'failed'].includes(row.phase) && <button onClick={() => void action(row.attachment_id, 'cancel')}>取消附件</button>}
     </div>)}
     {!open && error && <p role="alert" className={styles.error}>{error}</p>}

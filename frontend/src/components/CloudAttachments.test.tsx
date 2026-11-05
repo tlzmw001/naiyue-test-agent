@@ -62,3 +62,11 @@ it('stages a file explicitly selected from another local directory', async () =>
     directory: 'D:\\Downloads', directory_identity: 'directory-id', paths: ['报告.txt'],
   })));
 });
+
+it('explains a failed background upload beside the attachment', () => {
+  render(<CloudAttachments api={{} as CloudApi} sid="S" bid="B" selected={[]} select={vi.fn()} changed={vi.fn()}
+    rows={[{ attachment_id: 'A', binding_id: 'B', display_name: '压缩包', input_id: null, size: 0, phase: 'failed',
+      error_code: 'input_budget', created_at: 0 }]} />);
+  expect(screen.getByText(/输入大小或文件数量超过上限/)).toBeTruthy();
+  expect(screen.getByRole('button', { name: '重试上传' })).toBeTruthy();
+});

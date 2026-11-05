@@ -112,3 +112,5 @@
   .networkFields { grid-template-columns: 1fr 1fr; }
   .networkFields .networkTls { grid-column: 1 / -1; min-height: 24px; }
 }
+
+.attachmentError { flex-basis: 100%; margin: 0; overflow-wrap: anywhere; }
