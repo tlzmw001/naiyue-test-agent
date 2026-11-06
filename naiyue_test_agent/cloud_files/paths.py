@@ -4,7 +4,7 @@ import os
 from pathlib import PurePosixPath
 import stat
 
-from naiyue_test_agent.storage.files import check_store_directory
+from naiyue_test_agent.storage.files import check_store_directory,windows_api_path
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 
 
@@ -28,7 +28,7 @@ def _windows_source_open(path):
     kernel.GetFileInformationByHandle.argtypes=[wintypes.HANDLE,ctypes.POINTER(Information)]
     kernel.GetFileInformationByHandle.restype=wintypes.BOOL
     kernel.CloseHandle.argtypes=[wintypes.HANDLE];kernel.CloseHandle.restype=wintypes.BOOL
-    handle=kernel.CreateFileW(str(path),0x80000000,0x1|0x2,None,3,0x00200000|0x80,None)
+    handle=kernel.CreateFileW(windows_api_path(path),0x80000000,0x1|0x2,None,3,0x00200000|0x80,None)
     if handle==wintypes.HANDLE(-1).value:raise ctypes.WinError(ctypes.get_last_error())
     try:
         info=Information()

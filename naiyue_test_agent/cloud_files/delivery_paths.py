@@ -8,7 +8,7 @@ import sys
 from uuid import uuid4
 from naiyue_test_agent.contracts.cloud_inputs import input_path,file_path
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
-from naiyue_test_agent.storage.files import check_store_directory
+from naiyue_test_agent.storage.files import check_store_directory,windows_api_path
 
 
 def component(name):
@@ -67,7 +67,7 @@ def rename_new(source,destination,*,dir_fd=None,src_dir_fd=None,dst_dir_fd=None)
     if os.name=='nt':
         kernel=ctypes.WinDLL('kernel32',use_last_error=True)
         kernel.MoveFileExW.argtypes=[ctypes.c_wchar_p,ctypes.c_wchar_p,ctypes.c_uint]
-        if not kernel.MoveFileExW(str(source),str(destination),0):raise ctypes.WinError(ctypes.get_last_error())
+        if not kernel.MoveFileExW(windows_api_path(source),windows_api_path(destination),0):raise ctypes.WinError(ctypes.get_last_error())
     elif sys.platform=='darwin':
         libc=ctypes.CDLL(None,use_errno=True)
         libc.renameatx_np.argtypes=[ctypes.c_int,ctypes.c_char_p,ctypes.c_int,ctypes.c_char_p,ctypes.c_uint]

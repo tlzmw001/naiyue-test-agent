@@ -2,11 +2,12 @@
 import hashlib
 import json
 import os
+from pathlib import Path
 from uuid import uuid4
 
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from naiyue_test_agent.contracts.cloud_inputs import CapturedInput,InputTransfer,InputPackage,CreateTransfer
-from naiyue_test_agent.storage.files import open_store_readonly,open_store_file,sync_store_directory
+from naiyue_test_agent.storage.files import open_store_readonly,open_store_file,sync_store_directory,windows_api_path
 from .paths import identity
 
 
@@ -25,6 +26,7 @@ def upload(client,directory,*,upload_id=None,check_cancel=None,on_progress=None)
     facts=dict(purpose='input',input_id=captured.input_id,size=captured.size,
         archive_sha256=captured.archive_sha256,codec=captured.codec)
     journal=directory/('upload-'+client.settings.instance_id+('-'+upload_id if upload_id else '')+'.json')
+    if os.name=='nt':journal=Path(windows_api_path(journal))
     if journal.exists() or journal.is_symlink():
         with os.fdopen(open_store_readonly(journal),'rb') as stream:value=json.loads(stream.read(8193))
         value=CreateTransfer.model_validate(value).model_dump()

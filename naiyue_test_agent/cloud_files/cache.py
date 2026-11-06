@@ -12,7 +12,7 @@ from naiyue_test_agent.cloud_runner.state import read_json,write_json
 from naiyue_test_agent.contracts.cloud_inputs import CapturedInput,InputPackage
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from naiyue_test_agent.storage.files import open_store_file,acquire_store_lock,release_store_lock,sync_store_directory
-from naiyue_test_agent.storage.files import open_store_readonly,check_store_directory
+from naiyue_test_agent.storage.files import open_store_readonly,check_store_directory,windows_api_path
 from naiyue_test_agent.storage.cloud.schema import private_file
 from .capture import capture, publish_capture_directory
 from .archive import validate_package
@@ -24,7 +24,9 @@ def _used(root):
         for name in dirs:
             private_directory(Path(parent)/name)
         for name in files:
-            path=Path(parent)/name;info=path.lstat()
+            path=Path(parent)/name
+            if os.name=='nt':path=Path(windows_api_path(path.absolute()))
+            info=path.lstat()
             if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1:raise CloudError('input_cache_invalid')
             total+=info.st_size
     return total

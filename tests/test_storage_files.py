@@ -62,7 +62,8 @@ def test_windows_lock_dispatch_uses_fixed_range_and_preserves_other_io(monkeypat
     assert caught.value.errno == errno.EIO
 
 
-def test_windows_open_uses_reparse_handle_and_noninherit_crt_flags(monkeypatch, tmp_path):
+@pytest.mark.parametrize('long_path', [False, True])
+def test_windows_open_uses_reparse_handle_and_noninherit_crt_flags(monkeypatch, tmp_path, long_path):
     import ctypes
     from types import SimpleNamespace
     import sys
@@ -85,8 +86,10 @@ def test_windows_open_uses_reparse_handle_and_noninherit_crt_flags(monkeypatch, 
         calls.append(('convert', handle, flags))
         return 9
     monkeypatch.setitem(sys.modules, 'msvcrt', SimpleNamespace(open_osfhandle=convert))
-    assert storage_files._windows_open(tmp_path / 'owner', False) == 9
+    path = r'C:\缓存' + '\\' + 'p'*188 + '\\upload-' + 'a'*36 + '-' + 'b'*36 + '.json' if long_path else tmp_path / 'owner'
+    assert storage_files._windows_open(path, False) == 9
     args = calls[0][1]
+    assert args[0] == ('\\\\?\\' if long_path else '') + str(path)
     assert args[3] is None  # Noninheritable native handle.
     assert args[4] == 4 and args[5] & 0x00200000  # OPEN_ALWAYS / OPEN_REPARSE_POINT.
     assert calls[1] == ('convert', 456, 2 | 0x8000 | 0x80)
@@ -118,3 +121,16 @@ def test_windows_handle_is_closed_when_crt_conversion_fails(monkeypatch, tmp_pat
     with pytest.raises(OSError) as caught:
         storage_files._windows_open(tmp_path / 'owner', False)
     assert caught.value is original and closed == [456]
+
+
+@pytest.mark.parametrize('name,prefix', [
+    ('C:/工作/' + '字'*260, '\\\\?\\C:\\工作\\'),
+    ('\\\\server\\share\\' + 'a'*260, '\\\\?\\UNC\\server\\share\\'),
+    ('C:\\' + '😀'*129, '\\\\?\\C:\\'),
+])
+def test_windows_extended_path_handles_drive_unc_and_utf16(name, prefix):
+    from naiyue_test_agent.storage.files import windows_api_path
+    result = windows_api_path(name)
+    assert result == prefix + name.replace('/', '\\').rsplit('\\',1)[-1]
+    assert windows_api_path(result) == result
+    assert windows_api_path('C:\\short\\file') == 'C:\\short\\file'

@@ -1,9 +1,24 @@
 """Portable, noninheritable regular-file handles and local ownership locks."""
 
 import errno
+import ntpath
 import os
 from pathlib import Path
 import stat
+
+
+def windows_api_path(path):
+    """Keep Win32's extended path syntax at the filesystem boundary."""
+    name = str(path)
+    if name.startswith(('\\\\?\\', '\\\\.\\')) or len(name.encode('utf-16-le', errors='surrogatepass')) < 520:
+        return name
+    normalized = ntpath.normpath(name)
+    drive, tail = ntpath.splitdrive(normalized)
+    if drive.startswith('\\\\') and ntpath.isabs(normalized):
+        return '\\\\?\\UNC\\' + normalized[2:]
+    if len(drive) == 2 and drive[1] == ':' and tail.startswith('\\'):
+        return '\\\\?\\' + normalized
+    return name
 
 
 def _regular(info):
@@ -49,7 +64,7 @@ def _windows_open(path, exclusive_create, *, readonly=False, writable_attributes
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel.CloseHandle.restype = wintypes.BOOL
     access = 0x80000000 | (0 if readonly else 0x40000000) | (0x100 if writable_attributes else 0)
-    handle = kernel.CreateFileW(str(path), access, 0x1 | 0x2,
+    handle = kernel.CreateFileW(windows_api_path(path), access, 0x1 | 0x2,
                                 None, 3 if readonly else 1 if exclusive_create else 4, 0x00200000 | 0x80, None)
     if handle == wintypes.HANDLE(-1).value:
         raise ctypes.WinError(ctypes.get_last_error())
@@ -72,7 +87,7 @@ def clear_store_readonly(path):
     import ctypes
     from ctypes import wintypes
     import msvcrt
-    path = Path(path)
+    path = Path(windows_api_path(Path(path).absolute()))
     check_store_directory(path.parent)
     check_store_file(path)
     if not getattr(path.lstat(), 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_READONLY: return None
@@ -105,6 +120,7 @@ def clear_store_readonly(path):
 def open_store_file(path, *, exclusive_create=False):
     path = Path(path)
     if os.name == 'nt':
+        path = Path(windows_api_path(path.absolute()))
         fd = _windows_open(path, exclusive_create)
     else:
         flags = os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW
@@ -123,6 +139,8 @@ def open_store_file(path, *, exclusive_create=False):
 def open_store_readonly(path):
     """Open an existing regular single-link file; never create or follow it."""
     path = Path(path)
+    if os.name == 'nt':
+        path = Path(windows_api_path(path.absolute()))
     check_store_file(path)  # Reject FIFOs before a blocking POSIX open.
     fd = (_windows_open(path, False, readonly=True) if os.name == 'nt'
           else os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK))
