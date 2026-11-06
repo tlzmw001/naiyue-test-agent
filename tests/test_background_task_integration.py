@@ -34,3 +34,21 @@ def test_background_acceptance_with_installer_restricted_path(monkeypatch, tmp_p
     monkeypatch.setenv('PATH', str(tmp_path))
     result = asyncio.run(background_scenario(tmp_path, StreamingToolModel, executable=executable))
     assert result['cleanup'] == 'passed'
+
+
+def test_background_smoke_does_not_require_reverse_dns(monkeypatch, tmp_path):
+    from scripts import release_background_smoke
+
+    command = release_background_smoke.shell_command
+    reject_reverse_dns = (
+        "import socket\n"
+        "def reject_reverse_dns(*args):\n"
+        " raise RuntimeError('reverse DNS unavailable in this runner')\n"
+        "socket.gethostbyaddr = reject_reverse_dns\n"
+    )
+    monkeypatch.setattr(release_background_smoke, 'shell_command',
+                        lambda script: command(reject_reverse_dns + script))
+
+    result = asyncio.run(release_background_smoke.background_scenario(tmp_path, StreamingToolModel))
+    assert result['cross_turn_service'] == 'passed'
+    assert result['cleanup'] == 'passed'

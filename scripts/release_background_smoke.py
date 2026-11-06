@@ -57,13 +57,15 @@ async def background_scenario(root, model_type, *, automatic=False, executable=N
     assert {spec.tool.name for spec in tools} == {shell, 'task_list', 'task_output', 'task_stop'}
     def call(name, args, identity):
         return AIMessage(content='', tool_calls=[{'name': name, 'args': args, 'id': identity}])
-    service = ("import os,json\nfrom http.server import HTTPServer,BaseHTTPRequestHandler\n"
+    # The fixture only listens on a numeric loopback address. HTTPServer
+    # performs reverse DNS during bind, before the readiness line is emitted.
+    service = ("import os,json\nfrom http.server import BaseHTTPRequestHandler\nfrom socketserver import TCPServer\n"
         "class Handler(BaseHTTPRequestHandler):\n"
         " def do_GET(self):\n"
         "  self.send_response(200);self.end_headers();self.wfile.write(b'healthy')\n"
         " def log_message(self,*args): pass\n"
-        "server=HTTPServer(('127.0.0.1',0),Handler)\n"
-        "print(json.dumps({'pid':os.getpid(),'port':server.server_port}),flush=True)\nserver.serve_forever()")
+        "server=TCPServer(('127.0.0.1',0),Handler)\n"
+        "print(json.dumps({'pid':os.getpid(),'port':server.server_address[1]}),flush=True)\nserver.serve_forever()")
     model = model_type(replies=[call(shell, {'command': shell_command(service), 'background': not automatic}, 'service'),
                                AIMessage(content='service submitted')])
     options = dict(database_path=directory / 'sessions.sqlite', tools=tools, system_prompt='',

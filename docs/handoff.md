@@ -1,5 +1,7 @@
 # Naiyue Test Agent：当前开发学习交接
 
+**2026-11-06 0.5.10 macOS 发布门槛**。托管 macOS 后台烟测的 Python 子进程已启动，诊断堆栈显示夹具的 HTTPServer 在绑定后反查 127.0.0.1，尚未输出就绪消息。夹具改用数字回环 TCP 监听并保留真实 HTTP、跨轮和清理断言。禁用反向 DNS 的回归先失败后通过，发布相关 81 项通过。下一步以修复提交的四平台 CI 为准，再打标签并验证实际发布的 wheel 与 Release 附件。
+
 **2026-11-06 Spec143AY 本机刷新与云端 MCP**。本机沿用刷新按钮和 CLI 原入口，一次重拉启用服务目录。云端 Runner 支持直连与 Windows 中转，主智能体自动获得生效工具，任务内刷新按轮次应用并由 Runner 确认。中转验证了原 Host、SNI、证书和路径，轮结束关闭中转执行连接。发布前完整后端 6575 项、前端 648 项及构建通过，macOS ARM64 wheel 和 Twine 检查通过。此前 Chromium 1200px/375px 完成面板布局检查。纳入 0.5.10。[版本说明](releases/0.5.10.md)。下一步使用更新后的 Windows Agent、Linux Coordinator 和 Runner 模板验证公司 MCP 真实端点及 SSH 中转。[Spec143AY](specs/143ay-cloud-mcp-and-manual-refresh.md)
 
 **2026-11-05 项目移除入口**。左侧项目行的常驻「移除」改为右键菜单「移除项目」，键盘可用 Shift+F10。沿用原确认弹窗、活动保护及登记移除语义。前端 645 项、构建通过，Chromium 1200px 和 375px 均验证右键、确认及取消后焦点回到项目行。改动在工作区。[Spec143AP](specs/143ap-project-removal-ui.md)
