@@ -6,6 +6,7 @@ import { Chevron, Icon } from './Icons';
 import SessionMenu from './SessionMenu';
 import SessionSearch from './SessionSearch';
 import SessionIndicators from './SessionIndicators';
+import SidebarResizeHandle from './SidebarResizeHandle';
 import styles from '../App.module.css';
 import sidebar from './Sidebar.module.css';
 
@@ -185,6 +186,7 @@ export default function Sidebar({ rows, selected, open, disabled, managing, onNe
         })}</div>)}
       </nav>
       <div className={`${styles.localBadge} ${sidebar.footer}`}><span />本地工作台</div>
+      {!collapsed && <SidebarResizeHandle side="navigation" />}
     </aside>
     {menu && <SessionMenu key={menu.row.session_id} row={menu.row} title={title(menu.row)} x={menu.x} y={menu.y}
       busy={managing} close={closeMenu}

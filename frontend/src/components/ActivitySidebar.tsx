@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { Icon } from './Icons';
+import SidebarResizeHandle from './SidebarResizeHandle';
 import styles from './ActivitySidebar.module.css';
 
 const tabs = [{ id: 'agents', label: '子智能体' }, { id: 'tasks', label: '后台任务' }, { id: 'context', label: '上下文' }, { id: 'cloud', label: '云端任务' }] as const;
@@ -35,5 +36,6 @@ export default function ActivitySidebar({ tab, select, close, activeCount, child
     </header>
     {visibleTabs.map(item => <div className={styles.content} key={item.id} role="tabpanel" hidden={tab !== item.id}
       id={`activity-${item.id}`} aria-labelledby={`activity-tab-${item.id}`}>{children[item.id]}</div>)}
+    <SidebarResizeHandle side="activity" />
   </aside>;
 }

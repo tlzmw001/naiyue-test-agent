@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { ScopeSelection } from './projectTypes';
 import projectStyles from './components/ProjectNavigation.module.css';
@@ -45,6 +45,19 @@ export default function App({ api: supplied, active = true, selection, scopeName
   }, [active, selection, chat]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<ActivityTab>('agents');
+  const layout = useRef<HTMLDivElement>(null);
+  const sessionId = chat.session?.session_id;
+  useLayoutEffect(() => {
+    const root = layout.current;
+    const scroll = root?.querySelector<HTMLElement>(`.${styles.conversation}`);
+    if (!root || !scroll) return;
+    const update = () => root.style.setProperty('--conversation-scrollbar', `${scroll.offsetWidth - scroll.clientWidth}px`);
+    update();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(update);
+    observer.observe(scroll);
+    return () => observer.disconnect();
+  }, [sessionId]);
   const background = useBackgroundTasks(api, sidebarOpen && sidebarTab === 'tasks', active);
   const sidebarTrigger = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef<HTMLButtonElement | null>(null);
@@ -81,7 +94,7 @@ export default function App({ api: supplied, active = true, selection, scopeName
   const labels = { running: chat.stopping ? '正在停止' : (({resources:'正在读取项目指令和 Skills',model_request:'正在准备模型请求',model:'正在请求模型',tools:'正在执行工具'} as Record<string,string>)[chat.run?.preparation_phase??'']??'正在处理'), completed: '本次运行完成', stopped: '已停止',
     interrupted: '等待审批', failed: '本次运行失败', unconfirmed: '执行结果未同步' };
 
-  return <div className={styles.app}>
+  return <div className={styles.app} ref={layout}>
     {active && <Sidebar rows={chat.sessions} selected={chat.session?.session_id} open={navigation}
       navigation={projectNavigation} scopeName={scopeName} scopeId={api.scopeId}
       currentSession={chat.session ?? undefined} currentRun={chat.run}

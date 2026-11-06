@@ -302,3 +302,45 @@ it('shows saved child instances and shares the list with the sidebar without fet
   expect(list).toHaveBeenCalledTimes(1);
   expect(api.start).not.toHaveBeenCalled();
 });
+
+it('lets both sidebars use only the main conversation’s spare width', async () => {
+  const { api } = client();
+  const { container } = render(<App api={api} />);
+  await waitFor(() => expect(api.sessions).toHaveBeenCalled());
+  const layout = container.firstElementChild as HTMLElement;
+  const workspace = screen.getByRole('main');
+  const leftPane = screen.getByRole('complementary', { name: '会话导航' });
+  layout.style.setProperty('--navigation-width', '260px');
+  layout.style.setProperty('--activity-width', '440px');
+  layout.style.setProperty('--conversation-width', '768px');
+  layout.style.setProperty('--conversation-padding-x', '28px');
+  layout.style.setProperty('--conversation-scrollbar', '16px');
+  const extra = (side: string) => parseFloat(layout.style.getPropertyValue(`--${side}-requested`)) || 0;
+  Object.defineProperty(workspace, 'clientWidth', { get: () => 940 - extra('navigation') - extra('activity') });
+  Object.defineProperty(leftPane, 'offsetWidth', { get: () => 260 + extra('navigation') });
+
+  const left = screen.getByRole('separator', { name: '调整会话导航宽度' });
+  fireEvent.pointerDown(left, { pointerId: 1, clientX: 260, button: 0 });
+  fireEvent.pointerMove(left, { pointerId: 1, clientX: 300 });
+  fireEvent.pointerUp(left, { pointerId: 1 });
+  expect(extra('navigation')).toBe(40);
+
+  fireEvent.click(screen.getByRole('button', { name: '打开辅助侧栏' }));
+  const rightPane = screen.getByRole('complementary', { name: '辅助侧栏' });
+  Object.defineProperty(rightPane, 'offsetWidth', { get: () => 440 + extra('activity') });
+  const right = screen.getByRole('separator', { name: '调整辅助侧栏宽度' });
+  fireEvent.pointerDown(right, { pointerId: 2, clientX: 1200, button: 0 });
+  fireEvent.pointerMove(right, { pointerId: 2, clientX: 1000 });
+  fireEvent.pointerUp(right, { pointerId: 2 });
+  expect(extra('activity')).toBe(60);
+  fireEvent.keyDown(left, { key: 'End' });
+  expect(extra('navigation')).toBe(40);
+  fireEvent.keyDown(right, { key: 'ArrowRight' });
+  expect(extra('activity')).toBe(44);
+  fireEvent.keyDown(right, { key: 'Home' });
+  expect(extra('activity')).toBe(0);
+  fireEvent.keyDown(left, { key: 'End' });
+  expect(extra('navigation')).toBe(100);
+  fireEvent.click(screen.getByRole('button', { name: '收起侧栏' }));
+  expect(screen.queryByRole('separator', { name: '调整会话导航宽度' })).toBeNull();
+});
