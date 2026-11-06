@@ -25,6 +25,7 @@ from naiyue_test_agent.web.settings import WebSettings
 from naiyue_test_agent.web.windows_disconnect import windows_disconnect_handler
 from .browser import BrowserBoundary, BrowserFiles
 from .ownership import ServiceOwner
+from .cloud_downloads import BROWSER_DOWNLOAD_ROUTE
 from .cloud_tasks import router as cloud_task_router
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from .projects import router as project_router
@@ -99,6 +100,10 @@ def create_service_app(options, *, application_factory=None, shutdown=None):
             raise
 
     async def access(request: Request):
+        route = request.scope.get('route')
+        if request.method == 'GET' and getattr(route, 'name', None) == BROWSER_DOWNLOAD_ROUTE:
+            # The matched download route checks the file-scoped ticket and HttpOnly cookie.
+            return
         authorize(request, app.state.web_settings)
         if app.state.scopes.closing:
             raise WebError('service_closing', 503)

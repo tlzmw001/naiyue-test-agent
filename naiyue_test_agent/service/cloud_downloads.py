@@ -6,6 +6,8 @@ from starlette.responses import JSONResponse
 from naiyue_test_agent.contracts.cloud_tasks import UUIDText,CloudError
 from naiyue_test_agent.contracts.cloud_local_tasks import SessionId
 
+BROWSER_DOWNLOAD_ROUTE = 'cloud_browser_download'
+
 
 def register(router,access,domain):
     @router.post('/cloud-tasks/{binding_id}/results/{result_id}/files/{file_id}/download-link')
@@ -26,7 +28,7 @@ def register(router,access,domain):
         response.set_cookie('nyt_download',secret,max_age=ttl,path=path,httponly=True,samesite='strict')
         return response
 
-    @router.get('/cloud-downloads/{link_id}')
+    @router.get('/cloud-downloads/{link_id}',name=BROWSER_DOWNLOAD_ROUTE)
     async def download(request:Request,link_id:UUIDText):
         state=request.app.state;settings=state.web_settings
         if request.headers.get('host')!=settings.authority or request.headers.get('origin') not in (None,settings.origin):

@@ -1,5 +1,7 @@
 # Naiyue Test Agent：当前开发学习交接
 
+**2026-11-06 浏览器下载 401**。完整本机服务复现签发链接成功、仅携带有效下载 Cookie 的 GET 被全局 Bearer 鉴权拒绝。仅匹配的文件下载 GET 使用原有短期票据和 Cookie 鉴权，签发和其他 API 继续走 Bearer。新增回归先红后绿，下载及服务协议相关 17 项、云端全量复跑 1204 项和 macOS ARM64 wheel 构建通过。首轮全量一个模型 Runner 用例返回 `runner_not_ready`，单测与全量复跑通过。下一步用含修复的 Windows 本机包从 Chrome 复验原文件下载。
+
 **2026-11-06 云端结果取回窗口**。可取回和历史分组，按原有接口分页，默认定位最近的可取回结果。勾选、选目录、一次点击保存，后台继续预检和写前复核；只有冲突才单独确认覆盖，断线后按原命令核对。本机分析草稿、单文件预览与下载及旧任务代码交付保留。结果取回改动仅在本机 Web 端，云端清理和下载协议沿用。前端 656 项、构建、相关后端 15 项和 Chromium 1200px/375px 的模拟接口界面验证通过。下一步用 Windows 原机复验同名覆盖、断线恢复和分析草稿。[Spec143AZ](specs/143az-cloud-result-retrieval.md)
 
 **2026-11-06 MCP 静态认证头**。本机与云端共用按服务的 `headers_env`。获准的 HTTP 可发送认证头，HTTPS 继续校验 CA 和服务名。Coordinator 仅将引用写入配置快照，通过已鉴权控制帧交付环境值；Runner 继续直连或走 Windows 隧道。旧模板在启用该配置时显示不支持。MCP 与云端回归 1486 项、配置示例 2 项及 macOS ARM64、Windows x64、Linux x64 wheel 构建与 Twine 检查通过。本片单独打包到现有 v0.5.10 Release，用独立的离线索引和 Runner 发行 ID。下一步用更新后的 Coordinator 和 Runner 模板复验公司实际 HTTPS MCP 和隧道。[Spec143AY](specs/143ay-cloud-mcp-and-manual-refresh.md)
