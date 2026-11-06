@@ -19,6 +19,26 @@ def facts(path):
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
 
+def test_local_http_discovery_sends_configured_token(tmp_path, monkeypatch):
+    from naiyue_test_agent.mcp_client.discovery import discover_server
+    from naiyue_test_agent.mcp_client.settings import MCPServerSettings
+    from naiyue_test_agent.tools.web_settings import NetworkSettings
+
+    path = tmp_path / 'authenticated.jsonl'
+    path.with_suffix('.headers').write_text(json.dumps({'authorization': 'Bearer fixture-local'}))
+    monkeypatch.setenv('LOCAL_MCP_AUTH', 'Bearer fixture-local')
+
+    async def scenario():
+        async with http_server(path, json_response=True) as url:
+            server = MCPServerSettings(enabled=True, transport='streamable_http', url=url,
+                                       headers_env={'Authorization': 'LOCAL_MCP_AUTH'})
+            catalog = await discover_server('local', server, NetworkSettings(mode='direct'))
+            assert catalog.tools
+            assert not any(row['event'] == 'auth_rejected' for row in facts(path))
+
+    asyncio.run(scenario())
+
+
 async def until(predicate):
     async with asyncio.timeout(15):
         while not predicate():

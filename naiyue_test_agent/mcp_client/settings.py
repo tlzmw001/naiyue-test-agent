@@ -68,8 +68,8 @@ class MCPServerSettings(BaseModel):
                 loopback = ipaddress.ip_address(url.hostname).is_loopback
             except ValueError:
                 loopback = url.hostname.lower() == 'localhost'
-            if url.scheme == 'http' and (self.headers_env or not (loopback or self.allow_insecure_http)):
-                raise ValueError('Plain HTTP requires loopback or opt-in and forbids credential headers')
+            if url.scheme == 'http' and not (loopback or self.allow_insecure_http):
+                raise ValueError('Plain HTTP requires loopback or opt-in')
             denied = {'host', 'connection', 'content-length', 'content-type', 'accept', 'accept-encoding',
                       'transfer-encoding', 'mcp-session-id', 'mcp-protocol-version'}
             if len({key.lower() for key in self.headers_env}) != len(self.headers_env):

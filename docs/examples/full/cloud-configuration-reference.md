@@ -216,6 +216,7 @@ CLI统一用 `--settings C:/private/connections.json --profile development`，�
 | `route` | `direct` 从 Runner 直连。 `windows_tunnel` 复用该任务绑定的 Windows SSH 反向入口。 |
 | `network_slot` | 中转必填。用任务 `network_id` 下的端口入口 ID。Windows 连接页面应把该入口指向与 MCP URL 相同的主机、有效端口和 TLS 类型。 |
 | `allow_insecure_http` | 默认 `false`。仅在明确使用非回环明文 HTTP 时设为 `true`。HTTPS 按 Runner 信任的 CA 校验证书。 |
+| `headers_env` | 可选。按服务填写「请求头 → Coordinator 进程环境变量名」，如 `{"Authorization":"LOGS_MCP_AUTHORIZATION"}`。变量值填写完整头值，例如 `Bearer <token>`。多个服务可使用不同变量，也可为同一个服务配置多个头。获准连接的明文 HTTP 会明文发送这些头。 |
 | `connect_timeout_seconds` | 默认 15 秒，建立连接和发现目录的单服务上限。 |
 | `call_timeout_seconds` | 默认 30 秒，单次调用上限。 |
 | `idle_timeout_seconds` | 默认 300 秒，直连空闲连接回收。中转连接仅在同一轮内复用，每轮结束就关闭。每个 Runner 对每个服务默认单并发。 |
@@ -223,6 +224,12 @@ CLI统一用 `--settings C:/private/connections.json --profile development`，�
 服务并行发现。刷新确认期限至少为 `control_receive_timeout_seconds`，也会覆盖最长的已启用服务连接超时与控制帧发送预算。真实 Windows 中转需保证该机的 SSH
 反向连接与待测服务网络可用。关闭中转或目标变更后，下一轮会禁用失配的 MCP 服务。
 开发机直连服务和原内置工具仍可使用。旧 Runner 模板显示不支持此功能。
+
+使用认证头需要更新 Coordinator 和 Runner。真实凭证在 Linux 的 Coordinator 启动环境设置，不放进
+`tool_environment.values`。Coordinator 随已认证的刷新控制帧交给 Runner，实际 MCP 请求仍由
+Runner 发出。修改启动环境的凭证后，重启 Coordinator，再在原任务点击「MCP 工具 → 刷新工具」。
+Windows 隧道入口仍匹配 MCP URL 的主机、端口和 TLS 类型；私有 CA 由 Runner 信任，可在 Runner
+启动环境使用 `SSL_CERT_FILE` 指向受信 CA bundle。使用域名时证书须覆盖该域名，使用 IP 时须覆盖该 IP。
 
 ## update.example.json
 

@@ -175,6 +175,7 @@ class MCPRefreshDispatch(Fenced):
     settings: CloudMCPSettings
     services: dict | None = None
     expires_at: float
+    credential_environment: dict[str, str] = Field(default_factory=dict, repr=False, exclude_if=lambda value: not value)
 
 
 class MCPApplied(Fenced):

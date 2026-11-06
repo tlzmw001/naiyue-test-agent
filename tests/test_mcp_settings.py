@@ -29,7 +29,6 @@ def test_mcp_defaults_and_user_loader(tmp_path):
     {'transport': 'streamable_http', 'url': 'https://user:password@example.invalid'},
     {'transport': 'streamable_http', 'url': 'https://example.invalid/#fragment'},
     {'transport': 'streamable_http', 'url': 'http://example.invalid'},
-    {'transport': 'streamable_http', 'url': 'http://localhost:3210', 'headers_env': {'X-Key': 'SECRET'}},
     {'transport': 'streamable_http', 'url': 'https://example.invalid', 'headers_env': {'Bad\nHeader': 'SECRET'}},
     {'transport': 'streamable_http', 'url': 'https://example.invalid', 'headers_env': {'Host': 'SECRET'}},
     {'transport': 'stdio', 'command': 'app', 'connect_timeout_seconds': 0},
@@ -57,6 +56,14 @@ def test_plain_http_explicit_optin_and_loopback():
         assert MCPServerSettings(transport='streamable_http', url=url).url == url
     assert MCPServerSettings(transport='streamable_http', url='http://example.invalid',
                              allow_insecure_http=True)
+
+
+@pytest.mark.parametrize('url,opt_in', [('http://localhost:123', False), ('http://example.invalid', True)])
+def test_plain_http_can_send_credential_headers(url, opt_in):
+    from naiyue_test_agent.mcp_client.settings import MCPServerSettings
+    settings = MCPServerSettings(transport='streamable_http', url=url, allow_insecure_http=opt_in,
+                                 headers_env={'Authorization': 'MCP_TOKEN'})
+    assert settings.headers_env == {'Authorization': 'MCP_TOKEN'}
 
 
 def test_config_error_does_not_expose_input(tmp_path, caplog):

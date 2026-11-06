@@ -1,5 +1,7 @@
 # Naiyue Test Agent：当前开发学习交接
 
+**2026-11-06 MCP 静态认证头**。本机与云端共用按服务的 `headers_env`。获准的 HTTP 可发送认证头，HTTPS 继续校验 CA 和服务名。Coordinator 仅将引用写入配置快照，通过已鉴权控制帧交付环境值；Runner 继续直连或走 Windows 隧道。旧模板在启用该配置时显示不支持。MCP 与云端回归 1486 项、配置示例 2 项及 macOS ARM64、Windows x64、Linux x64 wheel 构建与 Twine 检查通过。本片单独打包到现有 v0.5.10 Release，用独立的离线索引和 Runner 发行 ID。下一步用更新后的 Coordinator 和 Runner 模板复验公司实际 HTTPS MCP 和隧道。[Spec143AY](specs/143ay-cloud-mcp-and-manual-refresh.md)
+
 **2026-11-06 0.5.10 macOS 发布门槛**。托管 macOS 后台烟测的 Python 子进程已启动，诊断堆栈显示夹具的 HTTPServer 在绑定后反查 127.0.0.1，尚未输出就绪消息。夹具改用数字回环 TCP 监听并保留真实 HTTP、跨轮和清理断言。禁用反向 DNS 的回归先失败后通过，发布相关 81 项通过。下一步以修复提交的四平台 CI 为准，再打标签并验证实际发布的 wheel 与 Release 附件。
 
 **2026-11-06 Spec143AY 本机刷新与云端 MCP**。本机沿用刷新按钮和 CLI 原入口，一次重拉启用服务目录。云端 Runner 支持直连与 Windows 中转，主智能体自动获得生效工具，任务内刷新按轮次应用并由 Runner 确认。中转验证了原 Host、SNI、证书和路径，轮结束关闭中转执行连接。发布前完整后端 6575 项、前端 648 项及构建通过，macOS ARM64 wheel 和 Twine 检查通过。此前 Chromium 1200px/375px 完成面板布局检查。纳入 0.5.10。[版本说明](releases/0.5.10.md)。下一步使用更新后的 Windows Agent、Linux Coordinator 和 Runner 模板验证公司 MCP 真实端点及 SSH 中转。[Spec143AY](specs/143ay-cloud-mcp-and-manual-refresh.md)

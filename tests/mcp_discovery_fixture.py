@@ -109,7 +109,12 @@ def main():
         async def endpoint(scope, receive, send):
             if args.tls_cert:
                 audit('http_request', host=dict(scope['headers'])[b'host'].decode('ascii'), path=scope['path'])
-            if args.mode == 'auth':
+            expected = args.audit.with_suffix('.headers')
+            headers = dict(scope['headers'])
+            wrong_header = expected.exists() and any(
+                headers.get(name.encode('ascii')) != value.encode('ascii')
+                for name, value in json.loads(expected.read_text()).items())
+            if args.mode == 'auth' or wrong_header:
                 audit('auth_rejected')
                 await PlainTextResponse('PRIVATE-AUTH-BODY', status_code=401)(scope, receive, send)
                 return

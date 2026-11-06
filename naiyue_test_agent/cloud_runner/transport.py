@@ -11,6 +11,7 @@ from websockets.exceptions import WebSocketException
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking,await_settled
 from naiyue_test_agent.contracts.cloud_events import EventBatch,canonical_json,digest
 from naiyue_test_agent.contracts.cloud_json import parse_object
+from naiyue_test_agent.contracts.cloud_mcp import MCP_HEADERS_CAPABILITY
 from naiyue_test_agent.contracts.cloud_runner import Hello,CoordinatorFrame,RunnerBootstrap
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from .state import read_json
@@ -31,7 +32,7 @@ class RunnerClient:
 
     def hello(self):
         b=self.bootstrap
-        return Hello(kind='hello',phase=self.kernel.phase,capabilities=['artifacts:capture','control:stop','control:recover','background:tasks','observations:send','mcp:refresh'],recovery=self.kernel.recovery_info,
+        return Hello(kind='hello',phase=self.kernel.phase,capabilities=['artifacts:capture','control:stop','control:recover','background:tasks','observations:send','mcp:refresh',MCP_HEADERS_CAPABILITY],recovery=self.kernel.recovery_info,
             model_ids=list(self.kernel.catalog.model_ids) if self.kernel.catalog else [],
             **({'file_transfer_version':1} if b.input_id is None else {}),
             **{k:getattr(b,k) for k in ('task_id','project_id','input_id','instance_id','generation','boot_id','state_epoch','release_id')})
@@ -117,7 +118,8 @@ class RunnerClient:
                 if (mcp.applied_revision, mcp.applied_digest) != (frame.refresh_id, frame.digest):
                     # An interrupted partial apply has no usable revision.
                     mcp.applied_revision = None
-                    mcp.report = await mcp.apply(frame.settings, frame.services, dial_deadline=expires_at)
+                    mcp.report = await mcp.apply(frame.settings, frame.services, dial_deadline=expires_at,
+                                                 credential_environment=frame.credential_environment)
                     if time.time() >= expires_at:
                         return
                     mcp.applied_revision, mcp.applied_digest = frame.refresh_id, frame.digest

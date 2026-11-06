@@ -150,6 +150,7 @@
         "enabled": false,
         "url": "https://logs-mcp.example.invalid/mcp",
         "route": "direct",
+        "headers_env": {"Authorization": "LOGS_MCP_AUTHORIZATION"},
         "connect_timeout_seconds": 15.0,
         "call_timeout_seconds": 30.0,
         "idle_timeout_seconds": 300.0
@@ -159,6 +160,7 @@
         "url": "https://nacos-mcp.example.invalid/mcp",
         "route": "windows_tunnel",
         "network_slot": "users",
+        "headers_env": {"X-API-Key": "NACOS_MCP_API_KEY"},
         "allow_insecure_http": false
       }
     }

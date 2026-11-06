@@ -1,11 +1,14 @@
 """Persist task MCP intent and confirm its effective catalog through Runner control."""
 import logging
+import os
 import time
 from uuid import uuid4
 
 from naiyue_test_agent.cloud_files.configuration import read_settings
 from naiyue_test_agent.contracts.cloud_events import digest
-from naiyue_test_agent.contracts.cloud_mcp import CloudMCPSection, CloudMCPSettings, RefreshMCP, tunnel_target
+from naiyue_test_agent.contracts.cloud_mcp import (
+    MCP_HEADERS_CAPABILITY, CloudMCPSection, CloudMCPSettings, RefreshMCP, tunnel_target,
+)
 from naiyue_test_agent.contracts.cloud_networks import service_context
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from naiyue_test_agent.storage.cloud.networks import read_network
@@ -14,6 +17,11 @@ from .work import cloud_work
 
 logger = logging.getLogger(__name__)
 CAPABILITY = 'mcp:refresh'
+
+
+def _supports_settings(task, settings):
+    return (MCP_HEADERS_CAPABILITY in task.runner_capabilities
+            or not any(server.get('headers_env') for server in settings['servers'].values()))
 
 
 class CloudMCP:
@@ -28,9 +36,9 @@ class CloudMCP:
             raise CloudError('cloud_task_unavailable', 409)
         return task
 
-    def _status(self, task, row, report):
+    def _status(self, task, row, report, settings):
         connected = task.runner_connection_id
-        if CAPABILITY not in task.runner_capabilities and connected:
+        if connected and (CAPABILITY not in task.runner_capabilities or not _supports_settings(task, settings)):
             status = 'unsupported'
         elif not connected:
             status = 'waiting_runner'
@@ -83,7 +91,8 @@ class CloudMCP:
         task = self._require(task_id)
         with self.runtime.database.transaction() as db:
             row = meta(db, 'mcp-task:' + task_id)
-            return self._status(task, row, self._report(db, task, row))
+            settings = row['settings'] if row else meta(db, 'mcp-settings')
+            return self._status(task, row, self._report(db, task, row), settings)
 
     def request(self, task_id, request):
         r = self.runtime
@@ -96,9 +105,11 @@ class CloudMCP:
                 return
         settings = (read_settings(r.settings_path, CloudMCPSection).mcp
                     if r.settings_path is not None else r.settings.mcp)
+        value = settings.model_dump(mode='json')
         with r.gates.hold(task_id):
             task = self._require(task_id)
-            if task.runner_connection_id and CAPABILITY not in task.runner_capabilities:
+            if task.runner_connection_id and (CAPABILITY not in task.runner_capabilities
+                                              or not _supports_settings(task, value)):
                 raise CloudError('cloud_mcp_unsupported', 409)
             key = 'mcp-task:' + task_id
             with r.database.transaction(write=True) as db:
@@ -112,7 +123,6 @@ class CloudMCP:
                     raise CloudError('cloud_mcp_refresh_in_progress', 409)
                 if row.get('refresh_id'):
                     previous = [*previous[-31:], row['refresh_id']]
-                value = settings.model_dump(mode='json')
                 put(db, 'mcp-settings', value)
                 put(db, key, dict(refresh_id=request.refresh_id, settings=value, previous=previous,
                     report=row.get('report', []), report_connection=row.get('report_connection')))
@@ -146,6 +156,8 @@ class CloudMCP:
                 return None
             if row.get('expires_at', 0) > time.time() and not row.get('confirmed_connection'):
                 return None  # A replaced connection may still be closing its discovery.
+            if not _supports_settings(task, row['settings']):
+                return None
             settings = CloudMCPSettings.model_validate(row['settings'])
             with r.database.transaction(write=True) as db:
                 services, switching = self._routes(db, task, settings)
@@ -159,8 +171,13 @@ class CloudMCP:
                 profile = digest({'settings': row['settings'], 'services': services})
                 put(db, key, row | dict(sent_connection=connection.connection_id, digest=profile, targets=targets,
                     expires_at=expires, confirmed_connection=None, network_id=task.network_id if any(targets.values()) else None))
-                return dict(kind='mcp_refresh', refresh_id=row['refresh_id'], digest=profile,
-                    settings=row['settings'], services=services, expires_at=expires)
+            credentials = {name: value for name in settings.credential_names()
+                           if (value := os.environ.get(name)) is not None}
+            frame = dict(kind='mcp_refresh', refresh_id=row['refresh_id'], digest=profile,
+                settings=row['settings'], services=services, expires_at=expires)
+            if credentials:
+                frame['credential_environment'] = credentials
+            return frame
 
     async def advance(self, connection):
         if not connection.mcp_supported:
@@ -195,6 +212,8 @@ class CloudMCP:
         with self.runtime.database.transaction() as db:
             row = meta(db, 'mcp-task:' + task.task_id)
         if row is None:
+            return None
+        if task.runner_connection_id and not _supports_settings(task, row['settings']):
             return None
         if task.runner_connection_id and row.get('confirmed_connection') == task.runner_connection_id:
             return row['refresh_id']

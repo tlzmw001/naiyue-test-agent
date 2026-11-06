@@ -1,6 +1,7 @@
 import asyncio
 from uuid import uuid4
 
+import pytest
 from langchain_core.messages import AIMessage
 
 from naiyue_test_agent.cloud_runner.kernel import open_runner
@@ -30,6 +31,75 @@ def test_cloud_runner_uses_all_discovered_tools_without_selection(tmp_path):
                 assert (await kernel.execute(command))['status'] == 'completed'
                 assert [row['arguments'] for row in calls(audit)] == [{'text': 'cloud'}]
     asyncio.run(scenario())
+
+
+def test_cloud_runner_uses_separate_service_credentials_and_rotates_them(tmp_path, monkeypatch):
+    import json
+    from test_mcp_connections import facts
+
+    async def scenario():
+        root, state = directories(tmp_path)
+        logs, ab = tmp_path / 'logs.jsonl', tmp_path / 'ab.jsonl'
+        logs.with_suffix('.headers').write_text(json.dumps({'authorization': 'Bearer logs-first'}))
+        ab.with_suffix('.headers').write_text(json.dumps({'x-api-key': 'ab-secret'}))
+        monkeypatch.setenv('LOGS_AUTH', 'Bearer inherited-value')
+        async with http_server(logs, 'stateful', True) as logs_url, http_server(ab, 'stateful', True) as ab_url:
+            settings = CloudMCPSettings.model_validate({'servers': {
+                'logs': {'url': logs_url, 'headers_env': {'Authorization': 'LOGS_AUTH'}},
+                'ab': {'url': ab_url, 'headers_env': {'X-API-Key': 'AB_KEY'}},
+            }})
+            model = StreamingToolModel(replies=[call('mcp__logs__echo', {'text': 'updated'}), AIMessage(content='done')])
+            async with open_runner(bootstrap(), root, state, catalog=ModelCatalog('A', {'A': model})) as kernel:
+                before = facts(logs)
+                report = await kernel.mcp.apply(settings, None, credential_environment={'AB_KEY': 'ab-secret'})
+                assert [row['status'] for row in report] == ['error', 'available']
+                assert facts(logs) == before
+                credentials = {'LOGS_AUTH': 'Bearer logs-first', 'AB_KEY': 'ab-secret'}
+                report = await kernel.mcp.apply(settings, None, credential_environment=credentials)
+                assert [row['status'] for row in report] == ['available', 'available']
+                logs.with_suffix('.headers').write_text(json.dumps({'authorization': 'Bearer logs-next'}))
+                report = await kernel.mcp.apply(settings, None,
+                    credential_environment=credentials | {'LOGS_AUTH': 'Bearer logs-next'})
+                assert [row['status'] for row in report] == ['available', 'available']
+                kernel.mcp.applied_revision = str(uuid4())
+                assert (await kernel.execute(request(mcp_revision=kernel.mcp.applied_revision)))['status'] == 'completed'
+                assert [row['arguments'] for row in calls(logs)] == [{'text': 'updated'}]
+                assert not any(row['event'] == 'auth_rejected' for row in facts(logs) + facts(ab))
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('supports_headers', [False, True])
+def test_coordinator_dispatches_credential_values_without_storing_them(tmp_path, monkeypatch, supports_headers):
+    from naiyue_test_agent.application.cloud.runtime import open_cloud_runtime
+    from naiyue_test_agent.storage.cloud.releases import meta
+    from cloud_helpers import owner_headers
+    from lifecycle_helpers import config
+    from test_runner_control import client, connect, hello, prepared
+
+    monkeypatch.setenv('LOGS_AUTH', 'Bearer fixture-cloud')
+    settings = CloudMCPSettings.model_validate({'servers': {'logs': {
+        'url': 'https://logs.example.test/mcp', 'headers_env': {'Authorization': 'LOGS_AUTH'}}}})
+    with open_cloud_runtime(config(tmp_path).model_copy(update={'mcp': settings})) as runtime:
+        b = prepared(runtime)
+        with client(runtime) as http, connect(http, runtime, b) as ws:
+            capabilities = ['mcp:refresh'] + (['mcp:headers'] if supports_headers else [])
+            ws.send_json(hello(b) | {'capabilities': capabilities})
+            welcome = ws.receive_json()
+            path = f'/api/cloud/v1/tasks/{b.task_id}/mcp'
+            if supports_headers:
+                frame = ws.receive_json()
+                assert frame['kind'] == 'mcp_refresh'
+                assert frame['credential_environment'] == {'LOGS_AUTH': 'Bearer fixture-cloud'}
+                assert frame['settings']['servers']['logs']['headers_env'] == {'Authorization': 'LOGS_AUTH'}
+            else:
+                assert http.get(path, headers=owner_headers(runtime)).json()['status'] == 'unsupported'
+                fence = {key: welcome[key] for key in ('connection_id', 'generation', 'boot_id', 'state_epoch')}
+                ws.send_json(dict(kind='heartbeat', **fence))
+                assert ws.receive_json() == welcome
+            with runtime.database.transaction() as db:
+                assert 'fixture-cloud' not in repr(meta(db, 'mcp-settings'))
+                assert 'fixture-cloud' not in repr(meta(db, 'mcp-task:' + b.task_id))
 
 
 def test_owner_refresh_is_fenced_and_reports_only_after_runner_applies(tmp_path):
@@ -88,7 +158,12 @@ def tls_certificate(tmp_path, hostname):
 
 
 def test_tunnel_keeps_host_sni_certificate_path_and_rejects_changed_target(tmp_path, monkeypatch):
+    import json
+    import time
     from urllib.parse import urlsplit
+    from naiyue_test_agent.cloud_runner.transport import RunnerClient
+    from naiyue_test_agent.contracts.cloud_events import digest
+    from naiyue_test_agent.contracts.cloud_runner import MCPRefreshDispatch
     from test_mcp_connections import facts
 
     hostname = 'private-mcp.example.test'
@@ -99,25 +174,43 @@ def test_tunnel_keeps_host_sni_certificate_path_and_rejects_changed_target(tmp_p
     async def scenario():
         root, state = directories(tmp_path)
         audit = tmp_path / 'tls.jsonl'
+        audit.with_suffix('.headers').write_text(json.dumps({'authorization': 'Bearer tunnel-fixture'}))
         model = StreamingToolModel(replies=[call('mcp__logs__echo', {'text': 'tunnel'}), AIMessage(content='done')])
         async with http_server(audit, 'stateful', json_response=True, tls=tls) as physical:
             address = f'https://{hostname}/mcp/'
             settings = CloudMCPSettings.model_validate({'servers': {'logs': {
-                'url': address, 'route': 'windows_tunnel', 'network_slot': 'corp'}}})
+                'url': address, 'route': 'windows_tunnel', 'network_slot': 'corp',
+                'headers_env': {'Authorization': 'TUNNEL_AUTH'}}}})
             slot = dict(address=address, connect_host='127.0.0.1', connect_port=urlsplit(physical).port)
             routes = {'slots': {'corp': slot}}
-            async with open_runner(bootstrap(), root, state, catalog=ModelCatalog('A', {'A': model})) as kernel:
-                report = await kernel.mcp.apply(settings, routes)
+            b = bootstrap()
+            async with open_runner(b, root, state, catalog=ModelCatalog('A', {'A': model})) as kernel:
+                transport = RunnerClient(kernel)
+                reports = []
+
+                async def send(value):
+                    reports.append(value)
+
+                transport.send = send
+                credentials = {'TUNNEL_AUTH': 'Bearer tunnel-fixture'}
+                frame = MCPRefreshDispatch(kind='mcp_refresh', refresh_id=str(uuid4()), settings=settings,
+                    services=routes, expires_at=time.time() + 20,
+                    digest=digest(dict(settings=settings.model_dump(), services=routes)),
+                    credential_environment=credentials, generation=b.generation, boot_id=b.boot_id,
+                    state_epoch=b.state_epoch, connection_id=str(uuid4()))
+                await transport.apply_mcp(frame)
+                report = reports[-1]['services']
                 assert report[0]['status'] == 'available', report
+                assert 'tunnel-fixture' not in repr(reports) + repr(frame)
                 assert not kernel.mcp.names_for({'slots': {'corp': slot | {'address': 'https://wrong.example.test/'}}})
-                kernel.mcp.applied_revision = str(uuid4())
-                command = request().model_copy(update={'mcp_revision': kernel.mcp.applied_revision, 'services': routes})
+                command = request().model_copy(update={'mcp_revision': frame.refresh_id, 'services': routes})
                 assert (await kernel.execute(command))['status'] == 'completed'
                 assert [row['arguments'] for row in calls(audit)] == [{'text': 'tunnel'}]
                 assert not kernel.mcp.resources._owners
                 before = facts(audit)
                 assert {row['sni'] for row in before if row['event'] == 'tls'} == {hostname}
                 assert {(row['host'], row['path']) for row in before if row['event'] == 'http_request'} == {(hostname, '/mcp/')}
+                assert not any(row['event'] == 'auth_rejected' for row in before)
                 wrong = address.replace(hostname, 'wrong.example.test')
                 config = CloudMCPSettings.model_validate({'servers': {'logs': {
                     'url': wrong, 'route': 'windows_tunnel', 'network_slot': 'corp'}}})

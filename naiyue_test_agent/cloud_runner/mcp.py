@@ -36,7 +36,7 @@ class RunnerMCP:
                 self.applied_digest = None
         self.run_tools = self.names_for(services)
 
-    async def apply(self, settings, services, *, dial_deadline=None):
+    async def apply(self, settings, services, *, dial_deadline=None, credential_environment=None):
         definitions, dials, unroutable = {}, {}, set()
         for name, server in settings.servers.items():
             definition = server.client_settings()
@@ -49,7 +49,8 @@ class RunnerMCP:
                     dials[name] = dial
             definitions[name] = definition
         status = await refresh_mcp(self.resources, self.registry, MCPSettings(servers=definitions),
-            borrow_mcp=self.sessions.borrow_mcp, permission_settings=self.permissions, dial_targets=dials, dial_deadline=dial_deadline)
+            borrow_mcp=self.sessions.borrow_mcp, permission_settings=self.permissions, dial_targets=dials,
+            dial_deadline=dial_deadline, credential_environment=credential_environment or {})
         effective = {item['server_id']: item for item in status['servers']}
         self._tools = {}
         report = []

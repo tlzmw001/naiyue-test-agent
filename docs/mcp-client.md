@@ -81,7 +81,9 @@ SDK使用独立 httpx2 客户端；只允许 SDK 在同源内跟随重定向，�
 省略字段保持原默认，`[]`表示零工具；旧会话和子角色工具名单不被覆盖。
 
 loopback HTTP 可用于本地服务；其他 HTTP 要显式设置 `allow_insecure_http = true`。
-所有明文 HTTP 都禁止 headers_env，避免发送自定义认证头；需要认证时使用 HTTPS。
+获准连接的 HTTP 服务也可以配置 `headers_env`，请求头会明文传输。HTTPS 继续校验证书和服务名。
+私有 CA 可通过 Agent 服务进程的 `SSL_CERT_FILE` 指定受信 CA bundle。
+环境变量由服务启动时继承。修改变量值后重启本机 Agent 服务，再刷新工具。
 stdio 字段与 HTTP 字段互斥，不接受独立旧 SSE transport。
 
 ## 目录、预算与错误

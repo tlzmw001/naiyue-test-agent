@@ -33,8 +33,9 @@ async def _catalog(resources, name, server, environment, identity, dial_target, 
             resources._candidates.discard(owner)
 
 
-async def _cloud_catalogs(resources, settings, dial_targets, dial_deadline):
-    configs = {name: resources._configuration(name, server, dial_targets.get(name))
+async def _cloud_catalogs(resources, settings, dial_targets, dial_deadline, credential_environment):
+    configs = {name: resources._configuration(name, server, dial_targets.get(name),
+                                              credential_environment=credential_environment)
                for name, server in settings.servers.items() if server.enabled}
     values = await asyncio.gather(*(
         _catalog(resources, name, settings.servers[name], environment, identity, dial_targets.get(name), dial_deadline)
@@ -43,7 +44,8 @@ async def _cloud_catalogs(resources, settings, dial_targets, dial_deadline):
     return dict(zip(configs, values)), configs
 
 
-async def refresh_mcp(resources, registry, settings, *, borrow_mcp, permission_settings, dial_targets=None, dial_deadline=None):
+async def refresh_mcp(resources, registry, settings, *, borrow_mcp, permission_settings, dial_targets=None,
+                      dial_deadline=None, credential_environment=None):
     """Failed candidates never replace the effective service or its definitions."""
     previous_request = resources._last_refresh_request
     async with resources._refresh_lock:
@@ -53,7 +55,10 @@ async def refresh_mcp(resources, registry, settings, *, borrow_mcp, permission_s
             return resources.server_status()
         names = list(dict.fromkeys([*settings.servers, *resources._definitions]))
         resources._last_refresh.clear()
-        catalogs, configs = await _cloud_catalogs(resources, settings, dial_targets, dial_deadline) if dial_targets is not None else ({}, {})
+        catalogs, configs = ({}, {})
+        if dial_targets is not None:
+            catalogs, configs = await _cloud_catalogs(resources, settings, dial_targets, dial_deadline,
+                                                      credential_environment)
         for name in names:
             resources._check_open()
             server = settings.servers.get(name)

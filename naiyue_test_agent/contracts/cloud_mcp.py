@@ -10,12 +10,16 @@ from .cloud_tasks import CloudRecord, UUIDText
 from ..mcp_client.settings import MCPServerSettings, MCPSettings, TOOL_NAME
 
 
+MCP_HEADERS_CAPABILITY = 'mcp:headers'
+
+
 class CloudMCPServer(CloudRecord):
     url: str = Field(min_length=1, max_length=2048, repr=False)
     enabled: bool = True
     route: Literal['direct', 'windows_tunnel'] = 'direct'
     network_slot: EntryId | None = None
     allow_insecure_http: bool = False
+    headers_env: dict[str, str] = Field(default_factory=dict, repr=False, exclude_if=lambda value: not value)
     connect_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     call_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     idle_timeout_seconds: float = Field(default=300.0, gt=0, le=3600)
@@ -33,6 +37,9 @@ class CloudMCPServer(CloudRecord):
 
 class CloudMCPSettings(CloudRecord):
     servers: dict[str, CloudMCPServer] = Field(default_factory=dict, max_length=8)
+
+    def credential_names(self):
+        return {name for server in self.servers.values() if server.enabled for name in server.headers_env.values()}
 
     @model_validator(mode='after')
     def check_ids(self):

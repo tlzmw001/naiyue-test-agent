@@ -133,9 +133,10 @@ class MCPSessionResources:
             # _retire retains the necessary failure for borrowers and final close.
             logger.error('mcp_idle_cleanup_failed error_type=%s', type(error).__name__)
 
-    def _configuration(self, server_id, server, dial_target=None):
+    def _configuration(self, server_id, server, dial_target=None, *, credential_environment=None):
         references = set(server.headers_env.values()) | {ref[2:-1] for ref in server.env.values()}
-        environment = {name: os.environ.get(name) for name in references}
+        source = os.environ if credential_environment is None else credential_environment
+        environment = {name: source.get(name) for name in references}
         connection = server.model_dump(exclude={'enabled', 'allowed_tools'})
         content = json.dumps([server_id, connection, dict(self._network), environment, dial_target],
                              sort_keys=True, separators=(',', ':')).encode()
