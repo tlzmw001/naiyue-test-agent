@@ -13,6 +13,8 @@
 - **外部集成**：MCP、网页搜索与抓取、AITest 工具，以及项目 Skills。
 - **云端任务**：从主输入框加号菜单新建或续聊独立任务；云端Coordinator/Runner执行；新任务无需Git基线，在对话中上传文件，按提示词使用材料，output产物可下载、保存或交给主Agent分析。已开始的云端运行不依赖浏览器保持打开。
 
+0.5.11 支持本机和云端为每个 MCP 服务分别配置认证头。云端 Runner 沿用直连或 Windows 隧道。[升级与验收](docs/releases/0.5.11.md)
+
 0.5.10 支持本机一键刷新 MCP、云端 MCP 直连和 Windows 中转。任务附件支持批量混选文件和文件夹，云端详情可折叠，项目移除入口位于项目右键菜单。[升级与验收](docs/releases/0.5.10.md)
 
 0.5.9发布[云端文件与统一连接配置](docs/cloud-files-and-connections.md)：空任务、对话附件、20GiB传输预算、下一轮待发送消息和直接产物下载；Windows使用一份connections.json。
