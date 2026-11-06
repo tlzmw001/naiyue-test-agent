@@ -1,5 +1,7 @@
 # Naiyue Test Agent：当前开发学习交接
 
+**2026-11-06 云端结果取回窗口**。可取回和历史分组，按原有接口分页，默认定位最近的可取回结果。勾选、选目录、一次点击保存，后台继续预检和写前复核；只有冲突才单独确认覆盖，断线后按原命令核对。本机分析草稿、单文件预览与下载及旧任务代码交付保留。结果取回改动仅在本机 Web 端，云端清理和下载协议沿用。前端 656 项、构建、相关后端 15 项和 Chromium 1200px/375px 的模拟接口界面验证通过。下一步用 Windows 原机复验同名覆盖、断线恢复和分析草稿。[Spec143AZ](specs/143az-cloud-result-retrieval.md)
+
 **2026-11-06 MCP 静态认证头**。本机与云端共用按服务的 `headers_env`。获准的 HTTP 可发送认证头，HTTPS 继续校验 CA 和服务名。Coordinator 仅将引用写入配置快照，通过已鉴权控制帧交付环境值；Runner 继续直连或走 Windows 隧道。旧模板在启用该配置时显示不支持。MCP 与云端回归 1486 项、配置示例 2 项及 macOS ARM64、Windows x64、Linux x64 wheel 构建与 Twine 检查通过。本片单独打包到现有 v0.5.10 Release，用独立的离线索引和 Runner 发行 ID。下一步用更新后的 Coordinator 和 Runner 模板复验公司实际 HTTPS MCP 和隧道。[Spec143AY](specs/143ay-cloud-mcp-and-manual-refresh.md)
 
 **2026-11-06 0.5.10 macOS 发布门槛**。托管 macOS 后台烟测的 Python 子进程已启动，诊断堆栈显示夹具的 HTTPServer 在绑定后反查 127.0.0.1，尚未输出就绪消息。夹具改用数字回环 TCP 监听并保留真实 HTTP、跨轮和清理断言。禁用反向 DNS 的回归先失败后通过，发布相关 81 项通过。下一步以修复提交的四平台 CI 为准，再打标签并验证实际发布的 wheel 与 Release 附件。

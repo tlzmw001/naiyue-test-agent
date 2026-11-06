@@ -6,6 +6,7 @@ export interface CloudTask {
   title?: string; created_at?: number; updated_at?: number;
   runner_phase: string; environment_phase: string; sandbox_id: string | null; active_run_id: string | null;
   last_run_id: string | null; last_error_code: string | null; last_quiescent_at: number | null;
+  result_ids?: string[];
   environment_operation_id: string | null; control_operation_id: string | null; artifact_operation_id: string | null;
   runner_capabilities?: string[]; runner_model_ids: string[]; reclaim_blockers: string[];
   runner_recovery?: { run_id: string; checkpoint_id?: string | null } | null;

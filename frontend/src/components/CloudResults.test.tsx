@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeAll, afterAll, expect, it, vi } from 'vitest';
 import CloudResults from './CloudResults';
 import { installDialogMock } from '../testDialogs';
@@ -9,7 +9,7 @@ beforeAll(() => { restoreDialogs = installDialogMock(); });
 afterAll(() => restoreDialogs());
 afterEach(() => { cleanup(); sessionStorage.clear(); });
 const binding = { binding_id: 'B', revision: 8, cloud: { artifact_operation_id: null } } as CloudBinding;
-const file = { role: 'artifact', artifact: { artifact_id: 'F', relative_name: 'report.html', size: 23, sha256: 'a'.repeat(64) } };
+const file = { role: 'artifact' as const, artifact: { artifact_id: 'F', relative_name: 'report.html', size: 23, sha256: 'a'.repeat(64) } };
 function api(phase = 'available') {
   return { results: vi.fn().mockResolvedValue([{ result_id: 'R', source_run_id: 'run12345', phase, revision: 2, outcome: 'failed' }]),
     result: vi.fn().mockResolvedValue({ plan: { result_id: 'R', input_id: 'i'.repeat(64) }, phase, revision: 2, boundary: { outcome: 'failed' }, bundle: { files: [file] } }),
@@ -23,7 +23,7 @@ it('shows actual files, separates failed execution from available result and esc
   expect(await screen.findByText('新增 · new.py')).toBeTruthy();
   expect(screen.getAllByText(/执行失败/).length).toBeGreaterThan(0);
   expect(screen.queryByText(/文件完整性已核对/)).toBeNull();
-  expect(screen.getByRole('button', { name: '保存勾选文件到本地' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: '保存到本地' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: '预览' }));
   expect(await screen.findByText('<script>bad()</script>')).toBeTruthy(); expect(view.container.querySelector('script')).toBeNull();
   expect(screen.queryByRole('button', { name: '下载' })).toBeNull(); expect(view.container.querySelector('a[download]')).toBeNull();
@@ -75,19 +75,28 @@ it('receives selected reports locally before preparing an analysis draft, withou
   await waitFor(() => expect(accept).toHaveBeenCalledWith(expect.objectContaining({ text: '分析任务报告' })));
 });
 
-it('does not deliver a late analysis draft after changing the local session', async () => {
+it.each(['session', 'result'])('does not deliver a valid late analysis draft after changing the %s', async scope => {
   const cloud = api(); Object.assign(cloud, { projectId: 'P' });
   let resolve!: (value: object) => void;
+  vi.mocked(cloud.results).mockResolvedValue(['R', 'B'].map(result_id => ({ result_id, source_run_id: result_id + '-run', phase: 'available',
+    revision: 2, outcome: 'completed', error_code: null, captured_at: 1, files_count: 1 })));
+  const detail = await cloud.result('S', 'B', 'R');
+  vi.mocked(cloud.result).mockClear().mockImplementation(async (_s, _b, rid) => ({ ...detail, plan: { ...detail.plan, result_id: rid } }));
   Object.assign(cloud, { receive: vi.fn().mockImplementation(async (_s, _b, _r, body) => ({ receive_id: body.command_id, command_id: body.command_id,
     local_project_id: 'P', local_session_id: 'S', binding_id: 'B', result_id: 'R', input_id: 'i'.repeat(64), phase: 'available', files: [], active: false })),
     analysisDraft: vi.fn().mockImplementation(() => new Promise(done => { resolve = done; })) });
   const accept = vi.fn(); const view = render(<CloudResults api={cloud} sid="S" binding={binding} active changed={vi.fn()} onAnalysisDraft={accept} />); fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
-  fireEvent.click(await screen.findByRole('button', { name: /运行 run12345/ }));
   fireEvent.click(await screen.findByRole('button', { name: '交给主 Agent 分析' }));
   await waitFor(() => expect(cloud.analysisDraft).toHaveBeenCalled());
-  view.rerender(<CloudResults api={cloud} sid="other" binding={binding} active changed={vi.fn()} onAnalysisDraft={accept} />); fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
-  const { act } = await import('@testing-library/react');
-  await act(async () => resolve({ local_project_id: 'P', local_session_id: 'S', receive_id: 'old', text: 'old response', material_refs: [] }));
+  const receiveId = vi.mocked(cloud.analysisDraft).mock.calls[0][1];
+  if (scope === 'session') {
+    view.rerender(<CloudResults api={cloud} sid="other" binding={binding} active changed={vi.fn()} onAnalysisDraft={accept} />);
+    fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
+  } else {
+    fireEvent.click(screen.getByRole('button', { name: /运行 B-run/ }));
+    await screen.findByText(/结果 B/);
+  }
+  await act(async () => resolve({ local_project_id: 'P', local_session_id: 'S', receive_id: receiveId, text: 'old response', material_refs: [] }));
   expect(accept).not.toHaveBeenCalled();
 });
 
@@ -98,6 +107,7 @@ it('shows the run which superseded an uncaptured result without inventing failed
   vi.mocked(cloud.result).mockResolvedValue({ plan: { result_id: 'R', source_run_id: 'run12345', input_id: 'i'.repeat(64) },
     phase: 'superseded', revision: 3, error_code: null, boundary: { outcome: 'completed' }, bundle: null, superseded_by: 'next87654321' });
   render(<CloudResults api={cloud} sid="S" binding={binding} active changed={vi.fn()} />); fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
+  fireEvent.click(screen.getByRole('button', { name: '历史记录' }));
   fireEvent.click(await screen.findByRole('button', { name: /运行 run12345 · 已由后续运行替代/ }));
   expect(await screen.findByText(/未生成本轮固定文件/)).toBeTruthy();
   expect(screen.getAllByText(/next8765/).length).toBeGreaterThan(0);
@@ -114,6 +124,7 @@ it.each([
 ])('does not offer stale bundle files when the result is $phase', async value => {
   const cloud = api(value.phase);
   render(<CloudResults api={cloud} sid="S" binding={binding} active changed={vi.fn()} />); fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
+  if (value.phase === 'deleted') fireEvent.click(screen.getByRole('button', { name: '历史记录' }));
   fireEvent.click(await screen.findByRole('button', { name: new RegExp('运行 run12345 · ' + value.label) }));
   expect(await screen.findByText(value.detail)).toBeTruthy();
   expect(screen.getAllByText(/执行失败/).length).toBeGreaterThan(0);
@@ -121,6 +132,97 @@ it.each([
   expect(screen.queryByRole('button', { name: '预览' })).toBeNull();
   expect(screen.queryByRole('button', { name: '下载' })).toBeNull();
   expect(cloud.changes).not.toHaveBeenCalled();
+});
+it('defaults to the latest retrievable result, keeps capture failures visible, and only loads history pages on demand', async () => {
+  const cloud = api();
+  const row = (id: string, phase: string, files_count: number | null) => ({
+    result_id: id, source_run_id: id + '-run', phase, files_count, revision: 2, outcome: 'completed',
+    error_code: null, captured_at: null,
+  });
+  vi.mocked(cloud.results).mockImplementation(async (_sid, _bid, offset) => offset === 20 ? [row('old', 'deleted', null)] :
+    [row('empty', 'available', 0), row('failed', 'failed', null), row('R', 'available', 1),
+      ...Array.from({ length: 17 }, (_, i) => row('deleted' + i, 'deleted', null))]);
+  render(<CloudResults api={cloud} sid="S" binding={{ ...binding, input_id: null }} active changed={vi.fn()} />);
+  expect(cloud.results).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
+  await waitFor(() => expect(screen.getByRole('button', { name: /运行 R-run/ }).getAttribute('aria-pressed')).toBe('true'));
+  expect(screen.getByRole('button', { name: /运行 failed/ })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /运行 empty/ })).toBeNull();
+  expect(cloud.results).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByRole('button', { name: '历史记录' }));
+  expect(await screen.findByRole('button', { name: /运行 empty.*无产物/ })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: '加载更早记录' }));
+  expect(await screen.findByRole('button', { name: /运行 old-run/ })).toBeTruthy();
+  expect(cloud.results).toHaveBeenLastCalledWith('S', 'B', 20, expect.any(AbortSignal));
+});
+it('finds a still-retained result behind a full page of history without fetching history pages', async () => {
+  const cloud = api();
+  vi.mocked(cloud.results).mockResolvedValue(Array.from({ length: 20 }, (_, index) => ({
+    result_id: 'old-' + index, source_run_id: 'old-' + index, phase: 'deleted', files_count: null,
+    revision: 2, outcome: 'completed', error_code: null, captured_at: null,
+  })));
+  vi.mocked(cloud.result).mockResolvedValue({ plan: { result_id: 'R', source_run_id: 'retained-run', input_id: null }, phase: 'available',
+    revision: 2, error_code: null, boundary: { outcome: 'completed' }, bundle: { captured_at: 1, files: [file] } });
+  const cloudBinding = { ...binding, input_id: null, cloud: { ...binding.cloud, result_ids: ['R'] } } as CloudBinding;
+  render(<CloudResults api={cloud} sid="S" binding={cloudBinding} active changed={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
+  expect(await screen.findByRole('button', { name: /运行 retained/ })).toBeTruthy();
+  expect(await screen.findByRole('checkbox', { name: /report.html/ })).toBeTruthy();
+  expect(cloud.results).toHaveBeenCalledOnce();
+});
+it('selects the latest available result on reopening after the previous one was cleaned up', async () => {
+  const cloud = api();
+  const row = (id: string, phase: string) => ({ result_id: id, source_run_id: id + '-run', phase,
+    revision: 2, outcome: 'completed', error_code: null, captured_at: 1, files_count: phase === 'available' ? 1 : null });
+  vi.mocked(cloud.results).mockResolvedValue([row('A', 'available')]);
+  const detail = await cloud.result('S', 'B', 'A');
+  vi.mocked(cloud.result).mockClear().mockImplementation(async (_s, _b, rid) => ({ ...detail, plan: { ...detail.plan, result_id: rid, input_id: null } }));
+  render(<CloudResults api={cloud} sid="S" binding={binding} active changed={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
+  await screen.findByText('结果 A');
+  fireEvent.click(screen.getByRole('button', { name: '关闭结果窗口' }));
+  vi.mocked(cloud.results).mockResolvedValue([row('B', 'available'), row('A', 'deleted')]);
+  fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
+  expect(await screen.findByText('结果 B')).toBeTruthy();
+  expect(screen.getByRole('button', { name: /运行 B-run/ }).getAttribute('aria-pressed')).toBe('true');
+});
+it('ignores a late browser download ticket even after returning to the same result', async () => {
+  const cloud = api();
+  let finish!: (value: { url: string; expires_in: number }) => void;
+  Object.assign(cloud, { downloadLink: vi.fn().mockImplementation(() => new Promise(resolve => { finish = resolve; })) });
+  vi.mocked(cloud.results).mockResolvedValue(['A', 'B'].map(result_id => ({ result_id, source_run_id: result_id + '-run', phase: 'available',
+    revision: 2, outcome: 'completed', error_code: null, captured_at: 1, files_count: 1 })));
+  vi.mocked(cloud.result).mockImplementation(async (_s, _b, rid) => ({ plan: { result_id: rid, source_run_id: rid, input_id: null }, phase: 'available',
+    revision: 2, error_code: null, boundary: { outcome: 'completed' }, bundle: { captured_at: 1, files: [file] } }));
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  try {
+    render(<CloudResults api={cloud} sid="S" binding={binding} active changed={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
+    fireEvent.click(await screen.findByRole('button', { name: '浏览器下载' }));
+    fireEvent.click(screen.getByRole('button', { name: /运行 B-run/ }));
+    await screen.findByText('结果 B');
+    fireEvent.click(screen.getByRole('button', { name: /运行 A-run/ }));
+    await screen.findByText('结果 A');
+    await act(async () => finish({ url: '/api/client/v1/cloud-downloads/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa', expires_in: 300 }));
+    expect(click).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '浏览器下载' })).not.toHaveProperty('disabled', true);
+  } finally { click.mockRestore(); }
+});
+it('keeps the original local save status reachable after the cloud result is cleaned up', async () => {
+  const cloud = api('deleted');
+  const fixed = { action: 'files', command_id: 'save-1', receive_id: 'receive-1', destination_handle: 'P', destination_path: '/reports', name: '' };
+  const deliveryStatus = vi.fn().mockResolvedValue({ ...fixed, local_project_id: 'P', local_session_id: 'S',
+    phase: 'completed', conflicts: [], changes: [], error_code: null });
+  Object.assign(cloud, { projectId: 'P', deliveryStatus, executeDelivery: vi.fn() });
+  sessionStorage.setItem('naiyue.cloud-files.P.S.B.R', JSON.stringify(fixed));
+  render(<CloudResults api={cloud} sid="S" binding={binding} active changed={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
+  fireEvent.click(screen.getByRole('button', { name: '历史记录' }));
+  fireEvent.click(await screen.findByRole('button', { name: /运行 run12345 · 结果文件已清理/ }));
+  expect(await screen.findByText('文件已保存到所选文件夹')).toBeTruthy();
+  expect(deliveryStatus).toHaveBeenCalledExactlyOnceWith('S', 'save-1', expect.any(AbortSignal));
+  expect(cloud.executeDelivery).not.toHaveBeenCalled();
+  expect(screen.queryByRole('button', { name: '保存到本地' })).toBeNull();
 });
 it('opens results in a centered dialog and returns focus when closed', async () => {
   const restoreDialog = installDialogMock();

@@ -52,7 +52,13 @@
 .results summary { cursor: pointer; font-weight: var(--fw-semibold); }
 .resultList { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 12px; }
 .resultList li { display: grid; gap: 4px; }
+.resultTabs, .resultFile, .resultFileHeader { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.resultFile, .resultFileHeader { justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.resultFile .check, .resultFileHeader .check { margin: 0; align-items: center; min-height: 34px; }
+.resultFileHeader { margin-top: 4px; }
+.resultsDialog .resultTabs button[aria-pressed="true"], .resultsDialog button.resultPrimary { background: var(--action-bg); color: var(--on-action); }
 .resultRecord { display: grid; gap: 8px; }
+.resultRecord > p:first-child { margin: 4px 0; }
 .resultPreview { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; font-size: var(--fs-meta); padding: 10px; border: 1px solid var(--line); border-radius: var(--r-sm); }
 
 .resultsEntry { padding: 0 20px 10px; flex-shrink: 0; }

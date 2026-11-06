@@ -92,10 +92,12 @@ it('repairs the fixed original code material through a visible refresh action', 
 it('locks report selection to the exact save intent until explicitly changing that intent', async () => {
   const api = client(); vi.mocked(api.receive).mockImplementation(async (_s, _b, _r, body) => record(body.command_id) as never);
   Object.assign(api, { browseDirectories: vi.fn().mockResolvedValue({ path: '/reports', identity: 'seen', parent: '/', separator: '/', positions: [], items: [], next_offset: null }),
-    delivery: vi.fn(async (_s, value) => ({ ...value, local_project_id: 'P', local_session_id: 'S', phase: 'prepared', changes: [{ path: 'report.json', operation: 'add' }], conflicts: [], error_code: null })) });
+    delivery: vi.fn(async (_s, value) => ({ ...value, local_project_id: 'P', local_session_id: 'S', phase: 'prepared', changes: [{ path: 'report.json', operation: 'modify' }], conflicts: ['report.json'], force_allowed: true, error_code: null })) });
   render(<CloudResultReceive api={api} sid="S" bid="B" rid="R" inputId="I" files={files} active />);
   const checkbox = screen.getByRole('checkbox', { name: /report.json/ }); fireEvent.click(checkbox);
-  fireEvent.click(screen.getByRole('button', { name: '保存勾选文件到本地' })); fireEvent.click(await screen.findByRole('button', { name: '选择此文件夹' }));
+  fireEvent.click(screen.getByRole('button', { name: '选择文件夹' })); fireEvent.click(await screen.findByRole('button', { name: '选择此文件夹' }));
+  expect(checkbox).not.toHaveProperty('disabled', true); expect(api.receive).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: '保存到本地' }));
   await screen.findByText('保存预检已完成'); expect(checkbox).toHaveProperty('disabled', true);
   expect(api.receive).toHaveBeenCalledWith('S', 'B', 'R', expect.objectContaining({ artifact_ids: ['F'], include_code: false }));
   fireEvent.click(screen.getByRole('button', { name: '更换保存位置或选择' })); await waitFor(() => expect(checkbox).toHaveProperty('disabled', false));
