@@ -292,5 +292,5 @@ BackgroundProcessManager.submit/foreground 的 `_validate_binding` 在取得 B1 
 
 ### Spec143AY 云端 MCP
 
-- Coordinator 的刷新意图、连接派发租约和应用确认使用 CT1 → registry DB。配置文件读取、控制帧发送和 Runner 目录发现位于 CT1/DB 外。派发事务读取网络切换状态并设置有界租约，网络切换在同一个 registry DB 中检查该租约。删除清理任务的 MCP 状态。已到期的租约不再阻止普通轮次或切换。
+- Coordinator 的刷新意图、连接派发租约和应用确认使用 CT1 → registry DB。配置文件读取、控制帧发送和 Runner 目录发现位于 CT1/DB 外。派发事务读取网络切换状态并设置有界租约，网络切换在同一个 registry DB 中检查该租约。删除清理任务的 MCP 状态。已到期的租约不再阻止普通轮次或切换。WebSocket 请求取消时，Runner detach 的 CT1/registry 更新先完成，再退出请求。
 - Runner 的目录任务由当前控制连接的事件循环拥有，连接断开时取消并等待收尾。正常刷新用原 T3 → T5，Runner 只有在轮次之间才更换生效目录。普通轮次先核对 Coordinator 确认的版本与网络目标，再冻结主智能体工具名；过期或不一致的版本只使用内置工具。中转执行连接在 Runner 发送 finished 前关闭；候选中转连接的 TCP 请求受发现租约期限约束。

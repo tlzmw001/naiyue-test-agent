@@ -4,9 +4,12 @@ import logging
 import time
 from uuid import uuid4
 
+from anyio import CancelScope
+
 from naiyue_test_agent.contracts.cloud_tasks import CloudError,CloudTask
 from naiyue_test_agent.contracts.cloud_events import canonical_json,digest
 from .runner_bootstrap import TaskBootstrap
+from .mcp import CAPABILITY
 from .runner_runs import RunnerRuns
 from .runner_actions import RunnerActionCommands
 from .work import cloud_work
@@ -18,6 +21,7 @@ class Connection:
     def __init__(self,control,websocket,raw,hello):
         self.control,self.websocket,self.raw=control,websocket,raw
         self.task_id=hello.task_id;self.connection_id=str(uuid4())
+        self.mcp_supported=CAPABILITY in hello.capabilities
         self.fence=dict(connection_id=self.connection_id,generation=hello.generation,
             boot_id=hello.boot_id,state_epoch=hello.state_epoch)
         self.lock=asyncio.Lock()
@@ -198,13 +202,16 @@ class RunnerControl:
                     'reclaim_blockers':task.reclaim_blockers if expected_stop else list(dict.fromkeys([*task.reclaim_blockers,'runner_disconnected']))}),expected_revision=task.revision,
                     expected_generation=task.generation,revoked_at=time.time())
                 return task.active_run_id,task.artifact_operation_id,task.control_operation_id
-        active,artifact,action=await cloud_work(self.runtime,mark)
-        if active:
-            command=await cloud_work(self.runtime,lambda:self.active_command(connection.task_id,active))
-            await cloud_work(self.runtime,lambda:self.runs.unconfirmed(connection.task_id,command))
-        if action:await cloud_work(self.runtime,lambda:self.actions.unconfirmed(connection.task_id,action))
-        if artifact and (await cloud_work(self.runtime,lambda:self.runtime.registry.get_command(artifact))).operation=='artifact:capture':
-            await cloud_work(self.runtime,lambda:self.runtime.artifacts.unconfirmed(connection.task_id,artifact))
+        # The request may be cancelled while leaving a closed WebSocket. Drain
+        # the persisted detach before its revision can race the next owner action.
+        with CancelScope(shield=True):
+            active,artifact,action=await cloud_work(self.runtime,mark)
+            if active:
+                command=await cloud_work(self.runtime,lambda:self.active_command(connection.task_id,active))
+                await cloud_work(self.runtime,lambda:self.runs.unconfirmed(connection.task_id,command))
+            if action:await cloud_work(self.runtime,lambda:self.actions.unconfirmed(connection.task_id,action))
+            if artifact and (await cloud_work(self.runtime,lambda:self.runtime.registry.get_command(artifact))).operation=='artifact:capture':
+                await cloud_work(self.runtime,lambda:self.runtime.artifacts.unconfirmed(connection.task_id,artifact))
 
     async def aclose(self):
         self.closing=True

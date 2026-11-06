@@ -163,6 +163,8 @@ class CloudMCP:
                     settings=row['settings'], services=services, expires_at=expires)
 
     async def advance(self, connection):
+        if not connection.mcp_supported:
+            return
         try:
             frame = await cloud_work(self.runtime, lambda: self.prepare(connection))
             if frame is not None:

@@ -289,3 +289,45 @@ def test_mcp_close_failure_preserves_runner_error_and_closes_remote_models(tmp_p
         assert closed == ['mcp', 'models']
 
     asyncio.run(scenario())
+
+
+def test_legacy_runner_skips_mcp_dispatch_work(tmp_path, monkeypatch):
+    from naiyue_test_agent.application.cloud.runtime import open_cloud_runtime
+    from lifecycle_helpers import config
+    from test_runner_control import client, connect, hello, prepared
+
+    with open_cloud_runtime(config(tmp_path)) as runtime:
+        b = prepared(runtime)
+        checked = []
+        monkeypatch.setattr(runtime.mcp, 'prepare', lambda connection: checked.append(connection.task_id))
+        with client(runtime) as http, connect(http, runtime, b) as ws:
+            ws.send_json(hello(b))
+            welcome = ws.receive_json()
+            fence = {key: welcome[key] for key in ('connection_id', 'generation', 'boot_id', 'state_epoch')}
+            ws.send_json(dict(kind='heartbeat', **fence))
+            assert ws.receive_json() == welcome
+        assert checked == []
+
+
+def test_cancelled_control_request_still_marks_runner_disconnected(tmp_path):
+    from anyio import CancelScope
+    from naiyue_test_agent.application.cloud.runner_control import Connection
+    from naiyue_test_agent.application.cloud.runtime import open_cloud_runtime
+    from naiyue_test_agent.contracts.cloud_runner import Hello
+    from lifecycle_helpers import config
+    from test_runner_control import hello, prepared
+
+    async def scenario(runtime, b):
+        value = Hello.model_validate(hello(b))
+        connection = Connection(runtime.control, None, b.token.get_secret_value(), value)
+        runtime.control.bind(connection, value)
+        runtime.control.connections[b.task_id] = connection
+        with CancelScope() as cancel:
+            cancel.cancel()
+            await runtime.control.detach(connection)
+        task = runtime.registry.get_task(b.task_id)
+        assert task.runner_connection_id is None
+        assert task.runner_phase == 'disconnected'
+
+    with open_cloud_runtime(config(tmp_path)) as runtime:
+        asyncio.run(scenario(runtime, prepared(runtime)))
