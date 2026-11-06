@@ -1,4 +1,5 @@
-import { useEffect, useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { errorText, type WebApi } from '../api';
 import type { ProjectRow } from '../projectTypes';
 import type { SessionRow } from '../types';
@@ -6,6 +7,7 @@ import { Chevron, Icon } from './Icons';
 import SessionIndicators from './SessionIndicators';
 import { sessionSyncPollMs } from '../uiSettings';
 import styles from './ProjectNavigation.module.css';
+import menuStyles from './SessionMenu.module.css';
 
 function status(project: ProjectRow) {
   const values = [];
@@ -55,24 +57,50 @@ export default function ProjectNavigation({ api, projects, failure, retry, scope
   expanded: Record<string, boolean>; expand: (id: string, open: boolean) => void;
   revision: number; remove: (project: ProjectRow) => void;
 }) {
+  const [menu, setMenu] = useState<{ project: ProjectRow; origin: HTMLButtonElement; x: number; y: number }>();
+  const menuRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const node = menuRef.current;
+    if (!menu || !node) return;
+    node.style.left = `${Math.max(0, Math.min(menu.x, window.innerWidth - node.offsetWidth))}px`;
+    node.style.top = `${Math.max(0, Math.min(menu.y, window.innerHeight - node.offsetHeight))}px`;
+    node.querySelector('button')?.focus();
+    const outside = (event: PointerEvent) => {
+      if (!node.contains(event.target as Node)) setMenu(undefined);
+    };
+    document.addEventListener('pointerdown', outside);
+    return () => document.removeEventListener('pointerdown', outside);
+  }, [menu]);
+
   const group = (id: string, name: string, project?: ProjectRow) => {
     const open = expanded[id] ?? id === scopeId;
     return <section key={id} role="group" aria-label={name} className={styles.group}>
-      <div className={styles.heading} data-selected={id === scopeId}>
+      <div className={styles.heading} data-selected={id === scopeId} onContextMenu={project ? event => {
+        const origin = event.currentTarget.querySelector<HTMLButtonElement>(`.${styles.enter}`);
+        if (!origin) return;
+        event.preventDefault();
+        setMenu({ project, origin, x: event.clientX, y: event.clientY });
+      } : undefined}>
         <button className={styles.expand} aria-label={`${open ? '收起' : '展开'}${name}`} aria-expanded={open}
           onClick={() => expand(id, !open)}><Chevron direction={open ? 'down' : 'right'} /></button>
         <button className={styles.enter} aria-current={id === scopeId ? 'location' : undefined}
           aria-label={`进入${name}`} aria-expanded={open}
+          aria-keyshortcuts={project ? 'Shift+F10 ContextMenu' : undefined}
           aria-description={id === scopeId ? open ? '点击收起会话列表' : '点击展开会话列表' : undefined}
           title={id === scopeId ? open ? '收起会话列表' : '展开会话列表' : `进入${name}`}
+          onKeyDown={project ? event => {
+            if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+            event.preventDefault();
+            const origin = event.currentTarget;
+            const { left, bottom } = origin.getBoundingClientRect();
+            setMenu({ project, origin, x: left, y: bottom });
+          } : undefined}
           onClick={() => {
             if (id === scopeId) { expand(id, !open); return; }
             expand(id, true); select(id);
           }}>
           <Icon name={id === 'chats' ? 'chat' : 'folder'} /><span>{name}</span>
         </button>
-        {project && <button type="button" className={styles.remove} aria-label={`移除${name}`} title="移除项目"
-          onClick={() => remove(project)}>移除</button>}
       </div>
       {project && status(project) && <p className={styles.status}>{status(project)}</p>}
       {open && <div className={styles.children}>{id === scopeId ? children : <Directory api={api} scopeId={id} select={select} refresh={revision} />}</div>}
@@ -84,5 +112,18 @@ export default function ProjectNavigation({ api, projects, failure, retry, scope
     {projects?.map(project => group(project.project_id, project.name, project))}
     {scopeId !== 'chats' && projects && !projects.some(project => project.project_id === scopeId) &&
       <section role="group" aria-label="当前项目"><p className={styles.hint}>当前项目不在目录中，请刷新核对。</p>{children}</section>}
+    {menu && createPortal(<div ref={menuRef} className={menuStyles.menu} role="menu"
+      aria-label={`${menu.project.name} 的操作`} onKeyDown={event => {
+        if (event.key !== 'Escape' && event.key !== 'Tab') return;
+        if (event.key === 'Escape') event.preventDefault();
+        menu.origin.focus();
+        setMenu(undefined);
+      }}>
+      <button type="button" role="menuitem" className={menuStyles.delete} onClick={() => {
+        menu.origin.focus();
+        setMenu(undefined);
+        remove(menu.project);
+      }}>移除项目</button>
+    </div>, document.body)}
   </>;
 }

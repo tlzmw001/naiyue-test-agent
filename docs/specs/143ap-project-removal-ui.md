@@ -6,7 +6,7 @@
 
 项目登记在 projects.sqlite；ProjectService.list → _view 查询目录availability，不会因missing自动丢登记。service/projects DELETE → ProjectAPI.remove → HostManager.remove → ProjectService.remove → operations.resume 删除注册行并返回data_retained=True；项目数据库、归档、源码保留。HostManager要求项目已关闭，ProjectHost._close拒绝运行/恢复/审批/后台工作；storage.deletion_guard保护活动会话及云端关联。前端ProjectWorkspace/ProjectNavigation只有选择，无移除入口。
 
-新增侧栏项目行“移除项目”按钮与居中确认弹窗，展示名称/完整路径及保留数据说明。普通对话无移除入口，missing项目可移除；不自动隐藏缺失目录，不增加清库/删除源码/远程删除/历史恢复功能。
+侧栏项目行通过右键菜单提供“移除项目”，聚焦项目名称后也可用 Shift+F10 打开菜单。选择后进入居中确认弹窗，展示名称、完整路径及保留数据说明。普通对话无移除入口，missing 项目可移除；不自动隐藏缺失目录，不增加清库、删除源码、远程删除或历史恢复功能。
 
 ## 接线与状态
 

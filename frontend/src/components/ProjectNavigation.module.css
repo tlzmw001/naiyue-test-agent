@@ -22,6 +22,3 @@
 .projectTrigger:hover { background: var(--surface-hover); }
 .projectTrigger svg:not([data-chevron]) { width: 16px; height: 16px; flex-shrink: 0; }
 @media (max-width: 760px) { .location { display: none; } }
-
-.remove { flex-shrink: 0; padding: 6px; font-size: var(--fs-caption); color: var(--muted); }
-.heading .remove:hover { color: var(--danger); background: var(--surface-hover); }

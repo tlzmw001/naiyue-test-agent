@@ -277,10 +277,42 @@ it('does not poll conversation or background tasks for a hidden scope', async ()
   } finally { vi.useRealTimers(); }
 });
 
+async function chooseProjectRemoval() {
+  fireEvent.contextMenu(await screen.findByRole('button', { name: '进入项目 A' }), { clientX: 80, clientY: 120 });
+  fireEvent.click(screen.getByRole('menuitem', { name: '移除项目' }));
+}
+
+it('opens project actions by right-click or keyboard without entering or removing the project', async () => {
+  const { root } = fixture();
+  const remove = vi.spyOn(root, 'removeProject');
+  render(<ProjectWorkspace api={root} />);
+  const project = await screen.findByRole('button', { name: '进入项目 A' });
+  const chats = screen.getByRole('button', { name: '进入普通对话' });
+  expect(screen.queryByRole('button', { name: '移除项目 A' })).toBeNull();
+  expect(fireEvent.contextMenu(chats)).toBe(true);
+  expect(screen.queryByRole('menu')).toBeNull();
+
+  expect(fireEvent.contextMenu(project, { clientX: 80, clientY: 120 })).toBe(false);
+  const menu = screen.getByRole('menu', { name: '项目 A 的操作' });
+  const action = within(menu).getByRole('menuitem', { name: '移除项目' });
+  expect(document.activeElement).toBe(action);
+  expect(screen.getByRole('button', { name: '项目与位置，当前：普通对话' })).toBeTruthy();
+  expect(screen.queryByRole('dialog', { name: '移除项目' })).toBeNull();
+
+  fireEvent.keyDown(action, { key: 'Escape' });
+  expect(screen.queryByRole('menu')).toBeNull();
+  expect(document.activeElement).toBe(project);
+  fireEvent.keyDown(project, { key: 'F10', shiftKey: true });
+  expect(screen.getByRole('menu', { name: '项目 A 的操作' })).toBeTruthy();
+  fireEvent.pointerDown(chats);
+  expect(screen.queryByRole('menu')).toBeNull();
+  expect(remove).not.toHaveBeenCalled();
+});
+
 it('confirms removal of the current project, keeps files, and returns to ordinary chats', async () => {
   const { root } = fixture(); render(<ProjectWorkspace api={root} />);
   fireEvent.click(await screen.findByRole('button', { name: '进入项目 A' }));
-  fireEvent.click(await screen.findByRole('button', { name: '移除项目 A' }));
+  await chooseProjectRemoval();
   const dialog = await screen.findByRole('dialog', { name: '移除项目' });
   expect(within(dialog).getByText(`/projects/${a}`)).toBeTruthy();
   expect(within(dialog).getByText(/磁盘文件和本地历史数据将保留/)).toBeTruthy();
@@ -299,7 +331,7 @@ it('canceling missing-project removal leaves the project visible and sends no co
   const result = await root.projects(); result.items[0].availability = 'missing';
   vi.mocked(root.projects).mockResolvedValue(result);
   render(<ProjectWorkspace api={root} />);
-  fireEvent.click(await screen.findByRole('button', { name: '移除项目 A' }));
+  await chooseProjectRemoval();
   const remove = vi.spyOn(root, 'removeProject');
   fireEvent.click(within(await screen.findByRole('dialog', { name: '移除项目' })).getByRole('button', { name: '取消' }));
   expect(screen.getByText('目录不存在')).toBeTruthy();
@@ -312,7 +344,7 @@ it('removing another project keeps the active project and its unsent draft', asy
   fireEvent.click(await screen.findByRole('button', { name: '进入项目 B' }));
   fireEvent.change(await screen.findByRole('textbox', { name: '消息' }), { target: { value: '保留 B 草稿' } });
   vi.spyOn(root, 'removeProject').mockResolvedValue({ project_id: a, data_retained: true });
-  fireEvent.click(screen.getByRole('button', { name: '移除项目 A' }));
+  await chooseProjectRemoval();
   fireEvent.click(within(await screen.findByRole('dialog', { name: '移除项目' })).getByRole('button', { name: '确认移除' }));
   await waitFor(() => expect(screen.queryByRole('dialog', { name: '移除项目' })).toBeNull());
   expect(screen.getByRole('button', { name: '项目与位置，当前：项目 B' })).toBeTruthy();
@@ -325,7 +357,7 @@ it('a removal rejection retains the current project and draft', async () => {
   fireEvent.click(await screen.findByRole('button', { name: '进入项目 A' }));
   fireEvent.change(await screen.findByRole('textbox', { name: '消息' }), { target: { value: '保留 A 草稿' } });
   vi.spyOn(root, 'removeProject').mockRejectedValue(new ApiError('project_in_use'));
-  fireEvent.click(screen.getByRole('button', { name: '移除项目 A' }));
+  await chooseProjectRemoval();
   fireEvent.click(within(await screen.findByRole('dialog', { name: '移除项目' })).getByRole('button', { name: '确认移除' }));
   await screen.findByText(/项目中还有运行/);
   fireEvent.click(screen.getByRole('button', { name: '取消' }));
