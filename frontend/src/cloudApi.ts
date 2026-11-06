@@ -1,5 +1,5 @@
 import type { NetworkView, ServiceTarget } from './components/CloudNetworks';
-import type { CloudFileTree, CloudArchive, CloudAttachment, CloudQueuedMessage, CloudBinding, CloudDetail, CloudDetailPage, CloudDraft, CloudModels, CloudOperation, CloudProfile, CloudSnapshot, CloudThread, CloudUsage, DeletePreview } from './cloudTypes';
+import type { CloudFileTree, CloudArchive, CloudAttachment, CloudQueuedMessage, CloudBinding, CloudDetail, CloudDetailPage, CloudDraft, CloudMcpStatus, CloudModels, CloudOperation, CloudProfile, CloudSnapshot, CloudThread, CloudUsage, DeletePreview } from './cloudTypes';
 import { decodeSSE, responseBytes } from './sse';
 import type { SseFrame } from './sse';
 
@@ -46,6 +46,8 @@ export class CloudApi {
   history(sid: string, bid: string, thread?: string, cursor?: string, signal?: AbortSignal) { return this.read<CloudArchive>(this.task(bid) + '/history' + this.query(sid, { thread_id: thread, cursor, limit: 30 }), signal); }
   threads(sid: string, bid: string, cursor?: string, signal?: AbortSignal) { return this.read<{ threads: CloudThread[]; next_cursor: string | null }>(this.task(bid) + '/history/threads' + this.query(sid, { cursor }), signal); }
   usage(sid: string, bid: string, signal?: AbortSignal) { return this.read<CloudUsage>(this.task(bid) + '/usage' + this.query(sid), signal); }
+  mcp(sid: string, bid: string, signal?: AbortSignal) { return this.read<CloudMcpStatus>(this.task(bid) + '/mcp' + this.query(sid), signal); }
+  refreshMcp(sid: string, bid: string, refresh_id: string) { return this.write<CloudMcpStatus>(this.task(bid) + '/mcp' + this.query(sid), { refresh_id }); }
   models(sid: string, bid: string, signal?: AbortSignal) { return this.read<CloudModels>(this.task(bid) + '/models' + this.query(sid), signal); }
   detail(sid: string, bid: string, row: CloudDetail, field: string, offset: number, signal?: AbortSignal) {
     return this.read<CloudDetailPage>(this.task(bid) + '/history/messages/' + encodeURIComponent(row.message_id) + this.query(sid, { thread_id: row.thread_id, revision: row.revision, field, offset }), signal);

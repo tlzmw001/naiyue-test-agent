@@ -59,6 +59,9 @@ class MessageQueue:
                 if (result['phase']!='available' or task['runner_phase']!='ready' or task['control_operation_id']
                         or task['environment_operation_id'] or task['artifact_operation_id']
                         or any(x not in ('background_commands',) for x in task['reclaim_blockers'])):return value
+                if 'mcp:refresh' in task.get('runner_capabilities', ()):
+                    status=await self.manager.view(domain,bid,sid,'mcp',{})
+                    if status['status'] in ('refreshing','waiting_run','waiting_runner'):return value
                 for aid in value['request'].get('attachment_ids',[]):
                     item=binding.get('local_attachments',{}).get(aid)
                     if item is None or item['phase'] in ('failed','cancelled'):raise CloudError('attachment_not_ready')
@@ -73,6 +76,8 @@ class MessageQueue:
             operation=await self.manager.commands.reconcile(domain,operation['command_id'],sid)
             if operation['phase'] in ('accepted','succeeded') or operation['phase']=='failed' and operation['steps']['primary'].get('receipt'):
                 return await run_blocking(repo.update,cid,sid,'sent',expected=('dispatching',),error_code=None)
+            if operation['phase']=='rejected' and operation.get('error_code')=='cloud_mcp_refresh_in_progress':
+                return await run_blocking(repo.wait_for_mcp_refresh,cid,sid,operation['command_id'])
             raise CloudError(operation.get('error_code') or 'cloud_queue_send_rejected') if operation['phase']=='rejected' else CloudError('cloud_queue_send_unconfirmed')
         except CloudError as error:
             logger.warning('cloud_queued_message_paused code=%s',error.code)

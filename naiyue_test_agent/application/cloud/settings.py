@@ -16,6 +16,7 @@ from naiyue_test_agent.contracts.cloud_history import HistoryLimits
 from naiyue_test_agent.contracts.cloud_observation import ObservationLimits
 from naiyue_test_agent.contracts.cloud_resources import ResourceLimits
 from naiyue_test_agent.contracts.cloud_results import ResultLimits
+from naiyue_test_agent.contracts.cloud_mcp import CloudMCPSettings
 
 
 class BackendSettings(BaseModel):
@@ -74,6 +75,7 @@ class CloudSettings(BaseModel):
     artifact_limits:ArtifactLimits=Field(default_factory=ArtifactLimits)
     result_limits:ResultLimits=Field(default_factory=ResultLimits)
     model_proxy:ModelProxySettings|None=None
+    mcp:CloudMCPSettings=Field(default_factory=CloudMCPSettings)
 
     @field_validator('data_dir')
     @classmethod

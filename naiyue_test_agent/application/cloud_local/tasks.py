@@ -220,8 +220,17 @@ class ManualCloudTasks:
                 if isinstance(result,BaseException) and primary is None:primary=result
         if primary is not None:raise primary
 
+    async def refresh_mcp(self, domain, binding_id, session_id, refresh_id):
+        with self.operation(), domain.owner.operation():
+            binding = await run_blocking(domain.repo.binding, binding_id, session_id)
+            if not binding['retained'] or binding['task_id'] is None:
+                raise CloudError('cloud_task_unavailable', 409)
+            async with self.connection(binding) as client:
+                return await run_blocking(client.request, 'POST', '/tasks/' + binding['task_id'] + '/mcp',
+                    json={'refresh_id': refresh_id})
+
     async def view(self,domain,binding_id,session_id,view,params):
-        if view not in ('history','snapshot','usage','models','history/threads','history/messages','results','result','result_changes','result_preview'):raise CloudError('cloud_view_not_found',404)
+        if view not in ('history','snapshot','usage','models','mcp','history/threads','history/messages','results','result','result_changes','result_preview'):raise CloudError('cloud_view_not_found',404)
         with self.operation(),domain.owner.operation():
             binding=await run_blocking(domain.repo.binding,binding_id,session_id)
             if binding['task_id'] is None:raise CloudError('cloud_preparation_pending')
@@ -239,7 +248,12 @@ class ManualCloudTasks:
                 if view=='result_preview':tail='/files/'+TypeAdapter(UUIDText).validate_python(params.pop('file_id'))+'/preview'
                 view='results/'+rid+tail
             async with self.connection(binding) as client:
-                value=await run_blocking(client.request,'GET','/tasks/'+binding['task_id']+'/'+view,params=params)
+                try:
+                    value=await run_blocking(client.request,'GET','/tasks/'+binding['task_id']+'/'+view,params=params)
+                except CloudError as error:
+                    if view=='mcp' and error.status==404 and error.code=='remote_error':
+                        return dict(status='unsupported',refresh_id=None,services=[])
+                    raise
                 if view=='results':
                     if any(row.get('task_id',binding['task_id'])!=binding['task_id'] for row in value):raise CloudError('cloud_result_identity_mismatch',502)
                 elif view.startswith('results/') and view.count('/')==1:

@@ -4,7 +4,7 @@ import CloudTasks from './CloudTasks';
 import CloudTaskDetail from './CloudTaskDetail';
 import { installDialogMock } from '../testDialogs';
 import type { CloudApi } from '../cloudApi';
-import type { CloudBinding, CloudSnapshot, CloudTask } from '../cloudTypes';
+import type { CloudBinding, CloudOperation, CloudSnapshot, CloudTask } from '../cloudTypes';
 import { useCloudObservation } from '../useCloudObservation';
 import { useCloudDraft } from '../useCloudDraft';
 import CloudTaskCreate from './CloudTaskCreate';
@@ -72,6 +72,28 @@ it('shows a retained task history and a separate target composer', async () => {
   expect(cloud.create).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: '返回任务列表' }));
   expect(await screen.findByRole('button', { name: /任务 aaaaaaaa/ })).toBe(document.activeElement);
+});
+it('disables idle cloud sends with a visible reason until the Runner confirms the MCP refresh', async () => {
+  const cloud = api([binding]);
+  const available = { status: 'available' as const, refresh_id: null, services: [] };
+  let confirm!: (status: Awaited<ReturnType<CloudApi['mcp']>>) => void;
+  const runner = new Promise<Awaited<ReturnType<CloudApi['mcp']>>>(resolve => { confirm = resolve; });
+  cloud.mcp = vi.fn().mockResolvedValueOnce(available).mockReturnValue(runner);
+  cloud.refreshMcp = vi.fn().mockResolvedValue({ ...available, status: 'refreshing', refresh_id: 'refresh' });
+  render(<CloudTaskDetail api={cloud} sid="S" binding={binding} active back={vi.fn()} changed={vi.fn()} />);
+  const draft = await screen.findByRole('textbox', { name: '发给此云端任务' });
+  await waitFor(() => expect(draft).toHaveProperty('disabled', false));
+  fireEvent.change(draft, { target: { value: '等目录确认后发送' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: '发送到云端' })).toHaveProperty('disabled', false));
+  fireEvent.click(screen.getByRole('button', { name: 'MCP 工具' }));
+  await screen.findByText('此任务暂无 MCP 服务。');
+  fireEvent.click(screen.getByRole('button', { name: '刷新工具' }));
+  await screen.findByText('正在刷新');
+  expect(screen.getByRole('button', { name: '等待 MCP 工具刷新' })).toHaveProperty('disabled', true);
+  expect(cloud.message).not.toHaveBeenCalled();
+  await act(async () => confirm({ ...available, refresh_id: 'refresh' }));
+  expect(screen.getByRole('button', { name: '发送到云端' })).toHaveProperty('disabled', false);
+  expect(draft).toHaveProperty('value', '等目录确认后发送');
 });
 it('keeps cloud drafts isolated on task switches and never sends while a run is active', async () => {
   const b2 = { ...binding, binding_id: 'B2', task_id: 'c'.repeat(32), cloud: { ...task, task_id: 'c'.repeat(32), active_run_id: 'r' } };
@@ -322,4 +344,48 @@ it('loads models after the new runner registers them in the same generation', as
   await waitFor(() => expect(cloud.models).toHaveBeenCalledTimes(1));
   rerender(<CloudTaskDetail {...props} binding={binding} />);
   expect(await screen.findByRole('button', { name: '模型与推理强度：A · low' })).toBeTruthy();
+});
+
+it('collapses the task header details without hiding the conversation', async () => {
+  const cloud = api([binding]);
+  render(<CloudTaskDetail api={cloud} sid="S" binding={binding} active back={vi.fn()} changed={vi.fn()} />);
+  const toggle = screen.getByRole('button', { name: '收起任务信息' });
+  expect(await screen.findByText('云端正在检查测试')).toBeTruthy();
+  expect(screen.getByRole('combobox', { name: '查看云端根子线程' })).toBeTruthy();
+  fireEvent.click(toggle);
+  expect(screen.queryByRole('combobox', { name: '查看云端根子线程' })).toBeNull();
+  expect(screen.queryByRole('button', { name: /结果与产物/ })).toBeNull();
+  expect(screen.getByRole('button', { name: '返回任务列表' })).toBeTruthy();
+  expect(screen.getByText('云端正在检查测试')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: '展开任务信息' }));
+  expect(screen.getByRole('combobox', { name: '查看云端根子线程' })).toBeTruthy();
+});
+
+it('retires the temporary bubble after matching run activity without requiring the human row', async () => {
+  const cloud = api([binding]);
+  let accepted: CloudOperation | undefined;
+  let emit: ((frame: { event: string; data: unknown }) => void) | undefined;
+  vi.mocked(cloud.message).mockImplementation(async (_sid, _bid, body) => {
+    accepted = { command_id: String((body as { command_id: string }).command_id), binding_id: 'B', kind: 'message', phase: 'accepted', run_id: 'current-run', steps: {} };
+    return accepted;
+  });
+  vi.mocked(cloud.operations).mockImplementation(async () => accepted ? [accepted] : []);
+  vi.mocked(cloud.observe).mockImplementation(async (_sid, _bid, _thread, _cursor, signal, callback) => {
+    emit = callback;
+    return new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+  });
+  render(<CloudTaskDetail api={cloud} sid="S" binding={binding} active back={vi.fn()} changed={vi.fn()} />);
+  const input = screen.getByRole('textbox', { name: '发给此云端任务' });
+  await waitFor(() => expect(input).not.toHaveProperty('disabled', true));
+  fireEvent.change(input, { target: { value: '重试这轮' } });
+  fireEvent.click(screen.getByRole('button', { name: '发送到云端' }));
+  await screen.findByText('云端已受理，等待消息同步');
+  const frame = (run_id: string) => ({ event: 'snapshot', data: { ...snapshot, archive: { ...snapshot.archive, messages: [] },
+    live: { ...snapshot.live, messages: [{ id: 'live-ai', run_id, type: 'ai', content: '本轮正在执行', provisional: true }] } } });
+  act(() => emit?.(frame('older-run')));
+  expect(screen.getByText('云端已受理，等待消息同步')).toBeTruthy();
+  act(() => emit?.(frame('current-run')));
+  await waitFor(() => expect(screen.queryByText('云端已受理，等待消息同步')).toBeNull());
+  act(() => emit?.({ event: 'snapshot', data: snapshot }));
+  expect(screen.queryByText('云端已受理，等待消息同步')).toBeNull();
 });

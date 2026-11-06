@@ -1,5 +1,9 @@
 # 后续开发与补充清单
 
+## 本机一键刷新与云端 MCP 实机验收
+
+[Spec143AY](specs/143ay-cloud-mcp-and-manual-refresh.md) 三片已接线。待用更新后的 Windows Agent、Linux Coordinator 和 Runner 模板验收公司直连 MCP、实际 Windows SSH 反向中转、远端改参数后原任务单次刷新，以及断线恢复。MCP Server 开发和公司网络接入另行安排。
+
 ## 0.5.9 后续补充（2026-11-05，已按Spec143AR完成本机实现）
 
 | 项目 | 已确认事实及影响 | 最小处理范围与验收 |

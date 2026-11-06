@@ -40,9 +40,10 @@ def is_retryable_mcp_error(error):
 
 
 class ConnectionOwner:
-    def __init__(self, server_id, settings, network, environment, identity):
+    def __init__(self, server_id, settings, network, environment, identity, *, dial_target=None, dial_deadline=None, select_all=False):
         self.server_id, self.settings, self.network = server_id, settings, network
         self.environment, self.identity = environment, identity
+        self.dial_target, self.dial_deadline, self.select_all = dial_target, dial_deadline, select_all
         self.ready = asyncio.get_running_loop().create_future()
         # Creation can fail after the last waiter was cancelled. Retrieve the
         # future's exception even then; close() still checks the owner's failure.
@@ -65,9 +66,17 @@ class ConnectionOwner:
         phase = 'connect'
         try:
             async with asyncio.timeout(self.settings.connect_timeout_seconds) as deadline:
-                async with open_connection(self.settings, self.network, environment=self.environment) as client:
+                options = {}
+                if self.dial_target is not None:
+                    options['dial_target'] = self.dial_target
+                if self.dial_deadline is not None:
+                    options['dial_deadline'] = self.dial_deadline
+                elif self.select_all and self.dial_target is None and self.settings.transport == 'streamable_http':
+                    options['close_timeout'] = self.settings.connect_timeout_seconds
+                async with open_connection(self.settings, self.network, environment=self.environment, **options) as client:
                     phase = 'catalog'
-                    catalog = await read_catalog(self.server_id, self.settings, client.session)
+                    options = {'select_all': True} if self.select_all else {}
+                    catalog = await read_catalog(self.server_id, self.settings, client.session, **options)
                     deadline.reschedule(None)
                     self.ready.set_result(MCPLease(client, catalog, self.identity))
                     phase = 'active'

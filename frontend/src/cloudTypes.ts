@@ -7,7 +7,7 @@ export interface CloudTask {
   runner_phase: string; environment_phase: string; sandbox_id: string | null; active_run_id: string | null;
   last_run_id: string | null; last_error_code: string | null; last_quiescent_at: number | null;
   environment_operation_id: string | null; control_operation_id: string | null; artifact_operation_id: string | null;
-  runner_model_ids: string[]; reclaim_blockers: string[];
+  runner_capabilities?: string[]; runner_model_ids: string[]; reclaim_blockers: string[];
   runner_recovery?: { run_id: string; checkpoint_id?: string | null } | null;
 }
 export interface CloudBinding {
@@ -46,3 +46,12 @@ export interface CloudAttachment { uploaded_bytes?: number | null; transfer_byte
 export interface CloudQueuedMessage { command_id: string; message_command_id: string; phase: string; error_code: string | null; request: { text: string; attachment_ids?: string[] }; dispatch_request?: object }
 
 export interface CloudFileTree { path: string; entries: { path: string; name: string; kind: string; size: number }[]; next_offset: number | null }
+
+export interface CloudMcpStatus {
+  status: 'available' | 'refreshing' | 'waiting_run' | 'waiting_runner' | 'error' | 'unconfirmed' | 'unsupported';
+  refresh_id: string | null;
+  services: {
+    server_id: string; route: 'direct' | 'windows_tunnel'; tools: string[];
+    status: 'available' | 'disabled' | 'error'; error?: string | null;
+  }[];
+}

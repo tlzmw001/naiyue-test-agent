@@ -1,0 +1,20 @@
+.panel { position: absolute; inset-inline-start: 10px; bottom: calc(100% + 10px); z-index: 12; width: min(320px, calc(100% - 20px)); display: flex; flex-direction: column; max-height: min(420px, 45dvh); box-sizing: border-box; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); box-shadow: 0 8px 30px var(--shadow), 0 2px 6px var(--shadow-soft); color: var(--text); }
+.header { display: flex; align-items: start; justify-content: space-between; gap: 8px; padding: 12px 12px 10px; border-bottom: 1px solid var(--line); }
+.header strong, .header small { display: block; }
+.header strong { font-size: var(--fs-ui); font-weight: var(--fw-semibold); }
+.header small, .note, .serviceHeading small { color: var(--muted); font-size: var(--fs-caption); }
+.header small { margin-top: 4px; }
+.close { display: grid; place-items: center; border: 0; background: transparent; color: var(--text-secondary); border-radius: var(--r-sm); width: 28px; height: 28px; font-size: var(--fs-icon); }
+.close:hover { background: var(--surface-hover); }
+.content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 10px 12px; }
+.summary { font-size: var(--fs-meta); color: var(--text-secondary); overflow-wrap: anywhere; }
+.service { border-top: 1px solid var(--line); margin-top: 9px; padding-top: 9px; }
+.serviceHeading { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 8px; overflow-wrap: anywhere; }
+.serviceHeading strong { font-weight: var(--fw-semibold); }
+.note, .failure { margin: 6px 0 0; line-height: var(--lh-ui); }
+.failure { color: var(--danger); font-size: var(--fs-caption); }
+.tools { list-style: none; padding: 0; margin: 5px 0 0; }
+.tools li { padding: 3px 0; color: var(--text-secondary); font-size: var(--fs-caption); overflow-wrap: anywhere; }
+.footer { padding: 5px 10px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; }
+.footer button:disabled { opacity: .55; }
+.panel button:focus-visible, .panel:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }

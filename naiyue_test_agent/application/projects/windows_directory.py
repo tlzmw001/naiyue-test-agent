@@ -1,5 +1,6 @@
 """Windows directory handles and relative creation, without path re-resolution."""
 from contextlib import contextmanager
+from naiyue_test_agent.storage.files import windows_api_path
 
 
 @contextmanager
@@ -12,7 +13,7 @@ def directory_handle(path):
     kernel.CreateFileW.restype = w.HANDLE
     kernel.CloseHandle.argtypes = [w.HANDLE]
     kernel.CloseHandle.restype = w.BOOL
-    handle = kernel.CreateFileW(str(path), 0x80000000, 3, None, 3, 0x02000000 | 0x00200000, None)
+    handle = kernel.CreateFileW(windows_api_path(path), 0x80000000, 3, None, 3, 0x02000000 | 0x00200000, None)
     if handle == w.HANDLE(-1).value:
         raise ctypes.WinError(ctypes.get_last_error())
     try:

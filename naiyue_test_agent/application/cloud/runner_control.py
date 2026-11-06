@@ -106,6 +106,7 @@ class RunnerControl:
         except BaseException:
             await self.detach(connection)
             raise
+        await self.runtime.mcp.advance(connection)
         return connection
 
     def active_command(self,task_id,run_id):
@@ -116,7 +117,9 @@ class RunnerControl:
         if frame.kind=='observations':
             await self.runtime.observations.receive(connection,frame)
             return
-        if frame.kind=='admission_rejected':
+        if frame.kind=='mcp_applied':
+            await cloud_work(self.runtime,lambda:self.runtime.mcp.confirm(connection,frame))
+        elif frame.kind=='admission_rejected':
             await cloud_work(self.runtime,lambda:self.reject(connection,frame))
         elif frame.kind=='renew':
             b=await cloud_work(self.runtime,lambda:self.bootstrap.renew(connection))
@@ -148,6 +151,8 @@ class RunnerControl:
                     or frame.run_id not in (None,receipt.result['command']['run_id'])):raise CloudError('run_identity_mismatch')
             if frame.status in ('unknown','not_found','interrupted'):
                 await cloud_work(self.runtime,lambda:self.runs.unconfirmed(connection.task_id,frame.command_id))
+        if frame.kind in ('finished','heartbeat','control_finished','artifact_finished'):
+            await self.runtime.mcp.advance(connection)
         self._live_notice(self.runtime.observations.changed,connection.task_id)
 
     def reject(self,connection,frame):

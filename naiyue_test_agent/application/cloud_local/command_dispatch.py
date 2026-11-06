@@ -60,7 +60,9 @@ def send(domain,client,op,step,*,explicit=False):
         op=journal.dispatch(cid,sid,step);item=op['steps'][step]
         try:raw=client.request('POST',item['path'],json=item['request'])
         except CloudError as rejected:
-            if rejected.code in ('runner_not_ready','model_unavailable','unsupported_thinking_level','model_profile_changed','task_revision_conflict','run_identity_mismatch',
+            mcp_wait = (rejected.code == 'cloud_mcp_refresh_in_progress' and rejected.status == 409
+                and item['operation'] == 'run:start')
+            if mcp_wait or rejected.code in ('runner_not_ready','model_unavailable','unsupported_thinking_level','model_profile_changed','task_revision_conflict','run_identity_mismatch',
                     'task_busy','control_unavailable','request_too_large','invalid_request','environment_already_running',
                     'command_capacity','result_output_conflict','result_capacity','result_busy','result_not_retryable','result_revision_conflict','environment_capacity','environment_retained_capacity',
                     'task_delete_requires_stop','task_delete_confirmation_changed','task_not_available',

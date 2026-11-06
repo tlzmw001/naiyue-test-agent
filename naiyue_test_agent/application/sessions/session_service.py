@@ -40,7 +40,7 @@ logger = logging.getLogger('naiyue_test_agent.application')
 class SessionService:
     """Locate sessions and coordinate admission; each session drives its run."""
 
-    def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None, max_active_runs=10, mcp_resources=None, http_attempt_limit=None, shell_task_settings=None, data_dir=None, project=None, admission=None, execution_authority=None, fixed_execution=False,image_input_settings=None):
+    def __init__(self, catalog: ModelCatalog, tool_registry: ToolRegistry | None = None, *, initial_active_tools=None, permission_settings=None, progress_settings=None, max_active_runs=10, mcp_resources=None, http_attempt_limit=None, shell_task_settings=None, data_dir=None, project=None, admission=None, execution_authority=None, fixed_execution=False,image_input_settings=None, root_mcp_tools=None):
         if type(max_active_runs) is not int or max_active_runs <= 0:
             raise ValueError('Root run capacity must be a positive integer')
         from naiyue_test_agent.image_input_settings import ImageInputSettings
@@ -53,6 +53,7 @@ class SessionService:
         self._admission = admission if admission is not None else RunAdmission(max_active_runs)
         self._execution_authority, self._fixed_execution = execution_authority, fixed_execution
         self.mcp_resources = mcp_resources
+        self._root_mcp_tools = root_mcp_tools
         self._permission_settings = permission_settings if permission_settings is not None else PermissionSettings()
         install_model_usage_callback(catalog, http_attempt_limit=http_attempt_limit)
         self._permission_reviewer = AutoPermissionReviewer.from_catalog(catalog, self._permission_settings.auto)
@@ -197,7 +198,8 @@ class SessionService:
         return self.require(session_id).resolve_model(agent_path)
 
     def resolve_request_configuration(self, session_id: str, agent_path='root'):
-        return self.require(session_id).resolve_request_configuration(agent_path)
+        model_id, model, names = self.require(session_id).resolve_request_configuration(agent_path)
+        return model_id, model, self._effective_tools(names, agent_path)
 
     def resolve_prompt_parts(self, session_id, agent_path='root'):
         if agent_path=='root' and self.memory_jobs is not None:self.memory_jobs.directory_attempt(session_id)
@@ -403,7 +405,12 @@ class SessionService:
         return self.require(session_id).resolve_permission_context(agent_path)
 
     def resolve_active_tool_names(self, session_id, agent_path='root'):
-        return self.require(session_id).get_active_tools(agent_path)
+        return self._effective_tools(self.require(session_id).get_active_tools(agent_path), agent_path)
+
+    def _effective_tools(self, names, agent_path):
+        if agent_path == 'root' and self._root_mcp_tools is not None:
+            return (*names, *self._root_mcp_tools())
+        return names
 
     def is_stop_requested(self, session_id: str) -> bool:
         return self.require(session_id).controls.is_stop_requested()

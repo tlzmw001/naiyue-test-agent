@@ -43,6 +43,7 @@ def network_scenario(root,*,git_executable=None):
     assert manifest.schema_version==selection.schema_version==3
     assert {entry.path for entry in manifest.entries}==set(content)
     assert {name:(expanded/name).read_bytes() for name in content}==content
+    upload_journal_scenario(root,captured)
     output_files_scenario(root)
     state=root/'网络.json'
     write_json(state,{'revision':1,'address':'http://example.test'})
@@ -66,7 +67,49 @@ def network_scenario(root,*,git_executable=None):
     assert not child.alive and not child.reader.is_alive()
     return dict(source_tree='passed',capture_archive='passed',state_replace='passed',
         git_scope=git,child_process='passed',real_ssh='not_tested',
-        attachment_roundtrip='passed',output_files_save='passed')
+        attachment_roundtrip='passed',output_files_save='passed',long_upload_journal='passed')
+
+
+def upload_journal_scenario(root, captured):
+    from types import SimpleNamespace
+    from uuid import uuid4
+    from naiyue_test_agent.cloud_files.cache import _used
+    from naiyue_test_agent.cloud_files.input_upload import upload
+    from naiyue_test_agent.contracts.cloud_tasks import CloudError
+    from naiyue_test_agent.storage.files import windows_api_path
+
+    # Keep the directory short enough for ordinary metadata IO, while the
+    # production journal name containing two UUIDs crosses MAX_PATH.
+    directory = root / ('缓存' + 'x' * max(0, 197 - len(str(root))))
+    directory.mkdir()
+    receipt = captured.model_copy(update={'directory': directory})
+    (directory/'receipt.json').write_bytes(receipt.model_dump_json().encode('utf-8'))
+    instance, attachment = str(uuid4()), str(uuid4())
+    journal = directory/f'upload-{instance}-{attachment}.json'
+    assert len(str(journal).encode('utf-16-le')) // 2 >= 260
+    commands = []
+
+    def request(method,path,**kwargs):
+        if method=='GET' and path.startswith('/inputs/'):
+            raise CloudError('input_not_found',404)
+        assert (method,path)==('POST','/transfers')
+        commands.append(kwargs['json']['command_id'])
+        raise CloudError('cloud_connection_failed',503)
+
+    client = SimpleNamespace(settings=SimpleNamespace(instance_id=instance),request=request)
+    journal_io = Path(windows_api_path(journal)) if os.name=='nt' else journal
+    try:
+        for _ in range(2):
+            try:
+                upload(client,directory,upload_id=attachment)
+            except CloudError as error:
+                assert error.code=='cloud_connection_failed'
+            else:
+                raise AssertionError('Expected a disconnect after the journal was written')
+        assert len(commands)==2 and commands[0]==commands[1]
+        assert _used(directory)==(directory/'receipt.json').stat().st_size+journal_io.stat().st_size
+    finally:
+        journal_io.unlink(missing_ok=True)
 
 
 def output_files_scenario(root):
@@ -135,7 +178,7 @@ def output_files_scenario(root):
 
 def verify_network_report(report):
     if not isinstance(report,dict) or any(report.get(k)!='passed' for k in
-            ('source_tree','capture_archive','state_replace','child_process','attachment_roundtrip','output_files_save')):
+            ('source_tree','capture_archive','state_replace','child_process','attachment_roundtrip','output_files_save','long_upload_journal')):
         raise ValueError('installed_network_checks_failed')
     if report.get('git_scope') not in ('passed','unavailable'):raise ValueError('installed_git_check_invalid')
 

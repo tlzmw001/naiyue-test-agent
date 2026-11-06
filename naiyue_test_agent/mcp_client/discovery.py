@@ -47,7 +47,7 @@ class DiscoveredCatalog:
     fingerprint: str
 
 
-async def read_catalog(server_id, settings, session):
+async def read_catalog(server_id, settings, session, *, select_all=False):
     from mcp.types import PaginatedRequestParams
     if not re.fullmatch(r'[A-Za-z0-9_]{1,16}', server_id):
         raise MCPDiscoveryError('invalid_server_id')
@@ -86,7 +86,7 @@ async def read_catalog(server_id, settings, session):
                 raise
             except (ValueError, TypeError, RecursionError):
                 raise MCPDiscoveryError('invalid_schema') from None
-            tools.append(DiscoveredTool(name, registered, name in settings.allowed_tools, definition))
+            tools.append(DiscoveredTool(name, registered, select_all or name in settings.allowed_tools, definition))
         cursor = page.next_cursor
         if cursor is None:
             break

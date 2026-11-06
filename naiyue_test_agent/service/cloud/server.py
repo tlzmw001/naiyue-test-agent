@@ -93,9 +93,9 @@ async def _serve(runtime):
                     signal.signal(signum, handler)
 
 
-def serve_cloud(settings):
+def serve_cloud(settings, *, settings_path=None):
     for name in ('httpx','httpcore','httpx2','httpcore2'):
         logging.getLogger(name).setLevel(logging.ERROR)
-    with open_cloud_runtime(settings) as runtime:
+    with open_cloud_runtime(settings, settings_path=settings_path) as runtime:
         asyncio.run(_serve(runtime))
     return 0

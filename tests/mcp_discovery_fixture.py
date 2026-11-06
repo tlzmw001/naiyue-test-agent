@@ -23,6 +23,8 @@ def main():
     parser.add_argument('--http', action='store_true')
     parser.add_argument('--json-response', action='store_true')
     parser.add_argument('--legacy', action='store_true')
+    parser.add_argument('--tls-cert')
+    parser.add_argument('--tls-key')
     args = parser.parse_args()
 
     def audit(event, **values):
@@ -37,11 +39,16 @@ def main():
     async def listing(ctx, params):
         cursor = params.cursor if params else None
         audit('list', cursor=cursor)
+        if args.mode == 'blocked_until_release':
+            while not args.audit.with_suffix('.release-catalog').exists():
+                await asyncio.sleep(.02)
         if args.mode == 'wait' or args.audit.with_suffix('.block-catalog').exists():
             await asyncio.Event().wait()
         if args.mode == 'empty':
             return ListToolsResult(tools=[])
         schema = {'type': 'object', 'properties': {'text': {'type': 'string'}}}
+        if args.audit.with_suffix('.schema-v2').exists():
+            schema = {'type': 'object', 'properties': {'trace_id': {'type': 'string'}}, 'required': ['trace_id']}
         if args.mode == 'invalid':
             schema['properties']['runtime'] = {}
         if args.mode == 'large':
@@ -55,7 +62,7 @@ def main():
         nonlocal count
         if args.mode in ('stateful', 'tools'):
             count += 1
-            audit('call', count=count, pid=os.getpid())
+            audit('call', count=count, pid=os.getpid(), arguments=params.arguments)
             action = (params.arguments or {}).get('text')
             if action == 'drop':
                 os._exit(3)
@@ -100,12 +107,22 @@ def main():
                 yield
 
         async def endpoint(scope, receive, send):
+            if args.tls_cert:
+                audit('http_request', host=dict(scope['headers'])[b'host'].decode('ascii'), path=scope['path'])
             if args.mode == 'auth':
                 audit('auth_rejected')
                 await PlainTextResponse('PRIVATE-AUTH-BODY', status_code=401)(scope, receive, send)
                 return
             if scope['method'] == 'DELETE':
                 audit('delete')
+                if args.mode in ('blocked_delete_headers', 'blocked_delete_body'):
+                    if args.mode == 'blocked_delete_body':
+                        await send({'type': 'http.response.start', 'status': 200, 'headers': []})
+                    while not args.audit.with_suffix('.release-delete').exists():
+                        await asyncio.sleep(.02)
+                    if args.mode == 'blocked_delete_body':
+                        await send({'type': 'http.response.body', 'body': b''})
+                        return
             await manager.handle_request(scope, receive, send)
 
         app = Starlette(routes=[Mount('/mcp', app=endpoint)], lifespan=lifespan)
@@ -113,7 +130,11 @@ def main():
             sock.bind(('127.0.0.1', 0))
             sock.listen()
             audit('ready', port=sock.getsockname()[1])
-            await uvicorn.Server(uvicorn.Config(app, log_level='error')).serve(sockets=[sock])
+            config = uvicorn.Config(app, log_level='error', ssl_certfile=args.tls_cert, ssl_keyfile=args.tls_key)
+            if args.tls_cert:
+                config.load()
+                config.ssl.set_servername_callback(lambda _connection, name, _context: audit('tls', sni=name))
+            await uvicorn.Server(config).serve(sockets=[sock])
 
     asyncio.run(http() if args.http else stdio())
 

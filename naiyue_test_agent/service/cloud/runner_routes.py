@@ -23,6 +23,16 @@ def register_runner_routes(owner,task,runtime):
         owner_authorize(request,runtime)
         return await cloud_work(runtime,lambda:runtime.models.options(task_id))
 
+    @owner.get('/api/cloud/v1/tasks/{task_id}/mcp')
+    async def mcp_status(request: Request, task_id: str):
+        owner_authorize(request, runtime)
+        return await cloud_work(runtime, lambda: runtime.mcp.status(task_id))
+
+    @owner.post('/api/cloud/v1/tasks/{task_id}/mcp')
+    async def mcp_refresh(request: Request, task_id: str):
+        owner_authorize(request, runtime)
+        return await runtime.mcp.refresh(task_id, await _body(request, runtime))
+
     @owner.post('/api/cloud/v1/tasks/{task_id}/runs')
     async def start(request:Request,task_id:str):
         owner_authorize(request,runtime)

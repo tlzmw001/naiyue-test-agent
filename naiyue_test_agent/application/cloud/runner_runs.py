@@ -10,6 +10,7 @@ from naiyue_test_agent.contracts.cloud_tasks import CloudError,CloudTask,Command
 from naiyue_test_agent.storage.cloud.lifecycle import LifecycleRepository
 from .work import cloud_work
 from .producers import CommandProducers
+from .mcp import CAPABILITY
 
 logger=logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ class RunnerRuns:
             r.models.validate_thinking(task,request.model_id,request.thinking_level)
             try:r.credentials.authorize(raw,task_id,'control:connect')
             except CloudError:raise CloudError('runner_not_ready') from None
+            mcp_revision=r.mcp.run_revision(task) if CAPABILITY in task.runner_capabilities else None
             attachments=[]
             if request.attachment_ids:
                 if task.template_snapshot is None or task.template_snapshot.file_transfer_version!=1:raise CloudError('template_files_update_required')
@@ -72,7 +74,7 @@ class RunnerRuns:
                 if endpoint is None:raise CloudError('cloud_network_not_configured',409)
                 services=service_context(NetworkRepository(r.database).read(task.network_id),endpoint)
             command=RunCommand(attachments=attachments,services=services,command_id=request.command_id,run_id=run_id,message=request.message,model_id=request.model_id,
-                thinking_level=request.thinking_level,result_plan=plan)
+                thinking_level=request.thinking_level,result_plan=plan,mcp_revision=mcp_revision)
             frame=dict(kind='command',command=command.model_dump(),connection_id=connection_id,
                 generation=task.generation,boot_id=task.runner_boot_id,state_epoch=task.state_epoch)
             if len(canonical_json(frame).encode())>r.settings.max_frame_bytes:raise CloudError('request_too_large',413)
@@ -89,6 +91,8 @@ class RunnerRuns:
 
     async def _start(self,task_id,request,fingerprint):
         live=self.control.connections.get(task_id)
+        if live is not None:
+            await self.runtime.mcp.advance(live)
         connection_id=live.connection_id if live else None
         raw=live.raw if live else None
         receipt,fresh=await cloud_work(self.runtime,lambda:self.reserve(task_id,request,fingerprint,connection_id,raw))

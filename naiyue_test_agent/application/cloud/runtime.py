@@ -21,8 +21,9 @@ logger = logging.getLogger(__name__)
 
 
 class CloudRuntime:
-    def __init__(self, settings, owner, database):
+    def __init__(self, settings, owner, database, *, settings_path=None):
         self.settings, self.owner, self.database = settings, owner, database
+        self.settings_path = settings_path
         self.instance_id = owner.record['instance_id']
         self.registry = CloudRegistry(database)
         self.registry.bind_instance(self.instance_id, initialize=owner.record['status'] == 'initializing')
@@ -48,6 +49,8 @@ class CloudRuntime:
         self.resources = CloudResources(self)
         from .inputs import CloudInputs
         self.inputs = CloudInputs(self)
+        from .mcp import CloudMCP
+        self.mcp = CloudMCP(self)
         from .runner_control import RunnerControl
         self.control = RunnerControl(self)
         from .artifacts import CloudArtifacts
@@ -180,7 +183,7 @@ class CloudRuntime:
 
 
 @contextmanager
-def open_cloud_runtime(settings):
+def open_cloud_runtime(settings, *, settings_path=None):
     stack, primary = ExitStack(), None
     try:
         owner = stack.enter_context(CloudOwner(settings))
@@ -191,7 +194,7 @@ def open_cloud_runtime(settings):
         database = Database.open_cloud(settings.data_dir / 'cloud.sqlite', profile='registry',
             initialize=owner.record['status'] == 'initializing')
         stack.callback(database.close)
-        runtime = CloudRuntime(settings, owner, database)
+        runtime = CloudRuntime(settings, owner, database, settings_path=settings_path)
         stack.callback(runtime.close)
         owner.ready()
         yield runtime

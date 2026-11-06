@@ -67,7 +67,7 @@ def main(argv=None):
         if args.command == 'serve':
             from naiyue_test_agent.application.cloud.settings import CloudSettings
             from naiyue_test_agent.service.cloud.server import serve_cloud
-            return serve_cloud(read_settings(args.settings, CloudSettings))
+            return serve_cloud(read_settings(args.settings, CloudSettings), settings_path=args.settings.expanduser().absolute())
         from naiyue_test_agent.cloud_install.template import TemplateBuildSettings, prepare_template
         receipt = prepare_template(read_settings(args.settings, TemplateBuildSettings), args.release_id)
         print(receipt.model_dump_json(indent=2))

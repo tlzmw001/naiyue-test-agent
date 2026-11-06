@@ -16,6 +16,7 @@ from .cloud_results import ResultPlan,ResultLimits
 from .cloud_inputs import InputLimits
 from .cloud_history import HistoryLimits
 from .cloud_observation import ObservationLimits,ObservationBatch
+from .cloud_mcp import CloudMCPSettings, CloudMCPServiceStatus
 
 
 def task_permissions():
@@ -85,6 +86,7 @@ class RunnerBootstrap(CloudRecord):
 
 
 class RunCommand(CloudRecord):
+    mcp_revision:UUIDText|None=Field(default=None,exclude_if=lambda v:v is None)
     attachments:list[TaskAttachment]=Field(default_factory=list,max_length=128,exclude_if=lambda v:not v)
     services:dict|None=Field(default=None,exclude_if=lambda value:value is None)
     command_id: UUIDText
@@ -164,6 +166,22 @@ class Fenced(CloudRecord):
 
 class Welcome(Fenced):
     kind: Literal['welcome']
+
+
+class MCPRefreshDispatch(Fenced):
+    kind: Literal['mcp_refresh']
+    refresh_id: UUIDText
+    digest: ContentId
+    settings: CloudMCPSettings
+    services: dict | None = None
+    expires_at: float
+
+
+class MCPApplied(Fenced):
+    kind: Literal['mcp_applied']
+    refresh_id: UUIDText
+    digest: ContentId
+    services: list[CloudMCPServiceStatus] = Field(max_length=8)
 
 
 class Dispatch(Fenced):
@@ -274,5 +292,5 @@ class Observations(Fenced):
     batch:ObservationBatch
 
 
-RunnerFrame=TypeAdapter(Annotated[Hello|State|Finished|Heartbeat|ArtifactState|ArtifactFinished|ControlState|ControlFinished|AdmissionRejected|Observations,Field(discriminator='kind')])
-CoordinatorFrame=TypeAdapter(Annotated[Welcome|Dispatch|Query|Renewed|ArtifactDispatch|ArtifactQuery|ControlDispatch|ControlQuery,Field(discriminator='kind')])
+RunnerFrame=TypeAdapter(Annotated[Hello|State|Finished|Heartbeat|ArtifactState|ArtifactFinished|ControlState|ControlFinished|AdmissionRejected|Observations|MCPApplied,Field(discriminator='kind')])
+CoordinatorFrame=TypeAdapter(Annotated[Welcome|Dispatch|Query|Renewed|ArtifactDispatch|ArtifactQuery|ControlDispatch|ControlQuery|MCPRefreshDispatch,Field(discriminator='kind')])

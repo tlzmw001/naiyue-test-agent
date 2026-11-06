@@ -201,6 +201,29 @@ CLI统一用 `--settings C:/private/connections.json --profile development`，�
 | `body_timeout_seconds` (model_proxy.body_timeout_seconds) | 读取模型请求体超时秒数。 |
 | `max_duration_seconds` (model_proxy.max_duration_seconds) | 单次模型请求最长秒数。 |
 
+### 云端 MCP（143AY）
+
+在 Linux 开发机 Coordinator 启动时 `--settings` 指向的文件中填写 `mcp`。
+示例中的服务均为停用状态，替换实际地址并开启后才会连接。已有任务从 Windows 端
+打开「云端任务 → MCP 工具 → 刷新工具」应用，正在运行的任务等该轮结束后更新。
+本机 `settings.toml` 的 MCP 用于本机 Agent，云端 MCP 由这份 Coordinator 配置管理。
+
+| 字段 | 用途 |
+| --- | --- |
+| `mcp` / `servers` | 可选。按服务 ID 配置，默认无服务，最多 8 项。ID 可用 1–16 个英文字母、数字或下划线。 |
+| `enabled` | 控制整个服务。启用服务的有效工具全部交给云端主智能体。 |
+| `url` | HTTP(S) Streamable HTTP 地址，保留真实域名和路径。禁止 URL 用户名、密码、查询参数和片段。 |
+| `route` | `direct` 从 Runner 直连。 `windows_tunnel` 复用该任务绑定的 Windows SSH 反向入口。 |
+| `network_slot` | 中转必填。用任务 `network_id` 下的端口入口 ID。Windows 连接页面应把该入口指向与 MCP URL 相同的主机、有效端口和 TLS 类型。 |
+| `allow_insecure_http` | 默认 `false`。仅在明确使用非回环明文 HTTP 时设为 `true`。HTTPS 按 Runner 信任的 CA 校验证书。 |
+| `connect_timeout_seconds` | 默认 15 秒，建立连接和发现目录的单服务上限。 |
+| `call_timeout_seconds` | 默认 30 秒，单次调用上限。 |
+| `idle_timeout_seconds` | 默认 300 秒，直连空闲连接回收。中转连接仅在同一轮内复用，每轮结束就关闭。每个 Runner 对每个服务默认单并发。 |
+
+服务并行发现。刷新确认期限至少为 `control_receive_timeout_seconds`，也会覆盖最长的已启用服务连接超时与控制帧发送预算。真实 Windows 中转需保证该机的 SSH
+反向连接与待测服务网络可用。关闭中转或目标变更后，下一轮会禁用失配的 MCP 服务。
+开发机直连服务和原内置工具仍可使用。旧 Runner 模板显示不支持此功能。
+
 ## update.example.json
 
 | 字段 | 用途 |

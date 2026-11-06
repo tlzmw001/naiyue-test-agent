@@ -25,12 +25,13 @@ class RunnerClient:
         self.kernel,self.http,self.bootstrap_path=kernel,http,bootstrap_path
         self.bootstrap=kernel.bootstrap
         self.fence=None;self.ws=None;self.send_lock=asyncio.Lock()
+        self.mcp_job=None
         self.commands=set();self.reported=set()
         self.artifact_reported=set();self.control_commands=set();self.control_reported=set()
 
     def hello(self):
         b=self.bootstrap
-        return Hello(kind='hello',phase=self.kernel.phase,capabilities=['artifacts:capture','control:stop','control:recover','background:tasks','observations:send'],recovery=self.kernel.recovery_info,
+        return Hello(kind='hello',phase=self.kernel.phase,capabilities=['artifacts:capture','control:stop','control:recover','background:tasks','observations:send','mcp:refresh'],recovery=self.kernel.recovery_info,
             model_ids=list(self.kernel.catalog.model_ids) if self.kernel.catalog else [],
             **({'file_transfer_version':1} if b.input_id is None else {}),
             **{k:getattr(b,k) for k in ('task_id','project_id','input_id','instance_id','generation','boot_id','state_epoch','release_id')})
@@ -51,7 +52,9 @@ class RunnerClient:
     async def receiver(self):
         while True:
             frame=await self.receive()
-            if frame.kind=='command':
+            if frame.kind=='mcp_refresh':
+                self.start_mcp_refresh(frame)
+            elif frame.kind=='command':
                 if self.bootstrap.expires_at<=time.time():raise CloudError('runner_credential_expired')
                 if await self.rejected(frame.command.command_id,frame.command,'run:start'):continue
                 try:result=await await_settled(self.kernel.accept(frame.command))
@@ -94,6 +97,36 @@ class RunnerClient:
                 value=await run_blocking(self.kernel.artifacts.journal.get,frame.command_id)
                 await self.send(dict(kind='artifact_state',command_id=frame.command_id,
                     artifact_id=value.command.artifact_id if value else None,status=value.status if value else 'not_found'))
+
+    def start_mcp_refresh(self, frame):
+        if self.kernel.mcp is None or self.kernel.phase != 'ready':
+            return
+        if self.mcp_job is not None and not self.mcp_job.done():
+            return
+        self.mcp_job = asyncio.create_task(self.apply_mcp(frame))
+
+    async def apply_mcp(self, frame):
+        mcp = self.kernel.mcp
+        try:
+            expires_at = min(frame.expires_at, self.bootstrap.expires_at)
+            async with asyncio.timeout(max(0, expires_at - time.time())):
+                if expires_at <= time.time():
+                    return
+                if frame.digest != digest(dict(settings=frame.settings.model_dump(mode='json'), services=frame.services)):
+                    raise CloudError('cloud_mcp_digest_invalid')
+                if (mcp.applied_revision, mcp.applied_digest) != (frame.refresh_id, frame.digest):
+                    # An interrupted partial apply has no usable revision.
+                    mcp.applied_revision = None
+                    mcp.report = await mcp.apply(frame.settings, frame.services, dial_deadline=expires_at)
+                    if time.time() >= expires_at:
+                        return
+                    mcp.applied_revision, mcp.applied_digest = frame.refresh_id, frame.digest
+                await self.send(dict(kind='mcp_applied', refresh_id=frame.refresh_id,
+                    digest=frame.digest, services=mcp.report))
+        except (CloudError, OSError, TimeoutError, WebSocketException) as error:
+            logger.warning('runner_mcp_refresh_unconfirmed error_type=%s', type(error).__name__)
+        except Exception as error:
+            logger.error('runner_mcp_refresh_failed error_type=%s', type(error).__name__)
 
     async def rejected(self,command_id,command=None,operation=None):
         value=await run_blocking(self.kernel.journal.rejection,command_id)
@@ -176,6 +209,10 @@ class RunnerClient:
         finally:
             for job in jobs:job.cancel()
             await asyncio.gather(*jobs,return_exceptions=True)
+            if self.mcp_job is not None:
+                self.mcp_job.cancel()
+                await asyncio.gather(self.mcp_job, return_exceptions=True)
+                self.mcp_job=None
 
     async def loop(self,stop):
         while not stop.is_set():

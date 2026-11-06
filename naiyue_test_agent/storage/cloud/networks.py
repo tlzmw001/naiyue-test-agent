@@ -1,5 +1,6 @@
 """Network switches and run admission share CT1; interrupted switches stay closed."""
 import json
+import time
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from naiyue_test_agent.contracts.cloud_networks import NetworkChange
 
@@ -45,7 +46,11 @@ class NetworkRepository:
                 OR (json_extract(record_json,'$.environment_phase')!='absent' AND json_extract(record_json,'$.runner_phase')!='ready')
                 OR EXISTS(SELECT 1 FROM json_each(json_extract(tasks.record_json,'$.reclaim_blockers')) WHERE value!='result_pending'))''',
                 (ident,)).fetchone()[0]
-            if busy:raise CloudError('cloud_network_busy',409)
+            discovery=connection.execute("""SELECT 1 FROM meta WHERE key LIKE 'mcp-task:%'
+                AND json_extract(value,'$.network_id')=?
+                AND json_extract(value,'$.confirmed_connection') IS NULL
+                AND json_extract(value,'$.expires_at')>? LIMIT 1""",(ident,time.time())).fetchone()
+            if busy or discovery:raise CloudError('cloud_network_busy',409)
             state['switching']=payload
             return self._save(connection,ident,state)
 

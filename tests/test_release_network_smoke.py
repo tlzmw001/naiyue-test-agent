@@ -26,6 +26,7 @@ def test_network_install_smoke_checks_new_attachments_and_output_files(tmp_path)
     report=network_scenario(tmp_path)
     assert report['attachment_roundtrip']=='passed'
     assert report['output_files_save']=='passed'
+    assert report['long_upload_journal']=='passed'
     verify_network_report(report)
     root=tmp_path/'网络 native checks'
     assert (root/'附件展开'/'隐藏 目录'/'.env').read_bytes()==b'EXPLICIT_SAMPLE=1\r\n'

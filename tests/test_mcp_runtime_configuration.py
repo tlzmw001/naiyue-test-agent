@@ -66,6 +66,32 @@ def test_add_after_zero_server_start_select_and_call_without_rebuilding(monkeypa
     asyncio.run(scenario())
 
 
+def test_unchanged_settings_refreshes_a_revised_schema_in_the_same_session(monkeypatch, tmp_path):
+    async def scenario():
+        path, config = tmp_path / 'schema.jsonl', tmp_path / 'settings.toml'
+        server = stdio_settings(path, 'stateful', allowed_tools=['echo'])
+        app, _ = await make_mcp_app(monkeypatch, path, [
+            call(NAME, {'text': 'before'}), AIMessage(content='one'),
+            call(NAME, {'trace_id': 'after'}), AIMessage(content='two'),
+        ], server=server, mode='BypassApprovals')
+        try:
+            sid = await app.host.sessions.create('A')
+            await app.host.runs.start(sid, [('user', 'one')])
+            original = app.host.tools.list()[0]
+            write_config(config, {'local': server})
+            path.with_suffix('.schema-v2').touch()
+            assert (await app.host.mcp.refresh(config))['servers'][0]['status'] == 'enabled'
+            revised = app.host.tools.list()[0]
+            assert revised.input_schema['required'] == ['trace_id']
+            assert revised.permissions.identity() != original.permissions.identity()
+            assert app.host.sessions.active_tools(sid) == (NAME,)
+            await app.host.runs.start(sid, [('user', 'two')])
+            assert [row['arguments'] for row in calls(path)] == [{'text': 'before'}, {'trace_id': 'after'}]
+        finally:
+            await app.aclose()
+    asyncio.run(scenario())
+
+
 def test_append_allowlist_keeps_process_and_unchanged_refresh_keeps_authority(monkeypatch, tmp_path):
     async def scenario():
         path, config = tmp_path / 'same.jsonl', tmp_path / 'settings.toml'

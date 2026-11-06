@@ -28,7 +28,10 @@ def checked_attachment_directory(path, expected):
 
 
 class LocalAttachments:
-    def __init__(self,manager):self.manager=manager;self.flights={}
+    def __init__(self,manager):
+        self.manager=manager
+        self.flights={}
+        self.capture_gate=asyncio.Lock()
 
     async def submit(self,domain,bid,sid,root,request):
         with self.manager.operation(),domain.owner.operation():
@@ -59,8 +62,11 @@ class LocalAttachments:
                             if expected:checked_attachment_directory(root,expected)
                         await run_blocking(validate)
                         selection=await run_blocking(select_files,root,self.manager.settings.input_limits,current['paths'])
-                        captured=await domain.capture(sid,root,selection.model_dump(by_alias=True),
-                            self.manager.settings.input_limits,validate=validate if expected else None,attachment_directory=bool(expected))
+                        async with self.capture_gate:
+                            pending=await run_blocking(repo.read,bid,sid,aid)
+                            if pending['phase']=='cancelled':raise CloudError('attachment_cancelled')
+                            captured=await domain.capture(sid,root,selection.model_dump(by_alias=True),
+                                self.manager.settings.input_limits,validate=validate if expected else None,attachment_directory=bool(expected))
                         current=await run_blocking(repo.update,bid,sid,aid,**captured)
                     binding=await run_blocking(domain.repo.binding,bid,sid)
                     source=await run_blocking(domain.repo.source,current['source_handle'],sid)

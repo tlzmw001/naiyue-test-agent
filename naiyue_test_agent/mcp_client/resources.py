@@ -20,19 +20,22 @@ logger = logging.getLogger(__name__)
 
 
 class MCPSessionResources:
-    def __init__(self, settings: MCPSettings, network: NetworkSettings, *, retry_settings=None):
+    def __init__(self, settings: MCPSettings, network: NetworkSettings, *, retry_settings=None, select_all=False):
         self._loop = asyncio.get_running_loop()
         settings = MCPSettings.model_validate(settings.model_dump())
         # Public dumps omit proxy credentials; trusted internal copies must retain them.
         network = NetworkSettings.model_validate(dict(network))
         self._salt = secrets.token_bytes(32)
         self._network = network
+        self.select_all = select_all
+        self._dial_targets = {}
         from ..tools.retry_settings import ToolRetrySettings
         self.retry_settings = retry_settings if retry_settings is not None else ToolRetrySettings()
         self._definitions = {name: server.model_copy(deep=True) for name, server in settings.servers.items()}
         self._catalogs = {}
         self._authorization_ids = {}
         self._refresh_lock = asyncio.Lock()
+        self._last_refresh_request = None
         self._candidates = set()
         self._last_refresh = {}
         self._configs = {}
@@ -130,11 +133,11 @@ class MCPSessionResources:
             # _retire retains the necessary failure for borrowers and final close.
             logger.error('mcp_idle_cleanup_failed error_type=%s', type(error).__name__)
 
-    def _configuration(self, server_id, server):
+    def _configuration(self, server_id, server, dial_target=None):
         references = set(server.headers_env.values()) | {ref[2:-1] for ref in server.env.values()}
         environment = {name: os.environ.get(name) for name in references}
         connection = server.model_dump(exclude={'enabled', 'allowed_tools'})
-        content = json.dumps([server_id, connection, dict(self._network), environment],
+        content = json.dumps([server_id, connection, dict(self._network), environment, dial_target],
                              sort_keys=True, separators=(',', ':')).encode()
         return environment, hmac.new(self._salt, content, hashlib.sha256).hexdigest()
 
@@ -142,12 +145,36 @@ class MCPSessionResources:
         config = self._configs.get(server_id)
         if config is None:
             return 'server_disabled'
-        if remote_tool not in config[0].allowed_tools:
+        if not self.select_all and remote_tool not in config[0].allowed_tools:
             return 'tool_disabled'
         catalog = self._catalogs.get(server_id)
         if self._authorization_ids.get(server_id) != identity or catalog is None or catalog.fingerprint != fingerprint:
             return 'definition_changed'
         return None
+
+    async def disable_server(self, name):
+        self._configs.pop(name, None)
+        self._authorization_ids.pop(name, None)
+        self._dial_targets.pop(name, None)
+        for key, owner in tuple(self._owners.items()):
+            if owner.server_id == name:
+                owner.retiring = owner.invalid = True
+                await await_settled(self._retire(key, owner))
+
+    async def close_tunnel_connections(self):
+        for key, owner in tuple(self._owners.items()):
+            if owner.dial_target is not None:
+                try:
+                    await self._retire(key, owner)
+                except Exception:
+                    # _retire logs and retains the failure for final resource close.
+                    continue
+
+    def effective_tool_names(self, name):
+        catalog = self._catalogs.get(name)
+        if name not in self._configs or catalog is None:
+            return []
+        return [tool.registered_name for tool in catalog.tools if tool.selected]
 
     def server_status(self):
         result = {}
@@ -275,7 +302,8 @@ class MCPSessionResources:
             if any(failed_key == key for failed_key, _ in self._cleanup_failures):
                 raise MCPResourceError('mcp_previous_cleanup_failed')
             if owner is None:
-                owner = ConnectionOwner(server_id, server, network, environment, identity)
+                owner = ConnectionOwner(server_id, server, network, environment, identity,
+                    dial_target=self._dial_targets.get(server_id), select_all=self.select_all)
                 self._owners[key] = owner
             owner.waiters.add(task)
             try:

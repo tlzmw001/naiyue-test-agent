@@ -55,6 +55,7 @@ LC1 关闭仍先封口/排空在途读和admit，再排空全部创建/命令 fl
 | CP2 输入操作预留（非线程锁） | `CloudInputs.busy/jobs/uploads/closing`，同一owner loop；`perform`及raw `receive` | commit/cancel producer持transfer键，再持input键；HTTP只shield等待，取消不释放实际producer的预留。不同transfer同I提交/取消互斥，不等锁而返回busy。raw流取消须排空正在执行的本地write/fsync/close后释放transfer键，不持SQLite事务跨await。shutdown先独立排空inputs，再排空lifecycle，任一失败仍关闭后续资源 |
 | CP2 S03.2 扩展 | 同一transfer的段PUT/status恢复/TTL取消，以及input键的commit对账 | 热路径先核身份；IO fsync/close后才CAS写段/offset/文件身份。状态GET如需恢复也由原perform producer持transfer→input预留，取消等待者不释放producer；活动PUT只读已确认offset。维护只在owner loop读busy并在worker重核updated_at/状态后原cancel；不在worker修改busy。Server维护协程收到stopping后结束，监听/维护排空后才关闭inputs/DB |
 | CF4 本地输入cache OS锁 | cloud_files.cache的私有cache.lock格式/容量及inputs/I发布 | 非阻塞，持有到本次捕获/必要回执/真实额度核对/rename发布完成；同cache串行，不跨SQLite/Coordinator锁，不继承给进程。来源选择在拿cache锁前完成，capture仅做本地事实复核。Windows锁字节初始化与签名分开处理，空/半签名只在受限私有初始化根恢复 |
+| CF5 本机附件准备门 `LocalAttachments.capture_gate` | 服务内附件工作协程的归档准备顺序 | 释放LC0后获取。持有期间检查取消状态并等待本机捕获，CF5 → 项目DB短读 / CF4；不跨SSH或传输，不在持CF4或DB事务时反向获取。其他输入消费者仍使用CF4。 |
 | CW0 本地IO工作（非线程锁） | `application/cloud/work.py:cloud_work` | worker登记CT0计数后释放CT0，才访问文件/DB。普通元数据请求保留S01取消立即返回语义；CP2生产者独立持预留，raw IO用drain_cancel等待真实worker结束，包括重复取消。失败可观察，必要状态不由HTTP等待者生死决定 |
 | CF3 输入捕获上传OS锁 | `InputClient.upload`的私有capture/upload.lock | 独立客户端非阻塞取得，持有到本次网络交互结束；锁FD不继承。instance绑定的上传command_id先fsync日志/父目录再发POST，ACK丢失后原ID重试。与远端CO0/CT1/DB无嵌套，不锁用户源目录 |
 | CF1 B数据库OS锁 | `Database.open_cloud → initialize_cloud`，每库`.lock` | 在CO0所有权内打开；history可在对应CT1内首次打开，非阻塞文件锁固定已验证管理目录。Database关闭后释放，无任务路径/其他库互相获取 |
@@ -287,3 +288,9 @@ BackgroundProcessManager.submit/foreground 的 `_validate_binding` 在取得 B1 
 - Attachment install pins project and batch parents, then publishes from private staging on the same workspace mount. Only verified isolated restore may rebind installed directory identities; normal retry keeps strict identity checks.
 - RunnerRuns uses the existing CT1/resource disk lock order for attachment metadata and conservative space admission; it holds no DB transaction or mutex across await.
 - Queued intents use the existing local SQLite CAS and command journal. Workers resume only a proven unsent original command; sent/unknown commands are reconciled. Browser download tickets use a bounded owner-loop TTL map and borrow existing domain/connection/download leases per GET.
+
+
+### Spec143AY 云端 MCP
+
+- Coordinator 的刷新意图、连接派发租约和应用确认使用 CT1 → registry DB。配置文件读取、控制帧发送和 Runner 目录发现位于 CT1/DB 外。派发事务读取网络切换状态并设置有界租约，网络切换在同一个 registry DB 中检查该租约。删除清理任务的 MCP 状态。已到期的租约不再阻止普通轮次或切换。
+- Runner 的目录任务由当前控制连接的事件循环拥有，连接断开时取消并等待收尾。正常刷新用原 T3 → T5，Runner 只有在轮次之间才更换生效目录。普通轮次先核对 Coordinator 确认的版本与网络目标，再冻结主智能体工具名；过期或不一致的版本只使用内置工具。中转执行连接在 Runner 发送 finished 前关闭；候选中转连接的 TCP 请求受发现租约期限约束。

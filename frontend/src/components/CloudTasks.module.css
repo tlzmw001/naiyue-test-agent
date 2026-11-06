@@ -24,14 +24,21 @@
 .composer textarea::placeholder { color: var(--faint); }
 .actions { font-size: var(--fs-meta); }
 .form .link, .detail .link { border: 0; padding: 3px 0; background: transparent; color: var(--muted); text-align: left; text-decoration: underline; text-underline-offset: 3px; }
-.detailHeader { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 16px 20px 12px; border-bottom: 1px solid var(--line); }
-.detailHeader .link { width: 100%; }.detailHeader strong { font-weight: var(--fw-medium); }.detailHeader span { margin-left: auto; color: var(--text-secondary); font-size: var(--fs-meta); }
-.detailHeader small { width: 100%; color: var(--muted); font-size: var(--fs-caption); overflow-wrap: anywhere; }
-.controlArea { padding: 12px 20px; display: flex; flex-direction: column; gap: 8px; max-height: 180px; overflow-y: auto; flex-shrink: 0; }
+.detailHeader { display: flex; align-items: center; gap: 8px; padding: 7px 14px; flex: none; border-bottom: 1px solid var(--line); }
+.detailHeader .link, .detailHeader span { flex: none; white-space: nowrap; font-size: var(--fs-meta); }
+.detailHeader strong { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: var(--fw-medium); }
+.detailHeader span { color: var(--text-secondary); }
+.detailHeader .taskDetailsToggle { display: grid; place-items: center; flex: none; padding: 6px; }
+.taskDetails { max-height: min(38%, 300px); overflow-y: auto; flex-shrink: 0; border-bottom: 1px solid var(--line); }
+.taskIdentity { padding: 10px 20px 0; overflow-wrap: anywhere; }
+.taskIdentity p { margin: 0 0 4px; font-weight: var(--fw-medium); }
+.taskIdentity small { color: var(--muted); font-size: var(--fs-caption); }
+.controlArea { padding: 10px 20px; display: flex; flex-direction: column; gap: 8px; }
+.taskNotices { padding: 4px 14px; max-height: 110px; overflow: auto; flex: none; }
 .detail .danger { color: var(--danger); }.thread { display: flex; gap: 10px; align-items: center; font-size: var(--fs-meta); }.thread select { flex: 1; }
 .process { display: flex; flex: 1; flex-direction: column; min-height: 110px; min-width: 0; overflow: hidden; }.process > .note { padding: 12px 20px; }
-.composer { padding: 12px 16px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; background: var(--surface-soft); }
-.composer > label { font-size: var(--fs-meta); color: var(--text-secondary); }.modelSelection { min-width: 0; flex: 1; }
+.composer { position: relative; padding: 12px 16px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; background: var(--surface-soft); }
+.composer > label { font-size: var(--fs-meta); color: var(--text-secondary); }.modelSelection { min-width: 0; flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .controlArea .deleteTask { font-size: var(--fs-ui); padding: 9px 10px; border: 0; background: transparent; color: var(--danger-strong); }
 .dialog { color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); width: min(380px, calc(100% - 40px)); padding: 22px; box-sizing: border-box; }
 .dialog::backdrop { background: var(--backdrop); }.dialog h3 { margin: 0 0 18px; font-size: var(--fs-body); font-weight: var(--fw-semibold); }.check { display: flex; gap: 8px; align-items: flex-start; margin: 16px 0; }
@@ -114,3 +121,8 @@
 }
 
 .attachmentError { flex-basis: 100%; margin: 0; overflow-wrap: anywhere; }
+
+.pickerBody form { margin-inline: 0; }
+.scopeFile .pickerFolder { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: none; flex: 1; text-align: left; border: 0; }
+.pickerFolder svg { width: 16px; height: 16px; flex: none; }
+.clearAttachmentSelection { margin-top: 10px; }

@@ -136,3 +136,77 @@ def test_mcp_resources_preserve_authenticated_proxy_and_apply_bypass(monkeypatch
             await other.aclose()
     asyncio.run(scenario())
     assert observed == [None if bypass else 'http://alice:p%40ss%23word@proxy.invalid:8080']
+
+
+def test_expired_tunnel_discovery_never_connects_even_during_cleanup():
+    import time
+    from naiyue_test_agent.mcp_client.connections import MCPResponsePolicyError, _BudgetTransport
+
+    async def scenario():
+        async with _BudgetTransport(None, 1024, endpoint='https://mcp.example.test/',
+                dial_target=('127.0.0.1', 1), dial_deadline=time.time() - 1) as transport:
+            with pytest.raises(MCPResponsePolicyError, match='mcp_tunnel_lease_expired'):
+                await transport.handle_async_request(httpx2.Request('DELETE', 'https://mcp.example.test/'))
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('tunneled,mode', [(False, 'blocked_delete_headers'), (True, 'blocked_delete_body')])
+def test_refresh_catalog_teardown_keeps_discovery_deadline(tmp_path, tunneled, mode):
+    import time
+    from urllib.parse import urlsplit
+
+    from naiyue_test_agent.mcp_client.refresh import _catalog
+    from naiyue_test_agent.mcp_client.resources import MCPSessionResources
+    from naiyue_test_agent.mcp_client.settings import MCPServerSettings, MCPSettings
+    from naiyue_test_agent.tools.web_settings import NetworkSettings
+    from test_mcp_connections import facts, http_server, until
+
+    async def scenario():
+        audit = tmp_path / 'mcp.jsonl'
+        async with http_server(audit, mode, json_response=True, legacy=True) as physical:
+            url = 'http://private-mcp.example.test/mcp/' if tunneled else physical
+            settings = MCPServerSettings(enabled=True, transport='streamable_http', url=url,
+                allow_insecure_http=tunneled, connect_timeout_seconds=2)
+            resources = MCPSessionResources(MCPSettings(), NetworkSettings(mode='direct'))
+            dial = ('127.0.0.1', urlsplit(physical).port) if tunneled else None
+            lease = time.time() + 2 if tunneled else None
+            refresh = asyncio.create_task(_catalog(resources, 'remote', settings, {}, 'candidate', dial, lease))
+            try:
+                await until(lambda: any(item['event'] == 'delete' for item in facts(audit)))
+                done, _ = await asyncio.wait({refresh}, timeout=4)
+                assert refresh in done, 'catalog cleanup exceeded its deadline'
+                assert [tool.remote_name for tool in refresh.result().tools] == ['echo', 'other']
+            finally:
+                audit.with_suffix('.release-delete').touch()
+                await asyncio.gather(refresh, return_exceptions=True)
+                await resources.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_cloud_direct_execution_owner_bounds_teardown(tmp_path):
+    from naiyue_test_agent.mcp_client.owner import ConnectionOwner
+    from naiyue_test_agent.mcp_client.settings import MCPServerSettings
+    from naiyue_test_agent.tools.web_settings import NetworkSettings
+    from test_mcp_connections import facts, http_server, until
+
+    async def scenario():
+        audit = tmp_path / 'mcp.jsonl'
+        async with http_server(audit, 'blocked_delete_body', json_response=True, legacy=True) as url:
+            settings = MCPServerSettings(enabled=True, transport='streamable_http', url=url,
+                connect_timeout_seconds=2)
+            owner = ConnectionOwner('remote', settings, NetworkSettings(mode='direct'), {}, 'execution', select_all=True)
+            lease = await owner.ready
+            assert [tool.remote_name for tool in lease.catalog.tools] == ['echo', 'other']
+            closing = asyncio.create_task(owner.close())
+            try:
+                await until(lambda: any(item['event'] == 'delete' for item in facts(audit)))
+                done, _ = await asyncio.wait({closing}, timeout=4)
+                assert closing in done, 'cloud execution owner stalled during shutdown'
+                closing.result()
+            finally:
+                audit.with_suffix('.release-delete').touch()
+                await closing
+
+    asyncio.run(scenario())

@@ -11,6 +11,7 @@ from naiyue_test_agent.contracts.cloud_local_tasks import ManualMessage,ManualCo
 from naiyue_test_agent.contracts.projects import LocalSource
 from naiyue_test_agent.web.auth import authorize
 from naiyue_test_agent.contracts.cloud_history import Identity
+from naiyue_test_agent.contracts.cloud_mcp import RefreshMCP
 from typing import Literal
 
 router=APIRouter(prefix='/api/client/v1')
@@ -150,14 +151,22 @@ register_observation(router,access,domain,bounded_view)
 
 
 
+@router.post('/cloud-tasks/{binding_id}/mcp')
+async def refresh_mcp(request: Request, binding_id: UUIDText, local_project_id: UUIDText, local_session_id: SessionId):
+    manager = access(request)
+    _, local = await domain(request, local_project_id, local_session_id)
+    value = await body(request, RefreshMCP)
+    return command_response(request, await manager.refresh_mcp(local, binding_id, local_session_id, value.refresh_id))
+
+
 @router.get('/cloud-tasks/{binding_id}/{view}')
-async def observation(request:Request,binding_id:UUIDText,view:Literal['snapshot','usage','models'],
+async def observation(request:Request,binding_id:UUIDText,view:Literal['snapshot','usage','models','mcp'],
         local_project_id:UUIDText,local_session_id:SessionId,thread_id:Identity|None=None,
         after_model:Identity|None=None,limit:int=Query(default=50,ge=1,le=100)):
     manager=access(request);_,local=await domain(request,local_project_id,local_session_id)
-    if view in ('usage','models') and thread_id is not None or view in ('snapshot','models') and after_model is not None:
+    if view in ('usage','models','mcp') and thread_id is not None or view in ('snapshot','models','mcp') and after_model is not None:
         raise CloudError('invalid_request',422)
-    params={} if view=='models' else {'limit':limit}
+    params={} if view in ('models','mcp') else {'limit':limit}
     if thread_id is not None:params['thread_id']=thread_id
     if after_model is not None:params['after_model']=after_model
     return await bounded_view(request,manager,local,binding_id,local_session_id,view,params)

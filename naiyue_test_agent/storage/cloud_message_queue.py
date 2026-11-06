@@ -63,3 +63,22 @@ class QueueRepository:
             value.update(phase=phase,updated_at=time.time(),**changes)
             c.execute('UPDATE naiyue_cloud_operations SET body_json=? WHERE command_id=?',(json.dumps(value),cid))
             return value
+
+    def wait_for_mcp_refresh(self, cid, sid, message_id):
+        with self.database.transaction(write=True, error_code='cloud_queue_storage_failed') as c:
+            value = _read(c, 'naiyue_cloud_operations', cid, sid, 'cloud_queue_not_found')
+            if (value['kind'] != 'queued_message' or value['phase'] != 'dispatching'
+                    or value['message_command_id'] != message_id):
+                raise CloudError('cloud_queue_changed')
+            child = _read(c, 'naiyue_cloud_operations', message_id, sid, 'cloud_queue_not_found')
+            primary = child['steps'].get('primary', {})
+            if (child['kind'] != 'message' or child['binding_id'] != value['binding_id']
+                    or child['request'] != value['dispatch_request'] or child['phase'] != 'rejected'
+                    or primary.get('operation') != 'run:start' or not primary.get('sent')
+                    or primary.get('rejected') != 'cloud_mcp_refresh_in_progress' or 'receipt' in primary):
+                raise CloudError('cloud_queue_send_unconfirmed')
+            # Keep the rejected child and its frozen request intact for reconciliation.
+            value.pop('dispatch_request')
+            value.update(phase='waiting', message_command_id=str(uuid4()), error_code=None, updated_at=time.time())
+            c.execute('UPDATE naiyue_cloud_operations SET body_json=? WHERE command_id=?', (json.dumps(value), cid))
+            return value

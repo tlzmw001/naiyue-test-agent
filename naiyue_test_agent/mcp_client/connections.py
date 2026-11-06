@@ -7,6 +7,7 @@ import logging
 from naiyue_test_agent.diagnostics import safe_log, diagnostic_text
 import os
 import threading
+import time
 from urllib.parse import urlsplit
 
 import httpx2
@@ -118,19 +119,50 @@ class _LimitedJSONStream(httpx2.AsyncByteStream):
 
 
 class _BudgetTransport(httpx2.AsyncBaseTransport):
-    def __init__(self, proxy, limit):
+    def __init__(self, proxy, limit, *, endpoint=None, dial_target=None, dial_deadline=None, close_timeout=None):
         # Explicit proxy selection preserves auto/direct/mandatory proxy policy.
         self.inner = httpx2.AsyncHTTPTransport(proxy=proxy, verify=True, trust_env=True)
         self.limit = limit
+        self.endpoint = httpx2.URL(endpoint) if endpoint is not None else None
+        self.dial_target, self.dial_deadline = dial_target, dial_deadline
+        self.close_timeout = close_timeout
 
     async def handle_async_request(self, request):
+        if self.dial_target is not None:
+            endpoint = self.endpoint
+            if (request.url.scheme, request.url.host, request.url.port) != (endpoint.scheme, endpoint.host, endpoint.port):
+                raise MCPResponsePolicyError('mcp_tunnel_origin_mismatch')
+            host, port = self.dial_target
+            request = httpx2.Request(request.method, request.url.copy_with(host=host, port=port),
+                headers=request.headers, stream=request.stream,
+                extensions={**request.extensions, 'sni_hostname': endpoint.host})
+        closing = request.method == 'DELETE'
+        remaining = self.close_timeout if closing else None
+        if self.dial_deadline is not None:
+            remaining = self.dial_deadline - time.time()
+            if remaining <= 0:
+                code = 'mcp_tunnel_lease_expired' if self.dial_target is not None else 'mcp_discovery_deadline_expired'
+                raise MCPResponsePolicyError(code)
+        if remaining is None:
+            return await self._send(request)
+        async with asyncio.timeout(remaining):
+            # The SDK awaits the full DELETE response during teardown. Keep that
+            # read inside the deadline, including stalled non-JSON bodies.
+            return await self._send(request, buffer_body=closing)
+
+    async def _send(self, request, *, buffer_body=False):
         response = await self.inner.handle_async_request(request)
         if response.headers.get('content-encoding', 'identity').lower().strip() != 'identity':
             await response.aclose()
             raise MCPResponsePolicyError('mcp_compressed_response_unsupported')
-        if response.headers.get('content-type', '').split(';')[0].strip() == 'application/json':
-            return httpx2.Response(response.status_code, headers=response.headers,
+        if buffer_body or response.headers.get('content-type', '').split(';')[0].strip() == 'application/json':
+            response = httpx2.Response(response.status_code, headers=response.headers,
                 stream=_LimitedJSONStream(response.stream, self.limit), extensions=response.extensions)
+        if buffer_body:
+            try:
+                await response.aread()
+            finally:
+                await response.aclose()
         return response
 
     async def aclose(self):
@@ -138,32 +170,39 @@ class _BudgetTransport(httpx2.AsyncBaseTransport):
 
 
 @asynccontextmanager
-async def _http_transport(settings, network, environment=None):
+async def _http_transport(settings, network, environment=None, *, dial_target=None, dial_deadline=None, close_timeout=None):
     from mcp.client.streamable_http import streamable_http_client
     headers = {name: _environment_value(reference, environment) for name, reference in settings.headers_env.items()}
     if any(any(ord(c) < 32 or ord(c) == 127 for c in value) for value in headers.values()):
         raise ValueError('mcp_invalid_credential_header')
     headers['Accept-Encoding'] = 'identity'
-    proxy = selected_proxy(settings.url, network)
+    proxy = None if dial_target is not None else selected_proxy(settings.url, network)
     if proxy and urlsplit(proxy).scheme not in ('http', 'https'):
         raise ValueError('mcp_unsupported_proxy')
-    async with httpx2.AsyncClient(transport=_BudgetTransport(proxy, settings.max_response_bytes),
+    options = {'endpoint': settings.url, 'dial_target': dial_target} if dial_target is not None else {}
+    if dial_deadline is not None:
+        options['dial_deadline'] = dial_deadline
+    if close_timeout is not None:
+        options['close_timeout'] = close_timeout
+    async with httpx2.AsyncClient(transport=_BudgetTransport(proxy, settings.max_response_bytes, **options),
             headers=headers, timeout=None, trust_env=False, follow_redirects=False) as http:
         # SDK 2.3 handles only redirects within the original endpoint's origin.
         async with streamable_http_client(settings.url, http_client=http,
+                terminate_on_close=dial_target is None or dial_deadline is not None,
                 max_sse_event_size=settings.max_response_bytes) as streams:
             yield streams
 
 
 @asynccontextmanager
-async def open_connection(settings, network, *, environment=None):
+async def open_connection(settings, network, *, environment=None, dial_target=None, dial_deadline=None, close_timeout=None):
     # Revalidate mutable nested containers before they reach the IO boundary.
     settings = MCPServerSettings.model_validate(settings.model_dump())
     if not settings.enabled:
         raise ValueError('mcp_server_disabled')
     from mcp.client.client import Client
     transport = (_stdio_transport(settings, environment) if settings.transport == 'stdio'
-                 else _http_transport(settings, network, environment))
+                 else _http_transport(settings, network, environment, dial_target=dial_target,
+                     dial_deadline=dial_deadline, close_timeout=close_timeout))
     with _safe_library_logs():
         async with Client(transport, read_timeout_seconds=settings.read_timeout_seconds or None,
                           cache=None, input_required_max_rounds=0) as client:

@@ -40,19 +40,22 @@ def stdio_settings(path, mode='normal', **extra):
 
 
 @asynccontextmanager
-async def http_server(path, mode='normal', json_response=False, *, legacy=False):
+async def http_server(path, mode='normal', json_response=False, *, legacy=False, tls=None):
     arguments = [sys.executable, str(FIXTURE), '--audit', str(path), '--http', '--mode', mode]
     if json_response:
         arguments.append('--json-response')
     if legacy:
         arguments.append('--legacy')
+    if tls is not None:
+        arguments.extend(['--tls-cert', str(tls[0]), '--tls-key', str(tls[1])])
     with path.with_suffix('.stderr').open('w') as output:
         proc = subprocess.Popen(arguments, stdout=output, stderr=output)
         try:
             await until(lambda: any(f['event'] == 'ready' for f in facts(path)) or proc.poll() is not None)
             assert proc.poll() is None, path.with_suffix('.stderr').read_text()[-2000:]
             port = next(f['port'] for f in facts(path) if f['event'] == 'ready')
-            yield f'http://127.0.0.1:{port}/mcp/'
+            scheme = 'https' if tls is not None else 'http'
+            yield f'{scheme}://127.0.0.1:{port}/mcp/'
         finally:
             proc.terminate()
             await asyncio.to_thread(proc.wait, 15)

@@ -101,3 +101,59 @@ def test_explicit_external_directory_requires_matching_observation(tmp_path):
     assert checked_attachment_directory(folder, expected) == folder
     with pytest.raises(CloudError, match='cloud_source_identity_changed'):
         checked_attachment_directory(folder, '0' * 64)
+
+
+def test_two_attachment_batches_queue_local_capture(tmp_path, monkeypatch):
+    from naiyue_test_agent.application.cloud_local import attachments as module
+
+    async def scenario():
+        manager,domain,store,_,sid,remote=setup(tmp_path)
+        release=asyncio.Event()
+        try:
+            created=await manager.submit(domain,'project',dict(command_id=str(uuid4()),local_session_id=sid,profile_id='work',template_id='test'))
+            await manager.drain()
+            bid=created['binding']['binding_id']
+            root=tmp_path/'source'
+            for name in ('a.zip','b.zip'):
+                (root/name).write_bytes(name.encode())
+            original_request=remote.request
+            def request(method,path,**kwargs):
+                if path.endswith('/attachments'):
+                    value=kwargs['json']
+                    import json
+                    receipt=domain.cache/'inputs'/value['input_id']/'receipt.json'
+                    return value|{'size':json.loads(receipt.read_bytes())['size']}
+                return original_request(method,path,**kwargs)
+            remote.request=request
+            original_upload=remote.upload
+            remote.upload=lambda path,**kwargs:original_upload(path)
+            original_capture=domain.capture
+            started=[]
+            first_entered=asyncio.Event()
+            async def capture(*args,**kwargs):
+                started.append(args[2]['paths'][0])
+                first_entered.set()
+                await release.wait()
+                return await original_capture(*args,**kwargs)
+            domain.capture=capture
+            second_selected=asyncio.Event()
+            original_blocking=module.run_blocking
+            async def run_blocking(fn,*args,**kwargs):
+                value=await original_blocking(fn,*args,**kwargs)
+                if fn is module.select_files and args[-1]==['b.zip']:
+                    second_selected.set()
+                return value
+            monkeypatch.setattr(module,'run_blocking',run_blocking)
+            await manager.attachments.submit(domain,bid,sid,root,dict(attachment_id=str(uuid4()),paths=['a.zip'],display_name='a'))
+            await asyncio.wait_for(first_entered.wait(),5)
+            await manager.attachments.submit(domain,bid,sid,root,dict(attachment_id=str(uuid4()),paths=['b.zip'],display_name='b'))
+            await asyncio.wait_for(second_selected.wait(),5)
+            assert started==['a.zip']
+            release.set()
+            await manager.drain()
+            assert started==['a.zip','b.zip']
+            assert [row['phase'] for row in await manager.attachments.list(domain,bid,sid)]==['ready','ready']
+        finally:
+            release.set()
+            await manager.close();store.close()
+    asyncio.run(scenario())
