@@ -3,7 +3,7 @@
     "macos-arm64": {
       "os": "macos",
       "machine": "arm64",
-      "runner": "macos-14",
+      "runner": "macos-15",
       "triple": "aarch64-apple-darwin",
       "wheel_tag": null
     },

@@ -40,7 +40,7 @@ def test_inline_python_runs_from_a_runner_script_outside_checkout(tmp_path, job)
     if job == 'targets':
         matrix = json.loads((tmp_path / 'outputs').read_text().removeprefix('matrix='))
         assert matrix['include'] == [
-            {'target': 'macos-arm64', 'runner': 'macos-14'},
+            {'target': 'macos-arm64', 'runner': 'macos-15'},
             {'target': 'linux-x86_64', 'runner': 'ubuntu-22.04'},
             {'target': 'linux-arm64', 'runner': 'ubuntu-24.04-arm'},
             {'target': 'windows-x86_64', 'runner': 'windows-2022'},
