@@ -75,6 +75,7 @@ export default function App({ api: supplied, active = true, selection, scopeName
   const closeModel = useCallback(() => setModelMenu(false), []);
   const contextTrigger = useRef<HTMLButtonElement>(null);
   const [navigation, setNavigation] = useState(false);
+  const navigationTrigger = useRef<HTMLButtonElement>(null);
   useEffect(() => { if (!active) { setNavigation(false); setModelMenu(false); } }, [active]);
   const [agentPanel, setAgentPanel] = useState<{ sessionId: string; agentId?: string; revision: number } | null>(null);
   const approvalArea = useRef<HTMLDivElement>(null);
@@ -103,11 +104,12 @@ export default function App({ api: supplied, active = true, selection, scopeName
       disabled={chat.submitting || chat.changingControls || !chat.model} managing={chat.managingSessions}
       update={chat.updateSession} remove={chat.deleteSession} reorder={chat.reorderSessions}
       onNew={() => { void chat.newSession(); setNavigation(false); }}
-      onSelect={id => { void chat.selectSession(id); setNavigation(false); }} onClose={() => setNavigation(false)} />}
+      onSelect={id => { void chat.selectSession(id); setNavigation(false); }}
+      onClose={() => { setNavigation(false); navigationTrigger.current?.focus(); }} />}
     <main className={styles.workspace}>
       <header className={styles.header}>
         <div className={styles.headerLeft}>
-          <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="打开会话栏" onClick={() => setNavigation(true)}><Icon name="menu" /></button>
+          <button ref={navigationTrigger} className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="打开会话栏" onClick={() => setNavigation(true)}><Icon name="menu" /></button>
           <ModelMenu models={chat.models} model={chat.session?.recovery ? chat.session.model_id : chat.model}
             level={chat.session?.thinking_level ?? chat.creation.controls.thinking_level ?? 'model_default'} options={chat.thinkingOptions[chat.model]} disabled={controlsDisabled}
             open={modelMenu} toggle={() => modelMenu ? closeModel() : openModels()} close={closeModel}

@@ -1,5 +1,9 @@
-.backdrop { position: fixed; inset: 0; z-index: 80; display: flex; justify-content: center; align-items: flex-start; padding: min(18dvh, 140px) 16px 24px; background: var(--backdrop); }
-.dialog { width: min(520px, 100%); max-height: 100%; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); box-shadow: 0 12px 45px var(--shadow); overflow: hidden; }
+/* 原生 <dialog> + showModal：模态隔离与焦点圈定由浏览器接管，本文件只保留视觉。 */
+.dialog { width: min(520px, calc(100% - 32px)); max-height: calc(100dvh - min(18dvh, 140px) - 24px);
+  margin: min(18dvh, 140px) auto auto; display: flex; flex-direction: column;
+  border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface);
+  box-shadow: 0 12px 45px var(--shadow); overflow: hidden; }
+.dialog::backdrop { background: var(--backdrop); }
 .dialog h2 { margin: 0; padding: 18px 18px 6px; font-size: var(--fs-ui); font-weight: var(--fw-semibold); color: var(--text); }
 .searchBar { display: flex; align-items: center; gap: 10px; padding: 4px 14px 12px 18px; border-bottom: 1px solid var(--line); }
 .searchBar input { width: 100%; min-width: 0; border: 0; background: transparent; color: var(--text); padding: 8px 0; font-size: var(--fs-body); }

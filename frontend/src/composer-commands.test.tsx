@@ -50,13 +50,13 @@ it('places commands before the mode, keeps context beside send and puts models i
   expect(context.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(model.closest('form')).toBeNull();
   expect(context.closest('form')).toBe(send.closest('form'));
-  fireEvent.click(plus);
+  fireEvent.pointerDown(plus);
   expect(screen.getByRole('menuitem', { name: /压缩上下文.*compact/ })).toBeTruthy();
   expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['云端任务', '添加图片', '压缩上下文/compact', '技能/skills', '发送后滚动']);
   expect(screen.getByRole('menuitem', { name: '发送后滚动' }).querySelector('[data-chevron="right"]')).not.toBeNull();
   fireEvent.keyDown(screen.getByRole('menu', { name: '指令与功能' }), { key: 'Escape' });
   expect(screen.queryByRole('menu')).toBeNull();
-  expect(document.activeElement).toBe(plus);
+  await waitFor(() => expect(document.activeElement).toBe(plus));
 });
 
 it('routes compact menu and slash command to the operation and preserves unrelated drafts', async () => {
@@ -64,7 +64,7 @@ it('routes compact menu and slash command to the operation and preserves unrelat
   await selectExisting();
   const input = screen.getByRole('textbox', { name: '消息' });
   fireEvent.change(input, { target: { value: 'keep this task' } });
-  fireEvent.click(screen.getByRole('button', { name: '指令与功能' }));
+  fireEvent.pointerDown(screen.getByRole('button', { name: '指令与功能' }));
   fireEvent.click(screen.getByRole('menuitem', { name: /压缩上下文.*compact/ }));
   await waitFor(() => expect(api.compact).toHaveBeenCalledExactlyOnceWith('s'));
   expect((input as HTMLTextAreaElement).value).toBe('keep this task');

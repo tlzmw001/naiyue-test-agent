@@ -37,8 +37,15 @@ export default function CloudAttachments({ api, sid, bid, rows, selected, select
   const [selections, setSelections] = useState<Record<string, Selection>>({});
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const dialog = useRef<HTMLDialogElement>(null); const trigger = useRef<HTMLButtonElement>(null);
+  const controls = useRef<HTMLDivElement>(null);
   const intent = useRef<Upload[]>([]);
   const generation = useRef(0);
+  useEffect(() => {
+    if (!menu) return;
+    const outside = (event: PointerEvent) => { if (!controls.current?.contains(event.target as Node)) setMenu(false); };
+    document.addEventListener('pointerdown', outside);
+    return () => document.removeEventListener('pointerdown', outside);
+  }, [menu]);
   useEffect(() => {
     if (!open) return;
     dialog.current?.showModal();
@@ -117,7 +124,7 @@ export default function CloudAttachments({ api, sid, bid, rows, selected, select
     catch (e) { console.warn('cloud_attachment_action_failed'); setError(cloudError(e)); }
   }
   return <div className={styles.attachments}>
-    <div className={composer.controls} onKeyDown={e => { if (e.key === 'Escape' && menu) { setMenu(false); trigger.current?.focus(); } }}>
+    <div ref={controls} className={composer.controls} onKeyDown={e => { if (e.key === 'Escape' && menu) { setMenu(false); trigger.current?.focus(); } }}>
       <button ref={trigger} className={`${composer.trigger} ${composer.plus}`} aria-label="添加附件" aria-expanded={menu} onClick={() => setMenu(v => !v)}><Icon name="plus" /></button>
       {menu && <div className={composer.popover}>
         <div className={composer.heading}>添加附件</div>

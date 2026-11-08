@@ -13,6 +13,7 @@ export default function CloudTaskActions({ api, sid, binding, busy, execute, for
   const [stop, setStop] = useState<{ revision: number; run: string | null }>();
   const [release, setRelease] = useState<{ revision: number; generation: number }>();
   const dialog = useRef<HTMLDialogElement>(null); const button = useRef<HTMLButtonElement>(null);
+  const opener = useRef<HTMLButtonElement | null>(null);
   const task = binding.cloud;
   useEffect(() => { if (preview || release || stop) dialog.current?.showModal(); }, [preview, release, stop]);
   if (!task) return null;
@@ -27,19 +28,24 @@ export default function CloudTaskActions({ api, sid, binding, busy, execute, for
     catch (failure) { console.warn('cloud_delete_preview_failed'); setError(cloudError(failure)); }
     finally { setChecking(false); }
   }
-  function close() { dialog.current?.close(); setPreview(undefined); setRelease(undefined); setStop(undefined); button.current?.focus(); }
+  function close() {
+    dialog.current?.close(); setPreview(undefined); setRelease(undefined); setStop(undefined);
+    const origin = opener.current?.isConnected && !opener.current.disabled ? opener.current :
+      button.current?.isConnected && !button.current.disabled ? button.current : null;
+    origin?.focus();
+  }
   return <>
     <div className={styles.actions} aria-label="云端任务控制">
       <button disabled={busy || !task.active_run_id && !task.reclaim_blockers.includes('background_commands')}
-        onClick={() => { if (!task.active_run_id) { setError(''); setStop({ revision: binding.revision, run: task.last_run_id }); } else void execute('control', { ...common, kind: 'stop', run_id: task.active_run_id, checkpoint_id: null }); }}>{task.active_run_id ? '停止本轮' : task.reclaim_blockers.includes('background_commands') ? '停止后台任务' : '停止本轮'}</button>
+        onClick={event => { opener.current = event.currentTarget; if (!task.active_run_id) { setError(''); setStop({ revision: binding.revision, run: task.last_run_id }); } else void execute('control', { ...common, kind: 'stop', run_id: task.active_run_id, checkpoint_id: null }); }}>{task.active_run_id ? '停止本轮' : task.reclaim_blockers.includes('background_commands') ? '停止后台任务' : '停止本轮'}</button>
       {task.environment_phase === 'absent' ? <button disabled={busy || !!task.reclaim_blockers.length}
         onClick={() => void execute('environment', { ...common, action: 'start', acknowledge_unknown: false, expected_generation: null })}>启动原环境</button> :
         <button disabled={busy || !quiescent} onClick={() => void execute('environment', { ...common, action: 'release', acknowledge_unknown: false, expected_generation: null })}>释放环境</button>}
       {task.runner_recovery && <button disabled={busy || !!task.artifact_operation_id} onClick={() => void execute('control', { ...common, kind: 'recover',
         run_id: task.runner_recovery!.run_id, checkpoint_id: task.runner_recovery!.checkpoint_id ?? null })}>核对恢复</button>}
       {uncertain && task.environment_phase !== 'absent' && <button disabled={busy || !forceReleaseAllowed || !!task.active_run_id || !!task.runner_recovery}
-        onClick={() => { acknowledge(false); setRelease({ revision: binding.revision, generation: task.generation }); }}>核对并释放环境</button>}
-      <button ref={button} className={`${styles.danger} ${styles.deleteTask}`} disabled={busy || checking || task.lifecycle === 'deleting'} onClick={() => void prepareDelete()}>删除任务</button>
+        onClick={event => { opener.current = event.currentTarget; acknowledge(false); setRelease({ revision: binding.revision, generation: task.generation }); }}>核对并释放环境</button>}
+      <button ref={button} className={`${styles.danger} ${styles.deleteTask}`} disabled={busy || checking || task.lifecycle === 'deleting'} onClick={event => { opener.current = event.currentTarget; void prepareDelete(); }}>删除任务</button>
     </div>
     {uncertain && !forceReleaseAllowed && <p className={styles.note}>存在尚未核对的原操作，请先核对原回执，再决定是否释放；不会重放未知执行。</p>}
     {!canSend(task) && <p className={styles.note}>{task.active_run_id ? '本轮执行中，可继续编辑草稿；结束或停止并保存后再发送。' :

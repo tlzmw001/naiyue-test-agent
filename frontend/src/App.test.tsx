@@ -38,7 +38,7 @@ it('bridges a verified cloud result into the main draft and sends only after exp
   const sessionButton = await screen.findByRole('button', { name: '本机主会话 A' });
   await act(async () => { fireEvent.click(sessionButton); });
   fireEvent.change(screen.getByRole('textbox', { name: '消息' }), { target: { value: '保留的本机请求' } });
-  fireEvent.click(screen.getByRole('button', { name: '指令与功能' })); fireEvent.click(screen.getByRole('menuitem', { name: '云端任务' }));
+  fireEvent.pointerDown(screen.getByRole('button', { name: '指令与功能' })); fireEvent.click(screen.getByRole('menuitem', { name: '云端任务' }));
   fireEvent.click(await screen.findByRole('button', { name: /任务 aaaaaaaa/ }));
   const restoreDialog = installDialogMock();
   try {
@@ -61,7 +61,7 @@ it('bridges a verified cloud result into the main draft and sends only after exp
 it('opens cloud observation from the candidate menu without creating a task or main run', async () => {
   const { api } = client();
   render(<App api={api} />);
-  fireEvent.click(await screen.findByRole('button', { name: '指令与功能' }));
+  fireEvent.pointerDown(await screen.findByRole('button', { name: '指令与功能' }));
   fireEvent.click(screen.getByRole('menuitem', { name: '云端任务' }));
   expect(screen.getByRole('tab', { name: '云端任务' }).getAttribute('aria-selected')).toBe('true');
   expect(await screen.findByText('请先在已授权的本地项目中选择一个会话，再使用云端任务。')).toBeTruthy();

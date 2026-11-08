@@ -30,3 +30,7 @@ research/
 
 # Frontend dev-server cache
 .vite/
+
+# Playwright browser-test artifacts
+frontend/test-results/
+frontend/playwright-report/

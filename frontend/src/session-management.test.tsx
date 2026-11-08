@@ -1,11 +1,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import App from './App';
 import ModelMenu from './components/ModelMenu';
 import { ApiError, WebApi } from './api';
+import { installDialogMock } from './testDialogs';
 import type { SessionRow, SessionView } from './types';
 
-afterEach(cleanup);
+let restoreDialog: () => void;
+beforeEach(() => { restoreDialog = installDialogMock(); });
+afterEach(() => { restoreDialog(); cleanup(); });
 
 function setup() {
   const api = new WebApi('fixture');

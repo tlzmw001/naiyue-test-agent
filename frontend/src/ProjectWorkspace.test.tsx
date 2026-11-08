@@ -239,7 +239,7 @@ it('keeps page-wide theme preference consistent when returning to a visited proj
   const { root } = fixture(); render(<ProjectWorkspace api={root} />);
   fireEvent.click(await screen.findByRole('button', { name: '进入项目 A' }));
   fireEvent.click(await screen.findByRole('button', { name: '进入项目 B' }));
-  fireEvent.click(screen.getByRole('button', { name: '主题：跟随系统' }));
+  fireEvent.pointerDown(screen.getByRole('button', { name: '主题：跟随系统' }));
   fireEvent.click(screen.getByRole('menuitemradio', { name: '深色' }));
   fireEvent.click(screen.getByRole('button', { name: '进入项目 A' }));
   expect(screen.getByRole('button', { name: '主题：深色' })).toBeTruthy();

@@ -1,7 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { SessionRow } from '../types';
-import { keepDialogFocus } from '../dialogFocus';
 import styles from './SessionSearch.module.css';
 
 export default function SessionSearch({ rows, title, disabled, select, close, restoreTarget }: {
@@ -11,13 +10,14 @@ export default function SessionSearch({ rows, title, disabled, select, close, re
   const [query, setQuery] = useState('');
   const [active, setActive] = useState('');
   const input = useRef<HTMLInputElement>(null);
-  const root = useRef<HTMLElement>(null);
+  const dialog = useRef<HTMLDialogElement>(null);
   const restoreFocus = useRef(true);
   const listId = useId();
   const matches = rows.filter(row => title(row).toLowerCase().includes(query.trim().toLowerCase()));
   const current = matches.find(row => row.session_id === active) ?? matches[0];
   const activeId = current && !disabled ? `${listId}-${matches.indexOf(current)}` : undefined;
   useEffect(() => {
+    dialog.current?.showModal();
     input.current?.focus();
     return () => { if (restoreFocus.current && restoreTarget?.isConnected) restoreTarget.focus(); };
   }, []);
@@ -29,21 +29,19 @@ export default function SessionSearch({ rows, title, disabled, select, close, re
     restoreFocus.current = false;
     select(row.session_id); close();
   }
-  return createPortal(<div className={styles.backdrop} onClick={event => {
-    if (event.target === event.currentTarget) close();
-  }}>
-    <section ref={root} className={styles.dialog} role="dialog" aria-modal="true" aria-label="搜索会话"
-      onKeyDown={event => {
-        if (event.nativeEvent.isComposing) return;
-        if (event.key === 'Escape') { event.preventDefault(); close(); return; }
-        keepDialogFocus(event, root.current);
-        if (event.target !== input.current) return;
-        if (['ArrowDown', 'ArrowUp'].includes(event.key) && matches.length && !disabled) {
-          event.preventDefault();
-          const index = matches.indexOf(current);
-          setActive(matches[(index + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length].session_id);
-        } else if (event.key === 'Enter') { event.preventDefault(); if (current) choose(current); }
-      }}>
+  // showModal 提供模态隔离与焦点圈定；Escape 走 onCancel，backdrop 点击按命中目标判断。
+  return createPortal(<dialog ref={dialog} className={styles.dialog} aria-label="搜索会话"
+    onCancel={event => { event.preventDefault(); close(); }}
+    onClick={event => { if (event.target === dialog.current) close(); }}
+    onKeyDown={event => {
+      if (event.nativeEvent.isComposing) return;
+      if (event.target !== input.current) return;
+      if (['ArrowDown', 'ArrowUp'].includes(event.key) && matches.length && !disabled) {
+        event.preventDefault();
+        const index = matches.indexOf(current);
+        setActive(matches[(index + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length].session_id);
+      } else if (event.key === 'Enter') { event.preventDefault(); if (current) choose(current); }
+    }}>
       <h2>搜索会话</h2>
       <div className={styles.searchBar}>
         <input ref={input} type="search" role="combobox" aria-label="搜索会话标题" placeholder="输入会话标题…"
@@ -62,6 +60,5 @@ export default function SessionSearch({ rows, title, disabled, select, close, re
       {!matches.length && <p className={styles.empty} role="status">{rows.length ? '没有匹配的会话' : '当前没有可搜索的会话'}</p>}
       {disabled && <p className={styles.empty} role="status">当前暂不可切换会话</p>}
       <div className={styles.footer}>↑ ↓ 选择 · Enter 打开 · Esc 关闭<span>仅搜索会话标题</span></div>
-    </section>
-  </div>, document.body);
+  </dialog>, document.body);
 }

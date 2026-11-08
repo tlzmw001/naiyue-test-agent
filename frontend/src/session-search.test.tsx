@@ -1,12 +1,15 @@
 import type { ComponentProps } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import Sidebar from './components/Sidebar';
 import App from './App';
 import { WebApi } from './api';
+import { installDialogMock } from './testDialogs';
 import type { SessionRow, SessionView } from './types';
 
-afterEach(cleanup);
+let restoreDialog: () => void;
+beforeEach(() => { restoreDialog = installDialogMock(); });
+afterEach(() => { restoreDialog(); cleanup(); });
 const rows: SessionRow[] = [
   { session_id: 'pinned', title: '接口回归 Alpha', pinned: true, model_id: 'A', workspace_root: null,
     state: 'ready', updated_at: '2026-10-17T12:00:00Z', last_run_status: 'completed' },
@@ -79,16 +82,15 @@ it('supports mouse selection and cancellation with focus restored', () => {
   fireEvent.click(screen.getByRole('option', { name: /支付测试/ }));
   expect(props.onSelect).toHaveBeenCalledExactlyOnceWith('other');
   trigger.focus(); open(); search('接口');
-  fireEvent.keyDown(screen.getByRole('combobox', { name: '搜索会话标题' }), { key: 'Escape' });
-  expect(document.activeElement).toBe(trigger);
-  expect(screen.queryByRole('dialog')).toBeNull();
-  open();
+  // Escape→cancel 是浏览器默认行为（jsdom 不模拟），由 e2e/modal-shortcut.spec.ts 覆盖；
+  // 这里用显式关闭路径验证同一焦点恢复机制。
   fireEvent.click(screen.getByRole('button', { name: '关闭搜索' }));
   expect(document.activeElement).toBe(trigger);
+  expect(screen.queryByRole('dialog')).toBeNull();
   expect(props.onSelect).toHaveBeenCalledTimes(1);
 });
 
-it('contains Tab focus and ignores composing Enter or shortcut keys', () => {
+it('ignores composing Enter and shortcut keys while the search is open', () => {
   setup();
   fireEvent.keyDown(window, { key: 'k', metaKey: true, isComposing: true });
   fireEvent.keyDown(window, { key: 'k', ctrlKey: true, altKey: true });
@@ -97,10 +99,7 @@ it('contains Tab focus and ignores composing Enter or shortcut keys', () => {
   const input = screen.getByRole('combobox', { name: '搜索会话标题' });
   fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
   expect(screen.getByRole('dialog')).toBeTruthy();
-  fireEvent.keyDown(input, { key: 'Tab', shiftKey: true });
-  expect(document.activeElement).toBe(screen.getByRole('button', { name: '关闭搜索' }));
-  fireEvent.keyDown(document.activeElement!, { key: 'Tab' });
-  expect(document.activeElement).toBe(input);
+  // Tab 焦点圈定由原生 dialog 的 top layer 接管，jsdom 不模拟；e2e/modal-shortcut.spec.ts 覆盖。
 });
 
 it('restores the original menu trigger when searching from a session menu and reopening the shortcut', () => {
@@ -113,7 +112,8 @@ it('restores the original menu trigger when searching from a session menu and re
   const input = screen.getByRole('combobox', { name: '搜索会话标题' });
   expect(document.activeElement).toBe(input);
   fireEvent.keyDown(input, { key: 'k', ctrlKey: true });
-  fireEvent.keyDown(input, { key: 'Escape' });
+  expect(screen.getByRole('dialog', { name: '搜索会话' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: '关闭搜索' }));
   expect(document.activeElement).toBe(trigger);
 });
 

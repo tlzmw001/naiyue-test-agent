@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import App from './App';
 import { WebApi } from './api';
@@ -20,12 +20,12 @@ it('defaults to system, selects dark and restores the persisted choice without a
   await screen.findByRole('button', { name: /模型与推理强度：A/ });
   const trigger = screen.getByRole('button', { name: '主题：跟随系统' });
   expect(document.documentElement.dataset.theme).toBe('system');
-  fireEvent.click(trigger);
+  fireEvent.pointerDown(trigger);
   fireEvent.click(screen.getByRole('menuitemradio', { name: '深色' }));
   expect(document.documentElement.dataset.theme).toBe('dark');
   expect(localStorage.getItem('naiyue.theme')).toBe('dark');
   expect(screen.queryByRole('menu')).toBeNull();
-  expect(document.activeElement).toBe(trigger);
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
   expect(api.models).toHaveBeenCalledTimes(1); expect(start).not.toHaveBeenCalled();
   unmount();
   setup();
@@ -33,16 +33,16 @@ it('defaults to system, selects dark and restores the persisted choice without a
   expect(document.documentElement.dataset.theme).toBe('dark');
 });
 
-it('supports light and system modes and closes the menu with Escape', () => {
+it('supports light and system modes and closes the menu with Escape', async () => {
   localStorage.setItem('naiyue.theme', 'light');
   setup();
   const trigger = screen.getByRole('button', { name: '主题：浅色' });
-  fireEvent.click(trigger);
+  fireEvent.pointerDown(trigger);
   fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowDown' });
   expect(document.activeElement?.getAttribute('role')).toBe('menuitemradio');
   fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
-  expect(document.activeElement).toBe(trigger);
-  fireEvent.click(trigger);
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
+  fireEvent.pointerDown(trigger);
   fireEvent.click(screen.getByRole('menuitemradio', { name: '跟随系统' }));
   expect(document.documentElement.dataset.theme).toBe('system');
 });
@@ -57,7 +57,7 @@ it('keeps theme selection usable when browser preference IO fails and records th
   vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
   vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
   setup();
-  fireEvent.click(screen.getByRole('button', { name: '主题：跟随系统' }));
+  fireEvent.pointerDown(screen.getByRole('button', { name: '主题：跟随系统' }));
   fireEvent.click(screen.getByRole('menuitemradio', { name: '深色' }));
   expect(document.documentElement.dataset.theme).toBe('dark');
   expect(warn).toHaveBeenCalledWith('theme_preference_read_failed');

@@ -114,7 +114,7 @@ it('closes on Escape, outside interaction or another control without losing the 
   fireEvent.pointerDown(document.body);
   expect(screen.queryByRole('listbox')).toBeNull();
   type(input, '/cont');
-  fireEvent.click(screen.getByRole('button', { name: '指令与功能' }));
+  fireEvent.pointerDown(screen.getByRole('button', { name: '指令与功能' }));
   expect(screen.queryByRole('listbox')).toBeNull();
   expect(screen.getByRole('menu', { name: '指令与功能' })).toBeTruthy();
   expect(input.value).toBe('/cont');

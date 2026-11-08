@@ -63,12 +63,26 @@ export default function Sidebar({ rows, selected, open, disabled, managing, onNe
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && !event.isComposing) {
+        // 有模态层（原生 top layer 或自绘 aria-modal）时全局搜索不介入，避免开在模态之后；
+        // 普通非模态浮层（操作菜单）不阻断，保持从菜单打开搜索并收起菜单的原语义。
+        if (searching || document.querySelector('dialog[open], [aria-modal="true"]')) return;
         event.preventDefault(); openSearch();
       }
     };
     window.addEventListener('keydown', shortcut);
     return () => window.removeEventListener('keydown', shortcut);
   }, [menu, searching]);
+  useEffect(() => {
+    if (!open) return;
+    const escape = (event: KeyboardEvent) => {
+      // 更上层弹层（原生模态、搜索、操作菜单）先处理 Escape；本监听只负责关闭抽屉。
+      if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog[open]')) return;
+      if (menu || searching) return;
+      event.preventDefault(); onClose();
+    };
+    window.addEventListener('keydown', escape);
+    return () => window.removeEventListener('keydown', escape);
+  }, [open, menu, searching, onClose]);
   function title(row: SessionRow) {
     return row.title ?? new Date(row.updated_at).toLocaleString('zh-CN', {
       month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });

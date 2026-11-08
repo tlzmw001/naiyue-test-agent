@@ -34,7 +34,7 @@ function setup(read = true) {
 }
 
 async function openSkills() {
-  fireEvent.click(await screen.findByRole('button', { name: '指令与功能' }));
+  fireEvent.pointerDown(await screen.findByRole('button', { name: '指令与功能' }));
   fireEvent.click(screen.getByRole('menuitem', { name: /技能.*skills/ }));
   return screen.findByRole('dialog', { name: '技能' });
 }

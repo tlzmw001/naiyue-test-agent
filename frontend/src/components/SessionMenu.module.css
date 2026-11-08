@@ -4,8 +4,9 @@
 .separator { height: 1px; background: var(--surface-active); margin: 4px; }
 .menu > .delete { color: var(--danger-strong); }
 .menu p { color: var(--danger); font-size: var(--fs-caption); padding: 4px 10px; }
-.backdrop { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 20px; background: var(--backdrop); }
-.dialog { width: min(380px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 22px; box-shadow: 0 12px 45px var(--shadow); }
+/* 确认态为原生 <dialog> + showModal：居中由浏览器默认 margin:auto 提供，遮罩用 ::backdrop。 */
+.dialog { width: min(380px, calc(100% - 40px)); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 22px; box-shadow: 0 12px 45px var(--shadow); }
+.dialog::backdrop { background: var(--backdrop); }
 .dialog h2 { margin: 0 0 18px; font-size: var(--fs-body); color: var(--text); font-weight: var(--fw-semibold); }
 .dialog label { display: block; color: var(--text-secondary); font-size: var(--fs-caption); }
 .dialog input { width: 100%; display: block; margin-top: 8px; padding: 10px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); color: var(--text); font-size: var(--fs-ui); }

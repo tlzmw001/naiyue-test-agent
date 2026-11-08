@@ -3,6 +3,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { McpRefreshResult, PermissionMode, SessionControlOptions, SkillCatalogView } from '../types';
 import type { WebApi } from '../api';
 import SkillsMenu from './SkillsMenu';
+import CommandMenu from './CommandMenu';
 import { commands } from '../commands';
 import type { CommandName, ComposerMenu } from '../commands';
 import { Chevron, Icon } from './Icons';
@@ -35,9 +36,6 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const imagePicker = useRef<HTMLInputElement>(null);
-  const scrollTrigger = useRef<HTMLButtonElement>(null);
-  const scrollMenu = useRef<HTMLElement>(null);
-  const [scrollMenuMode, setScrollMenuMode] = useState<'pointer' | 'keyboard' | null>(null);
   const previousSession = useRef(sessionId);
   const [refreshingMcp, setRefreshingMcp] = useState(false);
   const [mcpReport, setMcpReport] = useState<McpRefreshResult | null>(null);
@@ -57,20 +55,25 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
     previousSession.current = sessionId;
   }, [sessionId]);
   useEffect(() => {
-    if (scrollMenuMode === 'keyboard') scrollMenu.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
-  }, [scrollMenuMode]);
-  useEffect(() => {
-    setScrollMenuMode(null);
-    if (!open) return;
+    if (!open || open === 'commands') return;
     function outside(event: PointerEvent) {
       if (!root.current?.contains(event.target as Node)) setOpen(null);
     }
+    // 外点监听对 skills 同样生效（此前 rAF 分支提前返回导致监听缺失，点击消息框无法关闭面板）。
     document.addEventListener('pointerdown', outside);
-    const focus = open === 'commands' ? root.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)') :
-      root.current?.querySelector<HTMLInputElement>('input:checked:not(:disabled)') ??
-      root.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled), input:not([type="file"]):not(:disabled)');
-    focus?.focus();
-    return () => document.removeEventListener('pointerdown', outside);
+    let frame: number | undefined;
+    if (open === 'skills') {
+      frame = requestAnimationFrame(() => root.current
+        ?.querySelector<HTMLElement>('[aria-label="关闭技能列表"]')?.focus());
+    } else {
+      const focus = root.current?.querySelector<HTMLInputElement>('input:checked:not(:disabled)') ??
+        root.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled), input:not([type="file"]):not(:disabled)');
+      focus?.focus();
+    }
+    return () => {
+      document.removeEventListener('pointerdown', outside);
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
   }, [open]);
 
   function toggle(kind: 'modes' | 'tools' | 'commands', button: HTMLButtonElement) {
@@ -79,24 +82,18 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
   }
 
   return <div className={styles.controls} ref={root} onKeyDown={event => {
-    if (open === 'commands' && scrollMenuMode && ['ArrowLeft', 'Escape'].includes(event.key)) {
-      event.preventDefault(); setScrollMenuMode(null); scrollTrigger.current?.focus(); return;
-    }
-    if (event.key === 'Escape' && open) { event.preventDefault(); setOpen(null); trigger.current ? trigger.current.focus() : focusEditor(); }
-    if (open === 'commands' && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
-      const currentMenu = (event.target as HTMLElement).closest('[role="menu"]') ?? root.current?.querySelector('[role="menu"]');
-      if (currentMenu !== scrollMenu.current) setScrollMenuMode(null);
-      const items = Array.from(currentMenu?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled), [role="menuitemradio"]:not(:disabled)') ?? [])
-        .filter(item => item.closest('[role="menu"]') === currentMenu);
-      const current = items.indexOf(document.activeElement as HTMLButtonElement);
-      const index = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 :
-        (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
-      event.preventDefault(); items[index]?.focus();
+    // 指令菜单的键盘与关闭由 Radix 接管；modes/tools/skills 面板的 Escape 沿用原实现。
+    // Skills 面板的 Escape 明确回编辑器（此前会落到旧的权限/工具触发器）。
+    if (event.key === 'Escape' && open && open !== 'commands') {
+      event.preventDefault();
+      if (open === 'skills') { setOpen(null); focusEditor(); return; }
+      setOpen(null);
+      trigger.current ? trigger.current.focus() : focusEditor();
     }
   }}>
-    <button type="button" className={`${styles.trigger} ${styles.plus}`} aria-label="指令与功能"
-      aria-haspopup="menu" aria-expanded={open === 'commands'} disabled={disabled && !openCloud}
-      onClick={event => toggle('commands', event.currentTarget)}><Icon name="plus" /></button>
+    <CommandMenu open={open === 'commands'} onOpenChange={value => setOpen(value ? 'commands' : null)}
+      disabled={disabled} openCloud={openCloud} imageInputs={imageInputs} imagePicker={imagePicker}
+      sending={sending} compactDisabled={compactDisabled} runCommand={runCommand} sendScroll={sendScroll} />
     {imageInputs && <input ref={imagePicker} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"
       multiple hidden aria-label="添加图片" disabled={sending || imageInputs.reading || !imageInputs.limits}
       onChange={event => {
@@ -113,39 +110,6 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
       onClick={event => toggle('tools', event.currentTarget)} disabled={disabled}>
       工具 <span className={styles.count}>{options ? enabledCount : '…'}</span>
     </button>
-    {open === 'commands' && <section role="menu" aria-label="指令与功能" className={styles.popover}>
-      <div className={styles.heading}>指令与功能</div>
-      {openCloud && <button type="button" role="menuitem" className={styles.command} onClick={() => {
-        setOpen(null); if (trigger.current) openCloud(trigger.current);
-      }}><span>云端任务</span></button>}
-      {imageInputs && <button type="button" role="menuitem" className={styles.command}
-        disabled={sending || imageInputs.reading || !imageInputs.limits}
-        onClick={() => { imagePicker.current?.click(); setOpen(null); }}><span>添加图片</span></button>}
-      {commands.filter(command => command.name === 'compact' || command.name === 'skills').map(command => <button key={command.name} type="button" role="menuitem" className={styles.command}
-        disabled={command.name === 'compact' && compactDisabled}
-        onClick={() => { setOpen(null); runCommand(command.name); }}>
-        <span>{command.label}</span><kbd>/{command.name}</kbd>
-      </button>)}
-      {sendScroll && <div className={styles.submenuRoot} onMouseEnter={() => setScrollMenuMode('pointer')}
-        onMouseLeave={() => setScrollMenuMode(null)} onBlur={event => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setScrollMenuMode(null);
-        }}>
-        <button type="button" ref={scrollTrigger} role="menuitem" className={styles.command}
-          aria-haspopup="menu" aria-expanded={!!scrollMenuMode} aria-controls={scrollMenuMode ? `${id}-scroll` : undefined}
-          onClick={() => setScrollMenuMode('keyboard')} onKeyDown={event => {
-            if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); setScrollMenuMode('keyboard'); }
-          }}><span>发送后滚动</span><Chevron direction="right" /></button>
-        {scrollMenuMode && <section id={`${id}-scroll`} ref={scrollMenu} role="menu" aria-label="发送后滚动"
-          className={`${styles.popover} ${styles.submenu}`}>
-          {(Object.keys(sendScrollOptions) as SendScroll[]).map(value => <button key={value} type="button"
-            role="menuitemradio" aria-checked={sendScroll.preference === value} className={styles.command}
-            onClick={() => { sendScroll.select(value); setOpen(null); trigger.current?.focus(); }}>
-            <span>{sendScrollOptions[value]}</span><span aria-hidden="true">{sendScroll.preference === value ? '✓' : ''}</span>
-          </button>)}
-        </section>}
-      </div>}
-      <p className={styles.note}>指令也可在输入框输入。压缩需先结束运行并处理审批。</p>
-    </section>}
     {open === 'skills' && <SkillsMenu api={api} sessionId={sessionId} readEnabled={tools.includes('read')} className={styles.popover}
       select={selectSkill} close={() => { setOpen(null); focusEditor(); }} />}
     {(open === 'modes' || open === 'tools') && <section id={id} role="dialog" aria-label={open === 'modes' ? '权限模式' : '主 Agent 工具'} className={styles.popover}>

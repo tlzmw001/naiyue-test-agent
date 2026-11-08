@@ -218,6 +218,23 @@ it('requires explicit confirmation before releasing a disconnected environment',
     restoreDialog();
   }
 });
+it('falls back to a usable action entry when the opening entry disappears', () => {
+  const restoreDialog = installDialogMock();
+  try {
+    const cloud = api();
+    const uncertain = { ...binding, cloud: { ...task, runner_phase: 'disconnected', last_quiescent_at: null, reclaim_blockers: ['runner_disconnected'] } };
+    const view = render(<CloudTaskActions api={cloud} sid="S" binding={uncertain} busy={false} execute={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '核对并释放环境' }));
+    expect(screen.getByRole('dialog', { name: '释放状态未确认的环境？' })).toBeTruthy();
+    // 任务状态刷新后 uncertain 解除，打开入口消失；取消后焦点应落到仍可用的操作区按钮。
+    view.rerender(<CloudTaskActions api={cloud} sid="S" binding={binding} busy={false} execute={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    expect(screen.queryByRole('button', { name: '核对并释放环境' })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '删除任务' }));
+  } finally {
+    restoreDialog();
+  }
+});
 it('names background-only stopping by the actual affected work', () => {
   render(<CloudTaskActions api={api()} sid="S" binding={{ ...binding, cloud: { ...task, reclaim_blockers: ['background_commands'] } }} busy={false} execute={vi.fn()} />);
   expect(screen.getByRole('button', { name: '停止后台任务' })).not.toHaveProperty('disabled', true);

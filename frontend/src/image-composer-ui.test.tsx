@@ -33,7 +33,7 @@ it('opens the existing image picker from the plus menu without a trailing image 
   const input=screen.getByLabelText('添加图片') as HTMLInputElement;
   await waitFor(()=>expect(input.disabled).toBe(false));
   expect(screen.queryByRole('button',{name:'选择图片'})).toBeNull();
-  fireEvent.click(screen.getByRole('button',{name:'指令与功能'}));
+  fireEvent.pointerDown(screen.getByRole('button',{name:'指令与功能'}));
   const choose=screen.getByRole('menuitem',{name:'添加图片'});
   const openPicker=vi.spyOn(input,'click');
   fireEvent.click(choose);

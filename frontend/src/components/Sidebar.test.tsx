@@ -1,10 +1,13 @@
 import type { ComponentProps } from 'react';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { RunView, SessionRow, SessionView } from '../types';
 import Sidebar from './Sidebar';
+import { installDialogMock } from '../testDialogs';
 
-afterEach(cleanup);
+let restoreDialog: () => void;
+beforeEach(() => { restoreDialog = installDialogMock(); });
+afterEach(() => { restoreDialog(); cleanup(); });
 const rows: SessionRow[] = [
   { session_id: 'pinned', title: '接口回归', pinned: true, model_id: 'model-a', workspace_root: null,
     state: 'ready', updated_at: '2026-10-17T12:00:00Z', last_run_status: 'completed' },
@@ -174,7 +177,8 @@ it('keeps new and search actions available in the rail and restores search focus
   expect(props.onNew).toHaveBeenCalledTimes(1);
   const search = screen.getByRole('button', { name: '搜索会话' });
   search.focus(); fireEvent.click(search);
-  fireEvent.keyDown(screen.getByRole('combobox', { name: '搜索会话标题' }), { key: 'Escape' });
+  // Escape→cancel 由浏览器处理（e2e/modal-shortcut.spec.ts 覆盖）；jsdom 用显式关闭路径验证同一恢复机制。
+  fireEvent.click(screen.getByRole('button', { name: '关闭搜索' }));
   expect(document.activeElement).toBe(search);
   fireEvent.click(search);
   fireEvent.change(screen.getByRole('combobox'), { target: { value: '支付' } });
