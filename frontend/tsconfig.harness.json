@@ -9,6 +9,9 @@
   },
   "include": [
     "e2e-harness",
-    "e2e/fixtures"
+    "e2e/fixtures",
+    "e2e/reading-area.spec.ts",
+    "e2e/reading-visual.spec.ts",
+    "e2e/reading-perf.spec.ts"
   ]
 }

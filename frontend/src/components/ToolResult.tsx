@@ -40,7 +40,7 @@ export default function ToolResult({ name, result, anchor, loadChange }: { name:
   if (result.file_change && result.status !== 'error') return <FileChange result={result} loadChange={loadChange} anchor={anchor} />;
   const match = name === 'edit' && result.status !== 'error' &&
     /^edit replaced \d+ block\(s\); \d+ bytes\nfirstChangedLine=(\d+)\n([\s\S]*)$/.exec(result.content);
-  if (!match) return <pre data-message-id={anchor}>{result.content}</pre>;
+  if (!match) return <div data-message-id={anchor} className={styles.result}><pre>{result.content}</pre></div>;
   const lines = match[2].split('\n');
   const notice = lines.findIndex(line => line.startsWith('[edit:'));
   const diff = notice < 0 ? match[2] : lines.slice(0, notice).join('\n');

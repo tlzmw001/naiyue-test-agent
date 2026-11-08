@@ -12,9 +12,11 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'npm run dev -- --port 4573 --strictPort',
+    command: process.env.READING_PROD === '1'
+      ? 'npm run preview -- --port 4573 --strictPort'
+      : 'npm run dev -- --port 4573 --strictPort',
     url: 'http://127.0.0.1:4573',
-    reuseExistingServer: false,
+    reuseExistingServer: process.env.READING_EXTERNAL_SERVER === '1',
     timeout: 60_000,
   },
   projects: [

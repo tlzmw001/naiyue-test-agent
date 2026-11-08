@@ -1,5 +1,11 @@
 # 后续开发与补充清单
 
+## 独立待办：旧 E2E 类型检查（非 Spec143BE）
+
+- **事实**：当前 `frontend/tsconfig.harness.json` 精确覆盖 Spec143BE 三份 spec、fixtures 和 harness；试接全部 E2E 时，旧 `frontend/e2e/scroll-control.spec.ts` 在第 26、31、37 行有 3 个 `el` 可能为 null 的类型错误。对应浏览器用例已通过，该类型问题不属于 Spec143BE 阶段 4A 的验收或归档范围。
+- **最小处理范围**：另行确定旧 E2E 类型检查接入范围，修正空值处理并保留现有背景/模态滚动断言，不顺带修改侧栏、模态或其他前端行为。
+- **独立验收**：目标 E2E 文件全部纳入类型检查后命令通过，并重跑对应滚动浏览器回归；不借用 Spec143BE 的验证结果宣称本待办完成。
+
 ## 本机一键刷新与云端 MCP 实机验收
 
 [Spec143AY](specs/143ay-cloud-mcp-and-manual-refresh.md) 三片已接线。待用更新后的 Windows Agent、Linux Coordinator 和 Runner 模板验收公司直连 MCP、实际 Windows SSH 反向中转、远端改参数后原任务单次刷新，以及断线恢复。MCP Server 开发和公司网络接入另行安排。

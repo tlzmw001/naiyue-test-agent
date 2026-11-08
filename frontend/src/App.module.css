@@ -85,11 +85,11 @@
 .welcome h1 { font-size: var(--fs-display); font-weight: var(--fw-semibold); letter-spacing: -.6px; margin: 0 0 12px; }
 .welcome p { margin: 0; font-size: var(--fs-ui); color: var(--muted); }
 .messageList { max-width: var(--conversation-width); margin: 0 auto; padding-bottom: 20px; }
-.message { line-height: var(--lh-body); font-size: var(--fs-body); overflow-wrap: anywhere; margin-bottom: 32px; }
+.message { line-height: var(--lh-body); font-size: var(--fs-body); overflow-wrap: anywhere; margin-bottom: 28px; }
 .userMessage { background: var(--surface-hover); border-radius: var(--r-xl); padding: 12px 20px; max-width: 85%; width: fit-content; margin-left: auto; }
 .userMessage p { margin: 0; white-space: pre-wrap; }
 .assistantMessage { margin-left: 0; margin-right: auto; }
-.replyDivider { border: 0; margin: 0; }
+.replyDivider { border: 0; border-top: 1px solid var(--line); margin: 4px 0 20px; }
 .speaker { display: flex; align-items: center; gap: 12px; font-size: var(--fs-meta); font-weight: var(--fw-semibold); margin-bottom: 12px; }
 .speaker span { color: var(--muted); font-weight: var(--fw-regular); font-size: var(--fs-caption); }
 .messageBody > *:first-child { margin-top: 0; }
@@ -163,15 +163,15 @@
   .userMessage { max-width: 92%; }
 }
 .toolCall { background: var(--surface-subtle); border: 1px solid var(--line); border-radius: var(--r-lg); margin: 9px 0; min-width: 0; }
-.toolCall > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; cursor: pointer; padding: 11px 14px; font-size: var(--fs-meta); }
+.toolCall > summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; cursor: pointer; padding: 11px 14px; min-height: 40px; font-size: var(--fs-meta); }
 .toolName { font-weight: var(--fw-semibold); overflow-wrap: anywhere; min-width: 0; }
-.toolStatus { color: var(--muted); margin-left: auto; font-size: var(--fs-caption); }
-.toolPhase { color: var(--text-secondary); font-size: var(--fs-caption); flex-basis: 100%; padding-left: 18px; overflow-wrap: anywhere; }
-.toolTiming { display: flex; flex-wrap: wrap; gap: 4px 12px; flex-basis: 100%; padding-left: 18px; color: var(--muted); font-size: var(--fs-caption); font-variant-numeric: tabular-nums; }
+.toolStatus { color: var(--text-secondary); margin-left: auto; font-size: var(--fs-caption); font-weight: var(--fw-medium); white-space: nowrap; }
+.toolPhase { color: var(--muted); font-size: var(--fs-caption); flex-basis: 100%; padding-left: 32px; overflow-wrap: anywhere; }
+.toolTiming { display: flex; flex-wrap: wrap; gap: 4px 12px; flex-basis: 100%; padding-left: 32px; color: var(--muted); font-size: var(--fs-caption); font-variant-numeric: tabular-nums; }
 .toolCounter { font-size: var(--fs-caption); color: var(--text-secondary); font-variant-numeric: tabular-nums; margin: 8px 0; }
 .toolDetail { padding: 0 14px 12px; }
 .toolDetail section > p { overflow-wrap: anywhere; font-size: var(--fs-caption); color: var(--muted); }
-.detailLabel { color: var(--muted); font-size: var(--fs-caption); margin-top: 8px; }
+.detailLabel { color: var(--muted); font-size: var(--fs-caption); margin: 12px 0 4px; }
 .toolDetail pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow-y: auto; background: transparent; padding: 6px 0; margin: 0; font-size: var(--fs-caption); }
 .toolReason { color: var(--muted); font-size: var(--fs-caption); }
 .approvalArea { width: min(var(--conversation-width), calc(100% - 2 * var(--conversation-padding-x))); margin: 0 auto 12px; max-height: 45dvh; overflow-y: auto; flex-shrink: 0; display: grid; gap: 8px; }

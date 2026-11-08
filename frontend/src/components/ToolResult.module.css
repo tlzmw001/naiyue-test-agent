@@ -1,4 +1,5 @@
 .result { min-width: 0; }
+.result > pre { max-height: 320px; overflow-y: auto; overscroll-behavior: contain; }
 .result p { margin: 8px 0; }
 .diff { white-space: pre !important; overflow-x: auto; overflow-wrap: normal !important; }
 .diff span { display: block; min-width: max-content; }
