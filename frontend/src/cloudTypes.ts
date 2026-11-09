@@ -12,6 +12,7 @@ export interface CloudTask {
   runner_recovery?: { run_id: string; checkpoint_id?: string | null } | null;
 }
 export interface CloudBinding {
+  removal?: { command_id: string; removed_at: number };
   created_at?: number;
   binding_id: string; local_session_id: string; profile_id: string; instance_id: string;
   task_id: string | null; input_id: string | null; revision: number; preparation: string; retained: boolean;

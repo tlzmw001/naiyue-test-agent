@@ -6,7 +6,7 @@ from naiyue_test_agent.agent_runtime.async_utils import run_blocking
 from naiyue_test_agent.contracts.cloud_tasks import CloudError,UUIDText,CloudRecord
 from naiyue_test_agent.contracts.cloud_json import parse_object
 from naiyue_test_agent.contracts.cloud_local_tasks import ManualCreate,LocalSourceRequest,SessionId
-from naiyue_test_agent.contracts.cloud_local_tasks import ManualDelete
+from naiyue_test_agent.contracts.cloud_local_tasks import ManualDelete,ManualForget
 from naiyue_test_agent.contracts.cloud_local_tasks import ManualMessage,ManualControl,ManualEnvironment,TaskDraft,command_summary
 from naiyue_test_agent.contracts.projects import LocalSource
 from naiyue_test_agent.web.auth import authorize
@@ -124,6 +124,13 @@ async def delete_task(request:Request,binding_id:UUIDText,local_project_id:UUIDT
     manager=access(request);value=await body(request,ManualDelete)
     _,local=await domain(request,local_project_id,value.local_session_id)
     return command_response(request,await manager.commands.submit(local,binding_id,'delete',value.model_dump(mode='json')),status_code=202)
+
+
+@router.post('/cloud-tasks/{binding_id}/forget')
+async def forget_task(request:Request,binding_id:UUIDText,local_project_id:UUIDText):
+    manager=access(request);value=await body(request,ManualForget)
+    _,local=await domain(request,local_project_id,value.local_session_id)
+    return command_response(request,await manager.forget(local,binding_id,value.model_dump(mode='json')))
 
 
 async def bounded_view(request,manager,local,binding_id,session_id,view,params):

@@ -114,6 +114,13 @@ class ManualDelete(CloudRecord):
     acknowledge_unknown:bool=False
 
 
+class ManualForget(CloudRecord):
+    command_id:UUIDText
+    local_session_id:SessionId
+    expected_binding_revision:int=Field(ge=1)
+    acknowledge_unmanaged:Literal[True]
+
+
 def command_summary(op):
     value={k:op.get(k) for k in ('command_id','binding_id','local_session_id','kind','phase','request_digest',
         'run_id','error_code','created_at','updated_at')}

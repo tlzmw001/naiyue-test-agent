@@ -31,6 +31,8 @@
 | 预留／锁 | 保护对象与顺序 | 释放边界 |
 | --- | --- | --- |
 | LC0 新消费者 `ManualTaskCommands.submit` | 独立 admit producer 在既有 admission 下分配 command slot、同库固定请求身份；仅本机 DB，不做网络。DB 事务结束后 `_launch`，HTTP waiter 取消不取消已登记派发 | LC0 → DB；不反向获取，不持锁等模型/SSH。主会话删除仍由 retained binding 阻止，无伪造本机 run。 |
+| LC0 本机关联移除 `ManualCloudTasks.forget` | 独立 admit producer 核对本项目无活动本机 producer，随后在一次项目 DB 事务移除关联并结算旧意图；缺失 profile 时同样可用 | LC0 → DB，无远端 IO；旧缓存和派发回执在 DB 内核对 removal 标记，父删除与 retained 更新由同一 DB 事务互斥。 |
+| LC0 重试 `ManualCloudTasks.retry` / `LocalAttachments.action(retry)` | 独立 admit producer 在同一 admission 内读取当前本机意图并登记／启动 flight，与本机关联移除互斥；waiter 取消先排空 admit | LC0 → DB；网络派发、上传及已取消创建操作的远端核对均在锁外，worker 不反向获取 LC0。 |
 | LC3 `commands.slots/flights`（同 loop） | message/start/release 与 stop/recover 分开计数；后者有独立控制名额，普通派发拥塞不耗尽停止能力。键为 project+command，原ID复用；同 binding 未决派发由台账检查，不靠网络长锁 | 持久登记/冻结/派发标志均先于IO；callback 移除 flight。受理回执到达即结束本机派发，不等待整个远端模型。 |
 | DB 命令／草稿 CAS | 原用户摘要、完整 owner 请求和receipt；草稿独立 revision。强制释放同时固定所见 cloud revision/generation/active_run，不能用fresh状态重基确认 | 每次短事务；必要历史终局来自owner回执。旧ACK仅清除匹配草稿版本，读取不重复推进未变化的binding revision。 |
 

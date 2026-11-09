@@ -141,7 +141,7 @@ class LocalTaskRepo:
         with self.database.transaction(write=True,error_code='cloud_local_save_failed') as c:
             op=_read(c,'naiyue_cloud_operations',command_id,session_id,'cloud_operation_not_found')
             value=_read(c,'naiyue_cloud_bindings',op['binding_id'],session_id,'cloud_binding_not_found')
-            if value.get('deletion'):raise CloudError('cloud_task_unavailable')
+            if value.get('deletion') or value.get('removal'):raise CloudError('cloud_task_unavailable')
             if op['cancel_requested'] and phase not in ('cancelled','unknown'):
                 raise CloudError('cloud_preparation_cancelled')
             if dispatch_task:op['may_have_task']=True
@@ -162,7 +162,7 @@ class LocalTaskRepo:
             op=_read(c,'naiyue_cloud_operations',command_id,session_id,'cloud_operation_not_found')
             if op['phase']=='prepared':raise CloudError('cloud_preparation_already_finished')
             value=_read(c,'naiyue_cloud_bindings',op['binding_id'],session_id,'cloud_binding_not_found')
-            if value.get('deletion'):raise CloudError('cloud_task_unavailable')
+            if value.get('deletion') or value.get('removal'):raise CloudError('cloud_task_unavailable')
             op.update(cancel_requested=True,phase='cancelled',updated_at=time.time())
             value.update(preparation='cancelled',revision=value['revision']+1,retained=op['may_have_task'] or not settled)
             c.execute('UPDATE naiyue_cloud_operations SET body_json=? WHERE command_id=?',(json.dumps(op),command_id))
@@ -193,6 +193,7 @@ class LocalTaskRepo:
         with self.database.transaction(write=True,error_code='cloud_local_save_failed') as c:
             op=_read(c,'naiyue_cloud_operations',command_id,session_id,'cloud_operation_not_found')
             value=self._cache(c,op['binding_id'],session_id,task)
+            if value.get('removal'):return {'operation':op,'binding':value}
             if steps is not None:
                 op['steps']=steps;op['updated_at']=time.time()
                 c.execute('UPDATE naiyue_cloud_operations SET body_json=? WHERE command_id=?',(json.dumps(op),command_id))
@@ -204,7 +205,7 @@ class LocalTaskRepo:
 
     def _cache(self,c,binding_id,session_id,task):
         value=_read(c,'naiyue_cloud_bindings',binding_id,session_id,'cloud_binding_not_found')
-        if value.get('deletion'):return value
+        if value.get('deletion') or value.get('removal'):return value
         from naiyue_test_agent.contracts.cloud_local_tasks import checked_task
         checked=checked_task(task,value).model_dump(mode='json')
         old=value['cloud']

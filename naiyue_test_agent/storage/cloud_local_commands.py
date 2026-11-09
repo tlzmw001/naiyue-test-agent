@@ -9,6 +9,7 @@ from .cloud_local import _read
 from .queries import session_row
 
 TERMINAL={'succeeded','failed','rejected','cancelled'}
+RETIRED={'cloud_task_deleted','cloud_task_removed'}
 
 
 class LocalTaskCommands:
@@ -126,13 +127,13 @@ class LocalTaskCommands:
 
     def _writable(self,c,cid,sid):
         op=_read(c,'naiyue_cloud_operations',cid,sid,'cloud_operation_not_found')
-        if op.get('error_code')=='cloud_task_deleted':raise CloudError('cloud_task_unavailable')
+        if op.get('error_code') in RETIRED:raise CloudError('cloud_task_unavailable')
         return op
 
     def record(self,cid,sid,step,receipt):
         with self.database.transaction(write=True,error_code='cloud_local_save_failed') as c:
             op=_read(c,'naiyue_cloud_operations',cid,sid,'cloud_operation_not_found')
-            if op.get('error_code')=='cloud_task_deleted':return op
+            if op.get('error_code') in RETIRED:return op
             item=op['steps'][step]
             old=item.get('receipt')
             if old and (old['status'] in ('succeeded','failed')
@@ -160,18 +161,35 @@ class LocalTaskCommands:
                 or receipt.get('expected_generation')!=expected['generation']
                 or receipt.get('result',{}).get('phase')!='finished'):
             raise CloudError('cloud_delete_receipt_mismatch',502)
-        binding.update(retained=False,deletion=tombstone,cloud=None,draft=None,local_attachments={},queued_command_id=None,
+        binding['deletion']=tombstone
+        self._retire(c,binding,op['command_id'],'cloud_task_deleted')
+
+    def _retire(self,c,binding,command_id,code):
+        binding.update(retained=False,cloud=None,draft=None,local_attachments={},queued_command_id=None,
             draft_revision=binding.get('draft_revision',0)+1,revision=binding['revision']+1)
         c.execute('UPDATE naiyue_cloud_bindings SET retained=0,body_json=? WHERE binding_id=?',
             (json.dumps(binding),binding['binding_id']))
         for row in c.execute('SELECT body_json FROM naiyue_cloud_operations WHERE binding_id=? AND command_id!=?',
-                (binding['binding_id'],op['command_id'])).fetchall():
+                (binding['binding_id'],command_id)).fetchall():
             old=json.loads(row[0])
-            old.update(phase='cancelled' if old['kind']=='create' else 'failed',error_code='cloud_task_deleted',
+            cancelled=old['kind']=='create' or code=='cloud_task_removed' and old['kind']=='queued_message'
+            old.update(phase='cancelled' if cancelled else 'failed',error_code=code,
                 request={'command_id':old['command_id']},steps={},updated_at=time.time())
             old.pop('dispatch_request',None);old.pop('attachments',None)
             if old['kind']=='create':old.update(cancel_requested=True,may_have_task=False)
             c.execute('UPDATE naiyue_cloud_operations SET body_json=? WHERE command_id=?',(json.dumps(old),old['command_id']))
+
+    def forget(self,bid,sid,request):
+        if request.get('acknowledge_unmanaged') is not True:raise CloudError('invalid_request',422)
+        with self.database.transaction(write=True,error_code='cloud_local_save_failed') as c:
+            binding=self._binding(c,bid,sid)
+            if not binding['retained']:return binding
+            if binding['revision']!=request['expected_binding_revision']:raise CloudError('cloud_binding_conflict')
+            if c.execute('SELECT 1 FROM naiyue_cloud_operations WHERE command_id=?',(request['command_id'],)).fetchone():
+                raise CloudError('cloud_command_conflict')
+            binding['removal']=dict(command_id=request['command_id'],removed_at=time.time())
+            self._retire(c,binding,request['command_id'],'cloud_task_removed')
+            return self._binding(c,bid,sid)
 
     def adopt_deleted(self,bid,sid,task,raw):
         from naiyue_test_agent.contracts.cloud_tasks import CommandReceipt
@@ -180,7 +198,7 @@ class LocalTaskCommands:
         except ValidationError:raise CloudError('cloud_delete_receipt_mismatch',502) from None
         with self.database.transaction(write=True,error_code='cloud_local_save_failed') as c:
             binding=self._binding(c,bid,sid)
-            if binding.get('deletion'):return binding
+            if not binding['retained']:return binding
             checked=checked_task(task,binding)
             if (checked.lifecycle!='deleted' or checked.delete_command_id!=receipt['command_id']
                     or receipt['status']!='succeeded' or receipt['expected_generation']!=checked.generation):
@@ -215,6 +233,6 @@ class LocalTaskCommands:
     def fail(self,cid,sid,phase,code):
         with self.database.transaction(write=True,error_code='cloud_local_save_failed') as c:
             op=_read(c,'naiyue_cloud_operations',cid,sid,'cloud_operation_not_found')
-            if op.get('error_code')=='cloud_task_deleted':return op
+            if op.get('error_code') in RETIRED:return op
             if op['phase'] in ('accepted','succeeded','failed') and op['steps']['primary'].get('receipt'):return op
             op.update(phase=phase,error_code=code);return self._save(c,op)

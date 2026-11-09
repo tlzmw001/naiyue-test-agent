@@ -41,7 +41,7 @@ class ManualTaskCommands:
             return await await_settled(asyncio.create_task(admit()))
 
     def launch(self,domain,op,*,explicit=False):
-        if op.get('error_code')=='cloud_task_deleted':return op
+        if op.get('error_code') in ('cloud_task_deleted','cloud_task_removed'):return op
         key=(domain.project_id,op['command_id'])
         receipt=op['steps']['primary'].get('receipt')
         if receipt and receipt['status'] in ('succeeded','failed'):return op

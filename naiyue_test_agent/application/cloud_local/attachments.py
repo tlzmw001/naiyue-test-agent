@@ -107,5 +107,10 @@ class LocalAttachments:
             repo=AttachmentRepository(domain.repo.database)
             if action=='cancel':value=await run_blocking(repo.update,bid,sid,aid,phase='cancelled')
             else:
-                value=await run_blocking(repo.read,bid,sid,aid);self.launch(domain,value)
+                async def admit():
+                    async with self.manager.admission:
+                        value=await run_blocking(repo.read,bid,sid,aid)
+                        self.launch(domain,value)
+                        return value
+                value=await await_settled(asyncio.create_task(admit()))
             return public(value)

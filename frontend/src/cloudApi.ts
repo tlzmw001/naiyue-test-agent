@@ -60,6 +60,9 @@ export class CloudApi {
   operation(sid: string, cid: string, signal?: AbortSignal) { return this.read<CloudOperation>('/cloud-operations/' + encodeURIComponent(cid) + this.query(sid), signal); }
   retry(sid: string, cid: string) { return this.write<CloudOperation>('/cloud-operations/' + encodeURIComponent(cid) + '/retry' + this.query(sid), {}); }
   preview(sid: string, bid: string, signal?: AbortSignal) { return this.read<DeletePreview>(this.task(bid) + '/delete-preview' + this.query(sid), signal); }
+  forgetBinding(sid: string, bid: string, value: { command_id: string; expected_binding_revision: number; acknowledge_unmanaged: true }) {
+    return this.write<CloudBinding>(this.task(bid) + '/forget?local_project_id=' + encodeURIComponent(this.projectId), { ...value, local_session_id: sid });
+  }
   results(sid: string, bid: string, offset = 0, signal?: AbortSignal) { return this.read<ResultSummary[]>(this.task(bid) + '/results' + this.query(sid, { offset, limit: 20 }), signal); }
   result(sid: string, bid: string, rid: string, signal?: AbortSignal) { return this.read<CloudResult>(this.task(bid) + '/results/' + encodeURIComponent(rid) + this.query(sid), signal); }
   changes(sid: string, bid: string, rid: string, offset = 0, signal?: AbortSignal) { return this.read<ResultChanges>(this.task(bid) + '/results/' + encodeURIComponent(rid) + '/changes' + this.query(sid, { offset, limit: 50 }), signal); }

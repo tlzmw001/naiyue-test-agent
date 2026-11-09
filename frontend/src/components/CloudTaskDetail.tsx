@@ -17,8 +17,9 @@ import type { CloudAction } from './CloudTaskActions';
 import styles from './CloudTasks.module.css';
 import type { AnalysisDraft } from '../cloudReceiveTypes';
 
-export default function CloudTaskDetail({ api, sid, binding, active, metadataFresh = true, back, changed, onAnalysisDraft }: {
+export default function CloudTaskDetail({ api, sid, binding, active, metadataFresh = true, metadataError, back, changed, onAnalysisDraft, onForgotten }: {
   api: CloudApi; sid: string; binding: CloudBinding; active: boolean; metadataFresh?: boolean; back: () => void; changed: () => void;
+  metadataError?: string; onForgotten?: () => void;
   onAnalysisDraft?: (value: AnalysisDraft) => boolean | void;
 }) {
   const [expanded, setExpanded] = useState(true);
@@ -152,7 +153,7 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
         <small>{binding.profile_id} · 实例 {binding.instance_id.slice(0, 8)}</small>
       </div>
       <div className={styles.controlArea}>
-        <CloudTaskActions api={api} sid={sid} binding={binding} busy={busy || !metadataFresh} execute={execute}
+        <CloudTaskActions api={api} sid={sid} binding={binding} busy={busy || !metadataFresh} execute={execute} onForgotten={onForgotten ?? back}
           forceReleaseAllowed={!operations.some(op => op.kind !== 'create' && ['reserved', 'unknown', 'waiting_runner'].includes(op.phase))} />
         {binding.cloud?.last_error_code && <p role="status" className={styles.error}>上次执行需要检查：{cloudError({ code: binding.cloud.last_error_code })}</p>}
         {operations[0] && operations[0].kind !== 'message' && ['reserved', 'accepted', 'waiting_runner', 'unknown'].includes(operations[0].phase) && <p role="status" className={styles.note}>{operations[0].kind === 'delete' ? '删除请求已登记，等待云端确认；完成后任务才会移除。' : '操作尚未完成，请等待状态确认或核对原操作。'}</p>}
@@ -172,7 +173,7 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
     </div>
     {(!metadataFresh || error || unconfirmed || observation.error || operationFailed) &&
       <div className={styles.taskNotices}>
-        {!metadataFresh && <p role="status" className={styles.error}>任务状态尚未确认，恢复连接后再操作。</p>}
+        {!metadataFresh && <p role="status" className={styles.error}>任务状态尚未确认。{metadataError || '恢复连接后再操作。'}</p>}
         {operationFailed && !error && <p role="alert" className={styles.error}>{cloudError({ code: lastOperation.error_code ?? 'cloud_command_unknown' })}</p>}
         {error && <p role="alert" className={styles.error}>{error}</p>}
         {unconfirmed && <button onClick={() => void retryIntent()}>核对并重试原请求</button>}

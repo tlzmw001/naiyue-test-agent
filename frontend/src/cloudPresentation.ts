@@ -2,6 +2,8 @@ import { ApiError, errorText } from './api';
 import type { CloudBinding, CloudMessage, CloudLive, CloudTask } from './cloudTypes';
 import type { MessageRow, ToolState } from './types';
 const errors: Record<string, string> = {
+  cloud_local_work_active: '本机还有正在派发、上传、接收、保存或待发送的任务操作，请先处理完成后再移除关联。',
+  cloud_task_removed: '本机关联已移除，原任务已停止在本机管理。',
   cloud_result_identity_mismatch: '结果与当前任务不一致，已停止展示，请刷新当前任务核对',
   cloud_delivery_preflight_changed: '预检后本机文件已变化，已停止本次写入，请重新预检',
   cloud_delivery_baseline_changed: '应用基线已由另一项操作更新，请重新预检当前结果',

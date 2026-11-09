@@ -105,6 +105,7 @@ class ManualCloudTasks:
 
     @asynccontextmanager
     async def connection(self,binding):
+        if not binding['retained']:raise CloudError('cloud_task_unavailable')
         client=await self.connections.get(binding['profile_id'],binding['instance_id']);primary=None
         try:yield client
         except BaseException as error:primary=error;raise
@@ -172,12 +173,17 @@ class ManualCloudTasks:
 
     async def retry(self,domain,command_id,session_id):
         with self.operation(),domain.owner.operation():
-            op=await run_blocking(domain.repo.operation,command_id,session_id)
-            if op['kind']!='create':return self.commands.launch(domain,op,explicit=True)
+            async def admit():
+                async with self.admission:
+                    op=await run_blocking(domain.repo.operation,command_id,session_id)
+                    if op['kind']!='create':return self.commands.launch(domain,op,explicit=True)
+                    if not op['cancel_requested']:self._launch(domain,op)
+                    return op
+            op=await await_settled(asyncio.create_task(admit()))
+            if op['kind']!='create':return op
             if op['cancel_requested']:
                 await self._read(domain,op['binding_id'],session_id)
                 return await run_blocking(domain.repo.operation,command_id,session_id)
-            self._launch(domain,op)
             return op
 
     async def cancel(self,domain,command_id,session_id):
@@ -194,10 +200,25 @@ class ManualCloudTasks:
     async def read(self,domain,binding_id,session_id):
         with self.operation():return await self._read(domain,binding_id,session_id)
 
+    async def forget(self,domain,binding_id,value):
+        from naiyue_test_agent.contracts.cloud_local_tasks import ManualForget
+        request=ManualForget.model_validate(value).model_dump(mode='json')
+        with self.operation(),domain.owner.operation():
+            async def admit():
+                async with self.admission:
+                    binding=await run_blocking(domain.repo.binding,binding_id,request['local_session_id'])
+                    if binding['retained']:
+                        producers=(self.flights,self.slots,self.commands.flights,self.commands.slots,
+                            self.attachments.flights,self.receives.flights,self.deliveries.flights,self.queue.jobs)
+                        if any(key[0]==domain.project_id for producer in producers for key in producer):
+                            raise CloudError('cloud_local_work_active')
+                    return await run_blocking(domain.repo.commands.forget,binding_id,request['local_session_id'],request)
+            return await await_settled(asyncio.create_task(admit()))
+
     async def _read(self,domain,binding_id,session_id):
         with domain.owner.operation():
             binding=await run_blocking(domain.repo.binding,binding_id,session_id)
-            if binding.get('deletion'):return binding
+            if not binding['retained']:return binding
             if binding['task_id'] is None:
                 op=await run_blocking(domain.repo.operation,binding['create_command_id'],session_id)
                 if not op['may_have_task']:return binding

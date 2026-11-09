@@ -3,10 +3,12 @@ import type { CloudApi } from '../cloudApi';
 import type { CloudBinding, DeletePreview } from '../cloudTypes';
 import { canSend, cloudError } from '../cloudPresentation';
 import styles from './CloudTasks.module.css';
+import CloudTaskForget from './CloudTaskForget';
 
 export type CloudAction = (kind: 'control' | 'environment' | 'delete', body: Record<string, unknown>) => Promise<boolean | void>;
-export default function CloudTaskActions({ api, sid, binding, busy, execute, forceReleaseAllowed = true }: {
+export default function CloudTaskActions({ api, sid, binding, busy, execute, forceReleaseAllowed = true, onForgotten }: {
   api: CloudApi; sid: string; binding: CloudBinding; busy: boolean; execute: CloudAction; forceReleaseAllowed?: boolean;
+  onForgotten?: () => void;
 }) {
   const [preview, setPreview] = useState<DeletePreview>(); const [checking, setChecking] = useState(false);
   const [acknowledged, acknowledge] = useState(false); const [error, setError] = useState('');
@@ -46,6 +48,7 @@ export default function CloudTaskActions({ api, sid, binding, busy, execute, for
       {uncertain && task.environment_phase !== 'absent' && <button disabled={busy || !forceReleaseAllowed || !!task.active_run_id || !!task.runner_recovery}
         onClick={event => { opener.current = event.currentTarget; acknowledge(false); setRelease({ revision: binding.revision, generation: task.generation }); }}>核对并释放环境</button>}
       <button ref={button} className={`${styles.danger} ${styles.deleteTask}`} disabled={busy || checking || task.lifecycle === 'deleting'} onClick={event => { opener.current = event.currentTarget; void prepareDelete(); }}>删除任务</button>
+      <CloudTaskForget key={`${api.projectId}:${sid}:${binding.binding_id}`} api={api} sid={sid} binding={binding} onForgotten={onForgotten} />
     </div>
     {uncertain && !forceReleaseAllowed && <p className={styles.note}>存在尚未核对的原操作，请先核对原回执，再决定是否释放；不会重放未知执行。</p>}
     {!canSend(task) && <p className={styles.note}>{task.active_run_id ? '本轮执行中，可继续编辑草稿；结束或停止并保存后再发送。' :
