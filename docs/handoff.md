@@ -1,5 +1,7 @@
 # Naiyue Test Agent：当前开发学习交接
 
+**2026-11-08 main 功能修复提交与验证交接**。MCP 服务组选择/文件凭证 `aec2d8a`、记忆引文格式诊断 `5116631`、本机关联终极移除与重试准入 `6d1a39d` 分三项提交，纳入本次 main 同步。48 个功能文件与[已上传 v0.5.11 整合验证包](https://github.com/tlzmw001/naiyue-test-agent/releases/download/v0.5.11/naiyue-0.5.11-integrated-windows-linux-x64-30ebce09aef1.zip)快照逐文件一致；发布快照后端 6610、前端 666、浏览器 67（91 条件跳过）及构建全绿，本轮复跑后端专项 74、完整前端 666 与生产构建通过。Windows 更新本机，Linux 更新 Coordinator 才能使用文件 token，已有 mcp:headers 能力的 Runner 可沿用。未改正式标签/PyPI/索引；学习/架构文档、AGENTS 修改与临时探针不纳入功能提交，继续保留在工作区。验证及提交映射见 `build/integrated-validation-20261108-cfi0j3_a/`。唯一下一步为用户按包内说明执行 Windows/公司链路验收。
+
 **2026-11-08 前端阶段 1–4A 提交验收（frontend-ui-refactor）**。本轮提交范围为 [143BA](specs/143ba-frontend-modal-interaction.md) 模态与交互修复、[143BB](specs/143bb-radix-menu-pilot.md) ThemeMenu/CommandMenu 的 Radix 接入、[143BD](specs/143bd-base-ui-menu-pilot.md) 对照试点归档和 [143BE](specs/143be-reading-area-4a.md) 阅读区整理与性能基线；MCP、记忆、本机关联移除及学习文档等并行改动保留在工作区。按实际提交内容导出隔离候选验证：最终 Vitest 77 文件 657 项、浏览器 67 通过（91 条件跳过）、harness 类型检查与生产构建通过；生产 preview 性能场景另行 1 项通过，后端两分片 3329 + 3255 项通过。数量与下方整合工作区历史报告不同，原因是排除并行测试和两个无断言的临时探针，既有行为断言保留。构建/测试日志及范围记录位于 `build/frontend-ui-submit-20261108/`；性能仍只建立基线，无优化宣称。用户下一阶段偏好已明确：保留现有 ChatGPT 式中性色，参考 ZCode 改善简洁度与动效。**下一步建议先做 4B 输入区层级与现有菜单轻动效，待确认方案后写 Spec；本轮未开始该实现。** 下方其他事项与历史记录保留原时点状态。
 
 **2026-11-06 浏览器下载 401**。完整本机服务复现签发链接成功、仅携带有效下载 Cookie 的 GET 被全局 Bearer 鉴权拒绝。仅匹配的文件下载 GET 使用原有短期票据和 Cookie 鉴权，签发和其他 API 继续走 Bearer。新增回归先红后绿，下载及服务协议相关 17 项、云端全量复跑 1204 项和 macOS ARM64 wheel 构建通过。首轮全量一个模型 Runner 用例返回 `runner_not_ready`，单测与全量复跑通过。下一步用含修复的 Windows 本机包从 Chrome 复验原文件下载。
