@@ -138,7 +138,7 @@ def test_terminal_bridge_adds_and_uses_tool_in_its_existing_loop(monkeypatch, tm
         sid = client.request('POST', '/sessions', json={'model_id': 'A'})['session_id']
         write_config(config, {'local': stdio_settings(path, 'stateful', allowed_tools=['echo'])})
         handle_mcp_command(client, sid, ':mcp-refresh', lines.append)
-        handle_mcp_command(client, sid, ':tools +' + NAME, lines.append)
+        handle_mcp_command(client, sid, ':tools +mcp:local', lines.append)
         result = client.run(sid, 'new tool')
         assert result['messages'][-1]['content'] == 'CLI done' and len(calls(path)) == 1
     assert all(not process_alive(r['pid']) for r in facts(path) if r['event'] == 'start')

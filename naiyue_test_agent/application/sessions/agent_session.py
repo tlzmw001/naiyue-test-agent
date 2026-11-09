@@ -130,9 +130,7 @@ class AgentSession:
                 self._runtime.state.thinking_level = level
 
     def set_active_tools(self, names):
-        from naiyue_test_agent.tools.subagent import subagent_selection
-        names = subagent_selection(names)
-        names = tuple(spec.tool.name for spec in self._tool_registry.select(names))
+        names = self._tool_registry.session_selection(names)
         with self._tool_selection_lock:
             if self._persistence is not None:
                 self._persistence.storage.sessions.select_active_tools(self.session_id, names)

@@ -71,31 +71,31 @@ def test_changed_or_missing_service_never_executes_old_approval(monkeypatch, tmp
         async with opened(monkeypatch, path, database, [], settings=settings, initial=()) as (app, model):
             history = await app.host.history.session(sid)
             assert history['messages'] and not calls(path) and not model.seen
+            assert history['recovery']['actions'] == ['continue']
+            with pytest.raises(SessionPersistenceError, match='approval_restore_unavailable'):
+                await app.host.sessions.recover(sid, checkpoint_id=history['checkpoint_id'], action='restore_approval')
+            await app.host.sessions.recover(sid, checkpoint_id=history['checkpoint_id'], action='continue')
             if change in ('disabled', 'unselected'):
-                assert history['recovery']['reason'] == 'saved_configuration_unavailable'
-                assert history['recovery']['actions'] == []
-                with pytest.raises(SessionPersistenceError, match='invalid_active_tools'):
-                    await app.host.sessions.recover(sid, checkpoint_id=history['checkpoint_id'], action='restore_approval')
-            else:
-                assert history['recovery']['actions'] == ['continue']
-                with pytest.raises(SessionPersistenceError, match='approval_restore_unavailable'):
-                    await app.host.sessions.recover(sid, checkpoint_id=history['checkpoint_id'], action='restore_approval')
-                await app.host.sessions.recover(sid, checkpoint_id=history['checkpoint_id'], action='continue')
+                registry = app.host.sessions._sessions._tool_registry
+                assert registry.select_available(app.host.sessions.active_tools(sid)) == ()
             assert not calls(path) and not model.seen
     asyncio.run(scenario())
 
 
-def test_completed_session_reopen_preserves_history_but_reapproves_and_starts_new_process(monkeypatch, tmp_path):
+@pytest.mark.parametrize('selection', [NAME, 'mcp:local'])
+def test_completed_session_reopen_preserves_history_but_reapproves_and_starts_new_process(monkeypatch, tmp_path, selection):
     async def scenario():
         path, database = tmp_path / 'completed.jsonl', tmp_path / 'state.sqlite'
         async with opened(monkeypatch, path, database, [call(NAME, {}, 'old'), AIMessage(content='first')]) as (app, _):
             sid = await app.host.sessions.create('A')
+            await app.host.sessions.select_tools(sid, [selection])
             await app.host.runs.start(sid, [('user', 'first')])
             await app.host.runs.resume_approval(sid, ['approve'], remember_approved=['old'])
             original_pid = calls(path)[0]['pid']
         assert not process_alive(original_pid)
         async with opened(monkeypatch, path, database, [call(NAME, {'text': 'new'}, 'new'), AIMessage(content='second')]) as (app, _):
             await app.host.sessions.restore(sid)
+            assert app.host.sessions.active_tools(sid) == (selection,)
             assert app.host.sessions._sessions.resolve_permission_context(sid)['session_allow'] == []
             restored = await app.host.history.messages(sid)
             old, = [m for m in restored if isinstance(m, ToolMessage)]

@@ -195,9 +195,46 @@ class ToolRegistry:
         with self._lock:
             return tuple(self._specs)
 
+    def session_selection(self, names):
+        from .subagent import subagent_selection
+        names = subagent_selection(names)
+        self.select(tuple(name for name in names if not (
+            re.fullmatch(r'mcp:[A-Za-z0-9_]{1,16}', name) or self._legacy_mcp_name(name))))
+        return names
+
+    @staticmethod
+    def _legacy_mcp_name(name):
+        return re.fullmatch(r'mcp__[A-Za-z0-9_]{1,16}__[A-Za-z0-9_.-]{1,40}', name)
+
+    def expand_session_tools(self, names):
+        from naiyue_test_agent.mcp_client.tools import MCPPermission
+        with self._lock:
+            specs = tuple(self._specs.values())
+        by_tool = {spec.tool.name: spec.permissions.server_id for spec in specs
+                   if isinstance(spec.permissions, MCPPermission)}
+        servers = set(by_tool.values())
+        registered = {spec.tool.name for spec in specs}
+        expanded = []
+        for name in names:
+            service = by_tool.get(name)
+            if name.startswith('mcp:'):
+                service = name.removeprefix('mcp:')
+            elif service is None and name not in registered and self._legacy_mcp_name(name):
+                # Extra separators can belong to either the service ID or the remote tool.
+                parts = name.split('__')
+                service = parts[1] if (len(parts) == 3 and not parts[1].endswith('_')
+                    and not parts[2].startswith('_') and parts[1] in servers) else ''
+            if service is None:
+                expanded.append(name)
+            else:
+                expanded.extend(tool for tool, server in by_tool.items() if server == service)
+        return tuple(dict.fromkeys(expanded))
+
     def select_available(self, names, *, context=None):
         """Prepare new requests; saved batches must continue using select()."""
         from naiyue_test_agent.mcp_client.tools import MCPPermission
+        if context is None or context.scope.identity.agent_path == 'root':
+            names = self.expand_session_tools(names)
         return tuple(spec for spec in self.select(names)
             if (spec.tool.name!='cloud_result_read' or context is None or callable(context.scope.capabilities.cloud_materials))
             and (not isinstance(spec.permissions,MCPPermission) or spec.permissions.unavailable_reason(context) is None))

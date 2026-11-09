@@ -160,7 +160,7 @@
         "url": "https://nacos-mcp.example.invalid/mcp",
         "route": "windows_tunnel",
         "network_slot": "users",
-        "headers_env": {"X-API-Key": "NACOS_MCP_API_KEY"},
+        "headers": {"X-API-Key": "<private-api-key>"},
         "allow_insecure_http": false
       }
     }

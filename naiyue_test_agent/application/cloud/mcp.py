@@ -7,7 +7,7 @@ from uuid import uuid4
 from naiyue_test_agent.cloud_files.configuration import read_settings
 from naiyue_test_agent.contracts.cloud_events import digest
 from naiyue_test_agent.contracts.cloud_mcp import (
-    MCP_HEADERS_CAPABILITY, CloudMCPSection, CloudMCPSettings, RefreshMCP, tunnel_target,
+    FILE_HEADER_PREFIX, MCP_HEADERS_CAPABILITY, CloudMCPSection, CloudMCPSettings, RefreshMCP, tunnel_target,
 )
 from naiyue_test_agent.contracts.cloud_networks import service_context
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
@@ -28,7 +28,30 @@ class CloudMCP:
     def __init__(self, runtime):
         self.runtime = runtime
         with runtime.database.transaction(write=True) as db:
-            put(db, 'mcp-settings', runtime.settings.mcp.model_dump(mode='json'))
+            put(db, 'mcp-settings', runtime.settings.mcp.projected())
+
+    def _settings(self):
+        runtime = self.runtime
+        return (read_settings(runtime.settings_path, CloudMCPSection).mcp
+                if runtime.settings_path is not None else runtime.settings.mcp)
+
+    def _credential_environment(self, frame):
+        settings = CloudMCPSettings.model_validate(frame['settings'])
+        names = settings.credential_names()
+        credentials = {name: value for name in names if not name.startswith(FILE_HEADER_PREFIX)
+                       and (value := os.environ.get(name)) is not None}
+        if any(name.startswith(FILE_HEADER_PREFIX) for name in names):
+            try:
+                current = self._settings()
+            except CloudError as error:
+                logger.warning('cloud_mcp_credential_settings_unavailable code=%s', error.code)
+                return credentials
+            projected = current.projected()['servers']
+            for name, server in current.servers.items():
+                if server.enabled and projected[name] == frame['settings']['servers'].get(name):
+                    credentials.update({reference: server.headers[header].get_secret_value()
+                                        for header, reference in server.file_header_refs(name).items()})
+        return credentials
 
     def _require(self, task_id):
         task = self.runtime.registry.get_task(task_id)
@@ -103,9 +126,7 @@ class CloudMCP:
             row = meta(db, 'mcp-task:' + task_id)
             if row and row['refresh_id'] == request.refresh_id:
                 return
-        settings = (read_settings(r.settings_path, CloudMCPSection).mcp
-                    if r.settings_path is not None else r.settings.mcp)
-        value = settings.model_dump(mode='json')
+        value = self._settings().projected()
         with r.gates.hold(task_id):
             task = self._require(task_id)
             if task.runner_connection_id and (CAPABILITY not in task.runner_capabilities
@@ -171,13 +192,8 @@ class CloudMCP:
                 profile = digest({'settings': row['settings'], 'services': services})
                 put(db, key, row | dict(sent_connection=connection.connection_id, digest=profile, targets=targets,
                     expires_at=expires, confirmed_connection=None, network_id=task.network_id if any(targets.values()) else None))
-            credentials = {name: value for name in settings.credential_names()
-                           if (value := os.environ.get(name)) is not None}
-            frame = dict(kind='mcp_refresh', refresh_id=row['refresh_id'], digest=profile,
+            return dict(kind='mcp_refresh', refresh_id=row['refresh_id'], digest=profile,
                 settings=row['settings'], services=services, expires_at=expires)
-            if credentials:
-                frame['credential_environment'] = credentials
-            return frame
 
     async def advance(self, connection):
         if not connection.mcp_supported:
@@ -185,6 +201,9 @@ class CloudMCP:
         try:
             frame = await cloud_work(self.runtime, lambda: self.prepare(connection))
             if frame is not None:
+                credentials = await cloud_work(self.runtime, lambda: self._credential_environment(frame))
+                if credentials:
+                    frame['credential_environment'] = credentials
                 await connection.send(frame)
         except (CloudError, OSError, RuntimeError, TimeoutError) as error:
             logger.warning('cloud_mcp_dispatch_unconfirmed error_type=%s', type(error).__name__)

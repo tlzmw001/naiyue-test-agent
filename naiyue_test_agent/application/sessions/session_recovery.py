@@ -143,7 +143,8 @@ async def validate_saved_approval(settings, registry, row, snapshot, names, *, e
             raise ValueError('Saved temporary authority cannot be restored')
         selected = batch['tool_names']
         from naiyue_test_agent.tools.subagent import subagent_request_tools
-        if not isinstance(selected, list) or not set(selected).issubset(subagent_request_tools(names, registry)):
+        available = registry.expand_session_tools(subagent_request_tools(names, registry))
+        if not isinstance(selected, list) or not set(selected).issubset(available):
             raise ValueError('Saved tools are unavailable')
         specs = {spec.tool.name: spec for spec in registry.select(selected)}
         if execution_root is not None and execution_root.project_revision is not None and any(
@@ -196,11 +197,7 @@ def prepare_saved_configuration(owner, row):
         raise SessionPersistenceError('invalid_permission_mode') from error
     saved = row['active_tool_names_json']
     try:
-        names = json.loads(saved)
-        from naiyue_test_agent.tools.subagent import subagent_selection
-        names = subagent_selection(names)
-        specs = owner._tool_registry.select(names)
-        names = tuple(spec.tool.name for spec in specs)
+        names = owner._tool_registry.session_selection(json.loads(saved))
     except (ValueError, TypeError) as error:
         raise SessionPersistenceError('invalid_active_tools') from error
     owner._catalog.with_thinking(row['model_id'], row['thinking_level'])

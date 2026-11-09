@@ -63,6 +63,13 @@ Authorization = "MY_MCP_AUTHORIZATION"
 认证前缀。配置内保存的是变量名。URL 禁止 userinfo/fragment/控制字符；不提供 OAuth
 登录流程。禁止覆盖 Host、MCP session/version 及传输控制头。
 
+也可在私有 `settings.toml` 直接写完整头值。同名请求头只能选择一种配置来源。
+
+```toml
+[mcp.servers.remote.headers]
+Authorization = "Bearer <token>"
+```
+
 TLS 始终验证证书；代理复用 settings.toml 已有 `[network]` 的 auto/direct/proxy
 选择。auto 服从系统/环境代理与 NO_PROXY，不做代理健康探测或故障后直连回退。
 SDK使用独立 httpx2 客户端；只允许 SDK 在同源内跟随重定向，不跨源转发请求。
@@ -76,12 +83,12 @@ SDK使用独立 httpx2 客户端；只允许 SDK 在同源内跟随重定向，�
 以上扩展只适用于配置`no_proxy`，auto的系统/环境`NO_PROXY`仍按标准库处理。
 网络修改需重启，MCP刷新不会重载它。代理失败不切直连；stdio程序自身的联网仍独立配置。
 
-顶层 `default_active_tools` 可包含已登记的 `mcp__服务ID__原工具名`，用于CLI/Web新根会话
-默认选中。须先启用服务、加入allowed_tools并发现成功；未知名称启动失败，选中仍需审批。
-省略字段保持原默认，`[]`表示零工具；旧会话和子角色工具名单不被覆盖。
+顶层 `default_active_tools` 可写 `mcp:服务ID`，使 CLI/Web 新主会话默认选中该服务。旧的
+`mcp__服务ID__原工具名` 选择也按所属服务生效。实际可用工具取决于服务启用状态和当前
+`allowed_tools`，仍沿用工具审批。省略字段保持原默认，`[]` 表示零工具。
 
 loopback HTTP 可用于本地服务；其他 HTTP 要显式设置 `allow_insecure_http = true`。
-获准连接的 HTTP 服务也可以配置 `headers_env`，请求头会明文传输。HTTPS 继续校验证书和服务名。
+获准连接的 HTTP 服务可以配置 `headers` 或 `headers_env`，请求头会明文传输。HTTPS 继续校验证书和服务名。
 私有 CA 可通过 Agent 服务进程的 `SSL_CERT_FILE` 指定受信 CA bundle。
 环境变量由服务启动时继承。修改变量值后重启本机 Agent 服务，再刷新工具。
 stdio 字段与 HTTP 字段互斥，不接受独立旧 SSE transport。
@@ -123,11 +130,11 @@ connection_or_discovery_failed 返回，整体超时为 discovery_timeout。第�
 
 1. 新增server，设enabled=true，将远端原工具名加入allowed_tools，保存文件。
 2. Web打开输入区的“工具”，点击原有“刷新工具与模式”；它先应用MCP配置，再读取有效工具/模式，
-   完成后勾选新增工具。MCP刷新失败仍读取当前有效列表，保留失败说明。
+   完成后勾选对应的 MCP 服务。MCP 刷新失败仍读取当前有效列表，保留失败说明。
 3. 终端nyt chat中输入`:mcp-refresh`刷新，`:tools`查看，使用
-   `:tools +mcp__local__echo -mcp__local__other`增减当前主Agent的选择。
-4. 调整allowed_tools后再次刷新。同服务已有执行连接继续复用；新增工具不会自动
-   加入任何根会话或子角色。子角色名单仍取启动时显式配置。
+   `:tools +mcp:local` 或 `:tools -mcp:local` 增减当前主 Agent 的服务选择。
+4. 调整 `allowed_tools` 后再次刷新。已经选中服务的会话在下一次模型请求使用新名单。
+   旧会话曾选择任一服务工具时视为选中整个服务。子角色仍按显式工具名配置。
 5. 服务设enabled=false或移除该server，保存并刷新即可停用；重新启用并刷新后，
    同名工具原有会话选择恢复，旧“本会话允许”需要重新审批。
 
@@ -136,7 +143,7 @@ connection_or_discovery_failed 返回，整体超时为 discovery_timeout。第�
 有效配置，其余有效服务独立应用。文件缺失、TOML损坏或配置非法则整次刷新不应用。
 显式空`[mcp] servers = {}`会停用全部服务。未变服务不会重复发现或改变授权身份。
 
-启用中更改地址、command/args、凭证引用值或连接预算会返回
+启用中更改地址、command/args、凭证值或连接预算会返回
 connection_configuration_changed，需停用并收尾后重新启用，或重启应用。
 本机不依赖文件监听或服务端目录变更通知。远端修改工具参数后，即使本机配置相同，也可点击一次「刷新工具与模式」或运行 `:mcp-refresh`，然后在原会话发送新消息。配置与目录均一致时，保留原连接与授权。
 
@@ -235,9 +242,8 @@ TTL也是连接配置：启用中修改正值或0会明确拒绝本次应用，�
 
 ## CLI / Web 来源与结果（06）
 
-Web 的主 Agent 工具菜单显示服务 ID、远端原工具名和传输方式；明确配置该工具的
-子角色显示在同一项下。勾选只修改主 Agent 下一次模型请求的活动工具，不改变子角色
-的 tool_names，也不会停止在途调用。尚未注册的 allowed_tools 外工具不在菜单里。
+Web 主 Agent 工具菜单为每个 MCP 服务显示一个勾选项，仅列出服务名和可用工具数量。勾选影响主 Agent
+下一次模型请求。子角色的 `tool_names` 与在途调用沿用原有规则。
 
 CLI 与 Web 审批都显示 MCP 来源及记忆范围。“本会话始终允许此工具”对完整工具名
 生效，参数可变化，同会话根与子任务共用规则；配置/目录定义变化或重启后失效。

@@ -8,7 +8,7 @@ import tomllib
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 
 ENV_NAME = r'[A-Za-z_][A-Za-z0-9_]*'
@@ -27,6 +27,7 @@ class MCPServerSettings(BaseModel):
     env: dict[str, str] = Field(default_factory=dict, repr=False)
     url: str | None = Field(default=None, repr=False)
     headers_env: dict[str, str] = Field(default_factory=dict, repr=False)
+    headers: dict[str, SecretStr] = Field(default_factory=dict, repr=False)
     allow_insecure_http: bool = False
     allowed_tools: list[str] = Field(default_factory=list)
     connect_timeout_seconds: float = Field(default=15, gt=0)
@@ -45,7 +46,7 @@ class MCPServerSettings(BaseModel):
                 not re.fullmatch(TOOL_NAME, name) for name in self.allowed_tools):
             raise ValueError('Invalid MCP allowed tools')
         if self.transport == 'stdio':
-            if not self.command or self.url is not None or self.headers_env or self.allow_insecure_http:
+            if not self.command or self.url is not None or self.headers_env or self.headers or self.allow_insecure_http:
                 raise ValueError('Invalid stdio fields')
             if any('\0' in value for value in [self.command, *self.args, self.cwd or '']):
                 raise ValueError('Invalid subprocess argument')
@@ -72,12 +73,18 @@ class MCPServerSettings(BaseModel):
                 raise ValueError('Plain HTTP requires loopback or opt-in')
             denied = {'host', 'connection', 'content-length', 'content-type', 'accept', 'accept-encoding',
                       'transfer-encoding', 'mcp-session-id', 'mcp-protocol-version'}
-            if len({key.lower() for key in self.headers_env}) != len(self.headers_env):
+            names = [*self.headers_env, *self.headers]
+            if len({key.lower() for key in names}) != len(names):
                 raise ValueError('Duplicate MCP headers')
-            for header, name in self.headers_env.items():
+            for header in names:
                 if (not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", header)
-                        or header.lower() in denied or not re.fullmatch(ENV_NAME, name)):
+                        or header.lower() in denied):
                     raise ValueError('Invalid MCP credential header reference')
+            if any(not re.fullmatch(ENV_NAME, name) for name in self.headers_env.values()):
+                raise ValueError('Invalid MCP credential header reference')
+            if any(not value.get_secret_value() or any(not 32 <= ord(char) < 127 for char in value.get_secret_value())
+                   for value in self.headers.values()):
+                raise ValueError('Invalid MCP credential header value')
         return self
 
 

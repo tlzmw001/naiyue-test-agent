@@ -24,11 +24,11 @@ it('refreshes MCP configuration without sending a message or creating a session'
   expect(screen.queryByText(/保存 settings.toml 后刷新/)).toBeNull();
   expect(screen.queryByRole('button', { name: '刷新 MCP 配置' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '刷新工具与模式' }));
-  await screen.findByText(/local：已启用/);
+  await waitFor(() => expect(reload).toHaveBeenCalledOnce());
   expect(screen.queryByText('MCP 配置刷新完成')).toBeNull();
   expect(refresh).toHaveBeenCalledOnce();
   expect(reload).toHaveBeenCalledOnce();
-  expect(screen.getByText(/local：已启用/)).toBeTruthy();
+  expect(screen.queryByText(/local：已启用/)).toBeNull();
 });
 
 it('shows per-server failure and retains the effective enabled state', async () => {
@@ -69,7 +69,31 @@ it('retains saved selection but disables unavailable tools and explains the serv
     mcp_servers: [{ server_id: 'local', status: 'disabled', enabled: false, selected_tools: [] }] } });
   const check = screen.getByRole('checkbox') as HTMLInputElement;
   expect(check.checked).toBe(true); expect(check.disabled).toBe(true);
-  expect(screen.getByText(/服务已停用/)).toBeTruthy();
+  expect(screen.getByText('0 个工具')).toBeTruthy();
+});
+
+it('shows one checked row for a legacy service and saves one entry when selecting a service', () => {
+  const selectTools = vi.fn();
+  const options: ComponentProps<typeof ComposerControls>['options'] = {
+    default_active_tools: [], default_permission_mode: 'Default', permission_modes: ['Default'],
+    tools: [
+      { name: 'mcp__local__echo', description: 'echo', mcp_source: { server_id: 'local', remote_tool: 'echo' } },
+      { name: 'mcp__local__other', description: 'other', mcp_source: { server_id: 'local', remote_tool: 'other' } },
+    ],
+    mcp_servers: [{ server_id: 'local', status: 'enabled', enabled: true, selected_tools: ['echo', 'other'] }],
+  };
+  setup({ tools: ['mcp__local__echo'], selectTools, options });
+  const checkbox = screen.getByRole('checkbox', { name: /local/ }) as HTMLInputElement;
+  expect(screen.getAllByRole('checkbox')).toHaveLength(1);
+  expect(screen.getByText('2 个工具')).toBeTruthy();
+  expect(screen.queryByText(/echo|other/)).toBeNull();
+  expect(checkbox.checked).toBe(true);
+  fireEvent.click(checkbox);
+  expect(selectTools).toHaveBeenLastCalledWith([]);
+  cleanup();
+  setup({ tools: [], selectTools, options });
+  fireEvent.click(screen.getByRole('checkbox', { name: /local/ }));
+  expect(selectTools).toHaveBeenLastCalledWith(['mcp:local']);
 });
 
 it('keeps permission-mode refresh read-only', () => {

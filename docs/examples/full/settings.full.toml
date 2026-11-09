@@ -310,6 +310,9 @@ max_result_bytes = 65536 # 返回模型的正文预算；不限制远端服务�
 max_concurrency = 1 # 每宿主到此远程服务允许并发借用的调用数；不同项目各自拥有资源管理器。
 [mcp.servers.remote.headers_env]
 Authorization = "MY_MCP_AUTHORIZATION" # 值为父环境变量名，变量内容须含服务要求的完整认证头值；此处不写美元花括号或Token。
+# 也可删除上面的 Authorization 引用，在私有配置中直接填写完整头值。
+# [mcp.servers.remote.headers]
+# Authorization = "Bearer <token>"
 
 # 0.5.7移除整个 sandbox/delivery 和 MCP allow_sandbox；旧会话不兼容。
 # 云端连接统一放私有 connections.json，见 cloud-configuration-reference.md；不配置则只运行本机。

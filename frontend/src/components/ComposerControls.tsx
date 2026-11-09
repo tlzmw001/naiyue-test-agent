@@ -41,7 +41,29 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
   const [mcpReport, setMcpReport] = useState<McpRefreshResult | null>(null);
   const [mcpError, setMcpError] = useState(false);
   const mcpPending = useRef(false);
-  const enabledCount = options ? tools.filter(name => options.tools.some(tool => tool.name === name && tool.available !== false)).length : tools.length;
+  const builtinTools = options?.tools.filter(tool => !tool.mcp_source) ?? [];
+  const mcpStatus = options?.mcp_servers ?? [];
+  const serviceIds = new Set(mcpStatus.map(server => server.server_id));
+  for (const tool of options?.tools ?? []) {
+    if (tool.mcp_source) serviceIds.add(tool.mcp_source.server_id);
+  }
+  function serviceFor(name: string) {
+    if (name.startsWith('mcp:')) return name.slice(4);
+    const registered = options?.tools.find(tool => tool.name === name);
+    if (registered) return registered.mcp_source?.server_id;
+    const parts = name.split('__');
+    return parts.length === 3 && parts[0] === 'mcp' && !parts[1].endsWith('_')
+      && !parts[2].startsWith('_') && serviceIds.has(parts[1]) ? parts[1] : undefined;
+  }
+  const groups = [...serviceIds].map(id => {
+    const status = mcpStatus.find(server => server.server_id === id);
+    const count = (options?.tools ?? []).filter(tool => tool.mcp_source?.server_id === id && tool.available !== false).length;
+    const enabled = status?.enabled ?? count > 0;
+    return { id, enabled, count: enabled ? count : 0,
+      selected: tools.some(name => serviceFor(name) === id) };
+  });
+  const enabledCount = options ? builtinTools.filter(tool => tools.includes(tool.name) && tool.available !== false).length
+    + groups.filter(group => group.enabled && group.selected).length : tools.length;
   async function refreshMcp() {
     if (mcpPending.current) return;
     mcpPending.current = true; setRefreshingMcp(true); setMcpError(false);
@@ -129,17 +151,23 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
             </label>)}
           </fieldset> : <fieldset className={styles.fieldset} disabled={disabled}>
             <legend className={styles.srOnly}>选择主 Agent 工具</legend>
-            {!options?.tools.length && <p className={styles.note}>没有已注册工具</p>}
-            {options?.tools.map(tool => <label key={tool.name} className={styles.option}>
+            {!builtinTools.length && !groups.length && <p className={styles.note}>没有已注册工具</p>}
+            {builtinTools.map(tool => <label key={tool.name} className={styles.option}>
               <input type="checkbox" disabled={tool.available === false} checked={tools.includes(tool.name)} onChange={event =>
                 selectTools(event.target.checked ? [...tools, tool.name] : tools.filter(name => name !== tool.name))} />
               <span><strong>{tool.name}</strong>
-                {tool.mcp_source && <small>MCP 来源：{tool.mcp_source.server_id} / {tool.mcp_source.remote_tool}
-                  {tool.mcp_source.transport && ` · ${tool.mcp_source.transport}`}</small>}
                 {!!tool.subagent_roles?.length && <small>子 Agent 角色：{tool.subagent_roles.join('、')}</small>}
                 {tool.available === false && <small>{tool.unavailable_reason === 'server_disabled' ? '服务已停用' :
                   tool.unavailable_reason === 'tool_disabled' ? '工具已从服务允许名单移除' : '工具定义已变化，请刷新 MCP 配置'}；保留已保存的会话选择。</small>}
                 <small className={styles.toolDescription} title={tool.description}>{tool.description}</small></span>
+            </label>)}
+            {groups.map(group => <label key={`mcp:${group.id}`} className={styles.option}
+              title={group.enabled ? undefined : '服务已停用'}>
+              <input type="checkbox" disabled={!group.enabled} checked={group.selected} onChange={event => {
+                const remaining = tools.filter(name => serviceFor(name) !== group.id);
+                selectTools(event.target.checked ? [...remaining, `mcp:${group.id}`] : remaining);
+              }} />
+              <span><strong>{group.id}</strong><small>{group.count} 个工具</small></span>
             </label>)}
           </fieldset>}
         </div>
@@ -151,9 +179,10 @@ export default function ComposerControls({ options, mode, tools, disabled, loadi
       </>}
       {open === 'tools' && <div aria-live="polite">
         {mcpError && <p role="status" className={styles.note}>MCP 配置刷新失败，请检查配置后重试；已生效配置保持。</p>}
-        {(mcpReport?.servers ?? options?.mcp_servers ?? []).map(server => <p key={server.server_id} className={styles.note}>
+        {(mcpReport?.servers ?? mcpStatus).filter(server => server.status === 'error' || server.draining).map(server =>
+          <p key={server.server_id} className={styles.note}>
           {server.server_id}：{server.status === 'error' ? server.enabled ? '刷新失败，原服务仍启用' : '刷新失败，服务未启用' :
-            server.enabled ? '已启用' : server.draining ? '已停用，在途调用收尾中' : '已停用'}
+            '已停用，在途调用收尾中'}
           {server.error === 'connection_configuration_changed' && '；连接配置已变化，本次未应用，请停用并收尾后再启用。'}
         </p>)}
       </div>}

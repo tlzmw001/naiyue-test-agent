@@ -20,7 +20,6 @@ from naiyue_test_agent.application.errors import SessionBusyError
 from .agent_session import AgentSession, build_session
 from .background_tasks import BackgroundProcessManager
 from .task_queries import TaskQueries
-from naiyue_test_agent.tools.subagent import subagent_selection
 
 
 import logging
@@ -65,7 +64,7 @@ class SessionService:
         self.memory_jobs = None
         self._tool_registry = tool_registry if tool_registry is not None else ToolRegistry()
         initial = self._tool_registry.names() if initial_active_tools is None else initial_active_tools
-        self._initial_active_tools = tuple(spec.tool.name for spec in self._tool_registry.select(subagent_selection(initial)))
+        self._initial_active_tools = self._tool_registry.session_selection(initial)
         self._sessions: dict[str, AgentSession] = {}
         self._subagents: dict[str, dict] = {}
         self._lock = Lock()

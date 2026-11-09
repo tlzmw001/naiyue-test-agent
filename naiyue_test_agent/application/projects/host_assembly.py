@@ -53,7 +53,7 @@ async def assemble_host(*, catalog, parent, personal, admission, database_path, 
             return sessions.borrow_mcp(session_id, agent_path, server_id)
         await register_mcp_tools(registry, resources, borrow_mcp=borrow_mcp)
         application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
-        registry.select(initial)
+        registry.select(tuple(name for name in initial if not name.startswith('mcp:')))
         sessions = application.SessionService(catalog, registry, initial_active_tools=initial,
             permission_settings=settings.permissions, progress_settings=settings.progress,
             max_active_runs=settings.max_active_runs, mcp_resources=resources,
@@ -102,5 +102,5 @@ def prepare_tools(tools, settings, initial_active_tools):
     initial = subagent_selection(registry.names() if initial_active_tools is None else initial_active_tools)
     if not any(server.enabled for server in settings.mcp.servers.values()):
         application.validate_permission_rules(settings.permissions, registry.select(registry.names()))
-        registry.select(initial)
+        registry.select(tuple(name for name in initial if not name.startswith('mcp:')))
     return registry, initial

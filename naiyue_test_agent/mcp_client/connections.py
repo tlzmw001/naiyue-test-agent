@@ -173,6 +173,7 @@ class _BudgetTransport(httpx2.AsyncBaseTransport):
 async def _http_transport(settings, network, environment=None, *, dial_target=None, dial_deadline=None, close_timeout=None):
     from mcp.client.streamable_http import streamable_http_client
     headers = {name: _environment_value(reference, environment) for name, reference in settings.headers_env.items()}
+    headers.update({name: value.get_secret_value() for name, value in settings.headers.items()})
     if any(any(ord(c) < 32 or ord(c) == 127 for c in value) for value in headers.values()):
         raise ValueError('mcp_invalid_credential_header')
     headers['Accept-Encoding'] = 'identity'

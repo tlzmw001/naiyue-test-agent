@@ -39,6 +39,34 @@ def test_local_http_discovery_sends_configured_token(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
+def test_local_mcp_reads_header_from_private_settings(tmp_path):
+    from naiyue_test_agent.mcp_client.discovery import discover_server
+    from naiyue_test_agent.settings import load_settings
+    from naiyue_test_agent.tools.web_settings import NetworkSettings
+
+    path = tmp_path / 'headers.jsonl'
+    path.with_suffix('.headers').write_text(json.dumps({'authorization': 'Bearer fixture-file'}))
+    config = tmp_path / 'settings.toml'
+
+    async def scenario():
+        async with http_server(path, json_response=True) as url:
+            config.write_text(f'''[mcp.servers.local]
+enabled = true
+transport = "streamable_http"
+url = "{url}"
+[mcp.servers.local.headers]
+Authorization = "Bearer fixture-file"
+''')
+            settings = load_settings(config)
+            assert 'fixture-file' not in settings.model_dump_json()
+            server = settings.mcp.servers['local']
+            catalog = await discover_server('local', server, NetworkSettings(mode='direct'))
+            assert catalog.tools
+            assert not any(row['event'] == 'auth_rejected' for row in facts(path))
+
+    asyncio.run(scenario())
+
+
 async def until(predicate):
     async with asyncio.timeout(15):
         while not predicate():

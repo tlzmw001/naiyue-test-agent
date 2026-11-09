@@ -53,16 +53,32 @@ it('explains the MCP approval source and session scope while keeping the existin
   expect(submit).toHaveBeenCalledExactlyOnceWith([{ approval_id: 'a', decision: 'approve' }], ['a']);
 });
 
-it('shows source and explicit child roles while changing only the main Agent selection', () => {
+it('shows only the service name and tool count while selecting the main Agent group', () => {
   const selectTools = vi.fn();
   render(<ComposerControls options={{ tools: [{ name: call.name, description: 'external', mcp_source: source,
     subagent_roles: ['tester'] }], default_active_tools: [], default_permission_mode: 'Default', permission_modes: ['Default'] }}
     tools={[]} disabled={false} loading={false} error={false} reload={vi.fn()} selectMode={vi.fn()} selectTools={selectTools}
     sessionId="one" menu="tools" setMenu={vi.fn()} runCommand={vi.fn()} compactDisabled={false}
     api={new WebApi('fixture')} selectSkill={vi.fn()} focusEditor={vi.fn()} />);
-  expect(screen.getByText(/MCP 来源：local \/ echo/)).toBeTruthy();
-  expect(screen.getByText('子 Agent 角色：tester')).toBeTruthy();
+  expect(screen.getByText('local')).toBeTruthy();
+  expect(screen.getByText('1 个工具')).toBeTruthy();
+  expect(screen.queryByText('echo')).toBeNull();
+  expect(screen.queryByText(/tester|MCP ·/)).toBeNull();
   fireEvent.click(screen.getByRole('checkbox'));
-  expect(selectTools).toHaveBeenCalledExactlyOnceWith([call.name]);
+  expect(selectTools).toHaveBeenCalledExactlyOnceWith(['mcp:local']);
   expect(screen.getByText('下一次模型调用生效。')).toBeTruthy();
+});
+
+it.each(['mcp__a__b__echo', 'mcp__a___echo'])('does not infer a different service from ambiguous missing name %s', old => {
+  const selectTools = vi.fn();
+  render(<ComposerControls options={{ tools: [{ name: 'mcp__a__other', description: '',
+    mcp_source: { server_id: 'a', remote_tool: 'other' } }], default_active_tools: [],
+    default_permission_mode: 'Default', permission_modes: ['Default'] }}
+    tools={[old]} disabled={false} loading={false} error={false} reload={vi.fn()} selectMode={vi.fn()} selectTools={selectTools}
+    sessionId="one" menu="tools" setMenu={vi.fn()} runCommand={vi.fn()} compactDisabled={false}
+    api={new WebApi('fixture')} selectSkill={vi.fn()} focusEditor={vi.fn()} />);
+  const checkbox = screen.getByRole('checkbox');
+  expect(checkbox).toHaveProperty('checked', false);
+  fireEvent.click(checkbox);
+  expect(selectTools).toHaveBeenCalledExactlyOnceWith([old, 'mcp:a']);
 });

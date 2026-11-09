@@ -92,7 +92,8 @@ def test_unchanged_settings_refreshes_a_revised_schema_in_the_same_session(monke
     asyncio.run(scenario())
 
 
-def test_append_allowlist_keeps_process_and_unchanged_refresh_keeps_authority(monkeypatch, tmp_path):
+@pytest.mark.parametrize('selection', [NAME, 'mcp:local'])
+def test_append_allowlist_keeps_process_and_unchanged_refresh_keeps_authority(monkeypatch, tmp_path, selection):
     async def scenario():
         path, config = tmp_path / 'same.jsonl', tmp_path / 'settings.toml'
         server = stdio_settings(path, 'stateful', allowed_tools=['echo'])
@@ -100,6 +101,7 @@ def test_append_allowlist_keeps_process_and_unchanged_refresh_keeps_authority(mo
             call('mcp__local__other', {}), AIMessage(content='two')], server=server, mode='BypassApprovals')
         try:
             sid = await app.host.sessions.create('A')
+            await app.host.sessions.select_tools(sid, [selection])
             await app.host.runs.start(sid, [('user', 'one')])
             first = app.host.tools.list()[0].permissions.identity()
             write_config(config, {'local': server})
@@ -108,7 +110,6 @@ def test_append_allowlist_keeps_process_and_unchanged_refresh_keeps_authority(mo
             expanded = server.model_copy(update={'allowed_tools': ['echo', 'other']})
             write_config(config, {'local': expanded})
             await app.host.mcp.refresh(config)
-            await app.host.sessions.select_tools(sid, ['mcp__local__other'])
             await app.host.runs.start(sid, [('user', 'two')])
             assert [r['count'] for r in calls(path)] == [1, 2]
             assert len({r['pid'] for r in calls(path)}) == 1

@@ -137,8 +137,9 @@ class MCPSessionResources:
         references = set(server.headers_env.values()) | {ref[2:-1] for ref in server.env.values()}
         source = os.environ if credential_environment is None else credential_environment
         environment = {name: source.get(name) for name in references}
-        connection = server.model_dump(exclude={'enabled', 'allowed_tools'})
-        content = json.dumps([server_id, connection, dict(self._network), environment, dial_target],
+        connection = server.model_dump(exclude={'enabled', 'allowed_tools', 'headers'})
+        headers = {name: value.get_secret_value() for name, value in server.headers.items()}
+        content = json.dumps([server_id, connection, dict(self._network), environment, headers, dial_target],
                              sort_keys=True, separators=(',', ':')).encode()
         return environment, hmac.new(self._salt, content, hashlib.sha256).hexdigest()
 

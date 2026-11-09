@@ -69,8 +69,9 @@ def test_cloud_runner_uses_separate_service_credentials_and_rotates_them(tmp_pat
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize('supports_headers', [False, True])
-def test_coordinator_dispatches_credential_values_without_storing_them(tmp_path, monkeypatch, supports_headers):
+@pytest.mark.parametrize('supports_headers,source', [(False, 'env'), (True, 'env'), (True, 'file')])
+def test_coordinator_dispatches_credential_values_without_storing_them(tmp_path, monkeypatch, supports_headers, source):
+    import json
     from naiyue_test_agent.application.cloud.runtime import open_cloud_runtime
     from naiyue_test_agent.storage.cloud.releases import meta
     from cloud_helpers import owner_headers
@@ -78,9 +79,14 @@ def test_coordinator_dispatches_credential_values_without_storing_them(tmp_path,
     from test_runner_control import client, connect, hello, prepared
 
     monkeypatch.setenv('LOGS_AUTH', 'Bearer fixture-cloud')
-    settings = CloudMCPSettings.model_validate({'servers': {'logs': {
-        'url': 'https://logs.example.test/mcp', 'headers_env': {'Authorization': 'LOGS_AUTH'}}}})
-    with open_cloud_runtime(config(tmp_path).model_copy(update={'mcp': settings})) as runtime:
+    values = {'headers_env': {'Authorization': 'LOGS_AUTH'}} if source == 'env' else {
+        'headers': {'Authorization': 'Bearer fixture-cloud'}}
+    mcp = {'servers': {'logs': {'url': 'https://logs.example.test/mcp', **values}}}
+    settings = CloudMCPSettings.model_validate(mcp)
+    settings_file = tmp_path / 'cloud.json'
+    settings_file.write_text(json.dumps({'mcp': mcp}))
+    settings_file.chmod(0o600)
+    with open_cloud_runtime(config(tmp_path).model_copy(update={'mcp': settings}), settings_path=settings_file) as runtime:
         b = prepared(runtime)
         with client(runtime) as http, connect(http, runtime, b) as ws:
             capabilities = ['mcp:refresh'] + (['mcp:headers'] if supports_headers else [])
@@ -90,8 +96,23 @@ def test_coordinator_dispatches_credential_values_without_storing_them(tmp_path,
             if supports_headers:
                 frame = ws.receive_json()
                 assert frame['kind'] == 'mcp_refresh'
-                assert frame['credential_environment'] == {'LOGS_AUTH': 'Bearer fixture-cloud'}
-                assert frame['settings']['servers']['logs']['headers_env'] == {'Authorization': 'LOGS_AUTH'}
+                logs = frame['settings']['servers']['logs']
+                reference = logs['headers_env']['Authorization']
+                assert frame['credential_environment'] == {reference: 'Bearer fixture-cloud'}
+                assert 'headers' not in logs
+                if source == 'file':
+                    fence = {key: welcome[key] for key in ('connection_id', 'generation', 'boot_id', 'state_epoch')}
+                    ws.send_json(dict(kind='mcp_applied', refresh_id=frame['refresh_id'], digest=frame['digest'],
+                        services=[dict(server_id='logs', route='direct', tools=[], status='available')], **fence))
+                    ws.send_json(dict(kind='heartbeat', **fence))
+                    assert ws.receive_json() == welcome
+                    values['headers']['Authorization'] = 'Bearer rotated-file'
+                    settings_file.write_text(json.dumps({'mcp': mcp}))
+                    intent = {'refresh_id': str(uuid4())}
+                    assert http.post(path, headers=owner_headers(runtime), json=intent).status_code == 200
+                    next_frame = ws.receive_json()
+                    assert next_frame['refresh_id'] == intent['refresh_id']
+                    assert next_frame['credential_environment'] == {reference: 'Bearer rotated-file'}
             else:
                 assert http.get(path, headers=owner_headers(runtime)).json()['status'] == 'unsupported'
                 fence = {key: welcome[key] for key in ('connection_id', 'generation', 'boot_id', 'state_epoch')}
@@ -100,6 +121,7 @@ def test_coordinator_dispatches_credential_values_without_storing_them(tmp_path,
             with runtime.database.transaction() as db:
                 assert 'fixture-cloud' not in repr(meta(db, 'mcp-settings'))
                 assert 'fixture-cloud' not in repr(meta(db, 'mcp-task:' + b.task_id))
+                assert 'rotated-file' not in repr(meta(db, 'mcp-task:' + b.task_id))
 
 
 def test_owner_refresh_is_fenced_and_reports_only_after_runner_applies(tmp_path):

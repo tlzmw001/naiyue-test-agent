@@ -1,9 +1,10 @@
 """Cloud MCP service configuration and bounded Runner projections."""
+import hashlib
 import re
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 
 from .cloud_networks import EntryId, ServiceTarget
 from .cloud_tasks import CloudRecord, UUIDText
@@ -11,6 +12,7 @@ from ..mcp_client.settings import MCPServerSettings, MCPSettings, TOOL_NAME
 
 
 MCP_HEADERS_CAPABILITY = 'mcp:headers'
+FILE_HEADER_PREFIX = '__NYT_MCP_FILE_'
 
 
 class CloudMCPServer(CloudRecord):
@@ -20,12 +22,18 @@ class CloudMCPServer(CloudRecord):
     network_slot: EntryId | None = None
     allow_insecure_http: bool = False
     headers_env: dict[str, str] = Field(default_factory=dict, repr=False, exclude_if=lambda value: not value)
+    headers: dict[str, SecretStr] = Field(default_factory=dict, repr=False, exclude=True)
     connect_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     call_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     idle_timeout_seconds: float = Field(default=300.0, gt=0, le=3600)
 
     def client_settings(self):
-        return MCPServerSettings(transport='streamable_http', **self.model_dump(exclude={'route', 'network_slot'}))
+        return MCPServerSettings(transport='streamable_http', headers=self.headers,
+                                 **self.model_dump(exclude={'route', 'network_slot'}))
+
+    def file_header_refs(self, server_id):
+        return {header: FILE_HEADER_PREFIX + server_id + '_' + hashlib.sha256(header.lower().encode()).hexdigest()
+                for header in self.headers}
 
     @model_validator(mode='after')
     def check_endpoint(self):
@@ -40,6 +48,13 @@ class CloudMCPSettings(CloudRecord):
 
     def credential_names(self):
         return {name for server in self.servers.values() if server.enabled for name in server.headers_env.values()}
+
+    def projected(self):
+        value = self.model_dump(mode='json')
+        for name, server in self.servers.items():
+            if server.headers:
+                value['servers'][name]['headers_env'] = server.headers_env | server.file_header_refs(name)
+        return value
 
     @model_validator(mode='after')
     def check_ids(self):

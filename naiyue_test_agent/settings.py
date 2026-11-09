@@ -84,7 +84,8 @@ class AppSettings(BaseModel):
         if value is None:
             return None
         if (not isinstance(value, (list, tuple))
-                or any(not isinstance(name, str) or not re.fullmatch(r'[a-zA-Z0-9_.-]+', name) for name in value)
+                or any(not isinstance(name, str) or not re.fullmatch(r'[a-zA-Z0-9_.-]+|mcp:[A-Za-z0-9_]{1,16}', name)
+                       for name in value)
                 or len(set(value)) != len(value)):
             raise ValueError('Default active tools require unique tool names')
         return tuple(value)
