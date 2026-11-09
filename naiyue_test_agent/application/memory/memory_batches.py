@@ -2,6 +2,7 @@
 
 import json
 import math
+import re
 from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -13,6 +14,9 @@ from naiyue_test_agent.tools.memory import MemoryInput
 from naiyue_test_agent.tools.memory_writes import Kind, MemoryProposal
 from naiyue_test_agent.contracts.memory import MemoryReadError
 from .memory_sources import SECRET
+
+
+_QUOTE_FORMAT = re.compile(r'[\s`]+')
 
 
 def model_batch(batch):
@@ -226,6 +230,7 @@ def response_schema():
 
 def proposal_request(proposal, sources, related=()):
     diagnostic = 'fields_invalid'
+    format_match = None
     try:
         item = _Proposal.model_validate(proposal)
         old = None
@@ -262,6 +267,14 @@ def proposal_request(proposal, sources, related=()):
             diagnostic = 'quote_not_found'
             offset = source['text'].find(reference.quote)
             if offset < 0:
+                format_match = 'none'
+                normalized_quote = _QUOTE_FORMAT.sub('', reference.quote)
+                if normalized_quote:
+                    normalized_source = _QUOTE_FORMAT.sub('', source['text'])
+                    first = normalized_source.find(normalized_quote)
+                    if first >= 0:
+                        second = normalized_source.find(normalized_quote, first + 1)
+                        format_match = 'ambiguous' if second >= 0 else 'unique'
                 raise ValueError('Quote must match a current batch source')
             diagnostic = 'quote_ambiguous'
             if source['text'].find(reference.quote, offset + 1) >= 0:
@@ -277,4 +290,6 @@ def proposal_request(proposal, sources, related=()):
         failure = MemoryReadError('memory_proposal_invalid')
         # Internal diagnostic only: preserve the public error type/code and never copy model input.
         failure._diagnostic_reason = diagnostic
+        if format_match is not None:
+            failure._quote_format_match = format_match
         raise failure from error

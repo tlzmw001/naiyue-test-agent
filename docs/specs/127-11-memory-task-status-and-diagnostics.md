@@ -15,6 +15,12 @@ MemoryJobs → memory_job_runner.drive/_batch → 概览保存及逐条 proposal
 - 不记录模型返回、来源文本、完整异常字符串/Pydantic输入、凭证或原始供应商响应。原计数/事件/异常类型与API输出保留。
 - 接线复核发现共享服务默认WARNING会过滤INFO汇总；仅在service.__main__为memory_job_runner启用INFO，其他日志级别不变。日志投递复用diagnostics.safe_log，日志设施异常不改变已保存结果或掩盖主异常；独立进程启动接线和故障注入先红后绿验证。CLI/Web均委托该共享服务，无需修改它们的启动器。
 
+### 引文格式诊断（2026-11-06）
+
+仅在逐字查找失败时，对指定的当前批次来源片段和引文移除空白与反引号，再统计连续子串命中。原失败日志保留 `detail=quote_not_found`，追加 `quote_format_match=unique|ambiguous|none`。规范化后引文为空时归为 `none`。唯一命中仅是排查信号，写入仍要求逐字且唯一匹配。日志只记录分类，不记录引文、来源文本或偏移。
+
+涉及 `memory_batches.py`、`memory_job_runner.py` 和诊断测试。验证同一来源唯一命中、多处命中、无命中、空引文以及不会跨来源搜索，并检查 worker 的原拒写、部分完成状态和日志脱敏。
+
 ## 前端
 
 仅记忆任务使用紧凑状态与一句说明；Shell输出及归档保持。任务ID保留用于日志关联；原始JSON摘要与原始termination不再显示。

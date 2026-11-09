@@ -259,8 +259,10 @@ def _failure(job, diagnostic, error, *, stage='job', proposal_index=0):
     job.error_type = safe_error_type(error)
     reason = safe_memory_reason(error) if isinstance(error, MemoryReadError) else None
     detail = getattr(error, '_diagnostic_reason', None) if reason == 'memory_proposal_invalid' else None
-    safe_log(logger.error, '%s task_id=%s batch=%s stage=%s proposal_index=%s error_type=%s reason=%s detail=%s',
-        diagnostic, job.task_id, job.batches, stage, proposal_index, job.error_type, reason, detail)
+    format_match = getattr(error, '_quote_format_match', None) if detail == 'quote_not_found' else None
+    suffix = f' quote_format_match={format_match}' if format_match in ('unique', 'ambiguous', 'none') else ''
+    safe_log(logger.error, '%s task_id=%s batch=%s stage=%s proposal_index=%s error_type=%s reason=%s detail=%s%s',
+        diagnostic, job.task_id, job.batches, stage, proposal_index, job.error_type, reason, detail, suffix)
 
 
 async def _batch(service, job):
