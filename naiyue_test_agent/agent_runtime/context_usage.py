@@ -34,8 +34,9 @@ def compose_model_prompt(base, project_parts, specs, roles=()):
         parts.append({'id': 'subagent_roles', 'count': len(roles), 'text':
             '\n\nAvailable subagent roles (agent parameter):\n'
             + '\n'.join(f'{name}: {description}' for name, description in roles)
-            + '\nEach delegation starts a new foreground task with independent history. '
-              'The parent waits for its report; delegation does not grant permission to internal actions.'})
+            + '\nA new instance has independent conversation history and does not automatically see the full parent conversation. '
+              'Include necessary context and input locations in the task; pass its agent_id to continue an existing instance. '
+              'The parent continues after receiving the report.'})
     descriptors = [{key: part[key] for key in ('id', 'source', 'count') if key in part}
                    | {'chars': len(part['text'])} for part in parts]
     return SystemMessage(content=''.join(p['text'] for p in parts), response_metadata={PARTS_KEY: descriptors})

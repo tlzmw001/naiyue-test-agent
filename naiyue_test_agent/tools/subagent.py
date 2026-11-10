@@ -64,9 +64,11 @@ def parse_subagent_specs(value):
 
 class SubAgentInput(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
-    agent: str = Field(min_length=1)
-    task: str = Field(min_length=1)
-    agent_id: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
+    agent: str = Field(min_length=1, description='A registered role name from the available subagent roles list.')
+    task: str = Field(min_length=1, description=(
+        'A self-contained task with necessary context, input locations, scope and expected deliverables.'))
+    agent_id: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$', description=(
+        'A previously returned instance ID to continue that subagent; omit to create a new instance.'))
 
     @field_validator('agent', 'task')
     @classmethod
@@ -82,7 +84,13 @@ def create_subagent_tool():
 
     @tool('subagent', args_schema=execution, response_format='content_and_artifact')
     async def delegate(agent: str, task: str, runtime: ToolRuntime[RuntimeContext], agent_id: str | None = None):
-        """Delegate a foreground task. Omit agent_id for fresh history, or pass a returned ID to continue."""
+        """Delegate work to a registered subagent role.
+
+        When the user or a loaded Skill explicitly requires delegation, call this tool for that work.
+        Provide a self-contained task with necessary context, input locations, scope and expected deliverables.
+        Omit agent_id to start a new instance, or pass a returned agent_id to continue that instance.
+        Independent tasks may be delegated in parallel.
+        """
         require_tool_permit(runtime)
         port = runtime.context.scope.capabilities.invoke_subagent
         if not callable(port):
