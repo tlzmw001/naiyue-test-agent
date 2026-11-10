@@ -9,6 +9,7 @@ import httpx
 from naiyue_test_agent.agent_runtime.async_utils import await_settled
 from naiyue_test_agent.contracts.cloud_json import parse_object
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
+from naiyue_test_agent.model_access.network import client_options
 from .work import cloud_work
 
 logger=logging.getLogger(__name__)
@@ -28,7 +29,17 @@ class ModelRelay:
 
     def http(self):
         if self.client is None:
-            self.client=httpx.AsyncClient(follow_redirects=False,timeout=None)
+            network=self.authority.runtime.settings.model_network
+            options={}
+            if network.mode!='auto' or network.no_proxy:
+                mounts={}
+                for route in self.authority.routes.values():
+                    origin=str(httpx.URL(route.upstream).copy_with(path='/',query=None,fragment=None))
+                    if origin not in mounts:
+                        mounts[origin]=httpx.AsyncHTTPTransport(**client_options(route.upstream,network))
+                options=dict(mounts=mounts,trust_env=False,
+                    transport=httpx.AsyncHTTPTransport(verify=httpx.create_ssl_context(trust_env=True),trust_env=False))
+            self.client=httpx.AsyncClient(follow_redirects=False,timeout=None,**options)
         return self.client
 
     async def aclose(self):

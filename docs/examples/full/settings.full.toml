@@ -54,6 +54,19 @@ proxy_username = "REPLACE_WITH_PROXY_USERNAME" # 原始代理用户名；与密�
 proxy_password = 'REPLACE_WITH_PROXY_PASSWORD' # 原始代理密码；单引号保留反斜杠等字符，可显式空密码，无认证时同时移除两个认证字段。
 no_proxy = ["localhost", "127.0.0.1", "::1", ".corp.example", "*.internal.example", "10.0.0.0/8", "192.168.1.*", "fd00::/8"] # 主机/IP/CIDR或IPv4尾部整段通配；不写协议、端口、路径；点前缀含自身及子域，星点前缀仅子域。
 
+# 本机模型SDK独立路由：主会话、子智能体、压缩、记忆等共用模型目录的请求均采用本节。
+# 不继承上面的[network]；省略本节等于auto。修改后重启本机服务，无需改models.json。
+# 云端任务的模型出网由Linux cloud.json的model_network配置，本节不会传给Runner。
+[model_network]
+mode = "auto" # auto保留SDK原有环境代理行为；direct忽略代理；proxy使用手动代理，失败不会回退直连。
+# proxy = "http://127.0.0.1:7890" # 代理服务地址，HTTP(S)代理均支持；启用手动代理时将mode改为proxy。
+# proxy_username = "REPLACE_WITH_PROXY_USERNAME" # 有代理认证才填写；与proxy_password配套，原始字符由程序编码。
+# proxy_password = 'REPLACE_WITH_PROXY_PASSWORD' # 仅放私有配置；不自动展开${ENV_NAME}，无认证同时省略两项。
+no_proxy = [] # 格式与[network]相同，例如["localhost", "127.0.0.1", "10.*", ".corp.example"]；显式名单优先。
+# TLS证书校验保持开启；direct/proxy仍读取SSL_CERT_FILE/SSL_CERT_DIR（在运行服务的机器配置）。
+# 不支持SOCKS/PAC、单个模型覆盖或运行中热更新；该配置不改变模型的超时/重试参数。
+# SDK初建仍可能解析进程原有代理变量；若原变量格式无效或依赖未安装的代理协议，需先移除/修正。
+
 [tool_retry]
 tools = ["web_fetch", "web_search", "mcp__*"] # 可重试的外部工具选择：网页工具、精确MCP名或服务通配；不控制模型请求、Shell和AITest。
 max_retries = 2 # 初试之外最多追加几次，非负整数；0禁止追加重试，业务错误不会因增加次数变成可重试。

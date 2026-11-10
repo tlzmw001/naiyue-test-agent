@@ -132,6 +132,10 @@
     "git_executable": "git",
     "git_timeout_seconds": 30
   },
+  "model_network": {
+    "mode": "auto",
+    "no_proxy": []
+  },
   "model_proxy": {
     "config_path": "/srv/nyt/private/models.json",
     "upstreams": {},

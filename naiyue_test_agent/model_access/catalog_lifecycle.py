@@ -9,21 +9,30 @@ from langchain_anthropic import ChatAnthropic
 from langchain_ollama import ChatOllama
 
 from .http_observation import install_http_hooks, close_http_observation, client_token
+from .network import client_options
 
 
 logger = logging.getLogger(__name__)
 
 
-def prepare_owned_clients(models, owned, *, http_options=None):
+def prepare_owned_clients(models, owned, *, http_options=None, network=None):
     seen = set()
     for model in models:
         if id(model) in seen:
             continue
         seen.add(id(model))
         if isinstance(model, ChatOllama):
-            install_http_hooks(model._async_client._client, asynchronous=True)
-            install_http_hooks(model._client._client, asynchronous=False)
-            owned.extend(((model._async_client._client, True), (model._client._client, False)))
+            for name, asynchronous in (('_async_client', True), ('_client', False)):
+                sdk = getattr(model, name)
+                original = sdk._client
+                owned.append((original, asynchronous))
+                options = client_options(str(original.base_url), network)
+                if options:
+                    sdk = type(sdk)(host=str(original.base_url), headers=original.headers,
+                        timeout=original.timeout, follow_redirects=original.follow_redirects, **options)
+                    setattr(model, name, sdk)
+                    owned.append((sdk._client, asynchronous))
+                install_http_hooks(sdk._client, asynchronous=asynchronous)
             continue
         if isinstance(model, ChatOpenAI):
             sync, asynchronous = model.root_client, model.root_async_client
@@ -39,6 +48,8 @@ def prepare_owned_clients(models, owned, *, http_options=None):
         options = {'timeout': sync.timeout}
         if proxy:
             options['proxy'] = proxy
+        options.update(client_options(str(sync.base_url), network,
+            http_module=transport_module, native_proxy=proxy))
         if http_options:options.update(http_options)
         sync_http = transport_module.Client(**options)
         owned.append((sync_http, False))

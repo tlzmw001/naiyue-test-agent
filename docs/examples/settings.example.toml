@@ -151,6 +151,18 @@ mode = "auto"
 # 例如内网直连可填["10.0.0.0/8", "192.168.1.*", "fd00::/8", "*.corp.example"]。
 no_proxy = []  # 例如 ["localhost", "127.0.0.1", "::1", ".corp.example", "192.168.1.20"]
 
+# 模型SDK的独立网络设置；不继承[network]，省略时保留SDK现有环境代理行为。
+# 主会话、子智能体、压缩和记忆共用此设置；修改后重启本机服务。
+# 云端模型由开发机cloud.json的model_network控制，Runner到Coordinator的链路不变。
+[model_network]
+mode = "auto" # auto环境代理；direct忽略代理；proxy手动代理，失败不会改走直连。
+# proxy = "http://127.0.0.1:7890" # 启用手动代理时同时改mode="proxy"；支持HTTP/HTTPS代理。
+# proxy_username = "alice" # 有认证时与下面的密码配套；填写原始值，程序负责编码特殊字符。
+# proxy_password = 'REPLACE_WITH_PROXY_PASSWORD' # 仅填在私有文件；不会自动展开环境变量。
+no_proxy = [] # 与[network]格式相同；例如["localhost", "127.0.0.1", "10.*", ".corp.example"]。
+# TLS校验始终开启，仍采用SSL_CERT_FILE/SSL_CERT_DIR；不支持SOCKS/PAC或热更新。
+# SDK初建仍可能读取原环境代理；原变量格式无效或使用未安装的代理协议时，需先移除/修正。
+
 # 直接启动AITest CLI，无Shell解析。默认从有效PATH查找aitest。
 # 也可以用独立虚拟环境Python：executable="/path/to/venv/bin/python"，prefix_args=["-m", "aitest_kit.cli"]。
 # Windows可用单引号路径，如executable='D:\tools\venv\Scripts\python.exe'。

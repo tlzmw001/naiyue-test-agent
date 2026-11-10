@@ -92,10 +92,11 @@ class ModelCatalog:
         from .catalog_lifecycle import aclose_models
         await aclose_models(self._owned_http_clients)
 
-    def prepare_async_clients(self, *, http_options=None):
+    def prepare_async_clients(self, *, http_options=None, network=None):
         from .catalog_lifecycle import prepare_owned_clients
         if not self._owned_http_clients:
-            prepare_owned_clients(self._models.values(), self._owned_http_clients,http_options=http_options)
+            prepare_owned_clients(self._models.values(), self._owned_http_clients,
+                http_options=http_options, network=network)
 
     def thinking_selection(self, model_id: str) -> ThinkingSelection:
         self.get(model_id)

@@ -65,6 +65,7 @@ class AppSettings(BaseModel):
     cloud_tasks: CloudTaskSettings = Field(default_factory=CloudTaskSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     network: NetworkSettings = Field(default_factory=NetworkSettings)
+    model_network: NetworkSettings = Field(default_factory=NetworkSettings)
     tool_retry: ToolRetrySettings = Field(default_factory=ToolRetrySettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
     tools: BuiltinToolSettings = Field(default_factory=BuiltinToolSettings)
@@ -109,7 +110,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         raise ValueError('Permission settings could not be read or parsed') from error
     if {'sandbox', 'delivery'} & set(raw):
         raise ValueError('unsupported_legacy_sandbox_configuration')
-    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'default_active_tools', 'tools', 'permissions', 'process', 'tool_output', 'shell_tasks', 'storage', 'projects', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'checkpoint_retention', 'network', 'mcp', 'tool_retry', 'memory', 'image_inputs', 'cloud_tasks'}:
+    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'default_active_tools', 'tools', 'permissions', 'process', 'tool_output', 'shell_tasks', 'storage', 'projects', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'checkpoint_retention', 'network', 'model_network', 'mcp', 'tool_retry', 'memory', 'image_inputs', 'cloud_tasks'}:
         raise ValueError('Unknown runtime settings section')
     try:
         memory = MemorySettings.model_validate(raw.get('memory', {}))
@@ -141,6 +142,11 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
     except ValidationError:
         logger.error('network_settings_invalid')
         raise ValueError('Network settings are invalid') from None
+    try:
+        model_network = NetworkSettings.model_validate(raw.get('model_network', {}))
+    except ValidationError:
+        logger.error('model_network_settings_invalid')
+        raise ValueError('Model network settings are invalid') from None
     try:
         tool_retry = ToolRetrySettings.model_validate(raw.get('tool_retry', {}))
     except ValidationError:
@@ -193,7 +199,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         logger.warning('checkpoint_retention_invalid action=disabled')
         checkpoint_retention = CheckpointRetentionSettings(enabled=False)
     try:
-        return AppSettings(cloud_tasks=CloudTaskSettings.model_validate(raw.get('cloud_tasks', {})), image_inputs=image_inputs, storage=storage, projects=projects, memory=memory, tools=tools, network=network, mcp=mcp, tool_retry=tool_retry, permissions=permissions, process=process, shell_tasks=shell_tasks,
+        return AppSettings(cloud_tasks=CloudTaskSettings.model_validate(raw.get('cloud_tasks', {})), image_inputs=image_inputs, storage=storage, projects=projects, memory=memory, tools=tools, network=network, model_network=model_network, mcp=mcp, tool_retry=tool_retry, permissions=permissions, process=process, shell_tasks=shell_tasks,
                             default_active_tools=default_active_tools,
                             progress=progress, usage_persistence=usage_persistence,
                             subagents=raw.get('subagents', ()), max_active_runs=max_active_runs,

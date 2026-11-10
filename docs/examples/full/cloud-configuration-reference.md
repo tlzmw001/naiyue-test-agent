@@ -71,6 +71,22 @@ CLI统一用 `--settings C:/private/connections.json --profile development`，�
 
 ## cloud.example.json
 
+`model_network` 是 Coordinator 访问模型供应商的独立网络配置，不采用 Windows 本机的 `[model_network]` 或工具/MCP 的 `[network]`。省略时为 `{"mode":"auto","no_proxy":[]}`，保留环境代理；改为 `direct` 忽略代理。手动代理示例如下（仅复制到 Linux 私有 cloud.json，地址和凭证替换为实际值）：
+
+```json
+"model_network": {
+  "mode": "proxy",
+  "proxy": "http://proxy.example.invalid:8080",
+  "proxy_username": "REPLACE_WITH_PROXY_USERNAME",
+  "proxy_password": "REPLACE_WITH_PROXY_PASSWORD",
+  "no_proxy": ["localhost", "127.0.0.1", "10.*", ".corp.example"]
+}
+```
+
+无认证时同时省略 `proxy_username` / `proxy_password`。`no_proxy` 支持主机、IPv4/IPv6、CIDR及 IPv4 尾部整段通配，优先于代理；不填协议、端口或路径。`proxy` 模式不使用环境 NO_PROXY，失败不会回退直连；`auto` 继续考虑环境代理和 NO_PROXY，配置内旁路也优先。仅支持 HTTP/HTTPS 代理，TLS 校验保持开启并保留 Linux 服务进程的 `SSL_CERT_FILE` / `SSL_CERT_DIR`。修改后重启 Coordinator，不需要更新 Runner 模板或重建任务；此配置和代理凭证不下发 Runner，也不改变 Runner → Coordinator 的固定模型通道。
+
+Windows 本机 SDK 初次构造仍可能先解析进程原有代理变量。如果这些变量本身格式无效或需要未安装的可选代理依赖，请先移除或修正它们；有效 HTTP(S) 环境代理可被本机 `direct` / `proxy` 策略覆盖。Linux Coordinator 使用受控转发客户端，没有本机 SDK 的这一步。
+
 | 字段 | 用途 |
 | --- | --- |
 | `data_dir` (data_dir) | 开发机持久任务根；改路径不会自动搬迁数据。 |
