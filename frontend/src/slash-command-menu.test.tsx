@@ -73,6 +73,32 @@ it('completes by mouse without sending, then validates a skill with arguments in
   expect(api.skills).toHaveBeenCalledTimes(2);
 });
 
+it.each(['Enter', 'button'])('sends an edited built-in as ordinary text using %s', async method => {
+  const { input, send, compact } = await setup();
+  type(input, '/co');
+  fireEvent.click(screen.getByRole('option', { name: /\/compact 压缩上下文/ }));
+  expect(input.value).toBe('/compact ');
+  const edited = '/compact 请先整理本次排查\n保留失败证据';
+  type(input, edited);
+  if (method === 'Enter') fireEvent.keyDown(input, { key: 'Enter' });
+  else fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  await waitFor(() => expect(send).toHaveBeenCalledExactlyOnceWith(edited, false));
+  expect(compact).not.toHaveBeenCalled();
+  expect(screen.queryByText(/暂不接受参数/)).toBeNull();
+});
+
+it('sends a rewritten skill command as ordinary text after selecting a suggestion', async () => {
+  const { input, send } = await setup();
+  type(input, '/ca');
+  fireEvent.click(await screen.findByRole('option', { name: /\/case-review 检查失败用例/ }));
+  expect(input.value).toBe('/case-review ');
+  const edited = '/case-review-edited 请检查调整后的任务';
+  type(input, edited);
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await waitFor(() => expect(send).toHaveBeenCalledExactlyOnceWith(edited, false));
+  expect(screen.queryByText(/不支持的指令/)).toBeNull();
+});
+
 it('supports arrows and Tab, while complete built-ins still execute on Enter', async () => {
   const { input, compact, send } = await setup();
   type(input, '/co');
@@ -173,9 +199,9 @@ it('keeps built-ins on catalog failure and retries without losing the prefix', a
   type(input, '/not-found');
   expect(screen.getByText('没有匹配的指令或技能')).toBeTruthy();
   fireEvent.keyDown(input, { key: 'Enter' });
-  await screen.findByText(/不支持的指令/);
+  await waitFor(() => expect(send).toHaveBeenCalledExactlyOnceWith('/not-found', false));
   expect(input.value).toBe('/not-found');
-  expect(send).not.toHaveBeenCalled();
+  expect(screen.queryByText(/不支持的指令/)).toBeNull();
 });
 
 it('discards an old catalog after closing or switching sessions', async () => {

@@ -100,7 +100,7 @@ it('reports an empty catalog, retries errors, and refreshes before selecting', a
   expect(send).not.toHaveBeenCalled();
 });
 
-it('keeps read-disabled and missing skills out of model submission without losing the draft', async () => {
+it('blocks read-disabled skills but sends unknown slash text as an ordinary message', async () => {
   const { api, send } = setup(false);
   const input = screen.getByRole('textbox', { name: '消息' });
   await openSkills();
@@ -111,11 +111,12 @@ it('keeps read-disabled and missing skills out of model submission without losin
   fireEvent.keyDown(input, { key: 'Enter' });
   await screen.findByRole('status');
   expect((input as HTMLTextAreaElement).value).toBe('/case-review task');
+  expect(send).not.toHaveBeenCalled();
   vi.mocked(api.skills).mockResolvedValue({ ...catalog, entries: [] });
   fireEvent.change(input, { target: { value: '/missing-skill task' } });
   fireEvent.keyDown(input, { key: 'Enter' });
-  await screen.findByText(/不支持的指令/);
-  expect(send).not.toHaveBeenCalled();
+  await waitFor(() => expect(send).toHaveBeenCalledExactlyOnceWith('/missing-skill task', false));
+  expect((input as HTMLTextAreaElement).value).toBe('/missing-skill task');
 });
 
 it('discards confirmation responses after editing or switching sessions and deduplicates submit', async () => {

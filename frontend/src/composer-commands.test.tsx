@@ -90,7 +90,7 @@ it('only offers supported thinking levels and resets on model change', async () 
   expect(within(screen.getByRole('group', { name: '推理强度' })).getByRole('radio', { name: '配置默认' }).matches(':disabled')).toBe(true);
 });
 
-it('keeps failed compact commands and unknown commands out of the model', async () => {
+it('preserves failed compact commands and sends unknown slash text only after explicit submission', async () => {
   const { api } = setup();
   await selectExisting();
   vi.mocked(api.compact).mockRejectedValueOnce(new ApiError('session_busy'));
@@ -99,8 +99,11 @@ it('keeps failed compact commands and unknown commands out of the model', async 
   fireEvent.keyDown(input, { key: 'Enter' });
   await screen.findByText(/当前会话仍在运行或收尾/);
   expect((input as HTMLTextAreaElement).value).toBe('/compact');
+  expect(api.start).not.toHaveBeenCalled();
+  vi.mocked(api.start).mockRejectedValueOnce(new ApiError('session_busy'));
   fireEvent.change(input, { target: { value: '/not_supported' } });
   fireEvent.keyDown(input, { key: 'Enter' });
-  await screen.findByText(/不支持的指令/);
-  expect(api.start).not.toHaveBeenCalled();
+  await waitFor(() => expect(api.start).toHaveBeenCalledOnce());
+  expect(vi.mocked(api.start).mock.calls[0][1]).toBe('/not_supported');
+  expect(api.compact).toHaveBeenCalledOnce();
 });

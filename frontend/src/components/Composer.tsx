@@ -119,7 +119,7 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
     if (hasImages || hasMaterials || !match) { setCommandNotice(''); send(busy && followUp); return; }
     const command = commands.find(item => item.name === match[1]);
     if (command) {
-      if (match[2]) { setCommandNotice(`/${command.name} 暂不接受参数，请直接输入该指令。`); return; }
+      if (match[2]) { setCommandNotice(''); send(busy && followUp); return; }
       runCommand(command.name, true); return;
     }
     const captured = submission.current;
@@ -127,9 +127,8 @@ export default function Composer({ text, pending, pendingMode, busy, stopping, s
     try {
       const catalog = await (session?.session_id ? api.skills(session.session_id) : api.skills());
       if (!mounted.current || submission.current !== captured) return;
-      if (!catalog.entries.some(item => item.command === `/${match[1]}`))
-        setCommandNotice('不支持的指令，请从加号菜单查看可用指令。');
-      else if (!catalog.read_registered || !tools.includes('read')) setCommandNotice('请先在工具中启用 read，再调用技能。');
+      if (catalog.entries.some(item => item.command === `/${match[1]}`) && (!catalog.read_registered || !tools.includes('read')))
+        setCommandNotice('请先在工具中启用 read，再调用技能。');
       else send(busy && followUp);
     } catch (error) { if (mounted.current && submission.current === captured) setCommandNotice(errorText(error)); }
     finally { confirming.current = false; if (mounted.current) setCheckingSkill(false); }
