@@ -292,3 +292,86 @@ def test_multi_page_compaction_keeps_original_chat_after_reopen(monkeypatch, tmp
             assert web.state.service.application.sessions._persistence.storage.database.connection.total_changes == writes
             assert len(model.seen) == 6
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('outcome', ['success', 'failure', 'stop', 'skip'])
+def test_manual_compaction_can_summarize_an_idle_failed_model_checkpoint(monkeypatch, outcome):
+    from openai import BadRequestError
+    from naiyue_test_agent.agent_runtime.errors import ContextCompactionError
+    from naiyue_test_agent.agent_runtime.run_control import UserStop
+    from naiyue_test_agent.agent_runtime import manual_compaction
+    from unittest.mock import AsyncMock
+    from naiyue_test_agent import application
+    from naiyue_test_agent.model_access import ModelCatalog
+    from scripts.component_fixtures import build_component_application
+    from test_context_overflow_recovery import _configured_model, _history, _status
+    async def scenario():
+        manual_summary = RuntimeError('summary unavailable') if outcome == 'failure' else AIMessage(content='manual summary')
+        model = _configured_model([_status(), _status()], summaries=[
+            AIMessage(content='automatic summary'), manual_summary, AIMessage(content='retry summary')])
+        monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
+        app = await build_component_application('unused', tools=[], system_prompt='BASE', response_format=None)
+        try:
+            sid = await app.host.sessions.create('A')
+            with pytest.raises(BadRequestError):
+                await app.host.runs.start(sid, _history())
+            actor = app.host.sessions._sessions.require(sid)
+            assert actor.describe_session()['busy'] is False
+            graph = app.host.runs._agent
+            config = {'configurable': {'thread_id': actor.get_thread_id()}}
+            before = await graph.aget_state(config)
+            assert before.next == ('model',) and before.tasks[0].error
+            assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == 1
+            if outcome in ('stop', 'skip'):
+                with monkeypatch.context() as patch:
+                    patch.setattr(manual_compaction, '_acompact_messages', AsyncMock(
+                        side_effect=UserStop() if outcome == 'stop' else None, return_value=None))
+                    with pytest.raises(ContextCompactionError):
+                        await app.host.runs.compact(sid)
+            elif outcome == 'failure':
+                with pytest.raises(ContextCompactionError):
+                    await app.host.runs.compact(sid)
+            else:
+                result = await app.host.runs.compact(sid)
+                assert result['compaction_status'] == 'applied'
+            after = await graph.aget_state(config)
+            if outcome != 'success':
+                assert after.config == before.config and after.values == before.values
+                assert after.next == before.next and after.tasks == before.tasks
+            else:
+                assert not after.next and not any(task.error or task.interrupts for task in after.tasks)
+                assert after.values['messages'][0].additional_kwargs['naiyue_compaction_summary'] is True
+            assert after.values['messages'][-1] == before.values['messages'][-1]
+            assert (await graph.aget_state(before.config)).values['messages'] == before.values['messages']
+            summary_count = 1 if outcome in ('stop', 'skip') else 2
+            assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == summary_count
+            assert actor.describe_session()['busy'] is False
+            if outcome != 'success':
+                assert (await app.host.runs.compact(sid))['compaction_status'] == 'applied'
+                assert len(model.normal_inputs) == 2 and len(model.summary_inputs) == summary_count + 1
+        finally:
+            await app.aclose()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('nodes,tasks', [
+    (('model',), [('model', None, ())]),
+    (('model',), []),
+    (('tools',), [('tools', 'failed', ())]),
+    (('model', 'tools'), [('model', 'failed', ())]),
+    (('model',), [('model', 'failed', ('approval',))]),
+    (('model',), [('model', 'failed', ()), ('tools', 'failed', ())]),
+])
+def test_manual_compaction_still_rejects_other_pending_checkpoints(nodes, tasks):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from naiyue_test_agent.agent_runtime.manual_compaction import compact_checkpoint
+    snapshot = SimpleNamespace(next=nodes, tasks=[
+        SimpleNamespace(name=name, error=error, interrupts=interrupts) for name, error, interrupts in tasks])
+    agent = SimpleNamespace(aget_state=AsyncMock(return_value=snapshot), aupdate_state=AsyncMock())
+    async def scenario():
+        with pytest.raises(RuntimeError, match='completed checkpoint'):
+            await compact_checkpoint(agent, session_id='s', thread_id='t', run_id='r', model_id='A',
+                model=None, system_message=None, tools=[])
+        agent.aupdate_state.assert_not_awaited()
+    asyncio.run(scenario())

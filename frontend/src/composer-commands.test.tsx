@@ -76,6 +76,35 @@ it('routes compact menu and slash command to the operation and preserves unrelat
   expect(api.start).not.toHaveBeenCalled();
 });
 
+it.each(['failed', 'unconfirmed'] as const)('replaces the compact preparation notice when its run is %s', async status => {
+  const { api } = setup();
+  vi.mocked(api.run).mockResolvedValue({ session_id: 's', run_id: 'compact-run', mode: 'compact', status,
+    messages: [], last_sequence: 0, incomplete: status === 'unconfirmed', done: true, manual_review_required: false });
+  await selectExisting();
+  const input = screen.getByRole('textbox', { name: '消息' });
+  fireEvent.change(input, { target: { value: '保留原任务草稿' } });
+  fireEvent.pointerDown(screen.getByRole('button', { name: '指令与功能' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: /压缩上下文.*compact/ }));
+  await screen.findByText(status === 'failed' ? '上下文压缩失败，请查看错误详情后重试。' : '压缩结果尚未确认，请同步状态后核对。');
+  expect(screen.queryByText('正在准备压缩上下文…')).toBeNull();
+  expect((input as HTMLTextAreaElement).value).toBe('保留原任务草稿');
+  expect(api.compact).toHaveBeenCalledOnce(); expect(api.start).not.toHaveBeenCalled();
+});
+
+it('clears compact preparation once the run is accepted and running', async () => {
+  const { api } = setup();
+  vi.mocked(api.run).mockResolvedValue({ session_id: 's', run_id: 'compact-run', mode: 'compact', status: 'running',
+    messages: [], last_sequence: 0, incomplete: false, done: false, manual_review_required: false });
+  vi.spyOn(api, 'events').mockImplementation(async (_id, _after, signal) => {
+    await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+  });
+  await selectExisting();
+  fireEvent.pointerDown(screen.getByRole('button', { name: '指令与功能' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: /压缩上下文.*compact/ }));
+  await screen.findByText('正在压缩上下文');
+  expect(screen.queryByText('正在准备压缩上下文…')).toBeNull();
+});
+
 it('only offers supported thinking levels and resets on model change', async () => {
   const { api } = setup();
   await selectExisting();

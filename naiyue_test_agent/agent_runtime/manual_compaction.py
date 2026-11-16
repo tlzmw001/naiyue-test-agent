@@ -21,7 +21,9 @@ class ManualCompactionCommitError(RuntimeError):
 async def compact_checkpoint(agent, *, session_id, thread_id, run_id, model_id, model, system_message, tools):
     config = {'configurable': {'thread_id': thread_id}}
     snapshot = await agent.aget_state(config)
-    if snapshot.next or any(task.interrupts or task.error for task in snapshot.tasks):
+    failed_model = snapshot.next == ('model',) and bool(snapshot.tasks) and all(
+        task.name == 'model' and task.error and not task.interrupts for task in snapshot.tasks)
+    if not failed_model and (snapshot.next or any(task.interrupts or task.error for task in snapshot.tasks)):
         raise RuntimeError('Manual compaction requires a completed checkpoint')
     if not (snapshot.config or {}).get('configurable', {}).get('checkpoint_id'):
         # Initialize even when a stop was already accepted, so persistence can confirm ready.
@@ -46,12 +48,21 @@ async def compact_checkpoint(agent, *, session_id, thread_id, run_id, model_id, 
             system_messages=[system_message], tools=tools, force=True, trigger='manual')
         update = await control.await_model(call) if control is not None and native_async_model(model) else await await_settled(call())
     except UserStop:
+        if failed_model:
+            raise ContextCompactionError('Manual compaction stopped before replacing the failed checkpoint') from None
         return {**snapshot.values, 'run_stopped': True}
     except ContextCompactionError:
         # Policy already emitted its fixed reason; no checkpoint write has started.
+        if failed_model:
+            raise
         status = 'failed'
     if control is not None and control.requested:
+        if failed_model:
+            raise ContextCompactionError('Manual compaction stopped before replacing the failed checkpoint')
         return {**snapshot.values, 'run_stopped': True}
+    if failed_model and update is None:
+        # A failed model head is still failed until a replacement was committed.
+        raise ContextCompactionError('Manual compaction left the failed checkpoint unchanged')
     if update is not None:
         update['messages'][1].id = uuid4().hex
         expected = [message.id for message in update['messages'][1:]]

@@ -72,6 +72,11 @@ export function useConversation(api: WebApi, active = true) {
     currentRun.current = view;
     setRun(view);
     history.merge(view.messages);
+    if (view.mode === 'compact') {
+      setNotice(previous => previous === '正在准备压缩上下文…' ? '' : previous);
+      if (view.status === 'failed') setNotice('上下文压缩失败，请查看错误详情后重试。');
+      if (view.status === 'unconfirmed') setNotice('压缩结果尚未确认，请同步状态后核对。');
+    }
     if (view.mode === 'compact' && view.status === 'completed' && view.compaction_result) {
       const status = view.compaction_result.status;
       setNotice(status === 'applied' ? '上下文已压缩，原任务不会自动继续。' : status === 'skipped' ?
