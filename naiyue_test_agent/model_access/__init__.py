@@ -127,7 +127,10 @@ class ModelCatalog:
             # Materialize lazy SDK properties before copying, so both views borrow them.
             model._client, model._async_client
             settings = {'thinking': None, 'reasoning_effort': None, **settings}
-        return model.model_copy(update=settings)
+        from .calibration_identity import refresh_thinking
+        copied = model.model_copy(update={**settings, 'metadata': dict(model.metadata or {})})
+        refresh_thinking(copied)
+        return copied
 
 
 def _build_model(kind: str, model_name: str, provider: dict, model_id: str,
@@ -184,6 +187,8 @@ def catalog_from_configuration(configuration, *, connections=None):
             selection.native_settings,definition['request_settings'],definition['limit_metadata'],
             definition['reserve_metadata'],definition['keep_metadata'],definition['summary_output_metadata'],definition['api'])
         model.profile={**(model.profile or {}),**profile}
+        from .calibration_identity import attach_identity
+        attach_identity(model, model_id=model_id, kind=definition['kind'], api=definition['api'])
         models[model_id]=model
     catalog=ModelCatalog(configuration.default_model_id,models)
     catalog._thinking_selections=configuration.thinking_selections

@@ -38,19 +38,20 @@ logger = logging.getLogger('naiyue_test_agent.agent_runtime')
 
 def make_model_selection_middleware(
     resolve_model: Callable[[str, str], tuple[str, BaseChatModel]],
-    *, toolset=None, resolve_request_configuration=None, compact=False,
+    *, toolset=None, resolve_request_configuration=None, compact=False, response_format=None,
 ):
     """Prepare one model configuration and retain the existing response gates."""
     return _ModelSelectionMiddleware(resolve_model, toolset=toolset,
-        resolve_request_configuration=resolve_request_configuration, compact=compact)
+        resolve_request_configuration=resolve_request_configuration, compact=compact, response_format=response_format)
 
 
 class _ModelSelectionMiddleware(AgentMiddleware):
-    def __init__(self, resolve_model, *, toolset=None, resolve_request_configuration=None, compact=False):
+    def __init__(self, resolve_model, *, toolset=None, resolve_request_configuration=None, compact=False, response_format=None):
         self.resolve_model = resolve_model
         self.toolset = toolset
         self.resolve_request_configuration = resolve_request_configuration
         self.compact = compact
+        self.response_format = response_format
 
     @property
     def name(self):
@@ -89,7 +90,7 @@ class _ModelSelectionMiddleware(AgentMiddleware):
                 }},
             )
         context.invocation.model_call.model_id = event_label(model_id)
-        return PreparedRequest(model_id, call_id, model, active_tool_names=names)
+        return PreparedRequest(model_id, call_id, model, active_tool_names=names, response_format=self.response_format)
 
     @hook_config(can_jump_to=['end'])
     async def abefore_model(self, state, runtime):

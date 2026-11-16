@@ -7,7 +7,7 @@ from collections import Counter
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest
 from langchain_core.messages import AIMessage
-from langchain_core.messages.utils import count_tokens_approximately
+from .context_calibration import measure_request
 from langchain_core.tools import BaseTool
 
 from naiyue_test_agent.model_access import (
@@ -124,18 +124,18 @@ def _prepare_observation(request):
                     'needs_compaction': None,
                     'estimate_status': 'unavailable',
                 }
-                try:
-                    prompt_messages = ([request.system_message] if request.system_message else [])
-                    estimated = count_tokens_approximately(
-                        [*prompt_messages, *messages], tools=request.tools,
-                    )
-                    preflight['estimated_input_tokens'] = estimated
+                call = context.invocation.model_call
+                measurement = call.context_measurement if call is not None else None
+                if measurement is None:
+                    measurement = measure_request(request.model, request.system_message,
+                        messages, request.tools, response_format=request.response_format)
+                value = measurement.budget
+                preflight['estimated_input_tokens'] = value.raw_input_tokens
+                preflight['calibrated_input_tokens'] = value.calibrated_input_tokens
+                preflight['estimate_status'] = value.status
+                if value.calibrated_input_tokens is not None:
                     preflight['needs_compaction'] = (headroom >= window
-                                                     or estimated > threshold)
-                    preflight['estimate_status'] = 'available'
-                except Exception as error:
-                    logger.warning('context_preflight_estimate_unavailable error_type=%s',
-                                   type(error).__name__)
+                        or value.calibrated_input_tokens > threshold)
                 logger.info('model_context_preflight',
                             extra={'model_context_preflight': preflight})
     return payload, budget

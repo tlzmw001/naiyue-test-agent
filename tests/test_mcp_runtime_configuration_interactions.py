@@ -3,6 +3,7 @@
 import asyncio
 
 import pytest
+from pydantic import SecretStr
 from langchain_core.messages import AIMessage, ToolMessage
 
 from naiyue_test_agent import application, config_paths
@@ -13,7 +14,7 @@ from naiyue_test_agent.model_access import ModelCatalog
 from naiyue_test_agent.settings import AppSettings
 from test_async_application import StreamingToolModel, call
 from test_mcp_agent_tools import NAME, calls, make_mcp_app
-from test_mcp_connections import facts, process_alive, stdio_settings, until
+from test_mcp_connections import facts, http_server, process_alive, stdio_settings, until
 from test_mcp_runtime_configuration import empty_app, write_config
 from test_mcp_subagents import MCPChildModel, make_child_app
 
@@ -105,7 +106,7 @@ def test_candidate_cleanup_failure_prevents_publication_and_remains_required(mon
     asyncio.run(scenario())
 
 
-def test_connection_changes_are_explicit_and_non_mcp_settings_are_not_applied(monkeypatch, tmp_path):
+def test_connection_changes_are_explicit_and_non_mcp_settings_are_not_applied(monkeypatch, tmp_path, caplog):
     async def scenario():
         path, config = tmp_path / 'old.jsonl', tmp_path / 'settings.toml'
         server = stdio_settings(path, 'stateful', allowed_tools=['echo'])
@@ -116,14 +117,87 @@ def test_connection_changes_are_explicit_and_non_mcp_settings_are_not_applied(mo
             write_config(config, {'local': changed})
             result = await app.host.mcp.refresh(config)
             assert result['servers'][0]['error'] == 'connection_configuration_changed'
+            assert result['servers'][0]['changed_fields'] == ['args']
             assert result['servers'][0]['enabled'] and app.host.tools.list()[0] is original
+            assert 'code=connection_configuration_changed changed_fields=args' in caplog.text
+            assert '--PRIVATE' not in caplog.text + str(result)
             write_config(config, {'local': server})
             with config.open('a') as stream: stream.write('\n[permissions]\nmode="NoAsk"\n[network]\nmode="direct"\n')
-            await app.host.mcp.refresh(config)
+            restored = await app.host.mcp.refresh(config)
+            assert 'changed_fields' not in restored['servers'][0]
             sid = await app.host.sessions.create('A')
             assert app.host.sessions.permission_mode(sid) == 'Default'
         finally:
             await app.aclose()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('change', ['budget', 'headers', 'credential_environment'])
+def test_refresh_reports_changed_field_names_without_values(monkeypatch, tmp_path, caplog, change):
+    from naiyue_test_agent.mcp_client.settings import MCPServerSettings
+    async def scenario():
+        path, config = tmp_path / 'diagnostic.jsonl', tmp_path / 'settings.toml'
+        monkeypatch.setenv('MCP_REFRESH_TEST_SECRET', 'PRIVATE_OLD_TOKEN')
+        async with http_server(path, 'stateful', True) as url:
+            server = MCPServerSettings(enabled=True, transport='streamable_http', url=url, allowed_tools=['echo'],
+                headers={'Authorization': 'Bearer PRIVATE_OLD_HEADER'} if change == 'headers' else {},
+                headers_env={'Authorization': 'MCP_REFRESH_TEST_SECRET'} if change == 'credential_environment' else {})
+            app, _ = await make_mcp_app(monkeypatch, path, [], server=server)
+            try:
+                original = app.host.tools.list()[0]
+                if change == 'budget':
+                    candidate = server.model_copy(update={'call_timeout_seconds': 123.0})
+                    expected = 'call_timeout_seconds'
+                elif change == 'headers':
+                    candidate = server.model_copy(update={'headers': {'Authorization': SecretStr('Bearer PRIVATE_NEW_HEADER')}})
+                    expected = 'headers'
+                else:
+                    monkeypatch.setenv('MCP_REFRESH_TEST_SECRET', 'PRIVATE_NEW_TOKEN')
+                    candidate, expected = server, 'credential_environment'
+                values = candidate.model_dump(exclude={'headers'}, exclude_none=True)
+                values['headers'] = {key: value.get_secret_value() for key, value in candidate.headers.items()}
+                write_config(config, {'local': values})
+                result = await app.host.mcp.refresh(config)
+                assert result['servers'][0]['error'] == 'connection_configuration_changed'
+                assert result['servers'][0]['changed_fields'] == [expected]
+                assert app.host.tools.list()[0] is original and calls(path) == []
+                assert f'code=connection_configuration_changed changed_fields={expected}' in caplog.text
+                serialized = str(result) + caplog.text
+                assert 'PRIVATE_' not in serialized and 'MCP_REFRESH_TEST_SECRET' not in serialized and url not in serialized
+            finally:
+                await app.aclose()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('transport', ['stdio', 'streamable_http'])
+def test_unchanged_config_with_omitted_defaults_refreshes_remote_schema(monkeypatch, tmp_path, transport):
+    from naiyue_test_agent.mcp_client.settings import MCPServerSettings
+    async def scenario():
+        path, config = tmp_path / 'unchanged.jsonl', tmp_path / 'settings.toml'
+        async def check(server):
+            write_config(config, {'local': server.model_dump(exclude_defaults=True, exclude_none=True)})
+            original_bytes = config.read_bytes()
+            assert 'timeout_seconds' not in original_bytes.decode()
+            app, _ = await make_mcp_app(monkeypatch, path, [call(NAME, {'text': 'before'}), AIMessage(content='one'),
+                call(NAME, {'trace_id': 'after'}), AIMessage(content='two')], server=server, mode='BypassApprovals')
+            try:
+                sid = await app.host.sessions.create('A')
+                await app.host.runs.start(sid, [('user', 'before server update')])
+                path.with_suffix('.schema-v2').touch()
+                result = await app.host.mcp.refresh(config)
+                assert result['servers'][0]['status'] == 'enabled'
+                assert 'changed_fields' not in result['servers'][0]
+                assert app.host.tools.list()[0].input_schema['required'] == ['trace_id']
+                await app.host.runs.start(sid, [('user', 'after server update')])
+                assert [row['arguments'] for row in calls(path)] == [{'text': 'before'}, {'trace_id': 'after'}]
+                assert config.read_bytes() == original_bytes
+            finally:
+                await app.aclose()
+        if transport == 'stdio':
+            await check(stdio_settings(path, 'stateful', allowed_tools=['echo']))
+        else:
+            async with http_server(path, 'stateful', True) as url:
+                await check(MCPServerSettings(enabled=True, transport='streamable_http', url=url, allowed_tools=['echo']))
     asyncio.run(scenario())
 
 

@@ -25,6 +25,9 @@ class RunnerModels:
         self.catalog.prepare_async_clients(http_options={'trust_env':False,'follow_redirects':False})
         for model_id in self.catalog.model_ids:
             model=self.catalog.get(model_id);kind=parsed.models[model_id]['kind']
+            from naiyue_test_agent.model_access.calibration_identity import attach_identity
+            attach_identity(model, model_id=model_id, kind=kind, api=parsed.models[model_id]['api'],
+                route=bootstrap.models.profile_id)
             prefix=connections[model_id]['base_url']+'/'
             def before(request,*,kind=kind,prefix=prefix):
                 b=self.bootstrap

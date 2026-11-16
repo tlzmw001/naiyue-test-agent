@@ -36,9 +36,10 @@ def test_saved_sources_have_real_human_tool_reply_and_controlled_time(tmp_path):
         cases, _ = load_cases()
         facts = seed_sources(store, 's', cases[3]['sources'], at=1000.)
         batch = build_batch(store.memory, session_id='s', thread_id='s', conversation_revision=0,
-            start=(0, 0), upper=facts['upper'], token_budget=16000, source_chars=4000)
-        sources = {r['message_id']: r for r in batch['sources']}
-        assert set(sources) == {'e04-u', 'e04-t'}
+            start=(0, 0), upper=facts['upper'], token_budget=16000, source_chars=4000, max_messages=128, max_read_chars=65536, overlap_chars=600, context_floor=1)
+        sources = {r['message_id']: r for r in batch['units']}
+        assert set(sources) == {'e04-u', 'e04-t', 'e04-t-owner'}
+        assert sources['e04-t-owner']['context_only'] and sources['e04-t']['tool_pair_status']=='paired'
         assert sources['e04-u']['role'] == 'human'
         assert sources['e04-t']['tool_call_id'] == 'e04-call'
         assert sources['e04-t']['tool_status'] == 'success'
@@ -173,7 +174,7 @@ def test_probe_reaches_production_worker_with_an_offline_model():
     assert len(result['model_inputs'])==1
     assert [message['type'] for message in result['model_inputs'][0]]==['system','human']
     sent=json.loads(result['model_inputs'][0][1]['data']['content'])
-    assert sent['batch']['sources'] and all('source_key' in s for s in sent['batch']['sources'])
+    assert sent['batch']['units'] and all('evidence_id' in s for s in sent['batch']['units'])
 
 
 @pytest.mark.parametrize('mode', ['text', 'json_schema', 'function_calling'])

@@ -1,8 +1,6 @@
 """Project saved text into bounded batches; never trust model source metadata."""
 
 import json
-import math
-import re
 from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -12,107 +10,77 @@ from pydantic import BaseModel, ConfigDict, Field
 from naiyue_test_agent.model_access.stop_reason import normalize_stop_reason
 from naiyue_test_agent.tools.memory import MemoryInput
 from naiyue_test_agent.tools.memory_writes import Kind, MemoryProposal
-from naiyue_test_agent.contracts.memory import MemoryReadError
+from naiyue_test_agent.contracts.memory import MemoryReadError, MemoryBatch, BoundProposal
 from .memory_sources import SECRET
 
 
-_QUOTE_FORMAT = re.compile(r'[\s`]+')
+from .memory_input_units import assemble, model_batch
 
 
-def model_batch(batch):
-    sources = []
-    for source in batch.get('sources', []):
-        visible = {key: source[key] for key in ('source_key', 'role', 'text', 'occurred_at', 'name', 'tool_status')}
-        visible['partial'] = source['offset'] > 0 or source['offset'] + len(source['text']) < source['text_chars']
-        sources.append(visible)
-    return dict(sources=sources, complete=batch.get('complete', False), skipped=batch.get('skipped', []))
-
-
-def _tokens(value, model_view=False):
-    return count_tokens_approximately([HumanMessage(content=json.dumps(
-        model_batch(value) if model_view else value, ensure_ascii=False))])
-
-
-def _batch(archive, *, session_id, thread_id, conversation_revision, start, upper, token_budget, source_chars, model_view):
-    saved = archive.parent(session_id)
-    binding = archive.binding()
-    if saved is None or saved['thread_id'] != thread_id or saved['conversation_revision'] != conversation_revision:
-        raise MemoryReadError('memory_source_changed')
-    if binding is None or saved['project_id'] is None or saved['project_id'] != binding:
-        raise MemoryReadError('memory_source_scope_mismatch')
-    history_version = archive.history_version(session_id, thread_id)
-    position = [max(start[0], 1), start[1]]
-    result = dict(sources=[], next_position=position, complete=position[0] > upper, skipped=[],
-        history_version=history_version)
-    if _tokens(result, model_view) > token_budget:
-        raise MemoryReadError('memory_batch_budget')
-    row = None
-    while position[0] <= upper:
-        if row is None or row['sequence'] != position[0]:
-            row = archive.next_visible(session_id, thread_id, position[0], upper)
-        if row is None:
-            result.update(next_position=[upper + 1, 0], complete=True)
-            if _tokens(result, model_view) > token_budget:
-                raise MemoryReadError('memory_batch_budget')
-            return result
-        sequence, total = row['sequence'], row['text_chars']
-        offset = position[1] if sequence == position[0] else 0
-        if offset > total:
-            raise MemoryReadError('memory_batch_position_invalid')
-        reason = ('sensitive' if row['sensitive'] else 'time_unavailable' if row['occurred_at'] is None
-            or not math.isfinite(row['occurred_at']) else 'empty' if offset == total else None)
-        content = ''
-        if reason is None:
-            visible = archive.visible(session_id, thread_id, sequence,
-                offset=offset, chars=source_chars)
-            content = visible['content']
-        source = dict(source_key=f'{sequence}:{offset}', session_id=session_id, thread_id=thread_id,
-            message_id=row['message_id'], revision=row['revision'], conversation_revision=conversation_revision,
-            role=row['message_type'], reply_id=row['reply_id'], tool_call_id=row['tool_call_id'],
-            occurred_at=row['occurred_at'], offset=offset, text_chars=total,
-            name=row['name'], tool_status=row['tool_status'])
-        low, high = 0, len(content)
-        while low < high:
-            end = (low + high + 1) // 2
-            next_position = [sequence + 1, 0] if offset + end == total else [sequence, offset + end]
-            proposed = dict(result, sources=[*result['sources'], dict(source, text=content[:end])],
-                next_position=next_position, complete=next_position[0] > upper)
-            if _tokens(proposed, model_view) <= token_budget:
-                low = end
-            else:
-                high = end - 1
-        if low:
-            position = [sequence + 1, 0] if offset + low == total else [sequence, offset + low]
-            result.update(sources=[*result['sources'], dict(source, text=content[:low])],
-                next_position=position, complete=position[0] > upper)
-            if low < len(content):
-                return result
-            continue
-        if reason is None and result['sources']:
-            result.update(next_position=[sequence, offset], complete=False)
-            return result
-        position = [sequence + 1, 0]
-        proposed = dict(result, skipped=[*result['skipped'], f'{reason or "envelope_too_large"}:{sequence}'],
-            next_position=position, complete=position[0] > upper)
-        if _tokens(proposed, model_view) > token_budget:
-            if result['sources'] or result['skipped']:
-                return result
-            raise MemoryReadError('memory_batch_budget')
-        result = proposed
-    return result
-
-
-def build_batch(memory_repo, *, session_id, thread_id, conversation_revision, start, upper, token_budget, source_chars,
-        model_view=False):
-    numbers = [conversation_revision, upper, token_budget, source_chars]
-    if (not isinstance(start, (tuple, list)) or len(start) != 2
-            or any(type(n) is not int or not 0 <= n <= 9223372036854775807 for n in [*start, *numbers])
-            or token_budget == 0 or source_chars == 0 or start[0] == 0 and start[1] != 0):
+def build_batch(memory_repo, *, session_id, thread_id, conversation_revision, start, upper, token_budget,
+        source_chars, max_messages, max_read_chars, overlap_chars, context_floor) -> MemoryBatch:
+    numbers = [conversation_revision, upper, token_budget, source_chars, max_messages,
+        max_read_chars, overlap_chars, context_floor]
+    if (not isinstance(start,(tuple,list)) or len(start)!=2
+            or any(type(n) is not int or not 0<=n<=9223372036854775807 for n in [*start,*numbers])
+            or not 1<=max_messages<=1024 or not 1024<=max_read_chars<=262144
+            or not 0<=overlap_chars<=min(8192,max_read_chars//4)
+            or not 1<=context_floor<=max(1,start[0]) or not token_budget or not source_chars
+            or start[0]==0 and start[1]!=0):
         raise MemoryReadError('memory_batch_position_invalid')
     with memory_repo.batch_reader(SECRET) as archive:
-        return _batch(archive, session_id=session_id, thread_id=thread_id,
-            conversation_revision=conversation_revision, start=start, upper=upper,
-            token_budget=token_budget, source_chars=source_chars, model_view=model_view)
+        return assemble(archive,session_id=session_id,thread_id=thread_id,
+            conversation_revision=conversation_revision,start=start,upper=upper,token_budget=token_budget,
+            source_chars=source_chars,max_messages=max_messages,max_read_chars=max_read_chars,
+            overlap_chars=overlap_chars,context_floor=context_floor)
+
+
+def bind_proposal_evidence(proposal, batch: MemoryBatch) -> BoundProposal:
+    from naiyue_test_agent.tools.memory_writes import MemorySource
+    diagnostic='evidence_id_missing'
+    try:
+        references=proposal['sources']
+        if not isinstance(references,list) or not 1<=len(references)<=8:
+            raise ValueError('evidence_limit')
+        ids=[]; evidence=[]; sources=[]
+        for reference in references:
+            ref=_Reference.model_validate(reference)
+            if ref.evidence_id in ids:raise ValueError('duplicate_evidence')
+            ids.append(ref.evidence_id)
+            unit=batch['evidence_map'][ref.evidence_id]
+            diagnostic='evidence_not_citable'
+            if unit['context_only'] or unit['tool_pair_status'] in ('missing','invalid'):raise ValueError('context_only')
+            source={k:unit[k] for k in ('session_id','thread_id','message_id','revision','conversation_revision')}
+            source.update(quote=unit['text'],offset=unit['start_offset'],current_user=False)
+            sources.append(MemorySource.model_validate(source).model_dump())
+            evidence.append(unit)
+        diagnostic='overlap_only'
+        if not any(u['origin']=='new' for u in evidence):raise ValueError('overlap_only')
+        context=[]; complete=True; used=0
+        for unit in evidence:
+            peers=[u for u in batch['units'] if u['message_key']==unit['message_key']]
+            index=peers.index(unit)
+            for neighbor,required in ((peers[index-1] if index else None,unit['partial_before']),
+                    (peers[index+1] if index+1<len(peers) else None,unit['partial_after'])):
+                if not required:continue
+                if neighbor is None or neighbor['context_only']:
+                    complete=False;continue
+                if neighbor in evidence or neighbor in context:continue
+                if used+len(neighbor['text'])>batch['context_char_limit']:
+                    complete=False;continue
+                context.append(neighbor);used+=len(neighbor['text'])
+            if unit['tool_pair_status'] not in ('paired','not_tool'):complete=False
+            if unit['role']=='tool':
+                heads=[u for u in batch['units'] if u['role']=='ai' and u['context_only']
+                    and u['tool_call_id']==unit['tool_call_id'] and u['message_id']==unit['parent_message_id']]
+                if not heads:complete=False
+                for head in heads:
+                    if head not in context:context.append(head)
+        return dict(proposal={k:v for k,v in proposal.items() if k!='sources'}, evidence_ids=ids,
+            sources=sources,evidence=evidence,context_units=context,context_complete=complete)
+    except (ValueError,TypeError,KeyError,AttributeError) as error:
+        failure=MemoryReadError('memory_proposal_invalid');failure._diagnostic_reason=diagnostic
+        raise failure from error
 
 
 class _Overview(BaseModel):
@@ -196,8 +164,7 @@ def parse_model_result(response, settings, *, output_mode='text'):
 
 class _Reference(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
-    source_key: str = Field(min_length=1, max_length=128)
-    quote: str = Field(min_length=1, max_length=300)
+    evidence_id: str = Field(min_length=1, max_length=128)
 
 
 class _Proposal(BaseModel):
@@ -228,9 +195,8 @@ def response_schema():
     return _StructuredResult.model_json_schema()
 
 
-def proposal_request(proposal, sources, related=()):
+def proposal_request(proposal, batch, related=()):
     diagnostic = 'fields_invalid'
-    format_match = None
     try:
         item = _Proposal.model_validate(proposal)
         old = None
@@ -256,40 +222,15 @@ def proposal_request(proposal, sources, related=()):
             values.setdefault('title', item.subject)
             values.setdefault('reason', f'Background proposal: {item.basis}/{item.intent}; source and lifecycle gates apply.')
         payload = MemoryProposal.model_validate(values)
-        diagnostic = 'source_key_ambiguous'
-        by_key = {source['source_key']: source for source in sources}
-        if len(by_key) != len(sources):
-            raise ValueError('Ambiguous batch source identity')
-        references = []
-        for reference in item.sources:
-            diagnostic = 'source_key_missing'
-            source = by_key[reference.source_key]
-            diagnostic = 'quote_not_found'
-            offset = source['text'].find(reference.quote)
-            if offset < 0:
-                format_match = 'none'
-                normalized_quote = _QUOTE_FORMAT.sub('', reference.quote)
-                if normalized_quote:
-                    normalized_source = _QUOTE_FORMAT.sub('', source['text'])
-                    first = normalized_source.find(normalized_quote)
-                    if first >= 0:
-                        second = normalized_source.find(normalized_quote, first + 1)
-                        format_match = 'ambiguous' if second >= 0 else 'unique'
-                raise ValueError('Quote must match a current batch source')
-            diagnostic = 'quote_ambiguous'
-            if source['text'].find(reference.quote, offset + 1) >= 0:
-                raise ValueError('Quote must uniquely match a current batch source')
-            diagnostic = 'source_metadata_invalid'
-            references.append({key: source[key] for key in ('session_id', 'thread_id', 'message_id',
-                'revision', 'conversation_revision')} | dict(quote=reference.quote, offset=source['offset'] + offset))
+        references = bind_proposal_evidence(proposal, batch)['sources']
         diagnostic = 'write_request_invalid'
         return MemoryInput(action='update' if old else 'record', scope=scope, proposal=payload,
             sources=references, memory_id=item.memory_id,
             expected_version=old['version'] if old else None).model_dump(mode='json')
+    except MemoryReadError:
+        raise
     except (ValueError, KeyError, TypeError, AttributeError) as error:
         failure = MemoryReadError('memory_proposal_invalid')
         # Internal diagnostic only: preserve the public error type/code and never copy model input.
         failure._diagnostic_reason = diagnostic
-        if format_match is not None:
-            failure._quote_format_match = format_match
         raise failure from error

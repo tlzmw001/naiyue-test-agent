@@ -1,5 +1,7 @@
 # 全项目代码学习路线
 
+2026-11-07 当前课程转到[3.0 场景学习](../3.0/README.md)，从第一课重新编号。每章由用户总结、助手纠正后集中记入简短笔记。下方保留上一轮的路线和进度。
+
 代码版本对应（2026-10-19）：093删除同步执行面后，102继续删除IOCall/arun_steps及生命周期生成器；105/110把单会话状态和行为归到AgentSession。当前主链为`AsyncApplication.arun → SessionService.arun/_admit → AgentSession.arun（实现位于SessionExecution）→ runtime异步调用 → Agent图`，必要收尾仍由`await_settled(_afinish_run)`保护。Runtime通过SessionPort取得限定能力；应用单会话操作内部require拥有者。前六章的新旧调用、数据归属和新增能力统一见[Lesson74迁移复盘](lessons/lesson-74.md)。下面旧课堂文件表/行数保留其历史版本，不视为当前文件清单；已删除入口不再作为走读入口。
 
 当前学习安排（2026-10-14）：第六章8节职责/主分支讲解收束，最后一节见[Lesson73](lessons/lesson-73.md)，全章入口Lesson66–73。唯一下一步第七章上下文工程，先建立模型上下文组成与来源地图。前五章综合复盘见[Lesson65](lessons/lesson-65.md)。本节审批/恢复既有测试20 passed in1.40s，限本机fake与同进程合同，不宣称跨重启审批、实网模型或生产保证。讲解收束不等于逐行覆盖；用户有循环跳转/settle自述与失败隔离设计提问，第六章本人调试及独立实现未评估。后续为7上下文工程、8持久化与CLI、9Web/前端、10测试与复盘；改进见[后续清单TE9](../future-work.md)，未启动新功能。分类器练习仍暂缓，发布实现保留。

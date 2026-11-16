@@ -55,7 +55,7 @@ async def memory_scenario(root, Model):
         blockers='', next_step='Use the saved test runner'), proposals=[dict(scope='workspace',
         kind='user', title='Test runner', body=PREFERENCE, subject='test runner',
             basis='user_declaration', intent='activate', reason='Explicit persistent user preference',
-        sources=[dict(source_key='1:0', quote=PREFERENCE)])])
+        sources=[dict(evidence_id='E1')])])
     parent = Model(replies=[AIMessage(content='', tool_calls=[dict(name='memory',
         args=dict(action='refresh_overview'), id='installed-refresh')]),
         AIMessage(content='Request accepted'), AIMessage(content='Preference recalled')])

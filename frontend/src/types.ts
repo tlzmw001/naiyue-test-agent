@@ -5,7 +5,7 @@ export interface ThinkingOptions { default_level: string; supported_levels: stri
 export interface McpSource { server_id: string; remote_tool: string; transport?: 'stdio' | 'streamable_http'; }
 export interface McpServerStatus {
   server_id: string; status: 'enabled' | 'disabled' | 'error'; enabled: boolean;
-  selected_tools: string[]; draining?: boolean; error?: string;
+  selected_tools: string[]; draining?: boolean; error?: string; changed_fields?: string[];
 }
 export interface McpRefreshResult { servers: McpServerStatus[]; }
 export interface McpResultView {

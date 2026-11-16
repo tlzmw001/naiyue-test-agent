@@ -11,17 +11,18 @@ from naiyue_test_agent.application.memory.memory_batches import proposal_request
 from naiyue_test_agent.contracts.memory import MemoryReadError
 from test_async_application import StreamingToolModel
 from test_memory_batches import archive, batch, save
+from test_memory_batches import evidence_batch
 from test_memory_job_runner import fixture, response
 
 
 def flat(**changes):
     return dict(kind='context', subject='Python环境', body='使用.venv',
         basis='user_declaration', intent='activate',
-        sources=[dict(source_key='1:0', quote='使用.venv')]) | changes
+        sources=[dict(evidence_id='E1')]) | changes
 
 
 def source(**changes):
-    return dict(source_key='1:0', session_id='session', thread_id='root-thread', message_id='human',
+    return dict(session_id='session', thread_id='root-thread', message_id='human',
         revision=2, conversation_revision=3, offset=20, text='使用.venv') | changes
 
 
@@ -33,7 +34,7 @@ def old(**changes):
 
 
 def test_minimal_flat_record_has_six_meaning_fields_and_trusted_defaults():
-    request = proposal_request(flat(), [source()])
+    request = proposal_request(flat(), evidence_batch(source()))
     assert request['action'] == 'record' and request['scope'] == 'workspace'
     assert request['memory_id'] is request['expected_version'] is None
     assert request['proposal']['title'] == request['proposal']['subject'] == 'Python环境'
@@ -44,14 +45,14 @@ def test_minimal_flat_record_has_six_meaning_fields_and_trusted_defaults():
 
 
 def test_personal_record_is_explicit_and_title_reason_remain_optional():
-    request = proposal_request(flat(scope='personal', title='解释器', reason='明确选择'), [source()])
+    request = proposal_request(flat(scope='personal', title='解释器', reason='明确选择'), evidence_batch(source()))
     assert request['scope'] == 'personal'
     assert request['proposal']['title'] == '解释器' and request['proposal']['reason'] == '明确选择'
 
 
 def test_update_uses_only_the_sent_snapshot_and_preserves_omitted_metadata():
     snapshot = old()
-    request = proposal_request(flat(memory_id=snapshot['memory_id']), [source()], [snapshot])
+    request = proposal_request(flat(memory_id=snapshot['memory_id']), evidence_batch(source()), [snapshot])
     assert request['action'] == 'update' and request['scope'] == 'personal'
     assert request['expected_version'] == 4
     p = request['proposal']
@@ -64,7 +65,7 @@ def test_update_uses_only_the_sent_snapshot_and_preserves_omitted_metadata():
 
 def test_update_explicit_empty_lists_close_gaps_but_null_keeps_old_values():
     request = proposal_request(flat(memory_id='a' * 32, title=None, scope=None,
-        aliases=[], gaps=[], machine=None, target='new-venv'), [source()], [old()])
+        aliases=[], gaps=[], machine=None, target='new-venv'), evidence_batch(source()), [old()])
     p = request['proposal']
     assert p['gaps'] == p['aliases'] == [] and p['tags'] == ['python']
     assert p['title'] == '既有标题' and p['machine'] == 'Mac' and p['target'] == 'new-venv'
@@ -75,7 +76,7 @@ def test_update_explicit_empty_lists_close_gaps_but_null_keeps_old_values():
     dict(body='x' * 801), dict(aliases=['a'] * 6), dict(scope='both'), dict(intent=None)])
 def test_internal_control_fields_and_invalid_meaning_are_not_repaired(changes):
     with pytest.raises(MemoryReadError, match='memory_proposal_invalid'):
-        proposal_request(flat(**changes), [source()])
+        proposal_request(flat(**changes), evidence_batch(source()))
 
 
 @pytest.mark.parametrize('rows,changes', [([], {}), ([old(complete=False)], {}),
@@ -83,7 +84,7 @@ def test_internal_control_fields_and_invalid_meaning_are_not_repaired(changes):
     ([old()], {'kind': 'rule'})])
 def test_update_cannot_select_hidden_ambiguous_incomplete_or_different_scope_records(rows, changes):
     with pytest.raises(MemoryReadError, match='memory_proposal_invalid'):
-        proposal_request(flat(memory_id='a' * 32, **changes), [source()], rows)
+        proposal_request(flat(memory_id='a' * 32, **changes), evidence_batch(source()), rows)
 
 
 def test_prepare_sends_compact_sources_and_keeps_the_trusted_envelope(archive, tmp_path):
@@ -97,13 +98,12 @@ def test_prepare_sends_compact_sources_and_keeps_the_trusted_envelope(archive, t
             prepared = await _prepare(service, job, job.upper)
             trusted, messages = prepared[:2]
             payload = json.loads(messages[-1].content)
-            visible = payload['batch']['sources'][0]
-            assert set(visible) == {'source_key', 'role', 'text', 'occurred_at', 'name',
-                'tool_status', 'partial'}
-            assert visible['source_key'] == trusted['sources'][0]['source_key']
-            assert trusted['sources'][0]['message_id'] == 'human'
-            assert set(payload['batch']) == {'sources', 'complete', 'skipped'}
-            assert not job.model.seen and visible['partial'] is False
+            visible = payload['batch']['units'][0]
+            assert visible['evidence_id'] == trusted['units'][0]['evidence_id']
+            assert trusted['units'][0]['message_id'] == 'human'
+            assert 'message_id' not in visible and 'revision' not in visible
+            assert set(payload['batch']) == {'units', 'complete', 'skipped', 'coverage'}
+            assert not job.model.seen and visible['partial_after'] is False
         finally:
             service.memory.close()
     asyncio.run(scenario())
@@ -116,15 +116,15 @@ def test_frozen_update_cannot_overwrite_a_newer_version_in_real_store(archive, t
             additional_kwargs={'naiyue_human_input': True})], occurred_at=time.time() - 10)
         service, job, _ = fixture(archive, tmp_path, StreamingToolModel(replies=[]))
         try:
-            sources = batch(archive)['sources']
+            sources = batch(archive)
             created = service.memory.query('session', service.storage.sessions.get('session')['project_id'], proposal_request(flat(intent='candidate'), sources))['item']
             saved = service.memory.query('session', service.storage.sessions.get('session')['project_id'], MemoryInput(action='read', scope='workspace',
                 status='candidate', memory_id=created['memory_id']).model_dump(mode='json'))['items'][0]
             save(archive, [HumanMessage(id='confirmation', content='以后使用.venv',
                 additional_kwargs={'naiyue_human_input': True})], occurred_at=time.time() - 1)
-            sources = batch(archive)['sources']
+            sources = batch(archive)
             frozen = proposal_request(flat(memory_id=created['memory_id'], gaps=[],
-                sources=[dict(source_key='2:0', quote='使用.venv')]), sources, [saved])
+                sources=[dict(evidence_id='E2')]), sources, [saved])
             assert frozen['expected_version'] == 1
             service.memory.query('session', service.storage.sessions.get('session')['project_id'], frozen)
             with pytest.raises(MemoryReadError, match='memory_conflict'):

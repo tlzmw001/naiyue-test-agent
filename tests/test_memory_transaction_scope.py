@@ -3,7 +3,7 @@
 import pytest
 from langchain_core.messages import HumanMessage
 
-from naiyue_test_agent.application.memory import memory_batches, memory_results
+from naiyue_test_agent.application.memory import memory_input_units, memory_results
 from naiyue_test_agent.contracts.memory import MemoryReadError
 from naiyue_test_agent.tools.memory import MemoryInput
 from test_memory_batches import archive, batch, save
@@ -14,13 +14,13 @@ from test_memory_readonly import memory
 
 def test_batch_budget_computation_keeps_one_source_transaction(archive, monkeypatch):
     save(archive, [HumanMessage(id='source', content='visible source')])
-    original, observed = memory_batches._tokens, []
+    original, observed = memory_input_units.tokens, []
     def tokens(*args, **kwargs):
         observed.append((archive.database._active, archive.database.connection.in_transaction))
         return original(*args, **kwargs)
-    monkeypatch.setattr(memory_batches, '_tokens', tokens)
+    monkeypatch.setattr(memory_input_units, 'tokens', tokens)
     result = batch(archive)
-    assert result['sources'][0]['text'] == 'visible source'
+    assert result['units'][0]['text'] == 'visible source'
     assert observed and all(active and transaction for active, transaction in observed)
     assert not archive.database._active and not archive.database.connection.in_transaction
 

@@ -34,7 +34,7 @@ def _begin_recovery(request, reason):
     arguments = dict(
         messages=request.messages, model=request.model, model_id=limits.get('model_id'),
         context=context, system_messages=[request.system_message] if request.system_message else [],
-        tools=request.tools, force=True,
+        tools=request.tools, force=True, response_format=request.response_format,
     )
     return arguments, correlation, observer, operation_id
 

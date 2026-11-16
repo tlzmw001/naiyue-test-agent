@@ -16,6 +16,7 @@ from .run_observation_ports import (
 )
 
 if TYPE_CHECKING:
+    from .context_calibration import RequestMeasurement
     from langchain_core.language_models import BaseChatModel
     from langchain_core.messages import SystemMessage
     from ..tools.background_tasks import ProcessTaskPort, BackgroundNoticeSnapshot
@@ -95,10 +96,12 @@ class PreparedRequest:
     tools: list | None = None
     system_message: 'SystemMessage | None' = None
     background_notices: 'BackgroundNoticeSnapshot | None' = None
+    response_format: object | None = None
 
 
 @dataclass
 class ModelCallState:
+    context_measurement: 'RequestMeasurement | None' = field(default=None, kw_only=True)
     call_id: str | None = None
     model_id: str | None = None
     prepared: PreparedRequest | None = None

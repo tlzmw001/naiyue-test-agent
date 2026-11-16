@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import time
+from uuid import uuid4
 from xml.sax.saxutils import escape, quoteattr
 
 from .errors import ContextCompactionError
@@ -13,7 +14,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage,
 )
-from langchain_core.messages.utils import count_tokens_approximately
+from .context_calibration import KEY, measure_request, complete_sample, carry_compaction_state
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from naiyue_test_agent.model_access import (
@@ -41,19 +42,13 @@ SUMMARY_SYSTEM = (
 )
 
 
-def _cut_at_complete_turn(messages: list, keep_tokens: int) -> int:
-    """Retain at least the target suffix, beginning with a whole user turn."""
-    suffix_tokens = 0
-    crossing = None
-    for index in range(len(messages) - 1, -1, -1):
-        suffix_tokens += count_tokens_approximately([messages[index]])
-        if suffix_tokens >= keep_tokens:
-            crossing = index
-            break
-    if crossing is None:
-        return 0
-    return next((index for index in range(crossing, 0, -1)
-                 if isinstance(messages[index], HumanMessage)), 0)
+def _cut_at_complete_turn(messages, keep_tokens, measure_suffix):
+    """Measure valid complete suffixes, using each candidate's media slot."""
+    for index in range(len(messages) - 1, 0, -1):
+        if isinstance(messages[index], HumanMessage):
+            if measure_suffix(messages[index:]) >= keep_tokens:
+                return index
+    return 0
 
 
 def _validate_removed_prefix(messages: list) -> None:
@@ -169,6 +164,7 @@ def _record_summary_finished(correlation, observer, operation_id, started, *, re
 def _compaction_steps(
     messages: list, model: BaseChatModel, *, model_id: str | None, context: dict,
     system_messages: list, tools: list, force: bool = False, trigger: str | None = None,
+    response_format=None,
 ):
     """Share safe compaction between proactive and rejected-request paths."""
     session_id = context.scope.identity.session_id
@@ -209,21 +205,34 @@ def _compaction_steps(
     window = limits['context_window_tokens']
     output = limits['max_output_tokens']
     headroom = max(output, reserve['tokens'])
-    try:
-        estimated = count_tokens_approximately(
-            [*system_messages, *model_messages], tools=tools,
-        )
-    except Exception as error:
-        logger.warning('context_compaction_estimate_unavailable error_type=%s',
-                       type(error).__name__)
+    if len(system_messages) > 1:
+        raise ValueError('Expected at most one compaction system message')
+    system = system_messages[0] if system_messages else None
+    agent_measurement = measure_request(model, system, model_messages, tools,
+        response_format=response_format, calibration_history=messages)
+    estimated = agent_measurement.budget.calibrated_input_tokens
+    if estimated is None:
         logger.warning('context_budget_unverified', extra={'context_preparation': {
-            'event': 'context_budget_unverified', 'session_id': session_id, 'run_id': context.scope.identity.run_id,
-            'model_id': model_id, 'reason': 'initial_estimate_unavailable', 'force': force,
-            'error_type': type(error).__name__,
-        }})
+            'event': 'context_budget_unverified', 'session_id': session_id,
+            'run_id': context.scope.identity.run_id, 'model_id': model_id,
+            'reason': 'initial_estimate_unavailable', 'force': force}})
         if force:
-            raise ContextCompactionError('compaction_unavailable') from error
+            raise ContextCompactionError('compaction_unavailable')
         return None
+
+    def measure(candidate, *, purpose='agent', suffix=False, history=messages):
+        if purpose == 'summary':
+            result = measure_request(model, candidate[0], candidate[1:], [],
+                purpose='summary', calibration_history=history)
+        else:
+            projected_messages = prepare_model_messages(candidate, model)
+            result = measure_request(model, None if suffix else system,
+                projected_messages, [] if suffix else tools,
+                response_format=response_format, calibration_history=history)
+        if result.budget.calibrated_input_tokens is None:
+            raise ContextCompactionError('compaction_unavailable')
+        return result
+
     threshold = max(0, window - headroom)
     if not force and estimated <= threshold and headroom < window:
         return None
@@ -244,7 +253,8 @@ def _compaction_steps(
     try:
         if force:
             _validate_removed_prefix(messages)
-        cutoff = _cut_at_complete_turn(messages, keep['tokens'])
+        cutoff = _cut_at_complete_turn(messages, keep['tokens'],
+            lambda suffix: measure(suffix, suffix=True).budget.calibrated_input_tokens)
         if trigger == 'manual' and cutoff == 0:
             cutoff = next((index for index in range(len(messages) - 1, 0, -1)
                            if isinstance(messages[index], HumanMessage)
@@ -268,10 +278,15 @@ def _compaction_steps(
         split_turn_start = None
         projected = None
         if cutoff:
-            projected = count_tokens_approximately(
-                [*system_messages, *prepare_model_messages(
-                    [HumanMessage(content=SUMMARY_PREFIX), *messages[cutoff:]], model)], tools=tools,
-            ) + summary_output['tokens']
+            projected = measure([HumanMessage(content=SUMMARY_PREFIX), *messages[cutoff:]]).budget.calibrated_input_tokens + summary_output['tokens']
+            _validate_removed_prefix(messages[:cutoff])
+            if cutoff == 1 and messages[0].additional_kwargs.get(SUMMARY_MARKER):
+                # An old summary alone cannot be summarized; search later cuts.
+                projected = window + summary_output['tokens']
+            else:
+                request = _summary_request(messages[:cutoff])
+                if measure(request, purpose='summary').budget.calibrated_input_tokens + summary_output['tokens'] > window:
+                    projected = window + summary_output['tokens']
         if cutoff == 0 or projected > window - output:
             for candidate in range(max(cutoff + 1, 1), len(messages) - 1):
                 boundary = messages[candidate]
@@ -297,13 +312,10 @@ def _compaction_steps(
                     )
                 except ContextCompactionError:
                     continue
-                if (count_tokens_approximately(request) +
+                if (measure(request, purpose='summary').budget.calibrated_input_tokens +
                         summary_output['tokens'] > window):
                     continue
-                projected = count_tokens_approximately(
-                    [*system_messages, *prepare_model_messages(
-                        [HumanMessage(content=SUMMARY_PREFIX), *messages[candidate:]], model)], tools=tools,
-                ) + summary_output['tokens']
+                projected = measure([HumanMessage(content=SUMMARY_PREFIX), *messages[candidate:]]).budget.calibrated_input_tokens + summary_output['tokens']
                 if projected <= window - output:
                     cutoff = candidate
                     split_turn_start = turn_start
@@ -318,14 +330,21 @@ def _compaction_steps(
         summary_request = _summary_request(
             removed, split_turn_start=split_turn_start,
         )
-        summary_input = count_tokens_approximately(summary_request)
+        summary_measurement = measure(summary_request, purpose='summary')
+        summary_input = summary_measurement.budget.calibrated_input_tokens
+        sample_id = uuid4().hex
         if summary_input + summary_output['tokens'] > window:
             raise ContextCompactionError('summary_input_exceeds_budget')
+        if projected is not None and projected > window - output:
+            raise ContextCompactionError('compacted_request_over_budget')
         logger.info('context_summary_model_started', extra={'context_compaction': {
             'event': 'context_summary_model_started', **correlation,
-            'summary_input_tokens_estimate': summary_input,
+            'summary_input_tokens_estimate': summary_measurement.budget.raw_input_tokens,
+            'raw_input_tokens': summary_measurement.budget.raw_input_tokens,
+            'calibrated_input_tokens': summary_input, 'sample_id': sample_id,
             'summary_output_cap_tokens': summary_output['tokens'],
         }})
+        summary_correlation = {**correlation, 'sample_id': sample_id}
         summary_started = time.monotonic()
         if observer is not None:
             observe(observer, observer.summary_started, operation_id)
@@ -333,10 +352,10 @@ def _compaction_steps(
             response = yield (bind_model_output_limit(model, summary_output['tokens']),
                               summary_request)
         except asyncio.CancelledError as error:
-            _record_summary_finished(correlation, observer, operation_id, summary_started, error=error)
+            _record_summary_finished(summary_correlation, observer, operation_id, summary_started, error=error)
             raise
         except Exception as error:
-            _record_summary_finished(correlation, observer, operation_id, summary_started, error=error)
+            _record_summary_finished(summary_correlation, observer, operation_id, summary_started, error=error)
             logger.error('context_summary_model_failed error_type=%s',
                          type(error).__name__)
             policy = context.scope.errors
@@ -345,7 +364,7 @@ def _compaction_steps(
             if failure.category == 'transient':
                 fallback_reason = f'summary_{failure.reason}'
             raise ContextCompactionError('summary_failed') from error
-        _record_summary_finished(correlation, observer, operation_id, summary_started, response=response)
+        _record_summary_finished(summary_correlation, observer, operation_id, summary_started, response=response)
         if (not isinstance(response, AIMessage) or response.tool_calls or response.invalid_tool_calls):
             raise ContextCompactionError('summary_invalid')
         summary_text = response.content
@@ -367,9 +386,16 @@ def _compaction_steps(
             content=SUMMARY_PREFIX + summary_text.strip(),
             additional_kwargs={SUMMARY_MARKER: True},
         )
-        post_estimated = count_tokens_approximately(
-            [*system_messages, *prepare_model_messages([summary, *preserved], model)], tools=tools,
-        )
+        carried = None
+        try:
+            summary_envelope = complete_sample(summary_measurement, response, sample_id=sample_id)
+            carried = carry_compaction_state(agent_measurement, summary_envelope)
+            if carried is not None:
+                summary.response_metadata[KEY] = carried
+        except Exception as error:
+            logger.warning('calibration_summary_sample_failed error_type=%s', type(error).__name__)
+        post_estimated = measure([summary, *preserved],
+            history=[summary, *preserved] if carried is not None else messages).budget.calibrated_input_tokens
         if post_estimated > window - output:
             raise ContextCompactionError('compacted_request_over_budget')
         if force and post_estimated >= estimated:
@@ -383,7 +409,9 @@ def _compaction_steps(
             'preserved_message_count': len(preserved),
             'split_turn': split_turn_start is not None,
             'cutoff_message_index': cutoff,
-            'summary_input_tokens_estimate': summary_input,
+            'summary_input_tokens_estimate': summary_measurement.budget.raw_input_tokens,
+            'raw_input_tokens': summary_measurement.budget.raw_input_tokens,
+            'calibrated_input_tokens': summary_input, 'sample_id': sample_id,
             'summary_output_cap_tokens': summary_output['tokens'],
         }})
         if observer is not None:
@@ -445,8 +473,9 @@ def _compaction_steps(
 async def _acompact_messages(
     messages: list, model: BaseChatModel, *, model_id: str | None, context: dict,
     system_messages: list, tools: list, force: bool = False, trigger: str | None = None,
+    response_format=None,
 ):
     return await arun_summary_steps(_compaction_steps(
         messages, model, model_id=model_id, context=context,
-        system_messages=system_messages, tools=tools, force=force, trigger=trigger,
+        system_messages=system_messages, tools=tools, force=force, trigger=trigger, response_format=response_format,
     ))

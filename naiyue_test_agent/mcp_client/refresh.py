@@ -63,6 +63,7 @@ async def refresh_mcp(resources, registry, settings, *, borrow_mcp, permission_s
             resources._check_open()
             server = settings.servers.get(name)
             old = resources._configs.get(name)
+            changed_fields = []
             try:
                 if server is None or not server.enabled:
                     previous = resources._definitions.get(name)
@@ -76,6 +77,17 @@ async def refresh_mcp(resources, registry, settings, *, borrow_mcp, permission_s
                 environment, identity = configs[name] if name in configs else resources._configuration(name, server, dial_target)
                 if old is not None and old[3] != identity:
                     if not resources.select_all:
+                        changed_fields = sorted(field for field in type(server).model_fields
+                            if field not in ('enabled', 'allowed_tools')
+                            and getattr(old[0], field) != getattr(server, field))
+                        if old[1] != resources._network:
+                            changed_fields.append('network')
+                        if old[2] != environment:
+                            changed_fields.append('credential_environment')
+                        if resources._dial_targets.get(name) != dial_target:
+                            changed_fields.append('dial_target')
+                        if not changed_fields:
+                            changed_fields.append('connection_identity')
                         raise MCPResourceError('connection_configuration_changed')
                     await resources.disable_server(name)
                     old = None
@@ -103,12 +115,16 @@ async def refresh_mcp(resources, registry, settings, *, borrow_mcp, permission_s
                 if old is None:
                     resources._slots[name] = asyncio.Semaphore(server.max_concurrency)
             except Exception as error:
-                logger.warning('mcp_refresh_failed server=%s error_type=%s', name, type(error).__name__)
+                code = ('connection_configuration_changed' if isinstance(error, MCPResourceError)
+                        and str(error) == 'connection_configuration_changed' else 'mcp_refresh_failed')
+                logger.warning('mcp_refresh_failed server=%s code=%s changed_fields=%s error_type=%s',
+                               name, code, ','.join(changed_fields) or 'none', type(error).__name__)
                 resources._check_open()
                 effective = resources._configs.get(name)
                 resources._last_refresh[name] = {'server_id': name, 'status': 'error',
                     'enabled': effective is not None, 'selected_tools': list(effective[0].allowed_tools) if effective else [],
-                    'error': ('connection_configuration_changed' if isinstance(error, MCPResourceError)
-                              and str(error) == 'connection_configuration_changed' else 'mcp_refresh_failed')}
+                    'error': code}
+                if changed_fields:
+                    resources._last_refresh[name]['changed_fields'] = changed_fields
         resources._last_refresh_request = settings.model_copy(deep=True)
         return resources.server_status()

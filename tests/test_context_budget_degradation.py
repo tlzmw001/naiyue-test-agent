@@ -12,7 +12,7 @@ from langchain_core.messages.utils import count_tokens_approximately
 
 from event_sequence import EventSequenceChecker
 from native_application_helpers import async_test
-from naiyue_test_agent.agent_runtime import context_compaction, context_usage
+from naiyue_test_agent.agent_runtime import context_compaction, context_usage, context_calibration
 from naiyue_test_agent.agent_runtime.context_compaction import ContextCompactionError, SUMMARY_MARKER, SUMMARY_PREFIX
 from naiyue_test_agent.model_access import MODEL_ID_METADATA_KEY
 from naiyue_test_agent import application
@@ -87,7 +87,7 @@ async def test_ordinary_unknown_budget_sends_original_with_explicit_diagnostic(m
     else:
         def fail(*args, **kwargs):
             raise RuntimeError('PRIVATE_ESTIMATE')
-        monkeypatch.setattr(context_compaction, 'count_tokens_approximately', fail)
+        monkeypatch.setattr(context_calibration, 'count_tokens_approximately', fail)
     app = await _app(monkeypatch, {'A': model})
     events = []
     try:
@@ -128,7 +128,7 @@ async def test_invalid_budget_is_required_failure_even_when_estimator_is_unavail
         counted.append(True)
         raise RuntimeError('PRIVATE_COUNTER')
 
-    monkeypatch.setattr(context_compaction, 'count_tokens_approximately', fail)
+    monkeypatch.setattr(context_calibration, 'count_tokens_approximately', fail)
     app = await _app(monkeypatch, {'A': model})
     events = []
     try:
@@ -170,15 +170,15 @@ async def test_known_over_budget_cannot_fall_back_when_candidate_estimate_fails(
         summaries=[AIMessage(content='brief')])
     assert count_tokens_approximately([SystemMessage(content='BASE'), *messages]) > 300
     failure = RuntimeError('PRIVATE_CANDIDATE')
-    count = context_compaction.count_tokens_approximately
+    measure = context_compaction.measure_request
 
-    def checked(messages, **kwargs):
+    def checked(model, system, messages, tools, **kwargs):
         if any(isinstance(m, HumanMessage) and str(m.content).startswith(SUMMARY_PREFIX)
                and bool(m.additional_kwargs.get(SUMMARY_MARKER)) == (stage == 'post_summary') for m in messages):
             raise failure
-        return count(messages, **kwargs)
+        return measure(model, system, messages, tools, **kwargs)
 
-    monkeypatch.setattr(context_compaction, 'count_tokens_approximately', checked)
+    monkeypatch.setattr(context_compaction, 'measure_request', checked)
     app = await _app(monkeypatch, {'A': model})
     try:
         sid = await app.host.sessions.create('A')
@@ -201,7 +201,7 @@ async def test_explicit_overflow_with_unknown_estimate_never_retries_unchanged_i
     def fail(*args, **kwargs):
         raise RuntimeError('PRIVATE_COUNTER')
 
-    monkeypatch.setattr(context_compaction, 'count_tokens_approximately', fail)
+    monkeypatch.setattr(context_calibration, 'count_tokens_approximately', fail)
     app = await _app(monkeypatch, {'A': model})
     try:
         sid = await app.host.sessions.create('A')

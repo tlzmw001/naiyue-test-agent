@@ -235,11 +235,11 @@ class GatedOldProposal(StreamingToolModel):
     async def _next(self, model_messages):
         self.seen.append(model_messages)
         payload = json.loads(model_messages[-1].content)
-        old = next(source for source in payload['batch']['sources'] if source['role'] == 'human'
+        old = next(source for source in payload['batch']['units'] if source['role'] == 'human'
             and '以后并发规则使用旧选择' in source['text'])
         item = dict(proposal(kind='rule', title='并发规则', subject='concurrent rule', body='并发规则旧选择'),
             scope='workspace',
-            sources=[dict(source_key=old['source_key'], quote='以后并发规则使用旧选择')])
+            sources=[dict(evidence_id=old['evidence_id'])])
         if self.branch == 'correct':
             selected = next(row for row in payload['related_memories'] if row['memory_id'] == self.memory_id)
             item['memory_id'] = selected['memory_id']

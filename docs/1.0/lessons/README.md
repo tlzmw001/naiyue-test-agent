@@ -1,5 +1,7 @@
 # 系统课堂笔记
 
+- 新一轮章末总结与纠正见 [3.0 场景学习](../../3.0/README.md)，从第一课重新编号。
+
 本目录只维护课堂索引，当前学习位置和十章小节规划统一见[学习路线](../learning-roadmap.md)。以下含历史版本，当前机制以笔记版本提示和当前源码为准。
 
 第一章见[Lesson18](lesson-18.md)/[Lesson19](lesson-19.md)。第二章从[Lesson20](lesson-20.md)进入，模型目录见[Lesson24](lesson-24.md)，HTTP资源见[Lesson25](lesson-25.md)，旧版失败链见[Lesson26](lesson-26.md)/[Lesson27](lesson-27.md)/[Lesson28](lesson-28.md)。

@@ -165,7 +165,7 @@ def test_memory_batch_begin_failure_keeps_memory_error_code(tmp_path, caplog):
         try:
             with pytest.raises(MemoryReadError, match='memory_batch_read_failed'):
                 build_batch(store.memory, session_id='s', thread_id='t', conversation_revision=0,
-                    start=(0, 0), upper=0, token_budget=100, source_chars=100)
+                    start=(0, 0), upper=0, token_budget=100, source_chars=100, max_messages=128, max_read_chars=65536, overlap_chars=600, context_floor=1)
         finally:
             store.database.connection = connection
         assert 'memory_batch_read_failed' in caplog.text

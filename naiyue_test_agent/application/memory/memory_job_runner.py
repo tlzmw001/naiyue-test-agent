@@ -32,7 +32,7 @@ blockers, next_step (total <= {overview_chars} chars). Use previous_overview/cov
 state omissions. proposals has <= {max_proposals} items, including zero. Task progress belongs in overview.
 Each item is FLAT with six required fields: kind,subject,body (<=800 chars),basis,intent,sources.
 Optional: scope=workspace|personal (new defaults workspace), title, reason, machine,module,target,
-aliases (<=5), gaps. To update, select a complete related memory_id; code supplies action/version/scope.
+aliases (<=5), gaps. To update, choose a complete related memory_id; code supplies action/version/scope.
 Never supply action, expected_version, proposal, tags, deadline, invented IDs or trusted metadata.
 Omitted/null update fields keep old values; return gaps=[] to close supported gaps, aliases=[] to clear.
 Choose kind by meaning: user=durable collaboration/explanation style; rule=work constraints;
@@ -54,7 +54,7 @@ Preserve finite before/after observations, not unique causation, universal fixes
 Invent no commands, dependencies or checks. Plans are not execution; tool quotes are not human intent.
 Skip routine/repeated output, unverified plans, secrets, authentication examples/placeholders and
 redundant memory-handling policies; never store a placeholder value or fill a quota.
-sources items contain ONLY source_key and quote (1-300 chars, exact and unique within that batch source).
+sources items contain ONLY evidence_id from this batch. Cite every necessary condition; include at least one new span. Context-only units are not evidence.
 Code resolves identities/offsets/roles/time and validates writes; never supply those fields yourself.'''
 
 
@@ -130,8 +130,9 @@ async def _related(service, job, batch):
     count = min(service.settings.related_limit, service.settings.max_limit)
     if not count:
         return []
-    text = ' '.join(source['text'] for source in batch['sources'] if source['role'] == 'human')
-    text = (text or batch['sources'][0]['text'])[:service.settings.max_query_chars]
+    text = ' '.join(source['text'] for source in batch['units'] if source['role'] == 'human' and source['origin']=='new')
+    text = (text or next((u['text'] for u in batch['units'] if u['origin']=='new' and u['text'].strip()),''))[:service.settings.max_query_chars]
+    if not text.strip():return []
     rows = []
     for status in ('active', 'candidate'):
         request = MemoryInput(action='search', status=status, query=text, limit=count).model_dump(mode='json')
@@ -210,8 +211,9 @@ async def _prepare(service, job, upper):
         raise MemoryReadError('memory_batch_budget')
     batch = await run_blocking(build_batch, service.storage.memory, session_id=job.target_session_id,
         thread_id=job.thread_id, conversation_revision=job.conversation_revision,
-        start=job.start, upper=upper, token_budget=budget, source_chars=service.settings.read_chunk_chars, model_view=True)
-    related = await _related(service, job, batch) if batch['sources'] else []
+        start=job.start, upper=upper, token_budget=budget, source_chars=service.settings.read_chunk_chars, max_messages=service.settings.batch_max_messages, max_read_chars=service.settings.batch_read_chars,
+        overlap_chars=service.settings.batch_overlap_chars, context_floor=max(1,job.requested_start or 1))
+    related = await _related(service, job, batch) if batch['units'] else []
     if related:
         related_budget = cap - count_tokens_approximately(_messages(system, previous, related, {}, coverage))
         while related and related_budget <= 0:
@@ -222,14 +224,15 @@ async def _prepare(service, job, upper):
                 revised = await run_blocking(build_batch, service.storage.memory, session_id=job.target_session_id,
                     thread_id=job.thread_id, conversation_revision=job.conversation_revision,
                     start=job.start, upper=upper, token_budget=related_budget, source_chars=service.settings.read_chunk_chars,
-                    model_view=True)
+                    max_messages=service.settings.batch_max_messages, max_read_chars=service.settings.batch_read_chars,
+        overlap_chars=service.settings.batch_overlap_chars, context_floor=max(1,job.requested_start or 1))
             except MemoryReadError as error:
                 if str(error) != 'memory_batch_budget':
                     raise
                 logger.warning('memory_related_budget_unavailable')
                 related = []
             else:
-                if revised['sources']:
+                if revised['units']:
                     batch = revised
                 else:
                     related = []
@@ -259,10 +262,8 @@ def _failure(job, diagnostic, error, *, stage='job', proposal_index=0):
     job.error_type = safe_error_type(error)
     reason = safe_memory_reason(error) if isinstance(error, MemoryReadError) else None
     detail = getattr(error, '_diagnostic_reason', None) if reason == 'memory_proposal_invalid' else None
-    format_match = getattr(error, '_quote_format_match', None) if detail == 'quote_not_found' else None
-    suffix = f' quote_format_match={format_match}' if format_match in ('unique', 'ambiguous', 'none') else ''
-    safe_log(logger.error, '%s task_id=%s batch=%s stage=%s proposal_index=%s error_type=%s reason=%s detail=%s%s',
-        diagnostic, job.task_id, job.batches, stage, proposal_index, job.error_type, reason, detail, suffix)
+    safe_log(logger.error, '%s task_id=%s batch=%s stage=%s proposal_index=%s error_type=%s reason=%s detail=%s',
+        diagnostic, job.task_id, job.batches, stage, proposal_index, job.error_type, reason, detail)
 
 
 async def _batch(service, job):
@@ -277,7 +278,7 @@ async def _batch(service, job):
             _check(job)
             job.batches += 1
             job.skipped.extend(batch['skipped'])
-            if not batch['sources']:
+            if not any(u['origin']=='new' and u['text'] for u in batch['units']):
                 job.start = tuple(batch['next_position'])
                 return
             config = dict(tags=[MEMORY_TAG], metadata={MODEL_ID_METADATA_KEY: job.model_id,
@@ -319,7 +320,7 @@ async def _batch(service, job):
                     skipped.append(f'partial_source:{previous_end[0]}:{previous_end[1]}')
             elif current_start[1]:
                 skipped.append(f'unprocessed_until:{current_start[0]}:0:{current_start[0]}:{current_start[1]}')
-            skipped.extend(batch['skipped'])
+            skipped.extend(job.skipped)
             if next_offset and (previous_end is None or current_end > previous_end):
                 skipped.append(f'partial_source:{next_sequence}:{next_offset}')
             skipped = _bounded_notes(skipped)
@@ -337,7 +338,7 @@ async def _batch(service, job):
                 _check(job)
                 stage = 'proposal_validation'
                 try:
-                    request = proposal_request(proposal, batch['sources'], related)
+                    request = proposal_request(proposal, batch, related)
                     if not service.allowed(request):
                         raise MemoryReadError('memory_permission_denied')
                     stage = 'proposal_save'

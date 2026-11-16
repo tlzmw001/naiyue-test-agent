@@ -29,7 +29,7 @@ async def prepare_request(state, runtime, prepared, *, toolset=None, compact=Fal
                 start = end
         if compact:
             call = lambda: _acompact_messages(state['messages'], model, model_id=prepared.model_id,
-                context=context, system_messages=[prompt], tools=tools)
+                context=context, system_messages=[prompt], tools=tools, response_format=prepared.response_format)
             compressed = (await control.await_model(call) if control is not None and native_async_model(model)
                           else await call())
             if compressed:

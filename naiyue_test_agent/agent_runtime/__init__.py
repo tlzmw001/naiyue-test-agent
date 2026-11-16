@@ -162,7 +162,7 @@ def _build_runtime_agent(
         middleware=[ReplyIdentityMiddleware(), *([StopModelMiddleware()] if active_stop else []), *([TurnBoundaryMiddleware()] if observe_turns else []),
                     *request_controls,
                     make_model_selection_middleware(resolve_model, toolset=toolset,
-                        resolve_request_configuration=resolve_request_configuration, compact=compact_requests),
+                        resolve_request_configuration=resolve_request_configuration, compact=compact_requests, response_format=response_format),
                     toolset, ToolBatchMiddleware(tool_registry), _record_tool_call,
                     ToolErrorMiddleware(on_error=tool_error_feedback), ExecutionAuthorizationMiddleware(permission_settings),
                     *steering_middleware, BatchApprovalMiddleware(has_checkpointer=checkpointer is not None),

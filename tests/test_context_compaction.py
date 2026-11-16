@@ -233,7 +233,7 @@ async def test_summary_that_cannot_fit_preserved_turn_never_calls_normal_model(
                            match='compacted_request_over_budget'):
             await app.host.runs.start(session, [('user', 'new question')])
 
-    assert len(b.summary_inputs) == 1
+    assert len(b.summary_inputs) == 0  # S2 rejects the planned candidate before summary IO.
     assert b.normal_inputs == []
     assert app.host.sessions._sessions.require(session).describe_session()['busy'] is False
     thread_id = app.host.sessions._sessions.require(session).get_thread_id()

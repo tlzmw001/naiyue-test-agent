@@ -11,6 +11,7 @@ from langchain_core.messages.utils import count_tokens_approximately
 from naiyue_test_agent.application.conversation.chat_history import ChatUpdate
 from naiyue_test_agent.contracts.memory import MemoryReadError
 from naiyue_test_agent.storage.project_store import ProjectStore
+from naiyue_test_agent.application.memory.memory_batches import model_batch
 
 
 @pytest.fixture
@@ -38,7 +39,7 @@ def save(store, messages, *, thread='root-thread', occurred_at=1000.):
 def batch(store, **changes):
     from naiyue_test_agent.application.memory.memory_batches import build_batch
     return build_batch(store.memory, **(dict(session_id='session', thread_id='root-thread', conversation_revision=0,
-        start=[0, 0], upper=100, token_budget=16000, source_chars=4096) | changes))
+        start=[0, 0], upper=100, token_budget=16000, source_chars=4096, max_messages=128, max_read_chars=65536, overlap_chars=600, context_floor=1) | changes))
 
 
 def settings(**changes):
@@ -52,7 +53,7 @@ def result(**changes):
 def proposed(**changes):
     return dict(kind='context', title='测试环境', body='使用.venv', subject='pytest环境',
         basis='user_declaration', intent='activate', reason='用户明确约定',
-        sources=[dict(source_key='1:0', quote='使用.venv')]) | changes
+        sources=[dict(evidence_id='E1')]) | changes
 
 
 def test_batch_only_returns_visible_saved_root_sources_and_real_metadata(archive):
@@ -69,11 +70,11 @@ def test_batch_only_returns_visible_saved_root_sources_and_real_metadata(archive
     save(archive, [HumanMessage(id='child', content='HIDDEN-CHILD')], thread='subagent:child')
     actual = batch(archive, upper=6)
     assert actual['complete'] and actual['next_position'] == [7, 0]
-    assert [s['message_id'] for s in actual['sources']] == ['human', 'answer', 'tool']
-    assert [s['role'] for s in actual['sources']] == ['human', 'ai', 'tool']
-    assert actual['sources'][-1]['tool_call_id'] == 'call'
-    assert actual['sources'][0]['reply_id'] == 'reply' and actual['sources'][0]['occurred_at'] == 1000.
-    assert 'HIDDEN-' not in json.dumps(actual, ensure_ascii=False)
+    assert [s['message_id'] for s in actual['units']] == ['human', 'answer', 'tool']
+    assert [s['role'] for s in actual['units']] == ['human', 'ai', 'tool']
+    assert actual['units'][-1]['tool_call_id'] == 'call'
+    assert actual['units'][0]['reply_id'] == 'reply' and actual['units'][0]['occurred_at'] == 1000.
+    assert 'HIDDEN-' not in json.dumps(model_batch(actual), ensure_ascii=False)
 
 
 def test_long_source_is_split_by_actual_envelope_tokens_without_losing_text(archive):
@@ -81,12 +82,13 @@ def test_long_source_is_split_by_actual_envelope_tokens_without_losing_text(arch
     save(archive, [HumanMessage(id='long', content=text)])
     position, chunks = [0, 0], []
     for _ in range(200):
-        actual = batch(archive, upper=1, start=position, token_budget=400, source_chars=4096)
-        assert count_tokens_approximately([HumanMessage(content=json.dumps(actual, ensure_ascii=False))]) <= 400
+        actual = batch(archive, upper=1, start=position, token_budget=400, source_chars=4096, max_messages=128, max_read_chars=65536, overlap_chars=600, context_floor=1)
+        assert count_tokens_approximately([HumanMessage(content=json.dumps(model_batch(actual), ensure_ascii=False))]) <= 400
         assert actual['next_position'] != position
-        for source in actual['sources']:
+        for source in actual['units']:
+            if source['origin']=='overlap':continue
             assert len(source['text']) <= 4096
-            assert source['text'] == text[source['offset']:source['offset'] + len(source['text'])]
+            assert source['text'] == text[source['start_offset']:source['start_offset'] + len(source['text'])]
             assert source['text_chars'] == len(text)
             chunks.append(source['text'])
         position = actual['next_position']
@@ -105,13 +107,13 @@ def test_multiple_long_source_chunks_share_one_batch_and_sensitive_scan(archive,
             checks.append(len(value))
             return original.search(value)
     monkeypatch.setattr(memory_batches, 'SECRET', Checked())
-    actual = batch(archive, upper=1, token_budget=16000, source_chars=4096)
+    actual = batch(archive, upper=1, token_budget=16000, source_chars=4096, max_messages=128, max_read_chars=65536, overlap_chars=600, context_floor=1)
     assert actual['complete'] and actual['next_position'] == [2, 0]
-    assert len(actual['sources']) > 3 and ''.join(s['text'] for s in actual['sources']) == text
-    assert all(0 < len(s['text']) <= 4096 for s in actual['sources'])
-    assert len({s['source_key'] for s in actual['sources']}) == len(actual['sources'])
+    assert len(actual['units']) > 3 and ''.join(s['text'] for s in actual['units']) == text
+    assert all(0 < len(s['text']) <= 4096 for s in actual['units'])
+    assert len({s['unit_id'] for s in actual['units']}) == len(actual['units'])
     assert checks == [len(text)]
-    assert count_tokens_approximately([HumanMessage(content=json.dumps(actual, ensure_ascii=False))]) <= 16000
+    assert count_tokens_approximately([HumanMessage(content=json.dumps(model_batch(actual), ensure_ascii=False))]) <= 16000
 
 
 def test_secret_source_and_unknown_time_are_skipped_before_any_chunk_exposure(archive):
@@ -120,9 +122,9 @@ def test_secret_source_and_unknown_time_are_skipped_before_any_chunk_exposure(ar
         HumanMessage(id='safe', content='后续安全内容')])
     save(archive, [HumanMessage(id='old', content='没有来源时间')], occurred_at=None)
     actual = batch(archive, upper=3, source_chars=10)
-    assert [s['message_id'] for s in actual['sources']] == ['safe']
+    assert [s['message_id'] for s in actual['units']] == ['safe']
     assert actual['complete'] and len(actual['skipped']) == 2
-    raw = json.dumps(actual, ensure_ascii=False)
+    raw = json.dumps(model_batch(actual), ensure_ascii=False)
     assert private not in raw and 'normal prefix' not in raw and '没有来源时间' not in raw
 
 
@@ -137,10 +139,10 @@ def test_batch_rejects_stale_branch_and_invalid_positions(archive, changes):
 def test_batch_keeps_frozen_upper_and_makes_progress_when_envelope_cannot_fit(archive):
     save(archive, [HumanMessage(id='first', content='first'), HumanMessage(id='new', content='after upper')])
     actual = batch(archive, upper=1)
-    assert [s['text'] for s in actual['sources']] == ['first']
+    assert [s['text'] for s in actual['units']] == ['first']
     assert actual['complete'] and actual['next_position'] == [2, 0]
     small = batch(archive, upper=1, token_budget=80)
-    assert small['next_position'] == [2, 0] and small['skipped'] and not small['sources']
+    assert small['next_position'] == [2, 0] and small['skipped'] and not small['units']
     assert count_tokens_approximately([HumanMessage(content=json.dumps(small, ensure_ascii=False))]) <= 80
 
 
@@ -150,7 +152,7 @@ def test_batch_history_version_tracks_source_rewrites_and_paging_bounds(archive)
     assert first['history_version'] == 0
     save(archive, [HumanMessage(id='first', content='changed')])
     updated = batch(archive, upper=1)
-    assert updated['history_version'] == 1 and updated['sources'][0]['revision'] == 2
+    assert updated['history_version'] == 1 and updated['units'][0]['revision'] == 2
     with pytest.raises(MemoryReadError, match='memory_batch_position_invalid'):
         batch(archive, start=[1, 99], upper=1)
 
@@ -184,16 +186,16 @@ def test_parse_accepts_strict_empty_and_many_proposals_independently():
     data = result(proposals=[proposed(), {'action': 'invented'}, proposed(scope='personal')])
     actual = parse_model_result(AIMessage(content=json.dumps(data), response_metadata={'finish_reason': 'stop'}), settings())
     assert actual == data
-    source = dict(source_key='1:0', session_id='session', thread_id='root-thread', message_id='human',
+    source = dict(session_id='session', thread_id='root-thread', message_id='human',
         revision=1, conversation_revision=0, role='human', occurred_at=1000., reply_id='r', tool_call_id=None,
-        offset=40, text='以后使用.venv运行测试', text_chars=100)
-    first = proposal_request(actual['proposals'][0], [source])
+        offset=42, text='使用.venv', text_chars=100)
+    first = proposal_request(actual['proposals'][0], evidence_batch(source))
     assert first['action'] == 'record' and first['sources'][0]['offset'] == 42
     assert first['sources'][0]['quote'] == '使用.venv' and first['sources'][0]['revision'] == 1
     assert 'occurred_at' not in first['sources'][0] and 'role' not in first['sources'][0]
     with pytest.raises(MemoryReadError):
-        proposal_request(actual['proposals'][1], [source])
-    assert proposal_request(actual['proposals'][2], [source])['scope'] == 'personal'
+        proposal_request(actual['proposals'][1], evidence_batch(source))
+    assert proposal_request(actual['proposals'][2], evidence_batch(source))['scope'] == 'personal'
     assert parse_model_result(json.dumps(result()), settings()) == result()
 
 
@@ -235,22 +237,33 @@ def test_parse_ignores_hidden_response_blocks_and_rejects_nonfinite_json():
     dict(body='x' * 801), dict(aliases=['a'] * 6)])
 def test_proposal_cannot_invent_source_identity_offsets_time_or_exceed_contract(change):
     from naiyue_test_agent.application.memory.memory_batches import proposal_request
-    source = dict(source_key='1:0', session_id='s', thread_id='t', message_id='m', revision=1,
+    source = dict(session_id='s', thread_id='t', message_id='m', revision=1,
         conversation_revision=0, offset=30, text='unique quote', text_chars=99)
     with pytest.raises(MemoryReadError, match='memory_proposal_invalid'):
-        proposal_request(proposed(**change), [source])
+        proposal_request(proposed(**change), evidence_batch(source))
 
 
-def test_update_reuses_expected_version_and_ambiguous_quote_is_refused():
+def test_update_reuses_expected_version_and_repeated_text_is_bound_by_position():
     from naiyue_test_agent.application.memory.memory_batches import proposal_request
-    source = dict(source_key='1:0', session_id='s', thread_id='t', message_id='m', revision=2,
+    source = dict(session_id='s', thread_id='t', message_id='m', revision=2,
         conversation_revision=3, offset=20, text='使用.venv', text_chars=50)
     snapshot = dict(memory_id='b' * 32, version=4, scope='workspace', kind='context', complete=True,
         title='测试环境', reason='用户明确约定', aliases=[], tags=[], gaps=[],
         conditions=dict(machine=None, module=None, target=None))
-    request = proposal_request(proposed(memory_id='b' * 32), [source], [snapshot])
+    request = proposal_request(proposed(memory_id='b' * 32), evidence_batch(source), [snapshot])
     assert request['memory_id'] == 'b' * 32 and request['expected_version'] == 4
     assert request['sources'][0]['revision'] == 2 and request['sources'][0]['conversation_revision'] == 3
     source['text'] = '使用.venv、使用.venv'
-    with pytest.raises(MemoryReadError, match='memory_proposal_invalid'):
-        proposal_request(proposed(), [source])
+    request = proposal_request(proposed(), evidence_batch(source))
+    assert request['sources'][0]['quote'] == source['text']
+
+def evidence_batch(*sources):
+    """Explicit numbered fixtures for parser/transaction tests, not production projection."""
+    units=[]
+    for i,row in enumerate(sources,1):
+        at=row.get('offset',0)
+        unit=dict(unit_id=f'U{i}',evidence_id=f'E{i}',turn_key='r',message_key=row['message_id'],
+            sequence=i,role='human',origin='new',context_only=False,partial_before=False,partial_after=False,
+            tool_pair_status='not_tool',start_offset=at,end_offset=at+len(row['text']),text_chars=at+len(row['text']))
+        unit.update(row);units.append(unit)
+    return dict(units=units,evidence_map={u['evidence_id']:u for u in units},context_char_limit=600)

@@ -33,6 +33,9 @@ class MemorySettings(BaseModel):
     max_query_chars: int = Field(default=2000, gt=0, le=2000)
     max_query_terms: int = Field(default=128, gt=0, le=256)
     preview_chars: int = Field(default=300, gt=0)
+    batch_max_messages: int = Field(default=128, ge=1, le=1024)
+    batch_read_chars: int = Field(default=65536, ge=1024, le=262144)
+    batch_overlap_chars: int = Field(default=600, ge=0, le=8192)
     read_chunk_chars: int = Field(default=4096, gt=0)
     max_output_bytes: int = Field(default=16384, ge=4096)
     source_limit: int = Field(default=3, gt=0, le=8)
@@ -42,6 +45,12 @@ class MemorySettings(BaseModel):
         default_factory=lambda: dict.fromkeys(('user','rule','decision','context','procedure','experience','reference'),30))
     active_ttl_days: dict[Literal['context','procedure','experience','reference'], int] = Field(
         default_factory=lambda: dict(context=30,procedure=180,experience=365,reference=90))
+
+    @model_validator(mode='after')
+    def batch_bounds(self):
+        if self.batch_overlap_chars > self.batch_read_chars // 4:
+            raise ValueError('batch_overlap_chars exceeds read budget')
+        return self
 
     @field_validator('candidate_ttl_days','active_ttl_days')
     @classmethod

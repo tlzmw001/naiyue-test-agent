@@ -12,7 +12,7 @@ from naiyue_test_agent.application.memory.memory_batches import proposal_request
 from naiyue_test_agent.application.memory.memory_job_runner import drive
 from naiyue_test_agent.contracts.memory import MemoryReadError
 from test_async_application import StreamingToolModel
-from test_memory_batches import archive, save
+from test_memory_batches import archive, save, evidence_batch
 from test_memory_flat_contract import flat, source, old
 from test_memory_job_runner import fixture, response
 
@@ -21,33 +21,24 @@ from test_memory_job_runner import fixture, response
     (flat(body=123), [source()], [], 'fields_invalid'),
     (flat(memory_id='a' * 32), [source()], [], 'update_target_unavailable'),
     (flat(memory_id='a' * 32, kind='rule'), [source()], [old()], 'update_scope_or_kind'),
-    (flat(), [source(), source()], [], 'source_key_ambiguous'),
-    (flat(sources=[dict(source_key='missing', quote='PRIVATE_SOURCE')]), [source()], [], 'source_key_missing'),
-    (flat(sources=[dict(source_key='1:0', quote='PRIVATE_SOURCE')]), [source()], [], 'quote_not_found'),
-    (flat(), [source(text='使用.venv 使用.venv')], [], 'quote_ambiguous'),
+    (flat(sources=[dict(evidence_id='E1'),dict(evidence_id='E1')]), [source()], [], 'evidence_not_citable'),
+    (flat(sources=[dict(evidence_id='missing')]), [source()], [], 'evidence_id_missing'),
+    (flat(sources=[dict(evidence_id='E1',quote='PRIVATE_SOURCE')]), [source()], [], 'fields_invalid'),
+    (flat(sources=[dict(evidence_id='E999')]), [source(text='使用.venv 使用.venv')], [], 'evidence_id_missing'),
 ])
 def test_proposal_diagnostic_keeps_public_error_contract(item, sources, related, reason):
     with pytest.raises(MemoryReadError) as caught:
-        proposal_request(item, sources, related)
+        proposal_request(item, evidence_batch(*sources), related)
     assert type(caught.value) is MemoryReadError
     assert str(caught.value) == 'memory_proposal_invalid'
     assert caught.value._diagnostic_reason == reason
 
 
-@pytest.mark.parametrize('text,quote,expected', [
-    ('使用 `.venv`\n跑测试', '使用.venv 跑测试', 'unique'),
-    ('使用 `.venv`，使用\n.venv', '使用.venv', 'ambiguous'),
-    ('使用 `.venv`', '用 .venv 执行', 'none'),
-    ('使用 `.venv`', '`` \n', 'none'),
-    ('使用 `.venv`', '其他来源', 'none'),
-])
-def test_missing_quote_classifies_format_match_within_referenced_source(text, quote, expected):
-    item = flat(sources=[dict(source_key='1:0', quote=quote)])
-    sources = [source(text=text), source(source_key='2:0', text='其他来源')]
-    with pytest.raises(MemoryReadError, match='^memory_proposal_invalid$') as caught:
-        proposal_request(item, sources)
-    assert caught.value._diagnostic_reason == 'quote_not_found'
-    assert caught.value._quote_format_match == expected
+@pytest.mark.parametrize('text', ['使用 `.venv`\n跑测试','使用 `.venv`，使用\n.venv','使用 `.venv`','`` \n','其他来源'])
+def test_program_quote_preserves_original_format_without_model_transcription(text):
+    request=proposal_request(flat(),evidence_batch(source(text=text)))
+    assert request['sources'][0]['quote']==text
+    assert request['sources'][0]['offset']==20
 
 
 @pytest.mark.parametrize('mode', [
@@ -66,9 +57,9 @@ def test_worker_logs_correlated_safe_failure_and_terminal_counts(archive, tmp_pa
         replies = [response([])]
         changes = {}
         if mode == 'partial':
-            replies = [response([flat(sources=[dict(source_key='1:0', quote='PRIVATE_MODEL_TEXT')])])]
+            replies = [response([flat(sources=[dict(evidence_id='PRIVATE_MODEL_TEXT')])])]
         elif mode == 'format_partial':
-            replies = [response([flat(sources=[dict(source_key='1:0', quote='使用 PRIVATE_MODEL_TEXT 跑测试')])])]
+            replies = [response([flat(sources=[dict(evidence_id='E999')])])]
         elif mode == 'model_output':
             replies = [AIMessage(content='{PRIVATE_MODEL_TEXT')]
         elif mode in ('permission', 'overview'):
@@ -102,9 +93,8 @@ def test_worker_logs_correlated_safe_failure_and_terminal_counts(archive, tmp_pa
                     assert 'reason=memory_permission_denied' in failure
                     assert 'quote_format_match=' not in failure
                 else:
-                    assert 'detail=quote_not_found' in failure
-                    expected = 'unique' if mode == 'format_partial' else 'none'
-                    assert f'quote_format_match={expected}' in failure
+                    assert 'detail=evidence_id_missing' in failure
+                    assert 'quote_format_match=' not in failure
             elif mode == 'completed':
                 assert job.result_status == 'completed' and job.saved == 0 and job.failed == 0
             elif mode == 'batch_limit':

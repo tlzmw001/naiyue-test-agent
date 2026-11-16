@@ -58,7 +58,7 @@ def prepared(inputs):
 def test_e11_current_production_input_contains_old_id_complete_gap_and_keeps_version_server_side(inputs):
     service, job, candidate, *_ = inputs
     batch, messages, payload = prepared(inputs)
-    query = ' '.join(s['text'] for s in batch['sources'] if s['role'] == 'human')
+    query = ' '.join(s['text'] for s in batch['units'] if s['role'] == 'human')
     lexical = MemoryInput(action='search', status='candidate', query=query).model_dump(mode='json')
     assert service.memory.query('probe', job.project_id, lexical)['items'] == []
     row, = payload['related_memories']
@@ -153,7 +153,7 @@ def test_search_hit_is_deduplicated_against_latest_page_and_keeps_one_read_per_o
         calls.append(request)
         return original(sid, root, request)
     monkeypatch.setattr(service.memory, 'query', query)
-    rows = asyncio.run(_related(service, job, dict(sources=[dict(role='human', text='自动化用例编排')])))
+    rows = asyncio.run(_related(service, job, dict(units=[dict(role='human', text='自动化用例编排',origin='new')])))
     assert [row['memory_id'] for row in rows] == [candidate['actual_memory_id']]
     reads = [request for request in calls if request['action'] == 'read']
     assert len(reads) > 1 and len(reads) == len({r['offset'] for r in reads})
@@ -200,7 +200,7 @@ def test_input_budget_can_drop_optional_candidate_but_keeps_valid_primary_source
     service.settings = service.memory.settings = MemorySettings(auto_enabled=False, related_limit=8, max_input_tokens=cap)
     batch, messages, payload = prepared(inputs)
     assert payload['related_memories'] == []
-    assert {s['message_id'] for s in batch['sources']} == {s['message_id'] for s in original_sources['sources']}
+    assert {s['message_id'] for s in batch['units']} == {s['message_id'] for s in original_sources['units']}
     assert count_tokens_approximately(messages) <= cap
 
 
@@ -210,7 +210,7 @@ def test_existing_cross_session_search_hit_is_not_filtered_by_latest_page_rules(
         active_tool_names=['memory'], permission_mode='Default'))
     foreign = seed_candidate(service.memory, 'other', cases, at=at + 20)
     service.allowed = lambda request: request['action'] != 'list'
-    rows = asyncio.run(_related(service, job, dict(sources=[dict(role='human', text='自动化用例编排')])))
+    rows = asyncio.run(_related(service, job, dict(units=[dict(role='human', text='自动化用例编排',origin='new')])))
     assert {row['memory_id'] for row in rows} == {own['actual_memory_id'], foreign['actual_memory_id']}
 
 
@@ -262,7 +262,7 @@ def test_search_plus_latest_candidates_share_the_same_candidate_count_limit(inpu
         calls.append(request)
         return original(sid, root, request)
     monkeypatch.setattr(service.memory, 'query', query)
-    rows = asyncio.run(_related(service, job, dict(sources=[dict(role='human', text='自动化用例编排')])))
+    rows = asyncio.run(_related(service, job, dict(units=[dict(role='human', text='自动化用例编排',origin='new')])))
     assert len(rows) == 2
     assert {row['memory_id'] for row in rows} == {own['actual_memory_id'], additional[-1]}
     lists = [request for request in calls if request['action'] == 'list']

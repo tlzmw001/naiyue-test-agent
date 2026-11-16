@@ -247,7 +247,7 @@ async def test_preflight_uses_final_request_and_does_not_change_model_call(
         seen.append((messages, tools))
         return estimated_tokens
 
-    monkeypatch.setattr('naiyue_test_agent.agent_runtime.context_observation'
+    monkeypatch.setattr('naiyue_test_agent.agent_runtime.context_calibration'
                         '.count_tokens_approximately', estimate)
     request = SimpleNamespace(
         runtime=SimpleNamespace(context=typed_context(identity=RunIdentity(session_id='s1', run_id='r1'))),
@@ -260,7 +260,7 @@ async def test_preflight_uses_final_request_and_does_not_change_model_call(
         }),
         messages=[HumanMessage(content='SECRET_REQUEST')],
         system_message=SystemMessage(content='SECRET_SYSTEM'),
-        tools=[{'name': 'read', 'description': 'SECRET_TOOL'}],
+        tools=[{'name': 'read', 'description': 'SECRET_TOOL'}], response_format=None,
     )
     response = SimpleNamespace(result=[AIMessage(content='done')])
     handled = []
@@ -286,6 +286,7 @@ async def test_preflight_uses_final_request_and_does_not_change_model_call(
         'effective_headroom_tokens': max(output_limit, 20),
         'trigger_threshold_tokens': expected_threshold,
         'estimated_input_tokens': estimated_tokens,
+        'calibrated_input_tokens': estimated_tokens,
         'needs_compaction': needs_compaction, 'estimate_status': 'available',
     }]
     assert 'SECRET_REQUEST' not in caplog.text
@@ -300,7 +301,7 @@ async def test_preflight_estimation_failure_is_visible_and_does_not_block(monkey
     def fail_estimate(*_args, **_kwargs):
         raise RuntimeError('SECRET_ESTIMATION_FAILURE')
 
-    monkeypatch.setattr('naiyue_test_agent.agent_runtime.context_observation'
+    monkeypatch.setattr('naiyue_test_agent.agent_runtime.context_calibration'
                         '.count_tokens_approximately', fail_estimate)
     request = SimpleNamespace(
         runtime=SimpleNamespace(context=typed_context(identity=RunIdentity(session_id='s1'))),
@@ -312,7 +313,7 @@ async def test_preflight_estimation_failure_is_visible_and_does_not_block(monkey
             'naiyue_compaction_reserve': {'tokens': 20, 'source': 'default'},
         }),
         messages=[HumanMessage(content='SECRET_REQUEST')],
-        system_message=None, tools=[],
+        system_message=None, tools=[], response_format=None,
     )
     response = SimpleNamespace(result=[AIMessage(content='done')])
     with caplog.at_level(logging.INFO, logger='naiyue_test_agent.agent_runtime'):
@@ -323,7 +324,7 @@ async def test_preflight_estimation_failure_is_visible_and_does_not_block(monkey
     assert events[0]['estimate_status'] == 'unavailable'
     assert events[0]['needs_compaction'] is None
     assert events[0]['estimated_input_tokens'] is None
-    assert 'context_preflight_estimate_unavailable error_type=RuntimeError' in caplog.text
+    assert 'calibration_raw_unavailable error_type=RuntimeError' in caplog.text
     assert 'SECRET_ESTIMATION_FAILURE' not in caplog.text
 
 

@@ -175,7 +175,7 @@ def test_retry_request_construction_failure_is_classified_as_retry(native_model,
                   _model([], window=2000, reserve=20, summaries=[AIMessage(content='brief summary')]))
         error, calls = ValueError('PRIVATE'), []
         request = SimpleNamespace(runtime=SimpleNamespace(context=typed_context()), model=chosen,
-                                  messages=history(), system_message=SystemMessage(content='BASE'), tools=[])
+                                  messages=history(), system_message=SystemMessage(content='BASE'), tools=[], response_format=None)
 
         def override(**kwargs):
             raise error

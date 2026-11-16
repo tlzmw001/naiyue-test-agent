@@ -18,10 +18,10 @@ def test_many_batches_and_two_tasks_inherit_used_overview_range_and_omissions(ar
     from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='secret', content='password = SYNTHETIC_NOT_A_CREDENTIAL'),
-            HumanMessage(id='long', content='visible source ' * 20)])
+            HumanMessage(id='long', content='visible source。' * 200)])
         first_model = StreamingToolModel(replies=[response() for _ in range(10)])
         first_service, first, _ = fixture(archive, tmp_path, first_model,
-            max_input_tokens=1100, read_chunk_chars=20, max_batches=10)
+            max_input_tokens=16000, read_chunk_chars=20, max_batches=10, batch_read_chars=1024, batch_overlap_chars=0)
         first.upper = 2
         try:
             await drive(first_service, first)
@@ -105,7 +105,7 @@ def test_many_omission_notes_remain_bounded_with_explicit_truncation(archive, tm
     async def scenario():
         save(archive, [*[HumanMessage(id=f's{i}', content='password = SYNTHETIC_NOT_A_CREDENTIAL')
             for i in range(700)], HumanMessage(id='safe', content='safe final source')])
-        service, job, _ = fixture(archive, tmp_path, StreamingToolModel(replies=[response()]))
+        service, job, _ = fixture(archive, tmp_path, StreamingToolModel(replies=[response()]), max_batches=10, batch_max_messages=1024)
         job.upper = 701
         try:
             await drive(service, job)

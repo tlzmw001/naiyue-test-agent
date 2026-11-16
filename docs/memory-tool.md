@@ -55,6 +55,9 @@ update、disable和forget使用查询返回的真实memory_id和expected_version
 enabled = true
 auto_enabled = true
 trigger_turns = 8
+batch_max_messages = 128      # 单批消息/关系读取上限，1～1024。
+batch_read_chars = 65536      # 单批可见正文读取上限（含前文），1024～262144字符。
+batch_overlap_chars = 600     # 同交互辅助前文，0～8192且不超过读取上限的四分之一。
 trigger_chars = 20000
 # model_id = "已存在的模型ID" # 省略时冻结登记时的会话模型；不创建额外模型。
 max_input_tokens = 16000
@@ -115,7 +118,8 @@ memory字段可解析但校验非法或model_id不存在时安全诊断并禁用
 
 每批一次已配置语言模型输出overview={goal,progress,blockers,next_step}及至多8条proposals，不调用embedding、扩词、评分或格式修复模型。概览与每条记忆分别校验并提交03写入合同；成功概览不等于建议都已保存。相关记忆带真实ID，候选还带缺口；版本由程序在请求前冻结，不要求模型填写。模型可在新证据支持下提议同ID转正，CAS/来源/TTL等仍由代码校验。已配置deny规则同样约束内部list/search/read与写入。
 
-[127-07后台合同](specs/127-07-memory-model-contract.md)将建议改为平铺的kind、subject、body、basis、intent、sources六个核心字段；scope及环境条件等按需提供。程序补齐新建/更新动作、默认标题、来源身份和预期版本，只接受最终实际发送的完整相关记忆ID。来源仅向模型展示本批source_key、角色、可见正文、发生时间、工具名称/结果和partial标记，仍按原档案还原精确引文。显式memory工具的record/update参数结构保持上文合同。
+[Spec143BM-S1](specs/143bm-01-conversation-evidence-input.md)采用批内证据编号：模型的 sources 只返回 evidence_id，程序绑定原始消息身份、版本、位置和精确引文。优先按完整交互、完整消息装批，超长消息才沿自然边界分段；4096仅为I/O页大小。完整片段最多300字符，无自然边界的硬切只能作为上下文。工具正文继续受上游输出限制、可见字段、安全过滤、单批读取量及模型预算限制，不自动展开artifact。辅助前文不计新增处理范围，纯前文引用不能触发新确认。触发仍为既有轮数/字符阈值或显式请求，S1仍是单阶段整理；新旧批量语义复核属于后续S3。公开memory工具的record/update精确引文合同保持。
+
 
 models.json中每个模型的profile可选memory_output：text（默认）、json_schema或function_calling，仅控制后台整理的返回通道。后两种使用现有LangChain/SDK结构化接口；须由人明确确认该模型及网关支持后配置。不根据模型名猜能力，协议构造失败不切换通道重发，超时/SDK既有重试保持。schema请求开销计入输入限额；过小配置会在请求前失败。函数返回只接受单个MemoryResult，作为返回值解析，不执行工具；所有通道继续由项目校验顶层及逐条建议。当前支持的SDK路径和限制见127-07，不代表已通过真实供应商兼容性验收。
 

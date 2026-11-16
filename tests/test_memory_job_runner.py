@@ -45,7 +45,7 @@ def fixture(archive, tmp_path, model, **changes):
         job.status, job.result_status, job.termination = 'finished', status, termination
         job.cleanup_confirmed = True
     service._terminal = terminal
-    job = SimpleNamespace(task_id='a' * 32, session_id='session', target_session_id='session',
+    job = SimpleNamespace(task_id='a' * 32, requested_start=None, session_id='session', target_session_id='session',
         root=tmp_path, origin_run_id='root-run', model_id='A', model=model, thread_id='root-thread',
         conversation_revision=0, project_id=archive.sessions.get('session')['project_id'], deadline=time.monotonic() + 30, start=(0, 0), upper=1,
         batches=0, saved=0, failed=0, overview_saved=0, skipped=[], control=RunControl(),
@@ -436,7 +436,7 @@ def test_optional_related_budget_pressure_does_not_discard_valid_primary_sources
             await memory_job_runner.drive(service, job)
             assert job.result_status == 'completed' and job.overview_saved == 1 and job.failed == 0
             payload = json.loads(job.model.seen[0][-1].content)
-            assert payload['batch']['sources'][0]['text'] == 'visible' and payload['related_memories'] == []
+            assert payload['batch']['units'][0]['text'] == 'visible' and payload['related_memories'] == []
         finally:
             service.memory.close()
     asyncio.run(scenario())
