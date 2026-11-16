@@ -4,7 +4,7 @@ import CloudTasks from './CloudTasks';
 import CloudTaskDetail from './CloudTaskDetail';
 import { installDialogMock } from '../testDialogs';
 import type { CloudApi } from '../cloudApi';
-import type { CloudBinding, CloudOperation, CloudSnapshot, CloudTask } from '../cloudTypes';
+import type { CloudBinding, CloudDraft, CloudOperation, CloudSnapshot, CloudTask } from '../cloudTypes';
 import { useCloudObservation } from '../useCloudObservation';
 import { useCloudDraft } from '../useCloudDraft';
 import CloudTaskCreate from './CloudTaskCreate';
@@ -22,6 +22,70 @@ const snapshot: CloudSnapshot = { task, cursor: 'cursor', archive: { epoch: 'his
   messages: [{ id: 'm', type: 'ai', content: '云端正在检查测试', provisional: false, state: 'complete' }],
   next_cursor: null, thread: { thread_id: 'root' } },
   live: { epoch: 'live', seq: 1, replace: true, available: true, capture_incomplete: false, messages: [], tools: [], threads: [] } };
+
+async function keyboardComposer(target = binding) {
+  const cloud = api([target]);
+  vi.mocked(cloud.message).mockImplementation(async (_sid, _bid, body) => ({
+    command_id: String((body as { command_id: string }).command_id), binding_id: target.binding_id,
+    kind: 'message', phase: 'accepted', run_id: 'keyboard-run', steps: {},
+  }));
+  const props = { api: cloud, sid: 'S', binding: target, active: true, back: vi.fn(), changed: vi.fn() };
+  const view = render(<CloudTaskDetail {...props} />);
+  const input = screen.getByRole('textbox', { name: '发给此云端任务' });
+  await waitFor(() => expect(input).toHaveProperty('disabled', false));
+  return { cloud, input, props, ...view };
+}
+
+it.each([false, true])('keyboard Enter submits the cloud draft once (running=%s)', async running => {
+  const target = running ? { ...binding, cloud: { ...task, active_run_id: 'current' } } : binding;
+  const { cloud, input } = await keyboardComposer(target);
+  fireEvent.change(input, { target: { value: '键盘提交云端任务' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: running ? '本轮结束后发送' : '发送到云端' })).toHaveProperty('disabled', false));
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await waitFor(() => expect(running ? cloud.queueMessage : cloud.message).toHaveBeenCalledOnce());
+  expect(running ? cloud.queueMessage : cloud.message).toHaveBeenCalledWith('S', 'B', expect.objectContaining({ text: '键盘提交云端任务' }));
+  expect(running ? cloud.message : cloud.queueMessage).not.toHaveBeenCalled();
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await act(async () => {});
+  expect(running ? cloud.queueMessage : cloud.message).toHaveBeenCalledOnce();
+});
+
+it('keyboard shortcuts preserve Shift+Enter, IME composition and disabled sends', async () => {
+  const { cloud, input, props, rerender } = await keyboardComposer();
+  fireEvent.keyDown(input, { key: 'Enter' });
+  expect(cloud.saveDraft).not.toHaveBeenCalled();
+  fireEvent.change(input, { target: { value: '输入法确认后发送' } });
+  const newline = new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true });
+  fireEvent(input, newline);
+  expect(newline.defaultPrevented).toBe(false);
+  fireEvent.compositionStart(input);
+  fireEvent.keyDown(input, { key: 'Enter' });
+  fireEvent.compositionEnd(input);
+  fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+  expect(cloud.saveDraft).not.toHaveBeenCalled();
+  rerender(<CloudTaskDetail {...props} metadataFresh={false} />);
+  expect(screen.getByRole('button', { name: '发送到云端' })).toHaveProperty('disabled', true);
+  fireEvent.keyDown(input, { key: 'Enter' });
+  expect(cloud.saveDraft).not.toHaveBeenCalled();
+  rerender(<CloudTaskDetail {...props} metadataFresh />);
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await waitFor(() => expect(cloud.message).toHaveBeenCalledOnce());
+});
+
+it('keyboard Enter respects a pending draft save without showing a submitted message', async () => {
+  const { cloud, input } = await keyboardComposer();
+  let finish!: (value: CloudDraft) => void;
+  vi.mocked(cloud.saveDraft).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  fireEvent.change(input, { target: { value: '保存完成前不要发送' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存草稿' }));
+  expect(screen.getByRole('button', { name: '发送到云端' })).toHaveProperty('disabled', true);
+  fireEvent.keyDown(input, { key: 'Enter' });
+  expect(cloud.saveDraft).toHaveBeenCalledOnce();
+  expect(cloud.message).not.toHaveBeenCalled();
+  expect(screen.queryByText('保存完成前不要发送', { selector: 'p' })).toBeNull();
+  await act(async () => { finish({ draft_revision: 1, text: '保存完成前不要发送', model_id: 'A', thinking_level: 'model_default' }); });
+});
+
 function api(rows: CloudBinding[] = []) {
   return { projectId: project, profiles: vi.fn().mockResolvedValue([{ profile_id: 'work', template_ids: ['python'], default_template: 'python' }]),
     sourceTree: vi.fn().mockResolvedValue({ git: true, git_error: null, path: '', entries: [], next_offset: null, excluded_count: 0 }),

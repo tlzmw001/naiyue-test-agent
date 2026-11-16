@@ -39,6 +39,7 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
   const [operations, setOperations] = useState<CloudOperation[]>([]); const [error, setError] = useState('');
   const [busy, setBusy] = useState(false); const [sending, setSending] = useState(false);
   const pending = useRef(false); const alive = useRef(true);
+  const composing = useRef(false);
   const message = useRef<{ id: string; version: number } | undefined>(undefined);
   const intent = useRef<{ kind: string; body: Record<string, unknown> } | undefined>(undefined);
   const [unconfirmed, setUnconfirmed] = useState(false);
@@ -103,6 +104,7 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
     finally { pending.current = false; if (alive.current) setBusy(false); }
   }
   const execute: CloudAction = async (kind, body) => { if (metadataFresh) return await dispatch(kind, { command_id: crypto.randomUUID(), ...body }); };
+  const sendDisabled = !metadataFresh || !draft.ready || draft.conflict || draft.saving || busy || sending || !files.ready || !!queued || waitingForMcp || (!running && (!canSend(binding.cloud) || !attachmentsReady)) || !draft.text.trim() || !draft.model_id;
   async function send() {
     if (!metadataFresh || !files.ready || queued || waitingForMcp || (!running && (!canSend(binding.cloud) || !attachmentsReady)) || sending || !draft.text.trim() || !draft.model_id) return;
     setSending(true); if (!running) setSubmitted({ text: draft.text });
@@ -197,6 +199,12 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
       <CloudAttachments api={api} sid={sid} bid={binding.binding_id} rows={files.attachments} selected={draft.attachment_ids} select={draft.setAttachments} changed={files.refresh} />
       {files.error && <p role="status" className={styles.error}>{files.error}</p>}
       <label>发给此云端任务<textarea aria-label="发给此云端任务" value={draft.text} rows={3} disabled={!draft.ready}
+        onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
+        onKeyDown={event => {
+          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current) {
+            event.preventDefault(); if (!sendDisabled) void send();
+          }
+        }}
         onChange={e => draft.setText(e.target.value)} placeholder="目标、必要背景与验收条件" /></label>
       <div className={styles.actions}><div className={styles.modelSelection}>
         <ModelMenu models={models?.model_ids ?? []} model={draft.model_id ?? ''} level={draft.thinking_level}
@@ -208,7 +216,7 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
             ? binding.cloud.runner_capabilities.includes('mcp:refresh') : undefined} />
       </div>
         <button disabled={!draft.ready || draft.saving || draft.conflict} onClick={() => void draft.save().catch(() => console.warn('cloud_draft_save_failed'))}>保存草稿</button>
-        <button className={styles.primary} disabled={!metadataFresh || !draft.ready || draft.conflict || draft.saving || busy || sending || !files.ready || !!queued || waitingForMcp || (!running && (!canSend(binding.cloud) || !attachmentsReady)) || !draft.text.trim() || !draft.model_id}
+        <button className={styles.primary} disabled={sendDisabled}
           onClick={() => void send()}>{running ? '本轮结束后发送' : waitingForMcp ? '等待 MCP 工具刷新' : '发送到云端'}</button></div>
       {draft.error && <p role="status" className={styles.error}>{draft.error}</p>}
       {modelsError && <p role="status" className={styles.error}>云端模型选项读取失败：{modelsError}<button className={styles.link} onClick={() => setRevision(v => v + 1)}>重试读取</button></p>}
