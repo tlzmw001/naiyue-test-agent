@@ -136,3 +136,84 @@ it('accepts omitted statistics without losing the contiguous main event sequence
   expect(result.incomplete).toBe(false);
   expect(result.context_snapshot).toBeNull();
 });
+
+it('uses calibrated total for capacity and raw total for composition', () => {
+  const calibrated = { ...estimate, calibration: { method: 'ratio_estimate', calibrated_input_tokens: 68000, invalidation_reason: null } };
+  render(<ContextPanel usageContent={null} value={{ ...view, current: { ...view.current, estimate: calibrated } } as any}
+    loading={false} error="" retry={vi.fn()} />);
+  expect(screen.getByText('输入预估 68,000')).toBeTruthy();
+  expect(screen.getByText('43,616')).toBeTruthy();
+  expect(screen.getByText('82.4%')).toBeTruthy();
+  expect(screen.getByText('校准预估')).toBeTruthy();
+});
+
+it('uses strictly greater calibrated threshold and rejects malformed calibration', () => {
+  const current = (tokens: number) => ({ ...view, current: { ...view.current, estimate: { ...estimate,
+    calibration: { method: 'ratio_estimate', calibrated_input_tokens: tokens, invalidation_reason: null } } } }) as any;
+  const { rerender } = render(<ContextTrigger value={current(104000)} open={false} disabled={false} toggle={vi.fn()} triggerRef={{ current: null }} />);
+  expect(screen.getByRole('button').getAttribute('data-threshold')).toBeNull();
+  rerender(<ContextTrigger value={current(104001)} open={false} disabled={false} toggle={vi.fn()} triggerRef={{ current: null }} />);
+  expect(screen.getByRole('button').getAttribute('data-threshold')).toBe('reached');
+  rerender(<ContextTrigger value={current(NaN)} open={false} disabled={false} toggle={vi.fn()} triggerRef={{ current: null }} />);
+  expect(screen.getByRole('button').textContent).not.toContain('NaN');
+  expect(screen.getByRole('button').getAttribute('data-threshold')).toBeNull();
+});
+
+it('accepts v2 snapshot and rejects incompatible calibration fields', () => {
+  const run = { session_id: 's', run_id: 'r', status: 'running', messages: [], last_sequence: 0 } as any;
+  const snapshot = { ...view.latest_request!, version: 2, estimate: { ...estimate, calibration: {
+    method: 'ratio_estimate', calibrated_input_tokens: 17000, invalidation_reason: null } } };
+  const event = (snapshot: unknown) => ({ version: 1, session_id: 's', run_id: 'r', sequence: 1,
+    event_type: 'model_context_snapshot', data: { model_call_id: 'call', snapshot_json: JSON.stringify(snapshot) } }) as any;
+  expect(applyEvent(run, event(snapshot)).context_snapshot?.version).toBe(2);
+  for (const invalid of [null, { method: 'uncalibrated', calibrated_input_tokens: 17000, invalidation_reason: null },
+    { method: 'ratio_estimate', calibrated_input_tokens: -1, invalidation_reason: null }]) {
+    expect(() => applyEvent(run, event({ ...snapshot, estimate: { ...snapshot.estimate, calibration: invalid } }))).toThrow('invalid_event');
+  }
+});
+
+it('keeps sent calibrated prediction distinct from returned usage and next preview', () => {
+  const value = { ...view, current: { ...view.current, estimate: { ...estimate,
+    calibration: { method: 'ratio_estimate', calibrated_input_tokens: 60000, invalidation_reason: null } } },
+    latest_request: { ...view.latest_request!, version: 2, estimate: { ...estimate,
+      calibration: { method: 'ratio_estimate', calibrated_input_tokens: 40000, invalidation_reason: null } },
+      usage: { ...view.latest_request!.usage!, input_tokens: 50000 } } } as any;
+  render(<ContextPanel value={value} usageContent={null} loading={false} error="" retry={vi.fn()} />);
+  expect(screen.getByText('输入预估 60,000')).toBeTruthy();
+  fireEvent.click(screen.getByRole('tab', { name: '最近请求' }));
+  expect(screen.getByText(/校准预估：≈ 40,000/)).toBeTruthy();
+  expect(screen.getByText(/原始估算：≈ 34,000/)).toBeTruthy();
+  expect(screen.getByText('50,000')).toBeTruthy();
+  expect(screen.queryByText(/60,000/)).toBeNull();
+});
+
+it('does not replace unavailable calibrated total with raw tokens', () => {
+  const value = { ...view, current: { ...view.current, estimate: { ...estimate,
+    calibration: { method: 'unavailable', calibrated_input_tokens: null, invalidation_reason: 'raw_estimate_unavailable' } } } } as any;
+  render(<ContextPanel value={value} usageContent={null} loading={false} error="" retry={vi.fn()} />);
+  expect(screen.getByText(/当前预估暂不可用/)).toBeTruthy();
+  expect(screen.queryByText('输入预估 34,000')).toBeNull();
+});
+
+it.each([false, true])('refreshes thinking preview and rejects late old results (pending=%s)', async pending => {
+  const api = new WebApi('test');
+  let finishOld!: (value: ContextView) => void;
+  let finishNew!: (value: ContextView) => void;
+  const read = vi.spyOn(api, 'context').mockImplementationOnce(() => pending
+    ? new Promise(resolve => { finishOld = resolve; }) : Promise.resolve(view))
+    .mockImplementationOnce(() => new Promise(resolve => { finishNew = resolve; }));
+  const newer = { ...view, current: { ...view.current, estimate: { ...estimate, estimated_input_tokens: 1234 } } };
+  function Harness({ level }: { level: string }) {
+    const state = useContextView(api, { session_id: 's', model_id: 'A', active_tools: [], thinking_level: level } as any, null);
+    return <span>{state.value?.current.estimate?.estimated_input_tokens ?? 'pending'}</span>;
+  }
+  const { rerender } = render(<Harness level="model_default" />);
+  if (!pending) await screen.findByText('34000');
+  rerender(<Harness level="high" />);
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText('34000')).toBeNull();
+  await act(async () => finishNew(newer));
+  expect(screen.getByText('1234')).toBeTruthy();
+  if (pending) await act(async () => finishOld(view));
+  expect(screen.getByText('1234')).toBeTruthy();
+});

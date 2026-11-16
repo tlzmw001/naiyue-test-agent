@@ -49,17 +49,20 @@ def test_total_failure_preserves_unknown_instead_of_zero(monkeypatch, caplog):
     def fail(*args, **kwargs):
         raise RuntimeError('PRIVATE_COUNTER')
 
-    monkeypatch.setattr(context_usage, 'count_tokens_approximately', fail)
+    from naiyue_test_agent.agent_runtime import context_calibration
+    monkeypatch.setattr(context_calibration, 'count_tokens_approximately', fail)
     estimate = context_usage.estimate_context(model_with_limits([]), SystemMessage(content='base'), [], [])
     assert estimate['status'] == estimate['groups_status'] == 'unavailable'
     assert estimate['estimated_input_tokens'] is None and estimate['groups'] == []
-    assert 'context_total_estimate_unavailable' in caplog.text and 'PRIVATE_COUNTER' not in caplog.text
+    assert 'calibration_raw_unavailable' in caplog.text and 'PRIVATE_COUNTER' not in caplog.text
 
 
 def test_old_snapshot_without_group_status_is_read_without_rewriting():
     estimate = context_usage.estimate_context(model_with_limits([]), SystemMessage(content='base'), [], [])
     estimate.pop('groups_status', None)
     snapshot = context_usage.request_snapshot(typed_context(model_call=ModelCallState('call', 'A')), estimate)
+    snapshot['version'] = 1
+    estimate.pop('calibration')
     assert context_usage.read_snapshot(snapshot) == snapshot
     assert 'groups_status' not in snapshot['estimate']
 

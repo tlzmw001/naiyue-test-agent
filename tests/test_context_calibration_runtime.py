@@ -39,6 +39,8 @@ def test_returned_usage_calibrates_next_preflight(monkeypatch,caplog):
     preflight=[r.model_context_preflight for r in caplog.records if hasattr(r,'model_context_preflight')]
     assert [p['calibrated_input_tokens'] for p in preflight]==[1000,4000]
     assert [p['needs_compaction'] for p in preflight]==[False,True]
+    assert [p['method'] for p in preflight]==['uncalibrated','ratio_estimate']
+    assert [p['invalidation_reason'] for p in preflight]==['no_samples',None]
 
 
 def test_async_graph_attaches_sample_and_overflow_pairs_retry():

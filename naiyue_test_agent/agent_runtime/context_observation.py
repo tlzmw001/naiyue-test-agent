@@ -132,6 +132,8 @@ def _prepare_observation(request):
                 value = measurement.budget
                 preflight['estimated_input_tokens'] = value.raw_input_tokens
                 preflight['calibrated_input_tokens'] = value.calibrated_input_tokens
+                preflight['method'] = value.method
+                preflight['invalidation_reason'] = value.invalidation_reason
                 preflight['estimate_status'] = value.status
                 if value.calibrated_input_tokens is not None:
                     preflight['needs_compaction'] = (headroom >= window
@@ -171,10 +173,13 @@ class _ModelRequestObservationMiddleware(AgentMiddleware):
         payload, budget = _prepare_observation(request)
         snapshot = None
         context = request.runtime.context
+        call = context.invocation.model_call
+        measurement = call.context_measurement if call is not None else None
         try:
             if (context.invocation.model_call.call_id if context.invocation.model_call is not None else None):
                 snapshot = request_snapshot(context, estimate_context(
-                    request.model, request.system_message, request.messages, request.tools))
+                    request.model, request.system_message, request.messages, request.tools,
+                    measurement=measurement, response_format=request.response_format))
                 _publish_snapshot(context, snapshot)
         except Exception as error:
             logger.warning('context_snapshot_unavailable error_type=%s', type(error).__name__)

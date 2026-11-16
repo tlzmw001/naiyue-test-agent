@@ -5,10 +5,11 @@ from naiyue_test_agent.application.subagents.subagent_history import subagent_re
 
 
 class HistoryAPI:
-    def __init__(self, owner, sessions, persistence, agent, catalog, registry, system_prompt, metadata, conversation, subagents):
+    def __init__(self, owner, sessions, persistence, agent, catalog, registry, system_prompt, metadata, conversation, subagents, *, response_format=None):
         self._owner, self._sessions, self._persistence = owner, sessions, persistence
         self._agent, self._catalog, self._tool_registry = agent, catalog, registry
         self._system_prompt = system_prompt
+        self._response_format = response_format
         self._metadata, self._conversation, self._subagents = metadata, conversation, subagents
 
     async def messages(self, session_id):
@@ -30,7 +31,7 @@ class HistoryAPI:
             history = None if self._sessions.has_session(session_id) else await self.session(session_id)
             return await context_view(session_id, sessions=self._sessions, agent=self._agent,
                 catalog=self._catalog, tool_registry=self._tool_registry,
-                system_prompt=self._system_prompt, history=history)
+                system_prompt=self._system_prompt, history=history, response_format=self._response_format)
 
     async def subagents(self, session_id):
         with self._owner.operation():

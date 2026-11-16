@@ -70,7 +70,11 @@ async def web_scenario(root):
         ]}, 'id': 'edit-installed'},
         {'name': 'read', 'args': {'path': 'sample.py'}, 'id': 'read-edit-after'},
         {'name': 'read', 'args': {'path': str(outside)}, 'id': 'read-approved'},
-    ]), AIMessage(content='installed-ok')])
+    ], usage_metadata={'input_tokens': 4000, 'output_tokens': 1, 'total_tokens': 4001}),
+        AIMessage(content='installed-ok', usage_metadata={
+            'input_tokens': 6000, 'output_tokens': 1, 'total_tokens': 6001})],
+        metadata={'naiyue_context_estimation': {'version': 1,
+            'route_fingerprint': hashlib.sha256(b'installed-offline-fixture').hexdigest()}})
     application.load_model_catalog = lambda _: ModelCatalog('offline', {'offline': model})
     configuration = root / 'fixture-settings.toml'
     configuration.write_text('default_active_tools=["read","find","grep","edit"]\n'
@@ -112,6 +116,12 @@ async def web_scenario(root):
             view = (await client.get(f'/api/v1/scopes/chats/sessions/{session}')).json()
             batch, = view['approval_batches']
             assert len(model.seen) == 1
+            first_context = (await client.get(f'/api/v1/scopes/chats/sessions/{session}/context')).json()
+            first_snapshot = first_context['latest_request']
+            first_estimate = first_snapshot['estimate']
+            assert first_snapshot['usage']['input_tokens'] == 4000
+            assert first_estimate['calibration']['method'] == 'uncalibrated'
+            assert first_estimate['calibration']['calibrated_input_tokens'] == first_estimate['estimated_input_tokens']
             response = await client.post(f'/api/v1/scopes/chats/sessions/{session}/approvals', json={
                 'request_id': str(uuid4()), 'origin_run_id': batch['origin_run_id'],
                 'approval_batch_id': batch['approval_batch_id'],
@@ -132,6 +142,14 @@ async def web_scenario(root):
             assert returned['read-edit-after'].content == 'needle edited\n'
             assert (workspace / 'sample.py').read_bytes() == b'needle edited\n'
             assert returned['read-approved'].content == 'approved outside content'
+            second_context = (await client.get(f'/api/v1/scopes/chats/sessions/{session}/context')).json()
+            second_snapshot = second_context['latest_request']
+            second_estimate = second_snapshot['estimate']
+            assert second_snapshot['usage']['input_tokens'] == 6000
+            assert second_estimate['calibration']['method'] == 'ratio_estimate'
+            raw = first_estimate['estimated_input_tokens']
+            expected = (second_estimate['estimated_input_tokens'] * 4000 + raw - 1) // raw
+            assert second_estimate['calibration']['calibrated_input_tokens'] == expected
     reopened = create_probe_app(settings)
     async with reopened.router.lifespan_context(reopened):
         async with httpx.AsyncClient(event_hooks={'request': [async_command_headers]}, transport=httpx.ASGITransport(app=reopened), base_url=origin,
@@ -141,6 +159,8 @@ async def web_scenario(root):
             assert restored['can_run'] and not restored['busy']
             assert any(message['content'] == 'installed-ok' for message in restored['messages'])
             assert len(model.seen) == 2, 'Reopen executed model/tool work'
+            reopened_context = (await client.get(f'/api/v1/scopes/chats/sessions/{session}/context')).json()
+            assert reopened_context == second_context, 'Reopen lost calibration or frozen measurement'
     from release_mcp_smoke import mcp_scenario
     mcp = await mcp_scenario(root, OfflineModel)
     return workspace, model, mcp
@@ -208,7 +228,8 @@ def main():
     print(json.dumps({'target': native['target'], 'version': naiyue_test_agent.__version__,
         'installed_package': str(installed), 'native_tools': 'passed', 'frontend_api': 'passed',
         'find_grep': 'passed', 'read_edit_read': 'passed',
-        'approval_resume': 'passed', 'sqlite_reopen': 'passed', 'cli': 'passed', 'cli_protocol': cli,
+        'approval_resume': 'passed', 'sqlite_reopen': 'passed', 'context_calibration': 'passed',
+        'cli': 'passed', 'cli_protocol': cli,
         'configuration': 'passed', **storage, 'mcp': mcp, 'background_tasks': background,
         'subagent_continuation': subagents, 'memory': memory, 'user_images': images, 'service_network': network}))
 

@@ -66,7 +66,7 @@ def test_purpose_snapshots_are_bounded_and_do_not_expose_live_state():
     assert sessions.require(sid).describe_session()['manual_review_required'] is False
     view = sessions.require(sid).snapshot_for_context()
     assert set(view) == {'thread_id', 'model_id', 'workspace_root', 'active_tool_names',
-                         'busy', 'pending_approval', 'manual_review_required', 'project_id', 'execution_root', 'last_execution_path', 'execution_binding'}
+                         'busy', 'pending_approval', 'manual_review_required', 'project_id', 'execution_root', 'last_execution_path', 'execution_binding', 'thinking_level'}
     assert view['last_execution_path'] is None
     assert isinstance(view['active_tool_names'], tuple)
     assert sessions.context_snapshot_is_current(sid, view)

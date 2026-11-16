@@ -287,6 +287,7 @@ async def test_preflight_uses_final_request_and_does_not_change_model_call(
         'trigger_threshold_tokens': expected_threshold,
         'estimated_input_tokens': estimated_tokens,
         'calibrated_input_tokens': estimated_tokens,
+        'method': 'uncalibrated', 'invalidation_reason': 'identity_unavailable',
         'needs_compaction': needs_compaction, 'estimate_status': 'available',
     }]
     assert 'SECRET_REQUEST' not in caplog.text

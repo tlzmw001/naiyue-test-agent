@@ -14,6 +14,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage,
 )
+from .context_summary_content import summary_content_text
 from .context_calibration import KEY, measure_request, complete_sample, carry_compaction_state
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
@@ -55,7 +56,7 @@ def _validate_removed_prefix(messages: list) -> None:
     pending: set[str] = set()
     for message in messages:
         try:
-            content_text(message.content, strict=True)
+            summary_content_text(message)
         except ValueError as error:
             raise ContextCompactionError('unsupported_summary_content') from error
         if isinstance(message, AIMessage):
@@ -80,7 +81,7 @@ def _validate_removed_prefix(messages: list) -> None:
 def _serialize_text_history(messages: list) -> str:
     parts = []
     for message in messages:
-        text = content_text(message.content, strict=True)
+        text = summary_content_text(message)
         if isinstance(message, HumanMessage):
             parts.append(f'<message type="human">{escape(text)}</message>')
         elif isinstance(message, AIMessage):
@@ -343,6 +344,8 @@ def _compaction_steps(
             'raw_input_tokens': summary_measurement.budget.raw_input_tokens,
             'calibrated_input_tokens': summary_input, 'sample_id': sample_id,
             'summary_output_cap_tokens': summary_output['tokens'],
+            'method': summary_measurement.budget.method,
+            'invalidation_reason': summary_measurement.budget.invalidation_reason,
         }})
         summary_correlation = {**correlation, 'sample_id': sample_id}
         summary_started = time.monotonic()

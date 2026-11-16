@@ -129,6 +129,9 @@ def test_snapshot_old_optional_field_and_new_usage_validation(caplog):
     assert snapshot['usage'] == {'input_tokens': 100, 'output_tokens': 5, 'cache_read_tokens': 0, 'cache_write_tokens': 20}
     assert read_snapshot(snapshot) == snapshot
     del snapshot['usage']['cache_write_tokens']
+    assert read_snapshot(snapshot) is None
+    snapshot['version'] = 1
+    snapshot['estimate'].pop('calibration')
     restored = read_snapshot(snapshot)
     assert restored['usage']['cache_write_tokens'] is None
     assert 'cache_write_tokens' not in snapshot['usage']

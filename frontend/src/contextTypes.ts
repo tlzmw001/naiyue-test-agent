@@ -4,6 +4,8 @@ export interface ContextGroup {
 }
 export interface ContextEstimate {
   status: 'available' | 'unavailable'; estimated_input_tokens: number | null;
+  calibration?: { method: 'ratio_estimate' | 'inherited_agent_ratio' | 'uncalibrated' | 'unavailable';
+    calibrated_input_tokens: number | null; invalidation_reason: string | null };
   groups_status?: 'available' | 'unavailable';
   context_window_tokens: number | null; max_output_tokens: number | null;
   compaction_reserve_tokens: number | null; trigger_threshold_tokens: number | null;
@@ -11,7 +13,7 @@ export interface ContextEstimate {
   estimator: string; image_count: number; groups: readonly ContextGroup[];
 }
 export interface ContextSnapshot {
-  version: 1; model_call_id: string; model_id: string | null; run_id: string | null;
+  version: 1 | 2; model_call_id: string; model_id: string | null; run_id: string | null;
   recorded_at: string; status: 'running' | 'returned' | 'failed'; estimate: ContextEstimate;
   usage: { input_tokens: number | null; output_tokens: number | null;
     cache_read_tokens: number | null; cache_write_tokens: number | null } | null;
@@ -20,4 +22,19 @@ export interface ContextView {
   session_id: string;
   current: { basis: 'next_request' | 'last_sent' | 'unavailable'; model_id?: string | null; estimate: ContextEstimate | null };
   latest_request: ContextSnapshot | null;
+}
+
+export function validCalibration(estimate: ContextEstimate): boolean {
+  const value = estimate?.calibration;
+  if (!value || Object.keys(value).sort().join(',') !== 'calibrated_input_tokens,invalidation_reason,method') return false;
+  if (value.invalidation_reason !== null && !['no_samples', 'identity_changed', 'identity_unavailable',
+    'media_changed', 'unsupported_request_shape', 'invalid_record', 'raw_estimate_unavailable'].includes(value.invalidation_reason)) return false;
+  if (value.method === 'unavailable') return estimate.status === 'unavailable' &&
+    estimate.estimated_input_tokens === null && value.calibrated_input_tokens === null &&
+    estimate.groups_status === 'unavailable' && Array.isArray(estimate.groups) && estimate.groups.length === 0;
+  const raw = estimate.estimated_input_tokens, calibrated = value.calibrated_input_tokens;
+  return estimate.status === 'available' && Number.isSafeInteger(raw) && raw! >= 0 &&
+    Number.isSafeInteger(calibrated) && calibrated! >= 0 &&
+    (value.method === 'uncalibrated' ? calibrated === raw :
+      ['ratio_estimate', 'inherited_agent_ratio'].includes(value.method));
 }

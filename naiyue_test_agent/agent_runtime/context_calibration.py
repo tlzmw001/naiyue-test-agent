@@ -124,7 +124,7 @@ def measure_request(model, system_message, projected_messages, tools, *, purpose
         raise ValueError('Unsupported calibration purpose')
     messages=list(projected_messages)
     supported,media=_shape([*([system_message] if system_message else []),*messages],tools,response_format)
-    identity_data=(model.metadata or {}).get(IDENTITY_KEY)
+    identity_data=(getattr(model, 'metadata', None) or {}).get(IDENTITY_KEY)
     try:
         identity=fingerprint(identity_data) if identity_data else None
     except (ValueError,TypeError):

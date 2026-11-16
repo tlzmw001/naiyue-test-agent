@@ -84,7 +84,8 @@ async def assemble_host(*, catalog, parent, personal, admission, database_path, 
             subagents=settings.subagents, subagent_settings=settings.tools.subagent)
         return ProjectHost(catalog, sessions, agent, registry, system_prompt=system_prompt,
             persistence=persistence, storage=storage, usage=usage, diagnostics=diagnostics, resources=stack,
-            memory=memory, memory_jobs=jobs, parent=parent, cloud_receive_limits=settings.cloud_tasks.receive_limits)
+            memory=memory, memory_jobs=jobs, parent=parent, cloud_receive_limits=settings.cloud_tasks.receive_limits,
+            response_format=response_format)
     except BaseException as primary:
         for name, resource in (('memory_jobs', jobs), ('mcp', resources)):
             if resource is not None:

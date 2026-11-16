@@ -15,6 +15,8 @@ from naiyue_test_agent.model_access.messages import is_image_block
 from naiyue_test_agent.model_access.usage import normalize_model_usage
 
 
+from .context_calibration import measure_request
+
 logger = logging.getLogger(__name__)
 SNAPSHOT_KEY = 'naiyue_context_snapshot'
 PARTS_KEY = 'naiyue_prompt_parts'
@@ -86,18 +88,22 @@ def _system_children(message, total):
     return rows if previous == total else []
 
 
-def estimate_context(model, system_message, messages, tools):
+def estimate_context(model, system_message, messages, tools, *, measurement=None, response_format=None):
     result = {'status': 'unavailable', 'groups_status': 'unavailable',
         'estimated_input_tokens': None, 'groups': [],
         'image_count': sum(is_image_block(block) for message in messages
             if isinstance(message.content, list) for block in message.content),
         'estimator': 'framework_approximate', **_budget(model)}
-    try:
-        total = count_tokens_approximately([*([system_message] if system_message else []), *messages], tools=tools)
-    except Exception as error:
-        logger.warning('context_total_estimate_unavailable error_type=%s', type(error).__name__)
+    measurement = measurement if measurement is not None else measure_request(
+        model, system_message, messages, tools, response_format=response_format)
+    budget = measurement.budget
+    result['calibration'] = {'method': budget.method,
+        'calibrated_input_tokens': budget.calibrated_input_tokens,
+        'invalidation_reason': budget.invalidation_reason}
+    total = budget.raw_input_tokens
+    if total is None:
         return result
-    result.update(status='available', estimated_input_tokens=total)
+    result.update(status=budget.status, estimated_input_tokens=total)
     try:
         rows = {name: {'id': name, 'tokens': 0, 'count': 0} for name in GROUPS}
         if system_message is not None:
@@ -124,7 +130,7 @@ def estimate_context(model, system_message, messages, tools):
 
 
 def request_snapshot(context, estimate):
-    return {'version': 1, 'model_call_id': context.invocation.model_call.call_id,
+    return {'version': 2, 'model_call_id': context.invocation.model_call.call_id,
         'model_id': context.invocation.model_call.model_id, 'run_id': context.scope.identity.run_id,
         'recorded_at': datetime.now(timezone.utc).isoformat(), 'status': 'running',
         'estimate': estimate, 'usage': None}
@@ -165,7 +171,7 @@ def read_snapshot(value):
         if not isinstance(value, dict) or set(value) != {
                 'version', 'model_call_id', 'model_id', 'run_id', 'recorded_at', 'status', 'estimate', 'usage'}:
             raise ValueError('invalid_snapshot_fields')
-        if value['version'] != 1 or value['status'] not in ('running', 'returned', 'failed'):
+        if type(value['version']) is not int or value['version'] not in (1, 2) or value['status'] not in ('running', 'returned', 'failed'):
             raise ValueError('invalid_snapshot_state')
         for name in ('model_call_id', 'model_id', 'run_id'):
             label = value[name]
@@ -181,11 +187,26 @@ def read_snapshot(value):
             'max_output_tokens', 'compaction_reserve_tokens', 'trigger_threshold_tokens')
         sources = ('context_window_source', 'max_output_source', 'compaction_reserve_source')
         fields = {*counts, *sources, 'status', 'groups', 'estimator'}
-        if (not isinstance(estimate, dict) or set(estimate) not in (fields, fields | {'groups_status'})
+        allowed_fields = (fields, fields | {'groups_status'}) if value['version'] == 1 else (fields | {'groups_status', 'calibration'},)
+        if (not isinstance(estimate, dict) or set(estimate) not in allowed_fields
                 or estimate['estimator'] != 'framework_approximate'
                 or any(estimate[key] is not None and _number(estimate[key]) is None for key in counts)
                 or any(estimate[key] not in ('config', 'default', 'unknown') for key in sources)):
             raise ValueError('invalid_estimate_fields')
+        if value['version'] == 2:
+            calibration = estimate['calibration']
+            if (not isinstance(calibration, dict) or set(calibration) != {
+                    'method', 'calibrated_input_tokens', 'invalidation_reason'}):
+                raise ValueError('invalid_calibration_fields')
+            method, count, reason = (calibration['method'], calibration['calibrated_input_tokens'],
+                calibration['invalidation_reason'])
+            if (method not in ('unavailable', 'uncalibrated', 'ratio_estimate', 'inherited_agent_ratio')
+                    or reason not in (None, 'raw_estimate_unavailable', 'unsupported_request_shape',
+                        'identity_unavailable', 'identity_changed', 'no_samples', 'media_changed', 'invalid_record')
+                    or (method == 'unavailable' and (estimate['status'] != 'unavailable' or count is not None))
+                    or (method != 'unavailable' and (estimate['status'] != 'available' or _number(count) is None))
+                    or (method == 'uncalibrated' and count != estimate['estimated_input_tokens'])):
+                raise ValueError('invalid_calibration_state')
         groups = estimate['groups']
         if (not isinstance(groups, list) or len(groups) > len(GROUPS)
                 or not all(_valid_group(row) for row in groups)
@@ -205,6 +226,7 @@ def read_snapshot(value):
         usage = value['usage']
         if usage is not None and (not isinstance(usage, dict)
                 or not {'input_tokens', 'output_tokens', 'cache_read_tokens'} <= set(usage)
+                or value['version'] == 2 and 'cache_write_tokens' not in usage
                 or set(usage) - {'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens'}
                 or any(number is not None and _number(number) is None for number in usage.values())):
             raise ValueError('invalid_snapshot_usage')

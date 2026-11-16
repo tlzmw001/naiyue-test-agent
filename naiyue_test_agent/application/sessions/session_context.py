@@ -3,6 +3,7 @@
 import logging
 
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking
+from naiyue_test_agent.agent_runtime.context_calibration import measure_request
 from naiyue_test_agent.agent_runtime.context_usage import SNAPSHOT_KEY, compose_model_prompt, estimate_context, read_snapshot
 from naiyue_test_agent.model_access.messages import prepare_model_messages
 from .run_resources import prepare_resources
@@ -12,7 +13,7 @@ from naiyue_test_agent.tools.subagent import subagent_request_tools
 logger = logging.getLogger(__name__)
 
 
-async def context_view(session_id, *, sessions, agent, catalog, tool_registry, system_prompt, history=None):
+async def context_view(session_id, *, sessions, agent, catalog, tool_registry, system_prompt, history=None, response_format=None):
     config = None
     if sessions.has_session(session_id):
         row = sessions.require(session_id).snapshot_for_context()
@@ -23,7 +24,7 @@ async def context_view(session_id, *, sessions, agent, catalog, tool_registry, s
             and not snapshot.next and not any(task.interrupts or task.error for task in snapshot.tasks))
     else:
         row = {'model_id': history['model_id'], 'workspace_root': history['workspace_root'],
-            'active_tool_names': history['active_tools'], 'busy': False}
+            'active_tool_names': history['active_tools'], 'thinking_level': history['thinking_level'], 'busy': False}
         messages = history['messages']
         available = history['recovery']['kind'] == 'ready'
     latest = None
@@ -38,7 +39,7 @@ async def context_view(session_id, *, sessions, agent, catalog, tool_registry, s
         return {'session_id': session_id, 'current': current, 'latest_request': latest}
     if available:
         try:
-            model = catalog.get(row['model_id'])
+            model = catalog.with_thinking(row['model_id'], row['thinking_level'])
             from .local_execution import resolve_files
             saved=await run_blocking(sessions._persistence.storage.sessions.get,session_id)
             files=await resolve_files(sessions,saved)
@@ -56,7 +57,12 @@ async def context_view(session_id, *, sessions, agent, catalog, tool_registry, s
             if persistence is not None:
                 resources['prompt_parts'].extend(await persistence.prepare_memory(session_id,root,messages,model,preview=True))
             system = compose_model_prompt(system_prompt, resources['prompt_parts'], specs, roles)
-            estimate = estimate_context(model, system, prepare_model_messages(messages, model), [s.tool for s in specs])
+            projected = prepare_model_messages(messages, model)
+            tools = [s.tool for s in specs]
+            measurement = measure_request(model, system, projected, tools,
+                response_format=response_format, calibration_history=messages)
+            estimate = estimate_context(model, system, projected, tools,
+                measurement=measurement, response_format=response_format)
             current = {'basis': 'next_request', 'model_id': row['model_id'], 'estimate': estimate}
             if config is not None:
                 after = await agent.aget_state(config)

@@ -11,7 +11,7 @@ export function useContextView(api: WebApi, session: SessionView | null, run: Ru
   const sid = session?.session_id;
   const tools = JSON.stringify(session?.active_tools);
   const snapshot = run?.session_id === sid ? run?.context_snapshot : undefined;
-  const key = JSON.stringify([sid, session?.model_id, tools, run?.run_id, run?.status, run?.done,
+  const key = JSON.stringify([sid, session?.model_id, session?.thinking_level, tools, run?.run_id, run?.status, run?.done,
     snapshot, session?.busy, revision]);
   useEffect(() => {
     if (!sid || !active) return;

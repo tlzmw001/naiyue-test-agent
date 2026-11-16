@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { ReactNode, RefObject } from 'react';
+import { validCalibration } from '../contextTypes';
 import type { ContextEstimate, ContextGroup, ContextView } from '../contextTypes';
 import styles from './ContextPanel.module.css';
 import { Chevron } from './Icons';
@@ -12,9 +13,20 @@ const colors: Record<string, string> = { system: 'var(--chart-system)', tool_def
   assistant: 'var(--chart-assistant)', tool_results: 'var(--chart-tool_results)', summary: 'var(--chart-summary)', other: 'var(--chart-other)' };
 const sourceLabel: Record<string, string> = { config: '配置', default: '默认值', unknown: '未提供' };
 const format = (value: number | null | undefined) => value == null ? '未提供' : value.toLocaleString('en-US');
+function displayedTotal(estimate?: ContextEstimate | null): number | null {
+  if (estimate?.status !== 'available') return null;
+  if (estimate.calibration !== undefined) return validCalibration(estimate) ? estimate.calibration.calibrated_input_tokens : null;
+  return Number.isSafeInteger(estimate.estimated_input_tokens) && estimate.estimated_input_tokens! >= 0 ? estimate.estimated_input_tokens : null;
+}
+function estimateLabel(estimate: ContextEstimate): string {
+  return estimate.calibration?.method === 'ratio_estimate' ? '校准预估' :
+    estimate.calibration?.method === 'inherited_agent_ratio' ? '沿用历史比例预估' :
+    estimate.calibration ? '未校准预估' : '历史原始估算';
+}
 export function contextPercent(estimate?: ContextEstimate | null) {
-  return estimate?.status === 'available' && estimate.estimated_input_tokens != null && estimate.context_window_tokens
-    ? estimate.estimated_input_tokens / estimate.context_window_tokens * 100 : null;
+  const total = displayedTotal(estimate);
+  return total != null && estimate?.context_window_tokens && Number.isFinite(estimate.context_window_tokens)
+    ? total / estimate.context_window_tokens * 100 : null;
 }
 
 export function ContextTrigger({ value, open, disabled, toggle, triggerRef }: {
@@ -23,8 +35,8 @@ export function ContextTrigger({ value, open, disabled, toggle, triggerRef }: {
 }) {
   const percent = contextPercent(value?.current.estimate);
   const estimate = value?.current.estimate;
-  const thresholdReached = estimate?.status === 'available' && estimate.estimated_input_tokens != null &&
-    estimate.trigger_threshold_tokens != null && estimate.estimated_input_tokens >= estimate.trigger_threshold_tokens;
+  const total = displayedTotal(estimate);
+  const thresholdReached = total != null && estimate?.trigger_threshold_tokens != null && total > estimate.trigger_threshold_tokens;
   const label = percent == null ? '查看上下文构成' : `查看上下文构成，预估占用${percent.toFixed(1)}%`;
   return <button type="button" ref={triggerRef} className={styles.trigger} disabled={disabled}
     data-threshold={thresholdReached ? 'reached' : undefined}
@@ -47,12 +59,14 @@ function Group({ row, total }: { row: ContextGroup; total: number }) {
 }
 
 function Estimate({ estimate, basis }: { estimate?: ContextEstimate | null; basis: string }) {
-  if (!estimate || estimate.status !== 'available') return <p className={styles.notice}>当前预估暂不可用。最近请求的已记录用量仍可查看。</p>;
-  const total = estimate.estimated_input_tokens!;
+  const total = displayedTotal(estimate);
+  if (!estimate || total == null) return <p className={styles.notice}>当前预估暂不可用。最近请求的已记录用量仍可查看。</p>;
+  const raw = estimate.estimated_input_tokens!;
   const percent = contextPercent(estimate);
   const remaining = estimate.context_window_tokens != null && estimate.max_output_tokens != null
     ? Math.max(0, estimate.context_window_tokens - estimate.max_output_tokens - total) : null;
   return <>
+    <div className={styles.label}>{estimateLabel(estimate)}</div>
     <div className={styles.label}>{basis === 'last_sent' ? '本轮最近已发送的固定输入快照' : '按当前内容准备下一次请求'}</div>
     <div className={styles.big}>≈ {format(total)}<small>tokens{percent != null ? ` · ${percent.toFixed(1)}%` : ''}</small></div>
     <p className={styles.meta}>窗口 {format(estimate.context_window_tokens)} · 来源：{sourceLabel[estimate.context_window_source]}<br />
@@ -66,10 +80,10 @@ function Estimate({ estimate, basis }: { estimate?: ContextEstimate | null; basi
       输出预留来源：{sourceLabel[estimate.max_output_source]}；压缩预留 {format(estimate.compaction_reserve_tokens)}（{sourceLabel[estimate.compaction_reserve_source]}）。<br />
       自动压缩检查阈值：{format(estimate.trigger_threshold_tokens)}。</div>
     {estimate.groups_status !== 'unavailable' && <>
-    <div className={styles.section}>输入构成<small>各项均为本地估算</small></div>
+    <div className={styles.section}>输入构成<small>各项均为原始本地估算</small></div>
     <div className={styles.composition} aria-hidden="true">{estimate.groups.map(row => <i key={row.id}
-      style={{ background: colors[row.id], width: (total > 0 ? row.tokens / total * 100 : 0) + '%' }} />)}</div>
-    {estimate.groups.map(row => <Group key={row.id} row={row} total={total} />)}
+      style={{ background: colors[row.id], width: (raw > 0 ? row.tokens / raw * 100 : 0) + '%' }} />)}</div>
+    {estimate.groups.map(row => <Group key={row.id} row={row} total={raw} />)}
     </>}
     <div className={styles.note}><p>Skill 正文经 Read 读取后计入“工具结果”。</p>
       {!!estimate.image_count && <p>包含 {estimate.image_count} 张图片，图片 token 使用框架固定粗估，可能与实际有明显差异。</p>}
@@ -115,7 +129,8 @@ export default function ContextPanel({ value, loading, error, retry, usageConten
             <div className={styles.cache}><span>↳ 其中缓存读取</span><strong>{format(actual?.cache_read_tokens)}</strong></div>
             <div className={styles.cache}><span>↳ 其中缓存写入</span><strong>{format(actual?.cache_write_tokens)}</strong></div>
             <div><span>供应商报告的输出</span><strong>{format(actual?.output_tokens)}</strong></div></div>
-          <div className={styles.budget}>同一次发送前的本地估算：≈ {format(snapshot.estimate.estimated_input_tokens)} tokens。</div>
+          <div className={styles.budget}>同一次发送前的原始估算：≈ {format(snapshot.estimate.estimated_input_tokens)} tokens。</div>
+          {snapshot.version === 2 && <div className={styles.budget}>同一次发送前的{estimateLabel(snapshot.estimate)}：≈ {format(displayedTotal(snapshot.estimate))} tokens。</div>}
           <div className={styles.note}><p>供应商未返回的用量显示“未提供”，不记为零。</p>
             <p>分项构成均为估算，供应商报告不能精确分摊到各项。</p>
             <p>子智能体、Auto 审查和压缩摘要的调用不叠加到主会话上下文占用。</p></div>

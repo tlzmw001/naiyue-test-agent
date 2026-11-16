@@ -15,7 +15,7 @@ from naiyue_test_agent.agent_runtime.async_utils import run_blocking
 
 class ProjectHost:
     def __init__(self, catalog, sessions, agent, registry, *, system_prompt, persistence,
-                 storage, usage, diagnostics, resources, memory, memory_jobs, parent, cloud_receive_limits=None):
+                 storage, usage, diagnostics, resources, memory, memory_jobs, parent, cloud_receive_limits=None, response_format=None):
         self.project_id = sessions._project.project_id if sessions._project else None
         owner = self._lifetime = ApplicationLifetime(None, sessions, resources, parent=parent)
         self.memory = MemoryAPI(owner, sessions, persistence, agent, memory, memory_jobs)
@@ -23,7 +23,7 @@ class ProjectHost:
         self.sessions = SessionAPI(owner, sessions, persistence, agent, storage.sessions)
         self.runs = RunAPI(owner, sessions, agent, persistence, storage.sessions, storage.conversation, storage.replies)
         self.history = HistoryAPI(owner, sessions, persistence, agent, catalog, registry, system_prompt,
-                                  storage.sessions, storage.conversation, storage.subagents)
+                                  storage.sessions, storage.conversation, storage.subagents, response_format=response_format)
         self.tasks = TaskAPI(owner, sessions, metadata=storage.sessions)
         from naiyue_test_agent.application.cloud_local.tasks import LocalTaskDomain
         self.cloud_tasks = LocalTaskDomain(owner,storage,self.project_id,sessions._execution_authority,persistence)

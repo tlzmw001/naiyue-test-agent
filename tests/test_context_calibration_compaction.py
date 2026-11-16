@@ -26,11 +26,15 @@ def test_summary_guard_uses_calibrated_input():
     assert not chosen.summary_inputs and messages[1].response_metadata[calibration.KEY]==record
 
 
-def test_compaction_carries_samples_and_summary_only_updates_own_slot():
+def test_compaction_carries_samples_and_summary_only_updates_own_slot(caplog):
+    caplog.set_level("INFO")
     chosen=identified(model(window=4000,output=20,reserve=3650,summaries=[answer(300,'brief')]))
     messages,record=seeded(chosen,2)
     update=asyncio.run(_acompact_messages(messages,chosen,model_id='A',context=typed_context(),system_messages=[],tools=[]))
     carried=update['messages'][1].response_metadata[calibration.KEY]
+    started=[r.context_compaction for r in caplog.records if r.message == 'context_summary_model_started']
+    assert started[0]['method'] == 'inherited_agent_ratio'
+    assert started[0]['invalidation_reason'] is None
     assert carried['agent']==record['agent']
     assert carried['summary']['text']['actual_input_tokens']==300
     assert carried['revision']>record['revision']

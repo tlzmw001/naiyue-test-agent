@@ -1,6 +1,6 @@
 # Spec143BL-04：上下文校准的验证与交付
 
-日期：2026-11-16。状态：**已按单系数方向修订的详细实施 Spec，尚未实施、未运行以下验收**。
+日期：2026-11-16。状态：**S4已实现；2026-11-16继续验收已修复存储分层和Responses历史压缩问题，修复后六个现场场景通过，工程终局见10.1**。
 
 前置：[总方案](143bl-context-token-calibration.md)、[S1](143bl-01-calibration-core.md)、[S2](143bl-02-runtime-compaction.md)、[S3](143bl-03-projection-recovery.md)。本片不新增产品能力，完成确定性回归、标准产物检查和有界真实计量验证，并给出证据边界。
 
@@ -223,3 +223,78 @@ READING_PROD=1 npm --prefix frontend run test:browser -- context-calibration.spe
 - 总方案/S1～S4 标记实际完成状态，更新 handoff 顶部短摘要；不更新课堂掌握记录或《关键知识点》。
 
 本片不含 commit/push/tag/PyPI/Release/部署或安装替换用户环境。代码回退只忽略派生校准 metadata，不自动还原已经提交的摘要；不得把回退写成无损恢复历史。用户随后明确要求实现时可连续按 S1→S4 执行；尚未获得目标模型真实调用范围时先完成所有确定性工作，不伪造现场验收。
+
+## 10. 本地实施与现场证据（2026-11-16）
+
+新增 scripts/probe_context_calibration.py 与 context_calibration_report.py，复用临时组件应用、RequestBudget/guard_catalog、正式会话/工具/压缩/重开和现有快照/日志；不建立另一套 Agent 循环。探针独占创建报告、冻结发送前 E/C、完整返回后配 A、摘要按 sample_id 配对，取消/异常/必要报告保存失败终止后续。新增 guard 四协议真 SDK 受控 HTTP 断言、探针编排/数值与失败测试。摘要 started 日志补 method/invalidation_reason 两个白名单字段；探针在自己生命周期内计时既有 measure_request 调用，不另算预算。release_smoke 增加安装态两轮有效 usage、快照比对与 SQLite 重开断言。
+
+测试红灯分别记录在 build/s4-probe-red.log（6项行为失败；此前缺模块的收集失败不算有效红灯）、s4-probe-pair-red.log、s4-summary-log-red.log；release smoke 红灯为旧实现没有有效样本。最后探针/四协议/摘要定向30项通过。补上C5/C6丢样本假成功回归（build/s4-lost-state-red.log），逐条核对上一完整有效E/A生成的C；受控六场景fixture同步使用真实公式，原fixture仅固定给400不能表达该合同。四协议 guard 本身已有实现，此处新增覆盖不冒称新机制 TDD。
+
+真实配置只读选择 .env/models.json 的默认 heiyu-gpt-5.5（Responses）。现场执行：
+
+```bash
+.venv/bin/python -m scripts.probe_context_calibration --config .env/models.json --model-id heiyu-gpt-5.5 --report build/spec143bl-s4-live.json --live --request-limit 12 --total-timeout-seconds 600
+```
+
+实际退出3；4次物理请求，C1/C2/C3完成，C4手动压缩返回failed，C5/C6未运行。没有调整预算/材料重试。报告保留首次现场源码hash；后续补摘要method、operation报告和本地计时的收尾版本未重复现场请求，不将首次报告冒称最终源码全流程验证。该次未收集到压缩固定reason，不能仅凭保留额度推断根因；最终探针已收集现有 compaction_finished/recovery_finished 的固定reason和终局。
+
+| 请求 | E | C | A |
+|---|---:|---:|---:|
+| C1 |2288|2288|10416|
+| C2 |4675|21283|13881|
+| C3 工具前 |4965|14743|14132|
+| C3 工具后 |7325|20850|16984|
+
+相同3条已校准行：原始/校准误差中位数64.87%/22.76%，均值62.69%/26.80%，低估率100%/0%；完整返回usage可用率100%。满足“这组样本改善”，不代表模型全分布或摘要质量通过。没有现场摘要调用，因此摘要保真、压缩后续聊和现场重开均缺证据；确定性恢复测试不能替代这一缺口。
+
+浏览器新增 context-calibration.spec.ts 六类夹具×两视口；截图为合成夹具，不是现场模型效果。标准Mac构建、临时源码外安装和全量测试终局见交接的本轮收尾条目；不包含提交、push或发布。
+
+最终工程验收：相关回归293项通过（build/spec143bl-s4-regression-final.log）；前端78文件688项、harness类型检查、生产构建、最终产物两视口12项浏览器均通过；标准macos-arm64 wheel与源码外临时安装通过（spec143bl-s4-final-install.json含context_calibration=passed），关键计量模块与wheel源码逐字节一致。pip check、compileall、git diff --check通过。
+
+后端全量未通过：分片0为3259 passed；分片1为2902 passed/1 failed后提前停止。失败为 tests/test_storage_dependency_direction.py::test_application_does_not_construct_database_sql，单独复跑仍失败，定位未跟踪的并行记忆文件 application/memory/memory_comparison_reads.py:21 在应用层构造SQL；未修改此并行工作。两份终局为build/spec143bl-s4-verified-backend-{0,1}.xml，不能将此前主动中断的探索全量当作通过结果。完整证据索引build/spec143bl-s4-verification.json，包含S4文件哈希和运行前后整体源码哈希（其他并行改动可能变化）。
+
+当前结论：S4实现与有界现场验证已交付，但整体工程门禁因并行存储分层失败未通过；现场C4/C5/C6仍缺覆盖。下一步先协调修复并行存储分层失败并复验全量，再单独定位现场压缩失败，不调整材料挑选更好指标。未提交/push/发布。
+
+### 10.1 继续验收：Responses 历史内容修复范围
+
+现场诊断返回 unsupported_summary_content；安装版本 SDK 将客户端 function_call 同时保留在 AI.content 与 AI.tool_calls，reasoning 也保留在 content。原严格通用文本校验拒绝这些已知块，摘要前即失败。新增仅供压缩历史使用的 context_summary_content.py（原压缩文件483行，不能继续内嵌扩张）：AI reasoning/thinking/redacted_thinking 不作为可见事实进入摘要；Responses function_call 只有 id/name/JSON arguments 与已解析 tool_calls 一致时才省略重复内容，由原工具序列化输出一次。未知块、矛盾调用、服务端工具与非AI内容继续拒绝；原消息不修改，工具配对/必要提交/预算策略保持。正常链是正式probe→manual compact→校验与序列化→既有summary IO；失败链在矛盾内容校验处抛unsupported_summary_content，旧checkpoint不写。先以SDK同形块复现，随后做确定性与有界现场复验，不以换材料提高指标。
+
+
+继续验收先单独复现存储分层失败。应用侧 suppression 查询改走 MemoryRepo.any_suppressed，内部复用 MemoryWriter.suppressed，所有来源保持同一只读事务；新增遗忘来源仍拒绝的行为回归。未修改配置、权限或记忆语义。
+
+现场诊断使用同一配置/固定输入，最多8次，实际4次，报告build/spec143bl-s4-diagnostic-live.json：C4固定reason=unsupported_summary_content。新增 tests/test_context_calibration_probe_runtime.py 将已安装SDK同形的reasoning/function_call块送入正式应用链，修复前同样失败；修复后六场景通过。tests/test_context_summary_content.py 保证匹配的调用序列化一次、原消息不变，矛盾参数/未知块/非AI推理块仍拒绝；缺失/非法arguments单独复现后统一为受控失败。
+
+修复后独立完整现场复验：
+
+```bash
+.venv/bin/python -m scripts.probe_context_calibration --config .env/models.json --model-id heiyu-gpt-5.5 --report build/spec143bl-s4-fixed-live.json --live --request-limit 12 --total-timeout-seconds 600
+```
+
+退出0，7次物理HTTP，C1～C6全部完成，C4 applied（事前估值16998→提交后6838），固定事实保留。C5 E/C/A=2962/6868/7740，C6=2981/7790/7760，证明agent比例压缩carry与SQLite重开后可用；summary E/C/A=4815/11165/13992，method=inherited_agent_ratio，未污染agent比例。5条已校准主请求原始/校准误差中位数61.73%/11.27%、均值62.28%/18.41%、低估率100%/20%；用量可用率100%。本组样本改善，仍存在低估，不能推广为任意模型或零overflow保证。三次现场尝试分别4、4、7次，累计15次；每轮有独立上限与报告，旧失败报告保留，未更换材料和原预算。
+
+相关680项回归通过（build/spec143bl-s4-fixes-focused.log），包含存储分层、记忆、摘要内容、校准/压缩/恢复和安装smoke。最终完整工程结果与源码/产物一致性记录在build/spec143bl-s4-fixes-verification.json。
+
+
+最终安装门禁额外发现并行记忆双阶段迁移的旧夹具：release_memory_smoke仍给单阶段响应、缺matter，源测试可复现。已同步提取/比较两次固定响应和精确2次调用/62输入tokens/2对生命周期断言，保留保存/历史/归属/异常检查。test_model_memory_output中已删除response_schema入口同步迁到ExtractionResult.model_json_schema，协议、严格输出、输出cap与不修改原模型的断言不变；两组46项通过。更广相关759项通过。旧安装失败报告和已加载旧测试字节码的分片失败保留；最终结果仅取修正后终局，不恢复废弃接口、不删/skip或放宽测试。
+
+
+最终终局：后端四片1589+1777+1714+1761=6841通过，0失败/错误/跳过；index2取closed-backend-2-recheck.xml，其余取closed-backend-{0,1,3}.xml。并行记忆新增比较矩阵/候选读取在全量期间继续改动，额外41项回归通过，不与全量重复相加；其文件hash变化在verification中标明，安装产物按构建快照验收。前端688、浏览器12、标准macos-arm64构建、closed-install源码外安装（校准与两阶段记忆全部passed）、compileall/pip check/diff检查通过。最终证据build/spec143bl-s4-fixes-verification.json，现场六场景报告fixed-live.json。此前失败/中断报告均保留不计通过；未提交/push/发布。该组固定样本及Mac安装通过，不代表其他模型、任意摘要语义或Windows/Linux原机验收。
+
+### 10.2 只读审查后的探针修复（2026-11-16）
+
+成功门禁要求六场景完成、各场景必要计量齐全（C3至少两个主调用、C4摘要），全部记录必须完整返回且E/C/A有效，pending和已结束的incomplete均不得通过。按发生顺序分别维护agent/summary最近有效样本，首次summary允许继承agent，后续使用summary自己的比例；错误比例退出1，缺证据/usage退出3。
+
+探针专用ProbeBudget在每次HTTP发送前检查Measurements.summary_failed。摘要finished即使未配对，只要带error_type也设置终止状态；原产品主动摘要fallback不能继续发送下一主请求。守卫抛既有AcceptanceBudgetStop，探针退出1；C4执行failed退出1；固定reason为无安全切点、摘要预算不足等未覆盖情况以及skipped保持退出3。正常产品压缩降级逻辑不变。
+
+测试夹具补充正常摘要started/finished，缺usage夹具保持无可用摘要usage；新增六个红灯用例及正式应用摘要ReadTimeout→fallback发送前阻断回归。验证结果见handoff顶部本轮摘要。没有追加真实模型请求；之前现场报告属于修复前探针，不冒称本次失败边界的现场证据。
+
+### 10.3 最终review四项修复（2026-11-16）
+
+- 成功门禁保留每次失败尝试。只有同run_id/model_call_id的一次failed→一次returned，且context_recovery_finished确认recovered/retry_attempts=1，才允许首次overflow失败退出误差集合后通过。未恢复、跨run错配、多次失败、无retry不能豁免；失败计量与恢复记录仍入报告。正常返回缺usage仍退出3。
+- 所有场景监听既有tool_call_started/finished；只允许C3的一次read，其他场景调用、未知/未启用工具、非成功终局设置tool_deviation。ProbeBudget在下一次发送前拒绝，计划退出1；参数及实际目标仍由ReadOnce和C3最终配对断言核验。不更改产品权限行为。
+- v2 usage必须包含四字段；v1缺cache_write_tokens继续兼容。原始记录不修改。
+- 摘要输入支持Anthropic客户端tool_use：id/name/input必须与规范tool_calls一致，input为对象；验证后由原规范调用序列化一次。未知/服务端块、矛盾及不完整工具配对仍拒绝；原消息不变。正式应用回归同时覆盖Responses和安装SDK实际_format_output生成的Anthropic消息，再走manual compact→续聊→SQLite重开。
+
+本轮新增测试先确认5个行为红灯（overflow误判、两种工具偏离、v2缺字段、Anthropic历史拒绝），随后最小修复并补未恢复/跨run/重复失败等反向断言。验证与提交结果见handoff顶部。未追加真实模型请求。
+
+最终提交集合独立导出验证：后端四片1801+1711+1750+1550=6812通过，0失败/错误/跳过；定向284、前端688、两视口浏览器12通过；标准Mac wheel、源码外临时安装、compileall/pip check/diff通过，10个改动生产模块包内逐字节一致。全量发现两条旧测试需同步版本/字段合同：test_session_state纳入thinking_level断言；test_model_usage_paths明确v2缺字段拒绝、v1兼容，原非法数字和不修改原记录检查保留。修正后对应完整分片重跑，旧失败保留不计通过。证据build/spec143bl-final-commit-verification.json；本次提交隔离未暂存记忆/配置改动，无真实模型请求。

@@ -1,3 +1,4 @@
+import { validCalibration } from './contextTypes';
 import type { ContextSnapshot } from './contextTypes';
 import type { MessageRow, RuntimeEvent, RunView, ToolState } from './types';
 import { reasoningDelta } from './reasoning';
@@ -47,7 +48,8 @@ export function applyEvent(view: RunView, event: RuntimeEvent): RunView {
     if (data.snapshot_json === null) return { ...view, context_snapshot: null, last_sequence: event.sequence };
     if (typeof data.snapshot_json !== 'string') throw new Error('invalid_event');
     const context_snapshot = JSON.parse(data.snapshot_json) as ContextSnapshot;
-    if (context_snapshot.version !== 1 || context_snapshot.model_call_id !== data.model_call_id) throw new Error('invalid_event');
+    if (![1, 2].includes(context_snapshot.version) || context_snapshot.model_call_id !== data.model_call_id ||
+        (context_snapshot.version === 2 ? !validCalibration(context_snapshot.estimate) : context_snapshot.estimate?.calibration !== undefined)) throw new Error('invalid_event');
     return { ...view, context_snapshot, last_sequence: event.sequence };
   } else if (event.event_type === 'message_reasoning_delta') {
     messages = reasoningDelta(messages, data, event.run_id);

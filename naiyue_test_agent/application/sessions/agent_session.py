@@ -88,7 +88,7 @@ class AgentSession:
     def snapshot_for_context(self):
         with self._runtime.lock:
             row = self._runtime.state
-            return {'thread_id': row.thread_id, 'model_id': row.model_id,
+            return {'thread_id': row.thread_id, 'model_id': row.model_id, 'thinking_level': row.thinking_level,
                 'workspace_root': row.execution_path, 'project_id': row.project_id,
                 'execution_root': row.execution_root, 'active_tool_names': row.active_tool_names,
                 'last_execution_path': row.last_execution_path,
@@ -101,7 +101,8 @@ class AgentSession:
             row = self._runtime.state
             return (self._runtime.run is None and not row.pending_tool_approval and not row.manual_review_required
                 and row.thread_id == snapshot['thread_id'] and row.model_id == snapshot['model_id']
-                and row.active_tool_names == snapshot['active_tool_names'])
+                and row.active_tool_names == snapshot['active_tool_names']
+                and row.thinking_level == snapshot['thinking_level'])
 
     def approval_seed_identity(self):
         with self._runtime.lock:

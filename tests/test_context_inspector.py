@@ -125,12 +125,13 @@ def test_preview_fault_does_not_change_checkpoint_or_start_model(monkeypatch, tm
 
 def test_child_usage_does_not_replace_root_snapshot(monkeypatch, tmp_path):
     from test_subagent_execution import ChildModel, role
+    from test_context_calibration_runtime import identified
     from test_async_application import call
     from naiyue_test_agent.settings import AppSettings
     async def scenario():
-        model = ChildModel(replies=[call('subagent', {'agent': 'tester', 'task': 'child task'}, 'outer'),
+        model = identified(ChildModel(replies=[call('subagent', {'agent': 'tester', 'task': 'child task'}, 'outer'),
             AIMessage(content='child', usage_metadata={'input_tokens': 900, 'output_tokens': 3, 'total_tokens': 903}),
-            AIMessage(content='root', usage_metadata={'input_tokens': 120, 'output_tokens': 2, 'total_tokens': 122})])
+            AIMessage(content='root', usage_metadata={'input_tokens': 120, 'output_tokens': 2, 'total_tokens': 122})]))
         root = tmp_path / 'workspace'
         root.mkdir()
         async with web_client(monkeypatch, tmp_path, model, workspace_root=root,
@@ -140,6 +141,9 @@ def test_child_usage_does_not_replace_root_snapshot(monkeypatch, tmp_path):
             await web.state.delivery.wait(run)
             view = (await client.get(f'/api/v1/scopes/chats/sessions/{sid}/context')).json()
             assert view['latest_request']['usage']['input_tokens'] == 120
+            estimate = view['latest_request']['estimate']
+            assert estimate['calibration']['method'] == 'uncalibrated'
+            assert estimate['calibration']['calibrated_input_tokens'] == estimate['estimated_input_tokens']
             snapshots = [event for event in web.state.delivery.get(run).events if event['event_type'] == 'model_context_snapshot']
             assert any(event['source'] for event in snapshots)
             root = [json.loads(event['data']['snapshot_json']) for event in snapshots if not event['source']]

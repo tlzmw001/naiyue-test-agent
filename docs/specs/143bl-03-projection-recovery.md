@@ -1,6 +1,6 @@
 # Spec143BL-03：上下文校准的快照、恢复与界面
 
-日期：2026-11-16。状态：**已按单系数方向修订的详细实施 Spec，尚未实施**。
+日期：2026-11-16。状态：**已实现，最终本地验证记录见第9节**。
 
 前置：[总方案](143bl-context-token-calibration.md)、[S1 计量合同](143bl-01-calibration-core.md)、[S2 运行与压缩](143bl-02-runtime-compaction.md) 完成对应测试。后续：[S4 验证与交付](143bl-04-verification.md)。
 
@@ -187,3 +187,15 @@ L1：新增字段、v1/v2 读取和前端消费确实存在。L2：不是占位�
 提交前全量与标准构建遵循 S4。记录新增测试的有效红灯、定向/全量最终结果、v1/v2 往返证据和两种视口截图。普通快照错误仍是观察故障；必要保存错误仍阻断。未进行真实模型验证时明确记录其缺口。
 
 本片不新增锁或状态服务，不改变审批、工具执行、归档保留或数据恢复授权。完成后更新交接，唯一下一片为 S4 验证与交付；本 Spec 的存在不表示这些能力已经实现。
+
+## 9. 本地实施与验证（2026-11-16）
+
+已实现v2写入/v1-v2读取、严格calibration配对、冻结E/C与返回A分离、原始分组保持E、分组故障不丢总量。ModelInput本次measurement直接交给观察快照；预览按with_thinking读取，thinking参与过时复核；response_format沿host_assembly→ProjectHost→HistoryAPI→context_view传入。无模型身份的旧统计入口继续未校准估算。
+
+前端当前C统一用于占比/剩余/严格C>T，分类仍用E；最近请求显示E/C/A，legacy和不可用值明确降级。SQLite真实重开、regenerate前缀、根子隔离、Runner续期重开和必要history parts已测试，无存储表变更。
+
+有效红灯：前端3项行为失败、Web恢复version1!=2、非空response_format预览ratio!=uncalibrated；投影核心最初8项因新measurement参数缺失失败，属于接口红灯，不冒称全部算法TDD。既有总量故障注入迁移到S1计数边界，v1 fixture明确构造旧版本，session snapshot精确字段断言同步thinking_level；保留原行为检查。
+
+最终定向59项通过；后端全量3338+3431=6769项，0失败/错误/跳过，报告build/s3-backend-{0,1}-final.xml；包含当前并行记忆工作区，不是隔离发布证据。初版全量出现Runner就绪时序失败（单独重测2项通过）、model=None兼容遗漏和旧snapshot字段断言未迁移，均不计最终全量。前端78文件686项、TS/Vite生产构建、标准macos-arm64 wheel通过；只有既有chunk体积警告。真实Chromium桌面1440与手机375两项通过，截图build/spec143bl-s3-context-{desktop,mobile}.png；日志build/spec143bl-s3-{frontend,frontend-build,browser,final-build}.log。未请求真实供应商、未提交发布；S4真实效果验证另行推进。
+
+2026-11-16审查修复：前端useContextView缓存键纳入thinking_level，切档位即失效旧预览并重新查询，旧请求迟到不覆盖新档位；preflight直接投影本次budget.method/invalidation_reason。新增两种前端时序回归和后端首次无样本→有效ratio日志断言，均先红后绿。既有精确日志集合断言同步新增字段并保留严格比较。上下文相关后端272项、前端78文件688项、TS/Vite构建及diff检查通过，日志build/s3-fix-{backend-final,frontend,build}.log；本次未重新执行后端全量/真实供应商验证，未提交。
