@@ -8,7 +8,7 @@ export interface ProjectRow {
   availability: string | null;
 }
 export interface ProjectCatalog { items: ProjectRow[]; default_parent_dir: string | null }
-export interface ScopeSelection { scopeId: string; sessionId?: string; revision: number }
+export interface ScopeSelection { scopeId: string; sessionId?: string; newSession?: boolean; revision: number }
 export interface DirectoryPage {
   path: string; parent: string | null; separator: string; identity: string;
   items: { name: string; path: string; symlink: boolean }[]; next_offset: number | null;

@@ -51,11 +51,12 @@ function Directory({ api, scopeId, select, refresh }: { api: WebApi; scopeId: st
     </span>
   </button>)}</div>;
 }
-export default function ProjectNavigation({ api, projects, failure, retry, scopeId, select, children, expanded, expand, revision, remove }: {
+export default function ProjectNavigation({ api, projects, failure, retry, scopeId, select, children, expanded, expand, revision, remove, newSession, newSessionDisabled }: {
   api: WebApi; projects?: ProjectRow[]; failure: string; retry: () => void; scopeId: string;
   select: (scopeId: string, sessionId?: string) => void; children: ReactNode;
   expanded: Record<string, boolean>; expand: (id: string, open: boolean) => void;
   revision: number; remove: (project: ProjectRow) => void;
+  newSession: (project: ProjectRow) => void; newSessionDisabled: boolean;
 }) {
   const [menu, setMenu] = useState<{ project: ProjectRow; origin: HTMLButtonElement; x: number; y: number }>();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -64,7 +65,7 @@ export default function ProjectNavigation({ api, projects, failure, retry, scope
     if (!menu || !node) return;
     node.style.left = `${Math.max(0, Math.min(menu.x, window.innerWidth - node.offsetWidth))}px`;
     node.style.top = `${Math.max(0, Math.min(menu.y, window.innerHeight - node.offsetHeight))}px`;
-    node.querySelector('button')?.focus();
+    node.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
     const outside = (event: PointerEvent) => {
       if (!node.contains(event.target as Node)) setMenu(undefined);
     };
@@ -114,11 +115,23 @@ export default function ProjectNavigation({ api, projects, failure, retry, scope
       <section role="group" aria-label="当前项目"><p className={styles.hint}>当前项目不在目录中，请刷新核对。</p>{children}</section>}
     {menu && createPortal(<div ref={menuRef} className={menuStyles.menu} role="menu"
       aria-label={`${menu.project.name} 的操作`} onKeyDown={event => {
+        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+          const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []);
+          const current = items.indexOf(document.activeElement as HTMLButtonElement);
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 :
+            (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+          event.preventDefault(); items[next]?.focus();
+        }
         if (event.key !== 'Escape' && event.key !== 'Tab') return;
         if (event.key === 'Escape') event.preventDefault();
         menu.origin.focus();
         setMenu(undefined);
       }}>
+      <button type="button" role="menuitem" disabled={menu.project.project_id === scopeId && newSessionDisabled} onClick={() => {
+        menu.origin.focus();
+        setMenu(undefined);
+        newSession(menu.project);
+      }}>新建会话</button>
       <button type="button" role="menuitem" className={menuStyles.delete} onClick={() => {
         menu.origin.focus();
         setMenu(undefined);

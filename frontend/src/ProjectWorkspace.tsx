@@ -24,11 +24,11 @@ export default function ProjectWorkspace({ api }: { api: WebApi }) {
   const [removal, setRemoval] = useState<ProjectRow>();
   const removedIds = useRef(new Set<string>());
   const clients = useMemo(() => new Map([[api.scopeId, api]]), [api]);
-  const select = useCallback((scopeId: string, sessionId?: string) => {
+  const select = useCallback((scopeId: string, sessionId?: string, newSession?: boolean) => {
     if (removedIds.current.has(scopeId)) return;
     setExpanded(values => ({ ...values, [scopeId]: true }));
     setVisited(previous => previous.includes(scopeId) ? previous : [...previous, scopeId]);
-    setSelection(previous => ({ scopeId, sessionId, revision: previous.revision + 1 }));
+    setSelection(previous => ({ scopeId, sessionId, newSession, revision: previous.revision + 1 }));
   }, []);
   useEffect(() => {
     const controller = new AbortController(); setFailure('');
@@ -72,7 +72,8 @@ export default function ProjectWorkspace({ api }: { api: WebApi }) {
             aria-haspopup="dialog" aria-expanded={picker === 'projects'} onClick={() => setPicker('projects')}><Icon name={scopeId === 'chats' ? 'chat' : 'folder'} />
             <strong>{scopeName}</strong><Chevron direction={picker === 'projects' ? 'up' : 'down'} /></button></div> : undefined}
         scopePath={project && 'path' in project.source ? project.source.path : undefined}
-        navigation={current => <ProjectNavigation api={api} projects={catalog} failure={failure}
+        navigation={(current, newSessionDisabled) => <ProjectNavigation api={api} projects={catalog} failure={failure}
+          newSession={project => select(project.project_id, undefined, true)} newSessionDisabled={newSessionDisabled}
           revision={refresh} remove={setRemoval}
           expanded={expanded} expand={(id, open) => setExpanded(values => ({ ...values, [id]: open }))}
           retry={() => setRefresh(value => value + 1)} scopeId={scopeId} select={select}>{current}</ProjectNavigation>} />

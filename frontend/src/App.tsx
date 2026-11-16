@@ -29,7 +29,7 @@ import styles from './App.module.css';
 
 export default function App({ api: supplied, active = true, selection, scopeName, scopePath, navigation: projectNavigation, preferences, projectEntry }: {
   api?: WebApi; active?: boolean; selection?: ScopeSelection; scopeName?: string; scopePath?: string;
-  navigation?: (current: ReactNode) => ReactNode;
+  navigation?: (current: ReactNode, newSessionDisabled: boolean) => ReactNode;
   preferences?: { theme: ReturnType<typeof useTheme>; sendScroll: ReturnType<typeof useSendScroll> };
   projectEntry?: (path?: string | null) => ReactNode;
 }) {
@@ -38,10 +38,12 @@ export default function App({ api: supplied, active = true, selection, scopeName
   const cloudApi = useMemo(() => api.cloudTasks(), [api]);
   const appliedSelection = useRef<number | undefined>(undefined);
   useEffect(() => {
-    if (!active || !selection?.sessionId || appliedSelection.current === selection.revision ||
+    if (!active || !selection || (!selection.sessionId && !selection.newSession) || appliedSelection.current === selection.revision ||
         chat.submitting || chat.changingControls || chat.changingModel || chat.selectingSession || chat.recovering || !chat.models.length) return;
+    if (selection.newSession && (chat.managingSessions || chat.creation.locked)) return;
     appliedSelection.current = selection.revision;
-    void chat.selectSession(selection.sessionId);
+    if (selection.newSession) { void chat.newSession(); setNavigation(false); }
+    else if (selection.sessionId) void chat.selectSession(selection.sessionId);
   }, [active, selection, chat]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<ActivityTab>('agents');
@@ -97,7 +99,7 @@ export default function App({ api: supplied, active = true, selection, scopeName
 
   return <div className={styles.app} ref={layout}>
     {active && <Sidebar rows={chat.sessions} selected={chat.session?.session_id} open={navigation}
-      navigation={projectNavigation} scopeName={scopeName} scopeId={api.scopeId}
+      navigation={projectNavigation ? current => projectNavigation(current, chat.submitting || chat.changingControls || !chat.model || chat.managingSessions) : undefined} scopeName={scopeName} scopeId={api.scopeId}
       currentSession={chat.session ?? undefined} currentRun={chat.run}
       loading={chat.listing.loading} failure={chat.listing.failure}
       retry={() => void chat.listing.refreshSessions().catch(() => console.warn('session_directory_retry_failed'))}

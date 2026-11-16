@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import ProjectWorkspace from './ProjectWorkspace';
-import { WebApi } from './api';
+import { ApiError, WebApi } from './api';
 import type { SessionRow, SessionView } from './types';
 
 // jsdom models open state only; native dialog focus is checked in the browser.
@@ -295,7 +295,12 @@ it('opens project actions by right-click or keyboard without entering or removin
   expect(fireEvent.contextMenu(project, { clientX: 80, clientY: 120 })).toBe(false);
   const menu = screen.getByRole('menu', { name: '项目 A 的操作' });
   const action = within(menu).getByRole('menuitem', { name: '移除项目' });
+  expect(within(menu).getAllByRole('menuitem').map(item => item.textContent)).toEqual(['新建会话', '移除项目']);
+  expect(document.activeElement).toBe(within(menu).getByRole('menuitem', { name: '新建会话' }));
+  fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
   expect(document.activeElement).toBe(action);
+  fireEvent.keyDown(action, { key: 'ArrowUp' });
+  expect(document.activeElement).toBe(within(menu).getByRole('menuitem', { name: '新建会话' }));
   expect(screen.getByRole('button', { name: '项目与位置，当前：普通对话' })).toBeTruthy();
   expect(screen.queryByRole('dialog', { name: '移除项目' })).toBeNull();
 
@@ -370,4 +375,77 @@ it('reopening a removed initial scope falls back to ordinary chats', async () =>
   vi.mocked(root.projects).mockResolvedValue({ items: [], default_parent_dir: null });
   render(<ProjectWorkspace api={root} />);
   expect(await screen.findByRole('button', { name: '项目与位置，当前：普通对话' })).toBeTruthy();
+});
+
+it.each(['current', 'visited', 'unvisited'])('project context new session opens the target draft (%s)', async mode => {
+  const { root, api } = fixture(), target = api(a);
+  const create = vi.spyOn(target, 'create');
+  const foreignCreate = vi.spyOn(root, 'create');
+  render(<ProjectWorkspace api={root} />);
+  if (mode !== 'unvisited') {
+    fireEvent.click(await screen.findByRole('button', { name: '进入项目 A' }));
+    fireEvent.click(await screen.findByRole('button', { name: '会话 A A' }));
+    await waitFor(() => expect(target.prepare).toHaveBeenCalledOnce());
+    fireEvent.change(screen.getByRole('textbox', { name: '消息' }), { target: { value: '项目 A 草稿' } });
+  }
+  if (mode !== 'current') {
+    if (mode === 'visited') fireEvent.click(screen.getByRole('button', { name: '进入普通对话' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '消息' }), { target: { value: '普通对话草稿' } });
+  }
+  fireEvent.contextMenu(await screen.findByRole('button', { name: '进入项目 A' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: '新建会话' }));
+  await screen.findByRole('button', { name: '项目与位置，当前：项目 A' });
+  const row = await screen.findByRole('button', { name: '会话 A A' });
+  await waitFor(() => expect(row.getAttribute('aria-current')).toBeNull());
+  expect(screen.queryByRole('menu')).toBeNull();
+  expect((screen.getByRole('textbox', { name: '消息' }) as HTMLTextAreaElement).value).toBe(mode === 'unvisited' ? '' : '项目 A 草稿');
+  expect(create).not.toHaveBeenCalled(); expect(foreignCreate).not.toHaveBeenCalled();
+  if (mode !== 'current') {
+    fireEvent.click(screen.getByRole('button', { name: '进入普通对话' }));
+    expect((screen.getByRole('textbox', { name: '消息' }) as HTMLTextAreaElement).value).toBe('普通对话草稿');
+  }
+});
+
+it('project context new session waits for target models and keeps a failed first send in that scope', async () => {
+  const { root, api } = fixture(), target = api(a);
+  let finish!: (value: { default_model_id: string; model_ids: string[] }) => void;
+  vi.mocked(target.models).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const create = vi.spyOn(target, 'create').mockRejectedValue(new ApiError('project_execution_unavailable'));
+  const foreignCreate = vi.spyOn(root, 'create');
+  render(<ProjectWorkspace api={root} />);
+  fireEvent.contextMenu(await screen.findByRole('button', { name: '进入项目 A' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: '新建会话' }));
+  await screen.findByRole('button', { name: '项目与位置，当前：项目 A' });
+  expect(create).not.toHaveBeenCalled(); expect(foreignCreate).not.toHaveBeenCalled();
+  await act(async () => { finish({ default_model_id: 'A', model_ids: ['A'] }); });
+  fireEvent.change(screen.getByRole('textbox', { name: '消息' }), { target: { value: '在 A 中执行' } });
+  fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  await screen.findByText('项目执行目录不可用，历史仍可查看。');
+  expect(create).toHaveBeenCalledOnce(); expect(foreignCreate).not.toHaveBeenCalled();
+  expect((screen.getByRole('textbox', { name: '消息' }) as HTMLTextAreaElement).value).toBe('在 A 中执行');
+});
+
+it('project context new session creates once on first send and permits a later new draft', async () => {
+  const { root, api } = fixture(), target = api(a);
+  const create = vi.spyOn(target, 'create').mockResolvedValue({ session_id: 'same' });
+  const start = vi.spyOn(target, 'start').mockResolvedValue({ session_id: 'same', run_id: 'R' });
+  vi.spyOn(target, 'events').mockResolvedValue();
+  vi.spyOn(target, 'run').mockResolvedValue({ session_id: 'same', run_id: 'R', status: 'completed', messages: [], done: true,
+    last_sequence: 0, incomplete: false, manual_review_required: false });
+  const foreignCreate = vi.spyOn(root, 'create');
+  render(<ProjectWorkspace api={root} />);
+  fireEvent.contextMenu(await screen.findByRole('button', { name: '进入项目 A' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: '新建会话' }));
+  await screen.findByRole('button', { name: '项目与位置，当前：项目 A' });
+  await waitFor(() => expect(screen.getByRole('button', { name: '新建会话' })).toHaveProperty('disabled', false));
+  fireEvent.change(screen.getByRole('textbox', { name: '消息' }), { target: { value: '新任务正文' } });
+  fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  await waitFor(() => expect(start).toHaveBeenCalledExactlyOnceWith('same', '新任务正文', undefined, undefined));
+  expect(create).toHaveBeenCalledExactlyOnceWith('A', expect.any(String));
+  expect(foreignCreate).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.getByRole('button', { name: '会话 A A' }).getAttribute('aria-current')).toBe('true'));
+  fireEvent.contextMenu(screen.getByRole('button', { name: '进入项目 A' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: '新建会话' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: '会话 A A' }).getAttribute('aria-current')).toBeNull());
+  expect(create).toHaveBeenCalledOnce();
 });
