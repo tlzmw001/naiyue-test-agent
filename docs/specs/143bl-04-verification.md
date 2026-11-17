@@ -298,3 +298,13 @@ READING_PROD=1 npm --prefix frontend run test:browser -- context-calibration.spe
 本轮新增测试先确认5个行为红灯（overflow误判、两种工具偏离、v2缺字段、Anthropic历史拒绝），随后最小修复并补未恢复/跨run/重复失败等反向断言。验证与提交结果见handoff顶部。未追加真实模型请求。
 
 最终提交集合独立导出验证：后端四片1801+1711+1750+1550=6812通过，0失败/错误/跳过；定向284、前端688、两视口浏览器12通过；标准Mac wheel、源码外临时安装、compileall/pip check/diff通过，10个改动生产模块包内逐字节一致。全量发现两条旧测试需同步版本/字段合同：test_session_state纳入thinking_level断言；test_model_usage_paths明确v2缺字段拒绝、v1兼容，原非法数字和不修改原记录检查保留。修正后对应完整分片重跑，旧失败保留不计通过。证据build/spec143bl-final-commit-verification.json；本次提交隔离未暂存记忆/配置改动，无真实模型请求。
+
+### 10.4 后续复审修复
+
+摘要响应的严格可见文本投影适用于Responses及Anthropic的受支持块列表；允许text及已知思考块，思考不进入摘要文本，未知块、工具调用、空白及截断仍拒绝。新增已安装Anthropic SDK thinking+text响应经正式手动压缩的回归。
+
+C3工具证据按运行前已有调用ID排除旧调用，并从运行后历史收集新增调用及结果，保留原次数/参数/顺序/状态配对断言；不再假设历史长度单调增加。新增正式应用C3开始时自动压缩成功、随后一次read的回归。两项新增测试先确认失败，最小修复后转绿；本轮无真实供应商请求。
+
+本轮验证：上下文相关286 passed（12.23s），前端tsc/Vite生产构建退出0；compileall、pip check、git diff --check通过。初次扩大回归发现未知适配器列表接受范围变宽，已收窄至Responses/Anthropic后重跑同组全部通过，未修改原拒绝测试。未执行全量后端或真实模型验收。
+
+提交前独立源码快照全量后端6814通过（1802+1711+1750+1551，0失败/错误/跳过），前端688及生产构建通过。分片2首次因快照缺frontend/dist失败，补入本轮构建产物后完整重跑通过，报告build/spec143bl-two-fixes-backend-2-recheck.xml；其他三片为同前缀0/1/3.xml，原失败保留。

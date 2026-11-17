@@ -84,3 +84,32 @@ def test_probe_recovery_and_tool_deviation_boundaries(monkeypatch, tmp_path, cas
         assert report['http']['used'] == 1
         assert report['scenarios'][0]['status'] == 'failed'
         assert all(s['status'] == 'not_run' for s in report['scenarios'][1:])
+
+
+def test_c3_automatic_compaction_keeps_tool_evidence(monkeypatch, tmp_path):
+    from test_async_application import StreamingToolModel
+    def ack(n, text='ACK'):
+        return AIMessage(content=text, usage_metadata={'input_tokens': n, 'output_tokens': 1, 'total_tokens': n + 1})
+    read = ack(500)
+    read.tool_calls = [{'id': 'read', 'name': 'read', 'args': {'path': 'calibration.txt'}}]
+    budgets, sends = [], []
+    class Model(StreamingToolModel):
+        async def _next(self, messages):
+            budgets[-1].reserve('A')
+            purpose = 'summary' if str(messages[0].content).startswith('Summarize completed') else 'agent'
+            sends.append(purpose)
+            return ack(10000, probe.FACT) if purpose == 'summary' else await super()._next(messages)
+    base = identified(model_with_limits([]))
+    base.metadata.update(naiyue_compaction_reserve={'tokens': 103000, 'source': 'config'},
+        naiyue_compaction_keep_recent={'tokens': 1, 'source': 'config'},
+        naiyue_compaction_summary_output={'tokens': 2048, 'source': 'config'})
+    chosen = Model(replies=[ack(10416), ack(30000), read, ack(4000), ack(4000), ack(4000)], metadata=base.metadata)
+    monkeypatch.setattr(probe, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': chosen}))
+    monkeypatch.setattr(probe, 'guard_catalog', lambda catalog, budget: budgets.append(budget))
+    path = tmp_path / 'report.json'
+    code = asyncio.run(probe.run_probe('unused', 'A', path, live=True))
+    report = json.loads(path.read_text())
+    assert report['scenarios'][2]['status'] == 'completed', report
+    assert sends[:5] == ['agent', 'agent', 'summary', 'agent', 'agent']
+    assert any(o['status'] == 'applied' for o in report['operations'])
+    assert code in (0, 3), report

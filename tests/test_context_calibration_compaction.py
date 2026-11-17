@@ -133,3 +133,21 @@ def test_existing_summary_only_initial_prefix_searches_later_cut(force):
     assert update['messages'][1].additional_kwargs[SUMMARY_MARKER] is True
     assert update['messages'][2:] == messages[2:]
     assert messages == original
+
+
+def test_anthropic_thinking_summary_is_visible_text():
+    from anthropic.types import Message
+    from langchain_anthropic import ChatAnthropic
+    response = ChatAnthropic(model='fixture', api_key='synthetic')._format_output(Message(
+        id='summary', type='message', role='assistant', model='fixture', stop_reason='end_turn',
+        content=[{'type': 'thinking', 'thinking': 'PRIVATE', 'signature': 'fixture'},
+                 {'type': 'text', 'text': 'brief'}],
+        usage={'input_tokens': 300, 'output_tokens': 10})).generations[0].message
+    chosen = identified(model(window=4000, output=20, reserve=3650, summaries=[response]))
+    chosen.metadata['naiyue_model_input'] = {'kind': 'anthropic', 'api': None}
+    messages, _ = seeded(chosen, 2)
+    update = asyncio.run(_acompact_messages(messages, chosen, model_id='A', context=typed_context(),
+        system_messages=[], tools=[], force=True, trigger='manual'))
+    assert update['messages'][1].content.endswith('brief')
+    assert 'PRIVATE' not in update['messages'][1].content
+    assert len(chosen.summary_inputs) == 1

@@ -119,9 +119,16 @@ async def execute(config, model_id, root, budget, measurements, report, save):
         await scenario('C2', lambda: run_turn(app, sid, JSON_TEXT + '\nReply only ACK.'))
         async def tools():
             await app.host.sessions.select_tools(sid, ['read'])
+            from langchain_core.messages import AIMessage, ToolMessage
             before = await app.host.history.messages(sid)
+            old_ids = {call['id'] for message in before if isinstance(message, AIMessage)
+                for call in message.tool_calls}
             await run_turn(app, sid, 'Read calibration.txt exactly once, then reply only ACK.')
-            messages = (await app.host.history.messages(sid))[len(before):]
+            history = await app.host.history.messages(sid)
+            messages = [message for message in history
+                if isinstance(message, AIMessage) and message.tool_calls
+                    and any(call['id'] not in old_ids for call in message.tool_calls)
+                or isinstance(message, ToolMessage) and message.tool_call_id not in old_ids]
             expected_calls(messages, [('read', {'path': 'calibration.txt'})], work)
             paired_tools(messages, ['read'])
         await scenario('C3', tools)

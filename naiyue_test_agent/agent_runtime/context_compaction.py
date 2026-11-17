@@ -371,7 +371,8 @@ def _compaction_steps(
         if (not isinstance(response, AIMessage) or response.tool_calls or response.invalid_tool_calls):
             raise ContextCompactionError('summary_invalid')
         summary_text = response.content
-        if isinstance(summary_text, list) and metadata.get(MODEL_INPUT_METADATA_KEY, {}).get('api') == 'responses':
+        profile = metadata.get(MODEL_INPUT_METADATA_KEY, {})
+        if isinstance(summary_text, list) and (profile.get('api') == 'responses' or profile.get('kind') == 'anthropic'):
             if any(not isinstance(part, dict) or part.get('type') not in ('text', 'reasoning', 'thinking', 'redacted_thinking')
                     or part.get('type') == 'text' and not isinstance(part.get('text'), str) for part in summary_text):
                 raise ContextCompactionError('summary_invalid')
