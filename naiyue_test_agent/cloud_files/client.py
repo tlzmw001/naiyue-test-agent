@@ -79,12 +79,15 @@ class CloudClient:
         return download(self,task_id,artifact_id,destination)
 
     def request(self,method,path,**kwargs):
+        phase = 'response_headers'
         try:
             with self.http.stream(method,'/api/cloud/v1'+path,**kwargs) as response:
+                phase = 'response_body'
                 body=bytearray()
                 for chunk in response.iter_bytes(self.settings.io_bytes):
                     body.extend(chunk)
                     if len(body)>self.settings.max_response_bytes:raise CloudError('cloud_response_too_large',502)
+                phase = 'response_json'
                 value=json.loads(body)
                 if response.is_error:
                     code=value.get('error',{}).get('code','remote_error')
@@ -92,7 +95,9 @@ class CloudClient:
                     raise CloudError(code,response.status_code)
                 return value
         except (httpx.HTTPError,ValueError) as error:
-            logger.warning('cloud_input_request_failed error_type=%s',type(error).__name__)
+            operation = 'network' if path.startswith('/networks/') else 'cloud_api'
+            logger.warning('cloud_request_failed operation=%s phase=%s error_type=%s',
+                           operation, phase, type(error).__name__)
             raise CloudError('cloud_connection_failed',503) from None
 
     async def observe(self,task_id,*,thread_id=None,last_event_id=None,max_frame_bytes=None):

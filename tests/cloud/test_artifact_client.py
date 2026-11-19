@@ -11,6 +11,25 @@ from test_artifact_capture import command
 from test_runner_kernel import bootstrap
 
 
+@pytest.mark.parametrize(('path', 'operation'), [('/networks/private-network', 'network'), ('/inputs/private-input', 'cloud_api')])
+def test_cloud_transport_failure_reports_which_operation_failed_without_private_payloads(caplog, path, operation):
+    from naiyue_test_agent.cloud_files.client import CloudClient
+
+    def unreadable(request):
+        raise httpx.ReadError('private transport details', request=request)
+
+    settings = CloudConnection(endpoint='http://127.0.0.1:28281', owner_authority='127.0.0.1:28101',
+                               owner_token='private-token', instance_id=str(uuid4()))
+    client = CloudClient(settings, transport=httpx.MockTransport(unreadable))
+    try:
+        with pytest.raises(CloudError, match='cloud_connection_failed'):
+            client.request('GET', path)
+    finally:
+        client.close()
+    assert f'cloud_request_failed operation={operation} phase=response_headers error_type=ReadError' in caplog.text
+    assert all(value not in caplog.text for value in (path, 'private-token', 'private transport details'))
+
+
 @pytest.mark.parametrize('bad',[None,'hash','short','exists'])
 def test_download_checks_frozen_metadata_and_no_clobber(tmp_path,bad):
     from naiyue_test_agent.cloud_files.client import CloudClient
