@@ -24,7 +24,7 @@ export function useSessions(api: WebApi, notice: (text: string) => void) {
     } finally { if (!signal?.aborted && generation === version.current) setLoading(false); }
   }, [api]);
 
-  async function change(perform: () => Promise<void>) {
+  async function change(perform: () => Promise<void>, reportFailure = notice) {
     if (inFlight.current) return false;
     inFlight.current = true; setManaging(true); version.current++; notice('');
     try {
@@ -34,9 +34,9 @@ export function useSessions(api: WebApi, notice: (text: string) => void) {
       catch { notice('操作已保存，会话列表刷新未确认，请刷新页面核对。'); }
       return true;
     } catch (error) {
-      notice(errorText(error));
+      reportFailure(errorText(error));
       try { await refreshSessions(); }
-      catch { notice(errorText(error) + ' 会话列表刷新未确认。'); }
+      catch { reportFailure(errorText(error) + ' 会话列表刷新未确认。'); }
       return false;
     } finally { inFlight.current = false; setManaging(false); }
   }
@@ -48,9 +48,9 @@ export function useSessions(api: WebApi, notice: (text: string) => void) {
         .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned)));
     }),
     reorderSessions: (ids: string[]) => change(async () => { setSessions(await api.reorderSessions(ids)); }),
-    deleteSession: (id: string) => change(async () => {
+    deleteSession: (id: string, reportFailure?: (text: string) => void) => change(async () => {
       await api.deleteSession(id);
       setSessions(rows => rows.filter(row => row.session_id !== id));
-    }),
+    }, reportFailure),
   };
 }

@@ -199,11 +199,14 @@ export function useConversation(api: WebApi, active = true) {
     } catch (error) { setNotice(errorText(error));  }
   }
 
-  async function deleteSession(sid: string) {
-    if (busySend.current || selectionPending.current) return false;
+  async function deleteSession(sid: string, reportFailure: (text: string) => void = setNotice) {
+    if (busySend.current || selectionPending.current) {
+      reportFailure('当前会话操作尚未完成，请稍后重试删除。');
+      return false;
+    }
     busySend.current = true;
     try {
-      if (!await listing.deleteSession(sid)) return false;
+      if (!await listing.deleteSession(sid, reportFailure)) return false;
       imageInputs.forget(sid); delete stoppedMode.current[sid];
       if (selected.current === sid) {
         subscription.current?.abort(); selectionGeneration.current++; controlsRevision.current++;

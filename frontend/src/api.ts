@@ -333,6 +333,7 @@ export function errorText(error: unknown): string {
     session_delete_unconfirmed: '删除未确认，会话内容已保留，请刷新核对后重试。',
     session_background_tasks_active: '该会话仍有后台命令或未确认的清理，请先停止后台任务后再删除。',
     session_cloud_delivery_active: '该会话仍在准备或执行代码交付，请等待结束后再删除。',
+    session_cloud_tasks_retained: '该会话仍关联云端任务，请先处理关联任务，再删除此会话。',
     task_not_found: '后台任务不存在或不在当前工作区，请刷新列表。',
     task_cursor_invalid: '后台任务分页位置已失效，请刷新列表。',
     task_cleanup_unconfirmed: '进程清理尚未确认，请核对任务状态；任务记录仍保留。',

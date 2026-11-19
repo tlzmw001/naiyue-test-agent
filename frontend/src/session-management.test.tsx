@@ -118,6 +118,7 @@ it.each([
   { code: 'session_delete_unconfirmed', notice: /删除未确认/ },
   { code: 'session_background_tasks_active', notice: /先停止后台任务/ },
   { code: 'session_cloud_delivery_active', notice: /该会话仍在准备或执行代码交付，请等待结束后再删除/ },
+  { code: 'session_cloud_tasks_retained', notice: /仍关联云端任务/ },
 ])('keeps drafts and deletion intact for $code', async ({ code, notice }) => {
   const { api } = setup();
   fireEvent.click(await screen.findByRole('button', { name: '会话1 A' }));
@@ -127,7 +128,7 @@ it.each([
   vi.mocked(api.deleteSession).mockRejectedValueOnce(new ApiError(code));
   await menu('会话2'); fireEvent.click(screen.getByRole('menuitem', { name: '删除' }));
   fireEvent.click(within(screen.getByRole('dialog', { name: '删除会话' })).getByRole('button', { name: '删除会话' }));
-  await screen.findByText(notice);
+  await within(screen.getByRole('dialog', { name: '删除会话' })).findByText(notice);
   expect(screen.getByRole('button', { name: '会话2 A' })).toBeTruthy();
   expect((editor as HTMLTextAreaElement).value).toBe('keep this task');
   fireEvent.click(screen.getByRole('button', { name: '取消' }));
@@ -135,6 +136,20 @@ it.each([
   fireEvent.click(within(screen.getByRole('dialog', { name: '删除会话' })).getByRole('button', { name: '删除会话' }));
   await waitFor(() => expect(screen.queryByRole('button', { name: '会话2 A' })).toBeNull());
   expect((editor as HTMLTextAreaElement).value).toBe('keep this task');
+});
+
+it('shows deletion progress while the server is waiting to confirm', async () => {
+  const { api } = setup();
+  let finish!: (value: { session_id: string }) => void;
+  vi.mocked(api.deleteSession).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await menu('会话2');
+  fireEvent.click(screen.getByRole('menuitem', { name: '删除' }));
+  const dialog = screen.getByRole('dialog', { name: '删除会话' });
+  fireEvent.click(within(dialog).getByRole('button', { name: '删除会话' }));
+  expect(within(dialog).getByRole('status').textContent).toContain('正在删除会话');
+  expect(api.deleteSession).toHaveBeenCalledExactlyOnceWith('two');
+  await act(async () => finish({ session_id: 'two' }));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '删除会话' })).toBeNull());
 });
 
 it('prevents an older list read from overwriting a confirmed rename', async () => {

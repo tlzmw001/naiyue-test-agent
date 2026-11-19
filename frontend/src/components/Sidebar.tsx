@@ -23,7 +23,7 @@ export default function Sidebar({ rows, selected, open, disabled, managing, onNe
   rows: SessionRow[]; selected?: string; open: boolean; disabled: boolean;
   onNew: () => void; onSelect: (id: string) => void; onClose: () => void;
   managing: boolean; update: (id: string, change: { title?: string; pinned?: boolean }) => Promise<boolean>;
-  remove: (id: string) => Promise<boolean>; reorder: (ids: string[]) => Promise<boolean>;
+  remove: (id: string, reportFailure: (text: string) => void) => Promise<boolean>; reorder: (ids: string[]) => Promise<boolean>;
   navigation?: (current: ReactNode) => ReactNode; scopeName?: string; scopeId?: string;
   loading?: boolean; failure?: string; retry?: () => void;
   openLocalSettings?: (trigger: HTMLButtonElement) => void;
@@ -206,7 +206,7 @@ export default function Sidebar({ rows, selected, open, disabled, managing, onNe
     </aside>
     {menu && <SessionMenu key={menu.row.session_id} row={menu.row} title={title(menu.row)} x={menu.x} y={menu.y}
       busy={managing} close={closeMenu}
-      update={change => update(menu.row.session_id, change)} remove={() => remove(menu.row.session_id)} />}
+      update={change => update(menu.row.session_id, change)} remove={report => remove(menu.row.session_id, report)} />}
     {searching && <SessionSearch rows={rows} title={title} disabled={unavailable} restoreTarget={searchOrigin.current}
       select={onSelect} close={() => setSearching(false)} />}
   </>;
