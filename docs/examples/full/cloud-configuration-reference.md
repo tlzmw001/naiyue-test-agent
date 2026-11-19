@@ -1,4 +1,4 @@
-# Naiyue Test Agent 0.5.12 全量配置参考与逐项说明
+# Naiyue Test Agent 0.5.13 全量配置参考与逐项说明
 
 ## 本机、模型和云端配置
 
@@ -273,7 +273,7 @@ Windows 隧道入口仍匹配 MCP URL 的主机、端口和 TLS 类型；私有 
 | 字段 | 用途 |
 | --- | --- |
 | `work_dir` (work_dir) | 更新器持久日志、发行下载缓存根，需私有权限。 |
-| `index` (index) | 可信索引HTTPS URL或绝对文件路径；示例固定 v0.5.12。 |
+| `index` (index) | 可信索引HTTPS URL或绝对文件路径；示例固定 v0.5.13。 |
 | `trusted_prefixes` (trusted_prefixes) | 下载URL及重定向前缀白名单；仅保留实际可信资产来源。 |
 | `platform` (platform) | 目标开发机架构linux-x86_64或linux-arm64，不填本地Windows架构。 |
 | `build` (build) | 开发机模板构建参数。 |
