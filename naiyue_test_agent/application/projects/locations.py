@@ -42,7 +42,7 @@ def directory_facts(path):
     if status != 'available':
         raise ProjectError('project_directory_' + status)
     if os.name == 'nt':
-        from .windows_directory import directory_handle, signature
+        from naiyue_test_agent.storage.windows_directory import directory_handle, signature
         with directory_handle(path) as handle:
             return signature(handle)
     try:
@@ -60,7 +60,7 @@ def directory_identity(path, facts):
 
 def mkdir_under(parent, name, expected):
     if os.name == 'nt':
-        from .windows_directory import directory_handle, mkdir_relative, signature
+        from naiyue_test_agent.storage.windows_directory import directory_handle, mkdir_relative, signature
         with directory_handle(parent) as handle:
             if signature(handle) != expected:
                 raise ProjectError('project_location_changed')

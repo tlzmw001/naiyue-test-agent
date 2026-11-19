@@ -1,6 +1,6 @@
 # Spec143BP-S3：本机设置菜单与清理窗口
 
-日期：2026-11-18。状态：待实现。前置：S1/S2 后端合同。目的：用户能够在一个本机入口明确选择清理类别，并看懂实际删除、保留、跳过与失败结果。
+日期：2026-11-19。状态：界面和本机维护 API 已接通，真实浏览器与原生 Windows 验收归 S4。前置：S1/S2 后端合同。目的：用户能够在一个本机入口明确选择清理类别，并看懂实际删除、保留、跳过与失败结果。
 
 ## 1. 当前入口与状态归属
 
@@ -15,6 +15,15 @@
   → WebApi 全局 service API
   → 本机后端
 ```
+
+云端成果面板已有“清理未引用缓存”。两个按钮的清理范围和结果格式如下。
+
+| 用户入口 | 作用范围 | 执行与回显 |
+| --- | --- | --- |
+| 左下角“本机设置 → 清理缓存” | 本机已登记项目与持久普通会话，用户勾选工具输出归档、云输入包缓存 | 向 `/api/v1/maintenance/cache-cleanup` 提交选中类别，用同一操作 ID 查询各类别的结果和失败明细 |
+| 现有云端成果面板的“清理未引用缓存” | 当前项目的 `cloud-results/`，按本项目引用处理 `staging/` 与 `blobs/` | `CloudApi.cleanupReceiveCache(sid)` 向 `/api/client/v1/cloud-receive-cache/cleanup` 提交当前项目和会话查询参数，结果面板展示 `removed_files`、`freed_bytes` 或错误 |
+
+例如，用户通过 Web 取回或项目 Agent 的 `cloud_result` 工具保存了一份报告。报告属于用户的项目文件。用户随后在齿轮中勾选“云输入包缓存”，后端只处理 S2 定义的输入缓存，报告、交付记录和取回材料都在此次操作范围之外。项目成果面板的独立清理仍由接收服务检查取回、交付及 Agent 下载是否进行中，占用时向该面板返回 `cloud_receive_busy`。[成果面板](../../frontend/src/components/CloudResultReceive.tsx)、[Agent 下载与状态查询](../../naiyue_test_agent/application/cloud_local/result_tool.py)、[项目接收缓存清理准入](../../naiyue_test_agent/application/cloud_local/receives.py)
 
 ## 2. 界面合同
 
@@ -33,9 +42,12 @@
 
 ## 3. API、请求与恢复
 
-新增 `cacheCleanupTypes.ts` 与 `cacheCleanupApi.ts`；后者通过 WebApi 的受认证 service transport 构造，沿已有 cloudApi 的组合方式，避免在新组件重复处理 token/实例/header。方法：`policies(signal?)`、`execute(requestId, categories)`、`lookup(requestId, signal?)`。不新增未经认证的 fetch。
+新增 `cacheCleanupTypes.ts` 与 `cacheCleanupApi.ts`。在 `ProjectWorkspace` 的根 `WebApi` 上组合维护客户端，使用现有 `response(path, init, true)` 发送受认证的服务级请求。普通对话入口即使还没有会话也能操作。请求 URL 和 body 均与当前项目、会话、云任务绑定 ID 无关。[WebApi 的服务级请求与实例头](../../frontend/src/api.ts)、[工作区与各项目客户端](../../frontend/src/ProjectWorkspace.tsx)
 
-`useCacheCleanup` 持有 `loading_policy/idle/submitting/checking/finished/unknown` 状态，以及本次类别、request_id、service instance、结果/读取错误。纳秒和字节数字字符串按 string/BigInt 处理，不能先转 Number 再比较。
+- `policies(signal?)` 和 `execute(requestId, categories)` 分别 GET、POST `/api/v1/maintenance/cache-cleanup`。POST body 只含 `request_id` 与按合同排序的 `categories`，沿用传输层的 `X-Request-ID` 和 `X-Service-Instance`，前者与 body 中的 ID 相同。
+- `lookup(requestId, signal?)` 只 GET `/api/v1/maintenance/cache-cleanup/{request_id}`。云端成果面板继续使用带 `local_project_id` 和 `local_session_id` 的客户端路由。两个入口各自显示本次操作结果。[公共 HTTP 合同](143bp-00-contracts.md)、[成果面板 API](../../frontend/src/cloudApi.ts)
+
+`main.tsx` 将已经解析的 `connection.instanceId` 随根 `WebApi` 传入 `ProjectWorkspace`。唯一的 `useCacheCleanup` 用此 ID 核对本页保存的操作，持有 `loading_policy/idle/submitting/checking/finished/unknown` 状态及本次类别、request_id、结果或读取错误。纳秒和字节数字字符串按 string/BigInt 处理，不能先转 Number 再比较。
 
 正常序列：
 
@@ -54,6 +66,7 @@ sessionStorage 读写失败须 console 诊断并可见说明本页刷新后无�
 
 | 文件 | 修改 |
 | --- | --- |
+| `frontend/src/main.tsx` | 将当前服务实例 ID 交给根工作区，用于恢复查询 |
 | `frontend/src/ProjectWorkspace.tsx` | 唯一管理状态、窗口挂载与入口回调 |
 | `frontend/src/App.tsx` | 传递入口回调，不重复创建清理 hook |
 | `frontend/src/components/Sidebar.tsx`、`Sidebar.module.css` | 替换 footer、折叠/移动布局 |
@@ -67,11 +80,12 @@ sessionStorage 读写失败须 console 诊断并可见说明本页刷新后无�
 
 ## 5. TDD 与验收
 
-计划文件：`frontend/src/cache-cleanup-api.test.ts`、`cache-cleanup.test.tsx`、`components/LocalSettingsMenu.test.tsx`；扩展 Sidebar/ProjectWorkspace 现有行为测试。使用真实交互和精确请求断言，不只测内部 state 名。
+计划新增 `frontend/src/cache-cleanup-api.test.ts`、`cache-cleanup.test.tsx`、`components/LocalSettingsMenu.test.tsx`，扩展 Sidebar/ProjectWorkspace 的入口行为测试，并在已有 `cloud-api.test.ts` 核对成果清理路由与参数。使用真实交互和精确请求断言。
 
 - 无项目/无会话可打开，当前模型不可用不影响入口；策略未加载不可删。
 - 展开/折叠/窄屏、键盘、Escape、焦点返回、菜单与搜索弹层不争抢。
 - 初始未选；取消窗口、切换类别、GET 不发 POST；只提交勾选类别。
+- 从普通对话和项目齿轮分别执行，断言准确的服务路径、请求头、body 白名单及零次成果清理请求。在现有成果面板显式点击“清理未引用缓存”，断言只访问带原项目和会话参数的客户端路由，显示原计数或错误。
 - 项目切换不改变范围，不创建第二个 hook/任务；隐藏 App 不多挂窗口。
 - 快速双击仅一次 POST；运行时关闭再开仍为原请求。
 - HTTP 200 partial 展示失败，空结果不是异常；error path 按纯文本显示。
@@ -80,7 +94,8 @@ sessionStorage 读写失败须 console 诊断并可见说明本页刷新后无�
 - sessionStorage 异常有诊断且不制造重复操作；所有等待/失败状态可退出，不永久占满屏幕。
 
 ```bash
-npm --prefix frontend test -- --run src/cache-cleanup-api.test.ts src/cache-cleanup.test.tsx src/components/LocalSettingsMenu.test.tsx src/components/Sidebar.test.tsx
+npm --prefix frontend test -- --run src/cache-cleanup-api.test.ts src/cache-cleanup.test.tsx src/components/LocalSettingsMenu.test.tsx src/components/Sidebar.test.tsx src/ProjectWorkspace.test.tsx
+npm --prefix frontend test -- --run src/cloud-api.test.ts src/components/CloudResultReceive.test.tsx src/components/CloudResults.test.tsx src/components/CloudFilesDelivery.test.tsx
 npm --prefix frontend run build
 ```
 

@@ -1,3 +1,5 @@
+.settingsMenu { z-index: 6; }
+.footer { flex: 0 0 auto; margin-top: auto; padding-top: 8px; }
 .row { position: relative; border-radius: var(--r-md); user-select: none; }
 .row:hover, .row:focus-within, .row:has([aria-current="true"]) { background: var(--surface-active); }
 .row[data-dragging="true"] { opacity: .45; }
@@ -34,8 +36,8 @@
   .root[data-collapsed="true"] .brandMark,
   .root[data-collapsed="true"] .label,
   .root[data-collapsed="true"] .search kbd,
-  .root[data-collapsed="true"] .sessions,
-  .root[data-collapsed="true"] .footer { display: none; }
+  .root[data-collapsed="true"] .sessions { display: none; }
+  .root[data-collapsed="true"] .footer { display: flex; justify-content: center; }
   .root[data-collapsed="true"] .newChat,
   .root[data-collapsed="true"] .search { justify-content: center; width: 40px; height: 40px; padding: 0; margin: 24px auto 4px; }
   .root[data-collapsed="true"] .newChat { margin-top: 6px; }

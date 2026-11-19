@@ -319,3 +319,9 @@ BackgroundProcessManager.submit/foreground 的 `_validate_binding` 在取得 B1 
 `SessionPersistence.afinish` 必要保存成功、MemoryJobs通知之后，在释放S2的_active预留前调用session_maintenance.after_finish。checkpoint步骤保留原saver/DB边界；memory步骤在线程中持D1（共享PersonalMemory.lock）后顺序访问单库DB，无同时持两库锁。项目节流/外部链接seek状态归MemoryAccess，个人节流归共享PersonalMemory，都在D1内读写；不在锁内等待模型。仓储同一个写事务选择并重新核验删除资格、分批删除、提交统计。跨库链接只在个人库已打开时顺序查询有界目标元数据，再回项目库删除，不创建库或跨库事务。关闭同样取得D1；await_settled排空已开始的维护线程后才释放根运行/关库。
 
 S5审查修复：D1同时保护项目/共享个人cleanup_scan（页/链接seek状态），候选状态副本在单库事务提交成功后才发布；不增加锁。跨库目标查询异常独立降级，不能阻止本库GC。
+
+## 本机手动缓存清理（143BP S1–S2）
+
+- HTTP 回执生产者先登记单次清理准入和根 APP 生命周期。逐范围进 G4，任何时刻只有一个 G4。根 registry 未打开时，用既有根 OS 锁跨范围固定登记库；每次读连接在当前 worker 中打开并关闭。热 registry 只短取 DB；G4 内登记复核不取 P1。
+- 热归档在 worker 按 S2 → A2 → S3/B1 复用归档占用，并在释放短锁后持 B1 的范围预留。在该预留下重新短读父子会话的持久状态，读取时 B1 mutex 已释放。会话启动、恢复和删除从 S2 检查 B1 预留；B1 从不反取 S2。逐归档组文件处理取 O3，不在 O3 内调用会话逻辑。冷范围在 G4 内由同一 worker 持库 OS 锁、只读连接和文件句柄。
+- 热输入清理在事件循环内登记 domain 独占预留后交 worker。服务捕获、创建或附件生产者、附件取消和退役收尾所持的使用计数覆盖到必要记录保存，先登记再调度生产者。worker 依次持根 `cache.lock` 独占和 `readers.lock` 独占，短读业务 DB 后退出 DB 事务，再处理文件。服务和 CLI 上传先取 `readers.lock` 共享再取包内上传锁，取消只取共享租约。捕获只取 `cache.lock`，读租约没有反向取得捕获锁的路径。锁竞争非阻塞，线程操作排空后才释放外层预留。

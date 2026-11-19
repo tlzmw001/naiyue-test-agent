@@ -539,3 +539,10 @@ max_request_bytes = 29360128
 max_in_flight_requests = 2
 max_pending_image_messages = 16
 max_pending_image_bytes = 33554432
+
+# Applies only to an explicitly requested local cache cleanup.
+[cache_cleanup]
+tool_output_retention_days = 7
+cloud_input_retention_days = 3
+max_scan_entries = 100000
+max_operation_seconds = 60

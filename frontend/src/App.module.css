@@ -56,8 +56,6 @@
 .sessionTitle { display: flex; align-items: center; gap: 8px; font-size: var(--fs-ui); }
 .sessionTitle svg { width: 16px; height: 16px; color: var(--text-secondary); }
 .sessionMeta { color: var(--muted); padding-left: 24px; font-size: var(--fs-caption); max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-.localBadge { color: var(--muted); font-size: var(--fs-caption); padding: 20px 12px 4px; display: flex; align-items: center; gap: 8px; }
-.localBadge span { width: 6px; height: 6px; border-radius: var(--r-full); background: var(--indicator); }
 .workspace { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .header { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 28px; }
 .headerLeft { display: flex; align-items: center; gap: 16px; min-width: 0; }

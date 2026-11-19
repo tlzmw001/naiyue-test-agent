@@ -27,10 +27,11 @@ import ThemeMenu from './components/ThemeMenu';
 import { useSendScroll } from './useSendScroll';
 import styles from './App.module.css';
 
-export default function App({ api: supplied, active = true, selection, scopeName, scopePath, navigation: projectNavigation, preferences, projectEntry }: {
+export default function App({ api: supplied, active = true, selection, scopeName, scopePath, navigation: projectNavigation, preferences, projectEntry, openLocalSettings }: {
   api?: WebApi; active?: boolean; selection?: ScopeSelection; scopeName?: string; scopePath?: string;
   navigation?: (current: ReactNode, newSessionDisabled: boolean) => ReactNode;
   preferences?: { theme: ReturnType<typeof useTheme>; sendScroll: ReturnType<typeof useSendScroll> };
+  openLocalSettings?: (trigger: HTMLButtonElement) => void;
   projectEntry?: (path?: string | null) => ReactNode;
 }) {
   const api = useMemo(() => supplied ?? (() => { const c = browserConnection(); return new WebApi(c.token, c.scopeId, c.instanceId); })(), [supplied]);
@@ -118,6 +119,7 @@ export default function App({ api: supplied, active = true, selection, scopeName
   return <div className={styles.app} ref={layout}>
     {active && <Sidebar rows={chat.sessions} selected={chat.session?.session_id} open={navigation}
       navigation={projectNavigation ? current => projectNavigation(current, chat.submitting || chat.changingControls || !chat.model || chat.managingSessions) : undefined} scopeName={scopeName} scopeId={api.scopeId}
+      openLocalSettings={openLocalSettings}
       currentSession={chat.session ?? undefined} currentRun={chat.run}
       loading={chat.listing.loading} failure={chat.listing.failure}
       retry={() => void chat.listing.refreshSessions().catch(() => console.warn('session_directory_retry_failed'))}

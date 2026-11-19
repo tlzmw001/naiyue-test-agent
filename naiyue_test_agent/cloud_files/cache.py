@@ -16,6 +16,7 @@ from naiyue_test_agent.storage.files import open_store_readonly,check_store_dire
 from naiyue_test_agent.storage.cloud.schema import private_file
 from .capture import capture, publish_capture_directory
 from .archive import validate_package
+from .cache_access import MARKER, SIGNATURE
 
 
 def _used(root):
@@ -40,7 +41,7 @@ def capture_cached(source,selection,cache,limits,*,codec='gzip',source_receipt=N
     while not parent.exists():parent=parent.parent
     check_store_directory(parent);cache.mkdir(mode=0o700,parents=True,exist_ok=True)
     marker=cache/'cache.json'
-    signature=b'nyt-input-cache-init-v1\n';entries={p.name for p in cache.iterdir()}
+    signature=SIGNATURE;entries={p.name for p in cache.iterdir()}
     def initializing(header):return header==b'\0' or signature.startswith(header)
     if not marker.exists() and entries:
         if not entries<={'cache.lock','cache.json.next'} or 'cache.lock' not in entries:raise CloudError('input_cache_foreign')
@@ -58,7 +59,7 @@ def capture_cached(source,selection,cache,limits,*,codec='gzip',source_receipt=N
             os.lseek(fd,0,os.SEEK_SET);os.write(fd,signature);os.ftruncate(fd,len(signature))
             os.fsync(fd);sync_store_directory(cache)
         elif header!=signature:raise CloudError('input_cache_foreign')
-        expected=dict(format='nyt-input-cache',schema=1)
+        expected=MARKER
         if marker.exists():
             if read_json(marker)!=expected:raise CloudError('input_cache_foreign')
         else:write_json(marker,expected)

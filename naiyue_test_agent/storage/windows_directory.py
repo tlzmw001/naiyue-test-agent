@@ -1,6 +1,6 @@
 """Windows directory handles and relative creation, without path re-resolution."""
 from contextlib import contextmanager
-from naiyue_test_agent.storage.files import windows_api_path
+from .files import windows_api_path
 
 
 @contextmanager

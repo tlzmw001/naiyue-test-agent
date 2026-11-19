@@ -403,3 +403,10 @@ git_timeout_seconds = 30 # 单次Git子进程超时秒数。
 # 页面状态自动写入*.networks.json；不属于用户需要维护的额外连接配置。
 # connections.json内connection.max_response_bytes默认64MiB，旧显式4MiB应按文件清单大小同步调整。
 # 文件保存目录不是缓存预算；同名异内容仍需明确覆盖确认。
+
+# Applies only to an explicitly requested local cache cleanup.
+[cache_cleanup]
+tool_output_retention_days = 7
+cloud_input_retention_days = 3
+max_scan_entries = 100000
+max_operation_seconds = 60

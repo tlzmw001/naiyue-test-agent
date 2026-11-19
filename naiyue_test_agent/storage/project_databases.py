@@ -37,7 +37,10 @@ def locked_project_reader(path):
                 check_store_file(path.with_name(path.name + suffix))
             except FileNotFoundError:
                 pass
-        connection = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)
+        uri = path.as_uri()
+        if uri.startswith('file://') and not uri.startswith('file:///'):
+            uri = 'file:////' + uri.removeprefix('file://')
+        connection = sqlite3.connect(uri + '?mode=ro', uri=True)
         stack.callback(connection.close)
         connection.execute('PRAGMA trusted_schema=OFF')
         yield connection

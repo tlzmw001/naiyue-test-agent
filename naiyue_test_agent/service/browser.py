@@ -18,6 +18,10 @@ class BrowserBoundary:
             try:
                 if request.headers.get('host') != settings.authority:
                     raise WebError('invalid_host', 403)
+                from naiyue_test_agent.contracts.cache_cleanup import PATH
+                if scope['path'] == PATH or scope['path'].startswith(PATH + '/'):
+                    from .cache_cleanup import authorize_maintenance
+                    authorize_maintenance(request, self.owner)
                 instance = request.headers.get('x-service-instance')
                 if scope['path'].startswith('/api/') and instance is not None:
                     authorize(request, settings)

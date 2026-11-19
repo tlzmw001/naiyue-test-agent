@@ -105,6 +105,11 @@ async def test_regeneration_retires_touched_prefix_instance_but_keeps_untouched_
         await replace(app, sid)
         row = app.host.sessions._persistence.storage.subagents.get_subagent(sid, touched)
         assert row['state'] == 'retired' and row['version'] > before['version']
+        from naiyue_test_agent.storage.backup_schema import read_schema_version
+        from naiyue_test_agent.storage.cache_cleanup import session_rows
+        with app.host.sessions._persistence.storage.database.transaction() as connection:
+            assert session_rows(connection, read_schema_version(connection), 1, session_id=sid) == [
+                (sid, 'ready', 0)]
         assert row['checkpoint_id'] == before['checkpoint_id']
         assert app.host.sessions._persistence.storage.subagents.get_subagent(sid, untouched)['state'] == 'ready'
         assert (await app.host.history.subagent(sid, touched))['messages'][-1].content == 'discarded future'

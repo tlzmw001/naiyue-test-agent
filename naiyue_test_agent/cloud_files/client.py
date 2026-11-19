@@ -68,7 +68,9 @@ class CloudClient:
 
     def cancel_attachment_input(self,directory,input_id,attachment_id):
         from .input_upload import cancel_attachment_input
-        return cancel_attachment_input(self,directory,input_id,attachment_id)
+        from .cache_access import package_reader
+        with package_reader(directory, missing_ok=True):
+            return cancel_attachment_input(self,directory,input_id,attachment_id)
 
     def close(self):self.http.close()
 
@@ -131,10 +133,13 @@ class CloudClient:
             raise CloudError('cloud_connection_failed',503) from None
 
     def upload(self,directory,*,upload_id=None,check_cancel=None,on_progress=None,use_id=None):
-        directory=Path(directory).absolute();check_store_directory(directory)
+        directory=Path(directory).absolute()
         stack=ExitStack();primary=None
         try:
             from pydantic import TypeAdapter
+            from .cache_access import package_reader
+            stack.enter_context(package_reader(directory))
+            check_store_directory(directory)
             if upload_id is not None:TypeAdapter(UUIDText).validate_python(upload_id)
             fd=open_store_file(directory/('upload-'+upload_id+'.lock' if upload_id else 'upload.lock'));stack.callback(os.close,fd)
             try:acquire_store_lock(fd)

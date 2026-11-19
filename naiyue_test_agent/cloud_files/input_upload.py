@@ -52,10 +52,14 @@ def cancel_attachment_input(client,directory,ident,aid):
         raise CloudError('input_upload_identity')
 
 
+def read_capture_receipt(directory):
+    with os.fdopen(open_store_readonly(directory/'receipt.json'),'rb') as stream:
+        return CapturedInput.model_validate_json(stream.read(8193))
+
+
 def upload(client,directory,*,upload_id=None,check_cancel=None,on_progress=None,use_id=None):
     if check_cancel is not None:check_cancel()
-    with os.fdopen(open_store_readonly(directory/'receipt.json'),'rb') as stream:
-        captured=CapturedInput.model_validate_json(stream.read(8193))
+    captured=read_capture_receipt(directory)
     if captured.directory!=directory:raise CloudError('input_capture_identity')
     try:package=InputPackage.model_validate(client.request('GET','/inputs/'+captured.input_id))
     except CloudError as error:

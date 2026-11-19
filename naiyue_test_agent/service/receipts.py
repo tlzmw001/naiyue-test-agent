@@ -7,6 +7,8 @@ from uuid import UUID
 
 from starlette.responses import JSONResponse
 
+from naiyue_test_agent.contracts.cache_cleanup import PATH as CACHE_CLEANUP_PATH
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,6 +26,7 @@ class CommandReceipts:
         self.bytes = 0
         self.reserved = 0
         self.scopes = {}
+        self.targets = {}
 
     async def forget_scope(self, identity):
         pending = [(key, self.entries[key][1]) for key, scope in self.scopes.items() if scope == identity]
@@ -34,13 +37,19 @@ class CommandReceipts:
             if self.entries.get(key, (None, None))[1] is task:
                 self.bytes -= len(body)
                 del self.entries[key], self.scopes[key]
+                self.targets.pop(key, None)
+
+    def lookup(self, key, target):
+        if self.targets.get(key) == target:
+            return self.entries[key][1]
+        return None
 
     async def drain(self):
         tasks = [task for _, task in self.entries.values()]
         if tasks:
             await asyncio.gather(*tasks)
 
-    async def execute(self, key, fingerprint, operation, *, scope_id=None, image_lease=None):
+    async def execute(self, key, fingerprint, operation, *, scope_id=None, image_lease=None, target=None):
         if self.closing:
             return 503, [], _error('service_closing', 503).body
         previous = self.entries.get(key)
@@ -57,6 +66,8 @@ class CommandReceipts:
         task = asyncio.create_task(self._produce(key, operation, image_lease))
         self.entries[key] = fingerprint, task
         self.scopes[key] = scope_id
+        if target is not None:
+            self.targets[key] = target
         return await asyncio.shield(task)
 
     async def _produce(self, key, operation, image_lease=None):
@@ -74,6 +85,7 @@ class CommandReceipts:
                         'image_input_busy', 'pending_image_limit', 'pending_image_invalid'):
                 if self.entries.get(key, (None, None))[1] is asyncio.current_task():
                     del self.entries[key], self.scopes[key]
+                    self.targets.pop(key, None)
             else:
                 self.bytes += len(body)
             return status, headers, body
@@ -133,7 +145,7 @@ class IdempotentCommands:
             if not handshake:
                 value = headers.get(b'x-request-id', b'').decode('ascii')
                 key = str(UUID(value))
-                if key != value.lower():
+                if key != value.lower() or (path == CACHE_CLEANUP_PATH and value != key):
                     raise ValueError('invalid_id')
             chunks, size = [], 0
             while True:
@@ -215,7 +227,8 @@ class IdempotentCommands:
                     logger.info('service_receipt_scope_unavailable error_type=%s', type(error).__name__)
                     failure = public_error(error)
                     return await _error(failure.code, failure.status)(scope, receive, send)
-        status, result_headers, content = await receipts.execute(key, fingerprint, operation, scope_id=scope_id, image_lease=lease)
+        status, result_headers, content = await receipts.execute(key, fingerprint, operation, scope_id=scope_id, image_lease=lease,
+            target=(scope['method'], path) if path == CACHE_CLEANUP_PATH else None)
         await send({'type': 'http.response.start', 'status': status, 'headers': [
             *result_headers, (b'content-type', b'application/json'),
             (b'content-length', str(len(content)).encode())]})

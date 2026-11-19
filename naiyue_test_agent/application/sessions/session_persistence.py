@@ -163,7 +163,8 @@ class SessionPersistence:
 
     def start(self, session_id, run_id):
         with self._lock:
-            if session_id in self._active or session_id in self._recovering or session_id in self._blocked:
+            if (self.sessions.background_tasks.is_cleaning(self.sessions.session_archive_root(session_id))
+                        or session_id in self._active or session_id in self._recovering) or session_id in self._blocked:
                 raise SessionPersistenceError('session_recovery_blocked')
             self._active[session_id] = run_id
         # Reserve this owner before IO, without blocking event-loop readers of
@@ -197,7 +198,8 @@ class SessionPersistence:
 
     async def _delete(self, session_id, agent):
         with self._lock, self.sessions.deletion_guard(session_id):
-            if session_id in self._active or session_id in self._recovering:
+            if (self.sessions.background_tasks.is_cleaning(self.sessions.session_archive_root(session_id))
+                        or session_id in self._active or session_id in self._recovering):
                 raise SessionPersistenceError('session_recovery_blocked')
             self._recovering.add(session_id)
         try:
@@ -305,7 +307,8 @@ class SessionPersistence:
     async def arecover(self, session_id, agent, *, checkpoint_id, action):
         async with self.history_lock(session_id):
             with self._lock:
-                if session_id in self._active or session_id in self._recovering or session_id in self._blocked:
+                if (self.sessions.background_tasks.is_cleaning(self.sessions.session_archive_root(session_id))
+                        or session_id in self._active or session_id in self._recovering) or session_id in self._blocked:
                     raise SessionPersistenceError('session_recovery_blocked')
                 self._recovering.add(session_id)
             try:
@@ -319,7 +322,8 @@ class SessionPersistence:
 
     async def arestore(self, session_id, agent):
         with self._lock:
-            if session_id in self._active or session_id in self._recovering or session_id in self._blocked:
+            if (self.sessions.background_tasks.is_cleaning(self.sessions.session_archive_root(session_id))
+                        or session_id in self._active or session_id in self._recovering) or session_id in self._blocked:
                 raise SessionPersistenceError('session_recovery_blocked')
             self._recovering.add(session_id)
         try:

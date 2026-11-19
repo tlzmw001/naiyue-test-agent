@@ -1,6 +1,6 @@
 # Spec143BP-00：本机手动缓存清理公共合同
 
-日期：2026-11-18。状态：详细实施设计，未实现。业务范围已经用户确认；本文件规定 S1—S4 共同遵守的接口、状态、时间和故障语义。总入口见 [143BP](143bp-local-settings-and-cache-cleanup.md)。云端修改不属于这些切片。
+截至 2026-11-19，S1–S3 本机服务与界面入口已接通，S4 Windows 原生验收待执行。业务范围已经用户确认，本文件规定 S1—S4 共用的接口、状态、时间和故障语义。总入口见 [143BP](143bp-local-settings-and-cache-cleanup.md)。
 
 ## 1. 范围与最小路径
 
@@ -22,6 +22,8 @@ ProjectWorkspace（唯一窗口、请求状态）
 ```
 
 本功能不调用模型、不发云端 HTTP、不启动项目 Agent、不触发数据库升级或恢复，不改聊天、图片、checkpoint、记忆、日志、项目资产或云端结果。原 CLI 全量归档清理入口及其确认合同保持。
+
+本机已接收的成果有独立的项目/会话级管理入口，Agent 通过 `cloud_result` 下载并保存的文件属于项目资产。两者均不纳入这两个类别。云端任务删除时的共享输入回收由 Coordinator 执行，本机 POST 不触发云端回收或释放远端占用。
 
 ## 2. 配置与时间
 
@@ -103,7 +105,7 @@ POST 等待最终结果；浏览器断线不取消独立 producer。已进入应
 | `totals`, `categories` | 总数和逐类别计数，不按项目无界堆积成功记录 |
 | `details` | 跳过、失败、结果无法确认的可定位明细 |
 
-计数字段：`scopes_visited`, `units_examined`, `units_deleted`, `files_deleted`, `bytes_deleted`, `units_retained`, `units_skipped`, `units_failed`。计数均非负，类别求和与总计一致；scope 计数是“范围×类别”的访问次数，不冒充独立项目总数；`bytes_deleted` 使用十进制字符串。一个包部分删除可以贡献 `files_deleted/bytes_deleted`，但不贡献 `units_deleted`。目录不计字节，新建控制文件不冒充用户释放的缓存量。
+计数字段：`scopes_visited`, `units_examined`, `units_deleted`, `files_deleted`, `bytes_deleted`, `units_retained`, `units_skipped`, `units_failed`。计数均非负，类别求和与总计一致；scope 计数是“范围×类别”的访问次数，不冒充独立项目总数；`bytes_deleted` 使用十进制字符串。一个包部分删除可以贡献 `files_deleted/bytes_deleted`，但不贡献 `units_deleted`。目录、协调锁和清理控制文件不计入已删除的数据文件数或字节数。
 
 - `completed`：遍历结束，全部适用单元已处理，无跳过或错误。全部数据都未过期、目录从未产生缓存，也可以 completed + 零删除。
 - `partial`：存在保护/变化跳过、单元失败或预算停止，但有范围完成检查；零删除也可以 partial。
@@ -116,23 +118,23 @@ POST 等待最终结果；浏览器断线不取消独立 producer。已进入应
 
 | code | 展示/处理方向 |
 | --- | --- |
-| `scope_busy`, `input_cache_busy`, `recovery_required`, `legacy_delivery_dependency` | 暂时保留，说明依赖；用户完成/取消原工作后再清理 |
+| `scope_busy`, `input_cache_busy`, `recovery_required`, `input_in_use` | 区分活动运行、并发缓存使用、需要恢复的会话及仍可续办的输入消费者。明细说明具体占用，例如附件已取消、原上传的释放仍待核销 |
 | `registration_changed`, `identity_changed`, `already_missing` | 本次跳过，重新检查；外部已删文件不计本次空间 |
 | `permission_denied`, `sharing_violation`, `readonly_file` | 定位文件与错误码；提示检查权限/只读/占用，不猜具体进程 |
 | `unexpected_entry`, `ownership_invalid`, `unsupported_schema` | 保留并暴露识别或格式问题，不能当成空缓存 |
 | `io_error`, `metadata_unavailable`, `cleanup_internal_error` | 保留未处理部分并展示诊断 ID/类型，服务继续工作 |
 
-响应预算取既有 `max_frame_bytes`，包含最终摘要及 GET 查询包裹结构。执行前为本单元最坏一条失败明细和最终摘要预留编码后的字节数；不足则停止后续单元、返回 `result_budget`。每单元遇第一个失败即停，其他问题待再次手动扫描；不通过截断已发生的错误掩盖失败。读取阶段也受同样的明细预算限制。前端可分组折叠已返回的明细，无需新增持久错误日志库。
+响应预算取既有 `max_frame_bytes`，包含最终摘要及 GET 查询包裹结构。框架上限若连所选类别的最小预算停止回执都容纳不了，准入前返回 503 `cache_cleanup_result_budget`。执行前为本单元最坏一条失败明细和最终摘要预留编码后的字节数；不足则停止后续单元、返回 `result_budget`。每单元遇第一个失败即停，其他问题待再次手动扫描；不通过截断已发生的错误掩盖失败。读取阶段也受同样的明细预算限制。前端可分组折叠已返回的明细，无需新增持久错误日志库。
 
 ## 5. 范围所有权与生命周期
 
 - 当前服务的 `settings.storage.data_dir` 为唯一根；路径由 registry 及 chats DB 的身份导出，不接受浏览器路径。
 - registry 仅取仍登记项目；`deleting` 等未完成状态显示跳过。包括未打开、原工作目录暂时离线的登记项目；清理管理目录不需要访问项目源码目录。
 - 根 registry 已打开时借用其连接做短读；尚未打开但文件存在时，以原 registry OS 锁和只读连接建立清理读取上下文，校验 application_id、支持的 user_version 与字段，不调用会迁移/执行 reconcile 的惰性 property。此根文件锁先于所有项目锁取得并保留到操作结束；正常项目注册入口若在此期间竞争，沿已有非阻塞忙碌结果返回。根 registry 不存在时项目集合为空，仍可检查 chats，不创建 registry。不可验证的已有 registry 是全局枚举失败。
-- 项目 DB/归档路径必须匹配本数据根的受管布局和登记身份；迁移中、外部遗留位置或不匹配时跳过，不能跟随任意数据库路径清理。
+- 项目 DB/归档路径必须匹配本数据根的受管布局和登记身份。显式 `import_legacy` 允许登记位于外部的 DB 原路径。这类项目也计入枚举，但以范围跳过和具体原因为结果，不从登记路径向外扫描；仅剩目录且无登记时不枚举。
 - 普通会话取 `chats/sessions.sqlite` 内仍存在的持久会话身份，只处理相应 `sessions/<session_id>/artifacts`；子 Agent 复用父归档，不重复计数。临时/RAM 会话和没有登记来源的孤立目录不扫描。
 - 每个 host 单独取得既有 G4 生命周期门闩，复核登记 revision 与数据目录身份，再借用当前 host 或打开只读检查。禁止跨项目同时持有多个 G4。
-- 冷路径复用 `locked_project_reader` 与 `validate_runtime_connection`，只读查询所需列，持有该 DB 的 OS 锁到该范围结束；不经 `ProjectStore/Database` 的正常初始化路径，后者会触发迁移。
+- 冷路径复用 `locked_project_reader` 与 `validate_runtime_connection`，只读查询所需列，持有该 DB 的 OS 锁到该范围结束。项目库单独读取 `naiyue_store_info.version` 并核对已有受支持版本、项目身份和本类别必需字段。现行普通项目库 25 与启用 Wiki 后的项目库 26 都可参与。缺字段或未知版本按 `unsupported_schema` 跳过。正常 host 打开会组装运行资源，并可能备份和升级 Wiki；清理不走这条路径，也不打开 personal 库。
 - 热路径借用已有 DB，短事务读状态；不能再打开第二个需要相同 OS 独占锁的 ProjectStore。事务结束后再进行磁盘扫描/删除。
 - 缺少 DB 但出现缓存、格式无法识别、恢复标记存在、状态不明：范围级失败/保护跳过；不按“没有引用”删除。DB 与缓存都不存在才是空范围。
 
@@ -145,9 +147,9 @@ POST 等待最终结果；浏览器断线不取消独立 producer。已进入应
 | 路径 | 具体顺序与限制 |
 | --- | --- |
 | 范围枚举 | 清理事件循环标记 → 根 registry 读取上下文；已有连接短取 P1/registry DB，读完即释放短锁；冷 registry 的 OS 锁是整个操作的外层，先于 G4 和项目 OS 锁 |
-| 热归档 | G4 → A2→B1，短锁登记后释放；保持 B1 清理预留，worker 逐组取归档全局锁；不从归档锁回调 A2/B1 |
+| 热归档 | G4 内短查持久层占用 S2、会话注册表 A2、actor 状态 S3，再在 A2 下登记 B1 清理预留。嵌套遵循 S2 → A2、A2 → S3/B1。短锁释放后由 worker 逐组取得归档全局锁，B1 预留保留至文件操作结束。DB 和线程 IO 在短锁外完成 |
 | 冷归档 | G4 → 既有 DB OS 文件锁 → 只读查询；关闭查询事务后保留 OS 锁做文件 IO，不从 OS 锁反取 P1 |
-| 输入缓存 | G4 → domain 清理预留（若热）→ cache.lock → readers.lock 独占；随后短 DB 依赖复核，事务结束后再删除；读者不反取 cache.lock |
+| 输入缓存 | G4 → domain 清理预留（若热）→ cache.lock → readers.lock 独占；随后短 DB 依赖复核，事务结束后再删除。服务/CLI 上传与附件取消恢复在读包之前获取 readers.lock 共享租约；上传再取得包内既有上传锁。读者不反取 cache.lock |
 
 执行前的登记再次核验通过已选定的根读取上下文读取身份/revision，热连接沿 RegisteredExecution 已有的 DB 读取方式，冷连接沿操作开始时已取得的根锁，不从项目锁反取根锁/P1，也不调用 reconcile。冷 SQLite 连接的进入、查询与退出必须在同一个受控 worker 中完成；不得把线程绑定连接交给随机线程池调用。跨 await 仅保留明确登记的 OS 锁/占用预留，查询事务均已关闭。
 
@@ -174,4 +176,4 @@ POST 等待最终结果；浏览器断线不取消独立 producer。已进入应
 - Pi 本地 `a69bef789`：`core/tools/bash.ts → OutputAccumulator.snapshot → fullOutputPath`，关闭临时输出流和保留供读取的路径是不同操作；这条链不证明其有本机 7 天清理。
 - AgentX 本地 `3fcfa0e`：`ToolStateStateMachineAppService.processProcessor → AppPublishingProcessor.process → finally cleanupTemporaryFiles`，临时发布材料失败清理记录警告；这是任务临时文件，不等于本项目历史归档。参照对象生命周期划分，不搬它的定时容器清理或 Java API。
 
-最容易失效的前提是“所有缓存消费者都参加占用保护”。S2 必须核对服务、CLI、上传恢复、旧交付全链路；未识别的缓存格式或依赖保守保留并说明。不能靠一张 `input_id` 引用计数表替代真实消费者核对。
+S2 必须覆盖服务和 CLI 上传，以及主动取消、取消重试和删除关联后继续核销附件的路径。持久依赖复核包括已移除绑定的 `pending_attachment_releases`，也按现有 `pending_input_releases` 识别旧附件行中尚未释放的占用。旧代码交付已退出，历史交付事实和接收材料继续保留，不能仅凭其历史 `input_id` 锁住本机冻结包。

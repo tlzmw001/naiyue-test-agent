@@ -30,6 +30,7 @@ from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from .projects import router as project_router
 from .navigation import router as navigation_router
 from .directories import router as directory_router
+from .cache_cleanup import router as cache_cleanup_router
 from .receipts import CommandReceipts, IdempotentCommands
 from .scopes import ScopeServices
 from .settings import ServiceError, ServiceIdentity, StartupFailure
@@ -166,6 +167,7 @@ def create_service_app(options, *, application_factory=None, shutdown=None):
     app.include_router(terminal_session_router, prefix='/api/v1/scopes/{scope_id}')
     app.include_router(cloud_task_router)
     app.include_router(project_router)
+    app.include_router(cache_cleanup_router)
     app.include_router(navigation_router)
     app.include_router(directory_router)
     app.include_router(temporary_router)

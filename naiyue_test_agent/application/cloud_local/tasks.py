@@ -1,7 +1,8 @@
 """Main-session delegation and owned producers; no conversation or memory writes."""
 import asyncio
+import json
 import logging
-from contextlib import contextmanager,asynccontextmanager,nullcontext
+from contextlib import ExitStack,contextmanager,asynccontextmanager,nullcontext
 from pathlib import Path
 
 from naiyue_test_agent.agent_runtime.async_utils import await_settled,run_blocking
@@ -22,9 +23,60 @@ class LocalTaskDomain:
         self.project_id=project_id;self.cache=storage.path.parent/'cloud-input-cache' if storage.path else None
         self.authority=authority
         self.persistence=persistence
+        self._cache_users = 0
+        self._cache_cleaning = False
         from .materials import LocalMaterials
         self.materials=LocalMaterials(owner,storage,project_id)
         self.deliveries=storage.cloud_deliveries
+
+    @contextmanager
+    def input_cache_use(self):
+        if self._cache_cleaning:
+            raise CloudError('input_cache_busy')
+        self._cache_users += 1
+        try:
+            yield
+        finally:
+            self._cache_users -= 1
+
+    @contextmanager
+    def input_cache_cleanup(self):
+        from naiyue_test_agent.storage.cache_cleanup_files import CleanupIssue
+        if self._cache_users or self._cache_cleaning:
+            raise CleanupIssue('input_cache_busy', '正在处理此项目的输入')
+        self._cache_cleaning = True
+        try:
+            yield
+        finally:
+            self._cache_cleaning = False
+
+    async def check_source_cache(self, handle, session_id):
+        from naiyue_test_agent.cloud_files.cache_access import package_reader
+        source = await run_blocking(self.repo.source, handle, session_id)
+        captured = source['captured']
+        directory = Path(captured['directory'])
+        if directory != self.cache / 'inputs' / captured['input_id']:
+            raise CloudError('input_cache_invalid')
+        def verify():
+            from naiyue_test_agent.cloud_files.input_upload import read_capture_receipt
+            from naiyue_test_agent.contracts.cloud_inputs import CapturedInput
+            from naiyue_test_agent.storage.files import check_store_file
+            from pydantic import ValidationError
+            try:
+                with package_reader(directory):
+                    receipt = read_capture_receipt(directory)
+                    expected = CapturedInput.model_validate_json(json.dumps(captured))
+                    if receipt != expected.model_copy(update={'source_receipt': None}):
+                        raise CloudError('input_cache_invalid')
+                    archive = directory / 'archive'
+                    check_store_file(archive)
+                    if archive.stat().st_size != receipt.size:
+                        raise CloudError('input_cache_invalid')
+            except PermissionError as error:
+                raise CloudError('input_cache_permission_denied') from error
+            except (OSError, ValidationError) as error:
+                raise CloudError('input_cache_invalid') from error
+        await run_blocking(verify)
 
     async def session(self,session_id):
         row=await run_blocking(self.metadata.get,session_id)
@@ -32,7 +84,7 @@ class LocalTaskDomain:
         return row
 
     async def capture(self,session_id,root,selection,limits,*,git=False,include=(),exclude=(),paths=None,validate=None,attachment_directory=False):
-        with self.owner.operation():
+        with self.owner.operation(), self.input_cache_use():
             await self.session(session_id)
             if self.cache is None:raise CloudError('cloud_project_required')
             execution=await run_blocking(self.authority.resolve,self.project_id) if self.authority else None
@@ -123,7 +175,7 @@ class ManualCloudTasks:
             return await await_settled(asyncio.create_task(admit()))
 
     async def _submit(self,domain,project_name,request):
-        with domain.owner.operation():
+        with domain.owner.operation(), ExitStack() as custody:
             profile=self.book.require(request['profile_id'])
             if request['template_id'] not in profile.template_ids:raise CloudError('cloud_template_not_allowed',403)
             config=await run_blocking(self.connection_settings,profile)
@@ -132,6 +184,11 @@ class ManualCloudTasks:
             except CloudError as error:
                 if error.code!='cloud_operation_not_found':raise
                 existing=None
+            handle = request.get('source_handle')
+            if handle and (existing is None or existing['phase'] not in ('prepared','cancelled')):
+                custody.enter_context(domain.input_cache_use())
+                if existing is None:
+                    await domain.check_source_cache(handle, request['local_session_id'])
             key=(domain.project_id,request['command_id'])
             slot=key not in self.flights and (existing is None or existing['phase'] not in ('prepared','cancelled'))
             if slot and len(self.flights)+len(self.slots)>=self.settings.max_preparations:
@@ -168,8 +225,16 @@ class ManualCloudTasks:
                     await run_blocking(domain.repo.fail,op['command_id'],op['local_session_id'],'unknown','cloud_preparation_failed')
                 finally:
                     await run_blocking(domain.repo.settle_cancel,op['command_id'],op['local_session_id'])
-        task=asyncio.create_task(work());self.flights[key]=task;domain.own(task)
+        reservation = domain.input_cache_use() if op['request'].get('source_handle') else nullcontext()
+        reservation.__enter__()
+        try:
+            task=asyncio.create_task(work())
+        except BaseException:
+            reservation.__exit__(None, None, None)
+            raise
+        self.flights[key]=task;domain.own(task)
         def done(completed):
+            reservation.__exit__(None, None, None)
             if self.flights.get(key) is completed:del self.flights[key]
         task.add_done_callback(done)
 

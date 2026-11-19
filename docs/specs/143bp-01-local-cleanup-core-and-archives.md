@@ -1,6 +1,6 @@
 # Spec143BP-S1：本机清理基础与工具输出归档
 
-日期：2026-11-18。状态：待实现。前置：[公共合同](143bp-00-contracts.md)。本片交付后可通过认证 HTTP 完成工具归档清理及查询；前端入口归 S3，云输入类别暂不可执行。
+2026-11-19 已接通认证 HTTP、归档处理和同实例回执查询。Windows 原生验收归 S4。前置为[公共合同](143bp-00-contracts.md)。本片交付后可通过认证 HTTP 完成工具归档清理及查询。前端入口归 S3，云输入类别在 S2 接入。
 
 ## 1. 当前调用链与问题
 
@@ -19,7 +19,7 @@
 | `naiyue_test_agent/cache_cleanup_settings.py` | 新增四个配置字段及严格校验 |
 | `naiyue_test_agent/settings.py` | 接入 AppSettings、TOML 白名单与加载 |
 | `naiyue_test_agent/contracts/cache_cleanup.py` | 新增类别、请求、策略、结果和明细 schema |
-| `naiyue_test_agent/application/cache_cleanup.py` | 应用层 `CacheCleanup`；准入、时间、范围顺序、预算及汇总 |
+| `naiyue_test_agent/application/projects/cache_cleanup_operation.py` | 应用层 `CacheCleanup`；准入、时间、范围顺序、预算及汇总 |
 | `naiyue_test_agent/application/projects/cache_cleanup.py` | host 冷/热路径适配；不堆入已存在的 HostManager 主文件 |
 | `naiyue_test_agent/application/projects/host_manager.py` | 增加内部 `cache_cleanup_scope` 入口，沿 G4 接适配器 |
 | `naiyue_test_agent/application/projects/service.py`、`storage/project_registry.py` | 有界登记快照入口，不调用会访问源码目录的 `_view/availability` |
@@ -27,7 +27,7 @@
 | `naiyue_test_agent/tools/output_cleanup.py` | 新增按调用分组、时间筛选、身份复核及单组清理；不改旧 ClearPlan 形状 |
 | `naiyue_test_agent/tools/output.py` | 复用既有所有权/命名和全局锁；必要时提供窄内部入口，旧公开函数行为保持 |
 | `naiyue_test_agent/storage/cache_cleanup_files.py` | 归档、输入包、暂存共同需要的受管文件身份与删除原语；不建通用插件框架 |
-| `naiyue_test_agent/application/sessions/session_service.py` | 内部归档保护支持已验证、未加载的持久会话 ID，沿原 A2→B1 准入 |
+| `naiyue_test_agent/application/sessions/session_service.py`、`session_persistence.py`（同目录） | 内部归档保护支持已验证、未加载的持久会话 ID，核对 S2 的活动/恢复事实并复用 A2→B1 的同根准入 |
 | `naiyue_test_agent/application/service_application.py`、`application/core.py` | 构造并持有唯一 CacheCleanup，复用 root owner/settings/hosts |
 | `naiyue_test_agent/service/cache_cleanup.py`、`service/app.py` | 新管理路由、显式授权和注入；不依赖当前 scope |
 | `naiyue_test_agent/service/browser.py` | 新维护路径必填实例 header，在回执复用前拒绝缺失/错误实例；其他路由不变 |
@@ -47,6 +47,8 @@
 
 `storage/cache_cleanup.py` 提供 `read_cleanup_scope(connection, expected_profile)`：校验 runtime 身份、读取持久会话 ID/状态。无迁移、无写事务、无会话反序列化、无模型加载。S2 在该模块增加输入依赖查询，不另开全库并行连接。复用 `locked_project_reader` 时覆盖其 SQLite URI 的中文、空格、百分号、问号及 Windows 盘符/UNC 路径：URI 必须正确转义，UNC 使用 SQLite 可接受的本机文件路径表达，不把 `Path.as_uri()` 的主机 authority 无条件传给不支持它的 SQLite 构建；必要适配写在现有 `storage/project_databases.py` 的读取入口并补其原调用回归，不另建无锁冷读路径。
 
+项目库兼容性沿 `storage/backup_schema.py` 的受支持版本集合与本次所需列分别检查。flat 项目库可为 25，已迁移 Wiki 的项目库为 26；两类都应可读。根 registry 的 `PRAGMA user_version` 单独按 2—6 校验。正常打开项目的 `assemble_host → storage.memory.prepare_wiki` 可能备份并将 25 升至 26。冷清理直接读现有库；不调用上述准备入口，不读取 Wiki 正文，不创建备份。现有库无法证明项目/会话身份或缺少查询必需字段时，按公共合同报告原因并保留文件。
+
 `output_cleanup` 的输入为服务端已验证的归档根、截止时间和受管上下文，输出为单元事实/结果；不接收任意 UI 文件清单。扫描与执行都调用同一命名/所有权规则。
 
 ## 4. 枚举与占用
@@ -54,10 +56,12 @@
 1. 固定类别和 T，登记唯一清理操作；先枚举 registry 的仍登记项目身份，再普通会话。项目按 ID，普通会话按 session_id 顺序，保证结果可重复；受预算限制时如实报告未完成。
 2. 每个项目只访问 `<data_dir>/workspaces/<id>/artifacts` 与它的受管 DB；不检查源码目录是否在线作为删除前提。项目已删除登记/状态改变/revision 改变则跳过。
 3. 普通会话来自 chats DB；无 DB 无归档为零，缺库却有残留目录不猜来源。不给旧会话创建 actor；已删除会话的孤立目录不扩展扫描。
-4. 热 host 在 A2 下核对涉及该归档的 active/approval/manual-review/子实例状态，再进入 B1 的 `output_guard`。未加载的普通会话必须先由 DB 校验 ID，再允许导出的固定归档根进入保护；不能把仅“位于 sessions 目录”视为归属证明。
+4. 热 host 同时核对与该归档根相关的 `SessionPersistence._active/_recovering/_blocked` 和 actor 的 busy/approval/manual-review/子实例状态。持久层短锁 S2 可以进入 A2，A2 分别进入 S3 读 actor、进入 B1 的 `output_guard` 登记占用。新建同根恢复或删除预留也须在 S2 下与此登记互斥，再释放短锁做 IO。未加载的普通会话先由 DB 验证 ID，按 `session_archive_root` 导出归档根，沿同一保护路径处理。
 5. 冷 host 在 G4 + DB OS 锁下，若持久会话为 `running/interrupted/review_required` 或存在必要恢复状态，整个共享归档根跳过。热 host 同样检查持久恢复状态，不能只看已加载 actor。
 6. 保护期间后台任务注册/新运行继续沿原 B1 清理标记拒绝该根的准入；已经运行的任务使清理跳过。其他项目运行和消息发送不受全局清理标记限制。
 7. 当前后台输出查询读取内存快照并通过 archive.available 检查文件；保持其已有锁顺序，不在 `_GLOBAL_LOCK` 内回调持 archive 私有锁的方法。正常 Agent 工具读取受同根活动运行保护。
+
+收尾例子：一次对话已经通过 `storage.runs.finish_run` 将 DB 状态写为 `ready`，同一个 run 仍可能停在 `SessionPersistence.afinish → session_maintenance.after_finish`。后者处理 checkpoint 保留和记忆过期，返回后才释放持久层与 actor 的运行占用。此时用户点击清理，返回该根 `scope_busy`；独立项目仍可继续。手动清理不调用这些会话维护钩子。
 
 G4 防止本服务打开/关闭/移除/重定位该 host；登记提交前复核是第二道检查，不靠扫描时快照删除。跨进程遵守已有 DB 文件锁，无法取得视为忙碌。不要为清理强制关闭外部进程。
 
@@ -96,7 +100,7 @@ G4 防止本服务打开/关闭/移除/重定位该 host；登记提交前复核
 
 - `tests/test_cache_cleanup_settings.py`：默认值、覆盖、非法类型、TOML 接线。
 - `tests/test_cache_cleanup_outputs.py`：期限、组、识别、部分失败和计数。
-- `tests/test_cache_cleanup_scopes.py`：冷热 host、全本机范围、身份/移除竞争、恢复保护。
+- `tests/test_cache_cleanup_scopes.py`：冷热 host、全本机范围、身份/移除竞争、恢复保护；用事件暂停 `after_finish`，断言 DB 为 ready 时仍跳过本根，完成后再次手动执行才可清理。另用冷 flat 25/Wiki 26 及未知版本验证兼容性，断言无迁移、无新备份；同根恢复与清理两种准入顺序都验证。
 - `tests/test_service_cache_cleanup.py`：鉴权、实例、去重、查询、请求失联、容量、异常。
 - `tests/test_service_receipts.py`：原命令行为及新增目标信息释放回归。
 
@@ -108,4 +112,4 @@ G4 防止本服务打开/关闭/移除/重定位该 host；登记提交前复核
 .venv/bin/python -m pytest tests/test_cache_cleanup_settings.py tests/test_cache_cleanup_outputs.py tests/test_cache_cleanup_scopes.py tests/test_service_cache_cleanup.py tests/test_service_receipts.py tests/test_shell_output.py tests/test_bash_output.py tests/test_execution_root_archives.py -q
 ```
 
-配置模板只追加 `[cache_cleanup]` 说明；不要覆盖记忆分片同时修改的模板。收尾检查新增文件 L1 存在、L2 真实实现、L3 GET/POST/GET 查询实际接线，并将锁顺序记录到当前锁表。完整回归和原生 Windows 验收见 S4。
+在现行 `docs/examples/settings.example.toml` 和 `docs/examples/full/settings.full.toml` 增补 `[cache_cleanup]`。两份模板都沿正常 `load_settings` 加载，验证清理配置和既有 Wiki 配置可同时生效。收尾检查新增文件 L1 存在、L2 真实实现、L3 GET/POST/GET 查询实际接线，并将锁顺序记录到当前锁表。完整回归和原生 Windows 验收见 S4。

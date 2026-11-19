@@ -7,6 +7,7 @@ from naiyue_test_agent import application
 from naiyue_test_agent.agent_runtime.async_utils import acquire_blocking, await_settled, run_blocking
 from naiyue_test_agent.config_paths import get_data_dir
 from .core import Application
+from .projects.cache_cleanup_operation import CacheCleanup
 from .lifetime import ApplicationLifetime, _register_cleanup
 from .memory.personal_memory import PersonalMemory
 from .projects.host_manager import HostManager
@@ -82,6 +83,7 @@ async def open_service_application(config_path, *, tools, system_prompt, respons
         tools=tuple(tools), system_prompt=system_prompt, response_format=response_format,
         initial_active_tools=initial_active_tools, catalog_loader=models.get)
     app = Application(owner, models, projects, hosts)
+    app.cache_cleanup = CacheCleanup(owner, hosts, settings.cache_cleanup)
     primary = None
     try:
         yield app

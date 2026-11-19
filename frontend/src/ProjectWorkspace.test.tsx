@@ -449,3 +449,88 @@ it('project context new session creates once on first send and permits a later n
   await waitFor(() => expect(screen.getByRole('button', { name: '会话 A A' }).getAttribute('aria-current')).toBeNull());
   expect(create).toHaveBeenCalledOnce();
 });
+
+it('opens one global cleanup dialog and looks up the same request after a disconnect', async () => {
+  const { root } = fixture();
+  const policies = vi.fn().mockResolvedValue({ categories: [
+    { id: 'tool_outputs', available: true, retention_days: 7 },
+    { id: 'cloud_inputs', available: true, retention_days: 3 },
+  ] });
+  const execute = vi.fn().mockRejectedValue(new TypeError('disconnected'));
+  const lookup = vi.fn().mockRejectedValue(new ApiError('cache_cleanup_request_not_found'));
+  vi.spyOn(root, 'cacheCleanup').mockReturnValue({ policies, execute, lookup } as unknown as ReturnType<WebApi['cacheCleanup']>);
+  sessionStorage.removeItem('naiyue.cache-cleanup.last');
+  try {
+    render(<ProjectWorkspace api={root} instanceId="fixture-instance" />);
+    const settings = screen.getByRole('button', { name: '本机设置' });
+    fireEvent.keyDown(settings, { key: 'ArrowDown' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: '清理缓存' }));
+    const dialog = await screen.findByRole('dialog', { name: '清理缓存' });
+    const clean = within(dialog).getByRole('button', { name: '清理所选' }) as HTMLButtonElement;
+    expect(clean.disabled).toBe(true);
+    fireEvent.click(await within(dialog).findByRole('checkbox', { name: /云输入包缓存/ }));
+    expect(clean.disabled).toBe(false);
+    fireEvent.click(clean);
+    fireEvent.click(clean);
+    expect(await within(dialog).findByText('无法确认原操作结果。')).toBeTruthy();
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith(expect.any(String), ['cloud_inputs']);
+    expect(lookup).toHaveBeenCalledWith(execute.mock.calls[0][0], expect.any(AbortSignal));
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭' }));
+    fireEvent.click(await screen.findByRole('button', { name: '进入项目 A' }));
+    fireEvent.keyDown(screen.getByRole('button', { name: '本机设置' }), { key: 'ArrowDown' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: '清理缓存' }));
+    expect(await screen.findByText('无法确认原操作结果。')).toBeTruthy();
+    expect(screen.getAllByRole('dialog', { name: '清理缓存' })).toHaveLength(1);
+    expect(execute).toHaveBeenCalledTimes(1);
+  } finally {
+    sessionStorage.removeItem('naiyue.cache-cleanup.last');
+  }
+});
+
+it('uses a saved cleanup ID only with its original service instance', async () => {
+  const { root } = fixture();
+  const id = '33333333-3333-3333-3333-333333333333';
+  const lookup = vi.fn().mockResolvedValue({ state: 'finished', request_id: id, http_status: 409, error: { code: 'cache_cleanup_busy' } });
+  const api = { policies: vi.fn().mockResolvedValue({ categories: [] }), execute: vi.fn(), lookup };
+  vi.spyOn(root, 'cacheCleanup').mockReturnValue(api as unknown as ReturnType<WebApi['cacheCleanup']>);
+  sessionStorage.setItem('naiyue.cache-cleanup.last', JSON.stringify({ instanceId: 'original', requestId: id, categories: ['tool_outputs'] }));
+  try {
+    const first = render(<ProjectWorkspace api={root} instanceId="original" />);
+    await waitFor(() => expect(lookup).toHaveBeenCalledWith(id, expect.any(AbortSignal)));
+    first.unmount();
+    lookup.mockClear();
+    render(<ProjectWorkspace api={root} instanceId="replacement" />);
+    fireEvent.keyDown(screen.getByRole('button', { name: '本机设置' }), { key: 'ArrowDown' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: '清理缓存' }));
+    expect(await screen.findByText('无法确认原操作结果。')).toBeTruthy();
+    expect(lookup).not.toHaveBeenCalled();
+    expect(api.execute).not.toHaveBeenCalled();
+  } finally {
+    sessionStorage.removeItem('naiyue.cache-cleanup.last');
+  }
+});
+
+it('allows other cleanup categories when a saved category becomes unavailable', async () => {
+  const { root } = fixture();
+  const id = '33333333-3333-3333-3333-333333333333';
+  const policies = vi.fn().mockResolvedValue({ categories: [
+    { id: 'tool_outputs', retention_days: 7, available: false },
+    { id: 'cloud_inputs', retention_days: 3, available: true },
+  ] });
+  const lookup = vi.fn().mockResolvedValue({ state: 'finished', request_id: id, http_status: 409, error: { code: 'cache_cleanup_busy' } });
+  const execute = vi.fn().mockRejectedValue(new ApiError('cache_cleanup_busy'));
+  vi.spyOn(root, 'cacheCleanup').mockReturnValue({ policies, lookup, execute } as unknown as ReturnType<WebApi['cacheCleanup']>);
+  sessionStorage.setItem('naiyue.cache-cleanup.last', JSON.stringify({ instanceId: 'original', requestId: id, categories: ['tool_outputs'] }));
+  try {
+    render(<ProjectWorkspace api={root} instanceId="original" />);
+    fireEvent.keyDown(screen.getByRole('button', { name: '本机设置' }), { key: 'ArrowDown' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: '清理缓存' }));
+    expect((await screen.findByRole('checkbox', { name: /工具输出归档/ }) as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(screen.getByRole('checkbox', { name: /云输入包缓存/ }));
+    fireEvent.click(screen.getByRole('button', { name: '清理所选' }));
+    expect(execute).toHaveBeenCalledWith(expect.any(String), ['cloud_inputs']);
+  } finally {
+    sessionStorage.removeItem('naiyue.cache-cleanup.last');
+  }
+});

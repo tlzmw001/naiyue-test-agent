@@ -38,7 +38,7 @@ def parent(root,path,*,create=False,ordinary=False):
     (file_path if ordinary else input_path)(path);root=Path(root);before=directory_identity(root)
     with ExitStack() as stack:
         if os.name=='nt':
-            from naiyue_test_agent.application.projects.windows_directory import directory_handle,signature,mkdir_relative
+            from naiyue_test_agent.storage.windows_directory import directory_handle,signature,mkdir_relative
             current=root;handle=stack.enter_context(directory_handle(current));signature(handle)
             for part in PurePosixPath(path).parts[:-1]:
                 target=current/part

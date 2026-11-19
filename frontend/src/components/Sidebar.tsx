@@ -1,3 +1,4 @@
+import LocalSettingsMenu from './LocalSettingsMenu';
 import { Fragment, useEffect, useId, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { ReactNode } from 'react';
@@ -18,13 +19,14 @@ function dateBucket(row: SessionRow, now: Date) {
   return days < 0 ? 4 : days === 0 ? 0 : days === 1 ? 1 : days < 7 ? 2 : 3;
 }
 
-export default function Sidebar({ rows, selected, open, disabled, managing, onNew, onSelect, onClose, update, remove, reorder, navigation, scopeName, scopeId = 'chats', loading, failure, retry, currentSession, currentRun }: {
+export default function Sidebar({ rows, selected, open, disabled, managing, onNew, onSelect, onClose, update, remove, reorder, navigation, scopeName, scopeId = 'chats', loading, failure, retry, currentSession, currentRun, openLocalSettings }: {
   rows: SessionRow[]; selected?: string; open: boolean; disabled: boolean;
   onNew: () => void; onSelect: (id: string) => void; onClose: () => void;
   managing: boolean; update: (id: string, change: { title?: string; pinned?: boolean }) => Promise<boolean>;
   remove: (id: string) => Promise<boolean>; reorder: (ids: string[]) => Promise<boolean>;
   navigation?: (current: ReactNode) => ReactNode; scopeName?: string; scopeId?: string;
   loading?: boolean; failure?: string; retry?: () => void;
+  openLocalSettings?: (trigger: HTMLButtonElement) => void;
   currentSession?: SessionView; currentRun?: RunView | null;
 }) {
   const [menu, setMenu] = useState<{ row: SessionRow; x: number; y: number } | null>(null);
@@ -199,7 +201,7 @@ export default function Sidebar({ rows, selected, open, disabled, managing, onNe
           </section>;
         })}</div>)}
       </nav>
-      <div className={`${styles.localBadge} ${sidebar.footer}`}><span />本地工作台</div>
+      {openLocalSettings && <div className={sidebar.footer}><LocalSettingsMenu openCleanup={openLocalSettings} /></div>}
       {!collapsed && <SidebarResizeHandle side="navigation" />}
     </aside>
     {menu && <SessionMenu key={menu.row.session_id} row={menu.row} title={title(menu.row)} x={menu.x} y={menu.y}

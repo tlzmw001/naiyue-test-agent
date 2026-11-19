@@ -34,7 +34,7 @@ class LocalAttachments:
         self.capture_gate=asyncio.Lock()
 
     async def submit(self,domain,bid,sid,root,request):
-        with self.manager.operation(),domain.owner.operation():
+        with self.manager.operation(),domain.owner.operation(),domain.input_cache_use():
             repo=AttachmentRepository(domain.repo.database)
             async with self.manager.admission:
                 key=(domain.project_id,request['attachment_id'])
@@ -93,8 +93,18 @@ class LocalAttachments:
                         try:await run_blocking(repo.update,bid,sid,aid,phase='failed',error_code=code)
                         except CloudError as secondary:
                             if secondary.code!='attachment_cancelled':raise
-        job=asyncio.create_task(work());self.flights[key]=job;domain.own(job)
-        job.add_done_callback(lambda done:self.flights.pop(key,None))
+        reservation = domain.input_cache_use()
+        reservation.__enter__()
+        try:
+            job = asyncio.create_task(work())
+        except BaseException:
+            reservation.__exit__(None, None, None)
+            raise
+        self.flights[key]=job;domain.own(job)
+        def done(completed):
+            self.flights.pop(key, None)
+            reservation.__exit__(None, None, None)
+        job.add_done_callback(done)
 
     async def list(self,domain,bid,sid):
         with self.manager.operation(),domain.owner.operation():
@@ -107,7 +117,7 @@ class LocalAttachments:
             return [public(value) for value in values]
 
     async def action(self,domain,bid,sid,aid,action):
-        with self.manager.operation(),domain.owner.operation():
+        with self.manager.operation(),domain.owner.operation(),domain.input_cache_use():
             repo=AttachmentRepository(domain.repo.database)
             if action=='cancel':
                 value=await run_blocking(repo.cancel,bid,sid,aid)
@@ -138,15 +148,16 @@ class LocalAttachments:
     async def settle_retired(self,domain,binding):
         pending=binding.get('pending_attachment_releases',{})
         if binding['retained'] or not pending:return False
-        repo=AttachmentRepository(domain.repo.database)
-        for aid in pending:
-            job=self.flights.get((domain.project_id,aid))
-            if job is not None:await await_settled(job)
-        async with self.manager.connection(binding|{'retained':True}) as client:
-            for aid,ident in pending.items():
-                await self._release_input(domain,client,ident,aid)
-                await run_blocking(repo.release_retired,binding['binding_id'],binding['local_session_id'],aid,ident)
-        return True
+        with domain.input_cache_use():
+            repo=AttachmentRepository(domain.repo.database)
+            for aid in pending:
+                job=self.flights.get((domain.project_id,aid))
+                if job is not None:await await_settled(job)
+            async with self.manager.connection(binding|{'retained':True}) as client:
+                for aid,ident in pending.items():
+                    await self._release_input(domain,client,ident,aid)
+                    await run_blocking(repo.release_retired,binding['binding_id'],binding['local_session_id'],aid,ident)
+            return True
 
     async def _release_input(self,domain,client,ident,aid):
         cancel_upload=getattr(client,'cancel_attachment_input',None)

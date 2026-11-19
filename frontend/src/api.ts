@@ -1,3 +1,4 @@
+import { CacheCleanupApi } from './cacheCleanupApi';
 import type { ImageUpload, ImageConfiguration, ImageMetadata, PendingImageInput } from './imageTypes';
 import { CloudApi } from './cloudApi';
 import type { ContextView } from './contextTypes';
@@ -32,22 +33,25 @@ export function browserConnection(): BrowserConnection {
     history.replaceState(null, '', window.location.pathname + window.location.search);
   } else {
     try { value = JSON.parse(sessionStorage.getItem('naiyue.service-connection') ?? 'null') ?? empty; }
-    catch { value = empty; }
+    catch { console.warn('service_connection_storage_read_failed'); value = empty; }
   }
   if (typeof value.token !== 'string' || !/^[a-zA-Z0-9_-]{32,256}$/.test(value.token) ||
       typeof value.scopeId !== 'string' || !/^(chats|legacy|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.test(value.scopeId) ||
       (value.scopeId === 'legacy' && (typeof value.legacyDatabase !== 'string' || !value.legacyDatabase || value.legacyDatabase.length > 32768)) ||
       typeof value.instanceId !== 'string' || !/^[0-9a-f]{32}$/.test(value.instanceId)) {
-    sessionStorage.removeItem('naiyue.service-connection');
+    try { sessionStorage.removeItem('naiyue.service-connection'); }
+    catch { console.warn('service_connection_storage_remove_failed'); }
     return empty;
   }
-  sessionStorage.setItem('naiyue.service-connection', JSON.stringify(value));
+  try { sessionStorage.setItem('naiyue.service-connection', JSON.stringify(value)); }
+  catch { console.warn('service_connection_storage_write_failed'); }
   return value;
 }
 
 export class WebApi {
   constructor(private token: string, readonly scopeId = 'chats', private instanceId?: string) {}
 
+  cacheCleanup() { return new CacheCleanupApi((path, init) => this.response(path, init, true)); }
   forScope(scopeId: string) { return new WebApi(this.token, scopeId, this.instanceId); }
   async projects(signal?: AbortSignal): Promise<ProjectCatalog> {
     return (await this.response('/projects', { signal }, true)).json();

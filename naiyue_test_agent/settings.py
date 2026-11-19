@@ -11,6 +11,7 @@ from .config_paths import StorageSettings, get_agent_dir
 from .project_settings import ProjectsSettings
 from .image_input_settings import ImageInputSettings
 from .cloud_task_settings import CloudTaskSettings
+from .cache_cleanup_settings import CacheCleanupSettings
 from .checkpoint_settings import CheckpointRetentionSettings
 from .shell_task_settings import ShellTaskSettings
 from .memory_settings import MemorySettings
@@ -62,6 +63,7 @@ class AppSettings(BaseModel):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     image_inputs: ImageInputSettings = Field(default_factory=ImageInputSettings)
     projects: ProjectsSettings = Field(default_factory=ProjectsSettings)
+    cache_cleanup: CacheCleanupSettings = Field(default_factory=CacheCleanupSettings)
     cloud_tasks: CloudTaskSettings = Field(default_factory=CloudTaskSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     network: NetworkSettings = Field(default_factory=NetworkSettings)
@@ -110,7 +112,7 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         raise ValueError('Permission settings could not be read or parsed') from error
     if {'sandbox', 'delivery'} & set(raw):
         raise ValueError('unsupported_legacy_sandbox_configuration')
-    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'default_active_tools', 'tools', 'permissions', 'process', 'tool_output', 'shell_tasks', 'storage', 'projects', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'checkpoint_retention', 'network', 'model_network', 'mcp', 'tool_retry', 'memory', 'image_inputs', 'cloud_tasks'}:
+    if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'default_active_tools', 'tools', 'permissions', 'process', 'tool_output', 'shell_tasks', 'storage', 'projects', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'checkpoint_retention', 'network', 'model_network', 'mcp', 'tool_retry', 'memory', 'image_inputs', 'cloud_tasks', 'cache_cleanup'}:
         raise ValueError('Unknown runtime settings section')
     try:
         memory_raw = raw.get('memory', {})
@@ -204,7 +206,11 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         logger.warning('checkpoint_retention_invalid action=disabled')
         checkpoint_retention = CheckpointRetentionSettings(enabled=False)
     try:
-        return AppSettings(cloud_tasks=CloudTaskSettings.model_validate(raw.get('cloud_tasks', {})), image_inputs=image_inputs, storage=storage, projects=projects, memory=memory, tools=tools, network=network, model_network=model_network, mcp=mcp, tool_retry=tool_retry, permissions=permissions, process=process, shell_tasks=shell_tasks,
+        cache_cleanup = CacheCleanupSettings.model_validate(raw.get('cache_cleanup', {}))
+    except ValidationError as error:
+        raise ValueError('Cache cleanup settings are invalid') from error
+    try:
+        return AppSettings(cache_cleanup=cache_cleanup, cloud_tasks=CloudTaskSettings.model_validate(raw.get('cloud_tasks', {})), image_inputs=image_inputs, storage=storage, projects=projects, memory=memory, tools=tools, network=network, model_network=model_network, mcp=mcp, tool_retry=tool_retry, permissions=permissions, process=process, shell_tasks=shell_tasks,
                             default_active_tools=default_active_tools,
                             progress=progress, usage_persistence=usage_persistence,
                             subagents=raw.get('subagents', ()), max_active_runs=max_active_runs,

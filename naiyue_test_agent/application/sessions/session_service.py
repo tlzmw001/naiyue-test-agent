@@ -163,15 +163,21 @@ class SessionService:
         if len(roots) != 1 or None in roots:
             raise ValueError('Archive scope is unavailable or ambiguous')
         return roots.pop()
-    def output_guard(self, root):
+    def output_guard(self, root, *, persisted=False):
         stack = ExitStack()
         with self._lock:
             owned = ({self.session_archive_root('')} if self._project else
                      {session._archive_root for session in self._sessions.values()})
-            if root not in owned:raise ValueError('Archive scope does not belong to this host')
-            if any(session.is_busy() and session._archive_root == root
-                   for session in self._sessions.values()):
-                raise ValueError('Workspace has an active run')
+            if root not in owned and not persisted:raise ValueError('Archive scope does not belong to this host')
+            for session in self._sessions.values():
+                if session._archive_root != root:
+                    continue
+                if persisted:
+                    state = session.describe_session()
+                    if state['busy'] or state['pending_approval'] or state['manual_review_required']:
+                        raise ValueError('Workspace has an active run, approval or review')
+                elif session.is_busy():
+                    raise ValueError('Workspace has an active run')
             stack.enter_context(self.background_tasks.output_guard(root))
         return stack
     def configure_error_classifiers(self, *, model_id=None, model=None, runtime=None, application=None):

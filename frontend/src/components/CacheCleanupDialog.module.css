@@ -1,0 +1,22 @@
+.dialog {
+  margin: auto; width: min(92vw, 590px); max-height: 88dvh; overflow: auto;
+  padding: 22px; border-radius: var(--r-lg); border: 1px solid var(--line-strong);
+  color: var(--text); background: var(--surface); font-size: var(--fs-ui);
+}
+.dialog::backdrop { background: rgb(0 0 0 / .45); }
+.header, .footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.header h2, .dialog h3 { margin: 0; }
+.dialog button {
+  color: inherit; background: var(--surface-active); border: 1px solid var(--line-strong);
+  border-radius: var(--r-md); padding: 7px 12px; font: inherit;
+}
+.dialog button:disabled { opacity: .55; }
+.dialog fieldset { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line-strong); border-radius: var(--r-md); }
+.dialog label { display: flex; gap: 10px; align-items: baseline; }
+.dialog label small { display: block; color: var(--text-secondary); margin-top: 4px; }
+.dialog section { margin-top: 16px; }
+.dialog ul { padding-left: 20px; }
+.dialog details { border-top: 1px solid var(--line-strong); padding: 8px 0; overflow-wrap: anywhere; }
+.dialog details li + li { margin-top: 8px; }
+.path { font-family: var(--font-mono); overflow-wrap: anywhere; }
+.footer { justify-content: flex-end; margin-top: 16px; }

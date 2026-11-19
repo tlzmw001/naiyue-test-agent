@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import App from './App';
+import CacheCleanupDialog from './components/CacheCleanupDialog';
+import { useCacheCleanup } from './useCacheCleanup';
 import { errorText, type WebApi } from './api';
 import ProjectNavigation from './components/ProjectNavigation';
 import type { ProjectPickerMode, ProjectRow, ScopeSelection } from './projectTypes';
@@ -12,7 +14,7 @@ import { Chevron, Icon } from './components/Icons';
 import styles from './components/ProjectNavigation.module.css';
 
 /** Each visited scope retains its own fixed API and conversation controller. */
-export default function ProjectWorkspace({ api }: { api: WebApi }) {
+export default function ProjectWorkspace({ api, instanceId = '' }: { api: WebApi; instanceId?: string }) {
   const theme = useTheme(), sendScroll = useSendScroll();
   const [selection, setSelection] = useState<ScopeSelection>({ scopeId: api.scopeId, revision: 0 });
   const [visited, setVisited] = useState([api.scopeId]);
@@ -22,6 +24,10 @@ export default function ProjectWorkspace({ api }: { api: WebApi }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({ [api.scopeId]: true });
   const [picker, setPicker] = useState<ProjectPickerMode>();
   const [removal, setRemoval] = useState<ProjectRow>();
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+  const cleanupTrigger = useRef<HTMLButtonElement>(null);
+  const cleanupApi = useMemo(() => api.cacheCleanup(), [api]);
+  const cleanup = useCacheCleanup(cleanupApi, instanceId, cleanupOpen);
   const removedIds = useRef(new Set<string>());
   const clients = useMemo(() => new Map([[api.scopeId, api]]), [api]);
   const select = useCallback((scopeId: string, sessionId?: string, newSession?: boolean) => {
@@ -66,6 +72,7 @@ export default function ProjectWorkspace({ api }: { api: WebApi }) {
     const active = selection.scopeId === scopeId;
     return <div key={scopeId} hidden={!active}>
       <App api={client} active={active} selection={active ? selection : undefined} preferences={{ theme, sendScroll }}
+        openLocalSettings={trigger => { cleanupTrigger.current = trigger; setCleanupOpen(true); }}
         scopeName={scopeName}
         projectEntry={active ? path => <div className={styles.scope} role="status" aria-label="当前项目">
           <button type="button" className={styles.projectTrigger} title={path ? `${scopeName}\n${path}` : scopeName} aria-label={`项目与位置，当前：${scopeName}`}
@@ -78,7 +85,14 @@ export default function ProjectWorkspace({ api }: { api: WebApi }) {
           expanded={expanded} expand={(id, open) => setExpanded(values => ({ ...values, [id]: open }))}
           retry={() => setRefresh(value => value + 1)} scopeId={scopeId} select={select}>{current}</ProjectNavigation>} />
     </div>;
-  })}{picker && <ProjectPicker api={api} mode={picker} projects={catalog} currentScope={selection.scopeId} failure={failure}
+  })}{cleanupOpen && <CacheCleanupDialog cleanup={cleanup} close={() => {
+    setCleanupOpen(false);
+    requestAnimationFrame(() => {
+      const trigger = cleanupTrigger.current;
+      const active = trigger?.isConnected ? trigger : document.querySelector<HTMLButtonElement>('button[aria-label="本机设置"]');
+      active?.focus();
+    });
+  }} />}{picker && <ProjectPicker api={api} mode={picker} projects={catalog} currentScope={selection.scopeId} failure={failure}
     retry={() => setRefresh(value => value + 1)} close={() => setPicker(undefined)}
     select={id => { select(id); setPicker(undefined); }} added={project => {
       removedIds.current.delete(project.project_id);
