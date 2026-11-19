@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import App from './App';
 import { WebApi } from './api';
@@ -217,3 +217,71 @@ it.each([false, true])('refreshes thinking preview and rejects late old results 
   if (pending) await act(async () => finishOld(view));
   expect(screen.getByText('1234')).toBeTruthy();
 });
+
+
+it('keeps same-identity estimates during a run and uses its live input snapshot', async () => {
+  const api = new WebApi('test');
+  vi.spyOn(api, 'context').mockResolvedValue(view);
+  const session = { session_id: 's', model_id: 'A', active_tools: [] } as any;
+  const { result, rerender } = renderHook(({ run, model }) => useContextView(api, { ...session, model_id: model }, run),
+    { initialProps: { run: null as any, model: 'A' } });
+  await waitFor(() => expect(result.current.value?.current.estimate).toEqual(view.current.estimate));
+  vi.mocked(api.context).mockImplementation(() => new Promise(() => {}));
+  const run = { session_id: 's', run_id: 'next-run', status: 'running', done: false } as any;
+  rerender({ run, model: 'A' });
+  expect(result.current.value?.current.estimate).toEqual(view.current.estimate);
+  rerender({ run: { ...run, context_snapshot: { ...view.latest_request, run_id: 'next-run' } }, model: 'A' });
+  expect(result.current.value?.current.estimate).toEqual(view.latest_request!.estimate);
+  expect(result.current.value?.current.basis).toBe('last_sent');
+  expect(result.current.loading).toBe(false);
+  vi.mocked(api.context).mockResolvedValue({ session_id: 's', current: { basis: 'last_sent', estimate: null }, latest_request: null });
+  rerender({ run: { ...run, context_snapshot: { ...view.latest_request, run_id: 'next-run', status: 'running' } }, model: 'A' });
+  await waitFor(() => expect(api.context).toHaveBeenCalledTimes(4));
+  expect(result.current.value?.current.estimate).toEqual(view.latest_request!.estimate);
+  rerender({ run: { ...run, context_snapshot: { ...view.latest_request, run_id: 'next-run' } }, model: 'B' });
+  expect(result.current.value).toBeUndefined();
+});
+
+const reviewOld = {status:'available',estimated_input_tokens:10000,context_window_tokens:128000};
+const reviewNew = {...reviewOld,estimated_input_tokens:60000};
+const reviewSnapshot = {version:1,model_id:'A',run_id:'r',model_call_id:'c',estimate:reviewNew,status:'returned'};
+const reviewSession = {session_id:'s',model_id:'A',thinking_level:'low',active_tools:[]};
+it('retains the newest observed estimate after failed run', async () => {
+ const api = new WebApi('test');
+ vi.spyOn(api,'context').mockResolvedValue({session_id:'s',current:{basis:'next_request',estimate:reviewOld},latest_request:null} as any);
+ const {result,rerender}=renderHook(({run})=>useContextView(api,reviewSession as any,run),{initialProps:{run:null as any}});
+ await waitFor(()=>expect(result.current.value?.current.estimate).toEqual(reviewOld));
+ vi.mocked(api.context).mockResolvedValue({session_id:'s',current:{basis:'last_sent',estimate:null},latest_request:reviewSnapshot} as any);
+ rerender({run:{run_id:'r',session_id:'s',status:'running',done:false,context_snapshot:reviewSnapshot}});
+ await waitFor(()=>expect(api.context).toHaveBeenCalledTimes(2));
+ expect(result.current.value?.current.estimate).toEqual(reviewNew);
+ rerender({run:{run_id:'r',session_id:'s',status:'failed',done:true,context_snapshot:reviewSnapshot}});
+ await waitFor(()=>expect(result.current.loading).toBe(false));
+ expect(result.current.value?.current.estimate).toEqual(reviewNew);
+});
+it('does not restore old configuration estimate from history after identity changes', async () => {
+ const api=new WebApi('test');
+ vi.spyOn(api,'context').mockResolvedValue({session_id:'s',current:{basis:'next_request',estimate:reviewOld},latest_request:null} as any);
+ const {result,rerender}=renderHook(({level})=>useContextView(api,{...reviewSession,thinking_level:level} as any,null),{initialProps:{level:'low'}});
+ await waitFor(()=>expect(result.current.value?.current.estimate).toEqual(reviewOld));
+ vi.mocked(api.context).mockResolvedValue({session_id:'s',current:{basis:'unavailable',estimate:null},latest_request:{...reviewSnapshot,estimate:reviewOld}} as any);
+ rerender({level:'high'});
+ await waitFor(()=>expect(result.current.loading).toBe(false));
+ expect(result.current.value?.current.estimate).toBeNull();
+});
+
+ it('does not reuse an unchanged live snapshot after thinking or tool selection changes', async () => {
+  const api = new WebApi('test');
+  vi.spyOn(api, 'context').mockResolvedValue({ session_id: 's', current: { basis: 'unavailable', estimate: null }, latest_request: reviewSnapshot } as any);
+  const run = { session_id: 's', run_id: 'r', status: 'running', done: false, context_snapshot: reviewSnapshot } as any;
+  const { result, rerender } = renderHook(({ level, tools }) => useContextView(api,
+    { ...reviewSession, thinking_level: level, active_tools: tools } as any, run),
+    { initialProps: { level: 'low', tools: [] as string[] } });
+  await waitFor(() => expect(result.current.value?.current.estimate).toEqual(reviewNew));
+  rerender({ level: 'high', tools: [] });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.value?.current.estimate).toBeNull();
+  rerender({ level: 'high', tools: ['read'] });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.value?.current.estimate).toBeNull();
+ });

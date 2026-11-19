@@ -61,6 +61,11 @@ export default function App({ api: supplied, active = true, selection, scopeName
     return () => observer.disconnect();
   }, [sessionId]);
   const background = useBackgroundTasks(api, sidebarOpen && sidebarTab === 'tasks', active);
+  useEffect(() => {
+    background.dismissNotice();
+  }, [background.dismissNotice, chat.run?.run_id, chat.run?.status, chat.run?.preparation_phase, chat.run?.stop_requested,
+    chat.run?.done, chat.run?.compaction_result?.status, chat.notice, chat.submitting, chat.creation.preparing,
+    chat.connection?.attempt, chat.connection?.failed, sessionId]);
   const sidebarTrigger = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef<HTMLButtonElement | null>(null);
   const closeSidebar = () => { setSidebarOpen(false); returnFocus.current?.focus(); };
@@ -90,6 +95,19 @@ export default function App({ api: supplied, active = true, selection, scopeName
     if (chat.session) setAgentPanel({ sessionId: chat.session.session_id, agentId: path?.split('/').at(-1), revision: chat.session.conversation_revision ?? 0 });
   };
   const busy = chat.run?.status === 'running' && !chat.run.done;
+  const compactWaiting = (busy && chat.run?.mode === 'compact') ||
+    (chat.submitting && chat.notice === '正在准备压缩上下文…');
+  const [compactSeconds, setCompactSeconds] = useState(0);
+  useEffect(() => {
+    setCompactSeconds(0);
+    if (!compactWaiting) return;
+    const started = Date.now();
+    const timer = window.setInterval(() => setCompactSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [compactWaiting, sessionId]);
+  const compactLabel = chat.run?.compaction_result?.status === 'applied' ? '摘要已应用，正在保存并同步运行结果' :
+    chat.run?.preparation_phase === 'resources' ? '正在准备压缩所需资料' :
+    chat.run?.preparation_phase === 'model_request' ? '正在分析历史并生成压缩摘要' : '正在压缩上下文';
   const blocked = (!!busy && chat.run?.mode === 'compact') || (!busy && chat.session?.can_run === false) || chat.selectingSession || !chat.models.length || !!chat.run?.manual_review_required || !!chat.session?.manual_review_required || !!chat.session?.pending_approval;
   const controlsDisabled = chat.submitting || chat.changingControls || chat.changingModel || chat.selectingSession ||
     chat.recovering || !!chat.session?.recovery || !chat.models.length || (!chat.session && chat.creation.locked);
@@ -142,15 +160,16 @@ export default function App({ api: supplied, active = true, selection, scopeName
         recovering={chat.recovering} onRecover={action => void chat.recover(action)}
         stoppingRunId={chat.run?.status === 'running' && chat.run.stop_requested ? chat.run.run_id : undefined} />
       <div className={styles.feedback} aria-live="polite">
-        {chat.creation.preparing&&<span role="status">正在创建会话，消息仍保留…</span>}
+        {!background.notice && chat.creation.preparing&&<span role="status">正在创建会话，消息仍保留…</span>}
         {chat.session?.execution_root_error && <span className={styles.error}>执行目录不可用：{{ missing: '目录不存在', not_directory: '路径不是目录', not_registered: '执行副本未登记', wrong_project: '项目身份不匹配', unreadable: '无法访问或检查执行目录' }[chat.session.execution_root_error.reason]}。历史仍可查看。</span>}
         {background.notice && <button className={styles.syncButton} onClick={() => openSidebar('tasks')}>{background.notice}</button>}
-        {chat.run && chat.run.status !== 'completed' && <span className={`${styles.runStatus} ${busy ? styles.running : ''}`}><i />{busy && chat.run.mode === 'compact' ? '正在压缩上下文' : labels[chat.run.status]}</span>}
-        {!!chat.connection?.attempt && !chat.connection.failed && <span role="status">正在恢复连接（{chat.connection.attempt}/{runReconnectDelays.length}）</span>}
+        {!background.notice && chat.run && chat.run.status !== 'completed' && <span className={`${styles.runStatus} ${busy ? styles.running : ''}`}><i />{busy && chat.run.mode === 'compact' ? compactLabel : labels[chat.run.status]}</span>}
+        {!background.notice && !!chat.connection?.attempt && !chat.connection.failed && <span role="status">正在恢复连接（{chat.connection.attempt}/{runReconnectDelays.length}）</span>}
         {chat.connection?.failed && <span className={styles.error}>连接恢复未完成，已保留当前内容。</span>}
         {chat.run?.manual_review_required && <span className={styles.error}>执行结果需要人工核对，当前不能继续。</span>}
         {chat.run?.incomplete && <span className={styles.error}>部分消息尚未同步</span>}
-        {chat.notice && <span>{chat.notice}</span>}
+        {!background.notice && chat.notice && <span>{chat.notice}</span>}
+        {compactWaiting && !background.notice && <span>已等待 {compactSeconds} 秒</span>}
         {chat.run && (chat.run.status !== 'completed' || chat.run.incomplete || chat.connection?.failed) &&
           <button className={styles.syncButton} onClick={chat.reconnect}>重新同步</button>}
       </div>

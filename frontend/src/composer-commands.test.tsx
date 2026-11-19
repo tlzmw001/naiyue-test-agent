@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import App from './App';
 import { ApiError, WebApi } from './api';
@@ -13,6 +13,7 @@ function setup() {
     state: 'ready', updated_at: '', last_run_status: null, messages: [], busy: false, can_run: true,
     has_compaction: false, active_run_id: null, latest_run_id: null, active_tools: [], permission_mode: 'Default',
     manual_review_required: false, pending_approval: false, live: null };
+  vi.spyOn(api, 'backgroundTasks').mockResolvedValue({ items: [], next_before: null, active_count: 0, revision: 'base', terminal_revision: 0 });
   vi.spyOn(api, 'subagents').mockResolvedValue([]);
   vi.spyOn(api, 'serviceInfo').mockResolvedValue({ workspace_root: null, workspace_label: null });
   vi.spyOn(api, 'models').mockResolvedValue({ default_model_id: 'A', model_ids: ['A', 'B'], thinking_options: {
@@ -135,4 +136,70 @@ it('preserves failed compact commands and sends unknown slash text only after ex
   await waitFor(() => expect(api.start).toHaveBeenCalledOnce());
   expect(vi.mocked(api.start).mock.calls[0][1]).toBe('/not_supported');
   expect(api.compact).toHaveBeenCalledOnce();
+});
+
+
+it('retains a background notice until a new chat status replaces it without returning', async () => {
+  const { api } = setup();
+  await selectExisting();
+  await waitFor(() => expect(api.backgroundTasks).toHaveBeenCalled());
+  vi.mocked(api.backgroundTasks).mockResolvedValue({ items: [], next_before: null, active_count: 0, revision: 'done', terminal_revision: 1 });
+  const poll = async () => {
+    act(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await act(async () => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+  };
+  await poll();
+  await screen.findByRole('button', { name: '后台任务已结束或需核对' });
+  fireEvent.change(screen.getByRole('textbox', { name: '消息' }), { target: { value: '新任务' } });
+  expect(screen.getByRole('button', { name: '后台任务已结束或需核对' })).toBeTruthy();
+  vi.mocked(api.start).mockResolvedValue({ run_id: 'new-run', session_id: 's' });
+  vi.mocked(api.run).mockResolvedValue({ session_id: 's', run_id: 'new-run', mode: 'message', status: 'running',
+    preparation_phase: 'model', messages: [], last_sequence: 0, incomplete: false, done: false, manual_review_required: false });
+  let receive!: Parameters<WebApi['events']>[3];
+  vi.spyOn(api, 'events').mockImplementation(async (_id, _after, signal, callback) => {
+    receive = callback;
+    await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+  });
+  fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  await screen.findByText('正在请求模型');
+  expect(screen.queryByRole('button', { name: '后台任务已结束或需核对' })).toBeNull();
+  await poll();
+  expect(screen.queryByRole('button', { name: '后台任务已结束或需核对' })).toBeNull();
+  vi.mocked(api.backgroundTasks).mockResolvedValue({ items: [], next_before: null, active_count: 0, revision: 'later', terminal_revision: 2 });
+  await poll();
+  await screen.findByRole('button', { name: '后台任务已结束或需核对' });
+  expect(screen.queryByText('正在请求模型')).toBeNull();
+  await waitFor(() => expect(receive).toBeTypeOf('function'));
+  act(() => receive({ event: 'runtime', data: { version: 1, sequence: 1,
+    event_type: 'message_delta', session_id: 's', run_id: 'new-run', data: { message_id: 'm', text: 'hello', index: 1 } } }));
+  expect(screen.getByRole('button', { name: '后台任务已结束或需核对' })).toBeTruthy();
+  act(() => receive({ event: 'runtime', data: { version: 1, sequence: 2,
+    event_type: 'run_preparation', session_id: 's', run_id: 'new-run', data: { phase: 'resources' } } }));
+  await screen.findByText('正在读取项目指令和 Skills');
+  expect(screen.queryByRole('button', { name: '后台任务已结束或需核对' })).toBeNull();
+});
+
+
+it.each([
+  ['resources', null, '正在准备压缩所需资料'],
+  ['model_request', null, '正在分析历史并生成压缩摘要'],
+  ['model_request', { status: 'applied' }, '摘要已应用，正在保存并同步运行结果'],
+] as const)('shows the actual compact phase %s instead of a generic wait', async (phase, result, label) => {
+  const { api } = setup();
+  vi.mocked(api.run).mockResolvedValue({ session_id: 's', run_id: 'compact-run', mode: 'compact', status: 'running',
+    preparation_phase: phase, compaction_result: result, messages: [], last_sequence: 0, incomplete: false, done: false, manual_review_required: false });
+  vi.spyOn(api, 'events').mockImplementation(async (_id, _after, signal) => {
+    await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+  });
+  await selectExisting();
+  fireEvent.pointerDown(screen.getByRole('button', { name: '指令与功能' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: /压缩上下文.*compact/ }));
+  await screen.findByText(label);
+  expect(screen.getByText(/已等待 \d+ 秒/)).toBeTruthy();
 });

@@ -13,6 +13,7 @@ export function useBackgroundTasks(api: WebApi, open: boolean, active = true) {
   const [outputError, setOutputError] = useState('');
   const [stopFailure, setStopFailure] = useState<{ id: string; text: string }>();
   const [notice, setNotice] = useState('');
+  const dismissNotice = useCallback(() => setNotice(''), []);
   const [loading, setLoading] = useState(true);
   const [outputLoading, setOutputLoading] = useState(false);
   const [moreLoading, setMoreLoading] = useState(false);
@@ -118,6 +119,6 @@ export function useBackgroundTasks(api: WebApi, open: boolean, active = true) {
   const output = detail?.api === api && detail.value.task_id === selected ? detail.value : undefined;
   return { items: page?.items ?? [], activeCount: error ? undefined : page?.active_count, selected, select,
     nextBefore: page?.next_before, output, error, outputError, stopError: stopFailure?.id === selected ? stopFailure?.text ?? '' : '', loading, outputLoading,
-    moreLoading, stopping, notice, dismissNotice: () => setNotice(''), retry, loadMore, stop };
+    moreLoading, stopping, notice, dismissNotice, retry, loadMore, stop };
 }
 export type BackgroundTasksState = ReturnType<typeof useBackgroundTasks>;

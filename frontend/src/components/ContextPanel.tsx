@@ -40,7 +40,7 @@ export function ContextTrigger({ value, open, disabled, toggle, triggerRef }: {
   const label = percent == null ? '查看上下文构成' : `查看上下文构成，预估占用${percent.toFixed(1)}%`;
   return <button type="button" ref={triggerRef} className={styles.trigger} disabled={disabled}
     data-threshold={thresholdReached ? 'reached' : undefined}
-    aria-label={label} title={`${label}（本地估算${thresholdReached ? '，达到自动压缩阈值' : ''}）`} aria-expanded={open} onClick={toggle}>
+    aria-label={label} title={`${label}（${value?.current.basis === 'unavailable' ? '最近已记录，等待本轮输入更新' : '本地估算'}${thresholdReached ? '，达到自动压缩阈值' : ''}）`} aria-expanded={open} onClick={toggle}>
     <svg width="15" height="15" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" className={styles.ring} />
       {percent != null && <circle cx="10" cy="10" r="7" pathLength="100" className={styles.filled}
         strokeDasharray={`${Math.min(100, Math.max(0, percent))} 100`} />}</svg>
@@ -67,7 +67,7 @@ function Estimate({ estimate, basis }: { estimate?: ContextEstimate | null; basi
     ? Math.max(0, estimate.context_window_tokens - estimate.max_output_tokens - total) : null;
   return <>
     <div className={styles.label}>{estimateLabel(estimate)}</div>
-    <div className={styles.label}>{basis === 'last_sent' ? '本轮最近已发送的固定输入快照' : '按当前内容准备下一次请求'}</div>
+    <div className={styles.label}>{basis === 'last_sent' ? '本轮最近已发送的固定输入快照' : basis === 'unavailable' ? '最近已记录的预估，等待本轮输入更新' : '按当前内容准备下一次请求'}</div>
     <div className={styles.big}>≈ {format(total)}<small>tokens{percent != null ? ` · ${percent.toFixed(1)}%` : ''}</small></div>
     <p className={styles.meta}>窗口 {format(estimate.context_window_tokens)} · 来源：{sourceLabel[estimate.context_window_source]}<br />
       尚未包含输入框草稿和待发送消息</p>
