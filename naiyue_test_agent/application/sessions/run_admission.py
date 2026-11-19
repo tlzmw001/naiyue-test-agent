@@ -16,6 +16,9 @@ class RunAdmission:
 
 
     def available(self):
+        return self.active_count() < self.limit
+
+    def active_count(self):
         # Called under the admission lock; each service only holds its own lock
         # while snapshotting. Creation/restoration never takes this outer lock.
         active = 0
@@ -23,4 +26,4 @@ class RunAdmission:
             with service._lock:
                 actors = tuple(service._sessions.values())
             active += sum(actor.is_busy() for actor in actors)
-        return active < self.limit
+        return active

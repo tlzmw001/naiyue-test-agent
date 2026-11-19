@@ -534,3 +534,54 @@ it('allows other cleanup categories when a saved category becomes unavailable', 
     sessionStorage.removeItem('naiyue.cache-cleanup.last');
   }
 });
+
+it('refreshes model configuration from the model menu and preserves the list on failure', async () => {
+  const { root } = fixture();
+  const refresh = vi.spyOn(root, 'refreshModels').mockImplementationOnce(async () => {
+    const updated = { default_model_id: 'B', model_ids: ['A', 'B'] };
+    vi.mocked(root.models).mockResolvedValue(updated);
+    return updated;
+  }).mockRejectedValueOnce(new ApiError('model_config_refresh_failed'));
+  render(<ProjectWorkspace api={root} />);
+  fireEvent.click(await screen.findByRole('button', { name: /模型与推理强度：A/ }));
+  const menu = screen.getByRole('dialog', { name: '模型与推理强度' });
+  fireEvent.click(within(menu).getByRole('button', { name: '刷新模型配置' }));
+  expect(await within(menu).findByRole('radio', { name: 'B' })).toBeTruthy();
+  expect(within(menu).getByText('模型配置已刷新。')).toBeTruthy();
+  fireEvent.click(within(menu).getByRole('button', { name: '刷新模型配置' }));
+  expect((await within(menu).findByRole('alert')).textContent).toContain('请检查配置文件');
+  expect(within(menu).getByRole('radio', { name: 'B' })).toBeTruthy();
+  expect(refresh).toHaveBeenCalledTimes(2);
+});
+
+it('keeps the latest model list when an earlier refresh returns after switching projects', async () => {
+  const { root, api } = fixture();
+  const project = api(a);
+  type Models = Awaited<ReturnType<WebApi['models']>>;
+  let finishPrevious!: (value: Models) => void;
+  const previous = new Promise<Models>(resolve => { finishPrevious = resolve; });
+  vi.spyOn(root, 'refreshModels').mockReturnValue(previous);
+  vi.spyOn(project, 'refreshModels').mockImplementationOnce(async () => {
+    const latest = { default_model_id: 'A', model_ids: ['A', 'Latest'] };
+    vi.mocked(root.models).mockResolvedValue(latest);
+    vi.mocked(project.models).mockResolvedValue(latest);
+    return latest;
+  });
+  render(<ProjectWorkspace api={root} />);
+  async function refreshFromMenu() {
+    fireEvent.click(await screen.findByRole('button', { name: /模型与推理强度：A/ }));
+    const menu = screen.getByRole('dialog', { name: '模型与推理强度' });
+    fireEvent.click(within(menu).getByRole('button', { name: '刷新模型配置' }));
+    fireEvent.keyDown(menu, { key: 'Escape' });
+  }
+  await refreshFromMenu();
+  fireEvent.click(screen.getByRole('button', { name: '进入项目 A' }));
+  await refreshFromMenu();
+  await waitFor(() => expect(project.models).toHaveBeenCalledTimes(2));
+  fireEvent.click(screen.getByRole('button', { name: '进入普通对话' }));
+  await act(async () => finishPrevious({ default_model_id: 'A', model_ids: ['A', 'Stale'] }));
+  fireEvent.click(await screen.findByRole('button', { name: /模型与推理强度：A/ }));
+  const menu = screen.getByRole('dialog', { name: '模型与推理强度' });
+  expect(await within(menu).findByRole('radio', { name: 'Latest' })).toBeTruthy();
+  expect(within(menu).queryByRole('radio', { name: 'Stale' })).toBeNull();
+});

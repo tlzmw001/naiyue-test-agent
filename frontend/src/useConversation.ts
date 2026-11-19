@@ -13,6 +13,7 @@ export function useConversation(api: WebApi, active = true) {
   const activeRef = useRef(active); activeRef.current = active;
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState('');
+  const defaultModel = useRef('');
   const [thinkingOptions, setThinkingOptions] = useState<Record<string, ThinkingOptions>>({});
   const [session, setSession] = useState<SessionView | null>(null);
   const history = useMessageHistory(api);
@@ -63,7 +64,21 @@ export function useConversation(api: WebApi, active = true) {
   const statusSync=useConversationSync({ api, active, session, applySession, refreshSessions,
     canRefresh: resuming => !busySend.current && !selectionPending.current && !changingControls && !changingModel && !recovering && !submitting && (resuming || !(currentRun.current && !currentRun.current.done)),
     revision: () => JSON.stringify([selectionGeneration.current, controlsRevision.current, approvalRevision.current]),
-    onModels: config => { imageInputs.configure(config); setModels(config.model_ids); setModel(config.default_model_id); setThinkingOptions(config.thinking_options ?? {}); },
+    onModels: config => {
+      imageInputs.configure(config);
+      setModels(config.model_ids);
+      setThinkingOptions(config.thinking_options ?? {});
+      const previousDefault = defaultModel.current;
+      defaultModel.current = config.default_model_id;
+      if (selected.current === 'new') {
+        const next = config.model_ids.includes(model) && model !== previousDefault ? model : config.default_model_id;
+        const level = creation.controls.thinking_level;
+        if (next !== model || level && level !== 'model_default' && !config.thinking_options?.[next]?.supported_levels.includes(level)) {
+          creation.modelChanged();
+        }
+        setModel(next);
+      }
+    },
     onError: error => setNotice(errorText(error)), onClose: () => { subscription.current?.abort(); history.cancel(); },
   });
 
@@ -136,7 +151,7 @@ export function useConversation(api: WebApi, active = true) {
     statusSync.clear(id);
     selected.current = id;
     setSession(value);
-    setModel(models.includes(value.model_id) ? value.model_id : models[0] ?? '');
+    setModel(value.model_id);
     if (replace || history.sessionId !== id) history.open(id, undefined, { ...value.history, messages: value.messages });
     else void history.synchronize({ ...value.history, messages: value.messages });
     currentRun.current = value.live;
@@ -179,6 +194,7 @@ export function useConversation(api: WebApi, active = true) {
       if (selected.current !== 'new' && !draftRef.current.new) writeDraft(draftRef.current[selected.current] ?? '', 'new');
       subscription.current?.abort(); history.reset(); selectionGeneration.current++; controlsRevision.current++;
       selected.current = 'new'; currentRun.current = null; setSession(null); setRun(null); setConnection(null); setStopping(false);
+      if (!models.includes(model)) setModel(defaultModel.current);
       await refreshSessions();
     } catch (error) { setNotice(errorText(error));  }
   }
@@ -243,8 +259,11 @@ export function useConversation(api: WebApi, active = true) {
       setModel(value);
       controlsRevision.current++;
       setSession(previous => previous ? { ...previous, model_id: value, thinking_level: 'model_default' } : previous);
-      await refreshSessions();
       setNotice('模型已切换，下一次模型调用生效。');
+      try {
+        if (!session.can_run) await refreshSession(sid);
+        await refreshSessions();
+      } catch { if (selected.current === sid) setNotice('模型已切换，会话状态刷新未确认。'); }
     } catch (error) {
       if (selected.current === sid) {
         setNotice(errorText(error));
@@ -284,8 +303,10 @@ export function useConversation(api: WebApi, active = true) {
         setNotice('active_tools' in change ? '' : 'permission_mode' in change ?
           '权限模式已保存，下一批工具调用生效；当前审批保持原样。' : '推理强度已保存，下一次模型请求生效。');
       }
-      try { await refreshSessions(); }
-      catch { if (selected.current === sid) setNotice('选择已保存，会话列表刷新未确认。'); }
+      try {
+        if ('thinking_level' in change && session && !session.can_run) await refreshSession(sid);
+        await refreshSessions();
+      } catch { if (selected.current === sid) setNotice('选择已保存，会话状态刷新未确认。'); }
     } catch (error) {
       controlsRevision.current++;
       if (selected.current === sid) {
@@ -436,7 +457,7 @@ export function useConversation(api: WebApi, active = true) {
     finally { busySend.current = false; setSubmitting(false); }
   }
   const id = selected.current;
-  return { imageInputs, models, model, thinkingOptions, sessions, session, messages, run, notice:statusSync.error||notice,
+  return { imageInputs, models, model, thinkingOptions, refreshModels: statusSync.refreshModels, modelRefresh: statusSync.modelRefresh, sessions, session, messages, run, notice:statusSync.error||notice,
     materialInputs: { current: draftState.materialRef.current[id] ?? [], remove: (materialId: string) =>
       draftState.writeMaterials((draftState.materialRef.current[id] ?? []).filter(item => item.material_id !== materialId), id) },
     statusSyncError:statusSync.error, lastSubmission, listing, creation,

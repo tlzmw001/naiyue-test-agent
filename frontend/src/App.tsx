@@ -109,7 +109,11 @@ export default function App({ api: supplied, active = true, selection, scopeName
   const compactLabel = chat.run?.compaction_result?.status === 'applied' ? '摘要已应用，正在保存并同步运行结果' :
     chat.run?.preparation_phase === 'resources' ? '正在准备压缩所需资料' :
     chat.run?.preparation_phase === 'model_request' ? '正在分析历史并生成压缩摘要' : '正在压缩上下文';
-  const blocked = (!!busy && chat.run?.mode === 'compact') || (!busy && chat.session?.can_run === false) || chat.selectingSession || !chat.models.length || !!chat.run?.manual_review_required || !!chat.session?.manual_review_required || !!chat.session?.pending_approval;
+  const thinkingLevel = chat.session?.thinking_level ?? chat.creation.controls.thinking_level ?? 'model_default';
+  const thinkingOptions = chat.thinkingOptions[chat.model];
+  const unsupportedThinking = thinkingLevel !== 'model_default' && !!thinkingOptions &&
+    !thinkingOptions.supported_levels.includes(thinkingLevel);
+  const blocked = (!!busy && chat.run?.mode === 'compact') || (!busy && chat.session?.can_run === false) || chat.selectingSession || (!busy && (!chat.models.includes(chat.model) || unsupportedThinking)) || !!chat.run?.manual_review_required || !!chat.session?.manual_review_required || !!chat.session?.pending_approval;
   const controlsDisabled = chat.submitting || chat.changingControls || chat.changingModel || chat.selectingSession ||
     chat.recovering || !!chat.session?.recovery || !chat.models.length || (!chat.session && chat.creation.locked);
   const openModels = () => { setSidebarOpen(false); setModelMenu(true); };
@@ -133,7 +137,8 @@ export default function App({ api: supplied, active = true, selection, scopeName
         <div className={styles.headerLeft}>
           <button ref={navigationTrigger} className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="打开会话栏" onClick={() => setNavigation(true)}><Icon name="menu" /></button>
           <ModelMenu models={chat.models} model={chat.session?.recovery ? chat.session.model_id : chat.model}
-            level={chat.session?.thinking_level ?? chat.creation.controls.thinking_level ?? 'model_default'} options={chat.thinkingOptions[chat.model]} disabled={controlsDisabled}
+            level={thinkingLevel} options={thinkingOptions} disabled={controlsDisabled || chat.modelRefresh.pending}
+            refresh={() => void chat.refreshModels()} refreshState={chat.modelRefresh}
             open={modelMenu} toggle={() => modelMenu ? closeModel() : openModels()} close={closeModel}
             selectModel={value => void chat.selectModel(value)} selectThinking={value => void chat.selectThinking(value)} />
         </div>

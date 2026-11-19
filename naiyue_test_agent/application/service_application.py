@@ -17,59 +17,111 @@ from .sessions.run_admission import RunAdmission
 logger = logging.getLogger(__name__)
 
 
+class ModelRefreshBusy(RuntimeError):
+    pass
+
+
+class LiveModelCatalog:
+    """Stable handle used by open hosts when resolving the next model request."""
+    def __init__(self, loader):
+        self._loader = loader
+
+    def __getattr__(self, name):
+        if name.startswith('__'):
+            raise AttributeError(name)
+        return getattr(self._loader.require(), name)
+
+    async def aclose(self):
+        await self._loader.aclose()
+
+
 class DeferredModels:
     def __init__(self, config_path, network=None):
         self.config_path, self.value = config_path, None
         self.network = network
+        self.catalog = LiveModelCatalog(self)
         self._lock = asyncio.Lock()
 
     async def get(self):
         async with self._lock:
             if self.value is None:
-                value = await acquire_blocking(application.load_model_catalog,
-                    lambda item: item.aclose(), self.config_path)
-                try:
-                    options = {} if self.network is None else {'network': self.network}
-                    await run_blocking(value.prepare_async_clients, **options)
-                except BaseException:
-                    try:
-                        await await_settled(value.aclose())
-                    except BaseException as error:
-                        logger.error('model_cleanup_secondary_failed error_type=%s', type(error).__name__)
-                    raise
-                self.value = value
+                self.value = await self._prepare()
             return self.value
 
-    def _require(self):
+    async def for_host(self):
+        await self.get()
+        return self.catalog
+
+    async def refresh(self, settings, admission, *, background_busy=lambda: False, memory_available=True):
+        from naiyue_test_agent.agent_runtime.model_usage_observation import install_model_usage_callback
+
+        def validate(candidate):
+            auto = settings.permissions.auto
+            required = [role.model_id for role in settings.subagents]
+            if memory_available and settings.memory.enabled:
+                required.append(settings.memory.model_id)
+            if auto is not None:
+                required.extend((auto.fast_model_id, auto.detailed_model_id))
+            for identity in filter(None, required):
+                candidate.get(identity)
+            install_model_usage_callback(candidate, http_attempt_limit=settings.diagnostics.max_pending_events)
+
+        previous = None
+
+        def check_idle():
+            if admission.active_count() or background_busy():
+                raise ModelRefreshBusy
+
+        def publish(candidate):
+            nonlocal previous
+            validate(candidate)
+            with admission.lock:
+                check_idle()
+                previous, self.value = self.value, candidate
+
+        async with self._lock:
+            with admission.lock:
+                check_idle()
+            current = await self._prepare(publish)
+            if previous is not None and previous is not current:
+                try:
+                    await await_settled(previous.aclose())
+                except Exception as error:
+                    logger.warning('retired_model_cleanup_failed error_type=%s', type(error).__name__)
+
+    async def _prepare(self, on_prepared=None):
+        value = await acquire_blocking(application.load_model_catalog, lambda item: item.aclose(), self.config_path)
+        try:
+            options = {} if self.network is None else {'network': self.network}
+            await run_blocking(value.prepare_async_clients, **options)
+            if on_prepared is not None:
+                on_prepared(value)
+        except BaseException:
+            try:
+                await await_settled(value.aclose())
+            except BaseException as error:
+                logger.error('model_cleanup_secondary_failed error_type=%s', type(error).__name__)
+            raise
+        return value
+
+    def require(self):
         if self.value is None:
             raise RuntimeError('Models have not been opened')
         return self.value
-
-    @property
-    def default_model_id(self):
-        return self._require().default_model_id
-
-    @property
-    def model_ids(self):
-        return self._require().model_ids
-
-    def image_capabilities(self):
-        return self._require().image_capabilities()
-
-    def thinking_options(self, identity):
-        return self._require().thinking_options(identity)
 
     async def aclose(self):
         if self.value is not None:
             await self.value.aclose()
 
 
+
 @asynccontextmanager
 async def open_service_application(config_path, *, tools, system_prompt, response_format,
                                    settings, initial_active_tools=None):
     stack = AsyncExitStack()
+    tools = tuple(tools)
     models = DeferredModels(config_path, settings.model_network)
-    owner = ApplicationLifetime(models, None, stack)
+    owner = ApplicationLifetime(models.catalog, None, stack)
     personal = PersonalMemory(get_data_dir(settings.storage), settings.memory)
     async def close_personal(*args):
         await run_blocking(personal.close)
@@ -78,11 +130,21 @@ async def open_service_application(config_path, *, tools, system_prompt, respons
     async def close_projects(*args):
         await run_blocking(projects.close)
     _register_cleanup(stack, 'projects', close_projects)
+    admission = RunAdmission(settings.max_active_runs)
     hosts = HostManager(owner, catalog=None, personal=personal,
-        admission=RunAdmission(settings.max_active_runs), projects=projects, settings=settings,
-        tools=tuple(tools), system_prompt=system_prompt, response_format=response_format,
-        initial_active_tools=initial_active_tools, catalog_loader=models.get)
-    app = Application(owner, models, projects, hosts)
+        admission=admission, projects=projects, settings=settings,
+        tools=tools, system_prompt=system_prompt, response_format=response_format,
+        initial_active_tools=initial_active_tools, catalog_loader=models.for_host)
+    app = Application(owner, models.catalog, projects, hosts)
+    def background_busy():
+        return any(child._sessions.memory_jobs is not None and child._sessions.memory_jobs.has_pending_models()
+                   for child in owner._children)
+
+    async def refresh_models():
+        with owner.operation():
+            await models.refresh(settings, admission, background_busy=background_busy,
+                                 memory_available=any(spec.tool.name == 'memory' for spec in tools))
+    app.refresh_models = refresh_models
     app.cache_cleanup = CacheCleanup(owner, hosts, settings.cache_cleanup)
     primary = None
     try:

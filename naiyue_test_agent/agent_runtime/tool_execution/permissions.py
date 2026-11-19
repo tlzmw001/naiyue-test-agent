@@ -105,30 +105,36 @@ class AutoPermissionReviewer:
     def __init__(self, settings, fast_model, detailed_model):
         self.settings = settings
         self.models = {'fast': fast_model, 'detailed': detailed_model}
+        self._catalog = None
         self.model_ids = {'fast': settings.fast_model_id, 'detailed': settings.detailed_model_id}
 
     @classmethod
     def from_catalog(cls, catalog, settings):
-        return (None if settings is None else cls(settings, catalog.get(settings.fast_model_id),
-                                                  catalog.get(settings.detailed_model_id)))
+        if settings is None:
+            return None
+        get_model = catalog.get
+        reviewer = cls(settings, get_model(settings.fast_model_id), get_model(settings.detailed_model_id))
+        reviewer._catalog = catalog
+        return reviewer
 
     def _messages(self, data, stage):
         prompt = REVIEW_SYSTEM_PROMPT + f'Reason must be at most {self.settings.max_reason_chars} characters. ' + REVIEW_STAGE_PROMPTS[stage]
         return [SystemMessage(content=prompt), HumanMessage(content=json.dumps(data, ensure_ascii=False, sort_keys=True, allow_nan=False))]
 
-    def _fit_input(self, data):
+    def _fit_input(self, data, models=None):
+        models = self.models if models is None else models
         data = deepcopy(data)
         if not data['human_messages']:
             return None
         budgets = []
-        for model in self.models.values():
+        for model in models.values():
             limits = (model.metadata or {}).get(MODEL_LIMITS_METADATA_KEY, {})
             window, output = limits.get('context_window_tokens'), limits.get('max_output_tokens')
             if type(window) is not int or type(output) is not int or window <= output or output <= 0:
                 return None
             budgets.append(window - output)
         while True:
-            if all(count_tokens_approximately(self._messages(data, stage)) <= min(budgets) for stage in self.models):
+            if all(count_tokens_approximately(self._messages(data, stage)) <= min(budgets) for stage in models):
                 return data
             candidates = [(data['previous_calls'][0]['sequence'], 'previous_calls')] if data['previous_calls'] else []
             if len(data['human_messages']) > 1:
@@ -176,7 +182,11 @@ class AutoPermissionReviewer:
         if control is not None and control.requested:
             raise UserStop()
         try:
-            data = self._fit_input(data)
+            models = self.models
+            if self._catalog is not None:
+                get_model = self._catalog.get
+                models = {stage: get_model(identity) for stage, identity in self.model_ids.items()}
+            data = self._fit_input(data, models)
         except GraphBubbleUp:
             raise
         except Exception as error:
@@ -185,7 +195,7 @@ class AutoPermissionReviewer:
         if data is None:
             self._diagnostic(context, 'fast', 'ask', 'input_unavailable')
             return {'decision': 'ask', 'source': 'auto_input_unavailable'}
-        for stage, model in self.models.items():
+        for stage, model in models.items():
             response = None
             try:
                 if control is not None and control.requested:

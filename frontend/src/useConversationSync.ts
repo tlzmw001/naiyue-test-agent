@@ -17,15 +17,47 @@ export function useConversationSync(options: Options) {
   const [failure,setFailure]=useState<{sessionId:string;message:string}|null>(null);
   const latest = useRef(options); latest.current = options;
   const resume = useRef(false);
+  const modelsRevision = useRef(0);
+  const refreshing = useRef(false);
+  const [modelRefresh, setModelRefresh] = useState({ pending: false, message: '', failed: false });
+
+  async function refreshModels() {
+    if (refreshing.current) return;
+    refreshing.current = true;
+    setModelRefresh({ pending: true, message: '', failed: false });
+    try {
+      await options.api.refreshModels();
+      window.dispatchEvent(new Event('naiyue:models-refreshed'));
+      setModelRefresh({ pending: false, message: '模型配置已刷新。', failed: false });
+      void latest.current.refreshSessions().catch(error => latest.current.onError(error));
+    } catch (error) {
+      const message = error instanceof ApiError && error.code === 'model_config_refresh_failed'
+        ? '无法刷新模型配置，请检查配置文件后重试。'
+        : error instanceof ApiError && error.code === 'model_config_refresh_busy'
+          ? '当前有会话或后台记忆任务正在运行，请结束后刷新。' : errorText(error);
+      setModelRefresh({ pending: false, message, failed: true });
+    } finally { refreshing.current = false; }
+  }
   const api = options.api, id = options.session?.session_id, active = options.active;
   useEffect(() => {
     let disposed = false;
     const closed = latest.current.onClose;
-    Promise.all([api.models(), latest.current.refreshSessions()]).then(([config]) => {
-      if (!disposed) latest.current.onModels(config);
-    }).catch(error => { if (!disposed) latest.current.onError(error); });
+    void latest.current.refreshSessions().catch(error => { if (!disposed) latest.current.onError(error); });
     return () => { disposed = true; closed(); };
   }, [api]);
+  useEffect(() => {
+    if (!active) return;
+    let disposed = false;
+    function readModels() {
+      const revision = ++modelsRevision.current;
+      void api.models().then(config => {
+        if (!disposed && revision === modelsRevision.current) latest.current.onModels(config);
+      }).catch(error => { if (!disposed && revision === modelsRevision.current) latest.current.onError(error); });
+    }
+    readModels();
+    window.addEventListener('naiyue:models-refreshed', readModels);
+    return () => { disposed = true; window.removeEventListener('naiyue:models-refreshed', readModels); };
+  }, [api, active]);
   useEffect(() => {
     if (!active) { resume.current = true; latest.current.onClose(); return; }
     const controller = new AbortController();
@@ -68,6 +100,6 @@ export function useConversationSync(options: Options) {
     else timer = setTimeout(tick, sessionSyncPollMs);
     return () => { controller.abort(); clearTimeout(timer); };
   }, [api, id, active]);
-  return {error:failure&&failure.sessionId===id?failure.message:'',
+  return { refreshModels, modelRefresh, error:failure&&failure.sessionId===id?failure.message:'',
     clear:(sessionId:string)=>setFailure(current=>current?.sessionId===sessionId?null:current)};
 }

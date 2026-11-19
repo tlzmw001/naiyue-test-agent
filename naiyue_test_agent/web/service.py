@@ -19,10 +19,14 @@ class WebService:
 
     def models(self):
         models = self.application.models if self._models is None else self._models
+        return self.model_options(models, self.image_limits())
+
+    @staticmethod
+    def model_options(models, image_limits):
         return {'default_model_id': models.default_id,
                 'model_ids': list(models.ids), 'thinking_options': models.thinking_options(),
                 'capabilities': models.capabilities(),
-                'image_input_limits': self.image_limits().model_dump()}
+                'image_input_limits': image_limits.model_dump()}
 
     def image_limits(self):
         from naiyue_test_agent.image_input_settings import ImageInputSettings

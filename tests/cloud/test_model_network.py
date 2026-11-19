@@ -128,8 +128,9 @@ def test_service_deferred_models_receive_the_separate_policy(monkeypatch, tmp_pa
     from naiyue_test_agent.application.service_application import open_service_application
     from naiyue_test_agent.config_paths import StorageSettings
     from naiyue_test_agent.settings import AppSettings
+    from test_async_application import StreamingToolModel
     calls = []
-    catalog = ModelCatalog('A', {})
+    catalog = ModelCatalog('A', {'A': StreamingToolModel(replies=[])})
     monkeypatch.setattr(catalog, 'prepare_async_clients', lambda **kwargs: calls.append(kwargs['network']))
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: catalog)
     async def scenario():
@@ -137,7 +138,7 @@ def test_service_deferred_models_receive_the_separate_policy(monkeypatch, tmp_pa
             model_network=NetworkSettings(mode='direct'))
         async with open_service_application('unused', tools=(), system_prompt='', response_format=None, settings=settings) as app:
             assert calls == []
-            await app.models._catalog.get()
+            await app.chats.open()
             assert calls == [settings.model_network]
     asyncio.run(scenario())
 

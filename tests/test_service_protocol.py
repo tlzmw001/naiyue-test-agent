@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from uuid import uuid4
 
 import httpx
+import pytest
 from langchain_core.messages import AIMessage
 
 from naiyue_test_agent.service.app import create_service_app
@@ -204,4 +205,94 @@ def test_scoped_replay_expiry_requires_snapshot_without_stopping_run(monkeypatch
             assert [m['content'] for m in view['messages']] == ['question', 'answer']
             assert view['live']['status'] == 'completed'
             assert (await a.get('/api/v1/scopes/00000000-0000-0000-0000-000000000000/runs/' + run)).status_code == 404
+    asyncio.run(scenario())
+
+
+def test_refresh_models_updates_already_open_scope_and_keeps_last_good_catalog(monkeypatch, tmp_path):
+    from naiyue_test_agent import application
+    from naiyue_test_agent.model_access import ModelCatalog, ModelConfigError
+
+    async def scenario():
+        old = StreamingToolModel(replies=[AIMessage(content='old')])
+        new = StreamingToolModel(replies=[AIMessage(content='new')])
+        async with service_clients(monkeypatch, tmp_path, old) as (client, other, _, _):
+            scope = '/api/v1/scopes/chats'
+            sid = (await client.post(scope + '/sessions', headers=command(), json={'model_id': 'A'})).json()['session_id']
+            monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('B', {'A': new, 'B': new}))
+            refreshed = await client.post('/api/v1/models/refresh', headers=command(), json={})
+            assert refreshed.status_code == 200
+            assert refreshed.json()['model_ids'] == ['A', 'B']
+            assert (await other.get(scope + '/models')).json()['default_model_id'] == 'B'
+            def invalid(_):
+                raise ModelConfigError('fixture invalid')
+            monkeypatch.setattr(application, 'load_model_catalog', invalid)
+            rejected = await client.post('/api/v1/models/refresh', headers=command(), json={})
+            assert rejected.status_code == 422
+            assert (await other.get(scope + '/models')).json()['model_ids'] == ['A', 'B']
+            headers = command()
+            run = await client.post(f'{scope}/sessions/{sid}/runs', headers=headers,
+                                    json={'text': 'test', 'request_id': headers['X-Request-ID']})
+            assert run.status_code == 202
+            await client.get(f"{scope}/runs/{run.json()['run_id']}/events")
+            assert not old.seen and len(new.seen) == 1
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('removed', ['model', 'thinking'])
+def test_reopened_session_can_repair_unsupported_model_configuration(monkeypatch, tmp_path, removed):
+    from naiyue_test_agent import application
+    from naiyue_test_agent.model_access import ModelCatalog
+
+    async def scenario():
+        model = StreamingToolModel(replies=[AIMessage(content='saved answer'), AIMessage(content='new answer')])
+        async with service_clients(monkeypatch, tmp_path, model) as (client, _, app, _):
+            source = tmp_path / 'project'
+            source.mkdir()
+            project = await app.state.application.projects.add_local(str(source), trusted=True, operation_id=str(uuid4()))
+            scope = '/api/v1/scopes/' + project.project_id
+            sid = (await client.post(scope + '/sessions', headers=command(), json={'model_id': 'A'})).json()['session_id']
+            endpoint = f'{scope}/sessions/{sid}'
+
+            async def send(text):
+                headers = command()
+                return await client.post(endpoint + '/runs', headers=headers,
+                                         json={'text': text, 'request_id': headers['X-Request-ID']})
+
+            initial = await send('saved question')
+            assert initial.status_code == 202
+            await client.get(f"{scope}/runs/{initial.json()['run_id']}/events")
+            if removed == 'thinking':
+                catalog = app.state.application._lifetime._catalog
+                catalog._thinking_capabilities['A'] = {'kind': 'openai', 'levels': ('high',)}
+                changed = await client.patch(endpoint + '/thinking', headers=command(),
+                                             json={'model_id': 'A', 'thinking_level': 'high'})
+                assert changed.status_code == 200, changed.json()
+            await app.state.scopes.close_project(project.project_id)
+            replacement = 'B' if removed == 'model' else 'A'
+            monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog(replacement, {replacement: model}))
+            assert (await client.post('/api/v1/models/refresh', headers=command(), json={})).status_code == 200
+            prepared = (await client.post(endpoint + '/prepare', headers=command())).json()
+            assert prepared['model_id'] == 'A'
+            assert not prepared['can_run']
+            assert not prepared.get('recovery')
+            assert [message['content'] for message in prepared['messages']] == ['saved question', 'saved answer']
+            blocked = await send('blocked question')
+            assert blocked.status_code == 409, blocked.json()
+            if removed == 'thinking':
+                assert prepared['thinking_level'] == 'high'
+                changed = await client.patch(endpoint + '/thinking', headers=command(),
+                                             json={'model_id': 'A', 'thinking_level': 'model_default'})
+            else:
+                changed = await client.patch(endpoint + '/model', headers=command(), json={'model_id': 'B'})
+            assert changed.status_code == 200, changed.json()
+            repaired = (await client.get(endpoint)).json()
+            assert repaired['model_id'] == replacement and repaired['can_run']
+            assert repaired['thinking_level'] == 'model_default'
+            assert repaired['messages'] == prepared['messages']
+            continued = await send('next question')
+            assert continued.status_code == 202, continued.json()
+            await client.get(f"{scope}/runs/{continued.json()['run_id']}/events")
+            assert len(model.seen) == 2
+
     asyncio.run(scenario())

@@ -190,7 +190,7 @@ async def validate_saved_approval(settings, registry, row, snapshot, names, *, e
         raise SessionPersistenceError('approval_restore_unavailable') from error
 
 
-def prepare_saved_configuration(owner, row):
+def prepare_saved_configuration(owner, row, *, validate_model=True):
     try:
         owner._permission_settings.validate_mode(row['permission_mode'])
     except ValueError as error:
@@ -200,7 +200,8 @@ def prepare_saved_configuration(owner, row):
         names = owner._tool_registry.session_selection(json.loads(saved))
     except (ValueError, TypeError) as error:
         raise SessionPersistenceError('invalid_active_tools') from error
-    owner._catalog.with_thinking(row['model_id'], row['thinking_level'])
+    if validate_model:
+        owner._catalog.with_thinking(row['model_id'], row['thinking_level'])
     # Saved identity can be installed for history even when execution is unavailable.
     root = owner.sessions.saved_execution_root(row)
     return root.path if root is not None else None, names

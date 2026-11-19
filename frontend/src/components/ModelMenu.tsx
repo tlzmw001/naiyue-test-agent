@@ -3,7 +3,8 @@ import type { ThinkingOptions } from '../types';
 import styles from './ModelMenu.module.css';
 import { Icon } from './Icons';
 
-export default function ModelMenu({ models, model, level, options, open, disabled, toggle, close, selectModel, selectThinking, placement = 'below' }: {
+export default function ModelMenu({ models, model, level, options, open, disabled, toggle, close, selectModel, selectThinking, refresh, refreshState, placement = 'below' }: {
+  refresh?: () => void; refreshState?: { pending: boolean; message: string; failed: boolean };
   placement?: 'above' | 'below';
   models: string[]; model: string; level: string; options?: ThinkingOptions; open: boolean; disabled: boolean;
   toggle: () => void; close: () => void; selectModel: (id: string) => void; selectThinking: (level: string) => void;
@@ -15,7 +16,7 @@ export default function ModelMenu({ models, model, level, options, open, disable
     if (!open) return;
     const current = root.current?.querySelector<HTMLInputElement>('input:checked:not(:disabled)') ??
       root.current?.querySelector<HTMLInputElement>('input:not(:disabled)');
-    current?.focus();
+    (current ?? root.current?.querySelector<HTMLButtonElement>('[data-model-refresh]'))?.focus();
     const outside = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) close(); };
     document.addEventListener('pointerdown', outside);
     return () => document.removeEventListener('pointerdown', outside);
@@ -26,18 +27,22 @@ export default function ModelMenu({ models, model, level, options, open, disable
     if (event.key === 'Escape') { event.preventDefault(); close(); trigger.current?.focus(); }
   }}>
     <button ref={trigger} type="button" className={styles.trigger} aria-label={`模型与推理强度：${model || placeholder} · ${label}`}
-      title={`${model || placeholder} · ${label}`} aria-expanded={open} onClick={toggle} disabled={disabled}>
+      title={`${model || placeholder} · ${label}`} aria-expanded={open} onClick={toggle} disabled={disabled && !(refresh && (!models.length || refreshState?.pending))}>
       <span className={styles.modelName}>{model || placeholder}</span><span className={styles.level}>{label}</span>
     </button>
     {open && <section role="dialog" aria-label="模型与推理强度" className={`${styles.popover} ${placement === 'above' ? styles.above : ''}`}>
       <div className={styles.heading}>模型与推理强度<button type="button" aria-label="关闭模型菜单" onClick={() => { close(); trigger.current?.focus(); }}><Icon name="close"/></button></div>
+      {refresh && <button type="button" className={styles.refresh} data-model-refresh disabled={refreshState?.pending} onClick={refresh}>
+        {refreshState?.pending ? '正在刷新…' : '刷新模型配置'}
+      </button>}
+      {refreshState?.message && <p role={refreshState.failed ? 'alert' : 'status'}>{refreshState.message}</p>}
       <fieldset className={styles.group} disabled={disabled}><legend>模型</legend><div className={styles.options}>
         {(!models.includes(model) ? [model, ...models] : models).filter(Boolean).map(value => <label key={value} className={styles.option} title={value}>
           <input type="radio" name={`${id}-model`} value={value} disabled={!models.includes(value)} checked={model === value} onChange={() => selectModel(value)} />
           <span>{value}{!models.includes(value) && '（当前不可用）'}</span>
         </label>)}
       </div></fieldset>
-      <fieldset className={styles.group} disabled={disabled || !options?.supported_levels.length}><legend>推理强度</legend>
+      <fieldset className={styles.group} disabled={disabled || (level === 'model_default' && !options?.supported_levels.length)}><legend>推理强度</legend>
         <label className={styles.option}><input type="radio" name={`${id}-thinking`} value="model_default" checked={level === 'model_default'} onChange={() => selectThinking('model_default')} />
           <span>配置默认{options?.default_level && options.default_level !== 'model_default' ? `（${options.default_level}）` : ''}</span></label>
         {options?.supported_levels.map(value => <label key={value} className={styles.option}>

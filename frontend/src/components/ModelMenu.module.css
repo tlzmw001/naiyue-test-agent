@@ -20,3 +20,7 @@
 .popover p { margin: 10px 8px 4px; color: var(--muted); font-size: var(--fs-caption); line-height: var(--lh-relaxed); }
 .popover.above { top: auto; bottom: calc(100% + 12px); }
 @media (max-width: 600px) { .trigger { max-width: 170px; } .popover { left: 0; } }
+
+.refresh { margin: 0 8px 4px; padding: 6px 9px; border: 1px solid var(--line); border-radius: var(--r-sm); background: transparent; color: var(--text-secondary); font: inherit; font-size: var(--fs-caption); }
+.refresh:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); }
+.refresh:disabled { opacity: .6; }

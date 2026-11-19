@@ -280,6 +280,9 @@ class MemoryJobs:
             else:await await_settled(job.worker)
         return self._public(job)
 
+    def has_pending_models(self):
+        return any(not job.cleanup_confirmed for job in self._entries.values())
+
     async def wait_idle(self):
         await asyncio.gather(*(j.worker for j in self._entries.values() if j.worker is not None))
 

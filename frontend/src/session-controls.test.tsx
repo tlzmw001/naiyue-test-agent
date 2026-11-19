@@ -24,7 +24,7 @@ it('shows each selected mode as its name and chevron without a status circle', (
   }
 });
 
-function setup() {
+function setup(renderApp = true) {
   const api = new WebApi('synthetic-test-access');
   vi.spyOn(api, 'prepare').mockImplementation(id => api.session(id));
   const session: SessionView = { session_id: 's', model_id: 'A', workspace_root: '/workspace', state: 'ready',
@@ -43,7 +43,7 @@ function setup() {
   vi.spyOn(api, 'selectPermissionMode').mockImplementation(async (_id, permission_mode) => ({ permission_mode }));
   vi.spyOn(api, 'selectTools').mockImplementation(async (_id, active_tools) => ({ active_tools }));
   vi.spyOn(api, 'start');
-  render(<App api={api} />);
+  if (renderApp) render(<App api={api} />);
   return { api, session };
 }
 
@@ -61,6 +61,40 @@ it('keeps mode and tools inside the composer draft without creating a session', 
   expect(api.create).not.toHaveBeenCalled();
   expect((input as HTMLTextAreaElement).value).toBe('keep this draft');
   expect(api.start).not.toHaveBeenCalled();
+});
+
+it.each(['model', 'thinking'])('re-enables sending when an unavailable saved %s is replaced', async removed => {
+  const { api, session } = setup(false);
+  const saved = { ...session, can_run: false, thinking_level: removed === 'thinking' ? 'high' : 'model_default' };
+  vi.mocked(api.session).mockResolvedValue(saved);
+  vi.mocked(api.models).mockResolvedValue({
+    default_model_id: 'B', model_ids: removed === 'model' ? ['B'] : ['A', 'B'],
+    thinking_options: { A: { default_level: 'model_default', supported_levels: [] } },
+  });
+  const repair = () => {
+    const model_id = removed === 'model' ? 'B' : 'A';
+    const thinking_level = 'model_default';
+    vi.mocked(api.session).mockResolvedValue({ ...saved, model_id, thinking_level, can_run: true });
+    return { model_id, thinking_level };
+  };
+  const selectModel = vi.spyOn(api, 'select').mockImplementation(async () => repair());
+  const selectThinking = vi.spyOn(api, 'selectThinking').mockImplementation(async () => repair());
+  vi.spyOn(api, 'backgroundTasks').mockResolvedValue({ items: [], active_count: 0, revision: 'empty', terminal_revision: 0, next_before: null });
+  render(<App api={api} />);
+
+  fireEvent.click(await screen.findByRole('button', { name: /Invalid Date/ }));
+  const trigger = await screen.findByRole('button', { name: /模型与推理强度：A/ }) as HTMLButtonElement;
+  await waitFor(() => expect(trigger.disabled).toBe(false));
+  fireEvent.change(screen.getByRole('textbox', { name: '消息' }), { target: { value: 'keep this draft' } });
+  const send = screen.getByRole('button', { name: '发送消息' }) as HTMLButtonElement;
+  expect(send.disabled).toBe(true);
+  fireEvent.click(trigger);
+  const menu = screen.getByRole('dialog', { name: '模型与推理强度' });
+  fireEvent.click(within(menu).getByRole('radio', { name: removed === 'model' ? 'B' : '配置默认' }));
+  await waitFor(() => expect(send.disabled).toBe(false));
+  if (removed === 'model') expect(selectModel).toHaveBeenCalledExactlyOnceWith('s', 'B');
+  else expect(selectThinking).toHaveBeenCalledExactlyOnceWith('s', 'A', 'model_default');
+  expect((screen.getByRole('textbox', { name: '消息' }) as HTMLTextAreaElement).value).toBe('keep this draft');
 });
 
 it('selects the registered tools for the current main agent and preserves a failed selection', async () => {

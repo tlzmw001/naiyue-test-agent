@@ -71,6 +71,13 @@ class SessionPersistence:
         value['execution_root_kind'] = row['execution_root_kind']
         value['execution_root_error'] = error
         value['can_run'] = value['can_run'] and value['execution_root_error'] is None
+        if value['can_run']:
+            try:
+                options = self._catalog.thinking_options(value['model_id'])
+                value['can_run'] = (value['thinking_level'] == 'model_default'
+                                    or value['thinking_level'] in options['supported_levels'])
+            except ModelConfigError:
+                value['can_run'] = False
         value.pop('approval_run_id', None)
         from naiyue_test_agent.storage.conversation_sql.reply_storage import latest
         boundary = await run_blocking(self.storage.replies.latest, session_id)
@@ -141,7 +148,7 @@ class SessionPersistence:
                 row = await run_blocking(self.storage.sessions.get, session_id)
                 if not self.sessions.has_session(session_id) and row['state'] == 'ready':
                     try:
-                        await self.arestore(session_id, agent)
+                        await self.arestore(session_id, agent, allow_model_repair=True)
                     except (SessionPersistenceError, ValueError):
                         logger.warning('session_prepare_restore_unavailable')
                 snapshot = await agent.aget_state({'configurable': {'thread_id': row['thread_id']}})
@@ -320,7 +327,7 @@ class SessionPersistence:
                     self._recovering.discard(session_id)
 
 
-    async def arestore(self, session_id, agent):
+    async def arestore(self, session_id, agent, *, allow_model_repair=False):
         with self._lock:
             if (self.sessions.background_tasks.is_cleaning(self.sessions.session_archive_root(session_id))
                         or session_id in self._active or session_id in self._recovering) or session_id in self._blocked:
@@ -330,7 +337,7 @@ class SessionPersistence:
             row = await run_blocking(self.storage.sessions.get, session_id)
             if row['state'] != 'ready':
                 raise SessionPersistenceError('session_recovery_blocked')
-            root, names = prepare_saved_configuration(self, row)
+            root, names = prepare_saved_configuration(self, row, validate_model=not allow_model_repair)
             snapshot = await await_settled(agent.aget_state({'configurable': {'thread_id': row['thread_id']}}))
             actual = snapshot.config.get('configurable', {}).get('checkpoint_id')
             namespace = snapshot.config.get('configurable', {}).get('checkpoint_ns', '')

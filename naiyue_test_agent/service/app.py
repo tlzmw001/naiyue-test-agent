@@ -163,6 +163,21 @@ def create_service_app(options, *, application_factory=None, shutdown=None):
         shutdown()
         return {'accepted': True}
 
+    @app.post('/api/v1/models/refresh')
+    async def refresh_models(request: Request):
+        from naiyue_test_agent.application.service_application import ModelRefreshBusy
+        from naiyue_test_agent.web.service import WebService
+        application = request.app.state.application
+        settings = request.app.state.web_settings.runtime_settings
+        try:
+            await application.refresh_models()
+        except ModelRefreshBusy:
+            raise WebError('model_config_refresh_busy', 409) from None
+        except Exception as error:
+            logger.warning('model_config_refresh_failed error_type=%s', type(error).__name__)
+            raise WebError('model_config_refresh_failed', 422) from None
+        return WebService.model_options(application.models, settings.image_inputs)
+
     app.include_router(create_api_router(), prefix='/api/v1/scopes/{scope_id}')
     app.include_router(terminal_session_router, prefix='/api/v1/scopes/{scope_id}')
     app.include_router(cloud_task_router)

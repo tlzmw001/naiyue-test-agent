@@ -109,6 +109,9 @@ export class WebApi {
   }
 
   models() { return this.json<{ default_model_id: string; model_ids: string[]; thinking_options?: Record<string, ThinkingOptions> } & ImageConfiguration>('/models'); }
+  async refreshModels(): Promise<Awaited<ReturnType<WebApi['models']>>> {
+    return (await this.response('/models/refresh', { method: 'POST', body: '{}' }, true)).json();
+  }
   cloudTasks() { return new CloudApi(this.scopeId, (path, init) => this.response(path, init, 'client'), (options, signal) => this.browseDirectories(options, signal)); }
   serviceInfo(signal?: AbortSignal) { return this.json<ServiceInfo>('/service', 'GET', undefined, signal); }
   backgroundTasks(before?: string, signal?: AbortSignal) {
