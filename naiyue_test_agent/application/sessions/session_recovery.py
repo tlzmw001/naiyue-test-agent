@@ -195,9 +195,13 @@ def prepare_saved_configuration(owner, row, *, validate_model=True):
         owner._permission_settings.validate_mode(row['permission_mode'])
     except ValueError as error:
         raise SessionPersistenceError('invalid_permission_mode') from error
-    saved = row['active_tool_names_json']
     try:
-        names = owner._tool_registry.session_selection(json.loads(saved))
+        saved = json.loads(row['active_tool_names_json'])
+        if row['state'] == 'ready' and isinstance(saved, list) and saved.count('cloud_result_read') == 1:
+            # Old projects selected this read-only tool by default. Reopening a
+            # settled conversation must not grant its replacement's write capability.
+            saved.remove('cloud_result_read')
+        names = owner._tool_registry.session_selection(saved)
     except (ValueError, TypeError) as error:
         raise SessionPersistenceError('invalid_active_tools') from error
     if validate_model:

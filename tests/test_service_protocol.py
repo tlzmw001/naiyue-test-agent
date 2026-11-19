@@ -296,3 +296,45 @@ def test_reopened_session_can_repair_unsupported_model_configuration(monkeypatch
             assert len(model.seen) == 2
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('other_tools', [[], ['unrecognized_tool']])
+def test_ready_project_session_ignores_only_retired_cloud_read_tool(monkeypatch, tmp_path, other_tools):
+    import json
+    import sqlite3
+    from contextlib import closing
+
+    async def scenario():
+        model = StreamingToolModel(replies=[AIMessage(content='old answer'), AIMessage(content='new answer')])
+        async with service_clients(monkeypatch, tmp_path, model) as (client, _, app, _):
+            source = tmp_path / 'project'
+            source.mkdir()
+            project = await app.state.application.projects.add_local(str(source), trusted=True, operation_id=str(uuid4()))
+            scope = '/api/v1/scopes/' + project.project_id
+            sid = (await client.post(scope + '/sessions', headers=command(), json={'model_id': 'A'})).json()['session_id']
+            endpoint = f'{scope}/sessions/{sid}'
+
+            async def send(text):
+                headers = command()
+                started = await client.post(endpoint + '/runs', headers=headers,
+                                            json={'text': text, 'request_id': headers['X-Request-ID']})
+                assert started.status_code == 202, started.json()
+                await client.get(f"{scope}/runs/{started.json()['run_id']}/events")
+
+            await send('old question')
+            await app.state.scopes.close_project(project.project_id)
+            with closing(sqlite3.connect(project.database_path)) as connection, connection:
+                connection.execute('UPDATE naiyue_sessions SET active_tool_names_json=? WHERE session_id=?',
+                                   (json.dumps(['cloud_result_read', *other_tools]), sid))
+            prepared = (await client.post(endpoint + '/prepare', headers=command())).json()
+            assert [row['content'] for row in prepared['messages']] == ['old question', 'old answer']
+            if other_tools:
+                assert not prepared['can_run']
+                assert prepared['recovery']['reason'] == 'saved_configuration_unavailable'
+            else:
+                assert prepared['can_run'] and 'recovery' not in prepared
+                assert prepared['active_tools'] == []
+                await send('new question')
+                assert 'old question' in [message.content for message in model.seen[-1]]
+
+    asyncio.run(scenario())
