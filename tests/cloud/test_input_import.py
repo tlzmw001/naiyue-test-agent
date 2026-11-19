@@ -31,6 +31,11 @@ def test_owner_import_commit_create_task_and_cache_hit(tmp_path):
                 assert (await client.post('/api/cloud/v1/transfers',json=request)).json()==receipt
                 task_request=dict(command_id=str(uuid4()),project_id=project['project_id'],input_id=captured.input_id,template_id='python-tests')
                 assert (await client.post('/api/cloud/v1/tasks',json=task_request)).status_code==409
+                use_id=str(uuid4())
+                acquired=await client.post('/api/cloud/v1/input-uses',json=dict(command_id=use_id,input_id=captured.input_id,
+                    purpose='associate',origin_operation_id=task_request['command_id']))
+                assert acquired.status_code==200
+                use={'X-Input-Use-Id':use_id}
                 raw=(captured.directory/'archive').read_bytes();headers={'Content-Type':'application/octet-stream','Upload-Offset':'0','X-Content-SHA256':captured.archive_sha256}
                 uploaded=await client.put(f'/api/cloud/v1/transfers/{tid}/bytes',content=raw,headers=headers)
                 assert uploaded.status_code==200,uploaded.text
@@ -40,10 +45,10 @@ def test_owner_import_commit_create_task_and_cache_hit(tmp_path):
                 assert commit.status_code==200,commit.text
                 assert commit.json()['input_id']==captured.input_id
                 assert (await client.post(f'/api/cloud/v1/transfers/{tid}/commit',json={})).json()==commit.json()
-                created=await client.post('/api/cloud/v1/tasks',json=task_request)
+                created=await client.post('/api/cloud/v1/tasks',json=task_request,headers=use)
                 assert created.status_code==201,created.text
                 assert created.json()['result']['task']['input_id']==captured.input_id
-                assert (await client.post('/api/cloud/v1/tasks',json=task_request)).json()==created.json()
+                assert (await client.post('/api/cloud/v1/tasks',json=task_request,headers=use)).json()==created.json()
                 cached=await client.post('/api/cloud/v1/transfers',json=transfer_request(captured))
                 assert cached.json()['result']['transfer']['cache_hit'] is True
                 assert (await client.delete(f'/api/cloud/v1/transfers/{tid}')).status_code==409

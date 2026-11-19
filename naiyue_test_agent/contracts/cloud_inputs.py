@@ -209,3 +209,16 @@ class AttachInput(CloudRecord):
     attachment_id:UUIDText
     input_id:ContentId
     display_name:str=Field(min_length=1,max_length=255)
+
+
+class VerifyLegacyInputCutover(CloudRecord):
+    command_id: UUIDText
+    sources_verified: Literal[True]
+    input_use_ids: list[UUIDText] = Field(default_factory=list, max_length=1024)
+
+
+class AcquireInputUse(CloudRecord):
+    command_id:UUIDText
+    input_id:ContentId
+    purpose:Literal['associate','recover']
+    origin_operation_id:UUIDText

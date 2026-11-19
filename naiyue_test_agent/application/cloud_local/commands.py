@@ -53,6 +53,8 @@ class ManualTaskCommands:
                     binding=await run_blocking(domain.repo.binding,op['binding_id'],op['local_session_id'])
                     async with self.manager.connection(binding) as client:
                         await run_blocking(command_dispatch.execute,domain,client,op,self.manager.settings,explicit=explicit)
+                    if op['kind']=='delete':
+                        await self._settle_deleted_attachments(domain,op)
                 except Exception as error:
                     code=error.code if isinstance(error,CloudError) else 'cloud_command_failed'
                     logger.warning('cloud_manual_command_failed kind=%s code=%s error_type=%s',op['kind'],code,type(error).__name__)
@@ -67,10 +69,43 @@ class ManualTaskCommands:
         task.add_done_callback(done)
         return op
 
-    async def reconcile(self,domain,cid,sid):
+    async def _settle_deleted_attachments(self,domain,op):
+        sid=op['local_session_id']
+        try:
+            current=await run_blocking(domain.repo.operation,op['command_id'],sid)
+            if current['phase']!='succeeded':return
+            binding=await run_blocking(domain.repo.binding,op['binding_id'],sid)
+            if not await self.manager.attachments.settle_retired(domain,binding):return
+            cleanup=current['steps']['primary']['receipt']['result'].get('input_cleanup') or {}
+            if any(item.get('reason') in ('input_use_held','input_transfer_active') for item in cleanup.get('candidates',[])):
+                await self._cleanup_receipt(domain,current,retry=True)
+        except CloudError as error:
+            logger.warning('cloud_deleted_attachment_release_pending code=%s',error.code)
+
+    async def reconcile(self,domain,cid,sid,*,cleanup_retry=False):
         with self.manager.operation(),domain.owner.operation():
             op=await run_blocking(domain.repo.operation,cid,sid)
+            if op['kind']=='delete' and op['phase']=='succeeded':
+                return await self._cleanup_receipt(domain,op,retry=cleanup_retry)
+            if cleanup_retry:raise CloudError('cloud_delete_not_confirmed')
             return await self._observe(domain,op)
+
+    async def _cleanup_receipt(self,domain,op,*,retry):
+        sid=op['local_session_id'];cid=op['command_id']
+        binding=await run_blocking(domain.repo.binding,op['binding_id'],sid)
+        prior=op['steps']['primary']['receipt']
+        if (binding['retained'] or binding.get('deletion')!=prior['result'].get('tombstone')
+                or binding['task_id']!=op['task_id'] or binding['instance_id']!=op['instance_id']):
+            raise CloudError('cloud_delete_receipt_mismatch',502)
+        path='/commands/'+cid
+        if retry:
+            await self.manager.attachments.settle_retired(domain,binding)
+        # Borrow the pinned connection solely for this retired command identity.
+        async with self.manager.connection(binding|{'retained':True}) as client:
+            raw=await run_blocking(client.request,'POST',path+'/reconcile',json={}) if retry else (
+                await run_blocking(client.request,'GET',path))
+        receipt=command_dispatch.validate(raw,op,'primary')
+        return await run_blocking(domain.repo.commands.record,cid,sid,'primary',receipt)
 
     async def _observe(self,domain,op):
         if op['kind'] in ('create','queued_message') or op['phase'] in ('succeeded','failed','rejected','cancelled'):return op

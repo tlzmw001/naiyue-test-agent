@@ -20,7 +20,7 @@ def registered(runtime):
 
 @pytest.mark.parametrize('change,status,code', [({'Authorization': 'Bearer wrong'}, 401, 'unauthorized'),
     ({'Host': 'evil'}, 403, 'invalid_host'), ({'Origin': 'http://evil'}, 403, 'invalid_origin'),
-    ({'X-Cloud-Protocol': '2'}, 409, 'cloud_protocol_mismatch'),
+    ({'X-Cloud-Protocol': '1'}, 426, 'cloud_protocol_mismatch'),
     ({'X-Service-Instance': str(uuid4())}, 409, 'cloud_instance_mismatch')])
 def test_owner_rejections_have_no_command_side_effect(tmp_path, change, status, code):
     with open_cloud_runtime(settings(tmp_path)) as runtime:

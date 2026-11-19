@@ -15,12 +15,10 @@ import { Chevron } from './Icons';
 import { useCloudFiles } from '../useCloudFiles';
 import type { CloudAction } from './CloudTaskActions';
 import styles from './CloudTasks.module.css';
-import type { AnalysisDraft } from '../cloudReceiveTypes';
 
-export default function CloudTaskDetail({ api, sid, binding, active, metadataFresh = true, metadataError, back, changed, onAnalysisDraft, onForgotten }: {
-  api: CloudApi; sid: string; binding: CloudBinding; active: boolean; metadataFresh?: boolean; back: () => void; changed: () => void;
+export default function CloudTaskDetail({ api, sid, binding, active, metadataFresh = true, metadataError, back, changed, onDeleted, onForgotten }: {
+  api: CloudApi; sid: string; binding: CloudBinding; active: boolean; metadataFresh?: boolean; back: () => void; changed: () => void; onDeleted?: () => void;
   metadataError?: string; onForgotten?: () => void;
-  onAnalysisDraft?: (value: AnalysisDraft) => boolean | void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const detailsId = useId();
@@ -69,7 +67,7 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
           if (['accepted', 'succeeded'].includes(sent.phase)) setError('');
           changed();
         }
-        if (values.some(op => op.kind === 'delete' && op.phase === 'succeeded')) { changed(); back(); return; }
+        if (values.some(op => op.kind === 'delete' && op.phase === 'succeeded')) { if (onDeleted) onDeleted(); else { changed(); back(); } return; }
       } catch (failure) { if (!controller.signal.aborted) { console.warn('cloud_commands_read_failed'); setError(cloudError(failure)); } }
       finally { if (!controller.signal.aborted) timer = setTimeout(read, backgroundTaskPollMs); }
     }
@@ -171,7 +169,7 @@ export default function CloudTaskDetail({ api, sid, binding, active, metadataFre
         {observation.hasMoreThreads && <button disabled={observation.threadsLoading} onClick={() => void observation.loadThreads()}>加载更多子线程</button>}
         {observation.snapshot?.live.capture_incomplete && <p role="status" className={styles.note}>实况存在缺口，以已保存档案为准。</p>}
       </div>
-      <CloudResults api={api} sid={sid} binding={binding} active={active} changed={changed} onAnalysisDraft={onAnalysisDraft} />
+      <CloudResults api={api} sid={sid} binding={binding} active={active} changed={changed} />
     </div>
     {(!metadataFresh || error || unconfirmed || observation.error || operationFailed) &&
       <div className={styles.taskNotices}>

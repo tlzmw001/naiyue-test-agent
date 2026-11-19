@@ -7,7 +7,6 @@ import { backgroundTaskPollMs } from '../uiSettings';
 import styles from './CloudTasks.module.css';
 import CloudResultReceive from './CloudResultReceive';
 import { keepDialogFocus } from '../dialogFocus';
-import type { AnalysisDraft } from '../cloudReceiveTypes';
 import { ApiError } from '../api';
 
 const phases: Record<string, string> = { waiting_terminal: '等待执行结束', pending: '等待安全保存', capturing: '正在固定文件', verifying: '正在传输核对', available: '结果已保存', failed: '结果保存失败', unknown: '保存状态待核对', abandoned: '已放弃本轮结果', superseded: '已由后续运行替代', deleting: '正在清理结果文件', deleted: '结果文件已清理' };
@@ -18,13 +17,13 @@ const noArtifacts = (row: ResultSummary, binding: CloudBinding) =>
 const historical = (row: ResultSummary, binding: CloudBinding) =>
   noArtifacts(row, binding) || ['deleted', 'superseded', 'abandoned'].includes(row.phase);
 
-type Props = { api: CloudApi; sid: string; binding: CloudBinding; active: boolean; changed: () => void; onAnalysisDraft?: (value: AnalysisDraft) => boolean | void };
+type Props = { api: CloudApi; sid: string; binding: CloudBinding; active: boolean; changed: () => void };
 
 export default function CloudResults(props: Props) {
   return <ResultWindow key={JSON.stringify([props.api.projectId, props.sid, props.binding.binding_id, props.binding.task_id])} {...props} />;
 }
 
-function ResultWindow({ api, sid, binding, active, changed, onAnalysisDraft }: Props) {
+function ResultWindow({ api, sid, binding, active, changed }: Props) {
   const [open, setOpen] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null); const trigger = useRef<HTMLButtonElement>(null);
   useEffect(() => { if (open) dialog.current?.showModal(); }, [open]);
@@ -129,19 +128,6 @@ function ResultWindow({ api, sid, binding, active, changed, onAnalysisDraft }: P
     try { await api.resultAction(sid, binding.binding_id, selected, { command_id: crypto.randomUUID(), expected_binding_revision: binding.revision, expected_revision: record.revision, action: kind }); if (valid(token)) { setRefresh(v => v + 1); changed(); } }
     catch (e) { if (valid(token)) setError(cloudError(e)); } finally { if (valid(token)) { setBusy(false); setConfirm(false); } }
   }
-  async function download(item: ResultFile, rid: string) {
-    const token = generation.current;
-    setBusy(true); setError('');
-    try {
-      const link = await api.downloadLink(sid, binding.binding_id, rid, item.artifact.artifact_id);
-      if (!valid(token)) return;
-      if (!/^\/api\/client\/v1\/cloud-downloads\/[0-9a-f-]{36}$/.test(link.url)) throw new Error('cloud_download_invalid');
-      const anchor = document.createElement('a');
-      anchor.href = link.url; anchor.download = item.artifact.relative_name.split('/').at(-1)!;
-      document.body.append(anchor); anchor.click(); anchor.remove();
-    } catch (e) { if (valid(token)) setError(cloudError(e)); }
-    finally { if (valid(token)) setBusy(false); }
-  }
   const visibleRows = rows?.filter(row => historical(row, binding) === history);
   if (olderAvailable) visibleRows?.push(olderAvailable);
   const token = generation.current;
@@ -173,10 +159,8 @@ function ResultWindow({ api, sid, binding, active, changed, onAnalysisDraft }: P
         rid={record.plan.result_id} inputId={record.plan.input_id} files={[]} active={active && open} resumeOnly />}
       {record.phase === 'available' && !history && <>
         <CloudResultReceive key={`${api.projectId}:${sid}:${binding.binding_id}:${record.plan.result_id}`} api={api} sid={sid} bid={binding.binding_id}
-          rid={record.plan.result_id} inputId={record.plan.input_id} files={record.bundle?.files ?? []} active={active && open} branchAvailable={record.code_branch_available}
-          onAnalysisDraft={onAnalysisDraft ? value => { if (!valid(token)) return false; const accepted = onAnalysisDraft(value); if (accepted !== false) close(); return accepted; } : undefined}
-          fileActions={item => <div className={styles.actions}><button disabled={busy} onClick={() => void show(item)}>预览</button>
-            <button disabled={busy} onClick={() => void download(item, record.plan.result_id)}>浏览器下载</button></div>} />
+          rid={record.plan.result_id} inputId={record.plan.input_id} files={record.bundle?.files ?? []} active={active && open}
+          fileActions={item => <div className={styles.actions}><button disabled={busy} onClick={() => void show(item)}>预览</button></div>} />
         {changes && <><strong>代码变化 · {changes.total}</strong><ul>{changes.changes.map(row => <li key={row.path}>{({ added: '新增', deleted: '删除', modified: '修改' } as Record<string, string>)[row.kind]} · {row.path}{!row.portable && '（Windows 路径不兼容）'}</li>)}</ul>
           {changes.next_offset !== null && <button disabled={busy} onClick={() => { setBusy(true); void api.changes(sid, binding.binding_id, record.plan.result_id, changes.next_offset!).then(next => { if (valid(token)) setChanges({ ...next, changes: [...changes.changes, ...next.changes] }); }).catch(e => { if (valid(token)) setError(cloudError(e)); }).finally(() => { if (valid(token)) setBusy(false); }); }}>加载更多代码变化</button>}</>}
       </>}

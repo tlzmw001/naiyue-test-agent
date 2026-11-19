@@ -157,3 +157,56 @@ def test_two_attachment_batches_queue_local_capture(tmp_path, monkeypatch):
             release.set()
             await manager.close();store.close()
     asyncio.run(scenario())
+
+
+def test_attachment_cancel_retries_remote_release_after_connection_failure(tmp_path):
+    from test_manual_task_commands import prepared
+    from naiyue_test_agent.storage.cloud_attachments import AttachmentRepository
+
+    async def scenario():
+        manager,domain,store,sid,remote,binding=await prepared(tmp_path)
+        try:
+            bid=binding['binding_id'];aid=str(uuid4());repo=AttachmentRepository(domain.repo.database)
+            repo.reserve(bid,sid,tmp_path,dict(attachment_id=aid,paths=['report.txt'],display_name='report'))
+            repo.update(bid,sid,aid,phase='failed',input_id='c'*64)
+            attempts=[]
+            def release(input_id,operation_id):
+                attempts.append((input_id,operation_id))
+                if len(attempts)==1:raise CloudError('cloud_connection_failed',503)
+            remote.release_operation_input=release
+            with pytest.raises(CloudError,match='cloud_connection_failed'):
+                await manager.attachments.action(domain,bid,sid,aid,'cancel')
+            assert (await manager.attachments.list(domain,bid,sid))[0]['phase']=='cancelling'
+            assert (await manager.attachments.action(domain,bid,sid,aid,'cancel'))['phase']=='cancelled'
+            assert (await manager.attachments.action(domain,bid,sid,aid,'cancel'))['phase']=='cancelled'
+            assert attempts==[('c'*64,aid)]*2
+        finally:await manager.close();store.close()
+    asyncio.run(scenario())
+
+
+def test_forget_releases_unfinished_attachment_use_before_retiring_binding(tmp_path):
+    from test_manual_task_commands import prepared
+    from naiyue_test_agent.storage.cloud_attachments import AttachmentRepository
+
+    async def scenario():
+        manager,domain,store,sid,remote,binding=await prepared(tmp_path)
+        try:
+            bid=binding['binding_id'];aid=str(uuid4());repo=AttachmentRepository(domain.repo.database)
+            repo.reserve(bid,sid,tmp_path,dict(attachment_id=aid,paths=['report.txt'],display_name='report'))
+            repo.update(bid,sid,aid,phase='failed',input_id='c'*64)
+            calls=[]
+            def release(input_id,operation_id):
+                calls.append((input_id,operation_id))
+                if len(calls)==1:raise CloudError('cloud_connection_failed',503)
+            remote.release_operation_input=release
+            request=dict(command_id=str(uuid4()),local_session_id=sid,
+                expected_binding_revision=binding['revision'],acknowledge_unmanaged=True)
+            with pytest.raises(CloudError,match='cloud_connection_failed'):
+                await manager.forget(domain,bid,request)
+            assert domain.repo.binding(bid,sid)['retained']
+            assert repo.read(bid,sid,aid)['phase']=='cancelling'
+            value=await manager.forget(domain,bid,request)
+            assert not value['retained']
+            assert calls==[('c'*64,aid)]*2
+        finally:await manager.close();store.close()
+    asyncio.run(scenario())

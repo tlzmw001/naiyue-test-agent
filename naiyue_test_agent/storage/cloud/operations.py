@@ -17,7 +17,8 @@ def backup_database(database,destination,*,guard_format=False):
         target=sqlite3.connect(destination)
         try:
             database.connection.backup(target)
-            if guard_format:target.execute('PRAGMA user_version=2')
+            if guard_format and target.execute('PRAGMA user_version').fetchone()[0]<2:
+                target.execute('PRAGMA user_version=2')
             target.commit()
         finally:target.close()
     with os.fdopen(open_store_file(destination),'r+b') as stream:os.fsync(stream.fileno())
@@ -43,7 +44,8 @@ class OperationRepository:
     def __init__(self,database):self.database=database
 
     def enable_guards(self):
-        with self.database.transaction(write=True) as db:db.execute('PRAGMA user_version=2')
+        with self.database.transaction(write=True) as db:
+            if db.execute('PRAGMA user_version').fetchone()[0]<2:db.execute('PRAGMA user_version=2')
 
     def snapshot(self,*,quiet=True):
         with self.database.transaction() as db:
@@ -93,6 +95,11 @@ class OperationRepository:
                 for name,expected in (('manifest.json',package.manifest.canonical),('selection.json',package.selection.canonical)):
                     content_identity(directory/name,hashlib.sha256(expected).hexdigest(),len(expected))
                 package=package.model_copy(update={'archive_identity':identity});changes[key]=package.model_dump(mode='json',by_alias=True)
+                state_key='input-state:'+package.input_id
+                if state:=snapshot['meta'].get(state_key):
+                    if state['state']!='ready':raise CloudError('restore_input_retirement_pending')
+                    from naiyue_test_agent.contracts.cloud_events import digest
+                    changes[state_key]=state|dict(package_digest=digest(changes[key]))
                 target=directory/'input.json';temporary=directory/'input.restore-next';fd=open_store_file(temporary)
                 with os.fdopen(fd,'w') as stream:
                     stream.write(package.model_dump_json(by_alias=True));stream.truncate();stream.flush();os.fsync(stream.fileno())

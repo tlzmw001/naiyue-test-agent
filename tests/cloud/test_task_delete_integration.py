@@ -28,6 +28,12 @@ def test_real_owner_to_local_binding_deletion_and_parent_guard(tmp_path,monkeypa
             saved=t.domain.repo.operation(op['command_id'],t.sid)
             assert saved['phase']=='succeeded' and not t.domain.repo.binding(t.bid,t.sid)['retained']
             assert t.state.posts.count('/api/cloud/v1/tasks/'+t.binding['task_id']+'/delete')==1
+            summary=await t.manager.commands.reconcile(t.domain,op['command_id'],t.sid)
+            assert summary['phase']=='succeeded'
+            assert summary['steps']['primary']['receipt']['result']['input_cleanup']['state']=='completed'
+            retried=await t.manager.commands.reconcile(t.domain,op['command_id'],t.sid,cleanup_retry=True)
+            assert retried['phase']=='succeeded'
+            assert t.state.posts.count('/api/cloud/v1/commands/'+op['command_id']+'/reconcile')==1
             assert len([c for c in t.backend.calls if c[0]=='kill'])==1
             assert not t.runtime._histories
             create_id=t.binding['create_command_id']
@@ -95,4 +101,50 @@ def test_parent_can_be_deleted_immediately_after_receipt_without_late_refresh(tm
             await t.manager.drain()
             assert t.store.database.connection.execute('SELECT COUNT(*) FROM naiyue_cloud_bindings').fetchone()[0]==0
             assert not t.manager.commands.flights
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('release_interrupted',[False,True])
+def test_full_delete_settles_original_pending_attachment_use(tmp_path,monkeypatch,release_interrupted):
+    from naiyue_test_agent.agent_runtime.async_utils import run_blocking
+    from naiyue_test_agent.cloud_files.client import CloudClient
+    from naiyue_test_agent.contracts.cloud_local_tasks import command_summary
+    from naiyue_test_agent.storage.cloud_attachments import AttachmentRepository
+
+    async def run():
+        async with pair(tmp_path,monkeypatch) as t:
+            aid=uid();ident=t.binding['input_id']
+            repo=AttachmentRepository(t.domain.repo.database)
+            repo.reserve(t.bid,t.sid,tmp_path,dict(attachment_id=aid,display_name='report',paths=['report.txt']))
+            repo.update(t.bid,t.sid,aid,phase='failed',input_id=ident)
+            async with t.manager.connection(t.binding) as client:
+                use=await run_blocking(client.acquire_input_use,ident,aid)
+            assert t.runtime.inputs.uses.get(use)['state']=='held'
+            release=CloudClient.release_operation_input
+            attempts=[]
+            def interrupted(client,ident,operation_id):
+                attempts.append(operation_id)
+                if release_interrupted and len(attempts)==1:raise CloudError('cloud_connection_failed',503)
+                return release(client,ident,operation_id)
+            monkeypatch.setattr(CloudClient,'release_operation_input',interrupted)
+            preview=await t.manager.commands.delete_preview(t.domain,t.bid,t.sid)
+            request=dict(command_id=uid(),local_session_id=t.sid,expected_binding_revision=t.binding['revision'],
+                expected_revision=preview['revision'],expected_generation=preview['generation'],
+                preview_digest=preview['preview_digest'],acknowledge_unknown=False)
+            await t.manager.commands.submit(t.domain,t.bid,'delete',request);await t.manager.drain()
+            cid=request['command_id']
+            saved=t.domain.repo.operation(cid,t.sid)
+            assert saved['phase']=='succeeded'
+            if release_interrupted:
+                assert command_summary(saved)['attachment_release_pending'] is True
+                assert t.runtime.inputs.uses.get(use)['state']=='held'
+                with pytest.raises(SessionPersistenceError,match='session_cloud_attachment_release_pending'):
+                    t.store.runs.delete(t.sid,())
+                await t.manager.commands.reconcile(t.domain,cid,t.sid,cleanup_retry=True)
+                saved=t.domain.repo.operation(cid,t.sid)
+            assert t.runtime.inputs.uses.get(use)['state']=='released'
+            assert not command_summary(saved).get('attachment_release_pending')
+            assert saved['steps']['primary']['receipt']['result']['input_cleanup']['candidates'][0]['state']=='reclaimed'
+            assert attempts==([aid,aid] if release_interrupted else [aid])
+            t.store.runs.delete(t.sid,())
     asyncio.run(run())

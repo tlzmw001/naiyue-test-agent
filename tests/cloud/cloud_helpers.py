@@ -24,5 +24,5 @@ def task_record(project_id, **changes):
 
 def owner_headers(runtime):
     return {'Authorization': 'Bearer ' + runtime.settings.owner_token.get_secret_value(),
-        'Origin': runtime.settings.origin, 'X-Cloud-Protocol': '1',
+        'Origin': runtime.settings.origin, 'X-Cloud-Protocol': '2',
         'X-Service-Instance': runtime.instance_id}

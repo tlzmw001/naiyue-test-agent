@@ -70,7 +70,12 @@ def test_task_attachment_download_requires_accepted_command_and_own_token(tmp_pa
             raw=(captured.directory/'archive').read_bytes()
             assert (await c.put(url+'/bytes',content=raw,headers={'Content-Type':'application/octet-stream','Upload-Offset':'0','X-Content-SHA256':captured.archive_sha256})).status_code==200
             assert (await c.post(url+'/commit',json={})).status_code==200
-            response=await c.post('/api/cloud/v1/tasks/'+tid+'/attachments',json=dict(attachment_id=aid,input_id=package.input_id,display_name='files'))
+            use_id=str(uuid4())
+            held=await c.post('/api/cloud/v1/input-uses',json=dict(command_id=use_id,input_id=package.input_id,
+                purpose='associate',origin_operation_id=aid))
+            assert held.status_code==200
+            response=await c.post('/api/cloud/v1/tasks/'+tid+'/attachments',
+                headers={'X-Input-Use-Id':use_id},json=dict(attachment_id=aid,input_id=package.input_id,display_name='files'))
             assert response.status_code==201,response.text
         attachment=attach(r,tid,dict(attachment_id=aid,input_id=package.input_id,display_name='files'))
         token=r.credentials.issue(tid,scopes=['inputs:read']).token.get_secret_value()

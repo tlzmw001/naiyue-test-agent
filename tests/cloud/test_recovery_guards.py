@@ -39,6 +39,6 @@ def test_guard_capable_format_is_explicit_and_reopens_without_changing_task_sche
     cloud=config(tmp_path)
     with open_cloud_runtime(cloud) as r:
         OperationRepository(r.database).enable_guards();r.owner.enable_guards()
-        assert r.database.connection.execute('PRAGMA user_version').fetchone()[0]==2
-    assert json.loads((cloud.data_dir/'cloud-root.json').read_text())['schema']==2
-    with open_cloud_runtime(cloud) as r:assert r.owner.record['schema']==2
+        assert r.database.connection.execute('PRAGMA user_version').fetchone()[0]==3
+    assert json.loads((cloud.data_dir/'cloud-root.json').read_text())['schema']==3
+    with open_cloud_runtime(cloud) as r:assert r.owner.record['schema']==3

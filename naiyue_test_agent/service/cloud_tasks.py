@@ -192,6 +192,15 @@ async def task(request:Request,binding_id:UUIDText,local_project_id:UUIDText,loc
     return await manager.read(local,binding_id,local_session_id)
 
 
+@router.get('/cloud-deletions')
+async def deletions(request:Request,local_project_id:UUIDText,local_session_id:SessionId,
+                    offset:int=Query(default=0,ge=0,le=1000000),limit:int=Query(default=20,ge=1,le=100)):
+    access(request);_,local=await domain(request,local_project_id,local_session_id)
+    with local.owner.operation():
+        operations=await run_blocking(local.repo.commands.deletions,local_session_id,offset=offset,limit=limit)
+        return [command_summary(op) for op in operations]
+
+
 @router.get('/cloud-operations/{command_id}')
 async def operation(request:Request,command_id:UUIDText,local_project_id:UUIDText,local_session_id:SessionId):
     manager=access(request);_,local=await domain(request,local_project_id,local_session_id)
@@ -201,10 +210,11 @@ async def operation(request:Request,command_id:UUIDText,local_project_id:UUIDTex
 @router.post('/cloud-operations/{command_id}/{action}')
 async def operate(request:Request,command_id:UUIDText,action:str,local_project_id:UUIDText,local_session_id:SessionId):
     manager=access(request)
-    if action not in ('retry','cancel','reconcile'):raise CloudError('endpoint_not_found',404)
+    if action not in ('retry','cancel','reconcile','retry-input-cleanup'):raise CloudError('endpoint_not_found',404)
     await body(request,CloudRecord)
     _,local=await domain(request,local_project_id,local_session_id)
-    if action=='reconcile':return command_response(request,await manager.commands.reconcile(local,command_id,local_session_id))
+    if action in ('reconcile','retry-input-cleanup'):
+        return command_response(request,await manager.commands.reconcile(local,command_id,local_session_id,cleanup_retry=action=='retry-input-cleanup'))
     result=await (manager.retry(local,command_id,local_session_id) if action=='retry'
         else manager.cancel(local,command_id,local_session_id))
     return command_response(request,result,status_code=202)
@@ -234,6 +244,3 @@ from .cloud_source_routes import register as register_sources
 register_sources(router,access,domain,body)
 from .cloud_network_routes import register as register_networks
 register_networks(router,access,body)
-
-from .cloud_downloads import register as register_downloads
-register_downloads(router,access,domain)

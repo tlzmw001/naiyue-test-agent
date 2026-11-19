@@ -39,8 +39,8 @@ export function createConversationSubmit(context:Context) {
     if (imageInputs.reading) return;
     if (attached.length && !frozen && !imageInputs.supports(model)) { setNotice('当前模型不支持或尚未确认支持图片，请切换模型或移除图片。'); return; }
     const live = currentRun.current;
-    if (!frozen && materials.length && live?.status === 'running' && !live.done) {
-      setNotice('本轮正在执行，分析要求和材料已保留；结束后再发送下一轮。'); return;
+    if (materials.length) {
+      setNotice('旧分析材料已停用。请移除材料标签，保存云端产物后在主会话继续处理。'); return;
     }
     if (!frozen && stoppedMode.current[key] && live?.status === 'running') {
       if (attached.length) { setNotice('上一轮正在停止，图片已保留在输入框。'); return; }
@@ -49,7 +49,7 @@ export function createConversationSubmit(context:Context) {
       return;
     }
     const combined = frozen ? frozen.text : stoppedMode.current[key] ? [...queued, text].filter(Boolean).join('\n\n') : text;
-    if (!combined.trim() && !attached.length && !materials.length) return;
+    if (!combined.trim() && !attached.length) return;
     if (combined.length > 32768) { setNotice('待发送内容过长，请编辑后分批提交。'); return; }
     busySend.current = true;
     setSubmitting(true);
@@ -69,18 +69,17 @@ export function createConversationSubmit(context:Context) {
       }
       const configured = await creation.configure(sid);
       if (configured) setSession(previous => previous?.session_id === sid ? { ...previous, ...configured } : previous);
-      if ((attached.length || materials.length) && !request) request = imageInputs.freeze({ requestId: crypto.randomUUID(), sessionId: sid,
+      if (attached.length && !request) request = imageInputs.freeze({ requestId: crypto.randomUUID(), sessionId: sid,
         kind: live?.status === 'running' && !live.done ? followUp ? 'follow_up' : 'steering' : 'message',
         runId: live?.status === 'running' && !live.done ? live.run_id : undefined,
-        text: combined, draftText: text, images: attached, materialRefs: materials.map(item => ({ ...item })), revision: session?.conversation_revision });
+        text: combined, draftText: text, images: attached, revision: session?.conversation_revision });
       if (request ? request.kind !== 'message' : live?.status === 'running' && !live.done) {
         if (request && request.kind !== 'message') await api.control(request.runId!, request.kind, request.text, 'root', undefined, undefined, wireImages(request.images), [...new Set(request.images.flatMap(image => image.pendingId ? [image.pendingId] : []))], request.requestId);
         else await api.control(live!.run_id, followUp ? 'follow_up' : 'steering', combined);
         setLastSubmission({ session_id: sid });
         setNotice(followUp ? 'Follow-up 已排队，将在自然结束后处理。' : '补充消息已排队。');
       } else {
-        const started = materials.length ? await api.start(sid, combined, request!.requestId, request!.revision, wireImages(attached),
-          [...new Set(attached.flatMap(image => image.pendingId ? [image.pendingId] : []))], materials.map(item => item.material_id)) : attached.length ? await api.start(sid, combined, request!.requestId, request!.revision, wireImages(attached), [...new Set(attached.flatMap(image => image.pendingId ? [image.pendingId] : []))]) : await api.start(sid, combined, undefined, session?.conversation_revision);
+        const started = attached.length ? await api.start(sid, combined, request!.requestId, request!.revision, wireImages(attached), [...new Set(attached.flatMap(image => image.pendingId ? [image.pendingId] : []))]) : await api.start(sid, combined, undefined, session?.conversation_revision);
         setLastSubmission({ session_id: sid });
         if (started.run_id) {
           const value = await api.run(started.run_id);
@@ -94,10 +93,6 @@ export function createConversationSubmit(context:Context) {
       if (request) imageInputs.settle(sid,request.requestId);
       const sent = new Set(attached.map(image => image.client_id));
       imageInputs.write((imageInputs.ref.current[sid] ?? []).filter(image => !sent.has(image.client_id)), sid);
-      if (materials.length) {
-        const sentMaterials = new Set(materials.map(item => item.material_id));
-        draftState.writeMaterials((draftState.materialRef.current[sid] ?? []).filter(item => !sentMaterials.has(item.material_id)), sid);
-      }
       void imageInputs.refreshPending();
       if (draftRef.current[sid] === text) writeDraft('', sid);
       void refreshSessions().catch(error=>{

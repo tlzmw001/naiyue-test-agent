@@ -198,7 +198,7 @@ export default function App({ api: supplied, active = true, selection, scopeName
     {active && sidebarOpen && <ActivitySidebar tab={sidebarTab} select={tab => { setSidebarTab(tab); if (tab === 'tasks') background.dismissNotice(); }}
       activeCount={background.activeCount} close={closeSidebar}>{ {
       cloud: cloudApi ? <CloudTasks key={`${api.scopeId}:${chat.session?.session_id ?? ''}`} api={cloudApi} sessionId={chat.session?.session_id}
-        active={active && sidebarTab === 'cloud'} onAnalysisDraft={chat.addAnalysisDraft} /> : null,
+        active={active && sidebarTab === 'cloud'} /> : null,
       tasks: <BackgroundTasks state={background} />,
       context: chat.session ? <ContextPanel value={context.value} loading={context.loading} error={context.error}
         retry={context.retry} usageContent={<SessionUsage api={api} sessionId={chat.session.session_id} run={chat.run} />}

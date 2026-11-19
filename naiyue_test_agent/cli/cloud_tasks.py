@@ -1,4 +1,5 @@
 """Small operator surface over B's existing owner APIs, with explicit retry identity."""
+import logging
 import os
 from pathlib import Path
 from urllib.parse import quote
@@ -8,13 +9,15 @@ from pydantic import TypeAdapter
 from naiyue_test_agent.cloud_files.client import CloudClient,CloudConnection
 from naiyue_test_agent.contracts.cloud_json import parse_object
 from naiyue_test_agent.contracts.cloud_tasks import CloudError,CreateProject,TaskId,UUIDText
-from naiyue_test_agent.contracts.cloud_inputs import CreateTask
+from naiyue_test_agent.contracts.cloud_inputs import CreateTask,VerifyLegacyInputCutover
 from naiyue_test_agent.contracts.cloud_lifecycle import EnvironmentCommand
 from naiyue_test_agent.contracts.cloud_runner import StartRun,TaskControl
 from naiyue_test_agent.contracts.cloud_artifacts import CaptureRequest
 from naiyue_test_agent.storage.files import check_store_directory,open_store_readonly
 from naiyue_test_agent.cloud_files.configuration import read_settings
 from naiyue_test_agent.cloud_files.connections import read_connection
+
+logger=logging.getLogger(__name__)
 
 
 def register(commands):
@@ -29,6 +32,9 @@ def register(commands):
             if name=='artifact' and action in ('show','download'):p.add_argument('artifact_id')
             if action in ('create','start','stop','recover','refresh','send','capture'):p.add_argument('--request',type=Path,required=True)
             if action=='download':p.add_argument('--output',type=Path,required=True)
+    p=commands.add_parser('verify-legacy-inputs',help='Record completed legacy source and recovery checks')
+    p.add_argument('--settings',type=Path,required=True);p.add_argument('--profile')
+    p.add_argument('--request',type=Path,required=True)
     p=commands.add_parser('history');p.add_argument('task_id');p.add_argument('--settings',type=Path,required=True)
     p.add_argument('--profile')
     p.add_argument('--after-seq',type=int,default=0);p.add_argument('--epoch');p.add_argument('--limit',type=int)
@@ -47,7 +53,7 @@ def execute(args):
     # Validate identifiers and request content before opening the authenticated client.
     for field,model in (('task_id',TaskId),('command_id',UUIDText),('artifact_id',UUIDText)):
         if hasattr(args,field):TypeAdapter(model).validate_python(getattr(args,field))
-    models={('project','create'):CreateProject,('task','create'):CreateTask,('run','send'):StartRun,
+    models={('verify-legacy-inputs',None):VerifyLegacyInputCutover,('project','create'):CreateProject,('task','create'):CreateTask,('run','send'):StartRun,
         ('artifact','capture'):CaptureRequest,**{('control',a):TaskControl for a in ('stop','recover')},**{('task',a):EnvironmentCommand for a in ('start','stop','refresh')}}
     action=getattr(args,'action',None);body=None
     if model:=models.get((args.command,action)):
@@ -72,9 +78,22 @@ def execute(args):
         if value is not None:TypeAdapter(Identity).validate_python(value)
     client=CloudClient(read_connection(args.settings,getattr(args,'profile',None)))
     try:
+        if args.command=='verify-legacy-inputs':return client.request('POST','/input-legacy-cutover',json=body)
         if args.command=='project':return client.request('POST','/projects',json=body) if action=='create' else client.request('GET','/projects')
         if args.command=='command':return client.request('GET','/commands/'+args.command_id)
-        if args.command=='task' and action=='create':return client.request('POST','/tasks',json=body)
+        if args.command=='task' and action=='create':
+            if body['input_id'] is None:return client.request('POST','/tasks',json=body)
+            use_id=client.acquire_input_use(body['input_id'],body['command_id'])
+            try:return client.request('POST','/tasks',json=body,headers={'X-Input-Use-Id':use_id})
+            except CloudError as error:
+                # Only explicit create rejections prove no task was accepted.
+                if error.code in ('template_unavailable','cloud_network_not_configured','project_not_found',
+                        'input_not_ready','template_files_update_required','command_capacity',
+                        'environment_retained_capacity','command_id_conflict') and 400<=error.status<500:
+                    try:client.release_input_use(use_id)
+                    except CloudError as release_error:
+                        logger.warning('cloud_cli_input_release_pending code=%s',release_error.code)
+                raise
         path='/tasks/'+args.task_id
         if args.command in ('snapshot','usage'):
             params={}

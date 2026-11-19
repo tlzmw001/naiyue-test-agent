@@ -23,12 +23,14 @@ logger=logging.getLogger(__name__)
 class CloudInputs:
     def __init__(self,runtime):
         self.runtime=runtime;self.repository=InputRepository(runtime.database)
+        from naiyue_test_agent.storage.cloud.input_lifecycle import InputUses
+        self.uses=InputUses(runtime.database)
         self.root=runtime.settings.data_dir;self.limits=runtime.settings.input_limits;self.busy=set()
-        self.jobs=set();self.uploads=set();self.downloads=set();self.closing=False
+        self.jobs=set();self.uploads=set();self.downloads=set();self.readers={};self.closing=False
 
-    async def open_download(self,ident,*,task_id=None):
+    async def open_download(self,ident,*,task_id=None,use_id=None):
         from .input_download import open_download
-        return await open_download(self,ident,task_id=task_id)
+        return await open_download(self,ident,task_id=task_id,use_id=use_id)
 
     async def perform(self,ident,action):
         if self.closing:raise CloudError('cloud_closing',503)
@@ -63,6 +65,24 @@ class CloudInputs:
         self.busy.add(key)
         try:yield
         finally:self.busy.remove(key)
+
+    @contextmanager
+    def reading(self,ident):
+        key='input:'+TypeAdapter(ContentId).validate_python(ident)
+        if self.closing:raise CloudError('cloud_closing',503)
+        count=self.readers.get(key,0)
+        if key in self.busy and not count:raise CloudError('transfer_busy')
+        self.busy.add(key);self.readers[key]=count+1
+        try:yield
+        finally:
+            self.readers[key]-=1
+            if not self.readers[key]:
+                del self.readers[key]
+                self.busy.remove(key)
+
+    async def read_package(self,ident,action):
+        with self.reading(ident):
+            return await cloud_work(self.runtime,action,drain_cancel=True)
 
     def staging(self,ident):
         ident=TypeAdapter(UUIDText).validate_python(ident)
@@ -116,7 +136,7 @@ class CloudInputs:
         # files remain service-owned; hot reads do not hash a large archive again.
         return package
 
-    def create(self,value):
+    def create(self,value,*,use_id=None):
         request=CreateTransfer.model_validate(value)
         fingerprint=digest({'operation':'input:transfer','instance_id':self.runtime.instance_id,'request':request.model_dump(exclude={'command_id'})})
         try:old=self.runtime.registry.get_command(request.command_id)
@@ -136,11 +156,13 @@ class CloudInputs:
             chunk_bytes=self.limits.chunk_bytes,updated_at=now)
         receipt=CommandReceipt(command_id=request.command_id,resource_id=transfer.transfer_id,operation='input:transfer',
             request_digest=fingerprint,status='succeeded',http_status=201,result={'transfer':transfer.model_dump()},created_at=now,updated_at=now)
-        return self.repository.create(transfer,receipt,self.limits,self.runtime.settings.max_receipts)
+        return self.repository.create(transfer,receipt,self.limits,self.runtime.settings.max_receipts,use_id=use_id)
 
     def commit(self,ident):
         transfer=self.transfer(ident)
-        if transfer.state=='committed':return self.get_input(transfer.input_id)
+        if transfer.state=='committed':
+            self.repository.validate_committed_transfer(transfer)
+            return self.get_input(transfer.input_id)
         if transfer.state!='uploaded':raise CloudError('transfer_not_uploaded')
         staging=self.staging(ident);archive=staging/'archive'
         target=self.root/'inputs'/transfer.input_id
@@ -190,7 +212,7 @@ class CloudInputs:
         path.rmdir();sync_store_directory(path.parent)
         return self.repository.save(transfer,transfer.model_copy(update={'state':'cancelled'}))
 
-    def create_task(self,value):
+    def create_task(self,value,*,use_id=None):
         request=CreateTask.model_validate(value)
         fingerprint=digest({'operation':'task:create','instance_id':self.runtime.instance_id,'request':request.model_dump(exclude={'command_id'})})
         try:old=self.runtime.registry.get_command(request.command_id)
@@ -214,4 +236,4 @@ class CloudInputs:
             lifecycle='creating',created_at=now,updated_at=now,template_snapshot=template,template_digest=template.fingerprint)
         receipt=CommandReceipt(command_id=request.command_id,resource_id=task.task_id,operation='task:create',request_digest=fingerprint,
             status='succeeded',http_status=201,result={'task':task.model_dump()},created_at=now,updated_at=now)
-        return self.repository.create_task(task,receipt,self.runtime.settings.max_receipts,self.runtime.settings.max_retained_environments)
+        return self.repository.create_task(task,receipt,self.runtime.settings.max_receipts,self.runtime.settings.max_retained_environments,use_id=use_id)

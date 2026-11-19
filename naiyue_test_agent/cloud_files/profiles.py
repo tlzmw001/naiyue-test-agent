@@ -141,7 +141,8 @@ class ConnectedProfile:
         expected=expected_instance or self.client.settings.instance_id
         if raw.get('instance_id')!=expected:raise CloudError('cloud_instance_mismatch',409)
         capabilities=raw.get('capabilities')
-        if (type(raw.get('protocol')) is not int or raw['protocol']!=1 or not isinstance(capabilities,list)
+        from naiyue_test_agent.contracts.cloud_versions import OWNER_PROTOCOL
+        if (type(raw.get('protocol')) is not int or raw['protocol']!=OWNER_PROTOCOL or not isinstance(capabilities,list)
                 or not all(isinstance(v,str) for v in capabilities) or not REQUIRED.issubset(capabilities)):
             raise CloudError('cloud_protocol_incompatible',409)
         self.handshake=raw

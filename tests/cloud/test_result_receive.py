@@ -261,7 +261,7 @@ def test_corrupt_bytes_with_matching_headers_never_become_materials(tmp_path):
             first=await manager.receives.submit(domain,binding['binding_id'],rid,dict(command_id=str(uuid4()),local_session_id=sid,artifact_ids=[]))
             await manager.drain();record=await manager.receives.read(domain,first.receive_id,sid)
             assert record.phase=='failed' and not domain.materials.has_materials(sid)
-            with pytest.raises(CloudError):await manager.receives.analysis(domain,first.receive_id,sid)
+            assert domain.materials.repo.materials(first.receive_id,sid,domain.project_id)==[]
         finally:await manager.close();remote.http.close();store.close()
     asyncio.run(run())
 
@@ -285,8 +285,9 @@ def test_http_receive_state_projection_analysis_and_offline_material(monkeypatch
                 assert status.json()['input_package'] is None and status.json()['result'] is None
                 assert (await t.client.get(path,params=t.query|{'local_session_id':t.other_sid},headers=t.headers)).status_code==404
                 draft=await t.client.post(path+'/analysis-draft',params=t.query,headers=t.headers,json={})
-                assert draft.status_code==200,draft.text
-                ref=next(v for v in draft.json()['material_refs'] if v['role']=='artifact')
+                assert draft.status_code==410,draft.text
+                record=await manager.receives.read(domain,body['command_id'],sid)
+                ref={'material_id':next(v.material_id for v in record.files if v.role=='artifact')}
                 remote.request=lambda *a,**kw:(_ for _ in ()).throw(AssertionError('unexpected owner access'))
                 read=await t.client.get(t.base+'/cloud-materials/'+ref['material_id']+'/read',params=t.query|{'offset':2,'limit':1},headers=t.headers)
                 assert read.status_code==200 and read.json()['text']=='第二行\n'
@@ -349,7 +350,7 @@ def test_report_only_receive_omits_code_transport(tmp_path):
     asyncio.run(run())
 
 
-def test_empty_task_receives_selected_files_and_prepares_analysis_without_source(tmp_path):
+def test_empty_task_receives_selected_files_without_source(tmp_path):
     from test_manual_task_preparation import setup
     async def scenario():
         manager,domain,store,project,sid,remote=setup(tmp_path)
@@ -375,8 +376,8 @@ def test_empty_task_receives_selected_files_and_prepares_analysis_without_source
             rec=await manager.receives.submit(domain,binding['binding_id'],rid,dict(command_id=str(uuid4()),local_session_id=sid,include_code=False,artifact_ids=[fid]))
             await manager.drain();rec=await manager.receives.read(domain,rec.receive_id,sid)
             assert rec.phase=='available' and rec.input_package is None and rec.source_handle is None
-            draft=await manager.receives.analysis(domain,rec.receive_id,sid)
-            assert len(draft.material_refs)==1 and draft.material_refs[0].input_id is None
+            refs=domain.materials.repo.materials(rec.receive_id,sid,domain.project_id)
+            assert len(refs)==1 and refs[0].input_id is None
             assert domain.materials.files.blob(artifact['sha256']).read_bytes()==data
             from naiyue_test_agent.application.projects.locations import directory_facts,directory_identity
             domain.authority=object()  # Files delivery authorizes the observed destination, not an execution root.

@@ -25,7 +25,9 @@ def purge(connection,sid):connection.execute('DELETE FROM naiyue_cloud_deliverie
 def check_deletion(connection,sid=None):
     if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='naiyue_cloud_deliveries'").fetchone():return
     if connection.execute("""SELECT 1 FROM naiyue_cloud_deliveries
-            WHERE json_extract(body_json,'$.phase') IN ('preparing','executing')
+            WHERE (json_extract(body_json,'$.phase')='executing' OR (
+                json_extract(body_json,'$.action')='files' AND
+                json_extract(body_json,'$.phase') IN ('waiting_receive','preparing')))
             AND (? IS NULL OR session_id=?) LIMIT 1""",(sid,sid)).fetchone():
         raise SessionPersistenceError('session_cloud_delivery_active')
 
@@ -40,6 +42,21 @@ class DeliveryRepository:
 
     def read(self,cid,sid):
         with self.database.transaction(write=False,error_code='cloud_delivery_storage_failed') as c:return self._read(c,cid,sid)
+
+    def legacy_history(self,sid,*,offset,limit):
+        with self.database.transaction(write=False,error_code='cloud_delivery_storage_failed') as c:
+            rows=c.execute("""SELECT body_json,metadata_json FROM naiyue_cloud_deliveries
+                WHERE session_id=? AND json_extract(body_json,'$.action')!='files'
+                ORDER BY rowid DESC LIMIT ? OFFSET ?""",(sid,limit,offset))
+            return [(DeliveryRecord.model_validate_json(record),json.loads(metadata)) for record,metadata in rows]
+
+    def legacy_recovery_roots(self,project_id):
+        with self.database.transaction(write=False,error_code='cloud_delivery_storage_failed') as c:
+            rows=c.execute("""SELECT body_json,metadata_json FROM naiyue_cloud_deliveries WHERE project_id=?
+                AND json_extract(body_json,'$.action')!='files'
+                AND json_extract(body_json,'$.phase') IN ('executing','partial','unknown')""",(project_id,))
+            return [(DeliveryRecord.model_validate_json(record),json.loads(meta).get('root_identity'))
+                    for record,meta in rows]
 
     def reserve(self,request,record,metadata,maximum):
         fingerprint=digest(request.model_dump(mode='json'))

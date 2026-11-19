@@ -6,14 +6,15 @@ from naiyue_test_agent.contracts.cloud_lifecycle import EnvironmentCommand
 from naiyue_test_agent.contracts.cloud_local_tasks import checked_task
 
 
-def receipt(client,path,body,operation,fingerprint,*,dispatch=True,reconcile=False):
+def receipt(client,path,body,operation,fingerprint,*,dispatch=True,reconcile=False,use_id=None):
     found=True
     try:raw=client.request('GET','/commands/'+body['command_id'])
     except CloudError as error:
         if error.code!='command_not_found' or error.status!=404:raise
         if not dispatch:raise CloudError('cloud_preparation_unknown') from None
         found=False
-        raw=client.request('POST',path,json=body)
+        kwargs={'headers':{'X-Input-Use-Id':use_id}} if use_id else {}
+        raw=client.request('POST',path,json=body,**kwargs)
         raw=raw.get('receipt',raw)
     for can_reconcile in (found and reconcile,False):
         try:value=CommandReceipt.model_validate(raw)
@@ -55,10 +56,15 @@ def prepare(domain,client,command_id,session_id):
     if project_receipt.resource_id!=project.project_id:raise CloudError('cloud_project_invalid',502)
     steps['project']['receipt']=project_receipt.model_dump(mode='json')
     result=save(phase='upload',steps=steps,binding={'cloud_project_id':project.project_id});binding=result['binding']
+    use_id=None
     if op['request'].get('source_handle'):
+        acquire=getattr(client,'acquire_input_use',None)
+        if acquire is not None:
+            use_id=acquire(binding['input_id'],steps['task']['command_id'])
         source=repo.source(op['request']['source_handle'],session_id)
         from pathlib import Path
-        uploaded=client.upload(Path(source['captured']['directory']))
+        options={'use_id':use_id} if use_id else {}
+        uploaded=client.upload(Path(source['captured']['directory']),**options)
         if uploaded.get('input_id')!=binding['input_id']:raise CloudError('cloud_input_identity_mismatch',502)
     # Cancellation and the first potentially side-effectful task dispatch are atomic.
     task_request=steps['task'].get('request') or dict(command_id=steps['task']['command_id'],project_id=project.project_id,
@@ -69,7 +75,7 @@ def prepare(domain,client,command_id,session_id):
     try:
         task_receipt=receipt(client,'/tasks',task_request,'task:create',digest({
             'operation':'task:create','instance_id':binding['instance_id'],
-            'request':{k:v for k,v in task_request.items() if k!='command_id'}}))
+            'request':{k:v for k,v in task_request.items() if k!='command_id'}}),use_id=use_id)
     except CloudError as error:
         # These owner admission failures occur before task/receipt commit. A
         # transport error, unexpected response or missing ACK is never proof.

@@ -72,6 +72,7 @@ class LocalTaskDomain:
 class ManualCloudTasks:
     def __init__(self,settings,*,book=None,connections=None):
         from naiyue_test_agent.cloud_files.connections import ConnectionBook
+        self.result_tool_flights={}
         self.settings=settings
         self.book=book if book is not None else (ConnectionBook.read(settings.connections_file).profile_book()
             if settings.connections_file else ProfileBook.read(settings.profiles_file))
@@ -155,7 +156,8 @@ class ManualCloudTasks:
                 try:
                     binding=await run_blocking(domain.repo.binding,op['binding_id'],op['local_session_id'])
                     async with self.connection(binding) as client:
-                        await run_blocking(prepare,domain,client,op['command_id'],op['local_session_id'])
+                        try:await run_blocking(prepare,domain,client,op['command_id'],op['local_session_id'])
+                        finally:await self._release_cancelled_input(domain,client,op)
                 except CloudError as error:
                     logger.warning('cloud_manual_preparation_rejected code=%s',error.code)
                     if error.code=='cloud_preparation_cancelled':return
@@ -186,13 +188,25 @@ class ManualCloudTasks:
                 return await run_blocking(domain.repo.operation,command_id,session_id)
             return op
 
+    async def _release_cancelled_input(self,domain,client,op):
+        release=getattr(client,'release_operation_input',None)
+        if release is None:return
+        current=await run_blocking(domain.repo.operation,op['command_id'],op['local_session_id'])
+        if current['cancel_requested'] and not current['may_have_task']:
+            binding=await run_blocking(domain.repo.binding,op['binding_id'],op['local_session_id'])
+            if binding.get('input_id'):
+                await run_blocking(release,binding['input_id'],op['steps']['task']['command_id'])
+
     async def cancel(self,domain,command_id,session_id):
         with self.operation(),domain.owner.operation():
             op=await run_blocking(domain.repo.operation,command_id,session_id)
             if op['kind']!='create':raise CloudError('cloud_command_cancel_unavailable')
-            result=await run_blocking(domain.repo.cancel,command_id,session_id,
-                settled=(domain.project_id,command_id) not in self.flights)
-            if (domain.project_id,command_id) not in self.flights:
+            key=(domain.project_id,command_id)
+            result=await run_blocking(domain.repo.cancel,command_id,session_id,settled=key not in self.flights)
+            if key not in self.flights:
+                if not op['may_have_task'] and result['binding'].get('input_id') and op['phase']!='reserved':
+                    async with self.connection(result['binding']|{'retained':True}) as client:
+                        await self._release_cancelled_input(domain,client,op)
                 await run_blocking(domain.repo.settle_cancel,command_id,session_id)
                 result['binding']=await run_blocking(domain.repo.binding,result['binding']['binding_id'],session_id)
             return result
@@ -202,18 +216,30 @@ class ManualCloudTasks:
 
     async def forget(self,domain,binding_id,value):
         from naiyue_test_agent.contracts.cloud_local_tasks import ManualForget
+        from naiyue_test_agent.storage.cloud_attachments import pending_input_releases
         request=ManualForget.model_validate(value).model_dump(mode='json')
         with self.operation(),domain.owner.operation():
+            sid=request['local_session_id']
             async def admit():
                 async with self.admission:
-                    binding=await run_blocking(domain.repo.binding,binding_id,request['local_session_id'])
+                    binding=await run_blocking(domain.repo.binding,binding_id,sid)
                     if binding['retained']:
+                        if binding['revision']!=request['expected_binding_revision']:raise CloudError('cloud_binding_conflict')
                         producers=(self.flights,self.slots,self.commands.flights,self.commands.slots,
-                            self.attachments.flights,self.receives.flights,self.deliveries.flights,self.queue.jobs)
+                            self.attachments.flights,self.receives.flights,self.deliveries.flights,self.result_tool_flights,self.queue.jobs)
                         if any(key[0]==domain.project_id for producer in producers for key in producer):
                             raise CloudError('cloud_local_work_active')
-                    return await run_blocking(domain.repo.commands.forget,binding_id,request['local_session_id'],request)
-            return await await_settled(asyncio.create_task(admit()))
+                        pending=pending_input_releases(binding)
+                        if pending:return None,pending
+                    return await run_blocking(domain.repo.commands.forget,binding_id,sid,request),{}
+            async def finish():
+                binding,pending=await admit()
+                if binding is not None:return binding
+                for aid in pending:await self.attachments.action(domain,binding_id,sid,aid,'cancel')
+                binding,pending=await admit()
+                if pending:raise CloudError('cloud_attachment_release_pending')
+                return binding
+            return await await_settled(asyncio.create_task(finish()))
 
     async def _read(self,domain,binding_id,session_id):
         with domain.owner.operation():
@@ -233,9 +259,9 @@ class ManualCloudTasks:
 
     async def drain(self):
         primary=None
-        while self.flights or self.commands.flights or self.receives.flights or self.deliveries.flights or self.attachments.flights:
+        while self.result_tool_flights or self.flights or self.commands.flights or self.receives.flights or self.deliveries.flights or self.attachments.flights:
             results=await await_settled(asyncio.gather(*tuple(self.flights.values()),
-                *(v[1] for v in self.commands.flights.values()),*tuple(self.receives.flights.values()),
+                *tuple(self.result_tool_flights.values()),*(v[1] for v in self.commands.flights.values()),*tuple(self.receives.flights.values()),
                 *tuple(self.deliveries.flights.values()),*tuple(self.attachments.flights.values()),return_exceptions=True))
             for result in results:
                 if isinstance(result,BaseException) and primary is None:primary=result
@@ -281,12 +307,6 @@ class ManualCloudTasks:
                     plan=value.get('plan',{})
                     if any(plan.get(key)!=binding[key] for key in ('task_id','input_id')) or plan.get('result_id')!=rid:
                         raise CloudError('cloud_result_identity_mismatch',502)
-                    if binding['input_id'] is None:return value|dict(code_branch_available=False)
-                    operation=await run_blocking(domain.repo.operation,binding['create_command_id'],session_id)
-                    source_handle=operation['request'].get('source_handle')
-                    if not source_handle:raise CloudError('cloud_task_unavailable',409)
-                    source=await run_blocking(domain.repo.source,source_handle,session_id)
-                    value=value|dict(code_branch_available=bool(source['captured'].get('source_receipt')))
                 return value
 
     async def close(self):
@@ -304,6 +324,7 @@ class ManualCloudTasks:
                 if isinstance(error,BaseException) and not isinstance(error,asyncio.CancelledError):
                     logger.warning('cloud_observer_shutdown_failed error_type=%s',type(error).__name__)
         try:
+            if self.result_tool_flights:await await_settled(asyncio.gather(*tuple(self.result_tool_flights.values())))
             await self.deliveries.close()
             await self.receives.close()
             downloads=tuple(self.downloads)

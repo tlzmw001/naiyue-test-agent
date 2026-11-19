@@ -50,7 +50,7 @@ def public_error(error):
         if code in ('session_not_found', 'history_message_not_found'):
             return WebError(code, 404)
         return WebError(code if code in ('storage_in_use', 'session_recovery_blocked', 'session_background_tasks_active','unsupported_execution_binding','session_cloud_tasks_retained','session_cloud_delivery_active', 'workspace_mismatch',
-            'checkpoint_mismatch', 'session_save_unconfirmed', 'approval_restore_unavailable',
+            'checkpoint_mismatch', 'session_save_unconfirmed', 'approval_restore_unavailable','session_cloud_attachment_release_pending',
             'session_delete_unconfirmed', 'history_cursor_stale', 'history_invalid_offset') else
             'session_unavailable')
     return WebError('operation_failed', 500)

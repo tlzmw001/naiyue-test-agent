@@ -40,6 +40,23 @@ class ReceiveRepository:
     def read(self,rid,sid):
         with self.database.transaction(write=False,error_code='cloud_receive_storage_failed') as c:return self._read(c,rid,sid)
 
+    def available_artifacts(self,binding,result_id,artifact_id):
+        with self.database.transaction(write=False,error_code='cloud_receive_storage_failed') as c:
+            rows=c.execute("""SELECT body_json FROM naiyue_cloud_receives
+                WHERE session_id=? AND project_id=? AND json_extract(body_json,'$.binding_id')=?
+                AND json_extract(body_json,'$.result_id')=? AND json_extract(body_json,'$.phase')='available'
+                ORDER BY rowid DESC""",
+                (binding['local_session_id'],binding['local_project_id'],binding['binding_id'],result_id))
+            results=[]
+            for row in rows:
+                record=ReceiveRecord.model_validate_json(row[0])
+                if (record.instance_id,record.task_id,record.input_id)!=(binding['instance_id'],binding['task_id'],binding['input_id']):
+                    continue
+                for file in record.files:
+                    if file.role=='artifact' and file.verified and file.artifact.artifact_id==artifact_id:
+                        results.append((record.receive_id,file))
+            return results
+
     def reserve(self,binding,result_id,request,limits):
         sid=request['local_session_id'];rid=request['command_id'];project=binding['local_project_id']
         fingerprint=digest(dict(binding_id=binding['binding_id'],result_id=result_id,request=request))
@@ -57,13 +74,14 @@ class ReceiveRepository:
             from .cloud_local import _read
             operation=_read(c,'naiyue_cloud_operations',binding['create_command_id'],sid,'cloud_receive_identity_mismatch')
             if operation['binding_id']!=binding['binding_id'] or operation['kind']!='create':raise CloudError('cloud_receive_identity_mismatch',403)
-            source_handle=operation['request'].get('source_handle')
-            if binding['input_id'] is not None:
+            include_code=request.get('include_code',True)
+            source_handle=operation['request'].get('source_handle') if include_code else None
+            if include_code and binding['input_id'] is not None:
                 if not source_handle:raise CloudError('cloud_receive_identity_mismatch',409)
                 source=_read(c,'naiyue_cloud_sources',source_handle,sid,'cloud_receive_identity_mismatch')
                 if (source['local_project_id']!=project or source['local_session_id']!=sid
                         or source['captured']['input_id']!=binding['input_id']):raise CloudError('cloud_receive_input_mismatch',409)
-            elif request.get('include_code',True):raise CloudError('cloud_receive_selection_invalid',422)
+            elif include_code:raise CloudError('cloud_receive_selection_invalid',422)
             value=ReceiveRecord(receive_id=rid,command_id=rid,local_project_id=project,local_session_id=sid,
                 binding_id=binding['binding_id'],source_handle=source_handle,instance_id=binding['instance_id'],task_id=binding['task_id'],
                 result_id=result_id,input_id=binding['input_id'],phase='reserved')

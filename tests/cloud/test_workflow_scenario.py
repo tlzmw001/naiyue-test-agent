@@ -30,7 +30,7 @@ def test_two_tasks_two_rounds_and_resume_never_submit_another_run(tmp_path,monke
         def call(self,method,path,**kwargs):
             parts=path.strip('/').split('/')
             if method=='GET':
-                if path=='/instance':return dict(instance_id=self.settings.instance_id,protocol=1)
+                if path=='/instance':return dict(instance_id=self.settings.instance_id,protocol=2)
                 if parts[0]=='commands':
                     if parts[1] not in receipts:raise CloudError('command_not_found',404)
                     return receipts[parts[1]]
@@ -68,7 +68,7 @@ def test_two_tasks_two_rounds_and_resume_never_submit_another_run(tmp_path,monke
     monkeypatch.setattr(module,'CloudClient',Client)
     from naiyue_test_agent.contracts.cloud_versions import OWNER_PROTOCOL
     # The fixture and production probe must use the same declared protocol.
-    assert OWNER_PROTOCOL==1
+    assert OWNER_PROTOCOL==2
     settings=WorkflowSettings(connection_file=connection,source=source,selection_file=selection,
         template_id='current',model_id='chat',message='{task_marker}',rounds=2)
     report=run(settings,output,confirm_runs=4)

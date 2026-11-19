@@ -220,6 +220,9 @@ def matches_session_allow(rules, subject):
                 if (rule.get('mcp') == subject.get('mcp') and rule.get('mcp') is not None
                         and rule.get('session_id') == subject.get('session_id')):
                     return True
+            elif subject['tool_name']=='cloud_result' and 'download_plan' in subject:
+                if rule.get('download_plan')==subject['download_plan']:
+                    return True
             elif 'resolved' in subject:
                 if rule.get('target') is not None and permission_path(rule['target'], windows=windows) == permission_path(subject['resolved'], windows=windows):
                     return True
@@ -237,6 +240,8 @@ def remembered_rule(subject):
             'workspace': subject.get('workspace'), 'environment': subject['execution_environment']}
     if 'mcp' in subject:
         rule.update(mcp=dict(subject['mcp']), session_id=subject['session_id'])
+    elif subject['tool_name']=='cloud_result' and 'download_plan' in subject:
+        rule['download_plan']=subject['download_plan']
     elif 'resolved' in subject:
         rule['target'] = subject['resolved']
     elif 'command' in subject['args']:

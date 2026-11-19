@@ -21,6 +21,12 @@ class DeletionRepository:
             changed = c.execute('UPDATE tasks SET revision=?,record_json=? WHERE task_id=? AND revision=? AND generation=?',
                 (candidate.revision, candidate.model_dump_json(), previous.task_id, previous.revision, previous.generation)).rowcount
             if changed != 1: raise CloudError('task_revision_conflict')
+            inputs={attachment.input_id for attachment in previous.attachments.values()}
+            if previous.input_id is not None:
+                inputs.add(previous.input_id)
+            from .input_lifecycle import candidates
+            receipt=receipt.model_copy(update={'result':receipt.result | {
+                'input_candidates':sorted(inputs),'input_cleanup':candidates(c,sorted(inputs))}})
             c.execute('INSERT INTO commands VALUES(?,?,?,?)', (receipt.command_id, receipt.request_digest,
                 receipt.resource_id, receipt.model_dump_json()))
             c.execute('UPDATE task_credentials SET revoked_at=? WHERE task_id=? AND revoked_at IS NULL',

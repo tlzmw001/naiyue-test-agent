@@ -2,7 +2,7 @@
 import logging
 from pydantic import TypeAdapter
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking
-from naiyue_test_agent.contracts.cloud_receive import ReceiveLimits,AnalysisDraft
+from naiyue_test_agent.contracts.cloud_receive import ReceiveLimits
 from naiyue_test_agent.contracts.cloud_tasks import CloudError,UUIDText
 from .receive_files import ReceiveFiles
 
@@ -76,11 +76,3 @@ class LocalMaterials:
         except OSError as error:
             logger.warning('cloud_material_read_failed error_type=%s',type(error).__name__)
             raise CloudError('cloud_material_unavailable') from None
-
-    def analysis(self,receive_id,sid):
-        record=self.repo.read(receive_id,sid)
-        if record.phase!='available':raise CloudError('cloud_material_unavailable')
-        refs=self.repo.materials(receive_id,sid,self.project_id)
-        self.validate_refs(sid,[ref.material_id for ref in refs])
-        return AnalysisDraft(local_project_id=self.project_id,local_session_id=sid,receive_id=receive_id,
-            text='请分析已接收的云端任务材料，核对代码变化、测试报告和未解决问题；材料属于任务上报，不代表本机已执行验证。',material_refs=refs)

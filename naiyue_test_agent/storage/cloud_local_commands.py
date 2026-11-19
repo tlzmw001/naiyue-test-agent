@@ -105,6 +105,13 @@ class LocalTaskCommands:
                 pending=pending or old['kind'] in ('stop','recover')
             if pending:raise CloudError('cloud_command_pending')
 
+    def deletions(self,sid,*,offset,limit):
+        with self.database.transaction(write=False,error_code='cloud_local_read_failed') as c:
+            return [json.loads(row[0]) for row in c.execute("""SELECT body_json FROM naiyue_cloud_operations
+                WHERE session_id=? AND json_extract(body_json,'$.kind')='delete'
+                ORDER BY json_extract(body_json,'$.created_at') DESC,command_id LIMIT ? OFFSET ?""",
+                (sid,limit,offset))]
+
     def fix(self,cid,sid,step,payload,path,operation,fingerprint):
         with self.database.transaction(write=True,error_code='cloud_local_save_failed') as c:
             op=self._writable(c,cid,sid);item=op['steps'][step]
@@ -136,6 +143,19 @@ class LocalTaskCommands:
             if op.get('error_code') in RETIRED:return op
             item=op['steps'][step]
             old=item.get('receipt')
+            if step=='primary' and op['kind']=='delete' and old and old['status']=='succeeded':
+                if receipt['status']!='succeeded' or receipt['updated_at']<=old['updated_at']:return op
+                binding=self._binding(c,op['binding_id'],sid)
+                if receipt['result'].get('tombstone')!=binding.get('deletion'):
+                    raise CloudError('cloud_delete_receipt_mismatch',502)
+                previous=old['result'].get('input_cleanup') or {}
+                cleanup=receipt['result'].get('input_cleanup') or {}
+                if (cleanup.get('released_quota_bytes',0)<previous.get('released_quota_bytes',0)
+                        or previous and [x['input_id'] for x in previous['candidates']]!=
+                                        [x['input_id'] for x in cleanup.get('candidates',[])]):
+                    raise CloudError('cloud_delete_receipt_mismatch',502)
+                item['receipt']=receipt
+                return self._save(c,op)
             if old and (old['status'] in ('succeeded','failed')
                     or old['status']=='unknown' and receipt['status'] in ('accepted','running')):return op
             item['receipt']=receipt
@@ -163,8 +183,12 @@ class LocalTaskCommands:
             raise CloudError('cloud_delete_receipt_mismatch',502)
         binding['deletion']=tombstone
         self._retire(c,binding,op['command_id'],'cloud_task_deleted')
+        if binding.get('pending_attachment_releases'):op['attachment_release_pending']=True
 
     def _retire(self,c,binding,command_id,code):
+        from .cloud_attachments import pending_input_releases
+        pending=pending_input_releases(binding)
+        if pending:binding['pending_attachment_releases']=pending
         binding.update(retained=False,cloud=None,draft=None,local_attachments={},queued_command_id=None,
             draft_revision=binding.get('draft_revision',0)+1,revision=binding['revision']+1)
         c.execute('UPDATE naiyue_cloud_bindings SET retained=0,body_json=? WHERE binding_id=?',
@@ -185,6 +209,8 @@ class LocalTaskCommands:
             binding=self._binding(c,bid,sid)
             if not binding['retained']:return binding
             if binding['revision']!=request['expected_binding_revision']:raise CloudError('cloud_binding_conflict')
+            from .cloud_attachments import pending_input_releases
+            if pending_input_releases(binding):raise CloudError('cloud_attachment_release_pending')
             if c.execute('SELECT 1 FROM naiyue_cloud_operations WHERE command_id=?',(request['command_id'],)).fetchone():
                 raise CloudError('cloud_command_conflict')
             binding['removal']=dict(command_id=request['command_id'],removed_at=time.time())

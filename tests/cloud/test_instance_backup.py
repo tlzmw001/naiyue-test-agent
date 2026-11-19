@@ -60,3 +60,60 @@ def test_failed_task_backup_never_publishes_complete_instance(tmp_path,monkeypat
     with pytest.raises(CloudError):create_backup(settings,ident)
     assert list_backups(settings)[0]['phase']=='incomplete'
     assert not (settings.work_dir/'instance-backups'/ident/'complete.json').exists()
+
+
+def test_input_retirement_blocks_backup_until_original_delete_is_reconciled(tmp_path,monkeypatch):
+    import asyncio
+    import errno
+
+    from naiyue_test_agent.application.cloud import input_reclamation
+    from naiyue_test_agent.application.cloud.backend_runtime import open_cloud_backend
+    from naiyue_test_agent.cloud_install.backup import create_backup,list_backups,verify_backup
+    from test_instance_restore import prepare_one
+    from test_task_delete import Backend,request
+
+    settings,cloud,task,_=setup(tmp_path)
+    monkeypatch.setattr('naiyue_test_agent.cloud_install.offline.ensure_no_writers',lambda *a:None)
+
+    async def fail_cleanup(runtime):
+        runtime.releases.maintenance(dict(command_id=str(uuid4()),action='leave'))
+        async with open_cloud_backend(runtime,backend=Backend()):
+            def deny(*args):
+                raise PermissionError(errno.EACCES,'controlled input failure')
+            with monkeypatch.context() as patch:
+                patch.setattr(input_reclamation,'remove',deny)
+                failed=await runtime.deletions.command(task.task_id,request(runtime,task.task_id))
+            assert failed.status=='succeeded'
+            assert failed.result['input_cleanup']['state']=='failed'
+            return failed.command_id
+
+    with open_cloud_runtime(cloud) as runtime:
+        command_id=asyncio.run(fail_cleanup(runtime))
+        status=runtime.releases.maintenance(dict(command_id=str(uuid4()),action='enter'))
+    backup_id=str(uuid4())
+    with pytest.raises(CloudError,match='offline_not_quiet'):
+        create_backup(settings,backup_id)
+    assert not (settings.work_dir/'instance-backups'/backup_id/'complete.json').exists()
+    assert status['maintenance']=='draining'
+    assert {'kind':'input_cleanup','id':command_id} in status['blockers']
+
+    old_backup_id=str(uuid4())
+    with monkeypatch.context() as patch:
+        # Recreate a snapshot that the earlier backup gate let through.
+        patch.setattr('naiyue_test_agent.storage.cloud.operations.blockers',lambda db:[])
+        assert create_backup(settings,old_backup_id)['phase']=='completed'
+    with pytest.raises(CloudError,match='restore_input_retirement_pending'):
+        verify_backup(settings,old_backup_id)
+    assert next(row for row in list_backups(settings) if row['backup_id']==old_backup_id)['phase']=='invalid'
+
+    async def finish_cleanup(runtime):
+        async with open_cloud_backend(runtime,backend=Backend()):
+            final=await runtime.deletions.reconcile(command_id)
+            assert final.result['input_cleanup']['state']=='completed'
+            assert runtime.releases.maintenance_status()['maintenance']=='ready'
+
+    with open_cloud_runtime(cloud) as runtime:
+        asyncio.run(finish_cleanup(runtime))
+    assert create_backup(settings,backup_id)['phase']=='completed'
+    assert verify_backup(settings,backup_id)[0]['backup_id']==backup_id
+    assert prepare_one(settings,backup_id)[1]['phase']=='prepared'

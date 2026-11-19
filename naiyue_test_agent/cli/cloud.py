@@ -59,7 +59,7 @@ def main(argv=None):
             from .cloud_inputs import execute
             print(json.dumps(execute(args),ensure_ascii=True))
             return 0
-        if args.command in ('project','task','run','control','command','history','artifact','snapshot','usage'):
+        if args.command in ('project','task','run','control','command','history','artifact','snapshot','usage','verify-legacy-inputs'):
             import json
             from .cloud_tasks import execute
             print(json.dumps(execute(args),ensure_ascii=True))

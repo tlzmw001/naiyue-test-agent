@@ -287,6 +287,7 @@ export function errorText(error: unknown): string {
     project_not_found: '项目已移除或不在当前服务中，请刷新项目目录。',
     project_in_use: '项目中还有运行、审批、恢复或后台工作，请先处理完成，再移除项目。',
     project_cloud_tasks_retained: '项目仍关联云端任务或未完成的结果交付，请先处理这些任务，再移除项目。',
+    session_cloud_attachment_release_pending: '还有附件占用待解除，请在云端任务的删除记录中重试输入回收。',
     project_operation_pending: '项目正在处理其他操作，请稍后刷新。',
     project_invalid_path: '请输入有效的本机绝对路径，也可以使用 ~ 表示主文件夹。',
     project_directory_missing: '文件夹不存在，请选择其他位置或刷新后重试。',

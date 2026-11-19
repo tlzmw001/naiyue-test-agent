@@ -20,6 +20,3 @@ export interface MaterialRef {
   title: string; role: 'manifest' | 'patch' | 'artifact'; size: number; sha256: string; source_run_id: string;
   outcome: 'completed' | 'stopped' | 'failed' | 'interrupted' | 'unconfirmed'; captured_at: number; reported: true;
 }
-export interface AnalysisDraft {
-  local_project_id: string; local_session_id: string; receive_id: string; text: string; material_refs: MaterialRef[];
-}

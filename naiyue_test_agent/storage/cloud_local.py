@@ -49,6 +49,10 @@ def check_deletion(connection,session_id=None):
         else 'SELECT 1 FROM naiyue_cloud_bindings WHERE retained=1 AND session_id=? LIMIT 1')
     if connection.execute(query,args).fetchone():
         raise SessionPersistenceError('session_cloud_tasks_retained')
+    if connection.execute("""SELECT 1 FROM naiyue_cloud_bindings
+        WHERE json_type(body_json,'$.pending_attachment_releases')='object'
+        AND (? IS NULL OR session_id=?) LIMIT 1""",(session_id,session_id)).fetchone():
+        raise SessionPersistenceError('session_cloud_attachment_release_pending')
 
 
 def purge(connection,session_id):

@@ -137,6 +137,8 @@ def _component_match(pattern, path, windows):
 
 def match_rules(rules, subject, *, deny):
     args = subject['args']
+    if subject['tool_name']=='cloud_result' and 'download_plan' in subject:
+        args = {**args, **subject['download_plan']}
     contract = subject.get('argument_contract')
     if contract is not None:
         from .permissions import PermissionMechanismError

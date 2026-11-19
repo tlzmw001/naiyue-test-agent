@@ -26,6 +26,9 @@ def _app():
     @app.exception_handler(CloudError)
     async def known_error(request, error):
         value = {'code': error.code}
+        if error.code=='cloud_protocol_mismatch':
+            from naiyue_test_agent.contracts.cloud_versions import OWNER_PROTOCOL
+            value.update(required_version=OWNER_PROTOCOL,current_version=request.headers.get('x-cloud-protocol'))
         if error.last_seq is not None: value['last_seq'] = error.last_seq
         return JSONResponse({'error': value}, status_code=error.status)
 
@@ -53,6 +56,14 @@ def create_cloud_apps(runtime):
         owner_authorize(request, runtime)
         return dict(instance_id=runtime.instance_id, protocol=OWNER_PROTOCOL, version=__version__,
             capabilities=owner_capabilities(runtime.lifecycle is not None))
+
+    @owner.post('/api/cloud/v1/input-legacy-cutover')
+    async def legacy_input_cutover(request: Request):
+        owner_authorize(request, runtime)
+        from naiyue_test_agent.contracts.cloud_inputs import VerifyLegacyInputCutover
+        from naiyue_test_agent.storage.cloud.input_lifecycle import verify_legacy_cutover
+        value=VerifyLegacyInputCutover.model_validate(await _body(request,runtime))
+        return await cloud_work(runtime,lambda:verify_legacy_cutover(runtime.database,value))
 
     @owner.get('/api/cloud/v1/projects')
     async def projects(request: Request):

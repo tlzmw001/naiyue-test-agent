@@ -1,7 +1,7 @@
 """Authenticated local receipts and immutable material reads; no implicit network on GET."""
 from fastapi import Request,Query
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking
-from naiyue_test_agent.contracts.cloud_tasks import UUIDText,CloudRecord
+from naiyue_test_agent.contracts.cloud_tasks import UUIDText,CloudRecord,CloudError
 from naiyue_test_agent.contracts.cloud_receive import ReceiveRequest,ReceiveRetry
 from naiyue_test_agent.contracts.cloud_local_tasks import SessionId
 
@@ -37,10 +37,9 @@ def register(router,access,domain,body,command_response):
 
     @router.post('/cloud-receives/{receive_id}/analysis-draft')
     async def analysis(request:Request,receive_id:UUIDText,local_project_id:UUIDText,local_session_id:SessionId):
-        manager=access(request);await body(request,CloudRecord)
-        _,local=await domain(request,local_project_id,local_session_id)
-        result=await manager.receives.analysis(local,receive_id,local_session_id)
-        return command_response(request,result.model_dump(mode='json'))
+        access(request);await body(request,CloudRecord)
+        await domain(request,local_project_id,local_session_id)
+        raise CloudError('cloud_result_workflow_retired',410)
 
     @router.get('/cloud-materials/{material_id}')
     async def metadata(request:Request,material_id:UUIDText,local_project_id:UUIDText,local_session_id:SessionId):

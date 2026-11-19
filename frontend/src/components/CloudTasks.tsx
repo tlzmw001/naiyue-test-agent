@@ -1,3 +1,5 @@
+import CloudLegacyDeliveries from './CloudLegacyDeliveries';
+import CloudDeletionRecords from './CloudDeletionRecords';
 import CloudNetworks from './CloudNetworks';
 import { useEffect, useRef, useState } from 'react';
 import type { CloudApi } from '../cloudApi';
@@ -9,11 +11,10 @@ import CloudTaskDetail from './CloudTaskDetail';
 import styles from './CloudTasks.module.css';
 import mainStyles from '../App.module.css';
 import { Icon } from './Icons';
-import type { AnalysisDraft } from '../cloudReceiveTypes';
 import { ApiError } from '../api';
 import CloudTaskForget from './CloudTaskForget';
 
-export default function CloudTasks({ api, sessionId, active, onAnalysisDraft }: { api: CloudApi; sessionId?: string; active: boolean; onAnalysisDraft?: (value: AnalysisDraft) => boolean | void }) {
+export default function CloudTasks({ api, sessionId, active }: { api: CloudApi; sessionId?: string; active: boolean }) {
   const [networks, showNetworks] = useState(false);
   const [rows, setRows] = useState<CloudBinding[]>([]); const [profiles, setProfiles] = useState<CloudProfile[]>([]);
   const [selected, select] = useState<string>(); const [creating, create] = useState(false);
@@ -78,6 +79,8 @@ export default function CloudTasks({ api, sessionId, active, onAnalysisDraft }: 
     }
     void read(); return () => { controller.abort(); clearTimeout(timer); };
   }, [api, sessionId, active, visible, valid, pages, revision]);
+  const [deletions, showDeletions] = useState(false);
+  const [legacy, showLegacy] = useState(false);
   const binding = rows.find(row => row.binding_id === selected);
   const update = () => refresh(v => v + 1);
   function removeBinding(bid: string) {
@@ -91,16 +94,18 @@ export default function CloudTasks({ api, sessionId, active, onAnalysisDraft }: 
     (rowButtons.current.get(focusTarget.current) ?? newButton.current)?.focus(); focusTarget.current = undefined;
   }, [selected, creating]);
   if (!valid) return <section className={styles.panel}><p className={styles.note}>请先在已授权的本地项目中选择一个会话，再使用云端任务。</p></section>;
+  if (legacy) return <CloudLegacyDeliveries key={sessionId} api={api} sid={sessionId!} close={() => showLegacy(false)} />;
+  if (deletions) return <CloudDeletionRecords key={sessionId} api={api} sid={sessionId!} close={() => showDeletions(false)} />;
   if (creating) return <CloudTaskCreate api={api} sessionId={sessionId!} profiles={profiles} back={back} created={value => {
     setRows(old => [value, ...old.filter(row => row.binding_id !== value.binding_id)]); select(value.binding_id); create(false); update();
   }} />;
   if (binding?.task_id && binding.cloud) return <CloudTaskDetail key={binding.binding_id} api={api} sid={sessionId!}
     binding={binding} metadataFresh={!stale.includes(binding.binding_id) && !error} metadataError={issues[binding.binding_id]}
     active={active && visible && !unavailableProfiles.includes(binding.profile_id)}
-    back={back} changed={update} onAnalysisDraft={onAnalysisDraft} onForgotten={() => removeBinding(binding.binding_id)} />;
+    back={back} changed={update} onDeleted={() => { back(); showDeletions(true); }} onForgotten={() => removeBinding(binding.binding_id)} />;
   return <section className={styles.panel} aria-label="云端任务列表">
     <div className={styles.listHeader}><button ref={newButton} className={`${mainStyles.newChat} ${styles.newTask}`} onClick={() => { select(undefined); create(true); }}><Icon name="plus" /><span>新增任务</span></button>
-      <button onClick={() => showNetworks(true)}>服务连接</button><button onClick={update}>刷新</button></div>
+      <button onClick={() => showNetworks(true)}>服务连接</button><button onClick={() => showDeletions(true)}>删除记录</button><button onClick={() => showLegacy(true)}>旧交付记录</button><button onClick={update}>刷新</button></div>
     {networks && <CloudNetworks api={api} profiles={profiles} close={() => showNetworks(false)} />}
     {error && <p role="alert" className={styles.error}>{error}</p>}
     {loading && !rows.length && <p role="status" className={styles.note}>正在读取任务…</p>}

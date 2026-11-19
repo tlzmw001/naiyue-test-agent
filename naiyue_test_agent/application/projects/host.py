@@ -28,12 +28,15 @@ class ProjectHost:
         from naiyue_test_agent.application.cloud_local.tasks import LocalTaskDomain
         self.cloud_tasks = LocalTaskDomain(owner,storage,self.project_id,sessions._execution_authority,persistence)
         if cloud_receive_limits is not None:self.cloud_tasks.materials.limits=cloud_receive_limits
-        sessions.cloud_materials=self.cloud_tasks.materials
         self.observability = ObservationAPI(owner, sessions, storage.usage, storage.diagnostics,
                                              usage, diagnostics, metadata=storage.sessions)
         self.tools = ToolAPI(owner, sessions, registry)
         self.subagents = SubagentAPI(owner, sessions)
         self.mcp = McpAPI(owner, sessions, registry)
+
+    def bind_cloud_results(self, manager):
+        from naiyue_test_agent.application.cloud_local.result_tool import LocalResultTool
+        self._lifetime._sessions.cloud_results = LocalResultTool(manager, self.cloud_tasks)
 
     def _check_idle(self):
         owner, sessions = self._lifetime, self._lifetime._sessions

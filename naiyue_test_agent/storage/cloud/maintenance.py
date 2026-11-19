@@ -17,10 +17,16 @@ def blockers(db):
         record=json.loads(value)
         if key.startswith('maintenance-lease:') or record.get('state') not in ('committed','cancelled'):
             result.append(dict(kind='transfer',id=key))
+    for row in db.execute("""SELECT DISTINCT json_extract(value,'$.retiring_command_id') FROM meta
+        WHERE key LIKE 'input-state:%' AND json_extract(value,'$.state')='retiring' ORDER BY 1"""):
+        result.append(dict(kind='input_cleanup',id=row[0]))
     return result
 
 
-def continuing_cleanup(db,ident):
+def continuing_cleanup(db,ident,*,input_id=None):
+    if input_id is not None:
+        state=meta(db,'input-state:'+input_id,{})
+        return state.get('state')=='retiring' and state.get('retiring_command_id')==ident
     row=db.execute('SELECT record_json FROM commands WHERE command_id=?',(ident,)).fetchone()
     if row is None:return False
     value=json.loads(row[0])

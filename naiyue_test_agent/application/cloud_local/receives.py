@@ -25,7 +25,7 @@ class LocalReceives:
         with self.manager.operation(),domain.owner.operation():
             await domain.session(sid)
             async with self.manager.admission:
-                if any(key[0]==domain.project_id for key in (*self.flights,*self.manager.deliveries.flights)):
+                if any(key[0]==domain.project_id for key in (*self.flights,*self.manager.deliveries.flights,*self.manager.result_tool_flights)):
                     raise CloudError('cloud_receive_busy',409)
                 guard=domain.materials.files.use(cleanup=True);guard.__enter__()
             try:
@@ -64,11 +64,6 @@ class LocalReceives:
                 self.launch(domain,record,selection['artifact_ids'],explicit_retry=True,refresh=refresh)
                 return record.model_copy(update={'active':True})
 
-    async def analysis(self,domain,rid,sid):
-        with self.manager.operation(),domain.owner.operation():
-            domain.materials.limits=self.manager.settings.receive_limits
-            return await run_blocking(domain.materials.analysis,rid,sid)
-
     def launch(self,domain,record,selection,*,explicit_retry=False,refresh=False):
         key=self._key(domain,record.receive_id)
         if key in self.flights:return
@@ -100,7 +95,7 @@ class LocalReceives:
         selected=[f for f in result.bundle.files if include_code and f.role in ('manifest','patch') or f.artifact.artifact_id in wanted]
         if len(selected)>limits.max_files or any(f.artifact.size>limits.max_file_bytes for f in selected):raise CloudError('cloud_material_budget',413)
         package=None;branch_available=False
-        if record.input_id is not None:
+        if include_code and record.input_id is not None:
             package=InputPackage.model_validate(client.request('GET','/inputs/'+record.input_id))
             if (package.input_id!=record.input_id or package.manifest.input_id!=record.input_id
                     or package.manifest.selection['policy_sha256']!=hashlib.sha256(package.selection.canonical).hexdigest()):
@@ -122,7 +117,7 @@ class LocalReceives:
             await run_blocking(domain.materials.files.prepare_refresh,record)
             record=await run_blocking(domain.materials.repo.save,record.model_copy(update={'phase':'downloading','error_code':None,
                 'files':[f.model_copy(update={'offset':0,'verified':False}) for f in record.files]}))
-        if record.result is not None and (record.input_id is None or record.input_package is not None) and record.files and all(f.verified for f in record.files):
+        if record.result is not None and record.files and all(f.verified for f in record.files):
             record=await run_blocking(domain.materials.repo.save,record.model_copy(update={'phase':'verifying','error_code':None}))
             await run_blocking(self._publish,domain,record,identities)
             return

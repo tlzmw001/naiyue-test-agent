@@ -16,7 +16,7 @@ def inputs(tmp_path):
     def artifact(path):
         target=bundle/path.name;target.write_bytes(path.read_bytes())
         return dict(filename=path.name,url='https://releases.invalid/'+path.name,size=target.stat().st_size,sha256=hashlib.sha256(target.read_bytes()).hexdigest())
-    manifest=CloudRelease(release_id='r2',agent_version='0.5.6',source_commit='a'*40,coordinator_protocol=1,
+    manifest=CloudRelease(release_id='r2',agent_version='0.5.6',source_commit='a'*40,coordinator_protocol=2,
         runner_protocol=1,state_schema=1,min_connector_protocol=1,wheels={'linux-arm64':artifact(build.wheel)},
         kit=artifact(build.kit_wheel),kit_version='0.6.0',test_lock=artifact(build.test_lock),base_image=build.base_image)
     path=bundle/'r2.json';path.write_text(manifest.model_dump_json());path.chmod(0o600)
@@ -32,7 +32,7 @@ class Owner:
         from types import SimpleNamespace
         self.posts=[];self.revision=0;self.settings=SimpleNamespace(instance_id='fixture')
     def request(self,method,path,**kw):
-        if path=='/instance':return dict(instance_id='fixture',protocol=1,version='0.5.6',capabilities=['releases:write'])
+        if path=='/instance':return dict(instance_id='fixture',protocol=2,version='0.5.6',capabilities=['releases:write'])
         if path.startswith('/releases/active/'):return dict(release_id=None,revision=self.revision)
         self.posts.append((path,kw['json']))
         if path=='/releases/activate':self.revision+=1
@@ -95,7 +95,7 @@ def test_one_selected_manifest_drives_compatibility_and_build(tmp_path,monkeypat
     from naiyue_test_agent.cloud_install.store import UpdateStore
     import naiyue_test_agent.cloud_install.worker as worker
     settings,manifest=inputs(tmp_path);ident=str(uuid4());store=UpdateStore(settings);store.create(ident,'r2');calls=[]
-    incompatible=manifest.model_copy(update={'coordinator_protocol':2})
+    incompatible=manifest.model_copy(update={'coordinator_protocol':3})
     selected=[incompatible,manifest]
     monkeypatch.setattr(worker,'load_release',lambda *a,**kw:(selected.pop(0),'c'*64))
     def prepare(*a):calls.append(True);return template(runner_release_id='r2',wheel_sha256=manifest.wheels[settings.platform].sha256,kit_wheel_sha256=manifest.kit.sha256)

@@ -236,5 +236,7 @@ class ToolRegistry:
         if context is None or context.scope.identity.agent_path == 'root':
             names = self.expand_session_tools(names)
         return tuple(spec for spec in self.select(names)
-            if (spec.tool.name!='cloud_result_read' or context is None or callable(context.scope.capabilities.cloud_materials))
+            if (spec.tool.name!='cloud_result' or context is None or
+                context.scope.capabilities.cloud_results is not None and context.scope.identity.agent_path=='root'
+                and context.scope.environment is not None and context.scope.environment.kind=='host')
             and (not isinstance(spec.permissions,MCPPermission) or spec.permissions.unavailable_reason(context) is None))

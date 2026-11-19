@@ -33,3 +33,5 @@ class DeleteOperation(CloudRecord):
     creation_unconfirmed: bool = False
     phase: Literal['reserved', 'stopped', 'cleaning', 'finished'] = 'reserved'
     tombstone: dict | None = None
+    input_cleanup: dict | None = Field(default=None, exclude_if=lambda v:v is None)
+    input_candidates: list[ContentId] | None = Field(default=None, max_length=1025, exclude_if=lambda value: value is None)

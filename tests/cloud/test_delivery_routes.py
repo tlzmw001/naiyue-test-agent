@@ -1,92 +1,105 @@
-"""Real authenticated client routes separate receiving, preflight and confirmed writes."""
+"""Old interactive code operations are retired, but existing receipts stay readable."""
 import asyncio
-import json
-from pathlib import Path
 from uuid import uuid4
+
 from test_manual_commands_routes import configured
 from test_result_receive import receiving
 
 
-def test_export_requires_confirmation_and_keeps_owner_scope(monkeypatch,tmp_path):
+def test_legacy_code_delivery_writes_retire_but_receipt_stays_readable(monkeypatch,tmp_path):
     async def scenario():
         async with configured(monkeypatch,tmp_path) as t:
             domain=t.host.cloud_tasks;store=t.host.sessions._persistence.storage
             state=(t.manager,domain,store,t.sid,t.adapter,t.binding)
-            _,_,_,_,remote,binding,rid,files,_,_=await receiving(tmp_path,prepared_state=state)
+            _,_,_,_,remote,_,rid,_,_,_=await receiving(tmp_path,prepared_state=state)
             try:
-                record=await t.manager.receives.submit(domain,t.bid,rid,dict(command_id=str(uuid4()),local_session_id=t.sid,artifact_ids=[]))
+                received=await t.manager.receives.submit(domain,t.bid,rid,dict(command_id=str(uuid4()),local_session_id=t.sid))
                 await t.manager.drain()
-                request=dict(command_id=str(uuid4()),local_session_id=t.sid,receive_id=record.receive_id,
+                request=dict(command_id=str(uuid4()),local_session_id=t.sid,receive_id=received.receive_id,
                     action='export',destination_handle=t.query['local_project_id'],name='delivered')
-                path=t.base+'/cloud-deliveries'
-                denied=await t.client.post(path,params=t.query,headers=t.headers|{'Authorization':''},json=request)
+                base=t.base+'/cloud-deliveries'
+                denied=await t.client.post(base,params=t.query,headers=t.headers|{'Authorization':''},json=request)
                 assert denied.status_code==401
-                created=await t.client.post(path,params=t.query,headers=t.headers,json=request)
-                assert created.status_code==202,created.text
-                await t.manager.drain()
-                url=path+'/'+request['command_id']
+                retired=await t.client.post(base,params=t.query,headers=t.headers,json=request)
+                assert retired.status_code==410 and retired.json()['error']['code']=='cloud_result_workflow_retired'
+                from naiyue_test_agent.contracts.cloud_delivery import DeliveryRequest, DeliveryRecord
+                legacy=DeliveryRequest.model_validate(request)
+                record=DeliveryRecord(command_id=legacy.command_id,local_session_id=t.sid,local_project_id=domain.project_id,
+                                      receive_id=legacy.receive_id,action='export',phase='prepared')
+                domain.deliveries.reserve(legacy,record,{},10)
+                url=base+'/'+request['command_id']
                 preview=await t.client.get(url,params=t.query,headers=t.headers)
-                assert preview.json()['phase']=='prepared',preview.text
-                assert not (tmp_path/'a/delivered').exists()
+                assert preview.json()['phase']=='prepared' and preview.json()['error_code']=='cloud_result_workflow_retired'
+                history=await t.client.get(t.base+'/cloud-legacy-deliveries',params=t.query,headers=t.headers)
+                assert history.status_code==200 and [entry['command_id'] for entry in history.json()]==[record.command_id]
+                domain.deliveries.save(record.model_copy(update={'phase':'partial','done':['test.py']}))
+                history=await t.client.get(t.base+'/cloud-legacy-deliveries',params=t.query,headers=t.headers)
+                entry,=history.json()
+                assert entry['recovery_required'] and entry['done']==['test.py']
+                assert entry['evidence_path'].endswith('/deliveries/'+record.command_id)
                 cross=await t.client.get(url,params=t.query|{'local_session_id':t.other_sid},headers=t.headers)
                 assert cross.status_code==404
-                unconfirmed=await t.client.post(url+'/execute',params=t.query,headers=t.headers,json={'confirm':False})
-                assert unconfirmed.status_code==422 and not (tmp_path/'a/delivered').exists()
-                executed=await t.client.post(url+'/execute',params=t.query,headers=t.headers,json={'confirm':True})
-                assert executed.status_code==202,executed.text
-                await t.manager.drain()
-                final=await t.client.get(url,params=t.query,headers=t.headers)
-                assert final.json()['phase']=='completed',final.text
-                assert (tmp_path/'a/delivered/test.py').read_text()=='fixture'
-                again=await t.client.post(url+'/execute',params=t.query,headers=t.headers,json={'confirm':True})
-                assert again.json()['phase']=='completed'
-                assert t.model.seen==[] and (await t.host.sessions.status(t.sid))['run_id'] is None
+                denied=await t.client.post(url+'/execute',params=t.query,headers=t.headers,json={'confirm':False})
+                assert denied.status_code==422
+                reply=await t.client.post(url+'/execute',params=t.query,headers=t.headers,json={'confirm':True})
+                assert reply.status_code==410
+                reply=await t.client.post(url+'/recheck',params=t.query,headers=t.headers,json={})
+                assert reply.status_code==410
+                assert not (tmp_path/'a/delivered').exists() and t.model.seen==[]
             finally:remote.http.close()
     asyncio.run(scenario())
 
 
-def test_actual_changed_patch_applies_only_after_preflight_and_explicit_confirmation(monkeypatch,tmp_path):
-    from naiyue_test_agent.cloud_files.archive import validate_package
-    from naiyue_test_agent.cloud_runner.result_snapshot import freeze_result
-    from naiyue_test_agent.contracts.cloud_results import ResultPlan,ResultBoundary
-    from naiyue_test_agent.contracts.cloud_inputs import InputPackage
+def test_retired_preparing_code_is_not_an_active_delivery(monkeypatch,tmp_path):
+    from naiyue_test_agent.contracts.cloud_delivery import DeliveryRequest,DeliveryRecord
+    from naiyue_test_agent.storage.cloud_delivery import check_deletion
+
     async def scenario():
         async with configured(monkeypatch,tmp_path) as t:
-            domain=t.host.cloud_tasks;store=t.host.sessions._persistence.storage
-            state=(t.manager,domain,store,t.sid,t.adapter,t.binding)
-            _,_,_,_,remote,_,rid,_,data,_=await receiving(tmp_path,prepared_state=state)
+            domain=t.host.cloud_tasks
+            request=DeliveryRequest(command_id=str(uuid4()),local_session_id=t.sid,receive_id=str(uuid4()),
+                                    action='export',destination_handle=domain.project_id,name='old-export')
+            record=DeliveryRecord(command_id=request.command_id,local_project_id=domain.project_id,
+                                  local_session_id=t.sid,receive_id=request.receive_id,action='export',
+                                  name=request.name,phase='preparing')
+            domain.deliveries.reserve(request,record,{},10)
+            with domain.repo.database.transaction() as db:
+                check_deletion(db,t.sid)
+    asyncio.run(scenario())
+
+
+def test_retired_export_only_protects_original_export_directory(monkeypatch,tmp_path):
+    from naiyue_test_agent.application.cloud_local.result_tool import LocalResultTool
+    from naiyue_test_agent.cloud_files.delivery_paths import directory_identity
+    from naiyue_test_agent.contracts.cloud_delivery import DeliveryRequest,DeliveryRecord
+
+    async def scenario():
+        async with configured(monkeypatch,tmp_path) as t:
+            domain=t.host.cloud_tasks
+            state=(t.manager,domain,t.host.sessions._persistence.storage,t.sid,t.adapter,t.binding)
+            _,_,_,_,remote,_,rid,files,data,_=await receiving(tmp_path,prepared_state=state)
             try:
-                original=remote.request;metadata=original('GET','/tasks/'+t.binding['task_id']+'/results/'+rid)
-                source=domain.repo.source(domain.repo.operation(t.binding['create_command_id'],t.sid)['request']['source_handle'],t.sid)
-                inp=Path(source['captured']['directory']);package=InputPackage.model_validate_json((inp/'input.json').read_bytes())
-                runner=tmp_path/'runner';runner.mkdir()
-                validate_package(inp/'archive',package.codec,t.manager.settings.input_limits,destination=runner,expected_id=package.input_id)
-                (runner/'test.py').write_bytes(b'cloud code\r\n');(runner/'new.proto').write_text('syntax = "proto3";')
-                spool=freeze_result(runner,inp,tmp_path/'spool',ResultPlan.model_validate(metadata['plan']),
-                    ResultBoundary.model_validate(metadata['boundary']),1,t.manager.settings.result_limits,t.manager.settings.input_limits)
-                result=json.loads((spool/'result.json').read_text())
-                result['phase']='available'  # Controlled owner publishes the immutable Runner spool.
-                data.clear();data.update({f['artifact']['artifact_id']:(spool/'files'/f['artifact']['artifact_id']).read_bytes() for f in result['bundle']['files']})
-                remote.request=lambda method,path,**kw:result if method=='GET' and path=='/tasks/'+t.binding['task_id']+'/results/'+rid else original(method,path,**kw)
-                received=await t.manager.receives.submit(domain,t.bid,rid,dict(command_id=str(uuid4()),local_session_id=t.sid,artifact_ids=[]))
-                await t.manager.drain();(tmp_path/'a/unrelated').write_text('local dirty')
-                request=dict(command_id=str(uuid4()),local_session_id=t.sid,receive_id=received.receive_id,
-                    action='apply',destination_handle=t.query['local_project_id'])
-                url=t.base+'/cloud-deliveries'
-                response=await t.client.post(url,params=t.query,headers=t.headers,json=request)
-                assert response.status_code==202,response.text
-                await t.manager.drain();url+='/'+request['command_id']
-                ready=(await t.client.get(url,params=t.query,headers=t.headers)).json()
-                assert ready['phase']=='prepared' and ready['conflicts']==[],ready
-                assert {c['path'] for c in ready['changes']}=={'test.py','new.proto'}
-                assert (tmp_path/'a/test.py').read_text()=='fixture' and not (tmp_path/'a/new.proto').exists()
-                response=await t.client.post(url+'/execute',params=t.query,headers=t.headers,json={'confirm':True})
-                assert response.status_code==202,response.text
-                await t.manager.drain()
-                final=(await t.client.get(url,params=t.query,headers=t.headers)).json()
-                assert final['phase']=='completed',final
-                assert (tmp_path/'a/test.py').read_bytes()==b'cloud code\r\n'
-                assert (tmp_path/'a/new.proto').read_text()=='syntax = "proto3";'
-                assert (tmp_path/'a/unrelated').read_text()=='local dirty' and t.model.seen==[]
-            finally:remote.http.close()
+                project=tmp_path/'a'
+                protected=project/'old-export'
+                protected.mkdir()
+                outside=project/'reports'
+                outside.mkdir()
+                req=DeliveryRequest(command_id=str(uuid4()),local_session_id=t.sid,receive_id=str(uuid4()),
+                                      action='export',destination_handle=domain.project_id,name=protected.name)
+                record=DeliveryRecord(command_id=req.command_id,local_project_id=domain.project_id,
+                                      local_session_id=t.sid,receive_id=req.receive_id,action='export',name=req.name,
+                                      phase='partial')
+                domain.deliveries.reserve(req,record,dict(root_identity=directory_identity(project)),10)
+                port=LocalResultTool(t.manager,domain)
+                aid=files[2]['artifact']['artifact_id']
+                for target,expected in ((protected/'result.txt','failed'),(outside/'result.txt','completed')):
+                    cid=str(uuid4())
+                    await port.download(t.sid,cid,dict(binding_id=t.bid,result_id=rid,artifact_id=aid,
+                                                        path=str(target),force=False))
+                    await t.manager.drain()
+                    assert (await port.status(t.sid,cid))['state']==expected
+                assert not (protected/'result.txt').exists()
+                assert (outside/'result.txt').read_bytes()==data[aid]
+            finally:
+                remote.http.close()
     asyncio.run(scenario())

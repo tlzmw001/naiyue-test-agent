@@ -44,6 +44,32 @@ class CloudClient:
             timeout=settings.timeout_seconds,headers={'Host':settings.owner_authority,'Origin':'http://'+settings.owner_authority,
                 'Authorization':'Bearer '+settings.owner_token.get_secret_value(),'X-Service-Instance':settings.instance_id,'X-Cloud-Protocol':str(OWNER_PROTOCOL)})
 
+    def acquire_input_use(self,input_id,operation_id,*,purpose='associate'):
+        use_id=self.input_use_id(input_id,operation_id,purpose=purpose)
+        value=self.request('POST','/input-uses',json=dict(command_id=use_id,input_id=input_id,
+                           purpose=purpose,origin_operation_id=operation_id))
+        if (value.get('command_id'),value.get('input_id'),value.get('origin_operation_id'),value.get('purpose'))!=(
+                use_id,input_id,operation_id,purpose):
+            raise CloudError('input_use_conflict',502)
+        if value['state']=='released':raise CloudError('input_use_released')
+        return use_id
+
+    def input_use_id(self,input_id,operation_id,*,purpose='associate'):
+        from uuid import NAMESPACE_URL, uuid5
+        return str(uuid5(NAMESPACE_URL,f'naiyue-input:{self.settings.instance_id}:{purpose}:{operation_id}:{input_id}'))
+
+    def release_operation_input(self,input_id,operation_id):
+        try:self.release_input_use(self.input_use_id(input_id,operation_id))
+        except CloudError as error:
+            if error.code!='input_use_not_found':raise
+
+    def release_input_use(self,use_id):
+        return self.request('DELETE','/input-uses/'+use_id)
+
+    def cancel_attachment_input(self,directory,input_id,attachment_id):
+        from .input_upload import cancel_attachment_input
+        return cancel_attachment_input(self,directory,input_id,attachment_id)
+
     def close(self):self.http.close()
 
     def download(self,task_id,artifact_id,destination):
@@ -104,7 +130,7 @@ class CloudClient:
             logger.warning('cloud_observation_request_failed error_type=%s',type(error).__name__)
             raise CloudError('cloud_connection_failed',503) from None
 
-    def upload(self,directory,*,upload_id=None,check_cancel=None,on_progress=None):
+    def upload(self,directory,*,upload_id=None,check_cancel=None,on_progress=None,use_id=None):
         directory=Path(directory).absolute();check_store_directory(directory)
         stack=ExitStack();primary=None
         try:
@@ -115,7 +141,7 @@ class CloudClient:
             except BlockingIOError:raise CloudError('input_capture_busy') from None
             stack.callback(release_store_lock,fd)
             from .input_upload import upload
-            return upload(self,directory,upload_id=upload_id,check_cancel=check_cancel,on_progress=on_progress)
+            return upload(self,directory,upload_id=upload_id,check_cancel=check_cancel,on_progress=on_progress,use_id=use_id)
         except BaseException as error:
             primary=error;raise
         finally:

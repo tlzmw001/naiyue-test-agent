@@ -4,10 +4,10 @@ from naiyue_test_agent.contracts.cloud_inputs import AttachInput
 from naiyue_test_agent.contracts.cloud_tasks import CloudError,TaskId,UUIDText
 
 
-def attach(runtime,task_id,value):
+def attach(runtime,task_id,value,*,use_id=None):
     task_id=TypeAdapter(TaskId).validate_python(task_id);request=AttachInput.model_validate(value)
     with runtime.gates.hold(task_id):
-        return runtime.inputs.repository.attach(task_id,request)
+        return runtime.inputs.repository.attach(task_id,request,use_id=use_id)
 
 
 def for_command(runtime,task_id,command_id,attachment_id):

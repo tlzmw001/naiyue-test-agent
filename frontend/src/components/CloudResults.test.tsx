@@ -57,47 +57,15 @@ it('ignores an old result page after selecting another result', async () => {
   expect(screen.getByText('新增 · B-only.py')).toBeTruthy(); expect(screen.queryByText(/old-A.py/)).toBeNull();
 });
 
-it('receives selected reports locally before preparing an analysis draft, without sending a chat message', async () => {
-  const cloud = api(); Object.assign(cloud, { projectId: 'P' });
-  const received = { receive_id: 'C', command_id: 'C', local_project_id: 'P', local_session_id: 'S', binding_id: 'B',
-    instance_id: 'I', task_id: 'T', result_id: 'R', input_id: 'i'.repeat(64), phase: 'available', files: [], error_code: null, active: false, created_at: 1, updated_at: 1 };
-  const draft = { local_project_id: 'P', local_session_id: 'S', receive_id: 'C', text: '分析任务报告', material_refs: [] };
-  const receive = vi.fn().mockImplementation(async (_s, _b, _r, body) => ({ ...received, receive_id: body.command_id, command_id: body.command_id }));
-  const analysisDraft = vi.fn().mockImplementation(async (_s, id) => ({ ...draft, receive_id: id }));
-  Object.assign(cloud, { receive, analysisDraft, receiveStatus: vi.fn().mockResolvedValue(received) });
-  const accept = vi.fn(); render(<CloudResults api={cloud} sid="S" binding={binding} active changed={vi.fn()} onAnalysisDraft={accept} />); fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
-  fireEvent.click(await screen.findByRole('button', { name: /运行 run12345/ }));
+it('offers manual save and preview for legacy tasks with ordinary artifacts', async () => {
+  const cloud = api();
+  render(<CloudResults api={cloud} sid="S" binding={binding} active changed={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
   fireEvent.click(await screen.findByRole('checkbox', { name: /report.html/ }));
-  fireEvent.click(screen.getByRole('button', { name: '交给主 Agent 分析' }));
-  await waitFor(() => expect(accept).toHaveBeenCalled());
-  expect(receive).toHaveBeenCalledWith('S', 'B', 'R', { command_id: expect.any(String), artifact_ids: ['F'], include_code: true });
-  expect(analysisDraft).toHaveBeenCalledOnce();
-  await waitFor(() => expect(accept).toHaveBeenCalledWith(expect.objectContaining({ text: '分析任务报告' })));
-});
-
-it.each(['session', 'result'])('does not deliver a valid late analysis draft after changing the %s', async scope => {
-  const cloud = api(); Object.assign(cloud, { projectId: 'P' });
-  let resolve!: (value: object) => void;
-  vi.mocked(cloud.results).mockResolvedValue(['R', 'B'].map(result_id => ({ result_id, source_run_id: result_id + '-run', phase: 'available',
-    revision: 2, outcome: 'completed', error_code: null, captured_at: 1, files_count: 1 })));
-  const detail = await cloud.result('S', 'B', 'R');
-  vi.mocked(cloud.result).mockClear().mockImplementation(async (_s, _b, rid) => ({ ...detail, plan: { ...detail.plan, result_id: rid } }));
-  Object.assign(cloud, { receive: vi.fn().mockImplementation(async (_s, _b, _r, body) => ({ receive_id: body.command_id, command_id: body.command_id,
-    local_project_id: 'P', local_session_id: 'S', binding_id: 'B', result_id: 'R', input_id: 'i'.repeat(64), phase: 'available', files: [], active: false })),
-    analysisDraft: vi.fn().mockImplementation(() => new Promise(done => { resolve = done; })) });
-  const accept = vi.fn(); const view = render(<CloudResults api={cloud} sid="S" binding={binding} active changed={vi.fn()} onAnalysisDraft={accept} />); fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
-  fireEvent.click(await screen.findByRole('button', { name: '交给主 Agent 分析' }));
-  await waitFor(() => expect(cloud.analysisDraft).toHaveBeenCalled());
-  const receiveId = vi.mocked(cloud.analysisDraft).mock.calls[0][1];
-  if (scope === 'session') {
-    view.rerender(<CloudResults api={cloud} sid="other" binding={binding} active changed={vi.fn()} onAnalysisDraft={accept} />);
-    fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
-  } else {
-    fireEvent.click(screen.getByRole('button', { name: /运行 B-run/ }));
-    await screen.findByText(/结果 B/);
-  }
-  await act(async () => resolve({ local_project_id: 'P', local_session_id: 'S', receive_id: receiveId, text: 'old response', material_refs: [] }));
-  expect(accept).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: '保存到本地' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: '预览' })).toBeTruthy();
+  for (const name of ['交给主 Agent 分析', '浏览器下载', '预检代码交付'])
+    expect(screen.queryByRole('button', { name })).toBeNull();
 });
 
 it('shows the run which superseded an uncaptured result without inventing failed execution or files', async () => {
@@ -185,28 +153,6 @@ it('selects the latest available result on reopening after the previous one was 
   fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
   expect(await screen.findByText('结果 B')).toBeTruthy();
   expect(screen.getByRole('button', { name: /运行 B-run/ }).getAttribute('aria-pressed')).toBe('true');
-});
-it('ignores a late browser download ticket even after returning to the same result', async () => {
-  const cloud = api();
-  let finish!: (value: { url: string; expires_in: number }) => void;
-  Object.assign(cloud, { downloadLink: vi.fn().mockImplementation(() => new Promise(resolve => { finish = resolve; })) });
-  vi.mocked(cloud.results).mockResolvedValue(['A', 'B'].map(result_id => ({ result_id, source_run_id: result_id + '-run', phase: 'available',
-    revision: 2, outcome: 'completed', error_code: null, captured_at: 1, files_count: 1 })));
-  vi.mocked(cloud.result).mockImplementation(async (_s, _b, rid) => ({ plan: { result_id: rid, source_run_id: rid, input_id: null }, phase: 'available',
-    revision: 2, error_code: null, boundary: { outcome: 'completed' }, bundle: { captured_at: 1, files: [file] } }));
-  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-  try {
-    render(<CloudResults api={cloud} sid="S" binding={binding} active changed={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
-    fireEvent.click(await screen.findByRole('button', { name: '浏览器下载' }));
-    fireEvent.click(screen.getByRole('button', { name: /运行 B-run/ }));
-    await screen.findByText('结果 B');
-    fireEvent.click(screen.getByRole('button', { name: /运行 A-run/ }));
-    await screen.findByText('结果 A');
-    await act(async () => finish({ url: '/api/client/v1/cloud-downloads/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa', expires_in: 300 }));
-    expect(click).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: '浏览器下载' })).not.toHaveProperty('disabled', true);
-  } finally { click.mockRestore(); }
 });
 it('keeps the original local save status reachable after the cloud result is cleaned up', async () => {
   const cloud = api('deleted');

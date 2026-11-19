@@ -19,11 +19,11 @@ def test_private_profile_lists_only_public_fields_and_checks_handshake(tmp_path)
     book=ProfileBook.read(config);profile=book.require('work')
     text=json.dumps(book.public())
     assert 'private-test-token' not in text and str(path) not in text and '43121' not in text
-    def reply(request):return httpx.Response(200,json=dict(instance_id=raw['instance_id'],protocol=1,
+    def reply(request):return httpx.Response(200,json=dict(instance_id=raw['instance_id'],protocol=2,
         capabilities=['projects:create','commands:read','tasks:create','tasks:read','inputs:import','environment:commands']))
     conn=ConnectedProfile.open(profile,transport=httpx.MockTransport(reply))
     assert conn.handshake['instance_id']==raw['instance_id'];conn.close()
-    def wrong(request):return httpx.Response(200,json=dict(instance_id=str(uuid4()),protocol=1,capabilities=[]))
+    def wrong(request):return httpx.Response(200,json=dict(instance_id=str(uuid4()),protocol=2,capabilities=[]))
     from naiyue_test_agent.contracts.cloud_tasks import CloudError
     with pytest.raises(CloudError,match='cloud_instance_mismatch'):
         ConnectedProfile.open(profile,transport=httpx.MockTransport(wrong))
@@ -70,7 +70,7 @@ def test_handshake_timeout_is_passed_to_the_actual_http_request(tmp_path,monkeyp
     raw=connection();timeouts=[]
     def handler(request):
         timeouts.append(request.extensions['timeout'])
-        return httpx.Response(200,json=dict(instance_id=raw['instance_id'],protocol=1,capabilities=[
+        return httpx.Response(200,json=dict(instance_id=raw['instance_id'],protocol=2,capabilities=[
             'projects:create','commands:read','tasks:create','tasks:read','inputs:import','environment:commands']))
     client=CloudClient(CloudConnection(**raw),transport=httpx.MockTransport(handler))
     value=ConnectedProfile(profile,client)
@@ -79,7 +79,7 @@ def test_handshake_timeout_is_passed_to_the_actual_http_request(tmp_path,monkeyp
     assert all(0<t<=2.0 for t in timeouts[0].values())
 
 
-@pytest.mark.parametrize('broken',[{'protocol':True},{'protocol':2},{'capabilities':[{}]},{'capabilities':[]}])
+@pytest.mark.parametrize('broken',[{'protocol':True},{'protocol':1},{'capabilities':[{}]},{'capabilities':[]}])
 def test_malformed_handshake_never_opens_mutation_capability(tmp_path,broken):
     from naiyue_test_agent.cloud_files.profiles import CloudProfile,ConnectedProfile,REQUIRED
     from naiyue_test_agent.cloud_files.client import CloudConnection,CloudClient
@@ -88,7 +88,7 @@ def test_malformed_handshake_never_opens_mutation_capability(tmp_path,broken):
     raw=connection();seen=[]
     def handler(request):
         seen.append(request.method)
-        return httpx.Response(200,json=dict(instance_id=raw['instance_id'],protocol=1,capabilities=list(REQUIRED))|broken)
+        return httpx.Response(200,json=dict(instance_id=raw['instance_id'],protocol=2,capabilities=list(REQUIRED))|broken)
     value=ConnectedProfile(profile,CloudClient(CloudConnection(**raw),transport=httpx.MockTransport(handler)))
     try:
         with pytest.raises(CloudError,match='cloud_protocol_incompatible'):value.check()

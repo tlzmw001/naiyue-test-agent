@@ -194,6 +194,9 @@ def open_cloud_runtime(settings, *, settings_path=None):
         database = Database.open_cloud(settings.data_dir / 'cloud.sqlite', profile='registry',
             initialize=owner.record['status'] == 'initializing')
         stack.callback(database.close)
+        from naiyue_test_agent.storage.cloud.input_lifecycle import migrate
+        owner.enable_guards(3)
+        migrate(database)
         runtime = CloudRuntime(settings, owner, database, settings_path=settings_path)
         stack.callback(runtime.close)
         owner.ready()

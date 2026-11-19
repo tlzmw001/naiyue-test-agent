@@ -64,7 +64,7 @@ def delete_binding(domain,binding,sid):
 
 
 @pytest.mark.parametrize('action',['export','apply','branch'])
-def test_completed_receive_delivers_offline_after_task_deletion(monkeypatch,tmp_path,action):
+def test_retired_code_delivery_rejects_old_offline_input_without_mutation(monkeypatch,tmp_path,action):
     async def run():
         async with configured(monkeypatch,tmp_path) as t:
             binding,record,selected=await received_git(t,tmp_path);domain=t.host.cloud_tasks
@@ -76,19 +76,10 @@ def test_completed_receive_delivers_offline_after_task_deletion(monkeypatch,tmp_
                 request=dict(command_id=str(uuid4()),local_session_id=t.sid,receive_id=record.receive_id,
                     action=action,destination_handle=t.query['local_project_id'],name='delivered' if action!='apply' else '')
                 path=t.base+'/cloud-deliveries'
-                response=await t.client.post(path,params=t.query,headers=t.headers,json=request)
-                assert response.status_code==202,response.text
-                await t.manager.drain();path+='/'+request['command_id']
-                preview=(await t.client.get(path,params=t.query,headers=t.headers)).json()
-                assert preview['phase']=='prepared' and preview['conflicts']==[],preview
+                reply=await t.client.post(path,params=t.query,headers=t.headers,json=request)
+                assert reply.status_code==410 and reply.json()['error']['code']=='cloud_result_workflow_retired'
                 assert (tmp_path/'a/test.py').read_text()=='fixture'
-                executed=await t.client.post(path+'/execute',params=t.query,headers=t.headers,json={'confirm':True})
-                assert executed.status_code==202,executed.text
-                await t.manager.drain();final=(await t.client.get(path,params=t.query,headers=t.headers)).json()
-                assert final['phase']=='completed',final
-                if action=='apply':assert (tmp_path/'a/test.py').read_bytes()==b'cloud change\r\n'
-                elif action=='export':assert (tmp_path/'a/delivered/test.py').read_bytes()==b'cloud change\r\n'
-                else:assert git(tmp_path/'a','show','delivered:test.py')==b'cloud change\r\n'
+                assert not (tmp_path/'a/delivered').exists()
                 assert git(tmp_path/'a','rev-parse','HEAD')==original_head
                 assert record.source_handle==selected['source_handle']
                 assert record.model_validate_json(record.model_dump_json()).source_handle==record.source_handle

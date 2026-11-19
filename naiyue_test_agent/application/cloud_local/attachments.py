@@ -48,7 +48,7 @@ class LocalAttachments:
 
     def launch(self,domain,value):
         aid=value['attachment_id'];sid=value['local_session_id'];bid=value['binding_id'];key=(domain.project_id,aid)
-        if key in self.flights or value['phase'] in ('ready','attached','cancelled'):return
+        if key in self.flights or value['phase'] in ('ready','attached','cancelling','cancelled'):return
         if len(self.flights)>=self.manager.settings.max_preparations:raise CloudError('cloud_preparation_capacity',429)
         repo=AttachmentRepository(domain.repo.database)
         async def work():
@@ -64,22 +64,26 @@ class LocalAttachments:
                         selection=await run_blocking(select_files,root,self.manager.settings.input_limits,current['paths'])
                         async with self.capture_gate:
                             pending=await run_blocking(repo.read,bid,sid,aid)
-                            if pending['phase']=='cancelled':raise CloudError('attachment_cancelled')
+                            if pending['phase'] in ('cancelling','cancelled'):raise CloudError('attachment_cancelled')
                             captured=await domain.capture(sid,root,selection.model_dump(by_alias=True),
                                 self.manager.settings.input_limits,validate=validate if expected else None,attachment_directory=bool(expected))
                         current=await run_blocking(repo.update,bid,sid,aid,**captured)
                     binding=await run_blocking(domain.repo.binding,bid,sid)
                     source=await run_blocking(domain.repo.source,current['source_handle'],sid)
                     def check_cancel():
-                        if repo.read(bid,sid,aid)['phase']=='cancelled':raise CloudError('attachment_cancelled')
+                        if repo.read(bid,sid,aid)['phase'] in ('cancelling','cancelled'):
+                            raise CloudError('attachment_cancelled')
                     def progress(offset,total):
                         repo.update(bid,sid,aid,uploaded_bytes=offset,transfer_bytes=total)
                     async with self.manager.connection(binding) as client:
+                        acquire=getattr(client,'acquire_input_use',None)
+                        use_id=await run_blocking(acquire,current['input_id'],aid) if acquire is not None else None
                         await run_blocking(client.upload,Path(source['captured']['directory']),upload_id=aid,
-                            check_cancel=check_cancel,on_progress=progress)
+                            check_cancel=check_cancel,on_progress=progress,**({'use_id':use_id} if use_id else {}))
                         await run_blocking(check_cancel)
                         grant=dict(attachment_id=aid,input_id=current['input_id'],display_name=current['display_name'])
-                        result=TaskAttachment.model_validate(await run_blocking(client.request,'POST','/tasks/'+binding['task_id']+'/attachments',json=grant))
+                        kwargs={'headers':{'X-Input-Use-Id':use_id}} if use_id else {}
+                        result=TaskAttachment.model_validate(await run_blocking(client.request,'POST','/tasks/'+binding['task_id']+'/attachments',json=grant,**kwargs))
                         if any(getattr(result,k)!=v for k,v in grant.items()):raise CloudError('attachment_identity_conflict')
                         await run_blocking(repo.update,bid,sid,aid,phase='ready',size=result.size,error_code=None)
                 except Exception as error:
@@ -105,7 +109,23 @@ class LocalAttachments:
     async def action(self,domain,bid,sid,aid,action):
         with self.manager.operation(),domain.owner.operation():
             repo=AttachmentRepository(domain.repo.database)
-            if action=='cancel':value=await run_blocking(repo.update,bid,sid,aid,phase='cancelled')
+            if action=='cancel':
+                value=await run_blocking(repo.cancel,bid,sid,aid)
+                if value['phase']=='cancelled':return public(value)
+                try:
+                    job=self.flights.get((domain.project_id,aid))
+                    if job is not None:await await_settled(job)
+                    if value.get('input_id'):
+                        binding=await run_blocking(domain.repo.binding,bid,sid)
+                        async with self.manager.connection(binding) as client:
+                            await self._release_input(domain,client,value['input_id'],aid)
+                    value=await run_blocking(repo.cancel,bid,sid,aid,released=True)
+                except CloudError as error:
+                    logger.warning('cloud_attachment_cancel_pending code=%s',error.code)
+                    try:await run_blocking(repo.cancel,bid,sid,aid,error_code=error.code)
+                    except CloudError as save_error:
+                        logger.warning('cloud_attachment_cancel_status_failed code=%s',save_error.code)
+                    raise
             else:
                 async def admit():
                     async with self.manager.admission:
@@ -114,3 +134,24 @@ class LocalAttachments:
                         return value
                 value=await await_settled(asyncio.create_task(admit()))
             return public(value)
+
+    async def settle_retired(self,domain,binding):
+        pending=binding.get('pending_attachment_releases',{})
+        if binding['retained'] or not pending:return False
+        repo=AttachmentRepository(domain.repo.database)
+        for aid in pending:
+            job=self.flights.get((domain.project_id,aid))
+            if job is not None:await await_settled(job)
+        async with self.manager.connection(binding|{'retained':True}) as client:
+            for aid,ident in pending.items():
+                await self._release_input(domain,client,ident,aid)
+                await run_blocking(repo.release_retired,binding['binding_id'],binding['local_session_id'],aid,ident)
+        return True
+
+    async def _release_input(self,domain,client,ident,aid):
+        cancel_upload=getattr(client,'cancel_attachment_input',None)
+        if cancel_upload is not None:
+            await run_blocking(cancel_upload,domain.cache/'inputs'/ident,ident,aid)
+        else:
+            release=getattr(client,'release_operation_input',None)
+            if release is not None:await run_blocking(release,ident,aid)

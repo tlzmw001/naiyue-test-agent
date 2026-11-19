@@ -132,6 +132,15 @@ def command_summary(op):
         item={k:step[k] for k in ('command_id','operation','sent','rejected') if k in step}
         if 'receipt' in step:item['receipt']={k:step['receipt'].get(k) for k in ('status','http_status','error_code','updated_at')}
         value['steps'][name]=item
+    if op['kind']=='delete':
+        value['task_id']=op.get('task_id')
+        if op.get('attachment_release_pending'):value['attachment_release_pending']=True
+        cleanup=op['steps'].get('primary',{}).get('receipt',{}).get('result',{}).get('input_cleanup')
+        if cleanup:
+            value['input_cleanup']={key:cleanup.get(key) for key in
+                                    ('state','released_quota_bytes','bytes_complete','reason')}
+            value['input_cleanup']['candidates']=[
+                {key:item.get(key) for key in ('input_id','state','reason')} for item in cleanup['candidates']]
     return value
 
 

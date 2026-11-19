@@ -20,9 +20,9 @@ def test_confirm_cannot_bypass_global_delivery_capacity_across_projects(tmp_path
         domains=[];saves=[]
         for _ in range(2):
             record=DeliveryRecord(command_id=str(uuid4()),local_project_id=str(uuid4()),local_session_id=uuid4().hex,
-                receive_id=str(uuid4()),action='apply',phase='prepared')
+                receive_id=str(uuid4()),action='files',phase='prepared')
             def read(cid,sid,record=record):return record,{'verified':True}
-            repo=SimpleNamespace(read=read,save=lambda record,metadata=None:saves.append(record) or record)
+            repo=SimpleNamespace(legacy_recovery_roots=lambda _:[],read=read,save=lambda record,metadata=None:saves.append(record) or record)
             domains.append((SimpleNamespace(project_id=record.local_project_id,owner=SimpleNamespace(operation=nullcontext),deliveries=repo,
                 materials=SimpleNamespace(files=ReceiveFiles(SimpleNamespace(path=tmp_path/'state.sqlite')))),record))
         def launch(domain,record,execute):service.flights[(domain.project_id,record.command_id)]=object()
@@ -45,7 +45,7 @@ def test_different_projects_cannot_write_overlapping_destination_directories(tmp
         for _ in range(2):
             record=DeliveryRecord(command_id=str(uuid4()),local_project_id=str(uuid4()),local_session_id=uuid4().hex,
                 receive_id=str(uuid4()),action='files',phase='prepared')
-            repo=SimpleNamespace(read=lambda cid,sid,record=record:(record,{'verified':True}),
+            repo=SimpleNamespace(legacy_recovery_roots=lambda _:[],read=lambda cid,sid,record=record:(record,{'verified':True}),
                 save=lambda record,meta=None:saved.append(record) or record)
             domains.append((SimpleNamespace(project_id=record.local_project_id,owner=SimpleNamespace(operation=nullcontext),deliveries=repo,
                 materials=SimpleNamespace(files=ReceiveFiles(SimpleNamespace(path=tmp_path/'state.sqlite')))),record))

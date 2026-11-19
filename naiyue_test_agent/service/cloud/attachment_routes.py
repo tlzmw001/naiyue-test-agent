@@ -6,6 +6,7 @@ from naiyue_test_agent.application.cloud.work import cloud_work
 from naiyue_test_agent.contracts.cloud_tasks import CloudError
 from .auth import owner_authorize,task_bearer
 from .http import _body
+from .input_routes import use_header
 from .artifact_routes import ArtifactResponse
 
 
@@ -14,7 +15,8 @@ def register(owner,task,runtime):
     async def add(request:Request,task_id:str):
         owner_authorize(request,runtime)
         value=await _body(request,runtime)
-        result=await cloud_work(runtime,lambda:attach(runtime,task_id,value))
+        use_id=use_header(request,required=True)
+        result=await cloud_work(runtime,lambda:attach(runtime,task_id,value,use_id=use_id))
         return JSONResponse(result.model_dump(),status_code=201)
 
     async def authorized(request,task_id,command_id,attachment_id):
@@ -28,7 +30,7 @@ def register(owner,task,runtime):
     @task.get('/internal/cloud/v1/tasks/{task_id}/commands/{command_id}/attachments/{attachment_id}')
     async def metadata(request:Request,task_id:str,command_id:str,attachment_id:str):
         value=await authorized(request,task_id,command_id,attachment_id)
-        package=await cloud_work(runtime,lambda:runtime.inputs.get_input(value.input_id))
+        package=await runtime.inputs.read_package(value.input_id,lambda:runtime.inputs.get_input(value.input_id))
         return package.model_dump(include={'input_id','archive_sha256','size','codec'})
 
     @task.get('/internal/cloud/v1/tasks/{task_id}/commands/{command_id}/attachments/{attachment_id}/archive')

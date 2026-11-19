@@ -11,8 +11,8 @@ def test_material_reads_are_offline_scoped_lines_and_detect_lost_cache(tmp_path)
         manager,domain,store,sid,remote,binding,rid,files,data,requests=await receiving(tmp_path)
         try:
             first=await manager.receives.submit(domain,binding['binding_id'],rid,dict(command_id=str(uuid4()),local_session_id=sid,artifact_ids=[files[2]['artifact']['artifact_id']]))
-            await manager.drain();draft=await manager.receives.analysis(domain,first.receive_id,sid)
-            report=next(v for v in draft.material_refs if v.role=='artifact')
+            await manager.drain();refs=domain.materials.repo.materials(first.receive_id,sid,domain.project_id)
+            report=next(v for v in refs if v.role=='artifact')
             assert domain.materials.has_materials(sid)
             def offline(*a,**kw):raise AssertionError('material access must never contact owner')
             remote.request=offline;remote.task['lifecycle']='deleted'
@@ -37,7 +37,7 @@ def test_material_read_pins_and_rechecks_the_verified_descriptor(tmp_path,monkey
         manager,domain,store,sid,remote,binding,rid,files,data,requests=await receiving(tmp_path)
         try:
             first=await manager.receives.submit(domain,binding['binding_id'],rid,dict(command_id=str(uuid4()),local_session_id=sid,artifact_ids=[files[2]['artifact']['artifact_id']]))
-            await manager.drain();refs=(await manager.receives.analysis(domain,first.receive_id,sid)).material_refs
+            await manager.drain();refs=domain.materials.repo.materials(first.receive_id,sid,domain.project_id)
             report=next(ref for ref in refs if ref.role=='artifact');original=domain.materials.files.verified
             @contextmanager
             def changed(path,*args,**kwargs):

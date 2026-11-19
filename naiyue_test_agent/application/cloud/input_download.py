@@ -19,14 +19,16 @@ class InputArchive:
 
 
 class InputDownload(ArtifactDownload):
-    def __init__(self,service,ident,task_id=None):
+    def __init__(self,service,ident,task_id=None,use_id=None):
         super().__init__(service,task_id)
-        self.input_id=ident;self.key='input:'+ident;self.key_released=False
+        self.use_id=use_id
+        self.input_id=ident;self.reservation=service.reading(ident)
 
     def open(self):
         self.maintenance_lease=self.service.runtime.releases.enter_io()
         if self.task_id is not None:
             self.service.runtime.task_io._enter(self.task_id);self.reserved=True
+        if self.use_id is not None:self.service.uses.check(self.use_id,self.input_id,'recover')
         package=self.service.get_input(self.input_id)
         self.record=InputArchive(package.archive_sha256,package.size,
             self.input_id+('.tar.gz' if package.codec=='gzip' else '.tar'))
@@ -38,18 +40,18 @@ class InputDownload(ArtifactDownload):
     async def aclose(self):
         try:await super().aclose()
         finally:
-            if self.finished.is_set() and not self.key_released:
-                self.key_released=True
-                if not any(lease.input_id==self.input_id for lease in self.service.downloads):self.service.busy.discard(self.key)
+            if self.finished.is_set() and self.reservation is not None:
+                reservation,self.reservation=self.reservation,None
+                reservation.__exit__(None,None,None)
 
 
-async def open_download(service,ident,*,task_id=None):
+async def open_download(service,ident,*,task_id=None,use_id=None):
     ident=TypeAdapter(ContentId).validate_python(ident)
     if service.closing:raise CloudError('cloud_closing',503)
-    key='input:'+ident
-    if key in service.busy and not any(lease.input_id==ident for lease in service.downloads):raise CloudError('transfer_busy')
     if len(service.downloads)>=service.limits.max_downloads:raise CloudError('input_download_capacity',429)
-    lease=InputDownload(service,ident,task_id);service.busy.add(key);service.downloads.add(lease)
+    lease=InputDownload(service,ident,task_id,use_id)
+    lease.reservation.__enter__()
+    service.downloads.add(lease)
     try:
         async with lease.lock:
             await cloud_work(service.runtime,lease.open,drain_cancel=True)

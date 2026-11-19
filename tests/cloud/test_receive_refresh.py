@@ -20,12 +20,12 @@ def test_refresh_preserves_receive_material_ids_and_verifies_bytes_again(tmp_pat
             before=len(requests)
             assert (await manager.receives.read(domain,record.receive_id,sid)).phase=='available'
             assert len(requests)==before
-            with pytest.raises(CloudError):domain.materials.analysis(record.receive_id,sid)
+            with pytest.raises(CloudError):domain.materials.validate_refs(sid,[report.material_id])
             await manager.receives.retry(domain,record.receive_id,sid,refresh=True);await manager.drain()
             ready=await manager.receives.read(domain,record.receive_id,sid)
             assert ready.phase=='available' and [f.material_id for f in ready.files]==[f.material_id for f in record.files]
             assert ready.receive_id==record.receive_id and path.read_bytes()==data[report.artifact.artifact_id]
-            assert domain.materials.analysis(record.receive_id,sid).receive_id==record.receive_id
+            assert domain.materials.validate_refs(sid,[report.material_id])[0].receive_id==record.receive_id
             assert len(requests)>before
         finally:await manager.close();remote.http.close();store.close()
     asyncio.run(run())

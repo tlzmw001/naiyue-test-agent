@@ -81,11 +81,3 @@ class MaterialRef(CloudRecord):
     outcome:Literal['completed','stopped','failed','interrupted','unconfirmed']
     captured_at:float=Field(ge=0)
     reported:Literal[True]=True
-
-
-class AnalysisDraft(CloudRecord):
-    local_project_id:UUIDText
-    local_session_id:SessionId
-    receive_id:UUIDText
-    text:str=Field(min_length=1,max_length=4096)
-    material_refs:list[MaterialRef]=Field(min_length=1,max_length=1000)

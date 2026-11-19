@@ -79,7 +79,7 @@ def test_inline_connection_handshake_uses_instance_identity():
     profile=ConnectionBook.model_validate(raw).profile_book().require('alice')
     def reply(request):
         assert request.headers['authorization']=='Bearer private-test-token'
-        return httpx.Response(200,json={'instance_id':profile.connection.instance_id,'protocol':1,'capabilities':list(REQUIRED)})
+        return httpx.Response(200,json={'instance_id':profile.connection.instance_id,'protocol':2,'capabilities':list(REQUIRED)})
     with_connection=ConnectedProfile.open(profile,transport=httpx.MockTransport(reply))
     with_connection.close()
 

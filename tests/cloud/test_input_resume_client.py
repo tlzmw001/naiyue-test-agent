@@ -49,3 +49,28 @@ def test_client_resume_uses_real_server_offset_after_ack_loss(tmp_path,phase):
         assert lost and len(set(ids))==1 and len(writes)==len(set(writes))
         assert writes==list(range(0,captured.size,64))
         assert result['input_id']==captured.input_id and r.inputs.get_input(captured.input_id).input_id==captured.input_id
+
+
+def test_cancel_releases_use_and_cancels_its_original_unfinished_transfer(tmp_path):
+    captured,_,_=package(tmp_path)
+    cfg=settings(tmp_path,input_limits=InputLimits(chunk_bytes=64))
+    with open_cloud_runtime(cfg) as r,TestClient(create_cloud_apps(r)[0],base_url=cfg.origin) as owner:
+        connection=CloudConnection(endpoint=cfg.origin,owner_authority=cfg.authority,
+            owner_token=cfg.access_token,instance_id=r.instance_id)
+        def handler(request):
+            response=owner.request(request.method,str(request.url),headers=dict(request.headers),content=request.content)
+            if request.method=='PUT':raise httpx.ReadError('controlled missing segment ACK',request=request)
+            return httpx.Response(response.status_code,content=response.content,headers=response.headers)
+        client=CloudClient(connection,transport=httpx.MockTransport(handler))
+        aid=str(uuid4());ident=captured.input_id
+        try:
+            use=client.acquire_input_use(ident,aid)
+            with pytest.raises(CloudError,match='cloud_connection_failed'):
+                client.upload(captured.directory,upload_id=aid,use_id=use)
+            first,=r.inputs.repository.transfers()
+            assert first.state=='uploading' and first.offset==64
+            assert r.inputs.uses.get(use)['state']=='held'
+            for _ in range(2):client.cancel_attachment_input(captured.directory,ident,aid)
+            assert r.inputs.transfer(first.transfer_id).state=='cancelled'
+            assert r.inputs.uses.get(use)['state']=='released'
+        finally:client.close()

@@ -44,8 +44,9 @@ B的模型调用只在既有异步槽位内运行，不持D1或DB锁；Ledger.re
 
 | 预留／锁 | 保护对象与顺序 | 释放边界 |
 | --- | --- | --- |
+| LC0/LC1 主会话云端产物下载 | `LocalResultTool.download` 在原 admission 内登记固定下载回执及 project/operation flight，与本机缓存清理和移除关联互斥 | 远端结果元数据读取在 LC0 外；LC0 → 项目 DB 短事务。producer 在 LC0 外等待 receive/交付各自的 flight，沿用原目标 writer 和实际 IO 排空，status 不启动 producer。关机先封口再等待已登记结果 flight，之后关闭接收、交付和连接；项目 owner 排空受管任务后关闭项目 DB。 |
 | LC0 新消费者 `ManualTaskCommands.submit` | 独立 admit producer 在既有 admission 下分配 command slot、同库固定请求身份；仅本机 DB，不做网络。DB 事务结束后 `_launch`，HTTP waiter 取消不取消已登记派发 | LC0 → DB；不反向获取，不持锁等模型/SSH。主会话删除仍由 retained binding 阻止，无伪造本机 run。 |
-| LC0 本机关联移除 `ManualCloudTasks.forget` | 独立 admit producer 核对本项目无活动本机 producer，随后在一次项目 DB 事务移除关联并结算旧意图；缺失 profile 时同样可用 | LC0 → DB，无远端 IO；旧缓存和派发回执在 DB 内核对 removal 标记，父删除与 retained 更新由同一 DB 事务互斥。 |
+| LC0 本机关联移除 `ManualCloudTasks.forget` | 独立 producer 核对本项目无活动本机 producer，在一次项目 DB 事务移除关联并结算旧意图。普通本机关联可离线移除，有未结束的附件占用时先核对原操作 | LC0 → DB。附件占用释放在 LC0 外进行，完成后重新获取 LC0 核对准入。旧缓存和派发回执在 DB 内核对 removal 标记，父删除与 retained 更新由同一 DB 事务互斥。 |
 | LC0 重试 `ManualCloudTasks.retry` / `LocalAttachments.action(retry)` | 独立 admit producer 在同一 admission 内读取当前本机意图并登记／启动 flight，与本机关联移除互斥；waiter 取消先排空 admit | LC0 → DB；网络派发、上传及已取消创建操作的远端核对均在锁外，worker 不反向获取 LC0。 |
 | LC3 `commands.slots/flights`（同 loop） | message/start/release 与 stop/recover 分开计数；后者有独立控制名额，普通派发拥塞不耗尽停止能力。键为 project+command，原ID复用；同 binding 未决派发由台账检查，不靠网络长锁 | 持久登记/冻结/派发标志均先于IO；callback 移除 flight。受理回执到达即结束本机派发，不等待整个远端模型。 |
 | DB 命令／草稿 CAS | 原用户摘要、完整 owner 请求和receipt；草稿独立 revision。强制释放同时固定所见 cloud revision/generation/active_run，不能用fresh状态重基确认 | 每次短事务；必要历史终局来自owner回执。旧ACK仅清除匹配草稿版本，读取不重复推进未变化的binding revision。 |
@@ -71,6 +72,8 @@ LC1 关闭仍先封口/排空在途读和admit，再排空全部创建/命令 fl
 | CP2 输入操作预留（非线程锁） | `CloudInputs.busy/jobs/uploads/closing`，同一owner loop；`perform`及raw `receive` | commit/cancel producer持transfer键，再持input键；HTTP只shield等待，取消不释放实际producer的预留。不同transfer同I提交/取消互斥，不等锁而返回busy。raw流取消须排空正在执行的本地write/fsync/close后释放transfer键，不持SQLite事务跨await。shutdown先独立排空inputs，再排空lifecycle，任一失败仍关闭后续资源 |
 | CP2 S03.2 扩展 | 同一transfer的段PUT/status恢复/TTL取消，以及input键的commit对账 | 热路径先核身份；IO fsync/close后才CAS写段/offset/文件身份。状态GET如需恢复也由原perform producer持transfer→input预留，取消等待者不释放producer；活动PUT只读已确认offset。维护只在owner loop读busy并在worker重核updated_at/状态后原cancel；不在worker修改busy。Server维护协程收到stopping后结束，监听/维护排空后才关闭inputs/DB |
 | CF4 本地输入cache OS锁 | cloud_files.cache的私有cache.lock格式/容量及inputs/I发布 | 非阻塞，持有到本次捕获/必要回执/真实额度核对/rename发布完成；同cache串行，不跨SQLite/Coordinator锁，不继承给进程。来源选择在拿cache锁前完成，capture仅做本地事实复核。Windows锁字节初始化与签名分开处理，空/半签名只在受限私有初始化根恢复 |
+| CP2 共享输入回收 | `input_reclamation.reclaim` 使用原 input key，先登记实际 IO，再在 registry 短事务核对任务／附件／传输／持久占用并写 retiring | CP2 跨实际磁盘操作，CT1 和 DB 锁不跨 IO。owner acquire/release 和 create/attach 同一 registry 判定，task writer 持 CT1→DB。终结事务移除包索引并结算原回执。owner Range 以持久 recover use 续接，实际读取仍受 CP2/任务 IO 计数保护。 |
+| CP2 共享读取 | 同一输入包的元数据 GET、传输缓存核验、带输入创建任务、Runner 附件元数据及 Range | owner loop 计数共用 input key。读并行，写入、释放占用及回收与读互斥。读请求取消先排空真实磁盘工作，再释放计数。retiring 计入维护阻塞，只有同包原删除命令可以在维护期间继续已开始的回收。 |
 | CF5 本机附件准备门 `LocalAttachments.capture_gate` | 服务内附件工作协程的归档准备顺序 | 释放LC0后获取。持有期间检查取消状态并等待本机捕获，CF5 → 项目DB短读 / CF4；不跨SSH或传输，不在持CF4或DB事务时反向获取。其他输入消费者仍使用CF4。 |
 | CW0 本地IO工作（非线程锁） | `application/cloud/work.py:cloud_work` | worker登记CT0计数后释放CT0，才访问文件/DB。普通元数据请求保留S01取消立即返回语义；CP2生产者独立持预留，raw IO用drain_cancel等待真实worker结束，包括重复取消。失败可观察，必要状态不由HTTP等待者生死决定 |
 | CF3 输入捕获上传OS锁 | `InputClient.upload`的私有capture/upload.lock | 独立客户端非阻塞取得，持有到本次网络交互结束；锁FD不继承。instance绑定的上传command_id先fsync日志/父目录再发POST，ACK丢失后原ID重试。与远端CO0/CT1/DB无嵌套，不锁用户源目录 |
@@ -286,7 +289,7 @@ BackgroundProcessManager.submit/foreground 的 `_validate_binding` 在取得 B1 
 
 ### Spec143AK 本机缓存清理
 
-`ReceiveFiles.publication`另保护users计数/cleaning标记，`use()`仅登记与退出持短锁；预留跨IO/await但线程锁不跨。接收submit/retry、交付prepare/recheck/execute借use至登记flight；材料验证/读取借use至FD关闭。cleanup在owner admission内核对该项目无接收/交付flight并取得独占预留，释放admission后读取项目DB引用，再以既有固定父句柄执行孤儿清理；取消等待worker完成后才释放预留。标记检查不进入DB，DB不反向取publication；同任务并发仍沿已有owner/store生命周期，不增加跨进程承诺。
+`ReceiveFiles.publication`另保护users计数/cleaning标记，`use()`仅登记与退出持短锁；预留跨IO/await但线程锁不跨。接收submit/retry、交付prepare/recheck/execute借use至登记flight；材料验证/读取借use至FD关闭。cloud_result下载借use查找并校验已接收产物，然后进入admission固定交付和receive身份；producer另持use到保存退出。此处user计数预留跨admission，publication线程锁不跨。cleanup在owner admission内核对该项目无接收/交付flight并取得独占预留，释放admission后读取项目DB引用，再以既有固定父句柄执行孤儿清理；取消等待worker完成后才释放预留。标记检查不进入DB，DB不反向取publication；同任务并发仍沿已有owner/store生命周期，不增加跨进程承诺。
 
 ## Spec143AN 输入范围与服务隧道
 

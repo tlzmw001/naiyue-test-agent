@@ -15,7 +15,7 @@ from .task_cleanup import remove_task_data
 from .work import cloud_work
 
 logger = logging.getLogger(__name__)
-SCOPE = ['workspace', 'state', 'history', 'artifacts', 'task_command_bodies']
+SCOPE = ['workspace', 'state', 'history', 'artifacts', 'task_command_bodies', 'unreferenced_shared_inputs']
 
 
 class CloudDeletions:
@@ -109,6 +109,12 @@ class CloudDeletions:
                     active_run_id=None, artifact_operation_id=None, control_operation_id=None,
                     reclaim_blockers=[], runner_connection_id=None, runner_phase='unconfigured')
             if complete:
+                if operation.input_cleanup is None:
+                    from naiyue_test_agent.storage.cloud.input_lifecycle import candidates
+                    ids={a.input_id for a in previous.attachments.values()}
+                    if previous.input_id:ids.add(previous.input_id)
+                    with r.database.transaction(write=True) as db:
+                        operation=operation.model_copy(update=dict(input_candidates=sorted(ids), input_cleanup=candidates(db,sorted(ids))))
                 changes.update(lifecycle='deleted', title='', attachments={}, result_ids=[], pending_result_id=None, input_ready=False,
                     runner_recovery=None, runner_model_ids=[], runner_capabilities=[], model_profile_id=None)
                 tombstone = dict(instance_id=r.instance_id, task_id=operation.task_id,
@@ -123,7 +129,7 @@ class CloudDeletions:
     async def execute(self, receipt):
         r = self.runtime
         receipt = await cloud_work(r, lambda: r.registry.get_command(receipt.command_id))
-        if receipt.status == 'succeeded': return receipt
+        if receipt.status == 'succeeded': return await self._reclaim(receipt)
         operation = DeleteOperation.model_validate(receipt.result)
         try:
             r.observations.delete_task(operation.task_id)
@@ -151,13 +157,22 @@ class CloudDeletions:
             await cloud_work(r, lambda: remove_task_data(r.settings.data_dir, operation.task_id,
                 r.settings.resource_limits), drain_cancel=True)
             receipt, operation = await cloud_work(r, lambda: self.stage(receipt, operation, 'finished', complete=True))
-            return receipt
         except (BackendFailure, CloudError, OSError, sqlite3.Error, TimeoutError) as error:
             code = error.code if isinstance(error, (BackendFailure, CloudError)) else 'task_delete_storage_unavailable'
             logger.warning('cloud_task_delete_unconfirmed task_id=%s code=%s', operation.task_id, code)
             receipt = await cloud_work(r, lambda: r.registry.get_command(receipt.command_id))
             operation = DeleteOperation.model_validate(receipt.result)
             receipt, _ = await cloud_work(r, lambda: self.stage(receipt, operation, operation.phase, error=code))
+            return receipt
+        return await self._reclaim(receipt)
+
+    async def _reclaim(self,receipt):
+        from .input_reclamation import reclaim
+        try:
+            return await reclaim(self.runtime,receipt)
+        except (CloudError, OSError, sqlite3.Error) as error:
+            logger.warning('cloud_input_cleanup_unconfirmed command_id=%s error_type=%s',
+                           receipt.command_id,type(error).__name__)
             return receipt
 
     async def stop(self, receipt, operation):

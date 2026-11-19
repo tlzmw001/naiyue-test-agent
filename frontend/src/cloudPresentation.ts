@@ -2,7 +2,21 @@ import { ApiError, errorText } from './api';
 import type { CloudBinding, CloudMessage, CloudLive, CloudTask } from './cloudTypes';
 import type { MessageRow, ToolState } from './types';
 const errors: Record<string, string> = {
+  cloud_protocol_mismatch: '云端协议不匹配，请配套升级本机与 Coordinator。',
+  cloud_protocol_incompatible: '云端协议不兼容，请配套升级本机与 Coordinator。',
+  legacy_recovery_required: '旧代码交付尚待核对，已保留原操作和本机写入证据。',
+  input_legacy_use_unverified: '升级前的输入包无法核对全部历史恢复依赖，已保留。',
+  input_task_reference: '还有其他任务或附件使用。',
+  input_transfer_active: '还有未结束的传输。',
+  input_use_held: '还有未结束的关联或恢复。',
+  input_io_active: '文件正在读取或提交。',
+  input_cleanup_io_failed: '共享输入删除或状态写入失败。',
+  input_cleanup_unmanaged_entry: '目录包含未登记的文件。',
+  input_cleanup_identity_changed: '目录或文件身份已变化。',
+
+  cloud_result_workflow_retired: '旧取回入口已退出，请保存普通产物后在主会话继续处理。',
   cloud_local_work_active: '本机还有正在派发、上传、接收、保存或待发送的任务操作，请先处理完成后再移除关联。',
+  cloud_attachment_release_pending: '还有附件占用待解除，请重试当前操作。',
   cloud_task_removed: '本机关联已移除，原任务已停止在本机管理。',
   cloud_result_identity_mismatch: '结果与当前任务不一致，已停止展示，请刷新当前任务核对',
   cloud_delivery_preflight_changed: '预检后本机文件已变化，已停止本次写入，请重新预检',

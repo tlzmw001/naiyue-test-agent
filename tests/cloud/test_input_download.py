@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import threading
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -24,10 +25,14 @@ def test_owner_archive_download_is_immutable_range_bound_and_task_inaccessible(t
             owner,task=create_cloud_apps(runtime)
             path='/api/cloud/v1/inputs/'+captured.input_id+'/archive'
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=owner),base_url=runtime.settings.origin) as client:
-                assert (await client.get(path,headers=owner_headers(runtime))).status_code==404
+                assert (await client.get(path,headers=owner_headers(runtime))).status_code==409
                 package=runtime.inputs.commit(transfer.transfer_id)
                 before=file_identity((runtime.inputs.root/'inputs'/captured.input_id/'archive').stat())
-                headers=owner_headers(runtime);etag='"'+captured.archive_sha256+'"'
+                use_id=str(uuid4())
+                held=await client.post('/api/cloud/v1/input-uses',headers=owner_headers(runtime),json=dict(
+                    command_id=use_id,input_id=captured.input_id,purpose='recover',origin_operation_id=use_id))
+                assert held.status_code==200
+                headers=owner_headers(runtime)|{'X-Input-Use-Id':use_id};etag='"'+captured.archive_sha256+'"'
                 response=await client.get(path,headers=headers)
                 assert response.status_code==200,response.text
                 assert response.content==raw and hashlib.sha256(response.content).hexdigest()==package.archive_sha256
@@ -45,7 +50,7 @@ def test_owner_archive_download_is_immutable_range_bound_and_task_inaccessible(t
                 assert (await client.get(path)).status_code==401
                 denied=await client.get(path,headers=headers|{'Authorization':'Bearer task-only-credential'})
                 assert denied.status_code==401
-                assert (await client.get('/api/cloud/v1/inputs/'+'e'*64+'/archive',headers=headers)).status_code==404
+                assert (await client.get('/api/cloud/v1/inputs/'+'e'*64+'/archive',headers=headers)).status_code==409
                 assert file_identity((runtime.inputs.root/'inputs'/captured.input_id/'archive').stat())==before
                 assert runtime.inputs.get_input(captured.input_id)==package
                 assert not runtime.inputs.downloads and 'input:'+captured.input_id not in runtime.inputs.busy
@@ -106,9 +111,8 @@ def test_task_scoped_input_lease_is_closed_by_deletion(tmp_path):
                 assert not runtime.task_io.active and not runtime.registry.get_task(task.task_id).attachments
                 with pytest.raises(CloudError,match='task_not_available'):
                     await runtime.inputs.open_download(task.input_id,task_id=task.task_id)
-                owner=await runtime.inputs.open_download(task.input_id)
-                assert owner.task_id is None
-                await owner.aclose()
+                with pytest.raises(CloudError,match='input_not_found'):
+                    await runtime.inputs.open_download(task.input_id)
         asyncio.run(scenario())
 
 

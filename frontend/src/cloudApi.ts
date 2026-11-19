@@ -4,9 +4,9 @@ import { decodeSSE, responseBytes } from './sse';
 import type { SseFrame } from './sse';
 
 import type { ResultSummary, CloudResult, ResultChanges, ResultPreview } from './cloudResultTypes';
-import type { AnalysisDraft, ReceiveRecord } from './cloudReceiveTypes';
+import type { ReceiveRecord } from './cloudReceiveTypes';
 import type { DirectoryPage } from './projectTypes';
-import type { DeliveryRecord, DeliveryRequest } from './cloudDeliveryTypes';
+import type { DeliveryRecord, DeliveryRequest, LegacyDelivery } from './cloudDeliveryTypes';
 
 type Request = (path: string, init?: RequestInit) => Promise<Response>;
 export class CloudApi {
@@ -26,7 +26,6 @@ export class CloudApi {
     return (await this.request(path, { method, body: JSON.stringify(body) })).json();
   }
   private task(bid: string) { return '/cloud-tasks/' + encodeURIComponent(bid); }
-  downloadLink(sid: string, bid: string, rid: string, fid: string) { return this.write<{ url: string; expires_in: number }>(this.task(bid) + '/results/' + encodeURIComponent(rid) + '/files/' + encodeURIComponent(fid) + '/download-link' + this.query(sid), {}); }
   network(profile: string, signal?: AbortSignal) { return this.read<NetworkView>('/cloud-networks/' + encodeURIComponent(profile), signal); }
   changeNetwork(profile: string, slot: string, target: ServiceTarget, expected_revision: number) { return this.write<NetworkView>('/cloud-networks/' + encodeURIComponent(profile) + '/entries/' + encodeURIComponent(slot), { target, expected_revision }); }
   testNetwork(profile: string, target: ServiceTarget) { return this.write<{tcp_reachable: boolean}>('/cloud-networks/' + encodeURIComponent(profile) + '/test', target); }
@@ -57,6 +56,9 @@ export class CloudApi {
   message(sid: string, bid: string, body: object) { return this.write<CloudOperation>(this.task(bid) + '/messages?local_project_id=' + encodeURIComponent(this.projectId), { local_session_id: sid, ...body }); }
   command(sid: string, bid: string, kind: 'control' | 'environment' | 'delete', body: object) { return this.write<CloudOperation>(this.task(bid) + '/' + kind + '?local_project_id=' + encodeURIComponent(this.projectId), { local_session_id: sid, ...body }); }
   operations(sid: string, bid: string, signal?: AbortSignal) { return this.read<CloudOperation[]>(this.task(bid) + '/operations' + this.query(sid), signal); }
+  legacyDeliveries(sid: string, offset: number, signal?: AbortSignal) { return this.read<LegacyDelivery[]>('/cloud-legacy-deliveries' + this.query(sid, { offset }), signal); }
+  deletions(sid: string, offset: number, signal?: AbortSignal) { return this.read<CloudOperation[]>('/cloud-deletions' + this.query(sid) + '&offset=' + offset, signal); }
+  retryInputCleanup(sid: string, cid: string) { return this.write<CloudOperation>('/cloud-operations/' + encodeURIComponent(cid) + '/retry-input-cleanup' + this.query(sid), {}); }
   operation(sid: string, cid: string, signal?: AbortSignal) { return this.read<CloudOperation>('/cloud-operations/' + encodeURIComponent(cid) + this.query(sid), signal); }
   retry(sid: string, cid: string) { return this.write<CloudOperation>('/cloud-operations/' + encodeURIComponent(cid) + '/retry' + this.query(sid), {}); }
   preview(sid: string, bid: string, signal?: AbortSignal) { return this.read<DeletePreview>(this.task(bid) + '/delete-preview' + this.query(sid), signal); }
@@ -74,7 +76,6 @@ export class CloudApi {
   receiveStatus(sid: string, id: string, signal?: AbortSignal) { return this.read<ReceiveRecord>('/cloud-receives/' + encodeURIComponent(id) + this.query(sid), signal); }
   cleanupReceiveCache(sid: string) { return this.write<{ removed_files: number; freed_bytes: number }>('/cloud-receive-cache/cleanup' + this.query(sid), {}); }
   retryReceive(sid: string, id: string, refresh = false) { return this.write<ReceiveRecord>('/cloud-receives/' + encodeURIComponent(id) + '/retry' + this.query(sid), refresh ? { refresh: true } : {}); }
-  analysisDraft(sid: string, id: string) { return this.write<AnalysisDraft>('/cloud-receives/' + encodeURIComponent(id) + '/analysis-draft' + this.query(sid), {}); }
   delivery(sid: string, body: Omit<DeliveryRequest, 'local_session_id'>) {
     return this.write<DeliveryRecord>('/cloud-deliveries?local_project_id=' + encodeURIComponent(this.projectId), { ...body, local_session_id: sid });
   }

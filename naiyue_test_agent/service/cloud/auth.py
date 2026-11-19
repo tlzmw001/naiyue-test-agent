@@ -22,7 +22,7 @@ def owner_authorize(request, runtime, *, query_fields=()):
     protocol = request.headers.get('x-cloud-protocol')
     if ((protocol is not None and protocol != str(OWNER_PROTOCOL))
             or (request.method not in ('GET', 'HEAD') and protocol != str(OWNER_PROTOCOL))):
-        raise CloudError('cloud_protocol_mismatch')
+        raise CloudError('cloud_protocol_mismatch',426)
 
 
 def task_bearer(request, runtime):

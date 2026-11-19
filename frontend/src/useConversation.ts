@@ -439,7 +439,6 @@ export function useConversation(api: WebApi, active = true) {
   return { imageInputs, models, model, thinkingOptions, sessions, session, messages, run, notice:statusSync.error||notice,
     materialInputs: { current: draftState.materialRef.current[id] ?? [], remove: (materialId: string) =>
       draftState.writeMaterials((draftState.materialRef.current[id] ?? []).filter(item => item.material_id !== materialId), id) },
-    addAnalysisDraft: (value: import('./cloudReceiveTypes').AnalysisDraft) => activeRef.current && draftState.mergeAnalysisDraft(value),
     statusSyncError:statusSync.error, lastSubmission, listing, creation,
     connection: connection?.session_id === id && connection.run_id === run?.run_id ? connection : null, submitting, stopping, changingModel, changingControls, selectingSession, recovering,
     history: { ...history.pagination, loadOlder: history.loadOlder, disabled: selectingSession },

@@ -8,7 +8,7 @@ import type { SessionView } from './types';
 
 afterEach(() => { cleanup(); sessionStorage.clear(); });
 
-it('bridges a verified cloud result into the main draft and sends only after explicit confirmation', async () => {
+it('keeps cloud results separate from the main draft and preserves dialog focus', async () => {
   const project = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; const { api } = client(project);
   const row = { ...await api.session('s'), title: '本机主会话' };
   vi.mocked(api.sessions).mockResolvedValue([row]);
@@ -19,8 +19,6 @@ it('bridges a verified cloud result into the main draft and sends only after exp
     environment_operation_id: null, last_quiescent_at: 1, reclaim_blockers: [], runner_model_ids: ['A'] };
   const binding = { binding_id: 'B', local_session_id: 's', task_id: task.task_id, input_id: task.input_id, revision: 1,
     profile_id: 'work', instance_id: 'I', preparation: 'prepared', retained: true, cloud: task };
-  const material = { material_id: 'M', receive_id: '', task_id: task.task_id, result_id: 'R', input_id: task.input_id, title: 'report.json', role: 'artifact',
-    size: 12, sha256: 'c'.repeat(64), source_run_id: 'd'.repeat(32), outcome: 'failed', captured_at: 1, reported: true };
   const cloud = { projectId: project, profiles: vi.fn().mockResolvedValue([]), list: vi.fn().mockResolvedValue([binding]), binding: vi.fn().mockResolvedValue(binding),
     draft: vi.fn().mockResolvedValue({ text: '', model_id: 'A', draft_revision: 0 }), operations: vi.fn().mockResolvedValue([]),
     models: vi.fn().mockResolvedValue({ model_ids: ['A'], default_model_id: 'A', thinking_options: {} }),
@@ -31,8 +29,7 @@ it('bridges a verified cloud result into the main draft and sends only after exp
     result: vi.fn().mockResolvedValue({ plan: { result_id: 'R', input_id: task.input_id }, phase: 'available', revision: 1, boundary: { outcome: 'failed' }, bundle: { files: [] } }),
     changes: vi.fn().mockResolvedValue({ changes: [], total: 0, next_offset: null }),
     receive: vi.fn(async (_s, _b, _r, body: { command_id: string }) => ({ receive_id: body.command_id, command_id: body.command_id, local_project_id: project,
-      local_session_id: 's', binding_id: 'B', result_id: 'R', input_id: task.input_id, phase: 'available', active: false, files: [] })),
-    analysisDraft: vi.fn(async (_s, id: string) => ({ local_project_id: project, local_session_id: 's', receive_id: id, text: '请分析云端报告', material_refs: [{ ...material, receive_id: id }] })) };
+      local_session_id: 's', binding_id: 'B', result_id: 'R', input_id: task.input_id, phase: 'available', active: false, files: [] })) };
   vi.spyOn(api, 'cloudTasks').mockReturnValue(cloud as unknown as ReturnType<typeof api.cloudTasks>);
   render(<App api={api} />);
   const sessionButton = await screen.findByRole('button', { name: '本机主会话 A' });
@@ -49,12 +46,11 @@ it('bridges a verified cloud result into the main draft and sends only after exp
   fireEvent(resultDialog, new Event('cancel', { cancelable: true }));
   fireEvent.click(screen.getByRole('button', { name: /结果与产物/ }));
   fireEvent.click(await screen.findByRole('button', { name: /运行 run12345/ }));
-  fireEvent.click(await screen.findByRole('button', { name: '交给主 Agent 分析' }));
-  await waitFor(() => expect(screen.getByRole('textbox', { name: '消息' })).toHaveProperty('value', '保留的本机请求\n\n请分析云端报告'));
-  expect(screen.getByRole('region', { name: '云端材料引用' })).toBeTruthy(); expect(api.start).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
-  await waitFor(() => expect(api.start).toHaveBeenCalledOnce());
-  expect(vi.mocked(api.start).mock.calls[0][6]).toEqual(['M']);
+  expect(await screen.findByRole('region', { name: '结果取回' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: '交给主 Agent 分析' })).toBeNull();
+  expect(screen.getByRole('textbox', { name: '消息' })).toHaveProperty('value', '保留的本机请求');
+  expect(cloud.receive).not.toHaveBeenCalled();
+  expect(api.start).not.toHaveBeenCalled();
   } finally { restoreDialog(); }
 });
 

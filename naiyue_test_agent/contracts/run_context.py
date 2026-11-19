@@ -9,7 +9,7 @@ from .environment import EnvironmentRef, FileSystemPort
 from .process import ProcessPort
 from .run_ports import (
     HistoryQuery, MemoryQuery, InvokeSubagent, ListSubagents, TaskQueries,
-    RunControlPort, RunErrorPolicy, ToolBatchPlan, CloudMaterialsQuery,
+    RunControlPort, RunErrorPolicy, ToolBatchPlan, CloudResultsPort,
 )
 from .run_observation_ports import (
     RunPublisher, TurnObservation, ControlObservation, ContextOperationObservation, ToolProgressObservation,
@@ -51,7 +51,7 @@ class RunCapabilities:
     memory: MemoryQuery | None = None
     files: FileSystemPort | None = None
     processes: ProcessPort | None = None
-    cloud_materials: CloudMaterialsQuery | None = None
+    cloud_results: CloudResultsPort | None = None
 
 
 @dataclass(frozen=True)

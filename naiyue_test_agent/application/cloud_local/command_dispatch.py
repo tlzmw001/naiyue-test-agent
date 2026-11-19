@@ -11,7 +11,8 @@ from naiyue_test_agent.contracts.cloud_local_tasks import checked_task
 
 def validate(raw,op,step):
     try:
-        receipt=CommandReceipt.model_validate(raw);item=op['steps'][step];payload=item['request']
+        receipt=CommandReceipt.model_validate(raw);item=op['steps'][step]
+        payload=item.get('request',op['request'])
         if (receipt.command_id!=item['command_id'] or receipt.resource_id!=op['task_id']
                 or receipt.operation!=item['operation'] or receipt.request_digest!=item['request_digest']
                 or not item['operation'].startswith('result:') and receipt.expected_generation!=payload['expected_generation']):raise CloudError('cloud_receipt_mismatch',502)

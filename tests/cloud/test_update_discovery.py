@@ -43,7 +43,7 @@ def test_current_active_and_incompatible_channel_do_not_launch(tmp_path,monkeypa
     owner.request=request;monkeypatch.setattr(discovery,'launch',lambda *a:launched.append(a))
     assert discover(settings,owner,settings_file=tmp_path/'update.json')['phase']=='up_to_date'
     def incompatible(method,path,**kw):
-        if path=='/instance':return dict(instance_id='fixture',protocol=2,version='0.5.6',capabilities=['releases:write'])
+        if path=='/instance':return dict(instance_id='fixture',protocol=1,version='0.5.6',capabilities=['releases:write'])
         return original(method,path,**kw)
     owner.request=incompatible
     assert discover(settings,owner,settings_file=tmp_path/'update.json')['phase']=='requires_maintenance'

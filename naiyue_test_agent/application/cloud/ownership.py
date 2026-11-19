@@ -79,7 +79,7 @@ class CloudOwner:
         try:
             value = json.loads(content)
             if (len(content) > 4096 or set(value) != {'format', 'schema', 'instance_id', 'status'}
-                    or value['format'] != ROOT_FORMAT or type(value['schema']) is not int or value['schema'] not in (1,2)
+                    or value['format'] != ROOT_FORMAT or type(value['schema']) is not int or value['schema'] not in (1,2,3)
                     or value['status'] not in ('initializing', 'ready')
                     or str(__import__('uuid').UUID(value['instance_id'])) != value['instance_id']):
                 raise ValueError('invalid_root_marker')
@@ -107,9 +107,9 @@ class CloudOwner:
         os.replace(temporary, self.root / 'cloud-root.json')
         sync_store_directory(self.root)
 
-    def enable_guards(self):
-        if self.record['schema']==2:return
-        self.record=self.record|dict(schema=2)
+    def enable_guards(self, version=2):
+        if self.record['schema']>=version:return
+        self.record=self.record|dict(schema=version)
         temporary=self.root/'.cloud-root.next'
         if temporary.exists():private_file(temporary)
         self._write_marker(temporary)

@@ -64,6 +64,8 @@ class ScopeServices:
             host = await self.application.projects.history_host(scope_id)
             values = dict(workspace_root=getattr(project.source,'path',None), workspace_id=project.project_id,
                           database_path=project.database_path)
+        if values['workspace_id'] is not None and project.trusted and isinstance(project.source, LocalSource):
+            host.bind_cloud_results(self.cloud_tasks)
         settings = self.settings.model_copy(update=values)
         if self.closing:
             raise WebError('service_closing', 503)

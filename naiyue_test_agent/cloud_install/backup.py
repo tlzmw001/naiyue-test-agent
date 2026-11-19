@@ -44,7 +44,10 @@ def _manifest(settings,ident):
     manifest=read(attempt/'manifest.json',settings.backup_max_files*1024+1024*1024)
     if (digest(manifest)!=complete.get('manifest_sha256') or manifest.get('backup_id')!=ident
             or manifest.get('schema_version')!=1 or manifest.get('state_schema')!=STATE_SCHEMA
-            or manifest.get('coordinator_protocol')!=OWNER_PROTOCOL or manifest.get('runner_protocol')!=RUNNER_PROTOCOL):raise CloudError('backup_invalid')
+            or manifest.get('coordinator_protocol') not in (1,OWNER_PROTOCOL) or manifest.get('runner_protocol')!=RUNNER_PROTOCOL):raise CloudError('backup_invalid')
+    if any(key.startswith('input-state:') and state.get('state')=='retiring'
+           for key,state in manifest['meta'].items()):
+        raise CloudError('restore_input_retirement_pending')
     return manifest,attempt/'payload'
 
 
@@ -89,7 +92,7 @@ def _management(owned,destination,settings):
     allowed={'cloud-root.json','owner.lock','cloud.sqlite','cloud.sqlite.lock','cloud.sqlite-wal','cloud.sqlite-shm','cloud.sqlite-journal',
         'history','inputs','transfers','artifacts','artifact-transfers','tasks','restore-guard.json','gc-guard.json'}
     if set(os.listdir(source))-allowed:raise CloudError('offline_unknown_root_entry')
-    write(destination/'cloud-root.json',owned.owner.record|dict(schema=2))
+    write(destination/'cloud-root.json',owned.owner.record|dict(schema=max(2,owned.owner.record['schema'])))
     backup_database(owned.database,destination/'cloud.sqlite',guard_format=True)
     history=directory(destination/'history');known={t['task_id'] for t in owned.snapshot['tasks']}
     for path in sorted((source/'history').iterdir()):

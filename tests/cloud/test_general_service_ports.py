@@ -93,7 +93,7 @@ def test_owner_api_checks_assigned_entries_and_auth(tmp_path):
         settings=config(tmp_path).model_copy(update={'networks':{'alice':NetworkEndpoints(bind_host='172.18.0.1',ports={'one':21001,'two':21002,'third':21003})}})
         with open_cloud_runtime(settings) as r:
             owner,_=create_cloud_apps(r)
-            headers={'Authorization':'Bearer '+r.settings.owner_token.get_secret_value(),'Origin':r.settings.origin,'X-Cloud-Protocol':'1'}
+            headers={'Authorization':'Bearer '+r.settings.owner_token.get_secret_value(),'Origin':r.settings.origin,'X-Cloud-Protocol':'2'}
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=owner),base_url=r.settings.origin) as client:
                 url='/api/cloud/v1/networks/alice'
                 assert (await client.get(url)).status_code==401

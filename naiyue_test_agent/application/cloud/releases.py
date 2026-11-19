@@ -24,7 +24,7 @@ class CloudReleases:
         return self.repository.transact(request.command_id,fingerprint,run)
 
     def _supported(self,release,t):
-        if (release.coordinator_protocol!=OWNER_PROTOCOL or release.runner_protocol!=RUNNER_PROTOCOL or release.state_schema!=STATE_SCHEMA
+        if (release.coordinator_protocol not in (1,OWNER_PROTOCOL) or release.runner_protocol!=RUNNER_PROTOCOL or release.state_schema!=STATE_SCHEMA
                 or release.min_connector_protocol>OWNER_PROTOCOL):raise CloudError('release_protocol_incompatible')
         from naiyue_test_agent.contracts.cloud_capabilities import owner_capabilities
         lifecycle=getattr(self.runtime,'lifecycle',None)
@@ -118,8 +118,8 @@ class CloudReleases:
         self._command(request,'release:maintenance',run)
         return self.maintenance_status()
 
-    def enter_io(self,*,continuation=None):
-        return self.repository.begin_io(continuation)
+    def enter_io(self,*,continuation=None,input_id=None):
+        return self.repository.begin_io(continuation,input_id=input_id)
 
     def leave_io(self,ident):
         self.repository.end_io(ident)

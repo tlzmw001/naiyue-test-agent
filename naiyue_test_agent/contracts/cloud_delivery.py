@@ -15,8 +15,11 @@ class DeliveryRequest(CloudRecord):
     expected_directory:str|None=Field(default=None,max_length=64)
     name:str=Field(default='',max_length=128)
 
+    target_names:dict[UUIDText,str]=Field(default_factory=dict,max_length=1000,exclude_if=lambda v:not v)
+
     @model_validator(mode='after')
     def name_required(self):
+        if self.target_names and (self.action!='files' or self.name):raise ValueError('delivery_target_names_unexpected')
         if self.action in ('export','branch') and not self.name:raise ValueError('delivery_name_required')
         if self.action=='apply' and self.name:raise ValueError('delivery_name_unexpected')
         if self.action=='files':
@@ -37,7 +40,7 @@ class DeliveryRecord(CloudRecord):
     receive_id:UUIDText
     action:Literal['export','branch','apply','files']
     name:str=''
-    phase:Literal['preparing','prepared','executing','completed','partial','failed','unknown']
+    phase:Literal['waiting_receive','preparing','prepared','executing','completed','partial','failed','unknown']
     changes:list[DeliveryChange]=Field(default_factory=list)
     conflicts:list[str]=Field(default_factory=list)
     error_code:str|None=None

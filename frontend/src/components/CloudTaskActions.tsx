@@ -78,6 +78,7 @@ export default function CloudTaskActions({ api, sid, binding, busy, execute, for
       <h3 id="cloud-delete-title">删除此云端任务？</h3>{error && <p role="alert" className={styles.error}>{error}</p>}
       <p>任务 {preview.task_id.slice(0, 8)} · 连接 {binding.profile_id}</p>
       <p>将删除云端工作区、执行历史和产物，无法恢复。主聊天和已经下载的文件保留。</p>
+      {preview.scope.includes('unreferenced_shared_inputs') && <p>任务删除后会回收没有其他依赖的共享输入。回收结果可在删除记录中核对。</p>}
       {preview.requires_stop && !uncertain && <p role="status">请先停止本轮并等待保存完成，再重新预览删除。</p>}
       {preview.requires_stop && uncertain && <label className={styles.check}><input type="checkbox" checked={acknowledged}
         onChange={e => acknowledge(e.target.checked)} />我确认放弃尚未保存的现场，仍需核验原容器已停止</label>}

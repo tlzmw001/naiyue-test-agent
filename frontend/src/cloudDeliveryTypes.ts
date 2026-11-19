@@ -10,3 +10,8 @@ export interface DeliveryRecord {
   force?: boolean; force_allowed?: boolean; base_result_id?: string | null; destination_path?: string | null; done?: string[];
   error_code: string | null; branch_head: string | null;
 }
+
+export interface LegacyDelivery {
+  command_id: string; action: 'apply' | 'export' | 'branch'; phase: string;
+  path: string | null; done: string[]; recovery_required: boolean; evidence_path: string | null;
+}

@@ -18,8 +18,17 @@ export interface CloudBinding {
   task_id: string | null; input_id: string | null; revision: number; preparation: string; retained: boolean;
   create_command_id: string; cloud: CloudTask | null;
 }
+export interface InputCleanup {
+  state: string;
+  released_quota_bytes: number;
+  bytes_complete: boolean;
+  reason?: string | null;
+  candidates: { input_id: string; state: string; reason?: string | { code: string; errno?: number | null; winerror?: number | null } | null }[];
+}
 export interface CloudOperation {
   command_id: string; binding_id: string; kind: string; phase: string; error_code?: string | null; run_id?: string | null;
+  task_id?: string | null; attachment_release_pending?: boolean;
+  input_cleanup?: InputCleanup;
   steps: Record<string, { receipt?: { status: string; error_code?: string | null } }>;
 }
 export interface CloudDraft { attachment_ids?: string[]; draft_revision: number; text: string; model_id: string | null; thinking_level: string }

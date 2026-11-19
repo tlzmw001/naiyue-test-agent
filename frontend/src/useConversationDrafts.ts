@@ -1,6 +1,6 @@
 import { useRef, useState, type RefObject } from 'react';
 import type { DraftImage } from './imageTypes';
-import type { AnalysisDraft, MaterialRef } from './cloudReceiveTypes';
+import type { MaterialRef } from './cloudReceiveTypes';
 
 export interface ComposerDraft { text: string; images: DraftImage[]; materials: MaterialRef[] }
 /** One authoritative input per session; material drafts persist only within this browser tab. */
@@ -20,7 +20,7 @@ export function useConversationDrafts(selected: RefObject<string>, projectId?: s
     catch { console.warn('cloud_material_draft_read_failed'); }
     const materials = Array.isArray(stored?.materials) ? stored.materials.filter(value => value && typeof value.material_id === 'string' &&
       typeof value.title === 'string' && typeof value.size === 'number' && typeof value.receive_id === 'string') : [];
-    return source.current[id] = { text: materials.length && typeof stored?.text === 'string' ? stored.text : '', images: [], materials };
+    return source.current[id] = { text: typeof stored?.text === 'string' ? stored.text : '', images: [], materials };
   }
   function project() {
     draftRef.current = Object.fromEntries(Object.entries(source.current).map(([id,input])=>[id,input.text]));
@@ -32,7 +32,7 @@ export function useConversationDrafts(selected: RefObject<string>, projectId?: s
     project();
     if (projectId) try {
       const value = source.current[id];
-      if (value?.materials.length) sessionStorage.setItem(storageKey(id), JSON.stringify({ text: value.text, materials: value.materials }));
+      if (value?.materials.length || sessionStorage.getItem(storageKey(id)) !== null && value?.text) sessionStorage.setItem(storageKey(id), JSON.stringify({ text: value.text, materials: value.materials }));
       else sessionStorage.removeItem(storageKey(id));
     } catch { console.warn('cloud_material_draft_save_failed'); }
     repaint(value => value + 1);
@@ -45,15 +45,6 @@ export function useConversationDrafts(selected: RefObject<string>, projectId?: s
   }
   function writeMaterials(materials: MaterialRef[], id = selected.current) {
     source.current[id] = { ...input(id), materials }; publish(id);
-  }
-  function mergeAnalysisDraft(value: AnalysisDraft) {
-    const id = selected.current;
-    if (!projectId || value.local_project_id !== projectId || value.local_session_id !== id || id === 'new') return false;
-    const before = input(id), known = new Set(before.materials.map(item => item.material_id));
-    const added = value.material_refs.filter(item => { if (known.has(item.material_id)) return false; known.add(item.material_id); return true; });
-    if (!added.length) return true;
-    source.current[id] = { ...before, text: [before.text, value.text].filter(Boolean).join('\n\n'), materials: [...before.materials, ...added] };
-    publish(id); return true;
   }
   function appendDraft(text: string, images: DraftImage[], id = selected.current) {
     const before = input(id);
@@ -71,5 +62,5 @@ export function useConversationDrafts(selected: RefObject<string>, projectId?: s
     publish(id); setPending({ ...pendingRef.current });
   }
   return { drafts: draftRef.current, pending, draftRef, imageRef, materialRef, pendingRef, writeDraft, writeImages,
-    writeMaterials, mergeAnalysisDraft, appendDraft, moveDraft, writePending, forget };
+    writeMaterials, appendDraft, moveDraft, writePending, forget };
 }

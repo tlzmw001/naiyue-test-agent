@@ -18,16 +18,19 @@ def source_for(domain,record):
     return binding,source
 
 
-def recover_archive(client,package,destination,limits):
+def recover_archive(client,package,destination,limits,*,operation_id=None):
     """The fixed package binds every Range, then full SHA256 binds the final file."""
     destination=Path(destination);partial=destination.with_suffix('.part')
+    acquire=getattr(client,'acquire_input_use',None)
+    use_id=acquire(package.input_id,operation_id,purpose='recover') if acquire is not None and operation_id else None
+    headers={'X-Input-Use-Id':use_id} if use_id else {}
     descriptor=open_store_file(partial);sha=hashlib.sha256();size=0
     with os.fdopen(descriptor,'wb') as stream:
         stream.truncate(0)
         for offset in range(0,package.size,limits.chunk_bytes):
             end=min(package.size,offset+limits.chunk_bytes)-1
             with client.http.stream('GET','/api/cloud/v1/inputs/'+package.input_id+'/archive',
-                    headers={'Range':f'bytes={offset}-{end}','If-Range':'"'+package.archive_sha256+'"'}) as response:
+                    headers=headers|{'Range':f'bytes={offset}-{end}','If-Range':'"'+package.archive_sha256+'"'}) as response:
                 if (response.status_code!=206 or response.headers.get('etag')!='"'+package.archive_sha256+'"'
                         or response.headers.get('content-range')!=f'bytes {offset}-{end}/{package.size}'
                         or response.headers.get('content-length')!=str(end-offset+1)):raise CloudError('cloud_delivery_input_changed')
@@ -40,6 +43,7 @@ def recover_archive(client,package,destination,limits):
         stream.flush();os.fsync(stream.fileno())
     if size!=package.size or sha.hexdigest()!=package.archive_sha256:raise CloudError('cloud_delivery_input_changed')
     os.replace(partial,destination);sync_store_directory(destination.parent)
+    if use_id is not None:client.release_input_use(use_id)
     return destination
 
 

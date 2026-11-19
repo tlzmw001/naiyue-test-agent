@@ -74,3 +74,37 @@ def test_delete_pending_or_failed_receipt_keeps_retained_guard(tmp_path):
             await manager.close()
         finally:store.close()
     asyncio.run(run())
+
+
+def test_successful_delete_receipt_reports_failure_to_check_remote_cleanup(tmp_path):
+    async def run():
+        manager,domain,store,sid,remote,binding=await prepared(tmp_path)
+        try:
+            cid=uid()
+            bid=binding['binding_id'];tid=binding['task_id'];generation=binding['cloud']['generation']
+            request=dict(command_id=cid,local_session_id=sid,expected_binding_revision=binding['revision'],
+                         expected_revision=binding['cloud']['revision'],expected_generation=generation,
+                         preview_digest='a'*64,acknowledge_unknown=False)
+            journal=domain.repo.commands
+            journal.reserve(bid,sid,'delete',request)
+            payload={k:v for k,v in request.items() if k not in ('local_session_id','expected_binding_revision')}
+            payload['confirm_task_id']=tid
+            fingerprint=digest(dict(task_id=tid,request=payload))
+            journal.fix(cid,sid,'primary',payload,'/tasks/'+tid+'/delete','task:delete',fingerprint)
+            receipt=dict(command_id=cid,resource_id=tid,operation='task:delete',request_digest=fingerprint,
+                expected_generation=generation,status='succeeded',http_status=200,created_at=1.,updated_at=2.,error_code=None,
+                result=dict(phase='finished',tombstone=dict(instance_id=binding['instance_id'],task_id=tid,
+                    generation=generation,delete_command_id=cid,deleted_at=2.)))
+            journal.record(cid,sid,'primary',receipt)
+
+            def offline(*args,**kwargs):
+                raise CloudError('cloud_connection_failed',503)
+            manager.connections.client.request=offline
+            with pytest.raises(CloudError,match='cloud_connection_failed'):
+                await manager.commands.reconcile(domain,cid,sid)
+            assert domain.repo.operation(cid,sid)['phase']=='succeeded'
+            assert not domain.repo.binding(bid,sid)['retained']
+        finally:
+            await manager.close()
+            store.close()
+    asyncio.run(run())

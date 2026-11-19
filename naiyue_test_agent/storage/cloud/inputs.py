@@ -1,4 +1,5 @@
 """Input and transfer indexes in the trusted registry, with atomic receipts."""
+from .input_lifecycle import require_ready, generation, consume, assert_use, read, put
 from .releases import require_available,active_template
 from naiyue_test_agent.contracts.cloud_inputs import InputPackage,InputTransfer
 from naiyue_test_agent.contracts.cloud_tasks import CloudError,CommandReceipt,CloudTask
@@ -18,11 +19,13 @@ class InputRepository:
                 'SELECT value FROM meta WHERE key LIKE ?',('transfer:%',))]
 
     def input(self,ident):
-        with self.database.transaction() as c:row=c.execute('SELECT value FROM meta WHERE key=?',('input:'+ident,)).fetchone()
+        with self.database.transaction() as c:
+            require_ready(c,ident)
+            row=c.execute('SELECT value FROM meta WHERE key=?',('input:'+ident,)).fetchone()
         if row is None:raise CloudError('input_not_found',404)
         return InputPackage.model_validate_json(row[0])
 
-    def create(self,transfer,receipt,limits,max_receipts):
+    def create(self,transfer,receipt,limits,max_receipts,*,use_id=None):
         with self.database.transaction(write=True) as c:
             old=c.execute('SELECT record_json FROM commands WHERE command_id=?',(receipt.command_id,)).fetchone()
             if old is not None:
@@ -31,9 +34,13 @@ class InputRepository:
                 return previous
             require_available(c)
             if c.execute('SELECT COUNT(*) FROM commands').fetchone()[0]>=max_receipts:raise CloudError('command_capacity')
+            require_ready(c,transfer.input_id)
+            if use_id:assert_use(c,use_id,transfer.input_id,'associate')
             existing=c.execute('SELECT value FROM meta WHERE key=?',('input:'+transfer.input_id,)).fetchone()
             if existing is not None:
                 transfer=transfer.model_copy(update={'cache_hit':True,'state':'committed','offset':transfer.size})
+                state=generation(c,transfer.input_id,read(c,'input:'+transfer.input_id))
+                put(c,'transfer-generation:'+transfer.transfer_id,state['incarnation_id'])
                 receipt=receipt.model_copy(update={'result':{'transfer':transfer.model_dump()}})
             else:
                 pending=[InputTransfer.model_validate_json(r[0]) for r in c.execute('SELECT value FROM meta WHERE key LIKE ?',('transfer:%',))]
@@ -56,13 +63,23 @@ class InputRepository:
     def commit(self,previous,package):
         replacement=previous.model_copy(update={'state':'committed','offset':previous.size})
         with self.database.transaction(write=True) as c:
+            require_ready(c,package.input_id)
             c.execute('INSERT OR IGNORE INTO meta(key,value) VALUES(?,?)',('input:'+package.input_id,package.model_dump_json(by_alias=True)))
+            state=generation(c,package.input_id,read(c,'input:'+package.input_id))
+            put(c,'transfer-generation:'+previous.transfer_id,state['incarnation_id'])
             if c.execute('UPDATE meta SET value=? WHERE key=? AND value=?',
                     (replacement.model_dump_json(),'transfer:'+previous.transfer_id,previous.model_dump_json())).rowcount!=1:
                 raise CloudError('transfer_state_conflict')
         return package
 
-    def create_task(self,task,receipt,max_receipts,max_tasks):
+    def validate_committed_transfer(self,transfer):
+        with self.database.transaction() as c:
+            state=require_ready(c,transfer.input_id)
+            saved=read(c,'transfer-generation:'+transfer.transfer_id)
+            if state and (state['state']!='ready' or saved!=state['incarnation_id']):
+                raise CloudError('input_retired')
+
+    def create_task(self,task,receipt,max_receipts,max_tasks,*,use_id=None):
         with self.database.transaction(write=True) as c:
             old=c.execute('SELECT record_json FROM commands WHERE command_id=?',(receipt.command_id,)).fetchone()
             if old is not None:
@@ -71,6 +88,9 @@ class InputRepository:
                 return previous
             if c.execute('SELECT 1 FROM projects WHERE project_id=?',(task.project_id,)).fetchone() is None:raise CloudError('project_not_found',404)
             if task.input_id is not None and c.execute('SELECT 1 FROM meta WHERE key=?',('input:'+task.input_id,)).fetchone() is None:raise CloudError('input_not_ready')
+            if task.input_id is not None:
+                require_ready(c,task.input_id)
+                consume(c,use_id,task.input_id,dict(operation_id=receipt.command_id,task_id=task.task_id))
             require_available(c)
             selected=active_template(c,task.template_id)
             if selected is not None:
@@ -89,7 +109,7 @@ class InputRepository:
                 (receipt.command_id,receipt.request_digest,receipt.resource_id,receipt.model_dump_json()))
         return receipt
 
-    def attach(self,task_id,request):
+    def attach(self,task_id,request,*,use_id=None):
         from naiyue_test_agent.contracts.cloud_tasks import TaskAttachment
         import time
         with self.database.transaction(write=True) as c:
@@ -109,6 +129,8 @@ class InputRepository:
             if old is not None:
                 if old!=value:raise CloudError('attachment_identity_conflict')
                 return old
+            require_ready(c,request.input_id)
+            consume(c,use_id,request.input_id,dict(operation_id=request.attachment_id,task_id=task_id))
             if len(task.attachments)>=1024:raise CloudError('attachment_capacity')
             updated=CloudTask.model_validate(task.model_dump()|dict(attachments=task.attachments|{value.attachment_id:value},
                 revision=task.revision+1,updated_at=time.time()))

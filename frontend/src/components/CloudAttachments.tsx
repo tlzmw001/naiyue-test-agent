@@ -10,7 +10,7 @@ import { Icon } from './Icons';
 import composer from './ComposerControls.module.css';
 import styles from './CloudTasks.module.css';
 
-const labels: Record<string, string> = { uploading: '上传中', ready: '待发送', attached: '已提交', failed: '上传失败', cancelled: '已取消' };
+const labels: Record<string, string> = { uploading: '上传中', ready: '待发送', attached: '已提交', failed: '上传失败', cancelling: '取消待确认', cancelled: '已取消' };
 type Location = Pick<DirectoryPage, 'path' | 'identity' | 'parent' | 'separator'>;
 type Selection = { location?: Location; paths: string[] };
 type Upload = Parameters<CloudApi['uploadFiles']>[2];
@@ -145,7 +145,8 @@ export default function CloudAttachments({ api, sid, bid, rows, selected, select
         </p>
         <button onClick={() => void action(row.attachment_id, 'retry')}>重试上传</button>
       </>}
-      {['uploading', 'ready', 'failed'].includes(row.phase) && <button onClick={() => void action(row.attachment_id, 'cancel')}>取消附件</button>}
+      {row.phase === 'cancelling' && row.error_code && <p role="alert" className={styles.error}>{cloudError({ code: row.error_code })}</p>}
+      {['uploading', 'ready', 'failed', 'cancelling'].includes(row.phase) && <button onClick={() => void action(row.attachment_id, 'cancel')}>{row.phase === 'cancelling' ? '重试取消附件' : '取消附件'}</button>}
     </div>)}
     {!open && error && <p role="alert" className={styles.error}>{error}</p>}
     {open && <dialog ref={dialog} className={styles.resultsDialog} aria-label="选择上传文件"

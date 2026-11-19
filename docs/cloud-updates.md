@@ -110,7 +110,7 @@ ready后按原部署方式在专用venv安装check所列SHA对应的wheel并重�
 nyt cloud release maintenance leave --command-id LEAVE_UUID --remote REMOTE_JSON
 ```
 
-10.1不安装系统服务、不静默杀业务或修改防火墙。Windows本机包沿原安装方式单独升级，云端握手核对协议/能力；本机服务协议2与云端owner协议1是两条不同合同。已登记发行也会在激活和Coordinator启动时重新检查兼容性；管理程序降级后若不满足当前active的最低版本，启动明确拒绝，须恢复支持该发行的管理程序，不能以旧程序可import作为回退证明。非active的已登记旧版本也会在任务升级、环境启动/核对及发送新消息时检查当前支持；停止、取消预留与必要保存仍可收束。
+10.1不安装系统服务、不静默杀业务或修改防火墙。Windows本机包沿原安装方式单独升级，云端握手核对协议/能力；本机 Web 服务协议与 Coordinator owner 协议分别校验。Spec143BQ 要求 Coordinator owner 协议 2，请配套升级本机连接端。旧客户端连接新版 Coordinator 时，已认证的请求会收到 HTTP 426。旧界面可能只提示检查连接，查看响应中的 required_version 和 current_version 可确认版本差异。已登记发行也会在激活和Coordinator启动时重新检查兼容性；管理程序降级后若不满足当前active的最低版本，启动明确拒绝，须恢复支持该发行的管理程序，不能以旧程序可import作为回退证明。非active的已登记旧版本也会在任务升级、环境启动/核对及发送新消息时检查当前支持；停止、取消预留与必要保存仍可收束。
 
 ## 6. 发布端生成更新输入
 

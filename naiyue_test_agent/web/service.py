@@ -305,12 +305,14 @@ class WebService:
         value = await self._session_status(session_id)
         cached=self.delivery.start_receipt(session_id,body)
         if cached is not None:return cached
+        if body.material_refs:
+            raise WebError('cloud_result_workflow_retired',410)
         try:
             if body.pending_input_ids:
                 if not body.images:
                     raise WebError('invalid_request',422)
                 self.application.runs.validate_pending(session_id, body.pending_input_ids)
-            prepared_message = (await self.application.runs.prepare_input(session_id, body.text, body.images, message_id=body.request_id, **({'material_refs':body.material_refs} if body.material_refs else {}))
+            prepared_message = (await self.application.runs.prepare_input(session_id, body.text, body.images, message_id=body.request_id)
                                 if value['can_run'] else None)
         except Exception as error:
             raise public_error(error) from None

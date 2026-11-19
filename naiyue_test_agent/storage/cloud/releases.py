@@ -72,12 +72,12 @@ class ReleaseRepository:
         with self.database.transaction(write=True) as db:
             db.execute("DELETE FROM meta WHERE key LIKE 'maintenance-lease:%'")
 
-    def begin_io(self,continuation=None):
+    def begin_io(self,continuation=None,*,input_id=None):
         from uuid import uuid4
         from .maintenance import continuing_cleanup
         ident=str(uuid4())
         with self.database.transaction(write=True) as db:
-            allowed=continuation is not None and continuing_cleanup(db,continuation)
+            allowed=continuation is not None and continuing_cleanup(db,continuation,input_id=input_id)
             if not allowed:require_available(db)
             put(db,'maintenance-lease:'+ident,dict(id=ident))
         return ident
