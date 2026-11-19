@@ -1,6 +1,6 @@
-# 全量配置参考与逐项说明（当前开发分支）
+# Naiyue Test Agent 0.5.12 全量配置参考与逐项说明
 
-## 143AQ统一连接配置（开发分支，未发布）
+## 本机、模型和云端配置
 
 当前文件上传/下载操作、预算和Windows验收见[文件与连接指南](../../cloud-files-and-connections.md)。新任务不需要Git基线，创建后在对话加号添加文件；本轮output作为普通产物下载。
 
@@ -23,7 +23,7 @@ CLI统一用 `--settings C:/private/connections.json --profile development`，�
 
 下面profiles/connection/remote-update独立文件说明供0.5.8迁移核对，不是新版本要求额外准备的文件。
 
-本目录已包含143AO通用服务入口，尚未随新版本发布；已安装0.5.8请使用[对应标签的配置例子](https://github.com/tlzmw001/naiyue-test-agent/tree/v0.5.8/docs/examples/full)。通用入口迁移见末节及服务隧道手册。
+维护旧版本时请使用对应标签下的 `docs/examples/full`。通用入口迁移见末节及服务隧道手册。
 
 这些是示意配置，不是可直接连接公司环境的部署材料。所有端口、bridge、路径、UID/GID、实例ID与凭证都须替换。JSON严格不支持注释；本说明与JSON并列提供，不能往JSON加 _comment 字段。真实配置请放仓库外私有目录；Linux文件0600、目录0700，Windows限制ACL。无真实密钥。
 
@@ -31,7 +31,7 @@ CLI统一用 `--settings C:/private/connections.json --profile development`，�
 
 1. 本地settings.full.toml是从旧0.5.0参考迁移的完整场景示例，保留原逐项注释；其中Auto、代理、MCP和子Agent为示例选择，并非默认启用。先按需删去这些场景设置，再配置cloud_tasks。
 2. 开发机准备已有OpenSandbox、非root身份、bridge；cloud.example.json复制为私有cloud.json。templates为空不是通过预检的模板，按 ../../cloud-s091-windows-and-linux.md 产生真实回执再登记。
-3. 开发机models.json沿 ../models.example.json；新版本不改变模型配置格式，不把key放到Runner。
+3. 开发机使用独立的 [models.json 样例](../models.example.json)。供应商凭证保存在 Coordinator 私有配置，Runner 通过 Coordinator 模型通道调用。
 4. 将实际Owner身份填入connections.json对应条目的connection；Windows的settings只设置connections_file绝对路径。Linux更新器从cloud_settings_file引用的cloud.json读取连接，不再要求另一份connection文件。
 5. external模式自行开SSH转发；owned添加ssh_host并预先配置SSH认证，不并行占用同一端口。
 6. 只有需要更新/备份时才配置Linux update.json，并在Windows connections条目中填写可选remote_update；无需单独remote-update.json。Coordinator程序先独立升级，Runner更新不会重启Coordinator。维护标记跨重启保留，验证后显式leave。
@@ -39,6 +39,26 @@ CLI统一用 `--settings C:/private/connections.json --profile development`，�
 旧settings删除整个sandbox（含git/ssh/network/lifecycle/profiles）、delivery和mcp.allow_sandbox。旧会话不兼容，旧数据不自动迁移。S11 R4到0.5.7没有新增必填字段。JSON里省略的可选值：profiles.ssh_host默认null（owned必填）、update.maintenance_receipt默认null（需时填真实预检回执路径）、download_proxy默认null（需时填私有代理，不提交）；resource_limits.max_logical_bytes默认null（未设逻辑字节上限）。
 
 表格中的值均可在同名JSON定位。数值约束由真实Pydantic模型校验；秒、字节、数量不能互换；0仅在模型允许时使用。不要为对齐版本覆盖已有实例身份。
+
+### 模型窗口、压缩与用量校准
+
+`settings.toml` 管理本机工具、权限、存储及网络。窗口和压缩预算按模型配置在 `models.json` 的 `models.<id>` 条目中。本机界面保存新模型配置后可手动刷新，前台运行或后台记忆任务占用模型时需等它们结束。会话原选项失效时可打开历史并改选。Coordinator 模型配置按服务启动方式加载。
+
+| 字段 | 默认值和作用 |
+| --- | --- |
+| `context_window_tokens` | 128000。填网关实际提供的完整上下文窗口。 |
+| `max_output_tokens` | 16384。为模型输出保留的 token 上限。 |
+| `compaction_reserve_tokens` | `min(16384, max(1, 窗口 // 4))`。主动压缩阈值为「窗口 − max(输出上限, 压缩预留)」。 |
+| `compaction_keep_recent_tokens` | `min(20000, max(1, 窗口 // 4))`。选择保留近期完整历史时的预算。 |
+| `compaction_summary_output_tokens` | `min(2048, 输出上限, max(1, 压缩预留 × 4 // 5))`。摘要调用的输出上限。显式配置不得超过输出上限和压缩预留。 |
+
+实际发送的输入预算为「窗口 − 输出上限」。用量校准使用最近一次兼容响应的实际输入 token 除以同次请求的原始估算，之后用这个比例校准估算。新会话或没有兼容样本时使用本地估算。该比例由程序更新，没有单独的配置项。参见[预算合同](../../specs/143bl-context-token-calibration.md)。
+
+### 本机缓存、记忆与云端成果
+
+- `[cache_cleanup]` 在本机设置中手动勾选执行，按最后修改时间保留工具归档 7 天、云输入缓存 3 天。正在使用的材料保留。回执显示跳过和失败原因，已保存到项目的文件由用户管理。
+- `[memory]` 默认新记忆有效期 30 天，到期后保留 7 天再进入回收。旧长期记忆配置按加载报错提示迁移到当前字段。会话历史与概览沿用各自存储，记忆 Wiki 使用个人与项目范围。参见[逐项 TOML 注释](settings.full.toml)和[记忆工具说明](../../memory-tool.md)。
+- 云端结果窗口可手动保存文件。主 Agent 也可通过 `cloud_result` 保存关联任务的成果。完整删除云任务后，Coordinator 按删除回执回收已无引用的共享输入。切换 Runner 模板前请核对旧任务绑定和历史恢复依赖。
 
 ## profiles.example.json
 
@@ -194,8 +214,8 @@ Windows 本机 SDK 初次构造仍可能先解析进程原有代理变量。如�
 | `io_bytes` (artifact_limits.io_bytes) | 每次IO块字节数。 |
 | `transfer_timeout_seconds` (artifact_limits.transfer_timeout_seconds) | 材料传输超时秒数。 |
 | `result_limits` (result_limits) | 结果冻结、清单和租约预算。 |
-| `output_directory` (result_limits.output_directory) | 报告产物目录，相对项目根；源码变更另外归入代码取回。 |
-| `max_patch_bytes` (result_limits.max_patch_bytes) | 代码补丁字节预算。 |
+| `output_directory` (result_limits.output_directory) | 本轮可下载产物目录，相对项目根，默认 `.nyt-output`。需要交付源码时，可由云端 Agent 将相关文件打包后交付。 |
+| `max_patch_bytes` (result_limits.max_patch_bytes) | 读取历史代码补丁的字节预算。 |
 | `max_metadata_bytes` (result_limits.max_metadata_bytes) | 结构化元数据字节预算。 |
 | `max_files` (result_limits.max_files) | 清单文件数量上限；接收指材料文件数，结果指变更文件数。 |
 | `max_artifacts` (result_limits.max_artifacts) | 一次结果最多报告产物数量。 |
@@ -253,7 +273,7 @@ Windows 隧道入口仍匹配 MCP URL 的主机、端口和 TLS 类型；私有 
 | 字段 | 用途 |
 | --- | --- |
 | `work_dir` (work_dir) | 更新器持久日志、发行下载缓存根，需私有权限。 |
-| `index` (index) | 可信索引HTTPS URL或绝对文件路径；示例固定0.5.8且需发布后可用。 |
+| `index` (index) | 可信索引HTTPS URL或绝对文件路径；示例固定 v0.5.12。 |
 | `trusted_prefixes` (trusted_prefixes) | 下载URL及重定向前缀白名单；仅保留实际可信资产来源。 |
 | `platform` (platform) | 目标开发机架构linux-x86_64或linux-arm64，不填本地Windows架构。 |
 | `build` (build) | 开发机模板构建参数。 |
@@ -350,7 +370,7 @@ Windows继续使用profiles中的network_id，不增加全局网络列表。页�
 
 - Windows `cloud_tasks.input_limits` 和 Linux `input_limits`：单文件/每批20GiB、归档22GiB、100000文件、元数据32MiB、缓存64GiB。`max_downloads=64`限制共享不可变输入并发读，`min_free_bytes=268435456`为Runner展开文件后的保留空间。
 - Linux `artifact_limits`：单文件20GiB、缓存64GiB、最多4096份、`segment_bytes=8388608`；`transfer_timeout_seconds`按一段上传计算，不限制整个大文件总时长。
-- 两端 `result_limits`：每轮output总量20GiB、最多1000产物，新任务不扫描工作区，不生成patch；旧patch/Git字段只服务已有基线结果及仍使用的CLI接口。
+- 两端 `result_limits`：每轮output总量20GiB、最多1000产物，新任务不扫描工作区，不生成patch；旧 patch/Git 字段保留用于历史结果和恢复证据。
 - Windows `receive_limits`：单文件20GiB、1000文件、8MiB分段、缓存/交付保守预算128GiB；目标目录不是缓存目录。`transfer_timeout_seconds=120`按一段下载计。
 - Windows `cloud_tasks.queue_poll_seconds=1.0`：单条待发送消息核对间隔。`download_link_seconds=300`：本机单文件浏览器授权寿命；`max_download_links=64`：有效链接数量上限。全部设置均有边界校验。
 - Linux新Runner模板预检会生成 `file_transfer_version=1`。不要编辑旧回执的数字；必须真实构建并预检同源模板。旧0.5.8模板不接受新空任务。

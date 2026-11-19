@@ -1,8 +1,10 @@
-# 0.5.8当前源码的全量参考：每个配置项都是真实字段，注释只解释用途。
+# Naiyue Test Agent 0.5.12 本机全量配置参考。
 # 本例展示Auto、带认证代理、子Agent、两种MCP及云端任务；占位值须替换后使用。
 # 数值通常采用代码默认值；Auto/代理/显式模型/路径/工具名单属于本例选择，不是默认启用行为。
 # 默认配置位置是用户目录下的 .naiyue-test-agent/settings.toml；与启动项目目录无关。
-# 普通修改须正常停止共享服务再启动；MCP有显式刷新入口，刷新不代表全文件热更新。
+# 修改普通设置后正常重启本机服务。本机 MCP 有独立刷新入口。
+# 编辑并保存 models.json 后，可在「模型与推理强度」菜单点击「刷新模型配置」。
+# 模型刷新只重读服务启动时选定的模型文件，settings.toml 的模型网络、工具和权限按启动配置生效。
 # 路径中的~仅在明确支持的字段展开；这里的数据根和项目默认位置支持展开。
 # 秒/毫秒/字节/token/字符/行数是不同单位；0只有字段明确支持时才表示关闭或不限。
 
@@ -390,23 +392,26 @@ max_result_leases = 128 # 同时结果读取租约数量上限。
 git_executable = "git" # Git可执行文件路径或PATH中的名称。
 git_timeout_seconds = 30 # 单次Git子进程超时秒数。
 
-# 143AQ 文件与隧道说明（待发布，本地实现不能替代Windows和公司网络实测）：
+# 0.5.12 云端附件、成果与隧道操作。
 # 新任务只准备环境；进入云端对话后点击加号，选择项目内任意普通文件/目录。
 # 包含隐藏文件、.env、Git目录和压缩包；只传用户明确选择的范围，拒绝链接/特殊文件。
 # input_limits允许单文件/单批未压缩20GiB、归档22GiB；缓存64GiB包括冻结副本和归档。
 # Coordinator的input_limits和artifact_limits需同步调整；Runner从Coordinator接收限制。
 # 浏览器关闭不会取消上传/排队；本机服务停止期间不工作。崩溃后中断上传需点击“重试上传”，按确认偏移续传。
 # 每任务仅一条待发送消息；上一轮停止/失败/未知时暂停，取消后可重新编辑。
-# 主Agent分析只读取选中产物，文本/材料加入主会话输入框后仍由用户点击发送。
+# 项目 Agent 的 cloud_result 可以查询关联任务并保存产物。结果窗口也可手工保存。
+# 成功保存到项目的文件归该项目管理。清理缓存操作不删除这些文件。
 # 服务隧道目标在页面“服务连接”编辑；connections.json管理SSH、profile/network_id和模板。
 # Linux cloud.json管理networks.entries；每个network可有多个任意TCP用途端口。
 # 页面状态自动写入*.networks.json；不属于用户需要维护的额外连接配置。
 # connections.json内connection.max_response_bytes默认64MiB，旧显式4MiB应按文件清单大小同步调整。
 # 文件保存目录不是缓存预算；同名异内容仍需明确覆盖确认。
 
-# Applies only to an explicitly requested local cache cleanup.
+# 左下角「本机设置 → 清理缓存」主动触发，范围为本机。
+# 用户勾选类别后，以本次操作时间和文件最后修改时间计算保留期。
+# 会话历史、日志、已保存的项目成果和云端 Runner 由各自的生命周期管理。
 [cache_cleanup]
-tool_output_retention_days = 7
-cloud_input_retention_days = 3
-max_scan_entries = 100000
-max_operation_seconds = 60
+tool_output_retention_days = 7 # 工具输出归档保留天数。清掉归档后无法再读完整工具输出。
+cloud_input_retention_days = 3 # 云输入缓存保留天数。仍用于上传、恢复或被任务引用的材料会保留。
+max_scan_entries = 100000 # 每次清理扫描条目上限。达到预算时回执标记未完成范围。
+max_operation_seconds = 60 # 每次清理的时间预算，单位秒。已开始的文件操作仍可能需要收尾。

@@ -13,6 +13,11 @@
       "provider_id": "gateway",
       "model": "<your-model-name>",
       "api": "chat_completions",
+      "context_window_tokens": 128000,
+      "max_output_tokens": 16384,
+      "compaction_reserve_tokens": 16384,
+      "compaction_keep_recent_tokens": 20000,
+      "compaction_summary_output_tokens": 2048,
       "request": {
         "timeout_seconds": 300,
         "stream_chunk_timeout_seconds": 600,
@@ -23,7 +28,10 @@
         "memory_output": "text",
         "prompt_cache": {
           "protocol": "openai",
-          "retentions": ["in_memory", "24h"]
+          "retentions": [
+            "in_memory",
+            "24h"
+          ]
         }
       }
     }

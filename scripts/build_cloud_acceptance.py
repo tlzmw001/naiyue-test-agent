@@ -8,7 +8,10 @@ DOCS=('cloud-service-tunnels.md','cloud-143an-upgrade.md','cloud-final-windows-a
     'cloud-s091-windows-and-linux.md','cloud-s00-local-and-windows.md','cloud-s00-ai-handoff.md',
     'specs/143g-acceptance.md','specs/143e-a-to-b-cleanup.md','specs/143ah-s102-operations.md','specs/143ai-s11-final-acceptance.md')
 DOCS+=tuple('examples/full/'+name for name in ('settings.full.toml','cloud-configuration-reference.md',
-    'template-build.example.json','profiles.example.json','connection.example.json','cloud.example.json','update.example.json','remote-update.example.json'))
+    'template-build.example.json','profiles.example.json','connection.example.json','connections.example.json',
+    'cloud.example.json','update.example.json','remote-update.example.json'))
+DOCS+=('examples/models.example.json','cloud-files-and-connections.md','mcp-client.md','memory-tool.md',
+    'specs/143bl-context-token-calibration.md','specs/143bq-cloud-results-and-input-reclamation.md')
 SCRIPTS=('release_network_smoke.py','verify_cloud_candidate.py','verify_cloud_workflow.py','verify_cloud_backend.py',
     'profile_result_capture.py','cloud_release_manifest.py','release_artifacts.py','native_assets.py')
 
