@@ -29,13 +29,13 @@ def test_invalid_memory_output_does_not_silently_select_another_protocol(tmp_pat
 @pytest.mark.parametrize('name', ['official', 'gateway', 'claude', 'local'])
 @pytest.mark.parametrize('mode', ['json_schema', 'function_calling'])
 def test_official_wrapper_binds_schema_and_output_limit_without_mutating_model(tmp_path, name, mode):
-    from naiyue_test_agent.application.memory.memory_batches import response_schema
+    from naiyue_test_agent.application.memory.memory_proposals import ExtractionResult
     from naiyue_test_agent.model_access.memory_output import prepare_memory_output
     data = config_for_all_kinds()
     data['models'][name]['profile'] = {'memory_output': mode}
     model = load_model_catalog(write_config(tmp_path, data)).get(name)
     original = model.model_dump()
-    call, actual, overhead = prepare_memory_output(model, response_schema(), 77)
+    call, actual, overhead = prepare_memory_output(model, ExtractionResult.model_json_schema(), 77)
     assert actual == mode and overhead > 0
     raw = call.first.steps__['raw']
     if name == 'local':
@@ -62,12 +62,12 @@ def test_text_default_uses_existing_cap_and_has_no_schema_overhead():
 
 def test_sdk_protocol_fallback_is_rejected_before_any_request():
     from langchain_openai import ChatOpenAI
-    from naiyue_test_agent.application.memory.memory_batches import response_schema
+    from naiyue_test_agent.application.memory.memory_proposals import ExtractionResult
     from naiyue_test_agent.model_access.memory_output import prepare_memory_output
     model = ChatOpenAI(model='gpt-4', api_key='offline-placeholder')
     model.profile = {'memory_output': 'json_schema'}
     with pytest.raises(ValueError, match='memory_output_protocol_unavailable'):
-        prepare_memory_output(model, response_schema(), 99)
+        prepare_memory_output(model, ExtractionResult.model_json_schema(), 99)
 
 
 def test_ollama_text_limit_reaches_native_options_without_losing_configured_sampling():
@@ -97,7 +97,7 @@ def test_single_request_cap_overrides_configured_openai_default_without_mutation
     from http_observation_helpers import sdk_catalog
     from test_memory_batches import result
     from test_memory_structured_output import wire_response
-    from naiyue_test_agent.application.memory.memory_batches import response_schema
+    from naiyue_test_agent.application.memory.memory_proposals import ExtractionResult
     from naiyue_test_agent.model_access.memory_output import prepare_memory_output
 
     async def scenario():
@@ -110,7 +110,7 @@ def test_single_request_cap_overrides_configured_openai_default_without_mutation
             model.max_tokens = 16384
             model.profile = {'memory_output': mode}
             before = model.model_dump()
-            bounded, _, _ = prepare_memory_output(model, response_schema(), 77)
+            bounded, _, _ = prepare_memory_output(model, ExtractionResult.model_json_schema(), 77)
             await bounded.ainvoke('offline')
             assert len(sent) == 1
             assert sent[0]['max_output_tokens' if kind == 'responses' else 'max_completion_tokens'] == 77

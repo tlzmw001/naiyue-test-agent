@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 class HistorySettings(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
 
+    max_output_tokens: int = Field(default=2000, ge=256, le=16000)
     default_limit: int = Field(default=10, gt=0, le=50)
     max_limit: int = Field(default=50, gt=0, le=50)
     search_batch_messages: int = Field(default=200, gt=0, le=10000)

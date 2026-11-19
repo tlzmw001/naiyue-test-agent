@@ -52,7 +52,7 @@ def test_formal_root_child_and_approval_use_same_memory_api(monkeypatch, tmp_pat
                         await original(self, **(kwargs | {'scope': replace(scope, identity=identity)}))
             return await original(self, **kwargs)
         monkeypatch.setattr(MemoryAPI, 'query', traced)
-        reader = StreamingToolModel(replies=[call('memory', {'action': 'list'}, 'memory-call'), AIMessage(content='read')])
+        reader = StreamingToolModel(replies=[call('memory', {'request': {'action': 'list'}}, 'memory-call'), AIMessage(content='read')])
         root = (StreamingToolModel(replies=[call('subagent', {'agent': 'tester', 'task': 'read'}), AIMessage(content='done')])
                 if child else reader)
         settings = AppSettings.model_validate({'storage': {'data_dir': str(tmp_path / 'data')}})
@@ -138,7 +138,7 @@ def test_api_rejects_foreign_stale_inactive_and_invalid_requests(monkeypatch, tm
             checked.append(True)
             return {'items': []}
         monkeypatch.setattr(MemoryAPI, 'query', check)
-        model = StreamingToolModel(replies=[call('memory', {'action': 'list'}), AIMessage(content='done')])
+        model = StreamingToolModel(replies=[call('memory', {'request': {'action': 'list'}}), AIMessage(content='done')])
         async with opened(monkeypatch, tmp_path, model) as app:
             sid = await app.host.sessions.create_workspace('A', tmp_path)
             result = await app.host.runs.start(sid, [('user', 'read')])
@@ -159,8 +159,8 @@ def test_api_rejects_finished_scope_during_next_run(monkeypatch, tmp_path):
             captured.append(scope)
             return await original(self, scope=scope, request=request, **kwargs)
         monkeypatch.setattr(MemoryAPI, 'query', check)
-        model = StreamingToolModel(replies=[call('memory', {'action': 'list'}), AIMessage(content='one'),
-                                           call('memory', {'action': 'list'}), AIMessage(content='two')])
+        model = StreamingToolModel(replies=[call('memory', {'request': {'action': 'list'}}), AIMessage(content='one'),
+                                           call('memory', {'request': {'action': 'list'}}), AIMessage(content='two')])
         async with opened(monkeypatch, tmp_path, model) as app:
             sid = await app.host.sessions.create_workspace('A', tmp_path)
             for text in ('one', 'two'):

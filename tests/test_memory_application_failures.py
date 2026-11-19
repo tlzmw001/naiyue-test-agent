@@ -15,7 +15,7 @@ from test_memory_jobs import response
 
 def test_required_root_save_failure_never_releases_memory_worker(monkeypatch,tmp_path):
     async def scenario():
-        model=StreamingToolModel(replies=[call('memory',dict(action='refresh_overview')),AIMessage(content='已登记'),response()])
+        model=StreamingToolModel(replies=[call('memory',{'request': dict(action='refresh_overview')}),AIMessage(content='已登记'),response()])
         async with opened(monkeypatch,tmp_path,model,settings=config(tmp_path)) as app:
             sid=await app.host.sessions.create_workspace('A',tmp_path)
             def fail(*args,**kwargs):raise OSError('PRIVATE_SAVE_DETAIL')

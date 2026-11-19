@@ -6,7 +6,7 @@ import sqlite3
 
 from naiyue_test_agent.storage.files import check_store_directory, check_store_file, open_store_file
 from naiyue_test_agent.storage.memory_sql import lexical as memory_lexical
-from naiyue_test_agent.storage.memory_sql import memory_schema, memory_lifecycle_schema
+from naiyue_test_agent.storage.memory_sql import memory_schema, memory_lifecycle_schema, memory_evidence_schema, memory_time_schema
 from naiyue_test_agent.contracts.memory import MemoryReadError
 
 
@@ -45,16 +45,23 @@ def initialize_personal(database, settings):
         if not objects and version == 0 and application == 0:
             memory_schema.create(connection)
             memory_lifecycle_schema.upgrade(connection)
-            connection.execute('PRAGMA user_version=2')
+            memory_evidence_schema.upgrade(connection)
+            memory_time_schema.upgrade(connection)
+            connection.execute('PRAGMA user_version=4')
             connection.execute(f'PRAGMA application_id={APPLICATION_ID}')
-        elif version not in (1,2) or application != APPLICATION_ID:
+        elif version not in (1,2,3,4,5) or application != APPLICATION_ID:
             raise ValueError('memory_invalid_format')
-        elif version == 1:
-            from naiyue_test_agent.storage.memory_sql.memory_personal_upgrade import backup_format1
-            memory_schema.check(connection,version=1)
-            backup = backup_format1(database.path)
+        elif version in (1,2,3):
+            from naiyue_test_agent.storage.memory_sql.memory_personal_upgrade import backup_format
+            memory_schema.check(connection,version=version)
+            backup = backup_format(database.path,version=version)
             logger.info('memory_personal_upgrade_backup_created backup_id=%s',backup.name)
-            memory_lifecycle_schema.upgrade(connection)
-            connection.execute('PRAGMA user_version=2')
-        memory_schema.check(connection)
+            if version==1:memory_lifecycle_schema.upgrade(connection)
+            if version<3:memory_evidence_schema.upgrade(connection)
+            memory_time_schema.upgrade(connection)
+            connection.execute('PRAGMA user_version=4')
+        if connection.execute('PRAGMA user_version').fetchone()[0]==5:
+            from .memory_sql.memory_wiki_schema import check
+            check(connection)
+        else:memory_schema.check(connection)
     connection.execute('PRAGMA synchronous=FULL')

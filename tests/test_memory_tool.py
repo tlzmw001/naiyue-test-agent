@@ -4,6 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import json
 import sqlite3
+import time
 from uuid import uuid4
 
 import pytest
@@ -17,7 +18,9 @@ from naiyue_test_agent.settings import AppSettings, load_settings
 from naiyue_test_agent.tools import create_builtin_tools, create_subagent_tool, SubAgentSpec
 from naiyue_test_agent.tools.memory import MemoryInput, create_memory_tool
 from test_async_application import StreamingToolModel, call, make_app
-from test_memory_readonly import seed
+from memory_wiki_helpers import record
+from naiyue_test_agent.storage.memory_sql.memory_wiki_writes import WikiWriter
+from test_memory_wiki_pagination import decode_content
 
 
 @asynccontextmanager
@@ -67,10 +70,15 @@ def test_formal_list_search_read_then_reopen_without_internal_model_call(monkeyp
         model = StreamingToolModel(replies=[])
         identity = str(uuid4())
         async with opened(monkeypatch, tmp_path, model, identity=identity) as app:
-            item = seed(app.host.sessions._persistence.storage.database.connection, 1, workspace_id=identity, body='使用.venv运行pytest')
-            model.replies.extend([call('memory', {'action':'list','scope':'workspace'}, 'list'),
-                call('memory', {'action':'search','query':'.venv','scope':'workspace'}, 'search'),
-                call('memory', {'action':'read','scope':'workspace','memory_id':item,'version':1}, 'read'),
+            store=app.host.sessions._persistence.storage
+            page=WikiWriter.new_page('working_agreements','测试环境','测试约定')
+            plan=record(page['page_id'],workspace_id=identity,body='使用.venv运行pytest',expires_at=time.time()+86400)
+            with store.memory.wiki_edit('workspace',identity,now=time.time(),capacity=30) as writer:
+                writer.apply(pages=[page],memories=[plan])
+            item=plan['row']['memory_id']
+            model.replies.extend([call('memory', {'request': {'action':'list','scope':'workspace'}}, 'list'),
+                call('memory', {'request': {'action':'search','query':'.venv','scope':'workspace'}}, 'search'),
+                call('memory', {'request': {'action':'read','scope':'workspace','memory_id':item,'version':1}}, 'read'),
                 AIMessage(content='found environment')])
             sid = await app.host.sessions.create_workspace('A', tmp_path)
             result = await app.host.runs.start(sid, [('user','查记忆里的测试环境')])
@@ -78,9 +86,9 @@ def test_formal_list_search_read_then_reopen_without_internal_model_call(monkeyp
             assert [m.tool_call_id for m in messages] == ['list', 'search', 'read']
             assert all(m.status == 'success' for m in messages)
             assert json.loads(messages[1].content)['items'][0]['memory_id'] == item
-            assert '使用.venv运行pytest' in messages[-1].content
+            assert decode_content(json.loads(messages[-1].content))['entries'][0]['body']=='使用.venv运行pytest'
             assert len(model.seen) == 4 and not app.host.sessions._sessions.require(sid).is_busy()
-        reopened = StreamingToolModel(replies=[call('memory', {'action':'search','query':'.venv'}, 'cold'),AIMessage(content='saved memory')])
+        reopened = StreamingToolModel(replies=[call('memory', {'request': {'action':'search','query':'.venv'}}, 'cold'),AIMessage(content='saved memory')])
         async with opened(monkeypatch, tmp_path, reopened, identity=identity) as app:
             assert not app.host.sessions.is_loaded(sid)
             new = await app.host.sessions.create_workspace('A', tmp_path)
@@ -93,7 +101,7 @@ def test_formal_list_search_read_then_reopen_without_internal_model_call(monkeyp
 def test_real_sqlite_query_failure_is_paired_and_agent_continues(monkeypatch, tmp_path, caplog):
     from naiyue_test_agent.storage.memory_sql import memory_queries
     async def scenario():
-        model = StreamingToolModel(replies=[call('memory', {'action':'search','query':'venv'}, 'bad'),AIMessage(content='try current files')])
+        model = StreamingToolModel(replies=[call('memory', {'request': {'action':'search','query':'venv'}}, 'bad'),AIMessage(content='try current files')])
         async with opened(monkeypatch, tmp_path, model) as app:
             def failed(*args, **kwargs):raise sqlite3.OperationalError('PRIVATE-sql-provider-body')
             monkeypatch.setattr(memory_queries, 'rank', failed)
@@ -113,7 +121,7 @@ def test_blocked_memory_never_opens_personal_store(monkeypatch, tmp_path, blocke
         settings = AppSettings.model_validate({'storage':{'data_dir':str(tmp_path / 'data')},
             'memory':{'enabled':blocked != 'disabled'},
             'permissions':{'deny':[{'tool':'memory'}]} if blocked == 'deny' else {}})
-        model = StreamingToolModel(replies=[call('memory', {'action':'list'}), AIMessage(content='blocked')])
+        model = StreamingToolModel(replies=[call('memory', {'request': {'action':'list'}}), AIMessage(content='blocked')])
         async with opened(monkeypatch, tmp_path, model, settings=settings) as app:
             sid = await app.host.sessions.create_workspace('A', tmp_path)
             if blocked == 'inactive':await app.host.sessions.select_tools(sid, [])
@@ -126,23 +134,29 @@ def test_blocked_memory_never_opens_personal_store(monkeypatch, tmp_path, blocke
 def test_selected_child_gets_its_own_memory_permit(monkeypatch, tmp_path):
     async def scenario():
         root = StreamingToolModel(replies=[call('subagent', {'agent':'tester','task':'read memory'}),AIMessage(content='root done')])
-        child = StreamingToolModel(replies=[call('memory', {'action':'search','scope':'workspace','query':'venv'}, 'inner'),AIMessage(content='child done')])
+        child = StreamingToolModel(replies=[call('memory', {'request': {'action':'search','scope':'workspace','query':'.venv'}}, 'inner'),AIMessage(content='child done')])
         settings = AppSettings.model_validate({'storage':{'data_dir':str(tmp_path / 'data')}}).model_copy(update={
             'subagents':(SubAgentSpec('tester','Read memory','Read saved environment.',('memory',),model_id='B'),)})
         async with opened(monkeypatch, tmp_path, root, settings=settings,
                 tools=[create_memory_tool(),create_subagent_tool()],models={'A':root,'B':child}) as app:
             identity = app.host.sessions._persistence.storage.sessions.get_workspace_binding()['workspace_id']
-            seed(app.host.sessions._persistence.storage.database.connection, 1, workspace_id=identity)
+            store=app.host.sessions._persistence.storage
+            page=WikiWriter.new_page('working_agreements','测试环境','测试约定')
+            plan=record(page['page_id'],workspace_id=identity,body='使用.venv运行pytest',expires_at=time.time()+86400)
+            with store.memory.wiki_edit('workspace',identity,now=time.time(),capacity=30) as writer:
+                writer.apply(pages=[page],memories=[plan])
             sid = await app.host.sessions.create_workspace('A', tmp_path)
             await app.host.runs.start(sid, [('user','delegate')])
             message = next(m for m in child.seen[-1] if isinstance(m,ToolMessage) and m.tool_call_id == 'inner')
-            assert message.status == 'success' and 'venv' in message.content and len(child.seen) == 2
+            assert message.status == 'success' and len(child.seen) == 2
+            entry,=decode_content(json.loads(message.content))['entries']
+            assert entry['memory_id']==plan['row']['memory_id'] and entry['body']=='使用.venv运行pytest'
     asyncio.run(scenario())
 
 
 def test_nonpersistent_runtime_is_explicitly_unavailable(monkeypatch, tmp_path):
     async def scenario():
-        model = StreamingToolModel(replies=[call('memory', {'action':'list'}),AIMessage(content='unavailable')])
+        model = StreamingToolModel(replies=[call('memory', {'request': {'action':'list'}}),AIMessage(content='unavailable')])
         app = await make_app(monkeypatch, model, [create_memory_tool()])
         try:
             sid = await app.host.sessions.create_workspace('A', tmp_path)

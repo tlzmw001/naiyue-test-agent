@@ -1,0 +1,5334 @@
+{
+  "format": 1,
+  "synthetic": true,
+  "cases": [
+    {
+      "case_id": "input-01",
+      "family_id": "local-ci",
+      "suite": "input",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "本地回归使用 .venv。CI 保持 Python 3.10。"
+        }
+      ],
+      "old_memories": [],
+      "query": "本地 回归",
+      "claim": "本地回归使用 .venv。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "local-ci",
+          "text": "本地回归使用 .venv。CI 保持 Python 3.10。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "本地回归使用 .venv。CI 保持 Python 3.10。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-01",
+      "family_id": "local-ci",
+      "suite": "comparison",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "本地回归使用 .venv。CI 保持 Python 3.10。"
+        }
+      ],
+      "old_memories": [],
+      "query": "本地 回归",
+      "claim": "本地回归使用 .venv。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "local-ci",
+          "text": "本地回归使用 .venv。CI 保持 Python 3.10。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "本地回归使用 .venv。CI 保持 Python 3.10。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-01",
+      "family_id": "local-ci",
+      "suite": "recall",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "本地回归使用 .venv。CI 保持 Python 3.10。"
+        }
+      ],
+      "old_memories": [],
+      "query": "本地 回归",
+      "claim": "本地回归使用 .venv。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "local-ci",
+          "text": "本地回归使用 .venv。CI 保持 Python 3.10。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "本地回归使用 .venv。CI 保持 Python 3.10。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-01",
+      "family_id": "local-ci",
+      "suite": "semantic",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "本地回归使用 .venv。CI 保持 Python 3.10。"
+        }
+      ],
+      "old_memories": [],
+      "query": "本地 回归",
+      "claim": "本地回归使用 .venv。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "local-ci",
+          "text": "本地回归使用 .venv。CI 保持 Python 3.10。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "本地回归使用 .venv。CI 保持 Python 3.10。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-02",
+      "family_id": "proxy",
+      "suite": "input",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "仅下载依赖时开启代理。"
+        }
+      ],
+      "old_memories": [],
+      "query": "下载 依赖",
+      "claim": "下载依赖时开启代理。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "proxy",
+          "text": "仅下载依赖时开启代理。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "仅下载依赖时开启代理。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-02",
+      "family_id": "proxy",
+      "suite": "comparison",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "仅下载依赖时开启代理。"
+        }
+      ],
+      "old_memories": [],
+      "query": "下载 依赖",
+      "claim": "下载依赖时开启代理。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "proxy",
+          "text": "仅下载依赖时开启代理。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "仅下载依赖时开启代理。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-02",
+      "family_id": "proxy",
+      "suite": "recall",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "仅下载依赖时开启代理。"
+        }
+      ],
+      "old_memories": [],
+      "query": "下载 依赖",
+      "claim": "下载依赖时开启代理。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "proxy",
+          "text": "仅下载依赖时开启代理。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "仅下载依赖时开启代理。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-02",
+      "family_id": "proxy",
+      "suite": "semantic",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "仅下载依赖时开启代理。"
+        }
+      ],
+      "old_memories": [],
+      "query": "下载 依赖",
+      "claim": "下载依赖时开启代理。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "proxy",
+          "text": "仅下载依赖时开启代理。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "仅下载依赖时开启代理。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-03",
+      "family_id": "explain",
+      "suite": "input",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "以后解释代码先给具体例子。"
+        }
+      ],
+      "old_memories": [],
+      "query": "解释 代码",
+      "claim": "解释代码先给具体例子。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "explain",
+          "text": "以后解释代码先给具体例子。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "以后解释代码先给具体例子。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-03",
+      "family_id": "explain",
+      "suite": "comparison",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "以后解释代码先给具体例子。"
+        }
+      ],
+      "old_memories": [],
+      "query": "解释 代码",
+      "claim": "解释代码先给具体例子。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "explain",
+          "text": "以后解释代码先给具体例子。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "以后解释代码先给具体例子。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-03",
+      "family_id": "explain",
+      "suite": "recall",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "以后解释代码先给具体例子。"
+        }
+      ],
+      "old_memories": [],
+      "query": "解释 代码",
+      "claim": "解释代码先给具体例子。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "explain",
+          "text": "以后解释代码先给具体例子。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "以后解释代码先给具体例子。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-03",
+      "family_id": "explain",
+      "suite": "semantic",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "以后解释代码先给具体例子。"
+        }
+      ],
+      "old_memories": [],
+      "query": "解释 代码",
+      "claim": "解释代码先给具体例子。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "explain",
+          "text": "以后解释代码先给具体例子。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "以后解释代码先给具体例子。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-04",
+      "family_id": "temp",
+      "suite": "input",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "今天临时关闭缓存，不要改长期配置。"
+        }
+      ],
+      "old_memories": [],
+      "query": "缓存",
+      "claim": "永久关闭缓存。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "temp",
+          "text": "今天临时关闭缓存，不要改长期配置。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "今天临时关闭缓存，不要改长期配置。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-04",
+      "family_id": "temp",
+      "suite": "comparison",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "今天临时关闭缓存，不要改长期配置。"
+        }
+      ],
+      "old_memories": [],
+      "query": "缓存",
+      "claim": "永久关闭缓存。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "temp",
+          "text": "今天临时关闭缓存，不要改长期配置。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "今天临时关闭缓存，不要改长期配置。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-04",
+      "family_id": "temp",
+      "suite": "recall",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "今天临时关闭缓存，不要改长期配置。"
+        }
+      ],
+      "old_memories": [],
+      "query": "缓存",
+      "claim": "永久关闭缓存。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "temp",
+          "text": "今天临时关闭缓存，不要改长期配置。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "今天临时关闭缓存，不要改长期配置。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-04",
+      "family_id": "temp",
+      "suite": "semantic",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "今天临时关闭缓存，不要改长期配置。"
+        }
+      ],
+      "old_memories": [],
+      "query": "缓存",
+      "claim": "永久关闭缓存。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "temp",
+          "text": "今天临时关闭缓存，不要改长期配置。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "今天临时关闭缓存，不要改长期配置。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-05",
+      "family_id": "sql",
+      "suite": "input",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "SQL 查询必须绑定参数。"
+        }
+      ],
+      "old_memories": [],
+      "query": "SQL 参数",
+      "claim": "SQL 查询必须绑定参数。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "sql",
+          "text": "SQL 查询必须绑定参数。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "SQL 查询必须绑定参数。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-05",
+      "family_id": "sql",
+      "suite": "comparison",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "SQL 查询必须绑定参数。"
+        }
+      ],
+      "old_memories": [],
+      "query": "SQL 参数",
+      "claim": "SQL 查询必须绑定参数。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "sql",
+          "text": "SQL 查询必须绑定参数。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "SQL 查询必须绑定参数。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-05",
+      "family_id": "sql",
+      "suite": "recall",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "SQL 查询必须绑定参数。"
+        }
+      ],
+      "old_memories": [],
+      "query": "SQL 参数",
+      "claim": "SQL 查询必须绑定参数。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "sql",
+          "text": "SQL 查询必须绑定参数。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "SQL 查询必须绑定参数。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-05",
+      "family_id": "sql",
+      "suite": "semantic",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "SQL 查询必须绑定参数。"
+        }
+      ],
+      "old_memories": [],
+      "query": "SQL 参数",
+      "claim": "SQL 查询必须绑定参数。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "sql",
+          "text": "SQL 查询必须绑定参数。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "SQL 查询必须绑定参数。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-06",
+      "family_id": "permission",
+      "suite": "input",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "发布前必须获得用户确认。"
+        }
+      ],
+      "old_memories": [],
+      "query": "发布 确认",
+      "claim": "发布前必须获得用户确认。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "permission",
+          "text": "发布前必须获得用户确认。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "发布前必须获得用户确认。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-06",
+      "family_id": "permission",
+      "suite": "comparison",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "发布前必须获得用户确认。"
+        }
+      ],
+      "old_memories": [],
+      "query": "发布 确认",
+      "claim": "发布前必须获得用户确认。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "permission",
+          "text": "发布前必须获得用户确认。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "发布前必须获得用户确认。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-06",
+      "family_id": "permission",
+      "suite": "recall",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "发布前必须获得用户确认。"
+        }
+      ],
+      "old_memories": [],
+      "query": "发布 确认",
+      "claim": "发布前必须获得用户确认。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "permission",
+          "text": "发布前必须获得用户确认。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "发布前必须获得用户确认。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-06",
+      "family_id": "permission",
+      "suite": "semantic",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "发布前必须获得用户确认。"
+        }
+      ],
+      "old_memories": [],
+      "query": "发布 确认",
+      "claim": "发布前必须获得用户确认。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "permission",
+          "text": "发布前必须获得用户确认。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "发布前必须获得用户确认。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-07",
+      "family_id": "negation",
+      "suite": "input",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "不要把调试参数带到正式运行。"
+        }
+      ],
+      "old_memories": [],
+      "query": "正式 调试",
+      "claim": "正式运行启用调试参数。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "negation",
+          "text": "不要把调试参数带到正式运行。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "不要把调试参数带到正式运行。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-07",
+      "family_id": "negation",
+      "suite": "comparison",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "不要把调试参数带到正式运行。"
+        }
+      ],
+      "old_memories": [],
+      "query": "正式 调试",
+      "claim": "正式运行启用调试参数。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "negation",
+          "text": "不要把调试参数带到正式运行。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "不要把调试参数带到正式运行。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-07",
+      "family_id": "negation",
+      "suite": "recall",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "不要把调试参数带到正式运行。"
+        }
+      ],
+      "old_memories": [],
+      "query": "正式 调试",
+      "claim": "正式运行启用调试参数。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "negation",
+          "text": "不要把调试参数带到正式运行。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "不要把调试参数带到正式运行。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-07",
+      "family_id": "negation",
+      "suite": "semantic",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "不要把调试参数带到正式运行。"
+        }
+      ],
+      "old_memories": [],
+      "query": "正式 调试",
+      "claim": "正式运行启用调试参数。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "negation",
+          "text": "不要把调试参数带到正式运行。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "不要把调试参数带到正式运行。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-08",
+      "family_id": "report",
+      "suite": "input",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "测试报告统一写入 reports 目录。"
+        }
+      ],
+      "old_memories": [],
+      "query": "测试 报告",
+      "claim": "测试报告写入 reports 目录。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "report",
+          "text": "测试报告统一写入 reports 目录。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "测试报告统一写入 reports 目录。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-08",
+      "family_id": "report",
+      "suite": "comparison",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "测试报告统一写入 reports 目录。"
+        }
+      ],
+      "old_memories": [],
+      "query": "测试 报告",
+      "claim": "测试报告写入 reports 目录。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "report",
+          "text": "测试报告统一写入 reports 目录。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "测试报告统一写入 reports 目录。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-08",
+      "family_id": "report",
+      "suite": "recall",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "测试报告统一写入 reports 目录。"
+        }
+      ],
+      "old_memories": [],
+      "query": "测试 报告",
+      "claim": "测试报告写入 reports 目录。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "report",
+          "text": "测试报告统一写入 reports 目录。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "测试报告统一写入 reports 目录。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-08",
+      "family_id": "report",
+      "suite": "semantic",
+      "split": "calibration",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "测试报告统一写入 reports 目录。"
+        }
+      ],
+      "old_memories": [],
+      "query": "测试 报告",
+      "claim": "测试报告写入 reports 目录。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "report",
+          "text": "测试报告统一写入 reports 目录。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "测试报告统一写入 reports 目录。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-09",
+      "family_id": "port",
+      "suite": "input",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "只有本地调试才使用 8080 端口。"
+        }
+      ],
+      "old_memories": [],
+      "query": "本地 端口",
+      "claim": "所有环境使用 8080 端口。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "port",
+          "text": "只有本地调试才使用 8080 端口。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "只有本地调试才使用 8080 端口。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-09",
+      "family_id": "port",
+      "suite": "comparison",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "只有本地调试才使用 8080 端口。"
+        }
+      ],
+      "old_memories": [],
+      "query": "本地 端口",
+      "claim": "所有环境使用 8080 端口。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "port",
+          "text": "只有本地调试才使用 8080 端口。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "只有本地调试才使用 8080 端口。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-09",
+      "family_id": "port",
+      "suite": "recall",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "只有本地调试才使用 8080 端口。"
+        }
+      ],
+      "old_memories": [],
+      "query": "本地 端口",
+      "claim": "所有环境使用 8080 端口。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "port",
+          "text": "只有本地调试才使用 8080 端口。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "只有本地调试才使用 8080 端口。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-09",
+      "family_id": "port",
+      "suite": "semantic",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "只有本地调试才使用 8080 端口。"
+        }
+      ],
+      "old_memories": [],
+      "query": "本地 端口",
+      "claim": "所有环境使用 8080 端口。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "port",
+          "text": "只有本地调试才使用 8080 端口。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "只有本地调试才使用 8080 端口。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-10",
+      "family_id": "failure",
+      "suite": "input",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "工具返回测试失败，不能记录测试成功。"
+        }
+      ],
+      "old_memories": [],
+      "query": "测试 失败",
+      "claim": "测试成功。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "failure",
+          "text": "工具返回测试失败，不能记录测试成功。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "工具返回测试失败，不能记录测试成功。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-10",
+      "family_id": "failure",
+      "suite": "comparison",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "工具返回测试失败，不能记录测试成功。"
+        }
+      ],
+      "old_memories": [],
+      "query": "测试 失败",
+      "claim": "测试成功。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "failure",
+          "text": "工具返回测试失败，不能记录测试成功。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "工具返回测试失败，不能记录测试成功。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-10",
+      "family_id": "failure",
+      "suite": "recall",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "工具返回测试失败，不能记录测试成功。"
+        }
+      ],
+      "old_memories": [],
+      "query": "测试 失败",
+      "claim": "测试成功。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "failure",
+          "text": "工具返回测试失败，不能记录测试成功。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "工具返回测试失败，不能记录测试成功。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-10",
+      "family_id": "failure",
+      "suite": "semantic",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "工具返回测试失败，不能记录测试成功。"
+        }
+      ],
+      "old_memories": [],
+      "query": "测试 失败",
+      "claim": "测试成功。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "failure",
+          "text": "工具返回测试失败，不能记录测试成功。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "工具返回测试失败，不能记录测试成功。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-11",
+      "family_id": "timeout",
+      "suite": "input",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "接口超时先检查服务端日志。"
+        }
+      ],
+      "old_memories": [],
+      "query": "接口 超时",
+      "claim": "接口超时先检查服务端日志。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "timeout",
+          "text": "接口超时先检查服务端日志。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "接口超时先检查服务端日志。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-11",
+      "family_id": "timeout",
+      "suite": "comparison",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "接口超时先检查服务端日志。"
+        }
+      ],
+      "old_memories": [],
+      "query": "接口 超时",
+      "claim": "接口超时先检查服务端日志。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "timeout",
+          "text": "接口超时先检查服务端日志。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "接口超时先检查服务端日志。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-11",
+      "family_id": "timeout",
+      "suite": "recall",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "接口超时先检查服务端日志。"
+        }
+      ],
+      "old_memories": [],
+      "query": "接口 超时",
+      "claim": "接口超时先检查服务端日志。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "timeout",
+          "text": "接口超时先检查服务端日志。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "接口超时先检查服务端日志。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-11",
+      "family_id": "timeout",
+      "suite": "semantic",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "接口超时先检查服务端日志。"
+        }
+      ],
+      "old_memories": [],
+      "query": "接口 超时",
+      "claim": "接口超时先检查服务端日志。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "timeout",
+          "text": "接口超时先检查服务端日志。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "接口超时先检查服务端日志。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-12",
+      "family_id": "scope",
+      "suite": "input",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "项目甲的构建结果只适用于项目甲。"
+        }
+      ],
+      "old_memories": [],
+      "query": "构建 项目",
+      "claim": "所有项目构建都通过。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "scope",
+          "text": "项目甲的构建结果只适用于项目甲。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "项目甲的构建结果只适用于项目甲。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-12",
+      "family_id": "scope",
+      "suite": "comparison",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "项目甲的构建结果只适用于项目甲。"
+        }
+      ],
+      "old_memories": [],
+      "query": "构建 项目",
+      "claim": "所有项目构建都通过。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "scope",
+          "text": "项目甲的构建结果只适用于项目甲。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "项目甲的构建结果只适用于项目甲。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-12",
+      "family_id": "scope",
+      "suite": "recall",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "项目甲的构建结果只适用于项目甲。"
+        }
+      ],
+      "old_memories": [],
+      "query": "构建 项目",
+      "claim": "所有项目构建都通过。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "scope",
+          "text": "项目甲的构建结果只适用于项目甲。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "项目甲的构建结果只适用于项目甲。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-12",
+      "family_id": "scope",
+      "suite": "semantic",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "项目甲的构建结果只适用于项目甲。"
+        }
+      ],
+      "old_memories": [],
+      "query": "构建 项目",
+      "claim": "所有项目构建都通过。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "scope",
+          "text": "项目甲的构建结果只适用于项目甲。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "项目甲的构建结果只适用于项目甲。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-13",
+      "family_id": "venv-choice",
+      "suite": "input",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "以后该项目固定使用 uv 管理虚拟环境。"
+        }
+      ],
+      "old_memories": [],
+      "query": "uv 环境",
+      "claim": "该项目使用 uv 管理虚拟环境。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "venv-choice",
+          "text": "以后该项目固定使用 uv 管理虚拟环境。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "以后该项目固定使用 uv 管理虚拟环境。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-13",
+      "family_id": "venv-choice",
+      "suite": "comparison",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "以后该项目固定使用 uv 管理虚拟环境。"
+        }
+      ],
+      "old_memories": [],
+      "query": "uv 环境",
+      "claim": "该项目使用 uv 管理虚拟环境。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "venv-choice",
+          "text": "以后该项目固定使用 uv 管理虚拟环境。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "以后该项目固定使用 uv 管理虚拟环境。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-13",
+      "family_id": "venv-choice",
+      "suite": "recall",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "以后该项目固定使用 uv 管理虚拟环境。"
+        }
+      ],
+      "old_memories": [],
+      "query": "uv 环境",
+      "claim": "该项目使用 uv 管理虚拟环境。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "venv-choice",
+          "text": "以后该项目固定使用 uv 管理虚拟环境。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "以后该项目固定使用 uv 管理虚拟环境。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-13",
+      "family_id": "venv-choice",
+      "suite": "semantic",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "以后该项目固定使用 uv 管理虚拟环境。"
+        }
+      ],
+      "old_memories": [],
+      "query": "uv 环境",
+      "claim": "该项目使用 uv 管理虚拟环境。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "venv-choice",
+          "text": "以后该项目固定使用 uv 管理虚拟环境。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "以后该项目固定使用 uv 管理虚拟环境。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-14",
+      "family_id": "deadline",
+      "suite": "input",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "这个临时接口只保留到周五。"
+        }
+      ],
+      "old_memories": [],
+      "query": "临时 接口",
+      "claim": "永久保留这个接口。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "deadline",
+          "text": "这个临时接口只保留到周五。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "这个临时接口只保留到周五。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-14",
+      "family_id": "deadline",
+      "suite": "comparison",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "这个临时接口只保留到周五。"
+        }
+      ],
+      "old_memories": [],
+      "query": "临时 接口",
+      "claim": "永久保留这个接口。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "deadline",
+          "text": "这个临时接口只保留到周五。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "这个临时接口只保留到周五。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-14",
+      "family_id": "deadline",
+      "suite": "recall",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "这个临时接口只保留到周五。"
+        }
+      ],
+      "old_memories": [],
+      "query": "临时 接口",
+      "claim": "永久保留这个接口。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "deadline",
+          "text": "这个临时接口只保留到周五。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "这个临时接口只保留到周五。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-14",
+      "family_id": "deadline",
+      "suite": "semantic",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "这个临时接口只保留到周五。"
+        }
+      ],
+      "old_memories": [],
+      "query": "临时 接口",
+      "claim": "永久保留这个接口。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "deadline",
+          "text": "这个临时接口只保留到周五。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "这个临时接口只保留到周五。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-15",
+      "family_id": "artifact",
+      "suite": "input",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "完整结果保存在产物中，当前只显示摘要。"
+        }
+      ],
+      "old_memories": [],
+      "query": "完整 结果",
+      "claim": "所有检查均通过。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "artifact",
+          "text": "完整结果保存在产物中，当前只显示摘要。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "完整结果保存在产物中，当前只显示摘要。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-15",
+      "family_id": "artifact",
+      "suite": "comparison",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "完整结果保存在产物中，当前只显示摘要。"
+        }
+      ],
+      "old_memories": [],
+      "query": "完整 结果",
+      "claim": "所有检查均通过。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "artifact",
+          "text": "完整结果保存在产物中，当前只显示摘要。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "完整结果保存在产物中，当前只显示摘要。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-15",
+      "family_id": "artifact",
+      "suite": "recall",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "完整结果保存在产物中，当前只显示摘要。"
+        }
+      ],
+      "old_memories": [],
+      "query": "完整 结果",
+      "claim": "所有检查均通过。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "artifact",
+          "text": "完整结果保存在产物中，当前只显示摘要。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "完整结果保存在产物中，当前只显示摘要。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-15",
+      "family_id": "artifact",
+      "suite": "semantic",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "完整结果保存在产物中，当前只显示摘要。"
+        }
+      ],
+      "old_memories": [],
+      "query": "完整 结果",
+      "claim": "所有检查均通过。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "artifact",
+          "text": "完整结果保存在产物中，当前只显示摘要。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "完整结果保存在产物中，当前只显示摘要。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-16",
+      "family_id": "question",
+      "suite": "input",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "是否需要把数据库换成 PostgreSQL？"
+        }
+      ],
+      "old_memories": [],
+      "query": "数据库 PostgreSQL",
+      "claim": "已经决定换成 PostgreSQL。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "question",
+          "text": "是否需要把数据库换成 PostgreSQL？",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "是否需要把数据库换成 PostgreSQL？"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-16",
+      "family_id": "question",
+      "suite": "comparison",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "是否需要把数据库换成 PostgreSQL？"
+        }
+      ],
+      "old_memories": [],
+      "query": "数据库 PostgreSQL",
+      "claim": "已经决定换成 PostgreSQL。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "question",
+          "text": "是否需要把数据库换成 PostgreSQL？",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "是否需要把数据库换成 PostgreSQL？"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-16",
+      "family_id": "question",
+      "suite": "recall",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "是否需要把数据库换成 PostgreSQL？"
+        }
+      ],
+      "old_memories": [],
+      "query": "数据库 PostgreSQL",
+      "claim": "已经决定换成 PostgreSQL。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "question",
+          "text": "是否需要把数据库换成 PostgreSQL？",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "是否需要把数据库换成 PostgreSQL？"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-16",
+      "family_id": "question",
+      "suite": "semantic",
+      "split": "validation",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "是否需要把数据库换成 PostgreSQL？"
+        }
+      ],
+      "old_memories": [],
+      "query": "数据库 PostgreSQL",
+      "claim": "已经决定换成 PostgreSQL。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "question",
+          "text": "是否需要把数据库换成 PostgreSQL？",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "是否需要把数据库换成 PostgreSQL？"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-17",
+      "family_id": "windows",
+      "suite": "input",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "Windows 脚本使用 PowerShell。"
+        }
+      ],
+      "old_memories": [],
+      "query": "Windows PowerShell",
+      "claim": "Windows 脚本使用 PowerShell。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "windows",
+          "text": "Windows 脚本使用 PowerShell。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "Windows 脚本使用 PowerShell。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-17",
+      "family_id": "windows",
+      "suite": "comparison",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "Windows 脚本使用 PowerShell。"
+        }
+      ],
+      "old_memories": [],
+      "query": "Windows PowerShell",
+      "claim": "Windows 脚本使用 PowerShell。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "windows",
+          "text": "Windows 脚本使用 PowerShell。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "Windows 脚本使用 PowerShell。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-17",
+      "family_id": "windows",
+      "suite": "recall",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "Windows 脚本使用 PowerShell。"
+        }
+      ],
+      "old_memories": [],
+      "query": "Windows PowerShell",
+      "claim": "Windows 脚本使用 PowerShell。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "windows",
+          "text": "Windows 脚本使用 PowerShell。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "Windows 脚本使用 PowerShell。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-17",
+      "family_id": "windows",
+      "suite": "semantic",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "Windows 脚本使用 PowerShell。"
+        }
+      ],
+      "old_memories": [],
+      "query": "Windows PowerShell",
+      "claim": "Windows 脚本使用 PowerShell。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "windows",
+          "text": "Windows 脚本使用 PowerShell。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "Windows 脚本使用 PowerShell。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-18",
+      "family_id": "encoding",
+      "suite": "input",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "CSV 导出统一使用 UTF-8 编码。"
+        }
+      ],
+      "old_memories": [],
+      "query": "CSV 编码",
+      "claim": "CSV 导出使用 UTF-8 编码。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "encoding",
+          "text": "CSV 导出统一使用 UTF-8 编码。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "CSV 导出统一使用 UTF-8 编码。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-18",
+      "family_id": "encoding",
+      "suite": "comparison",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "CSV 导出统一使用 UTF-8 编码。"
+        }
+      ],
+      "old_memories": [],
+      "query": "CSV 编码",
+      "claim": "CSV 导出使用 UTF-8 编码。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "encoding",
+          "text": "CSV 导出统一使用 UTF-8 编码。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "CSV 导出统一使用 UTF-8 编码。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-18",
+      "family_id": "encoding",
+      "suite": "recall",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "CSV 导出统一使用 UTF-8 编码。"
+        }
+      ],
+      "old_memories": [],
+      "query": "CSV 编码",
+      "claim": "CSV 导出使用 UTF-8 编码。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "encoding",
+          "text": "CSV 导出统一使用 UTF-8 编码。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "CSV 导出统一使用 UTF-8 编码。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-18",
+      "family_id": "encoding",
+      "suite": "semantic",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "CSV 导出统一使用 UTF-8 编码。"
+        }
+      ],
+      "old_memories": [],
+      "query": "CSV 编码",
+      "claim": "CSV 导出使用 UTF-8 编码。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "encoding",
+          "text": "CSV 导出统一使用 UTF-8 编码。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "CSV 导出统一使用 UTF-8 编码。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-19",
+      "family_id": "hypothesis",
+      "suite": "input",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "可能是网络波动，尚未确认原因。"
+        }
+      ],
+      "old_memories": [],
+      "query": "网络 原因",
+      "claim": "已确认根因是网络。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "hypothesis",
+          "text": "可能是网络波动，尚未确认原因。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "可能是网络波动，尚未确认原因。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-19",
+      "family_id": "hypothesis",
+      "suite": "comparison",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "可能是网络波动，尚未确认原因。"
+        }
+      ],
+      "old_memories": [],
+      "query": "网络 原因",
+      "claim": "已确认根因是网络。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "hypothesis",
+          "text": "可能是网络波动，尚未确认原因。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "可能是网络波动，尚未确认原因。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-19",
+      "family_id": "hypothesis",
+      "suite": "recall",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "可能是网络波动，尚未确认原因。"
+        }
+      ],
+      "old_memories": [],
+      "query": "网络 原因",
+      "claim": "已确认根因是网络。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "hypothesis",
+          "text": "可能是网络波动，尚未确认原因。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "可能是网络波动，尚未确认原因。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-19",
+      "family_id": "hypothesis",
+      "suite": "semantic",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "可能是网络波动，尚未确认原因。"
+        }
+      ],
+      "old_memories": [],
+      "query": "网络 原因",
+      "claim": "已确认根因是网络。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "hypothesis",
+          "text": "可能是网络波动，尚未确认原因。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "可能是网络波动，尚未确认原因。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-20",
+      "family_id": "quote",
+      "suite": "input",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "反面示例：“失败也要写成成功。”不要这样做。"
+        }
+      ],
+      "old_memories": [],
+      "query": "失败 成功",
+      "claim": "失败也写成成功。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "quote",
+          "text": "反面示例：“失败也要写成成功。”不要这样做。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "反面示例：“失败也要写成成功。”不要这样做。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-20",
+      "family_id": "quote",
+      "suite": "comparison",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "反面示例：“失败也要写成成功。”不要这样做。"
+        }
+      ],
+      "old_memories": [],
+      "query": "失败 成功",
+      "claim": "失败也写成成功。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "quote",
+          "text": "反面示例：“失败也要写成成功。”不要这样做。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "反面示例：“失败也要写成成功。”不要这样做。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-20",
+      "family_id": "quote",
+      "suite": "recall",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "反面示例：“失败也要写成成功。”不要这样做。"
+        }
+      ],
+      "old_memories": [],
+      "query": "失败 成功",
+      "claim": "失败也写成成功。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "quote",
+          "text": "反面示例：“失败也要写成成功。”不要这样做。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "反面示例：“失败也要写成成功。”不要这样做。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-20",
+      "family_id": "quote",
+      "suite": "semantic",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "反面示例：“失败也要写成成功。”不要这样做。"
+        }
+      ],
+      "old_memories": [],
+      "query": "失败 成功",
+      "claim": "失败也写成成功。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "quote",
+          "text": "反面示例：“失败也要写成成功。”不要这样做。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "反面示例：“失败也要写成成功。”不要这样做。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-21",
+      "family_id": "date",
+      "suite": "input",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "截至本次检查，远端版本仍为 0.5.11。"
+        }
+      ],
+      "old_memories": [],
+      "query": "远端 版本",
+      "claim": "远端永远保持 0.5.11。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "date",
+          "text": "截至本次检查，远端版本仍为 0.5.11。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "截至本次检查，远端版本仍为 0.5.11。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-21",
+      "family_id": "date",
+      "suite": "comparison",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "截至本次检查，远端版本仍为 0.5.11。"
+        }
+      ],
+      "old_memories": [],
+      "query": "远端 版本",
+      "claim": "远端永远保持 0.5.11。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "date",
+          "text": "截至本次检查，远端版本仍为 0.5.11。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "截至本次检查，远端版本仍为 0.5.11。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-21",
+      "family_id": "date",
+      "suite": "recall",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "截至本次检查，远端版本仍为 0.5.11。"
+        }
+      ],
+      "old_memories": [],
+      "query": "远端 版本",
+      "claim": "远端永远保持 0.5.11。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "date",
+          "text": "截至本次检查，远端版本仍为 0.5.11。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "截至本次检查，远端版本仍为 0.5.11。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-21",
+      "family_id": "date",
+      "suite": "semantic",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "截至本次检查，远端版本仍为 0.5.11。"
+        }
+      ],
+      "old_memories": [],
+      "query": "远端 版本",
+      "claim": "远端永远保持 0.5.11。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "date",
+          "text": "截至本次检查，远端版本仍为 0.5.11。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "截至本次检查，远端版本仍为 0.5.11。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-22",
+      "family_id": "cleanup",
+      "suite": "input",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "删除临时文件前先确认目录范围。"
+        }
+      ],
+      "old_memories": [],
+      "query": "删除 临时",
+      "claim": "删除临时文件前确认目录范围。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "cleanup",
+          "text": "删除临时文件前先确认目录范围。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "删除临时文件前先确认目录范围。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-22",
+      "family_id": "cleanup",
+      "suite": "comparison",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "删除临时文件前先确认目录范围。"
+        }
+      ],
+      "old_memories": [],
+      "query": "删除 临时",
+      "claim": "删除临时文件前确认目录范围。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "cleanup",
+          "text": "删除临时文件前先确认目录范围。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "删除临时文件前先确认目录范围。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-22",
+      "family_id": "cleanup",
+      "suite": "recall",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "删除临时文件前先确认目录范围。"
+        }
+      ],
+      "old_memories": [],
+      "query": "删除 临时",
+      "claim": "删除临时文件前确认目录范围。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "cleanup",
+          "text": "删除临时文件前先确认目录范围。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "删除临时文件前先确认目录范围。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-22",
+      "family_id": "cleanup",
+      "suite": "semantic",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "删除临时文件前先确认目录范围。"
+        }
+      ],
+      "old_memories": [],
+      "query": "删除 临时",
+      "claim": "删除临时文件前确认目录范围。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "cleanup",
+          "text": "删除临时文件前先确认目录范围。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "删除临时文件前先确认目录范围。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-23",
+      "family_id": "subagent",
+      "suite": "input",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "子代理提出使用 Redis，用户尚未决定。"
+        }
+      ],
+      "old_memories": [],
+      "query": "Redis 决定",
+      "claim": "用户已决定使用 Redis。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "subagent",
+          "text": "子代理提出使用 Redis，用户尚未决定。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "子代理提出使用 Redis，用户尚未决定。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-23",
+      "family_id": "subagent",
+      "suite": "comparison",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "子代理提出使用 Redis，用户尚未决定。"
+        }
+      ],
+      "old_memories": [],
+      "query": "Redis 决定",
+      "claim": "用户已决定使用 Redis。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "subagent",
+          "text": "子代理提出使用 Redis，用户尚未决定。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "子代理提出使用 Redis，用户尚未决定。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-23",
+      "family_id": "subagent",
+      "suite": "recall",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "子代理提出使用 Redis，用户尚未决定。"
+        }
+      ],
+      "old_memories": [],
+      "query": "Redis 决定",
+      "claim": "用户已决定使用 Redis。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "subagent",
+          "text": "子代理提出使用 Redis，用户尚未决定。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "子代理提出使用 Redis，用户尚未决定。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-23",
+      "family_id": "subagent",
+      "suite": "semantic",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "子代理提出使用 Redis，用户尚未决定。"
+        }
+      ],
+      "old_memories": [],
+      "query": "Redis 决定",
+      "claim": "用户已决定使用 Redis。",
+      "kind": "context",
+      "must_activate": false,
+      "must_not_activate": true,
+      "expected_facts": [
+        {
+          "fact_id": "subagent",
+          "text": "子代理提出使用 Redis，用户尚未决定。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": false,
+          "must_activate": false,
+          "must_not_activate": true,
+          "allowed_statuses": [
+            "candidate",
+            "discard"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "子代理提出使用 Redis，用户尚未决定。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "unsupported"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "input-24",
+      "family_id": "retry",
+      "suite": "input",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "后台记忆整理失败后跳过，不自动重试。"
+        }
+      ],
+      "old_memories": [],
+      "query": "记忆 重试",
+      "claim": "后台记忆整理失败后不自动重试。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "retry",
+          "text": "后台记忆整理失败后跳过，不自动重试。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "后台记忆整理失败后跳过，不自动重试。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "comparison-24",
+      "family_id": "retry",
+      "suite": "comparison",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "后台记忆整理失败后跳过，不自动重试。"
+        }
+      ],
+      "old_memories": [],
+      "query": "记忆 重试",
+      "claim": "后台记忆整理失败后不自动重试。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "retry",
+          "text": "后台记忆整理失败后跳过，不自动重试。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "后台记忆整理失败后跳过，不自动重试。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "recall-24",
+      "family_id": "retry",
+      "suite": "recall",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "后台记忆整理失败后跳过，不自动重试。"
+        }
+      ],
+      "old_memories": [],
+      "query": "记忆 重试",
+      "claim": "后台记忆整理失败后不自动重试。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "retry",
+          "text": "后台记忆整理失败后跳过，不自动重试。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "后台记忆整理失败后跳过，不自动重试。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    },
+    {
+      "case_id": "semantic-24",
+      "family_id": "retry",
+      "suite": "semantic",
+      "split": "holdout",
+      "context": {
+        "project": "synthetic",
+        "session": "probe",
+        "thread": "probe",
+        "scope": "workspace"
+      },
+      "sources": [
+        {
+          "id": "u",
+          "role": "user",
+          "text": "后台记忆整理失败后跳过，不自动重试。"
+        }
+      ],
+      "old_memories": [],
+      "query": "记忆 重试",
+      "claim": "后台记忆整理失败后不自动重试。",
+      "kind": "context",
+      "must_activate": true,
+      "must_not_activate": false,
+      "expected_facts": [
+        {
+          "fact_id": "retry",
+          "text": "后台记忆整理失败后跳过，不自动重试。",
+          "source_ids": [
+            "u"
+          ],
+          "must_extract": true,
+          "must_activate": true,
+          "must_not_activate": false,
+          "allowed_statuses": [
+            "active"
+          ],
+          "support": {
+            "message_id": "u",
+            "offset": 0,
+            "quote": "后台记忆整理失败后跳过，不自动重试。"
+          }
+        }
+      ],
+      "expected_relations": [
+        "new"
+      ],
+      "assertion": "Preserve the original conditions and polarity; reject unsupported generalization.",
+      "forbidden": [
+        "unsupported_activation",
+        "scope_expansion",
+        "stale_overwrite"
+      ],
+      "fault": null
+    }
+  ]
+}

@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class SessionPersistence:
-    def __init__(self, storage, sessions, *, catalog, tool_registry, permission_settings, usage_persistence=None, title_max_chars=40, checkpoint_settings=None, memory_jobs=None):
+    def __init__(self, storage, sessions, *, catalog, tool_registry, permission_settings, usage_persistence=None, title_max_chars=40, checkpoint_settings=None, memory_jobs=None, memory_settings=None):
         self.storage = storage
         self.sessions = sessions
         self._catalog, self._tool_registry = catalog, tool_registry
@@ -43,6 +43,9 @@ class SessionPersistence:
         self._history_locks = {}
         self._prepared = {}
         self._memory_jobs = memory_jobs
+        self._memory_settings = memory_settings
+        self._directory_eligible=set()
+        self._directory_used=set()
 
     async def astatus(self, session_id):
         row = await run_blocking(self.storage.sessions.get, session_id)
@@ -99,19 +102,30 @@ class SessionPersistence:
             logger.error('memory_source_save_failed error_type=%s', type(error).__name__)
             raise ToolException('memory_source_save_failed: memory was not written.') from error
 
+    def directory_attempt(self,sid):
+        with self._lock:
+            if sid in self._directory_eligible:self._directory_used.add(sid)
+
     async def prepare_memory(self,session_id,root,messages,model,*,preview=False):
+        parts=[]
+        from .session_directory import prepare
+        try:parts=await run_blocking(prepare,self,session_id,preview=preview)
+        except Exception as error:logger.warning('session_directory_prepare_failed error_type=%s',type(error).__name__)
+        return parts+await self._prepare_memory_navigation(session_id,root,messages,model,preview=preview)
+
+    async def _prepare_memory_navigation(self,session_id,root,messages,model,*,preview=False):
         if self._memory_jobs is None:
             access = self.sessions.memory._access if self.sessions.memory else None
             if access is None or not access.personal_only:
                 return []
             if 'memory' not in self.sessions.require(session_id).get_active_tools():
                 return []
-            from naiyue_test_agent.application.memory.memory_context import prepare_memory_parts
+            from naiyue_test_agent.application.memory.memory_wiki_context import prepare_wiki_parts
             from naiyue_test_agent.tools.permission_rules import match_rules
             def allowed(request):
                 return match_rules(self._permission_settings.deny,
                     dict(tool_name='memory', args=request), deny=True) is None
-            return await run_blocking(prepare_memory_parts, access, session_id, None, messages, model,
+            return await run_blocking(prepare_wiki_parts, access, session_id, None,
                                       allowed=allowed)
         try:return await run_blocking(self._memory_jobs.prepare,session_id,root,messages,model,preview=preview)
         except (MemoryError,OSError,ValueError,SessionPersistenceError) as error:
@@ -249,18 +263,20 @@ class SessionPersistence:
                 logger.error('session_persistence_finalize_failed error_type=%s', type(error).__name__)
                 raise SessionPersistenceError('session_save_unconfirmed') from error
             else:
+                with self._lock:directory_used=session_id in self._directory_used
+                if directory_used:
+                    try:await run_blocking(self.storage.memory.mark_directory,session_id)
+                    except Exception as error:logger.warning('session_directory_marker_failed error_type=%s',type(error).__name__)
                 if self._memory_jobs is not None:
                     try:
                         identity,model=self.sessions.require(session_id).resolve_model()
                         await self._memory_jobs.after_finish(session_id,run_id,status if observation.mode!='compact' else 'skipped',model_id=identity,model=model)
                     except Exception as error:logger.error('memory_after_finish_failed error_type=%s',type(error).__name__)
-                if state == 'ready' and self._checkpoint_settings is not None:
-                    try:
-                        from naiyue_test_agent.storage.checkpoint_retention import prune_after_finish
-                        await await_settled(prune_after_finish(agent, self.storage, session_id, run_id,
-                            self._checkpoint_settings, snapshot=snapshot))
-                    except Exception as error:
-                        logger.error('checkpoint_retention_failed error_type=%s', type(error).__name__)
+                from .session_maintenance import after_finish
+                memory_access=self._memory_jobs.memory if self._memory_jobs else (
+                    self.sessions.memory._access if self.sessions.memory else None)
+                await after_finish(agent=agent,storage=self.storage,session_id=session_id,run_id=run_id,
+                    snapshot=snapshot,state=state,checkpoint_settings=self._checkpoint_settings,memory_access=memory_access)
             finally:
                 with self._lock:
                     self._active.pop(session_id, None)

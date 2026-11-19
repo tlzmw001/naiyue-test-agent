@@ -1,6 +1,10 @@
 # Spec143BM-S0：冻结基线、分阶段评测与正确性门槛
 
-日期：2026-11-16。状态：用户授权编写详细 Spec；**评测资产及新探针尚未实现，本轮未请求真实模型**。所属[总规范](143bm-memory-optimization.md)。
+2026-11-17 收尾合并：本片的场景覆盖、逐事实/B 关系评分、成本、可比基线和独立验收未完成项，统一转入 [S8 第 14 节](143bm-08-memory-tool-action-contract.md#14-s0s8-未完成事项统一对账与关闭标准)。旧资产/报告与本页历史协议保留，不再独立排期；当前两维语义评测用 S5/S8 的预算与标签，不叠加旧七类重复次数。
+
+版本边界：下文保留 S0–S4 的冻结评测合同。2026-11-16 新确认的两维记忆方案另见 [S5 评测协议](143bm-05-evaluation.md)；使用新协议版本和独立报告，不覆盖旧样本/评分结果，不将 S5 通过等同于本页完整验收通过。
+
+日期：2026-11-16。状态：**评测入口、96条名义场景及S3固定比较矩阵已实现；完整场景/人工评分闭环仍待补，本轮未请求真实模型**。所属[总规范](143bm-memory-optimization.md)。
 
 ## 1. 本片要回答的问题
 
@@ -191,3 +195,97 @@ S0 先写评测器失败测试，再实现工具。S1–S4 的行为红灯各自
 validation/holdout 和第二次重复分别使用相应 split 与新输出名；同一输出文件不复用。请求预算、模型/profile和运行清单写入协议后再执行，不由 shell 循环无限尝试。calibration/validation 基线在算法修改前；holdout 基线按第5节在冻结后从隔离旧版本取得。`--split all` 只用于留出已经揭盲后的历史回归，不能绕过这一顺序。
 
 S0 完成须交付：冻结数据与协议、评分器测试结果、旧生产链基线报告、待改善案例清单。真实基线尚未执行时明确标 `semantic_pending`，不能称已取得业务基线。S4 最终验收引用相同版本的基线与留出结果，报告程序/模型/业务三个层面的实际证据。
+
+
+## 12. S0＋S2联合实施记录（2026-11-16，阶段性）
+
+用户确认联合开发，先冻结当前S1基线再改S2。基线提交12693a1，完整源码归档build/spec143bm-s02/baseline-source.tar；工程基线baseline.json以真实临时SQLite/resolve观察同消息两段仅留一段，候选candidate.json两段保留、同位置仍去重。生产不导入评测脚本，无真实配置读取或供应商调用。
+
+scripts/evaluate_memory_optimization.py及memory_evaluation_cases.py是首批工程检查入口；输入evidence.json、protocol.json、rubric.md显式限定范围，哈希防篡改，报告排他创建。该入口目前仅覆盖片段保存，不是第8节完整CLI合同；96场景、各阶段指标、split/holdout、真实语义探针扩展仍待完成。不能将两条例子或单元测试冒称完整S0。S2的确认策略在内部事务参数实现，自动调用方留待S3。
+
+
+## 13. 评测入口扩展与隔离旧版实跑（2026-11-16）
+
+扩展fixtures.json为96条（4套各24、每套校准/验证/留出各8）；家族跨套件固定同split，数据哈希和标签基本一致性由load_suite检查。protocol同时保留首批两条证据基线的哈希。rubric明确当前覆盖程度：input为正文重建与片段绑定；comparison为受控提议经过当前公开保存门禁，不是采样模型或已实现B；recall调用真实prepare_memory_parts；semantic不在离线运行中执行。尚未补齐全部长消息/旧项更正/冲突/隐私/故障与成本矩阵，不能仅因数量达到96就称完整S0验收。
+
+新增memory_evaluation_runner.py供脚本调用，脚本没有导入真实模型目录或读取默认用户配置。报告保留逐例完成/失败/未执行；compare_reports逐case检查回退，禁止用另一例新通过抵消回退。CLI支持stage/split/fixtures/protocol/baseline，evaluate遇未满足标签返回非零；不会因预期产品缺口而改评分。报告排他创建，空precision为null。
+
+probe_memory_semantics支持optimization套件与split，并在读取配置前检查最坏调用预算；默认预留每例2次，8例repeat2拒绝，repeat1允许；优化模式限制max_batches1。旧12例保持原入口。未实际请求供应商，人工语义审阅与真实基线仍pending，报告不能宣称语义通过。
+
+正式工程对比报告仅引用build/spec143bm-s0-complete/frozen-old-{calibration,validation}.json和frozen-candidate-{calibration,validation}.json。旧生产源码来自12693a1的归档，隔离解出后只覆盖相同评测脚本/合成数据，不改旧产品代码。校准24条离线：旧21/24、新22/24；验证旧新均18/24；两组各8条semantic未执行，B均N/A。范围扩大等给定错误提议仍可能激活，保留非零门槛，不修成本片以外的S3。留出尚未运行。
+
+早期报告有临时路径未resolve、固定旧时间导致过期、命令cwd未切隔离旧版等问题，保留作诊断且不计正式结果；只有上述frozen-*为基线对比证据。两条证据旧baseline仍单独引用S02报告。三项评测器测试先红后绿，补充逐例回退/篡改/阶段标记测试；没有把所有数据编写称作TDD。
+
+最终工程验证：后端八片6775通过（index5最后补跑787），前端78文件686通过，评测与探针/证据30通过，记忆/迁移相关500通过。标准Mac构建、Twine、源外安装烟测、compileall及diff检查通过，provider_requests=0。verification.json汇总；不是完整S0质量验收。未提交发布。
+
+## 14. 审查修复合同（2026-11-16）
+
+revision 2 保持输入事实及 split 不变，修复评分器：input 的必需证据从 expected_facts.support 独立取范围，逐字符检查 resolve 后覆盖，不能从实际 refs 缩小分母。语义提取与受控错误 claim 的激活标签分离；负例转换为 fact_review，允许原文支持的正确 active 事实，具体 forbidden_claim 随检查结果保留并必须人工审阅，结构通过不表示语义通过。正式 load_suite 校验 protocol 同目录 rubric.md 的冻结哈希；默认与自定义入口一致。协议 revision/rubric 哈希变化后旧报告不可直接比较，旧报告保留为 revision 1 证据。未运行新的真实模型采样或留出验收。
+
+## 15. S0收尾实施合同（2026-11-16）
+
+当前96例受控公共写入报告保留为历史工程对照，不改名为S3质量验收。
+新增独立离线worker矩阵入口，复用已冻结comparison_s3.json的8个校准场景，
+在临时库通过MemoryJobs.request/after_finish执行真实A/B主链；模型替身只提供固定决定，
+不依赖tests helper，不读取用户配置。报告核对ID/version/TTL/写入数/失败数/调用次数，
+并在更正成功后走prepare_memory_parts检查新版本召回、读操作无写入。
+新增人工评分入口：绑定原始报告哈希，要求每个执行case都有审阅者、结论和依据，
+漏评/重复/未知case拒绝，错误覆盖/无依据激活/否定反转/范围扩大任一非零不得通过。
+人工通过不替代召回对比、成本、validation/holdout门槛，总验收仍pending。
+新增文件scripts/memory_worker_evaluation.py、scripts/review_memory_evaluation.py及对应测试；
+现有语义报告补run_id和源码/协议指纹，原报告不覆盖。未授权真实模型请求。
+完整96例扩展、独立留出及成本比较仍需后续完成，不能把8例矩阵称完整S0。
+
+本轮新增入口（项目根目录运行；output父目录须已存在）：
+
+```bash
+.venv/bin/python -m scripts.memory_worker_evaluation --output build/memory-worker-calibration.json
+.venv/bin/python -m scripts.review_memory_evaluation --report build/semantic-run.json --reviews build/human-reviews.json --output build/semantic-review.json
+```
+
+人工文件形状：`{"report_sha256":"原始报告文件SHA256","cases":[...]}`。
+每项包含case_id、reviewer、reason，以及严格布尔supported、wrong_overwrite、
+unsupported_activation、negation_reversed、scope_expanded。supported判断实际输出的主张有无证据；
+正确拒绝且没有输出可记true，漏提取另由事实召回门槛统计。每个执行case必须恰好一项。
+尚未完整执行/结构失败的原始报告拒绝产生人工通过；采样报告含唯一run_id和源码manifest。
+当前审阅粒度为case，还未实现Spec第9节的逐fact评分与完整指标，保持整体pending。
+
+实施结果：新入口及不完整报告门禁先红后绿；worker真实链8/8通过，
+每例2次替身逻辑调用、provider0，更正后召回v2且无写库。
+最终相关464项通过，标准Mac构建/Twine通过。
+本轮仅完成上述收尾第一步，完整矩阵/逐fact评分/成本与独立留出仍待完成。
+
+最终验证：后端四片1823+1759+1759+1564=6905项全通过（0失败/错误/跳过），专项464项；标准Mac构建/Twine与源外安装通过，provider0。证据build/spec143bm-evaluation-closure/verification.json、backend-*.xml、worker-final.json与install.json。未提交发布，完整S0仍pending。
+
+## 16. 逐事实评分与多项召回校准（2026-11-16）
+
+在现有人工评分入口增加可选facts；原始报告含expected_facts时必须逐fact恰好评分一次。
+每fact提供extracted/available/injected严格布尔及reason，分母来自冻结must_extract/
+must_activate/当前应召回标签，不从模型实际输出缩小。输出提议召回、最终有效召回、
+前台事实召回及漏项ID；无分母返回null。must_not_activate事实被available判真记禁止激活。
+语义探针保留冻结expected_facts并写入逐case原始报告，评分CLI仍绑定报告哈希。
+旧报告无事实标签可以继续逐case审阅，但fact_status=pending，不能宣称完整评分。
+另新增独立冻结recall_calibration.json，8条只用于校准；含多个合成种子/无关种子、
+多事项、弱查询、编号隔离、否定、URL边界和空答案。真实MemoryAccess+prepare_memory_parts
+执行，记录最终注入ID、召回/精度/误注入、只读副作用和耗时；不替换原96集或打开holdout。
+本轮不改变生产检索参数、不调用真实模型；完整分组矩阵与成本/旧版对照仍另行验收。
+
+执行：`.venv/bin/python -m scripts.memory_recall_evaluation --output build/recall-new.json`；
+隔离旧源码运行同一脚本/同一冻结fixtures得old.json后，可增加`--baseline build/recall-old.json`。
+数据/协议/split/逐case身份和源码manifest校验沿现有compare_reports；逐case召回或精度下降
+单列metric_regressions并非零退出；当前代码不自动切换旧版，不用同版重跑冒充历史基线。
+人工facts每项形状：`{fact_id,extracted,available,injected,reason}`，前三个判断均需严格布尔。
+extracted表示A提议覆盖该事实，available表示最终有正确、active、未过期且允许访问的记录覆盖，
+injected表示最终提示parts含该事实；必须结合原始阶段输出/记录和来源审阅，不按字符串自动判断。
+
+最终验证：后端四片1823+1759+1759+1568=6909项全通过（0失败/错误/跳过），相关467、最终补充35项通过；标准Mac构建/Twine及compileall/diff通过。8条新召回校准全过、读写入0、provider0。证据build/spec143bm-fact-evaluation/verification.json与recall-final.json。无真实模型/语义业务验收结论。
+
+## 17. 首轮真实校准（2026-11-16）
+
+**2026-11-16 S0首轮真实校准已执行，验收未通过**：按用户指示沿用.env/models.json唯一默认heiyu-gpt-5.5，optimization/calibration/repeat1，8/8执行、15次逻辑调用（≤16计划），无补跑；探针退出1，structural_failures=6、所有调用起止配对。semantic-01保存2条active；04临时操作A无提议；02/03/05的personal提议被B因缺跨项目证据拒绝；06/07/08的claim.scope被本地Claim(extra=forbid)拒绝，概览保留、task partial、记忆0写入。初步助手审阅未见错误激活，不是人工语义通过；正例固定context标签也需复核，原报告不改。HTTP尝试事件未观测，不能将0事件视作0请求或把15逻辑调用称HTTP数。证据build/spec143bm-semantic-calibration/run1.json、run1.log、triage.json。未改模型配置/用户库/生产代码，无重试/提交/发布。唯一下一步：分析并修正A范围选择与B输出合同表达，另按版本处理标签类型限制；先离线回归再另跑完整独立校准，不补跑失败案例。
+
+## 18. 第二轮独立校准（2026-11-16）
+
+**2026-11-16 S3提示合同修正及第二轮真实校准完成（未提交）**：A明确无显式跨项目依据用workspace、kind=user不自动personal；B实际消息附同源ComparisonResult schema并明确claim不得带scope，schema计入既有token预算，extra=forbid与失败不重试保持。2项接线回归先红后绿，记忆470项通过；标准Mac构建/Twine及2生产源码wheel逐字节一致。沿原heiyu-gpt-5.5完整8条calibration独立run2，15逻辑调用，任务completed由5/8→8/8、partial3→0、active记录2→8、personal0；临时缓存仍无提议。冻结评分仍失败5条（固定context，实际rule/user），原结果不改，不宣称业务验收通过。初步助手审阅保存内容均有对应原文，非人工评分。报告输入token77596→86437、输出2582→2946、总case耗时86.358→108.657秒，含模型随机差异，不归因成纯schema或生产性能。证据build/spec143bm-semantic-calibration/run{1,2}.json、comparison.json、prompt-fix-focused.log。无配置/用户库更改、无补跑或提交发布。唯一下一步：围绕两轮结果与评分类型/范围/成本做系统方案评审，再确定后续矩阵和独立验收。
+
+2026-11-17 机械动作矩阵版本边界：当前 `memory_worker_evaluation` 与对应测试消费独立 `comparison_s6.json` / `comparison_s6_protocol.json`。获批 S6 将 partial 冗余正文从“整次拒绝”改为“忽略正文、只附来源”，新矩阵更改该例的写入/版本预期并保留正文、确认时间和期限不变的检查。旧 `comparison_s3.json` 与原协议/历史报告保持原样；此为确定性合同迁移，不是重标真实模型质量结果。

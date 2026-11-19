@@ -1,6 +1,6 @@
 # Spec143BM-S2：证据身份、保存与生命周期
 
-状态：详细实施 Spec，待实施；2026-11-16。本轮只写文档，未改产品、真实配置或用户数据库。
+状态：S2已实现，S3已接内部确认范围；2026-11-16。实施与验证记录见文末，未改真实配置或用户数据库。
 源码基线：`60108431ceeeaf100df008da4765b879505fc1d7`。
 总入口：[143BM](143bm-memory-optimization.md)；设计依据：[总体方案](../长期记忆优化总体方案-2026-11-16.md)。
 输入协作：[S1](143bm-01-conversation-evidence-input.md)；后台提交消费者：[S3](143bm-03-proposal-comparison.md)。
@@ -286,3 +286,18 @@ git diff --check
 不得在准备原生资产前直接跑裸全量 pytest；非macOS ARM64按现有构建器选择本机目标并记录，不改构建体系。
 交付记录命令、红绿结果、库版本、快照验证与安装结果；本文件列出的是未来验收，未声称已运行。
 模型对whole/partial的判断质量交S0/S3固定负例实测；本片确定性测试通过不证明语义完整性或用户已掌握。
+
+
+## 10. 联合实施记录（2026-11-16）
+
+源码起点12693a1，项目仍为schema23，个人格式2。新增schema24/个人user_version3/format3迁移，保存四项核验属性及分组CHECK、消息索引；旧值保持NULL。旧个人私有backup_format1迁为backup_format(version=)，新旧备份验证同步。沿既有项目备份与事务迁移，无真实用户库改动。
+
+resolve/merge按span去重，确认和遗忘保留原消息hash；fresh按索引查询该记忆全部历史来源，本次必要引用优先保留。内部_mutate/commit增加confirmation_scope；partial/unknown保留正文、状态、时间，只补证，超8整项拒绝；whole按basis筛选fresh确认时间。公开调用仍为None，S3接入前不能声称自动后台部分确认已生效。
+
+旧测试fixture需移除format3列/索引才能构造真实历史库；集中扩展legacy_store_schema与storage_backup_fixture，明确版本断言由23/2更新24/3，未放宽原备份/回滚断言。两项核心回归先观察预期失败再实现；其余新增回归后补，不冒称整片完整TDD。工程评测当前为S0首批片段基线，完整S0仍待完成。验证结果随收尾记录。
+
+Validation: 135 focused tests passed. Expanded run: 506 passed, 1 concurrent context calibration failure. Full backend: three context/session failures; no all-green claim. Frontend 686 passed; standard Mac build, Twine and outside-source installation passed. 10 memory/storage files match the wheel. Provider calls: 0. Evidence: build/spec143bm-s02/verification.json. S0 remains partial, S3 caller pending; no commit or release.
+
+后续S0扩展轮已补齐工程全量证据：后端6775、前端686通过，标准构建/安装通过；之前并行工作区的全量失败记录保留，不再代表最新结果。详见build/spec143bm-s0-complete/verification.json。S3自动调用及S0完整语义验收仍待完成。
+
+审查修复（2026-11-16）：partial/unknown 的回执由最终保存 row.status 生成，避免旧 candidate 保持候选却返回 saved。MemoryWriter.sources 将新增来源属性 0/1 映射为 bool，历史 NULL 保持 None，不改数据库历史属性。新增六项审查回归先红后绿（其中部分确认两种范围各一项），专项36项通过；完整验证见 handoff 最新摘要。

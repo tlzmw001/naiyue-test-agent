@@ -8,18 +8,17 @@ from langchain_core.messages import AIMessage
 
 from test_async_application import StreamingToolModel, call
 from test_memory_tool import opened, feedback
-from test_memory_lifecycle import proposal
+from test_memory_wiki_mutations import args
 from naiyue_test_agent.storage.errors import SessionPersistenceError
 
 
 def record_args(**changes):
-    return dict(action='record',scope='workspace',proposal=proposal(),
-        sources=[dict(current_user=True,quote='以后测试使用.venv')]) | changes
+    return args(sources=[dict(current_user=True,quote='以后测试使用.venv')])|changes
 
 
 def test_current_round_user_is_archived_before_commit_and_reopens(monkeypatch,tmp_path):
     async def scenario():
-        model=StreamingToolModel(replies=[call('memory',record_args(),'save'),AIMessage(content='已记录')])
+        model=StreamingToolModel(replies=[call('memory',{'request': record_args()},'save'),AIMessage(content='已记录')])
         async with opened(monkeypatch,tmp_path,model) as app:
             identity=app.host.sessions._persistence.storage.sessions.get_workspace_binding()['workspace_id']
             sid=await app.host.sessions.create_workspace('A',tmp_path)
@@ -30,7 +29,7 @@ def test_current_round_user_is_archived_before_commit_and_reopens(monkeypatch,tm
             assert item['status']=='active' and item['evidence_at']>0 and len(model.seen)==2
             source=app.host.sessions._persistence.storage.database.connection.execute('SELECT * FROM naiyue_memory_sources').fetchone()
             assert source['session_id']==sid and source['role']=='human' and source['occurred_at']==item['evidence_at']
-        model2=StreamingToolModel(replies=[call('memory',dict(action='search',scope='workspace',query='.venv')),AIMessage(content='found')])
+        model2=StreamingToolModel(replies=[call('memory',{'request': dict(action='search',scope='workspace',query='.venv')}),AIMessage(content='found')])
         async with opened(monkeypatch,tmp_path,model2,identity=identity) as app:
             sid2=await app.host.sessions.create_workspace('A',tmp_path)
             result=await app.host.runs.start(sid2,[('user','查看记忆')])
@@ -40,7 +39,7 @@ def test_current_round_user_is_archived_before_commit_and_reopens(monkeypatch,tm
 
 def test_necessary_archive_failure_is_error_feedback_no_write_and_agent_continues(monkeypatch,tmp_path,caplog):
     async def scenario():
-        model=StreamingToolModel(replies=[call('memory',record_args(),'save'),AIMessage(content='记录失败请重试')])
+        model=StreamingToolModel(replies=[call('memory',{'request': record_args()},'save'),AIMessage(content='记录失败请重试')])
         async with opened(monkeypatch,tmp_path,model) as app:
             sid=await app.host.sessions.create_workspace('A',tmp_path)
             original=app.host.sessions._persistence.storage.conversation.save_chat_updates

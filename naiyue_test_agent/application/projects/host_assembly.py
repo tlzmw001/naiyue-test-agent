@@ -40,12 +40,17 @@ async def assemble_host(*, catalog, parent, personal, admission, database_path, 
                    Path(binding['root_path']), storage.path) if binding else None)
         memory = None
         if database_path is not None and 'memory' in registry.names() and settings.memory.enabled:
+            if settings.memory.model_id is not None and settings.memory.model_id not in catalog.model_ids:
+                raise ValueError('memory_model_unavailable')
             memory = await acquire_blocking(MemoryAccess, lambda item: run_blocking(item.close),
                 storage, settings.memory, get_data_dir(settings.storage), personal=personal, personal_only=chats)
             memory_owner = memory
             async def close_memory(*args):
                 await run_blocking(memory_owner.close)
             _register_cleanup(stack, 'memory', close_memory)
+            if project is not None:
+                import time
+                await run_blocking(storage.memory.prepare_wiki,now=time.time())
         from naiyue_test_agent.mcp_client.resources import MCPSessionResources
         resources = MCPSessionResources(settings.mcp, settings.network, retry_settings=settings.tool_retry)
         from naiyue_test_agent.mcp_client.tools import register_mcp_tools
@@ -80,7 +85,7 @@ async def assemble_host(*, catalog, parent, personal, admission, database_path, 
         persistence, agent = assemble_session_runtime(sessions, storage, owned.checkpointer,
             catalog=catalog, registry=registry, permissions=settings.permissions, usage_persistence=usage,
             title_max_chars=settings.session_title_max_chars, checkpoint_settings=settings.checkpoint_retention,
-            memory_jobs=jobs, system_prompt=system_prompt, response_format=response_format,
+            memory_jobs=jobs, memory_settings=settings.memory, system_prompt=system_prompt, response_format=response_format,
             subagents=settings.subagents, subagent_settings=settings.tools.subagent)
         return ProjectHost(catalog, sessions, agent, registry, system_prompt=system_prompt,
             persistence=persistence, storage=storage, usage=usage, diagnostics=diagnostics, resources=stack,

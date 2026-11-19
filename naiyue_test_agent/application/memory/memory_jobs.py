@@ -9,7 +9,6 @@ import hashlib
 import json
 import logging
 from pathlib import Path
-from threading import Lock
 import time
 from uuid import uuid4
 
@@ -19,7 +18,6 @@ from naiyue_test_agent.agent_runtime.run_control import RunControl
 from naiyue_test_agent.tools.permission_rules import match_rules
 from naiyue_test_agent.application.sessions.background_tasks import TaskQueryError
 from naiyue_test_agent.contracts.memory import MemoryReadError
-from .memory_context import prepare_memory_parts
 from naiyue_test_agent.application.observability.run_events import _log_event
 
 
@@ -43,6 +41,8 @@ class MemoryJob:
     thread_id:str
     conversation_revision:int
     project_id:str|None=None
+    wiki_request:dict|None=None
+    wiki_snapshot:dict|None=None
     created_at:str=field(default_factory=timestamp)
     deadline:float=0.
     status:str='starting'
@@ -81,7 +81,6 @@ class MemoryJobs:
         self._deleting=set()
         self._deletion_generations={}
         self._slots=asyncio.Semaphore(self.settings.max_active_tasks)
-        self._eligible=set();self._used=set();self._context_lock=Lock()
 
     def allowed(self,request):
         return not self._permissions or match_rules(self._permissions.deny,dict(tool_name='memory',args=request),deny=True) is None
@@ -90,7 +89,7 @@ class MemoryJobs:
         row=self.storage.sessions.get(sid)
         binding=self.storage.sessions.get_workspace_binding()
         return bool(binding and row['project_id']==binding['workspace_id'] and
-            'memory' in json.loads(row['active_tool_names_json']) and self.allowed(dict(action='list')))
+            'memory' in json.loads(row['active_tool_names_json']))
 
     def _execution_path(self,row):
         if row['execution_binding']=='sandbox':raise SessionPersistenceError('unsupported_execution_binding')
@@ -106,41 +105,47 @@ class MemoryJobs:
         if not self.settings.enabled or not self._enabled_for_session(sid):return []
         row=self.storage.sessions.get(sid)
         if str(root)!=str(self._execution_path(row)):raise MemoryReadError('memory_scope_mismatch')
-        if preview:
-            progress=self.storage.memory.progress(sid)
-            seen=bool(progress and progress[0]['directory_seen'])
-        else:
-            progress=self.storage.memory.ensure(sid);seen=bool(progress['directory_seen'])
-            with self._context_lock:self._eligible.add(sid)
-        with self._context_lock:seen|=sid in self._used
-        directory=self.storage.memory.directory(sid,self.settings.directory_limit) if not seen else ()
-        return prepare_memory_parts(self.memory,sid,row['project_id'],messages,model,directory=directory,allowed=self.allowed)
-
-    def directory_attempt(self,sid):
-        with self._context_lock:
-            if sid in self._eligible:self._used.add(sid)
+        if not preview:self.storage.memory.ensure(sid)
+        from .memory_wiki_context import prepare_wiki_parts
+        return prepare_wiki_parts(self.memory,sid,row['project_id'],allowed=self.allowed)
 
     def _selected(self,model_id,model=None):
         selected=self.settings.model_id or model_id
         return selected,model if model is not None and selected==model_id else self.catalog.get(selected)
 
     async def request(self,*,source_session_id,target_session_id,workspace_root,origin_run_id,model_id,
-                      tool_call_id=None,model=None,start_sequence=None,end_sequence=None):
+                      tool_call_id=None,model=None,start_sequence=None,end_sequence=None,wiki_request=None):
         if self._closing or {source_session_id,target_session_id}&self._deleting:
             raise MemoryReadError('memory_admission_closed')
         generations={sid:self._deletion_generations.get(sid,0) for sid in (source_session_id,target_session_id)}
-        if not self.allowed(dict(action='refresh_overview')):raise MemoryReadError('memory_permission_denied')
+        if wiki_request is None:
+            wiki_request=dict(action='refresh_overview',target_session_id=target_session_id,start_sequence=start_sequence,end_sequence=end_sequence)
+        if wiki_request is not None:
+            from naiyue_test_agent.tools.memory_wiki_actions import compile_wiki_request
+            wiki_request=compile_wiki_request({'request':wiki_request})
+            if wiki_request['action'] not in ('organize','refresh_overview'):raise MemoryReadError('memory_action_invalid')
+        if not self.allowed(wiki_request or dict(action='refresh_overview')):raise MemoryReadError('memory_permission_denied')
         row=await run_blocking(self.storage.sessions.get,target_session_id)
         caller=await run_blocking(self.storage.sessions.get,source_session_id)
         binding=await run_blocking(self.storage.sessions.get_workspace_binding)
         if (self._closing or {source_session_id,target_session_id}&self._deleting
                 or any(self._deletion_generations.get(sid,0)!=value for sid,value in generations.items())):
             raise MemoryReadError('memory_admission_closed')
-        if (not binding or row['project_id']!=binding['workspace_id'] or caller['project_id']!=binding['workspace_id']
-                or str(self._execution_path(caller))!=str(workspace_root)):
+        personal_chat=wiki_request and wiki_request['action']=='organize' and wiki_request['scope']=='personal' and binding is None
+        project_id=binding['workspace_id'] if binding else None
+        if ((not binding and not personal_chat) or row['project_id']!=project_id or caller['project_id']!=project_id
+                or (personal_chat and (workspace_root is not None or caller['execution_binding'] is not None or caller['workspace_root'] is not None))
+                or (not personal_chat and str(self._execution_path(caller))!=str(workspace_root))):
             raise MemoryReadError('memory_scope_mismatch')
+        wiki_snapshot=None
+        if wiki_request and wiki_request['action']=='organize':
+            wiki_snapshot=await run_blocking(self.memory.wiki_organize_snapshot,source_session_id,project_id,wiki_request)
+        if (self._closing or {source_session_id,target_session_id}&self._deleting
+                or any(self._deletion_generations.get(sid,0)!=value for sid,value in generations.items())):
+            raise MemoryReadError('memory_admission_closed')
         old=self._entries.get(self._targets.get(target_session_id))
         if old and not old.cleanup_confirmed:
+            if old.wiki_request!=wiki_request or old.wiki_snapshot!=wiki_snapshot:raise MemoryReadError('memory_target_pending')
             if old.thread_id!=row['thread_id'] or old.conversation_revision!=row['conversation_revision']:
                 raise MemoryReadError('memory_source_changed')
             # A pending root request never prematurely releases a previous caller's target.
@@ -155,7 +160,7 @@ class MemoryJobs:
         selected,model=self._selected(model_id,model)
         job=MemoryJob(uuid4().hex,source_session_id,target_session_id,workspace_root,origin_run_id,
             tool_call_id or '',selected,model,row['thread_id'],row['conversation_revision'],
-            project_id=binding['workspace_id'],deadline=time.monotonic()+self.settings.task_timeout_seconds,
+            project_id=project_id,wiki_request=wiki_request,wiki_snapshot=wiki_snapshot,deadline=time.monotonic()+self.settings.task_timeout_seconds,
             requested_start=start_sequence,requested_end=end_sequence)
         job.pending_runs.add((source_session_id,origin_run_id))
         self._entries[job.task_id]=job;self._targets[target_session_id]=job.task_id
@@ -163,10 +168,6 @@ class MemoryJobs:
         return dict(status='accepted',task_id=job.task_id,merged=False)
 
     async def after_finish(self,sid,run_id,status,*,model_id,model=None):
-        with self._context_lock:used=sid in self._used
-        if used:
-            try:await run_blocking(self.storage.memory.mark_directory, sid)
-            except Exception as error:logger.warning('memory_directory_marker_failed error_type=%s',type(error).__name__)
         # Approval resumes have a new run ID but still complete this caller's same logical turn.
         pending=[j for j in self._entries.values() if any(owner==sid for owner,_ in j.pending_runs) and not j.cleanup_confirmed]
         if status in ('interrupted','skipped') and not self._closing:return
@@ -177,8 +178,8 @@ class MemoryJobs:
                     job.termination='root_not_completed';job.control.request('failure')
             return
         if not pending and not self._enabled_for_session(sid):return
-        progress=await run_blocking(self.storage.memory.tick, sid)
-        if self.settings.auto_enabled and self._enabled_for_session(sid) and (progress['completed_turns']-progress['accepted_turns']>=self.settings.trigger_turns
+        progress=None if self.memory.personal_only else await run_blocking(self.storage.memory.tick, sid)
+        if progress is not None and self.settings.auto_enabled and self._enabled_for_session(sid) and (progress['completed_turns']-progress['accepted_turns']>=self.settings.trigger_turns
                 or progress['completed_chars']-progress['accepted_chars']>=self.settings.trigger_chars):
             row=await run_blocking(self.storage.sessions.get,sid)
             try:
@@ -199,6 +200,13 @@ class MemoryJobs:
 
     async def _release(self,job):
         if job.cleanup_confirmed:return
+        if job.wiki_request and job.wiki_request['action']=='organize':
+            row=await run_blocking(self.storage.sessions.get,job.target_session_id)
+            if row['thread_id']!=job.thread_id or row['conversation_revision']!=job.conversation_revision:
+                raise MemoryReadError('memory_source_changed')
+            current=await run_blocking(self.memory.wiki_organize_snapshot,job.session_id,job.project_id,job.wiki_request)
+            if current!=job.wiki_snapshot:raise MemoryReadError('memory_conflict')
+            job.released=True;job.changed.set();return
         progress=await run_blocking(self.storage.memory.ensure, job.target_session_id)
         row=await run_blocking(self.storage.sessions.get,job.target_session_id)
         upper_rows=await run_blocking(self.storage.conversation.upper_sequence, job.target_session_id, job.thread_id)
@@ -229,7 +237,7 @@ class MemoryJobs:
 
     def _public(self,job):
         return dict(task_id=job.task_id,session_id=job.session_id,workspace_root=str(job.root) if job.root is not None else None,origin_run_id=job.origin_run_id,
-            tool_call_id=job.tool_call_id,kind='memory',shell='memory',command_preview='整理会话概览与记忆',
+            tool_call_id=job.tool_call_id,kind='memory',shell='memory',command_preview='整理记忆页面' if job.wiki_request and job.wiki_request['action']=='organize' else '整理会话概览与记忆',
             status=job.status,result_status=job.result_status,created_at=job.created_at,started_at=job.started_at,
             finished_at=job.finished_at,max_execution_seconds=self.settings.task_timeout_seconds,exit_code=None,
             termination=job.termination,output_complete=job.cleanup_confirmed,cleanup_confirmed=job.cleanup_confirmed,error_type=job.error_type)

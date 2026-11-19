@@ -17,6 +17,8 @@ import tempfile
 import time
 from uuid import uuid4
 
+from scripts.memory_evaluation_cases import evaluation_model_identity, safe_report, seed_sources
+
 
 FIXTURES = Path(__file__).resolve().parents[1] / 'docs/research/memory00/fixtures.json'
 MAX_LOGICAL_CALLS = 24
@@ -39,51 +41,6 @@ def load_cases(path=FIXTURES):
     return cases, checksum
 
 
-def seed_sources(storage, sid, sources, *, at):
-    """Save synthetic visible facts using the existing admission/archive formats."""
-    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, message_to_dict
-    from naiyue_test_agent.application.conversation.chat_history import ChatUpdate
-    from naiyue_test_agent.application.sessions.session_controls import mark_human_messages
-
-    row, messages, facts, boundaries = storage.sessions.get(sid), [], [], []
-    inputs = list(sources)
-    setup = []
-    if not inputs or inputs[0]['role'] != 'user':
-        admission = dict(id='probe-admission-' + uuid4().hex, role='user',
-            text='请整理下面这一段已经结束的工作记录。')
-        inputs.insert(0, admission)
-        setup.append(dict(kind='synthetic_root_admission', source=admission))
-    reply_id = None
-    for source in inputs:
-        extra = {'naiyue_reply_id': reply_id} if reply_id else {}
-        if source['role'] == 'user':
-            message, = mark_human_messages([HumanMessage(content=source['text'], id=source['id'])])
-            reply_id = message.additional_kwargs['naiyue_reply_id']
-            boundaries.append(dict(reply_id=reply_id, input_message_id=message.id, source_checkpoint_id='probe-checkpoint'))
-        elif source['role'] == 'assistant':
-            message = AIMessage(content=source['text'], id=source['id'], additional_kwargs=extra)
-        elif source['role'] == 'tool':
-            owner = AIMessage(content='', id=source['id'] + '-owner', additional_kwargs=extra,
-                tool_calls=[dict(id=source['tool_call_id'], name='synthetic_observation', args={})])
-            messages.append((owner, reply_id))
-            message = ToolMessage(content=source['text'], id=source['id'], tool_call_id=source['tool_call_id'],
-                name='synthetic_observation', status='error' if source['id'] == 'e06-t1' else 'success')
-        else:
-            raise ValueError('semantic_source_role_invalid')
-        messages.append((message, reply_id))
-    for index, (message, message_reply) in enumerate(messages):
-        body = json.dumps(message_to_dict(message), ensure_ascii=False, sort_keys=True)
-        facts.append(dict(message_id=message.id, body_json=body, body_hash=hashlib.sha256(body.encode()).hexdigest(),
-            kind='message', source_checkpoint_id='probe-checkpoint', message_type=message.type,
-            parent_message_id=message.id + '-owner' if message.type == 'tool' else None,
-            reply_id=message_reply, occurred_at=at + index / 100))
-    head = next((r for r in storage.conversation.chat_heads(sid) if r['thread_id'] == row['thread_id']), {})
-    storage.conversation.save_chat_updates(sid, [ChatUpdate(row['thread_id'], '', 'root', head.get('revision', 0),
-        uuid4().hex, tuple(facts), boundaries=tuple(boundaries))])
-    upper = storage.database.read_rows('SELECT MAX(sequence) AS n FROM naiyue_chat_messages WHERE session_id=?', (sid,))[0]['n']
-    return dict(upper=upper, source_texts={s['id']: s['text'] for s in inputs}, setup=setup)
-
-
 def seed_candidate(memory, sid, cases, *, at):
     """Fill e11's missing old-state precondition, without editing its labels."""
     from naiyue_test_agent.tools.memory import MemoryInput
@@ -93,7 +50,7 @@ def seed_candidate(memory, sid, cases, *, at):
     parent = memory.storage.sessions.get(sid)
     reference = dict(session_id=sid, thread_id=parent['thread_id'], message_id=source['id'],
         revision=1, conversation_revision=parent['conversation_revision'], quote=text, offset=0)
-    proposal = dict(kind='procedure', title='自动化用例编排', body=text, subject='自动化用例编排',
+    proposal = dict(kind='context', title='自动化用例编排', body=text, subject='自动化用例编排',
         basis='inference', intent='candidate', gaps=['缺持久选择'], reason='旧助手提出编排，尚缺用户持久选择')
     first = MemoryInput(action='record', scope='workspace', proposal=proposal, sources=[reference])
     saved = memory.query(sid, memory.storage.sessions.get(sid)['project_id'], first.model_dump(mode='json'), now=at + 1)['item']
@@ -106,15 +63,14 @@ def seed_candidate(memory, sid, cases, *, at):
         explanation='原e11未给旧候选正文；此补充只还原同ID补证需要的旧状态，不代表原样本覆盖已验证。')
 
 
-def safe_report(value):
-    from naiyue_test_agent.application.memory.memory_sources import SECRET
-    if isinstance(value, str):
-        return '[redacted_sensitive_text]' if SECRET.search(value) else value
-    if isinstance(value, dict):
-        return {key: safe_report(item) for key, item in value.items()}
-    if isinstance(value, (tuple, list)):
-        return [safe_report(item) for item in value]
-    return value
+def evaluation_protocol_identity(args):
+    if args.suite=='legacy':path=FIXTURES.with_name('protocol.json')
+    else:
+        root=Path(__file__).resolve().parents[1]/'tests/data'/('memory_space_time' if args.suite=='space-time' else 'memory_optimization')
+        path=Path(args.protocol or root/'protocol.json')
+    rubric=path.with_name('rubric.md')
+    return dict(protocol_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+        rubric_sha256=hashlib.sha256(rubric.read_bytes()).hexdigest() if rubric.exists() else None)
 
 
 def check_case(case, rows, *, baseline, source_texts=None, candidate_id=None):
@@ -141,6 +97,7 @@ def check_case(case, rows, *, baseline, source_texts=None, candidate_id=None):
         failures.append('discard_case_created_memory')
     return dict(structural_status='fail' if failures else 'pass', failures=failures,
         semantic_status='needs_human_review', assertion=expected['assertion'],
+        forbidden_claim=expected.get('forbidden_claim'),
         forbidden_checks=[dict(assertion=item, status='needs_human_review') for item in expected['forbidden']],
         note='结构检查只核类型、状态、来源和版本；不自动证明范围、因果、措辞及禁止断言的语义。')
 
@@ -149,7 +106,8 @@ def probe_callback(budget, settings, *, output_mode='text'):
     from langchain_core.callbacks import AsyncCallbackHandler
     from langchain_core.messages import AIMessage
     from naiyue_test_agent.model_access import MODEL_ID_METADATA_KEY
-    from naiyue_test_agent.application.memory.memory_batches import parse_model_result
+    from naiyue_test_agent.application.memory.memory_proposals import parse_stage
+    from naiyue_test_agent.contracts.memory import MemoryReadError
 
     class ProbeCallback(AsyncCallbackHandler):
         raise_error = True
@@ -157,21 +115,37 @@ def probe_callback(budget, settings, *, output_mode='text'):
 
         def __init__(self):
             self.budget, self.outputs, self.inputs = budget, [], []
+            from scripts.memory_evaluation_costs import CaseCosts
+            self.costs=CaseCosts()
+            self.stages = {}
 
-        async def on_chat_model_start(self, serialized, messages, *, metadata=None, **kwargs):
+        async def on_chat_model_start(self, serialized, messages, *, run_id=None, metadata=None, **kwargs):
             from langchain_core.messages import message_to_dict
             self.budget.reserve((metadata or {}).get(MODEL_ID_METADATA_KEY))
+            self.stages[run_id]=(metadata or {}).get('memory_stage','extract')
+            self.costs.start(run_id,self.stages[run_id])
             self.inputs.append([safe_report(message_to_dict(message)) for group in messages for message in group])
 
-        async def on_llm_end(self, response, **kwargs):
+        async def on_llm_error(self,error,*,run_id=None,**kwargs):
+            self.costs.finish(run_id,failed=True)
+
+        async def on_llm_end(self, response, *, run_id=None, **kwargs):
             groups = response.generations
             message = groups[0][0].message if len(groups) == 1 and groups[0] else None
+            self.costs.finish(run_id,message.usage_metadata if isinstance(message,AIMessage) else None)
+            stage = self.stages.pop(run_id, 'extract')
             try:
                 if not isinstance(message, AIMessage):
                     raise ValueError('semantic_response_shape_invalid')
-                self.outputs.append(dict(parsed=safe_report(parse_model_result(message, settings, output_mode=output_mode))))
+                if stage == 'followup':
+                    self.outputs.append(dict(stage=stage, answer=safe_report(message.content)))
+                    return
+                self.outputs.append(dict(stage=stage,parsed=safe_report(parse_stage(message, settings, stage=stage,output_mode=output_mode))))
             except Exception as error:
-                self.outputs.append(dict(parse_error_type=type(error).__name__))
+                self.outputs.append(dict(stage=stage,
+                    parse_error_type=type(error).__name__,
+                    error_code=str(error) if isinstance(error, MemoryReadError) else 'response_parse_failed',
+                    raw_text=safe_report(str(message.text)) if isinstance(message, AIMessage) else None))
 
     return ProbeCallback()
 
@@ -196,6 +170,8 @@ async def run_case(case, repeat, catalog, model_id, callback, settings):
     from naiyue_test_agent.storage.project_store import ProjectStore
 
     events, started = [], time.monotonic()
+    from scripts.memory_evaluation_costs import CaseCosts
+    callback.costs=CaseCosts()
     callback.outputs = []
     callback.inputs = []
     with tempfile.TemporaryDirectory(prefix='nyt-memory-semantic-') as temporary:
@@ -208,6 +184,7 @@ async def run_case(case, repeat, catalog, model_id, callback, settings):
             coordinator = MemoryJobs(memory, catalog, publisher_factory=lambda sid, rid:
                 RunEventPublisher(sid, rid, (events.append,)))
             setup, texts, candidate_id = [], {}, None
+            restore_costs=None
             at = time.time() - 3600
             try:
                 if case.get('candidate'):
@@ -215,18 +192,31 @@ async def run_case(case, repeat, catalog, model_id, callback, settings):
                     setup.append(candidate)
                     texts.update(candidate['source_texts'])
                     candidate_id = candidate['actual_memory_id']
+                if case.get('space_time'):
+                    from scripts.memory_space_time_probe import seed_old
+                    old_setup=seed_old(memory, 'probe', case, at)
+                    setup.extend(old_setup)
+                    texts.update({s['source']['id']:s['source']['text'] for s in old_setup})
+                prior_upper = storage.database.read_rows('SELECT COALESCE(MAX(sequence),0) AS n FROM naiyue_chat_messages WHERE session_id=?', ('probe',))[0]['n']
                 baseline = {r['memory_id']: r['version'] for r in saved_rows(memory)}
                 coordinator.prepare('probe', root, [], catalog.get(model_id))
-                seeded = seed_sources(storage, 'probe', case['sources'], at=at + 10)
+                sources = [dict(v, role='user') if case.get('space_time') and v['role']=='human' else v for v in case['sources']]
+                seeded = seed_sources(storage, 'probe', sources, at=at + 10)
                 texts.update(seeded['source_texts'])
                 setup.extend(seeded['setup'])
+                restore_costs=callback.costs.observe(memory)
                 origin = uuid4().hex
                 accepted = await coordinator.request(source_session_id='probe', target_session_id='probe',
-                    workspace_root=root, origin_run_id=origin, model_id=model_id, tool_call_id='probe-refresh')
+                    workspace_root=root, origin_run_id=origin, model_id=model_id, tool_call_id='probe-refresh',
+                    **({'start_sequence':prior_upper+1} if case.get('space_time') else {}))
                 await coordinator.after_finish('probe', origin, 'completed', model_id=model_id)
                 await coordinator.wait_idle()
                 task = await coordinator.output(accepted['task_id'], session_id='probe', workspace_root=root)
                 rows = saved_rows(memory)
+                answer = None
+                if case.get('space_time'):
+                    from scripts.memory_space_time_probe import followup
+                    answer = await followup(memory, case, catalog.get(model_id), model_id)
                 from naiyue_test_agent.application.observability.diagnostic_persistence import project_diagnostic_event
                 from naiyue_test_agent.settings import DiagnosticSettings
                 diagnostics = DiagnosticSettings()
@@ -241,7 +231,7 @@ async def run_case(case, repeat, catalog, model_id, callback, settings):
                         storage.diagnostics.finish_diagnostic_run(fact, diagnostics)
                 starts = [e.data.invocation_id for e in events if e.event_type == 'model_call_started']
                 finishes = [e.data.invocation_id for e in events if e.event_type == 'model_call_finished']
-                return dict(case_id=case['id'], repeat=repeat, source_time=at + 10, setup=setup,
+                return dict(costs=callback.costs.snapshot(),followup=answer, answer_requirements=case.get('answer_requirements'), expected_facts=case.get('expected_facts'),case_id=case['id'], repeat=repeat, source_time=at + 10, setup=setup,
                     source_texts=texts, task=task, overview=storage.memory.overview('probe'), memories=rows,
                     model_outputs=callback.outputs, model_inputs=callback.inputs, invocation_pairing=starts == finishes,
                     usage=storage.usage.read_model_usage('probe', model_limit=20),
@@ -254,7 +244,32 @@ async def run_case(case, repeat, catalog, model_id, callback, settings):
                 try:
                     await coordinator.aclose()
                 finally:
+                    if restore_costs is not None:restore_costs()
                     memory.close()
+
+
+def selected_cases(args, *, calls_per_case=None):
+    from scripts.memory_evaluation_cases import load_suite,planned_calls
+    if getattr(args, 'suite', 'legacy') == 'space-time':
+        root = Path(__file__).resolve().parents[1] / 'tests/data/memory_space_time'
+        cases, protocol = load_suite(args.fixtures or root/'fixtures.json', args.protocol or root/'protocol.json')
+        selected = [dict(c, id=c['case_id'], space_time=True,
+            expected=dict(status='fact_review', assertion='逐事实审阅空间、时间和后续回答', forbidden=c['forbidden']))
+            for c in cases if c['split'] == args.split]
+        planned_calls(len(selected), args.repeat, 3)
+        return selected, protocol['suite_fixtures_sha256']
+    if getattr(args,'suite','legacy')=='legacy':
+        cases,checksum=load_cases()
+        planned_calls(len(cases),args.repeat,calls_per_case or 2)
+        return cases,checksum
+    cases,protocol=load_suite(getattr(args,'fixtures',None),getattr(args,'protocol',None))
+    selected=[c for c in cases if c['suite']=='semantic' and c['split']==args.split]
+    planned_calls(len(selected),args.repeat,calls_per_case or 2)
+    return [dict(id=c['case_id'],sources=c['sources'],expected_facts=c['expected_facts'],expected=dict(kind=c['kind'] if c['must_activate'] else None,
+        status='active' if c['must_activate'] else 'fact_review',
+        forbidden_claim=c['claim'] if c['must_not_activate'] else None,
+        required_sources=[v['id'] for v in c['sources']] if c['must_activate'] else [],
+        assertion=c['assertion'],forbidden=c['forbidden'])) for c in selected],protocol['suite_fixtures_sha256']
 
 
 def arguments(argv=None):
@@ -262,9 +277,13 @@ def arguments(argv=None):
     parser.add_argument('--config', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--model-id')
-    parser.add_argument('--repeat', type=int, choices=(1, 2), default=2)
+    parser.add_argument('--repeat', type=int, choices=(1, 2), default=1)
+    parser.add_argument('--suite',choices=('legacy','optimization','space-time'),default='legacy')
+    parser.add_argument('--split',choices=('calibration','validation','holdout'),default='calibration')
+    parser.add_argument('--fixtures',type=Path)
+    parser.add_argument('--protocol',type=Path)
     args = parser.parse_args(argv)
-    if args.output.exists():
+    if args.output.exists() or args.output.is_symlink():
         parser.error('--output must not already exist')
     if args.model_id is not None and not re.fullmatch(r'[A-Za-z0-9_.:/-]{1,128}', args.model_id):
         parser.error('invalid model identifier')
@@ -282,9 +301,17 @@ async def run(args):
     # Provider/library logging may contain URLs or exception bodies. Finite
     # failures and owned callback events are retained in the report instead.
     logging.disable(logging.CRITICAL)
-    cases, checksum = load_cases()
-    report = dict(synthetic=True, fixtures_sha256=checksum, max_logical_calls=MAX_LOGICAL_CALLS,
+    cases, checksum = selected_cases(args)
+    from scripts.evaluate_memory_optimization import evidence_manifest
+    report = dict(run_id=uuid4().hex, manifest=evidence_manifest(), suite=args.suite, split=args.split,
+        synthetic=True, fixtures_sha256=checksum, max_logical_calls=MAX_LOGICAL_CALLS,
         repeats=args.repeat, semantic_status='needs_human_review', cases=[], failures=[])
+    report.update(evaluation_protocol_identity(args))
+    if args.suite == 'space-time':
+        report['report_schema_version'] = 2
+        report['entry'] = 'background'
+        report['review_contract'] = 'memory-facts-v1'
+        report['policy'] = 'candidate' if 'convention' in str(__import__('naiyue_test_agent.tools.memory', fromlist=['MemoryInput']).MemoryInput.model_fields['kind'].annotation) else 'baseline'
     catalog, budget = None, RequestBudget(MAX_LOGICAL_CALLS)
     try:
         catalog = load_model_catalog(args.config)
@@ -293,7 +320,8 @@ async def run(args):
             raise ValueError('semantic_model_identifier_invalid')
         selected = catalog.get(model_id)
         report['model_id'] = model_id
-        settings = MemorySettings(auto_enabled=False)
+        settings = MemorySettings(auto_enabled=False,max_batches=1)
+        report['effective_model']=evaluation_model_identity(selected,settings)
         observer = probe_callback(budget, settings, output_mode=(selected.profile or {}).get('memory_output', 'text'))
         from langchain_core.callbacks.base import BaseCallbackManager
         seen = set()
@@ -315,7 +343,7 @@ async def run(args):
                     value = await run_case(case, repeat, catalog, model_id, observer, settings)
                     report['cases'].append(value)
                 except Exception as error:
-                    report['failures'].append(dict(case_id=case['id'], repeat=repeat, error_type=type(error).__name__))
+                    report['failures'].append(dict(case_id=case['id'], repeat=repeat, error_type=type(error).__name__,costs=observer.costs.snapshot()))
     except Exception as error:
         report['failures'].append(dict(stage='prepare', error_type=type(error).__name__))
     finally:
@@ -325,10 +353,11 @@ async def run(args):
             except Exception as error:
                 report['failures'].append(dict(stage='close', error_type=type(error).__name__))
     report['logical_budget'] = budget.snapshot()
-    report['expected_cases'] = 12 * args.repeat
+    report['expected_cases'] = len(cases) * args.repeat
     report['executed_cases'] = len(report['cases'])
     report['structural_failures'] = sum(value['checks']['structural_status'] != 'pass'
-        or value['task']['result_status'] != 'completed' or not value['invocation_pairing'] for value in report['cases'])
+        or value['task']['result_status'] != 'completed' or not value['invocation_pairing']
+        or (value.get('followup') or {}).get('status') == 'failed' for value in report['cases'])
     complete = not report['failures'] and report['executed_cases'] == report['expected_cases'] and not report['structural_failures']
     report['status'] = 'completed_needs_human_review' if complete else 'incomplete_or_structural_failure'
     args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -70,6 +70,7 @@ def test_failed_admission_save_never_releases_worker(jobs,monkeypatch):
             service.prepare('s',root,[],model)
             accepted=await register(service,root)
             source(access,'s')
+            before=storage.memory.ensure('s')
             def fail(*args,**kwargs):raise OSError('private provider detail')
             monkeypatch.setattr(store,'accept',fail)
             await service.after_finish('s','R','completed',model_id='A')
@@ -77,7 +78,10 @@ def test_failed_admission_save_never_releases_worker(jobs,monkeypatch):
             job=service._entries[accepted['task_id']]
             assert not job.released and not model.seen
             assert job.result_status=='failed' and job.termination=='admission_save_failed'
-            assert storage.memory.ensure('s')['next_sequence']==0
+            after=storage.memory.ensure('s')
+            assert after['next_sequence']==before['next_sequence']
+            assert after['accepted_turns']==before['accepted_turns']
+            assert after['accepted_chars']==before['accepted_chars']
         finally:await service.aclose()
     asyncio.run(scenario())
 
@@ -121,24 +125,38 @@ def test_explicit_ranges_are_not_silently_merged_or_dropped(jobs):
     asyncio.run(scenario())
 
 
-def test_directory_marker_failure_cannot_leave_failed_root_request_alive(jobs,monkeypatch,caplog):
+def test_directory_marker_failure_cannot_leave_failed_root_request_alive(monkeypatch,tmp_path,caplog):
+    from langchain_core.messages import AIMessage
+    from test_async_application import StreamingToolModel,call
+    from test_memory_tool import opened
+    from naiyue_test_agent.settings import AppSettings
+    from naiyue_test_agent.tools.history import create_history_tool
+    from naiyue_test_agent.tools.memory import create_memory_tool
     async def scenario():
-        storage,access,model,root=jobs
-        service=MemoryJobs(access,ModelCatalog('A',{'A':model}))
-        try:
-            service.prepare('s',root,[],model);service.directory_attempt('s')
-            accepted=await register(service,root,run='failed-R')
-            def fail(*args,**kwargs):raise OSError('PRIVATE_MARKER')
-            monkeypatch.setattr(store,'mark_directory',fail)
-            await service.after_finish('s','failed-R','failed',model_id='A')
+        failure=RuntimeError('root failed')
+        model=StreamingToolModel(replies=[AIMessage(content='old'),
+            call('memory',{'request':{'action':'refresh_overview'}}),failure,AIMessage(content='later')])
+        settings=AppSettings.model_validate({'memory':{'auto_enabled':False}})
+        async with opened(monkeypatch,tmp_path,model,settings=settings,
+                tools=[create_history_tool(),create_memory_tool()]) as app:
+            old=await app.host.sessions.create_workspace('A',tmp_path)
+            await app.host.runs.start(old,[('user','old work')])
+            sid=await app.host.sessions.create_workspace('A',tmp_path)
+            persistence=app.host.sessions._persistence
+            service=persistence._memory_jobs
+            def fail(*a,**kw):raise OSError('PRIVATE_MARKER')
+            monkeypatch.setattr(persistence.storage.memory,'mark_directory',fail)
+            with pytest.raises(RuntimeError) as caught:
+                await app.host.runs.start(sid,[('user','整理本会话')])
+            assert caught.value is failure
             await service.wait_idle()
-            job=service._entries[accepted['task_id']]
-            assert job.result_status=='stopped' and not job.pending_runs
-            source(access,'s',text='以后新工作')
-            await service.after_finish('s','later-R','completed',model_id='A')
-            assert not model.seen
-            assert 'memory_directory_marker_failed' in caplog.text and 'PRIVATE_MARKER' not in caplog.text
-        finally:await service.aclose()
+            job,=service._entries.values()
+            assert job.result_status=='stopped' and not job.pending_runs and not job.released
+            await app.host.runs.start(sid,[('user','以后新工作')])
+            await service.wait_idle()
+            assert len(model.seen)==4 and len(service._entries)==1
+            assert job.result_status=='stopped'
+            assert 'session_directory_marker_failed' in caplog.text and 'PRIVATE_MARKER' not in caplog.text
     asyncio.run(scenario())
 
 

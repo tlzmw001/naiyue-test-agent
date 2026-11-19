@@ -6,7 +6,9 @@ import time
 
 import pytest
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages.utils import count_tokens_approximately
+from naiyue_test_agent.application.memory.memory_wiki_protocol import WikiExtractionResult as ExtractionResult
 
 from naiyue_test_agent.storage.memory_sql import memory_overview_store as store
 from test_async_application import StreamingToolModel
@@ -82,7 +84,8 @@ def test_abandoned_partial_source_becomes_real_gap_instead_of_stale_partial(arch
     async def scenario():
         save(archive, [HumanMessage(id='long', content='visible source ' * 100)])
         service1, first, _ = fixture(archive, tmp_path, StreamingToolModel(replies=[response()]),
-            max_input_tokens=1100, read_chunk_chars=20, max_batches=1)
+            max_input_tokens=1100+count_tokens_approximately([SystemMessage(
+                content=json.dumps(ExtractionResult.model_json_schema(),ensure_ascii=False))]), read_chunk_chars=20, max_batches=1)
         await drive(service1, first)
         assert first.result_status == 'partial' and first.start[0] == 1 and first.start[1] > 0
         offset = first.start[1]
@@ -149,34 +152,32 @@ def test_only_slot_owner_is_running_and_pending_root_wait_is_starting(archive, t
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize('denied', ['search', 'read'])
-def test_background_related_reads_honor_each_normalized_request_permission(archive, tmp_path, monkeypatch, denied):
+@pytest.mark.parametrize('denied', ['list_pages', 'read_page'])
+def test_extraction_does_not_load_old_page_bodies(archive,tmp_path,monkeypatch,denied):
     from naiyue_test_agent.application.memory.memory_job_runner import drive
-    from naiyue_test_agent.tools.memory import MemoryInput
-    from test_memory_lifecycle import proposal
+    from naiyue_test_agent.storage.memory_sql.memory_wiki_writes import WikiWriter
+    from memory_wiki_helpers import record
     async def scenario():
-        save(archive, [HumanMessage(id='human', content='使用.venv', additional_kwargs={'naiyue_human_input': True})],
-            occurred_at=time.time())
-        model = StreamingToolModel(replies=[response()])
-        service, job, _ = fixture(archive, tmp_path, model, related_limit=2)
-        request = MemoryInput(action='record', scope='workspace', proposal=dict(proposal(),
-            body='使用.venv PRIVATE_CANDIDATE_BODY', intent='candidate', gaps=['需确认']),
-            sources=[dict(session_id='session', thread_id='root-thread', message_id='human', revision=1,
-                conversation_revision=0, quote='使用.venv', offset=0)]).model_dump(mode='json')
-        service.memory.query('session', service.storage.sessions.get('session')['project_id'], request)
-        original, calls = service.memory.query, []
-        def observed(*args):
-            calls.append(args[-1])
-            return original(*args)
-        monkeypatch.setattr(service.memory, 'query', observed)
-        service.allowed = lambda request: request['action'] != denied
+        archive.memory.prepare_wiki(now=time.time())
+        save(archive,[HumanMessage(id='human',content='使用.venv',additional_kwargs={'naiyue_human_input':True})],occurred_at=time.time())
+        model=StreamingToolModel(replies=[response()])
+        service,job,_=fixture(archive,tmp_path,model)
+        workspace=archive.sessions.get('session')['project_id']
+        page=WikiWriter.new_page('working_agreements','旧规则','')
+        with archive.memory.wiki_edit('workspace',workspace,now=time.time(),capacity=30) as writer:
+            writer.apply(pages=[page],memories=[record(page['page_id'],workspace_id=workspace,
+                body='PRIVATE_CANDIDATE_BODY',status='candidate',expires_at=time.time()+86400)])
+        original,calls=service.memory.query_wiki,[]
+        def observed(*args,**kwargs):
+            calls.append(args[-1]);return original(*args,**kwargs)
+        monkeypatch.setattr(service.memory,'query_wiki',observed)
+        service.allowed=lambda request:request['action']!=denied
         try:
-            await drive(service, job)
-            assert job.result_status == 'completed' and job.overview_saved == 1
-            assert all(request['action'] != denied for request in calls)
-            assert 'PRIVATE_CANDIDATE_BODY' not in model.seen[0][-1].content
-        finally:
-            service.memory.close()
+            await drive(service,job)
+            assert job.result_status=='completed' and job.overview_saved==1
+            assert calls==[]
+            assert 'PRIVATE_CANDIDATE_BODY' not in str(model.seen)
+        finally:service.memory.close()
     asyncio.run(scenario())
 
 

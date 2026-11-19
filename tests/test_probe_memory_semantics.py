@@ -1,3 +1,4 @@
+from test_memory_semantic_inputs import inputs
 """Offline checks for the acceptance probe; no configured provider is loaded."""
 
 import asyncio
@@ -54,31 +55,18 @@ def test_saved_sources_have_real_human_tool_reply_and_controlled_time(tmp_path):
         assert 'expected' not in json.dumps(batch)
 
 
-def test_candidate_setup_is_finite_explicit_and_keeps_real_id_version(tmp_path):
-    from scripts.probe_memory_semantics import seed_candidate, load_cases
-    from naiyue_test_agent.storage.project_store import ProjectStore
-    from naiyue_test_agent.application.memory.memory_access import MemoryAccess
-    from naiyue_test_agent.memory_settings import MemorySettings
-    with ProjectStore(tmp_path / 'sessions.sqlite') as store:
-        store.sessions.bind_workspace(str(uuid4()), tmp_path)
-        store.sessions.create('s', dict(thread_id='s', model_id='A', workspace_root=tmp_path,
-            active_tool_names=['memory'], permission_mode='Default'))
-        access = MemoryAccess(store, MemorySettings(auto_enabled=False), tmp_path / 'data')
-        try:
-            cases, _ = load_cases()
-            setup = seed_candidate(access, 's', cases, at=1000.)
-            assert len(setup['actual_memory_id']) == 32 and setup['version'] == 2
-            assert setup['fixture_alias'] == 'candidate-e11'
-            row = store.database.read_rows('SELECT * FROM naiyue_memories')[0]
-            assert row['status'] == 'candidate' and row['kind'] == 'procedure'
-            assert row['scope'] == 'workspace'
-            assert json.loads(row['gaps_json']) == ['缺持久选择']
-            assert 'asset' not in row['body']  # Reuse original Chinese e05 wording.
-            assert row['body'] == cases[4]['sources'][0]['text']
-            refs = store.database.read_rows('SELECT * FROM naiyue_memory_sources WHERE memory_version=2')
-            assert {r['role'] for r in refs} == {'ai'}
-        finally:
-            access.close()
+def test_candidate_setup_is_finite_explicit_and_keeps_real_id_version(inputs):
+    service, _, item, cases, _ = inputs
+    store = service.storage
+    assert len(item['memory_id']) == 32 and item['version'] == 2
+    row, = store.database.read_rows('SELECT * FROM naiyue_memories')
+    assert row['status'] == 'candidate' and row['scope'] == 'workspace'
+    assert row['memory_id'] == item['memory_id'] and row['expires_at'] > row['evidence_at']
+    assert '缺持久选择' in json.loads(row['gaps_json'])
+    assert row['body'] == cases[4]['sources'][0]['text']
+    refs = store.memory.wiki_sources([(item['memory_id'], 2)])
+    assert {r['message_id'] for r in refs} == {'probe-e11-prior-assistant'}
+    assert {r['role'] for r in refs} == {'human'}
 
 
 def test_structure_checks_do_not_claim_semantic_forbidden_items_are_proved():
@@ -187,10 +175,10 @@ def test_probe_reports_the_explicit_model_output_protocol(mode):
     value = dict(overview=dict(goal='目标', progress='进展', blockers='', next_step='继续'), proposals=[])
     response = AIMessage(content=json.dumps(value, ensure_ascii=False))
     if mode == 'function_calling':
-        response = AIMessage(content='', tool_calls=[dict(name='MemoryResult', args=value, id='return-1')])
+        response = AIMessage(content='', tool_calls=[dict(name='MemoryExtractionResult', args=value, id='return-1')])
     observer = probe_callback(RequestBudget(1), MemorySettings(), output_mode=mode)
     model = FakeMessagesListChatModel(responses=[response], callbacks=[observer],
         metadata={'naiyue_model_id': 'A'})
     asyncio.run(model.ainvoke('synthetic'))
-    assert observer.outputs == [dict(parsed=value)]
+    assert observer.outputs == [dict(stage='extract',parsed=value)]
     assert observer.budget.snapshot()['used'] == 1 and len(observer.inputs) == 1

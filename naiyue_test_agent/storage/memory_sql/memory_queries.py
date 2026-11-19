@@ -21,8 +21,9 @@ def eligibility(scope, workspace_id, request, now):
     # SQL expressions/field names are fixed source; every value is bound.
     sql = "m.scope=? AND (?='personal' OR m.workspace_id=?) AND " + STATUS[request['status']]
     parameters = [scope, scope, workspace_id, now]
-    sql += ' AND (? IS NULL OR m.kind=?)'
-    parameters.extend([request['kind'], request['kind']])
+    if 'kind' in request:
+        sql += ' AND (? IS NULL OR m.kind=?)'
+        parameters.extend([request['kind'], request['kind']])
     for field in CONDITIONS:
         sql += f' AND (m.{field} IS NULL OR ? IS NULL OR m.{field}=?)'
         parameters.extend([request[field], request[field]])
@@ -70,3 +71,19 @@ def sources(connection, identity, version, limit):
     rows = connection.execute('''SELECT * FROM naiyue_memory_sources
         WHERE memory_id=? AND memory_version=? ORDER BY source_id LIMIT ?''', (identity, version, limit + 1)).fetchall()
     return [dict(row) for row in rows[:limit]], len(rows) > limit
+
+
+def rank_comparison(connection, scope, workspace_id, now, variant, required, settings):
+    terms=lexical.tokens(variant)
+    if len(terms)>settings.max_query_terms:raise MemoryReadError('memory_query_too_complex')
+    if not terms:return [],False
+    expression=' OR '.join('"'+term+'"' for term in terms)
+    rows=connection.execute('''SELECT m.*,bm25(naiyue_memory_search,?,?,?) AS local_score
+        FROM naiyue_memory_search JOIN naiyue_memories m ON m.rowid=naiyue_memory_search.rowid
+        WHERE naiyue_memory_search MATCH ? AND m.scope=? AND (?='personal' OR m.workspace_id=?)
+        AND m.status IN ('active','candidate') AND memory_anchors(m.title,m.aliases_json,m.body,?)=1
+        AND m.memory_id=naiyue_memory_search.memory_id AND m.version=naiyue_memory_search.memory_version
+        AND memory_digest(m.title,m.aliases_json,m.body)=naiyue_memory_search.source_digest
+        ORDER BY local_score,m.memory_id LIMIT ?''',
+        (*settings.field_weights,expression,scope,scope,workspace_id,json.dumps(required),settings.candidate_limit+1)).fetchall()
+    return [dict(r) for r in rows[:settings.candidate_limit]],len(rows)>settings.candidate_limit

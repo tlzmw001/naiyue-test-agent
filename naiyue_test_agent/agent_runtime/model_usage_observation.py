@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import re
+from naiyue_test_agent.diagnostics import safe_log
 from threading import RLock
 from weakref import ref
 
@@ -99,6 +101,13 @@ class ModelUsageCallback(AsyncCallbackHandler):
             if model_id is None:
                 logger.warning('model_usage_identity_unavailable')
             data = ModelInvocationStartedData(str(run_id), model_id, _purpose(tags))
+            stage=(metadata or {}).get('memory_stage')
+            task=(metadata or {}).get('memory_task_id')
+            batch=(metadata or {}).get('memory_batch')
+            if (data.purpose=='memory' and stage in ('extract','compare','organize') and isinstance(task,str)
+                    and re.fullmatch(r'[0-9a-f]{32}',task) and type(batch) is int and 1<=batch<=10):
+                safe_log(logger.info,'memory_model_call task_id=%s batch=%s memory_stage=%s invocation_id=%s',
+                    task,batch,stage,data.invocation_id)
             owner = asyncio.current_task()
             done = lambda task: self._task_done(data.invocation_id, task)
             with self._lock:

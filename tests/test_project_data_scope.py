@@ -9,10 +9,11 @@ from naiyue_test_agent.application.memory.memory_access import MemoryAccess
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.tools.history import HistoryInput
 from naiyue_test_agent.tools.history_settings import HistorySettings
-from naiyue_test_agent.tools.memory import MemoryInput
+from test_memory_wiki_mutations import args
+from test_memory_wiki_pagination import decode_content
 from naiyue_test_agent.workspaces import prepare_workspace
 from test_history_tool_storage import save
-from test_memory_lifecycle import source, proposal
+from test_memory_lifecycle import source
 from langchain_core.messages import HumanMessage
 
 
@@ -53,11 +54,11 @@ def test_saved_memory_sources_remain_valid_after_execution_directory_disappears(
     with project(tmp_path, 'project') as (root, identity, _, access):
         reference = source(access, 'caller', text='所有项目回答都使用中文')
         root.rename(tmp_path / 'removed')
-        request = MemoryInput(action='record', scope='personal',
-            proposal=proposal(kind='user', body='回答使用中文'), sources=[reference]).model_dump(mode='json')
-        saved = access.query('caller', identity, request, now=2000)['item']
-        request = MemoryInput(action='read', scope='personal', memory_id=saved['memory_id']).model_dump(mode='json')
-        item = access.query('caller', identity, request, now=2000)['items'][0]
+        request=dict(args(sources=[reference]),scope='personal',scope_source_indexes=[0])
+        request['proposal']['body']='回答使用中文'
+        saved = access.query_wiki('caller', identity, request, now=2000)['item']
+        request=dict(action='read',scope='personal',memory_id=saved['memory_id'])
+        item=decode_content(access.query_wiki('caller',identity,request,now=2000))['entries'][0]
         assert item['scope'] == 'personal' and item['sources'][0]['available']
         assert not root.exists()
 
@@ -65,12 +66,12 @@ def test_saved_memory_sources_remain_valid_after_execution_directory_disappears(
 def test_personal_memory_is_shared_but_foreign_source_text_is_not(tmp_path):
     with project(tmp_path, 'one') as (_, identity, _, access):
         reference = source(access, 'caller', text='所有项目回答都使用中文')
-        request = MemoryInput(action='record', scope='personal',
-            proposal=proposal(kind='user', body='回答使用中文'), sources=[reference]).model_dump(mode='json')
-        saved = access.query('caller', identity, request, now=2000)['item']
+        request=dict(args(sources=[reference]),scope='personal',scope_source_indexes=[0])
+        request['proposal']['body']='回答使用中文'
+        saved = access.query_wiki('caller', identity, request, now=2000)['item']
     with project(tmp_path, 'two') as (_, identity, _, access):
-        request = MemoryInput(action='read', scope='personal', memory_id=saved['memory_id']).model_dump(mode='json')
-        item = access.query('caller', identity, request, now=2000)['items'][0]
+        request=dict(action='read',scope='personal',memory_id=saved['memory_id'])
+        item=decode_content(access.query_wiki('caller',identity,request,now=2000))['entries'][0]
         assert item['body'] == '回答使用中文'
         assert item['sources'][0]['reason'] == 'other_workspace'
         assert not item['sources'][0]['available'] and 'quote' not in item['sources'][0]

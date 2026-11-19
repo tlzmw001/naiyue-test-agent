@@ -1,0 +1,6 @@
+{
+  "format": 1,
+  "contract": "engineering_matrix_v1",
+  "fixtures_sha256": "7faa11221b23895de7d89224032857a07d09ec81656a046d768e46aecaa44055",
+  "scope": "offline engineering; not independent model quality holdout"
+}

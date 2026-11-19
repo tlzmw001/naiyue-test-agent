@@ -24,7 +24,7 @@ def test_temporary_root_child_and_approval_resume_have_no_project_ports(monkeypa
     async def scenario():
         root = ChildModel(replies=[call('subagent', {'agent': 'tester', 'task': 'query'}, 'delegate'), AIMessage(content='root done')])
         child = ChildModel(replies=[call('history', {'action': 'list_sessions'}, 'h'),
-                                   call('memory', {'action': 'list'}, 'm'), AIMessage(content='child done')])
+                                   call('memory', {'request': {'action': 'list'}}, 'm'), AIMessage(content='child done')])
         history = create_history_tool()
         if approval:
             history = replace(history, permissions=ToolPermission(default='ask'))

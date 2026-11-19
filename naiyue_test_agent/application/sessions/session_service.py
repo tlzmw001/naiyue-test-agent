@@ -201,7 +201,8 @@ class SessionService:
         return model_id, model, self._effective_tools(names, agent_path)
 
     def resolve_prompt_parts(self, session_id, agent_path='root'):
-        if agent_path=='root' and self.memory_jobs is not None:self.memory_jobs.directory_attempt(session_id)
+        if agent_path=='root':
+            if self._persistence is not None:self._persistence.directory_attempt(session_id)
         return self.require(session_id).lifecycle.resolve_prompt_parts(agent_path)
 
 

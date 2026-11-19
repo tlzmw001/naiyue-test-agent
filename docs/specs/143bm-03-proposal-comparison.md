@@ -1,10 +1,12 @@
 # Spec143BM-03：按提议检索旧记忆与批量比较
 
-日期：2026-11-16。状态：**详细实施 Spec，尚未实施**。源码基线：`60108431ceeeaf100df008da4765b879505fc1d7`。
+版本边界：2026-11-17 的 [S6 程序装配动作](143bm-06-program-owned-memory-actions.md) 替代本文中 B 必须重写完整 claim、重抄 kind、partial 正文不等即拒绝的输出要求。证据、权限、CAS 与生命周期保护继续有效；本文其余实施记录保留历史语境。
+
+日期：2026-11-16；状态更新于 2026-11-17。**两阶段主链已实现，有阶段工程验证和历史真实校准；完整关系判断、旧项召回和质量验收仍未关闭，统一转入 [S8 第 14 节](143bm-08-memory-tool-action-contract.md#14-s0s8-未完成事项统一对账与关闭标准)。** 下文阶段进度保留历史语境，不另排 S3/S0 收尾支线。初稿源码基线：`60108431ceeeaf100df008da4765b879505fc1d7`。
 
 总入口：[Spec143BM](143bm-memory-optimization.md)。前置：[S1 输入与证据编号](143bm-01-conversation-evidence-input.md)、[S2 证据保存与生命周期](143bm-02-evidence-lifecycle.md)。总体依据：[长期记忆优化总体方案](../长期记忆优化总体方案-2026-11-16.md)。
 
-本片使后台先提出有证据的事实，再按每条事实寻找旧项，最后集中判断新增、更正、补证或冲突。用户已确认失败直接跳过；不新增恢复包、重试、继续入口、提交回执或临时正文保留期。本次只编写文档，不改变产品、真实配置或用户数据库。
+本片使后台先提出有证据的事实，再按每条事实寻找旧项，最后集中判断新增、更正、补证或冲突。用户已确认失败直接跳过；不新增恢复包、重试、继续入口、提交回执或临时正文保留期。当前实施不修改真实配置或用户数据库。
 
 ## 1. 要交付的行为
 
@@ -327,3 +329,48 @@ git diff --check
 全量与发行构建使用[总索引的标准验证入口](143bm-memory-optimization.md)：`scripts.native_assets` 准备工具，`scripts.ci_shards` 跑后端全量，随后按其参数运行 `scripts.build_release` 与 `scripts.verify_wheel_install`；不用裸 `python -m build` 或手工复制模块替代。
 缺少本机 fd/rg 或标准构建准备时如实报告环境条件，不删断言或跳过用例。
 以上是实施时必须运行的命令，本次文档编写未运行产品测试/构建/真实模型。完成记录须分别列失败复现、聚焦/全量/构建实际结果、L1文件/L2实现/L3接线及S0质量成本报告。
+
+
+## 11. 实施进度（2026-11-16，尚未完成）
+
+本轮先实现 comparison_candidates / rank_comparison 和 commit_comparison 内部入口。抽取原query绑定校验由三入口直接共享，公开payload与检索过滤不变。内部固定SQL使用词法OR及显式身份锚点，包含active/candidate中已过期者，排除inactive/forgotten；逐查询检查三类状态权限、逐ID检查read权限，保留版本/digest、来源可见性及候选截断门禁。related_limit=0直接失败，不伪装成无旧项。来源最多8段经现有source_reference读取，不绕过归档门禁。
+
+三项核心行为先红（入口不存在）再绿，另补身份、停用、read拒绝及零限额边界。记忆与探针相关401项通过，标准macos-arm64构建退出0（build/spec143bm-s3/reads-tests.log、reads-build.log）。尚未运行后端全量或真实模型。A/B schema、分组/材料预算、runner接线、S0旧项矩阵和旧路径迁移均未完成；新内部入口当前只有测试消费者，不宣称L3后台接线或S3完成。未新增锁/改变锁顺序；未改真实配置或用户库，未提交发布。
+
+
+## 12. 两阶段实施与迁移（2026-11-16）
+
+memory_proposals负责A/B严格本地合同、局部overview验证及完整组决定编译；memory_comparison负责固定事项查询、连通组与整组预算；memory_model_json仅共享原有严格原始响应解析。runner已实际调用比较读取和commit_comparison，A不再读旧项，每批一次A、最多一次B。无效组可跳过而独立组提交；普通失败在已知批次边界前进，停止/全局超时仍立即结束，必要保存沿既有await_settled计数。
+
+来源在比较前回查当前归档与消息级抑制，最终提交再原子回查；比较阶段完整原文的版本/digest、来源可读状态与程序核验属性随旧材料送入B。新旧时序不足的更正被拒；whole变更正文在最终commit还必须存在匹配basis的fresh，公开None分支保持原行为。D1入口扩展及预检分段事务顺序已同步lock-hierarchy，无新增锁。
+
+旧_related/_local_candidate、单阶段PROMPT、MemoryResult模型schema、parse_model_result与proposal_request生产入口已删除，S1 binder和公共精确引用仍保留。原纯适配测试通过测试专用compile_request构造A绑定与B快照，保留字段、版本、来源、metadata及拒绝断言；worker测试在调用点显式准备staged_replies，真实SDK测试为每种协议显式响应A/B两次，未放宽保存、权限或事件配对断言。旧最近候选补足测试改为事项读取/来源不可读/无补查/权限/版本/预算合同，不保留废弃fallback给旧测试。
+
+probe按memory_stage解析A/B，不再将B误当含overview的A；两个套件按每例最坏2次在读取配置前预检，默认repeat=1、max_batches=1；无真实请求。回调写task/batch/stage/invocation安全关联日志，继续原usage/HTTP-attempt事件，不新增公开事件字段。比较准备日志记录实际查询数、候选/组数和耗时；未知模型usage继续为未知。
+
+新增comparison_s3.json是8条显式旧态、时间与受控决定的calibration矩阵，由真实drive提交并断言副作用、TTL及两次调用，哈希冻结在protocol revision3。它补充S0工程材料，不能冒称采样A/B判断准确率或完整S0。旧96条controlled-proposal入口保持公共写入适配，仍能在隔离旧源码运行；B标N/A表示本入口未采样B，与S3是否接线分开。
+
+
+最终工程验证：后端八片6843项（0失败/错误/跳过）；记忆/迁移/评测专项542项；前端78文件688项；标准macos-arm64构建、Twine、源外安装烟测、compileall与diff检查通过。最终wheel中21份相关源码逐字节匹配；安装烟测实际两次后台模型调用、独立usage/任务、重开及跨会话召回通过，真实provider_requests=0。报告build/spec143bm-s3/verification.json及final-*；早期迁移红灯和首轮6841报告保留但不作为最终版本验证。
+
+隔离旧版12693a1只覆盖当前评测脚本与合成数据后，revision3校准仍可执行：受控公共提议旧21/24、当前22/24，逐例无回退；八条semantic未执行，B未采样，evaluate按已知反例返回1。该对照包含S2片段收益，不归因于B；不宣称S0业务门槛通过。S3工程主链已接线，真实判断质量、S0完整矩阵/人工评分和S4仍待完成。未提交、发布或修改真实配置/用户库。
+
+
+## 13. S3审查修复（2026-11-16）
+
+修复五项边界：比较读取返回后立即记录全部已发现旧ID，跨提议版本不一致仍保留失败关联，完整连通组跳过；B路由先校验group_id字符串类型，数组/对象等局部坏组不阻止独立合法组；更新不显式重复设置旧deadline，由提交层沿用旧值，避免工具补证被误当用户新设截止期；可选target先继承再检查更正时序；比较预算拒绝记录memory_comparison_budget失败诊断，任务按已有规则标为partial/failed，不新增重试。
+
+新增tests/test_memory_s3_review_fixes.py：先观察6例预期失败，再修复转绿；另补whole/partial两种真实SQLite工具补证与截止期保留测试。原预算两例改为精确断言固定失败原因，保留独立组与整组跳过断言。未改公开payload、锁顺序、DB结构或真实配置。
+
+验证：新增8项、相关550项通过；最终工作区后端四片1856+1533+1764+1705=6858项，0失败/错误/跳过；前端688项、标准Mac构建、Twine、源外安装、compileall与diff检查通过。三个修改生产模块与wheel逐字节一致，provider_requests=0。证据build/spec143bm-s3-fixes/verification.json及同目录日志/XML。全量与产物包含保留的并行工作区改动，不作隔离发布声明。未提交发布，真实模型语义质量仍待S0。
+
+## 15. 首轮真实校准后的输出合同修正（2026-11-16）
+
+沿原权限/范围语义做最小表达修正：A明确缺少跨项目声明时使用workspace，kind=user
+不自动等于personal，持续时间不等于跨项目适用。B文本通道在实际SystemMessage中附本地
+ComparisonResult.model_json_schema（同程序校验源），明确scope由程序继承且不得复制到claim。
+生成消息函数也用于比较材料token预算，schema占用不得绕过cap。保留extra=forbid、
+不删字段抢救返回、不重试。先验证实际消息/本地schema一致，再跑确定性回归及同模型完整
+8条calibration新run_id；旧采样和标签不改，不针对失败案例单独补跑。
+
+最终工程验证：当前工作区后端四片1825+1759+1759+1569=6912项通过，0失败/错误/跳过；记忆470项通过；标准Mac构建/Twine、compileall/diff及2生产文件wheel一致通过。证据build/spec143bm-semantic-calibration/verification.json与fix-backend-*.xml。包含保留并行工作区内容，不作为隔离发布声明。

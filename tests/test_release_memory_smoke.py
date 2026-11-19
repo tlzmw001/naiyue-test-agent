@@ -22,9 +22,9 @@ def test_memory_worker_uses_the_real_graph_and_reopens_without_replay(report):
     from scripts.release_memory_smoke import verify_memory_report
     verify_memory_report(report)
     assert report['status'] == 'passed'
-    assert report['worker_model_calls'] == 1 and report['root_model_calls'] == 3
+    assert report['worker_model_calls'] == 3 and report['root_model_calls'] == 4
     assert report['memory_records'] == 1 and report['overview_version'] == 1
-    assert report['memory_input_tokens'] == 31
+    assert report['memory_input_tokens'] == 93
     assert report['task_id'] not in report['root_run_ids']
     assert report['cold_model_calls'] == report['cold_tasks'] == report['provider_requests'] == 0
 

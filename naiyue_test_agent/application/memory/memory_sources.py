@@ -28,6 +28,10 @@ def identity(row):
     return hashlib.sha256(json.dumps(value,separators=(',',':')).encode()).hexdigest()
 
 
+def span_identity(row):
+    return identity(row),row['start_offset'],row['end_offset']
+
+
 def resolve(archive, workspace_id, caller, references, now):
     result = []
     for ref in references:
@@ -61,6 +65,29 @@ def resolve(archive, workspace_id, caller, references, now):
             message_id=saved['message_id'],revision=saved['revision'],conversation_revision=parent['conversation_revision'],
             reply_id=visible['reply_id'],tool_call_id=visible['tool_call_id'],role=visible['message_type'],
             occurred_at=at,quote=ref['quote'],start_offset=ref['offset'],end_offset=ref['offset']+len(ref['quote']),
-            user_origin=human,tool_success=visible.get('tool_status')=='success'))
+            user_origin=human,tool_success=visible.get('tool_status')=='success',evidence_format=1,verified_at=now))
     sensitive([r['quote'] for r in result])
-    return list({identity(row):row for row in result}.values())
+    return list({span_identity(row):row for row in result}.values())
+
+
+def resolve_wiki(archive,workspace_id,caller,references,indexes,now):
+    """Bind index positions before deduplication; only actual user inputs support scope."""
+    result={}
+    for index,ref in enumerate(references):
+        row=resolve(archive,workspace_id,caller,[ref],now)[0]
+        saved=archive.saved(row['session_id'],row['thread_id'],row['message_id'],current_user=False)
+        if saved['kind']!='message':raise MemoryReadError('memory_self_reference')
+        if row['role']=='tool':
+            data=json.loads(saved['body_json'])['data']
+            linked=archive.tool_link(row['session_id'],row['thread_id'],parent_message_id=saved['parent_message_id'],
+                tool_call_id=data.get('tool_call_id'),before_sequence=saved['sequence'])
+            if not linked or linked['status']!='paired':raise MemoryReadError('memory_tool_source_unpaired')
+            if linked['name'] in ('memory','history'):raise MemoryReadError('memory_self_reference')
+        elif not row['user_origin']:
+            raise MemoryReadError('memory_direct_source_required')
+        row['supports_scope']=index in indexes
+        if row['supports_scope'] and not row['user_origin']:raise MemoryReadError('memory_scope_evidence_required')
+        key=span_identity(row)
+        row['supports_scope']=row['supports_scope'] or result.get(key,{}).get('supports_scope',False)
+        result[key]=row
+    return list(result.values())

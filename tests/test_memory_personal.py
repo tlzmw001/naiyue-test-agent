@@ -6,7 +6,12 @@ import pytest
 
 from naiyue_test_agent.storage.database import Database
 from naiyue_test_agent.memory_settings import MemorySettings
-from test_memory_readonly import seed, query, memory
+from test_memory_readonly import seed, memory
+
+
+def query(memory, **arguments):
+    storage,access,identity,_=memory
+    return access.query_wiki('caller',identity,arguments,now=2000000000.)
 
 
 def test_two_connections_observe_commits_and_delete_full(tmp_path):

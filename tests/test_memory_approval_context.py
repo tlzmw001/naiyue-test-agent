@@ -5,6 +5,7 @@ import asyncio
 from langchain_core.messages import AIMessage,SystemMessage
 from naiyue_test_agent.tools.read import create_session_read_tool
 from naiyue_test_agent.tools.memory import create_memory_tool
+from naiyue_test_agent.tools.history import create_history_tool
 from test_async_application import StreamingToolModel,call
 from test_memory_tool import opened
 from test_memory_jobs import response
@@ -15,9 +16,9 @@ def test_approval_resume_reuses_frozen_directory_and_releases_explicit_refresh(m
     async def scenario():
         root=tmp_path/'workspace';root.mkdir()
         outside=tmp_path/'outside.txt';outside.write_text('outside')
-        model=StreamingToolModel(replies=[call('memory',dict(action='refresh_overview')),
+        model=StreamingToolModel(replies=[call('memory',{'request': dict(action='refresh_overview')}),
             call('read',dict(path=str(outside))),AIMessage(content='根轮完成'),response()])
-        async with opened(monkeypatch,root,model,settings=config(root),tools=[create_memory_tool(),create_session_read_tool()]) as app:
+        async with opened(monkeypatch,root,model,settings=config(root),tools=[create_memory_tool(),create_session_read_tool(),create_history_tool()]) as app:
             other=await app.host.sessions.create_workspace('A',root)
             sid=await app.host.sessions.create_workspace('A',root)
             recalls=[];jobs=app.host.sessions._sessions.memory_jobs;prepare=jobs.prepare

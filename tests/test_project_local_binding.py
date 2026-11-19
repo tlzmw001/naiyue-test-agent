@@ -263,20 +263,29 @@ def test_cold_history_and_context_preview_resolve_current_project_position(monke
     asyncio.run(scenario())
 
 
-def test_first_relocated_run_keeps_project_memory_injection(monkeypatch, tmp_path, caplog):
+def test_first_relocated_run_keeps_project_memory_available(monkeypatch, tmp_path, caplog):
     from naiyue_test_agent.tools.memory import create_memory_tool
-    from test_memory_readonly import seed
+    from test_memory_wiki_storage import page
+    from memory_wiki_helpers import record
+    from test_memory_wiki_pagination import decode_content
+    import time
     async def scenario():
         preference='Preserve project memory after an explicit relocation'
         model=StreamingToolModel(replies=[AIMessage(content='before'),AIMessage(content='after')])
         async with opened(monkeypatch,tmp_path,model,tools=[create_memory_tool()]) as (app,project,host,sid):
             await host.runs.start(sid,[('user','before')])
             store=host.sessions._persistence.storage
-            seed(store.database.connection,1,workspace_id=project.project_id,kind='user',body=preference)
+            p=page();now=time.time()
+            with store.memory.wiki_edit('workspace',project.project_id,now=now,capacity=30) as writer:
+                writer.apply(pages=[p],memories=[record(p['page_id'],workspace_id=project.project_id,body=preference,expires_at=now+86400)])
+            model.replies=[call('memory',{'request':dict(action='read_page',scope='workspace',page_id=p['page_id'])}),AIMessage(content='after')]
             host=await moved_host(app,project,sid,tmp_path/'moved')
             caplog.clear()
-            await host.runs.start(sid,[('user','after')])
-            assert preference in ''.join(str(m.content) for m in model.seen[-1] if m.type=='system')
+            result=await host.runs.start(sid,[('user','读取保存的项目规则')])
+            message=next(m for m in reversed(result['messages']) if isinstance(m,ToolMessage) and m.name=='memory')
+            assert message.status=='success'
+            assert decode_content(json.loads(message.content))['entries'][0]['body']==preference
+            assert 'Saved memory Wiki navigation' in str(model.seen[-1])
             assert 'memory_context_prepare_failed' not in caplog.text
-            assert len(model.seen)==2
+            assert len(model.seen)==3
     asyncio.run(scenario())

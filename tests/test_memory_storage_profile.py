@@ -18,7 +18,7 @@ def test_memory_database_never_enters_disk_guards(monkeypatch, tmp_path):
         assert database.path is None
         assert database.uri.startswith('file:/naiyue-') and database.uri.endswith('?vfs=memdb')
         assert database.connection.execute('PRAGMA journal_mode').fetchone()[0] == 'memory'
-        assert database.read_rows('SELECT version FROM naiyue_store_info') == [{'version': 23}]
+        assert database.read_rows('SELECT version FROM naiyue_store_info') == [{'version': 25}]
     assert list(tmp_path.iterdir()) == []
 
 

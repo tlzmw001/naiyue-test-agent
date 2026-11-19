@@ -14,6 +14,8 @@ class PersonalMemory:
         self.lock = RLock()
         self.database = None
         self.closed = False
+        self.last_cleanup = None
+        self.cleanup_scan = {}
 
     def repository(self):
         with self.lock:
@@ -21,6 +23,12 @@ class PersonalMemory:
                 raise MemoryReadError('memory_unavailable')
             if self.database is None:
                 self.database = Database.open_personal(self.path, self.settings)
+                try:
+                    import time
+                    MemoryRepo(self.database).prepare_wiki(now=time.time())
+                except BaseException:
+                    self.database.close();self.database=None
+                    raise
             return MemoryRepo(self.database)
 
     def close(self):

@@ -1,5 +1,19 @@
 # 锁层级与获取约定
 
+## Spec143BO-S1 Wiki 存储组件（正式启动切换待 S6）
+
+`MemoryRepo.prepare_wiki` 在既有 `Database.lock` 下验证并准备单库格式；项目备份在该锁内、写事务开始前通过既有备份器完成，之后同线程重入 RLock 开一个 `Database.transaction(write=True)`。个人库沿既有 `BEGIN IMMEDIATE`＋独立只读连接备份规则执行，不改变 DELETE/FULL。此入口当前只由隔离库测试调用，未注册至默认启动或模型工具。
+
+`wiki_edit` 与 Wiki 查询只持单个 DB 锁；`WikiWriter.apply` 在该已存在事务内使用 SQL savepoint，不再开启 Database 事务、不取得 D1、不开其他库、不调用应用或模型。跨库链接快照必须由上层在合法读取后传入，读取投影仍由 S2 再过滤；无跨库写事务。未来接入 MemoryAccess 时仍沿既有 S1→D1→DB 顺序，不能从此 DB 临界区回取 D1。显式迁移须在原所有者独占且没有其他运行消费者时执行，关闭等该锁释放。
+
+S2-2 的 `MemoryAPI.query → MemoryAccess.query_wiki` 已接入上述读取顺序：校验运行范围后持 D1，`wiki_view` 在单库短事务中读取版本与有界投影，退出该 DB 事务后才取其他库或 `wiki_targets`。`PersonalMemory.repository` 的 D1 获取为同线程重入；无 DB→D1 反向调用，无跨库嵌套读事务。游标签名密钥随 MemoryAccess 生命周期持有，不新增锁或共享缓存；格式化和输出预算仍在当前 D1 内完成。默认注册/启动尚未切换。
+
+S2-3 写入先完成既有会话历史锁中的必要来源保存，再进入 `query_wiki → D1 → wiki_edit_with_sources`。后者复用 `edit_with_sources` 的事务所有权：workspace 同库只开一次写事务；personal 固定 `DB(project/chats source) → DB(personal target)`，不反向读别的项目。WikiWriter只借用既有事务连接；成组回滚失败时退出整个目标事务，随后退出来源事务。`wiki_organize_snapshot` 仍在D1内逐个短DB读取，受理和释放时均由event loop等待该读取完成后修改任务注册表，不在D1/DB内等待异步任务、模型或槽位；未新增锁。
+
+## Spec143BO-S3 后台读取与组织提交
+
+B的模型调用只在既有异步槽位内运行，不持D1或DB锁；Ledger.read通过run_blocking在D1内逐个短库事务读取，随后释放全部锁再等待下一次模型调用。commit_group固定D1→源project/chats DB→目标personal DB（workspace同库只开一次），WikiWriter.snapshot借用当前事务连接，不嵌套Database.transaction；Staged只在该线程/事务内收集数据，最终一次apply，不反向取D1。无新增锁、跨模型IO锁或跨scope写事务；原_commit屏蔽必要保存取消并排空，再按实际成功记录数结算。读取账本为任务局部数据，非全局缓存；任务受理/停止注册表仍由同一event loop管理。
+
 ## Spec143 S10.1/S10.2 显式更新、维护与离线运维
 
 | 锁／预留 | 当前消费者 | 顺序、IO与恢复 |
@@ -107,16 +121,16 @@ LC1 关闭仍先封口/排空在途读和admit，再排空全部创建/命令 fl
 | A1 `RunAdmission.lock` | `RLock`，全应用根运行的容量检查与准入提交 | [SessionService._admit](../naiyue_test_agent/application/sessions/session_service.py)；[RunAdmission.available/release](../naiyue_test_agent/application/sessions/run_admission.py)；available要求调用者已持有A1，release只在生命周期确认排空后调用 | `A1 → A2 → S3`；统计时逐个取得 A2，释放 A2 后读取对应 actor 的 S3，不同时锁多个 service。目录／注册 revision 验证在取得 A1 前完成。 |
 | A2 `SessionService._lock` | `Lock`，已加载 actor、子 Agent 角色、组装／关闭状态的注册表 | [SessionService](../naiyue_test_agent/application/sessions/session_service.py) 的注册／查找／快照／准入／删除 guard；`RunAdmission.available` | `A2 → {S3, B1, E1, M1}`：分别用于读 actor、检查清理、取订阅快照、冻结模型错误映射。不得反向获取 A1 或 S2。建图、创建会话的必要 SQL、运行及关闭等待在释放 A2 后执行。 |
 | S1 `SessionPersistence._history_locks[session_id]` | 异步锁，同会话准备、收尾、恢复、删除和记忆证据保存的协调 | [SessionPersistence](../naiyue_test_agent/application/sessions/session_persistence.py) 的 `aprepare/afinish/arecover/adelete`；[MemoryAPI.query](../naiyue_test_agent/application/memory/api.py) 的写入分支 | `S1 → {S2, D1, DB, D2}`。这是共同外层门闩，各分支分段获取内层锁；SQL 事务与 saver 调用不交叉持有。`arestore` 自己只用 S2 预留，`aprepare` 可在 S1 内调用它。 |
-| S2 `SessionPersistence._lock` | `Lock`，`_active/_recovering/_blocked` 的预留与短状态更新 | [SessionPersistence](../naiyue_test_agent/application/sessions/session_persistence.py)；[ProjectHost._check_idle](../naiyue_test_agent/application/projects/host.py) 只读取协调状态 | `S2 → A2 → S3`，用于 `_delete/_install_session` 等配对检查。预留后释放 S2 再做 SQL、saver 或 `await`；`start` 的 mark_running、afinish 的归档／裁剪都不持 S2 做 IO。 |
+| S2 `SessionPersistence._lock` | `Lock`，`_active/_recovering/_blocked` 及 Wiki S4 `_directory_eligible/_directory_used` 的预留与短状态更新 | [SessionPersistence](../naiyue_test_agent/application/sessions/session_persistence.py)；[ProjectHost._check_idle](../naiyue_test_agent/application/projects/host.py) 只读取协调状态 | `S2 → A2 → S3`，用于 `_delete/_install_session` 等配对检查。预留后释放 S2 再做 SQL、saver 或 `await`；`start` 的 mark_running、afinish 的归档／裁剪都不持 S2 做 IO。 |
 | S3 `SessionRuntime.lock` | [SessionRuntime](../naiyue_test_agent/application/sessions/session_state.py) 的 `Lock`，同一 actor 的 SessionState、ActiveRun、控制队列、审批、存活子实例 | [AgentSession](../naiyue_test_agent/application/sessions/agent_session.py)、[RunLifecycle](../naiyue_test_agent/application/sessions/session_execution.py)、[ControlQueue](../naiyue_test_agent/application/sessions/session_controls.py)、[ApprovalBook](../naiyue_test_agent/application/sessions/session_approval.py)、[SubagentRegistry](../naiyue_test_agent/application/subagents/session_subagents.py)、[subagent_records.admit](../naiyue_test_agent/application/subagents/subagent_records.py) | `S3 → {C1, E2, E4}`，只做停止标记、控制记录、turn 保存／恢复。四个协作者共用这一个实例；调用者已持锁时使用不再次获取 S3 的内部 guard。不得反向获取 A2／S2；不得执行模型／工具／SQL、控制事件 flush 或等待子实例。 |
 | S4 `AgentSession._model_selection_lock` | `Lock`，模型／思考档位的落库与内存提交顺序 | [AgentSession.select_model/select_thinking](../naiyue_test_agent/application/sessions/agent_session.py) | `S4 → {DB(project), S3}`，SQL 返回释放 DB 后才修改 S3；思考档位先在 S3 下核对，释放后落库，再取 S3 提交。 |
 | S5 `AgentSession._tool_selection_lock` | `Lock`，工具选择的落库与内存提交顺序 | [AgentSession.set_active_tools](../naiyue_test_agent/application/sessions/agent_session.py) | `S5 → {DB(project), S3}`，两把内层锁分段获取；registry 选择校验在 S5 前。S4/S5/S6 不互相嵌套。 |
 | S6 `AgentSession._permission_selection_lock` | `Lock`，权限模式的落库与内存提交顺序 | [AgentSession.set_permission_mode](../naiyue_test_agent/application/sessions/agent_session.py) | `S6 → {DB(project), S3}`，两把内层锁分段获取；不从 S3 回取选择锁。 |
 | B1 `BackgroundProcessManager._lock` | `RLock`，后台进程记录、调用去重、终局通知、删除／输出清理标记 | [background_tasks.py](../naiyue_test_agent/application/sessions/background_tasks.py) 的注册、短状态、查询、stop、stop_session、guard、close | A2 可获取 B1；注册的目录、登记与环境核验先在线程完成（不持 B1），返回循环后在 B1 下复核关闭／删除／清理与去重，冻结 EnvironmentRef；读 `control.requested` 只查询 Event，不取得 C1 mutex。`stop/stop_session/aclose` 同线程重入B1标记停止；释放后等待worker/核对输出关闭，stop_session不封口整个管理器。不得在B1内等待进程、磁盘或取得A2/S2。 |
-| D1 `PersonalMemory.lock`，亦为 `MemoryAccess._lock` | `RLock`，全应用共享个人库生命周期及各 MemoryAccess 查询／修改 | [PersonalMemory.repository/close](../naiyue_test_agent/application/memory/personal_memory.py)、[MemoryAccess.query/close](../naiyue_test_agent/application/memory/memory_access.py) | `D1 → DB(project) → DB(personal)`；个人写入先固定项目证据，再打开个人写事务。两个别名是同一把锁，允许同线程重入；当前锁内包含同步查询与 IO，跨项目也会竞争，本次未优化。 |
+| D1 `PersonalMemory.lock`，亦为 `MemoryAccess._lock` | `RLock`，全应用共享个人库生命周期及各 MemoryAccess 查询／修改 | [PersonalMemory.repository/close](../naiyue_test_agent/application/memory/personal_memory.py)、[MemoryAccess.query/comparison_candidates/commit_comparison/close](../naiyue_test_agent/application/memory/memory_access.py) | `D1 → DB(project) → DB(personal)`；个人写入先固定项目证据，再打开个人写事务。比较预检先读项目来源，释放该事务后检查目标抑制；查询及提交继续在D1内，最终提交再次原子核验。两个别名是同一把锁，允许同线程重入；当前锁内包含同步查询与 IO，跨项目也会竞争，本次未优化。 |
 | DB `Database.lock`（项目／chats／RAM／个人／注册各实例） | `RLock`，单连接、显式事务、读写和 close 的互斥 | [Database.transaction/read_rows/close](../naiyue_test_agent/storage/database.py)；各 Repo／[RunUnitOfWork](../naiyue_test_agent/storage/unit_of_work.py) 通过 transaction 进入 | 通常为叶锁；唯一明确的双库事务是 [MemoryRepo.edit_with_sources](../naiyue_test_agent/storage/memory.py) 的 `DB(project) → DB(personal)`。同库复用一个事务；即使 RLock 可重入，`transaction` 仍拒绝嵌套事务。禁止 DB 锁内反向调用应用、获取 D1 或进入 saver。 |
 | D2 `AsyncSqliteSaver.lock` | 框架 `asyncio.Lock`，第二条 SQLite 连接的 setup/read/write/history 游标 | [open_storage](../naiyue_test_agent/storage/resources.py) 创建；图的状态／运行 API，以及 [裁剪](../naiyue_test_agent/storage/checkpoint_retention.py) 的官方 `checkpointer.aget_tuple` | S1 可包住 saver 调用；应用不直接 acquire D2，不从 DB 临界区进入 saver。框架 `alist` 在 `yield` 期间仍持 D2，history 迭代体不得重新调用同 saver 或开启依赖它结束的数据库写事务。 |
-| J1 `MemoryJobs._context_lock` | `Lock`，`_eligible/_used` 跨线程目录使用标记 | [MemoryJobs.prepare/directory_attempt/after_finish](../naiyue_test_agent/application/memory/memory_jobs.py) | 叶锁；准备数据／保存 marker 在锁外。它不保护整个 job 注册表，后者由所属事件循环管理。 |
+| J1 `MemoryJobs._context_lock` | `Lock`，旧默认链 `_eligible/_used` 跨线程目录使用标记（S6退出）；Wiki目录状态归S2 | [MemoryJobs.prepare/directory_attempt/after_finish](../naiyue_test_agent/application/memory/memory_jobs.py) | 叶锁；准备数据／保存 marker 在锁外。它不保护整个 job 注册表，后者由所属事件循环管理。 |
 | J2 `MemoryJobs._slots` | 异步信号量，后台记忆任务并发额度 | [memory_job_runner._batch](../naiyue_test_agent/application/memory/memory_job_runner.py) 中的批次执行 | 可在额度内执行模型、记忆读写、C1 和观测入口；不持 J1 排队，也不递归请求同一额度。它是并发限额，不是数据库互斥锁。 |
 | T1 `AsyncBatchPlan.condition`（含其内部异步锁） | 条件变量，串行工具批次的 position/failed 与唤醒 | [AsyncBatchPlan.execute](../naiyue_test_agent/agent_runtime/tool_execution/async_batch.py) 的顺序分支 | 叶锁；`wait_for` 等待时释放条件锁，轮到自己后也先释放，再 `await handler()`。不得持 T1 执行工具。 |
 | T2 `AsyncBatchPlan.semaphore` | 异步信号量，并行工具批次的数量上限 | 同上，并行分支 | `T2 →` 具体工具的权限／MCP／文件／进程／记忆局部锁与额度；T1/T2 是替代分支，不嵌套。同批内部不得在 handler 中递归等待自己的额度。 |
@@ -296,3 +310,9 @@ BackgroundProcessManager.submit/foreground 的 `_validate_binding` 在取得 B1 
 
 - Coordinator 的刷新意图、连接派发租约和应用确认使用 CT1 → registry DB。配置文件读取、控制帧发送和 Runner 目录发现位于 CT1/DB 外。派发事务读取网络切换状态并设置有界租约，网络切换在同一个 registry DB 中检查该租约。删除清理任务的 MCP 状态。已到期的租约不再阻止普通轮次或切换。WebSocket 请求取消时，Runner detach 的 CT1/registry 更新先完成，再退出请求。
 - Runner 的目录任务由当前控制连接的事件循环拥有，连接断开时取消并等待收尾。正常刷新用原 T3 → T5，Runner 只有在轮次之间才更换生效目录。普通轮次先核对 Coordinator 确认的版本与网络目标，再冻结主智能体工具名；过期或不一致的版本只使用内置工具。中转执行连接在 Runner 发送 finished 前关闭；候选中转连接的 TCP 请求受发现租约期限约束。
+
+### Wiki S5 到期维护
+
+`SessionPersistence.afinish` 必要保存成功、MemoryJobs通知之后，在释放S2的_active预留前调用session_maintenance.after_finish。checkpoint步骤保留原saver/DB边界；memory步骤在线程中持D1（共享PersonalMemory.lock）后顺序访问单库DB，无同时持两库锁。项目节流/外部链接seek状态归MemoryAccess，个人节流归共享PersonalMemory，都在D1内读写；不在锁内等待模型。仓储同一个写事务选择并重新核验删除资格、分批删除、提交统计。跨库链接只在个人库已打开时顺序查询有界目标元数据，再回项目库删除，不创建库或跨库事务。关闭同样取得D1；await_settled排空已开始的维护线程后才释放根运行/关库。
+
+S5审查修复：D1同时保护项目/共享个人cleanup_scan（页/链接seek状态），候选状态副本在单库事务提交成功后才发布；不增加锁。跨库目标查询异常独立降级，不能阻止本库GC。

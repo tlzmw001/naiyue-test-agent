@@ -6,8 +6,8 @@ import sqlite3
 from uuid import UUID
 
 
-CURRENT_SCHEMA = 23
-SUPPORTED_SCHEMAS = frozenset(range(4, CURRENT_SCHEMA + 1))
+CURRENT_SCHEMA = 25
+SUPPORTED_SCHEMAS = frozenset(range(4, 27))
 
 
 def read_schema_version(connection):
@@ -65,8 +65,13 @@ def check_snapshot(path):
             required['naiyue_subagent_instances'] = ' '.join(FIELDS if version >= 20 else FIELDS[:-1] if version >= 19 else EXECUTION_FIELDS if version >= 18 else LEGACY_FIELDS)
         if version >= 15:
             from naiyue_test_agent.storage.memory_sql.memory_schema import REQUIRED, check
-            required.update(REQUIRED)
-            check(connection, version=2 if version >= 16 else 1)
+            if version<26:required.update(REQUIRED)
+            if version>=26:
+                from .memory_sql.memory_wiki_schema import check as wiki_check
+                connection.row_factory=sqlite3.Row
+                try:wiki_check(connection)
+                finally:connection.row_factory=None
+            else:check(connection, version=4 if version >= 25 else 3 if version >= 24 else 2 if version >= 16 else 1)
         if version >= 16:
             required['naiyue_chat_messages'] += ' occurred_at'
         if version >= 17:

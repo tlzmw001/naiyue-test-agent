@@ -96,7 +96,20 @@ def validate_permission_rules(settings, specs):
             for spec in candidates:
                 if isinstance(spec.input_schema, dict):
                     raise ValueError('JSON schema tools do not support argument permission rules')
-                field = spec.input_schema.model_fields.get(name)
+                from .memory_actions import is_memory_action_spec, memory_action_contract
+                from .memory import MemoryInput
+                schema = MemoryInput if is_memory_action_spec(spec) else spec.input_schema
+                if memory_action_contract(spec)=='memory_actions_v2':
+                    from typing import get_args, Union
+                    branches=get_args(spec.input_schema.model_fields['request'].annotation)
+                    fields=[b.model_fields[name] for b in branches if name in b.model_fields]
+                    if not fields:raise ValueError('Permission rule refers to an unknown public argument')
+                    types=tuple(Annotated[f.annotation,*f.metadata] if f.metadata else f.annotation for f in fields)
+                    annotation=Union[types]
+                    TypeAdapter(annotation).validate_python(value,strict=True)
+                    annotations.append(annotation)
+                    continue
+                field = schema.model_fields.get(name)
                 if field is None:
                     raise ValueError('Permission rule refers to an unknown public argument')
                 annotation = Annotated[field.annotation, *field.metadata] if field.metadata else field.annotation
@@ -123,10 +136,22 @@ def _component_match(pattern, path, windows):
 
 
 def match_rules(rules, subject, *, deny):
+    args = subject['args']
+    contract = subject.get('argument_contract')
+    if contract is not None:
+        from .permissions import PermissionMechanismError
+        if contract not in ('memory_actions_v1','memory_actions_v2') or subject.get('tool_name')!='memory':
+            raise PermissionMechanismError('Invalid memory argument contract')
+        from .memory_actions import compile_memory_tool_request
+        if contract=='memory_actions_v2':
+            from .memory_wiki_actions import compile_wiki_request
+            compile_memory_tool_request=compile_wiki_request
+        try:args=compile_memory_tool_request(args)
+        except (ValueError,TypeError) as error:
+            raise PermissionMechanismError('Invalid memory argument contract') from error
     for rule in rules:
         if rule.tool not in ('*', subject['tool_name']):
             continue
-        args = subject['args']
         if any(name not in args or type(args[name]) is not type(value) or args[name] != value
                for name, value in rule.args.items()):
             continue

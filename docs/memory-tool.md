@@ -1,5 +1,30 @@
 # memory：项目与个人记忆的查询和维护
 
+当前默认入口是数据库 Wiki v2。长期记忆没有 kind，个人和项目范围独立，默认有效期 30 天。迁移前会备份旧数据，启动后只从新代读取。旧召回和分类 TTL 的配置会明确提示迁移。默认切换的工程验收已完成，真实模型已知的范围判断和项目例外问题留待优化。详见 [Wiki S6](specs/143bo-06-acceptance-and-cutover.md)。
+
+前台只注册一个 `memory` 工具，所有操作通过 `request.action` 选择。`memory.default_ttl_days` 控制新记忆的默认有效期，`memory.wiki_topic_max_memories` 控制小主题容量，默认每页 30 条。
+
+v2 的 `list_topics → list_pages → read_page` 提供主题导航和按需分页；显式 `list/search/read` 保留词法辅助及来源/历史读取。单次完整返回默认≤2000估算token且≤16KiB；跟随next_cursor读完，失效游标重新读取。读取不续期。
+
+v2 `record` 指定destination（已有page_id/expected_page_version，或new_page的topic/title/description）。`update` 指定change：supplement仅补证、confirm完整重新确认、replace加新proposal；前两者不接收新正文。个人范围用scope_source_indexes关联本次来源的位置，代码核验真实用户与出处，模型负责语义支持判断。个人记忆沿用现有工具权限，不增加专用用户确认步骤。补证保留期限，完整新确认/替换采用当前TTL并保留原明确截止条件；disable/forget沿用权限与期望版本检查。必要保存失败不重试，不把失败提议降级保存。
+
+v2 `organize` 只受理指定范围1..8个既有页，`refresh_overview`受理历史整理；accepted/task_id不是保存成功。Wiki后台A/B沿同一任务执行：A提出并独立保存概览，B按需读完目录/页面后成组提交；organize直接进入B，只改指定既有页或新建同级页。受限读取每次≤2000估算token，材料不足/失败不重试，不回退直接保存提议。后台自动登记仍使用已配置的轮数或字数阈值。完整入口见[Spec143BO-S2](specs/143bo-02-wiki-tools-and-scope.md)，后台流程与限制见[Spec143BO-S3](specs/143bo-03-background-consolidation.md)。
+
+当前工具入口为 `{request: {action, ...}}`，各动作仅接受自己的字段；旧顶层 action 调用安全拒绝。能力端口收到按 Wiki v2 编译的当前请求。
+
+合并范围的读取会分别检查项目与个人权限，只打开获准的库。关联页标题也必须通过目标范围的读页权限。
+
+## 上下文预算与历史目录
+
+Wiki每轮只注入主题入口，`memory.wiki_navigation_tokens`默认2000；其他会话目录使用独立`memory.session_directory_tokens`默认2000，首次真实尝试后不重复注入，预览不消耗。关闭memory不关闭history目录，两个预算为0关闭自动材料而不关闭显式工具。`tools.history.max_output_tokens`默认2000，完整JSON与16384字节预算同时约束；普通读取的概览为短预览，完整正文用`history {action:"read",session_id,overview_only:true}`及next_cursor。概览变化使旧游标失效；覆盖遗漏明细以数量/省略标记展示，数据库与任务诊断仍保留明细。
+
+## 到期维护
+
+到期立即停止从新读取中作为有效记忆返回。默认`expiry_grace_days=7`，到期满缓冲后，已打开本机库在必要会话保存成功的收尾位置机会清理；没有定时器，也不扫描关闭项目。`cleanup_batch_size=100`限制每批工作量，`cleanup_interval_seconds=3600`节流；0表示每次合格收尾尝试一批。个人库跨项目共享节流，未打开时不为清理创建库。失败按项目/个人分别记录、不重试当前调用，不改变前台成功结果。forgotten墓碑、抑制、旧代隔离、原始历史/概览/诊断保持；不执行VACUUM，删除不意味着擦除备份或磁盘残留。
+
+<details>
+<summary>历史版本记录（旧 143BM 合同）</summary>
+
 从0.4.0提供，设计与验收见Spec127。提供list/search/read、record/update/disable/forget及refresh_overview。概览/记忆整理在完整根用户轮正常保存后执行；达到配置阈值也可自动登记。真实新库为空时返回空结果，不注入示例或遍历旧会话自动填充。
 
 ## 入口与作用域
@@ -11,9 +36,9 @@ Spec128分支的程序入口为`app.memory.query(scope=当前RunScope, request=�
 默认scope=both，查询当前workspace与personal；可指定其中之一，不能提交任意工作区、数据库路径或SQL。项目数据在当前sessions.sqlite的独立表中；个人库位于配置data_dir/personal/memory.sqlite，相同data_dir的所有项目共享；个人记录不受来源项目目录是否存在影响，但跨项目不开放来源会话原文。项目UUID与执行目录的拆分见[Spec128-01](specs/128-01-project-execution-root.md)。首次需要个人读写时才打开，关闭总开关不删除数据。
 
 ```json
-{"action":"list","scope":"workspace","limit":10}
-{"action":"search","query":"pytest 测试类","scope":"both"}
-{"action":"search","query":"代理","machine":"windows","status":"active"}
+{"request":{"action":"list","scope":"workspace","limit":10}}
+{"request":{"action":"search","query":"pytest 测试类","scope":"both"}}
+{"request":{"action":"search","query":"代理","machine":"windows","status":"active"}}
 ```
 
 read使用返回的具体scope、memory_id及version；offset从0开始，以返回next_offset继续读取。version是期望当前版本，已更正时返回memory_version_changed，不静默改读新正文。
@@ -33,16 +58,18 @@ K由默认/单次limit决定，受max_limit约束。先取排序后的K条，再
 以下是调用参数示意，不是已保存的数据或实际效果证据：
 
 ```json
-{"action":"record","scope":"workspace","proposal":{"kind":"context","title":"pytest环境","body":"使用.venv运行pytest","subject":"pytest环境","basis":"user_declaration","intent":"activate","reason":"用户明确约定后续使用"},"sources":[{"current_user":true,"quote":"以后测试使用.venv"}]}
+{"request":{"action":"record","scope":"workspace","proposal":{"kind":"context","title":"pytest环境","body":"使用.venv运行pytest","subject":"pytest环境","basis":"user_declaration","intent":"activate","reason":"用户明确约定后续使用"},"sources":[{"current_user":true,"quote":"以后测试使用.venv"}]}}
 ```
 
 record/update要求完整proposal和最多8条来源。current_user只选择调用会话当前根thread由应用接收的真实用户输入；子任务文字不能伪装成用户声明。也可引用history返回的具体session_id/thread_id/message_id/revision/conversation_revision、quote和offset。写入前保存当前正式checkpoint的可见档案，再核对范围、版本、角色及引文；不运行/恢复目标会话。没有可信发生时间的旧档案拒绝作为新写入来源，可由用户在新轮重新确认。
 
 basis为user_declaration/tool_observation/inference；模型可提出candidate或activate。明确持久用户声明，或成功工具直接支持且目标明确的可复用观察，在没有缺口/已知冲突时可首次active。推断、缺持久意图/条件/验证等保留candidate和gaps，不按时间、次数或confidence自动晋升。程序核对来源和确定性门禁，不能证明自然语言的语义蕴含；模型仍需对“是否值得记、是否支持”负责。已知敏感模式拒绝保存，不声称能识别所有秘密。
 
-update、disable和forget使用查询返回的真实memory_id和expected_version，scope必须具体。update替换完整建议并补证/更正，同稳定ID递增版本；kind固定以免通过改类型绕TTL。候选转正、到期后恢复需真实新证据。已知同类型/subject/条件的active正文冲突降为candidate；完全相同已有记录拒绝重复创建。disable保留历史并退出默认查询；forget清记忆当前正文/条件/版本/引文/索引，只留最小墓碑和同scope库旧来源身份哈希抑制。抑制按已知消息版本，可能一并阻止同条消息中的其他候选；不做同义文本识别、不删除原会话或已有备份，也不承诺物理介质安全擦除。
+update、disable和forget使用查询返回的真实memory_id和expected_version，scope必须具体。update替换完整建议并补证/更正，同稳定ID递增版本；前台直接改变kind报memory_kind_change_requires_comparison；后台仅correction＋whole＋较新的真实用户独立证据允许同ID改类。候选转正、到期后恢复需真实新证据。已知同范围/subject/条件的active正文冲突降为candidate；完全相同已有记录拒绝重复创建。disable保留历史并退出默认查询；forget清记忆当前正文/条件/版本/引文/索引，只留最小墓碑和同scope库旧来源身份哈希抑制。抑制按已知消息版本，可能一并阻止同条消息中的其他候选；不做同义文本识别、不删除原会话或已有备份，也不承诺物理介质安全擦除。
 
-候选TTL各类默认30天；active的user/rule/decision无类型TTL，其余如配置所列。明确deadline（来源给出的Unix秒时间）即使免类型TTL也遵守；与类型期限取早。普通读取、旧来源重提或改写不续期；新来源身份且真实时间晚于原依据，才以来源时间采用当前TTL策略。没有重新指定deadline的确认保留原明确截止时间。TTL配置不追溯既有记录，按类型可仅覆盖部分配置；正整数上限36500天，免TTL类型不能配置active类型TTL。
+当前kind仅convention（长期约定）和context（阶段事实），与personal/workspace范围独立。候选默认均30天，active默认90/30天；明确deadline与类型期限取早。读取、duplicate和部分确认不续期，新确认按真实证据时间计算。旧七类配置不能自动合并，须显式迁移；旧preference_limit只在配置读取边界转换并记录弃用诊断。数据库升级保留历史七类快照，但当前记录改为两类并追加迁移版本，按旧evidence_at计算期限，不能刷新为升级时间。真实采用前停止旧进程并备份；不支持旧进程混写新格式。
+
+预加载取得personal＋convention全部active集合，一次list最多max_limit，随后逐条完整read；任何分页/截断/读取失败整体退回普通检索。完整组连同包裹装得下个人预算才注入，超预算不挑子集。普通检索仍覆盖个人和当前项目，弱输入不补查询。来源原文清理不自动淘汰仍有效正文。
 
 成功回执含saved/still_candidate、真实ID/version及缺口；并发旧版本报memory_conflict，不能覆盖更正/停用/遗忘。回执超预算时缩短文字并标truncated，已保存正文完整；read可读取当前gaps/reason/deadline_at，include_history显式返回最近最多5个版本的短正文和理由/缺口，history_truncated表明历史受条数或字节预算截断。新建/更新前检查最小详情预算，超限以memory_metadata_budget拒绝并回滚；保存后若人为调小预算，读取仍可能报memory_output_budget，需恢复足够预算，不裁改已保存正文。IO/来源必要保存失败是配对的工具错误，主Agent可继续，不能宣称已记住。
 
@@ -69,7 +96,11 @@ task_timeout_seconds = 300
 max_pending_tasks = 32
 max_active_tasks = 1
 injection_tokens = 2000
-preference_limit = 3
+personal_convention_tokens = 800
+comparison_queries = 2       # 每条有效提议最多两条事项查询，第二条仅用于有依据的对象编号。
+comparison_query_chars = 256 # 每条比较查询字符上限，32～512。
+comparison_query_terms = 64  # 每条比较查询词数上限，8～128。
+comparison_material_bytes = 65536 # 整次B材料上限，4096～262144；同时受模型token预算约束。
 related_limit = 8
 directory_limit = 8
 default_limit = 10
@@ -87,19 +118,11 @@ source_limit = 3
 busy_timeout_ms = 2500
 
 [memory.candidate_ttl_days]
-user = 30
-rule = 30
-decision = 30
+convention = 30
 context = 30
-procedure = 30
-experience = 30
-reference = 30
-
 [memory.active_ttl_days]
+convention = 90
 context = 30
-procedure = 180
-experience = 365
-reference = 90
 ```
 
 default_limit必须<=max_limit<=candidate_limit，max_limit最大50；max_output_bytes至少4096。candidate_limit是每库/每个variant的候选上限，和返回条数K不同；max_query_terms限制分词后的查询复杂度。整包JSON含来源、元数据和游标计入输出预算，必要时少返回条目、缩短正文或减少来源，并标注截断。工具IO/FTS故障与真正无结果分开。
@@ -109,30 +132,36 @@ memory字段可解析但校验非法或model_id不存在时安全诊断并禁用
 ## 概览与后台整理
 
 ```json
-{"action":"refresh_overview"}
+{"request":{"action":"refresh_overview"}}
 ```
 
 回执是accepted与task_id，表示登记成功。工具本身仍按原parallel调度返回，不在这一工具调用中等待会话结束或另调模型。当前根轮正常保存后，应用worker独立运行；审批等待保留请求，续跑正常完成再释放，停止/失败不释放。可用target_session_id选择同项目的保存会话；start_sequence/end_sequence可限定范围，范围请求在目标已有任务时明确拒绝，不静默丢弃边界。同会话普通请求可合并，保持首次模型和deadline；其他调用会话不能接管在途目标。
 
 自动阈值是“自上次受理后新增完整用户轮达到trigger_turns，或可见用户/助手字符达到trigger_chars”。受理成功或合并才推进基线；队列满保留未受理材料，下次正常结束再检查。失败/超限不重复卡住旧段，后续新材料继续推进。旧会话第一次新轮前建立基线，不回放整个历史；首次输入可包含最近旧轮。
 
-每批一次已配置语言模型输出overview={goal,progress,blockers,next_step}及至多8条proposals，不调用embedding、扩词、评分或格式修复模型。概览与每条记忆分别校验并提交03写入合同；成功概览不等于建议都已保存。相关记忆带真实ID，候选还带缺口；版本由程序在请求前冻结，不要求模型填写。模型可在新证据支持下提议同ID转正，CAS/来源/TTL等仍由代码校验。已配置deny规则同样约束内部list/search/read与写入。
+每批采用两阶段后台整理：A仅根据本批原文与上一概览输出overview={goal,progress,blockers,next_step}及至多8条带matter的提议；程序先绑定证据，再按每条事项最多两条词法查询读取同归属的旧active/candidate（含过期项）。B一次集中比较完整组，建议新增、重复、补证、更正、条件不同、未解决冲突或丢弃。共享旧项的提议必须共同处理；候选截断、读取失败或材料超限不会被当成无旧项。概览在B前独立尝试保存，B失败不回滚合法概览，也不通过active/candidate兜底。每批A≤1、B≤1，零有效比较组时B=0；不追加修复或重试调用。最终每条写入由程序检查权限、来源、遗忘、CAS和生命周期。部分/未知确认仅补证且保持原正文与期限，不能让过期项整体转正。
 
-[Spec143BM-S1](specs/143bm-01-conversation-evidence-input.md)采用批内证据编号：模型的 sources 只返回 evidence_id，程序绑定原始消息身份、版本、位置和精确引文。优先按完整交互、完整消息装批，超长消息才沿自然边界分段；4096仅为I/O页大小。完整片段最多300字符，无自然边界的硬切只能作为上下文。工具正文继续受上游输出限制、可见字段、安全过滤、单批读取量及模型预算限制，不自动展开artifact。辅助前文不计新增处理范围，纯前文引用不能触发新确认。触发仍为既有轮数/字符阈值或显式请求，S1仍是单阶段整理；新旧批量语义复核属于后续S3。公开memory工具的record/update精确引文合同保持。
+[Spec143BM-S1](specs/143bm-01-conversation-evidence-input.md)采用批内证据编号：模型的 sources 只返回 evidence_id，程序绑定原始消息身份、版本、位置和精确引文。优先按完整交互、完整消息装批，超长消息才沿自然边界分段；4096仅为I/O页大小。完整片段最多300字符，无自然边界的硬切只能作为上下文。工具正文继续受上游输出限制、可见字段、安全过滤、单批读取量及模型预算限制，不自动展开artifact。辅助前文不计新增处理范围，纯前文引用不能触发新确认。触发仍为既有轮数/字符阈值或显式请求，[S3](specs/143bm-03-proposal-comparison.md)已接新旧批量复核；模型不能自行填写旧记忆ID，程序将O编号映射到真实版本。公开memory工具的record/update精确引文合同保持。
 
 
-models.json中每个模型的profile可选memory_output：text（默认）、json_schema或function_calling，仅控制后台整理的返回通道。后两种使用现有LangChain/SDK结构化接口；须由人明确确认该模型及网关支持后配置。不根据模型名猜能力，协议构造失败不切换通道重发，超时/SDK既有重试保持。schema请求开销计入输入限额；过小配置会在请求前失败。函数返回只接受单个MemoryResult，作为返回值解析，不执行工具；所有通道继续由项目校验顶层及逐条建议。当前支持的SDK路径和限制见127-07，不代表已通过真实供应商兼容性验收。
+models.json中每个模型的profile可选memory_output：text（默认）、json_schema或function_calling，仅控制后台整理的返回通道。后两种使用现有LangChain/SDK结构化接口；须由人明确确认该模型及网关支持后配置。不根据模型名猜能力，协议构造失败不切换通道重发，超时/SDK既有重试保持。schema请求开销计入输入限额；过小配置会在请求前失败。函数返回每阶段只接受单个对应名称MemoryExtractionResult或MemoryComparisonResult，作为返回值解析，不执行工具；所有通道继续由项目校验顶层、逐条提议与完整决定组。当前支持的SDK路径和限制见127-07，不代表已通过真实供应商兼容性验收。
 
 等待目标数、实际并发、输入/输出预算、单批建议及总批数均受配置控制。总时限从首次登记开始，包含等待本轮、排队、模型及SDK既有重试；不额外增加项目重试。停止/关闭会等待实际模型或必要提交收尾，已提交成果保留。task_list/task_output/task_stop及现有CLI/Web后台面板可查看/停止，memory任务没有Shell退出码或输出归档；独立purpose/mode=memory的用量与诊断不混入活动根聊天事件。队列是进程内资源，不在重启时重放，保存的概览与记忆持久保留。
 
-新用户轮最多注入3条偏好、8条相关记忆及会话首次8个同项目近期索引，共2000估算token。代码检索及限额，不额外请求模型决定注入；弱查询如“继续”不随机召回相关经验。每项只含短索引、真实版本/来源可用状态及详情工具入口，不自动续期或转正。历史记录不授予权限，当前指令和源码/配置优先。审批/同轮循环使用冻结快照；进程重启的审批恢复不重新全局检索，下一新用户轮重新准备。已知敏感模式的索引省略并记录安全诊断，不保证识别全部秘密。
+新用户轮优先在默认800 token个人预算内完整注入个人长期约定，普通相关记忆最多8条及会话首次8个同项目近期索引，整包默认2000估算token。代码检索及限额，不额外请求模型决定注入；弱查询如“继续”不随机召回相关经验。每项只含短索引、真实版本/来源可用状态及详情工具入口，不自动续期或转正。历史记录不授予权限，当前指令和源码/配置优先。审批/同轮循环使用冻结快照；进程重启的审批恢复不重新全局检索，下一新用户轮重新准备。已知敏感模式的索引省略并记录安全诊断，不保证识别全部秘密。
 
 ## 个人库模式与项目备份
 
-用户在02复核后确认个人共享库统一DELETE/FULL，短事务、有界busy等待，不自动切换WAL；这不改变项目会话库既有模式。已有非DELETE个人库返回memory_personal_mode_unavailable，不在运行中的其他使用者旁在线转换。未知格式返回memory_invalid_format且不改写；format2验证专属application_id/user_version及表/触发器结构。模式/格式问题须在全部使用者关闭后单独处理。
+用户在02复核后确认个人共享库统一DELETE/FULL，短事务、有界busy等待，不自动切换WAL；这不改变项目会话库既有模式。已有非DELETE个人库返回memory_personal_mode_unavailable，不在运行中的其他使用者旁在线转换。未知格式返回memory_invalid_format且不改写；format4验证专属application_id/user_version及两类CHECK/表/触发器结构；旧format1/2/3经验证、备份后事务升级到4，来源新核验属性保持历史NULL。模式/格式问题须在全部使用者关闭后单独处理。
 
-项目当前schema18，17→18回填项目与执行身份，不访问旧执行目录；升级沿用迁移前快照、结构校验及离线整库还原；当前记录、来源、历史版本、检索索引及概览/触发进度一起保存。个人format1升级前，在BEGIN IMMEDIATE保留写权时经独立只读连接生成同目录memory.sqlite.format1-<id>.sqlite一致性私有快照，验证及fsync后才事务升级；已有当前版本成为历史基线，更早不可恢复版本不虚构。项目还原不回滚个人库。现有storage CLI不因此自动支持个人库备份/还原；个人库维护需要关闭全部使用者并使用一致性SQLite快照，不能在WAL/写事务活动时只复制主文件。
+项目当前schema25，24→25迁移两类当前记录、期限、版本和FTS，23→24增加证据核验属性及消息身份索引；历史17→18回填项目与执行身份，不访问旧执行目录；升级沿用迁移前快照、结构校验及离线整库还原；当前记录、来源、历史版本、检索索引及概览/触发进度一起保存。个人format1升级前，在BEGIN IMMEDIATE保留写权时经独立只读连接生成同目录memory.sqlite.format1-<id>.sqlite一致性私有快照，验证及fsync后才事务升级；已有当前版本成为历史基线，更早不可恢复版本不虚构。项目还原不回滚个人库。现有storage CLI不因此自动支持个人库备份/还原；个人库维护需要关闭全部使用者并使用一致性SQLite快照，不能在WAL/写事务活动时只复制主文件。
 
 04—06两轮共48次真实配置模型调用，第二轮固定预期13/24满足。127-07精简后台合同后，[127-08](specs/127-08-memory-semantic-ab.md)使用新预算完成text/json_schema各12次真实请求：两组格式均12/12，原固定结构/状态预期为11/12和9/12，同候选ID转正均通过。共同e06缺可复现目标，仍保持候选；结构化组另外产生外部偏好候选和例行噪声，并有类型/语言偏差。默认保持text，旧样本回归不证明泛化，自动提取质量仍未整体关闭。累计72逻辑调用，本轮24 HTTP采集完整；历史HTTP次数不另行推定。需要仅使用显式维护时可将auto_enabled=false，实际配置不自动修改。
 
 真实对比还发现Responses默认上限覆盖单次记忆上限，[127-09](specs/127-09-openai-output-limit.md)已在采样结束后修正为SDK规范字段绑定，覆盖记忆及摘要消费者；旧结果保留当时实际16384上限，不能冒充修复后的真实验证。修复后使用SDK/模拟HTTP回归及工程验收，未追加供应商调用。更早失败与边界见[04—06验收记录](specs/127-04-06-memory-completion.md)。
+
+自动召回按最近真实用户消息的完整句子、段落、列项和明确连接词生成独立查询；默认扫描前16000字符，至多4次，每次至多8项，最终相关索引合计仍至多8项，并服从既有2000 token总预算。普通逗号不拆，保留否定、条件及技术词项，代码围栏省略；扫描截断的残句和超限段整体省略。弱消息不查询。结果先照顾各查询覆盖再按RRF补位，同身份版本变化则排除；单次失败不重试，其他查询继续。自动召回只注入索引预览与详情入口，不写库、不续期。recall_query_limit=4（1..8）、recall_scan_chars=16000（2000..128000且不小于max_query_chars）可在memory配置设置。日志记录安全计数与固定错误原因。
+
+后台比较的动作合同见 [S6](specs/143bm-06-program-owned-memory-actions.md)：部分/未知整体确认的直接补证只附来源与说明，不要求模型重抄旧正文；程序保留内容、状态和期限。接受单条 A 提议可用 claim=null 并选其全部证据；合并/改写才生成正文。kind 由程序继承 A（仅附来源时继承旧项）；duplicate/unsupported 不写库。此为后台内部合同，前台 update 仍是完整建议替换，前台工具参数由 S8-1 迁移为 request 动作信封，内部 MemoryAPI/存储仍用原 flat 请求。
+
+</details>

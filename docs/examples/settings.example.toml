@@ -108,9 +108,10 @@ max_list_items = 20            # subagent_list每页最多展示的实例数。
 max_list_bytes = 8192          # 整页JSON的UTF-8字节上限，含分页信息。
 task_preview_chars = 160       # 列表中每条委派任务预览的字符数。
 
-# 0.4.0 Spec127：只使用已有配置语言模型，无embedding模型。
+# 记忆 Wiki 使用已配置的语言模型提出和整理长期记忆。
 # enabled=false关闭整个记忆模块；auto_enabled=false仅关闭阈值整理，显式refresh仍可用。
 [memory]
+read_chunk_chars = 4096 # 后台来源单元读取的字符预算；Wiki输出由wiki_read_tokens控制。
 enabled = true
 auto_enabled = true
 trigger_turns = 8              # 完整正常用户轮，或下方新增可见正文字符，任一达到即登记。
@@ -127,11 +128,8 @@ max_batches = 3
 task_timeout_seconds = 300     # 首次登记起总时限，包含根轮等待、排队、模型及SDK重试。
 max_pending_tasks = 32
 max_active_tasks = 1
-injection_tokens = 2000        # 新轮有界短索引，不包含完整历史。
-preference_limit = 3
-related_limit = 8
 directory_limit = 8
-# 检索K、候选/生效记忆各类型TTL和个人库模式详见docs/memory-tool.md。
+# 默认有效期、个人与项目范围及 Wiki 分页设置见 docs/memory-tool.md 和 full/settings.full.toml。
 
 # Web工具与远程HTTP MCP的网络设置，不改变模型供应商、Bash或待测项目自身的网络配置。
 # auto：读取系统/环境HTTP_PROXY、HTTPS_PROXY、ALL_PROXY及NO_PROXY；无代理时直连。

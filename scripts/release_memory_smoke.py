@@ -6,7 +6,7 @@ import re
 from unittest.mock import patch
 
 
-PREFERENCE = 'Use .venv for tests from now on.'
+PREFERENCE = 'Across all projects, use .venv for tests from now on.'
 
 
 def verify_memory_report(report):
@@ -15,8 +15,8 @@ def verify_memory_report(report):
         flags = ('status', 'overview', 'memory_saved', 'task_queries', 'first_turn_index',
                  'independent_usage', 'history_reopen')
         valid = all(report[key] == 'passed' for key in flags)
-        counts = dict(root_model_calls=3, worker_model_calls=1, memory_records=1,
-            overview_version=1, memory_input_tokens=31, cold_model_calls=0, cold_tasks=0, provider_requests=0)
+        counts = dict(root_model_calls=4, worker_model_calls=3, memory_records=1,
+            overview_version=1, memory_input_tokens=93, cold_model_calls=0, cold_tasks=0, provider_requests=0)
         valid &= all(type(report[key]) is int and report[key] == value for key, value in counts.items())
         valid &= isinstance(report['task_id'], str) and re.fullmatch('[0-9a-f]{32}', report['task_id']) is not None
         roots = report['root_run_ids']
@@ -40,7 +40,8 @@ async def memory_scenario(root, Model):
     from naiyue_test_agent.storage.memory_sql.memory_overview_store import overview
     from naiyue_test_agent.model_access import ModelCatalog
     from naiyue_test_agent.settings import AppSettings
-    from naiyue_test_agent.tools.memory import create_memory_tool, MemoryInput
+    from naiyue_test_agent.tools.memory import create_memory_tool
+    from naiyue_test_agent.tools.history import create_history_tool
     from naiyue_test_agent.workspaces import prepare_workspace
 
     directory = root.resolve(strict=True) / 'memory-acceptance'
@@ -52,22 +53,26 @@ async def memory_scenario(root, Model):
         'memory': {'auto_enabled': False, 'model_id': 'memory'}})
     location = prepare_workspace(workspace, data_dir=directory / 'data', database_path=database)
     generated = dict(overview=dict(goal='Installed memory acceptance', progress='Saved preference',
-        blockers='', next_step='Use the saved test runner'), proposals=[dict(scope='workspace',
-        kind='user', title='Test runner', body=PREFERENCE, subject='test runner',
+        blockers='', next_step='Use the saved test runner'), proposals=[dict(scope='personal',
+        topic='working_agreements',scope_evidence_ids=['E1'],title='Test runner', body=PREFERENCE, subject='test runner', matter='test runner',
             basis='user_declaration', intent='activate', reason='Explicit persistent user preference',
         sources=[dict(evidence_id='E1')])])
     parent = Model(replies=[AIMessage(content='', tool_calls=[dict(name='memory',
-        args=dict(action='refresh_overview'), id='installed-refresh')]),
+        args={'request': dict(action='refresh_overview')}, id='installed-refresh')]),
         AIMessage(content='Request accepted'), AIMessage(content='Preference recalled')])
-    worker = Model(replies=[AIMessage(content=json.dumps(generated),
-        usage_metadata=dict(input_tokens=31, output_tokens=13, total_tokens=44))])
+    organization_read=dict(result=dict(step='read',requests=[dict(action='list_pages',topic='working_agreements')]))
+    organization_finish=dict(result=dict(step='finish',decisions=[dict(relation='add',proposal_ids=['P1'],destination='N1')],
+        page_changes=[dict(ref='N1',topic='working_agreements',title='Test runner',description='')]))
+    worker = Model(replies=[AIMessage(content=json.dumps(value),
+        usage_metadata=dict(input_tokens=31,output_tokens=13,total_tokens=44))
+        for value in (generated,organization_read,organization_finish)])
 
     @asynccontextmanager
     async def opened():
         with patch.object(application, 'load_model_catalog',
                 lambda _: ModelCatalog('root', {'root': parent, 'memory': worker})):
             async with open_smoke_host('unused', workspace=workspace, data_dir=directory / 'data', database_path=database,
-                    tools=[create_memory_tool()], system_prompt='', response_format=None, settings=settings,
+                    tools=[create_memory_tool(),create_history_tool()], system_prompt='', response_format=None, settings=settings,
                     workspace_binding={'workspace_id': location.workspace_id, 'root_path': workspace}) as app:
                 yield app
 
@@ -91,21 +96,28 @@ async def memory_scenario(root, Model):
         assert listing['active_count'] == 0 and listing['items'][0]['task_id'] == task_id
         saved = app.sessions._persistence.storage.memory.overview(sid)
         assert saved['overview_status'] == 'generated' and saved['overview'] == generated['overview']
-        request = MemoryInput(action='list', scope='workspace').model_dump(mode='json')
-        memories = app.memory._access.query(sid, app.sessions._persistence.storage.sessions.get(sid)['project_id'], request)['items']
-        assert len(memories) == 1 and memories[0]['kind'] == 'user' and memories[0]['body'] == PREFERENCE
+        access=app.memory._access
+        identity=app.sessions._persistence.storage.sessions.get(sid)['project_id']
+        listing=access.query_wiki(sid,identity,dict(action='list',scope='personal'))
+        assert len(listing['items'])==1
+        detail=access.query_wiki(sid,identity,dict(action='read',scope='personal',memory_id=listing['items'][0]['memory_id']))
+        memories=json.loads(detail['content'][8:-4])['entries']
+        assert len(memories)==1 and memories[0]['scope']=='personal' and memories[0]['body']==PREFERENCE
         usage = await app.observability.usage(sid, model_limit=20)
         memory_usage, = [row for row in usage['activities'] if row['id'] == 'memory']
-        assert memory_usage['recorded_calls'] == 1
-        assert memory_usage['metrics']['input_tokens'] == dict(known_sum='31', reported_calls=1, unknown_calls=0)
+        assert memory_usage['recorded_calls'] == 3
+        assert memory_usage['metrics']['input_tokens'] == dict(known_sum='93', reported_calls=3, unknown_calls=0)
         next_sid = await app.sessions.create_workspace('root', workspace)
-        await app.runs.start(next_sid, [('user', 'continue')])
+        parent.replies.insert(0,AIMessage(content='',tool_calls=[dict(name='memory',id='installed-read',args={'request':dict(action='read_page',scope='personal',page_id=memories[0]['page_id'])})]))
+        recalled=await app.runs.start(next_sid,[('user','Read the saved test runner preference')])
+        recalled_tool=next(m for m in recalled['messages'] if isinstance(m,ToolMessage) and m.tool_call_id=='installed-read')
+        assert recalled_tool.status=='success' and PREFERENCE in recalled_tool.content
         system, = [message.content for message in parent.seen[-1] if isinstance(message, SystemMessage)]
-        assert PREFERENCE in system and 'Saved memory index' in system
+        assert PREFERENCE not in system and 'Saved memory Wiki navigation' in system
         assert 'Other session directory' in system and sid in system and generated['overview']['goal'] in system
         root_ids = sorted({event.run_id for event in events})
         assert task_id not in root_ids and len(root_ids) == 2 and origin in root_ids
-        assert len(parent.seen) == 3 and len(worker.seen) == 1
+        assert len(parent.seen) == 4 and len(worker.seen) == 3
         assert not parent.replies and not worker.replies
         root_calls, worker_calls = len(parent.seen), len(worker.seen)
         memory_tokens = int(memory_usage['metrics']['input_tokens']['known_sum'])
@@ -120,7 +132,7 @@ async def memory_scenario(root, Model):
         diagnostics = await app.observability.events(sid, task_id)
         assert diagnostics['summary']['mode'] == 'memory' and diagnostics['summary']['origin_run_id'] == origin
         kinds = [event['event_type'] for event in diagnostics['events']]
-        assert kinds.count('model_call_started') == kinds.count('model_call_finished') == 1
+        assert kinds.count('model_call_started') == kinds.count('model_call_finished') == 3
         assert not parent.seen and not worker.seen and not app.sessions._sessions.memory_jobs._entries
     report = {key: 'passed' for key in ('status', 'overview', 'memory_saved', 'task_queries',
         'first_turn_index', 'independent_usage', 'history_reopen')}

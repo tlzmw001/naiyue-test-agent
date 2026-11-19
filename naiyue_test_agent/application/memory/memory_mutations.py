@@ -15,7 +15,8 @@ def _public(row):
     return result
 
 
-def commit(writer, archive, workspace_id, caller, request, settings, now):
+def commit(writer, archive, workspace_id, caller, request, settings, now, *, confirmation_scope=None):
+    if confirmation_scope not in (None,'whole','partial','unknown'):raise MemoryReadError('memory_partial_confirmation')
     action, scope = request['action'],request['scope']
     old = None
     if action != 'record':
@@ -33,10 +34,19 @@ def commit(writer, archive, workspace_id, caller, request, settings, now):
         if writer.suppressed(evidence.identity(source)):
             raise MemoryReadError('memory_source_suppressed')
     p=request['proposal'];evidence.sensitive(p)
-    if old and p['kind']!=old['kind']:raise MemoryReadError('memory_kind_changed')
+    kind_changed=old is not None and p['kind']!=old['kind']
+    if kind_changed and confirmation_scope!='whole':
+        raise MemoryReadError('memory_kind_change_requires_comparison')
     previous = writer.sources(old['memory_id'],old['version']) if old else []
-    known={evidence.identity(s) for s in previous}
-    fresh=[s for s in sources if evidence.identity(s) not in known and (old is None or s['occurred_at']>old['evidence_at'])]
+    fresh=[s for s in sources if old is None or (s['occurred_at']>old['evidence_at']
+        and not writer.has_message(old['memory_id'],s))]
+    if kind_changed and (p['basis']!='user_declaration' or not any(s['user_origin'] for s in fresh)):
+        raise MemoryReadError('memory_new_evidence_required')
+    if confirmation_scope=='whole':
+        fresh=[s for s in fresh if (p['basis']=='user_declaration' and s['user_origin']
+            or p['basis']=='tool_observation' and p['target'] and s['tool_success'])]
+    if old and confirmation_scope=='whole' and p['body']!=old['body'] and not fresh:
+        raise MemoryReadError('memory_new_evidence_required')
     at=max(s['occurred_at'] for s in fresh) if fresh else old['evidence_at'] if old else max(s['occurred_at'] for s in sources)
     gaps=list(p['gaps'])
     if p['intent']=='activate':
@@ -71,11 +81,23 @@ def commit(writer, archive, workspace_id, caller, request, settings, now):
         created_at=old['created_at'] if old else now,updated_at=now,evidence_at=at,
         last_confirmed_at=at if status=='active' else old['last_confirmed_at'] if old else None,
         ttl_days=ttl,expires_at=expiry,deadline_at=deadline,gaps_json=json.dumps(list(dict.fromkeys(gaps)),ensure_ascii=False),reason=p['reason'])
-    merged={evidence.identity(s):s for s in [*previous,*sources]}
+    merged={evidence.span_identity(s):s for s in [*previous,*sources]}
+    if old and confirmation_scope in ('partial','unknown'):
+        if any(p[k]!=old[k] for k in ('body','kind','subject','machine','module','target')):
+            raise MemoryReadError('memory_partial_confirmation')
+        if len(merged)>8:raise MemoryReadError('memory_source_limit')
+        row=dict(old,version=old['version']+1,updated_at=now,reason=p['reason'])
+    current={evidence.span_identity(s):s for s in sources}
+    if len(current)>8:raise MemoryReadError('memory_source_limit')
+    if confirmation_scope in ('partial','unknown'):
+        retained=list(merged.values())
+    else:
+        retained=list(current.values())+sorted((s for key,s in merged.items() if key not in current),
+            key=lambda s:s['occurred_at'],reverse=True)[:8-len(current)]
     # Evidence history is bounded per version; old versions retain their original references until forgotten.
     check_metadata(row,settings)
-    writer.save(row,sorted(merged.values(),key=lambda s:s['occurred_at'],reverse=True)[:8])
-    return dict(status='saved' if status=='active' else 'still_candidate',item=_public(row))
+    writer.save(row,retained)
+    return dict(status='saved' if row['status']=='active' else 'still_candidate',item=_public(row))
 
 
 def _retire(writer,old,sources,action,reason,now):
@@ -89,5 +111,5 @@ def _retire(writer,old,sources,action,reason,now):
             machine=None,module=None,target=None,subject=None)
         writer.forget(row,hashes,now)
     else:
-        writer.save(row,list({evidence.identity(s):s for s in [*previous,*sources]}.values())[-8:])
+        writer.save(row,list({evidence.span_identity(s):s for s in [*previous,*sources]}.values())[-8:])
     return dict(status='forgotten' if action=='forget' else 'saved',item=_public(row))

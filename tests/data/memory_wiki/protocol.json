@@ -1,0 +1,59 @@
+{
+  "protocol": "wiki_v1",
+  "splits": [
+    "calibration",
+    "validation",
+    "holdout"
+  ],
+  "cases_per_split": 8,
+  "required_coverage": [
+    "W01",
+    "W02",
+    "W03",
+    "W04",
+    "W05",
+    "W06",
+    "W07",
+    "W08",
+    "W09",
+    "W10",
+    "W11",
+    "W12",
+    "W13",
+    "W14",
+    "W15",
+    "W16",
+    "W17",
+    "W18",
+    "W19",
+    "W20",
+    "W21",
+    "W22",
+    "W23",
+    "W24"
+  ],
+  "fixtures_sha256": "0ba3c083ce90212a6b4af34c3f4e1dc9f4e9ece8a05da6fdab1542580308292d",
+  "semantic_dimensions": [
+    "long_term_value",
+    "scope",
+    "topic",
+    "conditions",
+    "merge_fidelity",
+    "navigation",
+    "answer"
+  ],
+  "deterministic_dimensions": [
+    "permissions",
+    "source_binding",
+    "versions",
+    "capacity",
+    "pagination",
+    "expiry",
+    "no_retry",
+    "legacy_isolation"
+  ],
+  "scoring": "Semantic decisions require attributed review; no exact body matching.",
+  "timing": "Source wall clock and monotonic elapsed time are distinct; no production retries.",
+  "runtime_status": "connected_requires_runtime_evaluation",
+  "supersedes_fixtures_sha256": "7fb1a90529b5c4a996f47e21aac5162eb140d63571f1d363256e21557d0ddc58"
+}

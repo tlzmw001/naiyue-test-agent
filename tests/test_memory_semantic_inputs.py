@@ -1,4 +1,4 @@
-"""Candidate context is bounded and source-local without changing lexical search."""
+"""A input stays source-local while B discovers candidates through scoped Wiki reads."""
 
 import asyncio
 import json
@@ -9,15 +9,39 @@ import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages.utils import count_tokens_approximately
 
-from naiyue_test_agent.storage.memory_sql import memory_overview_store
 from naiyue_test_agent.application.memory.memory_access import MemoryAccess
 from naiyue_test_agent.application.memory.memory_jobs import MemoryJob, MemoryJobs
-from naiyue_test_agent.application.memory.memory_job_runner import _prepare, _related
+from naiyue_test_agent.application.memory.memory_job_runner import _prepare
 from naiyue_test_agent.storage.project_store import ProjectStore
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.model_access import ModelCatalog
-from naiyue_test_agent.tools.memory import MemoryInput
-from scripts.probe_memory_semantics import load_cases, seed_candidate, seed_sources
+from scripts.probe_memory_semantics import load_cases, seed_sources
+from naiyue_test_agent.application.memory.memory_organization_reads import Ledger
+from naiyue_test_agent.contracts.memory import MemoryReadError
+from naiyue_test_agent.tools.memory_wiki_actions import compile_wiki_request
+from test_memory_wiki_pagination import decode_content
+
+
+TOPIC = 'working_agreements'
+
+
+def seed_candidate(memory, sid, cases, *, at):
+    text = cases[4]['sources'][0]['text']
+    message_id = 'probe-e11-prior-assistant'
+    seed_sources(memory.storage, sid, [dict(id=message_id, role='user', text=text)], at=at)
+    parent = memory.storage.sessions.get(sid)
+    ref = dict(session_id=sid, thread_id=parent['thread_id'], message_id=message_id,
+               revision=1, conversation_revision=parent['conversation_revision'], quote=text, offset=0)
+    proposal = dict(title='自动化用例编排', body=text, subject='自动化用例编排', basis='inference',
+                    intent='candidate', gaps=['缺持久选择'], reason='用户来源支持待确认推断')
+    scope = dict(scope='workspace', sources=[ref])
+    page = dict(topic=TOPIC, title=proposal['title'], description='')
+    project = parent['project_id']
+    saved = memory.query_wiki(sid, project, dict(action='record', **scope, proposal=proposal,
+        destination={'new_page': page}), now=at+1)['item']
+    return memory.query_wiki(sid, project, dict(action='update', **scope,
+        memory_id=saved['memory_id'], expected_version=saved['version'], change={'mode': 'supplement'}),
+        now=at+2)['item']
 
 
 @pytest.fixture
@@ -33,6 +57,7 @@ def inputs(tmp_path):
         coordinator = MemoryJobs(memory, ModelCatalog('offline', {'offline': model}))
         cases, _ = load_cases()
         at = time.time() - 3600
+        storage.memory.prepare_wiki(now=at)
         candidate = seed_candidate(memory, 'probe', cases, at=at)
         coordinator.prepare('probe', tmp_path, [], model)
         facts = seed_sources(storage, 'probe', cases[10]['sources'], at=at + 10)
@@ -48,222 +73,160 @@ def inputs(tmp_path):
 
 
 def prepared(inputs):
+    service,job,*_=inputs
+    batch,messages,_,_,_=asyncio.run(_prepare(service,job,job.upper))
+    assert job.model.i==0
+    return batch,messages,json.loads(messages[-1].content)
+
+
+def directory(inputs, ledger, allowed, **extra):
     service, job, *_ = inputs
-    batch, messages, _, _, frozen, _ = asyncio.run(_prepare(service, job, job.upper))
-    assert all('version' in row for row in frozen)
-    assert job.model.i == 0  # This path never invokes the model.
-    return batch, messages, json.loads(messages[-1].content)
+    return ledger.read(service.memory, 'probe', job.project_id,
+                       dict(action='list_pages', topic=ledger.topic, **extra), allowed)
 
 
-def test_e11_current_production_input_contains_old_id_complete_gap_and_keeps_version_server_side(inputs):
-    service, job, candidate, *_ = inputs
-    batch, messages, payload = prepared(inputs)
-    query = ' '.join(s['text'] for s in batch['units'] if s['role'] == 'human')
-    lexical = MemoryInput(action='search', status='candidate', query=query).model_dump(mode='json')
-    assert service.memory.query('probe', job.project_id, lexical)['items'] == []
-    row, = payload['related_memories']
-    assert row['memory_id'] == candidate['actual_memory_id'] and 'version' not in row
-    frozen = asyncio.run(_prepare(service, job, job.upper))[4]
-    assert frozen[0]['version'] == 2
-    assert row['status'] == 'candidate' and row['gaps'] == ['缺持久选择']
-    assert row['complete'] and row['body'] == inputs[3][4]['sources'][0]['text']
-    assert row['basis'] == 'inference' and row['reason']
-    assert 'sources' not in row and 'expected' not in payload
+def read_page(inputs, ledger, page_id, allowed, **extra):
+    service, job, *_ = inputs
+    return ledger.read(service.memory, 'probe', job.project_id,
+                       dict(action='read_page', page_id=page_id, **extra), allowed)
+
+
+def lookup(inputs, *, allowed=lambda _: True):
+    ledger = Ledger('workspace', TOPIC)
+    result = directory(inputs, ledger, allowed)
+    assert result['complete']
+    for page in decode_content(result)['pages']:
+        result = read_page(inputs, ledger, page['page_id'], allowed)
+        while result['has_more']:
+            result = read_page(inputs, ledger, page['page_id'], allowed, cursor=result['next_cursor'])
+        assert ledger.require_page(page['page_id'])
+    return ledger
+
+
+def test_extraction_does_not_receive_old_ids_or_gaps(inputs):
+    service, _, candidate, *_ = inputs
+    _, messages, payload = prepared(inputs)
+    assert 'related_memories' not in payload
+    assert candidate['memory_id'] not in messages[-1].content
+    assert '缺持久选择' not in messages[-1].content
     assert count_tokens_approximately(messages) <= service.settings.max_input_tokens
+    row, = lookup(inputs).old.values()
+    assert row['version'] == candidate['version'] == 2
+    assert '缺持久选择' in row['gaps'] and row['body'] == inputs[3][4]['sources'][0]['text']
 
 
-def test_latest_page_does_not_add_another_session_candidate(inputs):
+def test_directory_finds_accessible_other_session_candidates(inputs):
     service, job, own, cases, at = inputs
     service.storage.sessions.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
         active_tool_names=['memory'], permission_mode='Default'))
-    foreign = seed_candidate(service.memory, 'other', cases, at=at + 20)
-    _, _, payload = prepared(inputs)
-    ids = {row['memory_id'] for row in payload['related_memories']}
-    assert own['actual_memory_id'] in ids and foreign['actual_memory_id'] not in ids
+    foreign = seed_candidate(service.memory, 'other', cases, at=at+20)
+    assert {r['memory_id'] for r in lookup(inputs).old.values()} == {own['memory_id'], foreign['memory_id']}
 
 
-@pytest.mark.parametrize('failure', ['changed', 'other_thread', 'truncated', 'missing'])
-def test_latest_candidate_requires_all_available_current_thread_sources(inputs, failure):
+@pytest.mark.parametrize('failure', ['changed', 'missing', 'other_thread'])
+def test_old_source_unavailable_is_explicit_but_does_not_hide_old_body(inputs, failure):
     service, job, own, _, at = inputs
-    storage = service.storage
-    old_id = 'probe-e11-prior-assistant'
     if failure == 'changed':
-        seed_sources(storage, 'probe', [dict(id=old_id, role='assistant', text='此旧来源已经更正。')], at=at + 20)
-    elif failure == 'other_thread':
-        from naiyue_test_agent.application.conversation.chat_history import ChatUpdate
-        saved = storage.database.read_rows('SELECT * FROM naiyue_chat_messages WHERE message_id=?', (old_id,))[0]
-        message = {key: saved[key] for key in ('message_id', 'body_json', 'body_hash', 'kind',
-            'source_checkpoint_id', 'message_type', 'parent_message_id', 'reply_id', 'occurred_at')}
-        storage.conversation.save_chat_updates('probe', [ChatUpdate('other-thread', '', 'root', 0, 'other', (message,))])
-        with storage.database.connection:
-            storage.database.connection.execute('UPDATE naiyue_memory_sources SET thread_id=? WHERE memory_id=?',
-                ('other-thread', own['actual_memory_id']))
-    elif failure == 'truncated':
-        service.settings = service.memory.settings = MemorySettings(auto_enabled=False, source_limit=1)
-        text = '补充旧候选的有限描述，仍待确认。'
-        seed_sources(storage, 'probe', [dict(id='extra-source', role='assistant', text=text)], at=at + 20)
-        proposal = dict(kind='procedure', title='自动化用例编排', body=inputs[3][4]['sources'][0]['text'],
-            subject='自动化用例编排', basis='inference', intent='candidate', gaps=['缺持久选择'], reason='仍待确认')
-        request = MemoryInput(action='update', scope='workspace', memory_id=own['actual_memory_id'], expected_version=2,
-            proposal=proposal, sources=[dict(session_id='probe', thread_id='probe', message_id='extra-source',
-                revision=1, conversation_revision=0, quote=text, offset=0)]).model_dump(mode='json')
-        service.memory.query('probe', job.project_id, request)
+        seed_sources(service.storage, 'probe',
+            [dict(id='probe-e11-prior-assistant', role='user', text='更正旧来源')], at=at+20)
     else:
-        with storage.database.connection:
-            storage.database.connection.execute('DELETE FROM naiyue_memory_sources WHERE memory_id=?', (own['actual_memory_id'],))
-    latest = MemoryInput(action='list', status='candidate', limit=8).model_dump(mode='json')
-    listed, = service.memory.query('probe', job.project_id, latest)['items']
-    if failure == 'other_thread':
-        assert all(source['available'] for source in listed['sources'])
-        assert all(source['thread_id'] == 'other-thread' for source in listed['sources'])
-    elif failure == 'truncated':
-        assert listed['sources_truncated']
-    elif failure == 'changed':
-        assert not all(source['available'] for source in listed['sources'])
-    else:
-        assert listed['sources'] == []
-    assert prepared(inputs)[2]['related_memories'] == []
+        with service.storage.database.transaction(write=True) as connection:
+            if failure == 'missing':
+                connection.execute('DELETE FROM naiyue_chat_messages WHERE message_id=?', ('probe-e11-prior-assistant',))
+            else:
+                connection.execute('UPDATE naiyue_memory_sources SET thread_id=? WHERE memory_id=?',
+                                   ('missing-thread', own['memory_id']))
+    ledger = lookup(inputs)
+    row, = ledger.old.values()
+    assert row['body'] == inputs[3][4]['sources'][0]['text']
+    result = ledger.read(service.memory, 'probe', job.project_id,
+        dict(action='read', memory_id=own['memory_id'], status='candidate'), lambda _: True)
+    entry, = decode_content(result)['entries']
+    assert entry['body'] == row['body'] and entry['sources']
+    assert all(not s['available'] and 'quote' not in s for s in entry['sources'])
 
 
-@pytest.mark.parametrize('denied', ['list', 'read'])
-def test_latest_list_and_full_read_each_obey_complete_permission_request(inputs, denied, monkeypatch):
-    service, job, *_ = inputs
-    checks, calls = [], []
+@pytest.mark.parametrize('denied', ['list_pages', 'read_page'])
+def test_each_normalized_permission_denial_is_failure_not_empty_result(inputs, denied):
+    checks = []
+
     def allowed(request):
         checks.append(request)
+        assert compile_wiki_request({'request': request}) == request
         return request['action'] != denied
-    service.allowed = allowed
-    original = service.memory.query
-    def query(sid, root, request):
-        calls.append(request)
-        return original(sid, root, request)
-    monkeypatch.setattr(service.memory, 'query', query)
-    assert prepared(inputs)[2]['related_memories'] == []
-    assert any(request['action'] == denied for request in checks)
-    assert not any(request['action'] == denied for request in calls)
-    for request in checks:
-        assert MemoryInput(**request).model_dump(mode='json') == request
+
+    with pytest.raises(MemoryReadError, match='memory_permission_denied'):
+        lookup(inputs, allowed=allowed)
+    assert checks[-1]['action'] == denied
 
 
-def test_search_hit_is_deduplicated_against_latest_page_and_keeps_one_read_per_offset(inputs, monkeypatch):
-    service, job, candidate, *_ = inputs
-    service.settings = service.memory.settings = MemorySettings(auto_enabled=False, read_chunk_chars=8)
-    calls, original = [], service.memory.query
-    def query(sid, root, request):
-        calls.append(request)
-        return original(sid, root, request)
-    monkeypatch.setattr(service.memory, 'query', query)
-    rows = asyncio.run(_related(service, job, dict(units=[dict(role='human', text='自动化用例编排',origin='new')])))
-    assert [row['memory_id'] for row in rows] == [candidate['actual_memory_id']]
-    reads = [request for request in calls if request['action'] == 'read']
-    assert len(reads) > 1 and len(reads) == len({r['offset'] for r in reads})
-    assert all(request['version'] == 2 for request in reads)
+def test_repeated_page_read_fails_without_losing_complete_entry(inputs):
+    service, _, own, *_ = inputs
+    service.memory.settings = MemorySettings(auto_enabled=False, read_chunk_chars=8, source_limit=1)
+    ledger = lookup(inputs)
+    row, = ledger.old.values()
+    assert row['version'] == 2 and row['body'] == inputs[3][4]['sources'][0]['text']
+    assert len(row['body']) > 8
+    with pytest.raises(MemoryReadError, match='memory_read_no_progress'):
+        read_page(inputs, ledger, own['page_id'], lambda _: True)
+    assert len(ledger.old) == 1
 
 
-def test_candidate_fallback_uses_only_one_bounded_page_and_never_exceeds_count(inputs, monkeypatch):
-    service, job, own, *_ = inputs
-    service.settings = service.memory.settings = MemorySettings(auto_enabled=False, related_limit=1)
-    calls, original = [], service.memory.query
-    def query(sid, root, request):
-        calls.append(request)
-        return original(sid, root, request)
-    monkeypatch.setattr(service.memory, 'query', query)
-    rows = prepared(inputs)[2]['related_memories']
-    assert [row['memory_id'] for row in rows] == [own['actual_memory_id']]
-    lists = [request for request in calls if request['action'] == 'list']
-    assert len(lists) == 1 and lists[0]['status'] == 'candidate' and lists[0]['limit'] == 1
-    assert lists[0]['cursor'] is None
+def test_stale_snapshot_is_not_retried(inputs, monkeypatch):
+    service, _, own, *_ = inputs
+    ledger = Ledger('workspace', TOPIC)
+    directory(inputs, ledger, lambda _: True)
+    original = service.storage.memory.wiki_view
+    calls = []
+
+    def changed(*args, **kwargs):
+        calls.append(args[2]['action'])
+        view = original(*args, **kwargs)
+        return dict(view, catalog_revision=view['catalog_revision'] + 1)
+
+    monkeypatch.setattr(service.storage.memory, 'wiki_view', changed)
+    with pytest.raises(MemoryReadError, match='memory_cursor_stale'):
+        read_page(inputs, ledger, own['page_id'], lambda _: True)
+    assert calls == ['list_topics'] and not ledger.old
 
 
-def test_stale_full_read_is_not_retried_at_a_new_version(inputs, monkeypatch):
-    service, job, own, *_ = inputs
-    original, changed = service.memory.query, []
-    def query(sid, root, request):
-        if request['action'] == 'read' and not changed:
-            changed.append(True)
-            with service.storage.database.connection:
-                service.storage.database.connection.execute('UPDATE naiyue_memories SET version=version+1 WHERE memory_id=?',
-                    (own['actual_memory_id'],))
-        return original(sid, root, request)
-    monkeypatch.setattr(service.memory, 'query', query)
-    assert prepared(inputs)[2]['related_memories'] == [] and changed
+def test_unrelated_topic_does_not_fall_back_to_recent_candidate(inputs):
+    ledger = Ledger('workspace', 'stable_knowledge')
+    result = directory(inputs, ledger, lambda _: True)
+    assert decode_content(result)['pages'] == [] and result['complete']
+    with pytest.raises(MemoryReadError, match='memory_page_not_discovered'):
+        read_page(inputs, ledger, inputs[2]['page_id'], lambda _: True)
+    assert not ledger.old
 
 
-def test_input_budget_can_drop_optional_candidate_but_keeps_valid_primary_sources(inputs):
-    service, job, own, cases, at = inputs
-    service.settings = service.memory.settings = MemorySettings(auto_enabled=False, related_limit=0)
-    original_sources, messages, _ = prepared(inputs)
-    cap = count_tokens_approximately(messages) + 32
-    with service.storage.database.connection:
-        service.storage.database.connection.execute('UPDATE naiyue_memories SET body=? WHERE memory_id=?',
-            ('bounded optional context ' * 100, own['actual_memory_id']))
-    service.settings = service.memory.settings = MemorySettings(auto_enabled=False, related_limit=8, max_input_tokens=cap)
-    batch, messages, payload = prepared(inputs)
-    assert payload['related_memories'] == []
-    assert {s['message_id'] for s in batch['units']} == {s['message_id'] for s in original_sources['units']}
-    assert count_tokens_approximately(messages) <= cap
-
-
-def test_existing_cross_session_search_hit_is_not_filtered_by_latest_page_rules(inputs):
-    service, job, own, cases, at = inputs
-    service.storage.sessions.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
-        active_tool_names=['memory'], permission_mode='Default'))
-    foreign = seed_candidate(service.memory, 'other', cases, at=at + 20)
-    service.allowed = lambda request: request['action'] != 'list'
-    rows = asyncio.run(_related(service, job, dict(units=[dict(role='human', text='自动化用例编排',origin='new')])))
-    assert {row['memory_id'] for row in rows} == {own['actual_memory_id'], foreign['actual_memory_id']}
-
-
-def test_ineligible_latest_page_is_not_followed_to_find_an_older_local_candidate(inputs, monkeypatch):
+def test_partial_directory_cannot_authorize_new_destination(inputs):
+    from naiyue_test_agent.application.memory.memory_organization_commit import commit_group
     service, job, _, cases, at = inputs
-    service.settings = service.memory.settings = MemorySettings(auto_enabled=False, related_limit=1)
-    service.storage.sessions.create('other', dict(thread_id='other', model_id='offline', workspace_root=job.root,
-        active_tool_names=['memory'], permission_mode='Default'))
-    seed_candidate(service.memory, 'other', cases, at=at + 20)
-    calls, original = [], service.memory.query
-    def query(sid, root, request):
-        calls.append(request)
-        return original(sid, root, request)
-    monkeypatch.setattr(service.memory, 'query', query)
-    assert prepared(inputs)[2]['related_memories'] == []
-    lists = [request for request in calls if request['action'] == 'list']
-    assert len(lists) == 1 and lists[0]['limit'] == 1 and lists[0]['cursor'] is None
+    for i in range(8):
+        sid = f'other-{i}'
+        service.storage.sessions.create(sid, dict(thread_id=sid, model_id='offline', workspace_root=job.root,
+            active_tool_names=['memory'], permission_mode='Default'))
+        seed_candidate(service.memory, sid, cases, at=at+20+i)
+    service.memory.settings = MemorySettings(auto_enabled=False, wiki_read_tokens=900)
+    ledger = Ledger('workspace', TOPIC)
+    result = directory(inputs, ledger, lambda _: True)
+    assert result['has_more'] and TOPIC not in ledger.directories
+    before = service.storage.database.connection.total_changes
+    finish = dict(step='finish', decisions=[], page_changes=[
+        dict(ref='N1', topic=TOPIC, title='不完整扫描', description='')])
+    with pytest.raises(MemoryReadError, match='memory_read_incomplete'):
+        commit_group(service.memory, 'probe', job.project_id, [(ledger, {}, finish)], lambda _: True)
+    assert before == service.storage.database.connection.total_changes
 
 
-def test_newly_unavailable_source_is_rechecked_during_full_read(inputs, monkeypatch):
-    service, job, _, _, at = inputs
-    service.settings = service.memory.settings = MemorySettings(auto_enabled=False, read_chunk_chars=8)
-    calls, original = [], service.memory.query
-    def query(sid, root, request):
-        if request['action'] == 'read':
-            calls.append(request)
-            if len(calls) == 2:
-                seed_sources(service.storage, 'probe', [dict(id='probe-e11-prior-assistant',
-                    role='assistant', text='旧来源在读取期间已改写。')], at=at + 20)
-        return original(sid, root, request)
-    monkeypatch.setattr(service.memory, 'query', query)
-    assert prepared(inputs)[2]['related_memories'] == [] and len(calls) == 2
-
-
-def test_search_plus_latest_candidates_share_the_same_candidate_count_limit(inputs, monkeypatch):
-    service, job, own, cases, at = inputs
-    service.settings = service.memory.settings = MemorySettings(auto_enabled=False, related_limit=2)
-    quote = cases[4]['sources'][0]['text']
-    reference = dict(session_id='probe', thread_id='probe', message_id='probe-e11-prior-assistant',
-        revision=1, conversation_revision=0, quote=quote, offset=0)
-    additional = []
-    for index in range(2):
-        proposal = dict(kind='context', title=f'其他候选事项{index}', body='等待网络策略确认',
-            subject=f'候选网络事项{index}', basis='inference', intent='candidate', gaps=['待确认'], reason='有限测试前置')
-        request = MemoryInput(action='record', scope='workspace', proposal=proposal, sources=[reference]).model_dump(mode='json')
-        additional.append(service.memory.query('probe', job.project_id, request, now=at + 100 + index)['item']['memory_id'])
-    calls, original = [], service.memory.query
-    def query(sid, root, request):
-        calls.append(request)
-        return original(sid, root, request)
-    monkeypatch.setattr(service.memory, 'query', query)
-    rows = asyncio.run(_related(service, job, dict(units=[dict(role='human', text='自动化用例编排',origin='new')])))
-    assert len(rows) == 2
-    assert {row['memory_id'] for row in rows} == {own['actual_memory_id'], additional[-1]}
-    lists = [request for request in calls if request['action'] == 'list']
-    assert len(lists) == 1 and lists[0]['limit'] == 2 and lists[0]['cursor'] is None
+def test_extraction_budget_is_independent_of_old_memory_material(inputs):
+    service,job,own,*_=inputs
+    first,messages,_=prepared(inputs)
+    cap=count_tokens_approximately(messages)+32
+    with service.storage.database.connection:
+        service.storage.database.connection.execute('UPDATE naiyue_memories SET body=? WHERE memory_id=?',('optional old body '*100,own['memory_id']))
+    service.settings=service.memory.settings=MemorySettings(auto_enabled=False,max_input_tokens=cap)
+    batch,messages,payload=prepared(inputs)
+    assert 'related_memories' not in payload
+    assert [u['message_id'] for u in batch['units']]==[u['message_id'] for u in first['units']]
+    assert count_tokens_approximately(messages)<=cap

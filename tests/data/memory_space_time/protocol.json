@@ -1,0 +1,23 @@
+{
+  "format": 2,
+  "protocol_id": "memory-space-time-v1",
+  "report_schema_version": 2,
+  "suite_fixtures_sha256": "7eca5271d8f60e674a2e0628230f3e7a033166d395aaafbcda8e7e116cdfd9cf",
+  "rubric_sha256": "043840626b0ec097ce1ddaef15647fe9c14bb54229186da0bad06719b054de0d",
+  "max_logical_calls": 24,
+  "calls_per_case": 3,
+  "repeats": 1,
+  "entries": [
+    "background",
+    "foreground"
+  ],
+  "model_identity": "record_effective_configuration_at_runtime",
+  "thresholds": {
+    "scope_expanded": 0,
+    "unsupported_activation": 0,
+    "wrong_overwrite": 0,
+    "negation_reversed": 0,
+    "wrong_long_term": 0
+  },
+  "holdout_status": "authored_not_run_not_used_for_tuning"
+}

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 
 import httpx
 import httpx2
@@ -9,14 +10,17 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from http_observation_helpers import sdk_catalog, sdk_response
-from naiyue_test_agent.application.memory.memory_batches import parse_model_result
+from naiyue_test_agent.application.memory.memory_wiki_protocol import parse,WikiExtractionResult
+
+def parse_extraction(response,settings,*,output_mode):
+    return parse(response,output_mode,WikiExtractionResult)
 from naiyue_test_agent.contracts.memory import MemoryReadError
 from test_memory_batches import archive, save, result
 from test_memory_flat_contract import flat
 from test_memory_job_runner import fixture
 
 
-def tool_result(value, *, name='MemoryResult', **changes):
+def tool_result(value, *, name='WikiExtractionResult', **changes):
     args = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
     return AIMessage(content='', additional_kwargs={'tool_calls': [dict(id='return-1', type='function',
         function=dict(name=name, arguments=args))]}, response_metadata={'finish_reason': 'tool_calls'}, **changes)
@@ -24,7 +28,7 @@ def tool_result(value, *, name='MemoryResult', **changes):
 
 def test_function_result_is_a_return_value_and_preserves_per_item_validation():
     value = result(proposals=[flat(), {'invalid': True}])
-    assert parse_model_result(tool_result(value), type('Settings', (), dict(overview_chars=1200, max_proposals=8))(),
+    assert parse_extraction(tool_result(value), type('Settings', (), dict(overview_chars=1200, max_proposals=8))(),
         output_mode='function_calling') == value
 
 
@@ -37,12 +41,12 @@ def test_function_protocol_does_not_repair_or_execute_untrusted_calls(mutation):
     elif mutation == 'multiple':response.tool_calls.append(dict(name='bash', args={}, id='other', type='tool_call'))
     elif mutation == 'truncated':response.response_metadata['finish_reason'] = 'length'
     elif mutation == 'refusal':response.additional_kwargs['refusal'] = 'declined'
-    else:response.invalid_tool_calls.append(dict(name='MemoryResult', args='{', id='bad', error='invalid', type='invalid_tool_call'))
+    else:response.invalid_tool_calls.append(dict(name='WikiExtractionResult', args='{', id='bad', error='invalid', type='invalid_tool_call'))
     with pytest.raises(MemoryReadError):
-        parse_model_result(response, settings(), output_mode='function_calling')
+        parse_extraction(response, settings(), output_mode='function_calling')
 
 
-def wire_response(request, kind, mode, value):
+def wire_response(request, kind, mode, value, name='WikiExtractionResult'):
     response = sdk_response(request, kind)
     body = response.json()
     text = json.dumps(value, ensure_ascii=False)
@@ -50,34 +54,38 @@ def wire_response(request, kind, mode, value):
         message = dict(role='assistant', content=text)
         if mode == 'function_calling':
             message.update(content=None, tool_calls=[dict(id='return-1', type='function',
-                function=dict(name='MemoryResult', arguments=text))])
+                function=dict(name=name, arguments=text))])
         body['choices'][0].update(message=message, finish_reason='tool_calls' if mode == 'function_calling' else 'stop')
     elif kind == 'responses':
-        body['output'] = ([dict(type='function_call', id='fc_return', call_id='return-1', name='MemoryResult',
+        body['output'] = ([dict(type='function_call', id='fc_return', call_id='return-1', name=name,
             arguments=text, status='completed')] if mode == 'function_calling' else
             [dict(type='message', id='msg_return', role='assistant', status='completed',
                 content=[dict(type='output_text', text=text, annotations=[])])])
     elif kind == 'anthropic':
-        body['content'] = ([dict(type='tool_use', id='return-1', name='MemoryResult', input=value)]
+        body['content'] = ([dict(type='tool_use', id='return-1', name=name, input=value)]
             if mode == 'function_calling' else [dict(type='text', text=text)])
         body['stop_reason'] = 'tool_use' if mode == 'function_calling' else 'end_turn'
     else:
         body['message']['content'] = text if mode == 'json_schema' else ''
         if mode == 'function_calling':
-            body['message']['tool_calls'] = [dict(function=dict(name='MemoryResult', arguments=value))]
+            body['message']['tool_calls'] = [dict(function=dict(name=name, arguments=value))]
     return (httpx2 if kind == 'anthropic' else httpx).Response(200, json=body)
 
 
 @pytest.mark.parametrize('kind', ['openai', 'responses', 'anthropic', 'ollama'])
 @pytest.mark.parametrize('mode', ['json_schema', 'function_calling'])
-def test_real_adapter_worker_keeps_partial_success_usage_and_single_request(archive, tmp_path, kind, mode):
+def test_real_adapter_worker_keeps_partial_success_usage_and_one_request_per_step(archive, tmp_path, kind, mode):
     from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
-        save(archive, [HumanMessage(id='human', content='使用.venv', additional_kwargs={'naiyue_human_input': True})])
+        archive.memory.prepare_wiki(now=time.time())
+        save(archive, [HumanMessage(id='human', content='使用.venv', additional_kwargs={'naiyue_human_input': True})],occurred_at=time.time()-1)
         sent = []
         def serve(request):
             sent.append(json.loads(request.content))
-            return wire_response(request, kind, mode, result(proposals=[flat(), {'invalid': True}]))
+            from memory_wiki_helpers import proposed,scripted_replies
+            replies=scripted_replies([AIMessage(content=json.dumps(result(proposals=[proposed(),{'invalid':True}])) )])
+            value=json.loads(replies[len(sent)-1].content)
+            return wire_response(request,kind,mode,value,name='WikiExtractionResult' if len(sent)==1 else 'OrganizationResult')
         async with sdk_catalog(kind, serve=serve) as catalog:
             model = catalog.get('A')
             model.profile = {**(model.profile or {}), 'memory_output': mode}
@@ -85,10 +93,10 @@ def test_real_adapter_worker_keeps_partial_success_usage_and_single_request(arch
             try:
                 await drive(service, job)
                 assert job.result_status == 'partial' and job.failed == job.saved == job.overview_saved == 1
-                assert len(sent) == 1
+                assert len(sent) == 3
                 starts = [e for e in events if e.event_type == 'model_call_started']
                 ends = [e for e in events if e.event_type == 'model_call_finished']
-                assert len(starts) == len(ends) == 1 and starts[0].data.invocation_id == ends[0].data.invocation_id
+                assert len(starts) == len(ends) == 3 and all(a.data.invocation_id==b.data.invocation_id for a,b in zip(starts,ends))
                 assert starts[0].data.purpose == 'memory'
                 body = sent[0]
                 if mode == 'function_calling':
@@ -107,6 +115,7 @@ def test_real_adapter_worker_keeps_partial_success_usage_and_single_request(arch
 def test_schema_budget_fails_before_request_and_does_not_switch_protocol(archive, tmp_path):
     from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
+        archive.memory.prepare_wiki(now=time.time())
         save(archive, [HumanMessage(id='human', content='使用.venv')])
         calls = []
         async with sdk_catalog(serve=lambda request: calls.append(request)) as catalog:

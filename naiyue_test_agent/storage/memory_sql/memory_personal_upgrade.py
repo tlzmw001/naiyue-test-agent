@@ -9,10 +9,10 @@ from naiyue_test_agent.storage.files import open_store_file, sync_store_director
 from naiyue_test_agent.storage.memory_sql import memory_schema
 
 
-def backup_format1(path):
+def backup_format(path, *, version):
     # Caller holds BEGIN IMMEDIATE: another writer cannot change this DELETE-mode DB.
     # Backup must read through a separate connection, never the writer transaction itself.
-    target=path.with_name(path.name+'.format1-'+uuid4().hex+'.sqlite')
+    target=path.with_name(path.name+f'.format{version}-'+uuid4().hex+'.sqlite')
     fd=open_store_file(target,exclusive_create=True)
     try:
         with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as source:
@@ -20,7 +20,10 @@ def backup_format1(path):
                 source.backup(destination)
                 if destination.execute('PRAGMA integrity_check').fetchone()[0]!='ok':
                     raise ValueError('memory_backup_invalid')
-                memory_schema.check(destination,version=1)
+                memory_schema.check(destination,version=version)
+                from naiyue_test_agent.storage.personal_database import APPLICATION_ID
+                if destination.execute('PRAGMA user_version').fetchone()[0]!=version or destination.execute('PRAGMA application_id').fetchone()[0]!=APPLICATION_ID:
+                    raise ValueError('memory_backup_invalid')
                 destination.commit()
         os.fsync(fd)
         sync_store_directory(target.parent)

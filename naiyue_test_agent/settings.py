@@ -113,7 +113,12 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
     if set(raw) - {'session_title_max_chars', 'max_active_runs', 'web_event_cache_bytes', 'default_active_tools', 'tools', 'permissions', 'process', 'tool_output', 'shell_tasks', 'storage', 'projects', 'progress', 'subagents', 'usage_persistence', 'diagnostics', 'checkpoint_retention', 'network', 'model_network', 'mcp', 'tool_retry', 'memory', 'image_inputs', 'cloud_tasks'}:
         raise ValueError('Unknown runtime settings section')
     try:
-        memory = MemorySettings.model_validate(raw.get('memory', {}))
+        memory_raw = raw.get('memory', {})
+        if isinstance(memory_raw, dict):memory_raw = dict(memory_raw)
+        from .memory_settings import REMOVED_MEMORY_FIELDS
+        obsolete=sorted(REMOVED_MEMORY_FIELDS.intersection(memory_raw)) if isinstance(memory_raw,dict) else []
+        if obsolete:raise ValueError('memory_config_migration_required: remove '+','.join(obsolete)+'; use default_ttl_days and Wiki navigation/read budgets')
+        memory = MemorySettings.model_validate(memory_raw)
     except ValidationError:
         logger.warning('memory_settings_invalid action=disabled')
         memory = MemorySettings(enabled=False)

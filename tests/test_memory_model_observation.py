@@ -156,3 +156,29 @@ def test_memory_origin_is_persisted_without_requiring_it_on_older_summaries(tmp_
         summary = store.diagnostics.read_diagnostic_events('s', 'memory-run')['summary']
         assert summary['mode'] == 'memory' and 'origin_run_id' not in summary
     assert RunStartedData('message').origin_run_id is None
+
+
+@async_test
+async def test_memory_stage_log_correlates_real_invocation_without_prompt(caplog):
+    import logging
+    events=[];invocation=uuid4()
+    with caplog.at_level(logging.INFO),bind_run_scope(typed_scope(publisher=RunEventPublisher('s','memory-run',(events.append,)))):
+        handler=ModelUsageCallback()
+        await handler.on_chat_model_start({},[['PRIVATE_PROMPT']],run_id=invocation,
+            metadata=metadata()|dict(memory_stage='compare',memory_task_id='a'*32,memory_batch=1),tags=['naiyue_memory'])
+        await handler.on_llm_end(output(None),run_id=invocation)
+    assert f'invocation_id={invocation}' in caplog.text and 'memory_stage=compare' in caplog.text
+    assert 'PRIVATE_PROMPT' not in caplog.text
+
+
+@async_test
+async def test_wiki_organization_log_correlates_real_invocation_without_prompt(caplog):
+    import logging
+    events=[];invocation=uuid4()
+    with caplog.at_level(logging.INFO),bind_run_scope(typed_scope(publisher=RunEventPublisher('s','memory-run',(events.append,)))):
+        handler=ModelUsageCallback()
+        await handler.on_chat_model_start({},[['PRIVATE_PROMPT']],run_id=invocation,
+            metadata=metadata()|dict(memory_stage='organize',memory_task_id='a'*32,memory_batch=1),tags=['naiyue_memory'])
+        await handler.on_llm_end(output(None),run_id=invocation)
+    assert f'invocation_id={invocation}' in caplog.text and 'memory_stage=organize' in caplog.text
+    assert 'PRIVATE_PROMPT' not in caplog.text

@@ -77,6 +77,15 @@ max_delay_seconds = 10 # 单次退避等待的上界秒数，允许0；不是整
 replay_safe_tools = [] # 仅列业务已确认只读/幂等/有可靠去重的完整MCP工具名；不接受通配，未列入的未知副作用不重放。
 
 [memory]
+default_ttl_days = 30 # 新记忆的默认有效天数。
+wiki_topic_max_memories = 30 # 每个小主题允许的有效记忆条数。
+wiki_read_tokens = 2000 # 按需读取目录或正文时每页的估算 token 上限。
+read_chunk_chars = 4096 # 后台来源单元读取的字符预算；Wiki输出由wiki_read_tokens控制。
+expiry_grace_days = 7 # 到期后物理删除缓冲；0表示到期即可在后续维护清理。
+cleanup_batch_size = 100 # 每次历史版本、主条目、链接和空页的有界工作预算。
+cleanup_interval_seconds = 3600 # 机会触发间隔；0每次合格收尾检查一个批次。
+wiki_navigation_tokens = 2000 # Wiki主题导航独立预算；0关闭自动导航。
+session_directory_tokens = 2000 # 其他会话目录独立预算；0关闭自动目录。
 enabled = true # 整体记忆开关；关闭后停止本模块相关查询、维护与注入，不删除已经保存的记录。
 auto_enabled = true # 是否按新增正常用户轮/正文阈值触发整理；关闭后仍可显式请求整理，不等于关闭整个记忆模块。
 trigger_turns = 8 # 自上次整理后新增完整且正常保存的用户轮数，正整数；与字符阈值任一满足即可登记任务。
@@ -93,9 +102,7 @@ max_batches = 3 # 一次整理任务最多处理的批数，1..10；剩余历史
 task_timeout_seconds = 300 # 一整个记忆任务的总预算秒数，1..3600；含登记后的等待、相关读取和多批，不随模型HTTP超时增加而变长。
 max_pending_tasks = 32 # 每项目宿主待启动整理任务的数量预算，1..256；不是整个服务的根Agent或Shell后台任务数。
 max_active_tasks = 1 # 每项目宿主同时运行的记忆整理任务数，1..4；不是跨项目共用的全局并发池。
-injection_tokens = 2000 # 新用户轮自动记忆索引的总估算token预算，0..8000；0关闭此预算下的自动注入，不删除记忆。
-preference_limit = 3 # 自动注入偏好条目数，0..10；条数仍受自动注入总token预算限制。
-related_limit = 8 # 自动注入相关记忆条目数，0..50；不会自动把每条记忆完整正文都塞入提示词。
+comparison_material_bytes = 65536 # 整次B材料上限，4096～262144；同时受模型token预算约束。
 directory_limit = 8 # 首次提供的近期可见会话索引条数，0..50；需要原文时再调用history。
 default_limit = 10 # memory工具未传limit时的结果条数，1..50；须不大于最大返回条数。
 max_limit = 50 # memory工具单次允许返回的最大条数，1..50；须不大于检索候选数。
@@ -106,25 +113,11 @@ rrf_k = 60 # 多路排名融合的正整数平滑常数，分数按1/(k+名次)�
 max_query_chars = 2000 # memory查询输入字符上限，1..2000；不限制记忆正文文件大小。
 max_query_terms = 128 # 查询分词后的复杂度预算，1..256；超过会明确拒绝，不能仅靠减少返回条数解决。
 preview_chars = 300 # 列表/搜索每条正文预览的字符数，正整数；不是read完整正文分块大小。
-read_chunk_chars = 4096 # 读取记忆正文时每块字符数，正整数；可继续分页，仍受单次完整JSON字节预算约束。
 max_output_bytes = 16384 # memory工具单次完整JSON响应的UTF-8预算，至少4096字节；含元数据和分页信息。
 source_limit = 3 # 每条记忆随结果提供的来源数量上限，1..8；不限制存储中已有的所有来源。
 busy_timeout_ms = 2500 # 个人记忆SQLite锁等待，0..30000毫秒；项目库锁等待由storage节控制，0立即失败。
-[memory.candidate_ttl_days]
-user = 30 # 用户偏好类候选保留天数，1..36500；是尚未转正的候选期限。
-rule = 30 # 规则类候选保留天数；候选阶段与正式记录的生命周期分别处理。
-decision = 30 # 决策类候选保留天数；过期候选不再作为有效候选使用。
-context = 30 # 临时上下文类候选保留天数；不改变会话原文保留。
-procedure = 30 # 操作流程类候选保留天数；不自动执行记录中的流程。
-experience = 30 # 经验类候选保留天数；不是模型训练或缓存期限。
-reference = 30 # 参考资料类候选保留天数；不删除来源文件。
-[memory.active_ttl_days]
-context = 30 # 正式临时上下文的有效天数，1..36500；候选转正后采用正式期限规则。
-procedure = 180 # 正式操作流程的有效天数；到期处理不等于删除聊天记录。
-experience = 365 # 正式经验记录的有效天数；与检索排序权重无关。
-reference = 90 # 正式参考资料记录的有效天数；user/rule/decision没有本表可配置的正式TTL字段。
-
 [tools.history]
+max_output_tokens = 2000 # 完整返回JSON的token预算，与字节预算取先到者。
 default_limit = 10 # history列表/搜索默认返回条数，1..50；目标是已保存可见会话，不恢复目标会话执行。
 max_limit = 50 # 单次最大返回条数，1..50；须不小于默认条数。
 search_batch_messages = 200 # 历史搜索每次扫描的消息批量，1..10000；是内部读取批量，不是给模型的返回条数。

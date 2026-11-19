@@ -1,0 +1,9 @@
+{
+  "format": 1,
+  "fixtures_sha256": "2e3010d8abd537e99647df18f4e4ce3981166982ab642601202d6249f5bc91b0",
+  "rubric_sha256": "029da338ffdb64759136caf955f6a6d387c59a8b59639e487e31506c43ec0078",
+  "suite_fixtures_sha256": "d68e23580301be69920ab8eef1c639e0c407fbc88ff6dcda8014014bc8bb463a",
+  "max_logical_calls": 24,
+  "revision": 3,
+  "comparison_s3_sha256": "23ce39c4619b0fecc059453ab91507f077a337703ca8ab3a294df6c949c4410e"
+}

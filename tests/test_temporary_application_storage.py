@@ -63,7 +63,7 @@ def test_temporary_project_tools_remain_unavailable(monkeypatch, tmp_path, exist
     async def scenario():
         from naiyue_test_agent.tools.history import create_history_tool
         from naiyue_test_agent.tools.memory import create_memory_tool
-        replies = [call('history', {'action': 'list_sessions'}, 'h'), call('memory', {'action': 'list'}, 'm'), AIMessage(content='done')]
+        replies = [call('history', {'action': 'list_sessions'}, 'h'), call('memory', {'request': {'action': 'list'}}, 'm'), AIMessage(content='done')]
         app, _ = await build(monkeypatch, tmp_path, replies, tools=[create_history_tool(), create_memory_tool()])
         try:
             sid = await app.host.sessions.create_workspace('A', tmp_path)

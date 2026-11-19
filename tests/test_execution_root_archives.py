@@ -119,7 +119,7 @@ def test_ephemeral_session_archives_without_project_identity_or_project_tools(mo
     root.mkdir()
     model = StreamingToolModel(replies=[
         call('bash', {'command': command("print('x' * 1000)")}),
-        call('history', {'action': 'list_sessions'}), call('memory', {'action': 'list'}), AIMessage(content='done')])
+        call('history', {'action': 'list_sessions'}), call('memory', {'request': {'action': 'list'}}), AIMessage(content='done')])
     monkeypatch.setattr(application, 'load_model_catalog', lambda _: ModelCatalog('A', {'A': model}))
     settings = AppSettings.model_validate({'storage': {'data_dir': data},
         'permissions': {'mode': 'BypassApprovals'}, 'tools': {'bash': {'max_output_bytes': 32}}})

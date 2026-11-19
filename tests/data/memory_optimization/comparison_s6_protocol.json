@@ -1,0 +1,6 @@
+{
+  "contract": "program_owned_actions_v1",
+  "fixtures_sha256": "46f859dec4a1731f0dc306f1f10b83f497e056e62f6e0afaa20ed6f1706ceca4",
+  "supersedes_sha256": "23ce39c4619b0fecc059453ab91507f077a337703ca8ab3a294df6c949c4410e",
+  "semantic_status": "scripted_mechanism_only"
+}

@@ -4,7 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-Kind = Literal['user', 'rule', 'decision', 'context', 'procedure', 'experience', 'reference']
+Kind = Literal['convention', 'context']
 
 
 class MemorySource(BaseModel):

@@ -31,6 +31,12 @@ def source_store(tmp_path, *, version=CURRENT_SCHEMA, bound=True, checkpoints=Tr
         connection.execute('INSERT INTO writes VALUES(?,?,?,?,?,?,?,?)',
                            ('T', '', 'C', 'task', 0, 'pending', 'json', b'opaque-value'))
         connection.execute("UPDATE naiyue_sessions SET checkpoint_id='C'")
+    if version < 25:
+        from tests.legacy_store_schema import remove_memory_time
+        remove_memory_time(connection)
+    if version < 24:
+        from tests.legacy_store_schema import remove_memory_evidence
+        remove_memory_evidence(connection)
     if version < 21:
         # Downgraded fixtures must remove the schema-21 delegation tables too.
         for table in ('naiyue_cloud_operations','naiyue_cloud_bindings','naiyue_cloud_sources','naiyue_cloud_targets'):

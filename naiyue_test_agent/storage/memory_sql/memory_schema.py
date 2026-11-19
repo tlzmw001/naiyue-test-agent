@@ -49,16 +49,22 @@ def create(connection):
         DELETE FROM naiyue_memory_sources WHERE memory_id=OLD.memory_id; END''')
 
 
-def check(connection, *, version=2):
+def check(connection, *, version=4):
     from naiyue_test_agent.storage.memory_sql.memory_lifecycle_schema import REQUIRED as lifecycle
-    required = REQUIRED | lifecycle if version == 2 else REQUIRED
+    required = REQUIRED | lifecycle if version >= 2 else REQUIRED
     for table, fields in required.items():
         columns = {row[1] for row in connection.execute(f'PRAGMA table_info("{table}")')}
         if not set(fields.split()) <= columns:
             raise ValueError('memory_invalid_format')
-    if version == 2:
+    if version >= 2:
         columns = {row[1] for row in connection.execute('PRAGMA table_info(naiyue_memories)')}
         if not {'gaps_json','reason','deadline_at'} <= columns:raise ValueError('memory_invalid_format')
+    if version>=3:
+        from .memory_evidence_schema import check as check_evidence
+        check_evidence(connection)
+    if version>=4:
+        from .memory_time_schema import check as check_time
+        check_time(connection)
     info = connection.execute('SELECT singleton,format_version FROM naiyue_memory_info').fetchall()
     if [tuple(row) for row in info] != [(1, version)]:
         raise ValueError('memory_invalid_format')

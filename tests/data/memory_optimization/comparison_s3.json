@@ -1,0 +1,15 @@
+{
+  "format": 1,
+  "synthetic": true,
+  "split": "calibration",
+  "cases": [
+    {"id":"duplicate","old_body":"本地回归使用系统Python","old_age":120,"new_age":60,"relation":"duplicate","confirmation":"whole","claim_body":null,"expected_writes":0,"expected_rows":1,"expected_version":1,"expected_failed":0,"renewed":false},
+    {"id":"whole_supplement","old_body":"本地回归使用系统Python","old_age":120,"new_age":60,"relation":"supplement","confirmation":"whole","claim_body":"本地回归使用系统Python","expected_writes":1,"expected_rows":1,"expected_version":2,"expected_failed":0,"renewed":true},
+    {"id":"partial_compound","old_body":"本地回归使用系统Python，CI使用Python3.10","old_age":120,"new_age":60,"relation":"supplement","confirmation":"partial","claim_body":"本地回归使用系统Python，CI使用Python3.10","expected_writes":1,"expected_rows":1,"expected_version":2,"expected_failed":0,"renewed":false},
+    {"id":"expired_partial","old_body":"本地回归使用系统Python，CI使用Python3.10","old_age":3456000,"new_age":60,"relation":"supplement","confirmation":"unknown","claim_body":"本地回归使用系统Python，CI使用Python3.10","expected_writes":1,"expected_rows":1,"expected_version":2,"expected_failed":0,"renewed":false},
+    {"id":"partial_rewrite_rejected","old_body":"本地回归使用系统Python，CI使用Python3.10","old_age":120,"new_age":60,"relation":"supplement","confirmation":"partial","claim_body":"本地回归使用.venv，CI使用Python3.10","expected_writes":0,"expected_rows":1,"expected_version":1,"expected_failed":1,"renewed":false},
+    {"id":"correction","old_body":"本地回归使用系统Python","old_age":120,"new_age":60,"relation":"correction","confirmation":"whole","claim_body":"本地回归使用.venv","expected_writes":1,"expected_rows":1,"expected_version":2,"expected_failed":0,"renewed":true},
+    {"id":"older_correction_rejected","old_body":"本地回归使用系统Python","old_age":60,"new_age":120,"relation":"correction","confirmation":"whole","claim_body":"本地回归使用.venv","expected_writes":0,"expected_rows":1,"expected_version":1,"expected_failed":1,"renewed":false},
+    {"id":"unsupported_no_fallback","old_body":null,"old_age":120,"new_age":60,"relation":"unsupported","confirmation":"unknown","claim_body":null,"expected_writes":0,"expected_rows":0,"expected_version":null,"expected_failed":0,"renewed":false}
+  ]
+}

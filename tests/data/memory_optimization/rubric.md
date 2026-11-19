@@ -1,0 +1,17 @@
+# Memory optimization evaluation protocol, version 1
+
+All 96 cases are synthetic: four suites of 24 cases. Each suite has eight calibration, eight validation and eight holdout cases. All variants of a family remain in the same split. Holdout results have not been opened.
+
+The first engineering entrypoint checks source-span preservation, including message position deduplication. The full offline entrypoint runs input reconstruction/binding, controlled flat proposals through the current production write path, and current foreground injection. Controlled comparison proposals are test inputs, not outputs sampled from a model. Their negative outcomes expose the limits of source checks; they do not measure a model error rate. This controlled-proposal entrypoint does not sample B, so its B metric remains N/A even after the production S3 worker is connected. The current comparison set contains new/unsupported proposals; old-record correction, partial confirmation, conflict and failure families still require additional fixtures before full S0 acceptance.
+
+Each source includes explicit text. expected_facts preserves that text and its conditions; claim may be an intentionally unsupported generalization. must_activate and must_not_activate are mutually exclusive. Deterministic checks cover IDs, spans and states; human review must judge entailment, negation, scope and time. Semantic samples must run through MemoryJobs with an explicitly supplied model configuration; no real-model report exists yet. No semantic acceptance may be inferred from offline tests.
+
+Positive recall fixtures seed a current valid memory, with event time relative to the run. Report injection and lookup results separately where observable; empty precision is null. Current nominal fixtures alone do not cover all S4 multi-issue, privacy and cost gates.
+
+Reports are exclusive-created and cannot overwrite earlier evidence. Baseline/current must have identical fixture/protocol hashes and case identities. A newly passing case cannot cancel a previously passing case that regresses. Incomplete/unsupported semantic stages remain pending. Failures never trigger a product retry. Real sampling repetitions use whole splits and independent run IDs, not cherry-picked failed cases.
+
+The original two evidence cases and their reports are retained for S2 regression. They are not an independent semantic holdout. Full S0 acceptance requires the remaining matrix coverage and human-reviewed real-model results specified in Spec143BM-S0.
+
+Review revision 2: controlled proposal activation labels apply to claim only. In semantic extraction, a negative controlled claim does not forbid other supported active facts. Such cases remain fact-level human review items, with the forbidden claim retained in each check report; structural success cannot grant semantic acceptance. Input evidence coverage is checked against independently labelled support ranges. Custom protocol files resolve rubric.md beside the protocol file and verify its frozen hash before execution. Earlier reports belong to revision 1 and cannot be compared under this protocol.
+
+Revision 3 adds comparison_s3.json: eight calibration-only, explicitly scripted comparison decisions with old-state/time labels. The production worker executes A/B with offline responses; tests check ID/version/TTL and write counts. This is deterministic mechanism evidence, not extraction or semantic-decision accuracy. The original 96-case corpus and unopened holdout retain their identities.

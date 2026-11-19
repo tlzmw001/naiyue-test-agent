@@ -98,7 +98,7 @@ def test_natural_scanner_keeps_multiline_quotes_and_code_lines():
 
 
 def test_tool_binding_keeps_parent_context(archive):
-    from scripts.probe_memory_semantics import seed_sources
+    from scripts.memory_evaluation_cases import seed_sources
     from naiyue_test_agent.application.memory.memory_batches import bind_proposal_evidence
     seed_sources(archive,'session',[dict(id='u',role='user',text='检查本地测试。'),
         dict(id='t',role='tool',text='18 passed。',tool_call_id='call-7')],at=1000.)
@@ -111,7 +111,7 @@ def test_tool_binding_keeps_parent_context(archive):
 
 
 def test_oversized_turn_uses_complete_messages_before_splitting(archive):
-    from scripts.probe_memory_semantics import seed_sources
+    from scripts.memory_evaluation_cases import seed_sources
     seed_sources(archive,'session',[dict(id='u',role='user',text='本地回归用.venv。'),
         dict(id='a',role='assistant',text='检查记录。'*100)],at=1000.)
     batch=build(archive,token_budget=1200)
@@ -147,7 +147,7 @@ def test_orphan_tool_overlap_stays_non_citable(archive):
 
 
 def test_call_header_does_not_skip_tool_body(archive):
-    from scripts.probe_memory_semantics import seed_sources
+    from scripts.memory_evaluation_cases import seed_sources
     seed_sources(archive,'session',[dict(id='u',role='user',text='检查测试。'),
         dict(id='t',role='tool',text='测试通过。'*150,tool_call_id='c')],at=1000.)
     batch=build(archive,upper=3,token_budget=1200,overlap_chars=0)
@@ -155,21 +155,22 @@ def test_call_header_does_not_skip_tool_body(archive):
     assert not batch['complete']
 
 
-def test_tool_only_related_uses_nonempty_body(archive):
-    import asyncio
-    from types import SimpleNamespace
-    from naiyue_test_agent.application.memory.memory_job_runner import _related
-    from naiyue_test_agent.memory_settings import MemorySettings
-    from scripts.probe_memory_semantics import seed_sources
+def test_tool_only_proposal_keeps_matter_and_routes_to_wiki_topic(archive):
+    from naiyue_test_agent.application.memory.memory_wiki_protocol import bind_extraction
+    from scripts.memory_evaluation_cases import seed_sources
     seed_sources(archive,'session',[dict(id='u',role='user',text='检查测试。'),
         dict(id='t',role='tool',text='测试通过。',tool_call_id='c')],at=1000.)
     batch=build(archive,start=(3,0),upper=3,context_floor=3)
-    requests=[]
-    def query(*args):
-        requests.append(args[-1]);return {'items':[]}
-    service=SimpleNamespace(settings=MemorySettings(),allowed=lambda r:True,memory=SimpleNamespace(query=query))
-    asyncio.run(_related(service,SimpleNamespace(target_session_id='session',project_id='p'),batch))
-    assert requests and all(r['query'] for r in requests if r['action']=='search')
+    eid=next(u['evidence_id'] for u in batch['units'] if u['role']=='tool' and u['evidence_id'])
+    raw = dict(matter='本地测试结果', topic='stable_knowledge', title='测试观察', subject='测试',
+        body='测试通过', basis='tool_observation', intent='activate', target='本地测试',
+        reason='保留可复用观察', sources=[dict(evidence_id=eid)])
+    bound = bind_extraction(raw, batch, 1)
+    assert (bound['matter'], bound['scope'], bound['topic']) == ('本地测试结果', 'workspace', 'stable_knowledge')
+    assert bound['sources'][0]['message_id'] == 't' and bound['sources'][0]['quote'] == '测试通过。'
+    from naiyue_test_agent.contracts.memory import MemoryReadError
+    with pytest.raises(MemoryReadError, match='memory_proposal_invalid'):
+        bind_extraction(dict(raw, matter=''), batch, 1)
 
 
 @pytest.mark.parametrize('opening,closing',[('“','”'),('（','）'),('```','```')])

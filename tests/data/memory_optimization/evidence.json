@@ -1,0 +1,1 @@
+{"format":1,"synthetic":true,"cases":[{"id":"two-spans","text":"本地用.venv。CI保持原样。","quotes":["本地用.venv。","CI保持原样。"],"expected_spans":2},{"id":"same-span","text":"只用于本地。","quotes":["只用于本地。","只用于本地。"],"expected_spans":1}]}

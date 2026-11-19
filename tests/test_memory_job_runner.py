@@ -1,6 +1,7 @@
 """The memory worker owns bounded model calls and drains its actual commits."""
 
 import asyncio
+from memory_wiki_helpers import scripted_replies as staged_replies,proposed
 import json
 import threading
 import time
@@ -21,7 +22,7 @@ from naiyue_test_agent.storage.memory_sql import memory_overview_store as store
 from naiyue_test_agent.memory_settings import MemorySettings
 from naiyue_test_agent.model_access import ModelCatalog, MODEL_LIMITS_METADATA_KEY
 from test_async_application import StreamingToolModel
-from test_memory_batches import archive, save, result, proposed
+from test_memory_batches import archive, save, result
 from test_memory_lifecycle import proposal
 
 
@@ -33,7 +34,7 @@ async def until(predicate):
 
 
 def fixture(archive, tmp_path, model, **changes):
-    settings = MemorySettings(**(dict(auto_enabled=False, related_limit=0) | changes))
+    settings = MemorySettings(**(dict(auto_enabled=False) | changes))
     memory = MemoryAccess(archive, settings, tmp_path / 'data')
     catalog = ModelCatalog('A', {'A': model})
     install_model_usage_callback(catalog)
@@ -45,7 +46,8 @@ def fixture(archive, tmp_path, model, **changes):
         job.status, job.result_status, job.termination = 'finished', status, termination
         job.cleanup_confirmed = True
     service._terminal = terminal
-    job = SimpleNamespace(task_id='a' * 32, requested_start=None, session_id='session', target_session_id='session',
+    from naiyue_test_agent.application.memory.memory_jobs import MemoryJob
+    job = MemoryJob(tool_call_id='',task_id='a' * 32, requested_start=None, session_id='session', target_session_id='session',
         root=tmp_path, origin_run_id='root-run', model_id='A', model=model, thread_id='root-thread',
         conversation_revision=0, project_id=archive.sessions.get('session')['project_id'], deadline=time.monotonic() + 30, start=(0, 0), upper=1,
         batches=0, saved=0, failed=0, overview_saved=0, skipped=[], control=RunControl(),
@@ -62,8 +64,9 @@ def response(proposals=None):
 def test_normal_worker_saves_overview_and_memory_with_independent_event_identity(archive, tmp_path):
     from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
-        save(archive, [HumanMessage(id='human', content='以后使用.venv', additional_kwargs={'naiyue_human_input': True})])
-        model = StreamingToolModel(replies=[response([proposed()])])
+        archive.memory.prepare_wiki(now=time.time())
+        save(archive, [HumanMessage(id='human', content='以后使用.venv', additional_kwargs={'naiyue_human_input': True})],occurred_at=time.time()-1)
+        model = StreamingToolModel(replies=staged_replies([response([proposed()])]))
         service, job, events = fixture(archive, tmp_path, model)
         try:
             await drive(service, job)
@@ -74,7 +77,7 @@ def test_normal_worker_saves_overview_and_memory_with_independent_event_identity
             starts = [e for e in events if e.event_type == 'run_started']
             ends = [e for e in events if e.event_type == 'run_finished']
             calls = [e for e in events if e.event_type == 'model_call_started']
-            assert len(starts) == len(ends) == len(calls) == 1
+            assert len(starts) == len(ends) == 1 and len(calls) == 3
             assert starts[0].run_id == job.task_id and starts[0].data.origin_run_id == 'root-run'
             assert calls[0].data.purpose == 'memory' and calls[0].data.model_id == 'A'
             assert ends[0].data.status == 'completed' and all(e.run_id != 'root-run' for e in events)
@@ -87,7 +90,7 @@ def test_invalid_proposal_and_permission_failure_preserve_independent_success(ar
     from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='human', content='以后使用.venv', additional_kwargs={'naiyue_human_input': True})])
-        model = StreamingToolModel(replies=[response([{'unexpected': 'SYNTHETIC_PRIVATE'}, proposed()])])
+        model = StreamingToolModel(replies=staged_replies([response([{'unexpected': 'SYNTHETIC_PRIVATE'}, proposed()])]))
         service, job, events = fixture(archive, tmp_path, model)
         service.allowed = lambda request: request['scope'] != 'workspace'
         try:
@@ -98,7 +101,7 @@ def test_invalid_proposal_and_permission_failure_preserve_independent_success(ar
             assert finished.data.failure.category == 'memory_error'
             assert finished.data.failure.reason == 'memory_task_incomplete'
             assert finished.data.failure.error_type == 'MemoryReadError'
-            assert 'SYNTHETIC_PRIVATE' not in caplog.text and 'memory_proposal_failed' in caplog.text
+            assert 'SYNTHETIC_PRIVATE' not in caplog.text and 'memory_wiki_proposal_failed' in caplog.text
             assert 'reason=memory_permission_denied' in caplog.text
         finally:
             service.memory.close()
@@ -109,7 +112,7 @@ def test_json_failure_has_no_false_save_and_no_model_repair_loop(archive, tmp_pa
     from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='human', content='visible')])
-        model = StreamingToolModel(replies=[AIMessage(content='{SYNTHETIC_PRIVATE')])
+        model = StreamingToolModel(replies=staged_replies([AIMessage(content='{SYNTHETIC_PRIVATE')]))
         service, job, events = fixture(archive, tmp_path, model)
         try:
             await drive(service, job)
@@ -120,7 +123,7 @@ def test_json_failure_has_no_false_save_and_no_model_repair_loop(archive, tmp_pa
             finished = [e for e in events if e.event_type == 'run_finished'][0]
             assert finished.data.status == 'failed'
             assert finished.data.failure.category == 'memory_error'
-            assert finished.data.failure.reason == 'memory_result_invalid'
+            assert finished.data.failure.reason == 'memory_task_incomplete'
         finally:
             service.memory.close()
     asyncio.run(scenario())
@@ -129,7 +132,7 @@ def test_json_failure_has_no_false_save_and_no_model_repair_loop(archive, tmp_pa
 def test_waiting_root_stop_never_takes_slot_or_calls_model(archive, tmp_path):
     from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
-        model = StreamingToolModel(replies=[])
+        model = StreamingToolModel(replies=staged_replies([]))
         service, job, events = fixture(archive, tmp_path, model)
         job.released = False
         worker = asyncio.create_task(drive(service, job))
@@ -150,7 +153,7 @@ def test_waiting_root_stop_never_takes_slot_or_calls_model(archive, tmp_path):
 def test_admission_failure_is_distinguished_from_an_uncompleted_root(archive, tmp_path, termination, status):
     from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
-        model = StreamingToolModel(replies=[])
+        model = StreamingToolModel(replies=staged_replies([]))
         service, job, events = fixture(archive, tmp_path, model)
         job.released = False
         job.termination = termination
@@ -172,7 +175,7 @@ def test_native_model_stop_and_expired_deadline_do_not_save(archive, tmp_path):
     from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='human', content='visible')])
-        model = StreamingToolModel(replies=[response()], entered=asyncio.Event(), release=asyncio.Event())
+        model = StreamingToolModel(replies=staged_replies([response()]), entered=asyncio.Event(), release=asyncio.Event())
         service, job, events = fixture(archive, tmp_path, model)
         worker = asyncio.create_task(drive(service, job))
         try:
@@ -180,7 +183,7 @@ def test_native_model_stop_and_expired_deadline_do_not_save(archive, tmp_path):
             job.control.request(); job.changed.set()
             await asyncio.wait_for(worker, 5)
             assert job.result_status == 'stopped' and job.overview_saved == 0 and not service._slots.locked()
-            service2, job2, events2 = fixture(archive, tmp_path, StreamingToolModel(replies=[]))
+            service2, job2, events2 = fixture(archive, tmp_path, StreamingToolModel(replies=staged_replies([])))
             try:
                 job2.deadline = time.monotonic() - 1
                 await drive(service2, job2)
@@ -198,7 +201,7 @@ def test_merging_root_wait_does_not_hold_slot_and_processes_new_saved_upper(arch
     from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='one', content='first source')])
-        model = StreamingToolModel(replies=[response(), response()])
+        model = StreamingToolModel(replies=staged_replies([response(), response()]))
         service, job, events = fixture(archive, tmp_path, model)
         job.pending_runs.add(('session', 'second-root'))
         worker = asyncio.create_task(drive(service, job))
@@ -227,7 +230,7 @@ def test_long_message_respects_model_window_output_cap_and_batch_limit(archive, 
     from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='long', content='长🧪文本' * 10000)])
-        model = CapturingModel(replies=[response(), response(), response()], metadata={
+        model = CapturingModel(replies=staged_replies([response(), response(), response()]), metadata={
             MODEL_LIMITS_METADATA_KEY: {'context_window_tokens': 2300, 'max_output_tokens': 300}})
         service, job, events = fixture(archive, tmp_path, model, max_input_tokens=3000, max_output_tokens=1000)
         try:
@@ -284,7 +287,7 @@ def test_queued_stop_does_not_wait_for_an_unrelated_task_or_lose_a_slot(archive,
     from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='human', content='visible')])
-        model = StreamingToolModel(replies=[])
+        model = StreamingToolModel(replies=staged_replies([]))
         service, job, events = fixture(archive, tmp_path, model)
         await service._slots.acquire()
         worker = asyncio.create_task(drive(service, job))
@@ -312,7 +315,7 @@ def test_stop_during_necessary_commit_drains_and_counts_the_real_save(archive, t
                 raise RuntimeError('Test commit was not released')
             return original(*args, **kwargs)
         monkeypatch.setattr(archive.memory, 'save_overview', gated)
-        service, job, events = fixture(archive, tmp_path, StreamingToolModel(replies=[response()]))
+        service, job, events = fixture(archive, tmp_path, StreamingToolModel(replies=staged_replies([response()])))
         worker = asyncio.create_task(memory_job_runner.drive(service, job))
         try:
             assert await asyncio.to_thread(entered.wait, 5)
@@ -335,7 +338,7 @@ def test_source_rewritten_during_model_call_cannot_save_stale_overview_or_memory
     from naiyue_test_agent.application.memory.memory_job_runner import drive
     async def scenario():
         save(archive, [HumanMessage(id='human', content='使用.venv', additional_kwargs={'naiyue_human_input': True})])
-        model = StreamingToolModel(replies=[response([proposed()])], entered=asyncio.Event(), release=asyncio.Event())
+        model = StreamingToolModel(replies=staged_replies([response([proposed()])]), entered=asyncio.Event(), release=asyncio.Event())
         service, job, events = fixture(archive, tmp_path, model)
         worker = asyncio.create_task(drive(service, job))
         try:
@@ -352,91 +355,96 @@ def test_source_rewritten_during_model_call_cannot_save_stale_overview_or_memory
     asyncio.run(scenario())
 
 
-def test_related_active_and_candidate_records_enter_the_same_single_model_call(archive, tmp_path):
+def test_active_and_candidate_records_enter_only_wiki_organization(archive,tmp_path):
     from naiyue_test_agent.application.memory.memory_job_runner import drive
-    from naiyue_test_agent.tools.memory import MemoryInput
+    from test_memory_wiki_mutations import args
+    from test_memory_wiki_worker import read,finish
     async def scenario():
-        save(archive, [HumanMessage(id='human', content='使用.venv', additional_kwargs={'naiyue_human_input': True})],
-            occurred_at=time.time())
-        model = StreamingToolModel(replies=[response()])
-        service, job, events = fixture(archive, tmp_path, model, related_limit=2, preview_chars=10)
-        ref = dict(session_id='session', thread_id='root-thread', message_id='human', revision=1,
-            conversation_revision=0, quote='使用.venv', offset=0)
-        for intent in ('activate', 'candidate'):
-            value = dict(proposal(reason='用户明确约定'), subject='environment ' + intent, intent=intent,
-                body='使用.venv ' + 'existing detail ' * 40,
-                gaps=['等待确认测试环境'] if intent == 'candidate' else [])
-            request = MemoryInput(action='record', scope='workspace', proposal=value, sources=[ref]).model_dump(mode='json')
-            service.memory.query('session', service.storage.sessions.get('session')['project_id'], request)
+        archive.memory.prepare_wiki(now=time.time())
+        save(archive,[HumanMessage(id='human',content='使用.venv',additional_kwargs={'naiyue_human_input':True})],occurred_at=time.time()-1)
+        model=StreamingToolModel(replies=[])
+        service,job,_=fixture(archive,tmp_path,model,preview_chars=10)
+        ref=dict(session_id='session',thread_id='root-thread',message_id='human',revision=1,conversation_revision=0,quote='使用.venv',offset=0)
+        page=None
+        for intent in ('activate','candidate'):
+            request=args(sources=[ref])
+            request['proposal'].update(subject='environment '+intent,intent=intent,reason='用户明确约定',
+                body='使用.venv '+'existing detail '*40,gaps=['等待确认测试环境'] if intent=='candidate' else [])
+            if page:request['destination']=dict(page_id=page,expected_page_version=1)
+            saved=service.memory.query_wiki('session',job.project_id,request)['item'];page=saved['page_id']
+        model.replies=[response([proposed()]),read(dict(action='list_pages',topic='working_agreements')),
+            read(dict(action='read_page',page_id=page)),finish(decisions=[dict(relation='unsupported',proposal_ids=['P1'])])]
         try:
-            await drive(service, job)
-            assert job.result_status == 'completed' and len(model.seen) == 1
-            payload = json.loads(model.seen[0][-1].content)
-            assert {r['status'] for r in payload['related_memories']} == {'active', 'candidate'}
-            assert all('sources' not in row and row['memory_id'] for row in payload['related_memories'])
-            candidate = next(r for r in payload['related_memories'] if r['status'] == 'candidate')
-            assert candidate['complete'] and len(candidate['body']) > service.settings.preview_chars
-            assert candidate['gaps'] == ['等待确认测试环境'] and candidate['reason'] == '用户明确约定'
-        finally:
-            service.memory.close()
+            await drive(service,job)
+            assert job.result_status=='completed' and len(model.seen)==4
+            assert 'existing detail' not in str(model.seen[0])
+            material=json.loads(model.seen[-1][-1].content)
+            entries=json.loads(material['read_results'][0]['content'][8:-4])['entries']
+            assert {r['status'] for r in entries}=={'active','candidate'}
+            candidate=next(r for r in entries if r['status']=='candidate')
+            assert len(candidate['body'])>service.settings.preview_chars
+            assert candidate['gaps']==['等待确认测试环境'] and candidate['reason']=='用户明确约定'
+        finally:service.memory.close()
     asyncio.run(scenario())
 
 
-def test_candidate_changed_after_search_is_skipped_with_diagnostic(archive, tmp_path, monkeypatch, caplog):
+def test_candidate_changed_after_complete_page_is_rejected_at_commit(archive,tmp_path,monkeypatch,caplog):
     from naiyue_test_agent.application.memory.memory_job_runner import drive
-    from naiyue_test_agent.tools.memory import MemoryInput
+    from naiyue_test_agent.application.memory.memory_organization_reads import Ledger
+    from test_memory_wiki_mutations import args
+    from test_memory_wiki_worker import read,finish
     async def scenario():
-        save(archive, [HumanMessage(id='human', content='使用.venv', additional_kwargs={'naiyue_human_input': True})],
-            occurred_at=time.time())
-        model = StreamingToolModel(replies=[response()])
-        service, job, events = fixture(archive, tmp_path, model, related_limit=2)
-        ref = dict(session_id='session', thread_id='root-thread', message_id='human', revision=1,
-            conversation_revision=0, quote='使用.venv', offset=0)
-        value = dict(proposal(reason='用户明确约定'), intent='candidate', gaps=['等待确认'])
-        record = MemoryInput(action='record', scope='workspace', proposal=value, sources=[ref]).model_dump(mode='json')
-        saved = service.memory.query('session', service.storage.sessions.get('session')['project_id'], record)['item']
-        original = service.memory.query
-        reads = []
-        def changed(sid, root, request):
-            if request['action'] == 'read' and not reads:
-                reads.append(request)
-                update = MemoryInput(action='update', scope='workspace', memory_id=saved['memory_id'],
-                    expected_version=1, proposal=dict(value, gaps=['另一个会话已更新']), sources=[ref]).model_dump(mode='json')
-                original(sid, root, update)
-            return original(sid, root, request)
-        monkeypatch.setattr(service.memory, 'query', changed)
+        archive.memory.prepare_wiki(now=time.time())
+        save(archive,[HumanMessage(id='human',content='使用.venv',additional_kwargs={'naiyue_human_input':True})],occurred_at=time.time()-1)
+        model=StreamingToolModel(replies=[]);service,job,_=fixture(archive,tmp_path,model)
+        ref=dict(session_id='session',thread_id='root-thread',message_id='human',revision=1,conversation_revision=0,quote='使用.venv',offset=0)
+        request=args(sources=[ref]);request['proposal'].update(intent='candidate',gaps=['等待确认'])
+        saved=service.memory.query_wiki('session',job.project_id,request)['item']
+        model.replies=[response([proposed()]),read(dict(action='list_pages',topic='working_agreements')),
+            read(dict(action='read_page',page_id=saved['page_id'])),finish(decisions=[dict(relation='unsupported',proposal_ids=['P1']),
+                dict(relation='move',old_refs=['O1'],target_old_ref='O1',destination='N1')],
+                page_changes=[dict(ref='N1',topic='working_agreements',title='新组',description='')])]
+        original=Ledger.read;reads=[]
+        def changed(ledger,*values):
+            result=original(ledger,*values)
+            if values[3]['action']=='read_page':
+                reads.append(dict(ledger.old['O1']))
+                with archive.database.transaction(write=True) as c:
+                    c.execute('UPDATE naiyue_memories SET version=version+1 WHERE memory_id=?',(saved['memory_id'],))
+            return result
+        monkeypatch.setattr(Ledger,'read',changed)
         try:
-            await drive(service, job)
-            assert job.result_status == 'completed' and job.overview_saved == 1
-            assert reads[0]['version'] == 1
-            assert json.loads(model.seen[0][-1].content)['related_memories'] == []
-            assert 'memory_related_read_failed' in caplog.text and 'version_changed' in caplog.text
-        finally:
-            service.memory.close()
+            await drive(service,job)
+            assert job.result_status=='partial' and job.overview_saved==1 and job.saved==0
+            assert reads[0]['version']==1 and len(model.seen)==4
+            assert 'memory_conflict' in caplog.text
+            row=archive.database.connection.execute('SELECT page_id,version FROM naiyue_memories').fetchone()
+            assert row['page_id']==saved['page_id'] and row['version']==2
+            assert archive.database.connection.execute("SELECT COUNT(*) FROM naiyue_memory_pages WHERE title='新组'").fetchone()[0]==0
+        finally:service.memory.close()
     asyncio.run(scenario())
 
 
-def test_optional_related_budget_pressure_does_not_discard_valid_primary_sources(archive, tmp_path, monkeypatch):
+def test_zero_proposals_do_not_spend_lookup_or_rebuild_input_budget(archive, tmp_path, monkeypatch):
     from naiyue_test_agent.application.memory import memory_job_runner
     from naiyue_test_agent.contracts.memory import MemoryReadError
     async def scenario():
         save(archive, [HumanMessage(id='human', content='visible')])
-        service, job, events = fixture(archive, tmp_path, StreamingToolModel(replies=[response()]))
+        service, job, events = fixture(archive, tmp_path, StreamingToolModel(replies=staged_replies([response()])))
         original, calls = memory_job_runner.build_batch, []
         def constrained(*args, **kwargs):
             calls.append(kwargs['token_budget'])
-            if len(calls) == 2:
+            if len(calls) == 3:
                 raise MemoryReadError('memory_batch_budget')
             return original(*args, **kwargs)
-        async def related(*args):
-            return [dict(memory_id='b' * 32, body='bounded optional context')]
         monkeypatch.setattr(memory_job_runner, 'build_batch', constrained)
-        monkeypatch.setattr(memory_job_runner, '_related', related)
+        monkeypatch.setattr(service.memory,'comparison_candidates',lambda *a,**k: (_ for _ in ()).throw(AssertionError('No proposals, no lookup')))
         try:
             await memory_job_runner.drive(service, job)
             assert job.result_status == 'completed' and job.overview_saved == 1 and job.failed == 0
             payload = json.loads(job.model.seen[0][-1].content)
-            assert payload['batch']['units'][0]['text'] == 'visible' and payload['related_memories'] == []
+            assert payload['batch']['units'][0]['text'] == 'visible' and 'related_memories' not in payload
+            assert len(calls)==1
         finally:
             service.memory.close()
     asyncio.run(scenario())

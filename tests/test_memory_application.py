@@ -7,6 +7,8 @@ import pytest
 from langchain_core.messages import AIMessage, SystemMessage
 
 from naiyue_test_agent.settings import AppSettings
+from naiyue_test_agent.tools.history import create_history_tool
+from naiyue_test_agent.tools.memory import create_memory_tool
 from test_async_application import StreamingToolModel,call
 from test_memory_tool import opened,feedback
 from test_memory_jobs import response
@@ -18,7 +20,7 @@ def config(root,**memory):
 
 def test_refresh_finishes_root_before_independent_model_and_persists_overview(monkeypatch,tmp_path):
     async def scenario():
-        model=StreamingToolModel(replies=[call('memory',dict(action='refresh_overview'),'refresh'),
+        model=StreamingToolModel(replies=[call('memory',{'request': dict(action='refresh_overview')},'refresh'),
             AIMessage(content='任务已登记'),response()])
         async with opened(monkeypatch,tmp_path,model,settings=config(tmp_path)) as app:
             sid=await app.host.sessions.create_workspace('A',tmp_path)
@@ -59,9 +61,10 @@ def test_automatic_or_threshold_and_failure_does_not_repeat_old_range(monkeypatc
 
 def test_new_session_directory_is_first_request_only_and_history_reads_overview(monkeypatch,tmp_path):
     async def scenario():
-        model=StreamingToolModel(replies=[call('memory',dict(action='refresh_overview')),AIMessage(content='已做测试'),
+        model=StreamingToolModel(replies=[call('memory',{'request': dict(action='refresh_overview')}),AIMessage(content='已做测试'),
             response(),AIMessage(content='知道下一步'),AIMessage(content='继续工作')])
-        async with opened(monkeypatch,tmp_path,model,settings=config(tmp_path)) as app:
+        async with opened(monkeypatch,tmp_path,model,settings=config(tmp_path),
+                tools=[create_memory_tool(),create_history_tool()]) as app:
             first=await app.host.sessions.create_workspace('A',tmp_path)
             await app.host.runs.start(first,[('user','本轮完成一个检查，请整理')]);await app.host.sessions._sessions.memory_jobs.wait_idle()
             second=await app.host.sessions.create_workspace('A',tmp_path)

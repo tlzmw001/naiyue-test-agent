@@ -1,0 +1,159 @@
+{
+  "format": 1,
+  "synthetic": true,
+  "split": "calibration",
+  "cases": [
+    {
+      "case_id": "short",
+      "family_id": "recall-v2-short",
+      "query": "Nacos",
+      "seeds": [
+        {
+          "alias": "a",
+          "text": "Nacos 配置使用开发环境"
+        },
+        {
+          "alias": "noise",
+          "text": "Redis 缓存"
+        }
+      ],
+      "expected_aliases": [
+        "a"
+      ]
+    },
+    {
+      "case_id": "multi",
+      "family_id": "recall-v2-multi",
+      "query": "Nacos。另外 Redis。",
+      "seeds": [
+        {
+          "alias": "a",
+          "text": "Nacos 配置"
+        },
+        {
+          "alias": "b",
+          "text": "Redis 缓存"
+        },
+        {
+          "alias": "noise",
+          "text": "Postgres 数据库"
+        }
+      ],
+      "expected_aliases": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "case_id": "anchor",
+      "family_id": "recall-v2-anchor",
+      "query": "Nacos。另外 TC-99。",
+      "seeds": [
+        {
+          "alias": "a",
+          "text": "Nacos 配置"
+        },
+        {
+          "alias": "b",
+          "text": "TC-99 页面"
+        },
+        {
+          "alias": "noise",
+          "text": "TC-98 页面"
+        }
+      ],
+      "expected_aliases": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "case_id": "weak",
+      "family_id": "recall-v2-weak",
+      "query": "继续吧",
+      "seeds": [
+        {
+          "alias": "noise",
+          "text": "Nacos 配置"
+        }
+      ],
+      "expected_aliases": []
+    },
+    {
+      "case_id": "empty",
+      "family_id": "recall-v2-empty",
+      "query": "RabbitMQ",
+      "seeds": [
+        {
+          "alias": "noise",
+          "text": "Postgres 数据库"
+        }
+      ],
+      "expected_aliases": []
+    },
+    {
+      "case_id": "negation",
+      "family_id": "recall-v2-negation",
+      "query": "不要启用 Nacos 调试。",
+      "seeds": [
+        {
+          "alias": "a",
+          "text": "不要启用 Nacos 调试"
+        },
+        {
+          "alias": "noise",
+          "text": "Redis 缓存"
+        }
+      ],
+      "expected_aliases": [
+        "a"
+      ]
+    },
+    {
+      "case_id": "url",
+      "family_id": "recall-v2-url",
+      "query": "Check https://example.com. Check TC-99.",
+      "seeds": [
+        {
+          "alias": "a",
+          "text": "Check https://example.com"
+        },
+        {
+          "alias": "b",
+          "text": "Check TC-99"
+        },
+        {
+          "alias": "noise",
+          "text": "Check TC-98"
+        }
+      ],
+      "expected_aliases": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "case_id": "repeated",
+      "family_id": "recall-v2-repeated",
+      "query": "Nacos。Nacos。另外 Redis。",
+      "seeds": [
+        {
+          "alias": "a",
+          "text": "Nacos 配置"
+        },
+        {
+          "alias": "b",
+          "text": "Redis 缓存"
+        },
+        {
+          "alias": "noise",
+          "text": "Postgres 数据库"
+        }
+      ],
+      "expected_aliases": [
+        "a",
+        "b"
+      ]
+    }
+  ]
+}

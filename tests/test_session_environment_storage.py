@@ -27,15 +27,14 @@ def test_schema19_local_binding_migrates_without_changing_its_location(tmp_path)
     with closing(ProjectStore(path)) as store:
         store.sessions.bind_workspace(project,tmp_path)
     with sqlite3.connect(path) as connection:
-        connection.execute('DROP TABLE naiyue_project_identity')
-        connection.execute('ALTER TABLE naiyue_sessions DROP COLUMN execution_setup_json')
-        connection.execute('ALTER TABLE naiyue_subagent_instances DROP COLUMN environment_binding_id')
+        from tests.legacy_store_schema import remove_environment_schema
+        remove_environment_schema(connection)
         connection.execute('UPDATE naiyue_store_info SET version=19')
     with closing(ProjectStore(path,runtime_profile=project)) as store:
         assert store.sessions.get_workspace_binding()==dict(workspace_id=project,root_path=str(tmp_path))
         assert store.database.read_rows('SELECT * FROM naiyue_project_identity')==[
             dict(project_id=project,source_kind='local')]
-        assert store.database.read_rows('SELECT version FROM naiyue_store_info')==[dict(version=23)]
+        assert store.database.read_rows('SELECT version FROM naiyue_store_info')==[dict(version=25)]
 
 
 @pytest.mark.parametrize('profile',['local','chats'])

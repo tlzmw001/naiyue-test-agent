@@ -255,6 +255,9 @@ async def prepare_permission_call(call, spec, context, settings, session_allow):
                 'Tool target preparation failed. Check the arguments and retry with a valid target.'}
     subject.update(tool_name=spec.tool.name, args=args, side_effects=spec.side_effects,
                    session_id=context.scope.identity.session_id, execution_environment=execution_environment(context))
+    from naiyue_test_agent.tools.memory_actions import memory_action_contract
+    if memory_action_contract(spec):
+        subject['argument_contract']=memory_action_contract(spec)
     root = context.scope.identity.execution_root
     if root is not None and root.project_revision is not None:
         subject['project_revision'] = root.project_revision

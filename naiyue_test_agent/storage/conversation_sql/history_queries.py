@@ -36,19 +36,36 @@ def _size(result):
     return len(json.dumps(result, ensure_ascii=False).encode())
 
 
-def _fit_record(result, item, budget):
+def _fits(result, settings):
+    from langchain_core.messages import SystemMessage
+    from langchain_core.messages.utils import count_tokens_approximately
+    text=json.dumps(result,ensure_ascii=False)
+    return len(text.encode())<=settings.max_output_bytes and max((len(text.encode())+2)//3,count_tokens_approximately([SystemMessage(content=text)]))<=settings.max_output_tokens
+
+
+def _fit_record(result, item, settings):
     result['items'].append(item)
-    if _size(result) <= budget:
+    if _fits(result,settings):
         return True
     if len(result['items']) > 1:
         result['items'].pop()
         return False
-    while item.get('content') and _size(result) > budget:
+    while item.get('content') and not _fits(result,settings):
         item['content'] = item['content'][:len(item['content']) // 2]
         projection.finish_record(item)
-    if _size(result) > budget or (item.get('text_chars') and not item.get('content')):
+    if not _fits(result,settings) or (item.get('text_chars') and not item.get('content')):
         _fail('history_output_budget')
     return True
+
+
+def compact_summary(summary):
+    summary=dict(summary)
+    if isinstance(summary.get('coverage'),dict):
+        coverage=dict(summary['coverage'])
+        skipped=coverage.pop('skipped',[])
+        coverage.update(skipped_count=len(skipped) if isinstance(skipped,list) else int(bool(skipped)),skipped_details_omitted=bool(skipped))
+        summary['coverage']=coverage
+    return summary
 
 
 def _directory(connection, source, request, settings, count):
@@ -68,13 +85,16 @@ def _directory(connection, source, request, settings, count):
     result = dict(status='ok', items=[], has_more=False, next_cursor=None)
     for i, row in enumerate(rows[:count]):
         item = {k: row[k] for k in ('session_id', 'title', 'updated_at', 'state')}
-        summary=read_overview(connection,row)
+        summary=compact_summary(read_overview(connection,row))
         if 'updated_at' in summary:summary['overview_updated_at']=summary.pop('updated_at')
+        if isinstance(summary.get('overview'),dict):
+            summary['overview']={k:v[:settings.preview_chars//4] for k,v in summary['overview'].items()}
+            summary['overview_complete']=False
         item.update(summary,state_source='saved',archive_available=bool(row['archive_threads']))
         old_cursor = result['next_cursor']
         result.update(has_more=i + 1 < len(rows), next_cursor=_encode({**expected,
             'updated_at': row['updated_at'], 'session_id': row['session_id']}) if i + 1 < len(rows) else None)
-        if not _fit_record(result, item, settings.max_output_bytes):
+        if not _fit_record(result, item, settings):
             result.update(has_more=True, next_cursor=old_cursor)
             break
     return result
@@ -117,8 +137,13 @@ def _messages(connection, source, request, settings, count):
         coverage['upper'] = upper
     result = dict(status='ok', items=[], has_more=False, next_cursor=None, coverage=coverage, scanned=0)
     if request['agent_id'] is None:
-        summary=read_overview(connection,target)
+        summary=compact_summary(read_overview(connection,target))
         if 'updated_at' in summary:summary['overview_updated_at']=summary.pop('updated_at')
+        if request['cursor'] is not None or request['sequence'] is not None:summary.pop('overview',None)
+        elif isinstance(summary.get('overview'),dict):
+            summary['overview']={k:v[:settings.preview_chars//4] for k,v in summary['overview'].items()}
+            summary['overview_complete']=False
+        summary['overview_detail']=dict(action='read',session_id=target['session_id'],overview_only=True)
         result.update(summary)
     if request['sequence'] is not None:
         if request['conversation_revision'] != coverage['conversation_revision']:
@@ -132,10 +157,10 @@ def _messages(connection, source, request, settings, count):
         if request['offset'] > row['text_chars']:
             _fail('history_invalid_offset')
         item = projection.public_record(row, coverage['conversation_revision'])
-        _fit_record(result, item, settings.max_output_bytes)
+        _fit_record(result, item, settings)
         result['has_more'] = not item['complete']
         # has_more is encoded too, including at the exact output budget boundary.
-        if _size(result) > settings.max_output_bytes:
+        if not _fits(result,settings):
             item['content'] = item['content'][:-1]
             projection.finish_record(item)
         return result
@@ -150,7 +175,7 @@ def _messages(connection, source, request, settings, count):
             'upper': coverage['upper'], 'before': row['sequence']}) if i + 1 < len(rows) else None)
         if row['matched']:
             item = projection.public_record(row, coverage['conversation_revision'])
-            if not _fit_record(result, item, settings.max_output_bytes):
+            if not _fit_record(result, item, settings):
                 result.update(has_more=True, next_cursor=old_cursor, scanned=old_scanned)
                 break
             if len(result['items']) == count:
@@ -171,8 +196,11 @@ def query(connection, source_session_id, project_id, request, settings):
         _fail('history_invalid_limit')
     if request['action'] == 'list_sessions':
         result = _directory(connection, source, request, settings, count)
+    elif request.get('overview_only'):
+        from .history_overview import overview
+        result=overview(connection,source,request,settings)
     else:
         result = _messages(connection, source, request, settings, count)
-    if _size(result) > settings.max_output_bytes:
+    if not _fits(result,settings):
         _fail('history_output_budget')
     return result

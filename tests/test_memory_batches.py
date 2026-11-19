@@ -17,7 +17,7 @@ from naiyue_test_agent.application.memory.memory_batches import model_batch
 @pytest.fixture
 def archive(tmp_path):
     with ProjectStore(tmp_path / 'sessions.sqlite') as store:
-        store.sessions.bind_workspace('11111111111111111111111111111111', tmp_path)
+        store.sessions.bind_workspace('11111111-1111-4111-8111-111111111111', tmp_path)
         store.sessions.create('session', dict(thread_id='root-thread', model_id='A', workspace_root=tmp_path,
             active_tool_names=['memory'], permission_mode='Default'))
         yield store
@@ -51,7 +51,7 @@ def result(**changes):
 
 
 def proposed(**changes):
-    return dict(kind='context', title='测试环境', body='使用.venv', subject='pytest环境',
+    return dict(matter='pytest环境', kind='context', title='测试环境', body='使用.venv', subject='pytest环境',
         basis='user_declaration', intent='activate', reason='用户明确约定',
         sources=[dict(evidence_id='E1')]) | changes
 
@@ -182,21 +182,21 @@ def test_batch_sqlite_failure_is_diagnostic_and_not_empty(archive, caplog):
 
 
 def test_parse_accepts_strict_empty_and_many_proposals_independently():
-    from naiyue_test_agent.application.memory.memory_batches import parse_model_result, proposal_request
+    from memory_comparison_helpers import parse_extraction, compile_request
     data = result(proposals=[proposed(), {'action': 'invented'}, proposed(scope='personal')])
-    actual = parse_model_result(AIMessage(content=json.dumps(data), response_metadata={'finish_reason': 'stop'}), settings())
+    actual = parse_extraction(AIMessage(content=json.dumps(data), response_metadata={'finish_reason': 'stop'}), settings())
     assert actual == data
     source = dict(session_id='session', thread_id='root-thread', message_id='human',
         revision=1, conversation_revision=0, role='human', occurred_at=1000., reply_id='r', tool_call_id=None,
         offset=42, text='使用.venv', text_chars=100)
-    first = proposal_request(actual['proposals'][0], evidence_batch(source))
+    first = compile_request(actual['proposals'][0], evidence_batch(source))
     assert first['action'] == 'record' and first['sources'][0]['offset'] == 42
     assert first['sources'][0]['quote'] == '使用.venv' and first['sources'][0]['revision'] == 1
     assert 'occurred_at' not in first['sources'][0] and 'role' not in first['sources'][0]
     with pytest.raises(MemoryReadError):
-        proposal_request(actual['proposals'][1], evidence_batch(source))
-    assert proposal_request(actual['proposals'][2], evidence_batch(source))['scope'] == 'personal'
-    assert parse_model_result(json.dumps(result()), settings()) == result()
+        compile_request(actual['proposals'][1], evidence_batch(source))
+    assert compile_request(actual['proposals'][2], evidence_batch(source))['scope'] == 'personal'
+    assert parse_extraction(json.dumps(result()), settings()) == result()
 
 
 @pytest.mark.parametrize('content', ['{', '```json\n{}\n```', '[]',
@@ -205,29 +205,29 @@ def test_parse_accepts_strict_empty_and_many_proposals_independently():
     json.dumps(result(overview=dict(goal=1, progress='', blockers='', next_step=''))),
     json.dumps(result(proposals=[{}] * 9)), json.dumps(result(overview=dict(goal='x' * 1201, progress='', blockers='', next_step='')))])
 def test_invalid_top_level_json_never_becomes_partial_authoritative_state(content):
-    from naiyue_test_agent.application.memory.memory_batches import parse_model_result
+    from memory_comparison_helpers import parse_extraction
     with pytest.raises(MemoryReadError, match='memory_result_invalid'):
-        parse_model_result(content, settings())
+        parse_extraction(content, settings())
 
 
 @pytest.mark.parametrize('reason', ['length', 'max_tokens'])
 def test_valid_looking_json_from_truncated_response_is_rejected(reason):
-    from naiyue_test_agent.application.memory.memory_batches import parse_model_result
+    from memory_comparison_helpers import parse_extraction
     response = AIMessage(content=json.dumps(result()), response_metadata={
         'finish_reason' if reason == 'length' else 'stop_reason': reason})
     with pytest.raises(MemoryReadError, match='memory_result_truncated'):
-        parse_model_result(response, settings())
+        parse_extraction(response, settings())
 
 
 def test_parse_ignores_hidden_response_blocks_and_rejects_nonfinite_json():
-    from naiyue_test_agent.application.memory.memory_batches import parse_model_result
+    from memory_comparison_helpers import parse_extraction
     response = AIMessage(content=[dict(type='reasoning', reasoning='HIDDEN-RESPONSE'),
         dict(type='text', text=json.dumps(result()))])
-    assert parse_model_result(response, settings()) == result()
+    assert parse_extraction(response, settings()) == result()
     for value in ('NaN', 'Infinity', '-Infinity'):
         content = json.dumps(result()).replace('[]', '[' + value + ']')
         with pytest.raises(MemoryReadError, match='memory_result_invalid'):
-            parse_model_result(content, settings())
+            parse_extraction(content, settings())
 
 
 @pytest.mark.parametrize('change', [dict(sources=[dict(source_key='elsewhere', quote='quote')]),
@@ -236,25 +236,25 @@ def test_parse_ignores_hidden_response_blocks_and_rejects_nonfinite_json():
     dict(action='record', memory_id='a' * 32), dict(action='update'),
     dict(body='x' * 801), dict(aliases=['a'] * 6)])
 def test_proposal_cannot_invent_source_identity_offsets_time_or_exceed_contract(change):
-    from naiyue_test_agent.application.memory.memory_batches import proposal_request
+    from memory_comparison_helpers import compile_request
     source = dict(session_id='s', thread_id='t', message_id='m', revision=1,
         conversation_revision=0, offset=30, text='unique quote', text_chars=99)
     with pytest.raises(MemoryReadError, match='memory_proposal_invalid'):
-        proposal_request(proposed(**change), evidence_batch(source))
+        compile_request(proposed(**change), evidence_batch(source))
 
 
 def test_update_reuses_expected_version_and_repeated_text_is_bound_by_position():
-    from naiyue_test_agent.application.memory.memory_batches import proposal_request
+    from memory_comparison_helpers import compile_request
     source = dict(session_id='s', thread_id='t', message_id='m', revision=2,
         conversation_revision=3, offset=20, text='使用.venv', text_chars=50)
     snapshot = dict(memory_id='b' * 32, version=4, scope='workspace', kind='context', complete=True,
         title='测试环境', reason='用户明确约定', aliases=[], tags=[], gaps=[],
         conditions=dict(machine=None, module=None, target=None))
-    request = proposal_request(proposed(memory_id='b' * 32), evidence_batch(source), [snapshot])
+    request = compile_request(proposed(memory_id='b' * 32), evidence_batch(source), [snapshot])
     assert request['memory_id'] == 'b' * 32 and request['expected_version'] == 4
     assert request['sources'][0]['revision'] == 2 and request['sources'][0]['conversation_revision'] == 3
     source['text'] = '使用.venv、使用.venv'
-    request = proposal_request(proposed(), evidence_batch(source))
+    request = compile_request(proposed(), evidence_batch(source))
     assert request['sources'][0]['quote'] == source['text']
 
 def evidence_batch(*sources):

@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA
+from naiyue_test_agent.storage.backup_schema import CURRENT_SCHEMA, SUPPORTED_SCHEMAS
 
 from naiyue_test_agent.storage.errors import SessionPersistenceError
 from naiyue_test_agent.storage.project_store import ProjectStore
@@ -126,7 +126,7 @@ def test_version_read_failure_after_commit_keeps_backup_phase_and_primary_error(
     assert 'migration_version_unavailable' in caplog.text and 'PRIVATE-version-read' not in caplog.text
 
 
-@pytest.mark.parametrize('version', [3, CURRENT_SCHEMA + 1, 'unknown'])
+@pytest.mark.parametrize('version', [3, max(SUPPORTED_SCHEMAS) + 1, 'unknown'])
 def test_unknown_version_is_rejected_before_backup_or_changes(tmp_path, monkeypatch, version):
     from naiyue_test_agent.storage import migrations as storage_migrations
     database, _, _ = closed_store(tmp_path)
@@ -137,6 +137,20 @@ def test_unknown_version_is_rejected_before_backup_or_changes(tmp_path, monkeypa
     called = []
     monkeypatch.setattr(storage_migrations, 'create_backup', lambda *a, **kw: called.append(True))
     with pytest.raises(SessionPersistenceError, match='unsupported_store_schema'):
+        ProjectStore(database)
+    assert called == [] and database.read_bytes() == before and list_backups(database) == []
+
+
+def test_claimed_wiki_version_with_old_memory_format_is_rejected_unchanged(tmp_path, monkeypatch):
+    from naiyue_test_agent.storage import migrations as storage_migrations
+    database, _, _ = closed_store(tmp_path)
+    with closing(sqlite3.connect(database)) as connection:
+        connection.execute('UPDATE naiyue_store_info SET version=26')
+        connection.commit()
+    before = database.read_bytes()
+    called = []
+    monkeypatch.setattr(storage_migrations, 'create_backup', lambda *a, **kw: called.append(True))
+    with pytest.raises(ValueError, match='memory_invalid_format'):
         ProjectStore(database)
     assert called == [] and database.read_bytes() == before and list_backups(database) == []
 

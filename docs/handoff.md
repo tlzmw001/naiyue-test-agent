@@ -1,9 +1,124 @@
+**当前 S6：默认 Wiki 切换及本轮工程验收完成，模型效果优化延期。** 用户确认保持个人/项目范围的原合同：模型判断语义、代码核验真实引用与权限，不加入专用用户确认。后台失败跳过且不重试。校准 W04、W13、W22 的问题和原始结果保留，真实语义仍未通过。
+
+复核全后端 **7,313 通过、0 失败、0 报错** 的验证快照。当前代码与离线样本摘要一致，MAC arm64 包内 569 个 Python 模块与源码逐文件一致，Twine 复核通过。工程证据见 [verification.json](../build/spec143bo-s6/final-engineering/verification.json)，真实结果见 [R10 助手复核](../build/spec143bo-s6/acceptance-r10/assistant-review.json)。本次仅同步验收合同与文档，未提交。**后续：有新的范围或召回策略时，针对已记录偏差做完整校准对照，再决定是否进入 validation/holdout。** 课堂位置见 [3.0](3.0/README.md)。以下为前轮记录。
+
+**当前 S6：后端恢复全绿，真实模型语义验收还未通过。** 旧行为用例迁到 Wiki 导航、目录分页、来源和后台整理，历史自动召回实现移到 scripts，发布包只保留显式词法查询。删除无消费者的旧比较提交入口和重复工具工厂。补齐 both 范围权限、导航日志失败隔离、后台/前台校准的工具回执和独立问答。临时库实测迁移失败回滚、备份恢复旧格式。
+
+最终全后端 **7,313 通过 / 0 失败 / 0 报错**。macOS arm64 标准构建、Twine、569 个应用 Python 文件字节核对、diff 检查通过。离线合同 8 例，模型调用 0。2,000/20,000 压力探针涵盖 SQLite 重新打开、过期与历史版本、写锁等待，每批删除版本数不超过 100。证据 [verification.json](../build/spec143bo-s6/final-engineering/verification.json)。
+
+R10 用 heiyu-gpt-5.5 跑完整 calibration。前台适用 6 例、跳过后台专属 2 例，22 次逻辑调用。后台 7 流程完成、W22 部分失败，26 次逻辑调用。W07 同 ID v2 原文保留。W04 前台错存个人，W13 用显式搜索找到目标但缺目录续页证据，W22 前台遗漏项目例外，后台项目规则独立写入而个人局部更正被拒绝。详见 [助手复核](../build/spec143bo-s6/acceptance-r10/assistant-review.json)。真实 validation/holdout 按 Spec 暂缓，未提交。**下一步：先确认个人范围是否增加用户明确授权门禁，再冻结并完整复跑 calibration。** 课堂见 [3.0](3.0/README.md)，无新增理解证据。以下为前轮记录。
+
+**当前 S6：后台比较行为回归继续迁入 Wiki，整体验收仍未通过。** 历史固定矩阵的 8 个场景改走 A 绑定证据、B 读目录与页、提交。完整确认用 confirm，局部补证只补来源，过期页不可发现/写入。另将候选激活版本冲突、坏提议隔离、工具证据绑定、旧归档缺失、权限和 8 种适配器组合迁入当前路径。模型多给的补证正文保持不采用，真实门禁与观测事件继续验证。变化集中于测试与 Spec。
+
+记忆专项 **271 通过**。全后端 **7159 通过 / 129 失败 / 14 报错**，对比上一轮减少 26 个失败，完整节点名比较无新增。标准 Mac 构建、Twine、570 个应用 Python 文件字节核对和 diff 检查通过。离线校准验证 8 例合同，模型调用 0。原始日志及 [失败差异](../build/spec143bo-s6/comparison-migration/failure-delta.json) 已归档。真实模型效果本轮未重测。
+
+**唯一下一步：迁移仍使用旧自动召回、后台比较的评测驱动和行为用例。** Spec 的「后台比较行为用例迁移」记录了剩余脚本及当前替代路径。先验证权限、分页、零写入与事件，再移除只有旧消费者使用的内部入口。课堂位置见 [3.0](3.0/README.md)，无新增理解证据。以下为上一轮记录。
+
+**当前 S6：修复三处 Wiki 缺陷，跨会话工作流迁移完成，整体验收仍未通过。** 前台/后台在展开链接前检查目标页读取权限。停用验证真实用户来源，保留旧正文证据，不占用新名额。数据库完整性失败在回滚边界记录脱敏诊断。三处回归先出现 5 项预期失败，修复后 6 项通过（含允许访问对照）。
+
+W01–W04 经真实应用入口共 5 项通过。W02/W03 已用新版 Wiki 写入与读取校验现场报告及原约定。W04 用独立会话和事件同步验证更正覆盖旧快照、遗忘阻断在途候选回写，后台概览仍可独立保存。记忆专项 **243 通过**，全后端 **7133 通过 / 155 失败 / 14 报错**，相对上一轮清除 4 个工作流失败、无新增失败节点。Mac arm64 标准构建、Twine、570 个应用 Python 文件与源码逐字节核对及 diff 检查通过。离线 calibration 8 例合同通过，模型调用 0。原始日志和 [失败差异](../build/spec143bo-s6/review-fixes/failure-delta.json) 位于 build/spec143bo-s6/review-fixes，真实模型本轮未重新评测。
+
+**唯一下一步：按最新失败清单迁移旧自动召回和后台比较的行为用例与评测脚本，再移除仅由旧消费者调用的入口。** 保留显式词法检索、历史/概览和备份校验。课堂位置见 [3.0](3.0/README.md)，无新增理解证据。以下为上一轮记录。
+
+**当前 S6：默认 Wiki 已接线，整体验收仍未通过。** 本轮把生命周期、来源门禁、个人库并发/回滚、显式词法搜索与只读行为迁到 query_wiki/v2，保留顺序、状态、时钟、来源、事务与异常身份断言。补证不提交新正文/不续期；完整替换须新证据；active/candidate 共用可配置 TTL。候选元数据按需读回，长正文完整分页；必要 metadata 超预算依 S2 明确失败，不伪报完整。其他项目原文、隐藏推理、错误 tool/reply 配对仍被屏蔽。旧 schema 备份/nullable 字段检查改用历史存储，旧 helpers 及其未迁移消费者清单仍保留。
+
+本轮最新全后端四组 **7125 passed / 159 failed / 14 errors**，尚不能标记完成；合并专项 **449 passed in 27.27s**。标准 Mac 构建、Twine、570 个应用 Python 与源码逐字节核对、compileall/diff 通过。证据 [verification.json](../build/spec143bo-s6/migration-r5/verification.json)，未通过节点 [remaining-failures.json](../build/spec143bo-s6/migration-r5/remaining-failures.json)。没有通过 skip、无条件返回成功或放宽门禁处理失败。当前课堂位置见 [3.0](3.0/README.md)，无新增本人掌握证据。
+
+此前的阈值基线回归已修复：真实运行前 ensure，preview 只读，第一轮达到轮数/字数阈值可触发；后台失败仍跳过、不重试。模型 R5 本轮未重跑，语义和覆盖限制保持；2000/20000 性能首轮存在，冷缓存/并发/过期历史压力待补。**唯一下一步：继续迁移旧自动召回/比较/评测消费者与剩余行为检查，退出旧链并恢复全后端绿灯后补齐 S6 验收。** 未提交发布、未修改真实配置或操作用户数据库；其他并行方案保持。以下旧时点交接保留。
+
+**当前S6推进：默认Wiki接线已改，整体验收尚未完成。** 默认memory工厂返回v2，MemoryAPI拒v1；Host在模型配置有效且存在逻辑项目身份时备份/升级Wiki，个人库首次按需打开时独立升级。MemoryJobs默认Wiki，普通个人聊天导航也改读Wiki。修正schema26重开/备份校验，Git项目两层迁移复用workspace_binding；无项目绑定历史夹具不错误迁移。跨项目测试迁至新写入/read与导航合同，保留来源可见性、权限和关闭断言。默认切换相关首轮300通过，Git修复后cutover/迁移/跨项目14通过，构建待最终复核。证据build/spec143bo-s6。
+
+S6仍需完成：删除旧MemoryInput/自动召回/比较与后台分支及无消费者设置，迁移旧测试/探针，配置迁移错误与回退演练，2000/20000性能原始记录，接通background/foreground真实评测驱动并完整跑此前模型calibration8例。目前脚本仍wiki_runtime_not_connected，未调用真实模型；不能声称S6完成，也不能把旧测试失败改成skip。无真实用户库运行/迁移、真实配置修改、提交发布。以下历史交接保留。
+
+**当前推进：S5审查三项已修复，S6尚未完成。** 个人目标探测异常独立记录并继续项目GC；页/链接按seek限制检查量，剩余失效外链计入more_work。新增3回归先复现（扫描量另有修复前探针），retention17通过，Wiki/维护/checkpoint178通过；构建证据build/spec143bo-s5-review-fixes。S6已核对入口与退出清单，calibration8例离线合同通过，报告build/spec143bo-s6-offline，model_requests=0。真实background/foreground驱动仍明确wiki_runtime_not_connected，默认工具v1、API双合同、后台旧分支与设置退出未完成，不能声称S6完成。后续必须继续这些接线、迁移旧行为测试、性能与真实模型8例校准；用户未授权真实库迁移、提交发布。以下历史与并行交接保持。
+
+**当前记忆交接：2026-11-18，Spec143BO-S5已完成本机实现与验证。** 到期即时过滤保持；默认TTL30天、物理清理缓冲7天、批量100、机会间隔3600秒均配置，interval=0每次合格收尾尝试一批。SessionPersistence必要保存成功及MemoryJobs通知后调用session_maintenance，原checkpoint与memory分别隔离失败，排空已开始IO后才释放运行。MemoryAccess持共享D1，项目与已打开个人库分事务清理；个人节流共享，未打开不新建、不主动开项目。仓储同事务选择/核验，分批清历史/主记录/来源/链接/空页，保留forgotten抑制、旧代隔离及原始历史/概览。结构变化使目录/B快照失效，仅历史清理用include_history投影指纹失效游标。跨个人链接有界seek推进回绕。锁表、配置示例和工具说明已同步。
+
+验证：[verification.json](../build/spec143bo-s5/verification.json)。扩展模块882通过、最终针对性44通过；全后端四组1674+1917+1766+1914=7271通过，0失败/跳过（后补个人/域隔离/关闭用例由最终44覆盖）。标准Mac构建/Twine、570个打包Python匹配、compileall/pip/diff通过。无真实用户库清理/迁移、真实配置修改、模型质量评测、提交发布；不宣称全局清理重构或磁盘擦除完成。默认新代入口仍待S6。课堂掌握未新增，见[3.0](3.0/README.md)。唯一下一片：[S6整体验收与切换](specs/143bo-06-acceptance-and-cutover.md)。并行143BP方案及其他交接保持如下。
+
+**历史S4记忆交接：2026-11-18，S3三项审查问题已修复，S4已实现并完成本机验证。** 新P合并独立校验来源/范围/期限和候选状态；页元数据/链接检查写权限；按真实决定依赖拆事务，真实worker回归证明同主题坏提议不拖掉独立好提议。Wiki实例每轮只装配2000token主题导航，SessionPersistence独立拥有2000token历史目录及真实attempt/保存后seen标记；memory关闭不关闭history，配置仍从Host传入；权限参数经完整HistoryInput规范化。history整个JSON受2000token/16384字节约束，overview_only分页绑定原始概览快照，普通后续消息页不重复摘要；大覆盖遗漏明细显式显示数量/省略，原数据库和任务诊断保持。真实假模型请求已验证两个SystemMessage part和必要保存后的seen。默认项目/个人聊天旧代入口保持，统一切换与旧链删除仍归S6，无Wiki失败fallback旧检索。
+
+验证：[verification.json](../build/spec143bo-s4/verification.json)。模块/配置868项通过；最终受影响路径32项通过。全后端扫描7217通过/34失败，33项原生fd路径错误及1项普通聊天过早改代已处理，34失败项重跑全通过（非一次全绿运行，日志分别保留）。标准Mac构建/Twine、568个打包Python与源码逐字节核对、compileall/pip check/diff通过。首轮仓库根收集误纳第三方调研测试，已改用tests；无真实模型质量/用户数据库迁移/真实配置修改、提交发布。未新增课堂掌握证据；学习位置见[3.0](3.0/README.md)。唯一下一片：[S5到期维护](specs/143bo-05-expiry-and-maintenance.md)。其他并行交接如下保持。
+
+**当前记忆交接：2026-11-18，Spec143BO-S3已完成本机验收。** 真实队列/根完成释放→Wiki A提出与独立概览→B受限read/finish→完整阅读账本→同库相连组一次提交已接通；显式organize直接B。模型不抄旧正文，代码继承来源/条件/时钟；补证不续期，纯合并取最早到期，新完整确认复用统一门禁；候选完整读取、30条容量、来源上限、CAS/抑制和权限保持。失败组零写入，不重试、不回退保存A；停止等待模型零写入。Staged查重覆盖同组计划记录，敏感坏提议局部跳过不影响合法概览；已替换S2执行拒绝分支，旧默认比较器仍有消费者至S6。新增29，专项163，全后端四组1665+1911+1754+1909=7239（0失败/跳过）；标准Mac构建/Twine/compileall/pip/diff通过，1394冻结Python无漂移，wheel564应用Python逐字节一致。首轮缺fd及非递归清单已由现有固定资源准备/完整递归重跑纠正，未改产品测试断言或系统工具。证据[verification.json](../build/spec143bo-s3-final/verification.json)，主链/限制见[S3](specs/143bo-03-background-consolidation.md)，锁表同步。默认启动/用户库仍未切换（S6），无真实模型质量评测/配置修改/提交发布。课堂掌握无新增，见[3.0索引](3.0/README.md)。唯一下一片：[S4上下文与历史预算](specs/143bo-04-context-and-history-budgets.md)。其他并行缓存清理交接保持。
+
+**历史S2审查修复：2026-11-18。** 已为五项审查问题增加先红回归并修复：confirm服从冲突candidate门禁；同一用户删除指令可处理多个ID；both目录不跨过未读完个人批次；candidate到期使游标失效；普通聊天个人整理受理及根完成释放不再要求项目路径/历史进度。新增5项先红后绿；完整记忆相关回归759通过（33.05s），标准macos-arm64构建/Twine/diff检查通过，产物build/spec143bo-s2-review-fixes-final/release。未跑全后端或真实模型评测。S3尚未实施，下一步按143BO-03推进A提出/B按页整理；默认切换仍归S6。
+
+**历史S2记忆交接：2026-11-18，Spec143BO-S2已完成并通过工具组件整体验收。** 全部动作仍属于单一memory工具。v2合同从精确许可传入API，校验运行身份/执行绑定后，写入先必要归档，再通过统一Wiki提交器→源/目标事务→CAS/容量→有界回执；目录/页/ID读取、既有词法搜索、来源与历史投影已接通。补证不改正文和期限；完整确认/替换须真实较新依据，默认30天可配且保留明确截止；个人范围必要证据不丢；遗忘清正文/版本/来源并保留最小抑制。新页敏感metadata、满8来源遗忘和应用SQL边界问题已修正，worker共享测试夹具改用真实MemoryJob，原断言保留。专项128，全后端四组1647+1899+1762+1897=7205（0失败/跳过），标准Mac构建/Twine/compileall/pip/diff通过；冻结1386个Python文件一致，wheel内560应用Python文件与源码一致。29条并发最后槽一次保存一次冲突，第31条拒绝后条数/页版本均30。证据 [verification.json](../build/spec143bo-s2-final-fixed/verification.json)，完整日志同目录。organize/v2 refresh已接现有任务受理/根完成释放/停止/查询，Wiki执行归S3：当前隔离任务明确wiki_worker_unavailable失败、零模型/写入/不重试，不交旧kind worker；accepted不代表已保存。默认注册及项目25/个人4未切换，正式启用归S6；无真实模型效果评测、用户库迁移、真实配置修改、提交发布。锁顺序已同步lock-hierarchy。其他并行交接保持；课堂掌握未新增验收，位置见 [3.0索引](3.0/README.md)。唯一下一片：[S3后台提出与按页整理](specs/143bo-03-background-consolidation.md)。
+
+以下 143BM 记忆交接保留为历史实现/评测证据，其旧校准下一步已被上述方向替换；其他并行模块的交接不受此变更影响。
+
+**当前交接：source-only旧诊断引用门禁收敛已实现，真实效果待新批次。** supplement+partial/unknown由程序继承旧来源，模型old_evidence_refs有界字符串列表忽略并安全诊断；B提示要求空列表，错误schema仍拒绝。其他关系旧引用校验、目标范围/新E/权限/CAS/状态/时钟保护保持。12回归先红后绿，专项83、全后端7119（0失败/错误/跳过）、标准Mac构建/Twine/两模块wheel一致/compileall/pip/diff通过，冻结源码一致。证据build/spec143bm-source-only-old-refs/verification.json；[Spec](specs/143bm-08i-source-only-old-references.md)。本轮真实模型0，未改配置/用户库，未提交发布。唯一下一步冻结新代码，完整后台calibration8例≤24逻辑调用，核对06更正/07真实补证及其他退化；旧07失败原报告保留，不补子集，不进验证/留出。
+
+**当前交接：A提示新完整后台calibration完成，7完成1partial，质量未验收。** 8例24调用，无补跑。06找到旧项同ID context v1→convention v2，单行含新旧来源。07成功提取且B判supplement/direct/partial/claim=null，但old_evidence_refs=O1而非O1:S1，被old_source拒绝，零写入旧v1；不可称补证成功。01/05注入，其他空，08额外“根因未确定”措辞需人工核查。冻结源码/来源跨度/8followup零写库核验通过，diff通过；本轮实验/文档，不改产品/配置/用户库。证据build/spec143bm-extraction-calibration/{verification.json,comparison.json,analysis.md}。唯一下一步讨论source-only无提交消费者的旧来源诊断引用门禁，程序已持有旧ID/版本/来源，可考虑由程序关联，继续保护目标权限/CAS/新证据/时钟；先Spec，不补失败子集。
+
+**当前交接：A事项对象/局部确认提示修订已实现，真实效果待新采样。** 实际EXTRACT_PROMPT保留具体对象名于稳定matter（不新增identity_terms规则或逐字硬门禁），允许仅引用新证据提取局部确认，缺旧正文不得虚构/提前放弃，仍交B判断。2提示接线先红后绿；固定worker路径核对事项进入query、补证v2正文/时钟保持、旧新来源与完整新quote。样本改为单句适配既有单span驱动，未放宽断言。专项71、全后端7108（0失败/错误/跳过）、标准Mac构建/Twine/wheel提示一致/compileall/pip/diff通过，冻结源码一致。证据build/spec143bm-extraction-guidance/verification.json；[Spec](specs/143bm-08h-extraction-topic-confirmation.md)。本轮真实调用0，未改检索/配置/用户库、未提交发布。唯一下一步冻结新提示，完整后台calibration8例≤24逻辑调用，观察06旧项及07提议/补证；不补失败子集，不进入验证/留出。
+
+**当前交接：后台主链报告已按8例9标签重新复核，撤回07补证成功结论。** 07实际A空提议/无B/零写入，旧v1仅旧源；06 A提出正式约定但B.old_memories为空，判new而新旧并存。01–05保存、仅01注入，08保存安排/拒绝扩大原因判断。存储来源跨度精确核对、8followup零写库。本轮无模型/生产代码/配置/用户库改动，diff通过；助手审阅不是human评分。证据build/spec143bm-background-audit/{audit.json,analysis.md}，既有派生分析追加更正，原始报告保留。唯一下一步讨论A局部提示：事项保留原文对象名；局部确认可形成有新证据的提议交B比对，不虚构旧正文；检索算法不升级、不补失败子集。
+
+**当前交接：用户决定取消前台评测调用次数预算，v3已接线。** 每例/每批人工次数限制删除，callback只观测并拒绝非前台/后续阶段；完整8例/split校验、后台隔离、实际调用/usage/反馈及副作用保留。上限字段null，协议v3；既有运行时保护/后台限制不变。5回归先红后绿，专项25、全后端7105（0失败/错误/跳过）、标准Mac构建/Twine/compileall/pip/diff通过，冻结源码一致。证据build/spec143bm-s8-no-call-cap/verification.json；本轮真实请求0，未改真实配置/用户库。唯一下一步：回到后台主链，按已有报告梳理提取/比较/保存/召回及06/07的事实差异并完成助手逐事实复核；不再围绕前台次数调参。业务验收/人工评分未完成。
+
+**当前交接：前台v2新旧完整校准完成，效果未验收。** 各8例各31调用，共62/64，无补跑；旧549生产哈希/候选源码匹配。候选7完成/06 search→read→update后第四次说明被预算拒绝，已写context v2；旧8结构完成但8写入参数失败。仅候选01注入。06未请求改类，lifecycle标签要求旧项完全不变却同类更新成功，需讨论前台时间分类/评分政策，不直接称门禁bug或继续加预算。证据build/spec143bm-s8-foreground-v2/{verification.json,comparison.json,analysis.md}。本轮仅实验/文档，无产品源码/配置/用户库改动，diff通过。唯一下一步与用户讨论06政策和评测边界；人工评分/验证留出未完成。
+
+**当前交接：前台评测预算v2已实现，项目长期约定预加载不采用。** 用户确认三次foreground＋一次followup，8例32上限；统一常量接callback/plan/report，协议v2+driver哈希，提示允许先查后一次变更，失败不重试。新增四调用真实工具离线回归先红后绿，额外第四交互阻止及已写库/反馈保留断言同步；专项25、全后端7105（0失败/错误/跳过）、标准Mac构建/Twine、compileall/pip/diff通过，冻结源码一致。证据build/spec143bm-s8-budget/verification.json；[Spec](specs/143bm-08g-project-conventions-and-budget.md)。真实请求0，配置/用户库未改，未提交发布。唯一下一步：冻结新驱动并展示前台新旧完整calibration各8例/各32总64预算后执行，不补06子例、不进入validation/holdout；已有后台结果留用注明时点。S8-3业务验收/人工审阅仍未完成。课堂位置见[3.0索引](3.0/README.md)。
+
+**最新决定：不采用08g的项目长期约定完整预加载提案，用户认为注入过多。保持个人长期约定预算内完整加载，项目约定普通检索；前台预算调整尚待单独确认。当前记忆由memory prompt part拼入SystemMessage，不写入HumanMessage正文。**
+
+**当前交接：2026-11-17，S8-3新旧四批calibration完成，质量待讨论/人工审阅。** 旧链549生产文件与S5冻结匹配，仅评测脚本/资产覆盖；后台旧24/新23、前台旧24/新23，共94逻辑调用，无补跑。旧后台6完成2比较失败，新后台8完成；旧前台8结构完成但8参数失败零新增，新前台7完成、06写v2后第三轮被预算拒绝。注入非空例后台旧2→新1、前台旧0→新1；02旧workspace/user偏好注入，新workspace/convention不在personal组且检索未命中，是可观察退化。06候选后台仍旧新并存；07后台source-only比旧抄写门禁有改善。证据build/spec143bm-s8-baseline/{verification.json,comparison.json,analysis.md}及[执行Spec](specs/143bm-08f-calibration-run.md)。本轮无生产源码/配置/用户库变更，不重复声称全量测试；产品哈希、8+8报告/预算及diff检查通过。唯一下一步：与用户讨论是否接受项目长期约定未预加载和前台两轮预算限制，再决定修订合同/新批次；不进入validation/holdout，不伪造人工评分。课堂位置见[3.0索引](3.0/README.md)。
+
+**当前交接：2026-11-17，S8-2两处评测漏检已修复，S8-3候选首轮校准完成，整体未验收。** worker新增正文/当前版本来源集合与跨度核对；旧召回失败进入coverage退出门禁。3回归先红后绿，专项31、全后端7104（0失败/错误/跳过）、标准Mac构建/Twine通过。候选/旧归档/协议哈希冻结；既有heiyu-gpt-5.5配置只读，返回模型标识gpt-5.6-sol。后台/前台各完整8例各23逻辑调用，共46/48，无补跑；后台结构8完成，06旧ruff未匹配导致新旧并存；前台7完成/06 search→update成功后第三轮被预算阻止，已写v2、无followup。两入口均仅01后续注入。证据build/spec143bm-s8-calibration/verification.json、analysis.md；[执行Spec](specs/143bm-08f-calibration-run.md)。助手初析不代替人工评分。唯一下一步：准备隔离旧链同协议对照并审阅逐事实，讨论06预算与已知召回限制；不补失败子集或进入validation/holdout。未改真实配置/用户库，未提交发布。课堂位置见[3.0索引](3.0/README.md)。
+
+**当前交接：2026-11-17，S8-2 工程矩阵与逐例对账收尾，业务质量仍待真实评测。** worker/召回工程资产各24条、三组各8条，新组覆盖缺源/坏P/O/无证据/推断/部分更正与复杂查询；真实生产链核对写入、版本、状态、时钟和注入/零写库。旧资产保留，两个CLI/evaluate支持split，校验hash、ID/family与别名。coverage脚本逐项记录旧96条和两维24条版本边界；旧受控写入12项预期不符保留，不当B质量；新48条工程矩阵通过。工程覆盖表31个test节点核验，专项28、全后端7101项通过（0失败/错误/跳过），标准Mac构建/Twine通过；完整结果见build/spec143bm-s8-matrices/verification.json。[Spec第21节](specs/143bm-08-memory-tool-action-contract.md#21-s8-2-工程矩阵与覆盖收尾2026-11-17)、[覆盖表](specs/143bm-08e-engineering-coverage.md)。原SQL/HTTP等未知成本限制保持。无真实模型/配置/用户库操作、提交发布或人工效果验收。唯一下一步S8-3：冻结候选与旧基线及协议，明确阶段预算后后台/前台分别校准，先分析再决定进入质量验证/留出。课堂位置见[3.0索引](3.0/README.md)，无新增掌握证据。
+
+**当前交接：2026-11-17，按用户决定保留当前检索，S7前台评测驱动准备单元已接线，S7整体未完成。** 新scripts/memory_foreground_evaluation.py经真实service/host组件装配、模型memory工具、来源归档/权限/提交及结果回填，临时库auto=false；followup新增可选session_id以支持真实前台sid。正常写入→独立回答3调用/零B、坏源错误反馈零写入、额外模型轮预算阻止三个测试通过。预算inline异常曾触发未await警告，使用非inline回调后-W error 3项通过；最终记忆596项/19.98秒无警告，标准Mac构建/Twine、compileall/pip/diff通过。本轮无真实模型/配置/用户库操作、未提交发布。Spec为143bm-07-foreground-evaluation.md，证据build/spec143bm-s7-foreground/verification.json。唯一下一步：补齐中断后的工具反馈留存、前台改类专用标签/测试和CLI，再跑前台完整calibration；当前不可宣称前台真实效果或S7整体完成。
+
+**当前交接：2026-11-17，普通召回首轮离线对照完成，生产检索未改。** 新探索脚本compare_memory_recall_offline使用已存合成正文和临时库，6方案/8校准问题/有无10干扰=96请求，另18控制；模型0、读写入0、其他项目/candidate/过期匹配均未注入。带干扰current命中1/8（01预加载），门槛0.3→2/8+1干扰、0.2→5/8+4、0.1→8/8+10；trim0.5无改善，trim0.3→3/8+3。泛化安排问句在trim/低门槛注入发布记录，继续和无关量子问题均空。目标记录分母不是官方事实评分，干扰是预设主题标签不是人工精度；02未存不补造，07用原正文。证据build/spec143bm-recall-comparison/result-final.json、analysis.md；脚本compileall/diff及114次运行断言通过，不称新产品功能验收。唯一下一步：讨论明确主题提取/多事项/条件保留的最小查询优化合同，再离线测候选；不直接降低全局阈值。
+
+**当前交接：2026-11-17，评测报告过滤及实验身份缺口已修复，未提交。** safe_report统一过滤reasoning/thinking/redacted_thinking块及签名/加密字段，覆盖callback、followup和最终报告；模型身份复用既有校准元数据，记录有效参数/MemorySettings指纹与SDK重试配置，报告绑定protocol/rubric哈希，源码清单补齐实际驱动和模型配置消费者。5回归、首3项先红后绿；专项结果见build/spec143bm-report-fixes/verification.json和tests.log；标准Mac构建/Twine、compileall/pip/diff通过。只读加载既有模型配置确认身份可生成，真实模型调用0，旧报告/用户库不变。本轮未重跑完整后端。02归因已更正、07和同类抄写门禁已由S6修复；普通召回不足仍是待设计优化项。唯一下一步：为召回定义正例与干扰例离线对照，再确定最小检索改动；新真实模型批次、前台/留出集仍待执行。
+
+**当前交接：2026-11-17，S6“模型选动作、程序装配确定数据”已实现并完成本机工程验证，未提交。** 已整体核查记忆提取/比较/提交/前台工具门禁，详见[排查与实施Spec](specs/143bm-06-program-owned-memory-actions.md)。partial/unknown直接补证不再重抄正文，程序保留旧内容/状态/全部证据与期限时钟，只附来源和说明；B可用claim=null接受单条A及全部证据，kind由程序继承；零写入及补证动作不再校验无消费意义的多P kind一致性，可解析冗余claim忽略并安全诊断。实际改类、来源、权限、CAS、容量和不重试门禁保持，前台签名/真实配置/用户库未改。新增39测试，核心20失败分支先红后绿；最终记忆588项/22.22秒，完整后端四片1850+1772+1820+1580=7022，0失败/错误/跳过；标准Mac构建/Twine、2模块wheel一致、compileall/pip/diff通过，最终源码清单固定。旧S3资产/真实报告保留，当前机械矩阵另建S6版本8/8。旧真实A/B离线重放8 completed，07同ID升v2、正文和时间不变、来源新增，provider=0，不是新模型质量通过。普通搜索仍均空、仅01预加载，模型误判/召回/前台与留出评测仍待办；此前报告reasoning过滤与模型参数身份留存缺口尚未修复。证据[verification.json](../build/spec143bm-s6-actions/verification.json)。唯一下一步：只读审查S6最终代码与Spec，再决定后续评测修补和新完整批次。课堂位置见[3.0索引](3.0/README.md)，无新增掌握证据。
+
+**当前交接：2026-11-17，S5两项审查问题已修复，S5-3候选首轮已执行，质量验收未通过。** 迁移固定判断时刻、排除到期项冲突；list/read版本变化保留ID并在两组统一剔除。新增3回归先红后绿；另在真实评测中发现旧种子原文未纳入评分集合，新增1回归修复并离线重核。最终记忆549项/19.57秒，标准Mac构建/Twine、2模块wheel一致、compileall/diff通过；本轮未重跑完整后端。沿既有默认heiyu-gpt-5.5完整8例/24逻辑调用，无补跑，7 completed/1 partial（旧基线3/5、21调用）。原报告2结构失败保留：06评分材料遗漏误报离线澄清；07 partial改写被门禁拒绝。仅01个人长期约定注入1，其余0，召回仍待优化；02 A及B实际输入均为workspace，B误用跨项目要求拒绝导致漏存（复核更正）。证据build/spec143bm-s5-fixes/verification.json、comparison.json和原始报告。无真实配置/用户库操作、提交发布。唯一下一步：围绕逐事实审阅分析漏提取与普通召回不足，再决定是否调整检索/提示；不通过放宽门禁或更改标签制造通过。前台、validation/holdout仍未执行。课堂位置见[3.0索引](3.0/README.md)，无新增掌握证据。
+
+**当前交接：2026-11-16，S5-1/S5-2已本机实现并完成阶段工程验证（未提交）。** 当前请求两类convention/context，active 90/30天、candidate均30天；旧preference_limit仅在load_settings转换，运行时改personal_convention_tokens=800。后台改类要求direct/correction/whole及新真实用户证据，commit重验新消息；前台直接改类拒绝，同事项冲突键去kind。项目schema25/个人format4入口接真实迁移：保留旧快照/证据时点、追加当前版本、保守合并冲突、遗忘不复活、FTS同步；只验证临时旧库，未开真实用户库。预加载完整personal/convention组，最多1 list＋max_limit read，预算/分页/读失败整体退回原S4查询，版本冲突两组剔除，弱输入不补查询；无重试。最终记忆545项/21.06秒、新专项47项、项目消费者23项通过；后端四片1797+1831+1505+1827=6960（0失败/错误/跳过）。分片期间最后门禁和新增边界由最终记忆专项覆盖，不宣称隔离发布快照。标准Mac构建/Twine、11生产模块wheel逐字节一致、compileall/pip check/diff通过。证据build/spec143bm-s5-implementation/verification.json。示例及当前文档同步，真实配置/用户库保持，无真实模型/提交/发布。唯一下一步：审阅本次实现，再按S5-3用既有模型开展有界新旧calibration和逐事实审阅；前台评测/留出集仍待完成。课堂位置见[3.0索引](3.0/README.md)，无新增掌握证据。
+
+**当前交接：2026-11-16，S5评测两项审查问题已修复，S5-2证据时间展示先行接线。** 后续回答失败保留A/B及记忆材料、独立失败且无重试；v2完整partial报告可评分，engineering_passed=false/overall失败/CLI非零，缺case与旧协议保持拒绝。新增3项失败回归先红后绿；S5-2索引evidence_at与相对日期提示新增1项先红后绿并验证只读。专项51、记忆503项（19.42秒）通过，标准Mac构建、Twine、compileall/diff通过，证据build/spec143bm-s5-review-fixes/。真实模型调用0，无真实配置/用户库操作，无提交发布。S5-1两类/TTL/存储迁移和S5-2完整个人集合仍未完成；下一步为连同加载消费者完成这些依赖后再做新方案评测。课堂位置见[3.0索引](3.0/README.md)，无新增掌握证据。
+
+**当前交接：2026-11-16，S5-1的A输出合同准备单元已实现，整体S5-1未完成。** 真实A请求附同源ExtractionResult schema，明确identity_terms为字符串技术锚点且普通词可省略；schema计入原输入预算，预算不足不读归档/不调用模型；失败不重试。新增2项回归先红后绿；41专项、499记忆回归（18.83秒）通过，标准Mac构建/Twine及产物源码一致检查通过，证据build/spec143bm-s5-extraction-contract/verification.json。两项原小预算测试补足schema开销，保留所有部分推进与终止断言。真实模型调用0，旧真实基线/隔离快照未覆盖，未改真实配置/用户库，无提交发布。当前仍七类和旧TTL/格式；唯一下一步：连同旧注入消费者迁移两类枚举、90/30天、受控改类及项目/个人库升级，避免半切换产生kind=user非法请求。详见[实施Spec](specs/143bm-05-space-time-memory.md)。前台评测、完整人工评分与S0验收仍待完成。课堂位置见[3.0索引](3.0/README.md)，无新增掌握证据。
+
+下方保留此前工程与评测记录，阶段性的“下一步”以本摘要为准。
+
+**2026-11-16 S3提示合同修正及第二轮真实校准完成（未提交）**：A明确无显式跨项目依据用workspace、kind=user不自动personal；B实际消息附同源ComparisonResult schema并明确claim不得带scope，schema计入既有token预算，extra=forbid与失败不重试保持。2项接线回归先红后绿，记忆470项通过；标准Mac构建/Twine及2生产源码wheel逐字节一致。沿原heiyu-gpt-5.5完整8条calibration独立run2，15逻辑调用，任务completed由5/8→8/8、partial3→0、active记录2→8、personal0；临时缓存仍无提议。冻结评分仍失败5条（固定context，实际rule/user），原结果不改，不宣称业务验收通过。初步助手审阅保存内容均有对应原文，非人工评分。报告输入token77596→86437、输出2582→2946、总case耗时86.358→108.657秒，含模型随机差异，不归因成纯schema或生产性能。证据build/spec143bm-semantic-calibration/run{1,2}.json、comparison.json、prompt-fix-focused.log。无配置/用户库更改、无补跑或提交发布。唯一下一步：围绕两轮结果与评分类型/范围/成本做系统方案评审，再确定后续矩阵和独立验收。
+最终工程验证：当前工作区后端四片1825+1759+1759+1569=6912项通过，0失败/错误/跳过；记忆470项通过；标准Mac构建/Twine、compileall/diff及2生产文件wheel一致通过。证据build/spec143bm-semantic-calibration/verification.json与fix-backend-*.xml。包含保留并行工作区内容，不作为隔离发布声明。
+
+
+**2026-11-16 S0首轮真实校准已执行，验收未通过**：按用户指示沿用.env/models.json唯一默认heiyu-gpt-5.5，optimization/calibration/repeat1，8/8执行、15次逻辑调用（≤16计划），无补跑；探针退出1，structural_failures=6、所有调用起止配对。semantic-01保存2条active；04临时操作A无提议；02/03/05的personal提议被B因缺跨项目证据拒绝；06/07/08的claim.scope被本地Claim(extra=forbid)拒绝，概览保留、task partial、记忆0写入。初步助手审阅未见错误激活，不是人工语义通过；正例固定context标签也需复核，原报告不改。HTTP尝试事件未观测，不能将0事件视作0请求或把15逻辑调用称HTTP数。证据build/spec143bm-semantic-calibration/run1.json、run1.log、triage.json。未改模型配置/用户库/生产代码，无重试/提交/发布。唯一下一步：分析并修正A范围选择与B输出合同表达，另按版本处理标签类型限制；先离线回归再另跑完整独立校准，不补跑失败案例。
+
+**2026-11-16 S0逐事实评分与多项召回校准已接线（未提交）**：真实探针保留冻结expected_facts；人工评分必须覆盖全部事实，提议/最终有效/提示注入分母由标签决定，漏项列ID、空分母null、禁止激活阻断通过。新增独立8条calibration召回集，真实库含目标/干扰项，经MemoryAccess和prepare_memory_parts检查多事项、编号、弱查询、空答案、否定字面、URL与去重，8/8通过、provider0、读无写库。新增旧版报告对照支持同数据/协议/身份与逐例召回/精度退化检查。专项467及最后补充35项通过，标准Mac构建通过，完整结果见build/spec143bm-fact-evaluation。无真实模型采样；全96场景扩展、独立validation/holdout、B人工关系指标、完整成本/旧版采样仍待完成，不称S0总体通过。唯一下一步：核对真实模型采样配置/预算后先跑calibration并逐事实人工评分。
+最终验证：后端四片1823+1759+1759+1568=6909项全通过（0失败/错误/跳过），相关467、最终补充35项通过；标准Mac构建/Twine及compileall/diff通过。8条新召回校准全过、读写入0、provider0。证据build/spec143bm-fact-evaluation/verification.json与recall-final.json。无真实模型/语义业务验收结论。
+
+
+**2026-11-16 记忆URL边界修复与S0收尾第一步（未提交）**：URL保护不再吞掉空白前的句末英文句号，独立问题保留；新增回归先红后绿。新增不依赖tests的worker评测入口，通过MemoryJobs真实A/B链执行冻结8条比较校准，核对ID/版本/TTL/写入/失败/调用数及更正后S4召回v2且无写库，8/8通过、provider0。人工逐case评分入口绑定原始报告哈希，拒绝漏评/重复/未知case及不完整采样，安全错误禁止通过；真实探针补run_id/源码manifest。专项464项通过，标准Mac构建/Twine通过，完整验证见build/spec143bm-evaluation-closure。仍非完整S0：96场景扩展、逐fact评分、成本/基线比较和独立validation/holdout未完成，无真实模型采样。用户配置/数据保持，无提交发布，无新增课堂掌握证据。唯一下一步：补齐S0场景与逐事实评分，再开展有界真实模型校准。
+最终验证：后端四片1823+1759+1759+1564=6905项全通过（0失败/错误/跳过），专项464项；标准Mac构建/Twine与源外安装通过，provider0。证据build/spec143bm-evaluation-closure/verification.json、backend-*.xml、worker-final.json与install.json。未提交发布，完整S0仍pending。
+
+
 # Naiyue Test Agent：当前开发学习交接
 
 **2026-11-16 上下文复审两项修复已验证并准备本地提交**：Anthropic thinking+text摘要采用严格文本投影；C3按新增工具调用ID收集配对证据，支持自动压缩后历史缩短。两项新增测试先红后绿。独立提交源码快照后端1802+1711+1750+1551=6814通过（0失败/错误/跳过），前端688、生产构建、compileall、pip check及diff检查通过。分片2首次缺frontend/dist，补入本轮标准前端构建产物后完整重跑通过；原失败记录保留。报告build/spec143bl-two-fixes-backend-{0,1,2-recheck,3}.xml。仅提交本次6文件，保留并行记忆/配置工作，无真实模型请求。唯一下一步：按用户指令完成本地提交，未push/发布。
 
+**2026-11-16 记忆S4审查修复已本地验证（未提交）**：URL参数保护、字面引号/代码区括号、合法围栏关闭、整条弱输入判断；诊断保留偏好失败/截断，分离预算/敏感/估算省略并汇总规划原因；warning沿safe_log隔离。新增9回归先红后绿，专项43、记忆460、前端688、工作区后端6900（四片0失败/错误/跳过）通过；标准Mac构建/Twine/源外安装、compileall/diff通过，生产模块包内一致、provider0。证据build/spec143bm-s4-fixes/verification.json及Spec143BM-S4第12节。保留并行改动，未改真实配置/用户库，未提交发布，无新课堂掌握记录。唯一下一步：用户审阅修复；S0真实语义与留出集质量验收仍待完成。
+
 **2026-11-16 上下文校准S3/S4及最终四项修复已验证**。完成v2冻结快照、C/E界面及恢复预览、有界验收与安装烟测；overflow仅同run/call一次失败且一次恢复成功才豁免，失败计量保留；非预期工具调用在下一HTTP前阻断；v2 usage四字段严格、v1缺省兼容；Anthropic tool_use核对规范调用后一遍序列化，未知/矛盾仍拒绝。新增五项先红后绿及反向回归，正式应用覆盖两协议压缩/续聊/重开。提交集合独立快照后端1801+1711+1750+1550=6812通过（0失败/错误/跳过），定向284、前端688、浏览器12、标准Mac构建与源码外安装通过；10生产模块wheel字节一致，compileall/pip check/diff通过。两条旧测试版本/字段断言已同步，失败报告保留，最终取重跑分片。证据build/spec143bl-final-commit-verification.json、Spec143BL-04第10.3节；隔离其他未暂存记忆/配置工作，无新增真实模型请求。唯一下一步：按用户指令完成本次本地提交；未push/发布。
 
+
+**2026-11-16 记忆S4自动召回已本地实现/验证（未提交）**：有限扫描完整问题、独立查询、版本冲突剔除、覆盖优先/RRF、整条索引预算及安全计数接现有装配，弱查询/权限/预览审批快照保持；新增recall_query_limit/recall_scan_chars及示例，不改真实配置/DB。9项先红后绿，列表边界另先红修复，新增12规划与3真实存储回归。记忆451、前端688、后端四片6875（0失败/错误/跳过）、标准Mac构建/Twine/源外安装、compileall/diff通过；2生产模块包内一致、provider0。S3更正后多事项召回v2及旧来源删除状态联测，增强断言所在20项另通过。证据build/spec143bm-s4/verification.json及Spec143BM-S4第11节。并行工作保留，未提交发布，无课堂掌握记录。唯一下一步：用户审阅S4；S0完整语义/留出召回质量与成本验收仍未完成。
+
+
+**2026-11-16 记忆S3审查五项修复已本地验证（未提交）**：跨版本查询保留全部旧ID关联并跳过完整组；错误group_id隔离；旧deadline隐式继承；target继承先于工具更正时序检查；预算跳组计失败/部分完成，不重试。新增6例先红后绿，另补2种真实库截止期补证，新增8、相关550通过；工作区后端6858（四片，0失败/错误/跳过）、前端688、标准Mac构建/Twine/源外安装、compileall/diff通过，3模块包内源码一致、provider0。证据build/spec143bm-s3-fixes/verification.json及Spec143BM-03第13节。保留并行BL改动，未改真实配置/用户库，未提交发布。无新课堂掌握记录；唯一下一步：用户审阅S3修复；S0真实语义验收仍待完成，S4尚未实施。
+
+**2026-11-16 记忆Spec143BM-S3两阶段主链已接线并本地验证（未提交）**：A只提取/概览→逐事项有限查询→共享旧项整组B→权限/来源/CAS/S2确认范围提交。完整/部分确认、旧证据不可读、更正时序、失败前进不重试、概览独立、组级预算/错误隔离已验证；旧_related/单阶段schema/直接提交入口删除，测试/探针/安装烟测迁到A/B，D1入口与锁表同步。核心合同和两阶段主链先红后绿，补充固定8条比较校准矩阵（只证明受控决定执行）。最终后端6843（0失败/错误/跳过）、相关542、前端688通过；标准Mac构建/Twine/源外安装通过，21源码与wheel一致，provider0。证据build/spec143bm-s3/verification.json及final-*；先前迁移失败和首轮6841保留为历史。隔离12693a1的revision3受控公共提议校准21→22/24、无逐例回退，B未采样、已知反例仍使评测退出1；不称S0业务通过。真实配置/用户库未改，BL并行改动保留，无提交发布。唯一下一步：审查S3后按S4接前台事项拆分召回；S0完整矩阵/真实语义验收仍为整体验收待办。
+
+**2026-11-16 S0/S2审查五项问题已修复（未提交）**：输入评测按独立support范围检查证据覆盖；语义错误claim与正确原文事实分离，负例fact_review保留forbidden_claim供人工审阅；正式入口校验protocol同目录rubric哈希，revision2拒绝与旧报告直接比较。partial/unknown回执按最终row状态，来源布尔0/1读回bool、旧NULL保留。新增6项回归先红后绿，专项36、相关509、最终后端6781（八片，index1补跑775）通过，标准Mac构建及源外安装通过，provider0；中间布尔映射误入matches导致的一次失败已修正并复验，旧失败报告保留。证据build/spec143bm-review-fixes/verification.json。真实配置/用户库未改，未提交发布，并行BL改动保留。S0完整矩阵及真实语义验收仍未完成，S3尚未接入；唯一下一步：按S0既定范围补齐评测矩阵。
 
 **2026-11-16 工作区全部改动提交前验证**。本次包含上下文校准S1/S2及审查修复、记忆证据输入切片、MCP配置变更诊断、课堂与设计文档。按CI准备macos-arm64原生工具并加入PATH后，后端两片3370+3373=6743项全通过；前端78文件681项、TS/Vite生产构建及标准macos-arm64 wheel构建通过。报告build/workspace-commit-backend-{0,1}-recheck.xml，前端/构建日志build/workspace-commit-*.log。初次根目录pytest误收集调研测试，随后未配置fd的两片提前失败，均不计通过。提交范围83文件，node_modules依赖目录保留未跟踪，debug-sub.spec.ts仅为调试脚本；无真实模型验证，无push/发布。唯一下一步：按Spec143BL推进S3。
 
