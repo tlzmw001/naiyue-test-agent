@@ -191,7 +191,7 @@ def test_worker_source_only_handles_missing_old_archive_without_retry(archive,tm
                 d['proposal'] = dict(bound['proposal'], body=old_text + '本次只确认本地。')
             model.replies = [
                 AIMessage(content=json.dumps(result(proposals=[p]))),
-                read(dict(action='list_pages', topic=p['topic'])),
+                read(dict(action='list_pages')),
                 read(dict(action='read_page', page_id=first['page_id'])),
                 finish(decisions=[d]),
             ]
@@ -240,7 +240,7 @@ def test_native_adapter_reuses_bound_proposal_without_rewriting(archive,tmp_path
         sent=[]
         replies = [
             AIMessage(content=json.dumps(result(proposals=[proposed()]))),
-            read(dict(action='list_pages', topic='working_agreements')),
+            read(dict(action='list_pages')),
             finish(decisions=[dict(relation='add', proposal_ids=['P1'], destination='N1')],
                    page_changes=[dict(ref='N1', topic='working_agreements', title='环境', description='')]),
         ]

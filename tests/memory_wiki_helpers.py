@@ -41,7 +41,7 @@ def scripted_replies(replies):
         except (ValueError,TypeError,AttributeError):continue
         valid=[(i,p) for i,p in enumerate(values,1) if isinstance(p,dict) and 'topic' in p and 'body' in p]
         if not valid:continue
-        result.append(AIMessage(content=json.dumps(dict(result=dict(step='read',requests=[dict(action='list_pages',topic='working_agreements')])))))
+        result.append(AIMessage(content=json.dumps(dict(result=dict(step='read',requests=[dict(action='list_pages')])))))
         result.append(AIMessage(content=json.dumps(dict(result=dict(step='finish',
             decisions=[dict(relation='add',proposal_ids=[f'P{i}'],destination='N1') for i,_ in valid],
             page_changes=[dict(ref='N1',topic='working_agreements',title='测试规则',description='')])))))

@@ -273,7 +273,7 @@ class GatedWikiProposal(StreamingToolModel):
             self.entered.set()
             await self.release.wait()
         if step == 2:
-            return read(dict(action='list_pages', topic='working_agreements'))
+            return read(dict(action='list_pages'))
         if self.branch == 'forget':
             return finish(decisions=[dict(relation='add', proposal_ids=['P1'], destination='N1')],
                           page_changes=[dict(ref='N1', topic='working_agreements', title='并发规则', description='')])

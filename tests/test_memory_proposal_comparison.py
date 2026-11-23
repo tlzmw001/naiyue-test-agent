@@ -97,7 +97,7 @@ def _wiki_add():
     from test_memory_wiki_worker import finish, read
 
     return [
-        read(dict(action='list_pages', topic='working_agreements')),
+        read(dict(action='list_pages')),
         finish(decisions=[dict(relation='add', proposal_ids=['P1'], destination='N1')],
                page_changes=[dict(ref='N1', topic='working_agreements', title='本地回归环境', description='')]),
     ]
@@ -129,11 +129,11 @@ def test_bad_comparison_keeps_overview_without_candidate_fallback(archive, tmp_p
     from naiyue_test_agent.application.memory.memory_job_runner import drive
 
     async def run():
-        service, job, _ = _wiki_worker_case(archive, tmp_path, [_wiki_extract(), AIMessage(content='{broken')])
+        service, job, _ = _wiki_worker_case(archive, tmp_path, [_wiki_extract(), AIMessage(content='{broken'), AIMessage(content='{still broken')])
         try:
             await drive(service, job)
             assert job.overview_saved == 1 and job.saved == 0 and job.failed == 1
-            assert len(job.model.seen) == 2 and not job.model.replies and job.start == (2, 0)
+            assert len(job.model.seen) == 3 and not job.model.replies and job.start == (2, 0)
             assert archive.database.connection.execute('SELECT count(*) FROM naiyue_memories').fetchone()[0] == 0
         finally:
             service.memory.close()
@@ -187,7 +187,7 @@ def test_worker_corrects_same_id_even_when_old_quote_unavailable(archive, tmp_pa
             d = dict(relation='correction', proposal_ids=['P1'], old_refs=['O1'], target_old_ref='O1',
                      confirmation_scope='whole', evidence_ids=[eid], proposal=new['proposal'])
             model.replies = [AIMessage(content=json.dumps(result(proposals=[p]))),
-                read(dict(action='list_pages', topic=raw['topic'])),
+                read(dict(action='list_pages')),
                 read(dict(action='read_page', page_id=first['page_id'])), finish(decisions=[d])]
             job.upper = 2
             await drive(service, job)
@@ -256,7 +256,7 @@ def _two_wiki_proposals():
 def _second_topic_add():
     from test_memory_wiki_worker import finish, read
 
-    return [read(dict(action='list_pages', topic='stable_knowledge')),
+    return [read(dict(action='list_pages')),
         finish(decisions=[dict(relation='add', proposal_ids=['P2'], destination='N2')],
             page_changes=[dict(ref='N2', topic='stable_knowledge', title='报告语言', description='')])]
 
@@ -292,7 +292,7 @@ def test_oversized_group_is_skipped_without_truncating_independent_group(archive
 
     async def run():
         replies = [_wiki_extract(proposals=_two_wiki_proposals()),
-            read(dict(action='list_pages', topic='working_agreements')), *_second_topic_add()]
+            read(dict(action='list_pages')), *_second_topic_add()]
         service, job, _ = _wiki_worker_case(archive, tmp_path, replies)
         service.settings = service.memory.settings = MemorySettings(
             comparison_material_bytes=4096 if constraint == 'bytes' else 150000, max_input_tokens=16000)

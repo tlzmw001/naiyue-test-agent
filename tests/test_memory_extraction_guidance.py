@@ -38,10 +38,10 @@ def test_named_topic_and_partial_confirmation_reach_wiki_worker(inputs):
         eid = next(unit['evidence_id'] for unit in batch(service.storage, session_id='probe',
             thread_id='probe')['units'] if unit['message_id']=='confirm-local')
         proposal = proposed(matter='本地回归环境', subject='本地回归环境',
-            body='本地仍沿用原约定，CI不在此次确认范围。', sources=[dict(evidence_id=eid)])
+            body='本地仍沿用原约定，CI不在此次确认范围。', sources=[dict(evidence_id=eid)], scope_evidence_ids=[eid])
         job.model = StreamingToolModel(replies=[
             AIMessage(content=json.dumps(result(proposals=[proposal]))),
-            read(dict(action='list_pages', topic='working_agreements')),
+            read(dict(action='list_pages')),
             read(dict(action='read_page', page_id=old['page_id'])),
             finish(decisions=[dict(relation='supplement', proposal_ids=['P1'], old_refs=['O1'],
                 target_old_ref='O1', confirmation_scope='partial', evidence_ids=[eid])]),
@@ -51,6 +51,7 @@ def test_named_topic_and_partial_confirmation_reach_wiki_worker(inputs):
         assert job.result_status == 'completed' and len(job.model.seen) == 4
         material = json.loads(job.model.seen[1][-1].content)
         assert material['proposals'][0]['matter'] == '本地回归环境'
+        assert material['proposals'][0]['scope_evidence_ids'] == []
         connection = service.storage.database.connection
         row = connection.execute('SELECT * FROM naiyue_memories WHERE memory_id=?', (old['memory_id'],)).fetchone()
         assert row['version'] == 3 and row['expires_at'] == old['expires_at']
@@ -73,5 +74,6 @@ def test_organization_prompt_treats_unconfirmed_ci_as_supplement():
 def test_extraction_scope_guidance_keeps_project_exceptions_local(inputs):
     _, messages, _ = prepared(inputs)
     prompt = messages[0].content
+    assert 'workspace: leave scope_evidence_ids empty' in prompt
     assert 'From now on does not establish cross-project scope' in prompt
     assert 'keep the project exception out of the personal proposal' in prompt

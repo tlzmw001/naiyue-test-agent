@@ -154,7 +154,7 @@ def test_wiki_worker_saves_valid_item_independently_of_invalid_proposal(archive,
             additional_kwargs={'naiyue_human_input': True})], occurred_at=time.time() - 1)
         model = StreamingToolModel(replies=[
             response([wiki_proposal(), {'action': 'invented'}]),
-            read(dict(action='list_pages', topic='working_agreements')),
+            read(dict(action='list_pages')),
             finish(decisions=[dict(relation='add', proposal_ids=['P1'], destination='N1')],
                    page_changes=[dict(ref='N1', topic='working_agreements', title='环境', description='')]),
         ])

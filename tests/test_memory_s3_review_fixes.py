@@ -43,12 +43,12 @@ def test_bad_group_id_preserves_independent_valid_group(archive, tmp_path, bad_i
         invalid = dict(result=dict(step='finish', decisions=[dict(relation='unsupported',
             proposal_ids=[bad_id])]))
         replies = [_wiki_extract(proposals=_two_wiki_proposals()),
-            AIMessage(content=json.dumps(invalid)), *_second_topic_add()]
+            AIMessage(content=json.dumps(invalid)), AIMessage(content=json.dumps(invalid)), *_second_topic_add()]
         service, job, _ = _wiki_worker_case(archive, tmp_path, replies)
         try:
             await drive(service, job)
             assert job.saved == 1 and job.failed == 1 and job.result_status == 'partial'
-            assert len(job.model.seen) == 4 and not job.model.replies
+            assert len(job.model.seen) == 5 and not job.model.replies
             assert 'wiki_organization_failed' in job.skipped
             assert archive.database.connection.execute('SELECT body FROM naiyue_memories').fetchone()[0] == '报告使用中文'
         finally:
@@ -84,7 +84,7 @@ def test_budget_skip_reports_partial_without_finishing_organization(archive, tmp
 
     async def run():
         service, job, events = _wiki_worker_case(archive, tmp_path, [_wiki_extract(),
-            read(dict(action='list_pages', topic='working_agreements'))])
+            read(dict(action='list_pages'))])
         service.settings = service.memory.settings = service.settings.model_copy(update={'comparison_material_bytes': 4096})
         original = Ledger.read
 

@@ -55,7 +55,7 @@ def test_fixed_comparison_decisions(case, archive, tmp_path):
             expired = case['id'] == 'expired_partial'
             if first:
                 replies.extend([
-                    read(dict(action='list_pages', topic='working_agreements')),
+                    read(dict(action='list_pages')),
                     read(dict(action='read_page', page_id=first['page_id'])),
                 ])
                 decision.update(old_refs=['O1'], target_old_ref='O1')

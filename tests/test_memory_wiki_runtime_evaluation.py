@@ -185,7 +185,7 @@ def test_background_run_followup_reads_saved_wiki_in_another_session():
     model = StreamingToolModel(replies=[
         AIMessage(content=json.dumps(result(proposals=[
             proposed(body='报告完成前应先执行相关回归。')]))),
-        read(dict(action='list_pages', topic='working_agreements')),
+        read(dict(action='list_pages')),
         finish(decisions=[dict(relation='add', proposal_ids=['P1'], destination='N1')],
                page_changes=[dict(ref='N1', topic='working_agreements', title='回归约定', description='')]),
         call('memory', {'request': dict(action='search', scope='workspace', query='相关回归')}),

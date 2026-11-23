@@ -193,3 +193,60 @@ def test_forged_tool_arguments_never_reach_history_port():
             await create_history_tool().tool.coroutine(runtime=runtime,action='read',session_id='other')
         assert calls==[]
     asyncio.run(scenario())
+
+
+def test_history_and_memory_can_correct_arguments_in_same_turn(monkeypatch, tmp_path):
+    from naiyue_test_agent.tools.memory import create_memory_tool
+    from test_memory_wiki_mutations import args
+
+    async def scenario():
+        text = '当前项目使用隔离环境'
+        model = StreamingToolModel(replies=[])
+        async with build(monkeypatch, tmp_path/'sessions.sqlite', model,
+                         [create_history_tool(), create_memory_tool()]) as app:
+            sid = await app.host.sessions.create_workspace('A', tmp_path)
+            request = args(sources=[dict(current_user=True, quote=text)], scope_source_indexes=[0])
+            missing_destination = {key: value for key, value in request.items() if key != 'destination'}
+            model.replies.extend([
+                call('history', {'action':'search', 'query':'环境'}, 'h1'),
+                call('history', {'action':'search', 'query':'环境', 'session_id':sid}, 'h2'),
+                call('memory', {'request':missing_destination}, 'm1'),
+                call('memory', {'request':request}, 'm2'), AIMessage(content='已保存'),
+            ])
+            result = await app.host.runs.start(sid, [('user', text)])
+            messages = [m for m in result['messages'] if isinstance(m, ToolMessage)]
+            assert [(m.tool_call_id, m.status) for m in messages] == [
+                ('h1','error'), ('h2','success'), ('m1','error'), ('m2','success')]
+            assert 'session_id' in messages[0].content and 'destination' in messages[2].content
+            for index, message in enumerate(messages, 1):
+                assert message in model.seen[index]
+            item = json.loads(messages[-1].content)['item']
+            repo = app.host.memory._access.storage.memory
+            proof, = repo.wiki_sources([(item['memory_id'], item['version'])])
+            assert proof['quote'] == text and not proof['supports_scope']
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(('tool_name','arguments','field'), [
+    ('history', {'action':'read','session_id':'s','sequence':1}, 'conversation_revision'),
+    ('history', {'action':'read','session_id':'s','overview_only':True,'agent_id':'a'*64}, 'overview_only'),
+    ('history', {'action':'list_sessions','query':'PRIVATE_VALUE'}, 'list_sessions'),
+    ('memory', {'request':{'action':'update','scope':'workspace','memory_id':'a'*32,
+        'change':{'mode':'supplement'},'sources':[{'current_user':True,'quote':'PRIVATE_VALUE'}]}}, 'expected_version'),
+    ('memory', {'request':{'action':'organize','scope':'workspace','page_ids':['a'*32,'a'*32]}}, 'page_ids'),
+    ('memory', {'request':{'action':'refresh_overview','start_sequence':3,'end_sequence':2}}, 'start_sequence'),
+    ('memory', {'request':{'action':'search','query':' '}}, 'query'),
+])
+def test_front_tool_feedback_identifies_parameter(monkeypatch, tmp_path, tool_name, arguments, field):
+    from naiyue_test_agent.tools.memory import create_memory_tool
+    async def run():
+        model = StreamingToolModel(replies=[call(tool_name, arguments, 'invalid'), AIMessage(content='done')])
+        async with build(monkeypatch,tmp_path/'sessions.sqlite',model,[create_history_tool(),create_memory_tool()]) as app:
+            sid = await app.host.sessions.create_workspace('A',tmp_path)
+            result = await app.host.runs.start(sid,[('user','read or update')])
+            reply, = [m for m in result['messages'] if isinstance(m,ToolMessage)]
+            assert (reply.status,reply.tool_call_id) == ('error','invalid') and reply in model.seen[-1]
+            assert field in reply.content and 'PRIVATE_VALUE' not in reply.content
+            if tool_name == 'history' and arguments.get('session_id'):
+                assert 'list_sessions' not in reply.content
+    asyncio.run(run())

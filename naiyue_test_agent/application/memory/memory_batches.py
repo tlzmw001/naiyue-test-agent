@@ -40,6 +40,7 @@ def bind_proposal_evidence(proposal, batch: MemoryBatch) -> BoundProposal:
             ref=_Reference.model_validate(reference)
             if ref.evidence_id in ids:raise ValueError('duplicate_evidence')
             ids.append(ref.evidence_id)
+            diagnostic='evidence_id_missing'
             unit=batch['evidence_map'][ref.evidence_id]
             diagnostic='evidence_not_citable'
             if unit['context_only'] or unit['tool_pair_status'] in ('missing','invalid'):raise ValueError('context_only')

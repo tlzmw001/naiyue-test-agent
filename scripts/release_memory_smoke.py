@@ -60,7 +60,7 @@ async def memory_scenario(root, Model):
     parent = Model(replies=[AIMessage(content='', tool_calls=[dict(name='memory',
         args={'request': dict(action='refresh_overview')}, id='installed-refresh')]),
         AIMessage(content='Request accepted'), AIMessage(content='Preference recalled')])
-    organization_read=dict(result=dict(step='read',requests=[dict(action='list_pages',topic='working_agreements')]))
+    organization_read=dict(result=dict(step='read',requests=[dict(action='list_pages')]))
     organization_finish=dict(result=dict(step='finish',decisions=[dict(relation='add',proposal_ids=['P1'],destination='N1')],
         page_changes=[dict(ref='N1',topic='working_agreements',title='Test runner',description='')]))
     worker = Model(replies=[AIMessage(content=json.dumps(value),

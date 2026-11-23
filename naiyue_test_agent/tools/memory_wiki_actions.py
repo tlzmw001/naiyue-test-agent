@@ -1,7 +1,7 @@
 """Wiki v2 action contracts for the single memory tool; cutover is owned by S6."""
 from copy import deepcopy
 from typing import Annotated, Literal
-from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, create_model, field_validator, model_validator
 from .memory_writes import MemoryProposal, MemorySource
 
 ID = Annotated[str, Field(pattern=r'^[0-9a-f]{32}$')]
@@ -83,12 +83,16 @@ class Write(Strict):
     sources: list[MemorySource] = Field(min_length=1,max_length=8)
     scope_source_indexes: list[Annotated[int,Field(ge=0)]] = Field(default_factory=list,max_length=8)
 
+    @field_validator('scope_source_indexes', mode='before')
+    @classmethod
+    def personal_scope_indexes_only(cls, value, info: ValidationInfo):
+        return [] if info.data.get('scope') == 'workspace' else value
+
     @model_validator(mode='after')
     def indexes(self):
         ids=self.scope_source_indexes
         if len(set(ids))!=len(ids) or any(i>=len(self.sources) for i in ids):
             raise ValueError('memory_scope_evidence_invalid')
-        if self.scope=='workspace' and ids:raise ValueError('memory_scope_mismatch')
         return self
 
 

@@ -67,6 +67,8 @@ def _compile(stage,archive,namespace,caller,ledger,proposals,raw,settings,now,al
         if row:selector.update(memory_id=row['memory_id'],expected_version=row['version'])
         if not allowed(selector):fail('memory_permission_denied')
     for d in finished.decisions:
+        if d.relation == 'add' and d.destination is None:
+            fail('memory_destination_required')
         if len(set(d.proposal_ids))!=len(d.proposal_ids) or not set(d.proposal_ids)<=proposals.keys():fail()
         consumed.extend(d.proposal_ids)
         if len(set(d.old_refs))!=len(d.old_refs):fail()

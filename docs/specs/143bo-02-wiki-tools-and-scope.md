@@ -30,11 +30,13 @@
 
 destination 为互斥结构：{page_id,expected_page_version} 或 {new_page:{topic,title,description}}。不能同时提供两种。创建新页与写入在同一事务；普通 update 不偷偷搬页，复杂移动交 organize。
 
+前台 history、memory 均复用现有的配对工具错误消息。history 按会话、搜索、消息版本、概览和分页的实际参数组合提示修正。memory 的必填字段、个人来源索引、页集合、搜索、版本和分页冲突给出对应提示。错误内容使用校验器定义的字段名和固定说明，后续调用重新经过相同的权限与写入校验。
+
 change 为三个互斥分支：{mode:"supplement"}、{mode:"confirm"}、{mode:"replace",proposal:{...}}。supplement 表示局部/未知范围的直接补证，confirm 表示对现有完整内容的重新确认；两者均不接收 body/title/conditions/expiry，由程序继承旧内容。只有 replace 提交新正文，不要求重复 scope 来源原句或旧引用文本。工具说明先引导选择动作；未声明字段仍按 schema 拒绝，不设计前台任意载荷修复器。
 
 proposal 沿用 title/body/subject/条件/basis/intent/gaps/reason/显式 deadline 的既有约束，移除 kind。长期价值由提示和语义评测判断；不能通过程序字段检查宣称已经证明长期价值。
 
-scope_source_indexes 指向本次 sources 的零基位置，最多 8 个、去重且不得越界。后台用 E 编号表达同一关联，再由 binder 转为索引；不让模型重写第二份 MemorySource。workspace 必须为空；新建 personal 必须非空且所指来源为真实用户。替换 personal 正文时可以继承已有同事项的范围依据，但新的内容和限制仍需本次真实用户来源支持；不能用继承旧依据免除语义复核。
+scope_source_indexes 指向本次 sources 的零基位置，最多 8 个、去重且不得越界。后台用 E 编号表达同一关联，再由 binder 转为索引；不让模型重写第二份 MemorySource。workspace 在准备许可与执行前将该字段清空，模型多填的索引不会标记范围依据；新建 personal 必须非空且所指来源为真实用户。替换 personal 正文时可以继承已有同事项的范围依据，但新的内容和限制仍需本次真实用户来源支持；不能用继承旧依据免除语义复核。
 
 ## 3. 分页返回
 

@@ -18,7 +18,7 @@ from naiyue_test_agent.contracts.failures import safe_error_type
 from naiyue_test_agent.model_access import MODEL_LIMITS_METADATA_KEY, MODEL_ID_METADATA_KEY
 from naiyue_test_agent.model_access.memory_output import prepare_memory_output
 from .memory_batches import build_batch, model_batch
-from naiyue_test_agent.contracts.memory import MemoryReadError, safe_memory_reason
+from naiyue_test_agent.contracts.memory import MemoryReadError, overview_coverage_notes, safe_memory_reason
 from naiyue_test_agent.diagnostics import safe_log
 from .memory_sources import sensitive
 from .memory_wiki_protocol import validate_overview
@@ -85,11 +85,13 @@ async def _prepare(service, job, upper):
     from .memory_wiki_protocol import WikiExtractionResult,EXTRACT_PROMPT as WIKI_PROMPT
     schema=WikiExtractionResult
     prompt=WIKI_PROMPT
-    bound, output_mode, overhead = prepare_memory_output(job.model, schema.model_json_schema(), output)
+    definition = schema.model_json_schema()
+    definition['properties']['proposals']['maxItems'] = service.settings.max_proposals
+    bound, output_mode, overhead = prepare_memory_output(job.model, definition, output)
     cap -= overhead
     system = SystemMessage(content=prompt.format(overview_chars=service.settings.overview_chars,
         max_proposals=service.settings.max_proposals)
-        +'\nOutput JSON schema:\n'+json.dumps(schema.model_json_schema(),ensure_ascii=False))
+        +'\nOutput JSON schema:\n'+json.dumps(definition,ensure_ascii=False))
     saved = await run_blocking(service.storage.memory.overview, job.target_session_id)
     previous = saved['overview'] if saved['overview_status'] == 'generated' else None
     coverage = dict(saved['coverage'], skipped=_bounded_notes(saved['coverage']['skipped'])) if previous is not None else None
@@ -164,8 +166,12 @@ async def _batch(service, job):
             from .memory_wiki_protocol import parse,WikiExtractionResult
             parsed=parse(response,output_mode,WikiExtractionResult)
             if (not isinstance(parsed,dict) or set(parsed)!={'overview','proposals'}
-                    or not isinstance(parsed['proposals'],list) or len(parsed['proposals'])>service.settings.max_proposals):
+                    or not isinstance(parsed['proposals'],list)):
                 raise MemoryReadError('memory_result_invalid')
+            if len(parsed['proposals']) > service.settings.max_proposals:
+                _failure(job, 'memory_wiki_proposal_limit', MemoryReadError('memory_proposal_limit'), stage=stage)
+                job.skipped.append('memory_proposal_limit')
+                parsed['proposals'] = []
             next_sequence, next_offset = batch['next_position']
             consumed_upper = next_sequence if next_offset else next_sequence - 1
             coverage_lower = max(1, lower[0])
@@ -193,7 +199,7 @@ async def _batch(service, job):
                     skipped.append(f'partial_source:{previous_end[0]}:{previous_end[1]}')
             elif current_start[1]:
                 skipped.append(f'unprocessed_until:{current_start[0]}:0:{current_start[0]}:{current_start[1]}')
-            skipped.extend(job.skipped)
+            skipped.extend(overview_coverage_notes(job.skipped))
             if next_offset and (previous_end is None or current_end > previous_end):
                 skipped.append(f'partial_source:{next_sequence}:{next_offset}')
             skipped = _bounded_notes(skipped)

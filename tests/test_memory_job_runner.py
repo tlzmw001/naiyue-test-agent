@@ -372,7 +372,7 @@ def test_active_and_candidate_records_enter_only_wiki_organization(archive,tmp_p
                 body='使用.venv '+'existing detail '*40,gaps=['等待确认测试环境'] if intent=='candidate' else [])
             if page:request['destination']=dict(page_id=page,expected_page_version=1)
             saved=service.memory.query_wiki('session',job.project_id,request)['item'];page=saved['page_id']
-        model.replies=[response([proposed()]),read(dict(action='list_pages',topic='working_agreements')),
+        model.replies=[response([proposed()]),read(dict(action='list_pages')),
             read(dict(action='read_page',page_id=page)),finish(decisions=[dict(relation='unsupported',proposal_ids=['P1'])])]
         try:
             await drive(service,job)
@@ -400,7 +400,7 @@ def test_candidate_changed_after_complete_page_is_rejected_at_commit(archive,tmp
         ref=dict(session_id='session',thread_id='root-thread',message_id='human',revision=1,conversation_revision=0,quote='使用.venv',offset=0)
         request=args(sources=[ref]);request['proposal'].update(intent='candidate',gaps=['等待确认'])
         saved=service.memory.query_wiki('session',job.project_id,request)['item']
-        model.replies=[response([proposed()]),read(dict(action='list_pages',topic='working_agreements')),
+        model.replies=[response([proposed()]),read(dict(action='list_pages')),
             read(dict(action='read_page',page_id=saved['page_id'])),finish(decisions=[dict(relation='unsupported',proposal_ids=['P1']),
                 dict(relation='move',old_refs=['O1'],target_old_ref='O1',destination='N1')],
                 page_changes=[dict(ref='N1',topic='working_agreements',title='新组',description='')])]

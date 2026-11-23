@@ -5,7 +5,7 @@ import json
 import logging
 
 from naiyue_test_agent.storage.conversation_sql import history_projection
-from naiyue_test_agent.contracts.memory import MemoryReadError
+from naiyue_test_agent.contracts.memory import MemoryReadError, overview_coverage_notes
 
 
 logger = logging.getLogger(__name__)
@@ -149,7 +149,7 @@ def read_overview(connection, session):
             lower=saved['lower_sequence'],upper=saved['upper_sequence'],thread_id=saved['thread_id'],
             conversation_revision=saved['conversation_revision'],history_version=saved['history_version'],
             task_id=saved['task_id'],origin_run_id=saved['origin_run_id'],batch=saved['batch'],
-            skipped=json.loads(saved['skipped_json']),has_newer_messages=facts['upper']>saved['upper_sequence']))
+            skipped=overview_coverage_notes(json.loads(saved['skipped_json'])),has_newer_messages=facts['upper']>saved['upper_sequence']))
 
 
 def overview(connection, session_id):

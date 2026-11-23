@@ -37,7 +37,8 @@ def test_wiki_personal_scope_requires_bound_source_index():
     assert WikiMemoryToolInput(request=dict(args,scope_source_indexes=[0])).request.proposal.body=='先举例'
     for indexes in ([1],[0,0]):
         with pytest.raises(ValidationError):WikiMemoryToolInput(request=dict(args,scope_source_indexes=indexes))
-    with pytest.raises(ValidationError):WikiMemoryToolInput(request=dict(args,scope='workspace',scope_source_indexes=[0]))
+    workspace = WikiMemoryToolInput(request=dict(args,scope='workspace',scope_source_indexes=[0]))
+    assert workspace.request.scope_source_indexes == [] and len(workspace.request.sources) == 1
 
 
 def test_permission_v2_projection_and_v1_mismatch_rejection():

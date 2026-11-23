@@ -81,7 +81,7 @@ def _background_with_followup(answer, *extra):
     case = wiki_case('W04')
     model = StreamingToolModel(replies=[
         AIMessage(content=json.dumps(result(proposals=[proposed(body='先运行相关回归，再汇报完成。')]))),
-        read(dict(action='list_pages', topic='working_agreements')),
+        read(dict(action='list_pages')),
         finish(decisions=[dict(relation='add', proposal_ids=['P1'], destination='N1')],
                page_changes=[dict(ref='N1', topic='working_agreements', title='回归条件', description='')]),
         answer, *extra,

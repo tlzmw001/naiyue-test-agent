@@ -206,3 +206,21 @@ def test_rewrite_after_previous_overview_read_cannot_revalidate_old_summary(arch
         finally:
             first_service.memory.close(); second_service.memory.close()
     asyncio.run(scenario())
+
+
+def test_read_overview_filters_old_wiki_task_notes_but_preserves_source_gaps(archive, tmp_path):
+    from naiyue_test_agent.application.memory.memory_job_runner import drive
+
+    async def scenario():
+        save(archive, [HumanMessage(id='msg', content='saved history')])
+        service, job, _ = fixture(archive, tmp_path, StreamingToolModel(replies=[response()]))
+        try:
+            await drive(service, job)
+            notes = ['memory_proposal_limit', 'wiki_commit_failed', 'wiki_organization_failed', 'sensitive:1']
+            with archive.database.connection as connection:
+                connection.execute('UPDATE naiyue_memory_overviews SET skipped_json=? WHERE session_id=?',
+                                   (json.dumps(notes), 'session'))
+            assert archive.memory.overview('session')['coverage']['skipped'] == ['sensitive:1']
+        finally:
+            service.memory.close()
+    asyncio.run(scenario())

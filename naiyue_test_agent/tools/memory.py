@@ -109,6 +109,37 @@ def create_memory_tool():
 
     tool = StructuredTool.from_function(coroutine=execute, name='memory', args_schema=execution,
         description=DESCRIPTION)
-    tool.handle_validation_error = 'Invalid memory arguments. Use request.action and its action-specific schema.'
+    def invalid_arguments(error):
+        reasons = {
+            'memory_scope_evidence_required': 'For a personal record, give scope_source_indexes pointing to the real user sources that establish general applicability.',
+            'memory_scope_evidence_invalid': 'Use unique zero-based scope_source_indexes within sources.',
+            'memory_duplicate_target': 'Use each page ID only once in page_ids.',
+            'memory_cursor_offset_conflict': 'Continue with the returned cursor and omit offset.',
+            'memory_query_invalid': 'Use a nonblank query and nonblank expansions of at most 2000 characters each.',
+            'memory_range_invalid': 'start_sequence must be at or before end_sequence.',
+            'memory_page_metadata_invalid': 'Use a nonblank page title within 480 bytes and description within 900 bytes.',
+        }
+        hints = []
+        for issue in error.errors(include_input=False):
+            path = issue['loc']
+            reason = str(issue.get('ctx', {}).get('error', ''))
+            if reason in reasons:
+                hint = reasons[reason]
+            elif path[:3] == ('request', 'record', 'destination'):
+                hint = 'Supply destination with page_id and expected_page_version, or new_page with topic, title and description.'
+            elif issue['type'] == 'missing' and path:
+                hint = (f'Supply {path[-1]} from the latest read of the target.' if path[-1] == 'expected_version'
+                        else f'Supply the required field {path[-1]}.')
+            else:
+                continue
+            if hint not in hints:
+                hints.append(hint)
+            if len(hints) == 8:
+                break
+        if hints:
+            return 'Invalid memory arguments. ' + ' '.join(hints)
+        return 'Invalid memory arguments. Use request.action and its action-specific schema.'
+
+    tool.handle_validation_error = invalid_arguments
     return ToolSpec(tool, public, execution_mode='parallel', side_effects='may_mutate',
                     permissions=ToolPermission(default='allow'))

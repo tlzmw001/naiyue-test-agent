@@ -14,6 +14,14 @@ def safe_memory_reason(error):
     return reason if isinstance(reason, str) and re.fullmatch(r'[a-z][a-z0-9_]{0,79}', reason) else None
 
 
+def overview_coverage_notes(notes):
+    """Exclude Wiki task outcomes from source coverage, preserving legacy counts."""
+    if not isinstance(notes, list):
+        return notes
+    task_outcomes = ('memory_proposal_limit', 'wiki_organization_failed', 'wiki_commit_failed')
+    return [note for note in notes if note not in task_outcomes]
+
+
 CONDITIONS = ('machine', 'module', 'target', 'subject')
 
 

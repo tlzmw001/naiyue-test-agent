@@ -1,5 +1,6 @@
 """Bounded model read/finish loop and dependency isolation before any commit."""
 import json
+from pydantic import ValidationError
 from langchain_core.messages import HumanMessage,SystemMessage
 from langchain_core.messages.utils import count_tokens_approximately
 from naiyue_test_agent.agent_runtime.async_utils import run_blocking
@@ -8,9 +9,13 @@ from naiyue_test_agent.agent_runtime.stream_events import MEMORY_TAG
 from naiyue_test_agent.model_access import MODEL_ID_METADATA_KEY
 from naiyue_test_agent.model_access.memory_output import prepare_memory_output
 from naiyue_test_agent.contracts.memory import MemoryReadError
+from .memory_organization_feedback import finish_feedback, schema_feedback
+from .memory_sources import sensitive
 from .memory_organization_reads import Ledger
 from .memory_organization_commit import commit_group
-from .memory_wiki_protocol import OrganizationResult,ORGANIZE_PROMPT,parse,bind_extraction
+from .memory_wiki_protocol import (
+    AutomaticListPages, AutomaticOrganizationResult, OrganizationResult, ORGANIZE_PROMPT, parse, bind_extraction,
+)
 
 
 async def organize(service,job,batch,raws):
@@ -26,17 +31,21 @@ async def organize(service,job,batch,raws):
     if explicit:
         scope=job.wiki_request['scope']
         work[(scope,None)]={}
+    schema = OrganizationResult if explicit else AutomaticOrganizationResult
+    prompt = ORGANIZE_PROMPT if explicit else ORGANIZE_PROMPT + '\nOmit topic from list_pages. Code binds the work unit topic.'
     results=[]
     for (scope,topic),selected in work.items():
         ledger=Ledger(scope,topic,writable=job.wiki_request['page_ids'] if explicit else None)
         finished=None
         try:
             cap,output=_limits(job.model,service.settings)
-            bound,mode,overhead=prepare_memory_output(job.model,OrganizationResult.model_json_schema(),output)
-            system=SystemMessage(content=ORGANIZE_PROMPT+'\nOutput JSON schema:\n'+json.dumps(OrganizationResult.model_json_schema(),ensure_ascii=False))
+            definition = schema.model_json_schema()
+            bound,mode,overhead=prepare_memory_output(job.model,definition,output)
+            system=SystemMessage(content=prompt+'\nOutput JSON schema:\n'+json.dumps(definition,ensure_ascii=False))
             material=dict(scope=scope,topic=topic,writable_page_ids=sorted(ledger.writable) if explicit else None,
                 proposals=list(selected.values()))
             messages=[system,HumanMessage(content=json.dumps(material,ensure_ascii=False))]
+            correction_used = False
             used=0
             while True:
                 _check(job)
@@ -46,15 +55,49 @@ async def organize(service,job,batch,raws):
                 if native_async_model(job.model):response=await job.control.await_model(lambda:bound.ainvoke(messages,config=config))
                 else:response=await run_blocking(bound.invoke,messages,config=config)
                 _check(job)
-                value=parse(response if mode=='text' else response['raw'],mode,OrganizationResult)
-                step=OrganizationResult.model_validate(value).result
-                if step.step=='finish':
-                    finished=step.model_dump(mode='json');break
+                issues = []
+                try:
+                    value = parse(response if mode == 'text' else response['raw'], mode, schema)
+                    step = schema.model_validate(value, context={'scope': scope, 'topic': topic}).result
+                except (ValidationError, MemoryReadError) as error:
+                    if isinstance(error, ValidationError):
+                        issues = schema_feedback(error)
+                        if not issues:
+                            raise
+                        sensitive(value)
+                    elif isinstance(error.__cause__, json.JSONDecodeError):
+                        sensitive(error.__cause__.doc)
+                        issues = ['result: return one complete valid JSON object matching the supplied schema.']
+                    else:
+                        raise
+                    if correction_used:
+                        if finished is None:
+                            raise
+                        break
+                else:
+                    if step.step == 'finish':
+                        issues = finish_feedback(step, selected)
+                        if not issues or finished is None:
+                            finished = step.model_dump(mode='json')
+                        if not issues or correction_used:
+                            break
+                        sensitive(value)
+                    elif finished is not None:
+                        break  # The original finish is still available for independent group validation.
+                if issues:
+                    correction_used = True
+                    required = 'finish' if finished is not None else 'read or finish'
+                    feedback = dict(parameter_feedback=issues, instruction=f'Resubmit one complete {required} step using the supplied material.')
+                    messages.append(HumanMessage(content=json.dumps(feedback)))
+                    continue
                 replies=[]
                 for request in step.requests:
                     _check(job)
+                    read_request = request.model_dump(mode='json')
+                    if isinstance(request, AutomaticListPages):
+                        read_request['topic'] = ledger.topic
                     reply=await run_blocking(ledger.read,service.memory,job.target_session_id,job.project_id,
-                        request.model_dump(mode='json'),service.allowed)
+                        read_request,service.allowed)
                     text=json.dumps(reply,ensure_ascii=False);used+=len(text.encode())
                     if used>service.settings.comparison_material_bytes:raise MemoryReadError('memory_organization_budget')
                     replies.append(reply)
