@@ -1,0 +1,3 @@
+{"id":"boundary-values","mode":"model","turns":["什么是软件测试中的边界值分析？请简述并给一个例子。"],"tools":["read"],"checks":{"no_tools":true,"rubric":"准确解释选择输入边界及附近取值进行测试，并给出自洽的范围和测试值示例。"}}
+{"id":"compare-reports","mode":"session","turns":["读取 before.json 和 after.json 并比较状态。只列出从通过变成失败的用例 ID，每行一个。"],"fixture":"reports","tools":["read"],"checks":{"required_reads":["before.json","after.json"],"final_ids":["T-17"]}}
+{"id":"clarify-reports","mode":"session","turns":["帮我找这次测试中新出现的失败。先询问我两份报告的文件名，等我回复再读。","旧报告是 before.json，新报告是 after.json。只列出从通过变成失败的用例 ID，每行一个。"],"fixture":"reports","tools":["read"],"attempts":4,"checks":{"clarify_first":true,"required_reads":["before.json","after.json"],"final_ids":["T-17"]}}
