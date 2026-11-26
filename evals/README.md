@@ -99,3 +99,72 @@ python -m evals run --config .env/models.json --model heiyu-gpt-5.5 \
 ```
 
 模拟用户使用 `--user-model`，在第二轮或之后可以结束对话。评测按数据集中固定的答案与工具证据判断成功。报告展开后可查看实际对话、停止原因、Agent 耗时和单列的模拟用户耗时。`pass_4` 只有同一道题四次全部通过时为 true，至少一次未达标且四次都有有效结论时为 false，遇到执行错误或缺少结果时留空。总通过率以可判定的题数为分母。固定对话的 `smoke.jsonl` 仍可原样运行。
+## 从本机历史抽取评测候选
+
+在仓库根目录手动运行 `python -m evals.curate scan`。传入产品实际的数据目录，那里包含 `projects.sqlite`。输出目录必须是新目录，并位于产品数据目录和登记的项目目录之外。
+
+```sh
+python -m evals.curate scan --data-dir "$AGENT_DATA" --project "$PROJECT_ID" \
+  --from 2026-11-16T00:00:00Z --to 2026-11-23T00:00:00Z \
+  --all-percent 10 --seed 42 --output "$CURATION_DIR/week-all"
+```
+
+`--project` 可重复，省略后扫描已登记项目。时间须包含时区，区间包含起点，排除终点。配置 `--rules` 后分别用 `--matched-percent` 和 `--unmatched-percent` 设置比例，默认 100% 和 0%。规则文件使用 `{"any":[{"all":[{"run_status":["failed"]}]}]}` 形状。条件支持 `tool_error`、`min_model_calls`、`min_tool_calls` 和 `min_user_turns`。工具条件可以指定 `root`、`child` 或 `both`，默认 `root`。
+
+以下规则会选出“`read` 报错且会话已有两次用户输入”的运行，也会选出以 `failed` 结束的运行。
+
+```json
+{
+  "any": [
+    {"all": [{"tool_error": {"name": "read", "outcomes": ["error_result", "exception"]}}, {"min_user_turns": 2}]},
+    {"all": [{"run_status": ["failed"]}]}
+  ]
+}
+```
+
+查看输出的 `report.md` 可核对样本数量及选中理由。`manifest.json` 是后续步骤使用的冻结清单，包含来源身份、覆盖缺口、各池分母和种子。命令退出码 0 表示已生成报告，部分项目跳过时可从报告查看原因。指定范围内所有项目均无法扫描时，命令生成缺口报告并返回 2。扫描无需模型配置。抽样前仅使用身份、顺序和消息类型等元数据。[离线采样与标注设计](../docs/specs/agent-evaluation-history-curation.md)
+
+## 提取与标注这批候选
+
+扫描在封存 `manifest.json` 后，只为选中的运行补取脱敏片段，并写入 `materials.json`。对先前仅有清单的批次，可用原产品数据目录恢复提取。已提取成功的材料保存在本地。回复分支已改变、诊断过期或无法读库时，候选带缺口记录。
+
+```sh
+python -m evals.curate scan --resume --data-dir "$AGENT_DATA" --output "$BATCH_DIR"
+python -m evals.curate annotate --batch "$BATCH_DIR" --config "$MODELS_CONFIG" --model "$ANNOTATOR_ID"
+```
+
+`annotate` 把脱敏片段发送给显式指定的模型端点，操作前可在 `materials.json` 核对输入。命令默认串行处理，用 `--candidate CANDIDATE_ID` 可以只标注指定条目。每条结果单独写入 `annotations/<candidate_id>.json`，里面有推荐方向、证据引用、改写、缺项、用例对象和配套文件内容。对应一条调用超时或返回无效 JSON 时，保留类型并继续处理其它条目。重复运行会恢复失败项，保留相同材料与配置下已完成的标注。S3 将使用这些草稿生成审核预览和正式数据集。
+
+人工可用 `annotate --batch "$BATCH_DIR" --candidate "$CANDIDATE_ID" --draft "$DRAFT_JSON"` 导入 `{"proposals":[...]}`。人工补充的依据使用 `manual` 引用，在 `changes` 记录构造过程。模型模式省略 `--draft`，人工模式无需模型配置。自动脱敏覆盖常见凭证格式、私密路径及 URL，不能识别每种业务自定义敏感内容。
+
+## 审核并导出评测数据集
+
+运行第一条命令后打开批次里的 `review.html`。报告逐方向展示原证据、输入、判分和隐藏目标、正式 JSONL 行以及 fixture。可见输入和配套文件用于复现历史边界，评分目标保存在 JSONL 的判分字段。相似题只供人工对照，可以选择关联已有题。
+
+```sh
+python -m evals.curate review --batch "$BATCH_DIR"
+python -m evals.curate review --batch "$BATCH_DIR" \
+  --candidate "$CANDIDATE_ID" --direction "$DIRECTION" --revision "$REVISION" --decision accept
+python -m evals.curate export --batch "$BATCH_DIR" --version v1
+```
+
+审批版本来自报告。改动草稿时，用 `annotate --draft` 导入修改，然后刷新审核报告并确认新版本。可选决定为 `accept`、`needs-material`、`link` 和 `discard`。关联已有题使用 `--decision link --existing CASE_ID`。要对照增量版本，在 `review` 中传入 `--previous VERSION_DIR`。
+
+代码判分题可以在采纳时附带 `--examples CHECKS_JSON`。文件的 `positive` 与 `negative` 分别是交给现有评分器的合成证据。例子至少包含 `completed`、`answers` 和 `calls`，根据评测方向还可能需要工作区或子 Run 证据。两份证据都应是已完成的运行，正例须通过代码断言，反例须至少命中一条失败断言。报告分别显示可加载状态、代码断言自检和真实运行状态。有裁判细则的题还需要实际运行才能得到语义评分。
+
+导出发布到批次的 `versions/<version>`。可以用 `--previous VERSION_DIR` 保留已有增量用例并合入本批采纳项。已发布的同名且内容相同的版本可重复使用，内容冲突报告错误。将整个版本目录交给评测的使用方，其中包含按方向划分的 JSONL、fixture 和版本指纹。命令会打印调用现有评测入口所需的参数。
+
+## 跑一遍从历史到报告的验收
+
+在仓库根目录启用评测环境后执行。测试会登记一个临时项目，生成两轮会话归档，按条件选中第二个 Run，经过标注、审核、导出，再将同一份两轮轨迹题交给现有评测入口执行两次。标注和被测模型均使用固定回复，读取文件走产品工具。
+
+```sh
+PYTHONPATH=tests python -m pytest -q evals/tests/test_curation_roundtrip.py
+```
+
+两次运行都能读到文件。遵守用户更正的正例读取 final.txt，得到 RUN-47，轨迹为 exact；沿用原路径的反例读取 draft.txt，得到 RUN-18，轨迹为 divergent，端到端失败。生产模型可在评测环境中用下列命令运行自己的导出版本。报告位于输出目录下的 run-* 子目录。
+
+```sh
+python -m evals run --config "$MODELS_CONFIG" --model "$MODEL_ID" \
+  --dataset "$BATCH_DIR/versions/v1/trajectory.jsonl" --output "$REPORT_DIR"
+```

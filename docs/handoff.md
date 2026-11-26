@@ -1,3 +1,11 @@
+**2026-11-26 · 离线历史制题 S4 验收。** 临时项目在同一会话产生两次真实 Run，扫描选中用户更正文件名的第二轮，经固定模型标注、审核、导出，用现有评测入口跑同一份两轮轨迹题。两次工具均成功，正确路径轨迹 100 分且端到端通过，旧路径 0 分且端到端失败。复核修正了诊断裁剪后的工具补证、未知结果归池、父消息与回执配对、中文紧邻路径脱敏、审核正例与导出材料检查、目录误选建锁。评测定向 50 项、后端 7,459 项通过，macOS arm64 wheel 已构建。S1–S4 本机验收结束。真实模型在新增样本上的效果留待首批实际采纳样本后单独评测。[验收用例](../evals/tests/test_curation_roundtrip.py) · [审核预览](../build/curation-s4-final-S3PTbo/tests/test_history_to_scored_traject0/batch/review.html) · [回归结果](../build/curation-s4-eval-regression.log)
+
+**2026-11-26 · 离线历史采样 S3。** 已接通静态审核报告、按内容版本保存决定、代码评分正反例和版本化导出。合成候选的两条预览 JSONL 及三个 fixture 与导出逐字节一致。验证旧批准失效、增量合并及去重、同名冲突、并发写和发布中断。后端 7,459 项、评测定向 40 项通过，macOS arm64 wheel 构建通过。[使用说明](../evals/README.md#审核并导出评测数据集) · [合成预览](../build/curation-s3-demo-s67iqtfa/review.html) · [验收测试](../evals/tests/test_curation_review.py)。下一步 S4 用合成项目贯通扫描到现有评测报告的正例和反例。
+
+**2026-11-25 · 离线历史采样 S2。** `scan` 在清单冻结后为入选 Run 生成脱敏 `materials.json`，`scan --resume` 可恢复 S1 批次。独立 `annotate` 支持模型生成和人工导入，按候选保存方向、依据、用例及配套文件，识别历史换分支、过期和标注超时。后端 7,459 项、评测定向 36 项通过，macOS arm64 wheel 构建通过。[使用说明](../evals/README.md#提取与标注这批候选) · [设计](specs/agent-evaluation-history-curation.md) · [标注测试](../evals/tests/test_curation_annotation.py)。下一步 S3 从草稿生成静态审核预览、保存审核决定并发布版本化数据集。
+
+**2026-11-25 · 离线历史采样 S1。** `python -m evals.curate scan` 已接通项目库只读扫描、三态规则判断、百分比抽样和批次报告。[使用说明](../evals/README.md#从本机历史抽取评测候选) · [完整方案](specs/agent-evaluation-history-curation.md) · [S1 集成测试](../evals/tests/test_curation_scan.py)。合成项目走真实 Run 路径验证并行扫描、用户停止、落盘终态、时间边界和库忙降级。后端 7,459 项、评测定向 31 项通过，macOS arm64 wheel 构建通过。下一步 S2 从冻结清单提取并清洗入选材料，再接标注。
+
 **2026-11-25 · 首版评测基线。** 独立入口按 JSONL 执行。8 个正式数据集共 71 题（组件 44、系统 27），另有 3 道冒烟题。汇总已有报告的 80 次执行，断言通过 79 次，系统端到端成功 35/36；一条开放协作题的父 Agent 最终交付未达标。跨数据集总表由已有结果单独汇总。下一步讨论如何从真实运行中发现故障、清洗候选并标注为可重跑的用例。[评测说明](../evals/README.md) · [本机汇总报告](../build/eval-all-baseline/run-1795662507964408000/report.html)
 
 **2026-11-25 · 动态多轮交互评测。** 澄清报告、用户更正路径、用户收窄范围三题，经动态模拟用户与真实会话独立执行四次。修正澄清表达的问号误判后，按当前代码重判原始对话，12/12 次通过，pass^4 3/3。每次两轮；当前覆盖只读任务。定向及 CLI 回归 55 项通过，macOS arm64 wheel 构建通过。下一步按四类系统指标汇总基线。 [用例](../evals/data/multi-turn.jsonl) · [重判报告](../build/eval-multi-turn-replay/run-1795660877200204000/report.html)
